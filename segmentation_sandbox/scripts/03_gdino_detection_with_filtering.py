@@ -153,8 +153,6 @@ def main():
         ft_annotations.process_missing_annotations(
             model=ft_model,
             prompts="individual embryo",
-            box_threshold=0.15,  # Lower threshold for finetuned model
-            text_threshold=0.01,
             auto_save_interval=100,
             store_image_source=False,
             show_anno=False,
@@ -288,7 +286,6 @@ def main():
     
     print(f"\n📁 BASE MODEL ANNOTATIONS:")
     print(f"   File: {args.base_annotations}")
-    base_annotations.print_processing_summary(["individual embryo"])
     
     # Additional base model stats
     base_total_images = len([img_id for img_id, img_data in base_annotations.annotations.get("images", {}).items() 
@@ -311,7 +308,6 @@ def main():
     
     print(f"\n📁 FINETUNED MODEL ANNOTATIONS:")
     print(f"   File: {args.finetuned_annotations}")
-    ft_annotations.print_processing_summary(["individual embryo"], consider_different_if_different_weights=True)
     
     # Additional finetuned model stats
     ft_total_images = len([img_id for img_id, img_data in ft_annotations.annotations.get("images", {}).items() 
@@ -357,12 +353,12 @@ if __name__ == "__main__":
     main()
 
 # Example usage:
-# python3 03_dual_gdino_detection_with_filtering.py \
+# python3 03_gdino_detection_with_filtering.py \
 #   --config /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/configs/pipeline_config.yaml \
 #   --metadata /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/experiment_metadata.json \
 #   --base-annotations /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/gdino_annotations/gdino_annotations.json \
 #   --finetuned-annotations /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/gdino_annotations/gdino_annotations_finetuned.json \
 #   --confidence-threshold 0.5 \
 #   --iou-threshold 0.5
-#
+
 # Both models will predict "individual embryo" for comparison purposes
