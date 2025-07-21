@@ -991,7 +991,7 @@ class GSAMQualityControl:
                                 "snip_ids": set(),
                                 "count": 0
                             }
-                        
+
                         # Add entity ID to appropriate set and extract related IDs from flag data
                         if entity_type == "by_experiment":
                             overview[flag_type]["experiment_ids"].add(entity_id)
@@ -1020,12 +1020,17 @@ class GSAMQualityControl:
                                 if "image_id" in flag_instance:
                                     overview[flag_type]["image_ids"].add(flag_instance["image_id"])
                         elif entity_type == "by_embryo":
-                            # fold embryo-level flags into the snip_ids set for overview
-                            overview[flag_type]["snip_ids"].add(entity_id)
+                            # Properly aggregate embryo-level flags into overview
                             for flag_instance in flag_instances:
+                                if "experiment_id" in flag_instance:
+                                    overview[flag_type]["experiment_ids"].add(flag_instance["experiment_id"])
+                                if "video_id" in flag_instance:
+                                    overview[flag_type]["video_ids"].add(flag_instance["video_id"])
+                                if "image_id" in flag_instance:
+                                    overview[flag_type]["image_ids"].add(flag_instance["image_id"])
                                 if "embryo_id" in flag_instance:
                                     overview[flag_type]["snip_ids"].add(flag_instance["embryo_id"])
-                        
+
                         # Count flag instances
                         overview[flag_type]["count"] += len(flag_instances)
         
@@ -1189,8 +1194,25 @@ if __name__ == "__main__":
     qc = GSAMQualityControl(gsam_path, verbose=True)
     
     # Run checks on new entities only (default)
-    qc.run_all_checks(author="auto_qc_sam", save_in_place=False)
-    
+    # qc.run_all_checks(author="auto_qc_sam", save_in_place=True)
+
+    def rerun_segvar_only(qc: GSAMQualityControl, author="auto_qc"):
+        ents = {
+            "experiment_ids": list(qc.processed_experiment_ids | qc.new_experiment_ids),
+            "video_ids":      list(qc.processed_video_ids      | qc.new_video_ids),
+            "image_ids":      list(qc.processed_image_ids      | qc.new_image_ids),
+            "snip_ids":       list(qc.processed_snip_ids       | qc.new_snip_ids),
+        }
+        qc._mark_entities_checked(ents)
+        qc.check_segmentation_variability(author, ents)
+        qc.generate_overview(ents)
+        qc._create_backup("segvar_only")
+        qc._save_qc_summary(author)
+
+    # Usage:
+    # qc = GSAMQualityControl(gsam_path)
+    rerun_segvar_only(qc, author="auto_qc_segvar")
+        
 
     # # Or run on specific entities
     # specific_entities = {

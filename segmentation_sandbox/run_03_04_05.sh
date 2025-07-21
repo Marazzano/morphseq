@@ -31,13 +31,13 @@ MASK_EXPORT=$ROOT/data/annotation_and_masks/jpg_masks/grounded_sam_finetuned
 mkdir -p logs
 
 # echo "=== STEP 3 : GroundedDINO finetuned detection + HQ filtering ==="
-# python $ROOT/scripts/03_gdino_detection_with_filtering.py \
-#   --config "$CONFIG" \
-#   --metadata "$METADATA" \
-#   --finetuned-annotations "$FT_GDINO" \
-#   --confidence-threshold 0.45 \
-#   --iou-threshold 0.5 \
-#   | tee logs/step3_gdino.log
+python $ROOT/scripts/03_gdino_detection_with_filtering.py \
+  --config "$CONFIG" \
+  --metadata "$METADATA" \
+  --finetuned-annotations "$FT_GDINO" \
+  --confidence-threshold 0.45 \
+  --iou-threshold 0.5 \
+  | tee logs/step3_gdino.log
 
 echo "=== STEP 4 : SAM2 propagation using finetuned HQ annotations ==="
 python $ROOT/scripts/04_sam2_video_processing.py \

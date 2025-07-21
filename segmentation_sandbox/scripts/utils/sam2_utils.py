@@ -118,6 +118,10 @@ def load_sam2_model(config_path: str, checkpoint_path: str, device: str = "cuda"
 
 
 class GroundedSamAnnotations:
+    def _generate_gsam_id(self) -> str:
+        """Generate unique GSAM annotation ID."""
+        import random
+        return f"{random.randint(1000, 9999)}"
     """
     SAM2 video processing manager that integrates with GroundedDINO annotations.
     
@@ -305,13 +309,10 @@ class GroundedSamAnnotations:
             return None
 
     def _load_or_initialize_results(self) -> Dict:
-        """Load existing results file or initialize a new one."""
-        
-        #default behavior if no annotation is give is to create one to start
+        """Load existing results file or initialize a new one, with GSAM ID support."""
         if not self.filepath.exists():
             if self.verbose:
                 print(f"🆕 Initializing new SAM2 results file at: {self.filepath}")
-            
             # Extract seed annotations info
             seed_info = {}
             if self.seed_annotations:
@@ -325,11 +326,17 @@ class GroundedSamAnnotations:
                     "has_high_quality_annotations": seed_annotations_info["has_high_quality_annotations"],
                     "experiments_with_hq": seed_annotations_info["experiments_with_hq"]
                 }
-            
+            gsam_id = self._generate_gsam_id()
             return {
                 "script_version": "sam2_utils.py",
                 "creation_time": datetime.now().isoformat(),
                 "last_updated": datetime.now().isoformat(),
+                "gsam_annotation_id": gsam_id,
+                "file_info": {
+                    "gsam_annotation_id": gsam_id,
+                    "source_sam_annotations": str(self.seed_annotations_path) if self.seed_annotations_path else None,
+                    "source_experiment_metadata": str(self.experiment_metadata_path) if self.experiment_metadata_path else None
+                },
                 "seed_annotations_info": seed_info,
                 "sam2_model_info": {
                     "config_path": str(self.sam2_config) if self.sam2_config else None,
@@ -344,36 +351,51 @@ class GroundedSamAnnotations:
                 "snip_ids": [],
                 "experiments": {}
             }
-        
         try:
             if self.verbose:
                 print(f"📁 Loading existing SAM2 results from: {self.filepath}")
-            
             with open(self.filepath, 'r') as f:
                 data = json.load(f)
-            
+            # --- GSAM ID Backward Compatibility ---
+            changed = False
+            if 'gsam_annotation_id' not in data:
+                data['gsam_annotation_id'] = self._generate_gsam_id()
+                changed = True
+            if 'file_info' not in data:
+                data['file_info'] = {}
+                changed = True
+            if 'gsam_annotation_id' not in data['file_info']:
+                data['file_info']['gsam_annotation_id'] = data['gsam_annotation_id']
+                changed = True
+            if 'source_sam_annotations' not in data['file_info']:
+                data['file_info']['source_sam_annotations'] = str(self.seed_annotations_path) if self.seed_annotations_path else None
+                changed = True
+            if 'source_experiment_metadata' not in data['file_info']:
+                data['file_info']['source_experiment_metadata'] = str(self.experiment_metadata_path) if self.experiment_metadata_path else None
+                changed = True
+            if changed:
+                self._unsaved_changes = True
             if self.verbose:
                 total_videos = len(data.get('video_ids', []))
-                print(f"✅ Loaded {total_videos} videos successfully")
+                gsam_id = data.get('file_info', {}).get('gsam_annotation_id', 'unknown')
+                print(f"✅ Loaded {total_videos} videos successfully (GSAM ID: {gsam_id})")
             return data
-            
         except json.JSONDecodeError as e:
             if self.verbose:
                 print(f"❌ JSON corruption detected: {e}")
-            
             backup_path = self.filepath.with_suffix('.json.backup')
             shutil.move(self.filepath, backup_path)
-            
             if self.verbose:
                 print(f"📋 Moved corrupted file to backup: {backup_path.name}")
                 print(f"🆕 Starting with fresh SAM2 results")
-            
             return self._initialize_results()
-        
         except Exception as e:
             if self.verbose:
                 print(f"❌ Unexpected error: {e}")
             return self._initialize_results()
+    def get_gsam_id(self) -> str:
+        """Get the GSAM annotation ID for this file."""
+        return self.results.get("file_info", {}).get("gsam_annotation_id") or self.results.get("gsam_annotation_id")
 
     def save(self):
         """Save results to file with atomic write."""
@@ -964,9 +986,9 @@ class GroundedSamAnnotations:
             "total_embryos": len(self.results.get("embryo_ids", [])),
             "target_prompt": self.results.get("target_prompt"),
             "segmentation_format": self.results.get("segmentation_format"),
-            "last_updated": self.results.get("last_updated")
+            "last_updated": self.results.get("last_updated"),
+            "gsam_annotation_id": self.get_gsam_id()
         }
-        
         stats = self.results.get("processing_stats", {})
         if stats:
             summary.update({
@@ -975,7 +997,6 @@ class GroundedSamAnnotations:
                 "total_frames_processed": stats.get("total_frames_processed", 0),
                 "total_embryos_tracked": stats.get("total_embryos_tracked", 0)
             })
-        
         # Add seed annotations info
         seed_info = self.results.get("seed_annotations_info", {})
         if seed_info:
@@ -984,7 +1005,6 @@ class GroundedSamAnnotations:
                 "seed_weights": Path(seed_info.get("model_weights", "unknown")).name,
                 "has_high_quality_seed": seed_info.get("has_high_quality_annotations", False)
             })
-        
         return summary
 
     def print_summary(self):
@@ -1099,30 +1119,30 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
                 print(f"   Added embryo {embryo_id} (SAM2 obj_id: {embryo_idx + 1})")
             
         
-        # ---- Single-embryo augmentation (extra temporal hints) ----
-        if len(seed_detections) == 1:
-            other_frame_indices = list(range(len(image_ids)))
-            # remove the seed frame index
-            if seed_frame_idx in other_frame_indices:
-                other_frame_indices.remove(seed_frame_idx)
-            if other_frame_indices:
-                extra_indices = random.sample(
-                    other_frame_indices,
-                    k=min(5, len(other_frame_indices))
-                )
-                if verbose:
-                    print(f"   🤖 Single-embryo: seeding bbox into "
-                            f"{len(extra_indices)} extra frame(s) {extra_indices}")
-                # reuse bbox of the single embryo (obj_id = 1)
-                x1, y1, x2, y2 = seed_detections[0]['box_xyxy']
-                bbox_xyxy = np.array([[x1, y1, x2, y2]], dtype=np.float32)
-                for idx in extra_indices:
-                    predictor.add_new_points_or_box(
-                        inference_state=inference_state,
-                        frame_idx=idx,
-                        obj_id=1,
-                        box=bbox_xyxy
-                    )
+        # # ---- Single-embryo augmentation (extra temporal hints) ----
+        # if len(seed_detections) == 1:
+        #     other_frame_indices = list(range(len(image_ids)))
+        #     # remove the seed frame index
+        #     if seed_frame_idx in other_frame_indices:
+        #         other_frame_indices.remove(seed_frame_idx)
+        #     if other_frame_indices:
+        #         extra_indices = random.sample(
+        #             other_frame_indices,
+        #             k=min(5, len(other_frame_indices))
+        #         )
+        #         if verbose:
+        #             print(f"   🤖 Single-embryo: seeding bbox into "
+        #                     f"{len(extra_indices)} extra frame(s) {extra_indices}")
+        #         # reuse bbox of the single embryo (obj_id = 1)
+        #         x1, y1, x2, y2 = seed_detections[0]['box_xyxy']
+        #         bbox_xyxy = np.array([[x1, y1, x2, y2]], dtype=np.float32)
+        #         for idx in extra_indices:
+        #             predictor.add_new_points_or_box(
+        #                 inference_state=inference_state,
+        #                 frame_idx=idx,
+        #                 obj_id=1,
+        #                 box=bbox_xyxy
+        #             )
             
         # Propagate through video
         video_segments = {}
