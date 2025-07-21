@@ -329,10 +329,10 @@ def test_video_generation():
     print("=" * 50)
 
     # Configuration
-    annotations_path = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/grounded_sam_ft_annotations.json"
-    output_dir = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/test_videos"
-    max_videos = 5
-    fps = 10
+    annotations_path = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/grounded_sam_annotations_finetuned.json"
+    output_dir = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/test_videos/20250720"
+    max_videos = 10
+    fps = 3
     show_info = True
 
     print(f"📋 Test Configuration:")

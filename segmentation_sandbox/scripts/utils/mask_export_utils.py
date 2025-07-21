@@ -21,6 +21,7 @@ class EmbryoMaskExporter:
     def __init__(self, sam2_annotations_path: Path, output_base_dir: Path, 
                  gsam_annotation_id: str = None, force_reexport: bool = False,
                  verbose: bool = True, output_format: str = "jpg"):
+        self.export_stats = {"total_masks": 0, "overlapping_masks": 0}
         self.sam2_path = Path(sam2_annotations_path)
         self.output_base_dir = Path(output_base_dir)
         self.verbose = verbose
@@ -189,50 +190,43 @@ class EmbryoMaskExporter:
             print(f"   GSAM Annotation ID: {self.gsam_annotation_id}")
             print(f"   Force re-export: {self.force_reexport}")
         export_paths = {}
-        export_tasks = []
         skipped_count = 0
-        for exp_id, exp_data in self.sam2_data.get("experiments", {}).items():
-            for video_id, video_data in exp_data.get("videos", {}).items():
-                for image_id, image_data in video_data.get("images", {}).items():
-                    if image_data.get("embryos"):
-                        embryo_data = image_data["embryos"]
-                        if self._needs_export(image_id, embryo_data):
-                            first_embryo = next(iter(embryo_data.values()))
-                            if first_embryo['segmentation_format'] == 'rle':
-                                height, width = first_embryo['segmentation']['size']
-                                image_shape = (height, width)
-                            else:
-                                image_shape = (512, 512)
-                            export_tasks.append((image_id, embryo_data, image_shape))
-                        else:
-                            existing_info = self.existing_manifest["exports"][image_id]
-                            export_paths[image_id] = Path(existing_info["output_path"])
-                            skipped_count += 1
+        # Stream exports without accumulating tasks
         if self.verbose:
-            print(f"📊 Export analysis:")
-            print(f"   Images to export: {len(export_tasks)}")
-            print(f"   Images to skip: {skipped_count}")
-            print(f"   Total images: {len(export_tasks) + skipped_count}")
-        if export_tasks:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_image = {
-                    executor.submit(self._export_and_track, task[0], task[1], task[2]): task[0]
-                    for task in export_tasks
-                }
-                for future in as_completed(future_to_image):
-                    image_id = future_to_image[future]
-                    try:
-                        export_path = future.result()
-                        export_paths[image_id] = export_path
-                        if self.verbose and len(export_paths) % 100 == 0:
-                            print(f"   Exported {len(export_paths)} images...")
-                    except Exception as e:
-                        if self.verbose:
-                            print(f"   ❌ Error exporting {image_id}: {e}")
+            print(f"   Streaming export tasks...")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_image = {}
+            for exp_id, exp_data in self.sam2_data.get("experiments", {}).items():
+                for video_id, video_data in exp_data.get("videos", {}).items():
+                    for image_id, image_data in video_data.get("images", {}).items():
+                        if image_data.get("embryos"):
+                            embryo_data = image_data["embryos"]
+                            if self._needs_export(image_id, embryo_data):
+                                first_embryo = next(iter(embryo_data.values()))
+                                if first_embryo['segmentation_format'] == 'rle':
+                                    height, width = first_embryo['segmentation']['size']
+                                    image_shape = (height, width)
+                                else:
+                                    image_shape = (512, 512)
+                                future = executor.submit(self._export_and_track, image_id, embryo_data, image_shape)
+                                future_to_image[future] = image_id
+                            else:
+                                existing_info = self.existing_manifest["exports"][image_id]
+                                export_paths[image_id] = Path(existing_info["output_path"])
+                                skipped_count += 1
+            for future in as_completed(future_to_image):
+                image_id = future_to_image[future]
+                try:
+                    export_paths[image_id] = future.result()
+                    if self.verbose and len(export_paths) % 100 == 0:
+                        print(f"   Exported {len(export_paths)} images...")
+                except Exception as e:
+                    if self.verbose:
+                        print(f"   ❌ Error exporting {image_id}: {e}")
         self._update_manifest(export_paths)
         if self.verbose:
             print(f"\n✅ Incremental export complete!")
-            print(f"   New exports: {len(export_tasks)}")
+            print(f"   New exports: {len(export_paths) - skipped_count}")
             print(f"   Skipped (up-to-date): {skipped_count}")
             print(f"   Total managed: {len(export_paths)}")
         return export_paths

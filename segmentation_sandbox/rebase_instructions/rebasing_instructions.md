@@ -32,6 +32,7 @@ Follow this implementation order strictly - each module builds on the previous:
    - Test end-to-end detection → segmentation flow
    - Verify zero-detection images are properly recorded and visible downstream
 
+
 4. **Module 4 - Mask Export & Embryo QC** *(3-4 days)*
    - Implement incremental mask export system (`EmbryoMaskExporter`)
    - Add mask export manifest tracking with GSAM annotation ID linkage

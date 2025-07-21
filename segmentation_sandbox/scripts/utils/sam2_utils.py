@@ -60,7 +60,7 @@ from collections import Counter, defaultdict
 import cv2
 import tempfile
 import shutil
-
+import random
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
@@ -497,34 +497,36 @@ class GroundedSamAnnotations:
                 print("   Please ensure valid seed annotations are loaded with high-quality data")
             return []
         
-        # Get all available videos from cached annotations
+        # Get all available videos from cached annotations (full video IDs)
         available_videos = set(self.video_annotations.keys())
-        
-        # Filter by experiment_ids if specified
+
+        # Filter by experiment_ids if specified (use correct experiment ID extraction)
         if experiment_ids:
             filtered_videos = set()
             for video_id in available_videos:
+                # Extract experiment_id from video_id (assume format: YYYYMMDD_A01_0000, experiment_id: YYYYMMDD)
                 exp_id = video_id.split('_')[0]
                 if exp_id in experiment_ids:
                     filtered_videos.add(video_id)
             available_videos = filtered_videos
-        
-        # Filter by video_ids if specified
+
+        # Filter by video_ids if specified (must be full video IDs)
         if video_ids:
+            # Accept only exact matches to full video IDs
             available_videos = available_videos.intersection(set(video_ids))
-        
-        # Get processed videos
+
+        # Get processed videos (full video IDs)
         processed_videos = set(self.get_processed_video_ids())
-        
-        # Find missing videos
+
+        # Find missing videos using full video IDs
         missing_videos = list(available_videos - processed_videos)
-        
+
         if self.verbose:
             print(f"📊 Video processing status:")
             print(f"   Available videos: {len(available_videos)}")
             print(f"   Processed videos: {len(processed_videos & available_videos)}")
             print(f"   Missing videos: {len(missing_videos)}")
-        
+
         return missing_videos
     def process_missing_annotations(self, 
                                   video_ids: Optional[List[str]] = None,
@@ -608,8 +610,13 @@ class GroundedSamAnnotations:
                 
                 # Process video using utility function
                 sam2_results, video_metadata = process_single_video_from_annotations(
-                    video_id, video_ann, self, self.sam2_predictor,  # PASS SELF instead of self.seed_annotations
-                    processing_stats, self.segmentation_format, self.verbose
+                    video_id,                      # video_id
+                    video_ann,                     # annotations for this video
+                    self,                          # GroundedSamAnnotations instance
+                    self.sam2_predictor,           # loaded SAM2 predictor
+                    processing_stats,              # stats dict to update
+                    self.segmentation_format,      # 'rle' or 'polygon'
+                    self.verbose                   # verbosity flag
                 )
                 
                 # Store results if successful
@@ -1087,10 +1094,36 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
                 obj_id=embryo_idx + 1,  # SAM2 object IDs start from 1
                 box=bbox_xyxy
             )
-            
+
             if verbose:
                 print(f"   Added embryo {embryo_id} (SAM2 obj_id: {embryo_idx + 1})")
+            
         
+        # ---- Single-embryo augmentation (extra temporal hints) ----
+        if len(seed_detections) == 1:
+            other_frame_indices = list(range(len(image_ids)))
+            # remove the seed frame index
+            if seed_frame_idx in other_frame_indices:
+                other_frame_indices.remove(seed_frame_idx)
+            if other_frame_indices:
+                extra_indices = random.sample(
+                    other_frame_indices,
+                    k=min(5, len(other_frame_indices))
+                )
+                if verbose:
+                    print(f"   🤖 Single-embryo: seeding bbox into "
+                            f"{len(extra_indices)} extra frame(s) {extra_indices}")
+                # reuse bbox of the single embryo (obj_id = 1)
+                x1, y1, x2, y2 = seed_detections[0]['box_xyxy']
+                bbox_xyxy = np.array([[x1, y1, x2, y2]], dtype=np.float32)
+                for idx in extra_indices:
+                    predictor.add_new_points_or_box(
+                        inference_state=inference_state,
+                        frame_idx=idx,
+                        obj_id=1,
+                        box=bbox_xyxy
+                    )
+            
         # Propagate through video
         video_segments = {}
         if verbose:
@@ -1589,7 +1622,7 @@ def group_annotations_by_video(annotations: Dict, target_prompt: str = "individu
                     # Extract video_id from image_id (format: experiment_well_frame)
                     parts = image_id.split('_')
                     if len(parts) >= 3:
-                        video_id = '_'.join(parts[:2])  # experiment_well
+                        video_id = '_'.join(parts[:-1])  # experiment_well
                         
                         if detections:  # Only include if there are detections
                             video_annotations[video_id][image_id] = detections
@@ -1601,7 +1634,7 @@ def group_annotations_by_video(annotations: Dict, target_prompt: str = "individu
             # Extract video_id from image_id
             parts = image_id.split('_')
             if len(parts) >= 3:
-                video_id = '_'.join(parts[:2])
+                video_id = '_'.join(parts[:-1])
                 
                 # Extract detections for target prompt
                 detections = []

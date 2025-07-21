@@ -45,6 +45,17 @@ python $ROOT/scripts/04_sam2_video_processing.py \
   --target-prompt "individual embryo" \
   --segmentation-format rle \
   --verbose \
+  --save-interval 250 \
+  # --max-videos 5 \
+  # --video-ids 20231206_A01 \
   | tee logs/step4_sam2.log
 
+
+# echo "=== STEP 4 : SAM2 propagation using finetuned HQ annotations ==="
+# python $ROOT/scripts/05_sam2_qc.py \
+#   --config "$CONFIG" \
+#   --metadata "$METADATA" \
+#   --gsam-path "$SAM2_OUT" \
+#   --verbose \
+#   | tee logs/step5_sam2_qc.log
 echo "✔️  Pipeline finished"
