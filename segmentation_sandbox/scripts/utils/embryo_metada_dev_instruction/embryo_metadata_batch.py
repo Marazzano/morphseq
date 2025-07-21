@@ -20,6 +20,54 @@ class RangeParser:
     """Advanced range syntax parser for temporal specifications."""
     
     @staticmethod
+    def normalize_range_string(range_str: str) -> str:
+        """
+        Canonicalize slice-like range strings so that semantically equivalent
+        specifications collapse to a single normalized form.
+
+        Normalizations performed:
+        - Strip outer brackets/whitespace (handled earlier by caller)
+        - Collapse redundant trailing colon: e.g. "45::" -> "45:"
+        - Remove redundant default step field when empty: "10:20:" -> "10:20"
+        - Convert "::" with empty middle (e.g. "::" or ":10:") only when needed
+        - Strip spaces around colons
+        - Leave explicit non‑default step intact (e.g. "5::2" stays "5::2")
+        The function is *idempotent*.
+        """
+        # Remove internal whitespace around colons
+        range_str = ":".join(part.strip() for part in range_str.split(":"))
+
+        # Nothing to do for empty
+        if not range_str:
+            return range_str
+
+        parts = range_str.split(":")
+
+        # Pad parts to at most 3 (Python slice semantics)
+        if len(parts) > 3:
+            # Leave error handling to caller
+            return range_str
+
+        # Collapse trailing empty step if present and no explicit step value
+        if len(parts) == 3 and parts[2] == "":
+            # pattern like start:stop:  or start::  or :stop:
+            # Keep three parts only if middle empty AND we intend an explicit step field later
+            # If middle is empty and we have pattern start::  (default step),
+            # collapse to start:
+            if parts[1] == "":
+                # start::  -> start:
+                range_str = f"{parts[0]}:"
+            else:
+                # start:stop: -> start:stop
+                range_str = f"{parts[0]}:{parts[1]}"
+            return range_str
+
+        # Pattern start:: (len=2? actually split gives ['start', '', '']) handled above.
+        # Collapse double colon at end already processed.
+
+        return range_str
+
+    @staticmethod
     def parse_range(range_spec: Union[str, List[int], List[str]], 
                    available_items: List[str]) -> List[str]:
         """
@@ -74,6 +122,10 @@ class RangeParser:
         """Parse string range syntax."""
         # Remove brackets and whitespace
         range_str = range_str.strip().strip("[]")
+        # Normalize equivalent syntactic variants (e.g. "45::" -> "45:")
+        original_range_str = range_str
+        range_str = RangeParser.normalize_range_string(range_str)
+        normalized = (range_str != original_range_str)
         
         # Empty range
         if not range_str:
@@ -91,7 +143,8 @@ class RangeParser:
                 if range_str in available_items:
                     return [range_str]
                 return []
-        
+        # At this point, any form like "start::" has been normalized to "start:"
+        # so semantics for "[45::]" and "[45:]" are identical (start=45, to end, step=1).
         # Range with colons
         parts = range_str.split(":")
         if len(parts) > 3:
@@ -130,6 +183,7 @@ class RangeParser:
             if 0 <= idx < len(available_items):
                 selected.append(available_items[idx])
         
+        # Note: normalization ensures [a::] and [a:] return identical selections.
         return selected
     
     @staticmethod
@@ -263,6 +317,118 @@ class TemporalRangeParser(RangeParser):
         
         raise ValueError(f"Cannot extract frame number from {snip_id}")
 
+# -------------------------------------------------------------------------
+# Lightweight Annotation Batch Utility
+# -------------------------------------------------------------------------
+
+class AnnotationBatch:
+    """
+    Tiny helper for building lists of annotation assignments (phenotype, genotype,
+    treatment) before handing them to the high-performance BatchProcessor.
+    """
+
+    def __init__(self, batch_type: str):
+        self.batch_type = batch_type          # 'phenotype' | 'genotype' | 'treatment'
+        self._entries: list[dict] = []
+
+    # --------------------------- public API --------------------------------
+    def add(self, **kwargs):
+        """
+        Append an entry.
+
+        Keys depend on batch_type and match the dictionaries expected by
+        BatchOperations:
+          - phenotype: embryo_id, phenotype, frames, author, confidence, notes
+          - genotype : embryo_id, genotype, gene, author, notes, overwrite
+          - treatment: embryo_id, treatment, details, author, notes, …
+        """
+        self._entries.append(kwargs)
+
+    def to_list(self) -> list[dict]:
+        """Return a shallow-copy list ready for BatchOperations."""
+        return list(self._entries)
+
+    # --------------------- niceties for inspection -------------------------
+    def __iter__(self):
+        return iter(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __repr__(self) -> str:               # noqa: D401
+        return f"<AnnotationBatch type={self.batch_type} n={len(self)}>"
+
+
+# Type-specific convenience wrappers with explicit .add() signatures --------
+class PhenotypeBatch(AnnotationBatch):
+    def __init__(self):
+        super().__init__("phenotype")
+
+    def add(
+        self,
+        embryo_id: str,
+        phenotype: str,
+        frames: str = "all",
+        author: str = "system",
+        confidence: float = 1.0,
+        notes: str = "",
+    ):
+        super().add(
+            embryo_id=embryo_id,
+            phenotype=phenotype,
+            frames=frames,
+            author=author,
+            confidence=confidence,
+            notes=notes,
+        )
+
+
+class GenotypeBatch(AnnotationBatch):
+    def __init__(self):
+        super().__init__("genotype")
+
+    def add(
+        self,
+        embryo_id: str,
+        genotype: str,
+        gene: str = "WT",
+        author: str = "system",
+        notes: str = "",
+        overwrite: bool = False,
+    ):
+        super().add(
+            embryo_id=embryo_id,
+            genotype=genotype,
+            gene=gene,
+            author=author,
+            notes=notes,
+            overwrite=overwrite,
+        )
+
+
+class TreatmentBatch(AnnotationBatch):
+    def __init__(self):
+        super().__init__("treatment")
+
+    def add(
+        self,
+        embryo_id: str,
+        treatment: str,
+        author: str = "system",
+        details: str = "",
+        notes: str = "",
+    ):
+        super().add(
+            embryo_id=embryo_id,
+            treatment=treatment,
+            author=author,
+            details=details,
+            notes=notes,
+        )
+
+# -------------------------------------------------------------------------
+# End Annotation Batch Utility
+# -------------------------------------------------------------------------
 
 class BatchProcessor:
     """High-performance batch processing engine with parallel support."""
@@ -694,3 +860,16 @@ def estimate_batch_time(item_count: int,
         return f"{seconds/60:.1f} minutes"
     else:
         return f"{seconds/3600:.1f} hours"
+
+# Helper to canonicalize full bracketed range specification
+def normalize_range(range_spec: str) -> str:
+    """
+    Public helper to canonicalize a full bracketed range specification including brackets.
+    Example: "[45::]" -> "[45:]"; "[10:20:]" -> "[10:20]"
+    """
+    spec = range_spec.strip()
+    if spec.startswith("[") and spec.endswith("]"):
+        inner = spec[1:-1]
+        inner_norm = RangeParser.normalize_range_string(inner)
+        return f"[{inner_norm}]"
+    return range_spec

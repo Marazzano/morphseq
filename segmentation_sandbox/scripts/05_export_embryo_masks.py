@@ -22,57 +22,155 @@ from embryo_metada_dev_instruction.embryo_metadata_refactored import EmbryoMetad
 def transfer_qc_flags_via_gsam_id(sam_annotations_path: Path, embryo_metadata_path: Path, verbose: bool = True):
     """
     Transfer QC flags from SAM annotations to EmbryoMetadata using GSAM ID matching.
+    
+    Args:
+        sam_annotations_path: Path to SAM annotations file (GroundedSamAnnotation)
+        embryo_metadata_path: Path to embryo metadata file
+        verbose: Enable verbose output
+        
+    Returns:
+        Number of flags transferred
     """
     # Load SAM annotations
     with open(sam_annotations_path, 'r') as f:
         sam_data = json.load(f)
     
-    # Check if QC analysis exists in SAM annotations
-    qc_analysis = sam_data.get("qc_analysis")
-    if not qc_analysis:
+    # Check for QC flags in both old and new GSAM QC formats
+    qc_overview = sam_data.get("GEN_flag_overview", {})
+    qc_meta = sam_data.get("qc_meta", {})
+    flags_section = sam_data.get("flags", {})
+
+    if not (qc_overview or qc_meta or flags_section):
         if verbose:
-            print("ℹ️  No QC analysis found in SAM annotations")
+            print("ℹ️  No QC analysis found in SAM annotations (checked GEN_flag_overview, qc_meta, and flags)")
         return 0
     
-    sam_gsam_id = qc_analysis.get("gsam_annotation_id")
-    qc_flags = qc_analysis.get("qc_flags", {})
+    # Get GSAM ID from SAM annotations metadata
+    sam_gsam_id = sam_data.get("file_info", {}).get("gsam_annotation_id")
+    if not sam_gsam_id:
+        # Try alternative locations
+        sam_gsam_id = sam_data.get("qc_meta", {}).get("gsam_annotation_id")
     
-    if not sam_gsam_id or not qc_flags:
+    if not sam_gsam_id:
         if verbose:
-            print("ℹ️  No GSAM ID or QC flags found in SAM annotations")
+            print("ℹ️  No GSAM ID found in SAM annotations")
         return 0
     
     # Load EmbryoMetadata
-    embryo_metadata = EmbryoMetadata(
-        sam_annotation_path=str(sam_annotations_path),
-        embryo_metadata_path=str(embryo_metadata_path),
-        verbose=verbose
-    )
+    try:
+        embryo_metadata = EmbryoMetadata(
+            sam_annotation_path=str(sam_annotations_path),
+            embryo_metadata_path=str(embryo_metadata_path),
+            verbose=verbose
+        )
+    except Exception as e:
+        if verbose:
+            print(f"❌ Failed to load EmbryoMetadata: {e}")
+        return 0
     
     # Check GSAM ID match
-    metadata_gsam_id = embryo_metadata.results.get("source", {}).get("gsam_annotation_id")
+    metadata_gsam_id = embryo_metadata.data.get("file_info", {}).get("gsam_annotation_id")
     
     if sam_gsam_id != metadata_gsam_id:
         if verbose:
             print(f"⚠️  GSAM ID mismatch: SAM={sam_gsam_id}, Metadata={metadata_gsam_id}")
         return 0
     
-    # Transfer QC flags to EmbryoMetadata
+    if verbose:
+        print(f"✅ GSAM ID match confirmed: {sam_gsam_id}")
+    
     flags_transferred = 0
-    for entity_id, flag_list in qc_flags.items():
-        for flag_dict in flag_list:
-            flag = flag_dict.get("flag")
-            author = flag_dict.get("author")
-            details = flag_dict.get("details", "")
-            
-            embryo_metadata.add_flag(entity_id, flag, details, author)
-            flags_transferred += 1
+
+    # --- New GSAM QC format: flags section ---
+    if flags_section:
+        # Experiment-level
+        for exp_id, exp_flags in flags_section.get("by_experiment", {}).items():
+            for flag_type, flag_list in exp_flags.items():
+                for flag_data in flag_list:
+                    author = flag_data.get("author", "qc_transfer")
+                    embryo_metadata.add_experiment_flag(exp_id, flag_type, flag_data, author)
+                    flags_transferred += 1
+        # Video-level
+        for vid_id, vid_flags in flags_section.get("by_video", {}).items():
+            for flag_type, flag_list in vid_flags.items():
+                for flag_data in flag_list:
+                    author = flag_data.get("author", "qc_transfer")
+                    embryo_metadata.add_video_flag(vid_id, flag_type, flag_data, author)
+                    flags_transferred += 1
+        # Image-level
+        for img_id, img_flags in flags_section.get("by_image", {}).items():
+            for flag_type, flag_list in img_flags.items():
+                for flag_data in flag_list:
+                    author = flag_data.get("author", "qc_transfer")
+                    embryo_metadata.add_image_flag(img_id, flag_type, flag_data, author)
+                    flags_transferred += 1
+        # Snip-level
+        for snip_id, snip_flags in flags_section.get("by_snip", {}).items():
+            for flag_type, flag_list in snip_flags.items():
+                for flag_data in flag_list:
+                    author = flag_data.get("author", "qc_transfer")
+                    embryo_metadata.add_snip_flag(snip_id, flag_type, flag_data, author)
+                    flags_transferred += 1
+        # Embryo-level (if present)
+        for emb_id, emb_flags in flags_section.get("by_embryo", {}).items():
+            for flag_type, flag_list in emb_flags.items():
+                for flag_data in flag_list:
+                    author = flag_data.get("author", "qc_transfer")
+                    embryo_metadata.add_snip_flag(emb_id, flag_type, flag_data, author)
+                    flags_transferred += 1
+
+    # --- Old GSAM QC format: hierarchical flags ---
+    else:
+        # Process experiment-level flags
+        for exp_id, exp_data in sam_data.get("experiments", {}).items():
+            exp_flags = exp_data.get("flags", {})
+            for flag_type, flag_list in exp_flags.items():
+                for flag_data in flag_list:
+                    author = flag_data.get("author", "qc_transfer")
+                    embryo_metadata.add_experiment_flag(exp_id, flag_type, flag_data, author)
+                    flags_transferred += 1
+        # Process video-level flags
+        for exp_id, exp_data in sam_data.get("experiments", {}).items():
+            for video_id, video_data in exp_data.get("videos", {}).items():
+                video_flags = video_data.get("flags", {})
+                for flag_type, flag_list in video_flags.items():
+                    for flag_data in flag_list:
+                        author = flag_data.get("author", "qc_transfer")
+                        embryo_metadata.add_video_flag(video_id, flag_type, flag_data, author)
+                        flags_transferred += 1
+        # Process image-level flags
+        for exp_id, exp_data in sam_data.get("experiments", {}).items():
+            for video_id, video_data in exp_data.get("videos", {}).items():
+                for image_id, image_data in video_data.get("images", {}).items():
+                    image_flags = image_data.get("flags", {})
+                    for flag_type, flag_list in image_flags.items():
+                        for flag_data in flag_list:
+                            author = flag_data.get("author", "qc_transfer")
+                            embryo_metadata.add_image_flag(image_id, flag_type, flag_data, author)
+                            flags_transferred += 1
+        # Process snip-level flags (stored in embryo data)
+        for exp_id, exp_data in sam_data.get("experiments", {}).items():
+            for video_id, video_data in exp_data.get("videos", {}).items():
+                for image_id, image_data in video_data.get("images", {}).items():
+                    for embryo_id, embryo_data in image_data.get("embryos", {}).items():
+                        snip_id = embryo_data.get("snip_id")
+                        embryo_flags = embryo_data.get("flags", {})
+                        for flag_type, flag_list in embryo_flags.items():
+                            for flag_data in flag_list:
+                                author = flag_data.get("author", "qc_transfer")
+                                if snip_id:
+                                    embryo_metadata.add_snip_flag(snip_id, flag_type, flag_data, author)
+                                    flags_transferred += 1
     
     # Save updated metadata
-    embryo_metadata.save()
-    
-    if verbose:
-        print(f"✅ Transferred {flags_transferred} QC flags from SAM annotations to EmbryoMetadata via GSAM ID {sam_gsam_id}")
+    try:
+        embryo_metadata.save()
+        if verbose:
+            print(f"✅ Transferred {flags_transferred} QC flags from SAM annotations to EmbryoMetadata")
+    except Exception as e:
+        if verbose:
+            print(f"❌ Failed to save updated metadata: {e}")
+        return 0
     
     return flags_transferred
 

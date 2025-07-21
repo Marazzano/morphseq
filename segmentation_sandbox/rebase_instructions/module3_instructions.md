@@ -586,3 +586,120 @@ class GroundedSam:
         seed_idx = image_ids.index(seed_frame_id)
         
         # Initialize
+# Module 3: Rebased Annotation Pipeline
+
+## Purpose  
+Provide a clean, two‑stage annotation workflow that separates **detection** (GroundingDINO) and **segmentation** (SAM‑2) while allowing an integrated “tweaking” pipeline that chains the two for rapid experimentation.
+
+---
+
+## Directory Layout  
+
+```
+utils/
+└── annotation/
+    ├── __init__.py
+    ├── detection/
+    │   ├── __init__.py
+    │   └── gdino_utils.py          # Stage 1 – detection + GdinoAnnotations
+    ├── segmentation/
+    │   ├── __init__.py
+    │   └── sam2_utils.py           # Stage 2 – segmentation + Sam2Annotations
+    └── grounded_sam2/
+        ├── __init__.py
+        └── grounded_sam2_utils.py  # Stage 3 – integrated pipeline
+```
+
+---
+
+## Key Concepts  
+
+### Stage 1 – Detection (`gdino_utils.py`)
+* Wraps GroundingDINO model loading (`load_gdino_model`).  
+* `GdinoAnnotations` class handles:
+  * `add_annotation`, `get_detections`, `generate_high_quality_annotations`, `get_missing_annotations`.  
+* Exposes one public helper:  
+
+```python
+def run_batch_detection(model, image_paths: List[Path], prompt: str,
+                        box_thresh: float, text_thresh: float) -> Dict[str, List[Dict]]:
+    ...
+```
+
+### Stage 2 – Segmentation (`sam2_utils.py`)
+* Wraps SAM‑2 predictor loading (`load_sam2_model`).  
+* `Sam2Annotations` class handles:
+  * `add_segmentation`, `propagate_masks`, `get_missing_videos`.  
+* be VERY CAREFUL IMPLEMENTING segmentationlogic, follow it as closesly as possibel
+```python
+def run_video_segmentation(video_path: Path, seed_frame_id: str,
+                           seed_boxes: List[Dict], cfg: Sam2Config) -> Sam2Result:
+    ...
+```
+
+### Stage 3 – Integrated Tweaking (`grounded_sam2_utils.py`)
+* `GroundedSam2` class orchestrates Stage 1 + Stage 2 end‑to‑end:
+  1. Runs batch detection for target frames.  
+  2. Chooses seed frame (`_select_seed_frame`).  
+  3. Calls video segmentation.  
+  4. Optionally generates visualization & quick stats.  
+
+---
+
+## Implementation Steps  
+
+1. **Create `detection/gdino_utils.py`**  
+   * Copy detection‑specific code from `scripts/utils/grounded_sam_utils.py`.  
+   * Rename `GroundedDinoAnnotations` → `GdinoAnnotations`.  
+   * Remove any SAM‑2 references.
+
+2. **Create `segmentation/sam2_utils.py`**  
+   * Extract pure SAM‑2 logic from `scripts/utils/sam2_utils.py`.  
+   * Make the class consume seed detections passed in (no GDINO dependency).
+
+3. **Create `grounded_sam2/grounded_sam2_utils.py`**  
+   * New `GroundedSam2` class that lazy‑loads GDINO & SAM‑2 and chains them.  
+   * Re‑implement `_select_seed_frame`, `_propagate_masks` by importing helpers from Stage 1/2 to avoid code duplication.
+
+4. **Shared Utilities**  
+   * Move `calculate_iou` & `non_max_suppression` to `utils/annotation/__init__.py`.  
+   * Both annotation classes inherit from `BaseAnnotationParser` (Module 1).
+
+5. **Legacy Clean‑up**  
+   * Delete `scripts/utils/grounded_sam_utils.py` and `scripts/utils/sam2_utils.py` once the port is stable.  
+   * Provide thin re‑export shims (`import ... as ...`) for backward compatibility.
+
+---
+
+## Functions to Reuse / Re‑implement
+
+| Existing file | Function | New home |
+|---------------|----------|----------|
+| `grounded_sam_utils.py` | `get_model_metadata`, `calculate_detection_iou`, `generate_high_quality_annotations` | `gdino_utils.py` |
+| `sam2_utils.py` | `load_sam2_model`, `_propagate_masks`, `process_missing_annotations` | `sam2_utils.py` |
+| *both* | `_select_seed_frame` logic | `grounded_sam2_utils.py` |
+
+---
+
+## Minimal Usage Example  
+
+```python
+from utils.annotation.detection.gdino_utils import load_gdino_model, run_batch_detection
+from utils.annotation.segmentation.sam2_utils import load_sam2_model, run_video_segmentation
+from utils.annotation.grounded_sam2.grounded_sam2_utils import GroundedSam2
+
+# High‑level pipeline
+pipeline = GroundedSam2(pipeline_cfg)
+result = pipeline.process_video("20240315_B05_0000")
+print(result)
+```
+
+*The stand‑alone helpers (`run_batch_detection`, `run_video_segmentation`) remain available for advanced batch workflows.*
+
+---
+
+## Dependencies  
+* **Module 1:** Core Foundation (`BaseAnnotationParser`, path validators).  
+* **Module 2:** Metadata System (`experiment_metadata_utils`).  
+
+No further changes required to other modules.

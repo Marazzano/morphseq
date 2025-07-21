@@ -200,6 +200,10 @@ class GroundedDinoAnnotations:
         self.metadata_path = Path(metadata_path) if metadata_path else None
         self.annotations = self._load_or_initialize()
         self._unsaved_changes = False
+        # Path to record images with zero detections to avoid reprocessing
+        self.empty_log_path = self.filepath.with_suffix('.empty.log')
+        # Load previously recorded empty-image IDs
+        self._empty_ids = self._load_empty_ids()
         
         # Load metadata if provided
         self._metadata = None
@@ -207,6 +211,26 @@ class GroundedDinoAnnotations:
             self._metadata = load_experiment_metadata(self.metadata_path)
             if self.verbose and self._metadata:
                 print(f"📂 Loaded experiment metadata: {len(self._metadata.get('image_ids', []))} total images")
+
+    def _load_empty_ids(self) -> set:
+        """Load set of image IDs previously logged as having zero detections."""
+        if not hasattr(self, 'empty_log_path') or not self.empty_log_path.exists():
+            return set()
+        try:
+            with open(self.empty_log_path, 'r') as f:
+                return {line.strip() for line in f if line.strip()}
+        except Exception as e:
+            warnings.warn(f"Could not read empty annotations log: {e}")
+            return set()
+
+    def _append_empty_id(self, img_id: str):
+        """Append a single image ID to the empty-annotations log."""
+        try:
+            with open(self.empty_log_path, 'a') as f:
+                f.write(f"{img_id}\n")
+            self._empty_ids.add(img_id)
+        except Exception as e:
+            warnings.warn(f"Failed to record empty annotation for {img_id}: {e}")
 
     def _load_or_initialize(self) -> Dict:
         """Load existing annotations file or initialize a new one."""
@@ -372,6 +396,9 @@ class GroundedDinoAnnotations:
                     weights_info = f" (for {weights_name})"
                 print(f"📊 Prompt '{prompt}'{weights_info}: {len(missing_for_prompt)} missing, {len(annotated_for_prompt)} annotated")
         
+        # Exclude any image IDs already logged as having zero detections
+        for prompt, ids in missing_by_prompt.items():
+            missing_by_prompt[prompt] = [img for img in ids if img not in self._empty_ids]
         return missing_by_prompt
 
     def _get_filtered_image_ids(self, experiment_ids: Optional[List[str]] = None,
@@ -529,23 +556,11 @@ class GroundedDinoAnnotations:
                 all_results[image_name].update(image_results)
 
         # === Record no-detection annotations for missing images ===
-        from datetime import datetime
+        # Record zero-detection images to a separate log instead of modifying the main JSON
         for prompt in prompts:
             for img_id in missing_by_prompt[prompt]:
-                if img_id not in all_results:
-                    # Ensure image entry exists
-                    self.annotations["images"].setdefault(img_id, {"annotations": []})
-                    # Append empty annotation for this prompt
-                    self.annotations["images"][img_id]["annotations"].append({
-                        "annotation_id": f"ann_{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
-                        "prompt": prompt,
-                        "model_metadata": model_metadata,
-                        "inference_params": inference_params or {},
-                        "timestamp": datetime.now().isoformat(),
-                        "num_detections": 0,
-                        "detections": []
-                    })
-                    self._unsaved_changes = True
+                if img_id not in all_results and img_id not in self._empty_ids:
+                    self._append_empty_id(img_id)
 
         return all_results
 
