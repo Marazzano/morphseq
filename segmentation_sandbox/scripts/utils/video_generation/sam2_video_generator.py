@@ -297,17 +297,22 @@ def create_video(video_id: str, video_data: Dict, output_path: str, fps: int = 1
     return True
 
 
-def process_videos(annotations: Dict, output_dir: str, max_videos: Optional[int] = None, fps: int = 10, show_info: bool = True):
+def process_videos(annotations: Dict, output_dir: str, max_videos: Optional[int] = None, fps: int = 10, show_info: bool = True, video_ids: Optional[List[str]] = None):
     """Process multiple videos from annotations."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Collect successful videos
+    # Collect videos (filter by video_ids if provided)
     videos = []
     for exp_data in annotations.get('experiments', {}).values():
         for vid_id, vid_data in exp_data.get('videos', {}).items():
-            if vid_data.get('sam2_success', False):
-                videos.append((vid_id, vid_data))
+            # If specific video_ids provided, only process those
+            if video_ids and vid_id not in video_ids:
+                continue
+            # Otherwise use original SAM2 success filter
+            if not video_ids and not vid_data.get('sam2_success', False):
+                continue
+            videos.append((vid_id, vid_data))
     
     # Limit number of videos
     if max_videos:
@@ -323,14 +328,14 @@ def process_videos(annotations: Dict, output_dir: str, max_videos: Optional[int]
     print("✅ All videos processed.")
 
 
-def test_video_generation():
+def test_video_generation(specific_video_ids: Optional[List[str]] = None):
     """Test video generation with 5 videos."""
     print("🧪 SAM2 Video Generation Test")
     print("=" * 50)
 
     # Configuration
-    annotations_path = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/grounded_sam_annotations_finetuned.json"
-    output_dir = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/test_videos/20250720"
+    annotations_path = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/grounded_sam_annotations_finetuned_test.json"
+    output_dir = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/test_videos/20250720_test"
     max_videos = 10
     fps = 3
     show_info = True
@@ -354,7 +359,7 @@ def test_video_generation():
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # Process videos
-    process_videos(annotations, output_dir, max_videos, fps, show_info)
+    process_videos(annotations, output_dir, max_videos, fps, show_info, specific_video_ids)
 
     print("✅ Video generation test completed successfully!")
 
@@ -366,6 +371,7 @@ def main():
     parser.add_argument('output_dir', help='Output directory')
     parser.add_argument('--max-videos', type=int, help='Max videos to process')
     parser.add_argument('--fps', type=int, default=10, help='Video FPS')
+    parser.add_argument('--video-ids', nargs='+', help='Specific video IDs to process')
     
     args = parser.parse_args()
     
@@ -392,7 +398,11 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Process videos
+    # Process videos with specific video IDs if provided
+    process_videos(annotations, str(output_dir), args.max_videos, args.fps, video_ids=args.video_ids)
+    return  # Exit early since process_videos now handles everything
+
+    # This code below will be unreachable but kept for reference
     success_count = 0
     for vid_id, vid_data in videos:
         output_path = str(output_dir / f"{vid_id}_tracked.mp4")
@@ -408,4 +418,4 @@ def main():
 
 
 if __name__ == "__main__":
-    test_video_generation()
+    test_video_generation(["20231218_F11", "20240306_C01", "20240306_D06"])
