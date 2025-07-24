@@ -15,11 +15,13 @@ if __name__ == "__main__":
 
     root = Path("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/models/")
     # root = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/20241107_ds/"
+    sweep_list = ["sweep02_*", "sweep03_*", "sweep04_*"]
     tr_root = root / "training_outputs" 
-    dir_list = sorted(tr_root.glob("sweep04_*"))
-    out_path = os.path.join(root, "sweep04_figs")
-    for dir_name in dir_list:
-        hydra_path = os.path.join(tr_root, dir_name, "")
-        recon_wrapper(hydra_run_path=hydra_path,
-                      out_path=out_path,
-                      run_type="multirun")
+    for sweep in sweep_list:
+        dir_list = sorted(tr_root.glob(f"{sweep}_*"))
+        out_path = os.path.join(root, f"{sweep}_figs")
+        for dir_name in dir_list:
+            hydra_path = os.path.join(tr_root, dir_name, "")
+            recon_wrapper(hydra_run_path=hydra_path,
+                        out_path=out_path,
+                        run_type="multirun")
