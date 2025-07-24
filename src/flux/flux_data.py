@@ -6,11 +6,12 @@ import numpy as np
 import pytorch_lightning as pl
 
 class PairDataset(torch.utils.data.Dataset):
-    def __init__(self, z0, z1, exp_idx, emb_idx, Δt):
+    def __init__(self, z0, z1, exp_idx, emb_idx, T, dt):
         # store CPU tensors (float32 + int64)
         self.z0, self.z1 = z0, z1
         self.exp_idx, self.emb_idx = exp_idx, emb_idx
-        self.dt = Δt
+        self.dt = dt
+        self.temp = T  
 
     def __len__(self):
         return self.z0.shape[0]
@@ -22,6 +23,7 @@ class PairDataset(torch.utils.data.Dataset):
             "dz": dz,
             "exp": self.exp_idx[i],
             "emb": self.emb_idx[i],
+            "temp": self.temp[i] 
         }
     
 
@@ -43,11 +45,69 @@ def load_embryo_df(root:Path,
     return embryo_df
 
 
-def build_traing_data(df: pd.DataFrame, 
-                      min_frames:int=5,
-                      max_dt:int=3600,
-                      use_pca:bool=False,
-                      pca_components:int=10):
+def get_data_splits(df: pd.DataFrame, 
+                    train_fraction: float = 0.8, 
+                    val_fraction: float = 0.1):
+    """
+    Splits the embryo DataFrame into training, validation, and test sets.
+    
+    Args:
+        embryo_df (pd.DataFrame): DataFrame containing embryo metadata.
+        train_fraction (float): Fraction of data to use for training.
+        val_fraction (float): Fraction of data to use for validation.
+        
+    Returns:
+        tuple: Three DataFrames for training, validation, and test sets.
+    """
+    
+    df.reset_index(inplace=True)  # ensure 'embryo_id' is a column
+    
+    # Suppose your df is already loaded and has 'embryo_id'\
+    test_fraction = 1-train_fraction-val_fraction
+    desired_props = dict(train=train_fraction, val=val_fraction, test=test_fraction)
+
+    # Count rows per embryo
+    counts = df['em_id'].value_counts().sort_values(ascending=False)
+    embryos = counts.index.to_numpy()
+    sizes   = counts.values
+
+    # Shuffle for randomness
+    rng = np.random.default_rng(42)
+    shuf = rng.permutation(len(embryos))
+    embryos, sizes = embryos[shuf], sizes[shuf]
+
+    splits = {}
+    cum = 0
+    n_rows = len(df)
+    for split, prop in desired_props.items():
+        n_split = int(round(n_rows * prop))
+        splits[split] = []
+        split_size = 0
+        while cum < n_rows and split_size < n_split and len(embryos) > 0:
+            eid, esize = embryos[0], sizes[0]
+            splits[split].append(eid)
+            split_size += esize
+            cum += esize
+            embryos, sizes = embryos[1:], sizes[1:]
+
+    # If any embryos are left, add them to the last split
+    if len(embryos) > 0:
+        splits[split].extend(embryos.tolist())
+
+    # Now get row indices for each split
+    split_indices = {
+        split: df[df['em_id'].isin(eids)].index.to_numpy()
+        for split, eids in splits.items()
+    }
+    
+    return split_indices
+
+
+def build_training_data(embryo_df: pd.DataFrame, 
+                        min_frames:int=5,
+                        max_dt:int=3600,
+                        use_pca:bool=False,
+                        n_pca_components:int=10):
     
     """ 
     Builds training data from the embryo DataFrame.
@@ -56,19 +116,19 @@ def build_traing_data(df: pd.DataFrame,
         min_frames (int): Minimum number of frames for a valid embryo.
         max_dt (int): Maximum time difference in seconds.
         use_pca (bool): Whether to use PCA for dimensionality reduction.
-        pca_components (int): Number of PCA components to keep if use_pca is True.
+        n_pca_components (int): Number of PCA components to keep if use_pca is True.
     Returns:
         PairDataset: A dataset containing pairs of embeddings and their differences.
     """
     
     # get z col names
-    latent_cols = [df.columns[i] for i in range(1, len(df.columns)) if df.columns[i].startswith("z_mu_b")]
+    latent_cols = [embryo_df.columns[i] for i in range(1, len(embryo_df.columns)) if embryo_df.columns[i].startswith("z_mu_b")]
     if use_pca:
         # Apply PCA to the mu columns
-        pca = PCA(n_components=pca_components)
+        pca = PCA(n_components=n_pca_components)
         mu_data = embryo_df[latent_cols].values
         mu_data_pca = pca.fit_transform(mu_data)
-        latent_cols = [f"pca_{i}" for i in range(pca_components)]
+        latent_cols = [f"pca_{i}" for i in range(n_pca_components)]
         embryo_df[latent_cols] = mu_data_pca
 
     # generate IDs
@@ -78,7 +138,7 @@ def build_traing_data(df: pd.DataFrame,
     embryo_df["ex_id"] = ex_id.astype(int)
 
     # strip things down
-    merge_df0 = embryo_df.loc[:, ["em_id", "ex_id", "experiment_time"] + latent_cols]
+    merge_df0 = embryo_df.loc[:, ["em_id", "ex_id", "experiment_time", "temperature"] + latent_cols]
     counts = merge_df0["em_id"].value_counts()
     merge_df0 = merge_df0[merge_df0["em_id"].map(counts) >= min_frames]
     merge_df0["row_idx"] = merge_df0.groupby("em_id").cumcount() 
@@ -102,14 +162,18 @@ def build_traing_data(df: pd.DataFrame,
     exp_idx = merged_df["ex_id_0"].values
     emb_idx = merged_df["em_id"].values
     dt = merged_df["dt"].values.astype("float32")
+    T = merged_df["temperature_0"].values.astype("float32")  # time of first frame
 
-    return PairDataset(
-        z0=torch.tensor(z0),
-        z1=torch.tensor(z1),
-        exp_idx=torch.tensor(exp_idx),
-        emb_idx=torch.tensor(emb_idx),
-        dt=torch.tensor(dt)
-    )
+    ds = PairDataset(
+                    z0=torch.tensor(z0),
+                    z1=torch.tensor(z1),
+                    exp_idx=torch.tensor(exp_idx),
+                    emb_idx=torch.tensor(emb_idx),
+                    dt=torch.tensor(dt), 
+                    T=torch.tensor(T) 
+                )
+
+    return ds, merged_df.loc[:, ["em_id", "dt"]].reset_index(drop=True)
 
 
 # class NVFData(pl.LightningDataModule):
@@ -127,7 +191,7 @@ if __name__ == "__main__":
     model_name = "20241107_ds_sweep01_optimum"
 
     embryo_df = load_embryo_df(root, model_class, model_name)
-    test = build_traing_data(df=embryo_df,)
+    test = build_training_data(embryo_df=embryo_df,)
     test[0]
     print("check")
 
