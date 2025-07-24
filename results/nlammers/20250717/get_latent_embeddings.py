@@ -16,7 +16,6 @@ if __name__ == "__main__":
     data_root = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/"
     model_name = "20241107_ds_sweep01_optimum"
     # later_than = 20250501
-    experiments = ["20250716_chem4_28C_T00_1158", "20250716_chem4_28C_T01_1400",
-                   "20250716_chem4_34C_T00_1014", "20250716_chem4_35C_T00_1045"]
+    experiments = ['20250721_chem5_28C_T01_1401', '20250721_chem5_28C_T00_1257',  '20250721_chem5_35C_T00_1023']
 
     calculate_morph_embeddings(data_root=data_root, model_class="legacy", model_name=model_name, experiments=experiments)

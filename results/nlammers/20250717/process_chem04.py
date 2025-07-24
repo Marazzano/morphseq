@@ -13,11 +13,11 @@ if __name__ == "__main__":
     
     # export everything dated later than XX
     # later_than = 20250501
-    experiments = ["20250716_chem4_34C_T00_1014"] #["20250716_chem4_28C_T00_1158", "20250716_chem4_28C_T01_1400",
+    # experiments = ["20250716_chem4_34C_T00_1014"] #["20250716_chem4_28C_T00_1158", "20250716_chem4_28C_T01_1400",
                 #    "20250716_chem4_34C_T00_1024", "20250716_chem4_35C_T00_1045"]
     # experiments = ["20250215"]
 
-    # experiments = ['20250624_chem02_35C_T00_1216', '20250624_chem02_35C_T01_1711', '20250625_chem02_35C_T02_1228']
+    experiments = ['20250721_chem5_28C_T01_1401']#, '20250721_chem5_28C_T00_1257',  '20250721_chem5_35C_T00_1023']
     # call pipeline functions
     root = Path("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/")
 
