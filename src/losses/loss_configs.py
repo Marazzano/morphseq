@@ -22,7 +22,7 @@ class BasicLoss:
     kld_warmup: int = 0
 
     # PIXEL
-    reconstruction_loss: str = "L1"
+    reconstruction_loss: Literal["L1", "L2"] = "L2"  # L1 or L2
 
     # PIPS
     pips_net: Literal["vgg", "alex", "squeeze"] = "vgg"
@@ -113,8 +113,8 @@ class MetricLoss(BasicLoss):
 
     # metric-specific
     schedule_metric: bool = True
-    metric_warmup: int = 50
-    metric_rampup: int = 20
+    # metric_warmup: int = 50
+    # metric_rampup: int = 20
 
     # model arch info
     frac_nuisance_latents: float = 0.2
@@ -135,17 +135,41 @@ class MetricLoss(BasicLoss):
     # apply KLD reg to bio latents only?
     bio_only_kld: bool = False
 
+    # Metric
     @property
-    def metric_cfg(self):
-        return dict(n_warmup=self.metric_warmup, n_rampup=self.metric_rampup, w_min=0, w_max=self.metric_weight)
+    def metric_warmup(self) -> int:
+        return self.kld_rampup + self.kld_warmup + math.floor(self.hold_scale * self.train_scale)
 
     @property
-    def pips_cfg(self):
-        return dict(n_warmup=self.pips_warmup, n_rampup=self.pips_rampup, w_min=0, w_max=self.pips_weight)
+    def metric_rampup(self) -> int:
+        return math.floor(self.ramp_scale * self.train_scale)
+    
+    # PIPS
+    @property
+    def pips_warmup(self) -> int:
+        if self.metric_weight > 0:
+            return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
+        else:
+            return self.kld_rampup + self.kld_warmup + math.floor(self.hold_scale * self.train_scale)
+        # return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
 
     @property
-    def kld_cfg(self):
-        return dict(n_warmup=self.kld_warmup, n_rampup=self.kld_rampup, w_min=0, w_max=self.kld_weight)
+    def pips_rampup(self) -> int:
+        return math.floor(self.ramp_scale * self.train_scale)
+
+    # GAN
+    @property
+    def gan_warmup(self) -> int:
+        if self.pips_weight > 0:
+            return self.pips_rampup + self.pips_warmup + math.floor(self.hold_scale * self.train_scale)
+        elif self.metric_weight > 0:
+            return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
+        else:
+            return self.kld_rampup + self.kld_warmup + math.floor(self.hold_scale * self.train_scale)
+
+    @property
+    def gan_rampup(self) -> int:
+        return math.floor(self.ramp_scale * self.train_scale)
 
     @property
     def latent_dim_bio(self) -> int:
