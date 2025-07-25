@@ -58,6 +58,7 @@ class VAEConfig:
 
     @classmethod
     def from_cfg(cls, cfg):
+        
         # 1) pull in the raw user dict (OmegaConf or plain dict)
         user_model = cfg.pop("model", {})
         if isinstance(user_model, DictConfig):

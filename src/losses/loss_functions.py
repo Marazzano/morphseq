@@ -43,7 +43,7 @@ def recon_module(self, x, recon_x):
             recon_x.reshape(x.shape[0], -1) - x.reshape(x.shape[0], -1),
         ).mean(dim=-1)
 
-    elif self.reconstruction_loss == "mse":
+    elif self.reconstruction_loss == "L2":
         recon_loss = (
                 0.5
                 * F.mse_loss(
@@ -63,28 +63,6 @@ def recon_module(self, x, recon_x):
         raise NotImplementedError
         
     return recon_loss
-
-# def process_recon_loss(self, x, recon_x):
-#
-#     if self.pips_flag:
-#         PIPS_loss = L1PIPS_module(self, x, recon_x)
-#         recon_loss = PIPS_loss.nll_loss
-#         px_loss = PIPS_loss.recon_loss
-#         p_loss = PIPS_loss.pips_loss
-#     elif (not self.pips_flag) and (self.reconstruction_loss == "L1"):  # we can also do just the L1 loss
-#         self.pips_weight = 0
-#         PIPS_loss = L1PIPS_module(self, x, recon_x)
-#         recon_loss = PIPS_loss.nll_loss
-#         px_loss = PIPS_loss.recon_los
-#         p_loss = PIPS_loss.p_loss
-#     elif self.reconstruction_loss in ["mse", "bce"]:
-#         recon_loss = recon_module(self, x, recon_x)
-#         px_loss = recon_loss
-#         p_loss = torch.tensor([0.0])
-#     else:
-#         raise NotImplementedError
-#
-#     return recon_loss, px_loss, p_loss
 
 class EVALPIPSLOSS(nn.Module):
     def __init__(self, cfg, force_gpu: bool = False):
@@ -237,9 +215,220 @@ class VAELossBasic(nn.Module):
         )
 
         return output
-
     
 class NTXentLoss(nn.Module):
+
+    def __init__(self, cfg, recon_logvar_init=0.0):
+        super().__init__()
+
+        # self.kld_weight = cfg.kld_weight
+        self.reconstruction_loss = cfg.reconstruction_loss
+
+        # only applies if we're not doing PIPS
+        self.pips_flag = cfg.pips_flag
+        self.schedule_pips = cfg.schedule_pips
+        self.pips_weight = cfg.pips_weight
+        self.pips_net = cfg.pips_net
+        self.pips_cfg = cfg.pips_cfg
+        self.tv_weight = cfg.tv_weight
+
+        # GAN
+        self.use_gan = cfg.use_gan
+        self.gan_weight = cfg.gan_weight
+        self.gan_net = cfg.gan_net
+        self.schedule_gan = cfg.schedule_gan
+        self.gan_cfg = cfg.gan_cfg
+
+        # KLD
+        self.schedule_kld = cfg.schedule_kld
+        self.kld_weight = cfg.kld_weight
+        self.kld_cfg = cfg.kld_cfg
+
+        # NT-Xent
+        self.schedule_metric = cfg.schedule_metric
+        self.metric_weight = cfg.metric_weight
+        self.metric_cfg = cfg.metric_cfg
+
+        # ---- set up LPIPS (AlexNet backbone) ----
+        self.perceptual_loss = lpips.LPIPS(net=self.pips_net)  # default is vgg, so net="alex"
+        # freeze *all* its parameters:
+        for p in self.perceptual_loss.parameters():
+            p.requires_grad = False
+        # put it in eval mode so BatchNorm / Dropout won’t update
+        self.perceptual_loss.eval()
+        # this is your learnable recon‐variance term:
+        self.register_buffer('recon_logvar', torch.tensor(recon_logvar_init)) # NOPE. nn.Parameter(torch.tensor(recon_logvar_init))
+
+        # --- set up GAN loss ----
+        if self.use_gan:
+            if cfg.gan_net == "patch":
+                self.D = PatchD3(in_ch=cfg.input_dim[0])
+            elif cfg.gan_net == "ms_patch":
+                self.D = MultiScaleD(in_ch=cfg.input_dim[0])
+            elif cfg.gan_net == "style2": # keeping temporarilly
+                self.D = StyleGAN2DV0(in_ch=cfg.input_dim[0])
+            elif cfg.gan_net == "style2_small":
+                self.D = StyleGAN2D(in_ch=cfg.input_dim[0], num_blocks=4)
+            elif cfg.gan_net == "style2_big":
+                self.D = StyleGAN2D(in_ch=cfg.input_dim[0], num_blocks=7)
+            elif cfg.gan_net == "resnet_sn":
+                self.D = ResNet50SN_D(in_ch=cfg.input_dim[0])
+            elif cfg.gan_net == "patch4scale":
+                self.D = FourScalePatchD(in_ch=cfg.input_dim[0])
+            else:
+                raise ValueError("unknown gan_arch")
+
+    def forward(self, model_input, model_output, batch_key="data"):
+
+        # get model outputs
+        x = model_input[batch_key]
+        recon_x = model_output.recon_x
+        logvar = model_output.logvar
+        mu = model_output.mu
+
+        # get metadata
+        self_stats = model_input["self_stats"]
+        other_stats = model_input["other_stats"]
+
+        # Standard Gaussian regularization
+        KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
+
+        # get PIXEL recon loss
+        pixel_loss = recon_module(self, x, recon_x)
+
+        # get Perceptual loss
+        if self.pips_flag & (self.pips_weight > 0):
+            pips_loss = calc_pips_loss(self, x, recon_x)
+        else:
+            pips_loss = 0
+
+        # add adversarial loss
+        gan_loss = 0  # default zero
+        if self.use_gan and self.gan_weight > 0:
+            pred_fake = self.D(recon_x)
+            if isinstance(pred_fake, (list, tuple)):  # multi-scale
+                gan_loss = sum([-p.mean() for p in pred_fake]) / len(pred_fake)
+            else:
+                gan_loss = -pred_fake.mean()
+
+        # TV loss
+        # tv_loss = 0
+        # if self.tv_weight > 0:
+        #     tv_loss = calc_tv_loss(recon_x)
+
+        # get metric loss
+        metric_loss = self._nt_xent_loss_euclidean(features=mu,
+                                                   self_stats=self_stats,
+                                                   other_stats=other_stats)
+
+        # Upscale recon and KLD to standardized pixel/latent sizes
+        if self.reconstruction_loss != "L1":
+            pixel_scale_factor = (128 * 288) / 100 # factor of 100 comes from shuffling the KLD resizing factor
+        else:
+            pixel_scale_factor = (128 * 288) / 10 / 100# accounts for fact that L1 loss ~10x size of L2
+
+        kld_scale_factor = 1 #/ mu.shape[1]
+        # calculate weighted loss components
+        pixel_loss_w = pixel_loss.mean(dim=0) * pixel_scale_factor
+        kld_loss_w = KLD.mean(dim=0) * kld_scale_factor
+
+        # combine
+        total_loss = pixel_loss_w + self.kld_weight*kld_loss_w + self.pips_weight*pips_loss + self.gan_weight*gan_loss + self.cfg.metric_weight * metric_loss
+
+        output = ModelOutput(
+            loss=total_loss, recon_loss=total_loss, metric_loss=metric_loss,
+            gan_loss=gan_loss, pips_loss=pips_loss, pixel_loss=pixel_loss_w, kld_loss=kld_loss_w
+        )
+
+        return output
+    
+    
+    def _nt_xent_loss_euclidean(self, features, self_stats=None, other_stats=None, n_views=2):
+
+        temperature = self.cfg.temperature
+        # into the contrastive loss
+        features = features[:, self.cfg.biological_indices]
+        device = features.device
+        # infer batch size
+        batch_size = int(features.shape[0] / n_views)
+
+        # EUCLIDEAN
+        pair_matrix = torch.cat([torch.arange(batch_size) for i in range(n_views)], dim=0)
+        pair_matrix = (pair_matrix.unsqueeze(0) == pair_matrix.unsqueeze(1)).float()
+        mask = torch.eye(pair_matrix.shape[0], dtype=torch.bool).to(device)
+        pair_matrix[mask] = -1  # exclude self comparisons
+        # target_matrix = target_matrix.to(self.device)
+
+        dist_matrix = torch.cdist(features, features, p=2).pow(2)
+
+        # normalize distances to fall on scale similar to cosine. For stability, we will use expectation for 2 sigma of an isotropic gaussian as our "max"
+        N = self.cfg.latent_dim_bio / 2
+        sigma = N  # sigma^1 for an ND isotropic Gaussian
+        dist_normed = (-(dist_matrix / sigma).pow(
+            0.5) + self.cfg.margin) / temperature  # Effectively a shifted z score. Note that large distances are permitted to go below -1
+
+        # Generate matrix containing pos/neg pair info
+        target_matrix = torch.zeros(pair_matrix.shape, dtype=torch.float32)
+        if self_stats is not None:
+            age_vec = torch.cat([self_stats[1], other_stats[1]], axis=0)
+
+            age_deltas = torch.abs(age_vec.unsqueeze(-1) - age_vec.unsqueeze(0))
+            age_bool = age_deltas <= (self.cfg.time_window + 1.5)  # add an extra neutral "buffer" of 1.5 hrs
+
+            pert_cross = torch.zeros_like(age_bool, dtype=torch.bool)
+            pert_bool = torch.ones_like(age_bool, dtype=torch.bool)
+            # if self.cfg.time_only_flag == 1:
+            #     pass
+            if self.cfg.self_target_prob < 1.0:
+                pert_vec = torch.cat([self_stats[2], other_stats[2]], axis=0)
+
+                # get class relationships
+                metric_array = torch.tensor(self.cfg.metric_array).type(torch.int8)
+                metric_matrix = metric_array.clone().to(pert_vec.device)
+                metric_matrix = metric_matrix[pert_vec, :]
+                metric_matrix = metric_matrix[:, pert_vec]
+
+                pert_bool = metric_matrix == 1  # positive examples #pert_vec.unsqueeze(-1) == pert_vec.unsqueeze(0)  # avoid like perturbations
+                pert_cross = metric_matrix == -1
+            else:
+                pass
+
+            extra_match_flags = (age_bool & pert_bool).type(torch.bool)  # extra positives
+            target_matrix[extra_match_flags] = 1
+            target_matrix[pert_cross] = -1
+
+        target_matrix[pair_matrix == 1] = 1
+        target_matrix[pair_matrix == -1] = -1
+
+        # pass to device
+        target_matrix = target_matrix.to(device)
+
+        # call multiclass nt_xent loss
+        loss_euc = self._nt_xent_loss_multiclass(dist_normed, target_matrix)
+
+        return loss_euc
+    
+    
+    def _nt_xent_loss_multiclass(self, logits_tempered, target):
+
+        # Exclude cross-matches from everything
+        logits_tempered[target == -1] = -torch.inf # exclude flagged instances (self pair and cross-matched pairs)
+
+        # exclude negative pairs from numerator
+        logits_num = logits_tempered.clone()
+        logits_num[target == 0] = -torch.inf # exclude all negative pairs from numerator
+
+        # calculate loss for each entry in the batch
+        numerator = torch.logsumexp(logits_num, axis=1)
+        denominator = torch.logsumexp(logits_tempered, axis=1)
+        loss = -(numerator - denominator)
+
+        return torch.mean(loss)
+
+
+### OLD !!!!!!
+    
+class NTXentLossORIG(nn.Module):
 
     def __init__(self, cfg: MetricLoss, recon_logvar_init=0.0):
         super().__init__()
@@ -315,6 +504,7 @@ class NTXentLoss(nn.Module):
         else:
             KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
 
+        # calculate metric loss
         metric_loss = self._nt_xent_loss_euclidean(features=mu,
                                                    self_stats=self_stats,
                                                    other_stats=other_stats)
