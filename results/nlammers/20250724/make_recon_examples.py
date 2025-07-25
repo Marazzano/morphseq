@@ -9,13 +9,13 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.analyze.get_recon_examples import recon_wrapper
 import os
-from glob2 import glob
+# from glob2 import glob
 
 if __name__ == "__main__":
 
     root = Path("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/models/")
     # root = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/20241107_ds/"
-    sweep_list = ["sweep02_*", "sweep03_*", "sweep04_*"]
+    sweep_list = ["sweep04", "sweep03", "sweep02"]
     tr_root = root / "training_outputs" 
     for sweep in sweep_list:
         dir_list = sorted(tr_root.glob(f"{sweep}_*"))

@@ -65,6 +65,7 @@ class BasicEvalDataset(datasets.ImageFolder):
         else:
             return DatasetOutput(data=X, label=self.samples[index], index=index)
 
+
 class NTXentDataset(datasets.ImageFolder):
 
     def __init__(self, cfg, transform=None, target_transform=None,):
