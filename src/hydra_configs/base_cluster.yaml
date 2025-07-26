@@ -5,14 +5,15 @@ defaults:
 hydra:
   run:
     # top‐level directory under which *all* runs go
-    dir: "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/20241107_ds/training_outputs/${hydra.job.name}_${now:%Y%m%d_%H%M%S}"
+    # dir: "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/20241107_ds/training_outputs/${hydra.job.name}_${now:%Y%m%d_%H%M%S}"
+    dir: "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/models/training_outputs/${hydra.job.name}_${now:%Y%m%d_%H%M%S}"
 
   sweep:
-    dir: "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/20241107_ds/training_outputs/${hydra.job.name}_${now:%Y%m%d_%H%M%S}"
+    dir: "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/models/training_outputs/${hydra.job.name}_${now:%Y%m%d_%H%M%S}"
     subdir: ${hydra.job.num}
 
 wandb:
-  project: sweep04
+  project: sweep06_pips_test_redux
   #entity: nlammers-trap-zf-ml
   # RUN NAMING & GROUPING
   run_name: ${hydra:job.name}_${now:%Y%m%d_%H%M%S}_${hydra:job.num}

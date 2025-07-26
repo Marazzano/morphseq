@@ -1,15 +1,17 @@
-from torch.utils.data import Dataset
+from __future__ import annotations
+
 from pydantic.dataclasses import dataclass
 from dataclasses import field
-from typing import Literal, List, Type, Callable, Any, Dict, Optional
+from typing import Literal, List, Type, Callable, Any, Dict, Optional, Union
 from src.data.dataset_utils import make_seq_key, make_train_test_split
 from src.data.data_transforms import basic_transform, contrastive_transform
-from src.data.dataset_classes import BasicDataset, NTXentDataset
+from src.data.dataset_classes import BasicDataset, NTXentDataset, BasicEvalDataset
 import os
 import numpy as np
 import pandas as pd
 from src.data.dataset_utils import smart_read_csv
 from pydantic   import ConfigDict
+from pathlib import Path
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -75,6 +77,36 @@ class UrrDataConfig:
             self.train_indices = train_indices
 
 
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class EvalDataConfig:
+
+    experiments:   List[str]
+    return_sample_names: bool = True
+
+    transforms: Any = None
+    batch_size: int = 64
+    num_workers: int = 2
+    wrap: bool = True
+    root: Union[str, Path] = "./data"
+
+    @property
+    def data_path(self) -> Path:
+        root = Path(self.root)
+        return root / "training_data" / "bf_embryo_snips"
+
+    def make_metadata(self):
+        self.split_train_test()
+
+    def create_dataset(self):
+
+        # instantiate your dataset with both fixed and configurable args
+        return BasicEvalDataset(
+            root=self.data_path,
+            experiments=self.experiments,
+            transform=self.transforms,
+            return_name=self.return_sample_names
+        )
+
 @dataclass# (config_wrapper=ConfigDict(arbitrary_types_allowed=True))
 class BaseDataConfig(UrrDataConfig):
 
@@ -86,7 +118,7 @@ class BaseDataConfig(UrrDataConfig):
 
     # similarly for transform
     transform_name:   Literal["basic", "simclr"] = "simclr"
-    transform_kwargs: Dict[str,Any]                = field(default_factory=dict)
+    transform_kwargs: Dict[str, Any]                = field(default_factory=dict)
 
     return_sample_names: bool = False
 
