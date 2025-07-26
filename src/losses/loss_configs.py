@@ -108,6 +108,7 @@ class BasicLoss:
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class MetricLoss(BasicLoss):
+
     # override
     target: Literal["NT-Xent", "Triplet"] = "NT-Xent"
 
@@ -120,13 +121,12 @@ class MetricLoss(BasicLoss):
     frac_nuisance_latents: float = 0.2
     latent_dim: Optional[int] = None
     metric_array: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
-    # n_latents: Optional[int] = None
 
     # metric learning
-    temperature: float = 0.1 # sets sharpness of loss 'gradient'
+    temperature: float = 0.1  # sets sharpness of loss 'gradient'
     metric_weight: float = 1.0  # tunes weight of contastive loss within the loss function
-    margin: float = 1.0  #  sets tolerance/scale for metric loss.
-    distance_metric: Literal["euclidean"] = "euclidean" # Could/should add cosine
+    margin: float = 1.0  # sets tolerance/scale for metric loss.
+    distance_metric: Literal["euclidean"] = "euclidean"  # Could/should add cosine
 
     # params to structure interactions
     time_window: float = 1.5  # max permitted age difference between sequential pairs

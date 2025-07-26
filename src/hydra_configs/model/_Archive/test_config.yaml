@@ -1,4 +1,4 @@
-config_target: src.models.legacy_model_configs.morphVAEConfig
+config_target: src.models.legacy_model_configs.metricVAEConfig
 
 ddconfig:
   input_dim: [1, 288, 128]
