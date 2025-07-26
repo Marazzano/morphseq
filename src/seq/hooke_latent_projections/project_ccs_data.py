@@ -273,10 +273,6 @@ def do_latent_projections(root, model_name, max_threads=5, maxiter=300):
     meta_df = meta_df.loc[exp_filter, :]
     ccs_df = ccs_df.loc[exp_filter, :]
 
-    # augment ccs table to incorporate missing cell types
-    # mdl_cell_types = mdl_counts_df.columns
-    # ccs_df = ccs_df.reindex(columns=mdl_cell_types, fill_value=0)
-
     # check which ones were included in inference
     mdl_flags = np.isin(np.asarray(ccs_df.index), np.asarray(mdl_counts_df.index))
     meta_df["inference_flag"] = mdl_flags
@@ -335,11 +331,10 @@ def do_latent_projections(root, model_name, max_threads=5, maxiter=300):
     meta_df.to_csv(out_dir + "combined_metadata.csv")
     ccs_df.to_csv(out_dir + "combined_counts.csv")
 
-
     return time_df, latent_df, latent_se_df
 
 if __name__ == "__main__":
     root = "/media/nick/hdd021/Cole Trapnell's Lab Dropbox/Nick Lammers/Nick/morphseq/"
-    model_name = "bead_expt_linear"
-    max_threads = 24
+    model_name = "bead_expt_linear_20250606"
+    max_threads = 40
     time_df, latent_df, latent_se_df = do_latent_projections(root=root, model_name=model_name, max_threads=max_threads)
