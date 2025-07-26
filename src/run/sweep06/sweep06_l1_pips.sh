@@ -11,5 +11,5 @@ python -m src.run.training_cluster --multirun \
     model.ddconfig.latent_dim=128 \
     model.lossconfig.use_gan=False \
     model.lossconfig.gan_weight=0 \
-    model.lossconfig.reconstruction_loss="L1","L2" \
-    model.lossconfig.pips_weight=0,7.5,15
+    model.lossconfig.reconstruction_loss="L1" \
+    model.lossconfig.pips_weight=0,3.25,7.5,15

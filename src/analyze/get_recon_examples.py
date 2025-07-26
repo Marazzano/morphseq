@@ -95,12 +95,19 @@ def recon_wrapper(
         # construct out path
         folder_name = os.path.basename(os.path.dirname(run_path))
         mdl_name = model_config.ddconfig.name
+        latent_dim = model_config.ddconfig.latent_dim
         pips_wt = model_config.lossconfig.pips_weight
         gan_wt = model_config.lossconfig.gan_weight
+        pixel_loss = model_config.lossconfig.reconstruction_loss
+        if gan_wt == 0:
+            gan_str = "noGAN"
+        else:
+            gan_str = f"GAN_{model_config.lossconfig.gan_net}"
         attn = model_config.ddconfig.dec_use_local_attn
+        f_stub = folder_name.split("_")[0]
         out_name = (
-            f"{mdl_name}_p{int(10*pips_wt)}_g{int(np.ceil(100*gan_wt))}_attn_{attn}_"
-            f"GAN_{model_config.lossconfig.gan_net}_{folder_name}"
+            f"{mdl_name}_z{int(latent_dim):03}_p{int(10*pips_wt)}_g{int(np.ceil(100*gan_wt))}_attn_{attn}_" + \
+            gan_str + f"_{f_stub}_" + f"{pixel_loss}_" + Path(run_path).name
         )
         mdl_folder = os.path.join(out_path, out_name)
         os.makedirs(mdl_folder, exist_ok=True)
