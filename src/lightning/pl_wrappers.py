@@ -92,7 +92,13 @@ class LitModel(pl.LightningModule):
     def training_step(self, batch, batch_idx) -> torch.Tensor:
 
         # 1) get optimizers
-        opt_G, opt_D = self.optimizers()
+        opts = self.optimizers()
+        if isinstance(opts, (list, tuple)):
+            opt_G = opts[0]
+            opt_D = opts[1] if len(opts) > 1 else None
+        else:
+            opt_G = opts
+            opt_D = None
 
         # 2) update weights
         kld_w = self._kld_weight()
@@ -270,9 +276,9 @@ class LitModel(pl.LightningModule):
 
         if self.loss_fn.use_gan:  # discriminator present?
             opt_D = torch.optim.Adam(self.loss_fn.D.parameters(), lr=self.train_cfg.lr_gan, betas=(0.5, 0.999))
+            return [opt_G, opt_D]
         else:
-            opt_D = None
-        return [opt_G, opt_D]  # a list/tuple of TWO
+            return [opt_G]
 
 
     def train_dataloader(self):

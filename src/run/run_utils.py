@@ -136,9 +136,9 @@ def train_vae(cfg):
     else:
         raise Exception("cfg argument dtype is not recognized")
     full_config = config.copy()
-    dummy_config = config.copy()
+    # dummy_config = config.copy()
     model, model_config, data_config, loss_fn, pips_fn, train_config = initialize_model(config)
-    dummy_model, _, _, _, _, _= initialize_model(dummy_config)
+    # dummy_model, _, _, _, _, _= initialize_model(dummy_config)
 
     if hasattr(model_config, "ckpt_path"):
         model = load_from_checkpoint(model=model, ckpt_path=model_config.ckpt_path)
