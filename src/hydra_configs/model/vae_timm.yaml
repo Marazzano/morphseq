@@ -8,6 +8,7 @@ ddconfig:
 #  n_conv_layers: 5
 
 lossconfig:
+  reconstruction_loss: "L2"
   kld_weight: 1.0
 
   pips_flag: True
