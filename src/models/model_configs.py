@@ -86,14 +86,14 @@ class VAEConfig:
 
 
 @dataclass
-class morphVAEConfig:
+class metricVAEConfig:
 
     ddconfig: Any = field(default_factory=LegacyArchitecture) # Done
     lossconfig: MetricLoss = field(default_factory=MetricLoss)
     dataconfig: NTXentDataConfig = field(default_factory=NTXentDataConfig)
     trainconfig: LitTrainConfig = field(default_factory=LitTrainConfig)
 
-    name: Literal["morphVAE"] = "morphVAE"
+    name: Literal["metricVAE"] = "metricVAE"
     # objective: Literal['vae_loss_basic'] = 'vae_loss_basic'
     # base_learning_rate: float = 1e-4
 
@@ -135,8 +135,8 @@ class morphVAEConfig:
     
     
 
-# class morphVAEFancyConfig(morphVAEConfig):
+# class metricVAEFancyConfig(metricVAEConfig):
 #
 #     ddconfig: SplitArchitectureAELDM = field(default_factory=SplitArchitectureAELDM)
 #
-#     name: Literal["morphVAEFancy"] = "morphVAEFancy"
+#     name: Literal["metricVAEFancy"] = "metricVAEFancy"

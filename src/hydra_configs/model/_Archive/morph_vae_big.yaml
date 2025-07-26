@@ -1,4 +1,4 @@
-config_target: src.models.model_configs.morphVAEConfig
+config_target: src.models.model_configs.metricVAEConfig
 
 ddconfig:
   name: "convVAE"
