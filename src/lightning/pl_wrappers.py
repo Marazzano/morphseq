@@ -8,7 +8,7 @@ from torch import nn
 from src.models.ldm_models import AutoencoderKLModel
 from src.lightning.pl_utils import ramp_weight, cosine_ramp_weight
 import warnings
-from src.losses.loss_helpers import lpips_score, ssim_score
+from src.losses.loss_helpers import lpips_score, ssim_score, LatentCovarianceLoss
 
 warnings.filterwarnings(
     "ignore",
@@ -83,6 +83,22 @@ class LitModel(pl.LightningModule):
             self.log("val/lpips_val", lp, sync_dist=False, prog_bar=True)
             self.log("val/ssim_val", ssim, sync_dist=False, prog_bar=True)
 
+            # record anisotropy
+            if hasattr(self.loss_fn, "metric_weight"):
+                cov_loss_fn_b = LatentCovarianceLoss(latent_indices=self.loss_fn.biological_indices)
+                cov_loss_b, cond_b = cov_loss_fn_b(model_output=out)
+                self.log("val/z_b_anisotropy", cov_loss_b, sync_dist=False, prog_bar=True)
+                self.log("val/z_b_cond", cond_b, sync_dist=False, prog_bar=True)
+                cov_loss_fn_n = LatentCovarianceLoss(latent_indices=self.loss_fn.nuisance_indices)
+                cov_loss_n, cond_n = cov_loss_fn_n(model_output=out)
+                self.log("val/z_n_anisotropy", cov_loss_n, sync_dist=False, prog_bar=True)
+                self.log("val/z_n_cond", cond_n, sync_dist=False, prog_bar=True)
+            else:
+                cov_loss_fn = LatentCovarianceLoss(latent_indices=None)
+                cov_loss, cond = cov_loss_fn(model_output=out)
+                self.log("val/z_anisotropy", cov_loss, sync_dist=False, prog_bar=True)
+                self.log("val/z_cond", cond, sync_dist=False, prog_bar=True)
+
         # get batch size
         bsz = x.size(0)
         # log
@@ -108,7 +124,7 @@ class LitModel(pl.LightningModule):
         gan_w = self._gan_weight()
         self.loss_fn.gan_weight = gan_w
 
-        if hasattr(self, "metric_weight"):
+        if hasattr(self.loss_fn, "metric_weight"):
             metric_w = self._metric_weight()
             self.loss_fn.metric_weight = metric_w
 

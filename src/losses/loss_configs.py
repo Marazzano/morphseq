@@ -63,7 +63,7 @@ class BasicLoss:
 
     @property
     def gan_warmup(self) -> int:
-        if self.pips_weight > 0:
+        if (self.pips_weight > 0) & (self.schedule_pips > 0):
             return self.pips_rampup + self.pips_warmup + math.floor(self.hold_scale * self.train_scale)
         else:
             return self.kld_rampup + self.kld_warmup + math.floor(self.hold_scale * self.train_scale)
@@ -114,6 +114,8 @@ class MetricLoss(BasicLoss):
 
     # metric-specific
     schedule_metric: bool = True
+    metric_warmup: int = 0
+
     # metric_warmup: int = 50
     # metric_rampup: int = 20
 
@@ -137,20 +139,21 @@ class MetricLoss(BasicLoss):
 
     # Metric
     @property
-    def metric_warmup(self) -> int:
-        return self.kld_rampup + self.kld_warmup + math.floor(self.hold_scale * self.train_scale)
-
-    @property
     def metric_rampup(self) -> int:
         return math.floor(self.ramp_scale * self.train_scale)
+    
+    # KLD
+    @property
+    def kld_warmup(self) -> int:
+        return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
     
     # PIPS
     @property
     def pips_warmup(self) -> int:
-        if self.metric_weight > 0:
-            return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
-        else:
+        if (self.schedule_kld > 0):
             return self.kld_rampup + self.kld_warmup + math.floor(self.hold_scale * self.train_scale)
+        else:
+            return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
         # return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
 
     @property
@@ -160,13 +163,13 @@ class MetricLoss(BasicLoss):
     # GAN
     @property
     def gan_warmup(self) -> int:
-        if self.pips_weight > 0:
+        if (self.pips_weight > 0) & (self.schedule_pips > 0):
             return self.pips_rampup + self.pips_warmup + math.floor(self.hold_scale * self.train_scale)
-        elif self.metric_weight > 0:
-            return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
-        else:
+        elif self.schedule_kld:
             return self.kld_rampup + self.kld_warmup + math.floor(self.hold_scale * self.train_scale)
-
+        else:
+            return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
+            
     @property
     def gan_rampup(self) -> int:
         return math.floor(self.ramp_scale * self.train_scale)
@@ -177,6 +180,10 @@ class MetricLoss(BasicLoss):
         bio = self.latent_dim - math.ceil(self.frac_nuisance_latents * self.latent_dim)
         return max(bio, 1)
 
+    @property
+    def metric_cfg(self):
+        return dict(n_warmup=self.metric_warmup, n_rampup=self.metric_rampup, w_min=0, w_max=self.metric_weight)
+    
     @property
     def latent_dim_nuisance(self) -> int:
         return self.latent_dim - self.latent_dim_bio

@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     root = Path("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/models/")
     # root = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/training_data/20241107_ds/"
-    sweep_list = ["sweep05", "sweep04", "sweep03", "sweep02"] # ,
+    sweep_list = ["sweep07"]#["sweep05", "sweep04", "sweep03", "sweep02"] # ,
     tr_root = root / "training_outputs" 
     for sweep in sweep_list:
         dir_list = sorted(tr_root.glob(f"{sweep}_*"))
@@ -23,5 +23,5 @@ if __name__ == "__main__":
         for dir_name in dir_list:
             hydra_path = os.path.join(tr_root, dir_name, "")
             recon_wrapper(hydra_run_path=hydra_path,
-                        out_path=out_path,
-                        run_type="multirun")
+                          out_path=out_path,
+                          run_type="multirun")
