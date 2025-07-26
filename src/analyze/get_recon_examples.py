@@ -13,8 +13,31 @@ from src.lightning.pl_wrappers import LitModel
 from torch.utils.data import DataLoader
 from src.data.dataset_configs import BaseDataConfig
 from src.analyze.assess_hydra_results import get_hydra_runs, initialize_model_to_asses, parse_hydra_paths
+import shutil
 
 torch.set_float32_matmul_precision("medium")   # good default
+
+
+def copy_config_to_outfolder(cfg_path, out_folder):
+    """
+    Copies the Hydra config file to the output folder for provenance.
+    If the config is a dictionary (in-memory), saves it as YAML.
+    """
+    out_folder = Path(out_folder)
+    out_folder.mkdir(exist_ok=True, parents=True)
+    if isinstance(cfg_path, str) and os.path.isfile(cfg_path):
+        # Config is a file on disk
+        shutil.copy2(cfg_path, out_folder / "config.yaml")
+    else:
+        # Config is a dict or OmegaConf object
+        import yaml
+        config_path = out_folder / "config.yaml"
+        with open(config_path, "w") as f:
+            if hasattr(cfg_path, "to_container"):
+                # OmegaConf object
+                yaml.safe_dump(cfg_path.to_container(resolve=True), f)
+            else:
+                yaml.safe_dump(cfg_path, f)
 
 
 def recon_wrapper(
@@ -93,24 +116,26 @@ def recon_wrapper(
         )
 
         # construct out path
-        folder_name = os.path.basename(os.path.dirname(run_path))
-        mdl_name = model_config.ddconfig.name
-        latent_dim = model_config.ddconfig.latent_dim
-        pips_wt = model_config.lossconfig.pips_weight
-        gan_wt = model_config.lossconfig.gan_weight
-        pixel_loss = model_config.lossconfig.reconstruction_loss
-        if gan_wt == 0:
-            gan_str = "noGAN"
-        else:
-            gan_str = f"GAN_{model_config.lossconfig.gan_net}"
-        attn = model_config.ddconfig.dec_use_local_attn
-        f_stub = folder_name.split("_")[0]
-        out_name = (
-            f"{mdl_name}_z{int(latent_dim):03}_p{int(10*pips_wt)}_g{int(np.ceil(100*gan_wt))}_attn_{attn}_" + \
-            gan_str + f"_{f_stub}_" + f"{pixel_loss}_" + Path(run_path).name
-        )
+        # folder_name = os.path.basename(os.path.dirname(run_path))
+        # mdl_name = model_config.ddconfig.name
+        # latent_dim = model_config.ddconfig.latent_dim
+        # pips_wt = model_config.lossconfig.pips_weight
+        # gan_wt = model_config.lossconfig.gan_weight
+        # pixel_loss = model_config.lossconfig.reconstruction_loss
+        # if gan_wt == 0:
+        #     gan_str = "noGAN"
+        # else:
+        #     gan_str = f"GAN_{model_config.lossconfig.gan_net}"
+        # attn = model_config.ddconfig.dec_use_local_attn
+        # f_stub = folder_name.split("_")[0]
+        # out_name = (
+        #     f"{mdl_name}_z{int(latent_dim):03}_p{int(10*pips_wt)}_g{int(np.ceil(100*gan_wt))}_attn_{attn}_" + \
+        #     gan_str + f"_{f_stub}_" + f"{pixel_loss}_" + Path(run_path).name
+        # )
+        out_name = Path(run_path).parent.name + "_" + Path(run_path).name
         mdl_folder = os.path.join(out_path, out_name)
         os.makedirs(mdl_folder, exist_ok=True)
+        copy_config_to_outfolder(cfg, mdl_folder)
 
         assess_image_reconstructions(
             lit_model=lit_model,

@@ -9,8 +9,11 @@ ddconfig:
 
 lossconfig:
   reconstruction_loss: "L2"
-  kld_weight: 1.0
 
+  # KLD
+  kld_weight: 1.0
+  schedule_kld: True
+  
   # Metric
   metric_weight: 1.0
   temperature: 0.1
