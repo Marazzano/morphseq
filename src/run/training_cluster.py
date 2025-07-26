@@ -32,7 +32,7 @@ OmegaConf.register_new_resolver("ancestor", _abs_ancestor)
 
 @hydra.main(version_base="1.1",
             config_path="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/hydra_configs",
-            config_name="base_cluster")
+            config_name="base_cluster_metric")
 
 def main(cfg: DictConfig):
     # immediately turn it into a plain dict:
