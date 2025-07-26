@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from pythae.data.datasets import BaseDataset
-from src.models.model_configs import VAEConfig, morphVAEConfig
+from src.models.model_configs import VAEConfig, metricVAEConfig
 from src.models.model_components.legacy_components import EncoderConvVAE, DecoderConvVAE
 from src.models.model_components.timm_components import TimmEncoder, UniDecLite
 
@@ -59,12 +59,12 @@ class VAE(nn.Module):
         return mu + eps * std
 
 
-class morphVAE(nn.Module):
+class metricVAE(nn.Module):
     """VAE that incorporates split latent space and metric learning."""
 
     def __init__(
         self,
-        config: morphVAEConfig,
+        config: metricVAEConfig,
         encoder: Union[EncoderConvVAE, TimmEncoder] = EncoderConvVAE,
         decoder: Union[DecoderConvVAE, UniDecLite] = DecoderConvVAE,
     ):
