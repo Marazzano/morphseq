@@ -1,4 +1,4 @@
-from src.models.legacy_models import VAE, morphVAE
+from src.models.legacy_models import VAE, metricVAE
 from src.models.ldm_models import AutoencoderKLModel
 from dataclasses import asdict
 from src.models.model_components.legacy_components import (
@@ -25,7 +25,7 @@ def build_from_config(cfg):
             raise NotImplementedError
         model = VAE(cfg, encoder=encoder, decoder=decoder)
 
-    elif cfg.name == "morphVAE":
+    elif cfg.name == "metricVAE":
         if "convVAE" in cfg.ddconfig.name:
             encoder = EncoderConvVAE(cfg.ddconfig)
             decoder = DecoderConvVAEUpsamp(cfg.ddconfig)
@@ -37,7 +37,7 @@ def build_from_config(cfg):
             decoder = UniDecLite(cfg=cfg.ddconfig, enc_ch_last=encoder.embed_dim)
         else:
             raise NotImplementedError
-        model = morphVAE(cfg, encoder=encoder, decoder=decoder)
+        model = metricVAE(cfg, encoder=encoder, decoder=decoder)
 
     else:
         raise NotImplementedError
