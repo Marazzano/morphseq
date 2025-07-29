@@ -14,7 +14,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
-from src.flux.flux_lightning import ClockNVF
+from src.flux.flux_lightning import ClockNPF
 from src.flux.flux_data import load_embryo_df, build_training_data, get_data_splits
 
 torch.set_float32_matmul_precision("medium")
@@ -38,6 +38,7 @@ def train_vector_nn(
         wandb_entity: str = None,          # fill with your entity or org
         wandb_offline: bool = False,       # True for dev/offline
         save_dir: Path = None,          # or another output directory
+        n_steps: int= 3,  # number of steps to predict
     ) -> dict:
     
     # make save dir
@@ -47,7 +48,7 @@ def train_vector_nn(
 
     # 1) Initialize dataloader 
     embryo_df = load_embryo_df(root, model_class, model_name)
-    ds, df = build_training_data(embryo_df=embryo_df, use_pca=use_pca, n_pca_components=n_pc)
+    ds, df, _ = build_training_data(embryo_df=embryo_df, use_pca=use_pca, n_pca_components=n_pc, n_steps= n_steps)
     split_indices = get_data_splits(df=df)
     
     # Calculate model parameters
@@ -56,7 +57,7 @@ def train_vector_nn(
     num_embryo = ds.emb_idx.max().item() + 1    # # embryos
 
     # 2) Initialize model
-    lit = ClockNVF(
+    lit = ClockNPF(
         dim=dim,
         num_exp=num_exp,
         num_embryo=num_embryo,
@@ -65,6 +66,7 @@ def train_vector_nn(
         train_indices=split_indices['train'],
         val_indices=split_indices['val'],
         infer_embryo_clock=infer_embryo_clock,
+        n_steps= n_steps,  # number of steps to predict
         hidden=tuple(mlp_structure)
     )
 
@@ -104,7 +106,7 @@ def train_vector_nn(
         precision=16,
         log_every_n_steps=10,
         callbacks=[checkpoint_cb],
-        strategy=DDPStrategy(find_unused_parameters=True),
+        # strategy=DDPStrategy(find_unused_parameters=True),
         devices="auto",
         accelerator="auto",
     )
@@ -131,5 +133,5 @@ if __name__ == "__main__":
 
     train_vector_nn(
         root=root,
-        run_name= "test",
+        run_name= "potential_test",
         use_pca=True,) 

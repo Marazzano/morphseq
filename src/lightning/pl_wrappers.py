@@ -156,12 +156,20 @@ class LitModel(pl.LightningModule):
         # b) DISCRIMINATOR update
         # ------------------------------------------------
         if (self.loss_fn.gan_weight > 0) and (self.loss_fn.use_gan):
-            with torch.no_grad():
-                x_hat = self(x).recon_x.detach()
 
+            with torch.no_grad():
+                x_hat = out.recon_x.detach()
+
+            if hasattr(self.loss_fn, "metric_weight"):
+                x, _ = x.unbind(dim=1)  # (B, C, H, W)
+
+            # --- Run D on real and fake ---
+            # (pred_real_logits, feats_real) = self.loss_fn.D(x)
+            # (pred_fake_logits, feats_fake) = self.loss_fn.D(x_hat)
             pred_real = self.loss_fn.D(x)
             pred_fake = self.loss_fn.D(x_hat)
 
+            # --- GAN loss ---
             if self.loss_fn.gan_net in ["ms_patch", "patch4scale"]:
                 loss_D_list = [(F.relu(1 - pred_real[i]).mean() +
                                 F.relu(1 + pred_fake[i]).mean()) for i in range(len(pred_real))]
@@ -172,7 +180,21 @@ class LitModel(pl.LightningModule):
 
             self.log("train/loss_D", loss_D, prog_bar=True, on_step=True, on_epoch=self.log_epoch)
 
-            self.manual_backward(loss_D)
+            # --- Feature Matching Loss (optional) ---
+            # featmatch_loss = 0.0
+            # d = 0
+            # for real_scale_feats, fake_scale_feats in zip(feats_real, feats_fake):  # 4 scales
+            #     for fr, ff in zip(real_scale_feats, fake_scale_feats):  # 3 layers per scale
+            #         featmatch_loss += F.l1_loss(ff, fr)
+            #         d += 1
+
+            # Optional: normalize or weight
+            # featmatch_loss = featmatch_loss / d # avg over all features
+            # self.log("train/featmatch_loss", featmatch_loss, prog_bar=False, on_step=True, on_epoch=self.log_epoch)
+
+            # --- Combine and backward ---
+            total_loss_D = loss_D #+ self.loss_fn.lambda_feat_match * featmatch_loss  # lambda_featmatch: a tunable scalar, e.g. 10.0
+            self.manual_backward(total_loss_D)
 
             gn_D = self._grad_norm(module=self.loss_fn.D)
 

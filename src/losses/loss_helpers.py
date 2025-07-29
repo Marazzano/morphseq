@@ -112,7 +112,9 @@ class LatentCovarianceLoss(nn.Module):
         # calculate directional warping
         # cond = torch.linalg.eigvalsh(cov).max() / torch.linalg.eigvalsh(cov).min()
         eigvals = torch.linalg.eigvalsh(cov.float())
-        cond = eigvals.max() / eigvals.min() 
+        eps = 1e-8  # or slightly smaller
+        eigvals_clipped = eigvals.clamp(min=eps)
+        cond = eigvals_clipped.max() / eigvals_clipped.min() 
         # calculate anisotropy
         if self.mode == "fro":
             diff = cov - eye

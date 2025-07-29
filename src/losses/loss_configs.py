@@ -33,6 +33,7 @@ class BasicLoss:
     # ADVERSARIAL
     use_gan: bool = False
     gan_weight: float = 1.0
+    # lambda_feat_match: float = 0.0  # weight for feature matching loss
     gan_net: Literal["patch", "ms_patch", "style2_small", "style2_big", "style2" , "resnet_sn", "patch4scale"] = "patch4scale"
     schedule_gan: bool = True
 
@@ -145,7 +146,11 @@ class MetricLoss(BasicLoss):
     # KLD
     @property
     def kld_warmup(self) -> int:
-        return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
+        if self.schedule_metric:
+            return self.metric_rampup + self.metric_warmup + math.floor(self.hold_scale * self.train_scale)
+        else:
+            return 0
+        
     
     # PIPS
     @property
