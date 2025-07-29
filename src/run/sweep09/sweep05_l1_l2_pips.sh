@@ -5,7 +5,7 @@ set -euo pipefail
 echo ">>> Starting first run: run_name=${1:-Blurg}"
 python -m src.run.training_cluster --multirun \
     hydra.job.name=sweep09_sched \
-    model=metrics_vae_timm \
+    model=metric_vae_timm \
     model.ddconfig.name="Swin-Tiny" \
     model.ddconfig.dec_use_local_attn=False \
     model.ddconfig.latent_dim=128 \

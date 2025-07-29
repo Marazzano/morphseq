@@ -238,6 +238,7 @@ class NTXentLoss(nn.Module):
         self.gan_net = cfg.gan_net
         self.schedule_gan = cfg.schedule_gan
         self.gan_cfg = cfg.gan_cfg
+        # self.lambda_feat_match = cfg.lambda_feat_match
 
         # KLD
         self.schedule_kld = cfg.schedule_kld
