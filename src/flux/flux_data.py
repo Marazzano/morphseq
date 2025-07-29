@@ -6,24 +6,25 @@ import numpy as np
 import pytorch_lightning as pl
 
 class PairDataset(torch.utils.data.Dataset):
-    def __init__(self, z0, z1, exp_idx, emb_idx, T, dt):
-        # store CPU tensors (float32 + int64)
-        self.z0, self.z1 = z0, z1
-        self.exp_idx, self.emb_idx = exp_idx, emb_idx
+    def __init__(self, z0, z1, exp_idx, emb_idx, dt, temp):
+        self.z0 = z0
+        self.z1 = z1
+        self.exp_idx = exp_idx
+        self.emb_idx = emb_idx
         self.dt = dt
-        self.temp = T  
+        self.temp = temp
 
     def __len__(self):
         return self.z0.shape[0]
 
     def __getitem__(self, i):
-        dz = (self.z1[i] - self.z0[i]) / self.dt[i]   # finite diff target
         return {
             "z0": self.z0[i],
-            "dz": dz,
+            "z1": self.z1[i],
+            "dt": self.dt[i] / 3600.0,
             "exp": self.exp_idx[i],
             "emb": self.emb_idx[i],
-            "temp": self.temp[i] 
+            "temp": self.temp[i],
         }
     
 
@@ -105,75 +106,52 @@ def get_data_splits(df: pd.DataFrame,
 
 def build_training_data(embryo_df: pd.DataFrame, 
                         min_frames:int=5,
-                        max_dt:int=3600,
+                        max_dt:int=36000,
                         use_pca:bool=False,
-                        n_pca_components:int=10):
-    
-    """ 
-    Builds training data from the embryo DataFrame.
-    Args:
-        df (pd.DataFrame): DataFrame containing embryo metadata.
-        min_frames (int): Minimum number of frames for a valid embryo.
-        max_dt (int): Maximum time difference in seconds.
-        use_pca (bool): Whether to use PCA for dimensionality reduction.
-        n_pca_components (int): Number of PCA components to keep if use_pca is True.
-    Returns:
-        PairDataset: A dataset containing pairs of embeddings and their differences.
-    """
-    
-    # get z col names
-    latent_cols = [embryo_df.columns[i] for i in range(1, len(embryo_df.columns)) if embryo_df.columns[i].startswith("z_mu_b")]
+                        n_pca_components:int=10,
+                        n_steps:int=3):
+    """Build training pairs with fixed temporal step size (n_steps)."""
+    latent_cols = [c for c in embryo_df.columns if c.startswith("z_mu_b")]
     if use_pca:
-        # Apply PCA to the mu columns
         pca = PCA(n_components=n_pca_components)
-        mu_data = embryo_df[latent_cols].values
-        mu_data_pca = pca.fit_transform(mu_data)
+        pca_vals = pca.fit_transform(embryo_df[latent_cols].values)
         latent_cols = [f"pca_{i}" for i in range(n_pca_components)]
-        embryo_df[latent_cols] = mu_data_pca
+        embryo_df[latent_cols] = pca_vals
 
-    # generate IDs
     _, em_id = np.unique(embryo_df["embryo_id"], return_inverse=True)
     _, ex_id = np.unique(embryo_df["experiment_date"].astype(str), return_inverse=True)
     embryo_df["em_id"] = em_id.astype(int)
     embryo_df["ex_id"] = ex_id.astype(int)
 
-    # strip things down
-    merge_df0 = embryo_df.loc[:, ["em_id", "ex_id", "experiment_time", "temperature"] + latent_cols]
-    counts = merge_df0["em_id"].value_counts()
-    merge_df0 = merge_df0[merge_df0["em_id"].map(counts) >= min_frames]
-    merge_df0["row_idx"] = merge_df0.groupby("em_id").cumcount() 
-    merge_df0 = merge_df0.rename(columns={"experiment_time": "t"})
+    # Prune short embryos
+    embryo_df["row_idx"] = embryo_df.groupby("em_id").cumcount()
+    counts = embryo_df["em_id"].value_counts()
+    embryo_df = embryo_df[embryo_df["em_id"].map(counts) >= min_frames]
 
-    # create pairs
-    merge_df1 = merge_df0.copy()
-    merge_df0["row_idx"] += 1
+    df0 = embryo_df.copy()
+    df1 = embryo_df.copy()
+    df1["row_idx"] -= n_steps
 
-    merged_df = merge_df0.merge(merge_df1,
-                                on=["em_id", "row_idx"],
-                                how="inner",
-                                suffixes=("_0", "_1")
-                            )
-    merged_df["dt"] = merged_df["t_1"] - merged_df["t_0"]
-    merged_df = merged_df[(merged_df["dt"] > 0) & (merged_df["dt"] <= max_dt)]
+    merged = df0.merge(df1, on=["em_id", "row_idx"], suffixes=("_0", "_1"))
+    merged["dt"] = merged["experiment_time_1"] - merged["experiment_time_0"]
+    merged = merged[(merged["dt"] > 0) & (merged["dt"] <= max_dt)]
 
-    # create data arrays
-    z0 = merged_df[[f"{col}_0" for col in latent_cols]].values.astype("float32")
-    z1 = merged_df[[f"{col}_1" for col in latent_cols]].values.astype("float32")
-    exp_idx = merged_df["ex_id_0"].values
-    emb_idx = merged_df["em_id"].values
-    dt = merged_df["dt"].values.astype("float32")
-    T = merged_df["temperature_0"].values.astype("float32")  # time of first frame
+    z0 = merged[[f"{c}_1" for c in latent_cols]].values.astype("float32")
+    z1 = merged[[f"{c}_0" for c in latent_cols]].values.astype("float32")
+    dt = merged["dt"].values.astype("float32")
+    temp = merged["temperature_1"].values.astype("float32")
+    exp_idx = merged["ex_id_1"].values.astype("int64")
+    emb_idx = merged["em_id"].values.astype("int64")
 
-    ds = PairDataset(
-                    z0=torch.tensor(z0),
-                    z1=torch.tensor(z1),
-                    exp_idx=torch.tensor(exp_idx),
-                    emb_idx=torch.tensor(emb_idx),
-                    dt=torch.tensor(dt), 
-                    T=torch.tensor(T) 
-                )
+    # generate stripped-down dataset
+    # where we only keep the necessary columns
+    df_out = merged[["ex_id_1", "em_id", "snip_id_0", "embryo_id_0", "experiment_date_0", "experiment_time_1", "dt"] + [f"{c}_0" for c in latent_cols]].copy()
+    df_out.columns = ["_".join(col.split("_")[:-1]) for col in df_out.columns]
 
-    return ds, merged_df.loc[:, ["em_id", "dt"]].reset_index(drop=True)
+    ds = PairDataset(torch.tensor(z0), torch.tensor(z1), 
+                     torch.tensor(exp_idx), torch.tensor(emb_idx), 
+                     torch.tensor(dt), torch.tensor(temp))
+    return ds, merged[["em_id", "dt"]].reset_index(drop=True), df_out
 
 
 # class NVFData(pl.LightningDataModule):

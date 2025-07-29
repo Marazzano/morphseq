@@ -1,5 +1,8 @@
 config_target: src.models.model_configs.metricVAEConfig
 
+wandb:
+  project: sweep10
+  
 ddconfig:
   name: "Swin-Tiny" #"Efficient-B0-RA"
   input_dim: [1, 288, 128]
@@ -15,21 +18,25 @@ lossconfig:
   schedule_kld: True
   
   # Metric
+  schedule_metric: True
   metric_weight: 1.0
   temperature: 0.1
   margin: 1.0
-  schedule_metric: True
+  
 
   # PIPS
+  schedule_pips: True
   pips_flag: True
   pips_weight: 7.5
   pips_net: "vgg"
 
   # GAN
+  schedule_gan: True
   use_gan: True
   gan_weight: 1.0
-  gan_net: "style2"
-  schedule_gan: True
+  gan_net: "patch4scale"
+  lambda_feat_match: 10.0
+  
 
 dataconfig:
   target: "BasicDataset"

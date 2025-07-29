@@ -2,22 +2,15 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from typing import Sequence, Dict, Any
-from src.flux.flux_model import MLPVelocityField
+from src.flux.flux_model import MLPPotentialField
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import SubsetRandomSampler
 import torch.nn.functional as F
 
 
-class ClockNVF(pl.LightningModule):
-    """PyTorch‑Lightning module that trains a neural‑velocity field with
+class ClockNPF(pl.LightningModule):
+    """PyTorch‑Lightning module that trains a neural‑potential (and velocity) field with
     hierarchical (experiment → embryo) clock‑scaling.
-
-    Velocity model
-        v_pred = γ_{e,k} * f_θ(z)
-        γ_{e,k} = exp(log_s_e + δ_{e,k})
-    where
-        log_s_e  : learnable per‑experiment log‑scale
-        δ_{e,k}  : learnable embryo‑specific deviation with Gaussian shrinkage.
     """
 
     def __init__(
@@ -34,21 +27,26 @@ class ClockNVF(pl.LightningModule):
         lambda_curv: float = 0.1,  # regularization for curvature of the velocity field
         lambda_ang: float = 1,  # regularization for angular loss
         infer_embryo_clock: bool = False,
+        infer_temp_coeff: bool = True,
         hidden: Sequence[int] = (256, 128, 128),
         sigma: float = 0.2,  # shrinkage std‑dev for δ
         lr: float = 3e-4,
         weight_decay: float = 1e-4,
+        ref_temp:float = 28.0,
+        n_steps: int = 3,  # number of steps to predict
     ) -> None:
         
         super().__init__()
         self.save_hyperparameters()
 
         # shared geometry network f_θ
-        self.field = MLPVelocityField(dim, hidden)
+        self.field = MLPPotentialField(dim, hidden)
 
         # hierarchical clock parameters
         self.log_s = nn.Parameter(torch.zeros(num_exp))   # experiment speed (log‑space)
         self.delta = nn.Parameter(torch.zeros(num_embryo))  # embryo deviation
+        if infer_temp_coeff:
+            self.log_temp_coeff = nn.Parameter(torch.zeros(1))
 
         # dataset info
         self.ds = dataset
@@ -57,6 +55,7 @@ class ClockNVF(pl.LightningModule):
         self.train_indices = train_indices  # indices for training set
         self.val_indices = val_indices      # indices for validation set
 
+        self.n_euler_steps = n_steps
         # regularization hyper‑params
         self.sigma = sigma
         self.lambda_emb = lambda_emb  # regularization for embryo-specific deviations
@@ -67,47 +66,71 @@ class ClockNVF(pl.LightningModule):
         self.lr = lr
         self.weight_decay = weight_decay
         self.infer_embryo_clock = infer_embryo_clock
-
+        self.infer_temp_coeff = infer_temp_coeff  # whether to infer temperature coefficient
+        self.ref_temp = ref_temp
     # --------------------------------------------------------
     # Forward
     # --------------------------------------------------------
-    def forward(self, z: torch.Tensor, exp_idx: torch.Tensor, emb_idx: torch.Tensor) -> torch.Tensor:
-        """Predict velocity for latent positions *z*.
-
-        Args:
-            z:        (B, d) latent embeddings
-            exp_idx:  (B,) experiment indices (int)
-            emb_idx:  (B,) embryo indices (int)
-        Returns:
-            (B, d) velocity predictions
+    def forward(self, z: torch.Tensor, exp_idx: torch.Tensor, emb_idx: torch.Tensor, temp: torch.Tensor) -> torch.Tensor:
         """
+        Predict latent-space velocity from scalar potential field, modulated by experiment and embryo clocks.
+        """
+        # Log-scale rate modifiers
+        gamma_log = self.log_s[exp_idx]                     # (B,)
         if self.infer_embryo_clock:
-            gamma = torch.exp(self.log_s[exp_idx] + self.delta[emb_idx])  # (B,)
-        else:
-            gamma = torch.exp(self.log_s[exp_idx])
-            
-        return self.field(z) * gamma.unsqueeze(-1)
+            gamma_log += self.delta[emb_idx]                # (B,)
+        if self.infer_temp_coeff:
+            gamma_log += self.log_temp_coeff * (self.ref_temp-temp)  # (B,)
+
+        gamma = torch.exp(gamma_log)                        # (B,)
+
+        # Scalar potential prediction
+        phi = self.field(z) #.squeeze(-1)                          # (B, 1)
+
+        # Compute gradient w.r.t. inputs — ∇Φ(z)
+        grad = torch.autograd.grad(
+            outputs=phi.sum(),                              # scalar output for autograd
+            inputs=z,
+            create_graph=True,
+        )[0]                                                # (B, d)
+
+        # Modulate by gamma (broadcast across latent dim)
+        velocity = -grad * gamma.unsqueeze(-1)              # (B, d)
+
+        return velocity, phi
 
     # --------------------------------------------------------
     # Loss helpers
     # --------------------------------------------------------
-    def _loss(self, batch: Dict[str, torch.Tensor], scale_factor=1e4):
+    def _euler_rollout(self, z0, dt, n_steps, exp_idx, emb_idx, temp):
+        z = z0
+        for _ in range(n_steps):
+            z = z.detach().requires_grad_(True)  
+            with torch.enable_grad():
+                v, _ = self.forward(z, exp_idx, emb_idx, temp)
+            z = z + dt * v
+        return z
+
+    def _loss(self, batch: Dict[str, torch.Tensor], scale_factor=1):
+        
         z0 = batch["z0"]    # (B, d)
-        dz_target = batch["dz"]            # (B, d)
+        z1 = batch["z1"] 
+        dt = batch["dt"].view(-1, 1)            # (B, d)
         exp_idx = batch["exp"]      # (B,)
         emb_idx = batch["emb"]      # (B,)
-        
+        temp = batch["temp"]          # (B,)
+
         # finite‑difference velocity
-        dz_pred = self.forward(z0, exp_idx, emb_idx)
+        z_pred = self._euler_rollout(z0=z0, dt=dt, n_steps=self.n_euler_steps, exp_idx=exp_idx, emb_idx=emb_idx, temp=temp)
 
         # compute loss
 
         # MSE
-        loss_mse = scale_factor * torch.mean((dz_pred - dz_target) ** 2) # MSE
+        loss_mse = scale_factor * torch.mean((z1 - z_pred) ** 2) # MSE
 
         # cosine similarity
         # Angular loss
-        cos_sim  = F.cosine_similarity(dz_pred, dz_target, dim=-1)
+        cos_sim  = F.cosine_similarity(z_pred-z0, z1-z0, dim=-1)
         loss_ang = torch.mean(1 - cos_sim)
 
         # embryo term regularization
@@ -118,7 +141,7 @@ class ClockNVF(pl.LightningModule):
             curve_loss = scale_factor * self._curvature_loss(batch)
 
         # get total
-        loss = loss_mse + self.lambda_ang*loss_ang +  self.lambda_emb * loss_emb + self.lambda_curv * curve_loss
+        loss = loss_mse + self.lambda_curv * curve_loss # + self.lambda_ang*loss_ang +  self.lambda_emb * loss_emb 
 
         # calculate other metrics
         logs = {
@@ -128,7 +151,7 @@ class ClockNVF(pl.LightningModule):
             "curve_loss": curve_loss,
             "total": loss,
         }
-        logs = self._calculate_metrics(dz_target=dz_target, dz_pred=dz_pred, logs=logs)
+        # logs = self._calculate_metrics(dz_target=dz_target, dz_pred=dz_pred, logs=logs)
 
         return loss, logs
     
@@ -137,24 +160,28 @@ class ClockNVF(pl.LightningModule):
         """Compute Jacobian-norm penalty via Hutchinson’s estimator."""
 
         # 1️ make z0 a grad-tracking leaf
-        z0 = batch["z0"].detach().clone().requires_grad_(True)  # (B, d)
+        z0 = batch["z0"].clone().detach().requires_grad_(True)  # (B, d)
         exp_idx = batch["exp"]
         emb_idx = batch["emb"]
+        temp = batch["temp"]
 
         # 2️ forward on that same z0
-        dz_pred = self.forward(z0, exp_idx, emb_idx)            # (B, d)
+        vel, _ = self.forward(z0, exp_idx=exp_idx, emb_idx=emb_idx, temp=temp)            # (B, d)
 
         # 3️ Hutchinson trace estimator
-        v = torch.randn_like(z0)                                # probe
-        inner = (dz_pred * v).sum()                             # scalar
+        v = torch.randn_like(z0, device=z0.device)                              # probe
+        inner = (vel * v).sum()                             # scalar
         Jv = torch.autograd.grad(
             outputs=inner,
             inputs=z0,
             create_graph=True,
         )[0]                                                     # (B, d)
 
-        # 4️ mean squared norm = Frobenius norm^2 estimate
-        return (Jv ** 2).mean()
+        # Final estimate is squared norm of Jv
+        loss = (Jv ** 2).sum(dim=-1).mean()          # scalar
+
+        return loss
+    
     
     def _log_loss(self, logs: Dict[str, torch.Tensor], phase: str):
         """Log loss values for a given phase (train/val)."""
@@ -163,6 +190,7 @@ class ClockNVF(pl.LightningModule):
 
         # log total loss
         self.log(f"{phase}/total", logs["total"], prog_bar=True, on_epoch=True, on_step=False)
+
 
     def _calculate_metrics(self, 
                            dz_target: torch.Tensor,
@@ -228,7 +256,7 @@ class ClockNVF(pl.LightningModule):
             num_workers=self.num_workers,
             sampler=train_sampler,
             shuffle=False,
-            drop_last=True
+            drop_last=True,
         )
 
     def val_dataloader(self):

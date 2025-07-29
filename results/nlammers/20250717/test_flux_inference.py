@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     train_vector_nn(
         root=root,
-        run_name= "test_pca",
+        run_name= "test_potentia",
         wandb_entity="trap-zf-ml",
         wandb_project="dev-flux",
         use_pca=True,
