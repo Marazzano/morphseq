@@ -186,6 +186,10 @@ def calculate_detection_iou(box1_xyxy: List[float], box2_xyxy: List[float]) -> f
 
 
 class GroundedDinoAnnotations:
+    @property
+    def has_unsaved_changes(self) -> bool:
+        """Check for unsaved changes."""
+        return getattr(self, '_unsaved_changes', False)
     """
     GroundingDINO annotation manager with experiment metadata integration.
     
@@ -1239,13 +1243,13 @@ def gdino_inference_with_visualization(
                     results[image_name][prompt] = (boxes, logits, phrases, None)
 
                 if annotations_manager is not None:
-                    if len(boxes) > 0:
-                        annotations_manager.add_annotation(
-                            image_name, prompt, model, boxes, logits, phrases,
-                            inference_params or {"box_threshold": box_threshold, "text_threshold": text_threshold},
-                            image_source, overwrite=overwrite
-                        )
-                        image_has_new_annotations = True
+                    # Always add annotation, even if no detections (empty boxes)
+                    annotations_manager.add_annotation(
+                        image_name, prompt, model, boxes, logits, phrases,
+                        inference_params or {"box_threshold": box_threshold, "text_threshold": text_threshold},
+                        image_source, overwrite=overwrite
+                    )
+                    image_has_new_annotations = True
                 
                 if verbose:
                     print(f"      📍 Found {len(boxes)} detections")

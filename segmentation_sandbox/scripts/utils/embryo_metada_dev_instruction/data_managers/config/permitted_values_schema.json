@@ -52,27 +52,12 @@
   "zygosity_types": [
     "homozygous",
     "heterozygous",
-    "compound_heterozygous",
-    "hemizygous"
+    "crispant"
   ],
-  "priority_levels": [
-    "low",
-    "medium",
-    "high",
-    "critical"
-  ],
-  "flag_types": [
-    "quality",
-    "analysis",
-    "morphology",
-    "tracking",
-    "manual"
-  ],
+ 
   "treatment_types": [
     "chemical",
     "temperature",
-    "mechanical",
-    "genetic",
     "environmental"
   ]
 }

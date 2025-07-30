@@ -139,61 +139,10 @@ def main():
         return
 
     # =================================================================================
-    # PHASE 2: High-Quality Filtering for Base Model Annotations
+    # PHASE 2: High-Quality Filtering for Finetuned Model Annotations
     # =================================================================================
     print("\n" + "="*60)
-    print("🎯 PHASE 2: High-Quality Filtering for Base Model Annotations")
-    print("="*60)
-    
-    try:
-        # Get all image IDs that have individual embryo annotations
-        embryo_image_ids = []
-        for image_id, image_data in base_annotations.annotations.get("images", {}).items():
-            for annotation in image_data.get("annotations", []):
-                if annotation.get("prompt") == "individual embryo":
-                    embryo_image_ids.append(image_id)
-                    break
-        
-        print(f"Found {len(embryo_image_ids)} images with 'individual embryo' annotations")
-        
-        if embryo_image_ids:
-            print(f"🎯 Generating high-quality annotations for individual embryo...")
-            print(f"   Confidence threshold: {args.confidence_threshold}")
-            print(f"   IoU threshold: {args.iou_threshold}")
-            
-            result = base_annotations.generate_high_quality_annotations(
-                image_ids=embryo_image_ids,
-                prompt="individual embryo",
-                confidence_threshold=args.confidence_threshold,
-                iou_threshold=args.iou_threshold,
-                overwrite=True,
-                save_to_self=True
-            )
-            
-            base_annotations.save()
-            
-            # Print filtering results
-            stats = result["statistics"]
-            print(f"\n📊 Base Model Filtering Summary:")
-            print(f"   Original detections: {stats['original_detections']}")
-            print(f"   Confidence removed: {stats['confidence_removed']}")
-            print(f"   IoU removed: {stats['iou_removed']}")
-            print(f"   Final detections: {stats['final_detections']}")
-            print(f"   Retention rate: {stats['retention_rate']:.1%}")
-            print(f"   Final images: {stats['final_images']}")
-            
-            print("✅ Phase 2 complete: Base model quality filtering finished")
-        else:
-            print("⚠️ No individual embryo annotations found for filtering")
-            
-    except Exception as e:
-        print(f"❌ Error in Phase 2 (base model filtering): {e}")
-
-    # =================================================================================
-    # PHASE 3: High-Quality Filtering for Finetuned Model Annotations
-    # =================================================================================
-    print("\n" + "="*60)
-    print("🎯 PHASE 3: High-Quality Filtering for Finetuned Model Annotations")
+    print("🎯 PHASE 2: High-Quality Filtering for Finetuned Model Annotations")
     print("="*60)
     
     try:
@@ -245,29 +194,7 @@ def main():
     print("\n" + "="*60)
     print("📊 FINAL PIPELINE SUMMARY")
     print("="*60)
-    
-    print(f"\n📁 BASE MODEL ANNOTATIONS:")
-    print(f"   File: {args.base_annotations}")
-    
-    # Additional base model stats
-    base_total_images = len([img_id for img_id, img_data in base_annotations.annotations.get("images", {}).items() 
-                           if any(ann.get("prompt") == "individual embryo" for ann in img_data.get("annotations", []))])
-    base_total_detections = sum([ann.get("num_detections", 0) 
-                               for img_data in base_annotations.annotations.get("images", {}).values()
-                               for ann in img_data.get("annotations", [])
-                               if ann.get("prompt") == "individual embryo"])
-    base_hq_detections = sum([ann.get("num_detections", 0) 
-                            for img_data in base_annotations.annotations.get("images", {}).values()
-                            for ann in img_data.get("annotations", [])
-                            if ann.get("prompt") == "individual embryo" and ann.get("annotation_type") == "high_quality"])
-    
-    print(f"   📊 Base Model Stats:")
-    print(f"      • Images with detections: {base_total_images}")
-    print(f"      • Total detections: {base_total_detections}")
-    print(f"      • High-quality detections: {base_hq_detections}")
-    if base_total_detections > 0:
-        print(f"      • High-quality retention rate: {base_hq_detections/base_total_detections:.1%}")
-    
+        
     print(f"\n📁 FINETUNED MODEL ANNOTATIONS:")
     print(f"   File: {args.finetuned_annotations}")
     

@@ -29,7 +29,7 @@ Output Structure:
             │   └── 20240411_A01.mp4
             └── images/
                 └── 20240411_A01/
-                    └── 20240411_A01_0000.jpg
+                    └── 0000.jpg
 
 Usage:
     # Process specific experiments, creating/updating the metadata
