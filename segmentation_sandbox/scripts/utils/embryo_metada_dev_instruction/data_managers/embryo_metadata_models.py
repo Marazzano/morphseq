@@ -1,6 +1,6 @@
 """
 Embryo Metadata Data Models and Validation Implementation
-Auto-generated from module_2_data_models_and_validation.md
+
 """
 
 from typing import TypedDict, Optional, Dict, List, Union

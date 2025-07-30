@@ -526,8 +526,8 @@ class GroundedSamAnnotations:
         if experiment_ids:
             filtered_videos = set()
             for video_id in available_videos:
-                # Extract experiment_id from video_id (assume format: YYYYMMDD_A01_0000, experiment_id: YYYYMMDD)
-                exp_id = video_id.split('_')[0]
+                # Extract experiment_id from video_id (assume format: {experiment_id}_{well_id})
+                exp_id = '_'.join(video_id.split('_')[:-1])
                 if exp_id in experiment_ids:
                     filtered_videos.add(video_id)
             available_videos = filtered_videos
@@ -644,7 +644,7 @@ class GroundedSamAnnotations:
                 # Store results if successful
                 if sam2_results and video_metadata.get("sam2_success"):
                     # Extract experiment_id from video_id
-                    experiment_id = video_id.split('_')[0]
+                    experiment_id = '_'.join(video_id.split('_')[:-1])
                     
                     # Initialize experiment structure if needed
                     if experiment_id not in self.results["experiments"]:
@@ -767,7 +767,7 @@ class GroundedSamAnnotations:
                 
                 else:
                     # Store failed result
-                    experiment_id = video_id.split('_')[0]
+                    experiment_id = '_'.join(video_id.split('_')[:-1])
                     if experiment_id not in self.results["experiments"]:
                         self.results["experiments"][experiment_id] = {
                             "experiment_id": experiment_id,
@@ -850,7 +850,7 @@ class GroundedSamAnnotations:
         # Structure results for this video
         if sam2_results:
             # Extract experiment_id from video_id
-            experiment_id = video_id.split('_')[0]
+            experiment_id = '_'.join(video_id.split('_')[:-1])
             
             # Initialize experiment structure if needed
             if experiment_id not in self.results["experiments"]:
@@ -1631,47 +1631,28 @@ def group_annotations_by_video(annotations: Dict, target_prompt: str = "individu
     
     # Check for high-quality annotations first
     hq_annotations = annotations.get("high_quality_annotations", {})
-    if hq_annotations:
-        print(f"   Using high-quality annotations for prompt: '{target_prompt}'")
-        
-        for exp_id, exp_data in hq_annotations.items():
-            if exp_data.get("prompt") == target_prompt:
-                filtered_data = exp_data.get("filtered", {})
-                
-                for image_id, detections in filtered_data.items():
-                    # Extract video_id from image_id (format: experiment_well_frame)
-                    parts = image_id.split('_')
-                    if len(parts) >= 3:
-                        video_id = '_'.join(parts[:-1])  # experiment_well
-                        
-                        if detections:  # Only include if there are detections
-                            video_annotations[video_id][image_id] = detections
-    else:
-        # Fallback to regular annotations
-        print(f"   No high-quality annotations found, using regular annotations for prompt: '{target_prompt}'")
-        
-        for image_id, image_data in annotations.get("images", {}).items():
-            # Extract video_id from image_id
-            parts = image_id.split('_')
-            if len(parts) >= 3:
-                video_id = '_'.join(parts[:-1])
-                
-                # Extract detections for target prompt
-                detections = []
-                for annotation in image_data.get('annotations', []):
-                    if annotation.get('prompt') == target_prompt:
-                        detections.extend(annotation.get('detections', []))
-                
-                if detections:
-                    video_annotations[video_id][image_id] = detections
+    if not hq_annotations:
+        print(f"❌ No high-quality annotations found for prompt: '{target_prompt}'")
+        return {}
     
+    print(f"   Using high-quality annotations for prompt: '{target_prompt}'")
+    for exp_id, exp_data in hq_annotations.items():
+        if exp_data.get("prompt") == target_prompt:
+            filtered_data = exp_data.get("filtered", {})
+            for image_id, detections in filtered_data.items():
+                # Extract video_id from image_id (format: experiment_well_frame)
+                parts = image_id.split('_')
+                if len(parts) >= 3:
+                    video_id = '_'.join(parts[:-1])  # experiment_well
+                    # ALWAYS include the image, even if detections is empty
+                    video_annotations[video_id][image_id] = detections
+
     print(f"📊 Found annotations for {len(video_annotations)} videos")
     for video_id, image_annotations in video_annotations.items():
         total_detections = sum(len(dets) for dets in image_annotations.values())
         print(f"  {video_id}: {len(image_annotations)} images, {total_detections} detections")
-    
-    return dict(video_annotations)
 
+    return dict(video_annotations)
 def get_video_metadata_from_annotations(video_id: str, annotations: Dict) -> Optional[Dict]:
     """
     Extract video metadata from experiment metadata stored in annotations.
@@ -1704,7 +1685,7 @@ def get_video_metadata_from_annotations(video_id: str, annotations: Dict) -> Opt
     print(f"   📋 Available videos in metadata: {len(available_videos)} total")
     if available_videos:
         # Show some examples
-        exp_id = video_id.split('_')[0]
+        exp_id = '_'.join(video_id.split('_')[:-1])
         same_exp_videos = [v for v in available_videos if v.startswith(exp_id)]
         if same_exp_videos:
             print(f"   📋 Same experiment ({exp_id}) videos available: {same_exp_videos[:5]}...")
