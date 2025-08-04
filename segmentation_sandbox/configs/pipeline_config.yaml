@@ -16,9 +16,9 @@ paths:
   stitched_images_dir: "built_image_data/stitched_FF_images"
     
   # Mask directories (relative to morphseq_data_dir)
-  embryo_mask_root: "mask_data/embryo_mask_data"
-  yolk_mask_root: "mask_data/yolk_mask_data"
-  via_mask_root: "mask_data/via_annotation_data"
+  # embryo_mask_root: "mask_data/embryo_mask_data"
+  # yolk_mask_root: "mask_data/yolk_mask_data"
+  # via_mask_root: "mask_data/via_annotation_data"
   
   # Generated video directory (will be created by pipeline, relative to sandbox)
   morphseq_well_videos: "data/intermediate/morphseq_well_videos"
@@ -41,7 +41,8 @@ paths:
 models:
   groundingdino:
     config: "models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-    weights: "models/GroundingDINO/weights/groundingdino_swint_ogc.pth"
+    # weights: "models/GroundingDINO/weights/groundingdino_swint_ogc.pth"  # Original weights
+    weights: "/net/trapnell/vol1/home/mdcolon/proj/image_segmentation/Open-GroundingDino/finetune_output/finetune_output_run_nick_masks_20250308/checkpoint_best_regular.pth"
     
   sam2:
     config: "configs/sam2.1/sam2.1_hiera_l.yaml"
@@ -95,16 +96,4 @@ processing:
   jpeg_quality: 95
 
 # COCO dataset structure
-coco:
-  categories:
-    - id: 1
-      name: "embryo"
-    - id: 2
-      name: "dead embryo"
 
-# Logging configuration
-logging:
-  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  log_to_file: true
-  log_to_console: true
-  detailed_tracking: false  # Enable detailed tracking logs for debugging
