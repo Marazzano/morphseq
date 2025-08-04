@@ -1,4 +1,3 @@
-# base_file_handler.py
 """
 Base File Handler for MorphSeq Pipeline
 Handles JSON I/O, backups, and change tracking
