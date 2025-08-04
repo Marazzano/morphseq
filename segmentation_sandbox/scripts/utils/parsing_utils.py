@@ -408,6 +408,89 @@ def extract_unique_videos(entity_ids: list) -> list:
     return sorted(list(videos))
 
 
+# ========== ENTITY GROUPING UTILITIES ==========
+
+def group_by(entity_ids: list, group_type: str) -> dict:
+    """
+    Group entity IDs by hierarchical context.
+    
+    Args:
+        entity_ids: List of entity IDs to group
+        group_type: Type to group by ("experiment", "video", "embryo", etc.)
+        
+    Returns:
+        Dict mapping group_id to list of entity_ids
+        
+    Examples:
+        # Group images by video
+        group_by(image_ids, "video")
+        # {"20240411_A01": ["20240411_A01_t0000", "20240411_A01_t0001"], ...}
+        
+        # Group snips by embryo  
+        group_by(snip_ids, "embryo")
+        # {"20240411_A01_e01": ["20240411_A01_e01_s0000", "20240411_A01_e01_s0001"], ...}
+    """
+    grouped = {}
+    group_key = f"{group_type}_id"
+    
+    for entity_id in entity_ids:
+        try:
+            parsed = parse_entity_id(entity_id)
+            parent_id = parsed.get(group_key)
+            
+            if parent_id:
+                if parent_id not in grouped:
+                    grouped[parent_id] = []
+                grouped[parent_id].append(entity_id)
+        except ValueError:
+            # Skip invalid entity IDs
+            continue
+    
+    return grouped
+
+
+def group_entities_by_hierarchy(entity_ids: list) -> dict:
+    """
+    Group entities by all hierarchy levels simultaneously.
+    
+    Returns:
+        Dict with keys: experiments, videos, images, embryos, snips
+    """
+    return {
+        "experiments": group_by(entity_ids, "experiment"),
+        "videos": group_by(entity_ids, "video"),
+        "images": group_by(entity_ids, "image"),  # Will be empty for most cases
+        "embryos": group_by(entity_ids, "embryo"),
+        "snips": {}  # Snips are leaf nodes, no grouping needed
+    }
+
+
+def get_entities_by_type(entity_ids: list) -> dict:
+    """
+    Categorize entity IDs by their entity type.
+    
+    Returns:
+        Dict with lists: experiments, videos, images, embryos, snips
+    """
+    categorized = {
+        "experiments": [],
+        "videos": [], 
+        "images": [],
+        "embryos": [],
+        "snips": []
+    }
+    
+    for entity_id in entity_ids:
+        try:
+            entity_type = get_entity_type(entity_id)
+            if entity_type in categorized:
+                categorized[entity_type].append(entity_id)
+        except ValueError:
+            continue
+    
+    return categorized
+
+
 # ========== BACKWARD COMPATIBILITY ==========
 
 def get_image_path_from_id(image_id: str, base_path: str = "raw_data_organized") -> str:

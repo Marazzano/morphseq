@@ -1202,7 +1202,7 @@ def gdino_inference_with_visualization(
                 
             except Exception as e:
                 if verbose:
-                    print(f"❌ Error processing {image_path.name} with prompt '{prompt}': {e}")
+                    print(f"❌ Error processing image_id '{image_id}' ({image_path.name}) with prompt '{prompt}': {e}")
                 continue
         
         if image_results:
