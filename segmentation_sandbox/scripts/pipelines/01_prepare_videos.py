@@ -94,6 +94,10 @@ Examples:
         help="Comma-separated list of experiment names to process (default: all)"
     )
     parser.add_argument(
+        "--entities_to_process", 
+        help="Comma-separated list of entities to process (experiments, videos, or images)"
+    )
+    parser.add_argument(
         "--workers", 
         type=int, 
         default=8, 
@@ -127,9 +131,15 @@ Examples:
         print(f"❌ Error: Input directory does not exist: {input_dir}")
         sys.exit(1)
     
-    # Parse experiment list
+    # Parse experiment list (support both argument formats)
     experiment_names = None
-    if args.experiments_to_process:
+    if args.entities_to_process:
+        # New unified format - assume all entities are experiments for this step
+        experiment_names = [e.strip() for e in args.entities_to_process.split(",")]
+        if args.verbose:
+            print(f"📋 Will process specific entities (as experiments): {experiment_names}")
+    elif args.experiments_to_process:
+        # Legacy format for backward compatibility
         experiment_names = [e.strip() for e in args.experiments_to_process.split(",")]
         if args.verbose:
             print(f"📋 Will process specific experiments: {experiment_names}")

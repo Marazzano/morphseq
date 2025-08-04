@@ -15,8 +15,8 @@ class VideoConfig:
     
     # Font settings
     FONT = cv2.FONT_HERSHEY_SIMPLEX
-    FONT_SCALE = 1.0
-    FONT_THICKNESS = 2
+    FONT_SCALE = 3  # Increased from 1.0 for bigger image_id overlay
+    FONT_THICKNESS = 4
     
     # Default text settings
     TEXT_COLOR = (255, 255, 255)  # White

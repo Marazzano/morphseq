@@ -65,13 +65,41 @@ class BaseFileHandler:
             raise
     
     def _create_backup(self, file_path: Path) -> Path:
-        """Create timestamped backup."""
+        """Create timestamped backup and clean up old ones."""
+        # Create new backup first
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = file_path.with_suffix(f'.backup.{timestamp}{file_path.suffix}')
         shutil.copy2(file_path, backup_path)
         if self.verbose:
             print(f"📦 Created backup: {backup_path.name}")
+        
+        # Then clean up old backups
+        self._cleanup_old_backups(file_path)
+        
         return backup_path
+    
+    def _cleanup_old_backups(self, file_path: Path, keep_count: int = 1) -> None:
+        """Remove old backup files, keeping only the most recent ones."""
+        backup_pattern = f"{file_path.stem}.backup.*{file_path.suffix}"
+        backup_files = sorted(
+            file_path.parent.glob(backup_pattern),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True  # Most recent first
+        )
+        
+        # Remove old backups beyond keep_count
+        for old_backup in backup_files[keep_count:]:
+            try:
+                old_backup.unlink()
+                if self.verbose:
+                    print(f"🗑️  Removed old backup: {old_backup.name}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"⚠️  Could not remove backup {old_backup.name}: {e}")
+    
+    def cleanup_backups(self, keep_count: int = 1) -> None:
+        """Manually clean up backup files, keeping only the most recent ones."""
+        self._cleanup_old_backups(self.filepath, keep_count)
     
     # Change tracking
     def log_operation(self, operation: str, entity_id: str = None, **kwargs):
