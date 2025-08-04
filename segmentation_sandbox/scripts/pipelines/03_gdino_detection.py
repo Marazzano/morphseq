@@ -62,10 +62,8 @@ def main():
                        help="Detection prompt (default: individual embryo)")
     
     # Processing options
-    parser.add_argument("--experiment-ids", nargs="*", default=None,
-                       help="Specific experiment IDs to process")
-    parser.add_argument("--video-ids", nargs="*", default=None,
-                       help="Specific video IDs to process")
+    parser.add_argument("--entities_to_process", default=None,
+                       help="Comma-separated list of entities to process (experiments, videos, or images)")
     parser.add_argument("--max-images", type=int, default=None,
                        help="Maximum number of images to process (for testing)")
     parser.add_argument("--auto-save-interval", type=int, default=100,
@@ -91,28 +89,54 @@ def main():
     print(f"📊 Loaded metadata: {metadata_manager}")
 
     # Get target images
-    if args.experiment_ids:
-        print(f"🎯 Processing specific experiments: {args.experiment_ids}")
+    if args.entities_to_process:
+        # Parse comma-separated entities and let parsing utilities figure out what they are
+        entity_list = [entity.strip() for entity in args.entities_to_process.split(',')]
+        print(f"🎯 Processing entities: {entity_list}")
+        
         target_images = []
-        for exp_id in args.experiment_ids:
-            exp_images = metadata_manager.list_images(experiment_id=exp_id)
-            target_images.extend(exp_images)
-            print(f"   {exp_id}: {len(exp_images)} images")
-    elif args.video_ids:
-        print(f"🎯 Processing specific videos: {args.video_ids}")
-        target_images = []
-        for video_id in args.video_ids:
-            video_images = []
-            # Find experiment for this video
-            for exp_id in metadata_manager.list_experiments():
-                if video_id in metadata_manager.list_videos(exp_id):
-                    video_images = metadata_manager.list_images(exp_id, video_id)
-                    break
-            target_images.extend(video_images)
-            print(f"   {video_id}: {len(video_images)} images")
+        experiments_found = []
+        videos_found = []
+        images_found = []
+        
+        for entity in entity_list:
+            # Try to determine entity type using metadata manager
+            if entity in metadata_manager.list_experiments():
+                # It's an experiment
+                exp_images = metadata_manager.list_images(experiment_id=entity)
+                target_images.extend(exp_images)
+                experiments_found.append(entity)
+                print(f"   📁 Experiment {entity}: {len(exp_images)} images")
+            else:
+                # Check if it's a video by looking through all experiments
+                video_found = False
+                for exp_id in metadata_manager.list_experiments():
+                    if entity in metadata_manager.list_videos(exp_id):
+                        video_images = metadata_manager.list_images(exp_id, entity)
+                        target_images.extend(video_images)
+                        videos_found.append(entity)
+                        print(f"   🎬 Video {entity}: {len(video_images)} images")
+                        video_found = True
+                        break
+                
+                if not video_found:
+                    # Assume it's an image ID
+                    if entity in metadata_manager.list_images():
+                        target_images.append(entity)
+                        images_found.append(entity)
+                        print(f"   🖼️ Image {entity}")
+                    else:
+                        print(f"   ⚠️ Entity '{entity}' not found in metadata")
+        
+        print(f"📊 Found: {len(experiments_found)} experiments, {len(videos_found)} videos, {len(images_found)} images")
+        # Set the parsed entities for later use
+        parsed_experiment_ids = experiments_found if experiments_found else None
+        parsed_video_ids = videos_found if videos_found else None
     else:
         target_images = metadata_manager.list_images()
         print(f"📊 Processing all images: {len(target_images)}")
+        parsed_experiment_ids = None
+        parsed_video_ids = None
 
     if args.max_images and len(target_images) > args.max_images:
         target_images = target_images[:args.max_images]
@@ -139,9 +163,9 @@ def main():
         results = annotations.process_missing_annotations(
             model=model,
             prompts=args.prompt,
-            experiment_ids=args.experiment_ids,
-            video_ids=args.video_ids,
-            image_ids=target_images if not args.experiment_ids and not args.video_ids else None,
+            experiment_ids=parsed_experiment_ids,
+            video_ids=parsed_video_ids,
+            image_ids=target_images if not parsed_experiment_ids and not parsed_video_ids else None,
             auto_save_interval=args.auto_save_interval,
             store_image_source=False,
             show_anno=False,

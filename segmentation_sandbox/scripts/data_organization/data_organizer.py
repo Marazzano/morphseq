@@ -90,9 +90,18 @@ from typing import List, Optional, Dict, Tuple
 import re
 import json
 import shutil
+import sys
 from datetime import datetime
 from collections import defaultdict
 import cv2
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Try to import tqdm for progress bars
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
 
 # Try to import pyvips for fast image conversion
 try:
@@ -129,6 +138,12 @@ except ImportError:
 class DataOrganizer:
     """
     Organizes raw stitched images into a standard structure and creates videos/metadata.
+    
+    Performance Notes:
+    - Uses pyvips when available for faster image I/O (install with: pip install pyvips)
+    - Falls back to OpenCV when pyvips is not available (slower)
+    - Parallel processing with ThreadPoolExecutor for JPEG conversion
+    - Smart skip logic to avoid reprocessing existing files
     """
     @staticmethod
     def validate_entity_tracking_completeness(metadata, verbose=False):
@@ -203,6 +218,8 @@ class DataOrganizer:
             print(f"📂 Output directory: {raw_data_dir}")
             print(f"📋 Metadata file: {metadata_path}")
             print(f"🔄 Overwrite mode: {overwrite}")
+            if not PYVIPS_AVAILABLE:
+                print("⚠️  PyVips not available - using OpenCV (slower). Install with: pip install pyvips")
 
         # Load existing metadata to check what's already processed
         existing_metadata = {}
@@ -455,7 +472,6 @@ class DataOrganizer:
         
         video_path = vids_dir / f"{video_id}.mp4"
         
-        # Check if video already exists
         if video_path.exists() and not overwrite:
             if verbose:
                 print(f"     ⏭️  Video already exists: {video_path.name}")
@@ -463,47 +479,81 @@ class DataOrganizer:
         
         if verbose:
             print(f"     📸 Converting {len(image_files)} images to JPEG...")
-            
-        jpeg_paths = []
-        converted_count = 0
-        skipped_count = 0
         
-        for stitch_path, frame in sorted(image_files, key=lambda x: x[1]):
-            jpeg_filename = f"{str(frame).zfill(4)}.jpg"
-            jpeg_path = images_dir / jpeg_filename
+        # Parallel JPEG conversion with tqdm progress bar and smart skipping
+        jpeg_paths = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {}
+            sorted_images = sorted(image_files, key=lambda x: x[1])
+            total_images = len(sorted_images)
             
-            # Skip if JPEG already exists and not overwriting
-            if jpeg_path.exists() and not overwrite:
-                skipped_count += 1
-                jpeg_paths.append(jpeg_path)
-                continue
+            if TQDM_AVAILABLE and verbose:
+                pbar = tqdm(total=total_images, desc=f"{video_id} JPEG conversion", leave=False)
+            else:
+                pbar = None
+            
+            # First pass: collect existing files and queue new conversions
+            for stitch_path, frame in sorted_images:
+                jpeg_filename = f"{str(frame).zfill(4)}.jpg"
+                jpeg_path = images_dir / jpeg_filename
                 
-            # Convert to JPEG
-            DataOrganizer.convert_to_jpeg(stitch_path, jpeg_path)
-            converted_count += 1
-            jpeg_paths.append(jpeg_path)
+                if jpeg_path.exists() and not overwrite:
+                    # File exists, add to collection and update progress
+                    jpeg_paths.append((frame, jpeg_path))
+                    if pbar:
+                        pbar.update(1)
+                    continue
+                
+                # Queue for conversion
+                future = executor.submit(DataOrganizer.convert_to_jpeg, stitch_path, jpeg_path)
+                futures[future] = (frame, jpeg_path)
+            
+            # Second pass: collect conversion results
+            for future in as_completed(futures):
+                frame, jpeg_path = futures[future]
+                try:
+                    future.result()
+                    jpeg_paths.append((frame, jpeg_path))
+                except Exception as e:
+                    print(f"Failed to convert frame {frame}: {e}")
+                if pbar:
+                    pbar.update(1)
+            
+            if pbar:
+                pbar.close()
+        
+        # Sort by frame number and extract paths
+        jpeg_paths.sort(key=lambda x: x[0])
+        sorted_paths = [path for _, path in jpeg_paths]
         
         if verbose:
-            print(f"     ✅ Converted {converted_count} new images, skipped {skipped_count} existing")
-            
-        # Create video if it doesn't exist or we're overwriting
-        if not video_path.exists() or overwrite:
-            if verbose:
-                status = "Creating" if not video_path.exists() else "Recreating"
-                print(f"     🎥 {status} video: {video_path.name}")
-            DataOrganizer.create_video_from_jpegs(jpeg_paths, video_path, video_id, verbose)
-        elif verbose:
-            print(f"     ⏭️  Video already exists: {video_path.name}")
+            # Simplified statistics - avoid complex calculations during processing
+            converted_count = len(futures)  # Number of files we actually converted
+            existing_count = len(sorted_paths) - converted_count  # Files that already existed
+            print(f"     ✅ Processed {len(sorted_paths)} images ({converted_count} converted, {existing_count} existing)")
+        
+        # Create video (sequential)
+        DataOrganizer.create_video_from_jpegs(sorted_paths, video_path, video_id, verbose)
 
     @staticmethod
     def convert_to_jpeg(source_path, target_path, quality=90):
+        """
+        Convert image to JPEG using pyvips when available for speed, fallback to OpenCV.
+        This matches the performance optimizations from the original 01_prepare_videos.py
+        """
         try:
             if PYVIPS_AVAILABLE:
-                img = pyvips.Image.new_from_file(str(source_path))
-                if img.bands == 4:
-                    img = img[:3]
+                # Use pyvips for faster processing (matches original implementation)
+                img = pyvips.Image.new_from_file(str(source_path), access='sequential')
+                
+                # Convert to RGB if needed (pyvips handles this automatically)
+                if img.bands == 4:  # RGBA
+                    img = img[:3]  # Take only RGB channels
+                
+                # Save as JPEG with specified quality
                 img.write_to_file(str(target_path), Q=quality)
             else:
+                # Fallback to OpenCV (original fallback implementation)
                 image = cv2.imread(str(source_path))
                 if image is not None:
                     if len(image.shape) == 3 and image.shape[2] == 4:
@@ -601,15 +651,18 @@ class DataOrganizer:
         experiment_dirs = [d for d in Path(raw_data_dir).iterdir() if d.is_dir() and d.name != "experiment_metadata.json"]
         if verbose:
             print(f"📂 Scanning {len(experiment_dirs)} experiment directories...")
-            
-        for exp_dir in experiment_dirs:
+        
+        # Add progress bar for scanning experiments
+        experiment_iter = tqdm(experiment_dirs, desc="Scanning experiments", disable=not verbose) if TQDM_AVAILABLE and verbose else experiment_dirs
+        
+        for exp_dir in experiment_iter:
             experiment_id = exp_dir.name
-            if verbose:
+            if verbose and not TQDM_AVAILABLE:
                 print(f"   📊 Scanning experiment: {experiment_id}")
-            exp_metadata = DataOrganizer.scan_experiment_directory(exp_dir, experiment_id, verbose)
+            exp_metadata = DataOrganizer.scan_experiment_directory(exp_dir, experiment_id, verbose and not TQDM_AVAILABLE)
             if exp_metadata["videos"]:
                 metadata["experiments"][experiment_id] = exp_metadata
-            elif verbose:
+            elif verbose and not TQDM_AVAILABLE:
                 print(f"   ⚠️  No videos found for experiment: {experiment_id}")
         return metadata
 
@@ -630,17 +683,20 @@ class DataOrganizer:
         video_files = list(vids_dir.glob("*.mp4"))
         if verbose:
             print(f"     🎬 Found {len(video_files)} video files")
-            
-        for video_file in video_files:
+        
+        # Add progress bar for videos within experiment
+        video_iter = tqdm(video_files, desc=f"Scanning {experiment_id} videos", leave=False, disable=not TQDM_AVAILABLE or not verbose) if len(video_files) > 10 else video_files
+        
+        for video_file in video_iter:
             video_id = video_file.stem
             video_images_dir = images_dir / video_id
             if video_images_dir.exists():
-                if verbose:
+                if verbose and not TQDM_AVAILABLE:
                     image_count = len(list(video_images_dir.glob("*.jpg")))
                     print(f"       📸 Video {video_id}: {image_count} images")
                 video_metadata = DataOrganizer.scan_video_directory(video_id, video_file, video_images_dir)
                 exp_metadata["videos"][video_id] = video_metadata
-            elif verbose:
+            elif verbose and not TQDM_AVAILABLE:
                 print(f"       ⚠️  No images directory for video: {video_id}")
         return exp_metadata
 
@@ -656,46 +712,21 @@ class DataOrganizer:
             "processed_jpg_images_dir": str(images_dir),
             "image_ids": [],
             "total_frames": 0,
-            "image_size": None  # Will be [width, height]
+            "image_size": None  # Will be populated if needed by other modules
         }
+        
+        # Fast scan: just generate image IDs from filenames (no image loading!)
         jpeg_files = sorted(images_dir.glob("*.jpg"))
         image_ids = []
-        image_sizes = []
         
         for jpeg_file in jpeg_files:
             frame = jpeg_file.stem
             image_id = f"{experiment_id}_{well_id}_t{frame}"
             image_ids.append(image_id)
-            
-            # Check image dimensions
-            try:
-                img = cv2.imread(str(jpeg_file))
-                if img is not None:
-                    height, width = img.shape[:2]
-                    image_sizes.append((width, height))
-            except Exception as e:
-                print(f"Warning: Could not read image dimensions for {jpeg_file}: {e}")
-        
-        # Validate all images have same dimensions
-        if image_sizes:
-            unique_sizes = list(set(image_sizes))
-            if len(unique_sizes) == 1:
-                # All images same size - good!
-                video_metadata["image_size"] = list(unique_sizes[0])  # [width, height]
-            else:
-                # Mixed sizes - use most common (mode)
-                from collections import Counter
-                size_counts = Counter(image_sizes)
-                mode_size = size_counts.most_common(1)[0][0]
-                video_metadata["image_size"] = list(mode_size)  # [width, height]
-                print(f"Warning: Video {video_id} has mixed image sizes. Found {len(unique_sizes)} different sizes.")
-                print(f"         Using most common size: {mode_size[0]}x{mode_size[1]} (appears {size_counts[mode_size]} times)")
-                for size, count in size_counts.items():
-                    if size != mode_size:
-                        print(f"         Other size: {size[0]}x{size[1]} (appears {count} times)")
         
         video_metadata["image_ids"] = image_ids
         video_metadata["total_frames"] = len(image_ids)
+        
         return video_metadata
 
     @staticmethod
