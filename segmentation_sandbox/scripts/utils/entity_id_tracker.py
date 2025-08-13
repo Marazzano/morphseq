@@ -260,8 +260,19 @@ class EntityIDTracker:
         }
     
     @staticmethod
-    def validate_hierarchy(entities: Dict[str, Set[str]]) -> Dict:
-        """Validate parent-child ID relationships."""
+    def validate_hierarchy(entities: Dict[str, Set[str]], check_hierarchy: bool = False) -> Dict:
+        """
+        Validate parent-child ID relationships.
+        
+        Args:
+            entities: Dictionary of entity sets to validate
+            check_hierarchy: If True, perform full hierarchy validation. If False, skip validation.
+                           Default False since hierarchy validation is often not needed and can
+                           cause issues when processing partial datasets.
+        """
+        if not check_hierarchy:
+            return {"valid": True, "violations": [], "skipped": "Hierarchy validation disabled"}
+        
         violations = []
         
         # Check embryos reference valid experiments

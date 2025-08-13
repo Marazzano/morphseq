@@ -74,6 +74,35 @@ def main():
     print("🚀 Starting GroundingDINO Detection with Quality Filtering (Module 2)")
     print("=" * 70)
 
+    # EARLY CHECK: Initialize annotations manager first to see if work is needed
+    print("🔍 Quick check: Do we need to do any work?")
+    annotations = GroundedDinoAnnotations(args.annotations, verbose=False, metadata_path=args.metadata)
+    
+    # Quick check for existing HQ annotations - but only do this if we have specific entities
+    # Otherwise, we need to do the full check after loading metadata
+    if args.entities_to_process and not args.skip_filtering:
+        print(f"⚡ Quick check: Do HQ annotations exist for specific entities?")
+        
+        # Do a very quick check for the specific entities
+        basic_missing = annotations.get_missing_annotations(
+            prompts=[args.prompt],  # Convert string to list
+            experiment_ids=args.entities_to_process.split(',') if args.entities_to_process else None,
+            consider_different_if_different_weights=True,
+        )
+        
+        if not basic_missing or not basic_missing.get(args.prompt, []):
+            print("⚡ No new work needed - all annotations exist for specified entities!")
+            annotations.print_summary()
+            print("✅ GroundingDINO detection generation completed!")
+            return
+        else:
+            print(f"⚡ Found {len(basic_missing.get(args.prompt, []))} images needing work")
+    
+    # If no specific entities provided, we'll do the full check after loading metadata
+
+    # If we get here, we need to do work, so load everything properly
+    print("🔧 Loading full pipeline components...")
+
     # Load config and setup device
     config = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -149,39 +178,62 @@ def main():
     print(f"🔍 PHASE 1: GroundingDINO Detection ('{args.prompt}')")
     print("="*60)
 
-    # Initialize annotations manager with metadata integration
-    annotations = GroundedDinoAnnotations(args.annotations, verbose=True, metadata_path=args.metadata)
+    # Use the annotations manager we already created in the early check
+    annotations.verbose = True  # Turn on verbose output for the actual processing phase
     print(f"💾 Annotations will be saved to: {args.annotations}")
 
-    try:
-        # Load model
-        model = load_groundingdino_model(config, device=device)
-        print("✅ Model loaded successfully")
-
-        # Process missing annotations
-        print(f"🔄 Processing annotations for prompt: '{args.prompt}'")
-        results = annotations.process_missing_annotations(
-            model=model,
-            prompts=args.prompt,
-            experiment_ids=parsed_experiment_ids,
-            video_ids=parsed_video_ids,
-            image_ids=target_images if not parsed_experiment_ids and not parsed_video_ids else None,
-            auto_save_interval=args.auto_save_interval,
-            store_image_source=False,
-            show_anno=False,
-            overwrite=False,
-            consider_different_if_different_weights=True,
-        )
+    # Check what needs to be processed BEFORE loading the model
+    print("🔍 Checking for missing annotations...")
+    missing_images = annotations.get_missing_annotations(
+        prompts=[args.prompt],  # Convert string to list
+        experiment_ids=parsed_experiment_ids,
+        video_ids=parsed_video_ids,
+        image_ids=target_images if not parsed_experiment_ids and not parsed_video_ids else None,
+        consider_different_if_different_weights=True,
+    )
+    
+    new_work_done = False  # Track if we actually processed anything new
+    
+    # Extract the actual missing image list for our prompt
+    missing_image_list = missing_images.get(args.prompt, [])
+    
+    if not missing_image_list:
+        print("✅ No missing annotations found - all images already processed!")
+        print("✅ Phase 1 complete: No detection needed")
+    else:
+        print(f"📊 Found {len(missing_image_list)} images needing annotation")
         
-        print(f"✅ Processed {len(results)} images")
-        annotations.save()
-        print("✅ Phase 1 complete: Detection finished")
+        try:
+            # Only load model if there's work to do
+            print("🔄 Loading GroundingDINO model...")
+            model = load_groundingdino_model(config, device=device)
+            print("✅ Model loaded successfully")
 
-    except Exception as e:
-        print(f"❌ Error in Phase 1 (detection): {e}")
-        import traceback
-        traceback.print_exc()
-        return
+            # Process missing annotations
+            print(f"🔄 Processing annotations for prompt: '{args.prompt}'")
+            results = annotations.process_missing_annotations(
+                model=model,
+                prompts=args.prompt,  # Keep as string - process_missing_annotations handles conversion
+                experiment_ids=parsed_experiment_ids,
+                video_ids=parsed_video_ids,
+                image_ids=target_images if not parsed_experiment_ids and not parsed_video_ids else None,
+                auto_save_interval=args.auto_save_interval,
+                store_image_source=False,
+                show_anno=False,
+                overwrite=False,
+                consider_different_if_different_weights=True,
+            )
+            
+            print(f"✅ Processed {len(results)} images")
+            annotations.save()
+            print("✅ Phase 1 complete: Detection finished")
+            new_work_done = len(results) > 0  # Track if we actually did work
+
+        except Exception as e:
+            print(f"❌ Error in Phase 1 (detection): {e}")
+            import traceback
+            traceback.print_exc()
+            return
 
     # Skip filtering if requested
     if args.skip_filtering:
@@ -189,6 +241,23 @@ def main():
         annotations.print_summary()
         print("✅ GroundingDINO detection generation completed!")
         return
+
+    # Skip filtering if no new work was done and HQ annotations already exist
+    if not new_work_done:
+        existing_hq = annotations.annotations.get("high_quality_annotations", {})
+        # Check if HQ annotations exist for the target prompt (proper structure check)
+        hq_exists = False
+        if existing_hq:
+            for exp_data in existing_hq.values():
+                if exp_data.get('prompt') == args.prompt and exp_data.get('filtered'):
+                    hq_exists = True
+                    break
+        
+        if hq_exists:
+            print(f"\n⏭️ Skipping quality filtering - no new work done and HQ annotations already exist for '{args.prompt}'.")
+            annotations.print_summary()
+            print("✅ GroundingDINO detection generation completed!")
+            return
 
     # =================================================================================
     # PHASE 2: High-Quality Filtering

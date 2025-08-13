@@ -502,7 +502,7 @@ class ExperimentMetadata(BaseFileHandler):
             )
         
         # Use parsing utils for path components (fallback)
-        from utils.parsing_utils import get_relative_image_path
+        from scripts.utils.parsing_utils import get_relative_image_path
         relative_path = get_relative_image_path(image_id, extension)
         
         return use_base / experiment_id / relative_path
@@ -528,7 +528,7 @@ class ExperimentMetadata(BaseFileHandler):
             raise ValueError("No base path configured. Use set_base_data_path() or provide base_path parameter.")
         
         # Use parsing utils for path components
-        from utils.parsing_utils import get_relative_video_path
+        from scripts.utils.parsing_utils import get_relative_video_path
         relative_path = get_relative_video_path(video_id)
         experiment_id = extract_experiment_id(video_id)
         
