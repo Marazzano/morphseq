@@ -600,9 +600,9 @@ class GroundedSamAnnotations(BaseFileHandler):
                 processing_stats["errors"] += 1
                 if self.verbose:
                     print(f"❌ Error processing {video_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
                 continue
-        
-        # Final save
         self.save()
         
         if self.verbose:
@@ -723,6 +723,8 @@ class GroundedSamAnnotations(BaseFileHandler):
             
             if self.verbose:
                 print(f"❌ Video {video_id} processing failed: {e}")
+                import traceback
+                traceback.print_exc()
             
             raise
 
@@ -822,82 +824,21 @@ def extract_frame_suffix(image_id: str) -> str:
 
 
 def convert_sam2_mask_to_rle(binary_mask: np.ndarray) -> Dict:
-    """Convert SAM2 binary mask to RLE format for compact storage."""
-    try:
-        from pycocotools import mask as mask_utils
-    except ImportError:
-        raise ImportError("pycocotools required for RLE encoding. Install with: pip install pycocotools")
-
-    if binary_mask.dtype != np.uint8:
-        binary_mask = binary_mask.astype(np.uint8)
-
-    binary_mask_fortran = np.asfortranarray(binary_mask)
-    rle_result = mask_utils.encode(binary_mask_fortran)
-
-    # Standard COCO RLE: dict with 'counts' as bytes, or list of dicts for multi-object
-    if isinstance(rle_result, dict):
-        # Single mask: ensure 'counts' is a string
-        counts = rle_result['counts']
-        if isinstance(counts, bytes):
-            counts = counts.decode('utf-8')
-        rle_result['counts'] = counts
-        return rle_result
-    elif isinstance(rle_result, list):
-        # Multi-object: join all counts as strings (rare for binary mask)
-        # For single-object binary mask, this should not occur, but handle for robustness
-        result_dict = {'counts': [], 'size': binary_mask.shape}
-        for rle in rle_result:
-            counts = rle['counts']
-            if isinstance(counts, bytes):
-                counts = counts.decode('utf-8')
-            result_dict['counts'].append(counts)
-        # Optionally, join all counts into a single string (not standard, but for compactness)
-        result_dict['counts'] = ''.join(result_dict['counts'])
-        return result_dict
-    else:
-        # Fallback for unexpected types
-        return {'counts': str(rle_result), 'size': binary_mask.shape}
+    """Convert SAM2 binary mask to RLE format using simple mask_utils."""
+    from scripts.utils.mask_utils import encode_mask_complete
+    return encode_mask_complete(binary_mask)
 
 
 def convert_sam2_mask_to_polygon(binary_mask: np.ndarray) -> List[List[float]]:
-    """Convert SAM2 binary mask to polygon format."""
-    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    polygons = []
-    for contour in contours:
-        if len(contour) >= 3:  # Valid polygon needs at least 3 points
-            polygon = contour.flatten().tolist()
-            polygons.append(polygon)
-    
-    return polygons
+    """Convert SAM2 binary mask to polygon format using mask_utils."""
+    from scripts.utils.mask_utils import mask_to_polygon
+    return mask_to_polygon(binary_mask)
 
 
 def extract_bbox_from_mask(binary_mask: np.ndarray) -> List[float]:
-    """Extract bounding box from binary mask in normalized xyxy format."""
-    # Ensure binary mask is 2D
-    if binary_mask.ndim > 2:
-        # If mask has multiple dimensions, take the first channel or squeeze
-        binary_mask = binary_mask.squeeze()
-        if binary_mask.ndim > 2:
-            binary_mask = binary_mask[0]  # Take first channel
-    
-    y_indices, x_indices = np.where(binary_mask > 0)
-    
-    if len(y_indices) == 0 or len(x_indices) == 0:
-        return [0.0, 0.0, 0.0, 0.0]
-    
-    x_min, x_max = int(np.min(x_indices)), int(np.max(x_indices))
-    y_min, y_max = int(np.min(y_indices)), int(np.max(y_indices))
-    
-    h, w = binary_mask.shape
-    bbox_xyxy = [
-        x_min / w,  # x_min normalized
-        y_min / h,  # y_min normalized  
-        x_max / w,  # x_max normalized
-        y_max / h   # y_max normalized
-    ]
-    
-    return bbox_xyxy
+    """Extract bounding box from binary mask using mask_utils."""
+    from scripts.utils.mask_utils import mask_to_bbox
+    return mask_to_bbox(binary_mask)
 
 
 def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int, 
@@ -940,11 +881,38 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
                     print(f"⚠️ No bbox found in detection: {list(detection.keys())}")
                 continue
             
-            # Add positive click at bbox center
-            center_x = (bbox[0] + bbox[2]) / 2
-            center_y = (bbox[1] + bbox[3]) / 2
+            # Check if GDINO bbox is normalized (0-1) or pixel coordinates
+            is_normalized = all(0.0 <= coord <= 1.0 for coord in bbox)
             
-            points = np.array([[center_x, center_y]], dtype=np.float32)
+            # Get image dimensions for coordinate conversion
+            seed_image_path = video_dir / f"{seed_frame_idx:04d}.jpg"
+            if seed_image_path.exists():
+                seed_image = cv2.imread(str(seed_image_path))
+                if seed_image is not None:
+                    img_height, img_width = seed_image.shape[:2]
+                else:
+                    if verbose:
+                        print(f"⚠️ Could not read seed image: {seed_image_path}")
+                    continue
+            else:
+                if verbose:
+                    print(f"⚠️ Seed image not found: {seed_image_path}")
+                continue
+            
+            # Convert bbox center to pixel coordinates for SAM2
+            if is_normalized:
+                # GDINO bbox is normalized, convert to pixels
+                center_x_px = (bbox[0] + bbox[2]) / 2 * img_width
+                center_y_px = (bbox[1] + bbox[3]) / 2 * img_height
+            else:
+                # GDINO bbox is already in pixels
+                center_x_px = (bbox[0] + bbox[2]) / 2
+                center_y_px = (bbox[1] + bbox[3]) / 2
+            
+            if verbose:
+                print(f"SAM2 prompt for {embryo_id}: center=({center_x_px:.1f},{center_y_px:.1f})")
+            
+            points = np.array([[center_x_px, center_y_px]], dtype=np.float32)
             labels = np.array([1], np.int32)  # Positive click
             
             predictor.add_new_points_or_box(
@@ -1109,12 +1077,37 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
             }
             
             frame_masks = video_segments[frame_idx]
+            # DEBUG: Log frame masks and embryo_ids for troubleshooting
+            print(f"DEBUG: Processing frame {frame_idx} (image {image_id})")
+            print(f"DEBUG: frame_masks keys: {list(frame_masks.keys())}")
+            print(f"DEBUG: embryo_ids: {embryo_ids}")
             
             for obj_id, binary_mask in frame_masks.items():
-                if obj_id >= len(embryo_ids):
+                # Skip invalid indices
+                if isinstance(obj_id, int):
+                    if obj_id >= len(embryo_ids):
+                        if verbose:
+                            print(f"⚠️ obj_id {obj_id} out of range, skipping")
+                        continue
+                else:
+                    if verbose:
+                        print(f"⚠️ Invalid obj_id type: {type(obj_id)}")
                     continue
                     
                 embryo_id = embryo_ids[obj_id]
+                
+                # Fix: Squeeze extra dimensions from SAM2 mask
+                if binary_mask.ndim > 2:
+                    binary_mask = binary_mask.squeeze()
+                
+                # DEBUG: Save processed mask for inspection (optional - can re-enable for debugging)
+                # if verbose and frame_idx == 0:  # Only save for first frame to avoid spam
+                #     debug_dir = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/temp/debug_sam2_masks")
+                #     debug_dir.mkdir(parents=True, exist_ok=True)
+                #     mask_viz = (binary_mask * 255).astype(np.uint8)
+                #     debug_path = debug_dir / f"{video_id}_{image_id}_{embryo_id}_processed.png"
+                #     cv2.imwrite(str(debug_path), mask_viz)
+                #     print(f"Saved processed mask: {debug_path}, shape={binary_mask.shape}, sum={binary_mask.sum()}")
                 
                 # REFACTORED: Use standardized snip_id creation
                 snip_id = create_snip_id(embryo_id, image_id)
@@ -1167,9 +1160,9 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
         processing_stats["errors"] += 1
         if verbose:
             print(f"❌ Error processing video {video_id}: {e}")
+            import traceback
+            traceback.print_exc()
         raise
-
-
 def find_seed_frame_from_video_annotations(video_annotations: Dict[str, List[Dict]], video_id: str) -> Tuple[str, Dict]:
     """Find the best seed frame from video annotations, preferring first frame to avoid bidirectional propagation."""
     

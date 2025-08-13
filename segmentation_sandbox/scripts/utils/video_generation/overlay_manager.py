@@ -10,9 +10,17 @@ Handles smart positioning and rendering of various overlay types:
 
 import cv2
 import numpy as np
+import json
+from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 from dataclasses import dataclass
 from .video_config import VideoConfig, OVERLAY_COLORS, COLORBLIND_PALETTE
+
+# Import mask decoding utilities
+import sys
+SCRIPTS_DIR = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(SCRIPTS_DIR))
+from utils.mask_utils import decode_mask_rle
 
 @dataclass
 class OverlayConfig:
@@ -246,6 +254,165 @@ class OverlayManager:
             )
             current_y += line_height
             
+        return frame
+        
+    def add_sam2_embryos_overlay(self,
+                                frame: np.ndarray,
+                                embryos_data: Dict[str, Any],
+                                show_bbox: bool = True,
+                                show_mask: bool = True,
+                                show_metrics: bool = True,
+                                min_fill_ratio: float = 0.3,
+                                max_fill_ratio: float = 0.9,
+                                min_area_px: int = 500) -> np.ndarray:
+        """
+        Add SAM2 embryo overlays with QC metrics.
+        
+        Args:
+            frame: Input frame
+            embryos_data: Dict of embryo_id -> embryo_data from SAM2 results
+            show_bbox: Whether to show bounding boxes
+            show_mask: Whether to show segmentation masks
+            show_metrics: Whether to show QC metrics text
+            min_fill_ratio: Minimum mask/bbox fill ratio for good quality
+            max_fill_ratio: Maximum mask/bbox fill ratio for good quality
+            min_area_px: Minimum mask area in pixels
+            
+        Returns:
+            Frame with overlays applied
+        """
+        for i, (embryo_id, embryo_data) in enumerate(embryos_data.items()):
+            try:
+                # Get segmentation and decode mask
+                segmentation = embryo_data.get("segmentation")
+                if not segmentation:
+                    continue
+                
+                # Handle the nested segmentation format from GSAM
+                if isinstance(segmentation, dict):
+                    # New format: {"counts": "...", "size": [...], "format": "rle_base64", ...}
+                    format_type = segmentation.get("format", "rle")
+                    if format_type in ["rle", "rle_base64"]:
+                        try:
+                            mask = decode_mask_rle(segmentation)
+                            print(f"✓ Decoded mask for {embryo_id}: shape={mask.shape if mask is not None else 'None'}, area={mask.sum() if mask is not None else 0}")
+                        except Exception as e:
+                            print(f"⚠️ Failed to decode nested mask for {embryo_id}: {e}")
+                            continue
+                    else:
+                        print(f"⚠️ Unsupported segmentation format: {format_type}")
+                        continue
+                else:
+                    # Legacy format: direct segmentation data
+                    try:
+                        mask = decode_mask_rle(segmentation)
+                        print(f"✓ Decoded legacy mask for {embryo_id}: shape={mask.shape if mask is not None else 'None'}, area={mask.sum() if mask is not None else 0}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to decode legacy mask for {embryo_id}: {e}")
+                        continue
+                        
+                if mask is None:
+                    print(f"⚠️ Mask is None for {embryo_id}")
+                    continue
+                    
+                # Get bounding box
+                bbox = embryo_data.get("bbox", [])
+                if len(bbox) != 4:
+                    continue
+                    
+                x, y, w, h = bbox
+                
+                # Calculate metrics
+                mask_area = int(np.sum(mask))
+                bbox_area = w * h
+                fill_ratio = mask_area / bbox_area if bbox_area > 0 else 0.0
+                
+                # Get confidence if available
+                confidence = embryo_data.get("mask_confidence", 0.0)
+                
+                # Determine QC status
+                is_good_quality = (min_fill_ratio <= fill_ratio <= max_fill_ratio and 
+                                 mask_area >= min_area_px)
+                
+                # Get color for this embryo
+                color = self._get_detection_color(i)
+                warning_color = OVERLAY_COLORS['qc_flag_warning']
+                
+                # Show mask overlay
+                if show_mask:
+                    # Create colored mask overlay
+                    colored_mask = np.zeros_like(frame)
+                    mask_color = color if is_good_quality else warning_color
+                    colored_mask[mask > 0] = mask_color
+                    
+                    # Blend with original frame
+                    alpha = self.config.MASK_ALPHA
+                    frame = cv2.addWeighted(frame, 1 - alpha, colored_mask, alpha, 0)
+                    
+                    # Add mask outline
+                    contours, _ = cv2.findContours(
+                        mask.astype(np.uint8), 
+                        cv2.RETR_EXTERNAL, 
+                        cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    
+                    cv2.drawContours(
+                        frame, 
+                        contours, 
+                        -1, 
+                        mask_color, 
+                        self.config.MASK_OUTLINE_THICKNESS
+                    )
+                
+                # Show bounding box
+                if show_bbox:
+                    bbox_color = color if is_good_quality else warning_color
+                    cv2.rectangle(
+                        frame,
+                        (int(x), int(y)),
+                        (int(x + w), int(y + h)),
+                        bbox_color,
+                        self.config.BBOX_THICKNESS
+                    )
+                
+                # Show metrics text
+                if show_metrics:
+                    # Create embryo short ID (e.g., "e01")
+                    embryo_short = embryo_id.split('_')[-1] if '_' in embryo_id else embryo_id
+                    
+                    # Prepare text lines
+                    lines = [
+                        f"{embryo_short}",
+                        f"Conf: {confidence:.2f}" if confidence > 0 else "",
+                        f"Fill: {fill_ratio:.2f}",
+                        f"Area: {mask_area}"
+                    ]
+                    
+                    # Filter out empty lines
+                    lines = [line for line in lines if line]
+                    
+                    # Position text near bounding box
+                    text_x = int(x)
+                    text_y = int(y) - 10
+                    
+                    # Use warning color for poor quality
+                    text_color = color if is_good_quality else warning_color
+                    
+                    # Draw each line
+                    for j, line in enumerate(lines):
+                        if text_y - (j * 20) > 0:  # Don't go off screen
+                            self._add_text_with_background(
+                                frame,
+                                line,
+                                (text_x, text_y - (j * 20)),
+                                text_color,
+                                scale=0.5
+                            )
+                            
+            except Exception as e:
+                print(f"⚠️ Error processing embryo {embryo_id}: {e}")
+                continue
+                
         return frame
         
     def _add_text_with_background(self, 
