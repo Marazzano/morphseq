@@ -105,18 +105,19 @@ def main():
     try:
         # Load configuration
         config = load_config(config_path)
-        sam2_config = config.get("sam2", {})
+        sam2_config = config.get("models", {}).get("sam2", {})
         
         if args.verbose:
             print("🔧 Loading SAM2 configuration...")
         
         # Get SAM2 model paths from config
-        sam2_model_config = sam2_config.get("config_path")
-        sam2_checkpoint = sam2_config.get("checkpoint_path")
+        sam2_model_config = sam2_config.get("config")
+        sam2_checkpoint = sam2_config.get("checkpoint")
         
         if not sam2_model_config or not sam2_checkpoint:
             print("❌ SAM2 model configuration missing from config file")
-            print("   Required: sam2.config_path and sam2.checkpoint_path")
+            print("   Required: models.sam2.config and models.sam2.checkpoint")
+            print(f"   Found sam2_config keys: {list(sam2_config.keys()) if sam2_config else 'None'}")
             sys.exit(1)
         
         # Initialize GroundedSamAnnotations

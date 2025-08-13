@@ -16,11 +16,17 @@ ID FORMATS:
 
 MAIN FUNCTIONS:
     parse_entity_id()     - Auto-detect and parse any ID type
+        Output: Dict with keys for all components, e.g. {'experiment_id': ..., 'video_id': ..., 'entity_type': ...}
     get_entity_type()     - Determine ID type from format
+        Output: String, one of 'experiment', 'video', 'image', 'embryo', 'snip'
     build_image_id()      - Create image ID with 't' prefix
+        Output: e.g. '20250624_chem02_28C_T00_1356_H01_t0042'
     build_video_id()      - Create video ID from experiment + well
+        Output: e.g. '20250624_chem02_28C_T00_1356_H01'
     build_embryo_id()     - Create embryo ID from video + number
+        Output: e.g. '20250624_chem02_28C_T00_1356_H01_e01'
     build_snip_id()       - Create snip ID from embryo + frame
+        Output: e.g. '20250624_chem02_28C_T00_1356_H01_e01_s0034'
     
 EXTRACTION FUNCTIONS:
     extract_frame_number()    - Get frame from image/snip ID

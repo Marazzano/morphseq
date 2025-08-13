@@ -1,0 +1,99 @@
+🎬 SAM2 Video Processing Pipeline
+==================================================
+📋 Config: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/configs/pipeline_config.yaml
+📊 Metadata: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/experiment_metadata.json
+🎯 Annotations: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/detections/gdino_detections.json
+💾 Output: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+🎭 Target prompt: 'individual embryo'
+📦 Format: rle
+🖥️  Device: cuda
+🔬 Processing entities: ['20231206', '20240418', '20250612_30hpf_ctrl_atf6']
+
+🔧 Loading SAM2 configuration...
+🎬 Initializing GroundedSamAnnotations...
+🎬 Initializing GroundedSamAnnotations...
+   Target prompt: 'individual embryo'
+   Segmentation format: rle
+   Output file: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+📚 Loading components...
+✅ Components loaded successfully
+📝 Initialized new results structure
+✅ GroundedSamAnnotations initialized successfully
+🔧 Loading SAM2 model...
+🔧 Loading SAM2 model...
+✅ SAM2 model loaded on GPU
+✅ SAM2 model loaded successfully
+🎯 Found 264 videos to process
+📹 Videos:
+   - 20231206_D06: 59 images
+   - 20231206_G11: 59 images
+   - 20231206_B08: 59 images
+   - 20231206_G05: 53 images
+   - 20231206_C12: 59 images
+   ... and 259 more videos
+
+🎯 Processing 264 videos for SAM2 segmentation
+
+📹 Processing video 1/264: 20231206_D06
+🎬 Processing video: 20231206_D06
+🎬 Processing single video: 20231206_D06
+📁 Video directory: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/20231206/images/20231206_D06
+🖼️ Total frames: 59
+➡️ Forward propagation from first frame - avoiding bidirectional propagation
+🌱 Seed frame: 20231206_D06_t0000 (index 0)
+🎯 Seed detections: 1
+🎬 Running SAM2 propagation from seed frame 0
+✅ SAM2 propagation complete for 59 frames
+✅ Video 20231206_D06 processed: 59 frames
+✅ Video 20231206_D06 processed successfully
+ℹ️ Hierarchy validation disabled
+📋 Entity tracker updated: {'experiments': 1, 'videos': 1, 'images': 59, 'embryos': 1, 'snips': 59}
+💾 SAM2 results saved to /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+💾 Auto-saved after 1 videos
+
+📹 Processing video 2/264: 20231206_G11
+🎬 Processing video: 20231206_G11
+🎬 Processing single video: 20231206_G11
+📁 Video directory: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/20231206/images/20231206_G11
+🖼️ Total frames: 59
+➡️ Forward propagation from first frame - avoiding bidirectional propagation
+🌱 Seed frame: 20231206_G11_t0000 (index 0)
+🎯 Seed detections: 1
+🎬 Running SAM2 propagation from seed frame 0
+✅ SAM2 propagation complete for 59 frames
+✅ Video 20231206_G11 processed: 59 frames
+✅ Video 20231206_G11 processed successfully
+ℹ️ Hierarchy validation disabled
+📋 Entity tracker updated: {'experiments': 1, 'videos': 2, 'images': 118, 'embryos': 2, 'snips': 118}
+📦 Created backup: grounded_sam_segmentations.backup.20250813_005433.json
+💾 SAM2 results saved to /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+💾 Auto-saved after 2 videos
+
+📹 Processing video 3/264: 20231206_B08
+🎬 Processing video: 20231206_B08
+🎬 Processing single video: 20231206_B08
+📁 Video directory: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/20231206/images/20231206_B08
+🖼️ Total frames: 59
+➡️ Forward propagation from first frame - avoiding bidirectional propagation
+🌱 Seed frame: 20231206_B08_t0000 (index 0)
+🎯 Seed detections: 1
+🎬 Running SAM2 propagation from seed frame 0
+✅ SAM2 propagation complete for 59 frames
+✅ Video 20231206_B08 processed: 59 frames
+✅ Video 20231206_B08 processed successfully
+ℹ️ Hierarchy validation disabled
+📋 Entity tracker updated: {'experiments': 1, 'videos': 3, 'images': 177, 'embryos': 3, 'snips': 177}
+📦 Created backup: grounded_sam_segmentations.backup.20250813_005453.json
+🗑️  Removed old backup: grounded_sam_segmentations.backup.20250813_005433.json
+💾 SAM2 results saved to /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+💾 Auto-saved after 3 videos
+
+📹 Processing video 4/264: 20231206_G05
+🎬 Processing video: 20231206_G05
+🎬 Processing single video: 20231206_G05
+📁 Video directory: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/20231206/images/20231206_G05
+🖼️ Total frames: 59
+➡️ Forward propagation from first frame - avoiding bidirectional propagation
+🌱 Seed frame: 20231206_G05_t0000 (index 0)
+🎯 Seed detections: 1
+🎬 Running SAM2 propagation from seed frame 0

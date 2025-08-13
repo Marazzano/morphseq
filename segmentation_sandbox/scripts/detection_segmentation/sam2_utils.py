@@ -234,6 +234,12 @@ class GroundedSamAnnotations(BaseFileHandler):
         self.exp_metadata = None
         if self.experiment_metadata_path and self.experiment_metadata_path.exists():
             self.exp_metadata = ExperimentMetadata(self.experiment_metadata_path)
+            
+            # FIX: Set base data path for ExperimentMetadata
+            # Use the parent directory of experiment_metadata.json as base path
+            base_data_path = self.experiment_metadata_path.parent
+            self.exp_metadata.set_base_data_path(base_data_path)
+            
             self.experiment_metadata = self.exp_metadata.metadata  # For compatibility
         else:
             raise ValueError("Failed to load experiment metadata")
@@ -272,7 +278,7 @@ class GroundedSamAnnotations(BaseFileHandler):
                 if self.verbose:
                     print(f"⚠️ Failed to load existing file, initializing new: {e}")
         
-        # Initialize new results structure
+        # Initialize new results structure matching your format
         initial_data = {
             "script_version": "sam2_utils.py (refactored)",
             "creation_time": datetime.now().isoformat(),
@@ -310,11 +316,15 @@ class GroundedSamAnnotations(BaseFileHandler):
                 pipeline_step="module_2_segmentation" 
             )
             
-            # Validate entity hierarchy (FIXED: removed raise_on_violations parameter)
+            # Skip hierarchy validation for SAM2 processing since it's not relevant
+            # and can cause issues when processing partial datasets
             entities = EntityIDTracker.extract_entities(self.results)
-            validation_result = EntityIDTracker.validate_hierarchy(entities)
+            validation_result = EntityIDTracker.validate_hierarchy(entities, check_hierarchy=False)
             
-            if not validation_result.get('valid', True):
+            if validation_result.get('skipped'):
+                if self.verbose:
+                    print(f"ℹ️ {validation_result['skipped']}")
+            elif not validation_result.get('valid', True):
                 if self.verbose:
                     print(f"⚠️ Entity validation warnings: {validation_result.get('violations', [])}")
             
@@ -373,15 +383,31 @@ class GroundedSamAnnotations(BaseFileHandler):
             return {}
         
         hq_annotations = self.seed_annotations['high_quality_annotations']
-        if self.target_prompt not in hq_annotations:
+        
+        # NEW: Handle the correct structure - experiments contain filtered annotations
+        all_filtered_annotations = {}
+        target_prompt_found = False
+        
+        for exp_id, exp_data in hq_annotations.items():
+            if exp_data.get('prompt') == self.target_prompt:
+                target_prompt_found = True
+                if 'filtered' in exp_data:
+                    all_filtered_annotations.update(exp_data['filtered'])
+        
+        if not target_prompt_found:
             if self.verbose:
                 print(f"❌ Target prompt '{self.target_prompt}' not found in high_quality_annotations")
+            return {}
+        
+        if not all_filtered_annotations:
+            if self.verbose:
+                print(f"❌ No filtered annotations found for prompt '{self.target_prompt}'")
             return {}
         
         # Group by video_id
         video_groups = defaultdict(lambda: defaultdict(list))
         
-        for image_id, detections in hq_annotations[self.target_prompt].items():
+        for image_id, detections in all_filtered_annotations.items():
             # REFACTORED: Use parsing_utils for consistent video_id extraction
             try:
                 # Parse the full image_id to get components  
@@ -406,20 +432,10 @@ class GroundedSamAnnotations(BaseFileHandler):
         """Get list of video IDs that have been processed."""
         processed_videos = []
         
-        for exp_id, exp_data in self.results.get("experiments", {}).items():
-            for image_id, image_data in exp_data.get("images", {}).items():
-                if image_data.get("embryos"):
-                    # REFACTORED: Use parsing_utils for consistent video_id extraction  
-                    try:
-                        parsed = extract_experiment_id(image_id)
-                        exp_part = parsed['experiment_id']
-                        well_part = image_id.replace(exp_part + "_", "").split("_t")[0]
-                        video_id = f"{exp_part}_{well_part}"
-                        
-                        if video_id not in processed_videos:
-                            processed_videos.append(video_id)
-                    except:
-                        continue
+        for exp_data in self.results.get("experiments", {}).values():
+            for video_id, video_data in exp_data.get("videos", {}).items():
+                if video_data.get("sam2_success", False):
+                    processed_videos.append(video_id)
         
         return processed_videos
 
@@ -515,49 +531,154 @@ class GroundedSamAnnotations(BaseFileHandler):
             raise ValueError(f"Video {video_id} not found in annotations")
         
         video_annotations = video_groups[video_id]
+        processing_start_time = datetime.now().isoformat()
         
         # Process video using helper function
         processing_stats = {"processed": 0, "errors": 0}
         
-        sam2_results, video_metadata = process_single_video_from_annotations(
-            video_id, video_annotations, self, self.predictor, 
-            processing_stats, self.segmentation_format, self.verbose
-        )
-        
-        # Update results structure
-        exp_id = extract_experiment_id(video_id)['experiment_id']
-        
-        if exp_id not in self.results["experiments"]:
-            self.results["experiments"][exp_id] = {"images": {}}
-        
-        # Merge results
-        for image_id, image_data in sam2_results.items():
-            self.results["experiments"][exp_id]["images"][image_id] = image_data
+        try:
+            sam2_results, video_metadata, seed_frame_info = process_single_video_from_annotations(
+                video_id, video_annotations, self, self.predictor, 
+                processing_stats, self.segmentation_format, self.verbose
+            )
+            
+            # Extract experiment ID and well ID
+            exp_id = extract_experiment_id(video_id)
+            well_id = video_id.replace(f"{exp_id}_", "")
+            
+            # Initialize experiment structure if needed
+            if exp_id not in self.results["experiments"]:
+                self.results["experiments"][exp_id] = {
+                    "experiment_id": exp_id,
+                    "first_processed_time": processing_start_time,
+                    "last_processed_time": processing_start_time,
+                    "videos": {}
+                }
+            else:
+                # Ensure experiment has the new structure (backward compatibility)
+                exp_data = self.results["experiments"][exp_id]
+                if "videos" not in exp_data:
+                    exp_data["videos"] = {}
+                if "experiment_id" not in exp_data:
+                    exp_data["experiment_id"] = exp_id
+                if "first_processed_time" not in exp_data:
+                    exp_data["first_processed_time"] = processing_start_time
+                    
+                # Update last processed time
+                exp_data["last_processed_time"] = processing_start_time
+            
+            # Create video-level structure
+            video_structure = {
+                "video_id": video_id,
+                "well_id": well_id,
+                "seed_frame_info": seed_frame_info,
+                "embryo_ids": seed_frame_info["embryo_ids"],
+                "num_embryos": seed_frame_info["num_embryos"],
+                "frames_processed": len(sam2_results),
+                "sam2_success": True,
+                "processing_timestamp": processing_start_time,
+                "requires_bidirectional_propagation": seed_frame_info.get("requires_bidirectional_propagation", False),
+                "images": sam2_results
+            }
+            
+            # Store video structure
+            self.results["experiments"][exp_id]["videos"][video_id] = video_structure
             
             # Update snip_ids list
-            for embryo_data in image_data.get("embryos", {}).values():
-                snip_id = embryo_data.get("snip_id")
-                if snip_id and snip_id not in self.results["snip_ids"]:
-                    self.results["snip_ids"].append(snip_id)
-        
-        if self.verbose:
-            print(f"✅ Video {video_id} processed successfully")
-        
-        return sam2_results
+            for image_data in sam2_results.values():
+                for embryo_data in image_data.get("embryos", {}).values():
+                    snip_id = embryo_data.get("snip_id")
+                    if snip_id and snip_id not in self.results["snip_ids"]:
+                        self.results["snip_ids"].append(snip_id)
+            
+            if self.verbose:
+                print(f"✅ Video {video_id} processed successfully")
+            
+            return sam2_results
+            
+        except Exception as e:
+            # Handle failed processing
+            exp_id = extract_experiment_id(video_id)
+            well_id = video_id.replace(f"{exp_id}_", "")
+            
+            if exp_id not in self.results["experiments"]:
+                self.results["experiments"][exp_id] = {
+                    "experiment_id": exp_id,
+                    "first_processed_time": processing_start_time,
+                    "last_processed_time": processing_start_time,
+                    "videos": {}
+                }
+            else:
+                # Ensure experiment has the new structure (backward compatibility)
+                exp_data = self.results["experiments"][exp_id]
+                if "videos" not in exp_data:
+                    exp_data["videos"] = {}
+                if "experiment_id" not in exp_data:
+                    exp_data["experiment_id"] = exp_id
+                if "first_processed_time" not in exp_data:
+                    exp_data["first_processed_time"] = processing_start_time
+                    
+                # Update last processed time
+                exp_data["last_processed_time"] = processing_start_time
+            
+            # Create failed video structure
+            self.results["experiments"][exp_id]["videos"][video_id] = {
+                "video_id": video_id,
+                "well_id": well_id,
+                "sam2_success": False,
+                "processing_timestamp": processing_start_time,
+                "error_message": str(e),
+                "images": {}
+            }
+            
+            if self.verbose:
+                print(f"❌ Video {video_id} processing failed: {e}")
+            
+            raise
 
     def get_summary(self) -> Dict:
         """Get processing summary statistics."""
         total_snips = len(self.results.get("snip_ids", []))
         total_experiments = len(self.results.get("experiments", {}))
-        total_images = sum(len(exp.get("images", {})) for exp in self.results.get("experiments", {}).values())
+        
+        # Count videos and images from new structure
+        total_videos = 0
+        total_images = 0
+        successful_videos = 0
+        failed_videos = 0
+        
+        for exp_data in self.results.get("experiments", {}).values():
+            videos = exp_data.get("videos", {})
+            total_videos += len(videos)
+            
+            for video_data in videos.values():
+                if video_data.get("sam2_success", False):
+                    successful_videos += 1
+                else:
+                    failed_videos += 1
+                total_images += len(video_data.get("images", {}))
         
         return {
             "total_experiments": total_experiments,
+            "total_videos": total_videos,
             "total_images": total_images,
             "total_snips": total_snips,
+            "successful_videos": successful_videos,
+            "failed_videos": failed_videos,
             "segmentation_format": self.segmentation_format,
             "target_prompt": self.target_prompt
         }
+
+    def print_summary(self):
+        """Print processing summary."""
+        summary = self.get_summary()
+        print(f"\n📊 GroundedSamAnnotations Summary:")
+        print(f"   Experiments: {summary['total_experiments']}")
+        print(f"   Videos: {summary['total_videos']} (✅ {summary['successful_videos']} success, ❌ {summary['failed_videos']} failed)")
+        print(f"   Images: {summary['total_images']}")
+        print(f"   Snips: {summary['total_snips']}")
+        print(f"   Format: {summary['segmentation_format']}")
+        print(f"   Prompt: '{summary['target_prompt']}')")
 
     def print_summary(self):
         """Print processing summary."""
@@ -572,7 +693,8 @@ class GroundedSamAnnotations(BaseFileHandler):
     def __repr__(self) -> str:
         summary = self.get_summary()
         return (f"GroundedSamAnnotations(experiments={summary['total_experiments']}, "
-                f"images={summary['total_images']}, snips={summary['total_snips']})")
+                f"videos={summary['total_videos']}, images={summary['total_images']}, "
+                f"snips={summary['total_snips']})")
 
 
 # REFACTORED: Fix create_snip_id to use standard format with '_s' prefix
@@ -593,15 +715,36 @@ def convert_sam2_mask_to_rle(binary_mask: np.ndarray) -> Dict:
         from pycocotools import mask as mask_utils
     except ImportError:
         raise ImportError("pycocotools required for RLE encoding. Install with: pip install pycocotools")
-    
+
     if binary_mask.dtype != np.uint8:
         binary_mask = binary_mask.astype(np.uint8)
-    
+
     binary_mask_fortran = np.asfortranarray(binary_mask)
-    rle = mask_utils.encode(binary_mask_fortran)
-    rle['counts'] = rle['counts'].decode('utf-8')
-    
-    return rle
+    rle_result = mask_utils.encode(binary_mask_fortran)
+
+    # Standard COCO RLE: dict with 'counts' as bytes, or list of dicts for multi-object
+    if isinstance(rle_result, dict):
+        # Single mask: ensure 'counts' is a string
+        counts = rle_result['counts']
+        if isinstance(counts, bytes):
+            counts = counts.decode('utf-8')
+        rle_result['counts'] = counts
+        return rle_result
+    elif isinstance(rle_result, list):
+        # Multi-object: join all counts as strings (rare for binary mask)
+        # For single-object binary mask, this should not occur, but handle for robustness
+        result_dict = {'counts': [], 'size': binary_mask.shape}
+        for rle in rle_result:
+            counts = rle['counts']
+            if isinstance(counts, bytes):
+                counts = counts.decode('utf-8')
+            result_dict['counts'].append(counts)
+        # Optionally, join all counts into a single string (not standard, but for compactness)
+        result_dict['counts'] = ''.join(result_dict['counts'])
+        return result_dict
+    else:
+        # Fallback for unexpected types
+        return {'counts': str(rle_result), 'size': binary_mask.shape}
 
 
 def convert_sam2_mask_to_polygon(binary_mask: np.ndarray) -> List[List[float]]:
@@ -619,6 +762,13 @@ def convert_sam2_mask_to_polygon(binary_mask: np.ndarray) -> List[List[float]]:
 
 def extract_bbox_from_mask(binary_mask: np.ndarray) -> List[float]:
     """Extract bounding box from binary mask in normalized xyxy format."""
+    # Ensure binary mask is 2D
+    if binary_mask.ndim > 2:
+        # If mask has multiple dimensions, take the first channel or squeeze
+        binary_mask = binary_mask.squeeze()
+        if binary_mask.ndim > 2:
+            binary_mask = binary_mask[0]  # Take first channel
+    
     y_indices, x_indices = np.where(binary_mask > 0)
     
     if len(y_indices) == 0 or len(x_indices) == 0:
@@ -671,7 +821,12 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
         
         # Add objects from seed detections
         for i, (detection, embryo_id) in enumerate(zip(seed_detections, embryo_ids)):
-            bbox = detection['bbox']  # Should be in xyxy format
+            # Handle different bbox field names from GroundedDINO
+            bbox = detection.get('box_xyxy') or detection.get('bbox_xyxy') or detection.get('bbox')
+            if bbox is None:
+                if verbose:
+                    print(f"⚠️ No bbox found in detection: {list(detection.keys())}")
+                continue
             
             # Add positive click at bbox center
             center_x = (bbox[0] + bbox[2]) / 2
@@ -738,28 +893,24 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
     if verbose:
         print(f"🔄 Combining bidirectional results...")
     
-    # Create combined results in original frame order using OrderedDict to maintain sequence
-    combined_results = OrderedDict()
-    seed_image_id = image_ids[seed_frame_idx]
+    # Create combined results in original frame order using frame_idx as keys
+    combined_results = {}
     
     # Process all frames in strict original temporal order
     for frame_idx, image_id in enumerate(image_ids):
         if frame_idx == seed_frame_idx:
             # Use forward results for seed frame
             if frame_idx in forward_results:
-                combined_results[image_id] = forward_results[frame_idx]
+                combined_results[frame_idx] = forward_results[frame_idx]
         elif frame_idx > seed_frame_idx:
             # Use forward results for frames after seed
             if frame_idx in forward_results:
-                combined_results[image_id] = forward_results[frame_idx]
+                combined_results[frame_idx] = forward_results[frame_idx]
         else:
             # Use backward results for frames before seed (need to map indices)
             backward_frame_idx = seed_frame_idx - frame_idx
             if backward_frame_idx in backward_results:
-                combined_results[image_id] = backward_results[backward_frame_idx]
-    
-    # Convert back to regular dict but maintain order
-    combined_results = dict(combined_results)
+                combined_results[frame_idx] = backward_results[backward_frame_idx]
     
     if verbose:
         print(f"✅ Bidirectional propagation complete: {len(combined_results)} frames")
@@ -769,7 +920,7 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
 
 def process_single_video_from_annotations(video_id: str, video_annotations: Dict, grounded_sam_instance,
                                          predictor, processing_stats: Dict, segmentation_format: str = 'rle',
-                                         verbose: bool = True) -> Tuple[Dict, Dict]:
+                                         verbose: bool = True) -> Tuple[Dict, Dict, Dict]:
     """
     Process a single video with SAM2 segmentation using class experiment metadata.
     
@@ -783,19 +934,19 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
         verbose: Enable verbose output
         
     Returns:
-        Tuple of (sam2_results, video_metadata)
+        Tuple of (sam2_results, video_metadata, seed_frame_info)
     """
     if verbose:
         print(f"🎬 Processing single video: {video_id}")
     
     try:
         # REFACTORED: Use ExperimentMetadata method instead of custom lookup
-        video_info = grounded_sam_instance.exp_metadata.get_video_info(video_id)
+        video_info = grounded_sam_instance.exp_metadata.get_video_metadata(video_id)
         if not video_info:
             raise ValueError(f"Video {video_id} not found in experiment metadata")
         
         # Get video directory and image order from metadata
-        video_dir = Path(video_info['processed_jpg_images_dir'])
+        video_dir = grounded_sam_instance.exp_metadata.get_video_directory_path(video_id)
         image_ids_ordered = video_info['image_ids']  # Already in temporal order
         
         if verbose:
@@ -880,12 +1031,25 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
             
             sam2_results[image_id] = image_data
         
+        # Create seed frame info structure
+        seed_frame_info = {
+            "video_id": video_id,
+            "seed_frame": seed_image_id,
+            "num_embryos": len(seed_detections),
+            "detections": seed_detections,
+            "is_first_frame": (seed_frame_idx == 0),
+            "all_frames": image_ids_ordered,
+            "seed_frame_index": seed_frame_idx,
+            "embryo_ids": embryo_ids,
+            "requires_bidirectional_propagation": (seed_frame_idx > 0)
+        }
+        
         processing_stats["processed"] += 1
         
         if verbose:
             print(f"✅ Video {video_id} processed: {len(sam2_results)} frames")
         
-        return sam2_results, video_info
+        return sam2_results, video_info, seed_frame_info
         
     except Exception as e:
         processing_stats["errors"] += 1
@@ -895,28 +1059,49 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
 
 
 def find_seed_frame_from_video_annotations(video_annotations: Dict[str, List[Dict]], video_id: str) -> Tuple[str, Dict]:
-    """Find the best seed frame from video annotations (highest confidence detections)."""
-    best_score = 0
-    best_image_id = None
-    best_detections = None
+    """Find the best seed frame from video annotations, preferring first frame to avoid bidirectional propagation."""
     
+    # First, check if the first frame (t0000) exists and has detections
+    first_frame_id = f"{video_id}_t0000"
+    if first_frame_id in video_annotations and video_annotations[first_frame_id]:
+        if len(video_annotations[first_frame_id]) > 0:
+            print(f"➡️ Forward propagation from first frame - avoiding bidirectional propagation")
+            return first_frame_id, {"detections": video_annotations[first_frame_id]}
+    
+    # Sort frames by temporal order (extract frame numbers)
+    sorted_frames = []
     for image_id, detections in video_annotations.items():
-        # Calculate aggregate confidence score
-        if detections:
+        if detections:  # Only consider frames with detections
+            frame_num = extract_frame_number(image_id)
             avg_confidence = sum(det.get('confidence', 0) for det in detections) / len(detections)
             detection_count = len(detections)
-            
-            # Favor frames with more detections and higher confidence
             score = avg_confidence * detection_count
-            
-            if score > best_score:
-                best_score = score
-                best_image_id = image_id
-                best_detections = detections
+            sorted_frames.append((frame_num, image_id, detections, score))
     
-    if not best_image_id:
+    if not sorted_frames:
         raise ValueError(f"No valid seed frame found for video {video_id}")
     
+    # Sort by frame number (temporal order)
+    sorted_frames.sort(key=lambda x: x[0])
+    
+    # Look for good quality detections in the first 20% of frames to avoid bidirectional propagation
+    total_frames = len(sorted_frames)
+    early_frame_cutoff = max(1, int(total_frames * 0.2))  # First 20% of frames
+    
+    early_frames = sorted_frames[:early_frame_cutoff]
+    
+    # If we have good detections in early frames, use the best one from there
+    if early_frames:
+        best_early_frame = max(early_frames, key=lambda x: x[3])  # Best score in early frames
+        best_score_overall = max(sorted_frames, key=lambda x: x[3])[3]  # Best score in entire video
+        
+        # Use early frame if it's at least 80% as good as the best frame overall
+        if best_early_frame[3] >= 0.8 * best_score_overall:
+            _, best_image_id, best_detections, _ = best_early_frame
+            return best_image_id, {"detections": best_detections}
+    
+    # Fallback: use the frame with highest confidence overall
+    _, best_image_id, best_detections, _ = max(sorted_frames, key=lambda x: x[3])
     return best_image_id, {"detections": best_detections}
 
 
