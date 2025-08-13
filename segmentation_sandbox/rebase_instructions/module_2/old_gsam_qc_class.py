@@ -2,7 +2,7 @@
 """
 Simplified GSAM Quality Control Class
 ====================================
-
+@Claude this is OLD gsam qc class 
 Analyzes SAM2 annotations for quality issues and adds flags directly 
 to the GSAM JSON structure at the top level under "flags".
 
