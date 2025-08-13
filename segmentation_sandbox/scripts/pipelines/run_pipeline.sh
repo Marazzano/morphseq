@@ -115,7 +115,7 @@ python $ROOT/scripts/pipelines/04_sam2_video_processing.py \
   --target-prompt "individual embryo" \
   --segmentation-format rle \
   --verbose \
-  --save-interval 5 \
+  --save-interval 1 \
   | tee logs/step4_sam2.log
   # Fine-grained options for future reference:
   # --max-videos 5 \
