@@ -7,6 +7,7 @@ Supports progressive enhancement:
 """
 
 import cv2
+import json
 import numpy as np
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
@@ -214,6 +215,145 @@ class VideoGenerator:
         )
         
         return frame
+        
+    def create_sam2_eval_video_from_results(self,
+                                           results_json_path: Path,
+                                           experiment_id: str,
+                                           video_id: str,
+                                           output_video_path: Path,
+                                           show_bbox: bool = True,
+                                           show_mask: bool = True,
+                                           show_metrics: bool = True,
+                                           verbose: bool = True) -> bool:
+        """
+        Create SAM2 evaluation video from results JSON.
+        
+        Args:
+            results_json_path: Path to GroundedSam2Annotations.json
+            experiment_id: Experiment ID (e.g., "20250612_30hpf_ctrl_atf6")
+            video_id: Video ID (e.g., "20250612_30hpf_ctrl_atf6_A01")
+            output_video_path: Where to save the MP4 file
+            show_bbox: Show bounding boxes
+            show_mask: Show segmentation masks
+            show_metrics: Show QC metrics
+            verbose: Print progress
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if verbose:
+            print(f"🎬 Creating SAM2 evaluation video for {video_id}")
+            
+        # Load SAM2 results
+        try:
+            with open(results_json_path, 'r') as f:
+                sam2_data = json.load(f)
+        except Exception as e:
+            if verbose:
+                print(f"❌ Failed to load SAM2 results: {e}")
+            return False
+            
+        # Find experiment and video data
+        experiments = sam2_data.get("experiments", {})
+        if experiment_id not in experiments:
+            if verbose:
+                print(f"❌ Experiment {experiment_id} not found in results")
+            return False
+            
+        exp_data = experiments[experiment_id]
+        videos = exp_data.get("videos", {})
+        if video_id not in videos:
+            if verbose:
+                print(f"❌ Video {video_id} not found in experiment")
+            return False
+            
+        video_data = videos[video_id]
+        images = video_data.get("images", {})
+        
+        if not images:
+            if verbose:
+                print(f"❌ No images found for video {video_id}")
+            return False
+            
+        # Find video directory - use experiment metadata to locate images
+        # Standard path structure: data/raw_data_organized/{experiment_id}/images/{video_id}/
+        video_dir = Path("data/raw_data_organized") / experiment_id / "images" / video_id
+        
+        if not video_dir.exists():
+            if verbose:
+                print(f"❌ Video directory not found: {video_dir}")
+            return False
+            
+        # Get sorted image files
+        image_files = sorted(list(video_dir.glob("*.jpg")))
+        if not image_files:
+            if verbose:
+                print(f"❌ No JPEG files found in {video_dir}")
+            return False
+            
+        if verbose:
+            print(f"📁 Found {len(image_files)} frames in {video_dir}")
+            print(f"📊 Processing {len(images)} frames with SAM2 data")
+            
+        # Get video dimensions from first frame
+        first_frame = cv2.imread(str(image_files[0]))
+        if first_frame is None:
+            if verbose:
+                print("❌ Could not read first frame")
+            return False
+            
+        height, width = first_frame.shape[:2]
+        
+        # Initialize video writer
+        fourcc = cv2.VideoWriter_fourcc(*self.config.CODEC)
+        video_writer = cv2.VideoWriter(str(output_video_path), fourcc, self.config.FPS, (width, height))
+        
+        if not video_writer.isOpened():
+            if verbose:
+                print(f"❌ Could not open video writer for {output_video_path}")
+            return False
+            
+        frames_written = 0
+        frames_with_overlays = 0
+        
+        # Process each frame
+        for image_file in image_files:
+            frame = cv2.imread(str(image_file))
+            if frame is None:
+                continue
+                
+            # Generate image_id from filename
+            frame_num = image_file.stem
+            image_id = f"{video_id}_t{frame_num}"
+            
+            # Add image_id overlay (foundation)
+            frame = self._add_image_id_overlay(frame, image_id)
+            
+            # Add SAM2 overlays if data exists for this image
+            if image_id in images:
+                image_data = images[image_id]
+                embryos = image_data.get("embryos", {})
+                
+                if embryos:
+                    frame = self.overlay_manager.add_sam2_embryos_overlay(
+                        frame,
+                        embryos,
+                        show_bbox=show_bbox,
+                        show_mask=show_mask,
+                        show_metrics=show_metrics
+                    )
+                    frames_with_overlays += 1
+                    
+            video_writer.write(frame)
+            frames_written += 1
+            
+        video_writer.release()
+        
+        if verbose:
+            print(f"✅ SAM2 evaluation video created: {output_video_path.name}")
+            print(f"   📊 {frames_written} frames written, {frames_with_overlays} with SAM2 overlays")
+            
+        return True
         
     @staticmethod
     def extract_video_id_from_path(video_path: Path) -> str:

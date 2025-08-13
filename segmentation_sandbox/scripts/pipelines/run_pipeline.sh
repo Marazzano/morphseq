@@ -33,7 +33,7 @@ MASK_EXPORT=$ROOT/data/annotation_and_masks/jpg_masks/grounded_sam
 mkdir -p logs
 
 # Example experiments (uncomment to process specific experiments)
-EXAMPLE_EXPS="20231206,20240418,20250612_30hpf_ctrl_atf6"
+EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6" # "20231206,20240418,20250612_30hpf_ctrl_atf6"
 
 # Colors for output
 RED='\033[0;31m'
@@ -115,7 +115,7 @@ python $ROOT/scripts/pipelines/04_sam2_video_processing.py \
   --target-prompt "individual embryo" \
   --segmentation-format rle \
   --verbose \
-  --save-interval 1 \
+  --save-interval 10 \
   | tee logs/step4_sam2.log
   # Fine-grained options for future reference:
   # --max-videos 5 \
