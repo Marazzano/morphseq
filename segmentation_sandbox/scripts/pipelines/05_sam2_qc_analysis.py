@@ -36,6 +36,16 @@ SCRIPTS_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from utils.base_file_handler import BaseFileHandler
+from utils.mask_utils import decode_mask_rle
+
+def decode_segmentation_mask(segmentation: Dict) -> np.ndarray:
+    """Decode segmentation mask using mask_utils, handling both rle and rle_base64 formats."""
+    fmt = segmentation.get("format", "rle")
+    if fmt in ("rle", "rle_base64"):
+        from utils.mask_utils import decode_mask_rle
+        return decode_mask_rle(segmentation)
+    else:
+        raise ValueError(f"Unsupported segmentation format: {fmt}")
 
 def ensure_json_serializable(obj):
     """
@@ -67,7 +77,7 @@ class GSAMQualityControl(BaseFileHandler):
     for consistent file operations with the rest of the pipeline.
     """
     
-    def __init__(self, gsam_path: str, verbose: bool = True, progress: bool = True):
+    def __init__(self, gsam_path: str, verbose: bool = True, progress: bool = False):
         """
         Initialize QC with path to GSAM annotations.
         
@@ -282,22 +292,8 @@ class GSAMQualityControl(BaseFileHandler):
         flags_section[entity_key][entity_id][flag_type].append(flag_data)
 
     def _progress_iter(self, iterable, desc: str, total: Optional[int] = None):
-        """Wrap an iterable with a progress indicator compatible with tmux."""
-        if not self.progress:
-            return iterable
-        if _HAS_TQDM:
-            return tqdm(iterable, desc=desc, total=total, ncols=80)
-        else:
-            # Simple fallback progress
-            items = list(iterable)
-            total = len(items)
-            for i, item in enumerate(items):
-                if i % max(1, total // 10) == 0:
-                    pct = (i / total) * 100
-                    print(f"\r{desc}: {pct:.1f}%", end="", flush=True)
-                yield item
-            print(f"\r{desc}: 100.0%")
-            return
+        """Simple fallback - no progress bars to avoid iteration issues."""
+        return iterable
     
     def get_new_entities_to_process(self) -> Dict[str, List[str]]:
         """Get entities that need QC processing (only new ones)."""
@@ -489,9 +485,9 @@ class GSAMQualityControl(BaseFileHandler):
                         if area is None:
                             segmentation = embryo_data.get("segmentation")
                             segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                            if segmentation and segmentation_format == "rle":
+                            if segmentation and segmentation_format in ["rle", "rle_base64"]:
                                 try:
-                                    mask = mask_utils.decode(segmentation)
+                                    mask = decode_segmentation_mask(segmentation)
                                     area = float(np.sum(mask))
                                 except Exception as e:
                                     continue
@@ -547,9 +543,9 @@ class GSAMQualityControl(BaseFileHandler):
                         if current_area is None:
                             segmentation = embryo_data.get("segmentation")
                             segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                            if segmentation and segmentation_format == "rle":
+                            if segmentation and segmentation_format in ["rle", "rle_base64"]:
                                 try:
-                                    mask = mask_utils.decode(segmentation)
+                                    mask = decode_segmentation_mask(segmentation)
                                     current_area = float(np.sum(mask))
                                 except Exception as e:
                                     continue
@@ -612,16 +608,14 @@ class GSAMQualityControl(BaseFileHandler):
             print("🔍 Checking masks on image edges...")
         
         t0 = time()
-        margin_pixels = 5  # safety margin in pixels
+        margin_pixels = 2  # Adjusted: safety margin in pixels (was 5, now 2 for less strict edge detection)
         flag_count = 0
 
         experiments_items = list(self.gsam_data.get("experiments", {}).items())
         for exp_id, exp_data in experiments_items:
-            print(f"DEBUG EDGE: Processing experiment {exp_id}")
             
             # Check if experiment should be processed
             if not self._should_process_experiment(exp_id, entities):
-                print(f"DEBUG EDGE: Skipping experiment {exp_id}")
                 continue
             
             for video_id, video_data in exp_data.get("videos", {}).items():
@@ -645,16 +639,11 @@ class GSAMQualityControl(BaseFileHandler):
                         
                         segmentation = embryo_data.get("segmentation")
                         segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                        print(f"DEBUG EDGE MASK: Processing snip {snip_id}, segmentation exists: {segmentation is not None}")
-                        if segmentation:
-                            print(f"DEBUG EDGE MASK: Segmentation format: {segmentation_format}")
                         
-                        if segmentation and segmentation_format == "rle":
-                            print(f"DEBUG EDGE MASK: About to decode RLE for snip {snip_id}")
+                        if segmentation and segmentation_format in ["rle", "rle_base64"]:
                             try:
-                                mask = mask_utils.decode(segmentation)
+                                mask = decode_segmentation_mask(segmentation)
                                 height, width = mask.shape
-                                print(f"DEBUG EDGE MASK: Decoded mask shape: {height}x{width} for snip {snip_id}")
                                 
                                 # Check if mask touches edges
                                 touches_edges = {
@@ -664,10 +653,7 @@ class GSAMQualityControl(BaseFileHandler):
                                     "right": bool(np.any(mask[:, -margin_pixels:]))
                                 }
                                 
-                                print(f"DEBUG EDGE MASK: Edge touches for snip {snip_id}: {touches_edges}")
-                                
                                 if any(touches_edges.values()):
-                                    print(f"DEBUG EDGE: *** FLAGGING snip {snip_id} for edge touching: {touches_edges} ***")
                                     flag_data = {
                                         "snip_id": snip_id,
                                         "image_id": image_id,
@@ -680,15 +666,11 @@ class GSAMQualityControl(BaseFileHandler):
                                     }
                                     self._add_flag("MASK_ON_EDGE", flag_data, "snip", snip_id)
                                     flag_count += 1
-                                    print(f"DEBUG: Flag count is now {flag_count}")
-                                else:
-                                    print(f"DEBUG: snip {snip_id} does NOT touch edges: {touches_edges}")
                                     
                             except Exception as e:
-                                print(f"DEBUG EDGE MASK: Exception processing snip {snip_id}: {e}")
+                                if self.verbose:
+                                    print(f"⚠️ Error processing snip {snip_id}: {e}")
                                 continue
-                        else:
-                            print(f"DEBUG EDGE MASK: Skipping snip {snip_id} - no RLE segmentation")
         
         if self.verbose:
             elapsed = time() - t0
@@ -700,8 +682,10 @@ class GSAMQualityControl(BaseFileHandler):
             print("🔍 Checking for detection failures...")
         
         t0 = time()
-        expected_min_embryos = 3  # Minimum expected embryos per image
+        expected_min_embryos = 1  # Adjusted: Minimum expected embryos per image (was 3)
         flag_count = 0
+        total_images_checked = 0
+        total_embryos_found = 0
 
         experiments_items = list(self.gsam_data.get("experiments", {}).items())
         for exp_id, exp_data in experiments_items:
@@ -722,8 +706,13 @@ class GSAMQualityControl(BaseFileHandler):
                     
                     embryos = image_data.get("embryos", {})
                     embryo_count = len(embryos)
+                    total_images_checked += 1
+                    total_embryos_found += embryo_count
                     
+                    # Only flag images with 0 embryos (now that threshold is 1)
                     if embryo_count < expected_min_embryos:
+                        if self.verbose and flag_count < 10:  # Limit debug output to first 10 flags
+                            print(f"   Flagging image {image_id}: {embryo_count} embryos (expected {expected_min_embryos}+)")
                         flag_data = {
                             "image_id": image_id,
                             "video_id": video_id,
@@ -738,6 +727,11 @@ class GSAMQualityControl(BaseFileHandler):
         if self.verbose:
             elapsed = time() - t0
             print(f"   ✓ Detection failure check completed in {elapsed:.2f}s ({flag_count} images flagged)")
+            print(f"   DEBUG STATS: Checked {total_images_checked} images, found {total_embryos_found} total embryos")
+            if total_images_checked > 0:
+                avg_embryos = total_embryos_found / total_images_checked
+                print(f"   Average embryos per image: {avg_embryos:.1f}")
+            print(f"   Current threshold: {expected_min_embryos} embryos minimum per image")
     
     def check_overlapping_masks(self, author: str, entities: Dict[str, List[str]]):
         """Flag images where embryo masks overlap (IoU > 0.1)."""
@@ -781,10 +775,10 @@ class GSAMQualityControl(BaseFileHandler):
                             format2 = embryo_data2.get("segmentation_format", "unknown")
                             
                             if (seg1 and seg2 and 
-                                format1 == "rle" and format2 == "rle"):
+                                format1 in ["rle", "rle_base64"] and format2 in ["rle", "rle_base64"]):
                                 try:
-                                    mask1 = mask_utils.decode(seg1)
-                                    mask2 = mask_utils.decode(seg2)
+                                    mask1 = decode_segmentation_mask(seg1)
+                                    mask2 = decode_segmentation_mask(seg2)
                                     
                                     # Calculate IoU
                                     intersection = np.sum(mask1 & mask2)
@@ -855,9 +849,9 @@ class GSAMQualityControl(BaseFileHandler):
                         
                         segmentation = embryo_data.get("segmentation")
                         segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                        if segmentation and segmentation_format == "rle":
+                        if segmentation and segmentation_format in ["rle", "rle_base64"]: 
                             try:
-                                mask = mask_utils.decode(segmentation)
+                                mask = decode_segmentation_mask(segmentation)
                                 mask_area = np.sum(mask)
                                 total_area = mask.shape[0] * mask.shape[1]
                                 pct_area = mask_area / total_area
@@ -922,9 +916,9 @@ class GSAMQualityControl(BaseFileHandler):
                         
                         segmentation = embryo_data.get("segmentation")
                         segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                        if segmentation and segmentation_format == "rle":
+                        if segmentation and segmentation_format in ["rle", "rle_base64"]:
                             try:
-                                mask = mask_utils.decode(segmentation)
+                                mask = decode_segmentation_mask(segmentation)
                                 mask_area = np.sum(mask)
                                 total_area = mask.shape[0] * mask.shape[1]
                                 pct_area = mask_area / total_area
@@ -993,9 +987,9 @@ class GSAMQualityControl(BaseFileHandler):
                         
                         segmentation = embryo_data.get("segmentation")
                         segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                        if segmentation and segmentation_format == "rle":
+                        if segmentation and segmentation_format in ["rle", "rle_base64"]:
                             try:
-                                mask = mask_utils.decode(segmentation)
+                                mask = decode_segmentation_mask(segmentation)
                                 labeled_mask = label(mask)
                                 num_components = int(np.max(labeled_mask))
                                 
@@ -1101,17 +1095,91 @@ class GSAMQualityControl(BaseFileHandler):
         return dict(flag_counts)
    
     def generate_overview(self, entities: Dict[str, List[str]]):
-        """Generate summary overview of all flags."""
-        flag_counts = self._count_flags_in_hierarchy()
+        """
+        Generate flag_overview section with ALL flagged entity IDs.
+        Includes both existing flags and any new flags from this run.
+        """
+        if self.verbose:
+            print("📋 Generating overview section...")
         
-        overview = {
-            "total_flags": sum(flag_counts.values()),
-            "flag_breakdown": flag_counts,
-            "entities_checked": {k: len(v) for k, v in entities.items()},
-            "last_updated": datetime.now().isoformat()
-        }
+        # Initialize overview structure
+        overview = {}
+        flags_section = self.gsam_data["flags"]
         
-        self.gsam_data["flags"]["flag_overview"] = overview
+        # Collect ALL flag types and count them (not just from this run)
+        for entity_type in ["by_experiment", "by_video", "by_image", "by_snip", "by_embryo"]:
+            if entity_type in flags_section:
+                for entity_id, entity_flags in flags_section[entity_type].items():
+                    for flag_type, flag_instances in entity_flags.items():
+                        if flag_type not in overview:
+                            overview[flag_type] = {
+                                "experiment_ids": set(),
+                                "video_ids": set(),
+                                "image_ids": set(),
+                                "snip_ids": set(),
+                                "count": 0
+                            }
+
+                        # Add entity ID to appropriate set and extract related IDs from flag data
+                        if entity_type == "by_experiment":
+                            overview[flag_type]["experiment_ids"].add(entity_id)
+                        elif entity_type == "by_video":
+                            overview[flag_type]["video_ids"].add(entity_id)
+                            # Extract experiment_id from flag data if available
+                            for flag_instance in flag_instances:
+                                if "experiment_id" in flag_instance:
+                                    overview[flag_type]["experiment_ids"].add(flag_instance["experiment_id"])
+                        elif entity_type == "by_image":
+                            overview[flag_type]["image_ids"].add(entity_id)
+                            # Extract experiment_id and video_id from flag data if available
+                            for flag_instance in flag_instances:
+                                if "experiment_id" in flag_instance:
+                                    overview[flag_type]["experiment_ids"].add(flag_instance["experiment_id"])
+                                if "video_id" in flag_instance:
+                                    overview[flag_type]["video_ids"].add(flag_instance["video_id"])
+                        elif entity_type == "by_snip":
+                            overview[flag_type]["snip_ids"].add(entity_id)
+                            # Extract experiment_id, video_id, and image_id from flag data if available
+                            for flag_instance in flag_instances:
+                                if "experiment_id" in flag_instance:
+                                    overview[flag_type]["experiment_ids"].add(flag_instance["experiment_id"])
+                                if "video_id" in flag_instance:
+                                    overview[flag_type]["video_ids"].add(flag_instance["video_id"])
+                                if "image_id" in flag_instance:
+                                    overview[flag_type]["image_ids"].add(flag_instance["image_id"])
+                        elif entity_type == "by_embryo":
+                            # Properly aggregate embryo-level flags into overview
+                            for flag_instance in flag_instances:
+                                if "experiment_id" in flag_instance:
+                                    overview[flag_type]["experiment_ids"].add(flag_instance["experiment_id"])
+                                if "video_id" in flag_instance:
+                                    overview[flag_type]["video_ids"].add(flag_instance["video_id"])
+                                if "image_id" in flag_instance:
+                                    overview[flag_type]["image_ids"].add(flag_instance["image_id"])
+                                if "embryo_id" in flag_instance:
+                                    overview[flag_type]["snip_ids"].add(flag_instance["embryo_id"])
+
+                        # Count flag instances
+                        overview[flag_type]["count"] += len(flag_instances)
+        
+        # Convert sets to sorted lists for JSON serialization, filtering out None
+        for flag_type, flag_data in overview.items():
+            flag_data["experiment_ids"] = sorted([eid for eid in flag_data.get("experiment_ids", []) if eid is not None])
+            flag_data["video_ids"] = sorted([vid for vid in flag_data.get("video_ids", []) if vid is not None])
+            flag_data["image_ids"] = sorted([iid for iid in flag_data.get("image_ids", []) if iid is not None])
+            flag_data["snip_ids"] = sorted([sid for sid in flag_data.get("snip_ids", []) if sid is not None])
+            # Remove empty lists to keep JSON clean
+            overview[flag_type] = {k: v for k, v in flag_data.items() if v != []}
+        
+        # Store in flags section
+        flags_section["flag_overview"] = overview
+        
+        if self.verbose:
+            total_flagged = sum(data.get("count", 0) for data in overview.values())
+            if total_flagged > 0:
+                print(f"📊 Generated overview with {len(overview)} flag types, {total_flagged} total flags")
+            else:
+                print(f"📊 Generated overview - no flags found in the system")
     
     def _count_flags_in_hierarchy(self) -> Dict[str, int]:
         """Count all flags by type across the hierarchy."""
@@ -1132,18 +1200,18 @@ class GSAMQualityControl(BaseFileHandler):
         overview = self.gsam_data["flags"].get("flag_overview", {})
         qc_history = self.gsam_data["flags"].get("qc_history", [])
         
-        # Get flag breakdown - it's already a dict of {flag_type: count}
-        flag_breakdown = overview.get("flag_breakdown", {})
-        total_flags = overview.get("total_flags", 0)
+        # Calculate totals from the detailed overview
+        total_flags = sum(data.get("count", 0) for data in overview.values())
+        flag_categories = {k: v.get("count", 0) for k, v in overview.items()}
 
         return {
             "total_flags": total_flags,
-            "flag_categories": flag_breakdown,
+            "flag_categories": flag_categories,
             "entities_with_flags": {
-                "experiments": len(self.gsam_data["flags"].get("by_experiment", {})),
-                "videos": len(self.gsam_data["flags"].get("by_video", {})),
-                "images": len(self.gsam_data["flags"].get("by_image", {})),
-                "snips": len(self.gsam_data["flags"].get("by_snip", {}))
+                "experiments": len(set(sum([v.get("experiment_ids", []) for v in overview.values()], []))),
+                "videos": len(set(sum([v.get("video_ids", []) for v in overview.values()], []))),
+                "images": len(set(sum([v.get("image_ids", []) for v in overview.values()], []))),
+                "snips": len(set(sum([v.get("snip_ids", []) for v in overview.values()], [])))
             },
             "last_run": qc_history[-1] if qc_history else None,
             "total_runs": len(qc_history)
@@ -1182,6 +1250,11 @@ class GSAMQualityControl(BaseFileHandler):
         flags_section = self.gsam_data["flags"]
         
         return flags_section.get(entity_key, {}).get(entity_id, {})
+
+    def get_entities_with_flag_type(self, flag_type: str) -> Dict:
+        """Get all entity IDs that have a specific flag type from the overview."""
+        overview = self.gsam_data["flags"].get("flag_overview", {})
+        return overview.get(flag_type, {})
 
     def get_flags_by_type(self, flag_type: str) -> List[Dict]:
         """Get all flags of a specific type across all entities."""
@@ -1272,6 +1345,11 @@ Examples:
         help="Disable progress bars"
     )
     parser.add_argument(
+        "--progress", 
+        action="store_true", 
+        help="Enable progress bars"
+    )
+    parser.add_argument(
         "--dry-run", 
         action="store_true", 
         help="Run analysis without saving results"
@@ -1295,7 +1373,7 @@ Examples:
         qc = GSAMQualityControl(
             gsam_path=str(input_path),
             verbose=args.verbose,
-            progress=not args.no_progress
+            progress=args.progress and not args.no_progress
         )
         
         # Prepare target entities (if specified)
@@ -1328,11 +1406,13 @@ Examples:
             qc.save_json(qc.gsam_data, filepath=str(output_path), create_backup=True)
             if args.verbose:
                 print(f"💾 Results saved to: {output_path}")
-        
+
         # Print summary
         qc.print_summary()
-        
-        if args.verbose:
+
+        if args.dry_run:
+            print("\n🚫 Dry run complete. No changes were saved.")
+        elif args.verbose:
             print("✅ QC analysis completed successfully!")
         
     except Exception as e:
