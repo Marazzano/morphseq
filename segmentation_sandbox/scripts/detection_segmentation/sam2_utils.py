@@ -847,14 +847,21 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
                         verbose: bool = True) -> Dict:
     """
     Run SAM2 propagation from seed frame using the actual processed images directory.
-    FIXED: Updated to use corrected bbox format.
     """
     if verbose:
-        print(f"🎬 Running SAM2 propagation from seed frame {seed_frame_idx}")
+        print(f"🔄 Running SAM2 propagation from frame {seed_frame_idx}...")
+        print(f"   Video directory: {video_dir}")
+        print(f"   Seed frame image_id: {image_ids[seed_frame_idx]}")
+    
+    # Initialize video_segments to avoid UnboundLocalError
+    video_segments = {}
     
     # Create temporary directory with properly named symlinks for SAM2
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
+        
+        if verbose:
+            print(f"   📁 Creating SAM2-compatible frame directory with {len(image_ids)} frames")
         
         # Create symlinks with sequential naming (SAM2 expects this)
         for i, image_id in enumerate(image_ids):
@@ -868,12 +875,13 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
             else:
                 if verbose:
                     print(f"⚠️ Image not found: {src_path}")
+                raise FileNotFoundError(f"Source image not found: {src_path}")
         
-        # Initialize video with seed frame
+        # Initialize SAM2 inference state with properly named directory
         inference_state = predictor.init_state(video_path=str(temp_dir))
         
-        # Add objects from seed detections
-        for i, (detection, embryo_id) in enumerate(zip(seed_detections, embryo_ids)):
+        # Add bounding boxes from seed frame detections
+        for embryo_idx, (detection, embryo_id) in enumerate(zip(seed_detections, embryo_ids)):
             # Handle different bbox field names from GroundedDINO
             bbox = detection.get('box_xyxy') or detection.get('bbox_xyxy') or detection.get('bbox')
             if bbox is None:
@@ -881,62 +889,109 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
                     print(f"⚠️ No bbox found in detection: {list(detection.keys())}")
                 continue
             
+            x1, y1, x2, y2 = bbox
+            
             # Check if GDINO bbox is normalized (0-1) or pixel coordinates
             is_normalized = all(0.0 <= coord <= 1.0 for coord in bbox)
             
-            # Get image dimensions for coordinate conversion
-            seed_image_path = video_dir / f"{seed_frame_idx:04d}.jpg"
-            if seed_image_path.exists():
-                seed_image = cv2.imread(str(seed_image_path))
-                if seed_image is not None:
-                    img_height, img_width = seed_image.shape[:2]
-                else:
-                    if verbose:
-                        print(f"⚠️ Could not read seed image: {seed_image_path}")
-                    continue
-            else:
+            # Get image dimensions from the seed frame
+            seed_frame_num = extract_frame_number(image_ids[seed_frame_idx])
+            seed_image_path = video_dir / f"{seed_frame_num:04d}.jpg"  # Use frame number format
+            seed_image = cv2.imread(str(seed_image_path))
+            if seed_image is None:
                 if verbose:
-                    print(f"⚠️ Seed image not found: {seed_image_path}")
+                    print(f"⚠️ Could not read seed image: {seed_image_path}")
                 continue
+            img_height, img_width = seed_image.shape[:2]
             
-            # Convert bbox center to pixel coordinates for SAM2
+            # Convert to pixel coordinates if needed
             if is_normalized:
                 # GDINO bbox is normalized, convert to pixels
-                center_x_px = (bbox[0] + bbox[2]) / 2 * img_width
-                center_y_px = (bbox[1] + bbox[3]) / 2 * img_height
+                x1_px = x1 * img_width
+                y1_px = y1 * img_height
+                x2_px = x2 * img_width
+                y2_px = y2 * img_height
             else:
                 # GDINO bbox is already in pixels
-                center_x_px = (bbox[0] + bbox[2]) / 2
-                center_y_px = (bbox[1] + bbox[3]) / 2
+                x1_px, y1_px, x2_px, y2_px = x1, y1, x2, y2
+            
+            # Create bbox array in the format SAM2 expects
+            bbox_xyxy = np.array([[x1_px, y1_px, x2_px, y2_px]], dtype=np.float32)
             
             if verbose:
-                print(f"SAM2 prompt for {embryo_id}: center=({center_x_px:.1f},{center_y_px:.1f})")
+                coord_type = "normalized" if is_normalized else "pixel"
+                print(f"   SAM2 prompt for {embryo_id} ({coord_type}): bbox=[{x1_px:.1f},{y1_px:.1f},{x2_px:.1f},{y2_px:.1f}]")
             
-            points = np.array([[center_x_px, center_y_px]], dtype=np.float32)
-            labels = np.array([1], np.int32)  # Positive click
-            
+            # Add box to SAM2 (no points, only box)
             predictor.add_new_points_or_box(
                 inference_state=inference_state,
                 frame_idx=seed_frame_idx,
-                obj_id=i,
-                points=points,
-                labels=labels,
+                obj_id=embryo_idx,
+                box=bbox_xyxy,
             )
         
         # Propagate through video
-        video_segments = {}
+        if verbose:
+            print(f"   Propagating through {len(image_ids)} video frames...")
+        
         for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
-            video_segments[out_frame_idx] = {
-                out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
-                for i, out_obj_id in enumerate(out_obj_ids)
-            }
+            # Map frame index back to image_id
+            if out_frame_idx < len(image_ids):
+                image_id = image_ids[out_frame_idx]
+                frame_results = {}
+                
+                for i, out_obj_id in enumerate(out_obj_ids):
+                    # Skip invalid indices
+                    if isinstance(out_obj_id, int):
+                        if out_obj_id >= len(embryo_ids):
+                            if verbose:
+                                print(f"⚠️ obj_id {out_obj_id} out of range, skipping")
+                            continue
+                    else:
+                        if verbose:
+                            print(f"⚠️ Invalid obj_id type: {type(out_obj_id)}")
+                        continue
+                        
+                    embryo_id = embryo_ids[out_obj_id]
+                    
+                    # Fix: Squeeze extra dimensions from SAM2 mask
+                    binary_mask = out_mask_logits[i]
+                    if binary_mask.ndim > 2:
+                        binary_mask = binary_mask.squeeze()
+                    
+                    # Convert to binary mask
+                    binary_mask = (binary_mask > 0.0).cpu().numpy().astype(np.uint8)
+                    
+                    # REFACTORED: Use standardized snip_id creation
+                    snip_id = create_snip_id(embryo_id, image_id)
+                    
+                    # Convert mask to requested format
+                    if segmentation_format == 'rle':
+                        segmentation = convert_sam2_mask_to_rle(binary_mask)
+                    else:
+                        segmentation = convert_sam2_mask_to_polygon(binary_mask)
+                    
+                    # Extract bbox and area
+                    bbox = extract_bbox_from_mask(binary_mask)
+                    area = float(np.sum(binary_mask > 0))
+                    
+                    frame_results[embryo_id] = {
+                        "embryo_id": embryo_id,
+                        "snip_id": snip_id,
+                        "segmentation": segmentation,
+                        "segmentation_format": segmentation_format,
+                        "bbox": bbox,
+                        "area": area,
+                        "mask_confidence": 0.85  # SAM2 default confidence
+                    }
+                                        
+                video_segments[image_id] = frame_results
     
     if verbose:
         print(f"✅ SAM2 propagation complete for {len(video_segments)} frames")
     
     return video_segments
-
-
+     
 def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: int,
                                  seed_detections: List[Dict], embryo_ids: List[str],
                                  image_ids: List[str], segmentation_format: str = 'rle',
@@ -1101,13 +1156,13 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
                     binary_mask = binary_mask.squeeze()
                 
                 # DEBUG: Save processed mask for inspection (optional - can re-enable for debugging)
-                # if verbose and frame_idx == 0:  # Only save for first frame to avoid spam
-                #     debug_dir = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/temp/debug_sam2_masks")
-                #     debug_dir.mkdir(parents=True, exist_ok=True)
-                #     mask_viz = (binary_mask * 255).astype(np.uint8)
-                #     debug_path = debug_dir / f"{video_id}_{image_id}_{embryo_id}_processed.png"
-                #     cv2.imwrite(str(debug_path), mask_viz)
-                #     print(f"Saved processed mask: {debug_path}, shape={binary_mask.shape}, sum={binary_mask.sum()}")
+                if verbose and frame_idx == 0:  # Only save for first frame to avoid spam
+                    debug_dir = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/temp/debug_sam2_masks")
+                    debug_dir.mkdir(parents=True, exist_ok=True)
+                    mask_viz = (binary_mask * 255).astype(np.uint8)
+                    debug_path = debug_dir / f"{video_id}_{image_id}_{embryo_id}_processed.png"
+                    cv2.imwrite(str(debug_path), mask_viz)
+                    print(f"Saved processed mask: {debug_path}, shape={binary_mask.shape}, sum={binary_mask.sum()}")
                 
                 # REFACTORED: Use standardized snip_id creation
                 snip_id = create_snip_id(embryo_id, image_id)

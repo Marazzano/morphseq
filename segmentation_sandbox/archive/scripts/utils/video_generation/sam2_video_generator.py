@@ -69,10 +69,11 @@ from typing import Dict, List, Tuple, Optional
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-# Add utils to path for experiment metadata utilities
-# Define project root as three levels up (segmentation_sandbox)
-SANDBOX_ROOT = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/")
-sys.path.append(str(SANDBOX_ROOT / "scripts/utils"))
+# Add archive scripts folder to path for experiment metadata utilities
+SANDBOX_ROOT = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/archive")
+# Add the 'scripts' directory under archive to sys.path for importing utils
+sys.path.append(str(SANDBOX_ROOT / "scripts"))
+# Also include archive root
 if str(SANDBOX_ROOT) not in sys.path:
     sys.path.append(str(SANDBOX_ROOT))
 
@@ -154,23 +155,27 @@ def find_image_dir(video_id: str, first_image_id: str) -> Path:
     """Find image directory for a video using experiment metadata."""
     try:
         from scripts.utils.experiment_metadata_utils import get_image_id_paths
-        # Try to get image path using metadata utils
-        img_path = get_image_id_paths(first_image_id, 
-                                      SANDBOX_ROOT / "data/raw_data_organized/experiment_metadata.json")
+        # Try metadata-based lookup
+        img_path = get_image_id_paths(
+            first_image_id,
+            SANDBOX_ROOT / "data/raw_data_organized/experiment_metadata.json"
+        )
         return img_path.parent
+
     except Exception as e:
         # Fallback: search common locations
         search_paths = [
-            SANDBOX_ROOT / "data/raw_data_organized" / video_id.split('_')[0] / "images" / video_id,
+            SANDBOX_ROOT / "data/raw_data_organized" / "_".join(video_id.split('_')[:-1]) / "images" / video_id,
             SANDBOX_ROOT / f"data/**/images/{video_id}",
         ]
-        
-        for path in search_paths:
-            if path.exists() and (path / f"{first_image_id}.jpg").exists():
-                return path
-        
-        raise FileNotFoundError(f"Could not find images for {video_id}. "
-                               f"Metadata error: {e}")  
+    
+    for path in search_paths:
+        if path.exists() and (path / f"{first_image_id}.jpg").exists():
+            return path
+    
+    raise FileNotFoundError(
+        f"Could not find images for {video_id}. Metadata error: {e}"
+    )
 
 
 def create_video(video_id: str, video_data: Dict, output_path: str, fps: int = 10) -> bool:
@@ -334,8 +339,8 @@ def test_video_generation(specific_video_ids: Optional[List[str]] = None):
     print("=" * 50)
 
     # Configuration
-    annotations_path = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/grounded_sam_annotations_finetuned_test.json"
-    output_dir = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/sam2_annotations/test_videos/20250720_test"
+    annotations_path = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/archive/data/annotation_and_masks/sam2_annotations/grounded_sam_annotations_finetuned.json"
+    output_dir = "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/annotation_and_masks/temp/test_videos/20250813_masktest"
     max_videos = 10
     fps = 3
     show_info = True
@@ -418,4 +423,4 @@ def main():
 
 
 if __name__ == "__main__":
-    test_video_generation(["20231218_F11", "20240306_C01", "20240306_D06"])
+    test_video_generation(["20250612_30hpf_ctrl_atf6_A01", "20240306_C01", "20240306_D06"])
