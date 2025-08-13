@@ -441,25 +441,115 @@ class GroundedSamAnnotations(BaseFileHandler):
 
     def get_missing_videos(self, video_ids: Optional[List[str]] = None,
                           experiment_ids: Optional[List[str]] = None) -> List[str]:
-        """Get list of video IDs that need processing."""
-        # Get available videos from annotations
-        available_videos = list(self.group_annotations_by_video().keys())
+        """Get list of video IDs that need processing using EntityIDTracker cross-reference."""
+        # Cross-reference entities between GroundedDINO and SAM2 using EntityIDTracker
+        gdino_entities = self._extract_gdino_entities()
+        sam2_entities = EntityIDTracker.extract_entities(self.results)
+        
+        # Compare what's available vs processed
+        gdino_videos = set(gdino_entities.get("videos", []))
+        sam2_videos = set(sam2_entities.get("videos", []))
+        
+        # Get videos that exist in GroundedDINO but not fully processed by SAM2
+        missing_videos = list(gdino_videos - sam2_videos)
+        
+        # Also check for videos that failed processing (have sam2_success=False)
+        failed_videos = []
+        for exp_data in self.results.get("experiments", {}).values():
+            for video_id, video_data in exp_data.get("videos", {}).items():
+                if not video_data.get("sam2_success", False):
+                    failed_videos.append(video_id)
+        
+        # Add failed videos to missing list
+        missing_videos.extend([v for v in failed_videos if v in gdino_videos])
+        missing_videos = list(set(missing_videos))  # Remove duplicates
         
         # Filter by requested videos/experiments
         if video_ids:
-            available_videos = [v for v in available_videos if v in video_ids]
+            missing_videos = [v for v in missing_videos if v in video_ids]
         
         if experiment_ids:
-            available_videos = [v for v in available_videos 
-                              if any(v.startswith(exp_id) for exp_id in experiment_ids)]
+            missing_videos = [v for v in missing_videos 
+                            if any(v.startswith(exp_id) for exp_id in experiment_ids)]
         
-        # Get already processed videos
-        processed_videos = self.get_processed_video_ids()
-        
-        # Return missing videos
-        missing_videos = [v for v in available_videos if v not in processed_videos]
+        if self.verbose:
+            print(f"🔍 Entity cross-reference:")
+            print(f"   GroundedDINO videos: {len(gdino_videos)}")
+            print(f"   SAM2 processed videos: {len(sam2_videos)}")
+            print(f"   Missing videos: {len(missing_videos)}")
         
         return missing_videos
+
+    def _extract_gdino_entities(self) -> Dict:
+        """Extract entities from GroundedDINO annotations for cross-reference."""
+        if not self.seed_annotations or 'high_quality_annotations' not in self.seed_annotations:
+            return {"experiments": [], "videos": [], "images": [], "embryos": [], "snips": []}
+        
+        hq_annotations = self.seed_annotations['high_quality_annotations']
+        
+        # Extract all image IDs from filtered annotations for target prompt
+        all_image_ids = []
+        for exp_id, exp_data in hq_annotations.items():
+            if exp_data.get('prompt') == self.target_prompt:
+                if 'filtered' in exp_data:
+                    all_image_ids.extend(exp_data['filtered'].keys())
+        
+        # Use parsing_utils to extract entities from image IDs
+        experiments = set()
+        videos = set()
+        images = set()
+        
+        for image_id in all_image_ids:
+            try:
+                parsed = parse_entity_id(image_id)
+                if parsed.get('experiment_id'):
+                    experiments.add(parsed['experiment_id'])
+                if parsed.get('video_id'):
+                    videos.add(parsed['video_id'])
+                images.add(image_id)
+            except Exception as e:
+                if self.verbose:
+                    print(f"⚠️ Failed to parse entity from {image_id}: {e}")
+        
+        return {
+            "experiments": list(experiments),
+            "videos": list(videos), 
+            "images": list(images),
+            "embryos": [],  # GroundedDINO doesn't assign embryo IDs
+            "snips": []     # GroundedDINO doesn't have snip IDs
+        }
+
+    def get_entity_comparison(self) -> Dict:
+        """Get detailed comparison between GroundedDINO and SAM2 entities."""
+        gdino_entities = self._extract_gdino_entities()
+        sam2_entities = EntityIDTracker.extract_entities(self.results)
+        
+        comparison = {
+            "gdino_stats": {
+                "experiments": len(gdino_entities["experiments"]),
+                "videos": len(gdino_entities["videos"]),
+                "images": len(gdino_entities["images"])
+            },
+            "sam2_stats": {
+                "experiments": len(sam2_entities["experiments"]),
+                "videos": len(sam2_entities["videos"]),
+                "images": len(sam2_entities["images"]),
+                "embryos": len(sam2_entities["embryos"]),
+                "snips": len(sam2_entities["snips"])
+            },
+            "missing_from_sam2": {
+                "experiments": list(set(gdino_entities["experiments"]) - set(sam2_entities["experiments"])),
+                "videos": list(set(gdino_entities["videos"]) - set(sam2_entities["videos"])),
+                "images": list(set(gdino_entities["images"]) - set(sam2_entities["images"]))
+            },
+            "extra_in_sam2": {
+                "experiments": list(set(sam2_entities["experiments"]) - set(gdino_entities["experiments"])),
+                "videos": list(set(sam2_entities["videos"]) - set(gdino_entities["videos"])),
+                "images": list(set(sam2_entities["images"]) - set(gdino_entities["images"]))
+            }
+        }
+        
+        return comparison
 
     def process_missing_annotations(self, 
                                   video_ids: Optional[List[str]] = None,
@@ -680,15 +770,37 @@ class GroundedSamAnnotations(BaseFileHandler):
         print(f"   Format: {summary['segmentation_format']}")
         print(f"   Prompt: '{summary['target_prompt']}')")
 
-    def print_summary(self):
-        """Print processing summary."""
-        summary = self.get_summary()
-        print(f"\n📊 GroundedSamAnnotations Summary:")
-        print(f"   Experiments: {summary['total_experiments']}")
-        print(f"   Images: {summary['total_images']}")
-        print(f"   Snips: {summary['total_snips']}")
-        print(f"   Format: {summary['segmentation_format']}")
-        print(f"   Prompt: '{summary['target_prompt']}'")
+    def print_entity_comparison(self):
+        """Print detailed entity comparison between GroundedDINO and SAM2."""
+        comparison = self.get_entity_comparison()
+        
+        print(f"\n🔍 Entity Comparison (GroundedDINO vs SAM2):")
+        print(f"📊 GroundedDINO: {comparison['gdino_stats']['experiments']} exp, {comparison['gdino_stats']['videos']} videos, {comparison['gdino_stats']['images']} images")
+        print(f"🎬 SAM2: {comparison['sam2_stats']['experiments']} exp, {comparison['sam2_stats']['videos']} videos, {comparison['sam2_stats']['images']} images, {comparison['sam2_stats']['embryos']} embryos, {comparison['sam2_stats']['snips']} snips")
+        
+        missing = comparison['missing_from_sam2']
+        if any(len(v) > 0 for v in missing.values()):
+            print(f"❌ Missing from SAM2:")
+            if missing['experiments']:
+                print(f"   Experiments: {missing['experiments']}")
+            if missing['videos']:
+                print(f"   Videos: {len(missing['videos'])} total")
+                if len(missing['videos']) <= 5:
+                    print(f"   Videos: {missing['videos']}")
+                else:
+                    print(f"   Videos: {missing['videos'][:3]} ... and {len(missing['videos'])-3} more")
+            if missing['images']:
+                print(f"   Images: {len(missing['images'])} total")
+        
+        extra = comparison['extra_in_sam2']
+        if any(len(v) > 0 for v in extra.values()):
+            print(f"➕ Extra in SAM2:")
+            if extra['experiments']:
+                print(f"   Experiments: {extra['experiments']}")
+            if extra['videos']:
+                print(f"   Videos: {extra['videos']}")
+            if extra['images']:
+                print(f"   Images: {len(extra['images'])} total")
 
     def __repr__(self) -> str:
         summary = self.get_summary()
