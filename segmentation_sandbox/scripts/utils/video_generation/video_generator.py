@@ -262,19 +262,16 @@ class VideoGenerator:
             
         exp_data = experiments[experiment_id]
         videos = exp_data.get("videos", {})
+        # print(videos)
         if video_id not in videos:
             if verbose:
                 print(f"❌ Video {video_id} not found in experiment")
             return False
             
         video_data = videos[video_id]
-        images = video_data.get("images", {})
-        
-        if not images:
-            if verbose:
-                print(f"❌ No images found for video {video_id}")
-            return False
-            
+        print(video_data)
+  
+
         # Find video directory - use experiment metadata to locate images
         # Standard path structure: data/raw_data_organized/{experiment_id}/images/{video_id}/
         video_dir = Path("data/raw_data_organized") / experiment_id / "images" / video_id
@@ -293,7 +290,7 @@ class VideoGenerator:
             
         if verbose:
             print(f"📁 Found {len(image_files)} frames in {video_dir}")
-            print(f"📊 Processing {len(images)} frames with SAM2 data")
+            # print(f"📊 Processing {len(images)} frames with SAM2 data")
             
         # Get video dimensions from first frame
         first_frame = cv2.imread(str(image_files[0]))
