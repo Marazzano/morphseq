@@ -26,7 +26,10 @@ paths:
   # Model directories (relative to sandbox)
   models_dir: "models"
   groundingdino_path: "models/GroundingDINO"
-  sam2_path: "models/sam2/sam2"
+  # Path to the sam2 models directory. Can be absolute or sandbox-relative.
+  # If this path points directly to the 'sam2' package directory, it will be used as SAM2_ROOT.
+  # Example sandbox-relative: "models/sam2/sam2" or "models/sam2"
+  sam2_models_root: "models/sam2/sam2"
 
   # Output directories (relative to sandbox)
   intermediate_dir: "data/intermediate"
