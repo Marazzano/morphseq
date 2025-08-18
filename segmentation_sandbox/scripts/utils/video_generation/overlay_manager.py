@@ -281,12 +281,19 @@ class OverlayManager:
         Returns:
             Frame with overlays applied
         """
+        # Upfront validation
+        if not isinstance(embryos_data, dict) or not embryos_data:
+            raise ValueError(f"Invalid embryos_data: expected non-empty dict, got {type(embryos_data)} with {len(embryos_data) if hasattr(embryos_data, '__len__') else 'unknown'} items")
+        
+        if frame is None or frame.size == 0:
+            raise ValueError(f"Invalid frame: got {type(frame)} with shape {getattr(frame, 'shape', 'no shape attribute')}")
+        
         for i, (embryo_id, embryo_data) in enumerate(embryos_data.items()):
             try:
                 # Get segmentation and decode mask
                 segmentation = embryo_data.get("segmentation")
                 if not segmentation:
-                    continue
+                    raise ValueError(f"No segmentation data found for embryo {embryo_id}. Available keys: {list(embryo_data.keys())}")
                 
                 # Handle the nested segmentation format from GSAM
                 if isinstance(segmentation, dict):
@@ -295,30 +302,26 @@ class OverlayManager:
                     if format_type in ["rle", "rle_base64"]:
                         try:
                             mask = decode_mask_rle(segmentation)
-                            print(f"✓ Decoded mask for {embryo_id}: shape={mask.shape if mask is not None else 'None'}, area={mask.sum() if mask is not None else 0}")
                         except Exception as e:
-                            print(f"⚠️ Failed to decode nested mask for {embryo_id}: {e}")
-                            continue
+                            raise ValueError(f"Failed to decode RLE mask for {embryo_id}: {e}. Segmentation keys: {list(segmentation.keys())}")
                     else:
-                        print(f"⚠️ Unsupported segmentation format: {format_type}")
-                        continue
+                        raise ValueError(f"Unsupported segmentation format for {embryo_id}: {format_type}. Expected 'rle' or 'rle_base64'")
                 else:
                     # Legacy format: direct segmentation data
                     try:
                         mask = decode_mask_rle(segmentation)
-                        print(f"✓ Decoded legacy mask for {embryo_id}: shape={mask.shape if mask is not None else 'None'}, area={mask.sum() if mask is not None else 0}")
                     except Exception as e:
-                        print(f"⚠️ Failed to decode legacy mask for {embryo_id}: {e}")
-                        continue
+                        raise ValueError(f"Failed to decode legacy mask for {embryo_id}: {e}. Segmentation type: {type(segmentation)}")
                         
                 if mask is None:
-                    print(f"⚠️ Mask is None for {embryo_id}")
-                    continue
+                    raise ValueError(f"Failed to decode mask for embryo {embryo_id}. Segmentation format: {segmentation.get('format', 'unknown')}")
                     
-                # Get bounding box
+                # Get bounding box - check both locations
                 bbox = embryo_data.get("bbox", [])
+                if not bbox and isinstance(segmentation, dict):
+                    bbox = segmentation.get("bbox", [])
                 if len(bbox) != 4:
-                    continue
+                    raise ValueError(f"Invalid bbox for embryo {embryo_id}: expected 4 coordinates [x,y,w,h], got {len(bbox)} values: {bbox}. Available embryo_data keys: {list(embryo_data.keys())}, segmentation keys: {list(segmentation.keys()) if isinstance(segmentation, dict) else 'not dict'}")
                     
                 x, y, w, h = bbox
                 
@@ -340,14 +343,20 @@ class OverlayManager:
                 
                 # Show mask overlay
                 if show_mask:
-                    # Create colored mask overlay
-                    colored_mask = np.zeros_like(frame)
-                    mask_color = color if is_good_quality else warning_color
-                    colored_mask[mask > 0] = mask_color
+                    # Validate mask and frame compatibility
+                    if mask.shape[:2] != frame.shape[:2]:
+                        raise ValueError(f"Mask shape {mask.shape} incompatible with frame shape {frame.shape} for embryo {embryo_id}")
                     
-                    # Blend with original frame
+                    # Create colored mask overlay with proper alpha blending
+                    mask_color = color if is_good_quality else warning_color
                     alpha = self.config.MASK_ALPHA
-                    frame = cv2.addWeighted(frame, 1 - alpha, colored_mask, alpha, 0)
+                    
+                    # Apply color only to mask pixels, blend only where mask exists
+                    mask_pixels = mask > 0
+                    frame[mask_pixels] = (
+                        frame[mask_pixels] * (1 - alpha) + 
+                        np.array(mask_color) * alpha
+                    ).astype(frame.dtype)
                     
                     # Add mask outline
                     contours, _ = cv2.findContours(
@@ -410,8 +419,15 @@ class OverlayManager:
                             )
                             
             except Exception as e:
-                print(f"⚠️ Error processing embryo {embryo_id}: {e}")
-                continue
+                print(f"❌ FATAL ERROR processing embryo {embryo_id} in add_sam2_embryos_overlay()")
+                print(f"   Embryo data keys: {list(embryo_data.keys())}")
+                print(f"   Frame shape: {frame.shape}")
+                print(f"   Show flags: mask={show_mask}, bbox={show_bbox}, metrics={show_metrics}")
+                print(f"   Exception type: {type(e).__name__}")
+                print(f"   Exception message: {e}")
+                import traceback
+                traceback.print_exc()
+                raise  # Re-raise instead of swallowing the error
                 
         return frame
         

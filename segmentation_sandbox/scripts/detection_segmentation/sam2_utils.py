@@ -806,11 +806,7 @@ class GroundedSamAnnotations(BaseFileHandler):
                     successful_videos += 1
                 else:
                     failed_videos += 1
-                # New layout uses 'image_ids' mapping; support legacy 'images' as fallback
-                if 'image_ids' in video_data:
-                    total_images += len(video_data.get('image_ids', {}))
-                else:
-                    total_images += len(video_data.get('images', {}))
+                total_images += len(video_data.get('image_ids', {}))
         
         return {
             "total_experiments": total_experiments,
