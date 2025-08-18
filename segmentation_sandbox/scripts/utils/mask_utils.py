@@ -181,7 +181,7 @@ def polygon_to_mask(polygons: List[List[float]], height: int, width: int) -> np.
     return mask
 
 
-def encode_mask_complete(binary_mask: np.ndarray, format: str = "rle") -> Dict:
+def encode_mask_rle_full_info(binary_mask: np.ndarray, format: str = "rle") -> Dict:
     """
     Create complete segmentation object with RLE + derived info (area, bbox).
     This is the new self-contained format.
@@ -201,7 +201,9 @@ def encode_mask_complete(binary_mask: np.ndarray, format: str = "rle") -> Dict:
         segmentation = {
             "counts": rle["counts"],
             "size": rle["size"],
-            "format": "rle_base64",  # Specify that counts are base64-encoded
+            # Use canonical format name 'rle' for compatibility with sam2_utils
+            # counts may be base64-encoded bytes/strings depending on encoder
+            "format": "rle",
             "area": mask_area(binary_mask),
             "bbox": mask_to_bbox(binary_mask)
         }
@@ -250,15 +252,21 @@ def get_segmentation_format(segmentation: Dict, embryo_data: Dict = None) -> str
     Returns:
         Format string ("rle", "polygon", or "unknown")
     """
-    # Check new location first
-    format_str = segmentation.get("format")
-    if format_str:
-        return format_str
-    
-    # Fall back to old location for backward compatibility
-    if embryo_data:
+    # Check new location first, then fall back to old field for backward compatibility
+    format_str = segmentation.get("format") or segmentation.get("segmentation_format")
+    if not format_str and embryo_data:
+        # older records stored format on embryo_data.segmentation_format
         format_str = embryo_data.get("segmentation_format")
-        if format_str:
-            return format_str
-    
-    return "unknown"
+
+    if not format_str:
+        return "unknown"
+
+    # Normalize common variants to canonical values used across the codebase
+    f = str(format_str).lower()
+    if "rle" in f:
+        return "rle"
+    if "polygon" in f or "polygons" in f:
+        return "polygon"
+
+    # Unknown/other - return lowercased raw string for visibility
+    return f

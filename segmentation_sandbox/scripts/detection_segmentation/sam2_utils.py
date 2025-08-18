@@ -15,35 +15,49 @@ This version uses the modular utilities from Module 0 and Module 1:
 Output Structure:
 ================
 
-GroundedSam2Annotations.json format:
+GroundedSam2Annotations.json format (refactored):
 {
-  "script_version": "sam2_utils.py",
-  "creation_time": "YYYY-MM-DDThh:mm:ss",
-  "last_updated": "YYYY-MM-DDThh:mm:ss",
-  "entity_tracking": {...},  # Added by EntityIDTracker
-  "snip_ids": ["20240411_A01_e01_s0000", "20240411_A01_e01_s0001", ...],  # Note '_s' prefix
-  "experiments": {
-    "20240411": {
-      "images": {
-        "20240411_A01_t0000": {  # Note 't' prefix in JSON
-          "image_id": "20240411_A01_t0000",
-          "frame_index": 0,
-          "is_seed_frame": true,
-          "embryos": {
-            "20240411_A01_e01": {
-              "embryo_id": "20240411_A01_e01",
-              "snip_id": "20240411_A01_e01_s0000",  # CORRECTED: '_s' prefix format
-              "segmentation": {...},
-              "segmentation_format": "rle",
-              "bbox": [x, y, x, y],
-              "area": 1234.5,
-              "mask_confidence": 0.85
+    "script_version": "sam2_utils.py",
+    "creation_time": "YYYY-MM-DDThh:mm:ss",
+    "last_updated": "YYYY-MM-DDThh:mm:ss",
+    "entity_tracking": {...},  # Added/updated by EntityIDTracker
+    "snip_ids": ["20240411_A01_e01_s0000", "20240411_A01_e01_s0001", ...],  # Note '_s' prefix
+    "segmentation_format": "rle",  # canonical format stored at top-level
+    "experiments": {
+        "20240411": {
+            "experiment_id": "20240411",
+            "first_processed_time": "YYYY-MM-DDThh:mm:ss",
+            "last_processed_time": "YYYY-MM-DDThh:mm:ss",
+            "videos": {
+                "20240411_A01": {
+                    "video_id": "20240411_A01",
+                    "well_id": "A01",
+                    "seed_frame_info": {...},
+                    "num_embryos": 2,
+                    "frames_processed": 100,
+                    "sam2_success": true,
+                    "processing_timestamp": "YYYY-MM-DDThh:mm:ss",
+                    "image_ids": {
+                        "20240411_A01_t0000": {  # Note 't' prefix in image ids
+                            "image_id": "20240411_A01_t0000",
+                            "frame_index": 0,
+                            "is_seed_frame": true,
+                            "embryos": {
+                                "20240411_A01_e01": {
+                                    "embryo_id": "20240411_A01_e01",
+                                    "snip_id": "20240411_A01_e01_s0000",  # standardized '_s' prefix
+                                    "segmentation": {...},
+                                    "bbox": [x, y, x, y],
+                                    "area": 1234.5,
+                                    "mask_confidence": 0.85
+                                }
+                            }
+                        }
+                    }
+                }
             }
-          }
         }
-      }
     }
-  }
 }
 """
 
@@ -106,6 +120,44 @@ def load_sam2_model(config_path: str, checkpoint_path: str, device: str = "cuda"
     original_cwd = os.getcwd()
     
     try:
+        # Try to resolve SAM2 paths from pipeline configuration if available
+        try:
+            cfg_path = SANDBOX_ROOT / "configs" / "pipeline_config.yaml"
+            if cfg_path.exists():
+                import yaml as _yaml
+                cfg = _yaml.safe_load(cfg_path.read_text()) or {}
+                paths_cfg = cfg.get("paths", {})
+                # Prefer an explicit sam2_models_root, fall back to sam2_path
+                sam2_models_root_cfg = paths_cfg.get("sam2_models_root") or paths_cfg.get("sam2_path")
+                if sam2_models_root_cfg:
+                    sam2_models_root_path = Path(sam2_models_root_cfg)
+                    if not sam2_models_root_path.is_absolute():
+                        sam2_models_root_path = SANDBOX_ROOT / sam2_models_root_path
+
+                    # Compute SAM2_ROOT: if the configured path points to a directory named 'sam2', use it.
+                    # Otherwise assume the configured path may include the nested 'sam2' and set roots accordingly.
+                    if sam2_models_root_path.name == "sam2" and sam2_models_root_path.is_dir():
+                        SAM2_ROOT = sam2_models_root_path
+                        SAM2_MODELS_ROOT = SAM2_ROOT.parent
+                    else:
+                        # If path points to a deeper location (e.g. models/sam2/sam2), set SAM2_ROOT to its parent
+                        if sam2_models_root_path.is_dir():
+                            SAM2_ROOT = sam2_models_root_path
+                            SAM2_MODELS_ROOT = SAM2_ROOT.parent
+                        else:
+                            SAM2_ROOT = sam2_models_root_path.parent
+                            SAM2_MODELS_ROOT = SAM2_ROOT.parent
+
+                    # Append models root to sys.path if needed
+                    if str(SAM2_MODELS_ROOT) not in sys.path:
+                        sys.path.append(str(SAM2_MODELS_ROOT))
+                    print(f"ℹ️ Using SAM2 model root from config: {SAM2_ROOT}")
+        except Exception as _e:
+            # Keep fallback hardcoded paths
+            if str(SAM2_MODELS_ROOT) not in sys.path:
+                sys.path.append(str(SAM2_MODELS_ROOT))
+            pass
+
         # Change to SAM2 directory (working approach)
         os.chdir(SAM2_ROOT)
         
@@ -289,7 +341,6 @@ class GroundedSamAnnotations(BaseFileHandler):
             "target_prompt": self.target_prompt,
             "segmentation_format": self.segmentation_format,
             "device": self.device,
-            "snip_ids": [],
             "experiments": {}
         }
         
@@ -658,33 +709,39 @@ class GroundedSamAnnotations(BaseFileHandler):
                 exp_data["last_processed_time"] = processing_start_time
             
             # Create video-level structure
+            # Convert sam2_results to the canonical image_ids mapping using frame ordering
+
+            video_info = self.exp_metadata.get_video_metadata(video_id)
+            image_ids_ordered = video_info['image_ids']  # Already in temporal order
+
+            sam2_results_converted = self._convert_sam2_results_to_image_ids_format(
+                sam2_results, image_ids_ordered
+            )
+            sam2_results_converted = self._convert_sam2_results_to_image_ids_format(
+                sam2_results, image_ids_ordered
+            )
+
+            # Create video-level structure with formatted detections and bbox metadata
             video_structure = {
                 "video_id": video_id,
                 "well_id": well_id,
                 "seed_frame_info": seed_frame_info,
-                "embryo_ids": seed_frame_info["embryo_ids"],
                 "num_embryos": seed_frame_info["num_embryos"],
-                "frames_processed": len(sam2_results),
+                "frames_processed": len(sam2_results_converted),
                 "sam2_success": True,
                 "processing_timestamp": processing_start_time,
                 "requires_bidirectional_propagation": seed_frame_info.get("requires_bidirectional_propagation", False),
-                "images": sam2_results
+                # Use the already-computed mapping to avoid duplicate conversion work
+                "image_ids": sam2_results_converted
             }
             
             # Store video structure
             self.results["experiments"][exp_id]["videos"][video_id] = video_structure
             
-            # Update snip_ids list
-            for image_data in sam2_results.values():
-                for embryo_data in image_data.get("embryos", {}).values():
-                    snip_id = embryo_data.get("snip_id")
-                    if snip_id and snip_id not in self.results["snip_ids"]:
-                        self.results["snip_ids"].append(snip_id)
-            
             if self.verbose:
                 print(f"✅ Video {video_id} processed successfully")
             
-            return sam2_results
+            return sam2_results_converted
             
         except Exception as e:
             # Handle failed processing
@@ -711,14 +768,14 @@ class GroundedSamAnnotations(BaseFileHandler):
                 # Update last processed time
                 exp_data["last_processed_time"] = processing_start_time
             
-            # Create failed video structure
+            # Create failed video structure (new image_ids field)
             self.results["experiments"][exp_id]["videos"][video_id] = {
                 "video_id": video_id,
                 "well_id": well_id,
                 "sam2_success": False,
                 "processing_timestamp": processing_start_time,
                 "error_message": str(e),
-                "images": {}
+                "image_ids": {}
             }
             
             if self.verbose:
@@ -730,7 +787,8 @@ class GroundedSamAnnotations(BaseFileHandler):
 
     def get_summary(self) -> Dict:
         """Get processing summary statistics."""
-        total_snips = len(self.results.get("snip_ids", []))
+        entities = EntityIDTracker.extract_entities(self.results)
+        total_snips = len(entities.get("snips", []))
         total_experiments = len(self.results.get("experiments", {}))
         
         # Count videos and images from new structure
@@ -748,7 +806,11 @@ class GroundedSamAnnotations(BaseFileHandler):
                     successful_videos += 1
                 else:
                     failed_videos += 1
-                total_images += len(video_data.get("images", {}))
+                # New layout uses 'image_ids' mapping; support legacy 'images' as fallback
+                if 'image_ids' in video_data:
+                    total_images += len(video_data.get('image_ids', {}))
+                else:
+                    total_images += len(video_data.get('images', {}))
         
         return {
             "total_experiments": total_experiments,
@@ -810,6 +872,77 @@ class GroundedSamAnnotations(BaseFileHandler):
                 f"videos={summary['total_videos']}, images={summary['total_images']}, "
                 f"snips={summary['total_snips']})")
 
+    # ------------------------------------------------------------------
+    # Helper methods for refactored output structure
+    # ------------------------------------------------------------------
+    # def _format_seed_detections(self, seed_detections: List[Dict]) -> List[Dict]:
+    #     """Format seed detections for inclusion in seed_frame_info.
+
+    #     Normalizes common bbox keys to 'bbox_xyxy' and preserves original
+    #     detection payload under 'original'. Does not convert normalized
+    #     coords to pixels because image dimensions are not available here.
+    #     """
+    #     formatted = []
+    #     for det in seed_detections:
+    #         # Attempt to find bbox in several common field names
+    #         bbox = None
+    #         for key in ('box_xyxy', 'bbox_xyxy', 'bbox', 'box'):
+    #             if key in det:
+    #                 bbox = det[key]
+    #                 break
+
+    #         # Ensure bbox is a simple 4-tuple if present
+    #         if bbox is not None:
+    #             try:
+    #                 bbox_xyxy = tuple(float(x) for x in bbox)
+    #             except Exception:
+    #                 bbox_xyxy = bbox
+    #         else:
+    #             bbox_xyxy = None
+
+    #         formatted.append({
+    #             'original': det,
+    #             'bbox_xyxy': bbox_xyxy,
+    #         })
+
+    #     return formatted
+
+    def _convert_sam2_results_to_image_ids_format(self, sam2_results: Dict, image_ids_ordered: List[str]) -> Dict:
+        """Convert sam2_results to a mapping keyed by image_id strings.
+
+        Accepts results keyed either by image_id (string) or by frame index (int or str of int).
+        Uses the provided `image_ids_ordered` list to map numeric indices back to image ids.
+        """
+        if not sam2_results:
+            return {}
+
+        # Quick check: if keys look like image_ids already, return unchanged
+        sample_key = next(iter(sam2_results.keys()))
+        if isinstance(sample_key, str) and sample_key in image_ids_ordered:
+            return sam2_results
+
+        converted: Dict[str, Dict] = {}
+        for key, value in sam2_results.items():
+            # Numeric keys (int or numeric strings) map to ordered image ids
+            try:
+                idx = int(key)
+                if 0 <= idx < len(image_ids_ordered):
+                    image_id = image_ids_ordered[idx]
+                else:
+                    # Out of range: skip
+                    continue
+            except Exception:
+                # Non-integer key: try to use as-is if present in ordered list
+                if isinstance(key, str) and key in image_ids_ordered:
+                    image_id = key
+                else:
+                    # Skip unknown key types
+                    continue
+
+            converted[image_id] = value
+
+        return converted
+
 
 # REFACTORED: Fix create_snip_id to use standard format with '_s' prefix
 def create_snip_id(embryo_id: str, image_id: str) -> str:
@@ -825,8 +958,8 @@ def extract_frame_suffix(image_id: str) -> str:
 
 def convert_sam2_mask_to_rle(binary_mask: np.ndarray) -> Dict:
     """Convert SAM2 binary mask to RLE format using simple mask_utils."""
-    from scripts.utils.mask_utils import encode_mask_complete
-    return encode_mask_complete(binary_mask)
+    from scripts.utils.mask_utils import encode_mask_rle_full_info
+    return encode_mask_rle_full_info(binary_mask)
 
 
 def convert_sam2_mask_to_polygon(binary_mask: np.ndarray) -> List[List[float]]:
@@ -979,9 +1112,9 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
                         "embryo_id": embryo_id,
                         "snip_id": snip_id,
                         "segmentation": segmentation,
-                        "segmentation_format": segmentation_format,
-                        "bbox": bbox,
-                        "area": area,
+                        # "segmentation_format": segmentation_format,
+                        # "bbox": bbox,
+                        # "area": area,
                         "mask_confidence": 0.85  # SAM2 default confidence
                     }
                                         
@@ -1027,29 +1160,24 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
     # FIXED: Properly combine results maintaining original frame order
     if verbose:
         print(f"🔄 Combining bidirectional results...")
-    
-    # Create combined results in original frame order using frame_idx as keys
+
+    # forward_results and backward_results are keyed by image_id (strings).
+    # Build combined_results keyed by image_id in the original temporal order
     combined_results = {}
-    
-    # Process all frames in strict original temporal order
+
     for frame_idx, image_id in enumerate(image_ids):
-        if frame_idx == seed_frame_idx:
-            # Use forward results for seed frame
-            if frame_idx in forward_results:
-                combined_results[frame_idx] = forward_results[frame_idx]
-        elif frame_idx > seed_frame_idx:
-            # Use forward results for frames after seed
-            if frame_idx in forward_results:
-                combined_results[frame_idx] = forward_results[frame_idx]
-        else:
-            # Use backward results for frames before seed (need to map indices)
-            backward_frame_idx = seed_frame_idx - frame_idx
-            if backward_frame_idx in backward_results:
-                combined_results[frame_idx] = backward_results[backward_frame_idx]
-    
+        # Prefer forward (seed-to-end) results when available
+        if image_id in forward_results:
+            combined_results[image_id] = forward_results[image_id]
+            continue
+
+        # Otherwise use backward results (seed-to-start) when available
+        if image_id in backward_results:
+            combined_results[image_id] = backward_results[image_id]
+
     if verbose:
         print(f"✅ Bidirectional propagation complete: {len(combined_results)} frames")
-    
+
     return combined_results
 
 
@@ -1117,66 +1245,76 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
                 embryo_ids, image_ids_ordered, segmentation_format, verbose
             )
         
-        # Convert to structured format
+        # Normalize video_segments to be keyed by image_id (handles both numeric-index keys or image_id keys)
+        video_segments_mapped = grounded_sam_instance._convert_sam2_results_to_image_ids_format(
+            video_segments, image_ids_ordered
+        )
+
         sam2_results = {}
-        
+
         for frame_idx, image_id in enumerate(image_ids_ordered):
-            if frame_idx not in video_segments:
+            if image_id not in video_segments_mapped:
                 continue
-                
+
             image_data = {
                 "image_id": image_id,
                 "frame_index": frame_idx,
                 "is_seed_frame": (frame_idx == seed_frame_idx),
                 "embryos": {}
             }
-            
-            frame_masks = video_segments[frame_idx]
-            # DEBUG: Log frame masks and embryo_ids for troubleshooting
-            print(f"DEBUG: Processing frame {frame_idx} (image {image_id})")
-            print(f"DEBUG: frame_masks keys: {list(frame_masks.keys())}")
-            print(f"DEBUG: embryo_ids: {embryo_ids}")
-            
-            for obj_id, binary_mask in frame_masks.items():
-                # Skip invalid indices
-                if isinstance(obj_id, int):
-                    if obj_id >= len(embryo_ids):
-                        if verbose:
-                            print(f"⚠️ obj_id {obj_id} out of range, skipping")
-                        continue
-                else:
-                    if verbose:
-                        print(f"⚠️ Invalid obj_id type: {type(obj_id)}")
+
+            frame_masks = video_segments_mapped[image_id]
+            if verbose:
+                print(f"DEBUG: Processing image {image_id}, keys: {list(frame_masks.keys())}")
+
+            for key, val in frame_masks.items():
+                # If val already looks like an embryo dict, use it
+                if isinstance(val, dict) and 'embryo_id' in val:
+                    emb_id = val.get('embryo_id') or key
+                    image_data['embryos'][emb_id] = val
                     continue
-                    
-                embryo_id = embryo_ids[obj_id]
-                
-                # Fix: Squeeze extra dimensions from SAM2 mask
-                if binary_mask.ndim > 2:
+
+                # Otherwise, treat val as a binary mask
+                binary_mask = val
+
+                # Determine embryo_id from key (could be index or embryo_id string)
+                if isinstance(key, str) and key in embryo_ids:
+                    embryo_id = key
+                elif isinstance(key, int) and 0 <= key < len(embryo_ids):
+                    embryo_id = embryo_ids[key]
+                else:
+                    # Unknown key type; skip
+                    if verbose:
+                        print(f"⚠️ Skipping unknown object key: {key}")
+                    continue
+
+                # Normalize mask
+                if hasattr(binary_mask, 'ndim') and binary_mask.ndim > 2:
                     binary_mask = binary_mask.squeeze()
-                
-                # DEBUG: Save processed mask for inspection (optional - can re-enable for debugging)
-                if verbose and frame_idx == 0:  # Only save for first frame to avoid spam
-                    debug_dir = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/temp/debug_sam2_masks")
-                    debug_dir.mkdir(parents=True, exist_ok=True)
-                    mask_viz = (binary_mask * 255).astype(np.uint8)
-                    debug_path = debug_dir / f"{video_id}_{image_id}_{embryo_id}_processed.png"
-                    cv2.imwrite(str(debug_path), mask_viz)
-                    print(f"Saved processed mask: {debug_path}, shape={binary_mask.shape}, sum={binary_mask.sum()}")
-                
-                # REFACTORED: Use standardized snip_id creation
+
+                # Save debug mask for first frame optionally
+                if verbose and frame_idx == 0:
+                    try:
+                        debug_dir = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/temp/debug_sam2_masks")
+                        debug_dir.mkdir(parents=True, exist_ok=True)
+                        mask_viz = (binary_mask * 255).astype(np.uint8)
+                        debug_path = debug_dir / f"{video_id}_{image_id}_{embryo_id}_processed.png"
+                        cv2.imwrite(str(debug_path), mask_viz)
+                        if verbose:
+                            print(f"Saved processed mask: {debug_path}, shape={binary_mask.shape}, sum={binary_mask.sum()}")
+                    except Exception:
+                        pass
+
                 snip_id = create_snip_id(embryo_id, image_id)
-                
-                # Convert mask to requested format
+
                 if segmentation_format == 'rle':
                     segmentation = convert_sam2_mask_to_rle(binary_mask.astype(np.uint8))
                 else:
                     segmentation = convert_sam2_mask_to_polygon(binary_mask.astype(np.uint8))
-                
-                # Extract bbox and area
+
                 bbox = extract_bbox_from_mask(binary_mask)
                 area = float(np.sum(binary_mask > 0))
-                
+
                 embryo_data = {
                     "embryo_id": embryo_id,
                     "snip_id": snip_id,
@@ -1184,24 +1322,25 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
                     "segmentation_format": segmentation_format,
                     "bbox": bbox,
                     "area": area,
-                    "mask_confidence": 0.85  # SAM2 default confidence
+                    "mask_confidence": 0.85
                 }
-                
+
                 image_data["embryos"][embryo_id] = embryo_data
-            
+
             sam2_results[image_id] = image_data
         
-        # Create seed frame info structure
+        # Create seed frame info structure with formatted detections and bbox metadata
         seed_frame_info = {
             "video_id": video_id,
             "seed_frame": seed_image_id,
-            "num_embryos": len(seed_detections),
-            "detections": seed_detections,
-            "is_first_frame": (seed_frame_idx == 0),
-            "all_frames": image_ids_ordered,
             "seed_frame_index": seed_frame_idx,
+            "num_embryos": len(seed_detections),
+            "seed_detections": seed_detections,
+            "is_first_frame": (seed_frame_idx == 0),
             "embryo_ids": embryo_ids,
-            "requires_bidirectional_propagation": (seed_frame_idx > 0)
+            "requires_bidirectional_propagation": (seed_frame_idx > 0),
+            "bbox_format": "xyxy",
+            "bbox_units": "pixels"
         }
         
         processing_stats["processed"] += 1

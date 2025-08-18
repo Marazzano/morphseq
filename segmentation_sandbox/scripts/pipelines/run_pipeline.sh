@@ -21,7 +21,37 @@ conda activate segmentation_grounded_sam
 
 # ─── Path Configuration ──────────────────────────────────────────────────────
 ROOT=/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox
-CONFIG=$ROOT/configs/pipeline_config.yaml
+
+# Default config path (sandbox-relative)
+DEFAULT_CONFIG="$ROOT/configs/pipeline_config.yaml"
+
+# Allow overriding the pipeline config via environment variable or CLI arg
+# Precedence: CLI --config/-c > PIPELINE_CONFIG env var > default
+CONFIG="${PIPELINE_CONFIG:-$DEFAULT_CONFIG}"
+
+# Parse optional CLI args for overriding config (keep simple: --config or -c)
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --config|-c)
+      if [[ -n "${2:-}" ]]; then
+        CONFIG="$2"
+        shift 2
+      else
+        echo "Usage: $0 [--config CONFIG_PATH]" >&2
+        exit 1
+      fi
+      ;;
+    --) shift; break;;
+    *) break;;
+  esac
+done
+
+# Make CONFIG absolute when it's sandbox-relative (not starting with /)
+if [[ "$CONFIG" != /* ]]; then
+  CONFIG="$ROOT/$CONFIG"
+fi
+
+echo "Using pipeline config: $CONFIG"
 DATA_DIR=$ROOT/data/
 STITCHED_DIR_OF_EXPERIMENTS=/net/trapnell/vol1/home/nlammers/projects/data/morphseq/built_image_data/stitched_FF_images/
 METADATA=$ROOT/data/raw_data_organized/experiment_metadata.json
