@@ -15,8 +15,8 @@ class VideoConfig:
     
     # Font settings
     FONT = cv2.FONT_HERSHEY_SIMPLEX
-    FONT_SCALE = 3  # Increased from 1.0 for bigger image_id overlay
-    FONT_THICKNESS = 4
+    FONT_SCALE = 2  # Increased from 1.0 for bigger image_id overlay
+    FONT_THICKNESS = 3
     
     # Default text settings
     TEXT_COLOR = (255, 255, 255)  # White
@@ -36,7 +36,7 @@ class VideoConfig:
     
     # Bounding box settings
     BBOX_THICKNESS = 3
-    BBOX_ALPHA = 0.8
+    BBOX_ALPHA = 0.4
     
     # Mask settings
     MASK_ALPHA = 0.4
@@ -61,13 +61,13 @@ COLORBLIND_PALETTE = {
     'light_blue': (173, 216, 230),     # Light blue - very accessible
     'light_green': (144, 238, 144),    # Light green 
     'light_coral': (240, 128, 128),    # Light coral/pink
-    'light_yellow': (255, 255, 224),   # Light yellow
+    'light_yellow': (255, 215, 0),     # Gold yellow - more visible
     'light_purple': (221, 160, 221),   # Light purple/plum
     'light_orange': (255, 218, 185),   # Light orange/peach
-    'light_cyan': (224, 255, 255),     # Light cyan
+    'light_cyan': (0, 255, 255),       # Proper cyan - more visible
     'light_rose': (255, 182, 193),     # Light rose
-    'light_mint': (245, 255, 250),     # Light mint
-    'light_lavender': (230, 230, 250), # Light lavender
+    'light_mint': (152, 255, 152),     # Proper mint - more visible
+    'light_lavender': (186, 135, 186), # Proper lavender - more visible
 }
 
 # Specific color assignments for different overlay types

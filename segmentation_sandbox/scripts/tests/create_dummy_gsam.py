@@ -28,12 +28,14 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
     
     # Helper function to create RLE mask from binary array
     def create_rle(binary_mask):
+        import base64
         fortran_mask = np.asfortranarray(binary_mask.astype(np.uint8))
         rle = mask_utils.encode(fortran_mask)
-        rle['counts'] = rle['counts'].decode('utf-8')  # Convert bytes to string
-        # Format for QC code compatibility
-        rle['format'] = 'rle'
-        return rle
+        return {
+            'counts': base64.b64encode(rle['counts']).decode('utf-8'),  # Base64 encode bytes to string
+            'size': rle['size'],
+            'format': 'rle'
+        }
     
     # Create test masks with violations
     
@@ -102,7 +104,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
             "20240411_test": {
                 "videos": {
                     "20240411_test_H01": {
-                        "images": {}
+                        "image_ids": {}
                     }
                 }
             }
@@ -110,7 +112,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
     }
     
     # Add 10 frames to the video
-    video_data = gsam_data["experiments"]["20240411_test"]["videos"]["20240411_test_H01"]["images"]
+    video_data = gsam_data["experiments"]["20240411_test"]["videos"]["20240411_test_H01"]["image_ids"]
     
     for frame_num in range(10):
         image_id = f"20240411_test_H01_t{frame_num:04d}"
@@ -127,6 +129,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e01_s{frame_num:04d}",
                 "bbox": [200/width, 200/height, 300/width, 300/height],
                 "segmentation": normal_rle,
+                "segmentation_format": "rle",
                 "area": normal_area
             }
             
@@ -135,6 +138,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e02_s{frame_num:04d}",
                 "bbox": [0.0, 0.0, 100/width, 100/height],  # Touches top and left edges
                 "segmentation": edge_rle,
+                "segmentation_format": "rle",
                 "area": edge_area
             }
             
@@ -143,6 +147,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e03_s{frame_num:04d}",
                 "bbox": [100/width, 100/height, 400/width, 400/height],
                 "segmentation": large_rle,
+                "segmentation_format": "rle",
                 "area": large_area
             }
             
@@ -151,6 +156,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e04_s{frame_num:04d}",
                 "bbox": [250/width, 250/height, 252/width, 252/height],
                 "segmentation": small_rle,
+                "segmentation_format": "rle",
                 "area": small_area
             }
             
@@ -159,6 +165,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e05_s{frame_num:04d}",
                 "bbox": [100/width, 100/height, 420/width, 350/height],
                 "segmentation": discontinuous_rle,
+                "segmentation_format": "rle",
                 "area": discontinuous_area
             }
             
@@ -167,6 +174,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e06_s{frame_num:04d}",
                 "bbox": [200/width, 200/height, 280/width, 280/height],
                 "segmentation": overlap_rle1,
+                "segmentation_format": "rle",
                 "area": overlap_area1
             }
             
@@ -174,6 +182,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e07_s{frame_num:04d}",
                 "bbox": [240/width, 240/height, 320/width, 320/height],
                 "segmentation": overlap_rle2,
+                "segmentation_format": "rle",
                 "area": overlap_area2
             }
             
@@ -182,6 +191,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
                 "bbox": [200/width, 200/height, 250/width, 250/height],
                 "segmentation": var_small_rle,
+                "segmentation_format": "rle",
                 "area": var_small_area
             }
             
@@ -191,6 +201,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
                 "bbox": [180/width, 180/height, 320/width, 320/height],
                 "segmentation": var_large_rle,
+                "segmentation_format": "rle",
                 "area": var_large_area  # 7x larger than frame 0!
             }
             
@@ -199,10 +210,18 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e01_s{frame_num:04d}",
                 "bbox": [200/width, 200/height, 300/width, 300/height],
                 "segmentation": normal_rle,
+                "segmentation_format": "rle",
                 "area": normal_area
             }
             
-            # MISSING e02-e07 (detection failure for these)
+            # Add e02 again to ensure it gets processed
+            video_data[image_id]["embryos"]["e02"] = {
+                "snip_id": f"20240411_test_H01_e02_s{frame_num:04d}",
+                "bbox": [0.0, 0.0, 100/width, 100/height],
+                "segmentation": edge_rle,
+                "segmentation_format": "rle",
+                "area": edge_area
+            }
             
         elif frame_num == 2:
             # Frame 2: e08 back to small (more variability)
@@ -210,6 +229,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
                 "bbox": [200/width, 200/height, 250/width, 250/height],
                 "segmentation": var_small_rle,
+                "segmentation_format": "rle",
                 "area": var_small_area  # Back to small
             }
             
@@ -218,7 +238,49 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e01_s{frame_num:04d}",
                 "bbox": [200/width, 200/height, 300/width, 300/height],
                 "segmentation": normal_rle,
+                "segmentation_format": "rle",
                 "area": normal_area
+            }
+            
+            # Add key violation embryos to ensure processing
+            video_data[image_id]["embryos"]["e03"] = {
+                "snip_id": f"20240411_test_H01_e03_s{frame_num:04d}",
+                "bbox": [100/width, 100/height, 400/width, 400/height],
+                "segmentation": large_rle,
+                "segmentation_format": "rle",
+                "area": large_area
+            }
+            
+            video_data[image_id]["embryos"]["e04"] = {
+                "snip_id": f"20240411_test_H01_e04_s{frame_num:04d}",
+                "bbox": [250/width, 250/height, 252/width, 252/height],
+                "segmentation": small_rle,
+                "segmentation_format": "rle",
+                "area": small_area
+            }
+            
+            video_data[image_id]["embryos"]["e05"] = {
+                "snip_id": f"20240411_test_H01_e05_s{frame_num:04d}",
+                "bbox": [100/width, 100/height, 420/width, 350/height],
+                "segmentation": discontinuous_rle,
+                "segmentation_format": "rle",
+                "area": discontinuous_area
+            }
+            
+            video_data[image_id]["embryos"]["e06"] = {
+                "snip_id": f"20240411_test_H01_e06_s{frame_num:04d}",
+                "bbox": [200/width, 200/height, 280/width, 280/height],
+                "segmentation": overlap_rle1,
+                "segmentation_format": "rle",
+                "area": overlap_area1
+            }
+            
+            video_data[image_id]["embryos"]["e07"] = {
+                "snip_id": f"20240411_test_H01_e07_s{frame_num:04d}",
+                "bbox": [240/width, 240/height, 320/width, 320/height],
+                "segmentation": overlap_rle2,
+                "segmentation_format": "rle",
+                "area": overlap_area2
             }
             
         elif frame_num == 3:
@@ -227,6 +289,7 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
                 "bbox": [180/width, 180/height, 320/width, 320/height],
                 "segmentation": var_large_rle,
+                "segmentation_format": "rle",
                 "area": var_large_area
             }
             
@@ -235,33 +298,42 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
                 "snip_id": f"20240411_test_H01_e01_s{frame_num:04d}",
                 "bbox": [200/width, 200/height, 300/width, 300/height],
                 "segmentation": normal_rle,
+                "segmentation_format": "rle",
                 "area": normal_area
             }
             
         else:
-            # Frames 4-9: Just keep e01 and e08 with e08 alternating sizes
-            video_data[image_id]["embryos"]["e01"] = {
-                "snip_id": f"20240411_test_H01_e01_s{frame_num:04d}",
-                "bbox": [200/width, 200/height, 300/width, 300/height],
-                "segmentation": normal_rle,
-                "area": normal_area
-            }
-            
-            # e08 alternates between small and large
-            if frame_num % 2 == 0:
-                video_data[image_id]["embryos"]["e08"] = {
-                    "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
-                    "bbox": [200/width, 200/height, 250/width, 250/height],
-                    "segmentation": var_small_rle,
-                    "area": var_small_area
-                }
+            # Frames 4-9: Create some empty frames for detection failure  
+            if frame_num >= 7:
+                # Frames 7-9: Empty frames (detection failure)
+                pass  # No embryos added - this will trigger DETECTION_FAILURE
             else:
-                video_data[image_id]["embryos"]["e08"] = {
-                    "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
-                    "bbox": [180/width, 180/height, 320/width, 320/height],
-                    "segmentation": var_large_rle,
-                    "area": var_large_area
+                # Frames 4-6: Just keep e01 and e08 with e08 alternating sizes
+                video_data[image_id]["embryos"]["e01"] = {
+                    "snip_id": f"20240411_test_H01_e01_s{frame_num:04d}",
+                    "bbox": [200/width, 200/height, 300/width, 300/height],
+                    "segmentation": normal_rle,
+                    "segmentation_format": "rle",
+                    "area": normal_area
                 }
+                
+                # e08 alternates between small and large
+                if frame_num % 2 == 0:
+                    video_data[image_id]["embryos"]["e08"] = {
+                        "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
+                        "bbox": [200/width, 200/height, 250/width, 250/height],
+                        "segmentation": var_small_rle,
+                        "segmentation_format": "rle",
+                        "area": var_small_area
+                    }
+                else:
+                    video_data[image_id]["embryos"]["e08"] = {
+                        "snip_id": f"20240411_test_H01_e08_s{frame_num:04d}",
+                        "bbox": [180/width, 180/height, 320/width, 320/height],
+                        "segmentation": var_large_rle,
+                        "segmentation_format": "rle",
+                        "area": var_large_area
+                    }
     
     # Save the file
     output = Path(output_path)
@@ -284,8 +356,14 @@ def create_dummy_gsam_with_violations(output_path: str = "test_gsam_violations.j
 def test_qc_with_violations():
     """Test the QC system with the violation file."""
     import sys
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from detection_segmentation.gsam_quality_control import GSAMQualityControl
+    import importlib.util
+    
+    # Load the QC module directly
+    qc_path = Path(__file__).parent.parent / "pipelines" / "05_sam2_qc_analysis.py"
+    spec = importlib.util.spec_from_file_location("qc_analysis", qc_path)
+    qc_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(qc_module)
+    GSAMQualityControl = qc_module.GSAMQualityControl
     
     # Create test file
     test_file = create_dummy_gsam_with_violations("test_gsam_violations.json")
@@ -336,24 +414,25 @@ def test_qc_with_violations():
     return qc
 
 
+def validate_qc_results(qc):
+    """Simple validation that expected violations were found."""
+    expected = {"MASK_ON_EDGE": 1, "LARGE_MASK": 1, "SMALL_MASK": 1, "OVERLAPPING_MASKS": 1, "DISCONTINUOUS_MASK": 1}
+    summary = qc.get_flags_summary()
+    flags = summary.get('flag_categories', {})
+    
+    print(f"\n{'='*40}\nVALIDATION RESULTS\n{'='*40}")
+    all_passed = True
+    for flag_type, expected_count in expected.items():
+        actual = flags.get(flag_type, 0)
+        status = "PASS" if actual >= expected_count else "FAIL"
+        print(f"{flag_type}: {actual} found (expected {expected_count}) - {status}")
+        if status == "FAIL":
+            all_passed = False
+    
+    print(f"\nOVERALL: {'PASS' if all_passed else 'FAIL'}")
+    return all_passed
+
 if __name__ == "__main__":
-    # Run the test
     qc = test_qc_with_violations()
-    
-    # Optionally inspect the data structure
-    print("\n" + "="*60)
-    print("INSPECTING DATA STRUCTURE")
-    print("="*60)
-    
-    # Check what entities were found
-    print(f"\nTotal experiments: {len(qc.gsam_data.get('experiments', {}))}")
-    for exp_id, exp_data in qc.gsam_data.get('experiments', {}).items():
-        print(f"  Experiment: {exp_id}")
-        for video_id, video_data in exp_data.get('videos', {}).items():
-            print(f"    Video: {video_id}")
-            print(f"      Images: {len(video_data.get('images', {}))}")
-            
-            # Check first image
-            for image_id, image_data in list(video_data.get('images', {}).items())[:1]:
-                print(f"        Image: {image_id}")
-                print(f"          Embryos: {list(image_data.get('embryos', {}).keys())}")
+    success = validate_qc_results(qc)
+    exit(0 if success else 1)
