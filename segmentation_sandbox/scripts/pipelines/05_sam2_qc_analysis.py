@@ -144,7 +144,7 @@ class GSAMQualityControl(BaseFileHandler):
             all_experiment_ids.add(exp_id)
             for video_id, video_data in exp_data.get("videos", {}).items():
                 all_video_ids.add(video_id)
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     all_image_ids.add(image_id)
                     for embryo_id, embryo_data in image_data.get("embryos", {}).items():
                         snip_id = embryo_data.get("snip_id")
@@ -203,7 +203,7 @@ class GSAMQualityControl(BaseFileHandler):
                     break
                     
                 print(f"   📹 Video: {video_id}")
-                images = video_data.get("images", {})
+                images = video_data.get("image_ids", {})
                 print(f"      Images: {len(images)}")
                 
                 if not images:
@@ -316,7 +316,7 @@ class GSAMQualityControl(BaseFileHandler):
             all_experiment_ids.add(exp_id)
             for video_id, video_data in exp_data.get("videos", {}).items():
                 all_video_ids.add(video_id)
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     all_image_ids.add(image_id)
                     for embryo_id, embryo_data in image_data.get("embryos", {}).items():
                         snip_id = embryo_data.get("snip_id")
@@ -455,7 +455,7 @@ class GSAMQualityControl(BaseFileHandler):
                 if not self._should_process_video(video_id, entities):
                     continue
 
-                images = video_data.get("images", {})
+                images = video_data.get("image_ids", {})
                 image_ids = sorted(images.keys())
                 
                 embryo_frames = defaultdict(dict)  # embryo_id -> {image_id: area}
@@ -517,7 +517,7 @@ class GSAMQualityControl(BaseFileHandler):
                             }
                             # Use first image_id where this embryo appears for reference
                             ref_image_id = next(img_id for img_id in image_ids 
-                                              if embryo_id in video_data["images"][img_id].get("embryos", {}))
+                                              if embryo_id in video_data["image_ids"][img_id].get("embryos", {}))
                             self._add_flag("HIGH_SEGMENTATION_VAR_EMBRYO", flag_data, "image", ref_image_id)
 
                 # Snip-level variability flag
@@ -526,7 +526,7 @@ class GSAMQualityControl(BaseFileHandler):
                     if not self._should_process_image(image_id, entities):
                         continue
                         
-                    image_data = video_data["images"][image_id]
+                    image_data = video_data["image_ids"][image_id]
                     embryos_in_image = image_data.get("embryos", {})
                     
                     for embryo_id, embryo_data in embryos_in_image.items():
@@ -623,7 +623,7 @@ class GSAMQualityControl(BaseFileHandler):
                 if not self._should_process_video(video_id, entities):
                     continue
                     
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     # Check if image should be processed
                     if not self._should_process_image(image_id, entities):
                         continue
@@ -699,7 +699,7 @@ class GSAMQualityControl(BaseFileHandler):
                 if not self._should_process_video(video_id, entities):
                     continue
                     
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     # Check if image should be processed
                     if not self._should_process_image(image_id, entities):
                         continue
@@ -754,7 +754,7 @@ class GSAMQualityControl(BaseFileHandler):
                 if not self._should_process_video(video_id, entities):
                     continue
                     
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     # Check if image should be processed
                     if not self._should_process_image(image_id, entities):
                         continue
@@ -833,7 +833,7 @@ class GSAMQualityControl(BaseFileHandler):
                 if not self._should_process_video(video_id, entities):
                     continue
                     
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     # Check if image should be processed
                     if not self._should_process_image(image_id, entities):
                         continue
@@ -900,7 +900,7 @@ class GSAMQualityControl(BaseFileHandler):
                 if not self._should_process_video(video_id, entities):
                     continue
                     
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     # Check if image should be processed
                     if not self._should_process_image(image_id, entities):
                         continue
@@ -971,7 +971,7 @@ class GSAMQualityControl(BaseFileHandler):
                 if not self._should_process_video(video_id, entities):
                     continue
                 
-                for image_id, image_data in video_data.get("images", {}).items():
+                for image_id, image_data in video_data.get("image_ids", {}).items():
                     # Check if image should be processed
                     if not self._should_process_image(image_id, entities):
                         continue
@@ -1425,3 +1425,6 @@ Examples:
 
 if __name__ == "__main__":
     main()
+
+
+# python scripts/pipelines/05_sam2_qc_analysis.py --input /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json --dry-run

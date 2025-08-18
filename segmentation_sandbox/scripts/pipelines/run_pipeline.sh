@@ -21,37 +21,7 @@ conda activate segmentation_grounded_sam
 
 # ─── Path Configuration ──────────────────────────────────────────────────────
 ROOT=/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox
-
-# Default config path (sandbox-relative)
-DEFAULT_CONFIG="$ROOT/configs/pipeline_config.yaml"
-
-# Allow overriding the pipeline config via environment variable or CLI arg
-# Precedence: CLI --config/-c > PIPELINE_CONFIG env var > default
-CONFIG="${PIPELINE_CONFIG:-$DEFAULT_CONFIG}"
-
-# Parse optional CLI args for overriding config (keep simple: --config or -c)
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --config|-c)
-      if [[ -n "${2:-}" ]]; then
-        CONFIG="$2"
-        shift 2
-      else
-        echo "Usage: $0 [--config CONFIG_PATH]" >&2
-        exit 1
-      fi
-      ;;
-    --) shift; break;;
-    *) break;;
-  esac
-done
-
-# Make CONFIG absolute when it's sandbox-relative (not starting with /)
-if [[ "$CONFIG" != /* ]]; then
-  CONFIG="$ROOT/$CONFIG"
-fi
-
-echo "Using pipeline config: $CONFIG"
+CONFIG=$ROOT/configs/pipeline_config.yaml
 DATA_DIR=$ROOT/data/
 STITCHED_DIR_OF_EXPERIMENTS=/net/trapnell/vol1/home/nlammers/projects/data/morphseq/built_image_data/stitched_FF_images/
 METADATA=$ROOT/data/raw_data_organized/experiment_metadata.json
@@ -63,7 +33,7 @@ MASK_EXPORT=$ROOT/data/annotation_and_masks/jpg_masks/grounded_sam
 mkdir -p logs
 
 # Example experiments (uncomment to process specific experiments)
-EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6" # "20231206,20240418,20250612_30hpf_ctrl_atf6"
+EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6,20231206,20240418,20250612_30hpf_ctrl_atf6"
 
 # Colors for output
 RED='\033[0;31m'
@@ -155,9 +125,28 @@ python $ROOT/scripts/pipelines/04_sam2_video_processing.py \
 log_success "STEP 4 completed successfully"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STEP 5: Export Embryo Masks (NOW IMPLEMENTED)
+# STEP 5: SAM2 Quality Control Analysis
 # ═══════════════════════════════════════════════════════════════════════════════
-log_info "Starting STEP 5: Export Embryo Masks"
+log_info "Starting STEP 5: SAM2 Quality Control Analysis"
+
+python $ROOT/scripts/pipelines/05_sam2_qc_analysis.py \
+  --input "$SAM2_ANNOTATIONS" \
+  --author "pipeline_qc" \
+  --process-all \
+  --save-in-place \
+  --verbose \
+  | tee logs/step5_qc_analysis.log
+  # Fine-grained options for future reference:
+  # --dry-run \
+  # --max-entities 100 \
+  # --experiment-ids "exp1,exp2" \
+
+log_success "STEP 5 completed successfully"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STEP 6: Export Embryo Masks (MOVED FROM STEP 5)
+# ═══════════════════════════════════════════════════════════════════════════════
+log_info "Starting STEP 6: Export Embryo Masks"
 
 python $ROOT/scripts/pipelines/05_export_embryo_masks.py \
   --sam2_annotations "$SAM2_ANNOTATIONS" \
@@ -166,13 +155,13 @@ python $ROOT/scripts/pipelines/05_export_embryo_masks.py \
   --entities_to_process "$EXAMPLE_EXPS" \
   --workers 8 \
   --verbose \
-  | tee logs/step5_masks.log
+  | tee logs/step6_masks.log
   # Fine-grained options for future reference:
   # --export-format "png" \
   # --mask-resolution 512 \
   # --include-overlays \
 
-log_success "STEP 5 completed successfully"
+log_success "STEP 6 completed successfully"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COMPLETION
@@ -182,11 +171,12 @@ log_info "All pipeline stages implemented and executed:"
 log_info "✅ STEP 1: Video Preparation (Module 0)"
 log_info "✅ STEP 3: GroundingDINO Detection (Module 2)" 
 log_info "✅ STEP 4: SAM2 Video Processing (Module 2)"
-log_info "✅ STEP 5: Export Embryo Masks (Module 2)"
+log_info "✅ STEP 5: SAM2 Quality Control Analysis (Module 2)"
+log_info "✅ STEP 6: Export Embryo Masks (Module 2)"
 log_info "⚠️  STEP 2: Image Quality Control (Future: Module 1)"
 
 log_info "Output files:"
 log_info "  📊 Experiment metadata: $METADATA"
 log_info "  🎯 Detection annotations: $GDINO_ANNOTATIONS" 
-log_info "  🎬 Segmentation annotations: $SAM2_ANNOTATIONS"
+log_info "  🎬 Segmentation annotations: $SAM2_ANNOTATIONS (with QC flags)"
 log_info "  🖼️  Exported masks: $MASK_EXPORT"

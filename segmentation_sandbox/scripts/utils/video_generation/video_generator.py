@@ -221,9 +221,10 @@ class VideoGenerator:
                                            experiment_id: str,
                                            video_id: str,
                                            output_video_path: Path,
-                                           show_bbox: bool = True,
+                                           show_bbox: bool = False,
                                            show_mask: bool = True,
                                            show_metrics: bool = True,
+                                           show_qc_flags: bool = False,
                                            verbose: bool = True) -> bool:
         """
         Create SAM2 evaluation video from results JSON.
@@ -233,9 +234,10 @@ class VideoGenerator:
             experiment_id: Experiment ID (e.g., "20250612_30hpf_ctrl_atf6")
             video_id: Video ID (e.g., "20250612_30hpf_ctrl_atf6_A01")
             output_video_path: Where to save the MP4 file
-            show_bbox: Show bounding boxes
-            show_mask: Show segmentation masks
-            show_metrics: Show QC metrics
+            show_bbox: Show bounding boxes (default: False)
+            show_mask: Show segmentation masks (default: True)
+            show_metrics: Show QC metrics (default: True)
+            show_qc_flags: Show quality control flags (default: False)
             verbose: Print progress
             
         Returns:
@@ -269,6 +271,7 @@ class VideoGenerator:
             return False
             
         video_data = videos[video_id]
+        images = video_data.get("image_ids", {})
         print(video_data)
   
 
@@ -340,6 +343,19 @@ class VideoGenerator:
                         show_metrics=show_metrics
                     )
                     frames_with_overlays += 1
+                elif verbose:
+                    print(f"⚠️ No embryos found for image {image_id}")
+            elif verbose:
+                print(f"⚠️ Image {image_id} not found in SAM2 data. Available: {list(images.keys())[:3]}...")
+                    
+                # Add QC flags overlay if requested and available
+                # Add QC flags overlay if requested and available
+                if show_qc_flags and image_data.get("qc_flags"):
+                    frame = self.overlay_manager.add_overlay(
+                        frame,
+                        image_data["qc_flags"],
+                        "qc_flags"
+                    )
                     
             video_writer.write(frame)
             frames_written += 1
