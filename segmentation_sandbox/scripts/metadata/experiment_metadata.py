@@ -484,11 +484,10 @@ class ExperimentMetadata(BaseFileHandler):
             if video_data:
                 # Check if this image_id is tracked
                 if image_id in video_data.get("image_ids", []):
-                    # Use the stored processed_jpg_images_dir
-                    images_dir = Path(video_data["processed_jpg_images_dir"])
-                    # Convert to disk filename (no 't' prefix)
-                    filename = f"{int(frame_number):04d}.{extension}"
-                    return images_dir / filename
+                    # Use the stored processed_jpg_images_dir with parsing utils
+                    from scripts.utils.parsing_utils import get_image_id_path
+                    images_dir = video_data["processed_jpg_images_dir"]
+                    return get_image_id_path(images_dir, image_id, extension)
         
         # Fallback to base path construction if not in metadata
         if base_path:
@@ -624,10 +623,21 @@ class ExperimentMetadata(BaseFileHandler):
             existing_images = []
             for img_file in video_dir.glob(f"*.{extension}"):
                 # Convert filename back to image_id
-                frame_str = img_file.stem  # e.g., "0042"
-                frame_num = int(frame_str)
-                image_id = build_image_id(video_id, frame_num)
-                existing_images.append(image_id)
+                # New format: filename is the image_id itself (e.g., "20250612_30hpf_ctrl_atf6_F11_ch00_t0042.jpg")
+                potential_image_id = img_file.stem
+                
+                # Validate that this looks like an image_id and matches the video_id
+                if potential_image_id.startswith(video_id):
+                    existing_images.append(potential_image_id)
+                else:
+                    # Fallback for old numeric format (e.g., "0042.jpg") 
+                    try:
+                        frame_num = int(img_file.stem)
+                        image_id = build_image_id(video_id, frame_num)
+                        existing_images.append(image_id)
+                    except ValueError:
+                        # Skip files that don't match expected patterns
+                        continue
             
             return sorted(existing_images)
             
@@ -664,10 +674,11 @@ class ExperimentMetadata(BaseFileHandler):
                 images_dir = Path(video_data.get("processed_jpg_images_dir", ""))
                 
                 for image_id in video_data.get("image_ids", []):
-                    # Use stored path info + convert to disk filename
+                    # Parse image_id for metadata and use parsing utils for path construction
                     parsed = parse_entity_id(image_id)
                     frame_number = parsed["frame_number"]
-                    image_path = images_dir / f"{int(frame_number):04d}.jpg"
+                    from scripts.utils.parsing_utils import get_image_id_path
+                    image_path = get_image_id_path(images_dir, image_id)
                     
                     if image_path.exists():
                         images.append({

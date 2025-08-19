@@ -995,8 +995,24 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
         # Create symlinks with sequential naming (SAM2 expects this)
         for i, image_id in enumerate(image_ids):
             # REFACTORED: Use consistent frame number extraction
+            # Use full image_id filename on disk. Prefer experiment metadata to
+            # locate the images directory; fall back to video_dir when needed.
             frame_num = extract_frame_number(image_id)
-            src_path = video_dir / f"{frame_num:04d}.jpg"  # Disk format (no 't' prefix)
+            # Use parsing utils for consistent filename construction
+            from scripts.utils.parsing_utils import get_image_filename_from_id
+            image_filename = get_image_filename_from_id(image_id)
+            # video_dir may point to the video file's parent; try to find images dir
+            # Prefer ExperimentMetadata if available
+            try:
+                images_dir = None
+                if hasattr(self, 'exp_metadata') and self.exp_metadata:
+                    # ExperimentMetadata exposes a method to get processed_jpg_images_dir for a video
+                    images_dir = Path(self.exp_metadata.get_processed_images_dir_for_video(video_id)) if hasattr(self.exp_metadata, 'get_processed_images_dir_for_video') else None
+                if not images_dir:
+                    images_dir = video_dir
+                src_path = Path(images_dir) / image_filename
+            except Exception:
+                src_path = video_dir / image_filename
             dst_path = temp_dir / f"{i:05d}.jpg"
             
             if src_path.exists():
@@ -1024,8 +1040,18 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
             is_normalized = all(0.0 <= coord <= 1.0 for coord in bbox)
             
             # Get image dimensions from the seed frame
-            seed_frame_num = extract_frame_number(image_ids[seed_frame_idx])
-            seed_image_path = video_dir / f"{seed_frame_num:04d}.jpg"  # Use frame number format
+            seed_image_id = image_ids[seed_frame_idx]
+            # Use parsing utils for consistent filename construction
+            seed_image_filename = get_image_filename_from_id(seed_image_id)
+            try:
+                images_dir = None
+                if hasattr(self, 'exp_metadata') and self.exp_metadata:
+                    images_dir = Path(self.exp_metadata.get_processed_images_dir_for_video(video_id)) if hasattr(self.exp_metadata, 'get_processed_images_dir_for_video') else None
+                if not images_dir:
+                    images_dir = video_dir
+                seed_image_path = Path(images_dir) / seed_image_filename
+            except Exception:
+                seed_image_path = video_dir / seed_image_filename
             seed_image = cv2.imread(str(seed_image_path))
             if seed_image is None:
                 if verbose:

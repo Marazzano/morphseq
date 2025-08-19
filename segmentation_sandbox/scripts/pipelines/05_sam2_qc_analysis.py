@@ -1403,7 +1403,7 @@ Examples:
         # Save to custom output if specified
         if args.output and not args.dry_run:
             output_path = Path(args.output)
-            qc.save_json(qc.gsam_data, filepath=str(output_path), create_backup=True)
+            qc.save_json(qc.gsam_data, file_path=Path(output_path), create_backup=True)
             if args.verbose:
                 print(f"💾 Results saved to: {output_path}")
 

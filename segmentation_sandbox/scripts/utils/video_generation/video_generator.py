@@ -322,9 +322,9 @@ class VideoGenerator:
             if frame is None:
                 continue
                 
-            # Generate image_id from filename
-            frame_num = image_file.stem
-            image_id = f"{video_id}_t{frame_num}"
+            # Generate image_id from filename - use the actual filename as it appears in SAM2 data
+            frame_num = image_file.stem  # This is already the full frame name like "20250612_30hpf_ctrl_atf6_A01_ch00_t0000"
+            image_id = frame_num  # Don't add video_id prefix since it's already in the filename
             
             # Add image_id overlay (foundation)
             frame = self._add_image_id_overlay(frame, image_id)
