@@ -112,7 +112,7 @@ except ImportError:
 
 # Import utilities
 try:
-    from ..utils.parsing_utils import parse_entity_id, extract_experiment_id
+    from ..utils.parsing_utils import parse_entity_id, extract_experiment_id, build_image_id
     from ..utils.entity_id_tracker import EntityIDTracker
 except ImportError:
     # Fallback for when module is imported from different context
@@ -436,7 +436,12 @@ class DataOrganizer:
         if not frame_match:
             return None
         frame = frame_match.group(1)
-        return well_id, frame
+        
+        # Extract channel information
+        channel_match = re.search(r'ch(\d{2})', filename)
+        channel = int(channel_match.group(1)) if channel_match else 0
+        
+        return well_id, frame, channel
 
     @staticmethod
     def organize_experiment(experiment_dir, output_dir, experiment_id, verbose=True, overwrite=False):
@@ -449,8 +454,8 @@ class DataOrganizer:
         for stitch_file in stitch_files:
             result = DataOrganizer.parse_stitch_filename(stitch_file.name)
             if result:
-                well_id, frame = result
-                wells[well_id].append((stitch_file, frame))
+                well_id, frame, channel = result
+                wells[well_id].append((stitch_file, frame, channel))
             elif verbose:
                 print(f"   ⚠️  Could not parse filename: {stitch_file.name}")
         
@@ -484,7 +489,7 @@ class DataOrganizer:
         jpeg_paths = []
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = {}
-            sorted_images = sorted(image_files, key=lambda x: x[1])
+            sorted_images = sorted(image_files, key=lambda x: x[1])  # Sort by frame number
             total_images = len(sorted_images)
             
             if TQDM_AVAILABLE and verbose:
@@ -493,8 +498,14 @@ class DataOrganizer:
                 pbar = None
             
             # First pass: collect existing files and queue new conversions
-            for stitch_path, frame in sorted_images:
-                jpeg_filename = f"{str(frame).zfill(4)}.jpg"
+            for stitch_path, frame, channel in sorted_images:
+                # Build full image_id filename with channel: {video_id}_ch{channel}_tNNNN.jpg
+                try:
+                    image_id = build_image_id(video_id, int(frame), channel)
+                except Exception:
+                    # Fallback if frame is not numeric
+                    image_id = f"{video_id}_ch{channel:02d}_t{str(frame).zfill(4)}"
+                jpeg_filename = f"{image_id}.jpg"
                 jpeg_path = images_dir / jpeg_filename
                 
                 if jpeg_path.exists() and not overwrite:
@@ -720,8 +731,20 @@ class DataOrganizer:
         image_ids = []
         
         for jpeg_file in jpeg_files:
-            frame = jpeg_file.stem
-            image_id = f"{experiment_id}_{well_id}_t{frame}"
+            name = jpeg_file.stem
+            # If filename already contains full image_id (new convention with channel), use it
+            if name.startswith(f"{experiment_id}_{well_id}") and (re.search(r'_ch\d+_t\d{3,4}$', name) or re.search(r'_t\d{3,4}$', name)):
+                image_id = name
+            # If legacy numeric filename (NNNN), convert to image_id with default channel 0
+            elif re.fullmatch(r'\d{1,4}', name):
+                image_id = build_image_id(video_id, int(name), channel=0)
+            else:
+                # Fallback: attempt to construct from video_id and the stem
+                if re.search(r'_ch\d+_t\d{1,4}$', name) or re.search(r'_t\d{1,4}$', name):
+                    image_id = name
+                else:
+                    # Default to channel 0 for unknown format
+                    image_id = f"{experiment_id}_{well_id}_ch00_t{name}"
             image_ids.append(image_id)
         
         video_metadata["image_ids"] = image_ids
@@ -731,8 +754,12 @@ class DataOrganizer:
 
     @staticmethod
     def get_image_path_from_id(image_id, images_dir):
-        frame = image_id.split('_t')[-1]
-        return Path(images_dir) / f"{frame}.jpg"
+        """Return the expected on-disk path for a given `image_id` under `images_dir`.
+
+        With the new convention the filename is the full `image_id`.jpg and lives
+        inside the `images_dir` for the corresponding video.
+        """
+        return Path(images_dir) / f"{image_id}.jpg"
 
     @staticmethod
     def get_images_for_detection(metadata, experiment_ids=None):

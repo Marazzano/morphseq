@@ -10,7 +10,7 @@ ENTITY HIERARCHY:
 ID FORMATS:
     experiment_id: "20250624_chem02_28C_T00_1356"
     video_id:      "20250624_chem02_28C_T00_1356_H01"
-    image_id:      "20250624_chem02_28C_T00_1356_H01_t0042"  (with 't' prefix)
+    image_id:      "20250624_chem02_28C_T00_1356_H01_ch00_t0042"  (with channel + 't' prefix)
     embryo_id:     "20250624_chem02_28C_T00_1356_H01_e01"
     snip_id:       "20250624_chem02_28C_T00_1356_H01_e01_s0034"
 
@@ -19,8 +19,8 @@ MAIN FUNCTIONS:
         Output: Dict with keys for all components, e.g. {'experiment_id': ..., 'video_id': ..., 'entity_type': ...}
     get_entity_type()     - Determine ID type from format
         Output: String, one of 'experiment', 'video', 'image', 'embryo', 'snip'
-    build_image_id()      - Create image ID with 't' prefix
-        Output: e.g. '20250624_chem02_28C_T00_1356_H01_t0042'
+    build_image_id()      - Create image ID with channel + 't' prefix
+        Output: e.g. '20250624_chem02_28C_T00_1356_H01_ch00_t0042'
     build_video_id()      - Create video ID from experiment + well
         Output: e.g. '20250624_chem02_28C_T00_1356_H01'
     build_embryo_id()     - Create embryo ID from video + number
@@ -54,7 +54,8 @@ PATH UTILITIES:
 """
 
 import re
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
+from pathlib import Path
 
 
 def parse_entity_id(entity_id: str) -> Dict[str, str]:
@@ -79,7 +80,7 @@ def get_entity_type(entity_id: str) -> str:
         return "snip"
     elif re.search(r'_e\d+$', entity_id):
         return "embryo"
-    elif re.search(r'_t\d{3,4}$', entity_id):
+    elif re.search(r'_ch\d+_t\d{3,4}$', entity_id) or re.search(r'_t\d{3,4}$', entity_id):
         return "image"
     elif re.search(r'_[A-H]\d{2}$', entity_id):
         return "video"
@@ -172,19 +173,28 @@ def _parse_backwards_video(video_id: str) -> Dict[str, str]:
 
 
 def _parse_backwards_image(image_id: str) -> Dict[str, str]:
-    """Parse image_id: {video_id}_t{FRAME}."""
-    match = re.search(r'_t(\d{3,4})$', image_id)
-    if not match:
-        raise ValueError(f"Invalid image_id: {image_id}")
-    
-    frame_number = match.group(1)
-    video_id = image_id[:match.start()]
+    """Parse image_id: {video_id}_ch{CHANNEL}_t{FRAME} or legacy {video_id}_t{FRAME}."""
+    # Try new format with channel first
+    match = re.search(r'_ch(\d+)_t(\d{3,4})$', image_id)
+    if match:
+        channel = match.group(1)
+        frame_number = match.group(2)
+        video_id = image_id[:match.start()]
+    else:
+        # Fallback to legacy format without channel
+        match = re.search(r'_t(\d{3,4})$', image_id)
+        if not match:
+            raise ValueError(f"Invalid image_id: {image_id}")
+        channel = "0"  # Default channel for legacy format
+        frame_number = match.group(1)
+        video_id = image_id[:match.start()]
     
     # Parse video_id recursively
     video_components = _parse_backwards_video(video_id)
     
     return {
         **video_components,
+        "channel": channel,
         "frame_number": frame_number,
         "image_id": image_id,
         "entity_type": "image"
@@ -233,9 +243,9 @@ def _parse_backwards_snip(snip_id: str) -> Dict[str, str]:
 
 # ========== BUILDER FUNCTIONS ==========
 
-def build_image_id(video_id: str, frame_number: int) -> str:
-    """Build image ID with 't' prefix from video_id and frame number."""
-    return f"{video_id}_t{frame_number:04d}"
+def build_image_id(video_id: str, frame_number: int, channel: int = 0) -> str:
+    """Build image ID with channel + 't' prefix from video_id, frame number, and channel."""
+    return f"{video_id}_ch{channel:02d}_t{frame_number:04d}"
 
 
 def build_video_id(experiment_id: str, well_id: str) -> str:
@@ -282,15 +292,35 @@ def normalize_embryo_number(embryo_str: str) -> int:
 # ========== PATH UTILITIES ==========
 
 def get_image_filename_from_id(image_id: str, extension: str = "jpg") -> str:
-    """Convert image_id to disk filename (no 't' prefix on disk)."""
-    parsed = parse_entity_id(image_id)
-    frame_number = parsed["frame_number"]
-    # On disk: no 't' prefix, just NNNN.jpg format
-    return f"{int(frame_number):04d}.{extension}"
+    """Convert image_id to disk filename.
+
+    Current (simplest) behavior: always use the full `image_id` as the
+    filename on disk: ``{image_id}.{extension}``.
+    """
+    return f"{image_id}.{extension}"
+
+
+def get_image_id_path(processed_jpg_images_dir: Union[str, Path], image_id: str, extension: str = "jpg") -> Path:
+    """
+    Construct full image path from processed directory and image_id.
+    
+    Args:
+        processed_jpg_images_dir: Directory containing processed images (from metadata)
+        image_id: Full image ID (e.g., "20250612_30hpf_ctrl_atf6_F11_ch00_t0000")
+        extension: File extension (default: "jpg")
+    
+    Returns:
+        Full path: processed_jpg_images_dir / {image_id}.{extension}
+    
+    Example:
+        >>> get_image_id_path("/data/exp/images/video_A01", "20240411_A01_ch00_t0042")
+        Path('/data/exp/images/video_A01/20240411_A01_ch00_t0042.jpg')
+    """
+    return Path(processed_jpg_images_dir) / get_image_filename_from_id(image_id, extension)
 
 
 def get_relative_image_path(image_id: str, extension: str = "jpg") -> str:
-    """Get relative path from experiment root: images/video_id/NNNN.jpg"""
+    """Get relative path from experiment root: images/video_id/{image_id}.jpg"""
     parsed = parse_entity_id(image_id)
     video_id = parsed["video_id"]
     filename = get_image_filename_from_id(image_id, extension)
@@ -303,7 +333,7 @@ def get_relative_video_path(video_id: str) -> str:
 
 
 def build_image_path_from_base(image_id: str, base_path: str, extension: str = "jpg") -> str:
-    """Build full image path from base directory (backward compatibility)."""
+    """Build full image path from base directory (uses `{image_id}.jpg`)."""
     parsed = parse_entity_id(image_id)
     experiment_id = parsed["experiment_id"]
     relative_path = get_relative_image_path(image_id, extension)
@@ -325,17 +355,46 @@ def get_experiment_relative_path(experiment_id: str) -> str:
 # ========== CONVERSION UTILITIES ==========
 
 def disk_filename_to_image_id(video_id: str, filename: str) -> str:
-    """Convert disk filename (0042.jpg) to image_id with 't' prefix."""
-    frame_str = filename.replace('.jpg', '')
-    frame_number = int(frame_str)
-    return build_image_id(video_id, frame_number)
+        """Convert an on-disk filename to an image_id.
+
+        With the new convention filenames are expected to be full image IDs
+        (``{image_id}.jpg``). This helper does a best-effort conversion:
+        - If the stripped filename starts with the provided ``video_id`` and
+            matches the image pattern (with or without channel), it is returned unchanged.
+        - Otherwise, if the filename is numeric (NNNN) it will be converted to
+            ``{video_id}_ch00_tNNNN`` for backwards compatibility.
+        - Otherwise the stripped filename is returned (caller should validate).
+        """
+        name = filename.replace('.jpg', '')
+        if name.startswith(video_id) and (re.search(r'_ch\d+_t\d{3,4}$', name) or re.search(r'_t\d{3,4}$', name)):
+                return name
+        # numeric fallback - use default channel 0
+        if re.fullmatch(r'\d{1,4}', name):
+                return build_image_id(video_id, int(name), channel=0)
+        return name
 
 
 def image_id_to_disk_filename(image_id: str) -> str:
-    """Convert image_id to disk filename (remove 't' prefix)."""
-    parsed = parse_entity_id(image_id)
-    frame_number = parsed["frame_number"]
-    return f"{int(frame_number):04d}.jpg"
+    """Convert image_id to disk filename: ``{image_id}.jpg``."""
+    return f"{image_id}.jpg"
+
+
+def get_image_id_from_filename(video_id: str, filename: str, extension: str = "jpg") -> str:
+    """Return the image_id represented by an on-disk filename.
+
+    With the new naming convention the filename should be the full image_id
+    (``{image_id}.jpg``) and this function will simply strip the extension
+    and return the name. For robustness it will still accept legacy numeric
+    filenames and convert them to ``{video_id}_ch00_tNNNN`` (default channel 0).
+    """
+    name = filename.replace(f'.{extension}', '')
+    # Check for channel-inclusive format or legacy format
+    if name.startswith(video_id) and (re.search(r'_ch\d+_t\d{3,4}$', name) or re.search(r'_t\d{3,4}$', name)):
+        return name
+    # numeric fallback - use default channel 0
+    if re.fullmatch(r'\d{1,4}', name):
+        return build_image_id(video_id, int(name), channel=0)
+    return name
 
 
 # ========== VALIDATION HELPERS ==========

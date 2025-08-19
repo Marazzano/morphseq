@@ -28,12 +28,13 @@ METADATA=$ROOT/data/raw_data_organized/experiment_metadata.json
 GDINO_ANNOTATIONS=$ROOT/data/detections/gdino_detections.json
 SAM2_ANNOTATIONS=$ROOT/data/segmentation/grounded_sam_segmentations.json
 EMBRYO_METADATA=$ROOT/data/embryo_metadata/embryo_metadata.json
-MASK_EXPORT=$ROOT/data/annotation_and_masks/jpg_masks/grounded_sam
+MASK_EXPORT=$ROOT/data/exported_masks
 
 mkdir -p logs
 
 # Example experiments (uncomment to process specific experiments)
-EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6,20231206,20240418,20250612_30hpf_ctrl_atf6"
+EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6,20231206,20240418,20250305"
+# EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6"
 
 # Colors for output
 RED='\033[0;31m'
@@ -131,9 +132,9 @@ log_info "Starting STEP 5: SAM2 Quality Control Analysis"
 
 python $ROOT/scripts/pipelines/05_sam2_qc_analysis.py \
   --input "$SAM2_ANNOTATIONS" \
+  --output "$SAM2_ANNOTATIONS" \
   --author "pipeline_qc" \
   --process-all \
-  --save-in-place \
   --verbose \
   | tee logs/step5_qc_analysis.log
   # Fine-grained options for future reference:
@@ -144,22 +145,20 @@ python $ROOT/scripts/pipelines/05_sam2_qc_analysis.py \
 log_success "STEP 5 completed successfully"
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STEP 6: Export Embryo Masks (MOVED FROM STEP 5)
+# STEP 6: Export Embryo Masks (SimpleMaskExporter)
 # ═══════════════════════════════════════════════════════════════════════════════
 log_info "Starting STEP 6: Export Embryo Masks"
 
-python $ROOT/scripts/pipelines/05_export_embryo_masks.py \
-  --sam2_annotations "$SAM2_ANNOTATIONS" \
-  --metadata "$METADATA" \
+python $ROOT/scripts/pipelines/06_export_masks.py \
+  --sam2-annotations "$SAM2_ANNOTATIONS" \
   --output "$MASK_EXPORT" \
-  --entities_to_process "$EXAMPLE_EXPS" \
-  --workers 8 \
+  --entities-to-process "$EXAMPLE_EXPS" \
+  --export-format png \
   --verbose \
   | tee logs/step6_masks.log
   # Fine-grained options for future reference:
-  # --export-format "png" \
-  # --mask-resolution 512 \
-  # --include-overlays \
+  # --overwrite \
+  # --dry-run \
 
 log_success "STEP 6 completed successfully"
 
@@ -179,4 +178,4 @@ log_info "Output files:"
 log_info "  📊 Experiment metadata: $METADATA"
 log_info "  🎯 Detection annotations: $GDINO_ANNOTATIONS" 
 log_info "  🎬 Segmentation annotations: $SAM2_ANNOTATIONS (with QC flags)"
-log_info "  🖼️  Exported masks: $MASK_EXPORT"
+log_info "  🖼️  Exported masks: $MASK_EXPORT (PNG format)"
