@@ -1,321 +1,518 @@
 """
-EmbryoMetadata Core Class - Simple and Focused
-Inherits business logic from UnifiedEmbryoManager, handles file I/O and initialization.
+Module 3 Simplified: EmbryoMetadata MVP Implementation
+
+Core class for managing biological annotations layered on top of SAM2 segmentation data.
+Uses composition with BaseFileHandler for atomic file operations.
 """
 
+import json
 from pathlib import Path
-from typing import Dict, List, Optional, Union
 from datetime import datetime
+from typing import Dict, List, Optional, Any
+import sys
 
-# Module imports
+# Add parent directory to path for imports
+SCRIPTS_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(SCRIPTS_DIR))
+
 from utils.base_file_handler import BaseFileHandler
-from utils.entity_id_tracker import EntityIDTracker
-from utils.parsing_utils import (
-    get_entity_type, 
-    extract_embryo_id,
-    extract_frame_number
-)
-from metadata.schema_manager import SchemaManager
-from annotations.unified_managers import UnifiedEmbryoManager
-from annotations.annotation_batch import AnnotationBatch, EmbryoQuery
 
 
-class EmbryoMetadata(BaseFileHandler, UnifiedEmbryoManager):
+class EmbryoMetadata:
     """
-    Main embryo metadata class.
+    MVP: Biological annotation system with composition approach.
     
-    Core functionality:
-    - File I/O and persistence
-    - SAM annotation integration
-    - Data validation and consistency
-    - Embryo/snip hierarchy management
-    - Batch processing with validation and error handling
-    
-    Business logic inherited from UnifiedEmbryoManager.
+    Features:
+    - BaseFileHandler composition for atomic file operations
+    - SAM2 import and auto-update functionality
+    - Basic phenotype annotation with embryo_id + target='all'
+    - Hardcoded validation lists (no config files in MVP)
     """
     
-    def __init__(self, sam_annotation_path: Union[str, Path], 
-                 embryo_metadata_path: Optional[Union[str, Path]] = None,
-                 gen_if_no_file: bool = False, 
-                 verbose: bool = True,
-                 schema_path=None):
+    # Hardcoded validation lists for MVP
+    VALID_PHENOTYPES = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
+    VALID_GENES = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
+    VALID_ZYGOSITY = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
+    VALID_TREATMENTS = ["control", "DMSO", "PTU", "BIO", "SB431542", "DAPT", "heat_shock", "cold_shock"]
+    VALID_FLAGS = ["MOTION_BLUR", "OUT_OF_FOCUS", "DARK", "CORRUPT"]
+    
+    def __init__(self, sam2_path: str, annotations_path: Optional[str] = None):
+        """
+        Initialize with SAM2 file and optional existing annotations.
         
-        # Setup paths
-        self.sam_annotation_path = Path(sam_annotation_path)
-        if not self.sam_annotation_path.exists():
-            raise FileNotFoundError(f"SAM annotation file not found: {sam_annotation_path}")
+        Args:
+            sam2_path: Path to SAM2 annotations JSON file
+            annotations_path: Optional path to existing biology annotations
+        """
+        self.sam2_path = Path(sam2_path)
         
-        if embryo_metadata_path is None:
-            embryo_metadata_path = self.sam_annotation_path.with_name(
-                self.sam_annotation_path.stem + "_embryo_metadata.json"
-            )
-        
-        # Initialize file handler
-        super().__init__(embryo_metadata_path, verbose=verbose)
-        
-        # Configuration and schema
-        self.config = {"default_author": "unknown"}
-        self.schema_manager = SchemaManager(schema_path) if schema_path else SchemaManager()
-        self._auto_validate = True  # Default validation enabled
-        
-        # Load SAM annotations
-        self.sam_annotations = self.load_json(self.sam_annotation_path)
-        
-        # Load or create metadata
-        if self.filepath.exists():
-            self.data = self.load_json()
-            self._validate_entity_tracking()
-        elif gen_if_no_file:
-            self.data = self._create_from_sam()
-            self._initialize_entity_tracking()
+        # Determine annotations path
+        if annotations_path is None:
+            # Default: sam2_annotations.json -> sam2_annotations_biology.json
+            self.annotations_path = self.sam2_path.parent / f"{self.sam2_path.stem}_biology.json"
         else:
-            raise FileNotFoundError(f"Metadata not found: {embryo_metadata_path}")
+            self.annotations_path = Path(annotations_path)
         
-        # Initialize lookup caches
-        self._build_caches()
+        # Initialize BaseFileHandler for atomic operations
+        self.file_handler = BaseFileHandler(self.annotations_path)
+        
+        # Load or create data structure
+        if self.annotations_path.exists():
+            print(f"Loading existing annotations from: {self.annotations_path}")
+            self.data = self.file_handler.load_json()
+            # Auto-update with any new embryos from SAM2
+            self._update_from_sam2()
+        else:
+            print(f"Creating new annotations from SAM2: {self.sam2_path}")
+            self.data = self._create_from_sam2()
     
-    def _validate_entity_tracking(self):
-        """Validate entity hierarchy and update tracking section."""
-        # Extract current entities
-        current_entities = EntityIDTracker.extract_entities(self.data)
+    def _load_sam2_data(self) -> Dict:
+        """Load SAM2 data from file."""
+        with open(self.sam2_path) as f:
+            return json.load(f)
+    
+    def _extract_frame_number(self, image_id: str) -> int:
+        """Extract frame number from image_id like '20240418_A01_t0100' -> 100."""
+        if '_t' in image_id:
+            frame_part = image_id.split('_t')[-1]
+            return int(frame_part)
+        else:
+            raise ValueError(f"Cannot extract frame number from image_id: {image_id}")
+    
+    def _create_embryo_structure(self, embryo_id: str) -> Dict:
+        """Create empty embryo structure for annotations."""
+        # Extract experiment and video IDs from embryo_id
+        parts = embryo_id.split('_')
+        if len(parts) >= 3:
+            experiment_id = parts[0]
+            video_id = '_'.join(parts[:2])
+        else:
+            experiment_id = "unknown"
+            video_id = "unknown"
         
-        # Validate hierarchy (using correct method signature)
-        EntityIDTracker.validate_hierarchy(current_entities, check_hierarchy=True)
-        
-        # Update entity_tracking section
-        if "entity_tracking" not in self.data:
-            self.data["entity_tracking"] = {}
-        
-        self.data["entity_tracking"]["metadata"] = {
-            entity_type: list(ids) for entity_type, ids in current_entities.items()
+        return {
+            "embryo_id": embryo_id,
+            "experiment_id": experiment_id,
+            "video_id": video_id,
+            "genotype": None,
+            "treatments": [],
+            "snips": {}
         }
-        
-        if self.verbose:
-            counts = EntityIDTracker.get_counts(current_entities)
-            print(f"📊 Entities: {counts}")
     
-    def _initialize_entity_tracking(self):
-        """Initialize entity tracking for new metadata."""
-        # Extract from SAM annotations
-        sam_entities = EntityIDTracker.extract_entities(self.sam_annotations)
-        
-        # Extract from created metadata
-        metadata_entities = EntityIDTracker.extract_entities(self.data)
-        
-        # Find missing entities
-        missing = EntityIDTracker.compare_entities(sam_entities, metadata_entities)
-        
-        # Store tracking info
-        self.data["entity_tracking"] = {
-            "sam_source": {entity_type: list(ids) for entity_type, ids in sam_entities.items()},
-            "metadata": {entity_type: list(ids) for entity_type, ids in metadata_entities.items()},
-            "missing": {entity_type: list(ids) for entity_type, ids in missing.items()}
+    def _create_snip_structure(self, snip_id: str, frame_number: int) -> Dict:
+        """Create empty snip structure for frame-level annotations."""
+        return {
+            "snip_id": snip_id,
+            "frame_number": frame_number,
+            "phenotypes": [],
+            "flags": []
         }
-        
-        if self.verbose and any(missing.values()):
-            print(f"⚠️ Missing entities from SAM: {EntityIDTracker.get_counts(missing)}")
     
-    def check_sam_consistency(self) -> Dict:
-        """Check consistency with original SAM file."""
-        expected_sam = self.data.get("file_info", {}).get("source_sam_filename")
-        current_sam = Path(self.sam_annotation_path).name
+    def _extract_embryos_from_sam2(self) -> Dict[str, Dict]:
+        """
+        Extract embryo structure from SAM2 data.
         
-        if expected_sam and expected_sam != current_sam:
-            raise ValueError(f"SAM file mismatch: expected {expected_sam}, got {current_sam}")
-        
-        # Compare entities
-        sam_entities = EntityIDTracker.extract_entities(self.sam_annotations)
-        metadata_entities = EntityIDTracker.extract_entities(self.data)
-        missing = EntityIDTracker.compare_entities(sam_entities, metadata_entities)
-        
-        return {"missing_from_metadata": missing, "consistent": not any(missing.values())}
-    
-    def _create_from_sam(self) -> Dict:
-        """Create metadata structure from SAM annotations."""
+        Returns:
+            Dict mapping embryo_id to embryo structure with all snips
+        """
+        sam2_data = self._load_sam2_data()
         embryos = {}
         
-        # Extract embryo structure from SAM
-        for exp_id, exp_data in self.sam_annotations.get("experiments", {}).items():
+        # Scan through experiments -> videos -> images -> embryos
+        for exp_id, exp_data in sam2_data.get("experiments", {}).items():
             for video_id, video_data in exp_data.get("videos", {}).items():
-                for embryo_id in video_data.get("embryo_ids", []):
-                    if embryo_id not in embryos:
-                        embryos[embryo_id] = {
-                            "genotype": None,
-                            "treatments": {},
-                            "flags": {},
-                            "notes": "",
-                            "metadata": {"created": self.get_timestamp()},
-                            "snips": {}
-                        }
+                for image_id, image_data in video_data.get("images", {}).items():
+                    try:
+                        frame_num = self._extract_frame_number(image_id)
+                    except ValueError:
+                        print(f"Warning: Skipping image with invalid frame format: {image_id}")
+                        continue
                     
-                    # Add snips for this embryo
-                    for image_id, image_data in video_data.get("images", {}).items():
-                        if embryo_id in image_data.get("embryos", {}):
-                            snip_id = image_data["embryos"][embryo_id].get("snip_id")
-                            if snip_id:
-                                embryos[embryo_id]["snips"][snip_id] = {"flags": []}
+                    for embryo_id in image_data.get("embryos", {}):
+                        # Create embryo structure if first time seeing this embryo
+                        if embryo_id not in embryos:
+                            embryos[embryo_id] = self._create_embryo_structure(embryo_id)
+                        
+                        # Add snip for this frame
+                        snip_id = f"{embryo_id}_s{frame_num:04d}"
+                        embryos[embryo_id]["snips"][snip_id] = self._create_snip_structure(snip_id, frame_num)
+        
+        return embryos
+    
+    def _create_from_sam2(self) -> Dict:
+        """Create new annotation structure from SAM2 data."""
+        embryos = self._extract_embryos_from_sam2()
         
         return {
-            "file_info": {
-                "version": "1.0",
-                "created": self.get_timestamp(),
-                "source_sam": str(self.sam_annotation_path),
-                "source_sam_filename": self.sam_annotation_path.name
+            "metadata": {
+                "source_sam2": str(self.sam2_path),
+                "created": datetime.now().isoformat(),
+                "version": "simplified_v1"
             },
-            "embryos": embryos,
-            "entity_tracking": {}
+            "embryos": embryos
         }
     
-    def _build_caches(self):
-        """Build lookup caches for performance."""
-        self._snip_to_embryo = {}
+    def _update_from_sam2(self) -> None:
+        """
+        Auto-detect new embryos from SAM2 and merge without overwriting existing annotations.
+        """
+        sam2_embryos = self._extract_embryos_from_sam2()
         
-        for embryo_id, embryo_data in self.data["embryos"].items():
-            for snip_id in embryo_data.get("snips", {}):
-                self._snip_to_embryo[snip_id] = embryo_id
-    
-    def get_embryo_id_from_snip(self, snip_id: str) -> Optional[str]:
-        """Get embryo ID from snip ID."""
-        return self._snip_to_embryo.get(snip_id)
-    
-    def get_available_snips(self, embryo_id: Optional[str] = None) -> List[str]:
-        """Get available snip IDs."""
-        if embryo_id:
-            return list(self.data["embryos"].get(embryo_id, {}).get("snips", {}).keys())
-        return list(self._snip_to_embryo.keys())
-    
-    def get_snip_data(self, snip_id: str) -> Optional[Dict]:
-        """Get snip data."""
-        embryo_id = self.get_embryo_id_from_snip(snip_id)
-        if embryo_id:
-            return self.data["embryos"][embryo_id]["snips"].get(snip_id)
-        return None
-    
-    def save(self, backup: bool = True):
-        """Save with entity validation using embedded tracker approach."""
-        # EntityIDTracker is a PURE CONTAINER - use static methods for embedded tracking
-        try:
-            # Update embedded entity tracker in the embryo metadata
-            self.data = EntityIDTracker.update_entity_tracker(
-                self.data,
-                pipeline_step="module_3_embryo_metadata"
-            )
-            
-            # Update file info
-            if "file_info" not in self.data:
-                self.data["file_info"] = {}
-            self.data["file_info"]["last_updated"] = self.get_timestamp()
-            
-            # Save using inherited atomic save
-            self.save_json(self.data, create_backup=backup)
-            
-            if self.verbose:
-                embryo_count = len(self.data["embryos"])
-                snip_count = len(self._snip_to_embryo)
-                print(f"💾 Saved: {embryo_count} embryos, {snip_count} snips (validated)")
+        # Update metadata timestamp
+        self.data["metadata"]["updated"] = datetime.now().isoformat()
+        
+        # Merge embryos
+        new_embryo_count = 0
+        new_snip_count = 0
+        
+        for embryo_id, embryo_structure in sam2_embryos.items():
+            if embryo_id not in self.data["embryos"]:
+                # New embryo - add complete structure
+                self.data["embryos"][embryo_id] = embryo_structure
+                new_embryo_count += 1
+                new_snip_count += len(embryo_structure["snips"])
+            else:
+                # Existing embryo - only add new snips, preserve annotations
+                existing_snips = self.data["embryos"][embryo_id].get("snips", {})
+                new_snips = embryo_structure.get("snips", {})
                 
-        except Exception as e:
-            if self.verbose:
-                print(f"❌ Save failed: {e}")
-            raise
-    
-    def reload(self):
-        """Reload from file."""
-        self.data = self.load_json()
-        self._build_caches()
-        if self.verbose:
-            print("🔄 Reloaded metadata")
-    
-    def get_entity_counts(self) -> Dict[str, int]:
-        """Get counts of all entity types by parsing IDs."""
-        # Extract all entities and get counts
-        current_entities = EntityIDTracker.extract_entities(self.data)
-        return EntityIDTracker.get_counts(current_entities)
-    
-    @property
-    def embryo_count(self) -> int:
-        """Number of embryos."""
-        return len(self.data["embryos"])
-    
-    @property
-    def snip_count(self) -> int:
-        """Number of snips."""
-        return len(self._snip_to_embryo)
-    
-    def get_genotype(self, embryo_id: str) -> Optional[Dict]:
-        """Get genotype for embryo."""
-        return self.data["embryos"].get(embryo_id, {}).get("genotype")
-    
-    def get_phenotypes(self, snip_id: str) -> List[Dict]:
-        """Get phenotypes for snip."""
-        snip_data = self.get_snip_data(snip_id)
-        if snip_data and "phenotype" in snip_data:
-            return [snip_data["phenotype"]]  # Single phenotype per snip in this implementation
-        return []
-    
-    def get_flags(self, entity_id: str, level: str = "auto") -> List[Dict]:
-        """Get flags for entity."""
-        if level == "auto":
-            level = get_entity_type(entity_id)
+                for snip_id, snip_data in new_snips.items():
+                    if snip_id not in existing_snips:
+                        existing_snips[snip_id] = snip_data
+                        new_snip_count += 1
         
-        if level == "snip":
-            snip_data = self.get_snip_data(entity_id)
-            return snip_data.get("flags", []) if snip_data else []
-        elif level == "embryo":
-            embryo_data = self.data["embryos"].get(entity_id, {})
-            return list(embryo_data.get("flags", {}).values())
+        if new_embryo_count > 0:
+            print(f"Auto-detected {new_embryo_count} new embryos")
+        if new_snip_count > 0:
+            print(f"Auto-detected {new_snip_count} new snips")
+    
+    def _select_mode(self, embryo_id=None, target=None, snip_ids=None) -> str:
+        """
+        Prevent ambiguous parameter combinations.
         
-        return []
+        Args:
+            embryo_id: Embryo ID for embryo-based approach
+            target: Target specification for embryo-based approach  
+            snip_ids: List of snip IDs for direct snip approach
+        
+        Returns:
+            "embryo" if embryo-based approach, "snips" if snip-based approach
+            
+        Raises:
+            ValueError: If parameters are ambiguous or missing
+        """
+        by_embryo = embryo_id is not None or target is not None
+        by_snips = snip_ids is not None and len(snip_ids) > 0
+        
+        if by_embryo and by_snips:
+            print(f"❌ ERROR: add_phenotype() called with both approaches:")
+            print(f"   Embryo approach: embryo_id='{embryo_id}', target='{target}'")
+            print(f"   Snip approach: snip_ids={snip_ids}")
+            print(f"   SOLUTION: Use either (embryo_id + target) OR snip_ids, not both")
+            raise ValueError("Ambiguous parameters: cannot use both embryo and snip approaches")
+        
+        if not by_embryo and not by_snips:
+            print(f"❌ ERROR: add_phenotype() called without specifying target:")
+            print(f"   Missing parameters: embryo_id={embryo_id}, target={target}, snip_ids={snip_ids}")
+            print(f"   SOLUTION: Provide either (embryo_id='embryo_e01', target='all') OR snip_ids=['snip1', 'snip2']")
+            raise ValueError("Missing parameters: must specify either embryo or snip approach")
+        
+        return "embryo" if by_embryo else "snips"
     
-    def query(self) -> EmbryoQuery:
-        """Create new query builder."""
-        return EmbryoQuery(self)
+    def _resolve_target_to_snips(self, embryo_id: str, target: str) -> List[str]:
+        """
+        Resolve target specification to list of snip IDs.
+        
+        Args:
+            embryo_id: Target embryo ID
+            target: Target specification ('all', '30:50', '200:', etc.)
+            
+        Returns:
+            List of snip IDs
+        """
+        if embryo_id not in self.data["embryos"]:
+            raise ValueError(f"Embryo '{embryo_id}' not found. Available: {list(self.data['embryos'].keys())[:5]}...")
+        
+        embryo_data = self.data["embryos"][embryo_id]
+        available_snips = list(embryo_data["snips"].keys())
+        
+        if not available_snips:
+            raise ValueError(f"No snips available for embryo: {embryo_id}")
+        
+        if target == "all":
+            return available_snips
+        
+        # For Phase 2, add basic range parsing
+        if ":" in target:
+            return self._parse_frame_range(embryo_id, target, available_snips)
+        
+        # Single frame number
+        if target.isdigit():
+            frame_num = int(target)
+            snip_id = f"{embryo_id}_s{frame_num:04d}"
+            if snip_id in available_snips:
+                return [snip_id]
+            else:
+                raise ValueError(f"Frame {frame_num} not found for embryo {embryo_id}")
+        
+        raise ValueError(f"Invalid target format: '{target}'. Use 'all', frame number, or 'start:end' range")
     
-    def list_snips_by_phenotype(self, phenotype: str) -> List[str]:
-        """List all snips with specific phenotype."""
-        snips = []
-        for embryo_id, embryo_data in self.data["embryos"].items():
-            for snip_id, snip_data in embryo_data["snips"].items():
-                if "phenotype" in snip_data and snip_data["phenotype"]["value"] == phenotype:
-                    snips.append(snip_id)
-        return snips
+    def _parse_frame_range(self, embryo_id: str, target: str, available_snips: List[str]) -> List[str]:
+        """
+        Parse frame range like '30:50' or '200:' into snip IDs.
+        
+        Args:
+            embryo_id: Embryo ID for generating snip IDs
+            target: Range specification like '30:50' or '200:'
+            available_snips: List of available snip IDs to filter against
+            
+        Returns:
+            List of snip IDs that exist and fall within range
+        """
+        try:
+            if target.endswith(":"):
+                # Open-ended range like '200:'
+                start_frame = int(target[:-1])
+                end_frame = None
+            elif target.startswith(":"):
+                # Range from beginning like ':100'  
+                start_frame = None
+                end_frame = int(target[1:])
+            else:
+                # Closed range like '30:50'
+                start_str, end_str = target.split(":", 1)
+                start_frame = int(start_str) if start_str else None
+                end_frame = int(end_str) if end_str else None
+        except ValueError:
+            raise ValueError(f"Invalid range format: '{target}'. Use 'start:end', 'start:', or ':end'")
+        
+        matching_snips = []
+        for snip_id in available_snips:
+            # Extract frame number from snip_id like "embryo_e01_s0100"
+            try:
+                frame_part = snip_id.split("_s")[-1]
+                frame_num = int(frame_part)
+                
+                # Check if frame is in range
+                if start_frame is not None and frame_num < start_frame:
+                    continue
+                if end_frame is not None and frame_num >= end_frame:
+                    continue
+                    
+                matching_snips.append(snip_id)
+            except (ValueError, IndexError):
+                # Skip malformed snip IDs
+                continue
+        
+        if not matching_snips:
+            raise ValueError(f"No snips found in range '{target}' for embryo {embryo_id}")
+        
+        return matching_snips
     
-    def get_phenotype_statistics(self) -> Dict:
-        """Get phenotype distribution statistics."""
-        stats = {}
-        for embryo_data in self.data["embryos"].values():
-            for snip_data in embryo_data["snips"].values():
-                if "phenotype" in snip_data:
-                    value = snip_data["phenotype"]["value"]
-                    stats[value] = stats.get(value, 0) + 1
-        return stats
+    def _add_phenotype_to_snip(self, snip_id: str, phenotype: str, author: str) -> None:
+        """
+        Add phenotype to a specific snip.
+        
+        Args:
+            snip_id: Target snip ID
+            phenotype: Phenotype value
+            author: Author of annotation
+        """
+        # Find the embryo for this snip
+        embryo_id = "_".join(snip_id.split("_")[:-1])  # Remove the _sXXXX part
+        
+        if embryo_id not in self.data["embryos"]:
+            raise ValueError(f"Embryo for snip '{snip_id}' not found: {embryo_id}")
+        
+        embryo_data = self.data["embryos"][embryo_id]
+        if snip_id not in embryo_data["snips"]:
+            raise ValueError(f"Snip '{snip_id}' not found in embryo {embryo_id}")
+        
+        snip_data = embryo_data["snips"][snip_id]
+        if "phenotypes" not in snip_data:
+            snip_data["phenotypes"] = []
+        
+        # Create phenotype record
+        phenotype_record = {
+            "value": phenotype,
+            "author": author,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        snip_data["phenotypes"].append(phenotype_record)
     
-    def get_genotype_statistics(self) -> Dict[str, int]:
-        """Get genotype distribution statistics."""
-        stats = {}
+    def add_phenotype(self, phenotype: str, author: str, embryo_id: str = None, 
+                     target: str = None, snip_ids: List[str] = None) -> Dict:
+        """
+        Enhanced: Add phenotype annotation using either embryo or snip approach.
+        
+        Args:
+            phenotype: Phenotype value (must be in VALID_PHENOTYPES)
+            author: Author of the annotation
+            embryo_id: Target embryo ID (for embryo approach)
+            target: Target specification - 'all', '30:50', '200:', frame number (for embryo approach)
+            snip_ids: List of snip IDs (for direct snip approach)
+        
+        Returns:
+            Dict with operation details
+            
+        Raises:
+            ValueError: If parameters are invalid or ambiguous
+        """
+        # Validate phenotype
+        if phenotype not in self.VALID_PHENOTYPES:
+            print(f"❌ ERROR: Invalid phenotype '{phenotype}'")
+            print(f"   Valid options: {self.VALID_PHENOTYPES}")
+            raise ValueError(f"Invalid phenotype '{phenotype}'. Valid options: {self.VALID_PHENOTYPES}")
+        
+        # Validate parameter combination
+        mode = self._select_mode(embryo_id, target, snip_ids)
+        
+        # Resolve to snip IDs based on approach
+        if mode == "embryo":
+            if target is None:
+                target = "all"  # Default target
+            resolved_snips = self._resolve_target_to_snips(embryo_id, target)
+        else:  # mode == "snips"
+            # Validate that all snip IDs exist
+            resolved_snips = []
+            for snip_id in snip_ids:
+                # Find embryo for this snip
+                embryo_id_for_snip = "_".join(snip_id.split("_")[:-1])
+                if embryo_id_for_snip not in self.data["embryos"]:
+                    raise ValueError(f"Embryo for snip '{snip_id}' not found: {embryo_id_for_snip}")
+                if snip_id not in self.data["embryos"][embryo_id_for_snip]["snips"]:
+                    raise ValueError(f"Snip '{snip_id}' not found")
+                resolved_snips.append(snip_id)
+        
+        # Apply phenotype to all resolved snips
+        for snip_id in resolved_snips:
+            self._add_phenotype_to_snip(snip_id, phenotype, author)
+        
+        # Return operation details
+        if mode == "embryo":
+            return {
+                "operation": "add_phenotype",
+                "approach": "embryo",
+                "phenotype": phenotype,
+                "embryo_id": embryo_id,
+                "target": target,
+                "applied_to": resolved_snips,
+                "count": len(resolved_snips)
+            }
+        else:
+            return {
+                "operation": "add_phenotype", 
+                "approach": "snips",
+                "phenotype": phenotype,
+                "snip_ids": snip_ids,
+                "applied_to": resolved_snips,
+                "count": len(resolved_snips)
+            }
+    
+    def add_genotype(self, gene: str, author: str, embryo_id: str, 
+                    allele: Optional[str] = None, zygosity: str = "unknown") -> Dict:
+        """
+        Add genotype annotation to embryo.
+        
+        Args:
+            gene: Gene name (must be in VALID_GENES)
+            author: Author of the annotation
+            embryo_id: Target embryo ID
+            allele: Optional allele specification
+            zygosity: Zygosity (must be in VALID_ZYGOSITY)
+        
+        Returns:
+            Dict with operation details
+        """
+        # Validate gene
+        if gene not in self.VALID_GENES:
+            raise ValueError(f"Invalid gene '{gene}'. Valid options: {self.VALID_GENES}")
+        
+        # Validate zygosity
+        if zygosity not in self.VALID_ZYGOSITY:
+            raise ValueError(f"Invalid zygosity '{zygosity}'. Valid options: {self.VALID_ZYGOSITY}")
+        
+        # Check embryo exists
+        if embryo_id not in self.data["embryos"]:
+            raise ValueError(f"Embryo '{embryo_id}' not found")
+        
+        # Create genotype record
+        genotype_record = {
+            "gene": gene,
+            "allele": allele,
+            "zygosity": zygosity,
+            "author": author,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Add to embryo (will overwrite existing genotype)
+        self.data["embryos"][embryo_id]["genotype"] = genotype_record
+        
+        return {
+            "operation": "add_genotype",
+            "gene": gene,
+            "embryo_id": embryo_id,
+            "zygosity": zygosity
+        }
+    
+    def get_embryo_summary(self, embryo_id: str) -> Dict:
+        """Get summary of annotations for an embryo."""
+        if embryo_id not in self.data["embryos"]:
+            raise ValueError(f"Embryo '{embryo_id}' not found")
+        
+        embryo_data = self.data["embryos"][embryo_id]
+        
+        # Count phenotypes by type
+        phenotype_counts = {}
+        total_snips = len(embryo_data.get("snips", {}))
+        
+        for snip_data in embryo_data.get("snips", {}).values():
+            for phenotype in snip_data.get("phenotypes", []):
+                pheno_value = phenotype["value"]
+                phenotype_counts[pheno_value] = phenotype_counts.get(pheno_value, 0) + 1
+        
+        return {
+            "embryo_id": embryo_id,
+            "experiment_id": embryo_data.get("experiment_id"),
+            "video_id": embryo_data.get("video_id"),
+            "genotype": embryo_data.get("genotype"),
+            "treatment_count": len(embryo_data.get("treatments", [])),
+            "total_snips": total_snips,
+            "phenotype_counts": phenotype_counts
+        }
+    
+    def list_embryos(self) -> List[str]:
+        """Get list of all embryo IDs."""
+        return list(self.data["embryos"].keys())
+    
+    def save(self) -> None:
+        """Save annotations to file using BaseFileHandler atomic operations."""
+        self.file_handler.save_json(self.data)
+        print(f"Saved annotations to: {self.annotations_path}")
+    
+    def get_stats(self) -> Dict:
+        """Get overall statistics about the annotation dataset."""
+        embryo_count = len(self.data["embryos"])
+        total_snips = sum(len(embryo["snips"]) for embryo in self.data["embryos"].values())
+        
+        # Count annotations
+        total_phenotypes = 0
+        genotyped_embryos = 0
+        
         for embryo_data in self.data["embryos"].values():
             if embryo_data.get("genotype"):
-                gene = embryo_data["genotype"]["value"]
-                stats[gene] = stats.get(gene, 0) + 1
-        return stats
-    
-    def get_summary(self) -> Dict:
-        """Get overall metadata summary."""
-        entity_counts = self.get_entity_counts()
-        phenotype_stats = self.get_phenotype_statistics()
-        genotype_stats = self.get_genotype_statistics()
+                genotyped_embryos += 1
+            
+            for snip_data in embryo_data.get("snips", {}).values():
+                total_phenotypes += len(snip_data.get("phenotypes", []))
         
         return {
-            "entity_counts": entity_counts,
-            "phenotype_stats": phenotype_stats,
-            "genotype_stats": genotype_stats,
-            "auto_validate": self._auto_validate,
-            "file_info": self.data.get("file_info", {})
+            "embryo_count": embryo_count,
+            "total_snips": total_snips,
+            "total_phenotypes": total_phenotypes,
+            "genotyped_embryos": genotyped_embryos,
+            "source_sam2": self.data["metadata"].get("source_sam2"),
+            "created": self.data["metadata"].get("created"),
+            "updated": self.data["metadata"].get("updated")
         }
-    
-    def auto_validate(self, enabled: bool = True):
-        """Enable/disable automatic validation after changes."""
-        self._auto_validate = enabled
-        if self.verbose:
-            status = "enabled" if enabled else "disabled"
-            print(f"🔧 Auto-validation {status}")
