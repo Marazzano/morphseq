@@ -2,10 +2,11 @@
 
 ## Overview
 Phased implementation starting simple and building up complexity:
-- **Phase 1**: Core MVP with basic functionality (Week 1)
-- **Phase 2**: Business logic and validation (Week 2)  
-- **Phase 3**: Batch operations and inheritance (Week 3)
-- **Phase 4**: Polish, testing, and optimization (Week 4)
+- **Pre-Phase**: CLI script creation for pipeline integration
+- **Phase 1**: Core MVP with basic functionality (Days 1-2)
+- **Phase 2**: Parameter validation and API enhancement (Days 3-4)  
+- **Phase 3**: Business rules and validation (Days 5-7)
+- **Phase 4**: Batch system and tutorials (Week 2)
 
 **Key Principles**: Tiny API surface, unambiguous parameters, atomic operations, clear error messages
 
@@ -30,7 +31,7 @@ Phased implementation starting simple and building up complexity:
 **Core MVP Design** (Composition over inheritance):
 ```python
 class EmbryoMetadata:
-    """MVP: Use composition with BaseFileHandler, hardcoded validation"""
+    """MVP: Use composition with BaseFileHandler, hardcoded validation, auto-update from SAM2"""
     
     # Hardcoded validation lists (no config files yet)
     VALID_PHENOTYPES = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION"]
@@ -42,11 +43,30 @@ class EmbryoMetadata:
         self.annotations_path = annotations_path or sam2_path.replace('.json', '_biology.json')
         self.file_handler = BaseFileHandler(self.annotations_path)
         
-        # Load or create from SAM2
+        # Load existing or create from SAM2
         if Path(self.annotations_path).exists():
             self.data = self.file_handler.load_json()
+            # Auto-update with any new embryos from SAM2
+            self._update_from_sam2()
         else:
             self.data = self._create_from_sam2()
+    
+    def _update_from_sam2(self):
+        """Auto-detect new embryos from SAM2 and merge without overwriting existing annotations"""
+        sam2_embryos = self._extract_embryos_from_sam2()
+        
+        for embryo_id, embryo_structure in sam2_embryos.items():
+            if embryo_id not in self.data["embryos"]:
+                # New embryo - add complete structure
+                self.data["embryos"][embryo_id] = embryo_structure
+            else:
+                # Existing embryo - only add new snips, preserve annotations
+                existing_snips = self.data["embryos"][embryo_id].get("snips", {})
+                new_snips = embryo_structure.get("snips", {})
+                
+                for snip_id, snip_data in new_snips.items():
+                    if snip_id not in existing_snips:
+                        existing_snips[snip_id] = snip_data  # Add new snip with empty annotations
     
     def add_phenotype(self, phenotype, author, embryo_id, target="all"):
         """MVP: Only supports embryo_id + target='all' - no parameter validation yet"""
@@ -77,26 +97,37 @@ class EmbryoMetadata:
         self.file_handler.save_json(self.data)
 ```
 
-**Phase 1 Success Criteria** (2 core actions):
+**Phase 1 Success Criteria** (3 core actions):
 1. **✅ Archive existing files** (completed)
-2. **🔄 Create working MVP** that can:
+2. **🔄 Create update script** `scripts/pipelines/07_embryo_metadata_update.py`:
+   - Standardized argument parsing for embryo metadata updates
+   - **Auto-detect new embryos** from SAM2 reference and add to existing metadata
+   - Save outputs to `data/embryo_metadata/` directory
+   - Integrate with existing pipeline workflow
+3. **🔄 Create working MVP** that can:
    - Load real SAM2 file and extract embryo structure
+   - **Auto-merge new embryos** from SAM2 into existing metadata without overwriting annotations
    - Add phenotype using `embryo_id + target="all"` only
-   - Save using BaseFileHandler atomic writes
-   - Pass basic test with real data
+   - Save using BaseFileHandler atomic writes to `data/embryo_metadata/`
+   - Pass basic test with real data including embryo detection updates
 
 **Phase 1 Required Tests**:
-- `test_mvp_basic.py` - Load SAM2, add phenotype, save/reload
+- `test_update_script.py` - Test script argument parsing and data directory creation
+- `test_mvp_basic.py` - Load SAM2, add phenotype, save/reload to `data/embryo_metadata/`
 - `test_sam2_extraction.py` - Verify embryo structure extraction
+- `test_embryo_detection.py` - Test auto-detection and merging of new embryos from SAM2
+- `test_pipeline_integration.py` - Verify script works with existing pipeline
 - Performance: Process 10 embryos in <2 seconds
 
 **Logging Checkpoint**: 
 - 📝 Document test results in `implementation_log.md`
 - 📝 Record any SAM2 structure surprises
 - 📝 Benchmark loading/saving times
+- 📝 Track new embryo detection accuracy and merge behavior
 
 **Git Workflow Reminders**:
-- 🔄 `git add .` and `git commit -m "Phase 1: MVP implementation working"` when MVP passes tests
+- 🔄 First commit: `git commit -m "Add script 07_embryo_metadata_update.py"` when script works
+- 🔄 Second commit: `git commit -m "Phase 1: MVP implementation working"` when MVP passes tests
 - 🔄 Create branch: `git checkout -b phase1-mvp-implementation` 
 - 🔄 Commit frequently: After each working feature, not just at phase end
 - 📝 Log all git commits in `implementation_log.md` with commit hashes
@@ -785,4 +816,9 @@ metadata = EmbryoMetadata("nonexistent_file.json")
 - Record tutorial feedback from test users
 - Final system integration test results
 
-**Status**: Ready to begin Phase 1 - Creating MVP EmbryoMetadata class
+**Pre-Implementation Requirement: Update Script Setup**
+- **🔄 Create `scripts/pipelines/07_embryo_metadata_update.py`** - Standardized script for updating embryo metadata
+- **🔄 Save outputs to `data/embryo_metadata/`** - Organized storage location
+- **🔄 Integrate with existing pipeline numbering** - Follows 05_sam2_qc, 06_xxx pattern
+
+**Status**: Ready to begin Phase 1 after script creation

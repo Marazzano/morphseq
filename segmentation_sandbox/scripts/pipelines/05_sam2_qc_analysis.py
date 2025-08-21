@@ -429,9 +429,9 @@ class GSAMQualityControl(BaseFileHandler):
     
     def check_segmentation_variability(self, author: str, entities: Dict[str, List[str]], n_frames_check: int = 2):
         """
-        Flag embryos with high area variance across frames (>15% CV).
-        Flags both at embryo level (HIGH_SEGMENTATION_VAR_EMBRYO) and 
-        at individual snip level (HIGH_SEGMENTATION_VAR_SNIP).
+        Flag snips with high area variance compared to nearby frames.
+        Flags at individual snip level (HIGH_SEGMENTATION_VAR_SNIP).
+        Note: Embryo-level variance analysis has been disabled due to confounding effects from embryo death.
         """
         if self.verbose:
             print("🔍 Checking segmentation variability...")
@@ -496,29 +496,29 @@ class GSAMQualityControl(BaseFileHandler):
                             embryo_frames[embryo_id][image_id] = area
                             embryo_areas[embryo_id].append(area)
 
-                # Embryo-level variability flag
-                for embryo_id, areas in embryo_areas.items():
-                    if len(areas) >= 3:
-                        mean_area = np.mean(areas)
-                        std_area = np.std(areas)
-                        cv = std_area / mean_area if mean_area > 0 else 0
-                        if cv > cv_threshold:
-                            flag_data = {
-                                "experiment_id": exp_id,
-                                "video_id": video_id,
-                                "embryo_id": embryo_id,
-                                "issue": "HIGH_SEGMENTATION_VAR_EMBRYO",
-                                "coefficient_of_variation": float(round(cv, 3)),
-                                "frame_count": int(len(areas)),
-                                "mean_area": float(round(mean_area, 1)),
-                                "std_area": float(round(std_area, 1)),
-                                "author": author,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                            # Use first image_id where this embryo appears for reference
-                            ref_image_id = next(img_id for img_id in image_ids 
-                                              if embryo_id in video_data["image_ids"][img_id].get("embryos", {}))
-                            self._add_flag("HIGH_SEGMENTATION_VAR_EMBRYO", flag_data, "image", ref_image_id)
+                # Embryo-level variability flag - COMMENTED OUT due to confounding effects from embryo death
+                # for embryo_id, areas in embryo_areas.items():
+                #     if len(areas) >= 3:
+                #         mean_area = np.mean(areas)
+                #         std_area = np.std(areas)
+                #         cv = std_area / mean_area if mean_area > 0 else 0
+                #         if cv > cv_threshold:
+                #             flag_data = {
+                #                 "experiment_id": exp_id,
+                #                 "video_id": video_id,
+                #                 "embryo_id": embryo_id,
+                #                 "issue": "HIGH_SEGMENTATION_VAR_EMBRYO",
+                #                 "coefficient_of_variation": float(round(cv, 3)),
+                #                 "frame_count": int(len(areas)),
+                #                 "mean_area": float(round(mean_area, 1)),
+                #                 "std_area": float(round(std_area, 1)),
+                #                 "author": author,
+                #                 "timestamp": datetime.now().isoformat()
+                #             }
+                #             # Use first image_id where this embryo appears for reference
+                #             ref_image_id = next(img_id for img_id in image_ids 
+                #                               if embryo_id in video_data["image_ids"][img_id].get("embryos", {}))
+                #             self._add_flag("HIGH_SEGMENTATION_VAR_EMBRYO", flag_data, "image", ref_image_id)
 
                 # Snip-level variability flag
                 for i, image_id in enumerate(image_ids):

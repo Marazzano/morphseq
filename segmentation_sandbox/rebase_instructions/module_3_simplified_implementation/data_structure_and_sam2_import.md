@@ -1287,6 +1287,7 @@ def _validate_dead_permanence(self, embryo_id, frame_num, phenotype):
         if death_frame is not None and frame_num >= death_frame:
             # Trying to add non-DEAD after death - temporal violation
             raise ValueError(f"Cannot annotate '{phenotype}' at frame {frame_num} - embryo died at frame {death_frame}.")
+#note @claude, there should be a mark_dead function for the api 
 ```
 
 **Unified Flexible API Implementation:**

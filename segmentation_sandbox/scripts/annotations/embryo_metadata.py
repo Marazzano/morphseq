@@ -341,8 +341,103 @@ class EmbryoMetadata:
         
         snip_data["phenotypes"].append(phenotype_record)
     
+    def _validate_dead_exclusivity(self, snip_id: str, phenotype: str, overwrite_dead: bool = False) -> None:
+        """
+        Validate DEAD exclusivity: DEAD cannot coexist with other phenotypes at same snip.
+        
+        Args:
+            snip_id: Target snip ID
+            phenotype: Phenotype being added
+            overwrite_dead: Whether to allow overwriting DEAD frames
+            
+        Raises:
+            ValueError: If DEAD exclusivity would be violated
+        """
+        # Find embryo for this snip
+        embryo_id = "_".join(snip_id.split("_")[:-1])
+        embryo_data = self.data["embryos"][embryo_id]
+        snip_data = embryo_data["snips"][snip_id]
+        
+        existing_phenotypes = [p["value"] for p in snip_data.get("phenotypes", [])]
+        
+        # Check if snip already has DEAD
+        if "DEAD" in existing_phenotypes and phenotype != "DEAD" and not overwrite_dead:
+            # Silently skip - this is the DEAD safety behavior
+            raise ValueError("SKIP_DEAD_FRAME")  # Special error for silent skipping
+        
+        # Check if adding DEAD to snip with other phenotypes
+        if phenotype == "DEAD" and existing_phenotypes and not overwrite_dead:
+            non_dead_phenotypes = [p for p in existing_phenotypes if p != "DEAD"]
+            if non_dead_phenotypes:
+                print(f"❌ ERROR: Cannot add DEAD to snip {snip_id}")
+                print(f"   Existing phenotypes: {non_dead_phenotypes}")
+                print(f"   SOLUTION: Use overwrite_dead=True to override, or remove existing phenotypes first")
+                raise ValueError(f"DEAD exclusivity violation: snip {snip_id} has existing phenotypes {non_dead_phenotypes}")
+    
+    def _validate_dead_permanence(self, embryo_id: str, target_frame: int, phenotype: str, overwrite_dead: bool = False) -> None:
+        """
+        Validate DEAD permanence: Once dead at frame N, all frames >= N must be DEAD.
+        
+        Args:
+            embryo_id: Target embryo ID
+            target_frame: Frame number being annotated
+            phenotype: Phenotype being added
+            overwrite_dead: Whether to allow overriding DEAD permanence
+            
+        Raises:
+            ValueError: If DEAD permanence would be violated
+        """
+        if phenotype != "DEAD" and not overwrite_dead:
+            # Check if embryo is already dead at an earlier frame
+            embryo_data = self.data["embryos"][embryo_id]
+            
+            for snip_id, snip_data in embryo_data["snips"].items():
+                # Extract frame number from snip
+                try:
+                    frame_part = snip_id.split("_s")[-1]
+                    frame_num = int(frame_part)
+                except (ValueError, IndexError):
+                    continue
+                
+                # Check if this frame has DEAD phenotype
+                existing_phenotypes = [p["value"] for p in snip_data.get("phenotypes", [])]
+                if "DEAD" in existing_phenotypes and frame_num <= target_frame:
+                    print(f"❌ ERROR: Cannot add {phenotype} to frame {target_frame}")
+                    print(f"   Embryo {embryo_id} is already DEAD at frame {frame_num}")
+                    print(f"   SOLUTION: Use overwrite_dead=True to change death timeline")
+                    raise ValueError(f"DEAD permanence violation: embryo {embryo_id} already dead at frame {frame_num}")
+    
+    def _get_embryo_death_frame(self, embryo_id: str) -> Optional[int]:
+        """
+        Find the earliest frame where embryo is marked DEAD.
+        
+        Args:
+            embryo_id: Target embryo ID
+            
+        Returns:
+            Frame number of earliest DEAD annotation, or None if not dead
+        """
+        embryo_data = self.data["embryos"][embryo_id]
+        death_frames = []
+        
+        for snip_id, snip_data in embryo_data["snips"].items():
+            # Extract frame number
+            try:
+                frame_part = snip_id.split("_s")[-1]
+                frame_num = int(frame_part)
+            except (ValueError, IndexError):
+                continue
+            
+            # Check if this frame has DEAD
+            existing_phenotypes = [p["value"] for p in snip_data.get("phenotypes", [])]
+            if "DEAD" in existing_phenotypes:
+                death_frames.append(frame_num)
+        
+        return min(death_frames) if death_frames else None
+    
     def add_phenotype(self, phenotype: str, author: str, embryo_id: str = None, 
-                     target: str = None, snip_ids: List[str] = None) -> Dict:
+                     target: str = None, snip_ids: List[str] = None, 
+                     overwrite_dead: bool = False) -> Dict:
         """
         Enhanced: Add phenotype annotation using either embryo or snip approach.
         
@@ -385,35 +480,91 @@ class EmbryoMetadata:
                     raise ValueError(f"Snip '{snip_id}' not found")
                 resolved_snips.append(snip_id)
         
-        # Apply phenotype to all resolved snips
-        for snip_id in resolved_snips:
-            self._add_phenotype_to_snip(snip_id, phenotype, author)
+        # Apply phenotype to all resolved snips with DEAD validation
+        applied_snips = []
+        skipped_snips = []
         
-        # Return operation details
+        for snip_id in resolved_snips:
+            try:
+                # Extract frame number for validation
+                frame_part = snip_id.split("_s")[-1]
+                frame_num = int(frame_part)
+                
+                # Get embryo ID for this snip
+                snip_embryo_id = "_".join(snip_id.split("_")[:-1])
+                
+                # Check DEAD safety first (this handles silent skipping)
+                try:
+                    self._validate_dead_exclusivity(snip_id, phenotype, overwrite_dead)
+                except ValueError as e:
+                    if str(e) == "SKIP_DEAD_FRAME":
+                        # Silent skip for DEAD safety
+                        skipped_snips.append(snip_id)
+                        continue
+                    else:
+                        # Re-raise other exclusivity errors
+                        raise
+                
+                # Validate DEAD permanence with appropriate behavior
+                # For direct snip operations, we want strict validation
+                # For range operations, we want silent skipping
+                strict_mode = (mode == "snips")  # Direct snip operations are strict
+                
+                if phenotype != "DEAD" and not overwrite_dead:
+                    death_frame = self._get_embryo_death_frame(snip_embryo_id)
+                    if death_frame is not None and frame_num >= death_frame:
+                        if strict_mode:
+                            # Strict validation - raise error
+                            print(f"❌ ERROR: Cannot add {phenotype} to frame {frame_num}")
+                            print(f"   Embryo {snip_embryo_id} is already DEAD at frame {death_frame}")
+                            print(f"   SOLUTION: Use overwrite_dead=True to change death timeline")
+                            raise ValueError(f"DEAD permanence violation: embryo {snip_embryo_id} already dead at frame {death_frame}")
+                        else:
+                            # Safety mode - silent skip
+                            skipped_snips.append(snip_id)
+                            continue
+                
+                # Apply phenotype
+                self._add_phenotype_to_snip(snip_id, phenotype, author)
+                applied_snips.append(snip_id)
+                
+            except ValueError as e:
+                # Re-raise validation errors (non-safety issues)
+                raise
+        
+        # Return operation details with DEAD safety information
         if mode == "embryo":
-            return {
+            result = {
                 "operation": "add_phenotype",
                 "approach": "embryo",
                 "phenotype": phenotype,
                 "embryo_id": embryo_id,
                 "target": target,
-                "applied_to": resolved_snips,
-                "count": len(resolved_snips)
+                "applied_to": applied_snips,
+                "count": len(applied_snips)
             }
         else:
-            return {
+            result = {
                 "operation": "add_phenotype", 
                 "approach": "snips",
                 "phenotype": phenotype,
                 "snip_ids": snip_ids,
-                "applied_to": resolved_snips,
-                "count": len(resolved_snips)
+                "applied_to": applied_snips,
+                "count": len(applied_snips)
             }
+        
+        # Add DEAD safety information if frames were skipped
+        if skipped_snips:
+            result["skipped_dead_frames"] = skipped_snips
+            result["skipped_count"] = len(skipped_snips)
+            
+        return result
     
     def add_genotype(self, gene: str, author: str, embryo_id: str, 
-                    allele: Optional[str] = None, zygosity: str = "unknown") -> Dict:
+                    allele: Optional[str] = None, zygosity: str = "unknown", 
+                    overwrite: bool = False) -> Dict:
         """
-        Add genotype annotation to embryo.
+        Add genotype annotation to embryo with validation.
         
         Args:
             gene: Gene name (must be in VALID_GENES)
@@ -421,21 +572,37 @@ class EmbryoMetadata:
             embryo_id: Target embryo ID
             allele: Optional allele specification
             zygosity: Zygosity (must be in VALID_ZYGOSITY)
+            overwrite: Whether to overwrite existing genotype
         
         Returns:
             Dict with operation details
+            
+        Raises:
+            ValueError: If validation fails or genotype exists without overwrite
         """
         # Validate gene
         if gene not in self.VALID_GENES:
+            print(f"❌ ERROR: Invalid gene '{gene}'")
+            print(f"   Valid options: {self.VALID_GENES}")
             raise ValueError(f"Invalid gene '{gene}'. Valid options: {self.VALID_GENES}")
         
         # Validate zygosity
         if zygosity not in self.VALID_ZYGOSITY:
+            print(f"❌ ERROR: Invalid zygosity '{zygosity}'")
+            print(f"   Valid options: {self.VALID_ZYGOSITY}")
             raise ValueError(f"Invalid zygosity '{zygosity}'. Valid options: {self.VALID_ZYGOSITY}")
         
         # Check embryo exists
         if embryo_id not in self.data["embryos"]:
             raise ValueError(f"Embryo '{embryo_id}' not found")
+        
+        # Check for existing genotype
+        existing_genotype = self.data["embryos"][embryo_id].get("genotype")
+        if existing_genotype and not overwrite:
+            print(f"❌ ERROR: Embryo {embryo_id} already has genotype")
+            print(f"   Existing: {existing_genotype['gene']} ({existing_genotype['zygosity']})")
+            print(f"   SOLUTION: Use overwrite=True to replace existing genotype")
+            raise ValueError(f"Embryo {embryo_id} already has genotype. Use overwrite=True to replace.")
         
         # Create genotype record
         genotype_record = {
@@ -446,14 +613,69 @@ class EmbryoMetadata:
             "timestamp": datetime.now().isoformat()
         }
         
-        # Add to embryo (will overwrite existing genotype)
+        # Add to embryo
         self.data["embryos"][embryo_id]["genotype"] = genotype_record
         
         return {
             "operation": "add_genotype",
             "gene": gene,
             "embryo_id": embryo_id,
-            "zygosity": zygosity
+            "zygosity": zygosity,
+            "overwrite": overwrite,
+            "previous_genotype": existing_genotype
+        }
+    
+    def add_treatment(self, treatment: str, author: str, embryo_id: str, 
+                     temperature_celsius: Optional[float] = None,
+                     concentration: Optional[str] = None,
+                     notes: Optional[str] = None) -> Dict:
+        """
+        Add treatment annotation to embryo.
+        
+        Args:
+            treatment: Treatment name (must be in VALID_TREATMENTS)
+            author: Author of annotation
+            embryo_id: Target embryo ID
+            temperature_celsius: Optional temperature
+            concentration: Optional concentration
+            notes: Optional notes
+            
+        Returns:
+            Dict with operation details
+        """
+        # Validate treatment
+        if treatment not in self.VALID_TREATMENTS:
+            print(f"❌ ERROR: Invalid treatment '{treatment}'")
+            print(f"   Valid options: {self.VALID_TREATMENTS}")
+            raise ValueError(f"Invalid treatment '{treatment}'. Valid options: {self.VALID_TREATMENTS}")
+        
+        # Check embryo exists
+        if embryo_id not in self.data["embryos"]:
+            raise ValueError(f"Embryo '{embryo_id}' not found")
+        
+        # Create treatment record
+        treatment_record = {
+            "value": treatment,
+            "temperature_celsius": temperature_celsius,
+            "concentration": concentration,
+            "notes": notes,
+            "author": author,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Add to embryo treatments list
+        embryo_data = self.data["embryos"][embryo_id]
+        if "treatments" not in embryo_data:
+            embryo_data["treatments"] = []
+        
+        embryo_data["treatments"].append(treatment_record)
+        
+        return {
+            "operation": "add_treatment",
+            "treatment": treatment,
+            "embryo_id": embryo_id,
+            "temperature_celsius": temperature_celsius,
+            "concentration": concentration
         }
     
     def get_embryo_summary(self, embryo_id: str) -> Dict:
