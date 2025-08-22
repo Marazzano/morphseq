@@ -7,6 +7,8 @@ before applying them to the persistent EmbryoMetadata store.
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+import json
+from pathlib import Path
 
 
 class AnnotationBatch:
@@ -14,10 +16,10 @@ class AnnotationBatch:
     Temporary workspace using composition to reuse validation logic.
     
     Uses composition instead of inheritance for cleaner separation of concerns
-    and better maintainability.
+    and better maintainability. Shares configuration system with EmbryoMetadata.
     """
     
-    # Validation lists copied from EmbryoMetadata for reuse
+    # Default validation lists (loaded from config in __init__)
     VALID_PHENOTYPES = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
     VALID_GENES = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
     VALID_ZYGOSITY = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
@@ -39,6 +41,9 @@ class AnnotationBatch:
         self.data = data_structure
         self.validate = validate
         self.author = author
+        
+        # Load configuration to keep in sync with EmbryoMetadata
+        self._load_config()
     
     def _select_mode(self, embryo_id=None, target=None, snip_ids=None) -> str:
         """
@@ -518,3 +523,34 @@ class AnnotationBatch:
     def save(self):
         """Override save to prevent accidental saves of batch data."""
         raise NotImplementedError("AnnotationBatch cannot be saved directly. Use metadata.apply_batch() instead.")
+    
+    def _load_config(self, config_path: Optional[Path] = None) -> None:
+        """
+        Load validation lists from config file (same as EmbryoMetadata).
+        
+        Args:
+            config_path: Optional path to config file. If None, uses default location.
+        """
+        if config_path is None:
+            config_path = Path(__file__).parent / "config.json"
+        
+        try:
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                
+                # Update instance attributes from config (not class attributes)
+                if "phenotypes" in config:
+                    self.VALID_PHENOTYPES = config["phenotypes"]
+                if "genes" in config:
+                    self.VALID_GENES = config["genes"]
+                if "zygosity" in config:
+                    self.VALID_ZYGOSITY = config["zygosity"]
+                if "treatments" in config:
+                    self.VALID_TREATMENTS = config["treatments"]
+                if "flags" in config:
+                    self.VALID_FLAGS = config["flags"]
+        
+        except (json.JSONDecodeError, Exception):
+            # Silently fall back to defaults for batch operations
+            pass

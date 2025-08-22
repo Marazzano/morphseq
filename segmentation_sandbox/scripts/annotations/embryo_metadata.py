@@ -82,6 +82,9 @@ class EmbryoMetadata:
         # Enable validation by default
         self.validate = True
         
+        # Load configuration (with fallback to hardcoded defaults)
+        self.__class__._load_config()
+        
         # Load or create data structure
         if self.annotations_path.exists():
             print(f"Loading existing annotations from: {self.annotations_path}")
@@ -968,3 +971,40 @@ class EmbryoMetadata:
                 report["errors"].append(f"Error processing {embryo_id}: {str(e)}")
         
         return report
+    
+    @classmethod
+    def _load_config(cls, config_path: Optional[Path] = None) -> None:
+        """
+        Load validation lists from config file.
+        
+        Args:
+            config_path: Optional path to config file. If None, uses default location.
+        """
+        if config_path is None:
+            config_path = Path(__file__).parent / "config.json"
+        
+        try:
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                
+                # Update class attributes from config
+                if "phenotypes" in config:
+                    cls.VALID_PHENOTYPES = config["phenotypes"]
+                if "genes" in config:
+                    cls.VALID_GENES = config["genes"]
+                if "zygosity" in config:
+                    cls.VALID_ZYGOSITY = config["zygosity"]
+                if "treatments" in config:
+                    cls.VALID_TREATMENTS = config["treatments"]
+                if "flags" in config:
+                    cls.VALID_FLAGS = config["flags"]
+                
+                print(f"✅ Loaded configuration from: {config_path}")
+            else:
+                print(f"⚠️ Config file not found: {config_path}, using defaults")
+        
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Invalid JSON in config file {config_path}: {e}, using defaults")
+        except Exception as e:
+            print(f"⚠️ Error loading config file {config_path}: {e}, using defaults")
