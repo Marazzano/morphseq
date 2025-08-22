@@ -5,7 +5,7 @@ Provides a temporary workspace for safely manipulating embryo annotations
 before applying them to the persistent EmbryoMetadata store.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 import json
 from pathlib import Path
@@ -20,11 +20,11 @@ class AnnotationBatch:
     """
     
     # Default validation lists (loaded from config in __init__)
-    VALID_PHENOTYPES = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
-    VALID_GENES = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
-    VALID_ZYGOSITY = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
-    VALID_TREATMENTS = ["control", "DMSO", "PTU", "BIO", "SB431542", "DAPT", "heat_shock", "cold_shock"]
-    VALID_FLAGS = ["MOTION_BLUR", "OUT_OF_FOCUS", "DARK", "CORRUPT"]
+    VALID_PHENOTYPES: List[str] = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
+    VALID_GENES: List[str] = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
+    VALID_ZYGOSITY: List[str] = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
+    VALID_TREATMENTS: List[str] = ["control", "DMSO", "PTU", "BIO", "SB431542", "DAPT", "heat_shock", "cold_shock"]
+    VALID_FLAGS: List[str] = ["MOTION_BLUR", "OUT_OF_FOCUS", "DARK", "CORRUPT"]
     
     def __init__(self, data_structure: Dict, author: str, validate: bool = True):
         """
@@ -45,7 +45,7 @@ class AnnotationBatch:
         # Load configuration to keep in sync with EmbryoMetadata
         self._load_config()
     
-    def _select_mode(self, embryo_id=None, target=None, snip_ids=None) -> str:
+    def _select_mode(self, embryo_id: Optional[str] = None, target: Optional[str] = None, snip_ids: Optional[List[str]] = None) -> str:
         """
         Prevent ambiguous parameter combinations.
         
@@ -237,9 +237,9 @@ class AnnotationBatch:
         
         snip_data["phenotypes"].append(phenotype_record)
     
-    def add_phenotype(self, phenotype: str, author: str = None, embryo_id: str = None, 
-                     target: str = None, snip_ids: List[str] = None, 
-                     overwrite_dead: bool = False) -> Dict:
+    def add_phenotype(self, phenotype: str, author: Optional[str] = None, embryo_id: Optional[str] = None, 
+                     target: Optional[str] = None, snip_ids: Optional[List[str]] = None, 
+                     overwrite_dead: bool = False) -> Dict[str, Any]:
         """
         Add phenotype annotation with batch author default.
         
@@ -306,9 +306,9 @@ class AnnotationBatch:
             
         return result
     
-    def add_genotype(self, gene: str, author: str = None, embryo_id: str = None,
+    def add_genotype(self, gene: str, author: Optional[str] = None, embryo_id: Optional[str] = None,
                     allele: Optional[str] = None, zygosity: str = "unknown",
-                    overwrite: bool = False) -> Dict:
+                    overwrite: bool = False) -> Dict[str, Any]:
         """
         Add genotype annotation with batch author default.
         
@@ -370,10 +370,10 @@ class AnnotationBatch:
             "previous_genotype": existing_genotype
         }
     
-    def add_treatment(self, treatment: str, author: str = None, embryo_id: str = None,
+    def add_treatment(self, treatment: str, author: Optional[str] = None, embryo_id: Optional[str] = None,
                      temperature_celsius: Optional[float] = None,
                      concentration: Optional[str] = None,
-                     notes: Optional[str] = None) -> Dict:
+                     notes: Optional[str] = None) -> Dict[str, Any]:
         """
         Add treatment annotation with batch author default.
         
@@ -492,7 +492,7 @@ class AnnotationBatch:
         
         return "\n".join(lines)
     
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> Dict[str, Any]:
         """Get statistics about batch contents."""
         embryo_count = len(self.data["embryos"])
         total_snips = sum(len(embryo["snips"]) for embryo in self.data["embryos"].values())

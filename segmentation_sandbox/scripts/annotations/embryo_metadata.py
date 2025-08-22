@@ -8,7 +8,7 @@ Uses composition with BaseFileHandler for atomic file operations.
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Any, Union, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .annotation_batch import AnnotationBatch
@@ -27,12 +27,12 @@ class EmbryoMetadata:
     - Hardcoded validation lists (no config files in MVP)
     """
     
-    # Hardcoded validation lists for MVP
-    VALID_PHENOTYPES = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
-    VALID_GENES = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
-    VALID_ZYGOSITY = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
-    VALID_TREATMENTS = ["control", "DMSO", "PTU", "BIO", "SB431542", "DAPT", "heat_shock", "cold_shock"]
-    VALID_FLAGS = ["MOTION_BLUR", "OUT_OF_FOCUS", "DARK", "CORRUPT"]
+    # Default validation lists (fallback if config not found)
+    VALID_PHENOTYPES: List[str] = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
+    VALID_GENES: List[str] = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
+    VALID_ZYGOSITY: List[str] = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
+    VALID_TREATMENTS: List[str] = ["control", "DMSO", "PTU", "BIO", "SB431542", "DAPT", "heat_shock", "cold_shock"]
+    VALID_FLAGS: List[str] = ["MOTION_BLUR", "OUT_OF_FOCUS", "DARK", "CORRUPT"]
     
     def __init__(self, sam2_path: str, annotations_path: Optional[str] = None):
         """
@@ -243,7 +243,7 @@ class EmbryoMetadata:
         if new_snip_count > 0:
             print(f"Auto-detected {new_snip_count} new snips")
     
-    def _select_mode(self, embryo_id=None, target=None, snip_ids=None) -> str:
+    def _select_mode(self, embryo_id: Optional[str] = None, target: Optional[str] = None, snip_ids: Optional[List[str]] = None) -> str:
         """
         Prevent ambiguous parameter combinations.
         
@@ -522,9 +522,9 @@ class EmbryoMetadata:
         
         return min(death_frames) if death_frames else None
     
-    def add_phenotype(self, phenotype: str, author: str, embryo_id: str = None, 
-                     target: str = None, snip_ids: List[str] = None, 
-                     overwrite_dead: bool = False) -> Dict:
+    def add_phenotype(self, phenotype: str, author: str, embryo_id: Optional[str] = None, 
+                     target: Optional[str] = None, snip_ids: Optional[List[str]] = None, 
+                     overwrite_dead: bool = False) -> Dict[str, Any]:
         """
         Enhanced: Add phenotype annotation using either embryo or snip approach.
         
@@ -649,7 +649,7 @@ class EmbryoMetadata:
     
     def add_genotype(self, gene: str, author: str, embryo_id: str, 
                     allele: Optional[str] = None, zygosity: str = "unknown", 
-                    overwrite: bool = False) -> Dict:
+                    overwrite: bool = False) -> Dict[str, Any]:
         """
         Add genotype annotation to embryo with validation.
         
@@ -715,7 +715,7 @@ class EmbryoMetadata:
     def add_treatment(self, treatment: str, author: str, embryo_id: str, 
                      temperature_celsius: Optional[float] = None,
                      concentration: Optional[str] = None,
-                     notes: Optional[str] = None) -> Dict:
+                     notes: Optional[str] = None) -> Dict[str, Any]:
         """
         Add treatment annotation to embryo.
         
@@ -765,7 +765,7 @@ class EmbryoMetadata:
             "concentration": concentration
         }
     
-    def get_embryo_summary(self, embryo_id: str) -> Dict:
+    def get_embryo_summary(self, embryo_id: str) -> Dict[str, Any]:
         """Get summary of annotations for an embryo."""
         if embryo_id not in self.data["embryos"]:
             raise ValueError(f"Embryo '{embryo_id}' not found")
@@ -800,7 +800,7 @@ class EmbryoMetadata:
         self.file_handler.save_json(self.data)
         print(f"Saved annotations to: {self.annotations_path}")
     
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> Dict[str, Any]:
         """Get overall statistics about the annotation dataset."""
         embryo_count = len(self.data["embryos"])
         total_snips = sum(len(embryo["snips"]) for embryo in self.data["embryos"].values())
