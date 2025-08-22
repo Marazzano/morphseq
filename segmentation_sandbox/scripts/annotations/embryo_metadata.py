@@ -41,8 +41,29 @@ class EmbryoMetadata:
         Args:
             sam2_path: Path to SAM2 annotations JSON file
             annotations_path: Optional path to existing biology annotations
+            
+        Raises:
+            FileNotFoundError: If SAM2 file doesn't exist
+            ValueError: If SAM2 file contains invalid JSON or structure
         """
         self.sam2_path = Path(sam2_path)
+        
+        # Validate SAM2 file exists and is readable
+        if not self.sam2_path.exists():
+            raise FileNotFoundError(f"SAM2 file not found: {self.sam2_path}")
+        
+        if not self.sam2_path.is_file():
+            raise ValueError(f"SAM2 path is not a file: {self.sam2_path}")
+        
+        # Validate SAM2 JSON structure early
+        try:
+            sam2_data = self._load_sam2_data()
+            if "experiments" not in sam2_data:
+                raise ValueError(f"Invalid SAM2 format: missing 'experiments' key in {self.sam2_path}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in SAM2 file {self.sam2_path}: {e}")
+        except Exception as e:
+            raise ValueError(f"Error reading SAM2 file {self.sam2_path}: {e}")
         
         # Determine annotations path
         if annotations_path is None:
@@ -50,6 +71,10 @@ class EmbryoMetadata:
             self.annotations_path = self.sam2_path.parent / f"{self.sam2_path.stem}_biology.json"
         else:
             self.annotations_path = Path(annotations_path)
+        
+        # Validate annotations path directory exists
+        if not self.annotations_path.parent.exists():
+            raise FileNotFoundError(f"Directory for annotations file does not exist: {self.annotations_path.parent}")
         
         # Initialize BaseFileHandler for atomic operations
         self.file_handler = BaseFileHandler(self.annotations_path)
@@ -60,7 +85,16 @@ class EmbryoMetadata:
         # Load or create data structure
         if self.annotations_path.exists():
             print(f"Loading existing annotations from: {self.annotations_path}")
-            self.data = self.file_handler.load_json()
+            try:
+                self.data = self.file_handler.load_json()
+                # Validate loaded annotation structure
+                if not isinstance(self.data, dict) or "embryos" not in self.data:
+                    raise ValueError(f"Invalid annotation file structure in {self.annotations_path}: missing 'embryos' key")
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in annotations file {self.annotations_path}: {e}")
+            except Exception as e:
+                raise ValueError(f"Error loading annotations file {self.annotations_path}: {e}")
+            
             # Auto-update with any new embryos from SAM2
             self._update_from_sam2()
         else:
@@ -68,9 +102,28 @@ class EmbryoMetadata:
             self.data = self._create_from_sam2()
     
     def _load_sam2_data(self) -> Dict:
-        """Load SAM2 data from file."""
-        with open(self.sam2_path) as f:
-            return json.load(f)
+        """Load SAM2 data from file with error handling.
+        
+        Returns:
+            Dict containing SAM2 data
+            
+        Raises:
+            json.JSONDecodeError: If file contains invalid JSON
+            FileNotFoundError: If file doesn't exist
+            PermissionError: If file can't be read
+        """
+        try:
+            with open(self.sam2_path, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            # Re-raise with file context
+            raise
+        except FileNotFoundError:
+            # Re-raise with file context
+            raise
+        except PermissionError:
+            # Re-raise with file context
+            raise
     
     def _extract_frame_number(self, image_id: str) -> int:
         """Extract frame number from image_id like '20240418_A01_t0100' -> 100."""
