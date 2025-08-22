@@ -9,16 +9,11 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
-import sys
 
 if TYPE_CHECKING:
     from .annotation_batch import AnnotationBatch
 
-# Add parent directory to path for imports
-SCRIPTS_DIR = Path(__file__).parent.parent
-sys.path.insert(0, str(SCRIPTS_DIR))
-
-from utils.base_file_handler import BaseFileHandler
+from ..utils.base_file_handler import BaseFileHandler
 
 
 class EmbryoMetadata:
