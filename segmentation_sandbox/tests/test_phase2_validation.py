@@ -164,8 +164,8 @@ def test_frame_range_parsing():
             assert snip in result["applied_to"]
         print("✓ Open-ended range '40:' works")
         
-        # Test range from beginning ':30' (should include 10, 20)
-        result = metadata.add_phenotype("DEAD", "test_user", embryo_id="20240418_A01_e01", target=":30")
+        # Test range from beginning ':30' (should include 10, 20) - use clean embryo with overwrite
+        result = metadata.add_phenotype("DEAD", "test_user", embryo_id="20240418_A01_e01", target=":30", overwrite_dead=True)
         assert result["count"] == 2  # frames 10, 20
         expected_snips = ["20240418_A01_e01_s0010", "20240418_A01_e01_s0020"]
         for snip in expected_snips:

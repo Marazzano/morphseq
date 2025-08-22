@@ -93,13 +93,13 @@ def test_dead_exclusivity():
         assert result["count"] == 1
         print("✓ DEAD can be added to clean snip")
         
-        # Try to add other phenotype to DEAD snip - should be silently skipped
+        # Try to add other phenotype to DEAD snip - should be silently skipped (range approach)
         result = metadata.add_phenotype("NORMAL", "user1", 
-                                       snip_ids=["20240418_A01_e01_s0200"])
+                                       embryo_id="20240418_A01_e01", target="200")
         assert result["count"] == 0
         assert "skipped_dead_frames" in result
         assert len(result["skipped_dead_frames"]) == 1
-        print("✓ Non-DEAD phenotypes silently skip DEAD frames")
+        print("✓ Non-DEAD phenotypes silently skip DEAD frames (range approach)")
         
         # Override DEAD frame with overwrite_dead=True
         result = metadata.add_phenotype("NORMAL", "user1", 
@@ -146,10 +146,10 @@ def test_dead_permanence():
         # Try to add normal phenotype at same frame as death using snip approach - should fail  
         try:
             metadata.add_phenotype("EDEMA", "user1", snip_ids=["20240418_A01_e01_s0200"])
-            assert False, "Should have failed DEAD permanence"
+            assert False, "Should have failed DEAD exclusivity"
         except ValueError as e:
-            assert "DEAD permanence violation" in str(e)
-            print("✓ DEAD permanence prevents phenotypes at death frame (snip approach)")
+            assert "DEAD exclusivity violation" in str(e)
+            print("✓ DEAD exclusivity prevents phenotypes at DEAD frame (snip approach)")
         
         # Range operations should silently skip
         result = metadata.add_phenotype("NORMAL", "user1", embryo_id="20240418_A01_e01", target="250")
@@ -369,7 +369,7 @@ def test_error_message_quality():
         # Test genotype conflict error message
         metadata.add_genotype("tmem67", "user1", "20240418_A01_e01", zygosity="homozygous")
         try:
-            metadata.add_genotype("lmx1b", "user2", "20240418_A01_e01")
+            metadata.add_genotype("lmx1b", "user2", "20240418_A01_e01", zygosity="heterozygous")
             assert False, "Should have failed"
         except ValueError as e:
             error_msg = str(e)
@@ -427,13 +427,11 @@ def test_complex_dead_scenarios():
         assert result["count"] == 1
         print("✓ Can change death frame with overwrite_dead=True")
         
-        # Now frame 200 should still be considered after death
-        try:
-            metadata.add_phenotype("EDEMA", "user1", embryo_id="20240418_A01_e01", target="200")
-            assert False, "Should fail permanence check"
-        except ValueError as e:
-            assert "DEAD permanence violation" in str(e)
-            print("✓ DEAD permanence updated correctly after death frame change")
+        # Now frame 200 should be silently skipped (after death at frame 150)
+        result = metadata.add_phenotype("EDEMA", "user1", embryo_id="20240418_A01_e01", target="200")
+        assert result["count"] == 0  # Should be skipped
+        assert "skipped_dead_frames" in result
+        print("✓ DEAD permanence updated correctly after death frame change")
         
         return True
         

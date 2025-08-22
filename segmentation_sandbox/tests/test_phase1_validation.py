@@ -250,12 +250,12 @@ def test_validation_errors():
         except ValueError as e:
             assert "not found" in str(e)
         
-        # Test invalid target (MVP only supports 'all')
+        # Test invalid target (frame range with no matching snips)
         try:
             metadata.add_phenotype("EDEMA", "test_user", "20240418_A01_e01", target="30:50")
             assert False, "Should have raised ValueError for invalid target"
         except ValueError as e:
-            assert "MVP only supports target='all'" in str(e)
+            assert "No snips found in range" in str(e)
         
         # Test invalid gene
         try:
