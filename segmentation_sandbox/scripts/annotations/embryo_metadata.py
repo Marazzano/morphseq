@@ -8,12 +8,14 @@ Uses composition with BaseFileHandler for atomic file operations.
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Any
+import sys
 
-if TYPE_CHECKING:
-    from .annotation_batch import AnnotationBatch
+# Add parent directory to path for imports
+SCRIPTS_DIR = Path(__file__).parent.parent
+sys.path.insert(0, str(SCRIPTS_DIR))
 
-from ..utils.base_file_handler import BaseFileHandler
+from utils.base_file_handler import BaseFileHandler
 
 
 class EmbryoMetadata:
@@ -27,12 +29,12 @@ class EmbryoMetadata:
     - Hardcoded validation lists (no config files in MVP)
     """
     
-    # Default validation lists (fallback if config not found)
-    VALID_PHENOTYPES: List[str] = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
-    VALID_GENES: List[str] = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
-    VALID_ZYGOSITY: List[str] = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
-    VALID_TREATMENTS: List[str] = ["control", "DMSO", "PTU", "BIO", "SB431542", "DAPT", "heat_shock", "cold_shock"]
-    VALID_FLAGS: List[str] = ["MOTION_BLUR", "OUT_OF_FOCUS", "DARK", "CORRUPT"]
+    # Hardcoded validation lists for MVP
+    VALID_PHENOTYPES = ["NORMAL", "EDEMA", "DEAD", "CONVERGENCE_EXTENSION", "BLUR", "CORRUPT"]
+    VALID_GENES = ["WT", "tmem67", "lmx1b", "sox9a", "cep290", "b9d2", "rpgrip1l"]
+    VALID_ZYGOSITY = ["homozygous", "heterozygous", "compound_heterozygous", "crispant", "morpholino"]
+    VALID_TREATMENTS = ["control", "DMSO", "PTU", "BIO", "SB431542", "DAPT", "heat_shock", "cold_shock"]
+    VALID_FLAGS = ["MOTION_BLUR", "OUT_OF_FOCUS", "DARK", "CORRUPT"]
     
     def __init__(self, sam2_path: str, annotations_path: Optional[str] = None):
         """
@@ -41,29 +43,8 @@ class EmbryoMetadata:
         Args:
             sam2_path: Path to SAM2 annotations JSON file
             annotations_path: Optional path to existing biology annotations
-            
-        Raises:
-            FileNotFoundError: If SAM2 file doesn't exist
-            ValueError: If SAM2 file contains invalid JSON or structure
         """
         self.sam2_path = Path(sam2_path)
-        
-        # Validate SAM2 file exists and is readable
-        if not self.sam2_path.exists():
-            raise FileNotFoundError(f"SAM2 file not found: {self.sam2_path}")
-        
-        if not self.sam2_path.is_file():
-            raise ValueError(f"SAM2 path is not a file: {self.sam2_path}")
-        
-        # Validate SAM2 JSON structure early
-        try:
-            sam2_data = self._load_sam2_data()
-            if "experiments" not in sam2_data:
-                raise ValueError(f"Invalid SAM2 format: missing 'experiments' key in {self.sam2_path}")
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in SAM2 file {self.sam2_path}: {e}")
-        except Exception as e:
-            raise ValueError(f"Error reading SAM2 file {self.sam2_path}: {e}")
         
         # Determine annotations path
         if annotations_path is None:
@@ -72,32 +53,16 @@ class EmbryoMetadata:
         else:
             self.annotations_path = Path(annotations_path)
         
-        # Validate annotations path directory exists
-        if not self.annotations_path.parent.exists():
-            raise FileNotFoundError(f"Directory for annotations file does not exist: {self.annotations_path.parent}")
-        
         # Initialize BaseFileHandler for atomic operations
         self.file_handler = BaseFileHandler(self.annotations_path)
         
         # Enable validation by default
         self.validate = True
         
-        # Load configuration (with fallback to hardcoded defaults)
-        self.__class__._load_config()
-        
         # Load or create data structure
         if self.annotations_path.exists():
             print(f"Loading existing annotations from: {self.annotations_path}")
-            try:
-                self.data = self.file_handler.load_json()
-                # Validate loaded annotation structure
-                if not isinstance(self.data, dict) or "embryos" not in self.data:
-                    raise ValueError(f"Invalid annotation file structure in {self.annotations_path}: missing 'embryos' key")
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON in annotations file {self.annotations_path}: {e}")
-            except Exception as e:
-                raise ValueError(f"Error loading annotations file {self.annotations_path}: {e}")
-            
+            self.data = self.file_handler.load_json()
             # Auto-update with any new embryos from SAM2
             self._update_from_sam2()
         else:
@@ -105,28 +70,9 @@ class EmbryoMetadata:
             self.data = self._create_from_sam2()
     
     def _load_sam2_data(self) -> Dict:
-        """Load SAM2 data from file with error handling.
-        
-        Returns:
-            Dict containing SAM2 data
-            
-        Raises:
-            json.JSONDecodeError: If file contains invalid JSON
-            FileNotFoundError: If file doesn't exist
-            PermissionError: If file can't be read
-        """
-        try:
-            with open(self.sam2_path, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            # Re-raise with file context
-            raise
-        except FileNotFoundError:
-            # Re-raise with file context
-            raise
-        except PermissionError:
-            # Re-raise with file context
-            raise
+        """Load SAM2 data from file."""
+        with open(self.sam2_path) as f:
+            return json.load(f)
     
     def _extract_frame_number(self, image_id: str) -> int:
         """Extract frame number from image_id like '20240418_A01_t0100' -> 100."""
@@ -243,7 +189,7 @@ class EmbryoMetadata:
         if new_snip_count > 0:
             print(f"Auto-detected {new_snip_count} new snips")
     
-    def _select_mode(self, embryo_id: Optional[str] = None, target: Optional[str] = None, snip_ids: Optional[List[str]] = None) -> str:
+    def _select_mode(self, embryo_id=None, target=None, snip_ids=None) -> str:
         """
         Prevent ambiguous parameter combinations.
         
@@ -398,31 +344,6 @@ class EmbryoMetadata:
         
         snip_data["phenotypes"].append(phenotype_record)
     
-    def _should_skip_dead_frame(self, snip_id: str, phenotype: str, overwrite_dead: bool = False) -> bool:
-        """
-        Check if frame should be skipped due to DEAD status.
-        
-        Args:
-            snip_id: Target snip ID
-            phenotype: Phenotype being added
-            overwrite_dead: Whether to allow overwriting DEAD frames
-            
-        Returns:
-            True if frame should be skipped, False otherwise
-        """
-        # Find embryo for this snip
-        embryo_id = "_".join(snip_id.split("_")[:-1])
-        embryo_data = self.data["embryos"][embryo_id]
-        snip_data = embryo_data["snips"][snip_id]
-        
-        existing_phenotypes = [p["value"] for p in snip_data.get("phenotypes", [])]
-        
-        # Skip if trying to add non-DEAD to DEAD frame
-        if "DEAD" in existing_phenotypes and phenotype != "DEAD" and not overwrite_dead:
-            return True
-        
-        return False
-    
     def _validate_dead_exclusivity(self, snip_id: str, phenotype: str, overwrite_dead: bool = False, strict_mode: bool = False) -> None:
         """
         Validate DEAD exclusivity: DEAD cannot coexist with other phenotypes at same snip.
@@ -450,7 +371,9 @@ class EmbryoMetadata:
                 print(f"❌ ERROR: Cannot add {phenotype} to DEAD snip {snip_id}")
                 print(f"   SOLUTION: Use overwrite_dead=True to override DEAD status")
                 raise ValueError(f"DEAD exclusivity violation: snip {snip_id} already has DEAD phenotype")
-            # For non-strict mode, we use the skip method instead of raising
+            else:
+                # Safety mode - silent skip for range operations
+                raise ValueError("SKIP_DEAD_FRAME")  # Special error for silent skipping
         
         # Check if adding DEAD to snip with other phenotypes
         if phenotype == "DEAD" and existing_phenotypes and not overwrite_dead:
@@ -522,9 +445,9 @@ class EmbryoMetadata:
         
         return min(death_frames) if death_frames else None
     
-    def add_phenotype(self, phenotype: str, author: str, embryo_id: Optional[str] = None, 
-                     target: Optional[str] = None, snip_ids: Optional[List[str]] = None, 
-                     overwrite_dead: bool = False) -> Dict[str, Any]:
+    def add_phenotype(self, phenotype: str, author: str, embryo_id: str = None, 
+                     target: str = None, snip_ids: List[str] = None, 
+                     overwrite_dead: bool = False) -> Dict:
         """
         Enhanced: Add phenotype annotation using either embryo or snip approach.
         
@@ -583,15 +506,17 @@ class EmbryoMetadata:
                 # Get embryo ID for this snip
                 snip_embryo_id = "_".join(snip_id.split("_")[:-1])
                 
-                # Check DEAD safety first (using boolean method for silent skipping)
-                if not strict_mode and self._should_skip_dead_frame(snip_id, phenotype, overwrite_dead):
-                    # Silent skip for DEAD safety
-                    skipped_snips.append(snip_id)
-                    continue
-                
-                # For strict mode, validate and let errors bubble up
-                if strict_mode:
+                # Check DEAD safety first (this handles silent skipping)
+                try:
                     self._validate_dead_exclusivity(snip_id, phenotype, overwrite_dead, strict_mode)
+                except ValueError as e:
+                    if str(e) == "SKIP_DEAD_FRAME":
+                        # Silent skip for DEAD safety
+                        skipped_snips.append(snip_id)
+                        continue
+                    else:
+                        # Re-raise other exclusivity errors
+                        raise
                 
                 # Validate DEAD permanence with appropriate behavior
                 # For direct snip operations, we want strict validation
@@ -649,7 +574,7 @@ class EmbryoMetadata:
     
     def add_genotype(self, gene: str, author: str, embryo_id: str, 
                     allele: Optional[str] = None, zygosity: str = "unknown", 
-                    overwrite: bool = False) -> Dict[str, Any]:
+                    overwrite: bool = False) -> Dict:
         """
         Add genotype annotation to embryo with validation.
         
@@ -715,7 +640,7 @@ class EmbryoMetadata:
     def add_treatment(self, treatment: str, author: str, embryo_id: str, 
                      temperature_celsius: Optional[float] = None,
                      concentration: Optional[str] = None,
-                     notes: Optional[str] = None) -> Dict[str, Any]:
+                     notes: Optional[str] = None) -> Dict:
         """
         Add treatment annotation to embryo.
         
@@ -765,7 +690,7 @@ class EmbryoMetadata:
             "concentration": concentration
         }
     
-    def get_embryo_summary(self, embryo_id: str) -> Dict[str, Any]:
+    def get_embryo_summary(self, embryo_id: str) -> Dict:
         """Get summary of annotations for an embryo."""
         if embryo_id not in self.data["embryos"]:
             raise ValueError(f"Embryo '{embryo_id}' not found")
@@ -800,7 +725,7 @@ class EmbryoMetadata:
         self.file_handler.save_json(self.data)
         print(f"Saved annotations to: {self.annotations_path}")
     
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> Dict:
         """Get overall statistics about the annotation dataset."""
         embryo_count = len(self.data["embryos"])
         total_snips = sum(len(embryo["snips"]) for embryo in self.data["embryos"].values())
@@ -825,186 +750,3 @@ class EmbryoMetadata:
             "created": self.data["metadata"].get("created"),
             "updated": self.data["metadata"].get("updated")
         }
-    
-    def initialize_batch(self, mode: str = "skeleton", author: str = None) -> 'AnnotationBatch':
-        """
-        Create an AnnotationBatch from current metadata.
-        
-        Args:
-            mode: Initialization mode
-                - "skeleton": Empty annotations, preserve embryo/snip structure
-                - "copy": Full copy of current annotations
-            author: Required batch author
-            
-        Returns:
-            AnnotationBatch instance
-        """
-        if not author:
-            raise ValueError("Author required for batch initialization")
-        
-        # Import here to avoid circular imports
-        from .annotation_batch import AnnotationBatch
-        
-        if mode == "skeleton":
-            # Create empty structure preserving embryo/snip organization
-            batch_data = {
-                "metadata": {
-                    "source_sam2": self.data["metadata"].get("source_sam2"),
-                    "created": self.data["metadata"].get("created"),
-                    "version": "batch_skeleton",
-                    "batch_mode": mode
-                },
-                "embryos": {}
-            }
-            
-            # Copy embryo structure but clear annotations
-            for embryo_id, embryo_data in self.data["embryos"].items():
-                batch_data["embryos"][embryo_id] = {
-                    "embryo_id": embryo_id,
-                    "experiment_id": embryo_data.get("experiment_id"),
-                    "video_id": embryo_data.get("video_id"),
-                    "genotype": None,
-                    "treatments": [],
-                    "snips": {}
-                }
-                
-                # Copy snip structure but clear annotations
-                for snip_id, snip_data in embryo_data.get("snips", {}).items():
-                    batch_data["embryos"][embryo_id]["snips"][snip_id] = {
-                        "snip_id": snip_id,
-                        "frame_number": snip_data.get("frame_number"),
-                        "phenotypes": [],
-                        "flags": []
-                    }
-        
-        elif mode == "copy":
-            # Full copy of current data
-            import copy
-            batch_data = copy.deepcopy(self.data)
-            batch_data["metadata"]["version"] = "batch_copy"
-            batch_data["metadata"]["batch_mode"] = mode
-        
-        else:
-            raise ValueError(f"Invalid batch mode: {mode}. Use 'skeleton' or 'copy'")
-        
-        return AnnotationBatch(batch_data, author, validate=self.validate)
-    
-    def apply_batch(self, batch: 'AnnotationBatch', on_conflict: str = "error", dry_run: bool = False) -> Dict:
-        """
-        Apply batch changes to metadata with conflict resolution.
-        
-        Args:
-            batch: AnnotationBatch instance
-            on_conflict: Conflict resolution strategy
-                - "error": Fail on any conflict
-                - "skip": Keep existing data, skip conflicts
-                - "overwrite": Replace existing data completely
-                - "merge": Intelligently combine annotations
-            dry_run: If True, validate without applying changes
-            
-        Returns:
-            Report with applied count, conflicts, errors
-        """
-        # Import here to avoid circular imports
-        from .annotation_batch import AnnotationBatch
-        
-        report = {
-            "operation": "apply_batch",
-            "dry_run": dry_run,
-            "on_conflict": on_conflict,
-            "applied_count": 0,
-            "skipped_count": 0,
-            "conflicts": [],
-            "errors": []
-        }
-        
-        if not isinstance(batch, AnnotationBatch):
-            raise ValueError("Must provide AnnotationBatch instance")
-        
-        # Apply changes
-        for embryo_id, batch_embryo in batch.data["embryos"].items():
-            try:
-                # Ensure embryo exists in metadata
-                if embryo_id not in self.data["embryos"]:
-                    report["errors"].append(f"Embryo {embryo_id} not found in metadata")
-                    continue
-                
-                # Apply genotype
-                if batch_embryo.get("genotype"):
-                    existing_genotype = self.data["embryos"][embryo_id].get("genotype")
-                    if existing_genotype and on_conflict == "error":
-                        report["conflicts"].append(f"Genotype conflict for {embryo_id}")
-                    elif existing_genotype and on_conflict == "skip":
-                        report["skipped_count"] += 1
-                    elif not dry_run:
-                        self.data["embryos"][embryo_id]["genotype"] = batch_embryo["genotype"]
-                        report["applied_count"] += 1
-                
-                # Apply treatments
-                if batch_embryo.get("treatments"):
-                    if not dry_run:
-                        existing_treatments = self.data["embryos"][embryo_id].get("treatments", [])
-                        if on_conflict == "overwrite":
-                            self.data["embryos"][embryo_id]["treatments"] = batch_embryo["treatments"]
-                        else:
-                            # Merge treatments
-                            self.data["embryos"][embryo_id]["treatments"] = existing_treatments + batch_embryo["treatments"]
-                        report["applied_count"] += len(batch_embryo["treatments"])
-                
-                # Apply phenotypes
-                for snip_id, batch_snip in batch_embryo.get("snips", {}).items():
-                    if batch_snip.get("phenotypes"):
-                        if snip_id not in self.data["embryos"][embryo_id]["snips"]:
-                            report["errors"].append(f"Snip {snip_id} not found")
-                            continue
-                        
-                        if not dry_run:
-                            existing_phenotypes = self.data["embryos"][embryo_id]["snips"][snip_id].get("phenotypes", [])
-                            if on_conflict == "overwrite":
-                                self.data["embryos"][embryo_id]["snips"][snip_id]["phenotypes"] = batch_snip["phenotypes"]
-                            else:
-                                # Merge phenotypes
-                                self.data["embryos"][embryo_id]["snips"][snip_id]["phenotypes"] = existing_phenotypes + batch_snip["phenotypes"]
-                            report["applied_count"] += len(batch_snip["phenotypes"])
-            
-            except Exception as e:
-                report["errors"].append(f"Error processing {embryo_id}: {str(e)}")
-        
-        return report
-    
-    @classmethod
-    def _load_config(cls, config_path: Optional[Path] = None) -> None:
-        """
-        Load validation lists from config file.
-        
-        Args:
-            config_path: Optional path to config file. If None, uses default location.
-        """
-        if config_path is None:
-            config_path = Path(__file__).parent / "config.json"
-        
-        try:
-            if config_path.exists():
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                
-                # Update class attributes from config
-                if "phenotypes" in config:
-                    cls.VALID_PHENOTYPES = config["phenotypes"]
-                if "genes" in config:
-                    cls.VALID_GENES = config["genes"]
-                if "zygosity" in config:
-                    cls.VALID_ZYGOSITY = config["zygosity"]
-                if "treatments" in config:
-                    cls.VALID_TREATMENTS = config["treatments"]
-                if "flags" in config:
-                    cls.VALID_FLAGS = config["flags"]
-                
-                print(f"✅ Loaded configuration from: {config_path}")
-            else:
-                print(f"⚠️ Config file not found: {config_path}, using defaults")
-        
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Invalid JSON in config file {config_path}: {e}, using defaults")
-        except Exception as e:
-            print(f"⚠️ Error loading config file {config_path}: {e}, using defaults")
