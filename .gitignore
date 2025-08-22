@@ -83,3 +83,8 @@ src/build/__pychache__/
 **/__pycache__/
 **/data/
 .aider*
+
+# Claude Code configuration files
+CLAUDE.md
+.claude/
+*.claude
