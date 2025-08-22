@@ -347,6 +347,31 @@ class EmbryoMetadata:
         
         snip_data["phenotypes"].append(phenotype_record)
     
+    def _should_skip_dead_frame(self, snip_id: str, phenotype: str, overwrite_dead: bool = False) -> bool:
+        """
+        Check if frame should be skipped due to DEAD status.
+        
+        Args:
+            snip_id: Target snip ID
+            phenotype: Phenotype being added
+            overwrite_dead: Whether to allow overwriting DEAD frames
+            
+        Returns:
+            True if frame should be skipped, False otherwise
+        """
+        # Find embryo for this snip
+        embryo_id = "_".join(snip_id.split("_")[:-1])
+        embryo_data = self.data["embryos"][embryo_id]
+        snip_data = embryo_data["snips"][snip_id]
+        
+        existing_phenotypes = [p["value"] for p in snip_data.get("phenotypes", [])]
+        
+        # Skip if trying to add non-DEAD to DEAD frame
+        if "DEAD" in existing_phenotypes and phenotype != "DEAD" and not overwrite_dead:
+            return True
+        
+        return False
+    
     def _validate_dead_exclusivity(self, snip_id: str, phenotype: str, overwrite_dead: bool = False, strict_mode: bool = False) -> None:
         """
         Validate DEAD exclusivity: DEAD cannot coexist with other phenotypes at same snip.
@@ -374,9 +399,7 @@ class EmbryoMetadata:
                 print(f"❌ ERROR: Cannot add {phenotype} to DEAD snip {snip_id}")
                 print(f"   SOLUTION: Use overwrite_dead=True to override DEAD status")
                 raise ValueError(f"DEAD exclusivity violation: snip {snip_id} already has DEAD phenotype")
-            else:
-                # Safety mode - silent skip for range operations
-                raise ValueError("SKIP_DEAD_FRAME")  # Special error for silent skipping
+            # For non-strict mode, we use the skip method instead of raising
         
         # Check if adding DEAD to snip with other phenotypes
         if phenotype == "DEAD" and existing_phenotypes and not overwrite_dead:
@@ -509,17 +532,15 @@ class EmbryoMetadata:
                 # Get embryo ID for this snip
                 snip_embryo_id = "_".join(snip_id.split("_")[:-1])
                 
-                # Check DEAD safety first (this handles silent skipping)
-                try:
+                # Check DEAD safety first (using boolean method for silent skipping)
+                if not strict_mode and self._should_skip_dead_frame(snip_id, phenotype, overwrite_dead):
+                    # Silent skip for DEAD safety
+                    skipped_snips.append(snip_id)
+                    continue
+                
+                # For strict mode, validate and let errors bubble up
+                if strict_mode:
                     self._validate_dead_exclusivity(snip_id, phenotype, overwrite_dead, strict_mode)
-                except ValueError as e:
-                    if str(e) == "SKIP_DEAD_FRAME":
-                        # Silent skip for DEAD safety
-                        skipped_snips.append(snip_id)
-                        continue
-                    else:
-                        # Re-raise other exclusivity errors
-                        raise
                 
                 # Validate DEAD permanence with appropriate behavior
                 # For direct snip operations, we want strict validation
