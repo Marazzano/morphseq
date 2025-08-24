@@ -56,12 +56,45 @@ PATH UTILITIES:
 import re
 from typing import Dict, Optional, Union
 from pathlib import Path
+import warnings
 
 
-def parse_entity_id(entity_id: str) -> Dict[str, str]:
-    """Auto-detect type and parse to components."""
-    entity_type = get_entity_type(entity_id)
-    
+def parse_entity_id(entity_id: str, entity_type: Optional[str] = None) -> Dict[str, str]:
+    """Parse an entity ID into components.
+
+    Args:
+        entity_id: The ID string to parse.
+        entity_type: Optional explicit type hint to disambiguate parsing.
+            Accepted values: "experiment", "video", "image", "embryo", "snip".
+            If provided, it is validated against the ID format and used to
+            choose the parser. If omitted, the type is auto-detected via
+            :func:`get_entity_type`.
+
+    Returns:
+        Dict[str, str]: Parsed components including at minimum
+            {"entity_type": <type>} and higher-level IDs.
+
+    Raises:
+        ValueError: If an invalid `entity_type` is provided or if the ID does
+            not conform to the expected format for the given type.
+    """
+    # Normalize/validate optional override
+    if entity_type is not None:
+        entity_type = str(entity_type).strip().lower()
+        valid_types = {"experiment", "video", "image", "embryo", "snip"}
+        if entity_type not in valid_types:
+            raise ValueError(
+                f"Invalid entity_type '{entity_type}'. Must be one of {sorted(valid_types)}."
+            )
+    else:
+        # Warn when no explicit entity_type was provided and autodetection will be used
+        warnings.warn(
+            "No entity_type provided; will autodetect entity type from the provided entity_id.",
+            UserWarning,
+        )
+        entity_type = get_entity_type(entity_id)
+
+    # Dispatch to the correct backwards parser
     if entity_type == "snip":
         return _parse_backwards_snip(entity_id)
     elif entity_type == "embryo":
@@ -70,8 +103,11 @@ def parse_entity_id(entity_id: str) -> Dict[str, str]:
         return _parse_backwards_image(entity_id)
     elif entity_type == "video":
         return _parse_backwards_video(entity_id)
-    else:
+    elif entity_type == "experiment":
         return {"experiment_id": entity_id, "entity_type": "experiment"}
+
+    # This should be unreachable due to validation above, but keep a guard.
+    raise ValueError(f"Unhandled entity_type '{entity_type}'.")
 
 
 def get_entity_type(entity_id: str) -> str:
