@@ -59,6 +59,31 @@ from pathlib import Path
 import warnings
 
 
+# ========== PARSING PATTERNS (SINGLE SOURCE OF TRUTH) ==========
+WELL_PATTERN = r'[A-H]\d{2}'                    # A00-H99 consistently everywhere
+FRAME_PATTERN = r'\d{3,4}'                      # 3-4 digit frames  
+EMBRYO_NUM_PATTERN = r'\d+'                     # Embryo numbers
+CHANNEL_PATTERN = r'\d+'                        # Channel numbers
+
+# End patterns for backward parsing
+WELL_END_PATTERN = rf'_({WELL_PATTERN})$'       # _A01$ at end
+EMBRYO_END_PATTERN = rf'_e({EMBRYO_NUM_PATTERN})$'  # _e01$ at end
+SNIP_END_PATTERN = rf'_s?({FRAME_PATTERN})$'    # _s0042$ or _0042$ at end  
+IMAGE_CH_END_PATTERN = rf'_ch({CHANNEL_PATTERN})_t({FRAME_PATTERN})$'  # _ch00_t0042$ at end
+IMAGE_LEGACY_END_PATTERN = rf'_t({FRAME_PATTERN})$'  # _t0042$ at end
+
+# Detection patterns for get_entity_type  
+HAS_WELL_PATTERN = rf'_{WELL_PATTERN}$'         # Ends with well
+HAS_EMBRYO_PATTERN = rf'_e{EMBRYO_NUM_PATTERN}$'  # Ends with embryo
+HAS_SNIP_PATTERN = rf'_s?{FRAME_PATTERN}$'      # Ends with snip frame
+HAS_IMAGE_CH_PATTERN = rf'_ch{CHANNEL_PATTERN}_t{FRAME_PATTERN}$'  # Ends with ch+frame
+HAS_IMAGE_LEGACY_PATTERN = rf'_t{FRAME_PATTERN}$'  # Ends with frame only
+
+# Validation patterns
+WELL_STANDALONE_PATTERN = rf'^{WELL_PATTERN}$'  # Full well validation  
+EXPERIMENT_START_PATTERN = r'^20\d{6}'          # Must start with date
+
+
 def parse_entity_id(entity_id: str, entity_type: Optional[str] = None) -> Dict[str, str]:
     """Parse an entity ID into components.
 
@@ -112,13 +137,13 @@ def parse_entity_id(entity_id: str, entity_type: Optional[str] = None) -> Dict[s
 
 def get_entity_type(entity_id: str) -> str:
     """Return: experiment/video/image/embryo/snip."""
-    if re.search(r'_s?\d{3,4}$', entity_id) and '_e' in entity_id:
+    if re.search(HAS_SNIP_PATTERN, entity_id) and '_e' in entity_id:
         return "snip"
-    elif re.search(r'_e\d+$', entity_id):
+    elif re.search(HAS_EMBRYO_PATTERN, entity_id):
         return "embryo"
-    elif re.search(r'_ch\d+_t\d{3,4}$', entity_id) or re.search(r'_t\d{3,4}$', entity_id):
+    elif re.search(HAS_IMAGE_CH_PATTERN, entity_id) or re.search(HAS_IMAGE_LEGACY_PATTERN, entity_id):
         return "image"
-    elif re.search(r'_[A-H]\d{2}$', entity_id):
+    elif re.search(HAS_WELL_PATTERN, entity_id):
         return "video"
     else:
         return "experiment"
@@ -127,12 +152,12 @@ def get_entity_type(entity_id: str) -> str:
 def extract_frame_number(entity_id: str) -> Optional[int]:
     """Extract frame from snip_id/image_id."""
     # Try image pattern first
-    match = re.search(r'_t(\d{3,4})$', entity_id)
+    match = re.search(IMAGE_LEGACY_END_PATTERN, entity_id)
     if match:
         return int(match.group(1))
     
     # Try snip pattern (ensure has _e)
-    match = re.search(r'_s?(\d{3,4})$', entity_id)
+    match = re.search(SNIP_END_PATTERN, entity_id)
     if match and '_e' in entity_id:
         return int(match.group(1))
     
@@ -193,7 +218,7 @@ def get_parent_id(entity_id: str, parent_type: str) -> Optional[str]:
 
 def _parse_backwards_video(video_id: str) -> Dict[str, str]:
     """Parse video_id: {experiment_id}_{WELL}."""
-    match = re.search(r'_([A-H]\d{2})$', video_id)
+    match = re.search(WELL_END_PATTERN, video_id)
     if not match:
         raise ValueError(f"Invalid video_id: {video_id}")
     
@@ -211,17 +236,17 @@ def _parse_backwards_video(video_id: str) -> Dict[str, str]:
 def _parse_backwards_image(image_id: str) -> Dict[str, str]:
     """Parse image_id: {video_id}_ch{CHANNEL}_t{FRAME} or legacy {video_id}_t{FRAME}."""
     # Try new format with channel first
-    match = re.search(r'_ch(\d+)_t(\d{3,4})$', image_id)
+    match = re.search(IMAGE_CH_END_PATTERN, image_id)
     if match:
         channel = match.group(1)
         frame_number = match.group(2)
         video_id = image_id[:match.start()]
     else:
         # Fallback to legacy format without channel
-        match = re.search(r'_t(\d{3,4})$', image_id)
+        match = re.search(IMAGE_LEGACY_END_PATTERN, image_id)
         if not match:
             raise ValueError(f"Invalid image_id: {image_id}")
-        channel = "0"  # Default channel for legacy format
+        channel = "00"  # Zero-padded channel for consistency
         frame_number = match.group(1)
         video_id = image_id[:match.start()]
     
@@ -239,7 +264,7 @@ def _parse_backwards_image(image_id: str) -> Dict[str, str]:
 
 def _parse_backwards_embryo(embryo_id: str) -> Dict[str, str]:
     """Parse embryo_id: {video_id}_e{NN}."""
-    match = re.search(r'_e(\d+)$', embryo_id)
+    match = re.search(EMBRYO_END_PATTERN, embryo_id)
     if not match:
         raise ValueError(f"Invalid embryo_id: {embryo_id}")
     
@@ -259,7 +284,7 @@ def _parse_backwards_embryo(embryo_id: str) -> Dict[str, str]:
 
 def _parse_backwards_snip(snip_id: str) -> Dict[str, str]:
     """Parse snip_id: {embryo_id}_{FRAME} or {embryo_id}_s{FRAME}."""
-    match = re.search(r'_s?(\d{3,4})$', snip_id)
+    match = re.search(SNIP_END_PATTERN, snip_id)
     if not match:
         raise ValueError(f"Invalid snip_id: {snip_id}")
     
@@ -437,13 +462,13 @@ def get_image_id_from_filename(video_id: str, filename: str, extension: str = "j
 
 def is_valid_experiment_id(experiment_id: str) -> bool:
     """Check if string could be a valid experiment ID."""
-    # Basic check: should not end with well/frame/embryo patterns
-    return not re.search(r'_([A-H]\d{2}|[te]\d+|s?\d{3,4})$', experiment_id)
+    # Keep existing logic, just use centralized patterns
+    return not re.search(rf'_({WELL_PATTERN}|[te]{EMBRYO_NUM_PATTERN}|s?{FRAME_PATTERN})$', experiment_id)
 
 
 def is_valid_well_id(well_id: str) -> bool:
     """Check if string is a valid well ID format."""
-    return bool(re.match(r'^[A-H](0?[1-9]|1[0-2])$', well_id.upper()))
+    return bool(re.match(WELL_STANDALONE_PATTERN, well_id.upper()))
 
 
 def is_valid_frame_number(frame_number: int) -> bool:
