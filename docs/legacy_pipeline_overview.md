@@ -23,6 +23,31 @@ The pipeline is a multi-stage process, orchestrated by a series of `build` scrip
 
 ---
 
+### **Stage 0: Raw Image Metadata Compilation**
+
+This initial stage is responsible for compiling fundamental metadata directly from the raw image files, establishing the foundational data for all subsequent pipeline stages.
+
+- **Scripts:**
+    - `src/build/build01A_compile_keyence_torch.py` (for Keyence microscope data)
+    - `src/build/build01B_compile_yx1_images_torch.py` (for YX1 microscope data)
+
+#### **Process:**
+
+These scripts process raw image data (e.g., `.nd2` files for YX1, individual image tiles for Keyence) and extract critical acquisition parameters. Crucially, they generate metadata on a **per-well-time-point basis**. This means that for each unique combination of well and time point, a dedicated set of metadata is recorded, including:
+
+-   Physical dimensions (`Height (um)`, `Width (um)`)
+-   Pixel dimensions (`Height (px)`, `Width (px)`)
+-   Microscope settings (e.g., `Objective`, `BF Channel`)
+-   Time information (`Time (s)`, `Time Rel (s)`)
+
+This granular, per-image metadata is essential for accurate physical scaling and tracking throughout the pipeline.
+
+#### **Outputs:**
+
+-   **Raw Image Metadata CSV:** A CSV file located at `metadata/built_metadata_files/{experiment_date}_metadata.csv`. This file serves as the primary source of raw image acquisition parameters for downstream stages.
+
+---
+
 ### **Stage 1: Sequential Mask Generation**
 
 This stage generates all the necessary segmentation masks for downstream processing. It does **not** use a single multi-target model, but rather a series of individual models run sequentially.
