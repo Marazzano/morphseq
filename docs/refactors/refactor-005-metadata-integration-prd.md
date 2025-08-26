@@ -67,67 +67,62 @@ To effectively integrate this information without redundancy and maintain logica
 
 ### **Complete Enhanced Schema Structure:**
 
-```json
 {
-    "experiments": {
-        "20240418": {
-            "videos": {
-                "20240418_A01": {
-                    "video_id": "20240418_A01",
-                    "well_id": "A01",
-                    "mp4_path": "/path/to/video.mp4",
-                    "source_csv": "metadata/built_metadata_files/20240418_metadata.csv",
-
-                    // --- Well-level metadata (constant for all images within well) ---
-                    "medium": "E3",
-                    "genotype": "wildtype",
-                    "chem_perturbation": "none",
-                    "start_age_hpf": 24,
-                    "embryos_per_well": 1,
-                    "temperature": 28.5,
-                    "well_qc_flag": 0,
-                    // ---------------------------------------------------------------------------
-
-                    "image_ids": { // Dictionary structure, keyed by image_id
-                        "20240418_A01_t0000": {
-                            "frame_index": 0,
-                            "raw_image_data_info": { // Frame-specific information
-                                "raw_height_um": 7080.86,
-                                "raw_width_um": 7080.86,
-                                "raw_height_px": 2189,
-                                "raw_width_px": 2189,
-                                "microscope": "YX1",
-                                "objective": "Plan Apo λ 4x",
-                                "bf_channel": 0,
-                                "nd2_series_num": 1,
-                                "raw_time_s": 0.977,
-                                "relative_time_s": 0.0,
-                                "stitched_image_path": "/path/to/stitched_FF_images/20240418/ff_A01_t0000.jpg"
-                            }
-                        },
-                        "20240418_A01_t0001": {
-                            "frame_index": 1,
-                            "raw_image_data_info": {
-                                "raw_height_um": 7080.86,
-                                "raw_width_um": 7080.86,
-                                "raw_height_px": 2189,
-                                "raw_width_px": 2189,
-                                "microscope": "YX1",
-                                "objective": "Plan Apo λ 4x",
-                                "bf_channel": 0,
-                                "nd2_series_num": 1,
-                                "raw_time_s": 1.977,
-                                "relative_time_s": 1.0,
-                                "stitched_image_path": "/path/to/stitched_FF_images/20240418/ff_A01_t0001.jpg"
-                            }
-                        }
-                    }
-                }
+  "file_info": { ... },
+  "experiments": {
+    "<experiment_id>": {
+      "experiment_id": "<experiment_id>",
+      "created_time": "ISO-8601 or null",
+      "metadata": { ... },               // optional experiment-level info
+      "videos": {
+        "<video_id>": {
+          "video_id": "<video_id>",
+          "well_id": "A01",
+          "mp4_path": "...",             // from old doc (if present)
+          "processed_jpg_images_dir": "...",
+          "total_frames": 123,
+          "image_size": [H, W],          // from old doc (if present)
+          "source_csv": "...",           // from new doc (well-level fields)
+          "medium": "E3",
+          "genotype": "wildtype",
+          "chem_perturbation": "none",
+          "start_age_hpf": 24,
+          "embryos_per_well": 1,
+          ... and any other video level info from orignal gsam pipline and the build scripts amasses at this stage
+          "image_ids": {
+            "<image_id>": {
+              "frame_index": 0,
+              "raw_image_data_info": {
+                "Height (um)": 7080.86,
+                "Height (px)": 2189,
+                "Width (um)": 7080.86,
+                "Width (px)": 2189,
+                "microscope": "YX1",
+                "objective": "Plan Apo λ 4x",
+                "channel": 0,
+                "microscope": "YX1",
+                "bf_channel": 0,
+                "nd2_series_num": 1,
+                "raw_time_s": 0.977,
+                "relative_time_s": 0.0,
+                "stitched_image_path": "/path/to/stitched.jpg" //This is the the original stitched (not the renamed one after processing)
+              }
             }
+          }
         }
+      }
     }
+  },
+  "entity_tracking": {
+    "experiments": [],
+    "videos": [],
+    "images": [],
+    "embryos": [],
+    "snips": []
+  }
 }
-```
+
+
 
 ### **Schema Population Strategy:**
 
