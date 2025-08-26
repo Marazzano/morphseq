@@ -1,0 +1,233 @@
+{
+  "script_version": "sam2_utils.py (refactored)",
+  "creation_time": "2025-08-19T05:38:44.685805",
+  "last_updated": "2025-08-19T20:27:30.252812",
+  "gsam_id": "gsam_2686_sample",
+  "seed_annotations_path": "/path/to/gdino_detections.json",
+  "experiment_metadata_path": "/path/to/experiment_metadata.json",
+  "target_prompt": "individual embryo",
+  "segmentation_format": "rle",
+  "device": "cuda",
+  "experiments": {
+    "20240418": {
+      "experiment_id": "20240418",
+      "first_processed_time": "2025-08-19T07:03:55.891382",
+      "last_processed_time": "2025-08-19T08:48:15.889850",
+      "videos": {
+        "20240418_A01": {
+          "video_id": "20240418_A01",
+          "well_id": "A01",
+          "seed_frame_info": {
+            "video_id": "20240418_A01",
+            "seed_frame": "20240418_A01_ch00_t0008",
+            "seed_frame_index": 8,
+            "num_embryos": 2,
+            "seed_detections": [
+              {
+                "box_xyxy": [0.5377746820449829, 0.5066165328025818, 0.6609381437301636, 0.6322178244590759],
+                "confidence": 0.5351202487945557,
+                "phrase": "embryo"
+              },
+              {
+                "box_xyxy": [0.19767478108406067, 0.6185725927352905, 0.3114500343799591, 0.743476390838623],
+                "confidence": 0.5231584310531616,
+                "phrase": "embryo"
+              }
+            ],
+            "is_first_frame": false,
+            "embryo_ids": ["20240418_A01_e01", "20240418_A01_e02"],
+            "requires_bidirectional_propagation": true,
+            "bbox_format": "xyxy",
+            "bbox_units": "pixels"
+          },
+          "num_embryos": 2,
+          "frames_processed": 3,
+          "sam2_success": true,
+          "processing_timestamp": "2025-08-19T07:37:08.451377",
+          "requires_bidirectional_propagation": true,
+          "image_ids": {
+            "20240418_A01_ch00_t0000": {
+              "image_id": "20240418_A01_ch00_t0000",
+              "frame_index": 0,
+              "is_seed_frame": false,
+              "embryos": {
+                "20240418_A01_e01": {
+                  "embryo_id": "20240418_A01_e01",
+                  "snip_id": "20240418_A01_e01_s0000",
+                  "segmentation": {
+                    "counts": "WmpYZDIzUVQyZTBST2kwQzxHOUc5RjpHOEg2SzZLNEwzTDVMM0w0TTNNM00zTTJOM00yTjRMM000TDJOMk4yTjJPMU4yTjNNMk4yTjJOMk4yTjJPMk0yTjJOMk4yTjJPMU4yTzFOMk8xTzFOM04zTDRNMk4yTTRNMU8yTTJPMk0yTjNNMk8xTzFOMk8xTzFOMk8xTzAwMU8xTzBPMk8xTzAwMU8xTzAwMDAxTzAwMU8wMDAwMU8wMDAwMDAxTzAwMDAxTzAwMU8wMU8wMDAwMDEwTzAwMDAwMDFPMDAwMDEwTzAxTzAwMDAxTzFPMDAwMDFPMDAxTzAwMDAxTjEwMU8wMDFOMTAwMDFPMDAxTzAwMU8wMDEwTzAxTzAwMDAxTzAwMU4xMDAwMU8wMDFOMU8yTjJOMU8yTTJPMk8wTzJNM04xTzFPMk0yMDFOMU8yTjJOMk4yTTJPMk4yTjFPMk4yTjFONE0yTTNOMk4xTzJOMk0zTTJPMk4zTDNOMk0zTjFPM0wzTTNMNEw0TDRLNUw0TDROM000TDRMNEw0TDNOM0w0TDVJNkw2SDdKNks0SzVMNE01SGUwU09uamBfMQ==",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 41642.0,
+                    "bbox": [0.5760621288259479, 0.5121059844677935, 0.6742804933759707, 0.6290543627227044]
+                  },
+                  "mask_confidence": 0.85
+                },
+                "20240418_A01_e02": {
+                  "embryo_id": "20240418_A01_e02",
+                  "snip_id": "20240418_A01_e02_s0000",
+                  "segmentation": {
+                    "counts": "bmFRUTEyU1QyPkc2SjZLNUs0TTNNMk4zTDNNM04yTTRNMk00TDNNM0s1SzVMNEs1STdJN0k2SzZLNE00SzVMM000TTJMNU0yTjNOMU00SzRMNUs0TTRNM00yTzJNMk4yTzJNMk8yTTJPMU8xTjNOMU8xTjJPMk4xTzFPMk4xMDBPMk4xMDBPMk4xMDBPMk8wTzEwMDAxTjEwMDAxTzBPMTAwMDAwMU8wMDAwMDAxTzAwMDAwMDFPMDAwMDFPMDAwMDAwMDAwMDAwMDAwMU8wME8xMDAwMDAwMDBPMTAwMDAwMDAwMDAwMDAwMDAwMDAwTzEwMDAwMDAwME8wMTAwMDAwTzEwMDAwMDAwMDBPMTAwMDAwMDAwMDBPMTAwMDAwMU8wMDBPMTAwMDBPMk8wMDAwME8xMDAwMU4xMDBPMTAwTzJPME8xMDBPMTAwMDFOMTAwTzEwME8xMDFOMU8xMDBPMk4xMDBPMk8wTzEwMU4xTzJOMU8yTzBPMk4xTzJOMk8wTzJOMU8yTjFPMk4yTjFPMk4yTjFPMU8yTjFPMk4xTzJOMk4xTzJOMk4yTjJNM04yTTNNMk8yTTNOMU4zTjNLNE0zTTNNM000SzVNMk00SzVLNUw0SzVLNUwzTDVMNEw1SzVKNko2SDtDWl9uUDM=",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 41689.0,
+                    "bbox": [0.22567382366377342, 0.6473275468250342, 0.3362265874828689, 0.7492005481955231]
+                  },
+                  "mask_confidence": 0.85
+                }
+              }
+            },
+            "20240418_A01_ch00_t0001": {
+              "image_id": "20240418_A01_ch00_t0001",
+              "frame_index": 1,
+              "is_seed_frame": false,
+              "embryos": {
+                "20240418_A01_e01": {
+                  "embryo_id": "20240418_A01_e01",
+                  "snip_id": "20240418_A01_e01_s0001",
+                  "segmentation": {
+                    "counts": "WGlaYTI8alMyYTBBO0Q6SDhJNUs2SjZKNUs2STZKNUs3STZLNUs1TTNMNE00SzRMNko2SjVLNko1SzVLNE0zTDRMNEwzTjNNM0wzTjJOM00xTzJOMk4yTjJOMU8yTjJOMU8yTjJOMk4xTzJOMk8xTjJOMU8yTjEwME8yTjFPMTAxTjEwME8xMDFPME8xTzEwME8xMDFPME8xMDAwMDAwTzEwMU8wTzEwMDAwMDAwMDAwTzEwMDAxTzAwMDAwMDAwMDAwMDBPMTAwMDAxTjEwMDAwMDAwMDAwTzEwMDAwMDBPMTAwMDFOMTAwMDAwMU4xMDAwME8yTzAwME8yTzAwMU4xMDFOMTAxTzBPMk8wTzJPME8yTjJPME8yTTNPME8yTjJOMk8wTzJOMk4xTzJPMU0zTzFOMk4yTjFOM04yTjJOMU8yTzFOMk4yTzFOMk8wTzJPMU4yTzFOMk8wTzJPMU4zTTJOMk4yTzBPMk4yTzFOMk4yTjNNMk0zTjJPMU4yTjJPMk0yTjJNNEwzTjNNMk4yTjNNMk4zTDVLM040TjNNM0w0TDRLNko2SjVMNEw2RzhJOkVgMF1PYmxeYjE=",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 40632.0,
+                    "bbox": [0.5559616263133851, 0.511192325262677, 0.654179990863408, 0.6258565555047967]
+                  },
+                  "mask_confidence": 0.85
+                },
+                "20240418_A01_e02": {
+                  "embryo_id": "20240418_A01_e02",
+                  "snip_id": "20240418_A01_e02_s0001",
+                  "segmentation": {
+                    "counts": "ZGNkbjAxV1QyPkM6SDVLNEw1SzRMNE0yTjJNNE0yTDRNM00zSzRLNks1RjlGO0k3TDNMNUs1SzVLNUwzTTRMM04yTjNMM04zTTJOM04xTjJPMk0yTjNOMk0zTjFPMk4xTjJPMk0yTzJOMU8yTjFPMk4xTzJOMU8xTzJOMU8xMDBPMk4xMDBPMk4xMDBPMU8xMDBPMTAwTzEwME8xMDBPMU8yTzBPMTAwTzEwMDAwTzEwME8yTzAwMDAxTjEwMU8wTzEwMDAwMDBPMTAwMDAwMDAwTzEwMDBPMTAwMDAwMDAwMDAwMDAwMDAwMDAwTzEwMDAwMDAwMDAwMDBPMTAwMDAwMDAwMDFPMDAwTzEwMDAwMDFPMDAwMDBPMk8wMDBPMTAxTzBPMTAwMDFOMTAwMDFOMTAwMDFOMTAwMDFOMTAwMDFOMTAwTzJOMTAwTzJPME8xMDFOMTAwTzJPME8xMDFOMTAxTjFPMk8wTzJOMU8yTzBPMU8yTjEwMU4xTzEwMU4xTzJOMU8yTjFPMk4yTjJOMk4xTzJOMk4yTjFPMk4xTzJOMk0zTjJOMk0zTjFPMk00TDNNNEwzTTRMM0w0TjFONEk4SDdKNkg5RjpGOkg4SDhIZ1JVVDM=",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 42103.0,
+                    "bbox": [0.22703755021009468, 0.6476103046141149, 0.33485849885132263, 0.7496577090149431]
+                  },
+                  "mask_confidence": 0.85
+                }
+              }
+            },
+            "20240418_A01_ch00_t0008": {
+              "image_id": "20240418_A01_ch00_t0008",
+              "frame_index": 8,
+              "is_seed_frame": true,
+              "embryos": {
+                "20240418_A01_e01": {
+                  "embryo_id": "20240418_A01_e01",
+                  "snip_id": "20240418_A01_e01_s0008",
+                  "segmentation": {
+                    "counts": "sample_rle_data_for_seed_frame",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 41500.0,
+                    "bbox": [0.5377, 0.5066, 0.6609, 0.6322]
+                  },
+                  "mask_confidence": 0.85
+                },
+                "20240418_A01_e02": {
+                  "embryo_id": "20240418_A01_e02",
+                  "snip_id": "20240418_A01_e02_s0008",
+                  "segmentation": {
+                    "counts": "sample_rle_data_for_seed_frame_e02",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 42000.0,
+                    "bbox": [0.1977, 0.6186, 0.3115, 0.7435]
+                  },
+                  "mask_confidence": 0.85
+                }
+              }
+            }
+          }
+        },
+        "20240418_A04": {
+          "video_id": "20240418_A04",
+          "well_id": "A04",
+          "seed_frame_info": {
+            "video_id": "20240418_A04",
+            "seed_frame": "20240418_A04_ch00_t0007",
+            "seed_frame_index": 7,
+            "num_embryos": 1,
+            "seed_detections": [
+              {
+                "box_xyxy": [0.557047963142395, 0.6920315027236938, 0.682334303855896, 0.7960102558135986],
+                "confidence": 0.5339009165763855,
+                "phrase": "embryo"
+              }
+            ],
+            "is_first_frame": false,
+            "embryo_ids": ["20240418_A04_e01"],
+            "requires_bidirectional_propagation": true,
+            "bbox_format": "xyxy",
+            "bbox_units": "pixels"
+          },
+          "num_embryos": 1,
+          "frames_processed": 2,
+          "sam2_success": true,
+          "processing_timestamp": "2025-08-19T07:29:18.028468",
+          "requires_bidirectional_propagation": true,
+          "image_ids": {
+            "20240418_A04_ch00_t0000": {
+              "image_id": "20240418_A04_ch00_t0000",
+              "frame_index": 0,
+              "is_seed_frame": false,
+              "embryos": {
+                "20240418_A04_e01": {
+                  "embryo_id": "20240418_A04_e01",
+                  "snip_id": "20240418_A04_e01_s0000",
+                  "segmentation": {
+                    "counts": "sample_rle_data_a04_frame0",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 38500.0,
+                    "bbox": [0.5570, 0.6920, 0.6823, 0.7960]
+                  },
+                  "mask_confidence": 0.85
+                }
+              }
+            },
+            "20240418_A04_ch00_t0007": {
+              "image_id": "20240418_A04_ch00_t0007",
+              "frame_index": 7,
+              "is_seed_frame": true,
+              "embryos": {
+                "20240418_A04_e01": {
+                  "embryo_id": "20240418_A04_e01",
+                  "snip_id": "20240418_A04_e01_s0007",
+                  "segmentation": {
+                    "counts": "sample_rle_data_a04_seed_frame",
+                    "size": [2189, 2189],
+                    "format": "rle",
+                    "area": 39200.0,
+                    "bbox": [0.5570, 0.6920, 0.6823, 0.7960]
+                  },
+                  "mask_confidence": 0.85
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "entity_tracking": {
+    "experiments": ["20240418"],
+    "videos": ["20240418_A01", "20240418_A04"],
+    "images": [
+      "20240418_A01_ch00_t0000", "20240418_A01_ch00_t0001", "20240418_A01_ch00_t0008",
+      "20240418_A04_ch00_t0000", "20240418_A04_ch00_t0007"
+    ],
+    "embryos": ["20240418_A01_e01", "20240418_A01_e02", "20240418_A04_e01"],
+    "snips": [
+      "20240418_A01_e01_s0000", "20240418_A01_e01_s0001", "20240418_A01_e01_s0008",
+      "20240418_A01_e02_s0000", "20240418_A01_e02_s0001", "20240418_A01_e02_s0008",
+      "20240418_A04_e01_s0000", "20240418_A04_e01_s0007"
+    ]
+  },
+  "snip_ids": [
+    "20240418_A01_e01_s0000", "20240418_A01_e01_s0001", "20240418_A01_e01_s0008",
+    "20240418_A01_e02_s0000", "20240418_A01_e02_s0001", "20240418_A01_e02_s0008",
+    "20240418_A04_e01_s0000", "20240418_A04_e01_s0007"
+  ]
+}
