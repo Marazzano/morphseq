@@ -87,6 +87,63 @@ This stage takes the 2D masks from Stage 1, identifies and tracks individual emb
 
 -   **Master Metadata File:** A rich CSV file (`embryo_metadata_df.csv`) containing a row for every detected embryo at every timepoint, including its ID, position, QC flags, and morphological stats. This file is the primary input for the final stage.
 
+#### **Critical System Limitations:**
+
+The legacy tracking system has several fundamental problems that make it fragile and computationally expensive:
+
+1. **Fragile `region_label` System:**
+   - Relies on `skimage.measure.label` to assign temporary region numbers to embryo blobs
+   - Region labels are frame-specific and have no temporal consistency
+   - Vulnerable to segmentation artifacts and touching objects
+
+2. **Complex Tracking Algorithm:**
+   - `do_embryo_tracking` uses linear sum assignment based on centroid proximity
+   - Computationally intensive Hungarian algorithm for every frame
+   - Prone to ID switching when embryos move close together or temporarily disappear
+
+3. **Redundant Calculations:**
+   - `get_embryo_stats` runs `skimage.measure.regionprops` to recalculate area, centroids, bounding boxes
+   - These same properties could be pre-computed during segmentation
+   - Results in duplicated computational effort and potential inconsistencies
+
+4. **Error-Prone Pipeline:**
+   - Multiple failure points: detection → labeling → tracking → statistics calculation
+   - Silent failures possible at each stage (e.g., missed embryos, incorrect region isolation)
+   - Difficult to debug when tracking fails partway through long time series
+
+5. **Memory and Performance Issues:**
+   - Must load and process multiple mask files for each embryo
+   - Scales poorly with number of embryos and timepoints
+   - No built-in validation or error recovery mechanisms
+
+#### **Refactoring Implications for SAM2 Integration:**
+
+The limitations above make Stage 2 the primary target for SAM2 integration. The refactoring strategy completely eliminates the problematic components:
+
+**Functions to be DELETED entirely:**
+- `count_embryo_regions()` - Replaced by SAM2's instance-aware masks
+- `do_embryo_tracking()` - Replaced by SAM2's inherent temporal consistency  
+
+**Function to be SIMPLIFIED:**
+- `get_embryo_stats()` - Refactored from full property calculation to QC-only focus:
+  - **REMOVE:** All regionprops calculations (area, centroid, bbox)
+  - **REMOVE:** Region label isolation logic  
+  - **KEEP:** QC flag calculations against U-Net masks (yolk, bubble, focus)
+  - **KEEP:** Morphological measurements (length, width, surface area)
+  - **NEW:** Accept CSV row as input instead of region_label
+
+**Architecture Changes:**
+- **Input Method:** Replace `glob.glob()` image discovery with `pd.read_csv()` as primary data source
+- **Processing Logic:** Iterate over CSV rows instead of detected regions
+- **Data Flow:** Pre-computed metadata → QC validation instead of detection → calculation
+- **Error Handling:** CSV validation instead of mask parsing error handling
+
+**Expected Outcomes:**
+- **Code Reduction:** ~50-70% fewer lines in `build03A_process_images.py`
+- **Performance Improvement:** 50-80% faster execution due to eliminated calculations
+- **Reliability Improvement:** No more tracking failures or ID switching
+- **Maintainability:** Clear separation of segmentation (SAM2) vs QC logic (legacy)
+
 ---
 
 ### **Stage 3: 3D Z-Stack Processing & Snippet Export**
@@ -121,3 +178,184 @@ The final stage uses the 2D tracking data to find the best focal plane in the or
 #### **Outputs:**
 
 -   Final, processed, 2D brightfield image snips of each embryo, taken from the optimal focal plane.
+
+---
+
+## 4. SAM2 Segmentation Pipeline Advantages
+
+The SAM2 (Segment Anything Model 2) segmentation pipeline, implemented in the `segmentation_sandbox`, provides a superior alternative to the legacy Stage 2 tracking system by addressing all major limitations.
+
+### **Key Architectural Advantages:**
+
+#### **1. Instance-Aware Masks**
+- **Integer-Labeled Masks:** SAM2 outputs masks where pixel value directly corresponds to stable `embryo_id`
+- **No Region Labeling:** Eliminates the fragile `skimage.measure.label` step entirely  
+- **Consistent IDs:** Each embryo maintains the same pixel value across all frames in a video
+- **Example:** All pixels for embryo `20240411_A01_e01` have value `1`, embryo `20240411_A01_e02` has value `2`
+
+#### **2. Inherent Temporal Tracking**
+- **Built-in Consistency:** SAM2 handles temporal tracking automatically during segmentation
+- **No Hungarian Algorithm:** Eliminates complex linear sum assignment tracking
+- **Robust to Movement:** Handles embryos moving close together or temporary occlusion
+- **ID Stability:** No risk of ID switching mid-video
+
+#### **3. Pre-Computed Metadata**
+- **Rich Annotations:** SAM2 outputs include area, bounding box, mask confidence for each embryo
+- **No Regionprops:** Eliminates redundant area/centroid calculations in build scripts
+- **Consistent Measurements:** All metrics calculated from same source masks
+- **Performance Gain:** ~50-80% reduction in computational time for metadata extraction
+
+#### **4. Comprehensive Output Format**
+SAM2 produces `GroundedSam2Annotations.json` with complete embryo metadata:
+```json
+{
+    "embryos": {
+        "20240411_A01_e01": {
+            "snip_id": "20240411_A01_e01_s0042",
+            "area": 5000.0,
+            "bbox": [0.1, 0.2, 0.3, 0.4], 
+            "mask_confidence": 0.95,
+            "segmentation": {"counts": "RLE_string", "size": [1024, 1024]}
+        }
+    }
+}
+```
+
+### **ID Format Compatibility:**
+
+#### **Native SAM2 Format:**
+- **snip_id:** Uses `_s` prefix (e.g., `20240411_A01_e01_s0042`) 
+- **Frame Indexing:** `frame_index` matches snip numbering for parsing consistency
+- **No Conversion Needed:** Analysis confirmed frame_index == time_int, so `_s` format works directly
+
+#### **Parsing Integration:**
+- **Existing Utilities:** `parsing_utils.py` handles both `_s` and `_t` formats
+- **ID Extraction:** All existing ID parsing functions work with SAM2 native format
+- **Well Mapping:** SAM2 embryo_ids trace back to well IDs for metadata integration
+
+## 5. SAM2 Integration Strategy
+
+The integration of SAM2 into the legacy pipeline follows a **metadata bridge architecture** that transforms build scripts from data-processors into data-consumers.
+
+### **Core Integration Principle:**
+
+**From Producer to Consumer:** Instead of having build scripts calculate embryo properties from raw masks, they consume pre-computed metadata from SAM2's rich output format.
+
+### **Two-Phase Implementation:**
+
+#### **Phase 1: Metadata Bridge Script**
+- **Script:** `segmentation_sandbox/scripts/utils/export_sam2_metadata_to_csv.py`
+- **Purpose:** Flatten nested `GroundedSam2Annotations.json` into build-script-friendly CSV
+- **Input:** SAM2 JSON with nested experiment → video → image → embryo structure
+- **Output:** Flat CSV with one row per embryo per frame
+
+**CSV Schema:**
+```
+image_id, embryo_id, snip_id, frame_index, area_px, 
+bbox_x_min, bbox_y_min, bbox_x_max, bbox_y_max, 
+mask_confidence, exported_mask_path, experiment_id, 
+video_id, is_seed_frame
+```
+
+#### **Phase 2: Build Script Refactoring** 
+- **Target:** `src/build/build03A_process_images.py`
+- **Architecture Change:** CSV-driven processing instead of glob-based image discovery
+- **Function Elimination:** Remove `count_embryo_regions`, `do_embryo_tracking` entirely
+- **Function Simplification:** Refactor `get_embryo_stats` to focus only on QC checks
+
+### **Data Flow Transformation:**
+
+**Legacy Flow:**
+```
+Raw Images → Mask Generation → Region Labeling → 
+Tracking Algorithm → Property Calculation → QC Analysis
+```
+
+**SAM2 Integration Flow:**
+```
+GroundedSam2Annotations.json → CSV Bridge → 
+Pre-computed Metadata Loading → QC Analysis Only
+```
+
+### **Risk Mitigation Strategies:**
+
+#### **1. Schema Validation**
+- JSON structure validation with version checks
+- CSV schema enforcement with type checking
+- Graceful handling of missing or malformed fields
+
+#### **2. File System Robustness**
+- Exported mask file existence validation
+- Clear error messages for missing dependencies
+- Fallback mechanisms for partial data
+
+#### **3. Performance Optimization**
+- DataFrame operations optimization for large datasets
+- Memory-efficient processing for multi-experiment batches
+- Benchmark targets: Bridge <30s, Build <2x legacy time
+
+#### **4. Backward Compatibility**
+- Maintain existing output schema for downstream tools
+- Preserve QC flag calculations and thresholds
+- Keep well metadata integration unchanged
+
+### **Integration Benefits:**
+
+1. **Complexity Reduction:** ~50% code reduction in build scripts
+2. **Reliability Improvement:** Eliminates fragile tracking algorithm 
+3. **Performance Gains:** Pre-computed metadata eliminates redundant calculations
+4. **Maintainability:** Clear separation between segmentation and QC logic
+5. **Scalability:** Better handling of large multi-experiment datasets
+
+---
+
+### **Well Metadata Integration System**
+
+The legacy pipeline includes a sophisticated well metadata system that provides biological context (genotype, treatments, phenotypes) separate from the image processing pipeline.
+
+#### **File Structure:**
+
+- **Location:** `metadata/plate_metadata/{experiment_date}_well_metadata.xlsx`
+- **Format:** Multi-sheet Excel files with standardized 96-well plate layout
+
+#### **Excel Sheet Structure:**
+
+Each Excel file contains multiple sheets defining experimental conditions:
+
+1. **`medium`** - Culture medium specifications per well
+2. **`genotype`** - Genetic background and mutations per well  
+3. **`chem_perturbation`** - Chemical treatments and dosages
+4. **`start_age_hpf`** - Starting age in hours post fertilization
+5. **`embryos_per_well`** - Number of embryos per well
+6. **`temperature`** - Incubation temperature per well
+7. **`qc`** (optional) - Well-level quality control flags
+
+#### **Processing Pipeline:**
+
+- **Primary Function:** `load_experiment_plate_metadata()` in `src/build/export_utils.py`
+- **Process:**
+  1. Loads Excel file using `pd.ExcelFile()`
+  2. Parses each sheet into 8×12 well layout (A01-H12)
+  3. Flattens 2D plate data into long-format DataFrame
+  4. Creates well-level metadata with one row per well per experiment
+  5. Merges with embryo tracking data based on well ID matching
+
+#### **Integration Points:**
+
+- **Early Stage:** Used in `build01B_compile_yx1_images_torch.py` during initial image compilation
+- **Export Stage:** Primary integration happens during final data export via `export_utils.py`
+- **QC Analysis:** Referenced in `build04_perform_embryo_qc.py` for phenotype-based quality control
+
+#### **Key Design Principles:**
+
+- **Separation of Concerns:** Well metadata (biological context) is completely separate from image processing pipeline
+- **Well-Based Matching:** Integration occurs via well ID (e.g., "A01") rather than individual embryo IDs
+- **Plate-Level Organization:** Each Excel file represents one experimental plate with standardized layout
+- **Flexible Schema:** Different experiments can have different combinations of treatments and conditions
+
+#### **Implications for SAM2 Integration:**
+
+- **No Direct Interaction:** SAM2 bridge script should focus purely on segmentation metadata
+- **Existing Integration Path:** Well metadata merging is handled by established functions in `export_utils.py`
+- **ID Compatibility:** SAM2 embryo IDs must be traceable back to well IDs for proper metadata integration
+- **Parallel Processing:** Well metadata and segmentation metadata can be processed independently and merged downstream
