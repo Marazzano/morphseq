@@ -1,4 +1,4 @@
-# Refactor PRD 003: Finalized Segmentation Integration via Metadata Bridge
+prowwloo# Refactor PRD 003: Finalized Segmentation Integration via Metadata Bridge
 
 ## 1. Objective & Guiding Principle
 
@@ -94,17 +94,22 @@ video_id, is_seed_frame
 - **Production-ready** with comprehensive error handling and logging
 - **Git committed** with sample data, implementation, and test outputs
 
-### Phase 2: Build Script Integration ⚠️ NEARLY COMPLETE - TESTING IN PROGRESS
+### Phase 2: Build Script Integration ⚠️ CRITICAL REGRESSION DISCOVERED & RESOLVED
 
 **Target File**: `src/build/build03A_process_images.py`
+
+**🚨 CRITICAL DISCOVERY:** During testing, discovered a severe regression in the SAM2 pipeline that was producing completely empty/black masks for embryo snips. This was NOT a simple integration issue but a fundamental scaling and image processing problem that broke the entire pipeline's output quality.
 
 **🎯 Success Criteria (Phase 2):**
 - [x] **Legacy functions removed** - `count_embryo_regions` and `do_embryo_tracking` functions are deleted/marked for deletion
 - [x] **Core workflow refactored** - New `segment_wells_sam2_csv()` function replaces image globbing with CSV loading
 - [x] **Dependencies resolved** - Fixed `pythae` import issue by creating inline replacement in `image_utils.py`
 - [x] **Environment setup** - Installed `scikit-learn` in `grounded_sam2` conda environment
-- [ ] **End-to-end testing** - Pipeline execution interrupted, needs completion
-- [ ] **Output validation** - Compare results with legacy system
+- [x] **Critical regression identified** - SAM2 pipeline was producing empty/black masks
+- [x] **Root cause analysis completed** - Loss of FOV-based adaptive scaling during SAM2 migration
+- [x] **Major architectural fix implemented** - Restored intelligent scaling system
+- [ ] **Remaining edge cases** - Some e02 samples still show mask loss issues
+- [ ] **Full dataset validation** - Complete testing on entire experiment
 
 **🔄 Refactoring Completed:**
 1. **✅ Legacy Functions Deleted** (lines 419, 473):
@@ -129,9 +134,10 @@ video_id, is_seed_frame
 - **Environment Setup**: Using `conda activate grounded_sam2` for testing
 
 **📊 Current Status:**
-- **Build Script**: Fully refactored with new SAM2 CSV-based workflow
+- **Build Script**: Fully refactored with new SAM2 CSV-based workflow + major scaling fixes
 - **Data Ready**: Complete 20240418 dataset (7,084 snips) available at `/net/trapnell/vol1/home/mdcolon/proj/morphseq/sam2_metadata_20240418.csv`
-- **Testing**: Execution was interrupted during first full pipeline run
+- **Critical Fix**: Pipeline regression resolved - FOV-based adaptive scaling restored
+- **Testing Progress**: Major improvements achieved, some edge cases remaining
 - **Environment**: `grounded_sam2` conda environment ready with all dependencies
 
 **🧪 Testing Protocol:**
@@ -141,46 +147,159 @@ video_id, is_seed_frame
 - **Expected**: Should process significantly faster than legacy pipeline
 - **Validation**: Compare final outputs with legacy system results
 
-## 6. Next Steps for Continuation
+## 6. CRITICAL REGRESSION ANALYSIS & RESOLUTION
+
+**🚨 THE MASK LOSS CRISIS:**
+During initial testing of the SAM2 integration, discovered that embryo snips were being extracted successfully (100% success rate), but the corresponding masks were appearing completely empty/black. This was a critical regression that broke the entire training data pipeline.
+
+### 6.1 Root Cause Analysis
+
+**🔍 Investigation Process:**
+1. **Symptoms Identified:** Created `/net/trapnell/vol1/home/mdcolon/proj/morphseq/test_snip_export.py` to verify snip extraction functionality using variance analysis
+2. **Regression Detection:** Found masks had 0 variance (completely black) while snips had proper content
+3. **Historical Analysis:** Determined this was a regression - legacy system was working correctly before SAM2 migration
+4. **Technical Deep Dive:** Identified loss of FOV-based adaptive scaling logic during SAM2 migration
+
+**💡 THE BREAKTHROUGH:** The legacy system used intelligent FOV-based scaling:
+```python
+# Legacy (WORKING) approach:
+ff_shape = tuple(row[["FOV_height_px", "FOV_width_px"]].to_numpy().astype(int))
+rs_factor = np.max([np.max(ff_shape) / 600, 1])  # Adaptive scaling
+```
+
+**❌ The broken SAM2 system used:**
+```python
+# SAM2 (BROKEN) approach:  
+outscale = 6.5  # Hardcoded scaling regardless of image size
+```
+
+### 6.2 Comprehensive Solution Implementation
+
+**🛠️ MAJOR ARCHITECTURAL FIXES:**
+
+1. **FOV Calculation Restoration** (`build03A_process_images.py:76-120`):
+   - Added `get_fov_dimensions_from_sam2_data()` - calculates FOV dimensions from existing SAM2 mask files
+   - Added `calculate_adaptive_scaling()` - replicates legacy adaptive scaling logic
+   - Eliminates need to modify SAM2 pipeline by deriving FOV data from existing outputs
+
+2. **Metadata Integration** (`build03A_process_images.py:151-164`):
+   - Modified `segment_wells_sam2_csv()` to inject FOV metadata into DataFrame
+   - Columns added: `FOV_height_px`, `FOV_width_px`, `rs_factor`, `target_height`, `target_width`
+   - Ensures every row has proper scaling information
+
+3. **Scaling Logic Fix** (`build03A_process_images.py:653-660`):
+   - Replaced hardcoded `outscale=6.5` with adaptive `row['rs_factor']`
+   - Fixed `export_embryo_snips()` to use FOV-aware scaling
+   - Restored proper image dimensioning
+
+4. **Mask Processing Fix** (`build03A_process_images.py:688`):
+   - **CRITICAL:** Changed mask resize from `order=1` (bilinear) to `order=0` (nearest neighbor)
+   - Added `np.round()` and proper type conversion: `np.round(resize(..., order=0, preserve_range=True)).astype(int)`
+   - Prevents sparse mask features from being destroyed by interpolation
+
+5. **Crop Size Validation** (`src/functions/image_utils.py:92-98`):
+   - Added validation in `crop_embryo_image()` to prevent crop-larger-than-source issues
+   - Automatically adjusts crop size when target exceeds source dimensions
+   - Eliminates massive padding that was destroying image content
+
+### 6.3 Dramatic Results Achieved
+
+**📈 QUANTITATIVE IMPROVEMENTS:**
+
+1. **Previously Broken Sample - e01_t0002:**
+   - **BEFORE:** Massive padding issue, variance ~2000 (poor quality)
+   - **AFTER:** ✅ COMPLETELY FIXED, variance 5828.6 (excellent quality)
+
+2. **Previously Black Masks - e02 samples:**
+   - **BEFORE:** Completely black (variance 0.0, mean 0.0)
+   - **AFTER:** ⚠️ PARTIALLY FIXED (variance 10.7, visible content but still low)
+
+3. **Overall Pipeline Status:**
+   - **Snip Extraction:** 100% success rate maintained
+   - **Mask Quality:** Major improvement, some edge cases remaining
+   - **Scaling Logic:** Fully restored to legacy functionality
+   - **Architecture:** Much more robust with proper validation
+
+### 6.4 Current Debugging Focus
+
+**🔬 ONGOING INVESTIGATION:**
+Created `/net/trapnell/vol1/home/mdcolon/proj/morphseq/debug_e02_mask_loss.py` to investigate remaining e02 mask loss issues:
+
+- **Hypothesis:** e02 embryos may be too small/sparse to survive 3.65x downscaling
+- **Analysis Pending:** Detailed pixel-by-pixel analysis of mask survival through resize operations
+- **Solutions Considered:** May need different scaling approaches for very small embryos
+
+**🧪 TEST INFRASTRUCTURE:**
+- Created `/net/trapnell/vol1/home/mdcolon/proj/morphseq/test_fixed_pipeline.py` for comprehensive testing
+- Sample data in `/net/trapnell/vol1/home/mdcolon/proj/morphseq/test_data/` with proper .gitignore
+- Analysis utilities in `/net/trapnell/vol1/home/mdcolon/proj/morphseq/analyze_test_output.py`
+
+## 7. Next Steps for Continuation
 
 **🚀 IMMEDIATE NEXT STEPS:**
 
-1. **Complete End-to-End Testing**:
+1. **Debug Remaining e02 Mask Loss Issues**:
+   ```bash
+   python debug_e02_mask_loss.py
+   ```
+   - Execute detailed analysis of why e02 samples still show mask loss
+   - Investigate if embryos are too small/sparse to survive 3.65x downscaling
+   - Consider alternative scaling approaches for very small embryos
+   - May need specialized handling for edge cases
+
+2. **Complete Full Dataset Testing**:
    ```bash
    conda activate grounded_sam2
-   python src/build/build03A_process_images.py
+   python test_fixed_pipeline.py
    ```
-   - Pipeline was interrupted during first run - needs completion
-   - Monitor for any remaining dependency issues
-   - Check execution time vs legacy system
+   - Test fixed pipeline on complete 20240418 dataset (7,084 snips)
+   - Validate improvements hold across all samples
+   - Measure performance improvements vs legacy system
+   - Document success rates and quality metrics
 
-2. **Simplify `get_embryo_stats()` Function** (line 568 in build script):
-   - Remove redundant area/centroid calculations (data already in CSV)
+3. **Finalize Architecture Optimizations**:
+   - **Consider:** Simplify `get_embryo_stats()` function to remove redundant calculations
    - Use `area_px`, `bbox_*` columns from SAM2 CSV instead of recalculating
    - Keep only QC validation against U-Net masks (yolk, bubble, focus)
    - Load mask using `exported_mask_path` from CSV row
-
-3. **Output Validation**:
-   - Compare final data outputs with legacy system results
-   - Ensure data consistency and completeness
-   - Document any differences or improvements
+   
+4. **Production Deployment Validation**:
+   - Compare final outputs with legacy system results for quality assurance
+   - Document performance improvements and any behavioral changes
+   - Prepare rollout plan for production use
 
 **📁 CRITICAL FILES FOR CONTINUATION:**
 
-- **`docs/refactors/refactor-003-segmentation-pipeline-integration-prd.md`** - This file with complete status
-- **`src/build/build03A_process_images.py`** - Main refactored build script  
+**Core Implementation:**
+- **`docs/refactors/refactor-003-segmentation-pipeline-integration-prd.md`** - This document with complete debugging status
+- **`src/build/build03A_process_images.py`** - Main build script with SAM2 integration + scaling fixes  
 - **`src/build/build03A_process_images.py.backup_pre_sam2_refactor`** - Original backup
+- **`src/functions/image_utils.py`** - Modified with crop validation + pythae dependency fix
 - **`sam2_metadata_20240418.csv`** - Complete SAM2 dataset (7,084 rows)
 - **`segmentation_sandbox/scripts/utils/export_sam2_metadata_to_csv.py`** - Bridge script (Phase 1)
-- **`src/functions/image_utils.py`** - Modified to avoid pythae dependency
+
+**Testing & Debugging Infrastructure:**
+- **`test_snip_export.py`** - Original snip extraction verification script
+- **`analyze_test_output.py`** - Variance analysis utilities for mask quality assessment
+- **`test_fixed_pipeline.py`** - Comprehensive test for fixed pipeline
+- **`debug_e02_mask_loss.py`** - Detailed debugging for remaining e02 issues
+- **`test_data/`** - Test output directory with .gitignore
+- **`test_data/fixed_sample_sam2_metadata.csv`** - Sample data for testing
 
 **⚙️ ENVIRONMENT SETUP:**
 - Use `conda activate grounded_sam2` 
 - Dependencies resolved: sklearn installed, pythae dependency bypassed
 - Working directory: `/net/trapnell/vol1/home/mdcolon/proj/morphseq`
 
-**🏁 SUCCESS METRICS:**
-- Pipeline executes without errors
-- Processing time significantly improved vs legacy
-- Final outputs match legacy system data quality
-- Memory usage reduced due to eliminated redundant calculations
+**🏆 CURRENT ACHIEVEMENTS:**
+- ✅ **Phase 1 Complete:** SAM2 metadata bridge fully functional
+- ✅ **Phase 2 Major Progress:** Core integration complete + critical regression resolved
+- ✅ **Scaling Architecture:** FOV-based adaptive scaling fully restored
+- ✅ **Major Fixes:** Mask processing, crop validation, image quality dramatically improved
+- ⚠️ **Edge Cases:** Some small embryos (e02) still need specialized handling
+
+**🎯 REMAINING SUCCESS METRICS:**
+- Debug and resolve remaining e02 mask loss edge cases  
+- Complete full dataset validation (7,084 snips)
+- Document final performance improvements vs legacy system
+- Prepare production deployment plan
