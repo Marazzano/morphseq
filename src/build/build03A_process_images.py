@@ -111,41 +111,97 @@ def estimate_image_background(root, embryo_metadata_df, bkg_seed=309, n_bkg_samp
     return px_mean, px_std
 
 
-def export_embryo_snips(r: int, 
-                        root: str| Path, 
-                        stats_df: pd.DataFrame, 
-                        dl_rad_um: int, 
-                        outscale: float, 
-                        outshape: List, 
+def export_embryo_snips(r: int,
+                        root: str | Path,
+                        stats_df: pd.DataFrame,
+                        dl_rad_um: int,
+                        outscale: float,
+                        outshape: List,
                         px_mean: float, px_std: float):
-
-    # set path to segmentation data
-    root = Path(root)
-    ff_image_path = root / 'built_image_data' / 'stitched_FF_images'
-
-    # set path to segmentation data
-    segmentation_path = root / 'segmentation' 
-
-    # make directory for embryo snips
-    im_snip_dir = root / 'training_data' / 'bf_embryo_snips'
-    mask_snip_dir = root / 'training_data' / 'bf_embryo_masks'
-
-    # generate path and image name
-    seg_dirs_raw = segmentation_path.glob("*")
-    seg_dirs = [s for s in seg_dirs_raw if os.path.isdir(s)]
-
-    emb_path = [m for m in seg_dirs if "mask" in m.name][0]
-    yolk_path = [m for m in seg_dirs if "yolk" in m.name][0]
-
-    row = stats_df.iloc[r].copy()
+    """
+    Refactored function to use SAM2 metadata and disable unavailable QC checks.
     
-    # get surface area
-    px_dim_raw = row["Height (um)"] / row["Height (px)"]  # to adjust for size reduction (need to automate this)
+    This function is refactored to use pre-computed SAM2 metadata. It loads
+    the embryo mask from the path specified in the SAM2 CSV. Since yolk masks
+    are not available in the SAM2 pipeline output, a dummy yolk mask is used.
+    """
+    
+    root = Path(root)
+    row = stats_df.iloc[r].copy()
 
-    # write to file
+    # --- Load embryo mask from SAM2 CSV path ---
+    masks_base_dir = root / "segmentation_sandbox" / "data" / "exported_masks"
+    date = str(row["experiment_date"])
+    mask_filename = row["exported_mask_path"]
+    mask_path = masks_base_dir / date / "masks" / mask_filename
+
+    if not mask_path.exists():
+        warnings.warn(f"Mask file not found, skipping snip export: {mask_path}", stacklevel=2)
+        return True # Return True for out_of_frame_flag to indicate failure
+
+    im_mask_multi_embryo = io.imread(mask_path)
+    lbi = row["region_label"]
+    im_mask = (im_mask_multi_embryo == lbi).astype(int)
+    
+    # Create a dummy yolk mask since it's not available from SAM2 pipeline
+    im_yolk = np.zeros_like(im_mask)
+
+    # --- Load Full-Frame Image ---
+    ff_image_path = root / 'segmentation_sandbox' / 'data' / 'raw_data_organized'
+    im_stub = f"{row['image_id']}*"
+    
+    ff_image_paths = sorted((ff_image_path / date / "images" / row['video_id']).glob(im_stub))
+    if not ff_image_paths:
+        warnings.warn(f"FF image not found for {im_stub} in {ff_image_path / date}", stacklevel=2)
+        return True
+
+    im_ff = io.imread(ff_image_paths[0])
+
+    # --- Continue with legacy processing ---
+    if 'Height (um)' in row and 'Height (px)' in row and row['Height (px)'] > 0:
+        px_dim_raw = row["Height (um)"] / row["Height (px)"]
+    else:
+        px_dim_raw = 1.0
+
+    im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row)
+
+    if im_ff.shape[0] < im_ff.shape[1]:
+        im_ff = im_ff.transpose(1,0)
+
+    if im_ff.dtype != "uint8":
+        im_ff_scaled = skimage.exposure.rescale_intensity(im_ff, in_range='image', out_range=(0, 255))
+        im_ff = im_ff_scaled.astype(np.uint8)
+
+    im_ff_rs = rescale(im_ff, (px_dim_raw / outscale, px_dim_raw / outscale), order=1, preserve_range=True)
+    mask_emb_rs = resize(im_mask_ft.astype(float), im_ff_rs.shape, order=1)
+    mask_yolk_rs = resize(im_yolk.astype(float), im_ff_rs.shape, order=1)
+
+    angle_to_use = get_embryo_angle((mask_emb_rs > 0.5).astype(np.uint8),(mask_yolk_rs > 0.5).astype(np.uint8))
+
+    im_ff_rotated = rotate_image(im_ff_rs, np.rad2deg(angle_to_use))
+    emb_mask_rotated = rotate_image(mask_emb_rs, np.rad2deg(angle_to_use))
+    im_yolk_rotated = rotate_image(mask_yolk_rs, np.rad2deg(angle_to_use))
+
+    im_cropped, emb_mask_cropped, yolk_mask_cropped = crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape=outshape)
+    
+    emb_mask_cropped2 = scipy.ndimage.binary_fill_holes(emb_mask_cropped > 0.5).astype(np.uint8)
+    yolk_mask_cropped = scipy.ndimage.binary_fill_holes(yolk_mask_cropped > 0.5).astype(np.uint8)
+
+    noise_array_raw = np.reshape(truncnorm.rvs(-px_mean/px_std, 4, size=outshape[0]*outshape[1]), outshape)
+    noise_array = noise_array_raw*px_std + px_mean
+    noise_array[np.where(noise_array < 0)] = 0
+
+    im_cropped = skimage.exposure.equalize_adapthist(im_cropped)*255
+    mask_cropped_gauss = skimage.filters.gaussian(emb_mask_cropped2.astype(float), sigma=dl_rad_um / outscale)
+    im_cropped_gauss = np.multiply(im_cropped.astype(float), mask_cropped_gauss) + np.multiply(noise_array, 1-mask_cropped_gauss)
+
+    out_of_frame_flag = (np.sum(emb_mask_cropped == 1) / np.sum(emb_mask_rotated == 1)) < 0.98 if np.sum(emb_mask_rotated) > 0 else True
+
     im_name = row["snip_id"]
     exp_date = str(row["experiment_date"])
-
+    im_snip_dir = root / 'training_data' / 'bf_embryo_snips'
+    mask_snip_dir = root / 'training_data' / 'bf_embryo_masks'
+    
     ff_dir = im_snip_dir / exp_date
     ff_save_path = ff_dir / f"{im_name}.jpg"
     if not ff_dir.is_dir():
@@ -155,96 +211,6 @@ def export_embryo_snips(r: int,
     ff_save_path_uc = ff_dir_uc / f"{im_name}.jpg"
     if not ff_dir_uc.is_dir():
         ff_dir_uc.mkdir(parents=True, exist_ok=True)
-
-    well = row["well"]
-    time_int = row["time_int"]
-    date = str(row["experiment_date"])
-
-    ############
-    # Load masks from segmentation
-    ############
-    im_stub = f"{well}_t{time_int:04}*"
-
-    # load main embryo mask
-    im_emb_path = sorted((emb_path / date).glob(im_stub))[0]
-    im_mask = io.imread(im_emb_path)
-
-    # load yolk mask
-    im_yolk_path = sorted((yolk_path / date).glob(im_stub))[0]
-    im_yolk = io.imread(im_yolk_path)
-
-    im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row)
-
-    # im_mask_other = ((im_mask_lb > 0) & (im_mask_lb != lbi)).astype(int)
-
-    ############
-    # Load FF image
-    ############
-    im_ff_path = sorted((ff_image_path / date).glob(im_stub))[0]
-    im_ff = io.imread(im_ff_path)
-    if date == "20231207": # spot fix for 2 problematic datasets
-        if im_ff.shape[1] < 1920:
-            im_ff = im_ff.transpose(1,0)
-        im_ff = trim_to_shape(im_ff, np.asarray([3420, 1890]))
-    elif date == "20231208":
-        im_ff = trim_to_shape(im_ff, np.asarray([1710, 945]))
-
-    if im_ff.shape[0] < im_ff.shape[1]:
-        im_ff = im_ff.transpose(1,0)
-
-    # convert to 8 bit (format used for training)
-    if im_ff.dtype != "uint8":
-
-        # Rescale intensity of the image to the range [0, 255]
-        im_ff_scaled = skimage.exposure.rescale_intensity(im_ff, in_range='image', out_range=(0, 255))
-        im_ff = im_ff_scaled.astype(np.uint8)
-        # im_ff = skimage.util.img_as_ubyte(im_ff)
-
-    # rescale masks and image
-    im_ff_rs = rescale(im_ff, (px_dim_raw / outscale, px_dim_raw / outscale), order=1, preserve_range=True)
-    mask_emb_rs = resize(im_mask_ft.astype(float), im_ff_rs.shape, order=1)
-    mask_yolk_rs = resize(im_yolk.astype(float), im_ff_rs.shape, order=1)
-
-
-    ###################
-    # Rotate image
-    ###################
-
-    # get embryo mask orientation
-    angle_to_use = get_embryo_angle((mask_emb_rs > 0.5).astype(np.uint8),(mask_yolk_rs>0.5).astype(np.uint8))
-
-    im_ff_rotated = rotate_image(im_ff_rs, np.rad2deg(angle_to_use))
-    emb_mask_rotated = rotate_image(mask_emb_rs, np.rad2deg(angle_to_use))
-    im_yolk_rotated = rotate_image(mask_yolk_rs, np.rad2deg(angle_to_use))
-
-    #######################
-    # Crop
-    #######################
-    im_cropped, emb_mask_cropped, yolk_mask_cropped = crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape=outshape)
-    
-    # fill holes in embryo and yolk masks
-    emb_mask_cropped2 = scipy.ndimage.binary_fill_holes(emb_mask_cropped > 0.5).astype(np.uint8)
-    yolk_mask_cropped = scipy.ndimage.binary_fill_holes(yolk_mask_cropped > 0.5).astype(np.uint8)
-
-    # calculate the distance transform
-    # im_dist_cropped = scipy.ndimage.distance_transform_edt(1 * (emb_mask_cropped2 == 0))
-
-    # noise_array = np.random.normal(px_mean, px_std, outshape)
-    noise_array_raw = np.reshape(truncnorm.rvs(-px_mean/px_std, 4, size=outshape[0]*outshape[1]), outshape)
-    noise_array = noise_array_raw*px_std + px_mean
-    noise_array[np.where(noise_array < 0)] = 0 # This is redundant, but just in case someone fiddles with the above distributioon
-
-
-    # try distance-based taper 
-    im_cropped = skimage.exposure.equalize_adapthist(im_cropped)*255
-    mask_cropped_gauss = skimage.filters.gaussian(emb_mask_cropped2.astype(float), sigma=dl_rad_um / outscale)
-    im_cropped_gauss = np.multiply(im_cropped.astype(float), mask_cropped_gauss) + np.multiply(noise_array, 1-mask_cropped_gauss)
-
-    # check whether we cropped out part of the embryo
-    out_of_frame_flag = (np.sum(emb_mask_cropped == 1) / np.sum(emb_mask_rotated == 1)) < 0.98
-
-    # write to file
-    # im_name = row["snip_id"]
 
     io.imsave(ff_save_path, im_cropped_gauss.astype(np.uint8), check_contrast=False)
     io.imsave(ff_save_path_uc, im_cropped.astype(np.uint8), check_contrast=False)
@@ -416,72 +382,29 @@ def get_mask_paths_from_diff(df_diff, emb_dir, strict=False):
     return images_to_process, np.asarray(valid_indices)
 
 
-def count_embryo_regions(index, meta_lookup, image_list, master_df_update, max_sa_um, min_sa_um):
-
-    image_path = image_list[index]
-
-    iname = os.path.basename(image_path)
-    iname = iname.replace("ff_", "")
-    ename = os.path.basename(os.path.dirname(image_path))  
-
-    # extract metadata from image name
-    dash_index = iname.find("_")
-    well = iname[:dash_index]
-    t_index = int(iname[dash_index + 2:dash_index + 6])
-
-    master_index = meta_lookup[(well, ename, t_index)]
-    if master_index is None:
-        raise Exception(
-            "Incorrect number of matching entries found for " + iname + f". Expected 1, got {len(master_index)}.")
-
-    row = master_df_update.loc[master_index].copy()
-
-    ff_size = row['FOV_size_px']
-
-    im_mask, cb_mask = process_mask_images(image_path=image_path)
-    
-    # clean     = remove_small_objects(im_mask, min_size=int(min_sa_um))
-    im_mask_lb = label(im_mask)
-    regions = regionprops(im_mask_lb)
-
-    # recalibrate things relative to "standard" dimensions
-    pixel_size_raw = row["Height (um)"] / row["Height (px)"]
-    # im_area_um2 = pixel_size_raw**2 * ff_size   # to adjust for size reduction 
-    lb_size = im_mask_lb.size
-
-    sa_vec = np.asarray([rg["Area"] for rg in regions]) * ff_size / lb_size * pixel_size_raw**2 - 1
-    keep      = (sa_vec >= min_sa_um) & (sa_vec <= max_sa_um)
-    ranks     = np.argsort(np.argsort(-sa_vec))
-
-    i_pass = 0
-    for i, r in enumerate(regions):
-        # sa = r.area
-        if keep[i] & (ranks[i] < 4): #(sa >= min_sa_um_new) and (sa <= max_sa_um):
-            row.loc["e" + str(i_pass) + "_x"] = r.centroid[1]
-            row.loc["e" + str(i_pass) + "_y"] = r.centroid[0]
-            row.loc["e" + str(i_pass) + "_label"] = r.label
-            lb_indices = np.where(im_mask_lb == r.label)
-            row.loc["e" + str(i_pass) + "_frac_alive"] = np.mean(cb_mask[lb_indices] == 1)
-
-            i_pass += 1
-
-    row.loc["n_embryos_observed"] = i_pass
-    return [master_index, pd.DataFrame(row).T]
+# DELETED: count_embryo_regions() function
+# This legacy function has been replaced by SAM2 metadata bridge approach.
+# SAM2 provides pre-computed embryo areas, centroids, and bounding boxes,
+# eliminating the need for regionprops calculations.
+# 
+# Original function removed as part of refactor-003 Phase 2 implementation.
+# See: docs/refactors/refactor-003-segmentation-pipeline-integration-prd.md
+    pass  # Function body removed - replaced by SAM2 bridge approach
 
 
 
-def do_embryo_tracking(
+# DELETED: do_embryo_tracking() function  
+# This legacy function has been replaced by SAM2 metadata bridge approach.
+# SAM2 provides inherent temporal tracking with stable embryo IDs across frames,
+# eliminating the need for Hungarian algorithm tracking.
+# 
+# Original function removed as part of refactor-003 Phase 2 implementation.
+# See: docs/refactors/refactor-003-segmentation-pipeline-integration-prd.md
+def do_embryo_tracking_DELETED(
     well_id: str,
     df_update: pd.DataFrame
 ) -> pd.DataFrame:
-    """
-    Given a DataFrame `df_update` containing columns:
-      ['well_id', 'n_embryos_observed', 'e0_x', 'e0_y', 'e0_label', 'e0_frac_alive', …]
-    track embryos over time for the single well `well_id`.  
-    Returns a DataFrame with the same “static” cols plus:
-      ['xpos','ypos','fraction_alive','region_label','embryo_id']
-    for each time‐point where n_embryos_observed > 0.
-    """
+    """DELETED - Function replaced by SAM2 bridge approach."""
     # slice out just this well’s rows, in time‐order
     sub = df_update[df_update["well_id"] == well_id].copy().reset_index(drop=True)
     n_obs = sub["n_embryos_observed"].astype(int).values
@@ -565,141 +488,78 @@ def do_embryo_tracking(
     return pd.concat(out_rows, ignore_index=True)
 
 
-def get_embryo_stats(index: int, 
-                     root: str | Path, 
-                     embryo_metadata_df: pd.DataFrame, 
-                     qc_scale_um: int, 
+def get_embryo_stats(index: int,
+                     root: str | Path,
+                     embryo_metadata_df: pd.DataFrame,
+                     qc_scale_um: int,
                      ld_rat_thresh: float):
+    """
+    Refactored function to use SAM2 metadata and disable unavailable QC checks.
+    
+    This function is refactored as per refactor-003-prd to use pre-computed
+    SAM2 metadata. It loads the embryo mask from the path specified in the
+    SAM2 CSV. QC checks depending on bubble, focus, and yolk masks are
+    disabled as these masks are not available in the SAM2 pipeline output.
+    """
     
     root = Path(root)
-
     row = embryo_metadata_df.loc[index].copy()
 
-    # FF path
-    # FF_path = os.path.join(root, 'built_image_data', 'stitched_FF_images', '')
-
-    # generate path and image name
-    segmentation_path = root / 'segmentation' 
-    seg_dirs_raw = segmentation_path.glob("*")
-    seg_dirs = [s for s in seg_dirs_raw if os.path.isdir(s)]
-
-    emb_path = [m for m in seg_dirs if "mask" in m.name][0]
-    bubble_path = [m for m in seg_dirs if "bubble" in m.name][0]
-    focus_path = [m for m in seg_dirs if "focus" in m.name][0]
-    yolk_path = [m for m in seg_dirs if "yolk" in m.name][0]
-
-    well = row["well"]
-    time_int = row["time_int"]
+    # --- Load embryo mask from SAM2 CSV path ---
+    masks_base_dir = root / "segmentation_sandbox" / "data" / "exported_masks"
+    
     date = str(row["experiment_date"])
-
-    im_stub = well + f"_t{time_int:04}"
-    im_name = glob.glob(os.path.join(emb_path, date, "*" + im_stub + "*"))
-    # ff_size = row["FOV_size_px"]
-
-    # # load masked images
-    # im_emb_path = os.path.join(emb_path, date, im_name)
-
-    im = io.imread(im_name[0])
-    im_mask = (np.round(im / 255 * 2) - 1).astype(np.uint8)
-
-    # merge live/dead labels for now
-    # im_mask = np.zeros(im.shape, dtype="uint8")
-    # im_mask[np.where(im == 1)] = 1
-    # im_mask[np.where(im == 2)] = 1
-
-    im_bubble_path = next((p for p in (bubble_path / date).glob(f"*{im_stub}*")), None)
-    im_bubble = io.imread(im_bubble_path)
-    im_bubble = np.round(im_bubble / 255 * 2 - 1).astype(int)
-    if len(np.unique(label(im_bubble)) > 2):
-        im_bubble = remove_small_objects(label(im_bubble), 128)
-    im_bubble[im_bubble > 0] = 1
-
-    im_focus_path = next((p for p in (focus_path / date).glob(f"*{im_stub}*")), None)
-    im_focus = io.imread(im_focus_path)
-    im_focus = np.round(im_focus / 255 * 2 - 1).astype(int)
-    if len(np.unique(label(im_focus)) > 2):
-        im_focus = remove_small_objects(label(im_focus), 128)
-    im_focus[im_focus > 0] = 1
-
-    im_yolk_path = next((p for p in (yolk_path / date).glob(f"*{im_stub}*")), None) #os.path.join(yolk_path, date, im_name)
-    im_yolk = io.imread(im_yolk_path)
-    im_yolk = np.round(im_yolk / 255 * 2 - 1).astype(int)
+    mask_filename = row["exported_mask_path"]
     
-    # filter for just the label of interest
-    im_mask_lb = label(im_mask)
-    lbi = row["region_label"]  # im_mask_lb[yi, xi]
-    assert lbi != 0  # make sure we're not grabbing empty space
-    im_mask_lb = (im_mask_lb == lbi).astype(int)
-
-    # rescale masks to accord with original aspec ratio
-    ff_shape = tuple(row[["FOV_height_px", "FOV_width_px"]].to_numpy().astype(int))
-    if row["experiment_date"] in ["20231207", "20231208"]: # handle two samll but problematic datasets
-        ff_shape = tuple([3420, 1890])
-
-    rs_factor = np.max([np.max(ff_shape) / 600, 1]) # !!! what is this?
-    ff_shape = (ff_shape/rs_factor).astype(int)
+    mask_path = masks_base_dir / date / "masks" / mask_filename
     
-    im_mask_lb = np.round(resize(im_mask_lb.astype(float), ff_shape, order=0, preserve_range=True)).astype(int)
-    im_bubble = np.round(resize(im_bubble.astype(float), ff_shape, order=0, preserve_range=True)).astype(int)
-    im_focus = np.round(resize(im_focus.astype(float), ff_shape, order=0, preserve_range=True)).astype(int)
-    im_yolk = np.round(resize(im_yolk.astype(float), ff_shape, order=0, preserve_range=True)).astype(int)
+    if not mask_path.exists():
+        warnings.warn(f"Mask file not found: {mask_path}", stacklevel=2)
+        row.loc["dead_flag"] = False
+        row.loc["no_yolk_flag"] = False
+        row.loc["frame_flag"] = False
+        row.loc["focus_flag"] = False
+        row.loc["bubble_flag"] = False
+        return pd.DataFrame(row).transpose()
 
-    # get surface area
-    px_dim = row["Height (um)"] / row["Height (px)"] *rs_factor  # to adjust for size reduction (need to automate this)
-    # size_factor = np.sqrt(ff_size / im_yolk.size) #row["Width (px)"] / 640 * 630/320
-    # px_dim = px_dim_raw * size_factor
+    im_mask_multi_embryo = io.imread(mask_path)
+    
+    lbi = row["region_label"]
+    im_mask_lb = (im_mask_multi_embryo == lbi).astype(int)
+
+    # --- Perform calculations and QC checks ---
+    # Calculations depending on legacy metadata columns that are not in the SAM2 CSV
+    # are disabled or use placeholder values.
+    
+    px_dim = 1.0 
     qc_scale_px = int(np.ceil(qc_scale_um / px_dim))
 
-    # calculate sa-related metrics
+    row.loc["surface_area_um"] = row["area_px"] * (px_dim ** 2)
+    
     yy, xx = np.indices(im_mask_lb.shape)
     mask_coords = np.c_[xx[im_mask_lb==1], yy[im_mask_lb==1]]
-    pca = PCA(n_components=2)
-    mask_coords_rot = pca.fit_transform(mask_coords)
-    row.loc["length_um"], row.loc["width_um"] = (np.max(mask_coords_rot, axis=0) - np.min(mask_coords_rot, axis=0))*px_dim
-    row.loc["surface_area_um"] = np.sum(im_mask_lb) * px_dim ** 2
-    # rg = regionprops(im_mask_lb)
-    # row.loc["surface_area_um"] = rg[0].area_filled * px_dim ** 2
-    # row.loc["length_um"] = rg[0].axis_major_length * px_dim
-    # row.loc["width_um"] = rg[0].axis_minor_length * px_dim
+    if mask_coords.shape[0] > 1:
+        pca = PCA(n_components=2)
+        mask_coords_rot = pca.fit_transform(mask_coords)
+        row.loc["length_um"], row.loc["width_um"] = (np.max(mask_coords_rot, axis=0) - np.min(mask_coords_rot, axis=0)) * px_dim
+    else:
+        row.loc["length_um"], row.loc["width_um"] = 0.0, 0.0
 
-    # calculate speed
-    if (row["time_int"] > 1) and index > 0:
-        dr = np.sqrt((row["xpos"] - embryo_metadata_df.loc[index - 1, "xpos"]) ** 2 +
-                     (row["ypos"] - embryo_metadata_df.loc[index - 1, "ypos"]) ** 2) * px_dim
-        dt = row["Time Rel (s)"] - embryo_metadata_df.loc[index - 1, "Time Rel (s)"]
-        row.loc["speed"] = dr / dt
+    row.loc["speed"] = np.nan
 
     ######
     # now do QC checks
     ######
 
-    # Assess live/dead status
     row.loc["dead_flag"] = row["fraction_alive"] < ld_rat_thresh
-
-    # is there a yolk detected in the vicinity of the embryo body?
-    im_intersect = np.multiply((im_yolk == 1)*1, (im_mask_lb == 1)*1)
-    row.loc["no_yolk_flag"] = ~np.any(im_intersect)
-
-    # is a part of the embryo mask at or near the image boundary?
+    row.loc["no_yolk_flag"] = False
     im_trunc = im_mask_lb[qc_scale_px:-qc_scale_px, qc_scale_px:-qc_scale_px]
-    row.loc["frame_flag"] = np.sum(im_trunc) <= 0.98*np.sum(im_mask_lb) 
-
-    # is there an out-of-focus region in the vicinity of the mask?
-    if np.any(im_focus) or np.any(im_bubble):
-        im_dist = scipy.ndimage.distance_transform_edt(im_mask_lb == 0)
-
-    if np.any(im_focus):
-        min_dist = np.min(im_dist[np.where(im_focus == 1)])
-        row.loc["focus_flag"] = min_dist <= 2 * qc_scale_px
+    if np.sum(im_mask_lb) > 0:
+        row.loc["frame_flag"] = np.sum(im_trunc) <= 0.98 * np.sum(im_mask_lb)
     else:
-        row.loc["focus_flag"] = False
-
-    # is there bubble in the vicinity of embryo?
-    if np.any(im_bubble == 1):
-        min_dist_bubble = np.min(im_dist[np.where(im_bubble == 1)])
-        row.loc["bubble_flag"] = min_dist_bubble <= 2 * qc_scale_px
-    else:
-        row.loc["bubble_flag"] = False
+        row.loc["frame_flag"] = False
+    row.loc["focus_flag"] = False
+    row.loc["bubble_flag"] = False
 
     row_out = pd.DataFrame(row).transpose()
     
@@ -709,6 +569,79 @@ def get_embryo_stats(index: int,
 # Main process function 2
 ####################
 
+def segment_wells_sam2_csv(
+    root: str | Path,
+    exp_name: str,
+    sam2_csv_path: str | Path = None,
+    min_sa_um: float = 250_000,
+    max_sa_um: float = 2_000_000,
+    par_flag: bool = False,
+    overwrite_well_stats: bool = False,
+):
+    """
+    SAM2-based well segmentation using pre-computed metadata bridge CSV.
+    
+    This function replaces the legacy segment_wells() function that used
+    regionprops calculations and Hungarian algorithm tracking. Instead,
+    it loads pre-computed embryo metadata from SAM2 bridge CSV.
+    
+    Args:
+        root: Project root directory
+        exp_name: Experiment name (e.g., "20240418")
+        sam2_csv_path: Path to SAM2 metadata CSV (if None, looks for sam2_metadata_{exp_name}.csv)
+        min_sa_um: Minimum surface area filter (deprecated - handled by SAM2)
+        max_sa_um: Maximum surface area filter (deprecated - handled by SAM2) 
+        par_flag: Parallel processing flag (deprecated)
+        overwrite_well_stats: Overwrite existing stats flag
+        
+    Returns:
+        DataFrame with embryo tracking data compatible with legacy format
+    """
+    
+    root = Path(root)
+    
+    # Determine CSV path
+    if sam2_csv_path is None:
+        sam2_csv_path = root / f"sam2_metadata_{exp_name}.csv"
+    else:
+        sam2_csv_path = Path(sam2_csv_path)
+    
+    if not sam2_csv_path.exists():
+        raise FileNotFoundError(f"SAM2 metadata CSV not found: {sam2_csv_path}")
+    
+    print(f"🔄 Loading SAM2 metadata from {sam2_csv_path}")
+    
+    # Load SAM2 CSV with pre-computed metadata
+    sam2_df = pd.read_csv(sam2_csv_path, dtype={'experiment_id': str})
+    
+    # Filter by experiment if needed
+    if exp_name not in sam2_df['experiment_id'].values:
+        raise ValueError(f"Experiment {exp_name} not found in SAM2 CSV")
+    
+    exp_df = sam2_df[sam2_df['experiment_id'] == exp_name].copy()
+    
+    print(f"📊 SAM2 data loaded: {len(exp_df)} snips from experiment {exp_name}")
+    
+    # Transform SAM2 CSV format to legacy format expected by compile_embryo_stats
+    # Key transformation: CSV has one row per snip, legacy expects one row per embryo per well per time
+    
+    # Extract position from bounding box center
+    exp_df['xpos'] = (exp_df['bbox_x_min'] + exp_df['bbox_x_max']) / 2
+    exp_df['ypos'] = (exp_df['bbox_y_min'] + exp_df['bbox_y_max']) / 2
+    
+    # Add required columns for legacy compatibility
+    exp_df['fraction_alive'] = 1.0  # Placeholder - SAM2 doesn't compute this
+    exp_df['region_label'] = exp_df['embryo_id'].str.extract(r'_e(\d+)$')[0].astype(int)
+    
+    # Add experiment metadata columns that legacy system expects
+    exp_df['experiment_date'] = exp_name
+    exp_df['well_id'] = exp_df['video_id'].str.extract(r'_([A-H]\d{2})$')[0]
+    exp_df['time_int'] = exp_df['frame_index']
+    
+    print(f"✅ SAM2 data transformed to legacy format: {len(exp_df)} rows ready")
+    
+    return exp_df
+
 def segment_wells(
     root: str | Path,
     exp_name: str, 
@@ -717,6 +650,19 @@ def segment_wells(
     par_flag: bool = False,
     overwrite_well_stats: bool = False,
 ):
+    """
+    LEGACY FUNCTION - Replaced by SAM2 bridge approach.
+    
+    This function has been replaced by segment_wells_sam2_csv() which uses
+    pre-computed SAM2 metadata instead of image processing.
+    
+    For new workflows, use the SAM2 bridge CSV approach instead.
+    """
+    print("⚠️ WARNING: Using legacy segment_wells function")
+    print("   Consider migrating to segment_wells_sam2_csv() with SAM2 bridge CSV")
+    print("   See: docs/refactors/refactor-003-segmentation-pipeline-integration-prd.md")
+    
+    # Keep original function for backwards compatibility during transition
     
     n_workers = np.ceil(os.cpu_count()/4).astype(int)
 
@@ -1017,17 +963,32 @@ def extract_embryo_snips(root: str | Path,
 
 if __name__ == "__main__":
 
-    # root = "/Users/nick/Dropbox (Cole Trapnell's Lab)/Nick/morphseq/"
-    root = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq"
+    # The project root is now defined by the REPO_ROOT constant at the top of the file
+    # to avoid hardcoded paths.
+    root = REPO_ROOT
     
     # print('Compiling well metadata...')
     # build_well_metadata_master(root)
 
-    # # print('Compiling embryo metadata...')
-    exp_name = "20250612_24hpf_wfs1_ctcf"
-    tracked_df = segment_wells(root, exp_name=exp_name)
+    # SAM2 Pipeline Integration - Phase 2 Implementation
+    # Using bridge CSV instead of legacy image processing
+    exp_name = "20240418"  # Use experiment with SAM2 data available
+    
+    # The path to the CSV is now constructed relative to the project root.
+    # The PRD specifies the CSV is in the project root.
+    sam2_csv_path = root / f"sam2_metadata_{exp_name}.csv"
 
-    stats_df = compile_embryo_stats(exp_name, tracked_df)
+    # Option 1: Use new SAM2 CSV-based function (recommended)
+    tracked_df = segment_wells_sam2_csv(root, exp_name=exp_name, sam2_csv_path=sam2_csv_path)
+
+    # Using a smaller sample for faster testing as requested
+    print("Using a smaller sample of 100 rows for testing.")
+    tracked_df = tracked_df.head(100)
+
+    # Option 2: Use legacy function (fallback during transition)  
+    # tracked_df = segment_wells(root, exp_name=exp_name)
+
+    stats_df = compile_embryo_stats(root, tracked_df)
 
     # print('Extracting embryo snips...')
     extract_embryo_snips(root, stats_df=stats_df, outscale=6.5, dl_rad_um=50, overwrite_flag=False)
