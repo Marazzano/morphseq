@@ -283,7 +283,7 @@ This is the main output of the segmentation pipeline, containing the final segme
 
 ### Embryo Metadata (`embryo_metadata.json`)
 
-This file stores detailed, human-curated annotations for individual embryos, such as phenotypes, genotypes, and flags. It is managed by the `UnifiedEmbryoManager` class.
+This file stores detailed, human-curated annotations for individual embryos, such as phenotypes, genotypes, and flags
 
 ```json
 {
@@ -405,3 +405,56 @@ This file is created and managed by the `SimpleMaskExporter` to keep track of wh
 *   **`entity_tracking`**: A summary of all the entities for which masks have been exported.
 *   **`exports`**: A dictionary where each key is an `image_id` and the value contains information about the exported mask file, including its path, the number of embryos, and the timestamp of the export.
 *   **`total_exported`**: The total number of images for which masks have been exported.
+
+
+
+
+{
+  "file_info": { ... },
+  "experiments": {
+    "<experiment_id>": {
+      "experiment_id": "<experiment_id>",
+      "created_time": "ISO-8601 or null",
+      "metadata": { ... },               // optional experiment-level info
+      "videos": {
+        "<video_id>": {
+          "video_id": "<video_id>",
+          "well_id": "A01",
+          "mp4_path": "...",             // from old doc (if present)
+          "processed_jpg_images_dir": "...",
+          "total_frames": 123,
+          "image_size": [H, W],          // from old doc (if present)
+          "source_well_metadata_csv": "...",           // from new doc (well-level fields)
+          "medium": "E3",
+          "genotype": "wildtype",
+          "start_age_hpf": 24,
+          "embryos_per_well": 1,
+        ... and any other info from oriignal gsam piplein a
+          "image_ids": {
+            "<image_id>": {
+              "frame_index": 0,
+              "raw_image_data_info": {
+                "raw_height_um": 7080.86,
+                "raw_width_um": 7080.86,
+                "raw_height_px": 2189,
+                "raw_width_px": 2189,
+                "microscope": "YX1",
+                "objective": "Plan Apo λ 4x",
+                "bf_channel": 0,
+                "nd2_series_num": 1,
+                "raw_time_s": 0.977,
+                "relative_time_s": 0.0,
+                "stitched_image_path": "/path/to/stitched.jpg"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "entity_tracking": {
+    "experiments": [],
+    "videos": [],
+    "images": [],
+    "embryos": [],
+    "snips": []
