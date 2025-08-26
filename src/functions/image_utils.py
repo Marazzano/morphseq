@@ -4,7 +4,12 @@ import torch
 import skimage
 from skimage.morphology import label
 import torch.nn.functional as F
-from src.functions.dataset_utils import set_inputs_to_device
+# Simple replacement for set_inputs_to_device to avoid pythae dependency
+def set_inputs_to_device(input_tensor, device):
+    inputs_on_device = input_tensor
+    if device == "cuda":
+        inputs_on_device = input_tensor.cuda()
+    return inputs_on_device
 from skimage.morphology import disk, binary_closing, remove_small_objects
 from skimage.measure import label, regionprops, find_contours
 import scipy
@@ -80,6 +85,9 @@ def process_masks(im_mask, im_yolk, row, close_radius=15):
 
 def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape):
 
+    if np.sum(emb_mask_rotated) == 0:
+        return np.zeros(outshape), np.zeros(outshape), np.zeros(outshape)
+
     y_indices = np.where(np.max(emb_mask_rotated, axis=1) > 0.5)[0]
     x_indices = np.where(np.max(emb_mask_rotated, axis=0) > 0.5)[0]
     y_mean = int(np.mean(y_indices))
@@ -116,6 +124,8 @@ def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape
     
 def get_embryo_angle(mask_emb_rs, mask_yolk_rs):
     rp = regionprops(mask_emb_rs)
+    if not rp:
+        return 0.0  # Return a default angle if no regions are found
     angle = rp[0].orientation
 
     # find the orientation that puts yolk at top
