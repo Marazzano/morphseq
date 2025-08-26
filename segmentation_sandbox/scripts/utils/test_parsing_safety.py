@@ -97,7 +97,7 @@ def test_parse_entity_id():
     try:
         result = parse_entity_id("20240411_A01_t0042")
         print(f"  Legacy image result: {result}")
-        assert result["channel"] == "0"  # Should default to 0 for legacy
+        assert result["channel"] == "00"  # Now consistently zero-padded
         assert result["frame_number"] == "0042"
         print("  ✓ Legacy image test passed")
     except Exception as e:
