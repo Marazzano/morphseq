@@ -16,10 +16,16 @@ Key Features:
 - Uses existing parsing_utils.py for ID consistency
 - Supports experiment filtering for selective processing
 
-CSV Schema (14 columns):
-    image_id, embryo_id, snip_id, frame_index, area_px, bbox_x_min, bbox_y_min, 
-    bbox_x_max, bbox_y_max, mask_confidence, exported_mask_path, experiment_id, 
-    video_id, is_seed_frame
+CSV Schema (Enhanced with Raw Metadata - 37 columns):
+    Core SAM2 columns (14): image_id, embryo_id, snip_id, frame_index, area_px, bbox_x_min, bbox_y_min, 
+    bbox_x_max, bbox_y_max, mask_confidence, exported_mask_path, experiment_id, video_id, is_seed_frame
+    
+    Raw image metadata (16): Height (um), Height (px), Width (um), Width (px), BF Channel, Objective,
+    Time (s), Time Rel (s), height_um, height_px, width_um, width_px, bf_channel, objective, 
+    raw_time_s, relative_time_s, microscope, nd2_series_num
+    
+    Well-level metadata (7): medium, genotype, chem_perturbation, start_age_hpf, embryos_per_well, 
+    temperature, well_qc_flag
 
 Input Requirements:
 - GroundedSam2Annotations.json with standard SAM2 structure
@@ -94,12 +100,23 @@ except ImportError:
         normalize_frame_number
     )
 
-# CSV Schema Constants
+# CSV Schema Constants - Enhanced with raw metadata
 CSV_COLUMNS = [
     'image_id', 'embryo_id', 'snip_id', 'frame_index', 'area_px',
     'bbox_x_min', 'bbox_y_min', 'bbox_x_max', 'bbox_y_max', 
     'mask_confidence', 'exported_mask_path', 'experiment_id', 
-    'video_id', 'is_seed_frame'
+    'video_id', 'is_seed_frame',
+    
+    # Raw image metadata from legacy CSV (both original names and aliases)
+    'Height (um)', 'Height (px)', 'Width (um)', 'Width (px)', 
+    'BF Channel', 'Objective', 'Time (s)', 'Time Rel (s)',
+    'height_um', 'height_px', 'width_um', 'width_px', 
+    'bf_channel', 'objective', 'raw_time_s', 'relative_time_s',
+    'microscope', 'nd2_series_num',
+    
+    # Well-level metadata
+    'medium', 'genotype', 'chem_perturbation', 'start_age_hpf',
+    'embryos_per_well', 'temperature', 'well_qc_flag'
 ]
 
 # Setup logging
@@ -315,11 +332,25 @@ class SAM2MetadataExporter:
                             # Generate mask file path
                             exported_mask_path = self._generate_mask_path(image_id, embryos)
                             
+                            # Extract raw metadata from enhanced schema
+                            raw_image_data = image_data.get('raw_image_data_info', {})
+                            
+                            # Well-level metadata from video_data
+                            well_metadata = {
+                                'medium': video_data.get('medium'),
+                                'genotype': video_data.get('genotype'), 
+                                'chem_perturbation': video_data.get('chem_perturbation'),
+                                'start_age_hpf': video_data.get('start_age_hpf'),
+                                'embryos_per_well': video_data.get('embryos_per_well'),
+                                'temperature': video_data.get('temperature'),
+                                'well_qc_flag': video_data.get('well_qc_flag')
+                            }
+                            
                         except Exception as e:
                             logger.error(f"Error processing {embryo_id} in {image_id}: {e}")
                             continue
                         
-                        # Create row
+                        # Create row with enhanced metadata
                         row = [
                             image_id,                    # image_id
                             embryo_id,                   # embryo_id  
@@ -334,7 +365,38 @@ class SAM2MetadataExporter:
                             exported_mask_path,          # exported_mask_path
                             experiment_id,               # experiment_id
                             video_id_parsed,             # video_id
-                            is_seed_frame                # is_seed_frame
+                            is_seed_frame,               # is_seed_frame
+                            
+                            # Raw image metadata (original column names)
+                            raw_image_data.get('Height (um)'),
+                            raw_image_data.get('Height (px)'), 
+                            raw_image_data.get('Width (um)'),
+                            raw_image_data.get('Width (px)'),
+                            raw_image_data.get('BF Channel'),
+                            raw_image_data.get('Objective'),
+                            raw_image_data.get('Time (s)'),
+                            raw_image_data.get('Time Rel (s)'),
+                            
+                            # Raw image metadata (code-friendly aliases)
+                            raw_image_data.get('height_um'),
+                            raw_image_data.get('height_px'),
+                            raw_image_data.get('width_um'), 
+                            raw_image_data.get('width_px'),
+                            raw_image_data.get('bf_channel'),
+                            raw_image_data.get('objective'),
+                            raw_image_data.get('raw_time_s'),
+                            raw_image_data.get('relative_time_s'),
+                            raw_image_data.get('microscope'),
+                            raw_image_data.get('nd2_series_num'),
+                            
+                            # Well-level metadata
+                            well_metadata['medium'],
+                            well_metadata['genotype'],
+                            well_metadata['chem_perturbation'],
+                            well_metadata['start_age_hpf'],
+                            well_metadata['embryos_per_well'],
+                            well_metadata['temperature'],
+                            well_metadata['well_qc_flag']
                         ]
                         
                         rows.append(row)

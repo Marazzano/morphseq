@@ -205,21 +205,31 @@ class ExperimentMetadata(BaseFileHandler):
         self._increment_operations()
     
     def add_images_to_video(self, experiment_id: str, video_id: str, image_ids: List[str], **metadata_fields) -> None:
-        """Add images to video."""
+        """Add images to video - handles both list and dictionary image_ids formats."""
         # Ensure video exists
         if experiment_id not in self.metadata["experiments"]:
             self.add_experiment(experiment_id)
         if video_id not in self.metadata["experiments"][experiment_id]["videos"]:
             self.add_video_to_experiment(experiment_id, video_id)
         
-        # Add images to the list
-        image_ids_list = self.metadata["experiments"][experiment_id]["videos"][video_id]["image_ids"]
-        for image_id in image_ids:
-            if image_id not in image_ids_list:
-                image_ids_list.append(image_id)
+        # Get current image_ids (handle both list and dictionary formats)
+        video_data = self.metadata["experiments"][experiment_id]["videos"][video_id]
+        current_image_ids = video_data["image_ids"]
         
-        # Sort the list
-        image_ids_list.sort()
+        if isinstance(current_image_ids, dict):
+            # Dictionary format: add new images as dictionary entries
+            for image_id in image_ids:
+                if image_id not in current_image_ids:
+                    current_image_ids[image_id] = {
+                        "frame_index": len(current_image_ids),
+                        "raw_image_data_info": {}  # Will be populated by data_organizer
+                    }
+        else:
+            # List format: maintain backwards compatibility
+            for image_id in image_ids:
+                if image_id not in current_image_ids:
+                    current_image_ids.append(image_id)
+            current_image_ids.sort()
         
         # Update entity tracking
         self._update_entity_tracking(experiment_id, video_id, image_ids)
@@ -371,16 +381,34 @@ class ExperimentMetadata(BaseFileHandler):
         return None
     
     def get_image(self, experiment_id: str, video_id: str, image_id: str) -> Optional[Dict]:
-        """Get image metadata (returns basic info if image exists in video)."""
+        """Get image metadata - handles both list and dictionary image_ids formats."""
         video = self.get_video(experiment_id, video_id)
-        if video and image_id in video.get("image_ids", []):
-            # Return basic info since we only store image_ids as a list
-            return {
-                "image_id": image_id,
-                "video_id": video_id,
-                "experiment_id": experiment_id,
-                "exists": True
-            }
+        if not video:
+            return None
+            
+        image_ids = video.get("image_ids", [])
+        
+        if isinstance(image_ids, dict):
+            # Dictionary format: return enhanced metadata
+            if image_id in image_ids:
+                image_info = image_ids[image_id]
+                return {
+                    "image_id": image_id,
+                    "video_id": video_id,
+                    "experiment_id": experiment_id,
+                    "exists": True,
+                    "frame_index": image_info.get("frame_index", 0),
+                    "raw_image_data_info": image_info.get("raw_image_data_info", {})
+                }
+        else:
+            # List format: return basic info
+            if image_id in image_ids:
+                return {
+                    "image_id": image_id,
+                    "video_id": video_id,
+                    "experiment_id": experiment_id,
+                    "exists": True
+                }
         return None
     
     def list_experiments(self) -> List[str]:
@@ -396,16 +424,23 @@ class ExperimentMetadata(BaseFileHandler):
             return self.metadata["entity_tracking"]["videos"].copy()
     
     def list_images(self, experiment_id: str = None, video_id: str = None) -> List[str]:
-        """Get list of image IDs (optionally filtered by experiment/video)."""
+        """Get list of image IDs (optionally filtered by experiment/video) - handles both formats."""
         if experiment_id and video_id:
             video = self.get_video(experiment_id, video_id)
-            return video.get("image_ids", []) if video else []
+            if not video:
+                return []
+            image_ids = video.get("image_ids", [])
+            return list(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
         elif experiment_id:
             exp = self.get_experiment(experiment_id)
             if exp:
                 all_images = []
                 for video in exp["videos"].values():
-                    all_images.extend(video.get("image_ids", []))
+                    image_ids = video.get("image_ids", [])
+                    if isinstance(image_ids, dict):
+                        all_images.extend(image_ids.keys())
+                    else:
+                        all_images.extend(image_ids)
                 return all_images
             return []
         else:
@@ -414,6 +449,14 @@ class ExperimentMetadata(BaseFileHandler):
     def get_all_image_ids(self) -> List[str]:
         """Get all image IDs - alias for list_images() for backward compatibility."""
         return self.list_images()
+    
+    def _image_exists_in_video_data(self, video_data: Dict, image_id: str) -> bool:
+        """Helper function to check if image exists in video_data (handles both formats)."""
+        image_ids = video_data.get("image_ids", [])
+        if isinstance(image_ids, dict):
+            return image_id in image_ids
+        else:
+            return image_id in image_ids
     
     # ========== ENTITY SUMMARY ==========
     
@@ -483,7 +526,7 @@ class ExperimentMetadata(BaseFileHandler):
             video_data = exp_data.get("videos", {}).get(video_id)
             if video_data:
                 # Check if this image_id is tracked
-                if image_id in video_data.get("image_ids", []):
+                if self._image_exists_in_video_data(video_data, image_id):
                     # Use the stored processed_jpg_images_dir with parsing utils
                     from scripts.utils.parsing_utils import get_image_id_path
                     images_dir = video_data["processed_jpg_images_dir"]
@@ -573,7 +616,7 @@ class ExperimentMetadata(BaseFileHandler):
             if video_data:
                 # Quick check: if it's in image_ids, assume it exists
                 # (since metadata should reflect actual files)
-                if image_id in video_data.get("image_ids", []):
+                if self._image_exists_in_video_data(video_data, image_id):
                     # Optional: verify file actually exists
                     try:
                         image_path = self.get_image_path(image_id, extension, base_path)
@@ -673,7 +716,11 @@ class ExperimentMetadata(BaseFileHandler):
             for video_id, video_data in exp_data.get("videos", {}).items():
                 images_dir = Path(video_data.get("processed_jpg_images_dir", ""))
                 
-                for image_id in video_data.get("image_ids", []):
+                # Handle both list and dictionary formats for image_ids
+                image_ids = video_data.get("image_ids", [])
+                image_id_list = list(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
+                
+                for image_id in image_id_list:
                     # Parse image_id for metadata and use parsing utils for path construction
                     parsed = parse_entity_id(image_id)
                     frame_number = parsed["frame_number"]
