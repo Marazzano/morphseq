@@ -95,6 +95,9 @@ from datetime import datetime
 from collections import defaultdict
 import cv2
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import pandas as pd
+import os
+import logging
 
 # Try to import tqdm for progress bars
 try:
@@ -135,6 +138,10 @@ except ImportError:
         VideoGenerator = None
         VideoConfig = None
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 class DataOrganizer:
     """
     Organizes raw stitched images into a standard structure and creates videos/metadata.
@@ -145,6 +152,121 @@ class DataOrganizer:
     - Parallel processing with ThreadPoolExecutor for JPEG conversion
     - Smart skip logic to avoid reprocessing existing files
     """
+    @staticmethod
+    def load_legacy_metadata_csv(experiment_date):
+        """Load raw image metadata from legacy build scripts"""
+        csv_path = f"metadata/built_metadata_files/{experiment_date}_metadata.csv"
+        if os.path.exists(csv_path):
+            try:
+                return pd.read_csv(csv_path)
+            except Exception as e:
+                logger.warning(f"Failed to load CSV {csv_path}: {e}")
+                return None
+        else:
+            logger.warning(f"Legacy metadata CSV not found: {csv_path}")
+            return None
+    
+    @staticmethod
+    def parse_video_id_for_metadata(video_id):
+        """Extract experiment_date and well_id from video_id"""
+        # Format: "20240418_A01" or "20240418_A01_ch00" (per parsing_id_convention.md)
+        parts = video_id.split('_')
+        experiment_date = parts[0]  # "20240418"
+        well_id = parts[1]         # "A01"
+        channel = parts[2] if len(parts) > 2 else "ch00"
+        return experiment_date, well_id, channel
+    
+    @staticmethod
+    def enhance_video_metadata_with_csv(video_data, csv_df, experiment_date, well_id):
+        """Transform video metadata to enhanced schema"""
+        if csv_df is None:
+            return video_data
+        
+        # 1. Add well-level metadata (constant per well)
+        well_rows = csv_df[csv_df['well_id'] == f"{experiment_date}_{well_id}"]
+        if well_rows.empty:
+            # Try without experiment_date prefix
+            well_rows = csv_df[csv_df['well_id'] == well_id]
+        
+        if not well_rows.empty:
+            first_row = well_rows.iloc[0]
+            video_data.update({
+                'well_id': well_id,
+                'source_well_metadata_csv': f"metadata/built_metadata_files/{experiment_date}_metadata.csv",
+                'medium': first_row.get('medium', None),
+                'genotype': first_row.get('genotype', None),
+                'chem_perturbation': first_row.get('chem_perturbation', None),
+                'start_age_hpf': first_row.get('start_age_hpf', None),
+                'embryos_per_well': first_row.get('embryos_per_well', None),
+                'temperature': first_row.get('temperature', None),
+                'well_qc_flag': first_row.get('well_qc_flag', None)
+            })
+        
+        # 2. Transform image_ids from list to dictionary
+        old_image_ids = video_data.get('image_ids', [])
+        new_image_ids = {}
+        
+        for i, image_id in enumerate(old_image_ids):
+            # Extract time_int from image_id (e.g., "20240418_A01_ch00_t0000" -> 0)
+            time_int = 0  # default
+            if '_t' in image_id:
+                try:
+                    time_int = int(image_id.split('_t')[-1])
+                except (ValueError, IndexError):
+                    time_int = i  # fallback to frame index
+            else:
+                time_int = i
+            
+            # Find matching CSV row for this well_id + time_int
+            matching_rows = csv_df[
+                (csv_df['well_id'].str.endswith(well_id)) & 
+                (csv_df['time_int'] == time_int)
+            ]
+            
+            image_info = {
+                'frame_index': i,
+                'raw_image_data_info': {}
+            }
+            
+            if not matching_rows.empty:
+                row = matching_rows.iloc[0]
+                image_info['raw_image_data_info'] = {
+                    # Original CSV column names (preserves data lineage)
+                    'Height (um)': row.get('Height (um)', None),
+                    'Height (px)': row.get('Height (px)', None),
+                    'Width (um)': row.get('Width (um)', None),
+                    'Width (px)': row.get('Width (px)', None),
+                    'BF Channel': row.get('BF Channel', None),
+                    'Objective': row.get('Objective', None),
+                    'Time (s)': row.get('Time (s)', None),
+                    'Time Rel (s)': row.get('Time Rel (s)', None),
+                    
+                    # Code-friendly aliases (avoids fragile dict access)
+                    'height_um': row.get('Height (um)', None),
+                    'height_px': row.get('Height (px)', None),
+                    'width_um': row.get('Width (um)', None),
+                    'width_px': row.get('Width (px)', None),
+                    'bf_channel': row.get('BF Channel', None),
+                    'objective': row.get('Objective', None),
+                    'raw_time_s': row.get('Time (s)', None),
+                    'relative_time_s': row.get('Time Rel (s)', None),
+                    
+                    # Additional metadata
+                    'microscope': row.get('microscope', None),
+                    'nd2_series_num': row.get('nd2_series_num', None)
+                }
+            
+            new_image_ids[image_id] = image_info
+        
+        # 3. Replace image_ids list with dictionary
+        video_data['image_ids'] = new_image_ids
+        
+        # 4. Update processed vs raw dimension clarity
+        if 'image_size' in video_data:
+            video_data['processed_image_size_px'] = video_data.pop('image_size')
+        
+        return video_data
+    
     @staticmethod
     def validate_entity_tracking_completeness(metadata, verbose=False):
         """
@@ -750,6 +872,15 @@ class DataOrganizer:
         video_metadata["image_ids"] = image_ids
         video_metadata["total_frames"] = len(image_ids)
         
+        # NEW: Enhance with CSV metadata
+        experiment_date, well_id_parsed, channel = DataOrganizer.parse_video_id_for_metadata(video_id)
+        csv_df = DataOrganizer.load_legacy_metadata_csv(experiment_date)
+        
+        if csv_df is not None:
+            video_metadata = DataOrganizer.enhance_video_metadata_with_csv(
+                video_metadata, csv_df, experiment_date, well_id_parsed
+            )
+        
         return video_metadata
 
     @staticmethod
@@ -770,15 +901,37 @@ class DataOrganizer:
                 continue
             for video_id, video_data in metadata["experiments"][exp_id]["videos"].items():
                 images_dir = Path(video_data["processed_jpg_images_dir"])
-                for image_id in video_data["image_ids"]:
-                    image_path = DataOrganizer.get_image_path_from_id(image_id, images_dir)
-                    if image_path.exists():
-                        images.append({
-                            'image_id': image_id,
-                            'image_path': str(image_path),
-                            'video_id': video_id,
-                            'well_id': video_data['well_id'],
-                            'experiment_id': exp_id,
-                            'frame_number': int(image_id.split('_t')[-1])
-                        })
+                
+                # Handle both old (list) and new (dictionary) image_ids formats
+                image_ids = video_data["image_ids"]
+                if isinstance(image_ids, list):
+                    # Legacy format: image_ids as list
+                    for image_id in image_ids:
+                        image_path = DataOrganizer.get_image_path_from_id(image_id, images_dir)
+                        if image_path.exists():
+                            images.append({
+                                'image_id': image_id,
+                                'image_path': str(image_path),
+                                'video_id': video_id,
+                                'well_id': video_data['well_id'],
+                                'experiment_id': exp_id,
+                                'frame_number': int(image_id.split('_t')[-1])
+                            })
+                else:
+                    # Enhanced format: image_ids as dictionary
+                    for image_id, image_info in image_ids.items():
+                        image_path = DataOrganizer.get_image_path_from_id(image_id, images_dir)
+                        if image_path.exists():
+                            frame_index = image_info.get('frame_index', 0)
+                            raw_data = image_info.get('raw_image_data_info', {})
+                            images.append({
+                                'image_id': image_id,
+                                'image_path': str(image_path),
+                                'video_id': video_id,
+                                'well_id': video_data['well_id'],
+                                'experiment_id': exp_id,
+                                'frame_number': int(image_id.split('_t')[-1]),
+                                'frame_index': frame_index,
+                                'raw_image_data_info': raw_data
+                            })
         return images
