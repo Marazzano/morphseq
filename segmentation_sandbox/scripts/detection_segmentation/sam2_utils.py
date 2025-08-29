@@ -713,12 +713,12 @@ class GroundedSamAnnotations(BaseFileHandler):
 
             video_info = self.exp_metadata.get_video_metadata(video_id)
             image_ids_ordered = video_info['image_ids']  # Already in temporal order
+            
+            # Convert to list format for backwards compatibility
+            image_ids_list = _get_image_ids_list(image_ids_ordered)
 
             sam2_results_converted = self._convert_sam2_results_to_image_ids_format(
-                sam2_results, image_ids_ordered
-            )
-            sam2_results_converted = self._convert_sam2_results_to_image_ids_format(
-                sam2_results, image_ids_ordered
+                sam2_results, image_ids_list
             )
 
             # Create video-level structure with formatted detections and bbox metadata
@@ -980,7 +980,12 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
     if verbose:
         print(f"🔄 Running SAM2 propagation from frame {seed_frame_idx}...")
         print(f"   Video directory: {video_dir}")
-        print(f"   Seed frame image_id: {image_ids[seed_frame_idx]}")
+        # Handle both list and dictionary formats for image_ids
+        if isinstance(image_ids, dict):
+            image_ids_list = sorted(image_ids.keys())
+            print(f"   Seed frame image_id: {image_ids_list[seed_frame_idx]}")
+        else:
+            print(f"   Seed frame image_id: {image_ids[seed_frame_idx]}")
     
     # Initialize video_segments to avoid UnboundLocalError
     video_segments = {}
@@ -993,7 +998,9 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
             print(f"   📁 Creating SAM2-compatible frame directory with {len(image_ids)} frames")
         
         # Create symlinks with sequential naming (SAM2 expects this)
-        for i, image_id in enumerate(image_ids):
+        # Handle both list and dictionary formats for image_ids
+        image_ids_to_iterate = sorted(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
+        for i, image_id in enumerate(image_ids_to_iterate):
             # REFACTORED: Use consistent frame number extraction
             # Use full image_id filename on disk. Prefer experiment metadata to
             # locate the images directory; fall back to video_dir when needed.
@@ -1040,7 +1047,12 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
             is_normalized = all(0.0 <= coord <= 1.0 for coord in bbox)
             
             # Get image dimensions from the seed frame
-            seed_image_id = image_ids[seed_frame_idx]
+            # Handle both list and dictionary formats for image_ids
+            if isinstance(image_ids, dict):
+                image_ids_list = sorted(image_ids.keys())
+                seed_image_id = image_ids_list[seed_frame_idx]
+            else:
+                seed_image_id = image_ids[seed_frame_idx]
             # Use parsing utils for consistent filename construction
             seed_image_filename = get_image_filename_from_id(seed_image_id)
             try:
@@ -1092,7 +1104,12 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
         for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
             # Map frame index back to image_id
             if out_frame_idx < len(image_ids):
-                image_id = image_ids[out_frame_idx]
+                # Handle both list and dictionary formats for image_ids
+                if isinstance(image_ids, dict):
+                    image_ids_list = sorted(image_ids.keys())
+                    image_id = image_ids_list[out_frame_idx]
+                else:
+                    image_id = image_ids[out_frame_idx]
                 frame_results = {}
                 
                 for i, out_obj_id in enumerate(out_obj_ids):
@@ -1172,7 +1189,12 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
             print(f"⬅️ Backward propagation: frames 0 to {seed_frame_idx}")
         
         # Create reversed image list for backward propagation
-        reversed_image_ids = image_ids[:seed_frame_idx+1][::-1]
+        # Handle both list and dictionary formats for image_ids
+        if isinstance(image_ids, dict):
+            image_ids_list = sorted(image_ids.keys())
+            reversed_image_ids = image_ids_list[:seed_frame_idx+1][::-1]
+        else:
+            reversed_image_ids = image_ids[:seed_frame_idx+1][::-1]
         reversed_seed_idx = 0  # Seed is now at index 0 in reversed list
         
         backward_results = run_sam2_propagation(predictor, video_dir, reversed_seed_idx,
@@ -1234,16 +1256,19 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
         video_dir = grounded_sam_instance.exp_metadata.get_video_directory_path(video_id)
         image_ids_ordered = video_info['image_ids']  # Already in temporal order
         
+        # Convert to list format for backwards compatibility
+        image_ids_list = _get_image_ids_list(image_ids_ordered)
+        
         if verbose:
             print(f"📁 Video directory: {video_dir}")
-            print(f"🖼️ Total frames: {len(image_ids_ordered)}")
+            print(f"🖼️ Total frames: {len(image_ids_list)}")
         
         # Find seed frame and detections
         seed_image_id, seed_detections_dict = find_seed_frame_from_video_annotations(
             video_annotations, video_id
         )
         
-        seed_frame_idx = image_ids_ordered.index(seed_image_id)
+        seed_frame_idx = image_ids_list.index(seed_image_id)
         seed_detections = seed_detections_dict['detections']
         
         if verbose:
@@ -1258,23 +1283,23 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
             # Simple forward propagation
             video_segments = run_sam2_propagation(
                 predictor, video_dir, seed_frame_idx, seed_detections, 
-                embryo_ids, image_ids_ordered, segmentation_format, verbose
+                embryo_ids, image_ids_list, segmentation_format, verbose
             )
         else:
             # Bidirectional propagation
             video_segments = run_bidirectional_propagation(
                 predictor, video_dir, seed_frame_idx, seed_detections,
-                embryo_ids, image_ids_ordered, segmentation_format, verbose
+                embryo_ids, image_ids_list, segmentation_format, verbose
             )
         
         # Normalize video_segments to be keyed by image_id (handles both numeric-index keys or image_id keys)
         video_segments_mapped = grounded_sam_instance._convert_sam2_results_to_image_ids_format(
-            video_segments, image_ids_ordered
+            video_segments, image_ids_list
         )
 
         sam2_results = {}
 
-        for frame_idx, image_id in enumerate(image_ids_ordered):
+        for frame_idx, image_id in enumerate(image_ids_list):
             if image_id not in video_segments_mapped:
                 continue
 

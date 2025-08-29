@@ -652,10 +652,15 @@ class ExperimentMetadata(BaseFileHandler):
                 if stored_image_ids:
                     # Optional: verify a few exist to ensure metadata is accurate
                     if len(stored_image_ids) > 0:
-                        # Sample check on first image
-                        first_image = stored_image_ids[0]
-                        if self.verify_image_exists(first_image, extension, base_path):
-                            return stored_image_ids
+                        # Sample check on first image - handle both list and dict formats
+                        if isinstance(stored_image_ids, dict):
+                            first_image = sorted(stored_image_ids.keys())[0]
+                            if self.verify_image_exists(first_image, extension, base_path):
+                                return sorted(stored_image_ids.keys())
+                        else:
+                            first_image = stored_image_ids[0]
+                            if self.verify_image_exists(first_image, extension, base_path):
+                                return stored_image_ids
                     
         # Fallback to directory scanning
         try:

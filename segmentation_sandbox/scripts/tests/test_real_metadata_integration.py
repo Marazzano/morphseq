@@ -60,7 +60,9 @@ def test_metadata_driven_path_resolution():
     image_ids = video_data["image_ids"]
     
     # Test get_image_path uses stored metadata
-    for image_id in image_ids:
+    # Handle both list and dictionary formats for image_ids
+    image_ids_list = sorted(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
+    for image_id in image_ids_list:
         image_path = meta.get_image_path(image_id)
         
         # Should use the stored processed_jpg_images_dir

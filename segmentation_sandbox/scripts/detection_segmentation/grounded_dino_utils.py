@@ -743,7 +743,9 @@ class GroundedDinoAnnotations(BaseFileHandler):
         
         # Step 1: Collect raw detections
         raw_detections = []
-        for image_id in image_ids:
+        # Handle both list and dictionary formats for image_ids
+        image_ids_list = sorted(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
+        for image_id in image_ids_list:
             if image_id in self.annotations.get("images", {}):
                 annotations = self.annotations["images"][image_id].get("annotations", [])
                 for annotation in annotations:

@@ -48,6 +48,19 @@ GroundedSam2Annotations.json format:
 
 import os
 import sys
+
+# Helper function to handle both list and dictionary formats for image_ids
+def _get_image_ids_list(image_ids):
+    """Convert image_ids to list format, handling both list and dictionary inputs."""
+    return sorted(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
+
+def _get_image_id_at_index(image_ids, index):
+    """Get image_id at specific index, handling both list and dictionary inputs."""
+    if isinstance(image_ids, dict):
+        image_ids_list = sorted(image_ids.keys())
+        return image_ids_list[index]
+    else:
+        return image_ids[index]
 import json
 import yaml
 import warnings
@@ -675,7 +688,8 @@ class GroundedSamAnnotations:
                     
                     # Create a robust frame index mapping that handles bidirectional results
                     # First, create the original mapping from all_image_ids
-                    original_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(all_image_ids)}
+                    all_image_ids_list = _get_image_ids_list(all_image_ids)
+                    original_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(all_image_ids_list)}
                     
                     # Then, ensure all sam2_results have valid frame indices
                     # For any missing image_ids, assign sequential indices based on sorted order
@@ -697,7 +711,8 @@ class GroundedSamAnnotations:
                             if all_image_ids:
                                 # Find where this image_id would fit in the sorted sequence
                                 insertion_point = 0
-                                for i, orig_image_id in enumerate(all_image_ids):
+                                all_image_ids_list = _get_image_ids_list(all_image_ids)
+                                for i, orig_image_id in enumerate(all_image_ids_list):
                                     if image_id < orig_image_id:
                                         insertion_point = i
                                         break
@@ -707,21 +722,25 @@ class GroundedSamAnnotations:
                                 final_image_id_to_frame_idx[image_id] = insertion_point
                             else:
                                 # Fallback: use position in sorted sam2_image_ids
-                                final_image_id_to_frame_idx[image_id] = sam2_image_ids.index(image_id)
+                                sam2_image_ids_list = _get_image_ids_list(sam2_image_ids)
+                                final_image_id_to_frame_idx[image_id] = sam2_image_ids_list.index(image_id)
                     
                     # Verify no negative frame indices
                     if any(idx < 0 for idx in final_image_id_to_frame_idx.values()):
                         if self.verbose:
                             print(f"   ⚠️  Warning: Found negative frame indices, using sorted order as fallback")
                         # Fallback: assign sequential indices based on sorted order
-                        final_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(sam2_image_ids)}
+                        sam2_image_ids_list = _get_image_ids_list(sam2_image_ids)
+                        final_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(sam2_image_ids_list)}
                     
                     if self.verbose:
                         frame_indices = list(final_image_id_to_frame_idx.values())
                         print(f"   📋 Frame indices: {min(frame_indices)} to {max(frame_indices)} ({len(frame_indices)} frames)")
                     
                     for image_id, embryo_data in sam2_results.items():
-                        frame_idx = final_image_id_to_frame_idx.get(image_id, sam2_image_ids.index(image_id))
+                        # Use helper function for backwards compatibility with dictionary format
+                        sam2_image_ids_list = _get_image_ids_list(sam2_image_ids)
+                        frame_idx = final_image_id_to_frame_idx.get(image_id, sam2_image_ids_list.index(image_id))
                         
                         video_result["images"][image_id] = {
                             "image_id": image_id,
@@ -880,7 +899,8 @@ class GroundedSamAnnotations:
             all_image_ids = video_metadata.get("seed_info", {}).get("all_frames", [])
             
             # Create a robust frame index mapping that handles bidirectional results
-            original_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(all_image_ids)}
+            all_image_ids_list = _get_image_ids_list(all_image_ids)
+            original_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(all_image_ids_list)}
             
             # Ensure all sam2_results have valid frame indices
             sam2_image_ids = list(sam2_results.keys())
@@ -897,7 +917,8 @@ class GroundedSamAnnotations:
                     # For missing image_ids, find their correct position in the sequence
                     if all_image_ids:
                         insertion_point = 0
-                        for i, orig_image_id in enumerate(all_image_ids):
+                        all_image_ids_list = _get_image_ids_list(all_image_ids)
+                        for i, orig_image_id in enumerate(all_image_ids_list):
                             if image_id < orig_image_id:
                                 insertion_point = i
                                 break
@@ -906,21 +927,25 @@ class GroundedSamAnnotations:
                         final_image_id_to_frame_idx[image_id] = insertion_point
                     else:
                         # Fallback: use position in sorted sam2_image_ids
-                        final_image_id_to_frame_idx[image_id] = sam2_image_ids.index(image_id)
+                        sam2_image_ids_list = _get_image_ids_list(sam2_image_ids)
+                        final_image_id_to_frame_idx[image_id] = sam2_image_ids_list.index(image_id)
             
             # Verify no negative frame indices
             if any(idx < 0 for idx in final_image_id_to_frame_idx.values()):
                 if self.verbose:
                     print(f"   ⚠️  Warning: Found negative frame indices, using sorted order as fallback")
                 # Fallback: assign sequential indices based on sorted order
-                final_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(sam2_image_ids)}
+                sam2_image_ids_list = _get_image_ids_list(sam2_image_ids)
+                final_image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(sam2_image_ids_list)}
             
             if self.verbose:
                 frame_indices = list(final_image_id_to_frame_idx.values())
                 print(f"   📋 Frame indices: {min(frame_indices)} to {max(frame_indices)} ({len(frame_indices)} frames)")
             
             for image_id, embryo_data in sam2_results.items():
-                frame_idx = final_image_id_to_frame_idx.get(image_id, sam2_image_ids.index(image_id))
+                # Use helper function for backwards compatibility with dictionary format
+                sam2_image_ids_list = _get_image_ids_list(sam2_image_ids)
+                frame_idx = final_image_id_to_frame_idx.get(image_id, sam2_image_ids_list.index(image_id))
                 # Add mask_path to each embryo instance if available
                 embryos_with_mask_path = {}
                 for embryo_id, embryo_info in embryo_data.items():
@@ -1073,7 +1098,7 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
     if verbose:
         print(f"🔄 Running SAM2 propagation from frame {seed_frame_idx}...")
         print(f"   Video directory: {video_dir}")
-        print(f"   Seed frame image_id: {image_ids[seed_frame_idx]}")
+        print(f"   Seed frame image_id: {_get_image_id_at_index(image_ids, seed_frame_idx)}")
     
     # Create temporary directory with properly named symlinks for SAM2
     with tempfile.TemporaryDirectory() as temp_dir_str:
@@ -1084,7 +1109,8 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
             print(f"   📁 Creating SAM2-compatible frame directory with {len(image_ids)} frames")
         
         # Create sequentially named symlinks (000000.jpg, 000001.jpg, ...)
-        for idx, image_id in enumerate(image_ids):
+        image_ids_list = _get_image_ids_list(image_ids)
+        for idx, image_id in enumerate(image_ids_list):
             src_frame = video_dir / f"{image_id}.jpg"
             dst_frame = sam2_video_dir / f"{idx:06d}.jpg"
             
@@ -1152,7 +1178,7 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
         for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(inference_state):
             # Map frame index back to image_id
             if out_frame_idx < len(image_ids):
-                image_id = image_ids[out_frame_idx]
+                image_id = _get_image_id_at_index(image_ids, out_frame_idx)
                 frame_results = {}
                 
                 for obj_id, mask_logits in zip(out_obj_ids, out_mask_logits):
@@ -1220,7 +1246,7 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
     """
     if verbose:
         print(f"🔄 Running bidirectional SAM2 propagation...")
-        print(f"   Seed frame: {seed_frame_idx} ({image_ids[seed_frame_idx]})")
+        print(f"   Seed frame: {seed_frame_idx} ({_get_image_id_at_index(image_ids, seed_frame_idx)})")
         print(f"   Total frames: {len(image_ids)}")
     
     # Forward propagation (seed to end) - use original video directory
@@ -1251,7 +1277,7 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
             # Create sequentially named symlinks so SAM2 processes them in correct order
             backward_image_ids = []
             for new_idx, original_idx in enumerate(frames_to_reverse):
-                original_image_id = image_ids[original_idx]
+                original_image_id = _get_image_id_at_index(image_ids, original_idx)
                 backward_image_ids.append(original_image_id)
                 
                 # Source: original image file
@@ -1269,7 +1295,7 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
                         shutil.copy2(src_frame, dst_frame)
             
             if verbose:
-                print(f"   🎯 Seed frame ({image_ids[seed_frame_idx]}) is now at index 0")
+                print(f"   🎯 Seed frame ({_get_image_id_at_index(image_ids, seed_frame_idx)}) is now at index 0")
             
             # Run backward propagation with properly ordered frames
             
@@ -1339,10 +1365,11 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
     # Create combined results in original frame order using OrderedDict to maintain sequence
     from collections import OrderedDict
     combined_results = OrderedDict()
-    seed_image_id = image_ids[seed_frame_idx]
+    seed_image_id = _get_image_id_at_index(image_ids, seed_frame_idx)
     
     # Process all frames in strict original temporal order
-    for frame_idx, image_id in enumerate(image_ids):
+    image_ids_list = _get_image_ids_list(image_ids)
+    for frame_idx, image_id in enumerate(image_ids_list):
         if frame_idx < seed_frame_idx:
             # Frames before seed: use backward results (excluding seed frame to avoid duplication)
             if image_id in backward_results and image_id != seed_image_id:
@@ -1356,9 +1383,10 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
     combined_results = dict(combined_results)
     
     if verbose:
-        frames_from_backward = sum(1 for frame_idx, image_id in enumerate(image_ids) 
+        image_ids_list = _get_image_ids_list(image_ids)
+        frames_from_backward = sum(1 for frame_idx, image_id in enumerate(image_ids_list) 
                                  if frame_idx < seed_frame_idx and image_id in combined_results)
-        frames_from_forward = sum(1 for frame_idx, image_id in enumerate(image_ids) 
+        frames_from_forward = sum(1 for frame_idx, image_id in enumerate(image_ids_list) 
                                 if frame_idx >= seed_frame_idx and image_id in combined_results)
         
         print(f"   📊 Combined results: {len(combined_results)} total frames")
@@ -1367,7 +1395,8 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
         
         # Verify frame ordering is maintained by checking that keys are in temporal order
         result_image_ids = list(combined_results.keys())
-        result_frame_indices = [image_ids.index(img_id) for img_id in result_image_ids]
+        image_ids_list = _get_image_ids_list(image_ids)
+        result_frame_indices = [image_ids_list.index(img_id) for img_id in result_image_ids]
         if result_frame_indices == sorted(result_frame_indices):
             print(f"   ✅ Frame ordering verified: properly sequential")
             print(f"   📋 Frame sequence: {result_frame_indices[:5]}{'...' if len(result_frame_indices) > 5 else ''}")
@@ -1380,7 +1409,7 @@ def run_bidirectional_propagation(predictor, video_dir: Path, seed_frame_idx: in
             print(f"   🔧 Fixing frame ordering...")
             ordered_results = OrderedDict()
             for frame_idx in sorted(result_frame_indices):
-                image_id = image_ids[frame_idx]
+                image_id = _get_image_id_at_index(image_ids, frame_idx)
                 if image_id in combined_results:
                     ordered_results[image_id] = combined_results[image_id]
             combined_results = dict(ordered_results)
@@ -1433,7 +1462,8 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
         if not image_ids:
             raise ValueError(f"No images found for video_id: {video_id}")
         
-        image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(image_ids)}
+        image_ids_list = _get_image_ids_list(image_ids)
+        image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(image_ids_list)}
         
         # Find seed frame using video annotations
         seed_frame_id, seed_info = find_seed_frame_from_video_annotations(video_annotations, video_id)
@@ -1725,7 +1755,8 @@ def prepare_video_frames_from_annotations(video_id: str, annotations: Dict) -> T
     
     # Verify that the images exist in the processed directory
     missing_images = []
-    for image_id in image_ids:
+    image_ids_list = _get_image_ids_list(image_ids)
+    for image_id in image_ids_list:
         image_path = processed_jpg_images_dir / f"{image_id}.jpg"
         if not image_path.exists():
             missing_images.append(image_id)
@@ -1734,7 +1765,8 @@ def prepare_video_frames_from_annotations(video_id: str, annotations: Dict) -> T
         raise FileNotFoundError(f"Missing {len(missing_images)} images in {processed_jpg_images_dir}: {missing_images[:5]}...")
     
     # Create mapping from image_id to frame index (SAM2 uses indices)
-    image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(image_ids)}
+    image_ids_list = _get_image_ids_list(image_ids)
+    image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(image_ids_list)}
     
     return processed_jpg_images_dir, image_ids, image_id_to_frame_idx, video_info
 
@@ -1801,7 +1833,8 @@ def prepare_video_frames_from_image_paths(video_id: str, video_annotations: Dict
     
     # Verify that all images exist using the exact approach from experiment_metadata_utils
     missing_images = []
-    for image_id in image_ids:
+    image_ids_list = _get_image_ids_list(image_ids)
+    for image_id in image_ids_list:
         image_path = video_dir / f"{image_id}.jpg"
         if not image_path.exists():
             missing_images.append(image_id)
@@ -1810,7 +1843,8 @@ def prepare_video_frames_from_image_paths(video_id: str, video_annotations: Dict
         raise FileNotFoundError(f"Missing {len(missing_images)} images in {video_dir}: {missing_images[:5]}...")
     
     # Create mapping from image_id to frame index (SAM2 uses indices)
-    image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(image_ids)}
+    image_ids_list = _get_image_ids_list(image_ids)
+    image_id_to_frame_idx = {image_id: idx for idx, image_id in enumerate(image_ids_list)}
     
     print(f"   📄 Found {len(image_ids)} images")
     
@@ -1840,7 +1874,8 @@ def find_seed_frame_from_video_annotations(video_annotations: Dict[str, List[Dic
     
     # Consider first 20% of frames
     first_20_percent = max(1, len(all_image_ids) // 5)
-    early_frames = all_image_ids[:first_20_percent]
+    all_image_ids_list = _get_image_ids_list(all_image_ids)
+    early_frames = all_image_ids_list[:first_20_percent]
     
     # Count detections in early frames
     detection_counts = []
@@ -1878,9 +1913,9 @@ def find_seed_frame_from_video_annotations(video_annotations: Dict[str, List[Dic
         'seed_frame': seed_frame,
         'num_embryos': mode_count,
         'detections': frame_detection_info[seed_frame]['detections'],
-        'is_first_frame': seed_frame == all_image_ids[0],
-        'all_frames': all_image_ids,
-        'seed_frame_index': all_image_ids.index(seed_frame)
+        'is_first_frame': seed_frame == _get_image_id_at_index(all_image_ids, 0),
+        'all_frames': _get_image_ids_list(all_image_ids),
+        'seed_frame_index': _get_image_ids_list(all_image_ids).index(seed_frame)
     }
     
     return seed_frame, seed_info
