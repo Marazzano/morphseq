@@ -1,7 +1,4 @@
 """
-@GPT4.1 - IMPLEMENT DataOrganizer class here
-
-DETAILED REQUIREMENTS from module_0_2_simplified_dataorganization.md:
 
 ## EntityIDTracker Integration:
 EntityIDTracker serves as a PURE CONTAINER for entity validation and tracking.
@@ -201,7 +198,7 @@ class DataOrganizer:
             if cand and Path(cand).exists():
                 try:
                     df = pd.read_csv(cand)
-                    logger.info(f"Loaded legacy metadata CSV: {cand}")
+                    # logger.info(f"Loaded legacy metadata CSV: {cand}")
                     return df
                 except Exception as e:
                     logger.warning(f"Failed to load CSV {cand}: {e}")

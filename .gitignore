@@ -86,7 +86,7 @@ src/build/__pychache__/
 
 # Ignore generated test data
 test_data/
-*.csv
-*.mp4
-*.jpg
-*.png
+# *.csv
+# *.mp4
+# *.jpg
+# *.png

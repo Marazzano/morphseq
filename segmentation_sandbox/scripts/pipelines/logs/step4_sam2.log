@@ -1,1 +1,704 @@
-❌ Annotations file not found: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/detections/gdino_detections.json
+🎬 SAM2 Video Processing Pipeline
+==================================================
+📋 Config: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/configs/pipeline_config.yaml
+📊 Metadata: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/experiment_metadata.json
+🎯 Annotations: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/detections/gdino_detections.json
+💾 Output: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+🎭 Target prompt: 'individual embryo'
+📦 Format: rle
+🖥️  Device: cuda
+🔬 Processing entities: ['20250612_30hpf_ctrl_atf6']
+
+🔧 Loading SAM2 configuration...
+🎬 Initializing GroundedSamAnnotations...
+🎬 Initializing GroundedSamAnnotations...
+   Target prompt: 'individual embryo'
+   Segmentation format: rle
+   Output file: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+📚 Loading components...
+✅ Components loaded successfully
+📂 Loaded existing results from /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+✅ GroundedSamAnnotations initialized successfully
+🔧 Loading SAM2 model...
+🔧 Loading SAM2 model...
+ℹ️ Using SAM2 model root from config: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/models/sam2/sam2
+✅ SAM2 model loaded on GPU
+✅ SAM2 model loaded successfully
+🎯 Found 92 videos to process
+📹 Videos:
+   - 20250612_30hpf_ctrl_atf6_F11: 1 images
+   - 20250612_30hpf_ctrl_atf6_A05: 1 images
+   - 20250612_30hpf_ctrl_atf6_F09: 1 images
+   - 20250612_30hpf_ctrl_atf6_G03: 1 images
+   - 20250612_30hpf_ctrl_atf6_D12: 1 images
+   ... and 87 more videos
+
+🔍 Entity cross-reference:
+   GroundedDINO videos: 92
+   SAM2 processed videos: 92
+   Missing videos: 92
+🎯 Processing 92 videos for SAM2 segmentation
+
+📹 Processing video 1/92: 20250612_30hpf_ctrl_atf6_F04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 2/92: 20250612_30hpf_ctrl_atf6_B10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 3/92: 20250612_30hpf_ctrl_atf6_F11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 4/92: 20250612_30hpf_ctrl_atf6_D10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 5/92: 20250612_30hpf_ctrl_atf6_B07
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B07
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B07
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B07: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B07 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B07: name '_get_image_ids_list' is not defined
+
+📹 Processing video 6/92: 20250612_30hpf_ctrl_atf6_G01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 7/92: 20250612_30hpf_ctrl_atf6_F05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 8/92: 20250612_30hpf_ctrl_atf6_H12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H12: name '_get_image_ids_list' is not defined
+
+📹 Processing video 9/92: 20250612_30hpf_ctrl_atf6_C08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 10/92: 20250612_30hpf_ctrl_atf6_G04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 11/92: 20250612_30hpf_ctrl_atf6_G02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 12/92: 20250612_30hpf_ctrl_atf6_A05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 13/92: 20250612_30hpf_ctrl_atf6_F12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F12: name '_get_image_ids_list' is not defined
+
+📹 Processing video 14/92: 20250612_30hpf_ctrl_atf6_E02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 15/92: 20250612_30hpf_ctrl_atf6_A10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 16/92: 20250612_30hpf_ctrl_atf6_H08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 17/92: 20250612_30hpf_ctrl_atf6_F08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 18/92: 20250612_30hpf_ctrl_atf6_B04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 19/92: 20250612_30hpf_ctrl_atf6_A08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 20/92: 20250612_30hpf_ctrl_atf6_A02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 21/92: 20250612_30hpf_ctrl_atf6_H11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 22/92: 20250612_30hpf_ctrl_atf6_C09
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C09
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C09
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C09: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C09 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C09: name '_get_image_ids_list' is not defined
+
+📹 Processing video 23/92: 20250612_30hpf_ctrl_atf6_H01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 24/92: 20250612_30hpf_ctrl_atf6_D06
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D06
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D06
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D06: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D06 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D06: name '_get_image_ids_list' is not defined
+
+📹 Processing video 25/92: 20250612_30hpf_ctrl_atf6_C02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 26/92: 20250612_30hpf_ctrl_atf6_A12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A12: name '_get_image_ids_list' is not defined
+
+📹 Processing video 27/92: 20250612_30hpf_ctrl_atf6_A01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 28/92: 20250612_30hpf_ctrl_atf6_G07
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G07
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G07
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G07: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G07 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G07: name '_get_image_ids_list' is not defined
+
+📹 Processing video 29/92: 20250612_30hpf_ctrl_atf6_F03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 30/92: 20250612_30hpf_ctrl_atf6_F02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 31/92: 20250612_30hpf_ctrl_atf6_D11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 32/92: 20250612_30hpf_ctrl_atf6_E03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 33/92: 20250612_30hpf_ctrl_atf6_E01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 34/92: 20250612_30hpf_ctrl_atf6_H06
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H06
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H06
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H06: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H06 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H06: name '_get_image_ids_list' is not defined
+
+📹 Processing video 35/92: 20250612_30hpf_ctrl_atf6_H04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 36/92: 20250612_30hpf_ctrl_atf6_E05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 37/92: 20250612_30hpf_ctrl_atf6_D04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 38/92: 20250612_30hpf_ctrl_atf6_G06
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G06
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G06
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G06: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G06 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G06: name '_get_image_ids_list' is not defined
+
+📹 Processing video 39/92: 20250612_30hpf_ctrl_atf6_D05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 40/92: 20250612_30hpf_ctrl_atf6_E04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 41/92: 20250612_30hpf_ctrl_atf6_G10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 42/92: 20250612_30hpf_ctrl_atf6_H07
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H07
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H07
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H07: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H07 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H07: name '_get_image_ids_list' is not defined
+
+📹 Processing video 43/92: 20250612_30hpf_ctrl_atf6_E07
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E07
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E07
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E07: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E07 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E07: name '_get_image_ids_list' is not defined
+
+📹 Processing video 44/92: 20250612_30hpf_ctrl_atf6_A09
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A09
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A09
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A09: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A09 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A09: name '_get_image_ids_list' is not defined
+
+📹 Processing video 45/92: 20250612_30hpf_ctrl_atf6_C05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 46/92: 20250612_30hpf_ctrl_atf6_B11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 47/92: 20250612_30hpf_ctrl_atf6_H02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 48/92: 20250612_30hpf_ctrl_atf6_C12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C12: name '_get_image_ids_list' is not defined
+
+📹 Processing video 49/92: 20250612_30hpf_ctrl_atf6_C03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 50/92: 20250612_30hpf_ctrl_atf6_D07
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D07
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D07
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D07: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D07 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D07: name '_get_image_ids_list' is not defined
+
+📹 Processing video 51/92: 20250612_30hpf_ctrl_atf6_E08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 52/92: 20250612_30hpf_ctrl_atf6_G12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G12: name '_get_image_ids_list' is not defined
+
+📹 Processing video 53/92: 20250612_30hpf_ctrl_atf6_G03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 54/92: 20250612_30hpf_ctrl_atf6_H09
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H09
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H09
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H09: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H09 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H09: name '_get_image_ids_list' is not defined
+
+📹 Processing video 55/92: 20250612_30hpf_ctrl_atf6_C11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 56/92: 20250612_30hpf_ctrl_atf6_H03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 57/92: 20250612_30hpf_ctrl_atf6_H10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 58/92: 20250612_30hpf_ctrl_atf6_E10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 59/92: 20250612_30hpf_ctrl_atf6_A11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 60/92: 20250612_30hpf_ctrl_atf6_E11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 61/92: 20250612_30hpf_ctrl_atf6_G09
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G09
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G09
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G09: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G09 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G09: name '_get_image_ids_list' is not defined
+
+📹 Processing video 62/92: 20250612_30hpf_ctrl_atf6_D09
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D09
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D09
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D09: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D09 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D09: name '_get_image_ids_list' is not defined
+
+📹 Processing video 63/92: 20250612_30hpf_ctrl_atf6_A07
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A07
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A07
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A07: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A07 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A07: name '_get_image_ids_list' is not defined
+
+📹 Processing video 64/92: 20250612_30hpf_ctrl_atf6_A03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 65/92: 20250612_30hpf_ctrl_atf6_E12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E12: name '_get_image_ids_list' is not defined
+
+📹 Processing video 66/92: 20250612_30hpf_ctrl_atf6_C10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 67/92: 20250612_30hpf_ctrl_atf6_C01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 68/92: 20250612_30hpf_ctrl_atf6_E06
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_E06
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_E06
+❌ Error processing video 20250612_30hpf_ctrl_atf6_E06: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_E06 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_E06: name '_get_image_ids_list' is not defined
+
+📹 Processing video 69/92: 20250612_30hpf_ctrl_atf6_B09
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B09
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B09
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B09: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B09 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B09: name '_get_image_ids_list' is not defined
+
+📹 Processing video 70/92: 20250612_30hpf_ctrl_atf6_B01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 71/92: 20250612_30hpf_ctrl_atf6_G08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 72/92: 20250612_30hpf_ctrl_atf6_D03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 73/92: 20250612_30hpf_ctrl_atf6_F09
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F09
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F09
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F09: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F09 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F09: name '_get_image_ids_list' is not defined
+
+📹 Processing video 74/92: 20250612_30hpf_ctrl_atf6_F01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 75/92: 20250612_30hpf_ctrl_atf6_H05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_H05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_H05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_H05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_H05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_H05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 76/92: 20250612_30hpf_ctrl_atf6_D08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 77/92: 20250612_30hpf_ctrl_atf6_C04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_C04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_C04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_C04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_C04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_C04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 78/92: 20250612_30hpf_ctrl_atf6_B02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 79/92: 20250612_30hpf_ctrl_atf6_F07
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F07
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F07
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F07: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F07 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F07: name '_get_image_ids_list' is not defined
+
+📹 Processing video 80/92: 20250612_30hpf_ctrl_atf6_G11
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G11
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G11
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G11: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G11 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G11: name '_get_image_ids_list' is not defined
+
+📹 Processing video 81/92: 20250612_30hpf_ctrl_atf6_B05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 82/92: 20250612_30hpf_ctrl_atf6_B08
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B08
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B08
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B08: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B08 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B08: name '_get_image_ids_list' is not defined
+
+📹 Processing video 83/92: 20250612_30hpf_ctrl_atf6_F10
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F10
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F10
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F10: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F10 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F10: name '_get_image_ids_list' is not defined
+
+📹 Processing video 84/92: 20250612_30hpf_ctrl_atf6_A04
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A04
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A04
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A04: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A04 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A04: name '_get_image_ids_list' is not defined
+
+📹 Processing video 85/92: 20250612_30hpf_ctrl_atf6_A06
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_A06
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_A06
+❌ Error processing video 20250612_30hpf_ctrl_atf6_A06: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_A06 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_A06: name '_get_image_ids_list' is not defined
+
+📹 Processing video 86/92: 20250612_30hpf_ctrl_atf6_B03
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B03
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B03
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B03: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B03 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B03: name '_get_image_ids_list' is not defined
+
+📹 Processing video 87/92: 20250612_30hpf_ctrl_atf6_D12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D12: name '_get_image_ids_list' is not defined
+
+📹 Processing video 88/92: 20250612_30hpf_ctrl_atf6_G05
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_G05
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_G05
+❌ Error processing video 20250612_30hpf_ctrl_atf6_G05: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_G05 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_G05: name '_get_image_ids_list' is not defined
+
+📹 Processing video 89/92: 20250612_30hpf_ctrl_atf6_D01
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D01
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D01
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D01: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D01 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D01: name '_get_image_ids_list' is not defined
+
+📹 Processing video 90/92: 20250612_30hpf_ctrl_atf6_F06
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_F06
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_F06
+❌ Error processing video 20250612_30hpf_ctrl_atf6_F06: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_F06 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_F06: name '_get_image_ids_list' is not defined
+
+📹 Processing video 91/92: 20250612_30hpf_ctrl_atf6_D02
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_D02
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_D02
+❌ Error processing video 20250612_30hpf_ctrl_atf6_D02: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_D02 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_D02: name '_get_image_ids_list' is not defined
+
+📹 Processing video 92/92: 20250612_30hpf_ctrl_atf6_B12
+🎬 Processing video: 20250612_30hpf_ctrl_atf6_B12
+🎬 Processing single video: 20250612_30hpf_ctrl_atf6_B12
+❌ Error processing video 20250612_30hpf_ctrl_atf6_B12: name '_get_image_ids_list' is not defined
+❌ Video 20250612_30hpf_ctrl_atf6_B12 processing failed: name '_get_image_ids_list' is not defined
+❌ Error processing 20250612_30hpf_ctrl_atf6_B12: name '_get_image_ids_list' is not defined
+ℹ️ Hierarchy validation disabled
+📋 Entity tracker updated: {'experiments': 1, 'videos': 92, 'images': 0, 'embryos': 0, 'snips': 0}
+📦 Created backup: grounded_sam_segmentations.backup.20250829_121757.json
+🗑️  Removed old backup: grounded_sam_segmentations.backup.20250829_121538.json
+💾 SAM2 results saved to /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+
+✅ Processing complete: {'processed': 0, 'errors': 92, 'total': 92}
+
+==================================================
+✅ SAM2 Video Processing Complete!
+⏱️  Processing time: 0:00:00.090399
+📊 Videos processed: 0
+❌ Errors: 92
+💾 Output saved to: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+
+📈 Final Statistics:
+   🧪 Experiments: 1
+   🖼️  Images: 0
+   🎭 Snips: 0
+   📦 Format: rle

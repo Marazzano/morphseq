@@ -93,7 +93,9 @@ class SimpleMaskExporter:
         """Export set of images to labeled mask files"""
         exported = {}
         
-        for image_id in image_ids:
+        # Handle both list and dictionary formats for image_ids
+        image_ids_list = sorted(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
+        for image_id in image_ids_list:
             embryo_data = self._get_embryo_data(image_id)
             if not embryo_data:
                 continue

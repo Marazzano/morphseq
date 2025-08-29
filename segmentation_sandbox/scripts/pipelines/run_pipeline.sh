@@ -33,8 +33,8 @@ MASK_EXPORT=$ROOT/data/exported_masks
 mkdir -p logs
 
 # Example experiments (uncomment to process specific experiments)
-EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6,20231206,20240418,20250305"
-# EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6"
+# EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6,20231206,20240418,20250305"
+EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6"
 
 # Colors for output
 RED='\033[0;31m'

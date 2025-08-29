@@ -322,7 +322,7 @@ GroundedDINO model loaded successfully on cuda.
 ✅ Inference complete: processed 96/96 images
 ✅ Processed 96 images
 ✅ Entity validation passed: 96 images
-📦 Created backup: gdino_detections.backup.20250819_053829.json
+📦 Created backup: gdino_detections.backup.20250829_072332.json
 ✅ Phase 1 complete: Detection finished
 
 ============================================================
@@ -358,7 +358,7 @@ Found 96 images with 'individual embryo' annotations
    Final images: 92
    Experiments processed: 1
 ✅ Entity validation passed: 96 images
-📦 Created backup: gdino_detections.backup.20250819_053829.json
+📦 Created backup: gdino_detections.backup.20250829_072332.json
 ✅ Phase 2 complete: Quality filtering finished
 
 ============================================================

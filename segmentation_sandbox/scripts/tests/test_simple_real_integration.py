@@ -62,7 +62,9 @@ def test_metadata_driven_path_logic():
     print(f"✅ Image IDs: {image_ids}")
     
     # Test constructing paths using the stored metadata
-    for image_id in image_ids:
+    # Handle both list and dictionary formats for image_ids
+    image_ids_list = sorted(image_ids.keys()) if isinstance(image_ids, dict) else image_ids
+    for image_id in image_ids_list:
         # Extract frame number for filename
         frame_part = image_id.split('_t')[-1]  # e.g., "0000" 
         expected_filename = f"{frame_part}.jpg"
