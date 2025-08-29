@@ -36,6 +36,23 @@ import warnings
 from pathlib import Path
 from typing import Sequence, List
 from itertools import chain
+import os
+
+def resolve_sandbox_embryo_mask(root: str | Path, date: str, well: str, time_int: int) -> Path:
+    """Resolve integer-labeled embryo mask path from segmentation_sandbox export.
+
+    - Base directory can be overridden via MORPHSEQ_SANDBOX_MASKS_DIR
+    - No legacy fallback (fail fast to validate pipeline readiness)
+    """
+    root = Path(root)
+    base_override = os.environ.get("MORPHSEQ_SANDBOX_MASKS_DIR")
+    base = Path(base_override) if base_override else (root / "segmentation_sandbox" / "data" / "exported_masks")
+    mask_dir = base / str(date) / "masks"
+    stub = f"{well}_t{int(time_int):04}*"
+    candidates = sorted(mask_dir.glob(stub))
+    if not candidates:
+        raise FileNotFoundError(f"Sandbox embryo mask not found for pattern: {mask_dir}/{stub}")
+    return candidates[0]
 
 # Suppress the specific warning from skimage
 warnings.filterwarnings("ignore", message="Only one label was provided to `remove_small_objects`")
@@ -129,22 +146,28 @@ def export_embryo_snips(r: int,
     root = Path(root)
     row = stats_df.iloc[r].copy()
 
-    # --- Load embryo mask from SAM2 CSV path ---
-    masks_base_dir = root / "segmentation_sandbox" / "data" / "exported_masks"
+    # --- Load embryo mask from segmentation_sandbox (integer-labeled) ---
     date = str(row["experiment_date"])
-    mask_filename = row["exported_mask_path"]
-    mask_path = masks_base_dir / date / "masks" / mask_filename
-
-    if not mask_path.exists():
-        warnings.warn(f"Mask file not found, skipping snip export: {mask_path}", stacklevel=2)
-        return True # Return True for out_of_frame_flag to indicate failure
-
-    im_mask_multi_embryo = io.imread(mask_path)
-    lbi = row["region_label"]
-    im_mask = (im_mask_multi_embryo == lbi).astype(int)
+    well = row["well"]
+    time_int = int(row["time_int"])
+    mask_path = resolve_sandbox_embryo_mask(root, date, well, time_int)
+    im_mask_int = io.imread(mask_path)
+    lbi = int(row["region_label"])  # assumes present; MVP scope
+    im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
     
-    # Create a dummy yolk mask since it's not available from SAM2 pipeline
-    im_yolk = np.zeros_like(im_mask)
+    # Load yolk from legacy segmentation (keep non-embryo masks unchanged)
+    legacy_seg = root / 'built_image_data' / 'segmentation'
+    im_yolk = None
+    if legacy_seg.exists():
+        yolk_dirs = [p for p in legacy_seg.glob("*") if p.is_dir() and "yolk" in p.name]
+        if yolk_dirs:
+            stub = f"{well}_t{time_int:04}*"
+            candidates = sorted((yolk_dirs[0] / date).glob(stub))
+            if candidates:
+                im_yolk = io.imread(candidates[0])
+    if im_yolk is None:
+        warnings.warn("Legacy yolk mask not found; proceeding with empty yolk mask for 2D snips.")
+        im_yolk = np.zeros_like(im_mask)
 
     # --- Load Full-Frame Image ---
     ff_image_path = root / 'segmentation_sandbox' / 'data' / 'raw_data_organized'
@@ -163,7 +186,10 @@ def export_embryo_snips(r: int,
     else:
         px_dim_raw = 1.0
 
-    im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row)
+    # For single-embryo binary mask, set region_label=1 so downstream selection stays unchanged
+    row_for_mask = row.copy()
+    row_for_mask["region_label"] = 1
+    im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row_for_mask)
 
     if im_ff.shape[0] < im_ff.shape[1]:
         im_ff = im_ff.transpose(1,0)
@@ -517,27 +543,20 @@ def get_embryo_stats(index: int,
     root = Path(root)
     row = embryo_metadata_df.loc[index].copy()
 
-    # --- Load embryo mask from SAM2 CSV path ---
-    masks_base_dir = root / "segmentation_sandbox" / "data" / "exported_masks"
-    
+    # --- Load embryo mask from segmentation_sandbox (integer-labeled) ---
     date = str(row["experiment_date"])
-    mask_filename = row["exported_mask_path"]
-    
-    mask_path = masks_base_dir / date / "masks" / mask_filename
-    
-    if not mask_path.exists():
-        warnings.warn(f"Mask file not found: {mask_path}", stacklevel=2)
-        row.loc["dead_flag"] = False
-        row.loc["no_yolk_flag"] = False
-        row.loc["frame_flag"] = False
-        row.loc["focus_flag"] = False
-        row.loc["bubble_flag"] = False
+    well = row["well"]
+    time_int = int(row["time_int"])
+    mask_path = resolve_sandbox_embryo_mask(root, date, well, time_int)
+    if not Path(mask_path).exists():
+        warnings.warn(f"Sandbox mask not found: {mask_path}", stacklevel=2)
+        for c in ["dead_flag","no_yolk_flag","frame_flag","focus_flag","bubble_flag"]:
+            row.loc[c] = False
         return pd.DataFrame(row).transpose()
 
-    im_mask_multi_embryo = io.imread(mask_path)
-    
-    lbi = row["region_label"]
-    im_mask_lb = (im_mask_multi_embryo == lbi).astype(int)
+    im_mask_int = io.imread(mask_path)
+    lbi = int(row["region_label"])  # assumes present; MVP scope
+    im_mask_lb = ((im_mask_int == lbi) * 255).astype(np.uint8)
 
     # --- Perform calculations and QC checks ---
     # Calculations depending on legacy metadata columns that are not in the SAM2 CSV
@@ -548,6 +567,7 @@ def get_embryo_stats(index: int,
 
     row.loc["surface_area_um"] = row["area_px"] * (px_dim ** 2)
     
+    # Use binary mask for basic geometry
     yy, xx = np.indices(im_mask_lb.shape)
     mask_coords = np.c_[xx[im_mask_lb==1], yy[im_mask_lb==1]]
     if mask_coords.shape[0] > 1:
