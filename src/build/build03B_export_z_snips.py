@@ -86,12 +86,25 @@ def export_embryo_snips_z(r, root, embryo_metadata_df, experiment_log, dl_rad_um
         print(f"No SAM2 mask found for {date} {im_stub}")
         return
     im_emb_path = mask_candidates[0]
-    im_mask = io.imread(im_emb_path)
-    # no yolk mask from SAM2; use empty yolk mask
-    im_yolk = np.zeros_like(im_mask)
+    im_mask_int = io.imread(im_emb_path)
+    # Load yolk from legacy segmentation (keep non-embryo masks unchanged)
+    legacy_seg = os.path.join(root, 'built_image_data', 'segmentation', '')
+    seg_dir_list_raw = glob.glob(legacy_seg + "*")
+    seg_dir_list = [s for s in seg_dir_list_raw if os.path.isdir(s)]
+    yolk_dirs_legacy = [m for m in seg_dir_list if "yolk" in m]
+    if not yolk_dirs_legacy:
+        raise FileNotFoundError(f"Legacy yolk segmentation directory not found under {legacy_seg}")
+    yolk_candidates = sorted(glob.glob(os.path.join(yolk_dirs_legacy[0], date, im_stub)))
+    if not yolk_candidates:
+        raise FileNotFoundError(f"Legacy yolk mask not found for pattern: {os.path.join(yolk_dirs_legacy[0], date, im_stub)}")
+    im_yolk = io.imread(yolk_candidates[0])
 
-    # Normalize/select embryo mask using region_label
-    im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row)
+    # Convert integer-labeled mask to single-embryo binary via region_label, then set region_label=1
+    lbi = int(row["region_label"])  # expects region_label present from SAM2 metadata
+    im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
+    row_for_mask = row.copy()
+    row_for_mask["region_label"] = 1
+    im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row_for_mask)
 
     ############
     # Load Image Stack
