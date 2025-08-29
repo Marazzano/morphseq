@@ -84,7 +84,7 @@ WELL_STANDALONE_PATTERN = rf'^{WELL_PATTERN}$'  # Full well validation
 EXPERIMENT_START_PATTERN = r'^20\d{6}'          # Must start with date
 
 
-def parse_entity_id(entity_id: str, entity_type: Optional[str] = None, verbose=False) -> Dict[str, str]:
+def parse_entity_id(entity_id: str, entity_type: Optional[str] = None) -> Dict[str, str]:
     """Parse an entity ID into components.
 
     Args:
@@ -98,6 +98,10 @@ def parse_entity_id(entity_id: str, entity_type: Optional[str] = None, verbose=F
     Returns:
         Dict[str, str]: Parsed components including at minimum
             {"entity_type": <type>} and higher-level IDs.
+
+    Raises:
+        ValueError: If an invalid `entity_type` is provided or if the ID does
+            not conform to the expected format for the given type.
     """
     # Normalize/validate optional override
     if entity_type is not None:
@@ -108,12 +112,11 @@ def parse_entity_id(entity_id: str, entity_type: Optional[str] = None, verbose=F
                 f"Invalid entity_type '{entity_type}'. Must be one of {sorted(valid_types)}."
             )
     else:
-        if verbose:
-            warnings.warn(
-                "No entity_type provided; will autodetect entity type from the provided entity_id.",
-                UserWarning,
-            )
-        # Always autodetect regardless of verbose
+        # Warn when no explicit entity_type was provided and autodetection will be used
+        warnings.warn(
+            "No entity_type provided; will autodetect entity type from the provided entity_id.",
+            UserWarning,
+        )
         entity_type = get_entity_type(entity_id)
 
     # Dispatch to the correct backwards parser
@@ -128,7 +131,9 @@ def parse_entity_id(entity_id: str, entity_type: Optional[str] = None, verbose=F
     elif entity_type == "experiment":
         return {"experiment_id": entity_id, "entity_type": "experiment"}
 
+    # This should be unreachable due to validation above, but keep a guard.
     raise ValueError(f"Unhandled entity_type '{entity_type}'.")
+
 
 def get_entity_type(entity_id: str) -> str:
     """Return: experiment/video/image/embryo/snip."""
