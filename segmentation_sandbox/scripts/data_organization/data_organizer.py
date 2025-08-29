@@ -176,19 +176,39 @@ class DataOrganizer:
             return obj
     @staticmethod
     def load_legacy_metadata_csv(experiment_name):
-        """Load raw image metadata from legacy build scripts"""
-        # in future scripts might want to push in the data dir
-        csv_path = f"/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/built_metadata_files/{experiment_name}_metadata.csv"
-        if os.path.exists(csv_path):
-            try:
-                df = pd.read_csv(csv_path)
-                return df
-            except Exception as e:
-                logger.warning(f"Failed to load CSV {csv_path}: {e}")
-                return None
-        else:
-            logger.warning(f"Legacy metadata CSV not found: {csv_path}")
-            return None
+        """Load raw image metadata from legacy build scripts.
+
+        Resolution order (first existing is used):
+        1) Repo-relative: <repo_root>/metadata/built_metadata_files/{experiment_name}_metadata.csv
+        2) Env var MORPHSEQ_METADATA_ROOT: $MORPHSEQ_METADATA_ROOT/{experiment_name}_metadata.csv
+        3) Legacy absolute path (lab NFS) as last resort
+        """
+        candidates = []
+        # 1) repo-relative
+        try:
+            repo_root = Path(__file__).resolve().parents[3]
+            candidates.append(repo_root / "metadata" / "built_metadata_files" / f"{experiment_name}_metadata.csv")
+        except Exception:
+            pass
+        # 2) env var
+        env_root = os.getenv("MORPHSEQ_METADATA_ROOT")
+        if env_root:
+            candidates.append(Path(env_root) / f"{experiment_name}_metadata.csv")
+        # 3) legacy absolute
+        candidates.append(Path(f"/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/built_metadata_files/{experiment_name}_metadata.csv"))
+
+        for cand in candidates:
+            if cand and Path(cand).exists():
+                try:
+                    df = pd.read_csv(cand)
+                    logger.info(f"Loaded legacy metadata CSV: {cand}")
+                    return df
+                except Exception as e:
+                    logger.warning(f"Failed to load CSV {cand}: {e}")
+                    return None
+
+        logger.warning(f"Legacy metadata CSV not found for {experiment_name} in any candidate path")
+        return None
     
     @staticmethod
     def parse_video_id_for_metadata(video_id):
@@ -266,7 +286,8 @@ class DataOrganizer:
             
             video_data.update({
                 'well_id': well_id,
-                'source_well_metadata_csv': f"/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/built_metadata_files/{experiment_name}_metadata.csv",
+                # Store a relative path hint; actual resolution happens at load-time
+                'source_well_metadata_csv': f"metadata/built_metadata_files/{experiment_name}_metadata.csv",
                 'medium': to_python_type(first_row.get('medium', None)),
                 'genotype': to_python_type(first_row.get('genotype', None)),
                 'chem_perturbation': to_python_type(first_row.get('chem_perturbation', None)),
@@ -319,30 +340,37 @@ class DataOrganizer:
                     else:
                         return val
                 
+                # Normalize channel column name from CSV (supports both 'BF Channel' and 'Channel')
+                ch_val = row.get('BF Channel', None)
+                if pd.isna(ch_val) if 'BF Channel' in row else True:
+                    ch_val = row.get('Channel', None)
+
                 image_info['raw_image_data_info'] = {
                     # Original CSV column names (preserves data lineage)
                     'Height (um)': to_python_type(row.get('Height (um)', None)),
                     'Height (px)': to_python_type(row.get('Height (px)', None)),
                     'Width (um)': to_python_type(row.get('Width (um)', None)),
                     'Width (px)': to_python_type(row.get('Width (px)', None)),
-                    'Channel': to_python_type(row.get('Channel', None)),
+                    'BF Channel': to_python_type(ch_val),
                     'Objective': to_python_type(row.get('Objective', None)),
                     'Time (s)': to_python_type(row.get('Time (s)', None)),
                     'Time Rel (s)': to_python_type(row.get('Time Rel (s)', None)),
-                    
+
                     # Code-friendly aliases
                     'height_um': to_python_type(row.get('Height (um)', None)),
                     'height_px': to_python_type(row.get('Height (px)', None)),
                     'width_um': to_python_type(row.get('Width (um)', None)),
                     'width_px': to_python_type(row.get('Width (px)', None)),
-                    'bf_channel': to_python_type(row.get('Channel', None)),
+                    'bf_channel': to_python_type(ch_val),
                     'objective': to_python_type(row.get('Objective', None)),
                     'raw_time_s': to_python_type(row.get('Time (s)', None)),
                     'relative_time_s': to_python_type(row.get('Time Rel (s)', None)),
-                    
+
                     # Additional metadata
                     'experiment_date': to_python_type(row.get('experiment_date', None)),
-                    'time_string': to_python_type(row.get('time_string', None))
+                    'time_string': to_python_type(row.get('time_string', None)),
+                    'microscope': to_python_type(row.get('microscope', None)),
+                    'nd2_series_num': to_python_type(row.get('nd2_series_num', None)),
                 }
             else:
                 logger.warning(f"No CSV data found for image {image_id}, time_int={time_int}")
