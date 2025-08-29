@@ -186,10 +186,6 @@ def calculate_detection_iou(box1_xyxy: List[float], box2_xyxy: List[float]) -> f
 
 
 class GroundedDinoAnnotations:
-    @property
-    def has_unsaved_changes(self) -> bool:
-        """Check for unsaved changes."""
-        return getattr(self, '_unsaved_changes', False)
     """
     GroundingDINO annotation manager with experiment metadata integration.
     

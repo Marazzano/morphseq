@@ -152,13 +152,37 @@ class DataOrganizer:
     - Parallel processing with ThreadPoolExecutor for JPEG conversion
     - Smart skip logic to avoid reprocessing existing files
     """
+    
     @staticmethod
-    def load_legacy_metadata_csv(experiment_date):
+    def convert_to_json_serializable(obj):
+        """Convert pandas/numpy types to JSON serializable Python types"""
+        import numpy as np
+        
+        if obj is None:
+            return None
+        elif isinstance(obj, dict):
+            return {k: DataOrganizer.convert_to_json_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [DataOrganizer.convert_to_json_serializable(v) for v in obj]
+        elif pd.isna(obj):
+            return None
+        elif hasattr(obj, 'item'):  # numpy/pandas types
+            return obj.item()
+        elif isinstance(obj, (np.integer, np.floating)):
+            return obj.item()
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return obj
+    @staticmethod
+    def load_legacy_metadata_csv(experiment_name):
         """Load raw image metadata from legacy build scripts"""
-        csv_path = f"metadata/built_metadata_files/{experiment_date}_metadata.csv"
+        # in future scripts might want to push in the data dir
+        csv_path = f"/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/built_metadata_files/{experiment_name}_metadata.csv"
         if os.path.exists(csv_path):
             try:
-                return pd.read_csv(csv_path)
+                df = pd.read_csv(csv_path)
+                return df
             except Exception as e:
                 logger.warning(f"Failed to load CSV {csv_path}: {e}")
                 return None
@@ -168,46 +192,99 @@ class DataOrganizer:
     
     @staticmethod
     def parse_video_id_for_metadata(video_id):
-        """Extract experiment_date and well_id from video_id"""
-        # Format: "20240418_A01" or "20240418_A01_ch00" (per parsing_id_convention.md)
-        parts = video_id.split('_')
-        experiment_date = parts[0]  # "20240418"
-        well_id = parts[1]         # "A01"
-        channel = parts[2] if len(parts) > 2 else "ch00"
-        return experiment_date, well_id, channel
-    
+        """Extract experiment_name and well_id from video_id using existing parsing utils"""
+        try:
+            # Try existing parsing utils first
+            # print(video_id)
+            experiment_id = extract_experiment_id(video_id)
+            # print(experiment_id)
+            logger.debug(f"🔍 DEBUG: extract_experiment_id('{video_id}') returned: '{experiment_id}'")
+            
+            # Extract well_id - should be last part after splitting by '_'
+            parts = video_id.split('_')
+            well_id = parts[-1] if len(parts) > 0 else "unknown"
+            
+            logger.debug(f"Parsed video_id '{video_id}' as experiment_id='{experiment_id}', well_id='{well_id}'")
+            return experiment_id, well_id, "ch00"
+            
+        except Exception as e:
+            logger.warning(f"Error using extract_experiment_id: {e}")
+            logger.debug(f"Falling back to manual parsing...")
+            
+            # Fallback to manual parsing
+            parts = video_id.split('_')
+            if len(parts) >= 2:
+                well_id = parts[-1]  # Last part is always well_id (A01)
+                experiment_name = '_'.join(parts[:-1])  # Everything else is experiment_name
+                #logger.debug(f"Manual parse: experiment_name='{experiment_name}', well_id='{well_id}'")
+                return experiment_name, well_id, "ch00"
+            else:
+                logger.error(f"Could not parse video_id: {video_id}")
+                return video_id, "unknown", "ch00"
+
     @staticmethod
-    def enhance_video_metadata_with_csv(video_data, csv_df, experiment_date, well_id):
+    def enhance_video_metadata_with_csv(video_data, csv_df, experiment_name, well_id):
         """Transform video metadata to enhanced schema"""
+        logger.debug(f"Starting schema enhancement for {experiment_name}_{well_id}")
+        
         if csv_df is None:
+            logger.warning(f"No CSV data available for enhancement")
             return video_data
         
         # 1. Add well-level metadata (constant per well)
-        well_rows = csv_df[csv_df['well_id'] == f"{experiment_date}_{well_id}"]
-        if well_rows.empty:
-            # Try without experiment_date prefix
-            well_rows = csv_df[csv_df['well_id'] == well_id]
+        logger.debug(f"Looking for well rows matching '{well_id}' in CSV...")
         
+        # Try different matching strategies
+        if 'well_id' in csv_df.columns:
+            well_rows = csv_df[csv_df['well_id'].str.contains(well_id, na=False)]
+            logger.debug(f"Strategy 1 (contains {well_id}): Found {len(well_rows)} rows")
+            
+            if well_rows.empty:
+                # Try exact match
+                well_rows = csv_df[csv_df['well_id'] == well_id]
+                logger.debug(f"Strategy 2 (exact {well_id}): Found {len(well_rows)} rows")
+                
+        elif 'well' in csv_df.columns:
+            well_rows = csv_df[csv_df['well'] == well_id]
+            logger.debug(f"Strategy 3 (well column {well_id}): Found {len(well_rows)} rows")
+        else:
+            well_rows = pd.DataFrame()  # Empty
+            logger.warning(f"No well_id or well column found")
+            
         if not well_rows.empty:
             first_row = well_rows.iloc[0]
+            logger.debug(f"Adding well metadata from first matching row")
+            
+            # Convert pandas values to native Python types for JSON serialization
+            def to_python_type(val):
+                if pd.isna(val):
+                    return None
+                elif hasattr(val, 'item'):  # numpy types
+                    return val.item()
+                else:
+                    return val
+            
             video_data.update({
                 'well_id': well_id,
-                'source_well_metadata_csv': f"metadata/built_metadata_files/{experiment_date}_metadata.csv",
-                'medium': first_row.get('medium', None),
-                'genotype': first_row.get('genotype', None),
-                'chem_perturbation': first_row.get('chem_perturbation', None),
-                'start_age_hpf': first_row.get('start_age_hpf', None),
-                'embryos_per_well': first_row.get('embryos_per_well', None),
-                'temperature': first_row.get('temperature', None),
-                'well_qc_flag': first_row.get('well_qc_flag', None)
+                'source_well_metadata_csv': f"/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/built_metadata_files/{experiment_name}_metadata.csv",
+                'medium': to_python_type(first_row.get('medium', None)),
+                'genotype': to_python_type(first_row.get('genotype', None)),
+                'chem_perturbation': to_python_type(first_row.get('chem_perturbation', None)),
+                'start_age_hpf': to_python_type(first_row.get('start_age_hpf', None)),
+                'embryos_per_well': to_python_type(first_row.get('embryos_per_well', None)),
+                'temperature': to_python_type(first_row.get('temperature', None)),
+                'well_qc_flag': to_python_type(first_row.get('well_qc_flag', None))
             })
+        else:
+            logger.warning(f"No matching rows found for well_id '{well_id}'")
         
         # 2. Transform image_ids from list to dictionary
         old_image_ids = video_data.get('image_ids', [])
+        logger.debug(f"Converting {len(old_image_ids)} image_ids from list to dictionary")
         new_image_ids = {}
         
         for i, image_id in enumerate(old_image_ids):
-            # Extract time_int from image_id (e.g., "20240418_A01_ch00_t0000" -> 0)
+            # Extract time_int from image_id 
             time_int = 0  # default
             if '_t' in image_id:
                 try:
@@ -217,9 +294,11 @@ class DataOrganizer:
             else:
                 time_int = i
             
+            logger.debug(f"Processing image_id '{image_id}' with time_int={time_int}")
+            
             # Find matching CSV row for this well_id + time_int
             matching_rows = csv_df[
-                (csv_df['well_id'].str.endswith(well_id)) & 
+                (csv_df['well_id'].str.contains(well_id, na=False)) & 
                 (csv_df['time_int'] == time_int)
             ]
             
@@ -230,33 +309,47 @@ class DataOrganizer:
             
             if not matching_rows.empty:
                 row = matching_rows.iloc[0]
+                logger.debug(f"Found CSV data for image {image_id}, time_int={time_int}")
+                # Convert pandas values to native Python types for JSON serialization
+                def to_python_type(val):
+                    if pd.isna(val):
+                        return None
+                    elif hasattr(val, 'item'):  # numpy types
+                        return val.item()
+                    else:
+                        return val
+                
                 image_info['raw_image_data_info'] = {
                     # Original CSV column names (preserves data lineage)
-                    'Height (um)': row.get('Height (um)', None),
-                    'Height (px)': row.get('Height (px)', None),
-                    'Width (um)': row.get('Width (um)', None),
-                    'Width (px)': row.get('Width (px)', None),
-                    'BF Channel': row.get('BF Channel', None),
-                    'Objective': row.get('Objective', None),
-                    'Time (s)': row.get('Time (s)', None),
-                    'Time Rel (s)': row.get('Time Rel (s)', None),
+                    'Height (um)': to_python_type(row.get('Height (um)', None)),
+                    'Height (px)': to_python_type(row.get('Height (px)', None)),
+                    'Width (um)': to_python_type(row.get('Width (um)', None)),
+                    'Width (px)': to_python_type(row.get('Width (px)', None)),
+                    'Channel': to_python_type(row.get('Channel', None)),
+                    'Objective': to_python_type(row.get('Objective', None)),
+                    'Time (s)': to_python_type(row.get('Time (s)', None)),
+                    'Time Rel (s)': to_python_type(row.get('Time Rel (s)', None)),
                     
-                    # Code-friendly aliases (avoids fragile dict access)
-                    'height_um': row.get('Height (um)', None),
-                    'height_px': row.get('Height (px)', None),
-                    'width_um': row.get('Width (um)', None),
-                    'width_px': row.get('Width (px)', None),
-                    'bf_channel': row.get('BF Channel', None),
-                    'objective': row.get('Objective', None),
-                    'raw_time_s': row.get('Time (s)', None),
-                    'relative_time_s': row.get('Time Rel (s)', None),
+                    # Code-friendly aliases
+                    'height_um': to_python_type(row.get('Height (um)', None)),
+                    'height_px': to_python_type(row.get('Height (px)', None)),
+                    'width_um': to_python_type(row.get('Width (um)', None)),
+                    'width_px': to_python_type(row.get('Width (px)', None)),
+                    'bf_channel': to_python_type(row.get('Channel', None)),
+                    'objective': to_python_type(row.get('Objective', None)),
+                    'raw_time_s': to_python_type(row.get('Time (s)', None)),
+                    'relative_time_s': to_python_type(row.get('Time Rel (s)', None)),
                     
                     # Additional metadata
-                    'microscope': row.get('microscope', None),
-                    'nd2_series_num': row.get('nd2_series_num', None)
+                    'experiment_date': to_python_type(row.get('experiment_date', None)),
+                    'time_string': to_python_type(row.get('time_string', None))
                 }
+            else:
+                logger.warning(f"No CSV data found for image {image_id}, time_int={time_int}")
             
             new_image_ids[image_id] = image_info
+            
+            # Process all images
         
         # 3. Replace image_ids list with dictionary
         video_data['image_ids'] = new_image_ids
@@ -265,8 +358,9 @@ class DataOrganizer:
         if 'image_size' in video_data:
             video_data['processed_image_size_px'] = video_data.pop('image_size')
         
+        # logger.info(f"Schema enhancement complete. image_ids type: {type(video_data['image_ids'])}")
         return video_data
-    
+
     @staticmethod
     def validate_entity_tracking_completeness(metadata, verbose=False):
         """
@@ -336,12 +430,13 @@ class DataOrganizer:
         metadata_path = raw_data_dir / "experiment_metadata.json"
         
         if verbose:
-            print(f"📂 Source directory: {source_dir}")
-            print(f"📂 Output directory: {raw_data_dir}")
-            print(f"📋 Metadata file: {metadata_path}")
-            print(f"🔄 Overwrite mode: {overwrite}")
-            if not PYVIPS_AVAILABLE:
-                print("⚠️  PyVips not available - using OpenCV (slower). Install with: pip install pyvips")
+            pass
+            # print(f"📂 Source directory: {source_dir}")
+            # print(f"📂 Output directory: {raw_data_dir}")
+            # print(f"📋 Metadata file: {metadata_path}")
+            # print(f"🔄 Overwrite mode: {overwrite}")
+            # if not PYVIPS_AVAILABLE:
+            #     print("⚠️  PyVips not available - using OpenCV (slower). Install with: pip install pyvips")
 
         # Load existing metadata to check what's already processed
         existing_metadata = {}
@@ -350,8 +445,9 @@ class DataOrganizer:
                 with open(metadata_path, 'r') as f:
                     existing_metadata = json.load(f)
                 if verbose:
-                    existing_count = len(existing_metadata.get('experiments', {}))
-                    print(f"📖 Found existing metadata with {existing_count} experiments")
+                    pass
+                    # existing_count = len(existing_metadata.get('experiments', {}))
+                    # print(f"📖 Found existing metadata with {existing_count} experiments")
             except Exception as e:
                 if verbose:
                     print(f"⚠️  Could not load existing metadata: {e}")
@@ -361,11 +457,13 @@ class DataOrganizer:
         if experiment_names:
             experiment_dirs = [Path(source_dir) / name for name in experiment_names if (Path(source_dir) / name).is_dir()]
             if verbose:
-                print(f"🔍 Processing specified experiments: {experiment_names}")
+                pass
+                # print(f"🔍 Processing specified experiments: {experiment_names}")
         else:
             experiment_dirs = DataOrganizer.find_experiment_directories(Path(source_dir))
             if verbose:
-                print(f"🔍 Found {len(experiment_dirs)} experiments in source directory")
+                pass
+                # print(f"🔍 Found {len(experiment_dirs)} experiments in source directory")
 
         if not experiment_dirs:
             print("❌ No experiments found to process!")
@@ -478,16 +576,16 @@ class DataOrganizer:
             experiment_id = exp_dir.name
             print(f"\n🧪 Processing experiment {i}/{len(experiments_to_process)}: {experiment_id}")
             
-            if verbose:
-                stitch_count = len(list(exp_dir.glob('*_stitch.*')))
-                print(f"   Found {stitch_count} stitch files")
+            # if verbose:
+            #     stitch_count = len(list(exp_dir.glob('*_stitch.*')))
+            #     print(f"   Found {stitch_count} stitch files")
                 
             # Process this experiment
-            DataOrganizer.organize_experiment(exp_dir, raw_data_dir, experiment_id, verbose, overwrite)
+            DataOrganizer.organize_experiment(exp_dir, raw_data_dir, experiment_id, False, overwrite)  # Set verbose=False
             
             # Update and save metadata incrementally for robustness
-            if verbose:
-                print(f"   💾 Updating metadata for {experiment_id}...")
+            # if verbose:
+            #     print(f"   💾 Updating metadata for {experiment_id}...")
                 
             current_metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, verbose=False)
             
@@ -499,8 +597,9 @@ class DataOrganizer:
             
             # Save metadata after each experiment (autosave)
             try:
+                current_metadata_clean = DataOrganizer.convert_to_json_serializable(current_metadata)
                 with open(metadata_path, 'w') as f:
-                    json.dump(current_metadata, f, indent=2)
+                    json.dump(current_metadata_clean, f, indent=2)
                 if verbose:
                     exp_count = len(current_metadata.get('experiments', {}))
                     print(f"   ✅ Metadata saved ({exp_count} total experiments)")
@@ -509,11 +608,11 @@ class DataOrganizer:
 
         # Final metadata generation and validation
         print("\n📋 Generating final experiment metadata...")
-        final_metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, verbose)
+        final_metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, verbose=True)  # Keep verbose for our debug
 
         # Add entity tracker (MANDATORY for downstream modules)
-        if verbose:
-            print("📋 Adding embedded entity tracker...")
+        # if verbose:
+        #     print("📋 Adding embedded entity tracker...")
 
         final_metadata = EntityIDTracker.add_entity_tracker(
             final_metadata, 
@@ -525,9 +624,10 @@ class DataOrganizer:
             entity_counts = {k: len(v) for k, v in entities.items()}
             print(f"✅ Entity tracker embedded: {entity_counts}")
 
-        # Final save
+        # Final save with JSON serialization fix
+        final_metadata_clean = DataOrganizer.convert_to_json_serializable(final_metadata)
         with open(metadata_path, 'w') as f:
-            json.dump(final_metadata, f, indent=2)
+            json.dump(final_metadata_clean, f, indent=2)
             
         print(f"✅ Complete! Metadata saved to: {metadata_path}")
         
@@ -872,14 +972,52 @@ class DataOrganizer:
         video_metadata["image_ids"] = image_ids
         video_metadata["total_frames"] = len(image_ids)
         
-        # NEW: Enhance with CSV metadata
-        experiment_date, well_id_parsed, channel = DataOrganizer.parse_video_id_for_metadata(video_id)
-        csv_df = DataOrganizer.load_legacy_metadata_csv(experiment_date)
+        # DEBUG: CSV loading and optional enhancement performed at debug log level
+        experiment_name, well_id_parsed, channel = DataOrganizer.parse_video_id_for_metadata(video_id)
+        # logger.debug(f"Video {video_id} parsed as: exp_name={experiment_name}, well={well_id_parsed}, channel={channel}")
+        
+        csv_df = DataOrganizer.load_legacy_metadata_csv(experiment_name)
+        # logger.debug(f"CSV loaded: {csv_df is not None}, rows: {len(csv_df) if csv_df is not None else 0}")
         
         if csv_df is not None:
+            logger.debug(f"CSV columns: {list(csv_df.columns)}")
+            
+            # Test different well_id matching strategies
+            if 'well_id' in csv_df.columns:
+                well_rows = csv_df[csv_df['well_id'].str.contains(well_id_parsed, na=False)]
+                logger.debug(f"Found {len(well_rows)} rows for well {well_id_parsed} (contains strategy)")
+                if not well_rows.empty:
+                    logger.debug(f"Sample well_id values: {well_rows['well_id'].head().tolist()}")
+            elif 'well' in csv_df.columns:
+                well_rows = csv_df[csv_df['well'] == well_id_parsed]
+                logger.debug(f"Found {len(well_rows)} rows for well {well_id_parsed} (exact well strategy)")
+            else:
+                logger.debug("No well_id or well column found in CSV")
+                logger.debug(f"Available columns: {list(csv_df.columns)}")
+                if len(csv_df) > 0:
+                    logger.debug(f"First row sample: {dict(csv_df.iloc[0])}")
+            
+            # Perform schema transformation at debug level
+            logger.debug("Testing schema transformation...")
             video_metadata = DataOrganizer.enhance_video_metadata_with_csv(
-                video_metadata, csv_df, experiment_date, well_id_parsed
+                video_metadata, csv_df, experiment_name, well_id_parsed
             )
+            
+            logger.debug(f"Enhanced data image_ids type: {type(video_metadata.get('image_ids', []))}")
+            if isinstance(video_metadata.get('image_ids'), dict) and video_metadata['image_ids']:
+                first_key = next(iter(video_metadata['image_ids']))
+                first_data = video_metadata['image_ids'][first_key]
+                logger.debug(f"First image enhanced: {first_key}")
+                logger.debug(f"Raw data keys: {list(first_data.get('raw_image_data_info', {}).keys())}")
+                raw_data = first_data.get('raw_image_data_info', {})
+                if raw_data:
+                    logger.debug(f"Height (um): {raw_data.get('Height (um)')}")
+                    logger.debug(f"height_um alias: {raw_data.get('height_um')}")
+            
+            logger.debug(f"Well metadata - medium: {video_metadata.get('medium')}")
+            logger.debug(f"Well metadata - genotype: {video_metadata.get('genotype')}")
+            
+            # Continue processing without early exit
         
         return video_metadata
 
@@ -901,37 +1039,39 @@ class DataOrganizer:
                 continue
             for video_id, video_data in metadata["experiments"][exp_id]["videos"].items():
                 images_dir = Path(video_data["processed_jpg_images_dir"])
-                
-                # Handle both old (list) and new (dictionary) image_ids formats
-                image_ids = video_data["image_ids"]
-                if isinstance(image_ids, list):
-                    # Legacy format: image_ids as list
-                    for image_id in image_ids:
-                        image_path = DataOrganizer.get_image_path_from_id(image_id, images_dir)
-                        if image_path.exists():
-                            images.append({
-                                'image_id': image_id,
-                                'image_path': str(image_path),
-                                'video_id': video_id,
-                                'well_id': video_data['well_id'],
-                                'experiment_id': exp_id,
-                                'frame_number': int(image_id.split('_t')[-1])
-                            })
-                else:
-                    # Enhanced format: image_ids as dictionary
-                    for image_id, image_info in image_ids.items():
-                        image_path = DataOrganizer.get_image_path_from_id(image_id, images_dir)
-                        if image_path.exists():
-                            frame_index = image_info.get('frame_index', 0)
-                            raw_data = image_info.get('raw_image_data_info', {})
-                            images.append({
-                                'image_id': image_id,
-                                'image_path': str(image_path),
-                                'video_id': video_id,
-                                'well_id': video_data['well_id'],
-                                'experiment_id': exp_id,
-                                'frame_number': int(image_id.split('_t')[-1]),
-                                'frame_index': frame_index,
-                                'raw_image_data_info': raw_data
-                            })
+                for image_id in video_data["image_ids"]:
+                    image_path = DataOrganizer.get_image_path_from_id(image_id, images_dir)
+                    if image_path.exists():
+                        images.append({
+                            'image_id': image_id,
+                            'image_path': str(image_path),
+                            'video_id': video_id,
+                            'well_id': video_data['well_id'],
+                            'experiment_id': exp_id,
+                            'frame_number': int(image_id.split('_t')[-1])
+                        })
         return images
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Test DataOrganizer script.")
+    parser.add_argument("--source_dir", required=True, help="Source directory with experiment data.")
+    parser.add_argument("--output_dir", required=True, help="Output directory for test run.")
+    parser.add_argument("--experiment", required=True, help="Experiment name to process.")
+    args = parser.parse_args()
+
+    DataOrganizer.process_experiments(
+        source_dir=args.source_dir,
+        output_dir=args.output_dir,
+        experiment_names=[args.experiment],
+        verbose=True,
+        overwrite=True
+    )
+
+
+
+# python /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/scripts/data_organization/data_organizer_refactor_test.py   \
+#     --source_dir /net/trapnell/vol1/home/nlammers/projects/data/morphseq/built_image_data/stitched_FF_images   \
+#     --output_dir /net/trapnell/vol1/home/mdcolon/proj/morphseq/test_data/refactor_test_output   \
+#     --experiment "20250612_30hpf_ctrl_atf6"
