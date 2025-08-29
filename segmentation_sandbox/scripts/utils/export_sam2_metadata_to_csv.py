@@ -284,7 +284,14 @@ class SAM2MetadataExporter:
                 seed_frame_id = seed_frame_info.get('seed_frame')
                 
                 image_ids = video_data.get('image_ids', {})
-                for image_id, image_data in image_ids.items():
+                # Ensure deterministic temporal order when dict
+                if isinstance(image_ids, dict):
+                    iter_items = [(iid, image_ids[iid]) for iid in sorted(image_ids.keys())]
+                else:
+                    # legacy list form
+                    iter_items = [(iid, {}) for iid in image_ids]
+
+                for image_id, image_data in iter_items:
                     processed_images += 1
                     
                     # Progress tracking (log every 100 images or 10%)
@@ -333,7 +340,7 @@ class SAM2MetadataExporter:
                             exported_mask_path = self._generate_mask_path(image_id, embryos)
                             
                             # Extract raw metadata from enhanced schema
-                            raw_image_data = image_data.get('raw_image_data_info', {})
+                            raw_image_data = image_data.get('raw_image_data_info', {}) if isinstance(image_data, dict) else {}
                             
                             # Well-level metadata from video_data
                             well_metadata = {
@@ -372,7 +379,8 @@ class SAM2MetadataExporter:
                             raw_image_data.get('Height (px)'), 
                             raw_image_data.get('Width (um)'),
                             raw_image_data.get('Width (px)'),
-                            raw_image_data.get('BF Channel'),
+                            # Accept either 'BF Channel' or fallback to legacy 'Channel'
+                            (raw_image_data.get('BF Channel') if raw_image_data.get('BF Channel') is not None else raw_image_data.get('Channel')),
                             raw_image_data.get('Objective'),
                             raw_image_data.get('Time (s)'),
                             raw_image_data.get('Time Rel (s)'),

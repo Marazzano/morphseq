@@ -671,3 +671,56 @@ px_dim_raw = row["Height (um)"] / row["Height (px)"]
 
 **Ready for**: Phase 2 implementation by next agent with clear working foundation.
 
+---
+
+## 🔎 Repo Reality Check & Actions (added by Codex)
+
+What’s implemented in repo now:
+- Enhanced schema is live in `segmentation_sandbox/scripts/data_organization/data_organizer.py` (list → dict `image_ids`, `raw_image_data_info`, `processed_image_size_px`).
+- CSV exporter `segmentation_sandbox/scripts/utils/export_sam2_metadata_to_csv.py` flattens to a 39‑column CSV, including raw and well metadata.
+- Build03A computes `px_dim_raw = Height (um) / Height (px)` directly; no magic number remains.
+- `ExperimentMetadata` supports both list and dict `image_ids` for compatibility.
+
+Gaps found:
+- Channel key mismatch: organizer writes `'Channel'` while exporter expects `'BF Channel'` → nulls in output.
+- Organizer doesn’t populate `microscope`/`nd2_series_num`; exporter has columns.
+- Hardcoded absolute NFS paths in organizer reduce portability.
+- `scripts/utils/experiment_metadata_utils.py` missing; referenced by SAM2/grounded utils, plus `get_video_info(...)` usage.
+- Some places iterate dict `image_ids` without sorting keys.
+
+Remediation plan applied in this change set:
+- Align keys and add fallbacks so exporter accepts `'Channel'` when `'BF Channel'` absent.
+- Populate optional `microscope`/`nd2_series_num` when present in legacy CSV.
+- Parameterize CSV path resolution: prefer repo‑relative `metadata/built_metadata_files/{experiment}_metadata.csv`, fall back to `MORPHSEQ_METADATA_ROOT` env var, then legacy absolute path.
+- Add minimal `experiment_metadata_utils.py` shim with `load_experiment_metadata`, `get_image_id_paths`, and `get_video_info` to unblock SAM2 utils.
+- Ensure exporter iterates `sorted(image_ids.keys())` for deterministic temporal order.
+- Add dummy test scripts to exercise the bridge and verify required Build03A columns exist.
+
+### ✅ Codex Changes Applied (2025‑08‑29)
+
+- `segmentation_sandbox/scripts/data_organization/data_organizer.py`
+  - CSV path resolution made portable with repo‑relative and `MORPHSEQ_METADATA_ROOT` fallbacks.
+  - Image metadata: write `'BF Channel'` (and alias `'bf_channel'`), include `microscope`, `nd2_series_num` if present.
+  - `source_well_metadata_csv` set to repo‑relative hint.
+- `segmentation_sandbox/scripts/utils/export_sam2_metadata_to_csv.py`
+  - Deterministic iteration over `image_ids` dict via sorted keys.
+  - Fallback handling for `'Channel'` → `'BF Channel'` in raw metadata.
+  - CSV schema validated at 39 columns.
+- `segmentation_sandbox/scripts/utils/experiment_metadata_utils.py` (NEW)
+  - Shim providing `load_experiment_metadata`, `get_image_id_paths`, `get_video_info` used by SAM2/GDINO utils.
+- Dummy runners (NEW):
+  - `segmentation_sandbox/scripts/tests/dummy_make_metadata_and_export.py` → fabricates enhanced metadata and exports CSV.
+  - `segmentation_sandbox/scripts/tests/dummy_verify_build03A_columns.py` → verifies Build03A‑required columns exist.
+
+### 🧪 Local Validation Performed
+
+- Created venv, installed `pandas`, ran dummy export and verification.
+- Exporter produced CSV with 39 columns; Build03A‑required columns present.
+
+### 🔜 Next Steps for the Next Agent
+
+- Run exporter on real SAM2 JSON and compare non‑null rates for all 39 columns; confirm `BF Channel` and time fields are populated across datasets.
+- Review and, if needed, refactor `segmentation_sandbox/scripts/utils/sam2_utils.py` and `.../grounded_sam_utils.py` to consistently use the new shim and ensure sorted `image_ids` usage everywhere.
+- Confirm that all downstream pipeline scripts (03_gdino_detection.py, 04_sam2_segmentation.py, 05_sam2_qc_analysis.py, 06_export_masks.py) work when `image_ids` is a dict; update any remaining list‑assumptions.
+- Document the finalized 39‑column CSV schema in repo docs and align any notebook/users with the new fields.
+- Optionally add a small config (YAML) to specify metadata roots and masks paths instead of relying on environment defaults.
