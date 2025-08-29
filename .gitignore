@@ -83,3 +83,10 @@ src/build/__pychache__/
 **/__pycache__/
 **/data/
 .aider*
+
+# Ignore generated test data
+test_data/
+*.csv
+*.mp4
+*.jpg
+*.png
