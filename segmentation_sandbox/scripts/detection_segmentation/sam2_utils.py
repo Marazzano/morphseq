@@ -712,10 +712,11 @@ class GroundedSamAnnotations(BaseFileHandler):
             # Convert sam2_results to the canonical image_ids mapping using frame ordering
 
             video_info = self.exp_metadata.get_video_metadata(video_id)
-            image_ids_ordered = video_info['image_ids']  # Already in temporal order
-            
-            # Convert to list format for backwards compatibility
-            image_ids_list = _get_image_ids_list(image_ids_ordered)
+            image_ids_data = video_info['image_ids']
+            # Canonicalize to ordered list of image_ids (dict going forward)
+            image_ids_list = (sorted(image_ids_data.keys())
+                              if isinstance(image_ids_data, dict)
+                              else list(image_ids_data))
 
             sam2_results_converted = self._convert_sam2_results_to_image_ids_format(
                 sam2_results, image_ids_list
@@ -1254,10 +1255,11 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
         
         # Get video directory and image order from metadata
         video_dir = grounded_sam_instance.exp_metadata.get_video_directory_path(video_id)
-        image_ids_ordered = video_info['image_ids']  # Already in temporal order
-        
-        # Convert to list format for backwards compatibility
-        image_ids_list = _get_image_ids_list(image_ids_ordered)
+        image_ids_data = video_info['image_ids']
+        # Canonicalize to ordered list of image_ids (dict going forward)
+        image_ids_list = (sorted(image_ids_data.keys())
+                          if isinstance(image_ids_data, dict)
+                          else list(image_ids_data))
         
         if verbose:
             print(f"📁 Video directory: {video_dir}")
