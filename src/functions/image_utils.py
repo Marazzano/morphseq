@@ -45,42 +45,76 @@ def rotate_image(mat, angle):
 
 def process_masks(im_mask, im_yolk, row, close_radius=15):
 
-    im_mask = np.round(im_mask / 255 * 2 - 1).astype(np.uint8) # this is confusing, but effectively, any pixel > 0.75*255=1, else 0
-    im_mask_lb = label(im_mask)
-    
-    im_yolk = np.round(im_yolk / 255 * 2 - 1).astype(np.uint8)
-    if np.any(im_yolk == 1):
-        im_yolk = skimage.morphology.remove_small_objects(im_yolk.astype(bool), min_size=75).astype(int)  # remove small stuff
+    """
+    Normalize embryo and yolk masks to clean binary arrays and select the
+    correct embryo instance when given an integer-labeled mask.
 
-    lbi = row["region_label"]  # im_mask_lb[yi, xi]
+    Accepts any of:
+    - Integer-labeled embryo mask where pixel values are embryo IDs (SAM2)
+    - Binary embryo mask in {0,1}
+    - Binary embryo mask in {0,255}
 
-    assert lbi != 0  # make sure we're not grabbing empty space
+    Yolk mask may be absent (all zeros), {0,1}, or {0,255}.
+    """
 
-    im_mask_ft = (im_mask_lb == lbi).astype(int)
+    # --- Embryo mask normalization ---
+    em = np.asarray(im_mask)
+    em_max = int(em.max()) if em.size else 0
 
-    # apply simple morph operations to fill small holes
-    i_disk = disk(close_radius)
-    im_mask_ft = binary_closing(im_mask_ft, i_disk).astype(int)
-
-    # filter out yolk regions that don't contact the embryo ROI
-    im_intersect = np.multiply(im_yolk * 1, im_mask_ft * 1)
-
-    if np.sum(im_intersect) < 10:
-        im_yolk = np.zeros(im_yolk.shape).astype(int)
-    else:
-        y_lb = label(im_yolk)
-        lbu = np.unique(y_lb[np.where(im_intersect)])
-        if len(lbu) == 1:
-            im_yolk = (y_lb == lbu[0]).astype(int)
+    if em_max > 1:
+        # Integer-labeled mask (SAM2 style): pick the requested region_label
+        lbi = int(row["region_label"]) if "region_label" in row else None
+        if not lbi or lbi == 0:
+            # Fallback: treat any non-zero as embryo
+            em_bin = (em > 0).astype(int)
         else:
-            i_lb = label(im_intersect)
-            rgi = regionprops(i_lb)
-            a_vec = [r.area for r in rgi]
-            i_max = np.argmax(a_vec)
-            lu = np.unique(y_lb[np.where(i_lb == i_max+1)])
-            im_yolk = (y_lb == lu[0])*1
+            em_bin = (em == lbi).astype(int)
+    else:
+        # Binary in {0,1} possibly floats
+        em_bin = (em > 0).astype(int)
 
-    return im_mask_ft, im_yolk
+    # Some legacy callers may pass {0,255}; handle that as well
+    if em_max >= 255:
+        em_bin = (em > 127).astype(int)
+
+    # Morph-close to fill small holes
+    if em_bin.any():
+        i_disk = disk(close_radius)
+        em_bin = binary_closing(em_bin.astype(bool), i_disk).astype(int)
+
+    # --- Yolk mask normalization (optional) ---
+    yk = np.asarray(im_yolk)
+    yk_max = int(yk.max()) if yk.size else 0
+    if yk_max == 0:
+        yolk_bin = np.zeros_like(em_bin)
+    elif yk_max > 1 and yk_max < 255:
+        # assume labels; treat any non-zero as yolk
+        yolk_bin = (yk > 0).astype(int)
+    else:
+        # {0,255}
+        yolk_bin = (yk > 127).astype(int)
+
+    # Keep only yolk connected to embryo ROI
+    if em_bin.any() and yolk_bin.any():
+        intersect = (yolk_bin & em_bin).astype(int)
+        if intersect.sum() < 10:
+            yolk_bin = np.zeros_like(yolk_bin)
+        else:
+            y_lb = label(yolk_bin)
+            i_lb = label(intersect)
+            if i_lb.max() <= 1:
+                # Single contact component
+                keep_label = int(np.unique(y_lb[intersect == 1])[-1])
+                yolk_bin = (y_lb == keep_label).astype(int)
+            else:
+                # Choose yolk label overlapping with largest contact component
+                rgi = regionprops(i_lb)
+                a_vec = [r.area for r in rgi]
+                i_max = int(np.argmax(a_vec)) + 1
+                keep_label = int(np.unique(y_lb[i_lb == i_max])[-1])
+                yolk_bin = (y_lb == keep_label).astype(int)
+
+    return em_bin.astype(int), yolk_bin.astype(int)
 
 
 def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape):

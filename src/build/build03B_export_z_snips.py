@@ -33,8 +33,8 @@ def export_embryo_snips_z(r, root, embryo_metadata_df, experiment_log, dl_rad_um
     ############################
     # set generic path variables
 
-    # set path to segmentation data
-    segmentation_path = os.path.join(root, 'built_image_data', 'segmentation', '')
+    # set path to segmentation_sandbox mask export data
+    segmentation_path = os.path.join(root, 'segmentation_sandbox', 'data', 'exported_masks', '')
 
     # initialize folder to save temporary metadata files
     metadata_temp_dir = os.path.join(root, 'metadata', f'metadata_files_temp_z{n_z_max:02}', '')
@@ -44,9 +44,6 @@ def export_embryo_snips_z(r, root, embryo_metadata_df, experiment_log, dl_rad_um
     # generate path and image name
     seg_dir_list_raw = glob.glob(segmentation_path + "*")
     seg_dir_list = [s for s in seg_dir_list_raw if os.path.isdir(s)]
-
-    emb_path = [m for m in seg_dir_list if "mask" in m][0]
-    yolk_path = [m for m in seg_dir_list if "yolk" in m][0]
 
     ##########################
     # get metadata
@@ -83,14 +80,17 @@ def export_embryo_snips_z(r, root, embryo_metadata_df, experiment_log, dl_rad_um
     ############
     im_stub = well + f"_t{time_int:04}*"
 
-    # load main embryo mask
-    im_emb_path = glob.glob(os.path.join(emb_path, date, im_stub))[0]
+    # load integer-labeled embryo mask from segmentation_sandbox
+    mask_candidates = sorted(glob.glob(os.path.join(segmentation_path, date, 'masks', im_stub)))
+    if len(mask_candidates) == 0:
+        print(f"No SAM2 mask found for {date} {im_stub}")
+        return
+    im_emb_path = mask_candidates[0]
     im_mask = io.imread(im_emb_path)
+    # no yolk mask from SAM2; use empty yolk mask
+    im_yolk = np.zeros_like(im_mask)
 
-    # load yolk mask
-    im_yolk_path = glob.glob(os.path.join(yolk_path, date, im_stub))[0]
-    im_yolk = io.imread(im_yolk_path)
-
+    # Normalize/select embryo mask using region_label
     im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row)
 
     ############
@@ -359,9 +359,9 @@ def extract_embryo_z_snips(root, outscale=5.66, overwrite_flag=False, par_flag=F
 
 
 if __name__ == "__main__":
+    # Use repository root (two levels up from this file's directory)
+    from pathlib import Path
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+    root = str(REPO_ROOT)
 
-    # root = "/Users/nick/Dropbox (Cole Trapnell's Lab)/Nick/morphseq/"
-    root = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq"
-    
-    # print('Compiling well metadata...')
     extract_embryo_z_snips(root, par_flag=False, overwrite_flag=False, dl_rad_um=10)

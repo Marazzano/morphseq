@@ -305,16 +305,28 @@ def process_mask_images(image_path):
 
     # load label image
     im = io.imread(image_path)
-    im_mask = (np.round(im / 255 * 2) - 1).astype(np.uint8)
+    im = np.asarray(im)
+    if im.max() > 1 and im.max() < 255:
+        # integer-labeled mask from SAM2; treat any non-zero as embryo for this helper
+        im_mask = (im > 0).astype(np.uint8)
+    else:
+        # legacy binary {0,255} or {0,1}
+        im_mask = (im > 127).astype(np.uint8) if im.max() >= 255 else (im > 0).astype(np.uint8)
 
     # load viability image
     seg_path = os.path.dirname(os.path.dirname(os.path.dirname(image_path)))
     date_dir = os.path.basename(os.path.dirname(image_path))
     im_stub = os.path.basename(image_path)[:9]
-    via_dir = glob.glob(os.path.join(seg_path, "via_*"))[0]
-    via_path = glob.glob(os.path.join(via_dir, date_dir, im_stub + "*"))[0]
-    im_via = io.imread(via_path)
-    im_via = (np.round(im_via / 255 * 2) - 1).astype(np.uint8)
+    via_dirs = glob.glob(os.path.join(seg_path, "via_*"))
+    if via_dirs:
+        via_path_list = glob.glob(os.path.join(via_dirs[0], date_dir, im_stub + "*"))
+        if via_path_list:
+            im_via = io.imread(via_path_list[0])
+            im_via = (im_via > 127).astype(np.uint8) if im_via.max() >= 255 else (im_via > 0).astype(np.uint8)
+        else:
+            im_via = np.zeros_like(im_mask)
+    else:
+        im_via = np.zeros_like(im_mask)
     
     # make a combined mask
     cb_mask = np.ones_like(im_mask)
