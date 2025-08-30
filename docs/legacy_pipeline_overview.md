@@ -500,3 +500,50 @@ This section maps each legacy build script to its role, inputs, and outputs for 
 
 - Keyence: 01A → 01AB → 02B → 03A → 03B → 04 → 05
 - YX1: 01B → 02B → 03A → 03B → 04 → 05
+
+---
+
+## 6. Mask Usage
+
+This section summarizes what each mask is used for across the legacy build pipeline and where they are produced.
+
+### Mask Types
+
+- Embryo mask (`mask_*`): main object mask per frame (required for snips, geometry, orientation, QC coverage).
+- Viability mask (`via_*`): alive vs. dead signal (used for background sampling and dead flags).
+- Yolk mask (`yolk_*`): yolk region (used for orientation and to exclude yolk from focus scoring).
+- Focus mask (`focus_*`): out-of-focus regions (QC flag; not used in geometry).
+- Bubble mask (`bubble_*`): air bubble regions (QC flag; not used in geometry).
+
+### Where Masks Are Produced
+
+- `src/build/build02B_segment_bf_main.py`: Runs models and writes per‑model predictions under `segmentation/<model>_predictions/<date>/*.jpg`.
+- Orchestrated by `src/build/pipeline_objects.py` via `segment_images()`.
+
+### How Masks Are Used
+
+- 2D snips (geometry, orientation, cropping)
+  - Embryo mask required; yolk helps orientation.
+  - Files: `src/build/build03A_process_images.py`
+  - Steps: normalize masks (`process_masks`), compute angle (`get_embryo_angle`), rotate and crop (`rotate_image`, `crop_embryo_image`).
+  - Also saves cropped mask artifacts under `training_data/bf_embryo_masks/`.
+
+- Background/noise estimation (alive region only)
+  - Uses embryo + viability to exclude embryo and dead areas when sampling background pixels.
+  - File: `src/build/build03A_process_images.py` (`estimate_image_background`).
+
+- Z‑snips (focus‑aware selection)
+  - Uses embryo minus yolk (“body”) region to compute LoG focus scores and select best Z‑planes.
+  - Files: `src/build/build03B_export_z_snips.py` (LoG scoring, orientation, crop, export).
+  - Note: For 3D Z‑snips, a yolk mask is expected; code errors if legacy yolk mask is missing.
+
+- QC flags and downstream filtering
+  - Viability contributes to `fraction_alive` and `dead_flag` (legacy). In the SAM2 bridge path, `fraction_alive` is placeholder and `dead_flag` derived accordingly.
+  - Focus/bubble flags exist and are carried through, but are disabled (set False) in the current SAM2 bridge path.
+  - Files: `src/build/build03A_process_images.py` (flag assembly) and `src/build/build04_perform_embryo_qc.py` (QC usage and curation tables).
+
+### SAM2 Bridge Notes
+
+- Embryo mask comes from `segmentation_sandbox/data/exported_masks/<date>/masks/<well>_t####*` as integer‑labeled instances; the pipeline selects the `region_label` for a given snip.
+- 2D snips path tolerates missing legacy yolk by substituting an empty yolk mask; Z‑snips path requires a yolk mask to exclude yolk from focus scoring.
+- Focus/bubble masks are not produced by SAM2; flags remain False in the bridge path unless legacy masks are available.
