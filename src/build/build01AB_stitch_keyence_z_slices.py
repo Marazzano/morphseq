@@ -7,6 +7,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]   # adjust “2” if levels dif
 # Put that directory at the *front* of sys.path so Python looks there first
 sys.path.insert(0, str(REPO_ROOT))
 
+# Dependency simplification notes (comments only; no behavior change):
+# - glob2 → pathlib: replace `glob2` usages with `Path.glob()` or Python's built-in `glob`.
+# - PIL.Image: currently imported but not used; can be removed safely.
+# - tqdm/process_map: can be made optional; fallback to `concurrent.futures` with an optional progress bar.
+# - skimage.io: could be swapped for `imageio.v3` or OpenCV (`cv2`) for IO to reduce scikit-image footprint.
+# - stitch2d: external dependency; if needed, guard with a try/except and add a basic 2–3 tile aligner fallback.
+# - pandas: only used to read a CSV and fetch a scalar; could be replaced by `csv`/`numpy` if minimizing deps is critical.
+
 # script to define functions_folder for loading and standardizing fish movies
 import os
 import numpy as np

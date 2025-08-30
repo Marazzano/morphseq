@@ -29,6 +29,11 @@ from src.build.export_utils import PATTERNS, _match_files, has_output, newest_mt
 from src.build.build03A_process_images import segment_wells, compile_embryo_stats, extract_embryo_snips
 from src.build.build02B_segment_bf_main import apply_unet
 
+# Dependency simplification notes (comments only; no behavior change):
+# - glob2: used only to match files; replace with `Path.glob()` to drop glob2.
+# - pandas in this file is used primarily for IO; could be minimized if needed.
+# - Consider lazy imports for heavyweight modules in methods that need them (e.g. stitch/segment).
+
 
 log = logging.getLogger(__name__)
 logging.basicConfig(format="%(level_name)s | %(message)s", level=logging.INFO)

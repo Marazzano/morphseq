@@ -1,5 +1,6 @@
 # We will save the data in folders to mimic the desired example
 import os
+# Note: torch is not used in this script; can be removed to lighten imports.
 import torch
 import numpy as np
 import glob as glob
@@ -7,6 +8,7 @@ import pandas as pd
 from src.functions.utilities import path_leaf
 import skimage.io as io
 from tqdm import tqdm
+# If scikit-image is heavy for your environment, consider `cv2.resize` as a drop-in replacement for `rescale`.
 from skimage.transform import rescale
 
 def make_image_snips(root, train_name, label_var=None, rs_factor=1.0, overwrite_flag=False):

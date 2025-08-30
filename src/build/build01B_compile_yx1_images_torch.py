@@ -8,6 +8,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]   # adjust “2” if levels dif
 # Put that directory at the *front* of sys.path so Python looks there first
 sys.path.insert(0, str(REPO_ROOT))
 
+# Dependency simplification notes (comments only; no behavior change):
+# - nd2: specialized Nikon format reader; consider optional import with a user-friendly error, or support preconverted TIFF via imageio/cv2.
+# - sklearn KMeans: used only for QC of row/column assignments; could be replaced by numpy-based sorting/bucketing to avoid scikit-learn.
+# - skimage (io/util): IO/resize/CLAHE can be replaced by `imageio.v3` or OpenCV to reduce dependency surface.
+# - tqdm/process_map: provide fallback using `concurrent.futures` and a no-op progress wrapper when tqdm is missing.
+# - torch: focus-stacking supports CPU; ensure device="cpu" is documented as the default on machines without CUDA.
+
 
 import os, json, time, logging
 from pathlib import Path
