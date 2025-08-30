@@ -203,10 +203,45 @@ The final stage uses the 2D tracking data to find the best focal plane in the or
 #### **Outputs:**
 
 -   Final, processed, 2D brightfield image snips of each embryo, taken from the optimal focal plane.
-
 ---
 
 ## 4. SAM2 Segmentation Pipeline Advantages
+
+## Quick Reference: 2D Snips vs Z‑Snips
+
+This project exports standardized 2D “snips” that feed the embedding models. There are two ways to produce snips:
+
+- 2D Snips (default path)
+  - Script: `src/build/build03A_process_images.py`
+  - Inputs:
+    - Sandbox‑organized 2D frames: `segmentation_sandbox/data/raw_data_organized/<date>/images/<video_id>/<image_id>*.jpg`
+    - SAM2 embryo masks (integer‑labeled): `segmentation_sandbox/data/exported_masks/<date>/masks/<well>_t####*.tif` (override base with `MORPHSEQ_SANDBOX_MASKS_DIR`)
+    - Optional legacy yolk mask: `built_image_data/segmentation/yolk_*/<date>/<well>_t####*.tif`
+  - Core steps: normalize/select mask (`process_masks`), compute orientation (`get_embryo_angle`), rotate (`rotate_image`), crop (`crop_embryo_image`).
+  - Outputs:
+    - Cropped: `training_data/bf_embryo_snips/<date>/<snip_id>.jpg`
+    - Uncropped: `training_data/bf_embryo_snips_uncropped/<date>/<snip_id>.jpg`
+    - Masks: `training_data/bf_embryo_masks/emb_<snip_id>.jpg`, `training_data/bf_embryo_masks/yolk_<snip_id>.jpg`
+
+- Z‑Snips (3D‑aware, optional)
+  - Script: `src/build/build03B_export_z_snips.py`
+  - Inputs:
+    - Same embryo/yolk masks as 2D Snips
+    - Z‑stacks per timepoint:
+      - YX1: `raw_image_data/YX1/<date>/*.nd2` (channel “BF”, uses `nd2_series_num`, `time_int`)
+      - Keyence stitched Z stacks: `built_image_data/keyence_stitched_z/<date>/<well>_t####_stack.tif` (produced by `build01AB_stitch_keyence_z_slices.py` or `build01A_compile_keyence_torch.py`)
+    - Z‑resolution: from ND2 metadata (YX1) or `metadata/experiment_metadata.csv` (Keyence)
+  - Core steps: LoG focus scores on embryo body (`LoG_focus_stacker`), pick best slice(s), orient + crop like 2D path.
+  - Outputs:
+    - Cropped: `training_data/bf_embryo_snips_zNN/<date>/<snip_id>_zXX.jpg`
+    - Uncropped: `training_data/bf_embryo_snips_zNN_uncropped/<date>/<snip_id>_zXX.jpg`
+    - Per‑snip z‑metadata: `metadata/metadata_files_temp_zNN/<snip_id>.csv` (`z_res_um`, `z_ind`, `z_pos_rel`)
+
+Downstream Embeddings
+- Both snip types are encoded identically by the VAE:
+  - Lightning eval: `src/analyze/assess_vae_results.py` ➜ writes `models/<class>/<name>/embryo_stats_df.csv` with `z_mu_*`.
+  - Ad‑hoc (single/many images): `src/vae/auxiliary_scripts/assess_image_set.py` ➜ `AutoModel.load_from_folder(.../final_model)` then `encoder(x).embedding`.
+
 
 The SAM2 (Segment Anything Model 2) segmentation pipeline, implemented in the `segmentation_sandbox`, provides a superior alternative to the legacy Stage 2 tracking system by addressing all major limitations.
 
@@ -384,3 +419,84 @@ Each Excel file contains multiple sheets defining experimental conditions:
 - **Existing Integration Path:** Well metadata merging is handled by established functions in `export_utils.py`
 - **ID Compatibility:** SAM2 embryo IDs must be traceable back to well IDs for proper metadata integration
 - **Parallel Processing:** Well metadata and segmentation metadata can be processed independently and merged downstream
+
+---
+
+## 5. Build Scripts Summary (Legacy Pipeline Tasks)
+
+This section maps each legacy build script to its role, inputs, and outputs for quick reference.
+
+### Orchestration
+
+- `src/build/pipeline_objects.py`: High-level manager for per-date runs.
+  - Purpose: Discovers experiments, determines “needs_*” via filesystem checks, and runs steps: export → stitch → segment → stats/snips.
+  - Key methods: `export_images`, `stitch_images`, `stitch_z_images`, `segment_images`, `process_image_masks`.
+
+### 01A — Keyence Full‑Focus (FF) Compile
+
+- `src/build/build01A_compile_keyence_torch.py`
+  - Purpose: Focus‑stack Keyence tile Z‑stacks into 2D FF tiles; write per‑well/time metadata; stitch tiles into FF montages.
+  - Inputs: `raw_image_data/Keyence/<date>/XY*/[P*/]T*/...CH*.jpg`; plate metadata Excel.
+  - Outputs: `built_image_data/Keyence/FF_images/<date>/ff_*/*.jpg`; `built_image_data/stitched_FF_images/<date>/*_stitch.jpg`; `metadata/built_metadata_files/<date>_metadata.csv`.
+  - Notes: Uses LoG focus stacking and stitch2d with per‑date orientation and master alignment params (`master_params.json`).
+
+### 01AB — Keyence Z‑Slice Stitch (per timepoint)
+
+- `src/build/build01AB_stitch_keyence_z_slices.py`
+  - Purpose: Stitch multi‑tile Keyence Z‑stacks into a canonical canvas per timepoint.
+  - Inputs: Raw Keyence per‑well folders; FF tile dir + `master_params.json` from 01A; built metadata for sizing.
+  - Outputs: `built_image_data/Keyence_stitched_z/<date>/<well>_t####_stack.tif`.
+
+### 01B — YX1 Full‑Focus (FF) Compile
+
+- `src/build/build01B_compile_yx1_images_torch.py`
+  - Purpose: Read YX1 `.nd2` (T×W×Z×C×Y×X), fix timestamps, validate well mapping, focus‑stack BF to 2D FF, and build metadata.
+  - Inputs: `raw_image_data/YX1/<date>/*.nd2`; plate metadata Excel.
+  - Outputs: `built_image_data/stitched_FF_images/<date>/*_stitch.jpg`; `metadata/built_metadata_files/<date>_metadata.csv`.
+  - Notes: Verifies well layout via stage positions (KMeans). Handles ND2 time stamp jumps.
+
+### 02B — Segment BF Images
+
+- `src/build/build02B_segment_bf_main.py`
+  - Purpose: Run trained UNet/FPN models (mask/via/yolk/focus/bubble) on stitched FF images; write per‑model predictions.
+  - Inputs: `built_image_data/stitched_FF_images/<date>/*`; model weights under `segmentation/segmentation_models`.
+  - Outputs: `segmentation/<model>_predictions/<date>/*.jpg` (class‑coded grayscale outputs).
+
+### 03A — Process Images (Masks → Metadata → 2D Snips)
+
+- `src/build/build03A_process_images.py`
+  - Purpose: Legacy path to collect embryo detections and QC; exports 2D snips. SAM2 bridge now preferred for IDs/metrics.
+  - Inputs: Segmentation outputs; built metadata; SAM2 mask paths via `segmentation_sandbox` when available.
+  - Outputs: Combined frame/embryo metadata CSVs; `training_data/bf_embryo_snips/<date>/<snip_id>.jpg` (+ uncropped and masks).
+  - Notes: Includes helpers to sample background, compute orientation, rotate/crop, and optional legacy tracking (deprecated).
+
+### 03B — Export Z‑Snips (focus‑aware)
+
+- `src/build/build03B_export_z_snips.py`
+  - Purpose: Choose in‑focus Z‑planes using LoG scores in embryo body and export cropped z‑slice snips (1/3/5 slices).
+  - Inputs: Keyence stitched Z‑stacks or YX1 ND2; SAM2 embryo masks and legacy yolk masks; combined metadata.
+  - Outputs: `training_data/bf_embryo_snips_zNN/<date>/<snip_id>_zXX.jpg` (+ uncropped); per‑snip z‑meta CSVs.
+
+### 04 — Embryo QC + Stage Inference
+
+- `src/build/build04_perform_embryo_qc.py`
+  - Purpose: Apply rule‑based QC (size outliers, proximity to death), infer standardized stage (hpf), and build curation tables.
+  - Inputs: `metadata/combined_metadata_files/embryo_metadata_df01.csv`; stage reference (`metadata/stage_ref_df.csv`); perturbation keys.
+  - Outputs: `embryo_metadata_df02.csv`; `curation/curation_df.csv`; `curation/embryo_curation_df.csv`.
+
+### 05 — Make Training Snips
+
+- `src/build/build05_make_training_snips.py`
+  - Purpose: Copy/export curated snips into training folder structure, optionally grouped by labels and rescaled.
+  - Inputs: Curated metadata (`embryo_metadata_df02.csv`, curation CSVs); 2D snips.
+  - Outputs: `training_data/<train_name>/images/<label>/*.jpg` and a copy of the training metadata.
+
+### Shared Utilities
+
+- `src/build/export_utils.py`: Patterns for file checks; GPU/CPU memory heuristics; LoG focus stackers; Keyence orientation helper; plate metadata merge.
+- `src/build/data_classes.py`: `MultiTileZStackDataset` to load Keyence tile Z‑stacks for batched FF projection/stitching.
+
+### Typical Microscope Flows
+
+- Keyence: 01A → 01AB → 02B → 03A → 03B → 04 → 05
+- YX1: 01B → 02B → 03A → 03B → 04 → 05
