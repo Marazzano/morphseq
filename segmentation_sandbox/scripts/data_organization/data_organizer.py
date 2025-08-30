@@ -240,7 +240,7 @@ class DataOrganizer:
                 return video_id, "unknown", "ch00"
 
     @staticmethod
-    def enhance_video_metadata_with_csv(video_data, csv_df, experiment_name, well_id):
+    def enhance_video_metadata_with_csv(video_data, csv_df, experiment_name, well_id, images_dir=None, source_root=None):
         """Transform video metadata to enhanced schema"""
         logger.debug(f"Starting schema enhancement for {experiment_name}_{well_id}")
         
@@ -322,7 +322,9 @@ class DataOrganizer:
             
             image_info = {
                 'frame_index': i,
-                'raw_image_data_info': {}
+                'raw_image_data_info': {},
+                'raw_stitch_image_path': None,
+                'processed_image_path': None
             }
             
             if not matching_rows.empty:
@@ -371,6 +373,17 @@ class DataOrganizer:
                 }
             else:
                 logger.warning(f"No CSV data found for image {image_id}, time_int={time_int}")
+            
+            # Add processed image path if images_dir provided
+            if images_dir:
+                processed_path = Path(images_dir) / f"{image_id}.jpg"
+                image_info['processed_image_path'] = str(processed_path)
+            
+            # Add raw stitch image path if source_root provided
+            if source_root:
+                # Build path: source_root/built_image_data/stitched_FF_images/experiment/well_tXXXX.jpg
+                raw_stitch_path = Path(source_root) / 'built_image_data' / 'stitched_FF_images' / experiment_name / f"{well_id}_t{time_int:04d}.jpg"
+                image_info['raw_stitch_image_path'] = str(raw_stitch_path)
             
             new_image_ids[image_id] = image_info
             
@@ -1025,7 +1038,9 @@ class DataOrganizer:
             # Perform schema transformation at debug level
             logger.debug("Testing schema transformation...")
             video_metadata = DataOrganizer.enhance_video_metadata_with_csv(
-                video_metadata, csv_df, experiment_name, well_id_parsed
+                video_metadata, csv_df, experiment_name, well_id_parsed,
+                images_dir=Path(video_metadata.get('processed_jpg_images_dir')), 
+                source_root=Path('/net/trapnell/vol1/home/nlammers/projects/data/morphseq')
             )
             
             logger.debug(f"Enhanced data image_ids type: {type(video_metadata.get('image_ids', []))}")
