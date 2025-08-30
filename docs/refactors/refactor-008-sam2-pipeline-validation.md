@@ -325,3 +325,106 @@ def compile_embryo_stats(root, tracked_df, max_samples=None):
 ---
 
 *This document will be updated as implementation progresses and validation results become available.*
+
+---
+
+## ✅ Validation Amendments (With File:Line References)
+
+- Format bridge completeness: The SAM2→Legacy bridge currently lacks several Build04-required columns; plan must add a merge step with legacy well/experiment metadata.
+  - Build04 reads df01 here: `src/build/build04_perform_embryo_qc.py:314`
+  - Build04 uses `surface_area_um` vs `predicted_stage_hpf`: `src/build/build04_perform_embryo_qc.py:347` and cohorts/time fields near `src/build/build04_perform_embryo_qc.py:348`
+  - SAM2 bridge adds only minimal columns: `src/build/build03A_process_images.py:683` and `src/build/build03A_process_images.py:687`
+  - Action: Join SAM2 `exp_df` with legacy well/experiment metadata before writing df01.
+
+- Output path mismatch: Build03 SAM2 currently writes per-experiment metadata to a different location than Build04 expects.
+  - Build03 SAM2 write location: `src/build/build03A_process_images.py:1075`
+  - Build04 reads: `metadata/combined_metadata_files/embryo_metadata_df01.csv` at `src/build/build04_perform_embryo_qc.py:314`
+  - Action: Write df01 to `metadata/combined_metadata_files/embryo_metadata_df01.csv` (or update Build04 to read the per-experiment path consistently).
+
+- Mask path resolution: The resolver hardcodes `emnum_1`, which can mismatch exporter naming when multiple embryos exist.
+  - Resolver pattern (hardcoded): `src/build/build03A_process_images.py:51` and `src/build/build03A_process_images.py:52`
+  - Exporter mask naming: `segmentation_sandbox/scripts/utils/export_sam2_metadata_to_csv.py:430`
+  - Action: Use CSV `exported_mask_path` per row to resolve exact mask filename instead of hardcoding `emnum_1`.
+
+- Units and geometry: Surface area and lengths should use calibrated pixel size; code uses a placeholder.
+  - Placeholder px_dim (incorrect): `src/build/build03A_process_images.py:580`
+  - Surface area computed from `area_px` with placeholder: `src/build/build03A_process_images.py:583`
+  - Correct px size available in CSV row (Height um/px) already used for snip scaling: `src/build/build03A_process_images.py:199`
+  - Action: Set `px_dim = row["Height (um)"]/row["Height (px)"]` (or width analog) before computing `surface_area_um`, `length_um`, `width_um`.
+
+- Missing mask fallback marks rows usable: On mask-missing, QC flags are set False and row is returned.
+  - Behavior: `src/build/build03A_process_images.py:566` to `src/build/build03A_process_images.py:570`
+  - Action: Set `frame_flag=True` and/or drop the row to prevent inclusion in training; aggregate a missing resource report.
+
+- Snip ID and frame indexing: Prefer SAM2-provided `snip_id` to avoid indexing drift; Build03 recomputes snip IDs.
+  - Recompute in Build03 stats: `src/build/build03A_process_images.py:853`
+  - Action: Keep `snip_id` from SAM2 CSV; ensure `time_int` equals normalized frame index.
+
+- Yolk orientation handling: Yolk not guaranteed; QC uses yolk-free fallback, but flags default to False.
+  - No-yolk default: `src/build/build03A_process_images.py:602`
+  - Angle fallback implementation: `src/functions/image_utils.py:159`
+  - Action: Consider setting a separate `yolk_missing_flag` to surface missing yolk context in QC.
+
+- Dual image path: Code tries `raw_stitch_image_path`, but CSV doesn’t include it by default.
+  - Raw path check: `src/build/build03A_process_images.py:179`
+  - JPEG fallback: `src/build/build03A_process_images.py:187`
+  - Action: Either augment df via a merge to add `raw_stitch_image_path`, or rely on JPEGs and document behavior.
+
+- Runner hardcoded paths: Runner uses a hardcoded root path; parameterize for portability.
+  - Hardcoded root: `results/2024/20250830/run_build03_sam2.py:34`
+  - Action: Add `--root`, `--exp-name`, `--max-samples`, `--by-embryo`, `--frames-per-embryo` args.
+
+## 🔍 Concrete Validation Checks (Copy-Paste Friendly)
+
+- Schema gate before Build04 (df01):
+  - Confirm file exists at `metadata/combined_metadata_files/embryo_metadata_df01.csv:1`
+  - Required columns exist: `snip_id`, `embryo_id`, `experiment_date`, `well`, `time_int`, `Time Rel (s)`, `predicted_stage_hpf`, `surface_area_um`, `short_pert_name`, `phenotype`, `control_flag`, `temperature`, `medium`, `use_embryo_flag`.
+
+- Units sanity check (3 random rows):
+  - Compute `um_per_px = row['Height (um)']/row['Height (px)']` and assert `abs(surface_area_um - area_px*um_per_px**2) < 1e-3 * surface_area_um`.
+
+- Mask path consistency:
+  - Assert `exported_mask_path` naming in CSV matches filesystem under `segmentation_sandbox/data/exported_masks/{exp}/masks`.
+  - Confirm resolver uses CSV value (not `emnum_1` stub) for the same row.
+
+- Orientation stability (subset test):
+  - Compute rotation angles from `get_embryo_angle` across 5 frames/embryo; expect low variance for stable embryos.
+
+- Out-of-frame rate:
+  - Verify `out_of_frame_flag` rates < threshold (e.g., <5%) on subset.
+
+## 🛠️ Planned Code Adjustments (Minimal, High-Impact)
+
+- Use CSV mask filename:
+  - Replace stub logic at `src/build/build03A_process_images.py:51` to `src/build/build03A_process_images.py:56` with per-row `exported_mask_path`.
+
+- Correct unit conversions:
+  - Replace `px_dim = 1.0` at `src/build/build03A_process_images.py:580` with computed value from row; update `surface_area_um`, `length_um`, `width_um` at `src/build/build03A_process_images.py:583` and `src/build/build03A_process_images.py:591`.
+
+- Mask-missing handling:
+  - At `src/build/build03A_process_images.py:566` to `src/build/build03A_process_images.py:570`, set `frame_flag=True` (and/or drop row) to avoid false positives.
+
+- Write df01 where Build04 expects:
+  - Ensure Build03 writes `metadata/combined_metadata_files/embryo_metadata_df01.csv:1` (and keep per-experiment copy if desired).
+
+- Parameterize runner:
+  - Replace hardcoded root at `results/2024/20250830/run_build03_sam2.py:34` with CLI args; add `--max-samples` and embryo/frame sampling knobs.
+
+## 🧪 Subset Testing Strategy (Actionable)
+
+- Sampling knobs:
+  - Add `--max-samples`, `--by-embryo N`, `--frames-per-embryo M` to limit work deterministically.
+  - Filter right after `segment_wells_sam2_csv` returns its DataFrame.
+
+- Three-step integration tests:
+  - SAM2→Build03A (5 embryos × 3 frames) → df01 written; verify schema + units.
+  - Build03A→Build04 → df02 written; confirm curation CSVs exist.
+  - Build04→Build05 → training folders populated; images accessible.
+
+## 📎 Quick References
+
+- SAM2 bridge function: `src/build/build03A_process_images.py:619`
+- Stats and snip export: `src/build/build03A_process_images.py:833` and `src/build/build03A_process_images.py:921`
+- Build04 entrypoint: `src/build/build04_perform_embryo_qc.py:310`
+- Exported mask naming: `segmentation_sandbox/scripts/utils/export_sam2_metadata_to_csv.py:430`
+- Runner script: `results/2024/20250830/run_build03_sam2.py:34`
