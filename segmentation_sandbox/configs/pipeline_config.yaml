@@ -10,15 +10,16 @@
 paths:
   # Base morphseq data directory - all external data paths reference this
   # Change this to point to your morphseq data location
+  morphseq_data_dir: "/net/trapnell/vol1/home/nlammers/projects/data/morphseq"
 
 
   # Source data directories (relative to morphseq_data_dir)
   stitched_images_dir: "built_image_data/stitched_FF_images"
     
   # Mask directories (relative to morphseq_data_dir)
-  # embryo_mask_root: "mask_data/embryo_mask_data"
-  # yolk_mask_root: "mask_data/yolk_mask_data"
-  # via_mask_root: "mask_data/via_annotation_data"
+  embryo_mask_root: "mask_data/embryo_mask_data"
+  yolk_mask_root: "mask_data/yolk_mask_data"
+  via_mask_root: "mask_data/via_annotation_data"
   
   # Generated video directory (will be created by pipeline, relative to sandbox)
   morphseq_well_videos: "data/intermediate/morphseq_well_videos"

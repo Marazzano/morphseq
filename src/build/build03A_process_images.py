@@ -48,7 +48,8 @@ def resolve_sandbox_embryo_mask(root: str | Path, date: str, well: str, time_int
     base_override = os.environ.get("MORPHSEQ_SANDBOX_MASKS_DIR")
     base = Path(base_override) if base_override else (root / "segmentation_sandbox" / "data" / "exported_masks")
     mask_dir = base / str(date) / "masks"
-    stub = f"{well}_t{int(time_int):04}*"
+    # Match the actual naming pattern: {date}_{well}_ch00_t{time:04}_masks_emnum_1.png
+    stub = f"{date}_{well}_ch00_t{int(time_int):04}_masks_emnum_1.png"
     candidates = sorted(mask_dir.glob(stub))
     if not candidates:
         raise FileNotFoundError(f"Sandbox embryo mask not found for pattern: {mask_dir}/{stub}")
@@ -156,7 +157,7 @@ def export_embryo_snips(r: int,
     im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
     
     # Load yolk from legacy segmentation (keep non-embryo masks unchanged)
-    legacy_seg = root / 'built_image_data' / 'segmentation'
+    legacy_seg = Path("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/segmentation")
     im_yolk = None
     if legacy_seg.exists():
         yolk_dirs = [p for p in legacy_seg.glob("*") if p.is_dir() and "yolk" in p.name]
@@ -164,21 +165,35 @@ def export_embryo_snips(r: int,
             stub = f"{well}_t{time_int:04}*"
             candidates = sorted((yolk_dirs[0] / date).glob(stub))
             if candidates:
-                im_yolk = io.imread(candidates[0])
+                im_yolk_raw = io.imread(candidates[0])
+                # Resize yolk mask to match SAM2 mask dimensions
+                from skimage.transform import resize
+                im_yolk = resize(im_yolk_raw, im_mask.shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
     if im_yolk is None:
         warnings.warn("Legacy yolk mask not found; proceeding with empty yolk mask for 2D snips.")
         im_yolk = np.zeros_like(im_mask)
 
     # --- Load Full-Frame Image ---
-    ff_image_path = root / 'segmentation_sandbox' / 'data' / 'raw_data_organized'
-    im_stub = f"{row['image_id']}*"
+    # Try to use raw stitched image path from enhanced metadata first
+    im_ff = None
+    if 'raw_stitch_image_path' in row and row['raw_stitch_image_path']:
+        raw_stitch_path = Path(row['raw_stitch_image_path'])
+        if raw_stitch_path.exists():
+            im_ff = io.imread(raw_stitch_path)
+            print(f"Using raw stitched image: {raw_stitch_path}")
     
-    ff_image_paths = sorted((ff_image_path / date / "images" / row['video_id']).glob(im_stub))
-    if not ff_image_paths:
-        warnings.warn(f"FF image not found for {im_stub} in {ff_image_path / date}", stacklevel=2)
-        return True
-
-    im_ff = io.imread(ff_image_paths[0])
+    # Fallback to organized JPEG copies if raw path not available
+    if im_ff is None:
+        ff_image_path = root / 'segmentation_sandbox' / 'data' / 'raw_data_organized'
+        im_stub = f"{row['image_id']}*"
+        
+        ff_image_paths = sorted((ff_image_path / date / "images" / row['video_id']).glob(im_stub))
+        if not ff_image_paths:
+            warnings.warn(f"FF image not found for {im_stub} in {ff_image_path / date}", stacklevel=2)
+            return True
+        
+        im_ff = io.imread(ff_image_paths[0])
+        print(f"Using JPEG copy: {ff_image_paths[0]}")
 
     # --- Continue with legacy processing ---
     if 'Height (um)' in row and 'Height (px)' in row and row['Height (px)'] > 0:
@@ -668,6 +683,7 @@ def segment_wells_sam2_csv(
     # Add experiment metadata columns that legacy system expects
     exp_df['experiment_date'] = exp_name
     exp_df['well_id'] = exp_df['video_id'].str.extract(r'_([A-H]\d{2})$')[0]
+    exp_df['well'] = exp_df['well_id']  # Add 'well' column for legacy compatibility
     exp_df['time_int'] = exp_df['frame_index']
     
     print(f"✅ SAM2 data transformed to legacy format: {len(exp_df)} rows ready")
@@ -1004,7 +1020,7 @@ if __name__ == "__main__":
 
     # SAM2 Pipeline Integration - Phase 2 Implementation
     # Using bridge CSV instead of legacy image processing
-    exp_name = "20240418"  # Use experiment with SAM2 data available
+    exp_name = "20250612_30hpf_ctrl_atf6"  # Production experiment with validated SAM2 data
     
     # The path to the CSV is now constructed relative to the project root.
     # The PRD specifies the CSV is in the project root.
@@ -1013,9 +1029,8 @@ if __name__ == "__main__":
     # Option 1: Use new SAM2 CSV-based function (recommended)
     tracked_df = segment_wells_sam2_csv(root, exp_name=exp_name, sam2_csv_path=sam2_csv_path)
 
-    # Using a smaller sample for faster testing as requested
-    print("Using a smaller sample of 100 rows for testing.")
-    tracked_df = tracked_df.head(100)
+    # Production mode - process full dataset
+    print(f"Production mode: processing full dataset of {len(tracked_df)} rows.")
 
     # Option 2: Use legacy function (fallback during transition)  
     # tracked_df = segment_wells(root, exp_name=exp_name)

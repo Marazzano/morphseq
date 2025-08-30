@@ -1,0 +1,60 @@
+🎬 SAM2 Video Processing Pipeline
+==================================================
+📋 Config: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/configs/pipeline_config.yaml
+📊 Metadata: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/raw_data_organized/experiment_metadata.json
+🎯 Annotations: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/detections/gdino_detections.json
+💾 Output: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+🎭 Target prompt: 'individual embryo'
+📦 Format: rle
+🖥️  Device: cuda
+🔬 Processing entities: ['20250612_30hpf_ctrl_atf6']
+
+🔧 Loading SAM2 configuration...
+🎬 Initializing GroundedSamAnnotations...
+🎬 Initializing GroundedSamAnnotations...
+   Target prompt: 'individual embryo'
+   Segmentation format: rle
+   Output file: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+📚 Loading components...
+✅ Components loaded successfully
+📂 Loaded existing results from /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+✅ GroundedSamAnnotations initialized successfully
+🔧 Loading SAM2 model...
+🔧 Loading SAM2 model...
+ℹ️ Using SAM2 model root from config: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/models/sam2/sam2
+✅ SAM2 model loaded on GPU
+✅ SAM2 model loaded successfully
+🎯 Found 92 videos to process
+📹 Videos:
+   - 20250612_30hpf_ctrl_atf6_F11: 1 images
+   - 20250612_30hpf_ctrl_atf6_A05: 1 images
+   - 20250612_30hpf_ctrl_atf6_F09: 1 images
+   - 20250612_30hpf_ctrl_atf6_G03: 1 images
+   - 20250612_30hpf_ctrl_atf6_D12: 1 images
+   ... and 87 more videos
+
+🔍 Entity cross-reference:
+   GroundedDINO videos: 92
+   SAM2 processed videos: 92
+   Missing videos: 0
+🎯 Processing 0 videos for SAM2 segmentation
+ℹ️ Hierarchy validation disabled
+📋 Entity tracker updated: {'experiments': 1, 'videos': 92, 'images': 92, 'embryos': 92, 'snips': 92}
+📦 Created backup: grounded_sam_segmentations.backup.20250829_232038.json
+🗑️  Removed old backup: grounded_sam_segmentations.backup.20250829_220400.json
+💾 SAM2 results saved to /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+
+✅ Processing complete: {'processed': 0, 'errors': 0, 'total': 0}
+
+==================================================
+✅ SAM2 Video Processing Complete!
+⏱️  Processing time: 0:00:00.060248
+📊 Videos processed: 0
+❌ Errors: 0
+💾 Output saved to: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
+
+📈 Final Statistics:
+   🧪 Experiments: 1
+   🖼️  Images: 92
+   🎭 Snips: 92
+   📦 Format: rle
