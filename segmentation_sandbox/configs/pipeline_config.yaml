@@ -10,7 +10,7 @@
 paths:
   # Base morphseq data directory - all external data paths reference this
   # Change this to point to your morphseq data location
-  morphseq_data_dir: "/net/trapnell/vol1/home/nlammers/projects/data/morphseq"
+  morphseq_data_dir: "/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground"
 
 
   # Source data directories (relative to morphseq_data_dir)
