@@ -227,12 +227,26 @@ def export_embryo_snips(r: int,
     
     # Fallback to organized JPEG copies if raw path not available
     if im_ff is None:
-        ff_image_path = root / 'segmentation_sandbox' / 'data' / 'raw_data_organized'
-        im_stub = f"{row['image_id']}*"
+        ff_image_path = root / 'built_image_data' / 'stitched_FF_images'
         
-        ff_image_paths = sorted((ff_image_path / date / "images" / row['video_id']).glob(im_stub))
+        # Try both full format and legacy format
+        full_stub = f"{row['image_id']}*"
+        ff_image_paths = sorted((ff_image_path / date).glob(full_stub))
+        
         if not ff_image_paths:
-            warnings.warn(f"FF image not found for {im_stub} in {ff_image_path / date}", stacklevel=2)
+            # Try legacy format: extract well and time from image_id using regex
+            # image_id format: "20250612_30hpf_ctrl_atf6_C12_ch00_t0000"
+            # legacy format: "C12_t0000_stitch.jpg"
+            import re
+            image_id = row['image_id']
+            match = re.search(r'_([A-H]\d{2})_.*_(t\d{4})$', image_id)
+            if match:
+                well_part, time_part = match.groups()
+                legacy_stub = f"{well_part}_{time_part}*"
+                ff_image_paths = sorted((ff_image_path / date).glob(legacy_stub))
+        
+        if not ff_image_paths:
+            warnings.warn(f"FF image not found for {full_stub} or legacy format in {ff_image_path / date}", stacklevel=2)
             return True
         
         im_ff = io.imread(ff_image_paths[0])
