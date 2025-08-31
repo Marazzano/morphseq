@@ -483,6 +483,38 @@ This section maps each legacy build script to its role, inputs, and outputs for 
   - Purpose: Apply rule‑based QC (size outliers, proximity to death), infer standardized stage (hpf), and build curation tables.
   - Inputs: `metadata/combined_metadata_files/embryo_metadata_df01.csv`; stage reference (`metadata/stage_ref_df.csv`); perturbation keys.
   - Outputs: `embryo_metadata_df02.csv`; `curation/curation_df.csv`; `curation/embryo_curation_df.csv`.
+  - 
+#### Statsmodels Usage in Build04
+
+  Purpose: Statsmodels is used for developmental stage inference in Build04 - a critical biological
+  analysis step.
+
+  Specific Function: infer_embryo_stage_orig() uses Ordinary Least Squares (OLS) regression to:
+
+  1. Calibrate stage predictions using reference embryos (wild-type controls)
+  2. Build regression model with predictors:
+    - stage (predicted developmental stage)
+    - stage² (quadratic term)
+    - cohort_id (experimental batch effects)
+    - interaction (stage × cohort interaction)
+  3. Predict developmental stages for all embryos based on:
+    - Surface area measurements (μm²)
+    - Temporal progression through development
+    - Experimental batch corrections
+
+  Biological Context:
+  - Zebrafish embryos develop through predictable stages (24hpf, 30hpf, 36hpf, etc.)
+  - Surface area correlates with developmental stage progression
+  - The regression corrects for batch-to-batch variations in culture conditions
+
+  Alternative: We could potentially replace with sklearn's LinearRegression, but statsmodels provides:
+  - More detailed statistical diagnostics
+  - Better handling of interaction terms
+  - Compatibility with existing analysis pipeline
+
+  Impact on Testing: This means Build04 is doing scientific analysis, not just data processing - it's
+  inferring biological stages from morphological measurements.
+
 
 ### 05 — Make Training Snips
 

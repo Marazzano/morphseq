@@ -146,6 +146,7 @@ class SAM2MetadataExporter:
         self.sam2_json_path = Path(sam2_json_path)
         self.masks_dir = Path(masks_dir) if masks_dir else None
         self.sam2_data = None
+        self.experiment_metadata = None
         
     def load_and_validate_json(self) -> Dict[str, Any]:
         """
@@ -177,6 +178,28 @@ class SAM2MetadataExporter:
         logger.info(f"Successfully loaded SAM2 data with {len(data.get('experiments', {}))} experiments")
         
         return data
+
+    def load_experiment_metadata(self) -> None:
+        """
+        Load experiment metadata from experiment_metadata.json if available.
+        This provides pixel dimensions and other raw image data missing from SAM2 segmentation JSON.
+        """
+        # Try to find experiment_metadata.json in the same directory structure
+        sam2_dir = self.sam2_json_path.parent
+        while sam2_dir.name and sam2_dir != sam2_dir.parent:
+            metadata_path = sam2_dir / "raw_data_organized" / "experiment_metadata.json"
+            if metadata_path.exists():
+                logger.info(f"Loading experiment metadata from {metadata_path}")
+                try:
+                    with open(metadata_path, 'r') as f:
+                        self.experiment_metadata = json.load(f)
+                    logger.info(f"Successfully loaded experiment metadata with {len(self.experiment_metadata.get('experiments', {}))} experiments")
+                    return
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to load experiment metadata: {e}")
+            sam2_dir = sam2_dir.parent
+        
+        logger.warning("No experiment_metadata.json found - pixel dimensions will be missing")
     
     def _validate_json_structure(self, data: Dict[str, Any]) -> None:
         """
@@ -342,15 +365,29 @@ class SAM2MetadataExporter:
                             # Extract raw metadata from enhanced schema
                             raw_image_data = image_data.get('raw_image_data_info', {}) if isinstance(image_data, dict) else {}
                             
-                            # Well-level metadata from video_data
+                            # If raw_image_data is empty, try to merge from experiment metadata
+                            exp_metadata = {}
+                            video_metadata = {}
+                            if not raw_image_data and self.experiment_metadata:
+                                exp_metadata = self.experiment_metadata.get('experiments', {}).get(experiment_id, {})
+                                video_metadata = exp_metadata.get('videos', {}).get(video_id_parsed, {})
+                                image_metadata = video_metadata.get('image_ids', {}).get(image_id, {})
+                                raw_image_data = image_metadata.get('raw_image_data_info', {})
+                            
+                            # Always try to get experiment metadata for well-level data
+                            if not exp_metadata and self.experiment_metadata:
+                                exp_metadata = self.experiment_metadata.get('experiments', {}).get(experiment_id, {})
+                                video_metadata = exp_metadata.get('videos', {}).get(video_id_parsed, {})
+                            
+                            # Well-level metadata from experiment metadata (not SAM2 video_data)
                             well_metadata = {
-                                'medium': video_data.get('medium'),
-                                'genotype': video_data.get('genotype'), 
-                                'chem_perturbation': video_data.get('chem_perturbation'),
-                                'start_age_hpf': video_data.get('start_age_hpf'),
-                                'embryos_per_well': video_data.get('embryos_per_well'),
-                                'temperature': video_data.get('temperature'),
-                                'well_qc_flag': video_data.get('well_qc_flag')
+                                'medium': video_metadata.get('medium', video_data.get('medium')),
+                                'genotype': video_metadata.get('genotype', video_data.get('genotype')), 
+                                'chem_perturbation': video_metadata.get('chem_perturbation', video_data.get('chem_perturbation')),
+                                'start_age_hpf': video_metadata.get('start_age_hpf', video_data.get('start_age_hpf')),
+                                'embryos_per_well': video_metadata.get('embryos_per_well', video_data.get('embryos_per_well')),
+                                'temperature': video_metadata.get('temperature', video_data.get('temperature')),
+                                'well_qc_flag': video_metadata.get('well_qc_flag', video_data.get('well_qc_flag'))
                             }
                             
                         except Exception as e:
@@ -575,6 +612,7 @@ Examples:
         
         # Load and validate
         exporter.load_and_validate_json()
+        exporter.load_experiment_metadata()
         
         # Export to CSV
         df = exporter.export_to_csv(args.output, args.experiment_filter)
