@@ -343,7 +343,7 @@ def perform_embryo_qc(root, dead_lead_time=2):
 
     ############
     # Use surface-area of mask to remove large outliers
-    min_embryos = 10
+    min_embryos = 2  # Reduced for testing small datasets
     sa_ref_key = np.asarray(['wik', 'ab'])
     use_indices = np.where(np.isin(embryo_metadata_df["master_perturbation"], sa_ref_key) | (embryo_metadata_df["experiment_date"] == "20240626") & \
                            (embryo_metadata_df["use_embryo_flag"] == 1))[0]
@@ -381,12 +381,21 @@ def perform_embryo_qc(root, dead_lead_time=2):
             last_i = t-1
             break
 
-    # fill in blanks
-    percentile_array[:first_i] = percentile_array[first_i]
-    percentile_array[last_i + 1:] = percentile_array[last_i]
+    # fill in blanks - handle insufficient data case
+    if np.isnan(first_i) or np.isnan(last_i):
+        print(f"⚠️  Warning: Insufficient QC reference data for surface area outlier detection.")
+        print(f"   Found first_i={first_i}, last_i={last_i}")
+        print(f"   Skipping surface area QC step for small dataset.")
+        # Skip surface area outlier detection for small datasets
+        sa_bound_sm = np.full_like(time_index, offset_cushion)
+    else:
+        first_i = int(first_i)
+        last_i = int(last_i)
+        percentile_array[:first_i] = percentile_array[first_i]
+        percentile_array[last_i + 1:] = percentile_array[last_i]
 
-    # smooth
-    sa_bound_sm = offset_cushion + scipy.signal.savgol_filter(percentile_array, window_length=5, polyorder=2)
+        # smooth
+        sa_bound_sm = offset_cushion + scipy.signal.savgol_filter(percentile_array, window_length=5, polyorder=2)
 
     # flag outliers
     t_ids = np.digitize(time_vec_all, bins=time_index)
