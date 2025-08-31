@@ -27,8 +27,19 @@ from .steps.run_build02 import run_build02
 from .validation import run_validation
 
 
+def resolve_root(args) -> str:
+    """Resolve the root path, optionally appending test suffix for isolation."""
+    root = Path(args.root)
+    if hasattr(args, 'test_suffix') and args.test_suffix:
+        root = root.parent / f"{root.name}_{args.test_suffix}"
+        root.mkdir(parents=True, exist_ok=True)
+        print(f"📁 Using test root: {root}")
+    return str(root)
+
+
 def _add_common_root_and_exp(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--root", required=True, help="Project root (contains built_image_data/, metadata/, training_data/)")
+    ap.add_argument("--test-suffix", help="Append suffix to root for test isolation (e.g., test_sam2_20250830)")
     ap.add_argument("--exp", required=False, help="Experiment name (e.g., 20250612_30hpf_ctrl_atf6)")
 
 
@@ -106,21 +117,21 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.cmd == "build01":
-        run_build01(root=args.root, exp=args.exp, microscope=args.microscope,
+        run_build01(root=resolve_root(args), exp=args.exp, microscope=args.microscope,
                     metadata_only=args.metadata_only, overwrite=args.overwrite)
 
     elif args.cmd == "combine-metadata":
-        run_combine_metadata(root=args.root)
+        run_combine_metadata(root=resolve_root(args))
 
     elif args.cmd == "build02":
-        run_build02(root=args.root, mode=args.mode, model_name=args.model_name,
+        run_build02(root=resolve_root(args), mode=args.mode, model_name=args.model_name,
                     n_classes=args.n_classes, overwrite=args.overwrite)
 
     elif args.cmd == "build03":
         if not args.exp:
             raise SystemExit("--exp is required for build03")
         run_build03(
-            root=args.root,
+            root=resolve_root(args),
             exp=args.exp,
             sam2_csv=args.sam2_csv,
             by_embryo=args.by_embryo,
@@ -131,27 +142,28 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     elif args.cmd == "build04":
-        run_build04(root=args.root, dead_lead_time=args.dead_lead_time)
+        run_build04(root=resolve_root(args), dead_lead_time=args.dead_lead_time)
 
     elif args.cmd == "build05":
-        run_build05(root=args.root, train_name=args.train_name,
+        run_build05(root=resolve_root(args), train_name=args.train_name,
                     label_var=args.label_var, rs_factor=args.rs_factor,
                     overwrite=args.overwrite)
 
     elif args.cmd == "e2e":
         if not args.exp:
             raise SystemExit("--exp is required for e2e")
+        root = resolve_root(args)
         if not args.skip_build03:
-            run_build03(root=args.root, exp=args.exp, sam2_csv=args.sam2_csv,
+            run_build03(root=root, exp=args.exp, sam2_csv=args.sam2_csv,
                         by_embryo=args.by_embryo, frames_per_embryo=args.frames_per_embryo,
                         max_samples=args.max_samples, n_workers=args.n_workers)
         if not args.skip_build04:
-            run_build04(root=args.root)
+            run_build04(root=root)
         if not args.skip_build05:
-            run_build05(root=args.root, train_name=args.train_name)
+            run_build05(root=root, train_name=args.train_name)
 
     elif args.cmd == "validate":
-        run_validation(root=args.root, exp=args.exp, df01=args.df01, checks=args.checks)
+        run_validation(root=resolve_root(args), exp=args.exp, df01=args.df01, checks=args.checks)
 
     return 0
 

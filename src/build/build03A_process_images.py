@@ -39,10 +39,9 @@ from itertools import chain
 import os
 
 def resolve_sandbox_embryo_mask(root: str | Path, date: str, well: str, time_int: int) -> Path:
-    """Resolve integer-labeled embryo mask path from segmentation_sandbox export.
-
-    - Base directory can be overridden via MORPHSEQ_SANDBOX_MASKS_DIR
-    - No legacy fallback (fail fast to validate pipeline readiness)
+    """Legacy mask resolver - DEPRECATED. Use resolve_sandbox_embryo_mask_from_csv instead.
+    
+    This function uses hardcoded patterns and may fail when multiple embryos exist per frame.
     """
     root = Path(root)
     base_override = os.environ.get("MORPHSEQ_SANDBOX_MASKS_DIR")
@@ -54,6 +53,40 @@ def resolve_sandbox_embryo_mask(root: str | Path, date: str, well: str, time_int
     if not candidates:
         raise FileNotFoundError(f"Sandbox embryo mask not found for pattern: {mask_dir}/{stub}")
     return candidates[0]
+
+def resolve_sandbox_embryo_mask_from_csv(root: str | Path, row) -> Path:
+    """Resolve integer-labeled embryo mask path using CSV exported_mask_path.
+    
+    Uses the exact filename provided in the SAM2 CSV instead of pattern matching.
+    This eliminates hardcoded pattern assumptions and works with multiple embryos per frame.
+    
+    Args:
+        root: Project root directory
+        row: CSV row with exported_mask_path column
+        
+    Returns:
+        Path to the specific mask file for this embryo
+        
+    Raises:
+        FileNotFoundError: If the mask file specified in CSV doesn't exist
+    """
+    root = Path(root)
+    base_override = os.environ.get("MORPHSEQ_SANDBOX_MASKS_DIR")
+    # Hardcoded mask path for development - masks are in the development repo
+    if not base_override:
+        base = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/exported_masks")
+    else:
+        base = Path(base_override)
+    
+    date = str(row["experiment_date"])
+    mask_filename = row["exported_mask_path"]
+    
+    mask_path = base / date / "masks" / mask_filename
+    
+    if not mask_path.exists():
+        raise FileNotFoundError(f"Sandbox embryo mask not found: {mask_path}")
+    
+    return mask_path
 
 # Suppress the specific warning from skimage
 warnings.filterwarnings("ignore", message="Only one label was provided to `remove_small_objects`")
@@ -146,12 +179,14 @@ def export_embryo_snips(r: int,
     
     root = Path(root)
     row = stats_df.iloc[r].copy()
+    
+    # Extract key variables from row data  
+    well = row.get("well")
+    time_int = int(row.get("time_int", 0))
+    date = str(row.get("experiment_date"))
 
     # --- Load embryo mask from segmentation_sandbox (integer-labeled) ---
-    date = str(row["experiment_date"])
-    well = row["well"]
-    time_int = int(row["time_int"])
-    mask_path = resolve_sandbox_embryo_mask(root, date, well, time_int)
+    mask_path = resolve_sandbox_embryo_mask_from_csv(root, row)
     im_mask_int = io.imread(mask_path)
     lbi = int(row["region_label"])  # assumes present; MVP scope
     im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
@@ -559,10 +594,7 @@ def get_embryo_stats(index: int,
     row = embryo_metadata_df.loc[index].copy()
 
     # --- Load embryo mask from segmentation_sandbox (integer-labeled) ---
-    date = str(row["experiment_date"])
-    well = row["well"]
-    time_int = int(row["time_int"])
-    mask_path = resolve_sandbox_embryo_mask(root, date, well, time_int)
+    mask_path = resolve_sandbox_embryo_mask_from_csv(root, row)
     if not Path(mask_path).exists():
         warnings.warn(f"Sandbox mask not found: {mask_path}", stacklevel=2)
         for c in ["dead_flag","no_yolk_flag","frame_flag","focus_flag","bubble_flag"]:
@@ -574,10 +606,9 @@ def get_embryo_stats(index: int,
     im_mask_lb = ((im_mask_int == lbi) * 255).astype(np.uint8)
 
     # --- Perform calculations and QC checks ---
-    # Calculations depending on legacy metadata columns that are not in the SAM2 CSV
-    # are disabled or use placeholder values.
-    
-    px_dim = 1.0 
+    # Calculate actual pixel dimension from CSV metadata
+    # Use Height dimensions; Width should be equivalent for square pixels
+    px_dim = row["Height (um)"] / row["Height (px)"]
     qc_scale_px = int(np.ceil(qc_scale_um / px_dim))
 
     row.loc["surface_area_um"] = row["area_px"] * (px_dim ** 2)
@@ -685,6 +716,11 @@ def segment_wells_sam2_csv(
     exp_df['well_id'] = exp_df['video_id'].str.extract(r'_([A-H]\d{2})$')[0]
     exp_df['well'] = exp_df['well_id']  # Add 'well' column for legacy compatibility
     exp_df['time_int'] = exp_df['frame_index']
+    
+    # Calculate predicted developmental stage using legacy formula (Kimmel et al 1995)
+    # Formula: predicted_stage_hpf = start_age_hpf + time_hours * (0.055 * temperature - 0.57)
+    exp_df['predicted_stage_hpf'] = exp_df['start_age_hpf'] + \
+        (exp_df['Time Rel (s)'] / 3600.0) * (0.055 * exp_df['temperature'] - 0.57)
     
     print(f"✅ SAM2 data transformed to legacy format: {len(exp_df)} rows ready")
     
@@ -1007,6 +1043,11 @@ def extract_embryo_snips(root: str | Path,
     # save
     exp_name = dates[0]
     stats_df.to_csv(meta_root / f"{exp_name}_embryo_metadata.csv", index=False)
+    
+    # Also write Build04-compatible format at expected path
+    build04_meta_root = root / 'metadata' / "combined_metadata_files"
+    os.makedirs(build04_meta_root, exist_ok=True)
+    stats_df.to_csv(build04_meta_root / "embryo_metadata_df01.csv", index=False)
 
 
 if __name__ == "__main__":
