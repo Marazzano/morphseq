@@ -828,3 +828,94 @@ morphseq_data_dir: "/path/to/morphseq_playground"
 3. **Multi-Experiment Validation**: Test across different perturbations and dates
 4. **Production Migration**: Apply playground fixes to production environment
 5. **Performance Benchmarking**: Measure processing times for production planning
+
+---
+
+## 🧪 Automated Tests & Controlled Environment
+
+### Added Unit Tests (pytest)
+
+- `tests/sam2_pipeline/test_build_utils_stage_ref.py`: Validates `generate_stage_ref_from_df01()` outputs (`stage_ref_df.csv`, `stage_ref_params.csv`) from a minimal df01.
+- `tests/sam2_pipeline/test_build_utils_perturbation_key.py`: Validates `reconstruct_perturbation_key_from_df02()` majority-vote reconstruction and CSV write-out.
+- `tests/sam2_pipeline/test_cli_interface.py`: Confirms Build04 CLI accepts `--exp` for interface parity.
+- `tests/sam2_pipeline/test_build03_sam2_bridge.py`: Verifies `segment_wells_sam2_csv()` transforms SAM2 CSV to legacy-compatible columns (xpos/ypos/region_label/stage).
+- `tests/sam2_pipeline/test_build05_make_training_snips.py`: Creates a tiny, isolated root with two snips and minimal curation CSVs; asserts training folder/images produced.
+ - `tests/sam2_pipeline/test_embed_training_snips_sim.py`: Uses simulate mode to produce deterministic embeddings from images; validates CSV schema and non‑NaNs without requiring torch.
+
+These tests are self-contained and write only under `tmp_path`. They do not rely on production paths, avoiding false positives.
+
+### Test Runner
+
+- From repo root: `pytest -q tests/sam2_pipeline`
+- If needed, install pytest: `pip install pytest` (or use your conda env)
+
+### Controlled Test Layout (file-wise)
+
+For repeatable, isolated validation without production contamination:
+
+- Use the in-repo `morphseq_playground/` for manual tests (already created) and `pytest` for automated checks.
+- Automated tests create ephemeral structures under `tmp_path`, including:
+  - `metadata/combined_metadata_files/embryo_metadata_df01.csv` (for stage ref tests)
+  - `metadata/combined_metadata_files/embryo_metadata_df02.csv` and `curation/*` (for Build05 tests)
+  - `training_data/bf_embryo_snips/<exp>/<snip>.jpg` minimal images
+  - `sam2_metadata_<exp>.csv` minimal SAM2 metadata
+
+This mirrors the playground structure while staying fully local and disposable.
+
+---
+
+## 🔎 Code Audit Summary (aligned with this doc)
+
+- `src/build/build03A_process_images.py`:
+  - FF image path updated to `built_image_data/stitched_FF_images` and regex fallback supports legacy names (`C12_t0000*`).
+  - `resolve_sandbox_embryo_mask_from_csv()` uses exact CSV filenames under `segmentation_sandbox/data/exported_masks/<date>/masks` (override via `MORPHSEQ_SANDBOX_MASKS_DIR`).
+  - `segment_wells_sam2_csv()` produces legacy-compatible columns and computes `predicted_stage_hpf` from SAM2 timing/temperature fields.
+- `src/build/build04_perform_embryo_qc.py`:
+  - Small‑N hardening: `min_embryos=2` for tests; guarded percentile handling to avoid IndexError and NaNs.
+  - Uses `stage_ref_df.csv` via `infer_embryo_stage()`; persists df02 and curation tables as documented.
+- `src/build/build05_make_training_snips.py`:
+  - Organizes snips under `training_data/<train_name>/images/<label>/...` using df02 and curation CSVs; test uses `label_var=None`.
+- `src/run_morphseq_pipeline/cli.py`:
+  - Build04 accepts `--exp` (ignored) for consistent UX; covered by CLI test.
+- `src/build/build_utils.py`:
+  - `generate_stage_ref_from_df01()` and `reconstruct_perturbation_key_from_df02()` implemented and validated with unit tests.
+
+Conclusion: The code implements the fixes and utilities described in Refactor‑009; unit tests provide fast verification for critical components without production dependencies.
+
+---
+
+## ✅ What To Run (quick reference)
+
+- Automated: `pytest -q tests/sam2_pipeline`
+- Manual E2E (playground): `./test_sam2_full_pipeline.sh` (ensuring `morphseq_playground/metadata/*` files exist)
+
+Embeddings:
+- Simulated (CI-safe): `python -m src.run_morphseq_pipeline.cli embed --root <root> --train-name <name> --simulate --latent-dim 16`
+- Real model: `python -m src.run_morphseq_pipeline.cli embed --root <root> --train-name <name> --model-dir /path/to/final_model`
+
+
+Artifacts for quick sanity checks:
+- `safe_test_outputs/morphological_features.csv`
+- `safe_test_outputs/vae_embedding_analysis.png`
+
+---
+
+## 🧠 Morphological Embeddings Strategy & Validation
+
+Implementation options:
+- Pretrained VAE: Use `src/vae/auxiliary_scripts/assess_image_set.py` or the new CLI `embed` to extract `z_mu_*` from a trained model.
+- CI-safe simulate mode: `src/vae/auxiliary_scripts/embed_training_snips.py --simulate` generates deterministic embeddings to validate wiring and data contracts without heavy deps.
+
+Validation gates:
+- Shape: `len(embeddings) == n_snips`, columns `z_mu_00..z_mu_{d-1}` present
+- Hygiene: No NaNs/inf; finite numeric values
+- Consistency: Reproducible with fixed seeds (simulate) or deterministic model eval mode
+- Discriminative sanity: Correlate |z| norms or principal components with `surface_area_um` / `predicted_stage_hpf` (expect weak+ positive trend)
+- Joinability: `snip_id` exactly matches Build05 filenames (stems), join success rate 100% to `embryo_metadata_df_train.csv`
+
+Outputs:
+- `training_data/<train_name>/embeddings.csv` — primary artifact
+- Optional plots (not automated): PCA/UMAP overlays vs. phenotype for quick scientific check
+
+Escalation path:
+- If correlation or hygiene gates fail, sample 4–8 images, visualize reconstructions via `assess_image_set.py`, verify input scaling and grayscale transforms.
