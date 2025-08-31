@@ -25,6 +25,7 @@ from .steps.run_build01 import run_build01
 from .steps.run_build_combine_metadata import run_combine_metadata
 from .steps.run_build02 import run_build02
 from .validation import run_validation
+from .steps.run_embed import run_embed
 
 
 def resolve_root(args) -> str:
@@ -119,6 +120,17 @@ def build_parser() -> argparse.ArgumentParser:
     pv.add_argument("--df01", default="metadata/combined_metadata_files/embryo_metadata_df01.csv")
     pv.add_argument("--checks", default="schema,units,paths")
 
+    # embed
+    pem = sub.add_parser("embed", help="Generate morphological embeddings for training snips")
+    pem.add_argument("--root", required=True)
+    pem.add_argument("--train-name", required=True)
+    pem.add_argument("--model-dir", required=False, help="Path to model or its parent (for real embeddings)")
+    pem.add_argument("--out-csv", required=False)
+    pem.add_argument("--batch-size", type=int, default=64)
+    pem.add_argument("--simulate", action="store_true")
+    pem.add_argument("--latent-dim", type=int, default=16)
+    pem.add_argument("--seed", type=int, default=0)
+
     return p
 
 
@@ -173,6 +185,18 @@ def main(argv: list[str] | None = None) -> int:
 
     elif args.cmd == "validate":
         run_validation(root=resolve_root(args), exp=args.exp, df01=args.df01, checks=args.checks)
+
+    elif args.cmd == "embed":
+        run_embed(
+            root=resolve_root(args),
+            train_name=args.train_name,
+            model_dir=args.model_dir,
+            out_csv=args.out_csv,
+            batch_size=args.batch_size,
+            simulate=args.simulate,
+            latent_dim=args.latent_dim,
+            seed=args.seed,
+        )
 
     return 0
 
