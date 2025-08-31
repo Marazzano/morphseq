@@ -12,6 +12,13 @@
 
 **Current Status**: Build03A ✅ VALIDATED, Build04 ✅ VALIDATED, Build05 ⏳ READY FOR TESTING
 
+### What changed in this iteration
+- Standardized CLI: Build04 now accepts optional `--exp` (ignored) for parity with other steps (`src/run_morphseq_pipeline/cli.py:88`).
+- Stage reference generator: Added `generate_stage_ref_from_df01()` to reproducibly create `metadata/stage_ref_df.csv` from df01 (q90/95 + sigmoid fit) (`src/build/build_utils.py:90`).
+- Perturbation key recovery: Added `reconstruct_perturbation_key_from_df02()` to rebuild `metadata/perturbation_name_key.csv` from Build04 outputs (`src/build/build_utils.py:156`).
+- Small‑N QC hardening: Build04 surface‑area outlier pass tolerates tiny datasets (guarded percentiles, min_embryos lowered for tests) (`src/build/build04_perform_embryo_qc.py:346`, `:384`).
+- Documentation: Added guide for using ExperimentManager with Keyence and handing off to CLI (`docs/guides/using_experiment_manager_keyence.md`).
+
 ---
 
 ## 🎯 **ACTUAL VALIDATION RESULTS - August 31, 2025**
@@ -125,6 +132,8 @@ python -m src.run_morphseq_pipeline.cli build04 \
 - `src/run_morphseq_pipeline/steps/run_build04.py`
 - `src/run_morphseq_pipeline/cli.py` (build04 argument parser)
 
+Status: CLI updated — Build04 accepts `--exp` (ignored) to avoid confusion when reusing commands.
+
 ### **2. Command Interface Standardization**
 
 **Issue**: Inconsistent parameter requirements across build steps:
@@ -153,6 +162,8 @@ python -m src.run_morphseq_pipeline.cli build04 \
    - Investigate why `--exp` parameter is rejected
    - Update argument parser to accept experiment name
    - Test Build04 processing with corrected interface
+
+   Done: Build04 parser now accepts `--exp` (ignored by Build04), aligning usage with other steps.
 
 2. **Validate Build04 Processing**:
    - Confirm no `predicted_stage_hpf` KeyError occurs
@@ -208,6 +219,8 @@ python -m src.run_morphseq_pipeline.cli build04 \
 - **Build04+**: ❓ Unknown due to CLI interface blocking validation
 - **Overall Pipeline**: ⏳ Partially validated, needs interface fixes
 
+Update: Build04 validated on minimal dataset post‑patch; proceed to Build05 tests.
+
 ---
 
 ## 🔍 **TECHNICAL FINDINGS**
@@ -222,13 +235,15 @@ python -m src.run_morphseq_pipeline.cli build04 \
 - **Error Handling**: Generic argparse errors don't provide helpful guidance
 - **Documentation Gap**: No clear specification of required parameters per build step
 
+Resolution: Build04 now accepts `--exp` (ignored). Longer‑term, consider a "global args" helper enforcing consistent flags.
+
 ---
 
 ## 📝 **IMPLEMENTATION CHECKLIST**
 
 ### **Phase 1: Fix Build04 Interface** ⏱️ 15min
 - [ ] Investigate Build04 CLI argument parsing
-- [ ] Add `--exp` parameter support or document alternative usage
+- [x] Add `--exp` parameter support or document alternative usage
 - [ ] Test Build04 processing of Build03A outputs
 - [ ] Validate no `predicted_stage_hpf` KeyError occurs
 
@@ -398,6 +413,9 @@ embeddings = model.encoder(x).embedding
 - Extract from legacy nlammers analysis files
 - Generate from combined multi-experiment dataset
 
+Implemented utility:
+- `generate_stage_ref_from_df01(root, ref_dates, quantile, max_stage)` writes `metadata/stage_ref_df.csv` and `metadata/stage_ref_params.csv`. See `src/build/build_utils.py:90`.
+
 **Question 2: Perturbation Key Management**
 ❓ **QUESTION FOR USER**: Should we implement the proposed perturbation key management improvements?
 
@@ -406,6 +424,9 @@ embeddings = model.encoder(x).embedding
 - Create template generation script for new experiments  
 - Add validation to pipeline CLI with `--pert-key` option
 - Implement coverage checks against df01.csv
+
+Stopgap utility (when original key is missing):
+- `reconstruct_perturbation_key_from_df02(root)` rebuilds the key from `embryo_metadata_df02.csv` using mode/majority. See `src/build/build_utils.py:156`.
 
 #### **Performance & Scale Considerations**
 
@@ -481,6 +502,8 @@ embeddings = model.encoder(x).embedding
 - **Build05**: `src/build/build05_make_training_snips.py`
 - **VAE Assessment**: `src/analyze/assess_vae_results.py`, `src/vae/auxiliary_scripts/assess_image_set.py`
 - **CLI Interface**: `src/run_morphseq_pipeline/cli.py`
+ - **Keyence Manager**: `src/build/pipeline_objects.py`
+ - **New Utilities**: `src/build/build_utils.py` (stage ref + pert key reconstruction)
 
 **Created Dependencies** (FOR TESTING ONLY):
 - `perturbation_name_key.csv` - Contains atf6, inj-ctrl, EM mappings
@@ -495,5 +518,25 @@ cd /net/trapnell/vol1/home/mdcolon/proj/morphseq
 ---
 
 *Last Updated: August 31, 2025 - Build04 validation completed, Build05+VAE integration plan ready*
+
+---
+
+## ✅ Updates Implemented (This Refactor)
+- Build04 CLI accepts `--exp` for interface parity (ignored in logic).
+- New `build_utils`:
+  - `generate_stage_ref_from_df01()` — reproducible `stage_ref_df.csv` generator.
+  - `reconstruct_perturbation_key_from_df02()` — bootstrap missing perturbation key from df02.
+- Build04 QC hardened for tiny datasets (sa percentile guard + `min_embryos` lowered in tests).
+- Guide added for optional Keyence ExperimentManager usage and handoff to CLI.
+
+## 📌 Final Assessment and Path Forward
+- Use centralized CLI for Build03/04/05. Keep ExperimentManager for bulk Keyence export/stitch/segment when needed.
+- Stage reference: adopt multi‑experiment aggregate generation; use `generate_stage_ref_from_df01()` for reproducibility.
+- Perturbation key: version a baseline CSV; until then, use `reconstruct_perturbation_key_from_df02()` or curate manually.
+- Scale validation: ramp 10–20 → 40–60 → 90+ embryos; restore production QC thresholds (`min_embryos ~ 10`) once data scale permits.
+
+## 🧩 Manual Items Acknowledged
+- We will manually generate `metadata/perturbation_name_key.csv` if the production master file is unavailable.
+- We will recalculate `metadata/stage_ref_df.csv` using the new utility from available df01(s).
 
 *Created August 31, 2025 - First actual validation after discovering Refactor-008's false claims*
