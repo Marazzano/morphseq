@@ -87,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
     # build04
     p04 = sub.add_parser("build04", help="QC + stage inference")
     p04.add_argument("--root", required=True)
+    # Accept --exp for interface consistency with other steps; currently unused by build04
+    p04.add_argument("--exp", required=False, help="Experiment name (accepted for consistency; ignored by build04)")
     p04.add_argument("--dead-lead-time", type=int, default=2)
 
     # build05
