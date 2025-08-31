@@ -1,4 +1,9 @@
 import os
+# Dependency simplification notes (comments only; no behavior change):
+# - nd2: consider optional import and guiding users to preconvert ND2 → TIFF; then load with imageio/cv2.
+# - skimage: IO/resize/exposure can be swapped for imageio/cv2 operations to reduce dependency count.
+# - torch: LoG focus stacker can run on CPU; add clear documentation and possibly a pure NumPy/OpenCV fallback.
+# - tqdm/process_map: fallback to `concurrent.futures` when tqdm isn't installed; progress bar optional.
 import glob
 from tqdm import tqdm
 from skimage.measure import label, regionprops, find_contours

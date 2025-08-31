@@ -3,6 +3,8 @@ import torch
 import numpy as np
 from src.functions.core_utils_segmentation import Dataset, FishModel
 from torch.utils.data import DataLoader
+# Note: matplotlib is only needed when `make_sample_figures=True`.
+# To reduce dependencies, consider importing matplotlib lazily inside that branch.
 from matplotlib import pyplot as plt
 import glob
 import ntpath
