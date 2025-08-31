@@ -579,3 +579,137 @@ This section summarizes what each mask is used for across the legacy build pipel
 - Embryo mask comes from `segmentation_sandbox/data/exported_masks/<date>/masks/<well>_t####*` as integer‑labeled instances; the pipeline selects the `region_label` for a given snip.
 - 2D snips path tolerates missing legacy yolk by substituting an empty yolk mask; Z‑snips path requires a yolk mask to exclude yolk from focus scoring.
 - Focus/bubble masks are not produced by SAM2; flags remain False in the bridge path unless legacy masks are available.
+
+---
+
+## 7. Build04 Perturbation Key Management System
+
+The `perturbation_name_key.csv` file is a critical curation artifact that enforces consistent biological labeling throughout the pipeline.
+
+### **Purpose and Role**
+
+**Build04 Dependency**: Build04 performs QC and stage inference by merging embryo metadata with curated perturbation information:
+- **Location**: `<root>/metadata/perturbation_name_key.csv` 
+- **Code**: `src/build/build04_perform_embryo_qc.py:432`
+- **Legacy Root**: `/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/`
+
+**Core Function**: Maps `master_perturbation` values to standardized biological annotations:
+```python
+pert_name_key = pd.read_csv(os.path.join(root, 'metadata', "perturbation_name_key.csv"))
+embryo_metadata_df = embryo_metadata_df.merge(pert_name_key, how="left", on="master_perturbation", indicator=True)
+```
+
+**Enforcement**: Build04 **raises an exception** if any `master_perturbation` values are missing from the key:
+```python
+if np.any(embryo_metadata_df["_merge"] != "both"):
+    problem_perts = np.unique(embryo_metadata_df.loc[embryo_metadata_df["_merge"] != "both", "master_perturbation"])
+    raise Exception("Some perturbations were not found in key: " + ', '.join(problem_perts.tolist()))
+```
+
+### **Required Schema**
+
+**Essential Columns**:
+- `master_perturbation`: Join key (unique identifier)
+- `short_pert_name`: Standardized display name
+- `phenotype`: Biological classification (wt, mutant names)
+- `control_flag`: Boolean indicating control conditions 
+- `pert_type`: Type classification (control, crispant, fluor, CRISPR)
+- `background`: Genetic background (wik, ab, specific lines)
+
+**Example Structure**:
+```csv
+master_perturbation,short_pert_name,phenotype,control_flag,pert_type,background
+atf6,atf6,unknown,False,CRISPR,wik
+inj-ctrl,inj-ctrl,wt,True,control,wik
+EM,EM,wt,True,medium,wik
+wik,wik,wt,True,control,wik
+ab,ab,wt,True,control,ab
+```
+
+### **Data Flow and Origins**
+
+**Source Pipeline**: `master_perturbation` values originate from well metadata Excel sheets:
+1. **Excel Input**: `metadata/plate_metadata/{exp}_well_metadata.xlsx`
+2. **Assembly Logic**: Combined from `chem_perturbation` and `genotype` fields (`build04_perform_embryo_qc.py:322-338`)
+3. **Legacy Processing**: Historically processed by `src/_Archive/build_orig/build03A_process_embryos_main_par.py`
+
+**Downstream Usage**: The enriched metadata drives multiple Build04 outputs:
+- **Curation Tables**: `metadata/combined_metadata_files/curation/curation_df.csv`
+- **Training Keys**: `metadata/combined_metadata_files/curation/perturbation_train_key.csv`
+- **Metric Keys**: `metadata/combined_metadata_files/curation/perturbation_metric_key.csv`
+
+### **Current Management Limitations**
+
+**Manual Curation**: The key file is **not auto-generated** - it's maintained manually:
+- **No Generator Scripts**: Repository searches show only reads, never writes to `perturbation_name_key.csv`
+- **Manual Editing**: Values added/maintained by hand, often informed by well Excel sheets
+- **No Version Control**: File lives in production directories, not under version control
+- **Coverage Gaps**: New experiments can fail if novel `master_perturbation` values aren't pre-added to key
+
+**Discovery Commands**:
+```bash
+# Search for existing key files
+find /net/trapnell/vol1/home/nlammers/projects/data/morphseq -name "*perturbation*key*" -o -name "*pert*key*"
+
+# Check coverage against current data
+rg -n 'short_pert_name|phenotype|control_flag|pert_type|background' /net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/*.csv
+```
+
+### **Recommended Management Improvements**
+
+**1. Source Control Integration**:
+- Move `perturbation_name_key.csv` into repository under `metadata/` or `configs/`
+- Version control all changes with clear commit messages
+- Keep per-root overrides optional, default to versioned copy
+
+**2. Schema Validation**:
+- Define allowed values for `phenotype`, `pert_type`, `background`
+- Enforce uniqueness of `master_perturbation`
+- Add validation to `src/run_morphseq_pipeline/validation.py`
+
+**3. Template Generation**:
+```python
+# Proposed utility script
+def generate_perturbation_key_template(df01_path):
+    """Scan df01.csv and output template with unique master_perturbation values"""
+    df = pd.read_csv(df01_path)
+    unique_perts = df['master_perturbation'].unique()
+    
+    template = []
+    for pert in unique_perts:
+        template.append({
+            'master_perturbation': pert,
+            'short_pert_name': pert,  # Default to same name
+            'phenotype': 'unknown',   # Requires manual curation
+            'control_flag': 'inj-ctrl' in pert.lower(),  # Heuristic
+            'pert_type': 'unknown',   # Requires manual curation  
+            'background': 'wik'       # Default background
+        })
+    
+    return pd.DataFrame(template)
+```
+
+**4. Configurable Paths**:
+- Add `--pert-key` argument to Build04 CLI for custom key file paths
+- Maintain backward compatibility with default location
+- Support environment-specific keys (development vs production)
+
+**5. Coverage Validation**:
+```python
+# Proposed validation checks
+def validate_perturbation_coverage(df01_path, key_path):
+    """Verify all master_perturbation values in df01 exist in key"""
+    df01 = pd.read_csv(df01_path)
+    key = pd.read_csv(key_path)
+    
+    df01_perts = set(df01['master_perturbation'].unique())
+    key_perts = set(key['master_perturbation'].unique())
+    
+    missing = df01_perts - key_perts
+    if missing:
+        raise ValueError(f"Missing perturbations in key: {missing}")
+    
+    return True
+```
+
+This systematic approach would prevent Build04 crashes due to missing perturbation mappings and provide clear curation workflows for new experiments.
