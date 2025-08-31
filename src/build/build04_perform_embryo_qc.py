@@ -4,6 +4,10 @@ import scipy
 import numpy as np
 import time
 from tqdm import tqdm
+# Dependency simplification note: OLS usage can avoid statsmodels.
+# Replace with NumPy least squares:
+#   beta = np.linalg.lstsq(X_ft.values, Y_ft.values, rcond=None)[0]
+#   predictions_full = X_full.values @ beta
 import statsmodels.api as sm
 
 

@@ -7,6 +7,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]   # adjust “2” if levels dif
 # Put that directory at the *front* of sys.path so Python looks there first
 sys.path.insert(0, str(REPO_ROOT))
 
+# Dependency simplification notes (comments only; no behavior change):
+# - glob2 → pathlib: replace `glob` calls with `Path.glob()`; remove glob2 from deps.
+# - tqdm/process_map: can fallback to `concurrent.futures` (Thread/ProcessPoolExecutor) with optional tqdm.
+# - skimage (exposure/util/io): can be swapped for `imageio.v3` or OpenCV (`cv2`) operations + CLAHE to shrink footprint.
+# - stitch2d: external; consider try/except import and a simplified median-shift align fallback for 2–3 fixed tiles.
+# - pandas: only for metadata table assembly; could be replaced by Python csv if absolutely minimizing.
+# - torch: core to FF computation; if CPU-only environments, keep device="cpu" path working and document it.
+
 # script to define functions_folder for loading and standardizing fish movies
 import os
 import torch

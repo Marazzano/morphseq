@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 from typing import List, Sequence, Optional, Iterable, Union
+# Note: stitch2d is an external dep; consider guarding import behind try/except
+# and providing a minimal fallback for small fixed mosaics if not installed.
 from stitch2d.tile import OpenCVTile
 from skimage import feature, color
 from skimage import exposure, util
@@ -9,6 +11,7 @@ import torch
 import torch.nn.functional as F
 from concurrent.futures import ThreadPoolExecutor
 import skimage.io as skio
+# psutil appears unused here; safe to remove to reduce dependencies.
 import os, psutil, torch
 import itertools
 import pandas as pd
