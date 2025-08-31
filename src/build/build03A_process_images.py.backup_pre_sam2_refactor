@@ -40,6 +40,37 @@ from itertools import chain
 # Suppress the specific warning from skimage
 warnings.filterwarnings("ignore", message="Only one label was provided to `remove_small_objects`")
 
+# Legacy capability note:
+# This file retains the pre-SAM2 legacy behavior for working directly with
+# UNet-generated masks under `segmentation/` (mask, yolk, bubble, focus models),
+# then tracking embryos and extracting per-snip stats/snips. One piece that
+# existed in the older end-to-end flow was the approximate stage calculation
+# (predicted_stage_hpf) computed from well metadata. We restore that here so
+# downstream QC (Build04) receives the expected field when using the legacy path.
+
+def _ensure_predicted_stage_hpf(df: pd.DataFrame) -> pd.DataFrame:
+    """Add `predicted_stage_hpf` using the legacy Kimmel-style formula if missing.
+
+    Formula (hours post fertilization):
+      start_age_hpf + (Time Rel (s)/3600) * (0.055*temperature - 0.57)
+
+    Only applies if the requisite columns exist. Otherwise, the input is
+    returned unchanged.
+    """
+    needed = {"start_age_hpf", "Time Rel (s)", "temperature"}
+    if "predicted_stage_hpf" not in df.columns and needed.issubset(df.columns):
+        try:
+            df = df.copy()
+            df["predicted_stage_hpf"] = (
+                df["start_age_hpf"].astype(float)
+                + (df["Time Rel (s)"].astype(float) / 3600.0)
+                  * (0.055 * df["temperature"].astype(float) - 0.57)
+            )
+        except Exception:
+            # Leave silently unchanged if types are malformed; downstream code will not rely on this.
+            pass
+    return df
+
 def estimate_image_background(root, embryo_metadata_df, bkg_seed=309, n_bkg_samples=100):
 
     np.random.seed(bkg_seed)
@@ -726,6 +757,8 @@ def segment_wells(
 
     # 1) load + diff
     meta_df     = pd.read_csv(meta_dir / f"{exp_name}_metadata.csv", low_memory=False)
+    # Restore legacy predicted_stage_hpf if absent (derived from well metadata)
+    meta_df = _ensure_predicted_stage_hpf(meta_df)
     df_to_process = get_unprocessed_metadata(meta_df, out_dir, overwrite_well_stats)
     df_to_process["experiment_date"] = df_to_process["experiment_date"].astype(str)
     
