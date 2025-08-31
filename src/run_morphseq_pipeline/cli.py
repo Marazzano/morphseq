@@ -28,10 +28,17 @@ from .validation import run_validation
 
 
 def resolve_root(args) -> str:
-    """Resolve the root path, optionally appending test suffix for isolation."""
+    """Resolve the root path, optionally appending test suffix for isolation.
+    
+    WARNING: --test-suffix creates directory OUTSIDE the root path, which may cause
+    permission errors. For /net/trapnell/.../morphseq, user may only have write access
+    INSIDE morphseq/, not in parent directory. Consider omitting --test-suffix if
+    getting PermissionError during directory creation.
+    """
     root = Path(args.root)
     if hasattr(args, 'test_suffix') and args.test_suffix:
-        root = root.parent / f"{root.name}_{args.test_suffix}"
+        # Create subdirectory instead of sibling directory
+        root = root / args.test_suffix
         root.mkdir(parents=True, exist_ok=True)
         print(f"📁 Using test root: {root}")
     return str(root)
@@ -39,7 +46,7 @@ def resolve_root(args) -> str:
 
 def _add_common_root_and_exp(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--root", required=True, help="Project root (contains built_image_data/, metadata/, training_data/)")
-    ap.add_argument("--test-suffix", help="Append suffix to root for test isolation (e.g., test_sam2_20250830)")
+    ap.add_argument("--test-suffix", help="Append suffix to root for test isolation (e.g., test_sam2_20250830). WARNING: Creates directory outside root path, may cause permission errors.")
     ap.add_argument("--exp", required=False, help="Experiment name (e.g., 20250612_30hpf_ctrl_atf6)")
 
 

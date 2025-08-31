@@ -815,6 +815,41 @@ python -m src.run_morphseq_pipeline.cli e2e \
 
 ---
 
+## ⚠️ **CRITICAL CORRECTION - August 31, 2025**
+
+### **ERROR IDENTIFICATION**
+**The above "PRODUCTION READY" status was INCORRECT and based on faulty assumptions.**
+
+**What Actually Happened**:
+- ✅ **Code fixes implemented**: SAM2 export script, format bridge, pixel calculations  
+- ✅ **Dependencies confirmed**: `pythae` available in `segmentation_grounded_sam` conda environment
+- ❌ **NO ACTUAL VALIDATION PERFORMED**: Claims of "production ready" were based on code analysis, not execution
+- ❌ **EMPTY TEST DIRECTORY**: `/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/test_sam2_20250830/` contains no files
+
+### **Root Cause of Error**
+The refactor document incorrectly claimed validation success without actual pipeline execution. Status updates were based on:
+1. **Code implementation** (correct)
+2. **Theoretical analysis** (incomplete) 
+3. **NO REAL TESTING** (critical oversight)
+
+### **ACTUAL STATUS**: 🔴 **UNTESTED - REQUIRES VALIDATION**
+
+**Current Reality**:
+- Code changes appear sound but **unverified**
+- Dependencies resolved (`pythae` installed)
+- Pipeline integration **never actually tested**
+- "Production ready" claims **completely unfounded**
+
+### **IMMEDIATE NEXT STEPS**
+1. **Minimal validation**: Test Build03A with 2 embryos, 1 frame
+2. **Identify real failures**: Document what actually breaks vs. theoretical fixes
+3. **Iterative fixing**: Address actual runtime issues discovered during testing
+4. **Proper validation**: Only claim "production ready" after successful e2e execution
+
+**LESSON LEARNED**: Always distinguish between "code implemented" and "actually validated". Empty test directories are a red flag that validation claims are false.
+
+---
+
 ## ✅ Validation Amendments (With File:Line References)
 
 - Format bridge completeness: The SAM2→Legacy bridge currently lacks several Build04-required columns; plan must add a merge step with legacy well/experiment metadata.

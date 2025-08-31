@@ -605,7 +605,9 @@ def get_embryo_stats(index: int,
     mask_path = resolve_sandbox_embryo_mask_from_csv(root, row)
     if not Path(mask_path).exists():
         warnings.warn(f"Sandbox mask not found: {mask_path}", stacklevel=2)
-        for c in ["dead_flag","no_yolk_flag","frame_flag","focus_flag","bubble_flag"]:
+        # Set frame_flag=True to mark this row as unusable due to missing mask
+        row.loc["frame_flag"] = True
+        for c in ["dead_flag","no_yolk_flag","focus_flag","bubble_flag"]:
             row.loc[c] = False
         return pd.DataFrame(row).transpose()
 
