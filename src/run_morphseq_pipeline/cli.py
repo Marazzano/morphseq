@@ -26,6 +26,7 @@ from .steps.run_build_combine_metadata import run_combine_metadata
 from .steps.run_build02 import run_build02
 from .validation import run_validation
 from .steps.run_embed import run_embed
+from .steps.run_build06 import run_build06
 
 
 def resolve_root(args) -> str:
@@ -131,6 +132,17 @@ def build_parser() -> argparse.ArgumentParser:
     pem.add_argument("--latent-dim", type=int, default=16)
     pem.add_argument("--seed", type=int, default=0)
 
+    # build06 (standardize embeddings + df03 merge)
+    p06 = sub.add_parser("build06", help="Generate embeddings and merge into df02 → df03")
+    p06.add_argument("--root", required=True)
+    p06.add_argument("--train-name", required=True)
+    p06.add_argument("--simulate", action="store_true")
+    p06.add_argument("--latent-dim", type=int, default=16)
+    p06.add_argument("--seed", type=int, default=0)
+    p06.add_argument("--model-dir", required=False)
+    p06.add_argument("--batch-size", type=int, default=64)
+    p06.add_argument("--no-join-df02", action="store_true", help="Do not write df03 merge")
+
     return p
 
 
@@ -196,6 +208,18 @@ def main(argv: list[str] | None = None) -> int:
             simulate=args.simulate,
             latent_dim=args.latent_dim,
             seed=args.seed,
+        )
+
+    elif args.cmd == "build06":
+        run_build06(
+            root=resolve_root(args),
+            train_name=args.train_name,
+            simulate=args.simulate,
+            latent_dim=args.latent_dim,
+            seed=args.seed,
+            model_dir=args.model_dir,
+            batch_size=args.batch_size,
+            join_df02=not args.no_join_df02,
         )
 
     return 0
