@@ -1,69 +1,71 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
-import pandas as pd
+from typing import Optional, List, Union
+import logging
+import os
 
-from src.vae.auxiliary_scripts.embed_training_snips import embed_snips
+from ..services.gen_embeddings import build_df03_with_embeddings
 
 
 def run_build06(
-    root: str | Path,
-    train_name: str,
-    simulate: bool = False,
-    latent_dim: int = 16,
-    seed: int = 0,
-    model_dir: Optional[str | Path] = None,
-    batch_size: int = 64,
-    join_df02: bool = True,
-) -> None:
-    """Standardized embeddings generation and optional merge with df02 (df03 output).
-
-    - Generates `training_data/<train_name>/embeddings.csv` using either a pretrained
-      VAE (`model_dir`) or simulate mode for CI/wiring.
-    - Writes `training_data/<train_name>/embryo_metadata_with_embeddings.csv` by joining
-      the train metadata with embeddings on `snip_id`.
-    - If `join_df02=True`, merges embeddings into df02 across the entire root and writes
-      `metadata/combined_metadata_files/embryo_metadata_df03.csv` (df02 + z_mu_* columns
-      where available via snip_id match).
+    root: Union[str, Path],
+    data_root: Union[str, Path],
+    model_name: str = "20241107_ds_sweep01_optimum",
+    experiments: Optional[List[str]] = None,
+    generate_missing: bool = False,
+    export_analysis: bool = False,
+    train_name: Optional[str] = None,
+    write_train_output: bool = False,
+    overwrite: bool = False,
+    dry_run: bool = False,
+) -> Path:
+    """Standardize morphological embedding generation (Build06).
+    
+    Centralizes embedding aggregation by:
+    1. Ensuring latents exist for experiments in df02 (optionally generates missing via legacy batch path)
+    2. Aggregating per-experiment latents and merging into df02 to produce canonical df03
+    3. Optionally writing per-experiment df03 under central data root for analysis users
+    4. Providing clear CLI, safety checks, and non-destructive defaults
+    
+    This is the new approach that replaces training-subset embedding generation with
+    full df02 aggregation using the legacy latent store as source of truth.
+    
+    Args:
+        root: Pipeline root directory containing df02
+        data_root: Central data root (for models and latents)
+        model_name: Model name for embedding generation (default: "20241107_ds_sweep01_optimum")
+        experiments: Optional explicit experiment list (else inferred from df02)
+        generate_missing: Generate missing latent files using legacy batch path
+        export_analysis: Export per-experiment df03 copies to data root
+        train_name: Training run name for optional join
+        write_train_output: Write training metadata with embeddings
+        overwrite: Allow overwriting existing files
+        dry_run: Print planned actions without executing
+        
+    Returns:
+        Path to created df03 file
+        
+    Raises:
+        FileNotFoundError: If required files don't exist
+        ValueError: If configuration is invalid
     """
-    root = Path(root)
-    train_root = root / "training_data" / train_name
-
-    # 1) Generate embeddings
-    embed_csv = embed_snips(
+    # Setup logging
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    logger = logging.getLogger(__name__)
+    
+    # Delegate to the service orchestrator
+    return build_df03_with_embeddings(
         root=root,
+        data_root=data_root,
+        model_name=model_name,
+        experiments=experiments,
+        generate_missing=generate_missing,
+        export_analysis=export_analysis,
         train_name=train_name,
-        model_dir=model_dir,
-        out_csv=None,
-        batch_size=batch_size,
-        simulate=simulate,
-        latent_dim=latent_dim,
-        seed=seed,
+        write_train_output=write_train_output,
+        overwrite=overwrite,
+        dry_run=dry_run,
+        logger=logger,
     )
-
-    # 2) Join with train metadata if available
-    train_meta = train_root / "embryo_metadata_df_train.csv"
-    if train_meta.exists():
-        df_train = pd.read_csv(train_meta)
-        df_emb = pd.read_csv(embed_csv)
-        df_join = df_train.merge(df_emb, how="left", on="snip_id")
-        out_train_join = train_root / "embryo_metadata_with_embeddings.csv"
-        df_join.to_csv(out_train_join, index=False)
-        print(f"✔️  Wrote {out_train_join}")
-
-    # 3) Optionally merge into df02 for full root
-    if join_df02:
-        df02_path = root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
-        if df02_path.exists():
-            df02 = pd.read_csv(df02_path)
-            df_emb = pd.read_csv(embed_csv)
-            df03 = df02.merge(df_emb, how="left", on="snip_id")
-            df03_path = df02_path.with_name("embryo_metadata_df03.csv")
-            df03.to_csv(df03_path, index=False)
-            print(f"✔️  Wrote {df03_path}")
-        else:
-            print(f"ℹ️  Skipping df03 merge: {df02_path} not found")
-
-    print("✔️  Build06 complete.")
 

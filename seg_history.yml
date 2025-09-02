@@ -1,0 +1,30 @@
+name: seg_sam_py39
+channels:
+  - defaults
+dependencies:
+  - python=3.9
+  - pytorch=2.5.1
+  - torchaudio
+  - torchvision=0.20.1
+  - libvips
+  - scikit-learn
+  - opencv
+  - scipy[version='>=1.11,<1.14']
+  - libxml2
+  - numpy=1.26.4
+  - pytorch-cuda=12.1
+  - statsmodels
+  - nd2
+  - openpyxl
+  - xlsxwriter
+  - pytorch-lightning
+  - segmentation-models-pytorch
+  - aicsimageio
+  - pytest
+  - einops
+  - glob2
+  - omegaconf
+  - pythae
+  - lpips
+  - piq
+prefix: /net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/seg_sam_py39
