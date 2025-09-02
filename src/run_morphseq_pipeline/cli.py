@@ -15,6 +15,7 @@ SAM2 segmentation orchestration is intentionally not included here; provide --sa
 
 from __future__ import annotations
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -27,6 +28,7 @@ from .steps.run_build02 import run_build02
 from .validation import run_validation
 from .steps.run_embed import run_embed
 from .steps.run_build06 import run_build06
+from .services.gen_embeddings import build_df03_with_embeddings
 
 
 def resolve_root(args) -> str:
@@ -133,15 +135,24 @@ def build_parser() -> argparse.ArgumentParser:
     pem.add_argument("--seed", type=int, default=0)
 
     # build06 (standardize embeddings + df03 merge)
-    p06 = sub.add_parser("build06", help="Generate embeddings and merge into df02 → df03")
-    p06.add_argument("--root", required=True)
-    p06.add_argument("--train-name", required=True)
-    p06.add_argument("--simulate", action="store_true")
-    p06.add_argument("--latent-dim", type=int, default=16)
-    p06.add_argument("--seed", type=int, default=0)
-    p06.add_argument("--model-dir", required=False)
-    p06.add_argument("--batch-size", type=int, default=64)
-    p06.add_argument("--no-join-df02", action="store_true", help="Do not write df03 merge")
+    p06 = sub.add_parser("build06", help="Standardize embeddings and merge into df02 → df03")
+    p06.add_argument("--morphseq-repo-root", required=True, help="MorphSeq repository root directory")
+    p06.add_argument("--data-root", help="Data root directory (defaults to MORPHSEQ_DATA_ROOT env var)")
+    p06.add_argument("--model-name", default="20241107_ds_sweep01_optimum", 
+                     help="Model name for embedding generation")
+    p06.add_argument("--experiments", nargs="*", 
+                     help="Explicit experiment list (defaults to inference from df02)")
+    p06.add_argument("--generate-missing-latents", action="store_true",
+                     help="Generate missing latent files using analysis_utils")
+    p06.add_argument("--export-analysis-copies", action="store_true",
+                     help="Export per-experiment df03 copies to data root")
+    p06.add_argument("--train-run", help="Training run name for optional join")
+    p06.add_argument("--write-train-output", action="store_true",
+                     help="Write training metadata with embeddings")
+    p06.add_argument("--dry-run", action="store_true",
+                     help="Print planned actions without executing")
+    p06.add_argument("--overwrite", action="store_true",
+                     help="Allow overwriting existing files")
 
     return p
 
@@ -211,15 +222,25 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     elif args.cmd == "build06":
-        run_build06(
-            root=resolve_root(args),
-            train_name=args.train_name,
-            simulate=args.simulate,
-            latent_dim=args.latent_dim,
-            seed=args.seed,
-            model_dir=args.model_dir,
-            batch_size=args.batch_size,
-            join_df02=not args.no_join_df02,
+        # Resolve data_root from environment if not provided
+        data_root = args.data_root
+        if data_root is None:
+            data_root = os.environ.get("MORPHSEQ_DATA_ROOT")
+            if data_root is None:
+                print("ERROR: --data-root not provided and MORPHSEQ_DATA_ROOT environment variable not set")
+                return 1
+        
+        build_df03_with_embeddings(
+            root=args.morphseq_repo_root,
+            data_root=data_root,
+            model_name=args.model_name,
+            experiments=args.experiments,
+            generate_missing=args.generate_missing_latents,
+            export_analysis=args.export_analysis_copies,
+            train_name=args.train_run,
+            write_train_output=args.write_train_output,
+            overwrite=args.overwrite,
+            dry_run=args.dry_run,
         )
 
     return 0

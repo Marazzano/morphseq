@@ -1,9 +1,9 @@
 🔍 Starting QC analysis on: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
 🔄 Initializing entity tracking...
 ✅ Entity tracking initialized in 0.00s
-   New entities: 0 experiments, 0 videos, 0 images, 0 snips
+   New entities: 1 experiments, 92 videos, 92 images, 92 snips
 🔍 Loaded GSAM annotations from /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
-📊 Found 92 already processed snips
+📊 Found 0 already processed snips
 
 🔍 Starting QC analysis with author='pipeline_qc'
 📊 Entities to process: 1 experiments, 92 videos, 92 images, 92 snips
@@ -29,8 +29,8 @@
 📋 Generating overview section...
 📊 Generated overview - no flags found in the system
 💾 QC results updated in memory (not saved to disk)
-📦 Created backup: grounded_sam_segmentations.backup.20250829_232042.json
-🗑️  Removed old backup: grounded_sam_segmentations.backup.20250829_232038.json
+📦 Created backup: grounded_sam_segmentations.backup.20250901_210933.json
+🗑️  Removed old backup: grounded_sam_segmentations.backup.20250901_210925.json
 💾 Results saved to: /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json
 
 🏁 QC Summary
@@ -47,6 +47,6 @@ Entities with flags:
 
 ✅ No quality issues detected!
 
-🕒 Last Run: 2025-08-29T23:20:42.284910 by pipeline_qc
+🕒 Last Run: 2025-09-01T21:09:33.875466 by pipeline_qc
 ========================================
 ✅ QC analysis completed successfully!

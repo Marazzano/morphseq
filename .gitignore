@@ -90,3 +90,4 @@ test_data/
 # *.mp4
 # *.jpg
 # *.png
+*.pyc
