@@ -32,10 +32,11 @@ from tqdm.contrib.concurrent import process_map
 from skimage.transform import rescale, resize
 from src.build.export_utils import trim_to_shape
 from sklearn.decomposition import PCA
-import warnings 
+import warnings
 from pathlib import Path
 from typing import Sequence, List
 from itertools import chain
+from segmentation_sandbox.scripts.utils.parsing_utils import build_snip_id
 
 # Suppress the specific warning from skimage
 warnings.filterwarnings("ignore", message="Only one label was provided to `remove_small_objects`")
@@ -577,6 +578,7 @@ def segment_wells_sam2_csv(
     max_sa_um: float = 2_000_000,
     par_flag: bool = False,
     overwrite_well_stats: bool = False,
+    force_retrack: bool = False,
 ):
     """
     SAM2-based well segmentation using pre-computed metadata bridge CSV.
@@ -590,9 +592,10 @@ def segment_wells_sam2_csv(
         exp_name: Experiment name (e.g., "20240418")
         sam2_csv_path: Path to SAM2 metadata CSV (if None, looks for sam2_metadata_{exp_name}.csv)
         min_sa_um: Minimum surface area filter (deprecated - handled by SAM2)
-        max_sa_um: Maximum surface area filter (deprecated - handled by SAM2) 
+        max_sa_um: Maximum surface area filter (deprecated - handled by SAM2)
         par_flag: Parallel processing flag (deprecated)
         overwrite_well_stats: Overwrite existing stats flag
+        force_retrack: Rebuild snip IDs even if present in CSV
         
     Returns:
         DataFrame with embryo tracking data compatible with legacy format
@@ -617,8 +620,14 @@ def segment_wells_sam2_csv(
     # Filter by experiment if needed
     if exp_name not in sam2_df['experiment_id'].values:
         raise ValueError(f"Experiment {exp_name} not found in SAM2 CSV")
-    
+
     exp_df = sam2_df[sam2_df['experiment_id'] == exp_name].copy()
+
+    if force_retrack or "snip_id" not in exp_df.columns:
+        exp_df["snip_id"] = exp_df.apply(
+            lambda r: build_snip_id(r["embryo_id"], r["frame_index"]),
+            axis=1
+        )
     
     print(f"📊 SAM2 data loaded: {len(exp_df)} snips from experiment {exp_name}")
     
@@ -963,29 +972,35 @@ def extract_embryo_snips(root: str | Path,
 
 if __name__ == "__main__":
 
-    # The project root is now defined by the REPO_ROOT constant at the top of the file
-    # to avoid hardcoded paths.
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Process images with optional re-tracking")
+    parser.add_argument("--force-retrack", action="store_true", help="Rebuild snip IDs even if present")
+    args = parser.parse_args()
+
     root = REPO_ROOT
-    
-    # print('Compiling well metadata...')
-    # build_well_metadata_master(root)
 
     # SAM2 Pipeline Integration - Phase 2 Implementation
     # Using bridge CSV instead of legacy image processing
     exp_name = "20240418"  # Use experiment with SAM2 data available
-    
+
     # The path to the CSV is now constructed relative to the project root.
     # The PRD specifies the CSV is in the project root.
     sam2_csv_path = root / f"sam2_metadata_{exp_name}.csv"
 
     # Option 1: Use new SAM2 CSV-based function (recommended)
-    tracked_df = segment_wells_sam2_csv(root, exp_name=exp_name, sam2_csv_path=sam2_csv_path)
+    tracked_df = segment_wells_sam2_csv(
+        root,
+        exp_name=exp_name,
+        sam2_csv_path=sam2_csv_path,
+        force_retrack=args.force_retrack,
+    )
 
-    # Using a smaller sample for faster testing as requested
+    # Using a smaller sample of 100 rows for testing.
     print("Using a smaller sample of 100 rows for testing.")
     tracked_df = tracked_df.head(100)
 
-    # Option 2: Use legacy function (fallback during transition)  
+    # Option 2: Use legacy function (fallback during transition)
     # tracked_df = segment_wells(root, exp_name=exp_name)
 
     stats_df = compile_embryo_stats(root, tracked_df)
