@@ -40,6 +40,7 @@ from tqdm.contrib.concurrent import process_map
 from skimage.transform import rescale, resize
 from src.build.export_utils import trim_to_shape
 from sklearn.decomposition import PCA
+from src.build.qc_utils import compute_fraction_alive, compute_qc_flags, compute_speed
 import warnings 
 from pathlib import Path
 from typing import Sequence, List
@@ -95,6 +96,47 @@ def resolve_sandbox_embryo_mask_from_csv(root: str | Path, row) -> Path:
         raise FileNotFoundError(f"Sandbox embryo mask not found: {mask_path}")
     
     return mask_path
+
+def _load_build02_masks_for_row(root: Path, row, target_shape: tuple[int, int]) -> dict:
+    """Load Build02 masks (via/yolk/focus/bubble) for a row if available.
+
+    Searches under `<root>/segmentation/*_<model>/<date>/*{well}_t####*`.
+    Resizes masks (nearest-neighbor) to match `target_shape` when needed.
+    Returns dict with present masks; missing keys omitted.
+    """
+    import skimage.io as io
+    from skimage.transform import resize
+
+    date = str(row.get("experiment_date"))
+    well = row.get("well")
+    time_int = int(row.get("time_int", 0))
+    stub = f"{well}_t{time_int:04d}"
+
+    seg_root = Path(root) / "segmentation"
+    if not seg_root.exists():
+        return {}
+
+    def _find_and_read(keyword: str):
+        for p in seg_root.iterdir():
+            if p.is_dir() and keyword in p.name:
+                candidates = sorted((p / date).glob(f"*{stub}*"))
+                if candidates:
+                    arr = io.imread(candidates[0])
+                    # binarize generically for legacy {0,255} or {0,1}
+                    arr = (arr > (127 if arr.max() >= 255 else 0)).astype(np.uint8)
+                    if arr.shape != target_shape:
+                        arr = resize(
+                            arr.astype(float), target_shape, order=0, preserve_range=True, anti_aliasing=False
+                        ).astype(np.uint8)
+                    return arr
+        return None
+
+    out = {}
+    for k in ("via", "yolk", "focus", "bubble"):
+        m = _find_and_read(k)
+        if m is not None:
+            out[k] = m
+    return out
 
 # Suppress the specific warning from skimage
 warnings.filterwarnings("ignore", message="Only one label was provided to `remove_small_objects`")
@@ -199,19 +241,24 @@ def export_embryo_snips(r: int,
     lbi = int(row["region_label"])  # assumes present; MVP scope
     im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
     
-    # Load yolk from legacy segmentation (keep non-embryo masks unchanged)
-    legacy_seg = Path("/net/trapnell/vol1/home/nlammers/projects/data/morphseq/segmentation")
+    # Load yolk from Build02 segmentation (keep non-embryo masks unchanged)
     im_yolk = None
-    if legacy_seg.exists():
-        yolk_dirs = [p for p in legacy_seg.glob("*") if p.is_dir() and "yolk" in p.name]
+    seg_root = root / 'segmentation'
+    if seg_root.exists():
+        yolk_dirs = [p for p in seg_root.glob("*") if p.is_dir() and "yolk" in p.name]
         if yolk_dirs:
             stub = f"{well}_t{time_int:04}*"
             candidates = sorted((yolk_dirs[0] / date).glob(stub))
             if candidates:
                 im_yolk_raw = io.imread(candidates[0])
-                # Resize yolk mask to match SAM2 mask dimensions
                 from skimage.transform import resize
-                im_yolk = resize(im_yolk_raw, im_mask.shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint8)
+                im_yolk = resize(
+                    (im_yolk_raw > (127 if im_yolk_raw.max() >= 255 else 0)).astype(np.uint8),
+                    im_mask.shape,
+                    order=0,
+                    preserve_range=True,
+                    anti_aliasing=False,
+                ).astype(np.uint8)
     if im_yolk is None:
         warnings.warn("Legacy yolk mask not found; proceeding with empty yolk mask for 2D snips.")
         im_yolk = np.zeros_like(im_mask)
@@ -633,35 +680,56 @@ def get_embryo_stats(index: int,
     # Calculate actual pixel dimension from CSV metadata
     # Use Height dimensions; Width should be equivalent for square pixels
     px_dim = row["Height (um)"] / row["Height (px)"]
-    qc_scale_px = int(np.ceil(qc_scale_um / px_dim))
 
-    row.loc["surface_area_um"] = row["area_px"] * (px_dim ** 2)
-    
-    # Use binary mask for basic geometry
+    # Surface area using area_px if provided, else count mask pixels
+    row.loc["surface_area_um"] = row.get("area_px", float((im_mask_lb > 0).sum())) * (px_dim ** 2)
+
+    # Geometry (length/width) via PCA on embryo pixels
     yy, xx = np.indices(im_mask_lb.shape)
-    mask_coords = np.c_[xx[im_mask_lb==1], yy[im_mask_lb==1]]
+    mask_coords = np.c_[xx[im_mask_lb == 1], yy[im_mask_lb == 1]]
     if mask_coords.shape[0] > 1:
         pca = PCA(n_components=2)
         mask_coords_rot = pca.fit_transform(mask_coords)
-        row.loc["length_um"], row.loc["width_um"] = (np.max(mask_coords_rot, axis=0) - np.min(mask_coords_rot, axis=0)) * px_dim
+        row.loc["length_um"], row.loc["width_um"] = (
+            (np.max(mask_coords_rot, axis=0) - np.min(mask_coords_rot, axis=0)) * px_dim
+        )
     else:
         row.loc["length_um"], row.loc["width_um"] = 0.0, 0.0
 
-    row.loc["speed"] = np.nan
-
-    ######
-    # now do QC checks
-    ######
-
-    row.loc["dead_flag"] = row["fraction_alive"] < ld_rat_thresh
-    row.loc["no_yolk_flag"] = False
-    im_trunc = im_mask_lb[qc_scale_px:-qc_scale_px, qc_scale_px:-qc_scale_px]
-    if np.sum(im_mask_lb) > 0:
-        row.loc["frame_flag"] = np.sum(im_trunc) <= 0.98 * np.sum(im_mask_lb)
+    # Load Build02 auxiliary masks (best-effort) and compute fraction_alive + QC flags
+    aux = _load_build02_masks_for_row(Path(root), row, target_shape=im_mask_lb.shape)
+    frac_alive = compute_fraction_alive((im_mask_lb > 0).astype(np.uint8), aux.get("via"))
+    row.loc["fraction_alive"] = frac_alive
+    if np.isfinite(frac_alive):
+        row.loc["dead_flag"] = bool(frac_alive < ld_rat_thresh)
     else:
-        row.loc["frame_flag"] = False
-    row.loc["focus_flag"] = False
-    row.loc["bubble_flag"] = False
+        row.loc["dead_flag"] = False
+
+    flags = compute_qc_flags(
+        (im_mask_lb > 0).astype(np.uint8),
+        px_dim_um=px_dim,
+        qc_scale_um=qc_scale_um,
+        yolk_mask=aux.get("yolk"),
+        focus_mask=aux.get("focus"),
+        bubble_mask=aux.get("bubble"),
+    )
+    for k, v in flags.items():
+        row.loc[k] = v
+
+    # Speed (µm/s) if previous row has time/position
+    prev_xy = prev_t = None
+    if index > 0:
+        try:
+            prev_xy = (
+                float(embryo_metadata_df.loc[index - 1, "xpos"]),
+                float(embryo_metadata_df.loc[index - 1, "ypos"]),
+            )
+            prev_t = float(embryo_metadata_df.loc[index - 1, "Time Rel (s)"])
+        except Exception:
+            prev_xy, prev_t = None, None
+    curr_xy = (float(row.get("xpos", np.nan)), float(row.get("ypos", np.nan)))
+    curr_t = float(row.get("Time Rel (s)", np.nan)) if np.isfinite(row.get("Time Rel (s)", np.nan)) else None
+    row.loc["speed"] = compute_speed(prev_xy, prev_t, curr_xy, curr_t, px_dim)
 
     row_out = pd.DataFrame(row).transpose()
     

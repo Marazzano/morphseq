@@ -1,7 +1,8 @@
 # Refactor-010-B: Restore QC Features in Build03A (SAM2 Path)
 
 Created: 2025-09-03
-Status: Proposal
+Status: Complete ✅
+Completed: 2025-09-03
 Depends On: Refactor-010 (Standardize Embeddings), Refactor-009 (SAM2 Pipeline Validation)
 
 ## Executive Summary
@@ -118,8 +119,23 @@ All helpers tested on synthetic arrays before integration.
 - Missing timing columns: Keep `speed=NaN` when `Time Rel (s)` not available.
 - Performance: Distance transforms per row can be heavy; compute only when focus/bubble masks are present.
 
-## Timeline (Est.)
-- Day 1: Implement helper tests + helpers
-- Day 2: Integrate into `get_embryo_stats()` + snip yolk path fix
-- Day 3: Integration tests + docs
+## Timeline (Completed ✅)
+- ✅ **Implemented**: Helper functions in `src/build/qc_utils.py`
+  - `compute_fraction_alive()` - handles NaN when via mask missing
+  - `compute_qc_flags()` - frame/yolk/focus/bubble flags with fallbacks
+  - `compute_speed()` - restored speed calculation
+- ✅ **Integrated**: Modified `get_embryo_stats()` in `src/build/build03A_process_images.py`
+  - Uses `_load_build02_masks_for_row()` for Build02 mask loading
+  - Proper mask resizing to SAM2 geometry
+  - Graceful fallbacks when Build02 masks absent
+- ✅ **Validated**: Tests pass in `tests/test_build03A_integration_qc.py` and `tests/test_qc_utils.py`
+
+## Implementation Status
+**All acceptance criteria met:**
+- [x] `fraction_alive` computed from SAM2 embryo + Build02 viability masks (NaN when via absent)
+- [x] QC flags restored: yolk/focus/bubble/frame with Build02 mask dependencies
+- [x] Speed calculation restored using position/time data
+- [x] No hardcoded external paths - uses `<root>/segmentation/<model>_*/<date>/`
+- [x] Test-first helper functions implemented and passing
+- [x] Integration tests validate end-to-end functionality
 
