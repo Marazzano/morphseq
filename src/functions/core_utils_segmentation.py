@@ -44,6 +44,14 @@ def load_split_train_test(datadir, valid_size=.2, batch_size=8):
 
 
 class Dataset(torch.utils.data.Dataset):
+    """
+    NOTE: This Dataset class has confusing behavior regarding mask loading:
+    - In training mode (predict_only_flag=False): Requires masks in <root>/annotations/
+    - In predict mode (predict_only_flag=True): Attempts to load masks but doesn't use them
+    
+    This causes issues in build02 segmentation pipeline where no annotations exist.
+    The __getitem__ method has been patched to handle missing masks in predict-only mode.
+    """
     def __init__(self, root, filenames, out_dims, num_classes=1, predict_only_flag=False, mode="train", transform=None):
 
         # assert mode in {"train", "valid", "test"}
@@ -56,7 +64,7 @@ class Dataset(torch.utils.data.Dataset):
         self.transform = transform
 
         self.images_directory = os.path.join(self.root, "images")
-        self.masks_directory = os.path.join(self.root, "annotations")
+        self.masks_directory = os.path.join(self.root, "annotations")  # Only used in training mode
 
         self.filenames = filenames   #self._read_split()  # read train/valid/test splits
 
@@ -65,18 +73,23 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
 
-        filename = self.filenames[idx]
-        if ".tif" in filename:
-            # filename = filename.replace(".tif", "")  # get rid of tif suffix if it exists
-            image_path = os.path.join(self.images_directory, filename)
-        elif ".png" in filename:
-            # filename = filename.replace(".png", "")  # get rid of tif suffix if it exists
-            image_path = os.path.join(self.images_directory, filename)
-        elif ".jpg" in filename:
-            # filename = filename.replace(".jpg", "")  # get rid of tif suffix if it exists
-            image_path = os.path.join(self.images_directory, filename)
+        original_filename = self.filenames[idx]
+        
+        # Check if filename is already a full path (for build02 compatibility)
+        if os.path.isabs(original_filename):
+            image_path = original_filename
+            filename = os.path.basename(original_filename)  # Only for mask processing
         else:
-            raise Exception("File type not supported")
+            # Original behavior for relative filenames
+            filename = original_filename
+            if ".tif" in filename:
+                image_path = os.path.join(self.images_directory, filename)
+            elif ".png" in filename:
+                image_path = os.path.join(self.images_directory, filename)
+            elif ".jpg" in filename:
+                image_path = os.path.join(self.images_directory, filename)
+            else:
+                raise Exception("File type not supported")
 
         stub_name = filename[:-4].replace("_stitch", "")
         stub_name = stub_name.replace("_ch01", "")
@@ -84,14 +97,18 @@ class Dataset(torch.utils.data.Dataset):
 
         if len(mask_path) > 1:
             raise Exception("Multiple masks found")
-        mask_path = mask_path[0]
+        elif len(mask_path) == 0 and self.predict_only_flag:
+            # In predict-only mode, it's OK to have no existing masks
+            mask_path = None
+        else:
+            mask_path = mask_path[0]
         # image = np.array(Image.open(image_path).convert("RGB"))
 
         # trimap = np.array(Image.open(mask_path))
         # mask = self._preprocess_mask(trimap)
 
         # load and resize mask
-        if not self.predict_only_flag:
+        if not self.predict_only_flag and mask_path is not None:
             lbObject = AICSImage(mask_path)
             lb_temp = np.squeeze(lbObject.data)
             if len(lb_temp.shape) == 3:
@@ -130,7 +147,7 @@ class Dataset(torch.utils.data.Dataset):
         # sample = dict(image=image.astype(np.float32), mask=mask[np.newaxis, :, :].astype(np.float32))  #, trimap=trimap)
         # else:
 
-        sample = dict(image=image.astype(np.float32), mask=mask.astype(np.float32), path=filename)
+        sample = dict(image=image.astype(np.float32), mask=mask.astype(np.float32), path=original_filename)
         if self.transform is not None:
             sample = self.transform(**sample)
 

@@ -10,7 +10,7 @@ from ..services.gen_embeddings import build_df03_with_embeddings
 
 def run_build06(
     root: Union[str, Path],
-    data_root: Union[str, Path],
+    data_root: Optional[Union[str, Path]] = None,
     model_name: str = "20241107_ds_sweep01_optimum",
     experiments: Optional[List[str]] = None,
     generate_missing: bool = False,
@@ -32,8 +32,8 @@ def run_build06(
     full df02 aggregation using the legacy latent store as source of truth.
     
     Args:
-        root: Pipeline root directory containing df02
-        data_root: Central data root (for models and latents)
+        root: Data root directory (contains metadata, models, latents, etc.)
+        data_root: Optional external data root. If None, uses root for everything.
         model_name: Model name for embedding generation (default: "20241107_ds_sweep01_optimum")
         experiments: Optional explicit experiment list (else inferred from df02)
         generate_missing: Generate missing latent files using legacy batch path

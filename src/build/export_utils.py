@@ -24,7 +24,14 @@ def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_d
     # set paths
     # data_root = Path(data_root)
     repo_root = Path(repo_root)
-    plate_meta_path = repo_root / "metadata"/ "plate_metadata" / f"{exp_name}_well_metadata.xlsx"
+    well_meta_path = repo_root / "metadata" / "well_metadata" / f"{exp_name}_well_metadata.xlsx"
+    plate_meta_path = repo_root / "metadata" / "plate_metadata" / f"{exp_name}_well_metadata.xlsx"
+
+    # Prefer well_metadata directory if present, otherwise fall back to plate_metadata
+    if (repo_root / "metadata" / "well_metadata").exists():
+        plate_meta_path = well_meta_path
+    else:
+        plate_meta_path = plate_meta_path
     # built_meta = meta_root / "built_metadata_files"
     # well_meta = meta_root / "well_metadata"
     # combined_out = meta_root / "combined_metadata_files"
@@ -77,46 +84,79 @@ def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_d
     # sheet_dfs = []
     
     # xlf = pd.ExcelFile(xl)
-    with pd.ExcelFile(plate_meta_path) as xlf:
-        # build base well names A01…H12
-        wells = [f"{r}{c:02}" for r in "ABCDEFGH" for c in range(1,13)]
-        plate_df = pd.DataFrame({"well": wells})
-        plate_df["experiment_date"] = exp_name
+    try:
+        with pd.ExcelFile(plate_meta_path) as xlf:
+            # build base well names A01…H12
+            wells = [f"{r}{c:02}" for r in "ABCDEFGH" for c in range(1,13)]
+            plate_df = pd.DataFrame({"well": wells})
+            plate_df["experiment_date"] = exp_name
 
-        # parse each sheet into one vector
-        for sheet in well_sheets:
-            if sheet in xlf.sheet_names:
-                df = xlf.parse(sheet, header=0)           # keep blanks as NaN
-                block = df.iloc[:8, 1:13]                    # whatever made it through
+            # parse each sheet into one vector
+            for sheet in well_sheets:
+                if sheet in xlf.sheet_names:
+                    df = xlf.parse(sheet, header=0)           # keep blanks as NaN
+                    block = df.iloc[:8, 1:13]                    # whatever made it through
 
-                # ensure 8 rows, 12 cols
-                if sheet in ["start_age_hpf", "temperature", "embryos_per_well"]:
-                    block = block.reindex(index=range(8), columns=range(1,13), fill_value=np.nan)
-                    arr = block.to_numpy(dtype=float).ravel() 
-                else:
-                    block = block.reindex(index=range(8), columns=range(1,13), fill_value='')
-                    arr = block.to_numpy(dtype=str).ravel() 
-                plate_df[sheet] = arr
-            else:                   
-                plate_df[sheet] = np.nan
-            
+                    # ensure 8 rows, 12 cols
+                    if sheet in ["start_age_hpf", "temperature", "embryos_per_well"]:
+                        block = block.reindex(index=range(8), columns=range(1,13), fill_value=np.nan)
+                        arr = block.to_numpy(dtype=float).ravel() 
+                    else:
+                        block = block.reindex(index=range(8), columns=range(1,13), fill_value='')
+                        arr = block.to_numpy(dtype=str).ravel() 
+                    plate_df[sheet] = arr
+                else:                   
+                    plate_df[sheet] = np.nan
+                
 
-        plate_df = plate_df.dropna(subset=["start_age_hpf"]).reset_index(drop=True)
-        # # optional temperature sheet
-        # if "temperature" in xlf.sheet_names:
-        #     temp = xlf.parse("temperature").iloc[:8,1:13].to_numpy().ravel()
-        #     plate_df["temperature"] = np.nan_to_num(temp, nan=0).astype(float)
-        # else:
-        #     plate_df["temperature"] = np.nan
+            plate_df = plate_df.dropna(subset=["start_age_hpf"]).reset_index(drop=True)
+    
+    except FileNotFoundError as e:
+        raise FileNotFoundError(
+            f"❌ CRITICAL: Well metadata Excel file not found: {plate_meta_path}\n\n"
+            f"This file is REQUIRED and contains experiment design information:\n"
+            f"  • Medium conditions\n"
+            f"  • Genotype information\n"
+            f"  • Chemical perturbations\n"
+            f"  • Start age (hpf)\n"
+            f"  • Embryos per well\n"
+            f"  • Temperature settings\n\n"
+            f"Expected file: {plate_meta_path}\n\n"
+            f"The Excel file should contain these sheets:\n"
+            f"  • medium\n"
+            f"  • genotype\n"
+            f"  • chem_perturbation\n"
+            f"  • start_age_hpf\n"
+            f"  • embryos_per_well\n"
+            f"  • temperature\n\n"
+            f"Each sheet should have 8 rows × 12 columns (A01-H12 plate layout)"
+        ) from e
+    
+    except Exception as e:
+        raise RuntimeError(
+            f"❌ Error reading well metadata Excel file: {plate_meta_path}\n\n"
+            f"File exists but cannot be processed. Common issues:\n"
+            f"  • File is corrupted or not a valid Excel file\n"
+            f"  • File is currently open in Excel (close it and try again)\n"
+            f"  • Missing required sheets (medium, genotype, chem_perturbation, start_age_hpf, embryos_per_well, temperature)\n"
+            f"  • Incorrect sheet format (should be 8 rows × 12 columns)\n\n"
+            f"Original error: {e}"
+        ) from e
+    
+    # # optional temperature sheet
+    # if "temperature" in xlf.sheet_names:
+    #     temp = xlf.parse("temperature").iloc[:8,1:13].to_numpy().ravel()
+    #     plate_df["temperature"] = np.nan_to_num(temp, nan=0).astype(float)
+    # else:
+    #     plate_df["temperature"] = np.nan
 
-        # # optional QC sheet
-        # if "qc" in xlf.sheet_names:
-        #     qc = xlf.parse("qc").iloc[:8,1:13].to_numpy().ravel()
-        #     plate_df["well_qc_flag"] = np.nan_to_num(qc, nan=0).astype(int)
-        # else:
-        #     plate_df["well_qc_flag"] = 0
+    # # optional QC sheet
+    # if "qc" in xlf.sheet_names:
+    #     qc = xlf.parse("qc").iloc[:8,1:13].to_numpy().ravel()
+    #     plate_df["well_qc_flag"] = np.nan_to_num(qc, nan=0).astype(int)
+    # else:
+    #     plate_df["well_qc_flag"] = 0
 
-            
     # well_df_long = pd.concat(sheet_dfs, axis=0, ignore_index=True)
     # plate_df["experiment_date"] = well_df_long["experiment_date"].astype(str)
 
