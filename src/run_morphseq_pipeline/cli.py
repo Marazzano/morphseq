@@ -3,14 +3,14 @@
 Centralized MorphSeq pipeline runner.
 
 Usage examples:
-    python -m src.run_morphseq_pipeline.cli build03 --root /data/morphseq --exp 20250612_30hpf_ctrl_atf6 \
+    python -m src.run_morphseq_pipeline.cli build03 --data-root /data/morphseq --exp 20250612_30hpf_ctrl_atf6 \
         --sam2-csv /data/morphseq/sam2_metadata_20250612_30hpf_ctrl_atf6.csv --by-embryo 5 --frames-per-embryo 3
 
-    python -m src.run_morphseq_pipeline.cli build04 --root /data/morphseq
-    python -m src.run_morphseq_pipeline.cli build05 --root /data/morphseq --train-name train_ff_20250612
+    python -m src.run_morphseq_pipeline.cli build04 --data-root /data/morphseq
+    python -m src.run_morphseq_pipeline.cli build05 --data-root /data/morphseq --train-name train_ff_20250612
 
 Build01/02 orchestration is provided via thin wrappers to existing build scripts.
-SAM2 segmentation orchestration is intentionally not included here; provide --sam2-csv for Build03.
+SAM2 segmentation is now integrated as a first-class CLI citizen with the 'sam2' subcommand.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from .steps.run_build05 import run_build05
 from .steps.run_build01 import run_build01
 from .steps.run_build_combine_metadata import run_combine_metadata
 from .steps.run_build02 import run_build02
+from .steps.run_sam2 import run_sam2, run_sam2_batch
 from .validation import run_validation
 from .steps.run_embed import run_embed
 from .steps.run_build06 import run_build06
@@ -32,24 +33,25 @@ from .services.gen_embeddings import build_df03_with_embeddings
 
 
 def resolve_root(args) -> str:
-    """Resolve the root path, optionally appending test suffix for isolation.
-    
-    WARNING: --test-suffix creates directory OUTSIDE the root path, which may cause
-    permission errors. For /net/trapnell/.../morphseq, user may only have write access
-    INSIDE morphseq/, not in parent directory. Consider omitting --test-suffix if
-    getting PermissionError during directory creation.
+    """Resolve the data root path from CLI args, with test suffix support.
+
+    Prefers `--data-root`; falls back to legacy `--root` for compatibility.
+    WARNING: --test-suffix creates a subdirectory under the resolved root for isolation.
     """
-    root = Path(args.root)
+    root_value = getattr(args, 'data_root', None) or getattr(args, 'root', None)
+    if root_value is None:
+        raise SystemExit("ERROR: --data-root not provided (and legacy --root missing)")
+    root = Path(root_value)
     if hasattr(args, 'test_suffix') and args.test_suffix:
-        # Create subdirectory instead of sibling directory
-        root = root / args.test_suffix
+        # Create subdirectory under root for isolation
+        root = (root / args.test_suffix)
         root.mkdir(parents=True, exist_ok=True)
         print(f"📁 Using test root: {root}")
     return str(root)
 
 
 def _add_common_root_and_exp(ap: argparse.ArgumentParser) -> None:
-    ap.add_argument("--root", required=True, help="Project root (contains built_image_data/, metadata/, training_data/)")
+    ap.add_argument("--data-root", required=True, help="Project root (contains built_image_data/, metadata/, training_data/)")
     ap.add_argument("--test-suffix", help="Append suffix to root for test isolation (e.g., test_sam2_20250830). WARNING: Creates directory outside root path, may cause permission errors.")
     ap.add_argument("--exp", required=False, help="Experiment name (e.g., 20250612_30hpf_ctrl_atf6)")
 
@@ -61,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     # build01
     p01 = sub.add_parser("build01", help="Compile+stitch FF images; write built metadata CSV")
     _add_common_root_and_exp(p01)
-    p01.add_argument("--microscope", choices=["keyence", "yx1"], required=True)
+    p01.add_argument("--microscope", choices=["Keyence", "YX1"], required=True)
     p01.add_argument("--metadata-only", action="store_true", help="Skip image processing; write metadata only")
     p01.add_argument("--overwrite", action="store_true")
 
@@ -71,11 +73,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     # build02
     p02 = sub.add_parser("build02", help="Legacy segmentation (optional if using SAM2)")
-    p02.add_argument("--root", required=True)
-    p02.add_argument("--mode", choices=["legacy", "skip"], default="skip")
+    p02.add_argument("--data-root", required=True)
+    p02.add_argument("--mode", choices=["legacy", "skip"], default="legacy")
     p02.add_argument("--model-name", default="mask_v1_0050", help="Segmentation model name (legacy)")
     p02.add_argument("--n-classes", type=int, default=2)
+    p02.add_argument("--num-workers", type=int, default=0, help="Number of DataLoader workers (0=single-threaded)")
     p02.add_argument("--overwrite", action="store_true")
+
+    # sam2
+    p_sam2 = sub.add_parser("sam2", help="Run SAM2 segmentation pipeline")
+    _add_common_root_and_exp(p_sam2)
+    p_sam2.add_argument("--confidence-threshold", type=float, default=0.45, 
+                       help="GroundingDINO confidence threshold (default: 0.45)")
+    p_sam2.add_argument("--iou-threshold", type=float, default=0.5,
+                       help="GroundingDINO IoU threshold (default: 0.5)")
+    p_sam2.add_argument("--target-prompt", default="individual embryo",
+                       help="SAM2 detection prompt (default: 'individual embryo')")
+    p_sam2.add_argument("--workers", type=int, default=8,
+                       help="Number of parallel workers (default: 8)")
+    p_sam2.add_argument("--batch", action="store_true",
+                       help="Batch mode: process all experiments in data-root (ignores --exp)")
 
     # build03
     p03 = sub.add_parser("build03", help="Build03A using SAM2 bridge CSV or legacy tracked metadata")
@@ -90,42 +107,75 @@ def build_parser() -> argparse.ArgumentParser:
 
     # build04
     p04 = sub.add_parser("build04", help="QC + stage inference")
-    p04.add_argument("--root", required=True)
+    p04.add_argument("--data-root", required=True)
     # Accept --exp for interface consistency with other steps; currently unused by build04
     p04.add_argument("--exp", required=False, help="Experiment name (accepted for consistency; ignored by build04)")
     p04.add_argument("--dead-lead-time", type=int, default=2)
+    p04.add_argument("--pert-key", help="Path to perturbation_name_key.csv (overrides default datroot/metadata path)")
+    p04.add_argument("--no-auto-augment-pert-key", dest="auto_augment_pert_key", action="store_false",
+                     help="Disable auto-adding missing perturbations to key with unknown defaults")
+    p04.add_argument("--write-augmented-key", action="store_true",
+                     help="Write back augmented key to the provided path (non-destructive append)")
 
     # build05
     p05 = sub.add_parser("build05", help="Create training snips/folders from df02 + snips")
-    p05.add_argument("--root", required=True)
+    p05.add_argument("--data-root", required=True)
     p05.add_argument("--train-name", required=True)
     p05.add_argument("--label-var", default=None)
     p05.add_argument("--rs-factor", type=float, default=1.0)
     p05.add_argument("--overwrite", action="store_true")
 
     # e2e
-    pe2e = sub.add_parser("e2e", help="Run Build03→Build04→Build05")
+    pe2e = sub.add_parser("e2e", help="Run Build01→Build02→SAM2→Build03→Build04→Build05")
     _add_common_root_and_exp(pe2e)
-    pe2e.add_argument("--sam2-csv")
+    pe2e.add_argument("--sam2-csv", help="Path to SAM2 CSV (overrides auto-discovery)")
     pe2e.add_argument("--by-embryo", type=int)
     pe2e.add_argument("--frames-per-embryo", type=int)
     pe2e.add_argument("--max-samples", type=int)
     pe2e.add_argument("--n-workers", type=int, default=1)
     pe2e.add_argument("--train-name", required=True)
-    pe2e.add_argument("--skip-build03", action="store_true")
-    pe2e.add_argument("--skip-build04", action="store_true")
-    pe2e.add_argument("--skip-build05", action="store_true")
+    
+    # Pipeline step control
+    pe2e.add_argument("--skip-build01", action="store_true", help="Skip Build01 (image stitching)")
+    pe2e.add_argument("--skip-build02", action="store_true", help="Skip Build02 (QC masks)")
+    pe2e.add_argument("--run-sam2", action="store_true", help="Run SAM2 segmentation pipeline")
+    pe2e.add_argument("--skip-build03", action="store_true", help="Skip Build03 (embryo processing)")
+    pe2e.add_argument("--skip-build04", action="store_true", help="Skip Build04 (QC + staging)")
+    pe2e.add_argument("--skip-build05", action="store_true", help="Skip Build05 (training snips)")
+    
+    # SAM2 parameters (only used if --run-sam2 is set)
+    pe2e.add_argument("--sam2-confidence", type=float, default=0.45, 
+                     help="SAM2 GroundingDINO confidence threshold (default: 0.45)")
+    pe2e.add_argument("--sam2-iou", type=float, default=0.5,
+                     help="SAM2 GroundingDINO IoU threshold (default: 0.5)")
+    pe2e.add_argument("--sam2-prompt", default="individual embryo",
+                     help="SAM2 detection prompt (default: 'individual embryo')")
+    pe2e.add_argument("--sam2-workers", type=int, default=8,
+                     help="SAM2 parallel workers (default: 8)")
+    
+    # Build01 parameters (only used if not --skip-build01)
+    pe2e.add_argument("--microscope", choices=["keyence", "yx1"], 
+                     help="Microscope type for Build01 (required if not skipping Build01)")
+    pe2e.add_argument("--metadata-only", action="store_true", 
+                     help="Build01: skip image processing, write metadata only")
+    
+    # Build02 parameters (only used if not --skip-build02)
+    pe2e.add_argument("--build02-num-workers", type=int, default=0,
+                     help="Build02: Number of DataLoader workers (default: 0=single-threaded)")
+    
+    pe2e.add_argument("--overwrite", action="store_true",
+                     help="Overwrite existing outputs")
 
     # validate
     pv = sub.add_parser("validate", help="Run validation gates (schema, units, paths)")
-    pv.add_argument("--root", required=True)
+    pv.add_argument("--data-root", required=True)
     pv.add_argument("--exp", required=False)
     pv.add_argument("--df01", default="metadata/combined_metadata_files/embryo_metadata_df01.csv")
     pv.add_argument("--checks", default="schema,units,paths")
 
     # embed
     pem = sub.add_parser("embed", help="Generate morphological embeddings for training snips")
-    pem.add_argument("--root", required=True)
+    pem.add_argument("--data-root", required=True)
     pem.add_argument("--train-name", required=True)
     pem.add_argument("--model-dir", required=False, help="Path to model or its parent (for real embeddings)")
     pem.add_argument("--out-csv", required=False)
@@ -169,7 +219,35 @@ def main(argv: list[str] | None = None) -> int:
 
     elif args.cmd == "build02":
         run_build02(root=resolve_root(args), mode=args.mode, model_name=args.model_name,
-                    n_classes=args.n_classes, overwrite=args.overwrite)
+                    n_classes=args.n_classes, num_workers=args.num_workers, overwrite=args.overwrite)
+
+    elif args.cmd == "sam2":
+        root = resolve_root(args)
+        if args.batch:
+            # Batch mode: process all experiments
+            print("🔄 Running SAM2 in batch mode")
+            results = run_sam2_batch(
+                root=root,
+                confidence_threshold=args.confidence_threshold,
+                iou_threshold=args.iou_threshold,
+                target_prompt=args.target_prompt,
+                workers=args.workers
+            )
+            print(f"✅ Batch SAM2 completed: {len(results)} experiments processed")
+        else:
+            # Single experiment mode
+            if not args.exp:
+                raise SystemExit("--exp is required for sam2 (or use --batch for all experiments)")
+            print(f"🚀 Running SAM2 for experiment: {args.exp}")
+            csv_path = run_sam2(
+                root=root,
+                exp=args.exp,
+                confidence_threshold=args.confidence_threshold,
+                iou_threshold=args.iou_threshold,
+                target_prompt=args.target_prompt,
+                workers=args.workers
+            )
+            print(f"✅ SAM2 completed: {csv_path}")
 
     elif args.cmd == "build03":
         if not args.exp:
@@ -186,7 +264,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     elif args.cmd == "build04":
-        run_build04(root=resolve_root(args), dead_lead_time=args.dead_lead_time)
+        run_build04(
+            root=resolve_root(args),
+            dead_lead_time=args.dead_lead_time,
+            pert_key_path=args.pert_key,
+            auto_augment_pert_key=getattr(args, 'auto_augment_pert_key', True),
+            write_augmented_key=args.write_augmented_key,
+        )
 
     elif args.cmd == "build05":
         run_build05(root=resolve_root(args), train_name=args.train_name,
@@ -196,15 +280,108 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "e2e":
         if not args.exp:
             raise SystemExit("--exp is required for e2e")
+        
         root = resolve_root(args)
+        
+        print("🚀 Starting End-to-End MorphSeq Pipeline")
+        print(f"📁 Data root: {root}")
+        print(f"🧪 Experiment: {args.exp}")
+        print(f"🏷️ Training name: {args.train_name}")
+        
+        # Build01: Image stitching  
+        if not args.skip_build01:
+            if not args.microscope:
+                raise SystemExit("--microscope is required for Build01 (or use --skip-build01)")
+            print("\n" + "="*60)
+            print("📹 STEP 1: Build01 - Image stitching and metadata")
+            print("="*60)
+            run_build01(
+                root=root, 
+                exp=args.exp, 
+                microscope=args.microscope,
+                metadata_only=args.metadata_only, 
+                overwrite=args.overwrite
+            )
+        else:
+            print("\n⏭️  Skipping Build01 (image stitching)")
+            
+        # Build02: Complete QC mask generation
+        if not args.skip_build02:
+            print("\n" + "="*60)
+            print("🎭 STEP 2: Build02 - Complete QC mask suite (5 UNets)")
+            print("="*60)
+            run_build02(
+                root=root, 
+                mode="legacy",  # Run all 5 models
+                num_workers=args.build02_num_workers,
+                overwrite=args.overwrite
+            )
+        else:
+            print("\n⏭️  Skipping Build02 (QC masks)")
+            
+        # SAM2: Superior embryo segmentation
+        if args.run_sam2:
+            print("\n" + "="*60)
+            print("🎯 STEP 3: SAM2 - Superior embryo segmentation")
+            print("="*60)
+            csv_path = run_sam2(
+                root=root,
+                exp=args.exp,
+                confidence_threshold=args.sam2_confidence,
+                iou_threshold=args.sam2_iou,
+                target_prompt=args.sam2_prompt,
+                workers=args.sam2_workers
+            )
+            print(f"✅ SAM2 completed: {csv_path}")
+        else:
+            print("\n⏭️  Skipping SAM2 segmentation")
+            
+        # Build03: Hybrid mask processing 
         if not args.skip_build03:
-            run_build03(root=root, exp=args.exp, sam2_csv=args.sam2_csv,
-                        by_embryo=args.by_embryo, frames_per_embryo=args.frames_per_embryo,
-                        max_samples=args.max_samples, n_workers=args.n_workers)
+            print("\n" + "="*60)
+            print("🔬 STEP 4: Build03 - Embryo processing (hybrid masks)")
+            print("="*60)
+            run_build03(
+                root=root, 
+                exp=args.exp, 
+                sam2_csv=args.sam2_csv,  # Will auto-discover if None
+                by_embryo=args.by_embryo, 
+                frames_per_embryo=args.frames_per_embryo,
+                max_samples=args.max_samples, 
+                n_workers=args.n_workers
+            )
+        else:
+            print("\n⏭️  Skipping Build03 (embryo processing)")
+            
+        # Build04: QC and stage inference
         if not args.skip_build04:
+            print("\n" + "="*60) 
+            print("📊 STEP 5: Build04 - QC analysis and stage inference")
+            print("="*60)
             run_build04(root=root)
+        else:
+            print("\n⏭️  Skipping Build04 (QC + staging)")
+            
+        # Build05: Training data preparation
         if not args.skip_build05:
-            run_build05(root=root, train_name=args.train_name)
+            print("\n" + "="*60)
+            print("🎓 STEP 6: Build05 - Training data preparation")
+            print("="*60)
+            run_build05(
+                root=root, 
+                train_name=args.train_name,
+                overwrite=args.overwrite
+            )
+        else:
+            print("\n⏭️  Skipping Build05 (training snips)")
+            
+        print("\n" + "="*60)
+        print("🎉 End-to-End Pipeline Complete!")
+        print("="*60)
+        print(f"📁 Results available in: {root}")
+        if args.run_sam2:
+            print("🎯 Pipeline used SAM2 for superior embryo segmentation")
+        print(f"🏷️ Training data: {args.train_name}")
 
     elif args.cmd == "validate":
         run_validation(root=resolve_root(args), exp=args.exp, df01=args.df01, checks=args.checks)

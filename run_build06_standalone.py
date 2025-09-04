@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 def main():
     parser = argparse.ArgumentParser(description="Standalone Build06 runner")
-    parser.add_argument("--morphseq-repo-root", required=True, help="MorphSeq repository root directory")
-    parser.add_argument("--data-root", help="Data root directory (defaults to MORPHSEQ_DATA_ROOT env var)")
+    parser.add_argument("--root", required=True, help="Data root directory (contains metadata, models, latents)")
+    parser.add_argument("--external-data-root", help="Optional external data root for legacy mode (defaults to MORPHSEQ_DATA_ROOT env var)")
     parser.add_argument("--model-name", default="20241107_ds_sweep01_optimum", help="Model name for embedding generation")
     parser.add_argument("--latents-tag", default=None, help="Optional name for latent output dir (defaults to --model-name)")
     parser.add_argument("--experiments", nargs="*", help="Explicit experiment list (defaults to inference from df02)")
@@ -34,13 +34,11 @@ def main():
     
     args = parser.parse_args()
     
-    # Resolve data_root from environment if not provided
-    data_root = args.data_root
-    if data_root is None:
-        data_root = os.environ.get("MORPHSEQ_DATA_ROOT")
-        if data_root is None:
-            print("ERROR: --data-root not provided and MORPHSEQ_DATA_ROOT environment variable not set")
-            return 1
+    # Resolve external data root from environment if not provided
+    external_data_root = args.external_data_root
+    if external_data_root is None:
+        external_data_root = os.environ.get("MORPHSEQ_DATA_ROOT")
+        # external_data_root can be None - that's fine for unified mode
     
     print("Loading Build06 service...")
     
@@ -55,8 +53,8 @@ def main():
     
     try:
         result_path = build_df03_with_embeddings(
-            root=args.morphseq_repo_root,
-            data_root=data_root,
+            root=args.root,
+            data_root=external_data_root,
             model_name=args.model_name,
             latents_tag=args.latents_tag,
             experiments=args.experiments,

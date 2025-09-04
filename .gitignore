@@ -91,3 +91,6 @@ test_data/
 # *.jpg
 # *.png
 *.pyc
+
+
+morphseq_playground/

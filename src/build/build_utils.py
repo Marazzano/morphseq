@@ -106,6 +106,7 @@ def generate_stage_ref_from_df01(
     outfile: Optional[str] = None,
     write_params: bool = True,
     initial_guess: Optional[Iterable[float]] = None,
+    params_out_path: Optional[str] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Generate stage reference CSV by reproducing the legacy notebook logic.
 
@@ -121,7 +122,9 @@ def generate_stage_ref_from_df01(
     - max_stage: Upper bound of the stage grid to evaluate (72 or 96)
     - outfile: Optional explicit output CSV path; defaults to
                {root}/metadata/stage_ref_df.csv
-    - write_params: Also write {root}/metadata/stage_ref_params.csv
+    - write_params: Also write params CSV; path configurable via `params_out_path`
+    - params_out_path: Optional explicit params CSV path; defaults to
+               {root}/metadata/stage_ref_params.csv
     - initial_guess: Optional starting guess for [offset, sa_max, hill_coeff, k_half].
 
     Returns:
@@ -131,7 +134,7 @@ def generate_stage_ref_from_df01(
     if df01_path is None:
         df01_path = os.path.join(root, "metadata", "combined_metadata_files", "embryo_metadata_df01.csv")
     stage_ref_out = outfile or os.path.join(root, "metadata", "stage_ref_df.csv")
-    params_out = os.path.join(root, "metadata", "stage_ref_params.csv")
+    params_out = params_out_path or os.path.join(root, "metadata", "stage_ref_params.csv")
 
     df = pd.read_csv(df01_path)
     if "experiment_date" in df.columns:
@@ -194,9 +197,11 @@ def generate_stage_ref_from_df01(
     param_df = pd.DataFrame([params], columns=["offset", "sa_max", "hill_coeff", "inflection_point"])
 
     # Write to disk
-    os.makedirs(os.path.join(root, "metadata"), exist_ok=True)
+    # Ensure output directories exist
+    os.makedirs(os.path.dirname(stage_ref_out), exist_ok=True)
     stage_ref_df.to_csv(stage_ref_out, index=False)
     if write_params:
+        os.makedirs(os.path.dirname(params_out), exist_ok=True)
         param_df.to_csv(params_out, index=False)
 
     return stage_ref_df, param_df
@@ -283,3 +288,228 @@ def reconstruct_perturbation_key_from_df02(
 
     return key_df
 
+
+def bootstrap_perturbation_key_from_df01(
+    root: str,
+    df01: pd.DataFrame | None = None,
+    out_path: str | None = None,
+) -> pd.DataFrame:
+    """Create a minimal perturbation_name_key.csv from df01 when missing.
+
+    Strategy:
+    - Ensure `master_perturbation` is constructed from `chem_perturbation`/`genotype`.
+    - For each master, set:
+        - short_pert_name: mode of df01.short_pert_name if present, else master
+        - phenotype/control_flag/pert_type/background via safe defaults:
+            - if master in {wik, ab, wt, wt_ab, wt_wik}: phenotype=wt,
+              control_flag=True, pert_type=background, background=<master when in {wik,ab} else unknown>
+            - else: phenotype=unknown, control_flag=False, pert_type=unknown, background=unknown
+    - Write CSV to out_path if provided.
+    """
+    if df01 is None:
+        df01_path = os.path.join(root, "metadata", "combined_metadata_files", "embryo_metadata_df01.csv")
+        df01 = pd.read_csv(df01_path)
+
+    df01 = _ensure_master_perturbation(df01)
+    masters = df01["master_perturbation"].astype(str).str.strip()
+
+    # Short names: use mode per master if available
+    if "short_pert_name" in df01.columns:
+        short_map = (
+            df01.loc[:, ["master_perturbation", "short_pert_name"]]
+            .astype(str)
+            .groupby("master_perturbation")["short_pert_name"]
+            .agg(lambda s: s.value_counts().index[0])
+        )
+    else:
+        short_map = pd.Series(dtype=str)
+
+    import time as _time
+    timestamp = _time.strftime('%Y-%m-%d %H:%M:%S')
+    rows = []
+    ctrl_masters = {"wik", "ab", "wt", "wt_ab", "wt_wik"}
+    for m in sorted(masters.unique()):
+        m_l = str(m).strip()
+        short = short_map.loc[m] if m in short_map.index else m_l
+        if m_l.lower() in ctrl_masters:
+            phenotype = "wt"
+            control_flag = True
+            pert_type = "background"
+            background = m_l if m_l.lower() in {"wik", "ab"} else "unknown"
+        else:
+            phenotype = "unknown"
+            control_flag = False
+            pert_type = "unknown"
+            background = "unknown"
+        rows.append({
+            "master_perturbation": m_l,
+            "short_pert_name": short,
+            "phenotype": phenotype,
+            "control_flag": control_flag,
+            "pert_type": pert_type,
+            "background": background,
+            "time_auto_constructed": timestamp,
+        })
+
+    key_df = pd.DataFrame(rows)[
+        ["master_perturbation", "short_pert_name", "phenotype", "control_flag", "pert_type", "background", "time_auto_constructed"]
+    ]
+
+    if out_path is not None:
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        key_df.to_csv(out_path, index=False)
+
+    return key_df
+
+
+def _coerce_bool(val) -> bool:
+    s = str(val).strip().lower()
+    return s in ("1", "true", "t", "yes", "y")
+
+
+def _mode_str(series: pd.Series) -> str:
+    s = series.dropna().astype(str)
+    if s.empty:
+        return ""
+    counts = s.value_counts()
+    top = counts[counts == counts.max()].index.tolist()
+    return sorted(top)[0]
+
+
+def derive_perturbation_key_from_legacy(
+    legacy_csv_path: str,
+    out_path: Optional[str] = None,
+) -> pd.DataFrame:
+    """Derive perturbation_name_key.csv from a legacy embryo stats CSV.
+
+    Best-effort extraction of required columns using available legacy fields.
+    This is intended to bootstrap a modern key; manual curation is still
+    recommended for accuracy.
+
+    Expected useful legacy columns (if present):
+      - master_perturbation, short_pert_name, phenotype, control_flag,
+        pert_type, background
+      - chem_perturbation, genotype, strain/background-like columns
+
+    Strategy:
+      1) Compute master_perturbation from legacy columns if missing
+      2) Fill short_pert_name from legacy or fall back to master_perturbation
+      3) Use phenotype/control_flag/pert_type/background if available; otherwise
+         apply conservative defaults (unknown/False) with minimal heuristics
+      4) Aggregate by master_perturbation using mode to resolve inconsistencies
+
+    Returns a DataFrame with columns:
+      [master_perturbation, short_pert_name, phenotype, control_flag, pert_type, background]
+    and writes it to out_path if provided.
+    """
+    df = pd.read_csv(legacy_csv_path)
+
+    # Normalize candidate columns
+    cols = {c.lower(): c for c in df.columns}
+
+    def has(name: str) -> bool:
+        return name in cols
+
+    def col(name: str) -> str:
+        return cols[name]
+
+    # 1) master_perturbation
+    if has("master_perturbation"):
+        master = df[col("master_perturbation")].astype(str)
+    else:
+        chem = df[col("chem_perturbation")].astype(str) if has("chem_perturbation") else pd.Series(["None"] * len(df))
+        geno = df[col("genotype")].astype(str) if has("genotype") else pd.Series(["unknown"] * len(df))
+        # If chem is None-like, fall back to genotype
+        chem_norm = chem.str.strip()
+        none_mask = chem_norm.isin(["", "none", "None", "nan", "NaN"]) | chem_norm.isna()
+        master = chem_norm.copy()
+        master.loc[none_mask] = geno.loc[none_mask].astype(str).values
+    master = master.fillna("").str.strip()
+
+    # 2) short_pert_name
+    if has("short_pert_name"):
+        short = df[col("short_pert_name")].astype(str).fillna("").str.strip()
+    else:
+        short = master.copy()
+
+    # 3) phenotype
+    if has("phenotype"):
+        phenotype = df[col("phenotype")].astype(str).fillna("").str.strip()
+    else:
+        phenotype = pd.Series([""] * len(df))
+
+    # 4) control_flag
+    if has("control_flag"):
+        control_flag = df[col("control_flag")].map(_coerce_bool)
+    else:
+        # If phenotype says wt, assume control; else False
+        control_flag = phenotype.str.lower().eq("wt")
+
+    # 5) pert_type
+    if has("pert_type"):
+        pert_type = df[col("pert_type")].astype(str).fillna("").str.strip()
+    else:
+        # Minimal heuristic
+        pt = []
+        for m in master.str.lower().tolist():
+            if m in {"inj-ctrl", "inj_ctrl", "control", "wt"}:
+                pt.append("control")
+            elif m in {"em", "egg water", "ew"}:
+                pt.append("medium")
+            else:
+                pt.append("")
+        pert_type = pd.Series(pt)
+
+    # 6) background
+    if has("background"):
+        background = df[col("background")].astype(str).fillna("").str.strip()
+    else:
+        # Try common alternates
+        if has("strain"):
+            background = df[col("strain")].astype(str).fillna("").str.strip()
+        elif has("background_strain"):
+            background = df[col("background_strain")].astype(str).fillna("").str.strip()
+        else:
+            background = pd.Series([""] * len(df))
+
+    # Compose minimal key rows
+    key_df = pd.DataFrame({
+        "master_perturbation": master,
+        "short_pert_name": short,
+        "phenotype": phenotype,
+        "control_flag": control_flag.astype(bool),
+        "pert_type": pert_type,
+        "background": background,
+    })
+
+    # Clean whitespace and normalize empties to NaN for aggregation
+    for c in ["master_perturbation", "short_pert_name", "phenotype", "pert_type", "background"]:
+        key_df[c] = key_df[c].astype(str).str.strip()
+        key_df.loc[key_df[c].isin(["", "nan", "NaN"]), c] = np.nan
+
+    # Aggregate by master_perturbation using mode/majority
+    agg = {
+        "short_pert_name": _mode_str,
+        "phenotype": _mode_str,
+        "control_flag": lambda s: bool(pd.Series(s).astype(bool).mean() >= 0.5),
+        "pert_type": _mode_str,
+        "background": _mode_str,
+    }
+    key_df = (
+        key_df.groupby("master_perturbation", as_index=False)
+        .agg(agg)
+        .sort_values(by=["short_pert_name", "master_perturbation"], na_position="last")
+        .reset_index(drop=True)
+    )
+
+    # Final fill for any missing after aggregation
+    key_df["short_pert_name"].fillna(key_df["master_perturbation"], inplace=True)
+    key_df["phenotype"].fillna("unknown", inplace=True)
+    key_df["pert_type"].fillna("unknown", inplace=True)
+    key_df["background"].fillna("unknown", inplace=True)
+
+    if out_path is not None:
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        key_df.to_csv(out_path, index=False)
+
+    return key_df

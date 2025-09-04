@@ -1,10 +1,13 @@
-### SAM2 Integration (Segmentation) – Stub
+### 🎯 SAM2 Integration - FULLY IMPLEMENTED! 
 
-This runner does not orchestrate the SAM2 segmentation pipeline. Provide a precomputed SAM2 bridge CSV via `--sam2-csv` to run Build03 with SAM2 masks. A future version can add a `sam2` subcommand that shells out to `segmentation_sandbox/scripts/pipelines/run_pipeline.sh` or Python equivalents to generate:
-- `segmentation_sandbox/data/exported_masks/{exp}/masks/*.png`
-- `sam2_metadata_{exp}.csv`
+SAM2 segmentation is now a **first-class CLI citizen** with complete Python-based orchestration! The `sam2` subcommand runs the entire segmentation_sandbox pipeline and integrates seamlessly with the hybrid mask approach.
 
-For now, the `build03` command will accept `--sam2-csv` and skip legacy Build02.
+**Key Features:**
+- ✅ Direct SAM2 pipeline execution via `sam2` subcommand
+- ✅ Auto-discovery of SAM2 outputs by Build03  
+- ✅ Hybrid approach: SAM2 embryo masks + Build02 QC masks
+- ✅ Complete E2E orchestration with `--run-sam2` flag
+- ✅ Batch processing for multiple experiments
 
 ---
 
@@ -13,63 +16,163 @@ For now, the `build03` command will accept `--sam2-csv` and skip legacy Build02.
 Centralized CLI to invoke MorphSeq pipeline steps (Build01→Build05) with a consistent, parameterized interface. Keeps “results/” runners optional by exposing a single module entrypoint.
 
 Key features:
-- Subcommands for `build01`, `combine-metadata`, `build02`, `build03`, `build04`, `build05`, `e2e`, `validate`.
-- Supports SAM2-driven Build03 with `--sam2-csv` (no SAM2 orchestration here).
-- Writes df01 to `metadata/combined_metadata_files/embryo_metadata_df01.csv` for Build04 compatibility.
-- Subset sampling for Build03: `--by-embryo`, `--frames-per-embryo`, `--max-samples`.
+- **Complete pipeline**: `build01`, `build02`, `sam2`, `build03`, `build04`, `build05`, `e2e`, `validate`
+- **SAM2 Integration**: Direct `sam2` subcommand with Python orchestration
+- **Hybrid Segmentation**: SAM2 embryo masks + Build02 QC masks (yolk, focus, bubble, viability)
+- **Auto-Discovery**: Build03 automatically finds SAM2 outputs
+- **Enhanced Build02**: Runs all 5 UNet models (embryo, yolk, focus, bubble, viability)
+- **E2E Orchestration**: Complete Build01→Build02→SAM2→Build03→Build04→Build05 flow
 
 ## Install/Run
 
 - Run via module:
   - `python -m src.run_morphseq_pipeline.cli <subcommand> [args]`
 
-## Path Conventions (Defaults)
+## Data Structure & Path Conventions
 
-- Stitched FF images (Build01 output): `built_image_data/stitched_FF_images/{exp}`
-- Per‑experiment built metadata CSV: `metadata/built_metadata_files/{exp}_metadata.csv`
-- Experiment metadata (global): `metadata/experiment_metadata.csv`
-- Per‑experiment well metadata Excel: `metadata/well_metadata/{exp}_well_metadata.xlsx`
-- Combined master well metadata: `metadata/combined_metadata_files/master_well_metadata.csv`
-- Build03 df01 (input to Build04): `metadata/combined_metadata_files/embryo_metadata_df01.csv`
+### Build Pipeline Data
+- Stitched FF images: `<data_root>/built_image_data/stitched_FF_images/{exp}/`
+- Build02 QC masks: `<data_root>/segmentation/{model}_predictions/{exp}/`
+  - `mask_v0_0100_predictions/` - embryo masks
+  - `yolk_v1_0050_predictions/` - yolk masks  
+  - `focus_v0_0100_predictions/` - focus masks
+  - `bubble_v0_0100_predictions/` - bubble masks
+  - `via_v1_0100_predictions/` - viability masks
+
+### SAM2 Pipeline Data
+- SAM2 root: `<data_root>/sam2_pipeline_files/`
+- Exported masks: `<data_root>/sam2_pipeline_files/exported_masks/{exp}/`
+- Metadata CSV: `<data_root>/sam2_pipeline_files/sam2_expr_files/sam2_metadata_{exp}.csv`
+- Pipeline files: `<data_root>/sam2_pipeline_files/detections/`, `/embryo_metadata/`
+
+### Metadata Files
+- Per-experiment metadata: `<data_root>/metadata/built_metadata_files/{exp}_metadata.csv`
+- Combined df01: `<data_root>/metadata/combined_metadata_files/embryo_metadata_df01.csv`
 
 ## Subcommands
 
-- `build01` (Keyence or YX1)
-  - Example: `python -m src.run_morphseq_pipeline.cli build01 --root /data/morphseq --exp 20250612_30hpf_ctrl_atf6 --microscope keyence`
-  - Writes stitched FF images and `{exp}_metadata.csv`.
+### Core Pipeline Steps
 
-- `combine-metadata`
-  - Builds `master_well_metadata.csv` from experiment metadata, well xlsx, and built metadata.
-  - Example: `python -m src.run_morphseq_pipeline.cli combine-metadata --root /data/morphseq`
+**`build01`** - Image stitching and metadata
+```bash
+python -m src.run_morphseq_pipeline.cli build01 \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6 \
+  --microscope keyence
+```
 
-- `build02`
-  - Legacy segmentation (optional if using SAM2). Example: `--mode legacy`.
-  - Example: `python -m src.run_morphseq_pipeline.cli build02 --root /data/morphseq --mode legacy --model-name mask_v1_0050`
+**`build02`** - Complete QC mask suite (5 UNet models)
+```bash  
+python -m src.run_morphseq_pipeline.cli build02 \
+  --data-root morphseq_playground \
+  --mode legacy
+```
+Runs all 5 models: embryo, yolk, focus, bubble, viability
 
-- `build03`
-  - With SAM2 CSV: `python -m src.run_morphseq_pipeline.cli build03 --root /data/morphseq --exp 20250612_30hpf_ctrl_atf6 --sam2-csv /data/morphseq/sam2_metadata_20250612_30hpf_ctrl_atf6.csv --by-embryo 5 --frames-per-embryo 3`
-  - Legacy (no `--sam2-csv`): uses `segment_wells` (requires legacy masks from Build02).
-  - Writes df01 to `metadata/combined_metadata_files/embryo_metadata_df01.csv`.
+**`sam2`** - SAM2 segmentation pipeline ⭐ NEW!
+```bash
+# Single experiment
+python -m src.run_morphseq_pipeline.cli sam2 \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6 \
+  --confidence-threshold 0.45 \
+  --workers 8
 
-- `build04`
-  - QC + stage inference; reads df01; writes df02 and curation CSVs.
-  - Example: `python -m src.run_morphseq_pipeline.cli build04 --root /data/morphseq`
+# Batch mode (all experiments)  
+python -m src.run_morphseq_pipeline.cli sam2 \
+  --data-root morphseq_playground \
+  --batch
+```
 
-- `build05`
-  - Training snips/folders from df02 + snips. Example:
-  - `python -m src.run_morphseq_pipeline.cli build05 --root /data/morphseq --train-name train_ff_20250612`
+**`build03`** - Embryo processing (hybrid masks)
+```bash
+# Auto-discovers SAM2 CSV or falls back to legacy
+python -m src.run_morphseq_pipeline.cli build03 \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6 \
+  --by-embryo 5 --frames-per-embryo 3
+```
 
-- `e2e`
-  - Orchestrate 03→04→05. Example:
-  - `python -m src.run_morphseq_pipeline.cli e2e --root /data/morphseq --exp 20250612_30hpf_ctrl_atf6 --sam2-csv /data/morphseq/sam2_metadata_20250612_30hpf_ctrl_atf6.csv --by-embryo 5 --frames-per-embryo 3 --train-name train_ff_20250612`
+**`build04`** - QC analysis and stage inference
+```bash
+python -m src.run_morphseq_pipeline.cli build04 \
+  --data-root morphseq_playground
+```
 
-- `validate`
-  - Schema/units/path checks for df01.
-  - `python -m src.run_morphseq_pipeline.cli validate --root /data/morphseq --checks schema,units,paths`
+**`build05`** - Training data preparation  
+```bash
+python -m src.run_morphseq_pipeline.cli build05 \
+  --data-root morphseq_playground \
+  --train-name test_sam2_20250903
+```
 
-## Notes
+### End-to-End Orchestration
 
-- SAM2 segmentation is not orchestrated here; provide `--sam2-csv` to Build03.
-- Build03 subset sampling helps validate integration quickly on small subsets.
-- df01 write location is now consistent with Build04 expectation.
+**`e2e`** - Complete pipeline with SAM2 ⭐ ENHANCED!
+```bash
+# Full pipeline with SAM2
+python -m src.run_morphseq_pipeline.cli e2e \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6 \
+  --microscope keyence \
+  --run-sam2 \
+  --train-name test_sam2_20250903
 
+# Legacy pipeline (no SAM2)
+python -m src.run_morphseq_pipeline.cli e2e \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6 \
+  --microscope keyence \
+  --train-name legacy_test_20250903
+```
+
+### Utility Commands
+
+**`validate`** - Validation checks
+```bash
+python -m src.run_morphseq_pipeline.cli validate \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6 \
+  --checks schema,units,paths
+```
+
+## Key Features & Benefits
+
+### 🎯 SAM2 Integration
+- **Direct orchestration**: `sam2` subcommand runs complete segmentation_sandbox pipeline
+- **Auto-discovery**: Build03 automatically finds SAM2 outputs at standard paths
+- **Hybrid approach**: Superior SAM2 embryo masks + Build02 QC masks for complete analysis
+- **Batch processing**: Process multiple experiments with `--batch` flag
+
+### 🏗️ Enhanced Build02
+- **Complete QC suite**: Runs all 5 UNet models (embryo, yolk, focus, bubble, viability)
+- **Robust error handling**: Continues with partial success if some models fail
+- **Quality control**: Enables full QC flag calculation including dead_flag from viability masks
+
+### 🔄 End-to-End Orchestration
+- **Full pipeline**: Build01→Build02→SAM2→Build03→Build04→Build05
+- **Flexible control**: Skip any step with `--skip-*` flags
+- **Legacy compatibility**: Can run without SAM2 for existing workflows
+- **Progress tracking**: Clear step-by-step progress indicators
+
+### 🔍 Validation & Quality
+- **Pre-flight checks**: Validate inputs before pipeline execution
+- **SAM2 validation**: Check outputs, mask files, and CSV integrity
+- **Error handling**: Clear error messages and actionable feedback
+
+## Environment Setup
+
+```bash
+# Activate the MorphSeq environment
+conda activate mseq_data_pipeline_env
+
+# Verify SAM2 sandbox is available
+ls segmentation_sandbox/scripts/pipelines/
+```
+
+## Troubleshooting
+
+- **SAM2 not found**: Ensure `segmentation_sandbox/` exists in repo root
+- **Missing models**: Check Build02 model availability in conda environment  
+- **Auto-discovery fails**: Manually provide `--sam2-csv` path to Build03
+- **Permission errors**: Ensure write access to data root directory

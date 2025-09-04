@@ -388,8 +388,11 @@ def build_ff_from_keyence(data_root: Path | str,
     meta_df.drop_duplicates(subset=["well", "time_string"])
     meta_df["Time Rel (s)"] = meta_df["Time (s)"] - meta_df["Time (s)"].min()
     out_path = META / f"{exp_name}_metadata.csv"
-    meta_df.to_csv(META / out_path, index=False)
-
+    # Ensure the metadata output directory exists and write the CSV to the computed path.
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_df.to_csv(out_path, index=False)
+    # Provide a clear console message so users see that the metadata file was written
+    print(f"✔️  Wrote metadata CSV: {out_path}")
     log.info(f"✔️  Wrote {out_path}")
     log.info('Done.')
 

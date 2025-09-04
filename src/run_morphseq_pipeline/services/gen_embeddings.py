@@ -53,21 +53,51 @@ def resolve_model_dir(data_root: Union[str, Path], model_name: str) -> Path:
     return model_dir
 
 
+def get_available_snip_ids_for_experiment(repo_root: Union[str, Path], experiment: str) -> set:
+    """
+    Get available snip_ids for an experiment from the training_data directory.
+    
+    Args:
+        repo_root: Repository root containing training_data/bf_embryo_snips
+        experiment: Experiment name
+        
+    Returns:
+        Set of available snip_id stems (without extensions)
+    """
+    repo_root = Path(repo_root)
+    snip_dir = repo_root / "training_data" / "bf_embryo_snips" / experiment
+    
+    if not snip_dir.exists():
+        return set()
+    
+    snip_ids = set()
+    for snip_file in snip_dir.glob("*.png"):  # Assuming snips are PNG files
+        snip_id = snip_file.stem  # Remove .png extension
+        snip_ids.add(snip_id)
+    
+    return snip_ids
+
+
 def ensure_latents_for_experiments(
     data_root: Union[str, Path],
     model_name: str,
     experiments: List[str],
     generate_missing: bool = False,
+    repo_root: Optional[Union[str, Path]] = None,
     logger: Optional[logging.Logger] = None
 ) -> Dict[str, Path]:
     """
-    Ensures latent CSV files exist for all experiments.
+    Ensures latent CSV files exist and are up-to-date for all experiments.
+    
+    Checks if latents cover all available snip_ids for each experiment.
+    If snips exist but aren't covered by latents, marks for regeneration.
     
     Args:
         data_root: Path to data root directory
         model_name: Name of model for embedding generation
         experiments: List of experiment names
-        generate_missing: If True, generate missing latent files
+        generate_missing: If True, generate missing/outdated latent files
+        repo_root: Optional repo root to check for snips (for dependency checking)
         logger: Optional logger for output
         
     Returns:
@@ -89,8 +119,47 @@ def ensure_latents_for_experiments(
         latent_path = latent_dir / f"morph_latents_{exp}.csv"
         
         if latent_path.exists():
-            latent_paths[exp] = latent_path
-            logger.info(f"Found existing latents for {exp}: {latent_path}")
+            # Check if latents are up-to-date with available snips
+            needs_regeneration = False
+            
+            if repo_root is not None:
+                try:
+                    # Get available snip_ids from training data
+                    available_snip_ids = get_available_snip_ids_for_experiment(repo_root, exp)
+                    
+                    if available_snip_ids:  # Only check if we have snips to compare against
+                        # Load existing latents and check coverage
+                        latent_df = pd.read_csv(latent_path)
+                        if 'snip_id' in latent_df.columns:
+                            existing_snip_ids = set(latent_df['snip_id'].astype(str))
+                            
+                            missing_in_latents = available_snip_ids - existing_snip_ids
+                            extra_in_latents = existing_snip_ids - available_snip_ids
+                            
+                            if missing_in_latents:
+                                logger.info(f"Found {len(missing_in_latents)} snips not in latents for {exp}")
+                                needs_regeneration = True
+                            if extra_in_latents:
+                                logger.info(f"Found {len(extra_in_latents)} latents without corresponding snips for {exp}")
+                                needs_regeneration = True
+                            
+                            if not needs_regeneration:
+                                logger.info(f"Latents up-to-date for {exp}: {len(existing_snip_ids)} snips covered")
+                        else:
+                            logger.warning(f"No snip_id column in existing latents for {exp}, marking for regeneration")
+                            needs_regeneration = True
+                    else:
+                        logger.info(f"No snips found for {exp}, using existing latents")
+                        
+                except Exception as e:
+                    logger.warning(f"Could not check snip coverage for {exp}: {e}, using existing latents")
+            
+            if needs_regeneration:
+                missing_experiments.append(exp)
+                logger.info(f"Marking {exp} for regeneration due to snip coverage issues")
+            else:
+                latent_paths[exp] = latent_path
+                logger.info(f"Found existing up-to-date latents for {exp}: {latent_path}")
         else:
             missing_experiments.append(exp)
             logger.warning(f"Missing latents for {exp}: {latent_path}")
@@ -184,11 +253,19 @@ def generate_latents_with_repo_images(
         logger.error(f"Failed to import dependencies for latent generation: {e}")
         raise
 
-    # Load model from central data_root
+    # Load model from central data_root with Python version compatibility handling
     model_dir = resolve_model_dir(data_root, model_name)
-    logger.info(f"Loading model from {model_dir}")
-    lit_model = AutoModel.load_from_folder(model_dir)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    try:
+        from .legacy_model_utils import load_legacy_model_safe
+        logger.info(f"Loading legacy model from {model_dir} with compatibility handling")
+        lit_model = load_legacy_model_safe(str(model_dir), device=device, logger=logger)
+    except Exception as e:
+        logger.warning(f"Safe model loading failed: {e}")
+        logger.info("Attempting direct model loading (may fail on Python != 3.9)")
+        from src.vae.models.auto_model import AutoModel
+        lit_model = AutoModel.load_from_folder(str(model_dir))
 
     # Build dataloader using repo's snips
     input_size = (288, 128)  # matches legacy defaults
@@ -480,7 +557,7 @@ def export_df03_copies_by_experiment(
 
 def build_df03_with_embeddings(
     root: Union[str, Path],
-    data_root: Union[str, Path],
+    data_root: Optional[Union[str, Path]] = None,
     model_name: str = "20241107_ds_sweep01_optimum",
     latents_tag: Optional[str] = None,
     experiments: Optional[List[str]] = None,
@@ -497,8 +574,8 @@ def build_df03_with_embeddings(
     One-shot orchestrator for Build06 - the main entry point.
     
     Args:
-        root: Pipeline root directory
-        data_root: Data root directory (for models and latents)
+        root: Data root directory (contains all data: metadata, models, latents, etc.)
+        data_root: Optional legacy parameter for external data root. If None, uses root.
         model_name: Model name for embeddings
         experiments: Optional explicit experiment list
         generate_missing: Generate missing latent files
@@ -517,19 +594,44 @@ def build_df03_with_embeddings(
         logger = logging.getLogger(__name__)
     
     root = Path(root)
-    data_root = Path(data_root)
     
-    logger.info("=== Build06: Standardize Embeddings Generation ===")
-    logger.info(f"Root: {root}")
-    logger.info(f"Data root: {data_root}")
+    # Handle legacy two-root approach vs unified approach
+    if data_root is None:
+        # Unified approach: root contains everything
+        data_root = root
+        logger.info("=== Build06: Standardize Embeddings Generation (Unified Root Mode) ===")
+        logger.info(f"Root: {root}")
+    else:
+        # Legacy approach: separate data root
+        data_root = Path(data_root)
+        logger.info("=== Build06: Standardize Embeddings Generation (Legacy Two-Root Mode) ===")
+        logger.info(f"Repo root: {root}")
+        logger.info(f"Data root: {data_root}")
+    
     logger.info(f"Model: {model_name}")
     if latents_tag:
         logger.info(f"Latents tag: {latents_tag}")
     
-    # 1) Resolve df02 and experiment list
-    df02_path = root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
-    if not df02_path.exists():
-        raise FileNotFoundError(f"df02 not found: {df02_path}")
+    # 1) Resolve df02 and experiment list - check multiple possible locations
+    df02_locations = [
+        root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv",
+        root / "morphseq_playground" / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv",
+        data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv",
+    ]
+    
+    df02_path = None
+    for path in df02_locations:
+        logger.info(f"Checking for df02 at: {path}")
+        if path.exists():
+            df02_path = path
+            logger.info(f"✅ Found df02 at: {df02_path}")
+            break
+    
+    if df02_path is None:
+        logger.error("df02 not found at any of these locations:")
+        for path in df02_locations:
+            logger.error(f"  - {path}")
+        raise FileNotFoundError(f"df02 not found at any expected location")
     
     if experiments is None:
         # Infer experiments from df02
@@ -559,7 +661,7 @@ def build_df03_with_embeddings(
     latents_dir_name = latents_tag or model_name
     try:
         latent_paths = ensure_latents_for_experiments(
-            data_root, latents_dir_name, experiments, False, logger
+            data_root, latents_dir_name, experiments, False, root, logger
         )
     except FileNotFoundError:
         # Missing are expected in first pass; we'll generate below if requested
@@ -573,10 +675,10 @@ def build_df03_with_embeddings(
             generate_latents_with_repo_images(root, data_root, model_name, latents_dir_name, missing, logger)
         else:
             # Use standard generator, which writes under the given model_name (latents_dir_name)
-            _ = ensure_latents_for_experiments(data_root, latents_dir_name, missing, True, logger)
+            _ = ensure_latents_for_experiments(data_root, latents_dir_name, missing, True, root, logger)
         # Reload paths after generation
         latent_paths = ensure_latents_for_experiments(
-            data_root, latents_dir_name, experiments, False, logger
+            data_root, latents_dir_name, experiments, False, root, logger
         )
     
     # 4) Load and combine latents

@@ -1,0 +1,87 @@
+name: mseq_data_pipeline_env
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+  - defaults
+
+dependencies:
+  - python=3.9
+  
+  # Core ML packages
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  - torchaudio
+  - pytorch-cuda=12.1
+  - pytorch-lightning
+  
+  # Scientific computing
+  - numpy=1.26.4
+  - scipy>=1.11,<1.14
+  - scikit-learn
+  - scikit-image
+  - pandas
+  - matplotlib
+  
+  # Image processing
+  - opencv
+  - pillow
+  - libvips
+  - imageio
+  - tifffile
+  
+  # Data handling
+  - openpyxl
+  - xlsxwriter
+  - beautifulsoup4
+  - jsonlines
+  - jsonschema
+  
+  # Development tools
+  - pytest
+  - jupyterlab
+  - notebook
+  - ipykernel
+  
+  # Other utilities
+  - statsmodels
+  - libxml2
+  - cython
+  - regex
+  - termcolor
+  - omegaconf
+  - einops
+  - glob2
+  
+  # Packages only available via pip
+  - pip
+  - pip:
+      # ML-specific packages not in conda
+      - segmentation-models-pytorch
+      - pythae
+      - lpips
+      - piq
+      - sam2==1.1.0
+      - supervision==0.25.0
+      - transformers==4.54.1
+      - safetensors==0.5.3
+      - huggingface-hub==0.34.3
+      - tokenizers==0.21.4
+      
+      # Specialized packages
+      - aicsimageio
+      - nd2
+      - pyvips==3.0.0
+      - pycocotools==2.0.10
+      - stitch2d==1.2
+      - submitit==1.5.3
+      - iopath==0.1.10
+      - portalocker==3.2.0
+      
+      # Development utilities
+      - hydra-core==1.3.2
+      - addict==2.4.0
+      - colorlog==6.9.0
+      - git-filter-repo==2.47.0
+      - hf-xet==1.1.5
+      - yapf==0.40.1

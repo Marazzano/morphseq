@@ -51,7 +51,8 @@ def apply_unet(root, model_name, n_classes, overwrite_flag=False, segment_list=N
     path_to_images = os.path.join(root, "built_image_data", 'stitched_FF_images', '*')
     if segment_list is None:
         project_list = sorted(glob.glob(path_to_images))
-        project_list = [p for p in project_list if "ignore" not in p]
+        project_list = [p for p in project_list if "ignore" not in p.lower()]
+        project_list = [p for p in project_list if "_archive" not in p.lower()]
         project_list = [p for p in project_list if os.path.isdir(p)]
     else:
         project_list = [os.path.join(root, "built_image_data", 'stitched_FF_images', p) for p in segment_list]
@@ -143,14 +144,21 @@ def apply_unet(root, model_name, n_classes, overwrite_flag=False, segment_list=N
             lb_predicted = lb_predicted / (n_classes+1) * 255
             lb_predicted = np.asarray(lb_predicted.cpu()).astype(np.uint8)  # convert to integer
 
-            # write to file
+            # write to file; ensure we use a per-experiment subfolder derived from the
+            # parent folder of each image so outputs always land under
+            # <root>/segmentation/{model_name}_predictions/<experiment>/*.jpg
             im_paths = batch["path"]
             for b in range(lb_predicted.shape[0]):
                 lb_temp = np.squeeze(lb_predicted[b, :, :])
                 im_path = im_paths[b]
-                suffix = im_path.replace(path_to_images[:-1], "")
-                suffix = suffix.replace(".png", "") if suffix.endswith(".png") else suffix.replace(".jpg", "") 
-                out_path = os.path.join(path_to_labels, suffix + ".jpg")
+                # project_name is the stitched experiment folder name (parent directory)
+                project_name = ntpath.basename(os.path.dirname(im_path))
+                label_path_root = os.path.join(path_to_labels, project_name)
+                if not os.path.isdir(label_path_root):
+                    os.makedirs(label_path_root, exist_ok=True)
+
+                out_fname = ntpath.splitext(ntpath.basename(im_path))[0] + ".jpg"
+                out_path = os.path.join(label_path_root, out_fname)
                 io.imsave(out_path, lb_temp, check_contrast=False)
 
                 # make figure

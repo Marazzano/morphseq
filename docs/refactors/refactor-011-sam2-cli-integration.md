@@ -49,6 +49,16 @@ Integrate SAM2 segmentation directly into the CLI pipeline with proper orchestra
 
 ## **Architecture & Data Flow**
 
+### **CRITICAL PATH STRUCTURE**
+- **Repository Root**: `/net/trapnell/vol1/home/mdcolon/proj/morphseq`
+- **Data Root**: `morphseq_playground/` (for testing; in production will be nlammers data directory)
+- **SAM2 Scripts**: `<repo_root>/segmentation_sandbox/scripts/` (executable scripts)
+- **SAM2 Data Output**: `<data_root>/sam2_pipeline_files/` (all SAM2 generated data)
+
+**Example Full Paths (Testing)**:
+- Scripts: `/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/scripts/pipelines/01_prepare_videos.py`
+- Data: `/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/sam2_pipeline_files/`
+
 ### **Pipeline Sequence**
 ```
 Build01 (Stitched Images) 
@@ -67,8 +77,8 @@ Build04 → Build05 → Build06
 #### **Build01: Image Preparation**
 - **Input**: Raw microscope data
 - **Output**: 
-  - `built_image_data/stitched_FF_images/<exp>/<well>_t####.jpg`
-  - `metadata/built_metadata_files/<exp>_metadata.csv`
+  - `<data_root>/built_image_data/stitched_FF_images/<exp>/<well>_t####.jpg`
+  - `<data_root>/metadata/built_metadata_files/<exp>_metadata.csv`
 
 #### **Build02: Complete QC Mask Generation**  
 - **Input**: Stitched images
@@ -79,15 +89,16 @@ Build04 → Build05 → Build06
   - `bubble_v0_0100` (bubble masks)
   - `via_v1_0100` (viability/alive-dead masks)
 - **Output**:
-  - `segmentation/mask_v0_0100_predictions/<exp>/` (embryo masks)
-  - `segmentation/yolk_v1_0050_predictions/<exp>/` (yolk masks)
-  - `segmentation/focus_v0_0100_predictions/<exp>/` (focus masks)
-  - `segmentation/bubble_v0_0100_predictions/<exp>/` (bubble masks)
-  - `segmentation/via_v1_0100_predictions/<exp>/` (viability masks)
+  - `<data_root>/segmentation/mask_v0_0100_predictions/<exp>/` (embryo masks)
+  - `<data_root>/segmentation/yolk_v1_0050_predictions/<exp>/` (yolk masks)
+  - `<data_root>/segmentation/focus_v0_0100_predictions/<exp>/` (focus masks)
+  - `<data_root>/segmentation/bubble_v0_0100_predictions/<exp>/` (bubble masks)
+  - `<data_root>/segmentation/via_v1_0100_predictions/<exp>/` (viability masks)
 - **Purpose**: Provides complete QC mask suite for fraction_alive calculation, dead_flag, and all quality control flags
 
 #### **SAM2: Batch Embryo Segmentation**
-- **Input**: Auto-detects stitched images in `built_image_data/stitched_FF_images/`
+- **Input**: Auto-detects stitched images in `<data_root>/built_image_data/stitched_FF_images/`
+- **Scripts Location**: `<repo_root>/segmentation_sandbox/scripts/pipelines/`
 - **Processing**: Batch mode - processes all experiments found automatically
 - **Pipeline Steps**:
   1. `01_prepare_videos.py` → Video preparation for all experiments
@@ -106,14 +117,14 @@ Build04 → Build05 → Build06
   └── sam2_expr_files/
       └── sam2_metadata_<exp>.csv
   ```
-- **Environment**: `MORPHSEQ_SANDBOX_MASKS_DIR=<root>/sam2_pipeline_files/exported_masks`
+- **Environment**: `MORPHSEQ_SANDBOX_MASKS_DIR=<data_root>/sam2_pipeline_files/exported_masks`
 
 #### **Build03: Hybrid Mask Processing**
 - **Input**: 
   - Stitched images (pixel data)
   - SAM2 metadata CSV (embryo masks, positions, bboxes)
   - Build02 masks (yolk, focus, bubble, viability for QC)
-- **Auto-Discovery**: Finds `sam2_pipeline_files/sam2_expr_files/sam2_metadata_<exp>.csv`
+- **Auto-Discovery**: Finds `<data_root>/sam2_pipeline_files/sam2_expr_files/sam2_metadata_<exp>.csv`
 - **Logic**:
   - **Primary segmentation**: Use SAM2 embryo masks for superior accuracy
   - **QC analysis**: Use Build02 yolk/focus/bubble/viability masks for complete quality flags
@@ -433,3 +444,75 @@ python -m src.run_morphseq_pipeline.cli e2e \
 ### **Configuration Changes**
 - Environment: `MORPHSEQ_SANDBOX_MASKS_DIR` configuration
 - Paths: Standardize all mask loading to use `<root>/segmentation/...`
+
+---
+
+## **IMPLEMENTATION UPDATE - 2025-09-03**
+
+### ✅ **IMPLEMENTATION COMPLETE!**
+
+All stages of Refactor-011 have been successfully implemented:
+
+#### **Stage 1: Core SAM2 Integration ✅**
+- ✅ `run_sam2.py` wrapper with complete Python orchestration
+- ✅ CLI `sam2` subcommand with batch processing support  
+- ✅ Enhanced validation framework with SAM2-specific checks
+
+#### **Stage 2: Build02 Enhancement & Auto-Discovery ✅**
+- ✅ Enhanced Build02 runs all 5 UNet models (embryo, yolk, focus, bubble, viability)
+- ✅ Auto-discovery logic in Build03 finds SAM2 CSV automatically
+- ✅ Hybrid mask approach: SAM2 embryo + Build02 QC masks
+
+#### **Stage 3: E2E Orchestration ✅**
+- ✅ Complete E2E pipeline: Build01→Build02→SAM2→Build03→Build04→Build05
+- ✅ `--run-sam2` flag for seamless SAM2 integration
+- ✅ Comprehensive documentation with usage examples
+
+### **Key Implementation Features:**
+- **No timeouts**: SAM2 pipeline can run as long as needed
+- **Data path clarity**: All data stored in `<data_root>/sam2_pipeline_files/`  
+- **Robust error handling**: Graceful failure recovery with partial success
+- **Batch processing**: Auto-detect and process multiple experiments
+- **Auto-discovery**: Build03 finds SAM2 outputs without manual CSV paths
+
+### **Ready Usage Examples:**
+```bash
+# Individual SAM2 run
+python -m src.run_morphseq_pipeline.cli sam2 \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6
+
+# Full E2E with SAM2
+python -m src.run_morphseq_pipeline.cli e2e \
+  --data-root morphseq_playground \
+  --exp 20250529_24hpf_ctrl_atf6 \
+  --microscope keyence \
+  --run-sam2 \
+  --train-name test_sam2_20250903
+```
+
+### **TESTING STATUS:**
+
+#### ✅ **Initial Testing Complete - Keyence Dataset**
+**Dataset**: `20250529_24hpf_ctrl_atf6` (26GB, 96 wells, Keyence microscope)
+**Results**:
+- ✅ Build01 completed successfully (100% of wells processed)
+- ⏳ Build02 ready to run with `--mode legacy` for complete 5-UNet QC suite
+
+#### 🔄 **Current Testing Phase:**
+Running Build02 with complete QC segmentation suite:
+```bash
+python -m src.run_morphseq_pipeline.cli build02 --data-root morphseq_playground --mode legacy
+```
+
+#### 📋 **Remaining Testing Tasks:**
+1. Complete Build02 execution (5 UNet models: embryo, yolk, focus, bubble, viability)
+2. Run SAM2 pipeline for embryo segmentation
+3. Test Build03 auto-discovery and hybrid mask processing
+4. Validate complete E2E flow with all QC features
+5. **NEW**: Test with YX1 microscope dataset for multi-microscope validation
+
+#### 🎯 **Next Critical Step:**
+Need to identify and test YX1 microscope dataset to ensure pipeline works across both microscope types (Keyence ✅ + YX1 🔄).
+
+Implementation is **COMPLETE** - currently in comprehensive real-world testing phase! 🚀

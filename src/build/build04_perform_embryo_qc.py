@@ -9,6 +9,8 @@ from tqdm import tqdm
 #   beta = np.linalg.lstsq(X_ft.values, Y_ft.values, rcond=None)[0]
 #   predictions_full = X_full.values @ beta
 import statsmodels.api as sm
+from src.build.build_utils import bootstrap_perturbation_key_from_df01
+from src.build.build_utils import bootstrap_perturbation_key_from_df01
 
 
 def infer_embryo_stage_orig(embryo_metadata_df, ref_date="20240626"):
@@ -311,11 +313,63 @@ def infer_embryo_stage(root, embryo_metadata_df):
     return embryo_metadata_df
 
 
-def perform_embryo_qc(root, dead_lead_time=2):
+def perform_embryo_qc(
+    root,
+    dead_lead_time=2,
+    pert_key_path: str | None = None,
+    auto_augment_pert_key: bool = True,
+    write_augmented_key: bool = False,
+):
+    """Build04: QC + stage inference with robust perturbation key handling.
+
+    Behavior (summary):
+    - If `metadata/perturbation_name_key.csv` is missing/unreadable, bootstrap
+      it from df01 and write it before proceeding.
+    - If the key is incomplete, auto-augment missing `master_perturbation`
+      rows and always persist the augmented union. Added rows include a
+      `time_auto_constructed` timestamp for traceability.
+    - Fills safe defaults for optional df01 columns (flags, stage/time/surface
+      area, plus `temperature`/`medium`) to avoid brittle failures.
+
+    Outputs: df02 and curation CSVs written under
+    `metadata/combined_metadata_files/`.
+    """
 
     # read in metadata
     metadata_path = os.path.join(root, 'metadata', "combined_metadata_files", '')
     embryo_metadata_df = pd.read_csv(os.path.join(metadata_path, "embryo_metadata_df01.csv"))
+
+    # Ensure essential columns exist with safe defaults to avoid brittle failures
+    defaults_bool_false = [
+        "bubble_flag", "focus_flag", "frame_flag", "no_yolk_flag",
+    ]
+    for col in defaults_bool_false:
+        if col not in embryo_metadata_df.columns:
+            embryo_metadata_df[col] = False
+    if "use_embryo_flag" not in embryo_metadata_df.columns:
+        embryo_metadata_df["use_embryo_flag"] = True
+    else:
+        # Ensure boolean dtype for safe logical ops
+        embryo_metadata_df["use_embryo_flag"] = embryo_metadata_df["use_embryo_flag"].astype(bool)
+    if "dead_flag" not in embryo_metadata_df.columns:
+        embryo_metadata_df["dead_flag"] = False
+    if "predicted_stage_hpf" not in embryo_metadata_df.columns:
+        # Fallback: create a placeholder to allow pipeline to proceed; stage inference will overwrite later
+        embryo_metadata_df["predicted_stage_hpf"] = 0.0
+    if "surface_area_um" not in embryo_metadata_df.columns:
+        # Create placeholder; QC outlier step will skip on insufficient data
+        embryo_metadata_df["surface_area_um"] = 0.0
+    if "Time Rel (s)" not in embryo_metadata_df.columns:
+        embryo_metadata_df["Time Rel (s)"] = 0.0
+    # Provide optional metadata fields to avoid curation selection KeyErrors
+    if "temperature" not in embryo_metadata_df.columns:
+        embryo_metadata_df["temperature"] = pd.NA
+    else:
+        embryo_metadata_df["temperature"] = embryo_metadata_df["temperature"].fillna(pd.NA)
+    if "medium" not in embryo_metadata_df.columns:
+        embryo_metadata_df["medium"] = pd.NA
+    else:
+        embryo_metadata_df["medium"] = embryo_metadata_df["medium"].fillna(pd.NA)
 
     ############
     # Clean up chemical perturbation variable and create a master perturbation variable
@@ -334,12 +388,14 @@ def perform_embryo_qc(root, dead_lead_time=2):
     # for the second day
     # relabel_flags = (embryo_metadata_df["experiment_date"].astype(str) == "20240626") & \
     #                   ((embryo_metadata_df["Time Rel (s)"] / 3600) > 30)
-    date_ft = embryo_metadata_df["experiment_date"].astype(str) == "20240411"
-    row_vec = embryo_metadata_df["well"].str[0]
-    row_ft = (row_vec=="A") | (row_vec=="B") | (row_vec=="C")
-    wt_ft = embryo_metadata_df["master_perturbation"] == "wik"
-    relabel_flags = date_ft & row_ft & wt_ft
-    embryo_metadata_df.loc[relabel_flags, "master_perturbation"] = "Uncertain"  # this label just prevents these time points from being used for metric learning
+    # Guard special-case relabeling with presence of well column
+    if "well" in embryo_metadata_df.columns:
+        date_ft = embryo_metadata_df["experiment_date"].astype(str) == "20240411"
+        row_vec = embryo_metadata_df["well"].astype(str).str[0]
+        row_ft = (row_vec=="A") | (row_vec=="B") | (row_vec=="C")
+        wt_ft = embryo_metadata_df["master_perturbation"].astype(str) == "wik"
+        relabel_flags = date_ft & row_ft & wt_ft
+        embryo_metadata_df.loc[relabel_flags, "master_perturbation"] = "Uncertain"  # prevent use for metric learning
 
     ############
     # Use surface-area of mask to remove large outliers
@@ -429,7 +485,74 @@ def perform_embryo_qc(root, dead_lead_time=2):
 
     
     # join on additional perturbation info
-    pert_name_key = pd.read_csv(os.path.join(root, 'metadata', "perturbation_name_key.csv"))
+    if pert_key_path is None:
+        key_path = os.path.join(root, 'metadata', "perturbation_name_key.csv")
+    else:
+        key_path = pert_key_path
+    # Load or bootstrap perturbation key
+    try:
+        pert_name_key = pd.read_csv(key_path)
+    except Exception:
+        print(f"ℹ️  perturbation_name_key.csv not found or unreadable at {key_path}. Bootstrapping from df01...")
+        pert_name_key = bootstrap_perturbation_key_from_df01(root=root, df01=embryo_metadata_df, out_path=key_path)
+        print(f"📝 Wrote bootstrapped perturbation key to {key_path}")
+
+    # Ensure required columns exist on key with defaults
+    for col, default in (
+        ("short_pert_name", None),
+        ("phenotype", "unknown"),
+        ("control_flag", False),
+        ("pert_type", "unknown"),
+        ("background", "unknown"),
+        ("time_auto_constructed", None),
+    ):
+        if col not in pert_name_key.columns:
+            pert_name_key[col] = default
+
+    # Auto-augment missing perturbations so Build04 can proceed.
+    if auto_augment_pert_key:
+        masters = pd.Series(embryo_metadata_df["master_perturbation"].astype(str).unique())
+        existing = set(pert_name_key["master_perturbation"].astype(str).unique())
+        missing = masters[~masters.isin(existing)]
+        if len(missing) > 0:
+            # Derive short names from df01 if available; fallback to master
+            # Build short name map if available; otherwise fallback to master
+            if "short_pert_name" in embryo_metadata_df.columns:
+                short_map = (
+                    embryo_metadata_df.loc[:, ["master_perturbation", "short_pert_name"]]
+                    .astype(str)
+                    .groupby("master_perturbation")["short_pert_name"]
+                    .agg(lambda s: s.value_counts().index[0])
+                )
+            else:
+                short_map = pd.Series(dtype=str)
+            import time as _time
+            ts = _time.strftime('%Y-%m-%d %H:%M:%S')
+            add_rows = []
+            for m in missing.tolist():
+                short = short_map.loc[m] if m in short_map.index else m
+                add_rows.append({
+                    "master_perturbation": m,
+                    "short_pert_name": short,
+                    "phenotype": "unknown",
+                    "control_flag": False,
+                    "pert_type": "unknown",
+                    "background": "unknown",
+                    "time_auto_constructed": ts,
+                })
+            if add_rows:
+                augment_df = pd.DataFrame(add_rows)
+                pert_name_key = pd.concat([pert_name_key, augment_df], ignore_index=True)
+                # Drop any accidental duplicates, preferring original entries
+                pert_name_key = (
+                    pert_name_key.drop_duplicates(subset=["master_perturbation"], keep="first")
+                    .reset_index(drop=True)
+                )
+                print(f"ℹ️  Auto-augmented perturbation key with {len(add_rows)} missing entries.")
+                # Always persist augmented union for traceability
+                os.makedirs(os.path.dirname(key_path), exist_ok=True)
+                pert_name_key.to_csv(key_path, index=False)
+                print(f"📝 Wrote augmented key to {key_path}")
     embryo_metadata_df = embryo_metadata_df.merge(pert_name_key, how="left", on="master_perturbation", indicator=True)
     if np.any(embryo_metadata_df["_merge"] != "both"):
         problem_perts = np.unique(embryo_metadata_df.loc[embryo_metadata_df["_merge"] != "both", "master_perturbation"])
