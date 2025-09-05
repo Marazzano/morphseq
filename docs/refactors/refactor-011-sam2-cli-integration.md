@@ -574,3 +574,275 @@ Build03 should:
 - Generate hybrid metadata with best-of-both-worlds approach
 
 **SAM2 CLI Integration is COMPLETE and PROVEN** - Full end-to-end success! 🚀✅
+
+---
+
+## **BUILD03 INTEGRATION TESTING - 2025-09-04**
+
+### ✅ **SAM2 Mask Path Resolution - FIXED**
+**Issue**: Build03 was looking for SAM2 masks in hardcoded segmentation_sandbox path instead of data root location.
+**Solution**: Updated `resolve_sandbox_embryo_mask_from_csv()` in `build03A_process_images.py` to use `<data-root>/sam2_pipeline_files/exported_masks/` instead of hardcoded path.
+**Result**: ✅ SAM2 masks successfully found and loaded by Build03.
+
+### ⚠️ **Data Mismatch Discovery - ACTIVE ISSUE**
+**Problem Identified**: Discrepancy between Build01 metadata and SAM2 segmentation results causing Build03 failures.
+
+**Root Cause**:
+- **SAM2 processes more wells than Build01**: SAM2 found and segmented well `D04` (and potentially others)
+- **Build01 metadata missing `D04`**: Build01's `built_metadata_files/20250529_30hpf_ctrl_atf6_metadata.csv` does not contain `D04` entry
+- **SAM2 CSV contains orphaned data**: SAM2 CSV export includes `D04` but with empty Build01 metadata fields (NaN values)
+- **Build03 QC calculations fail**: NaN pixel dimensions cause `ValueError: cannot convert float NaN to integer` in `qc_utils.py:63`
+
+**Evidence**:
+```
+# SAM2 CSV row (D04 with empty metadata fields):
+20250529_30hpf_ctrl_atf6_D04_ch00_t0000,20250529_30hpf_ctrl_atf6_D04_e01,20250529_30hpf_ctrl_atf6_D04_e01_s0000,0,166877.0,0.25277777777777777,0.41812865497076024,0.5125,0.6152046783625731,0.85,20250529_30hpf_ctrl_atf6_D04_ch00_t0000_masks_emnum_1.png,20250529_30hpf_ctrl_atf6,20250529_30hpf_ctrl_atf6_D04,True,,,,,,,,,,,,,,,,,,,,,,,,,
+
+# Build01 metadata CSV (missing D04):
+# Contains: D06, D05, D03, D02, etc. but NO D04 entry
+```
+
+**Investigation Findings**:
+1. ✅ **D04 stitched images exist**: Confirmed in `stitched_FF_images/` directory
+2. ❓ **Why Build01 excluded D04**: Needs investigation - Build01 may have failed/skipped D04 for quality reasons
+3. ❓ **Data consistency**: Unclear why SAM2 can process wells that Build01 couldn't/didn't
+
+### 🔄 **Current Status & Next Steps**
+**Current State**: Build03 successfully loads SAM2 masks but fails on QC calculations due to missing Build01 metadata for some wells.
+
+**Immediate Fix Required**: 
+- **Filter SAM2 data to only include wells present in Build01 metadata** 
+- Prevent orphaned SAM2 entries from causing Build03 failures
+- Add robust NaN handling to QC calculations as fallback
+
+**Long-term Investigation**:
+- Determine why Build01 and SAM2 have different well coverage
+- Ensure data pipeline consistency across all build stages
+
+**Build03 Integration**: 🟡 **PARTIALLY WORKING** - Successful SAM2 mask loading, blocked by metadata mismatch issue.
+
+### 🔍 **Root Cause Analysis - Data Pipeline Inconsistency**
+
+**The Problem**: SAM2 processes more wells than Build01 included in metadata, creating orphaned SAM2 data.
+
+**Investigation Results**:
+1. ✅ **D04 stitched images exist**: Confirmed present in `stitched_FF_images/` directory
+2. ❓ **Build01 exclusion unclear**: Unknown why Build01 didn't include D04 in metadata CSV
+3. 🎯 **Solution approach**: Filter SAM2 data to only include wells present in Build01 metadata
+
+**Technical Details**:
+- **SAM2 Stage 1**: Auto-discovers experiments from `stitched_FF_images/` directory (finds D04)
+- **Build01 metadata**: Selective about wells included in final CSV (excludes D04)
+- **SAM2 CSV export**: Tries to merge with Build01 metadata, can't find D04, outputs NaN values
+- **Build03 failure**: `qc_utils.py:63` can't convert NaN pixel dimensions to integers
+
+**Immediate Fix Required**: 
+Filter SAM2 CSV export to only include wells that have corresponding Build01 metadata entries. This prevents orphaned SAM2 data from causing Build03 NaN crashes.
+
+**Implementation Strategy**:
+- Modify SAM2 CSV export stage to validate Build01 metadata presence before including wells
+- Add defensive NaN handling to Build03 QC calculations as backup safeguard
+- Log excluded wells for debugging pipeline inconsistencies
+
+### 🎉 **ISSUE RESOLVED - 2025-09-05**
+
+**✅ Complete Fix Implemented and Tested**
+
+**Changes Made:**
+1. **SAM2 CSV Export Filtering** (`export_sam2_metadata_to_csv.py`):
+   - Added `load_build01_metadata()` method to load experiment-specific Build01 metadata CSV
+   - Added well filtering in `_generate_csv_rows()` to skip wells not present in Build01
+   - Added sorting by `video_id` (well) for organized CSV output
+   - Logs excluded wells: `Skipping well D04 - not found in Build01 metadata`
+
+2. **Build03 Auto-Discovery Path Fix** (`run_build03.py`):
+   - Fixed path doubling issue by using absolute paths in auto-discovery
+   - Changed `sam2_csv = str(auto_csv)` to `sam2_csv = str(auto_csv.absolute())`
+   - Prevents `morphseq_playground/morphseq_playground/...` path errors
+
+**Test Results:**
+- ✅ **D04 Successfully Filtered**: SAM2 CSV reduced from 93 to 92 rows (D04 excluded)
+- ✅ **Build03 Integration Success**: Completed processing 92 wells with no NaN crashes
+- ✅ **Auto-Discovery Working**: Build03 found filtered CSV automatically
+- ✅ **Output Generated**: `embryo_metadata_df01.csv` written successfully
+- ✅ **Processing Time**: ~4 minutes for 92 wells with full QC analysis
+
+**Final Pipeline Status**: 🟢 **FULLY FUNCTIONAL**
+- Build01 → Build02 → SAM2 → Build03 pipeline working end-to-end
+- Data consistency maintained between pipeline stages
+- No more orphaned SAM2 data causing downstream failures
+
+**Next Steps**: Proceed with Build04 for embedding generation and model training preparation.
+
+---
+
+## 🐛 **DEAD FLAG BUG INVESTIGATION - 2025-09-05**
+
+### **Issue Description**
+All embryos in `embryo_metadata_df01.csv` have `dead_flag = True` despite having `fraction_alive = 1.0` (fully alive). This causes all embryos to be incorrectly flagged as dead, which then propagates to `dead_flag2 = True` in Build04's curation datasets.
+
+### **Key Components & Code Locations**
+
+#### **1. Build03 Dead Flag Calculation**
+**File**: `/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/build/build03A_process_images.py`  
+**Lines**: 700-707
+
+```python
+# Load Build02 auxiliary masks (best-effort) and compute fraction_alive + QC flags
+aux = _load_build02_masks_for_row(Path(root), row, target_shape=im_mask_lb.shape)
+frac_alive = compute_fraction_alive((im_mask_lb > 0).astype(np.uint8), aux.get("via"))
+row.loc["fraction_alive"] = frac_alive
+if np.isfinite(frac_alive):
+    row.loc["dead_flag"] = bool(frac_alive < ld_rat_thresh)  # ld_rat_thresh = 0.9
+else:
+    row.loc["dead_flag"] = False
+```
+
+#### **2. Via Mask Loading Function**
+**File**: `/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/build/build03A_process_images.py`  
+**Lines**: 101-140
+
+```python
+def _load_build02_masks_for_row(root: Path, row, target_shape: tuple[int, int]) -> dict:
+    # Searches under `<root>/segmentation/*_<model>/<date>/*{well}_t####*`
+    # Looks for directories containing keywords: "via", "yolk", "focus", "bubble"
+```
+
+#### **3. Fraction Alive Calculation**
+**File**: `/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/build/qc_utils.py`  
+**Lines**: 10-33
+
+```python
+def compute_fraction_alive(emb_mask: np.ndarray, via_mask: Optional[np.ndarray]) -> float:
+    if via_mask is None:
+        return np.nan  # Key issue: returns NaN when via mask missing
+    # ... calculates alive/(alive+dead) ratio
+```
+
+### **Data Locations**
+- **Via masks exist at**: `morphseq_playground/segmentation/via_v1_0100_predictions/20250529_30hpf_ctrl_atf6/`
+- **Current results**: `embryo_metadata_df01.csv` shows `fraction_alive = 1.0` but `dead_flag = True`
+
+### **Debugging Steps Needed**
+1. **Verify via mask loading**: Check if `_load_build02_masks_for_row()` successfully finds via masks in `via_v1_0100_predictions`
+2. **Debug aux.get("via")**: Confirm if via masks are being returned or if aux["via"] is None
+3. **Check fraction_alive logic**: Verify if `compute_fraction_alive()` returns 1.0 or NaN
+4. **Logic verification**: With `frac_alive=1.0` and `ld_rat_thresh=0.9`, `dead_flag` should be `False` not `True`
+
+### **Expected vs Actual Behavior**
+- **Expected**: `fraction_alive=1.0` → `dead_flag=False` (alive)
+- **Actual**: `fraction_alive=1.0` → `dead_flag=True` (incorrectly dead)
+
+**Root Cause**: Bug is likely in the via mask loading or the dead flag assignment logic in Build03's `get_embryo_stats()` function.
+
+**Impact**: This bug prevents proper Build04 execution as all embryos are incorrectly flagged as dead, affecting downstream QC analysis and curation dataset generation.
+
+---
+
+## 🔍 **DEAD FLAG BUG RESOLUTION - 2025-09-05**
+
+### **Root Cause Analysis: Mask Processing Logic**
+
+Through comprehensive debugging, we discovered the dead flag bug was caused by **incorrect mask thresholding logic** when loading Build02 auxiliary masks. Here's the complete analysis:
+
+#### **Legacy vs SAM2 Pipeline Data Flow Differences**
+
+**Diffusion-Dev Legacy Pipeline**:
+- **Embryo masks**: Build02 UNet predictions (well-level, multi-embryo)
+- **Auxiliary masks**: Build02 UNet predictions (via, yolk, focus, bubble)
+- **Embryo extraction**: `im_mask_lb = label(im_mask)` → filter by `row["region_label"]` 
+- **Fraction alive**: Pre-calculated during embryo detection phase using `cb_mask` logic
+- **Dead flag**: `dead_flag = row["fraction_alive"] < ld_rat_thresh` (direct comparison)
+
+**Current SAM2 Pipeline**:
+- **Embryo masks**: SAM2 predictions (multi-label: 0=background, 1=embryo1, 2=embryo2, etc.)
+- **Auxiliary masks**: Build02 UNet predictions (via, yolk, focus, bubble) 
+- **Embryo extraction**: SAM2 labels already distinguish individual embryos
+- **Fraction alive**: Computed dynamically using `compute_fraction_alive(emb_mask, via_mask)`
+- **Dead flag**: `dead_flag = bool(fraction_alive < ld_rat_thresh)` (computed result)
+
+#### **Multi-Embryo Handling Comparison**
+
+Both systems handle multiple embryos per well similarly:
+
+**Legacy approach**:
+```python
+# Multi-embryo mask → connected components → filter by region_label
+im_mask_lb = label(im_mask)  # [0, 1, 2, 3, ...] connected components
+lbi = row["region_label"]    # specific embryo label ID  
+im_mask_lb = (im_mask_lb == lbi).astype(int)  # binary for this embryo
+```
+
+**SAM2 approach**:
+```python  
+# Multi-embryo mask → extract by SAM2 label → binary for this embryo
+# SAM2 mask already labeled: [0, 1, 2, 3, ...] where each number = embryo ID
+im_mask_lb = (sam2_mask == embryo_id).astype(int)  # binary for this embryo
+```
+
+Both approaches apply auxiliary masks only to individual embryo regions, ensuring proper per-embryo QC calculations.
+
+#### **The Mask Processing Bug**
+
+**Problem**: Build02 auxiliary masks were being processed incorrectly due to faulty thresholding logic.
+
+**Debug Evidence**:
+```
+DEBUG: Raw via mask - unique values: [127], min: 127, max: 127
+DEBUG: Using threshold: 0 (max was 127)  
+DEBUG: After thresholding - unique values: [1], sum: 184320  # ALL DEAD!
+```
+
+**Broken Logic**:
+```python
+# WRONG: Hard-coded threshold selection
+threshold = 127 if arr_raw.max() >= 255 else 0
+arr = (arr_raw > threshold).astype(np.uint8)
+```
+
+For via masks with `max=127`, this used `threshold=0`, making `127 > 0 = True` → all pixels flagged as dead.
+
+**Corrected Logic**:
+```python
+# FIXED: Use diffusion-dev legacy processing for Build02 masks
+arr = (np.round(arr_raw / 255 * 2) - 1).astype(np.uint8)  # Legacy formula
+arr = (arr > 0).astype(np.uint8)  # Convert to proper binary
+```
+
+This matches the exact processing from diffusion-dev:
+- `arr/255` → normalize to [0,1] 
+- `*2` → scale to [0,2]
+- `np.round() - 1` → shift to [-1,0,1]
+- `> 0` → convert to binary [0,1]
+
+#### **Final Resolution**
+
+**Via masks with value 127**:
+- Legacy processing: `127/255*2-1 = -0.004` → rounds to 0 → `> 0 = False` → **0** (alive)
+- Result: `fraction_alive = 1.0`, `dead_flag = False` ✅
+
+**Mixed-value masks (yolk)**:  
+- Values <127.5 → negative → 0 (background)
+- Values ≥127.5 → positive → 1 (foreground)
+- Result: Proper binary segmentation ✅
+
+### **Implementation Details**
+
+**Files Modified**:
+- `src/build/build03A_process_images.py`: Updated `_load_build02_masks_for_row()` with legacy processing logic
+
+**Processing Logic**:
+```python
+# Use legacy diffusion-dev processing for Build02 masks
+arr = (np.round(arr_raw / 255 * 2) - 1).astype(np.uint8)
+arr = (arr > 0).astype(np.uint8)  # Convert to proper binary
+```
+
+**Testing Results**:
+- ✅ Via masks: All-127 files → proper zeros (no dead regions)
+- ✅ Yolk masks: Mixed grayscale → proper binary segmentation  
+- ✅ Fraction alive: 1.0 for healthy embryos
+- ✅ Dead flag: False for healthy embryos
+- ✅ Multi-embryo handling: Individual embryo QC maintained
+
+**Key Insight**: The auxiliary mask processing should always use the legacy diffusion-dev formula since these masks always come from Build02 UNet models, regardless of whether embryo masks come from SAM2 or Build02.

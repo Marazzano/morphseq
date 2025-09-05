@@ -35,7 +35,7 @@ def run_build03(
     if sam2_csv is None:
         auto_csv = root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{exp}.csv" 
         if auto_csv.exists():
-            sam2_csv = str(auto_csv)
+            sam2_csv = str(auto_csv.absolute())  # Use absolute path to avoid doubling
             print(f"🔍 Auto-discovered SAM2 CSV: {sam2_csv}")
         else:
             print(f"🔍 No SAM2 CSV found at {auto_csv}, using legacy segmentation")

@@ -147,6 +147,7 @@ class SAM2MetadataExporter:
         self.masks_dir = Path(masks_dir) if masks_dir else None
         self.sam2_data = None
         self.experiment_metadata = None
+        self.build01_wells = set()
         
     def load_and_validate_json(self) -> Dict[str, Any]:
         """
@@ -200,6 +201,42 @@ class SAM2MetadataExporter:
             sam2_dir = sam2_dir.parent
         
         logger.warning("No experiment_metadata.json found - pixel dimensions will be missing")
+
+    def load_build01_metadata(self, experiment_id: str) -> None:
+        """
+        Load Build01 metadata CSV for specific experiment to identify valid wells for filtering.
+        This prevents orphaned SAM2 data from wells that Build01 didn't process.
+        
+        Args:
+            experiment_id: Experiment ID (e.g., "20250529_30hpf_ctrl_atf6")
+        """
+        # Try to find Build01 metadata CSV matching this experiment
+        sam2_dir = self.sam2_json_path.parent
+        while sam2_dir.name and sam2_dir != sam2_dir.parent:
+            metadata_dir = sam2_dir / "metadata" / "built_metadata_files"
+            if metadata_dir.exists():
+                # Look for CSV file matching this experiment
+                experiment_csv = metadata_dir / f"{experiment_id}_metadata.csv"
+                if experiment_csv.exists():
+                    logger.info(f"Loading Build01 metadata for {experiment_id} from {experiment_csv}")
+                    try:
+                        df = pd.read_csv(experiment_csv)
+                        if 'well_id' in df.columns:
+                            # Extract well names (e.g., "A01" from "20250529_30hpf_ctrl_atf6_A01")
+                            for well_id in df['well_id']:
+                                if pd.notna(well_id) and isinstance(well_id, str):
+                                    well_name = well_id.split('_')[-1]
+                                    self.build01_wells.add(well_name)
+                            
+                            logger.info(f"Found {len(self.build01_wells)} valid wells in Build01 metadata for {experiment_id}")
+                            return
+                        else:
+                            logger.warning(f"Build01 metadata missing 'well_id' column for {experiment_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load Build01 metadata for {experiment_id}: {e}")
+            sam2_dir = sam2_dir.parent
+        
+        logger.warning(f"No Build01 metadata found for experiment {experiment_id} - SAM2 export will include all wells (may cause downstream NaN issues)")
     
     def _validate_json_structure(self, data: Dict[str, Any]) -> None:
         """
@@ -251,6 +288,11 @@ class SAM2MetadataExporter:
         # Create DataFrame with proper schema
         df = pd.DataFrame(rows, columns=CSV_COLUMNS)
         
+        # Sort by video_id (well) for better organization
+        if 'video_id' in df.columns and not df.empty:
+            df = df.sort_values('video_id').reset_index(drop=True)
+            logger.info(f"Sorted {len(df)} rows by video_id (well)")
+        
         # Validate schema
         self._validate_csv_schema(df)
         
@@ -283,6 +325,10 @@ class SAM2MetadataExporter:
             experiments = {k: v for k, v in experiments.items() if k in experiment_filter}
             logger.info(f"Filtering to experiments: {list(experiments.keys())}")
         
+        # Load Build01 metadata for each experiment to filter valid wells
+        for exp_id in experiments.keys():
+            self.load_build01_metadata(exp_id)
+        
         total_snips = 0
         
         # Pre-calculate total work for progress tracking
@@ -301,6 +347,14 @@ class SAM2MetadataExporter:
             videos = exp_data.get('videos', {})
             for video_id, video_data in videos.items():
                 logger.debug(f"Processing video: {video_id}")
+                
+                # Filter wells based on Build01 metadata availability
+                if self.build01_wells:
+                    # Extract well name from video_id (e.g., "A01" from "20250529_30hpf_ctrl_atf6_A01")
+                    well_name = video_id.split('_')[-1] if '_' in video_id else video_id
+                    if well_name not in self.build01_wells:
+                        logger.info(f"Skipping well {well_name} (video: {video_id}) - not found in Build01 metadata")
+                        continue
                 
                 # Get seed frame info
                 seed_frame_info = video_data.get('seed_frame_info', {})
