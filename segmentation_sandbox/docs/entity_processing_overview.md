@@ -42,6 +42,17 @@ The goal is to make it easy to run the full pipeline or a subset consistently an
 - Entity types: Experiments only (filters by experiment ID).
 - Incremental: Exports missing only by default; `--overwrite` forces re‑export of all.
 
+6) Build06 (MorphSeq Pipeline - Generate df03 with embeddings)
+- Selectors: `--experiments`
+- Default: If no selector is provided, processes ALL experiments found in df02 (incremental: missing from df03 only).
+- Entity types: Experiments only.
+- Incremental: Process only experiments missing from df03 by default.
+- Overwrite semantics: **REQUIRES explicit experiment specification**:
+  - `--overwrite --experiments "exp1,exp2"` → reprocess specific experiments
+  - `--overwrite --experiments "all"` → reprocess ALL experiments (explicit)
+  - `--overwrite` alone → **ERROR** (ambiguous, dangerous)
+- Quality filtering: Only processes embryos where `use_embryo_flag=True` (bypasses Build05 manual curation)
+
 ## Current Flag Differences
 
 - Underscore vs. hyphen:
@@ -116,6 +127,10 @@ Global conventions to adopt:
 - Modes:
   - `--process-missing` (default True): explicit name for the normal behavior that processes only missing work.
   - `--overwrite`: recompute/regenerate even if outputs exist. Do not call this "process-all".
+  - **IMPORTANT**: `--overwrite` without explicit selectors is DANGEROUS and ambiguous. Always require explicit entity specification:
+    - `--overwrite --experiments "exp1,exp2"` → overwrite specific experiments
+    - `--overwrite --experiments "all"` → overwrite ALL experiments (explicit intent)
+    - `--overwrite` alone → should ERROR or warn about ambiguity
   - Only step 05 retains `--process-all` because it truly means a full re-audit of all entities.
 - Startup banner: every step prints a clear banner at start: mode, selectors, counts, and what “no selectors” means. Example:
   - "Mode=process-missing. No selectors given → processing ALL available [images/videos/experiments] from metadata; limited to missing items. Use --experiments to target a subset; use --overwrite to force recompute."
