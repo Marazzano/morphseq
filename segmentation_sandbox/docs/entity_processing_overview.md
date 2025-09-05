@@ -1,5 +1,28 @@
 # Entity Processing Overview (segmentation_sandbox)
 
+
+NOTE:this need to be pdate overwrite needs to be explicity to match this   
+       45 +  6) Build06 (MorphSeq Pipeline - Generate df03 with 
+          + embeddings)
+       46 +  - Selectors: `--experiments`
+       47 +  - Default: If no selector is provided, processes 
+          + ALL experiments found in df02 (incremental: missing 
+          + from df03 only).
+       48 +  - Entity types: Experiments only.
+       49 +  - Incremental: Process only experiments missing 
+          + from df03 by default.
+       50 +  - Overwrite semantics: **REQUIRES explicit 
+          + experiment specification**:
+       51 +    - `--overwrite --experiments "exp1,exp2"` → 
+          + reprocess specific experiments
+       52 +    - `--overwrite --experiments "all"` → reprocess 
+          + ALL experiments (explicit)
+       53 +    - `--overwrite` alone → **ERROR** (ambiguous, 
+          + dangerous)
+       54 +  - Quality filtering: Only processes embryos where 
+          + `use_embryo_flag=True` (bypasses Build05 manual 
+          + curation)
+   
 This note documents how each pipeline step selects what to process today: whether it defaults to processing everything, supports targeting specific entities (experiments/videos/images/snips), and whether it has an explicit `--process-all` switch vs. incremental behavior.
 
 The goal is to make it easy to run the full pipeline or a subset consistently and prepare for a unified interface across steps.
