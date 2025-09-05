@@ -1,7 +1,7 @@
 # We will save the data in folders to mimic the desired example
 import os
 # Note: torch is not used in this script; can be removed to lighten imports.
-import torch
+# import torch
 import numpy as np
 import glob as glob
 import pandas as pd
