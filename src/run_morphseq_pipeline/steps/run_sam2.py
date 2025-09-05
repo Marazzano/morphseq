@@ -44,7 +44,6 @@ def run_sam2(
     iou_threshold: float = 0.5, 
     target_prompt: str = "individual embryo",
     workers: int = 8,
-    timeout: int = 3600,
     device: str = "cuda",
     segmentation_format: str = "rle",
     save_interval: int = 10,
@@ -61,7 +60,6 @@ def run_sam2(
         iou_threshold: GroundingDINO IoU threshold (default: 0.5)
         target_prompt: SAM2 detection prompt (default: "individual embryo")
         workers: Number of parallel workers (default: 8)
-        timeout: Script execution timeout in seconds (default: 3600)
         device: Device for SAM2 model - "cuda" or "cpu" (default: "cuda")
         segmentation_format: Output format - "rle" or "polygon" (default: "rle")
         save_interval: Auto-save interval for processing (default: 10)
@@ -117,7 +115,7 @@ def run_sam2(
         return sam2_root / "sam2_expr_files" / f"sam2_metadata_{exp}.csv"
     
     try:
-        # Create temporary config file for this run
+        # Create temporary config file for this run with model paths
         config_data = {
             "confidence_threshold": confidence_threshold,
             "iou_threshold": iou_threshold,
@@ -127,7 +125,17 @@ def run_sam2(
             "data_root": str(root),
             "device": device,
             "segmentation_format": segmentation_format,
-            "save_interval": save_interval
+            "save_interval": save_interval,
+            "models": {
+                "groundingdino": {
+                    "config": "models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
+                    "weights": "/net/trapnell/vol1/home/mdcolon/proj/image_segmentation/Open-GroundingDino/finetune_output/finetune_output_run_nick_masks_20250308/checkpoint_best_regular.pth"
+                },
+                "sam2": {
+                    "config": "configs/sam2.1/sam2.1_hiera_l.yaml",
+                    "checkpoint": "../checkpoints/sam2.1_hiera_large.pt"
+                }
+            }
         }
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
@@ -137,9 +145,11 @@ def run_sam2(
         
         # Stage 1: Prepare Videos
         print("📹 Stage 1: Preparing videos and metadata...")
+        stitched_images_dir = root / "built_image_data" / "stitched_FF_images"
         stage1_args = [
-            "--data-root", str(root),  # Data root, not repo root
-            "--experiment", exp,
+            "--directory_with_experiments", str(stitched_images_dir),
+            "--output_parent_dir", str(sam2_root),
+            "--experiments_to_process", exp,
             "--workers", str(workers)
         ]
         if verbose:
@@ -149,41 +159,46 @@ def run_sam2(
             script_path=scripts_dir / "01_prepare_videos.py",
             args=stage1_args,
             env=env,
-            cwd=sandbox_dir,
-            timeout=timeout
+            cwd=sandbox_dir
         )
         
         # Stage 2: GroundingDINO Detection  
         print("🔍 Stage 2: Running GroundingDINO detection...")
-        metadata_path = sam2_root / "embryo_metadata" / "experiment_metadata.json"
+        metadata_path = sam2_root / "raw_data_organized" / "experiment_metadata.json"
         annotations_path = sam2_root / "detections" / "gdino_detections.json"
         
         # Ensure directories exist
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
         annotations_path.parent.mkdir(parents=True, exist_ok=True)
         
+        stage2_args = [
+            "--config", config_path,
+            "--metadata", str(metadata_path),
+            "--annotations", str(annotations_path),
+            "--confidence-threshold", str(confidence_threshold),
+            "--iou-threshold", str(iou_threshold),
+            "--prompt", target_prompt
+        ]
+        if verbose:
+            stage2_args.append("--verbose")
+        
         result = _run_pipeline_script(
             script_path=scripts_dir / "03_gdino_detection.py", 
-            args=[
-                "--config", config_path,
-                "--metadata", str(metadata_path),
-                "--annotations", str(annotations_path),
-                "--confidence-threshold", str(confidence_threshold),
-                "--iou-threshold", str(iou_threshold),
-                "--target-prompt", target_prompt
-            ],
+            args=stage2_args,
             env=env,
-            cwd=sandbox_dir,
-            timeout=timeout
+            cwd=sandbox_dir
         )
         
         # Stage 3: SAM2 Video Processing
         print("🎯 Stage 3: SAM2 video segmentation...")
+        sam2_output_path = sam2_root / "segmentation" / "grounded_sam_segmentations.json"
+        sam2_output_path.parent.mkdir(parents=True, exist_ok=True)
+        
         sam2_args = [
             "--config", config_path,
             "--metadata", str(metadata_path), 
             "--annotations", str(annotations_path),
-            "--workers", str(workers),
+            "--output", str(sam2_output_path),
             "--target-prompt", target_prompt,
             "--segmentation-format", segmentation_format,
             "--device", device,
@@ -196,15 +211,14 @@ def run_sam2(
             script_path=scripts_dir / "04_sam2_video_processing.py",
             args=sam2_args,
             env=env,
-            cwd=sandbox_dir,
-            timeout=timeout
+            cwd=sandbox_dir
         )
         
         # Stage 4: QC Analysis
         print("📊 Stage 4: Quality control analysis...")
         qc_args = [
-            "--config", config_path,
-            "--metadata", str(metadata_path)
+            "--input", str(sam2_output_path),
+            "--experiments", exp
         ]
         if verbose:
             qc_args.append("--verbose")
@@ -213,19 +227,18 @@ def run_sam2(
             script_path=scripts_dir / "05_sam2_qc_analysis.py",
             args=qc_args,
             env=env,
-            cwd=sandbox_dir,
-            timeout=timeout
+            cwd=sandbox_dir
         )
         
         # Stage 5: Export Masks
         print("💾 Stage 5: Exporting masks...")
-        masks_output_dir = sam2_root / "exported_masks" / exp
+        masks_output_dir = sam2_root / "exported_masks"
         masks_output_dir.mkdir(parents=True, exist_ok=True)
         
         export_args = [
-            "--config", config_path,
-            "--metadata", str(metadata_path),
-            "--output-dir", str(masks_output_dir)
+            "--sam2-annotations", str(sam2_output_path),
+            "--output", str(masks_output_dir),
+            "--entities-to-process", exp
         ]
         if verbose:
             export_args.append("--verbose")
@@ -234,22 +247,20 @@ def run_sam2(
             script_path=scripts_dir / "06_export_masks.py",
             args=export_args,
             env=env,
-            cwd=sandbox_dir,
-            timeout=timeout
+            cwd=sandbox_dir
         )
         
         # Stage 6: Export Metadata CSV
         print("📋 Stage 6: Generating metadata CSV...")
-        annotations_json = sam2_root / "embryo_metadata" / "grounded_sam_segmentations.json"
         csv_output_dir = sam2_root / "sam2_expr_files"
         csv_output_dir.mkdir(parents=True, exist_ok=True)
         csv_output_path = csv_output_dir / f"sam2_metadata_{exp}.csv"
         
         csv_args = [
-            str(annotations_json),
+            str(sam2_output_path),
             "-o", str(csv_output_path),
             "--experiment-filter", exp,
-            "--masks-dir", str(masks_output_dir)
+            "--masks-dir", str(masks_output_dir / exp / "masks")
         ]
         if verbose:
             csv_args.append("-v")
@@ -258,8 +269,7 @@ def run_sam2(
             script_path=utils_dir / "export_sam2_metadata_to_csv.py",
             args=csv_args,
             env=env,
-            cwd=sandbox_dir,
-            timeout=timeout
+            cwd=sandbox_dir
         )
         
         # Cleanup
@@ -492,8 +502,6 @@ Examples:
                         help="SAM2 detection prompt (default: 'individual embryo')")
     parser.add_argument("--workers", type=int, default=8,
                         help="Number of parallel workers (default: 8)")
-    parser.add_argument("--timeout", type=int, default=3600,
-                        help="Script execution timeout in seconds (default: 3600)")
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda",
                         help="Device for SAM2 model (default: cuda)")
     parser.add_argument("--segmentation-format", choices=["rle", "polygon"], default="rle",
@@ -515,7 +523,6 @@ Examples:
         "iou_threshold": args.iou_threshold,
         "target_prompt": args.target_prompt,
         "workers": args.workers,
-        "timeout": args.timeout,
         "device": args.device,
         "segmentation_format": args.segmentation_format,
         "save_interval": args.save_interval,

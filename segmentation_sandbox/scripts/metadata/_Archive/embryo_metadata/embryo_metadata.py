@@ -70,8 +70,71 @@ class EmbryoMetadata(BaseFileHandler):
         
     def add_phenotype(self, embryo_id: str, phenotype_data: Dict) -> None:
         """Add phenotype annotation for an embryo."""
-        # TODO: Implement phenotype addition with autosave
-        pass
+        # Minimal, fast implementation with lazy init and autosave
+        # Lazy initialize in-memory structure
+        if not hasattr(self, "metadata") or not isinstance(getattr(self, "metadata", None), dict):
+            # Try to load existing file, otherwise create minimal structure
+            try:
+                self.metadata = self.load_json()
+            except Exception:
+                self.metadata = {
+                    "file_info": {
+                        "creation_time": datetime.now().isoformat(),
+                        "version": "1.0",
+                        "created_by": "EmbryoMetadata"
+                    },
+                    "embryos": {},
+                    "entity_tracking": {"embryos": []}
+                }
+
+        # Ensure counters exist for autosave
+        if not hasattr(self, "_ops_since_save"):
+            self._ops_since_save = 0
+        if not hasattr(self, "_auto_save_interval"):
+            # Best-effort default that mirrors the __init__ default
+            self._auto_save_interval = 10
+
+        # Insert phenotype entry
+        embryos = self.metadata.setdefault("embryos", {})
+        embryo_entry = embryos.setdefault(embryo_id, {
+            "embryo_id": embryo_id,
+            "phenotypes": [],
+            "genotypes": [],
+            "flags": [],
+            "created_time": datetime.now().isoformat(),
+        })
+
+        # Normalize phenotype payload and append with timestamp
+        payload = dict(phenotype_data) if isinstance(phenotype_data, dict) else {"value": phenotype_data}
+        payload["timestamp"] = datetime.now().isoformat()
+        embryo_entry.setdefault("phenotypes", []).append(payload)
+
+        # Track entity id
+        tracking = self.metadata.setdefault("entity_tracking", {}).setdefault("embryos", [])
+        if embryo_id not in tracking:
+            tracking.append(embryo_id)
+            tracking.sort()
+
+        # Update file_info last_updated
+        self.metadata.setdefault("file_info", {})["last_updated"] = datetime.now().isoformat()
+
+        # Operation log (best-effort)
+        try:
+            self.log_operation("add_phenotype", entity_id=embryo_id)
+        except Exception:
+            # BaseFileHandler may not be fully initialized; ignore silently
+            pass
+
+        # Autosave handling
+        self._ops_since_save += 1
+        interval = getattr(self, "_auto_save_interval", 0) or 0
+        if interval > 0 and self._ops_since_save >= interval:
+            try:
+                self.save_json(self.metadata)
+                self._ops_since_save = 0
+            except Exception:
+                # Do not raise to keep method fast/non-blocking
+                pass
         
     def add_genotype(self, embryo_id: str, genotype_data: Dict) -> None:
         """Add genotype annotation for an embryo."""  
