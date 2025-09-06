@@ -114,6 +114,86 @@ def calculate_morph_embeddings(data_root: Union[str, Path],
                   batch_size: int = 64,
                   ):
 
+    # Environment switching logic for Python 3.9 legacy models
+    import os
+    import sys
+    import subprocess
+    
+    if (model_class == "legacy" and 
+        os.environ.get("MSEQ_ENABLE_ENV_SWITCH") == "1" and 
+        sys.version_info[:2] != (3, 9)):
+        
+        print(f"⚠️  Legacy model requires Python 3.9, current version: {sys.version_info[0]}.{sys.version_info[1]}")
+        print("🔄 Switching to vae-env-cluster environment...")
+        print(f"🔍 Current CONDA_EXE: {os.environ.get('CONDA_EXE', 'Not set')}")
+        print(f"🔍 Current PATH contains conda: {'conda' in os.environ.get('PATH', '')}")
+        
+        # Build command to run this function in Python 3.9 environment
+        current_script = __file__
+        repo_root = Path(current_script).parent.parent.parent  # Go up to morphseq root
+        
+        # Use dedicated Python 3.9 script to avoid import compatibility issues
+        script_path = repo_root / "generate_embeddings_py39.py"
+        experiments_json = str(experiments).replace("'", '"')  # Convert to JSON format
+        
+        # Try different conda/mamba paths
+        conda_paths = [
+            "/net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda",
+            "/net/trapnell/vol1/home/mdcolon/software/miniconda3/condabin/conda", 
+            "/usr/bin/conda",
+            "conda"
+        ]
+        
+        mamba_paths = [
+            "/net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/mamba",
+            "/usr/bin/mamba", 
+            "mamba"
+        ]
+        
+        # Try to find working conda/mamba command
+        cmd_base = None
+        for conda_path in conda_paths:
+            try:
+                subprocess.run([conda_path, "--version"], capture_output=True, check=True)
+                cmd_base = [conda_path, "run", "-p", "/net/trapnell/vol1/home/nlammers/micromamba/envs/vae-env-cluster", "--no-capture-output"]
+                print(f"✅ Found conda at: {conda_path}")
+                break
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                continue
+        
+        if cmd_base is None:
+            for mamba_path in mamba_paths:
+                try:
+                    subprocess.run([mamba_path, "--version"], capture_output=True, check=True)
+                    cmd_base = [mamba_path, "run", "-p", "/net/trapnell/vol1/home/nlammers/micromamba/envs/vae-env-cluster", "--no-capture-output"]
+                    print(f"✅ Found mamba at: {mamba_path}")
+                    break
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    continue
+        
+        if cmd_base is None:
+            raise RuntimeError("❌ Could not find conda or mamba executable. Please ensure conda/mamba is installed and accessible.")
+        
+        cmd = cmd_base + ["python", str(script_path), str(data_root), model_name, model_class, experiments_json, str(batch_size)]
+        
+        try:
+            # Ensure subprocess inherits conda environment variables
+            env = os.environ.copy()
+            # Add conda paths if they're not already there
+            if 'CONDA_EXE' not in env and os.path.exists("/net/trapnell/vol1/home/mdcolon/software/miniconda3/condabin/conda"):
+                env['CONDA_EXE'] = "/net/trapnell/vol1/home/mdcolon/software/miniconda3/condabin/conda"
+            if 'CONDA_PREFIX' not in env:
+                env['CONDA_PREFIX'] = "/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+            
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+            print("✅ Python 3.9 subprocess completed successfully")
+            print(result.stdout)
+            return  # Exit early - the subprocess handled the work
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Subprocess failed: {e}")
+            print(f"stdout: {e.stdout}")
+            print(f"stderr: {e.stderr}")
+            raise
 
     legacy = model_class == "legacy"
     data_root = Path(data_root)

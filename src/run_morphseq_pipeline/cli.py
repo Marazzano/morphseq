@@ -30,7 +30,11 @@ from .validation import run_validation
 from .steps.run_embed import run_embed
 from .steps.run_build06 import run_build06
 from .services.gen_embeddings import build_df03_with_embeddings
+# Import centralized embedding generation utilities
+from ..analyze.gen_embeddings import ensure_embeddings_for_experiments
 
+
+MISCROSCOPE_CHOICES = ["Keyence", "YX1"]
 
 def resolve_root(args) -> str:
     """Resolve the data root path from CLI args, with test suffix support.
@@ -63,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     # build01
     p01 = sub.add_parser("build01", help="Compile+stitch FF images; write built metadata CSV")
     _add_common_root_and_exp(p01)
-    p01.add_argument("--microscope", choices=["Keyence", "YX1"], required=True)
+    p01.add_argument("--microscope", choices= MISCROSCOPE_CHOICES, required=True)
     p01.add_argument("--metadata-only", action="store_true", help="Skip image processing; write metadata only")
     p01.add_argument("--overwrite", action="store_true")
 
@@ -154,7 +158,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="SAM2 parallel workers (default: 8)")
     
     # Build01 parameters (only used if not --skip-build01)
-    pe2e.add_argument("--microscope", choices=["keyence", "yx1"], 
+    pe2e.add_argument("--microscope", choices= MISCROSCOPE_CHOICES, 
                      help="Microscope type for Build01 (required if not skipping Build01)")
     pe2e.add_argument("--metadata-only", action="store_true", 
                      help="Build01: skip image processing, write metadata only")
@@ -185,15 +189,29 @@ def build_parser() -> argparse.ArgumentParser:
     pem.add_argument("--seed", type=int, default=0)
 
     # build06 (standardize embeddings + df03 merge)
-    p06 = sub.add_parser("build06", help="Standardize embeddings and merge into df02 → df03")
+    p06 = sub.add_parser("build06", help="Generate df03 with quality-filtered embeddings (skips Build05)")
     p06.add_argument("--morphseq-repo-root", required=True, help="MorphSeq repository root directory")
-    p06.add_argument("--data-root", help="Data root directory (defaults to MORPHSEQ_DATA_ROOT env var)")
+    p06.add_argument("--data-root", required=True, 
+                     help="Data root directory containing models/ and metadata/ (REQUIRED for model access)")
     p06.add_argument("--model-name", default="20241107_ds_sweep01_optimum", 
                      help="Model name for embedding generation")
-    p06.add_argument("--experiments", nargs="*", 
-                     help="Explicit experiment list (defaults to inference from df02)")
-    p06.add_argument("--generate-missing-latents", action="store_true",
-                     help="Generate missing latent files using analysis_utils")
+    
+    # Standardized experiment selection (following segmentation_sandbox patterns)
+    p06.add_argument("--experiments", help="Comma-separated experiment IDs (default: auto-discover from df02)")
+    p06.add_argument("--entities_to_process", dest="experiments", 
+                     help="[Alias] Comma-separated experiment IDs")
+    
+    # Processing mode controls
+    p06.add_argument("--process-missing", action="store_true", default=True,
+                     help="Process only experiments missing from df03 (default)")
+    p06.add_argument("--generate-missing-latents", action="store_true", default=True,
+                     help="Generate missing latent files [REDUNDANT with --process-missing, kept for CLI standardization]")
+    p06.add_argument("--py39-env", default="/net/trapnell/vol1/home/nlammers/micromamba/envs/vae-env-cluster",
+                     help="Python 3.9 environment path for legacy model compatibility")
+    p06.add_argument("--overwrite", action="store_true",
+                     help="Force reprocess - REQUIRES --experiments specification (use 'all' for everything)")
+    
+    # Optional outputs
     p06.add_argument("--export-analysis-copies", action="store_true",
                      help="Export per-experiment df03 copies to data root")
     p06.add_argument("--train-run", help="Training run name for optional join")
@@ -201,8 +219,6 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Write training metadata with embeddings")
     p06.add_argument("--dry-run", action="store_true",
                      help="Print planned actions without executing")
-    p06.add_argument("--overwrite", action="store_true",
-                     help="Allow overwriting existing files")
 
     return p
 
@@ -407,11 +423,71 @@ def main(argv: list[str] | None = None) -> int:
                 print("ERROR: --data-root not provided and MORPHSEQ_DATA_ROOT environment variable not set")
                 return 1
         
+        # Convert to absolute path for proper model resolution
+        data_root = os.path.abspath(data_root)
+        
+        # Parse experiments from comma-separated string
+        experiments = None
+        if args.experiments:
+            if args.experiments.lower() == "all":
+                experiments = "all"  # Special case for explicit overwrite all
+            else:
+                experiments = [exp.strip() for exp in args.experiments.split(',') if exp.strip()]
+        
+        # Validate overwrite semantics for safety
+        if args.overwrite:
+            if not args.experiments:
+                print("ERROR: --overwrite requires explicit --experiments specification")
+                print("Safe usage:")
+                print("  --overwrite --experiments 'exp1,exp2'  # Overwrite specific experiments")
+                print("  --overwrite --experiments 'all'        # Overwrite ALL experiments (explicit)")
+                return 1
+            
+            if experiments == "all":
+                print("⚠️  WARNING: OVERWRITE ALL mode - will reprocess ALL experiments")
+                print("⚠️  WARNING: This will regenerate the entire df03 file")
+        
+        print(f"🔬 Build06: Enhanced df03 generation (skipping Build05)")
+        print(f"📂 Repo root: {args.morphseq_repo_root}")
+        print(f"📊 Data root: {data_root}")
+        print(f"🤖 Model: {args.model_name}")
+        
+        # Generate missing embeddings using Python 3.9 subprocess if needed
+        if args.generate_missing_latents and experiments:
+            # Handle experiments format for embedding generation
+            if experiments == "all":
+                print("🧬 Ensuring embeddings exist for ALL experiments (will auto-discover)...")
+                exp_list = None  # Let build_df03_with_embeddings discover experiments
+            else:
+                print(f"🧬 Ensuring embeddings exist for {len(experiments)} experiments...")
+                exp_list = experiments
+            
+            # Only run embedding generation if we have specific experiments
+            # For "all", let build_df03_with_embeddings handle discovery and generation
+            if exp_list:
+                success = ensure_embeddings_for_experiments(
+                    data_root=data_root,
+                    experiments=exp_list,
+                    model_name=args.model_name,
+                    py39_env_path=args.py39_env,
+                    overwrite=args.overwrite,
+                    process_missing=args.process_missing,
+                    verbose=False
+                )
+                
+                if not success:
+                    print("❌ Failed to generate required embeddings")
+                    return 1
+                print("✅ Embedding generation completed")
+        
+        # Enable environment switching by default for legacy models
+        os.environ["MSEQ_ENABLE_ENV_SWITCH"] = "1"
+        
         build_df03_with_embeddings(
             root=args.morphseq_repo_root,
             data_root=data_root,
             model_name=args.model_name,
-            experiments=args.experiments,
+            experiments=experiments,
             generate_missing=args.generate_missing_latents,
             export_analysis=args.export_analysis_copies,
             train_name=args.train_run,

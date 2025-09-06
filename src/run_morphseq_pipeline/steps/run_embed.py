@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Union, Optional
 
 from pathlib import Path
 
@@ -6,10 +7,10 @@ from src.vae.auxiliary_scripts.embed_training_snips import embed_snips
 
 
 def run_embed(
-    root: str | Path,
+    root: Union[str, Path],
     train_name: str,
-    model_dir: str | Path | None = None,
-    out_csv: str | Path | None = None,
+    model_dir: Optional[Union[str, Path]] = None,
+    out_csv: Optional[Union[str, Path]] = None,
     batch_size: int = 64,
     simulate: bool = False,
     latent_dim: int = 16,

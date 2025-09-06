@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Union
 import sys
 
 # Path to the project *root* (the directory that contains the `src/` folder)
@@ -270,8 +271,8 @@ def stitch_experiment(
     return {}
 
 
-def build_ff_from_keyence(data_root: Path | str, 
-                          repo_root: Path | str, 
+def build_ff_from_keyence(data_root: Union[Path, str], 
+                          repo_root: Union[Path, str], 
                           exp_name: str,
                           ff_filter_res_um: float=3.0,
                           overwrite: bool=False,

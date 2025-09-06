@@ -203,7 +203,7 @@ PATTERNS = {
 #     matches = itertools.chain.from_iterable(p.glob(pat) for pat in patterns)[:max_files]
 #     return [m for m in matches if m.is_file()]
 
-def _match_files(folder: Path | str, patterns: Iterable[str]) -> List[Path]:
+def _match_files(folder: Union[Path, str], patterns: Iterable[str]) -> List[Path]:
     """
     Return a list with *at most one* matching file in `folder`
     (empty list ↔ no match).  Fast because we stop after the first hit.
@@ -223,13 +223,13 @@ def _match_files(folder: Path | str, patterns: Iterable[str]) -> List[Path]:
     return []                                  
 
 
-def has_output(path: Path | None, patterns: Sequence[str]) -> bool:
+def has_output(path: Optional[Path], patterns: Sequence[str]) -> bool:
     """Does *path* contain at least one matching file?"""
     if not path:
         return False
     return bool(_match_files(Path(path), patterns))
 
-def newest_mtime(path: Path | None, patterns: Sequence[str]) -> float:
+def newest_mtime(path: Optional[Path], patterns: Sequence[str]) -> float:
     """
     mtime of the newest file that matches *patterns*.
     Returns 0 if nothing matches.
@@ -345,7 +345,7 @@ def _save_one_image(args):
 
 def save_images_parallel(images: Sequence[np.ndarray],
                          paths:  Sequence[Path],
-                         n_workers: int | None = None):
+                         n_workers: Optional[int] = None):
     """
     images: list of 2D arrays (e.g. your ff tiles)
     paths:  list of same length, where to write each array
@@ -397,9 +397,9 @@ def _get_kernels(filter_size: int, device: torch.device):
 
 
 def LoG_focus_stacker(
-    data_zyx: torch.Tensor | np.ndarray,   # either Z×Y×X or N×Z×Y×X
+    data_zyx: Union[torch.Tensor, np.ndarray],   # either Z×Y×X or N×Z×Y×X
     filter_size: int,
-    device: str | torch.device = "cpu",
+    device: Union[str, torch.device] = "cpu",
 ):
     """
     Returns (ff, abs_log), where:
@@ -457,9 +457,9 @@ def LoG_focus_stacker(
     return ff, abs_log
 
 def LoG_focus_stacker_batch(
-    data_zyx: torch.Tensor | np.ndarray,   # B*T x Z × Y × X dtype float / uint16
+    data_zyx: Union[torch.Tensor, np.ndarray],   # B*T x Z × Y × X dtype float / uint16
     filter_size: int,
-    device: str | torch.device = "cpu",
+    device: Union[str, torch.device] = "cpu",
 ):
     """
     Return (full-focus tensor, abs(LoG) stack).
@@ -487,7 +487,7 @@ def LoG_focus_stacker_batch(
 
     return ff, abs_log
 
-def valid_acq_dirs(root: Path, dir_list: list[str] | None) -> list[Path]:
+def valid_acq_dirs(root: Path, dir_list: Optional[list[str]]) -> list[Path]:
     if dir_list is not None:
         dirs = [root / d for d in dir_list]
     else:

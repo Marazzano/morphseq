@@ -17,6 +17,135 @@ import logging
 # from src.analyze.analysis_utils import calculate_morph_embeddings
 
 
+def filter_high_quality_embryos(df02: pd.DataFrame, logger: Optional[logging.Logger] = None) -> pd.DataFrame:
+    """
+    Filter df02 to only embryos with use_embryo_flag=True (high quality).
+    
+    This replaces Build05's quality filtering by using the comprehensive QC flag from Build03:
+    use_embryo_flag = ~(bubble_flag | focus_flag | frame_flag | dead_flag | no_yolk_flag)
+    
+    Args:
+        df02: Input dataframe from Build04
+        logger: Optional logger for progress reporting
+        
+    Returns:
+        Filtered dataframe containing only high-quality embryos
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    initial_count = len(df02)
+    
+    # Check if use_embryo_flag column exists
+    if 'use_embryo_flag' not in df02.columns:
+        logger.warning("use_embryo_flag column not found in df02 - using all embryos")
+        return df02.copy()
+    
+    # Apply quality filter
+    filtered_df = df02[df02["use_embryo_flag"] == True].copy()
+    final_count = len(filtered_df)
+    
+    # Log filtering statistics
+    filtered_out = initial_count - final_count
+    filter_pct = (filtered_out / initial_count * 100) if initial_count > 0 else 0
+    
+    logger.info(f"✅ Quality filtering: {initial_count} → {final_count} embryos (use_embryo_flag=True)")
+    logger.info(f"📊 Filtered out: {filtered_out} embryos ({filter_pct:.1f}%) with QC issues:")
+    
+    if filtered_out > 0:
+        # Show breakdown of QC issues (if columns available)
+        qc_flags = ['bubble_flag', 'focus_flag', 'frame_flag', 'dead_flag', 'no_yolk_flag']
+        available_flags = [flag for flag in qc_flags if flag in df02.columns]
+        
+        if available_flags:
+            bad_embryos = df02[df02["use_embryo_flag"] != True]
+            for flag in available_flags:
+                if flag in bad_embryos.columns:
+                    flag_count = bad_embryos[flag].sum()
+                    flag_pct = (flag_count / initial_count * 100) if initial_count > 0 else 0
+                    logger.info(f"   - {flag}: {flag_count} ({flag_pct:.1f}%)")
+    
+    return filtered_df
+
+
+def detect_missing_experiments(df02_path: Path, df03_path: Path, 
+                              target_experiments: Optional[List[str]] = None,
+                              logger: Optional[logging.Logger] = None) -> List[str]:
+    """
+    Detect which experiments need processing based on df02 vs df03 comparison.
+    
+    Args:
+        df02_path: Path to df02 file (source of truth for available experiments)
+        df03_path: Path to df03 file (existing processed experiments)
+        target_experiments: Optional list of specific experiments to target
+        logger: Optional logger for progress reporting
+        
+    Returns:
+        List of experiment IDs that need processing
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    
+    # Load existing df03 (if exists)
+    if df03_path.exists():
+        logger.info(f"📄 Loading existing df03: {df03_path}")
+        df03 = pd.read_csv(df03_path)
+        if 'experiment_date' in df03.columns:
+            processed_experiments = set(df03['experiment_date'].dropna().unique())
+            logger.info(f"📊 Found {len(processed_experiments)} processed experiments in df03")
+        else:
+            logger.warning("experiment_date column not found in df03")
+            processed_experiments = set()
+    else:
+        logger.info("📄 No existing df03 found - will process all experiments")
+        processed_experiments = set()
+    
+    # Load df02 to get available experiments
+    if not df02_path.exists():
+        raise FileNotFoundError(f"df02 not found: {df02_path}")
+    
+    logger.info(f"📄 Loading df02: {df02_path}")
+    df02 = pd.read_csv(df02_path)
+    
+    if 'experiment_date' not in df02.columns:
+        raise ValueError("experiment_date column not found in df02")
+    
+    available_experiments = set(df02['experiment_date'].dropna().unique())
+    logger.info(f"📊 Found {len(available_experiments)} available experiments in df02")
+    
+    if target_experiments:
+        # User specified experiments - check which need processing
+        if target_experiments == "all":
+            # Special case: user wants to process all available experiments
+            target_set = available_experiments
+            logger.info("🎯 Target: ALL experiments (explicit)")
+        else:
+            target_set = set(target_experiments)
+            logger.info(f"🎯 Target: {len(target_set)} specified experiments")
+            
+            # Validate that target experiments exist in df02
+            missing_from_df02 = target_set - available_experiments
+            if missing_from_df02:
+                logger.warning(f"⚠️  Target experiments not found in df02: {sorted(missing_from_df02)}")
+                target_set = target_set - missing_from_df02
+        
+        missing_experiments = target_set - processed_experiments
+    else:
+        # Auto-discover - all experiments in df02 not in df03
+        logger.info("🎯 Target: Auto-discover (all experiments in df02)")
+        missing_experiments = available_experiments - processed_experiments
+    
+    missing_list = sorted(list(missing_experiments))
+    logger.info(f"🔄 Need to process: {len(missing_list)} experiments")
+    
+    if missing_list:
+        logger.info(f"📋 Missing experiments: {missing_list}")
+    else:
+        logger.info("✅ All target experiments already processed")
+    
+    return missing_list
+
+
 def resolve_model_dir(data_root: Union[str, Path], model_name: str) -> Path:
     """
     Resolves model directory path and validates it contains required files.
@@ -149,7 +278,7 @@ def ensure_latents_for_experiments(
                             logger.warning(f"No snip_id column in existing latents for {exp}, marking for regeneration")
                             needs_regeneration = True
                     else:
-                        logger.info(f"No snips found for {exp}, using existing latents")
+                        logger.info(f"✅ Using available latents for {exp} (embeddings ready)")
                         
                 except Exception as e:
                     logger.warning(f"Could not check snip coverage for {exp}: {e}, using existing latents")
@@ -159,14 +288,14 @@ def ensure_latents_for_experiments(
                 logger.info(f"Marking {exp} for regeneration due to snip coverage issues")
             else:
                 latent_paths[exp] = latent_path
-                logger.info(f"Found existing up-to-date latents for {exp}: {latent_path}")
+                logger.info(f"📊 Using embeddings for {exp}: {latent_path}")
         else:
             missing_experiments.append(exp)
-            logger.warning(f"Missing latents for {exp}: {latent_path}")
+            logger.info(f"Need to generate latents for {exp}: {latent_path}")
     
     if missing_experiments:
         if generate_missing:
-            logger.info(f"Generating missing latents for {len(missing_experiments)} experiments")
+            logger.info(f"🤖 Generating embeddings for {len(missing_experiments)} experiments using legacy model")
             
             # Lazy import to avoid heavy dependency chain
             try:
@@ -200,7 +329,7 @@ def ensure_latents_for_experiments(
                     logger.error(f"Failed to generate latents for {exp}")
                     raise FileNotFoundError(f"Could not generate latents for {exp}")
         else:
-            logger.error(f"Missing latent files for {len(missing_experiments)} experiments")
+            logger.info(f"⏭️  Skipping latent generation for {len(missing_experiments)} experiments (generation disabled)")
             raise FileNotFoundError(
                 f"Missing latent files: {missing_experiments}. "
                 f"Use --generate-missing-latents to create them."
@@ -260,7 +389,12 @@ def generate_latents_with_repo_images(
     try:
         from .legacy_model_utils import load_legacy_model_safe
         logger.info(f"Loading legacy model from {model_dir} with compatibility handling")
-        lit_model = load_legacy_model_safe(str(model_dir), device=device, logger=logger)
+        # Allow optional auto-switch via env var
+        import os as _os
+        _switch_env = str(_os.getenv("MSEQ_ENABLE_ENV_SWITCH", "0")).lower() in {"1", "true", "yes", "on"}
+        lit_model = load_legacy_model_safe(
+            str(model_dir), device=device, logger=logger, enable_env_switch=_switch_env
+        )
     except Exception as e:
         logger.warning(f"Safe model loading failed: {e}")
         logger.info("Attempting direct model loading (may fail on Python != 3.9)")
@@ -391,6 +525,7 @@ def normalize_snip_ids(df: pd.DataFrame, logger: Optional[logging.Logger] = None
 def merge_df02_with_embeddings(
     root: Union[str, Path],
     latents_df: pd.DataFrame,
+    df02_filtered: Optional[pd.DataFrame] = None,
     overwrite: bool = False,
     out_name: str = "embryo_metadata_df03.csv",
     logger: Optional[logging.Logger] = None
@@ -401,6 +536,7 @@ def merge_df02_with_embeddings(
     Args:
         root: Pipeline root directory
         latents_df: DataFrame with embeddings (snip_id + z_mu_* columns)
+        df02_filtered: Optional pre-filtered df02 DataFrame (if None, loads from file)
         overwrite: Allow overwriting existing df03
         out_name: Output filename
         logger: Optional logger for output
@@ -409,7 +545,7 @@ def merge_df02_with_embeddings(
         Path to created df03 file
         
     Raises:
-        FileNotFoundError: If df02 doesn't exist
+        FileNotFoundError: If df02 doesn't exist and df02_filtered not provided
         FileExistsError: If df03 exists and overwrite=False
     """
     if logger is None:
@@ -419,15 +555,18 @@ def merge_df02_with_embeddings(
     df02_path = root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
     df03_path = root / "metadata" / "combined_metadata_files" / out_name
     
-    if not df02_path.exists():
-        raise FileNotFoundError(f"df02 not found: {df02_path}")
-    
     if df03_path.exists() and not overwrite:
         raise FileExistsError(f"df03 already exists: {df03_path}. Use --overwrite to replace.")
     
-    # Load df02
-    logger.info(f"Loading df02 from {df02_path}")
-    df02 = pd.read_csv(df02_path)
+    # Use provided filtered df02 or load from file
+    if df02_filtered is not None:
+        logger.info("Using provided quality-filtered df02")
+        df02 = df02_filtered
+    else:
+        if not df02_path.exists():
+            raise FileNotFoundError(f"df02 not found: {df02_path}")
+        logger.info(f"Loading df02 from {df02_path}")
+        df02 = pd.read_csv(df02_path)
     
     # Normalize snip_ids in both DataFrames
     df02_norm = normalize_snip_ids(df02, logger)
@@ -633,42 +772,81 @@ def build_df03_with_embeddings(
             logger.error(f"  - {path}")
         raise FileNotFoundError(f"df02 not found at any expected location")
     
-    if experiments is None:
-        # Infer experiments from df02
-        df02 = pd.read_csv(df02_path)
-        if 'experiment_date' in df02.columns:
-            experiments = df02['experiment_date'].dropna().unique().tolist()
-            logger.info(f"Inferred {len(experiments)} experiments from df02")
-        else:
-            raise ValueError("No experiments provided and cannot infer from df02")
+    # 1.1) Load df02 for experiment discovery and quality filtering
+    logger.info(f"📄 Loading df02 for processing: {df02_path}")
+    df02_raw = pd.read_csv(df02_path)
     
-    logger.info(f"Processing experiments: {experiments}")
+    if 'experiment_date' not in df02_raw.columns:
+        raise ValueError("experiment_date column not found in df02")
+    
+    # 1.2) Apply quality filtering (replaces Build05 functionality)
+    logger.info("🔍 Applying quality filtering (use_embryo_flag=True)")
+    df02 = filter_high_quality_embryos(df02_raw, logger)
+    
+    # 1.3) Determine df03 path for incremental processing
+    df03_path = data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
+    
+    # 1.4) Detect which experiments need processing (incremental logic)
+    if not overwrite:
+        logger.info("🔄 Detecting missing experiments (incremental mode)")
+        experiments_to_process = detect_missing_experiments(df02_path, df03_path, experiments, logger)
+        
+        if not experiments_to_process:
+            logger.info("✅ All target experiments already processed - nothing to do!")
+            if df03_path.exists():
+                return df03_path
+            else:
+                logger.warning("No df03 exists but no experiments to process - this shouldn't happen")
+                experiments_to_process = experiments or []
+    else:
+        # Overwrite mode - process specified experiments or all available
+        if experiments == "all":
+            experiments_to_process = df02['experiment_date'].dropna().unique().tolist()
+            logger.info(f"⚠️  OVERWRITE ALL mode - processing {len(experiments_to_process)} experiments")
+        elif experiments:
+            experiments_to_process = experiments
+            logger.info(f"⚠️  OVERWRITE mode - processing {len(experiments_to_process)} specified experiments")
+        else:
+            raise ValueError("Overwrite mode requires explicit experiment specification")
+    
+    logger.info(f"🎯 Final processing list: {len(experiments_to_process)} experiments")
+    if experiments_to_process:
+        logger.info(f"📋 Will process: {sorted(experiments_to_process)}")
     
     if dry_run:
         logger.info("=== DRY RUN - Planned Actions ===")
-        logger.info(f"Would process {len(experiments)} experiments")
-        logger.info(f"Generate missing latents: {generate_missing}")
-        logger.info(f"Use repo snips: {use_repo_snips}")
-        logger.info(f"Export analysis copies: {export_analysis}")
-        logger.info(f"Write training output: {write_train_output}")
-        return df02_path  # Return dummy path for dry run
+        logger.info(f"📊 Quality filtering: {len(df02_raw)} → {len(df02)} embryos")
+        logger.info(f"🎯 Would process: {len(experiments_to_process)} experiments")
+        if experiments_to_process:
+            logger.info(f"📋 Experiment list: {sorted(experiments_to_process)}")
+        logger.info(f"🤖 Generate missing latents: {generate_missing}")
+        logger.info(f"📂 Use repo snips: {use_repo_snips}")
+        logger.info(f"📤 Export analysis copies: {export_analysis}")
+        logger.info(f"🎓 Write training output: {write_train_output}")
+        logger.info(f"📄 Target df03: {df03_path}")
+        return df03_path  # Return target path for dry run
     
     # 2) Resolve model directory
     model_dir = resolve_model_dir(data_root, model_name)
     logger.info(f"Using model: {model_dir}")
     
+    # Early exit if no experiments to process
+    if not experiments_to_process:
+        logger.info("✅ No experiments to process - exiting early")
+        return df03_path if df03_path.exists() else df02_path
+    
     # 3) Ensure latents exist (read/write under <data_root>/analysis/.../<latents_dir>)
     latents_dir_name = latents_tag or model_name
     try:
         latent_paths = ensure_latents_for_experiments(
-            data_root, latents_dir_name, experiments, False, root, logger
+            data_root, latents_dir_name, experiments_to_process, False, root, logger
         )
     except FileNotFoundError:
         # Missing are expected in first pass; we'll generate below if requested
         latent_paths = {}
 
     # Generate missing if requested
-    missing = [exp for exp in experiments if exp not in latent_paths]
+    missing = [exp for exp in experiments_to_process if exp not in latent_paths]
     if missing and generate_missing:
         if use_repo_snips:
             logger.info("Generating missing latents from repo snips (SAM2-aligned)")
@@ -678,14 +856,15 @@ def build_df03_with_embeddings(
             _ = ensure_latents_for_experiments(data_root, latents_dir_name, missing, True, root, logger)
         # Reload paths after generation
         latent_paths = ensure_latents_for_experiments(
-            data_root, latents_dir_name, experiments, False, root, logger
+            data_root, latents_dir_name, experiments_to_process, False, root, logger
         )
     
-    # 4) Load and combine latents
+    # 4) Load and combine all embeddings
+    logger.info(f"🔗 Loading embeddings from {len(latent_paths)} experiment(s)")
     latents_df = load_latents(latent_paths, logger)
     
-    # 5) Merge with df02 to create df03
-    df03_path = merge_df02_with_embeddings(root, latents_df, overwrite, logger=logger)
+    # 5) Merge with quality-filtered df02 to create df03
+    df03_path = merge_df02_with_embeddings(data_root, latents_df, df02_filtered=df02, overwrite=overwrite, logger=logger)
     
     # 6) Optional training output
     if write_train_output and train_name:

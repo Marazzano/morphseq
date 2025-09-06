@@ -1,27 +1,26 @@
-### 🎯 SAM2 Integration - FULLY IMPLEMENTED! 
+# MorphSeq Centralized Pipeline Runner
 
-SAM2 segmentation is now a **first-class CLI citizen** with complete Python-based orchestration! The `sam2` subcommand runs the entire segmentation_sandbox pipeline and integrates seamlessly with the hybrid mask approach.
+**Status: Production Ready** - Complete SAM2 integration with enhanced Build06 and centralized embedding generation.
 
-**Key Features:**
-- ✅ Direct SAM2 pipeline execution via `sam2` subcommand
-- ✅ Auto-discovery of SAM2 outputs by Build03  
-- ✅ Hybrid approach: SAM2 embryo masks + Build02 QC masks
-- ✅ Complete E2E orchestration with `--run-sam2` flag
-- ✅ Batch processing for multiple experiments
+## 🚀 Key Features
 
----
+### ✅ **SAM2 Integration** - First-class CLI citizen
+- Direct SAM2 pipeline execution via `sam2` subcommand
+- Auto-discovery of SAM2 outputs by Build03  
+- Hybrid approach: SAM2 embryo masks + Build02 QC masks
+- Complete E2E orchestration with `--run-sam2` flag
+- Batch processing for multiple experiments
 
-# MorphSeq Centralized Runner
+### ✅ **Enhanced Build06** - Skips Build05 complexity
+- Direct df02 → df03 conversion with quality filtering
+- Automatic Python 3.9 environment switching for legacy models
+- Incremental processing (only missing experiments)
+- Centralized embedding generation module
 
-Centralized CLI to invoke MorphSeq pipeline steps (Build01→Build05) with a consistent, parameterized interface. Keeps “results/” runners optional by exposing a single module entrypoint.
+### ✅ **Complete Pipeline** 
+**Current Flow**: Build01 → Build02(5 UNets) → SAM2(batch) → Build03(hybrid) → Build04 → Build06(enhanced)
 
-Key features:
-- **Complete pipeline**: `build01`, `build02`, `sam2`, `build03`, `build04`, `build05`, `e2e`, `validate`
-- **SAM2 Integration**: Direct `sam2` subcommand with Python orchestration
-- **Hybrid Segmentation**: SAM2 embryo masks + Build02 QC masks (yolk, focus, bubble, viability)
-- **Auto-Discovery**: Build03 automatically finds SAM2 outputs
-- **Enhanced Build02**: Runs all 5 UNet models (embryo, yolk, focus, bubble, viability)
-- **E2E Orchestration**: Complete Build01→Build02→SAM2→Build03→Build04→Build05 flow
+**Commands Available**: `build01`, `build02`, `sam2`, `build03`, `build04`, `build06`, `e2e`, `validate`, `embed`
 
 ## Install/Run
 
@@ -41,13 +40,22 @@ Key features:
 
 ### SAM2 Pipeline Data
 - SAM2 root: `<data_root>/sam2_pipeline_files/`
-- Exported masks: `<data_root>/sam2_pipeline_files/exported_masks/{exp}/`
+- Exported masks: `<data_root>/sam2_pipeline_files/exported_masks/{exp}/masks/`
 - Metadata CSV: `<data_root>/sam2_pipeline_files/sam2_expr_files/sam2_metadata_{exp}.csv`
-- Pipeline files: `<data_root>/sam2_pipeline_files/detections/`, `/embryo_metadata/`
+- Segmentation data: `<data_root>/sam2_pipeline_files/segmentation/grounded_sam_segmentations.json`
+- Detection data: `<data_root>/sam2_pipeline_files/detections/gdino_detections.json`
+
+### Embedding Generation
+- Centralized module: `src/analyze/gen_embeddings/`
+- CLI tool: `python -m src.analyze.gen_embeddings.cli`
+- Python 3.9 subprocess orchestration for legacy model compatibility
+- Automatic environment switching in Build06
 
 ### Metadata Files
 - Per-experiment metadata: `<data_root>/metadata/built_metadata_files/{exp}_metadata.csv`
 - Combined df01: `<data_root>/metadata/combined_metadata_files/embryo_metadata_df01.csv`
+- Final df03 with embeddings: `<data_root>/metadata/combined_metadata_files/embryo_metadata_df03.csv`
+- Pipeline state tracking: `<data_root>/metadata/experiments/{exp}.json`
 
 ## Subcommands
 
@@ -58,7 +66,7 @@ Key features:
 python -m src.run_morphseq_pipeline.cli build01 \
   --data-root morphseq_playground \
   --exp 20250529_24hpf_ctrl_atf6 \
-  --microscope keyence
+  --microscope Keyence (or YX1) \
 ```
 
 **`build02`** - Complete QC mask suite (5 UNet models)
@@ -99,31 +107,46 @@ python -m src.run_morphseq_pipeline.cli build04 \
   --data-root morphseq_playground
 ```
 
-**`build05`** - Training data preparation  
+**`build06`** - Enhanced embeddings generation (skips Build05) ⭐ ENHANCED!
 ```bash
-python -m src.run_morphseq_pipeline.cli build05 \
+# Process new experiments only (default)
+python -m src.run_morphseq_pipeline.cli build06 \
+  --morphseq-repo-root /path/to/repo \
+  --data-root morphseq_playground
+
+# Process specific experiment
+python -m src.run_morphseq_pipeline.cli build06 \
+  --morphseq-repo-root /path/to/repo \
   --data-root morphseq_playground \
-  --train-name test_sam2_20250903
+  --experiments "20250529_30hpf_ctrl_atf6"
+
+# Force reprocess with explicit safety
+python -m src.run_morphseq_pipeline.cli build06 \
+  --morphseq-repo-root /path/to/repo \
+  --data-root morphseq_playground \
+  --overwrite --experiments "exp1,exp2"
 ```
 
 ### End-to-End Orchestration
 
 **`e2e`** - Complete pipeline with SAM2 ⭐ ENHANCED!
 ```bash
-# Full pipeline with SAM2
+# Full pipeline with SAM2 + Build06
 python -m src.run_morphseq_pipeline.cli e2e \
   --data-root morphseq_playground \
-  --exp 20250529_24hpf_ctrl_atf6 \
+  --exp 20250529_30hpf_ctrl_atf6 \
   --microscope keyence \
   --run-sam2 \
-  --train-name test_sam2_20250903
+  --train-name test_sam2_20250906
+
+# Pipeline: Build01 → Build02(5 UNets) → SAM2 → Build03(hybrid) → Build04 → Build06(embeddings)
 
 # Legacy pipeline (no SAM2)
 python -m src.run_morphseq_pipeline.cli e2e \
   --data-root morphseq_playground \
-  --exp 20250529_24hpf_ctrl_atf6 \
+  --exp 20250529_30hpf_ctrl_atf6 \
   --microscope keyence \
-  --train-name legacy_test_20250903
+  --train-name legacy_test_20250906
 ```
 
 ### Utility Commands
@@ -136,43 +159,79 @@ python -m src.run_morphseq_pipeline.cli validate \
   --checks schema,units,paths
 ```
 
-## Key Features & Benefits
+## ✨ Key Features & Benefits
 
-### 🎯 SAM2 Integration
-- **Direct orchestration**: `sam2` subcommand runs complete segmentation_sandbox pipeline
-- **Auto-discovery**: Build03 automatically finds SAM2 outputs at standard paths
-- **Hybrid approach**: Superior SAM2 embryo masks + Build02 QC masks for complete analysis
-- **Batch processing**: Process multiple experiments with `--batch` flag
+### 🎯 **SAM2 Integration**
+- **Python orchestration**: Complete segmentation_sandbox pipeline integration
+- **Auto-discovery**: Build03 finds SAM2 outputs automatically
+- **Hybrid masks**: Superior SAM2 embryo masks + Build02 QC masks
+- **Format consistency**: Fixed snip_id format (`_t####`) for pipeline compatibility
+- **Batch processing**: Process multiple experiments efficiently
 
-### 🏗️ Enhanced Build02
-- **Complete QC suite**: Runs all 5 UNet models (embryo, yolk, focus, bubble, viability)
-- **Robust error handling**: Continues with partial success if some models fail
-- **Quality control**: Enables full QC flag calculation including dead_flag from viability masks
+### 🏗️ **Enhanced Build02**
+- **Complete QC suite**: All 5 UNet models (embryo, yolk, focus, bubble, viability)
+- **Fixed mask processing**: Proper legacy formula for Build02 auxiliary masks
+- **Dead flag accuracy**: Correct viability mask processing (fixed critical bug)
+- **Quality control**: Full QC flag calculation including accurate dead_flag
 
-### 🔄 End-to-End Orchestration
-- **Full pipeline**: Build01→Build02→SAM2→Build03→Build04→Build05
+### 🚀 **Enhanced Build06** 
+- **Skips Build05**: Direct df02 → df03 conversion with same quality filtering
+- **Environment switching**: Automatic Python 3.9 subprocess for legacy models
+- **Incremental processing**: Only processes missing experiments by default
+- **Safe overwrite**: Explicit experiment specification required
+- **Centralized generation**: Clean embedding module in `src/analyze/gen_embeddings/`
+
+### 🔄 **Complete Pipeline Flow**
+```
+Build01 (stitching) → Build02 (5 UNets) → SAM2 (embryo masks) 
+    ↓
+Build03 (hybrid masks) → Build04 (QC/staging) → Build06 (embeddings)
+```
+- **Dependency tracking**: Steps run only when inputs change
 - **Flexible control**: Skip any step with `--skip-*` flags
-- **Legacy compatibility**: Can run without SAM2 for existing workflows
-- **Progress tracking**: Clear step-by-step progress indicators
-
-### 🔍 Validation & Quality
-- **Pre-flight checks**: Validate inputs before pipeline execution
-- **SAM2 validation**: Check outputs, mask files, and CSV integrity
-- **Error handling**: Clear error messages and actionable feedback
+- **Progress tracking**: Clear step-by-step indicators
+- **Error resilience**: Graceful handling of partial failures
 
 ## Environment Setup
 
 ```bash
-# Activate the MorphSeq environment
+# Main pipeline environment  
 conda activate mseq_data_pipeline_env
+
+# For Build06 embedding generation (automatic switching)
+# Python 3.9 environment: /net/trapnell/vol1/home/nlammers/micromamba/envs/vae-env-cluster
 
 # Verify SAM2 sandbox is available
 ls segmentation_sandbox/scripts/pipelines/
+
+# Verify centralized embedding generation
+ls src/analyze/gen_embeddings/
 ```
 
 ## Troubleshooting
 
+### SAM2 Issues
 - **SAM2 not found**: Ensure `segmentation_sandbox/` exists in repo root
-- **Missing models**: Check Build02 model availability in conda environment  
 - **Auto-discovery fails**: Manually provide `--sam2-csv` path to Build03
+- **Format errors**: Check snip_id uses `_t####` format (should be automatic)
+
+### Build02/Build03 Issues  
+- **Missing models**: Check Build02 model availability in conda environment
+- **Dead flag errors**: Ensure via masks exist in `segmentation/via_v1_0100_predictions/`
+- **Mask loading failures**: Verify Build02 completed all 5 UNet models successfully
+
+### Build06/Embedding Issues
+- **Python version errors**: Build06 automatically switches to Python 3.9 for legacy models
+- **Environment not found**: Check `/net/trapnell/vol1/home/nlammers/micromamba/envs/vae-env-cluster` exists
+- **Missing embeddings**: Use `--overwrite` with explicit experiment specification
+- **Model path issues**: Ensure `--data-root` contains `models/` directory
+
+### General Issues
 - **Permission errors**: Ensure write access to data root directory
+- **Memory issues**: Reduce workers with `--num-workers` or `--sam2-workers`
+- **Disk space**: Pipeline generates substantial mask and embedding data
+
+### Getting Help
+- **Status checking**: Use `validate` command to check pipeline state
+- **Progress tracking**: Check `metadata/experiments/{exp}.json` for pipeline state
+- **Log files**: Check `logs/` directory for detailed error information

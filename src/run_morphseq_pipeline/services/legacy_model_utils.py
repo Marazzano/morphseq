@@ -1,8 +1,10 @@
 """
 Utilities for loading legacy models with Python version compatibility handling.
 
-Handles automatic conda environment switching to load models that require Python 3.9
-due to pickle compatibility issues.
+Updated policy: Build06 no longer switches environments automatically. It must
+be run from a Python 3.9 environment (`mseq_pipeline_py3.9`). These utilities
+now validate the interpreter version and provide actionable errors instead of
+attempting conda env switching.
 """
 
 import os
@@ -92,17 +94,18 @@ def check_conda_env_exists(env_name: str) -> bool:
     return False
 
 def load_legacy_model_safe(
-    model_path: str, 
+    model_path: str,
     device: str = "cpu",
-    target_python_env: str = "seg_sam_py39",
-    logger: Optional[logging.Logger] = None
+    target_python_env: str = "mseq_pipeline_py3.9",
+    logger: Optional[logging.Logger] = None,
+    enable_env_switch: bool = False,
 ) -> torch.nn.Module:
     """
     Safely load a legacy model, handling Python version compatibility issues.
-    
-    If current Python version is not 3.9, automatically switches to specified
-    conda environment to load the model, then returns the loaded model in the
-    current process.
+
+    Policy: No automatic environment switching by default. If Python != 3.9,
+    raise a clear error instructing the user to activate `mseq_pipeline_py3.9`.
+    An optional escape hatch `enable_env_switch=True` remains for advanced use.
     
     Args:
         model_path: Path to model directory
@@ -116,7 +119,7 @@ def load_legacy_model_safe(
     Raises:
         FileNotFoundError: If model path doesn't exist
         RuntimeError: If model loading fails
-        EnvironmentError: If conda environment switching fails
+        EnvironmentError: If Python != 3.9 or environment switching fails
     """
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -126,7 +129,7 @@ def load_legacy_model_safe(
         raise FileNotFoundError(f"Model path does not exist: {model_path}")
     
     current_python = f"{sys.version_info[0]}.{sys.version_info[1]}"
-    
+
     # If already Python 3.9, load directly
     if current_python == "3.9":
         logger.info("Already running Python 3.9, loading model directly")
@@ -135,43 +138,42 @@ def load_legacy_model_safe(
         lit_model.to(device).eval()
         return lit_model
     
-    # Need to switch environments
-    logger.info(f"Current Python {current_python} != 3.9, switching to {target_python_env}")
-    
-    # Check if target environment exists
+    if not enable_env_switch:
+        raise EnvironmentError(
+            "Legacy model requires Python 3.9 for pickle deserialization. "
+            f"Detected Python {current_python}. Please activate the 'mseq_pipeline_py3.9' "
+            "conda environment and re-run Build06."
+        )
+
+    # Optional: switch environments (escape hatch)
+    logger.info(
+        f"Current Python {current_python} != 3.9. enable_env_switch=True so attempting "
+        f"to run in conda env '{target_python_env}'."
+    )
+
     if not check_conda_env_exists(target_python_env):
         raise EnvironmentError(f"Conda environment '{target_python_env}' not found")
-    
-    # Get current environment for restoration
-    current_env = get_current_conda_env()
-    if current_env:
-        logger.info(f"Current conda environment: {current_env}")
-    else:
-        logger.warning("Could not detect current conda environment")
-    
-    # Create temporary file for model state
+
     with tempfile.NamedTemporaryFile(suffix='.pt', delete=False) as tmp_file:
         temp_model_path = tmp_file.name
-    
+
     try:
-        # Build subprocess command
         subprocess_script = Path(__file__).parent.parent.parent.parent / "load_model_subprocess.py"
-        
+
         cmd = [
             'conda', 'run', '-n', target_python_env, 'python', str(subprocess_script),
             '--model-path', str(model_path),
             '--output-path', temp_model_path,
             '--device', device
         ]
-        
+
         logger.info(f"Running subprocess: {' '.join(cmd)}")
-        
-        # Run subprocess
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=300
         )
         
         if result.returncode != 0:

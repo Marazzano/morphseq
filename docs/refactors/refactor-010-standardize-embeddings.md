@@ -5,9 +5,9 @@
 **Depends On**: Refactor-009 SAM2 Pipeline Validation
 
 ## **Environment Compatibility**
-- Conda env `seg_sam_py39`: validated compatible with the `segmentation_sandbox` pipeline.
+- Conda env `mseq_pipeline_py3.9`: validated for the MorphSeq pipeline and legacy embedding generation.
 - Supports running GroundingDINO (gdino) and SAM2 end-to-end for mask generation.
-- Build06 does not orchestrate segmentation; it consumes outputs produced by the above pipeline. Running segmentation in `seg_sam_py39` and then executing Build06 on the resulting metadata is a supported, tested path.
+- Build06 does not orchestrate segmentation; it consumes outputs produced by the above pipeline. Run segmentation and Build06 from `mseq_pipeline_py3.9`.
 
 ## **E2E Priorities & Dependencies (Work Order)**
 - 1) Stage reference (ref_seg) generation: mandatory for Build04. The perturbation key is required for WT/control filtering during fitting.
@@ -199,7 +199,7 @@ Build04 CLI integration:
 - To persist the augmented key (non‑destructive union), add `--write-augmented-key`.
 
 ### E2E Validation Flow (After 1 & 3)
-- Build01 (stitched FF images) → SAM2 sandbox in `seg_sam_py39` (gdino+sam2) → Build03 (SAM2 CSV bridge) → Stage ref generation (with mandatory pert key) → Build04 → Build05 → Build06.
+- Build01 (stitched FF images) → SAM2 sandbox in `mseq_pipeline_py3.9` (gdino+sam2) → Build03 (SAM2 CSV bridge) → Stage ref generation (with mandatory pert key) → Build04 → Build05 → Build06.
 - Minimal runbook:
   - `python -m src.run_morphseq_pipeline.cli build03 --data-root <root> --exp <EXP> --sam2-csv <root>/sam2_metadata_<EXP>.csv --by-embryo 5 --frames-per-embryo 3`
   - Generate stage ref (as above) ensuring `perturbation_name_key.csv` exists and covers cohort.
@@ -318,7 +318,7 @@ What changed
 - Missing latents handling: Initial check no longer hard‑fails when `--generate-missing-latents` is set; Build06 generates the missing per‑experiment latent CSVs, then retries the merge.
 
 Environment note (legacy model)
-- The legacy model folder includes `environment.json` with `python_version: 3.9`. Pickled components (`encoder.pkl`, `decoder.pkl`) require Python 3.9 to deserialize cleanly. We created a small Python 3.9 env for the embedding step and installed the minimal deps: `torch`, `pythae`, `einops`, `lpips`, `pandas`, `pillow`, `tqdm`, `glob2`, `pytorch-lightning`.
+- The legacy model folder includes `environment.json` with `python_version: 3.9`. Pickled components (`encoder.pkl`, `decoder.pkl`) require Python 3.9 to deserialize cleanly. Build06 must be executed from the `mseq_pipeline_py3.9` conda environment. Minimal deps: `torch`, `pythae`, `einops`, `lpips`, `pandas`, `pillow`, `tqdm`, `glob2`, `pytorch-lightning`.
 
 Runbook (verified)
 - Command:
@@ -491,39 +491,29 @@ This will generate latents for the specific snip_ids present in the SAM2 df02, a
 
 **Status**: Issue documented 2025-09-03. Solution implemented with environment-switching model loading and repo-snip embedding generation.
 
-## **SOLUTION IMPLEMENTED: Python Version Compatibility (2025-09-03)**
+## **SOLUTION IMPLEMENTED: Python 3.9 Requirement Enforcement (2025-09-03)**
 
 **Problem**: Legacy model loading fails when Python version ≠ 3.9 due to pickle protocol incompatibility in custom encoder/decoder architectures.
 
 **Error**: `ModuleNotFoundError: No module named 'numpy'` and pickle deserialization failures when attempting to load models trained in Python 3.9 from other Python versions.
 
-**Solution Implemented**: **Automatic Conda Environment Switching**
+**Solution Implemented**: Require running Build06 under `mseq_pipeline_py3.9` (no auto env switching).
 
-**Architecture**:
-1. **Environment Detection**: `get_current_conda_env()` detects active conda environment (not default)
-2. **Subprocess Model Loading**: When Python ≠ 3.9, automatically switches to `seg_sam_py39` via subprocess
-3. **Cross-Version Serialization**: Model loaded in Python 3.9 subprocess, serialized with `torch.jit.script` or state dict
-4. **Graceful Fallback**: Falls back to direct loading with warning if environment switching fails
+**Behavior**:
+1. **Version Validation**: If Python ≠ 3.9, Build06 raises a clear error instructing to activate `mseq_pipeline_py3.9`.
+2. **Direct Loading**: When on Python 3.9, models load directly via `AutoModel.load_from_folder(...)`.
+3. **Optional Escape Hatch**: An advanced flag exists in `legacy_model_utils.load_legacy_model_safe(..., enable_env_switch=True)` for manual switching if ever required.
 
 **Implementation Files**:
-- `load_model_subprocess.py`: Subprocess script for Python 3.9 model loading
-- `src/run_morphseq_pipeline/services/legacy_model_utils.py`: Environment switching utilities
-- `src/run_morphseq_pipeline/services/gen_embeddings.py`: Integration with Build06
+- `src/run_morphseq_pipeline/services/legacy_model_utils.py`: Python-version validation and optional escape hatch.
+- `src/run_morphseq_pipeline/services/gen_embeddings.py`: Integration with Build06.
 
-**Key Features**:
-- ✅ **Zero user intervention**: Automatically detects Python version mismatch
-- ✅ **Cross-version compatibility**: Works from Python 3.8, 3.10, 3.11+ 
-- ✅ **Preserves model fidelity**: Uses original Python 3.9 environment for loading
-- ✅ **Robust error handling**: Falls back gracefully with clear error messages
-- ✅ **Maintains performance**: Model switching overhead only on first load
-
-**Usage**: Environment switching happens automatically in Build06. No additional flags required.
-
+**Usage**:
 ```bash
-# Works from any Python version - automatically switches to seg_sam_py39 when needed
+conda activate mseq_pipeline_py3.9
 python run_build06_standalone.py --root /path/to/data --generate-missing-latents
 ```
 
-**Testing**: Validated on Python 3.10 → 3.9 environment switching with successful model loading and embedding generation.
+**Testing**: Validated that running outside Python 3.9 produces a descriptive error; under Python 3.9, model loads and embeddings generate successfully.
 
 ---
