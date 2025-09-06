@@ -13,7 +13,7 @@ from src.build.build01AB_stitch_keyence_z_slices import stitch_z_from_keyence
 from src.build.build01B_compile_yx1_images_torch import build_ff_from_yx1
 import pandas as pd
 import multiprocessing
-from typing import Literal, Optional, Dict, List, Sequence
+from typing import Literal, Optional, Dict, List, Sequence, Union
 import torch
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -268,6 +268,14 @@ class Experiment:
     def has_latents(self, model_name: str = "20241107_ds_sweep01_optimum") -> bool:
         try:
             return self.get_latent_path(model_name).exists()
+        except Exception:
+            return False
+
+    @property
+    def needs_sam2(self) -> bool:
+        """Check if SAM2 needs to run for this experiment."""
+        try:
+            return not self.sam2_csv_path.exists()
         except Exception:
             return False
 
