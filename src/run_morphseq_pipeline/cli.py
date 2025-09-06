@@ -230,6 +230,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_status.add_argument("--model-name", default="20241107_ds_sweep01_optimum",
                           help="Model name for latent check (default: 20241107_ds_sweep01_optimum)")
 
+    # pipeline (orchestrated execution)
+    p_pipe = sub.add_parser("pipeline", help="Orchestrated pipeline execution")
+    p_pipe.add_argument("--data-root", required=True)
+    p_pipe.add_argument("action", choices=["e2e", "sam2", "build03", "build04", "build06"])
+    p_pipe.add_argument("--experiments", help="Comma-separated experiment IDs")
+    p_pipe.add_argument("--later-than", type=int, help="Process experiments after YYYYMMDD")
+    p_pipe.add_argument("--force", action="store_true", help="Force rerun even if not needed")
+    p_pipe.add_argument("--dry-run", action="store_true", help="Show what would run without executing")
+    p_pipe.add_argument("--model-name", default="20241107_ds_sweep01_optimum",
+                        help="Model name for embedding generation")
+    # SAM2 parameters
+    p_pipe.add_argument("--sam2-workers", type=int, default=8, help="SAM2 parallel workers")
+    p_pipe.add_argument("--sam2-confidence", type=float, default=0.45, help="SAM2 confidence threshold")
+    p_pipe.add_argument("--sam2-iou", type=float, default=0.5, help="SAM2 IoU threshold")
+    # Build03 parameters
+    p_pipe.add_argument("--by-embryo", type=int, help="Sample this many embryos")
+    p_pipe.add_argument("--frames-per-embryo", type=int, help="Sample this many frames per embryo")
+
     return p
 
 
@@ -590,6 +608,207 @@ def main(argv: list[str] | None = None) -> int:
                 bits.append("LAT✅" if st["has_latents"] else "LAT❌")
                 mic = st["microscope"] or "?"
                 print(f"{date} [{mic}]: " + " ".join(bits))
+
+    elif args.cmd == "pipeline":
+        # Lazy import to avoid heavy imports for other commands
+        try:
+            from src.build.pipeline_objects import ExperimentManager
+        except Exception as e:
+            print(f"ERROR: Failed to import ExperimentManager: {e}")
+            return 1
+
+        root = resolve_root(args)
+        try:
+            manager = ExperimentManager(root)
+        except Exception as e:
+            print(f"ERROR: Failed to initialize ExperimentManager: {e}")
+            return 1
+
+        # Select experiments based on filters
+        if args.experiments:
+            exp_list = [e.strip() for e in args.experiments.split(',') if e.strip()]
+            selected = [manager.experiments[e] for e in exp_list if e in manager.experiments]
+            if len(selected) != len(exp_list):
+                missing = [e for e in exp_list if e not in manager.experiments]
+                print(f"WARNING: Missing experiments: {missing}")
+        elif args.later_than:
+            selected = []
+            for exp in manager.experiments.values():
+                try:
+                    exp_date = int(exp.date[:8])  # Extract YYYYMMDD
+                    if exp_date > args.later_than:
+                        selected.append(exp)
+                except (ValueError, IndexError):
+                    continue
+        else:
+            selected = list(manager.experiments.values())
+
+        if args.dry_run:
+            print("🔍 DRY RUN - No changes will be made")
+        
+        print(f"\n{'='*60}")
+        print(f"MORPHSEQ PIPELINE ORCHESTRATION")
+        print(f"{'='*60}")
+        print(f"📁 Data root: {root}")
+        print(f"🎯 Action: {args.action}")
+        print(f"🧪 Selected experiments: {len(selected)}")
+        if args.force:
+            print("⚡ Force mode: Will rerun steps even if not needed")
+
+        # Execute based on action
+        if args.action == "e2e":
+            # Per-experiment steps first
+            for exp in selected:
+                print(f"\n{'='*40}")
+                print(f"Processing {exp.date}")
+                print(f"{'='*40}")
+                
+                # Show the complete pipeline flow in order
+                print("  📋 Pipeline Steps:")
+                
+                # Step 1: Raw data (Build01)
+                if exp.flags.get("ff", False):
+                    print("    1️⃣ ✅ Raw data → FF images (Build01)")
+                else:
+                    print("    1️⃣ ❌ Raw data → FF images (Build01) - Missing")
+                
+                # Step 2: QC Masks (Build02) 
+                qc_present, qc_total = exp.qc_mask_status()
+                if qc_present == qc_total and qc_total > 0:
+                    print(f"    2️⃣ ✅ QC mask generation (Build02) - {qc_present}/{qc_total}")
+                else:
+                    print(f"    2️⃣ ❌ QC mask generation (Build02) - {qc_present}/{qc_total}")
+                
+                # Step 3: SAM2 segmentation
+                if args.force or exp.needs_sam2:
+                    if args.dry_run:
+                        print("    3️⃣ 🔄 SAM2 segmentation - would run")
+                    else:
+                        print("    3️⃣ 🔄 Running SAM2 segmentation...")
+                        exp.run_sam2(
+                            workers=args.sam2_workers,
+                            confidence_threshold=args.sam2_confidence,
+                            iou_threshold=args.sam2_iou
+                        )
+                else:
+                    print("    3️⃣ ✅ SAM2 segmentation complete")
+                
+                # Step 4: Build03 (embryo processing)
+                if args.force or exp.needs_build03:
+                    if args.dry_run:
+                        print("    4️⃣ 🔄 Embryo processing (Build03) - would run")
+                    else:
+                        print("    4️⃣ 🔄 Running embryo processing (Build03)...")
+                        exp.run_build03(
+                            by_embryo=args.by_embryo,
+                            frames_per_embryo=args.frames_per_embryo
+                        )
+                else:
+                    print("    4️⃣ ✅ Embryo processing (Build03) complete")
+                
+                # Step 5: Latent embeddings
+                if args.force or not exp.has_latents(args.model_name):
+                    if args.dry_run:
+                        print("    5️⃣ 🔄 Latent embeddings - would generate")
+                    else:
+                        print("    5️⃣ 🔄 Generating latent embeddings...")
+                        exp.generate_latents(model_name=args.model_name)
+                else:
+                    print("    5️⃣ ✅ Latent embeddings exist")
+            
+            # Global steps after all experiments
+            print(f"\n{'='*40}")
+            print("Global Pipeline Steps")
+            print(f"{'='*40}")
+            print("  📋 Global Steps:")
+            
+            # Step 6: Build04 (df01 → df02 QC)
+            if args.force or manager.needs_build04:
+                if args.dry_run:
+                    print("    6️⃣ 🔄 Global QC & staging (Build04: df01→df02) - would run")
+                else:
+                    print("    6️⃣ 🔄 Running global QC & staging (Build04: df01→df02)...")
+                    manager.run_build04()
+            else:
+                print("    6️⃣ ✅ Global QC & staging (Build04: df01→df02) complete")
+                
+            # Step 7: Build06 (df02 + latents → df03)
+            if args.force or manager.needs_build06:
+                # Show which specific experiments need merging
+                experiments_needing_merge = []
+                for exp in selected:
+                    if exp.needs_build06_merge(args.model_name):
+                        experiments_needing_merge.append(exp.date)
+                
+                if args.dry_run:
+                    if experiments_needing_merge:
+                        print(f"    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run")
+                        print(f"        📋 Experiments needing merge: {len(experiments_needing_merge)}")
+                        if args.verbose:
+                            for exp_date in experiments_needing_merge[:3]:  # Show first 3
+                                print(f"            • {exp_date}")
+                            if len(experiments_needing_merge) > 3:
+                                print(f"            • ... and {len(experiments_needing_merge) - 3} more")
+                    else:
+                        print("    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run (other experiments)")
+                else:
+                    print("    7️⃣ 🔄 Running final merge (Build06: df02+latents→df03)...")
+                    if experiments_needing_merge:
+                        print(f"        📋 {len(experiments_needing_merge)} experiments need merging")
+                    manager.run_build06(model_name=args.model_name)
+            else:
+                print("    7️⃣ ✅ Final merge (Build06: df02+latents→df03) complete")
+
+        elif args.action == "sam2":
+            for exp in selected:
+                if args.force or exp.needs_sam2:
+                    if args.dry_run:
+                        print(f"🔄 SAM2 needed for {exp.date} - would run")
+                    else:
+                        print(f"🔄 Running SAM2 for {exp.date}...")
+                        exp.run_sam2(
+                            workers=args.sam2_workers,
+                            confidence_threshold=args.sam2_confidence,
+                            iou_threshold=args.sam2_iou
+                        )
+                else:
+                    print(f"✅ SAM2 already complete for {exp.date}")
+
+        elif args.action == "build03":
+            for exp in selected:
+                if args.force or exp.needs_build03:
+                    if args.dry_run:
+                        print(f"🔄 Build03 needed for {exp.date} - would run")
+                    else:
+                        print(f"🔄 Running Build03 for {exp.date}...")
+                        exp.run_build03(
+                            by_embryo=args.by_embryo,
+                            frames_per_embryo=args.frames_per_embryo
+                        )
+                else:
+                    print(f"✅ Build03 already complete for {exp.date}")
+
+        elif args.action == "build04":
+            if args.force or manager.needs_build04:
+                if args.dry_run:
+                    print("🔄 Build04 needed - would run global QC")
+                else:
+                    print("🔄 Running Build04 (global QC)...")
+                    manager.run_build04()
+            else:
+                print("✅ Build04 already complete")
+
+        elif args.action == "build06":
+            if args.force or manager.needs_build06:
+                if args.dry_run:
+                    print("🔄 Build06 needed - would run global merge")
+                else:
+                    print("🔄 Running Build06 (global merge)...")
+                    manager.run_build06(model_name=args.model_name)
+            else:
+                print("✅ Build06 already complete")
+
+        print(f"\n🎉 Pipeline {args.action} completed!")
 
     return 0
 
