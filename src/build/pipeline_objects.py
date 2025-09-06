@@ -1,9 +1,46 @@
+"""
+MorphSeq Pipeline Objects: Intelligent Experiment Management and Orchestration
+
+This module provides the core classes for managing MorphSeq experiments with intelligent
+tracking, state management, and pipeline orchestration. It enables seamless coordination
+between per-experiment processing and global cohort-level operations.
+
+Architecture Overview:
+===================
+
+Individual Experiments (Experiment class):
+├── Raw data acquisition & FF image creation (Build01)
+├── QC mask generation (Build02) OR SAM2 segmentation 
+├── Embryo processing & df01 contribution (Build03)
+└── Latent embedding generation (per-experiment)
+
+Global Operations (ExperimentManager class):
+├── df01 → QC & staging → df02 (Build04)
+└── df02 + latents → final dataset → df03 (Build06)
+
+Key Features:
+============
+✓ **Intelligent State Tracking**: JSON-based state files with timestamp comparison
+✓ **Automatic State Sync**: Detects existing work from previous runs
+✓ **Dependency Management**: Ensures correct execution order and prerequisites
+✓ **Duplicate Prevention**: Avoids reprocessing data already in downstream files
+✓ **Flexible Orchestration**: Supports individual steps or full end-to-end workflows
+
+Classes:
+========
+- Experiment: Manages individual experiment lifecycle and per-experiment operations
+- ExperimentManager: Orchestrates multiple experiments and global operations
+
+Author: Claude Code with MorphSeq Team
+Stage: 3 - Intelligent Pipeline Orchestration (Complete)
+"""
+
 from __future__ import annotations
 import sys
 from pathlib import Path
 
 # Path to the project *root* (the directory that contains the `src/` folder)
-REPO_ROOT = Path(__file__).resolve().parents[2]   # adjust “2” if levels differ
+REPO_ROOT = Path(__file__).resolve().parents[2]   # adjust "2" if levels differ
 
 # Put that directory at the *front* of sys.path so Python looks there first
 sys.path.insert(0, str(REPO_ROOT))
@@ -63,6 +100,35 @@ def record(step: str):
 
 @dataclass
 class Experiment:
+    """
+    Represents a single MorphSeq experiment with intelligent pipeline tracking.
+    
+    This class manages the complete lifecycle of a MorphSeq experiment, tracking
+    the state of each pipeline step and determining what work needs to be done.
+    
+    Pipeline Flow:
+    1. Raw data → FF images (Build01)
+    2. FF images → QC masks (Build02) 
+    3. FF images → SAM2 segmentation (SAM2)
+    4. SAM2/QC masks → embryo processing (Build03) → contributes to df01
+    5. Individual processing → latent embeddings (per-experiment)
+    6. df01 → df02 (Build04, global QC)
+    7. df02 + latents → df03 (Build06, global merge)
+    
+    State Management:
+    - Tracks completion via JSON state files in metadata/experiments/
+    - Uses file timestamps to detect when inputs are newer than outputs
+    - Automatically syncs with existing combined metadata files (df01/df02/df03)
+    - Avoids duplicate processing by checking downstream file inclusion
+    
+    Attributes:
+        date: Experiment date identifier (e.g., "20250529_30hpf_ctrl_atf6")
+        data_root: Path to MorphSeq data directory
+        n_workers: Number of CPU workers for processing (auto-calculated if not set)
+        flags: Dict tracking which pipeline steps have completed
+        timestamps: Dict tracking when each step was last run
+        repo_root: Path to MorphSeq repository
+    """
     date: str
     data_root: Union[Path, str]
     n_workers: int = 1
@@ -271,9 +337,121 @@ class Experiment:
         except Exception:
             return False
 
+    # ——— Stage 3: Downstream file tracking ————————————————————————————
+    
+    def is_in_df01(self) -> bool:
+        """
+        Check if this experiment exists in the combined embryo metadata (df01).
+        
+        df01 is created by Build03 and contains processed embryo data from all experiments.
+        If an experiment is in df01, it means Build03 has already been run for it.
+        
+        Returns:
+            bool: True if experiment_date appears in df01.csv
+        """
+        try:
+            import pandas as pd
+            df01_path = self.data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
+            if not df01_path.exists():
+                return False
+            df01 = pd.read_csv(df01_path)
+            return self.date in df01['experiment_date'].values if 'experiment_date' in df01.columns else False
+        except Exception:
+            return False
+
+    def is_in_df02(self) -> bool:
+        """
+        Check if this experiment exists in the QC'd embryo metadata (df02).
+        
+        df02 is created by Build04 and contains QC'd + staged embryo data.
+        If an experiment is in df02, it has passed through global QC processing.
+        
+        Returns:
+            bool: True if experiment_date appears in df02.csv
+        """
+        try:
+            import pandas as pd
+            df02_path = self.data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
+            if not df02_path.exists():
+                return False
+            df02 = pd.read_csv(df02_path)
+            return self.date in df02['experiment_date'].values if 'experiment_date' in df02.columns else False
+        except Exception:
+            return False
+
+    def is_in_df03(self) -> bool:
+        """
+        Check if this experiment exists in the final dataset (df03).
+        
+        df03 is created by Build06 and contains df02 data merged with latent embeddings.
+        This is the final, analysis-ready dataset.
+        
+        Returns:
+            bool: True if experiment_date appears in df03.csv
+        """
+        try:
+            import pandas as pd
+            df03_path = self.data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
+            if not df03_path.exists():
+                return False
+            df03 = pd.read_csv(df03_path)
+            return self.date in df03['experiment_date'].values if 'experiment_date' in df03.columns else False
+        except Exception:
+            return False
+
+    def needs_build06_merge(self, model_name: str = "20241107_ds_sweep01_optimum") -> bool:
+        """
+        Determine if THIS specific experiment needs to be merged in Build06.
+        
+        This is the most precise check for Build06 requirements. An experiment needs
+        merging if its latent embeddings are newer than the current df03 file.
+        
+        Logic:
+        - If no df03 exists → needs merge (if has latents)
+        - If latent embeddings are newer than df03 → needs merge  
+        - If latent embeddings are older than df03 → already merged
+        
+        This avoids unnecessary rebuilds when experiments are already current in df03.
+        
+        Args:
+            model_name: Model name for latent embeddings (default: latest model)
+            
+        Returns:
+            bool: True if this experiment's latents need merging into df03
+        """
+        try:
+            df03_path = self.data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
+            
+            # If no df03 exists, needs merge if we have latents
+            if not df03_path.exists():
+                return self.has_latents(model_name)
+            
+            # Key insight: Compare latent timestamp vs df03 timestamp
+            if self.has_latents(model_name):
+                latent_path = self.get_latent_path(model_name)
+                df03_time = df03_path.stat().st_mtime
+                latent_time = latent_path.stat().st_mtime
+                return latent_time > df03_time  # Latents newer = needs merge
+                
+            return False
+        except Exception:
+            return False
+
+    # ——— Stage 3: Pipeline step requirements ————————————————————————
+
     @property
     def needs_sam2(self) -> bool:
-        """Check if SAM2 needs to run for this experiment."""
+        """
+        Determine if SAM2 segmentation needs to run for this experiment.
+        
+        SAM2 is the modern embryo segmentation approach that produces superior
+        segmentation compared to legacy Build02 QC masks. 
+        
+        Logic: SAM2 is needed if the SAM2 metadata CSV doesn't exist yet.
+        
+        Returns:
+            bool: True if SAM2 segmentation needs to run
+        """
         try:
             return not self.sam2_csv_path.exists()
         except Exception:
@@ -322,12 +500,56 @@ class Experiment:
     @property
     def needs_build03(self) -> bool:
         """
-        Build03 appends to a global df01 but is driven per-experiment.
-        We consider it needed when a SAM2 CSV exists and is newer than the
-        last recorded build03 timestamp for this experiment.
+        Determine if Build03 embryo processing needs to run for this experiment.
+        
+        Build03 processes embryo segmentation data (from SAM2 or QC masks) and 
+        appends the results to the global df01.csv file. This is the bridge between
+        per-experiment segmentation and global embryo datasets.
+        
+        Multi-layered Logic:
+        1. If experiment already exists in df01 → auto-sync local state, return False
+        2. If recorded locally as complete → check if inputs are newer than last run
+        3. If never run locally → check if segmentation data is available
+        
+        Segmentation Sources (in order of preference):
+        - SAM2 CSV (modern, superior segmentation)
+        - Build02 QC masks (legacy, 5 UNet models)
+        
+        State Sync:
+        Automatically updates local JSON state if experiment found in df01 but not
+        tracked locally (handles legacy processing or external pipeline runs).
+        
+        Returns:
+            bool: True if Build03 needs to run for this experiment
         """
         try:
-            return self._safe_mtime_compare(self.sam2_csv_path, "build03")
+            # PRIORITY 1: Check if already processed (exists in df01)
+            if self.is_in_df01():
+                # Auto-sync: Update local state if missing timestamp
+                if "build03" not in self.timestamps:
+                    self.flags['build03'] = True
+                    self.flags['contributed_to_df01'] = True  
+                    self.timestamps['build03'] = datetime.utcnow().isoformat()
+                    self._save_state()
+                return False  # Already processed globally
+            
+            # PRIORITY 2: If locally recorded as complete, check input freshness
+            last_build03 = self._ts("build03", 0)
+            if last_build03 > 0:
+                # Check if SAM2 output is newer than last Build03 run
+                if self.sam2_csv_path.exists():
+                    sam2_time = self.sam2_csv_path.stat().st_mtime
+                    if sam2_time > last_build03:
+                        return True  # SAM2 data updated, needs reprocessing
+                # Note: Could also check QC mask timestamps here if needed
+                return False  # Local tracking shows complete and current
+            
+            # PRIORITY 3: Never run locally, check if segmentation data available
+            has_sam2_data = self.sam2_csv_path.exists()
+            has_qc_masks = self.has_all_qc_masks
+            
+            return has_sam2_data or has_qc_masks  # Can run if either source available
+            
         except Exception:
             return False
 
@@ -428,6 +650,77 @@ class Experiment:
         stats_df = compile_embryo_stats(root=self.data_root, tracked_df=tracked_df)
         extract_embryo_snips(root=self.data_root, stats_df=stats_df, overwrite_flag=force_update)
 
+    # ——— Stage 3: Orchestration execution methods ——————————————————————
+
+    @record("sam2")
+    def run_sam2(self, workers: int = 8, **kwargs):
+        """Execute SAM2 segmentation for this experiment"""
+        # Import here to avoid circular dependencies
+        from ..run_morphseq_pipeline.steps.run_sam2 import run_sam2
+        print(f"🎯 Running SAM2 for {self.date}")
+        result = run_sam2(
+            root=str(self.data_root), 
+            exp=self.date, 
+            workers=workers, 
+            **kwargs
+        )
+        return result
+
+    @record("build03")
+    def run_build03(self, by_embryo: int = None, frames_per_embryo: int = None, **kwargs):
+        """Execute Build03 for this experiment with SAM2/legacy detection"""
+        print(f"🔬 Running Build03 for {self.date}")
+        
+        # Import here to avoid circular dependencies
+        from ..run_morphseq_pipeline.steps.run_build03 import run_build03 as run_build03_step
+        
+        # Determine which path to use
+        sam2_csv = None
+        if self.sam2_csv_path.exists():
+            print(f"  Using SAM2 masks from {self.sam2_csv_path}")
+            sam2_csv = str(self.sam2_csv_path)
+        else:
+            print(f"  Using legacy Build02 masks")
+            # Check if legacy masks exist
+            if not self.has_all_qc_masks:
+                raise RuntimeError(f"No SAM2 CSV and missing QC masks for {self.date}")
+        
+        # Call the actual Build03 function with proper parameters
+        try:
+            result = run_build03_step(
+                root=str(self.data_root),
+                exp=self.date,
+                sam2_csv=sam2_csv,  # Will be None for legacy path
+                by_embryo=by_embryo,
+                frames_per_embryo=frames_per_embryo,
+                n_workers=kwargs.get('n_workers', self.num_cpu_workers),
+                df01_out=kwargs.get('df01_out', None)  # Use default if not specified
+            )
+            
+            # Update df01 contribution tracking
+            if result:
+                self.flags['contributed_to_df01'] = True
+                self.timestamps['last_df01_contribution'] = datetime.utcnow().isoformat()
+                
+            return result
+            
+        except Exception as e:
+            print(f"  ❌ Build03 failed: {e}")
+            raise
+
+    @record("latents")
+    def generate_latents(self, model_name: str = "20241107_ds_sweep01_optimum", **kwargs):
+        """Generate latent embeddings for this experiment"""
+        from ..analyze.gen_embeddings import ensure_embeddings_for_experiments
+        print(f"🧬 Generating latents for {self.date}")
+        success = ensure_embeddings_for_experiments(
+            data_root=str(self.data_root),
+            experiments=[self.date],
+            model_name=model_name,
+            **kwargs
+        )
+        return success
+
     # ——— load/save ——————————————————————————————————————————————————
 
     def _load_state(self):
@@ -444,6 +737,34 @@ class Experiment:
 
 
 class ExperimentManager:
+    """
+    Orchestrates multiple MorphSeq experiments and manages global pipeline operations.
+    
+    The ExperimentManager provides intelligent coordination between individual experiments
+    and global processing steps. It handles both per-experiment operations and cohort-level
+    data processing that spans multiple experiments.
+    
+    Key Responsibilities:
+    1. **Experiment Discovery**: Auto-discovers experiments from raw_image_data structure
+    2. **Global File Management**: Tracks combined metadata files (df01, df02, df03)
+    3. **Intelligent Orchestration**: Determines what processing is needed across the cohort
+    4. **Dependency Management**: Ensures correct order of per-experiment vs global steps
+    
+    Global Pipeline Flow:
+    Per-experiment: [Raw → FF → QC/SAM2 → Build03 → Latents] 
+                                     ↓
+    Global: [df01] → Build04 → [df02] → Build06 → [df03]
+    
+    Combined Files:
+    - df01: Raw embryo data from all Build03 runs (per-experiment contributions)
+    - df02: QC'd + staged embryo data from Build04 (global processing)  
+    - df03: Final dataset with embeddings from Build06 (global merge)
+    
+    Attributes:
+        root: Path to MorphSeq data root directory
+        exp_dir: Path to experiment state files (metadata/experiments/)
+        experiments: Dict mapping experiment dates to Experiment objects
+    """
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self.exp_dir = self.root / "metadata" / "experiments"
@@ -451,27 +772,74 @@ class ExperimentManager:
         self.discover_experiments()
         self.update_experiment_status()
 
-    # ——— global tracking (combined metadata) ————————————————————————
+    # ——— Global File Management: Combined Metadata Files ————————————————
+
     @property
     def df01_path(self) -> Path:
+        """
+        Path to embryo_metadata_df01.csv - the raw combined embryo dataset.
+        
+        df01 contains embryo-level data from all experiments that have completed Build03.
+        Each row represents one embryo at one timepoint, with morphological measurements
+        and metadata. This file grows as more experiments complete Build03.
+        
+        Created by: Build03 (appends per-experiment data)
+        Used by: Build04 input
+        """
         return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
 
     @property
     def df02_path(self) -> Path:
+        """
+        Path to embryo_metadata_df02.csv - the QC'd and staged embryo dataset.
+        
+        df02 is created by Build04 and contains df01 data after quality control,
+        outlier removal, and developmental stage inference. This is a cleaned,
+        analysis-ready version of df01.
+        
+        Created by: Build04 (global QC processing)
+        Used by: Build06 input
+        """
         return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
 
     @property
     def df03_path(self) -> Path:
+        """
+        Path to embryo_metadata_df03.csv - the final analysis-ready dataset.
+        
+        df03 is created by Build06 and contains df02 data merged with latent
+        morphological embeddings. This is the final dataset used for downstream
+        analysis and machine learning applications.
+        
+        Created by: Build06 (global merge with embeddings)
+        Used by: Analysis and ML workflows
+        """
         return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
 
     @property
     def needs_build04(self) -> bool:
-        # Can't run without input
+        """
+        Determine if Build04 global QC processing needs to run.
+        
+        Build04 processes the combined df01 embryo data through quality control,
+        outlier detection, and developmental stage inference to produce df02.
+        This is a global operation that processes all experiments together.
+        
+        Logic:
+        - If df01 doesn't exist → False (no input data available)
+        - If df02 doesn't exist → True (output needs to be created)
+        - If df01 is newer than df02 → True (input has been updated)
+        
+        Returns:
+            bool: True if Build04 global QC needs to run
+        """
+        # Can't run without input data
         if not self.df01_path.exists():
             return False
-        # Needs run if output missing
+        # Output missing, needs to run
         if not self.df02_path.exists():
             return True
+        # Check if input is newer than output
         try:
             return self.df01_path.stat().st_mtime > self.df02_path.stat().st_mtime
         except Exception:
@@ -479,14 +847,68 @@ class ExperimentManager:
 
     @property
     def needs_build06(self) -> bool:
+        """
+        Build06 is needed if:
+        1. df02 exists but df03 doesn't, OR
+        2. There are experiments in df02 that aren't in df03, OR
+        3. There are latent files newer than df03 for experiments that should be included
+        """
         if not self.df02_path.exists():
             return False
         if not self.df03_path.exists():
             return True
+        
         try:
-            return self.df02_path.stat().st_mtime > self.df03_path.stat().st_mtime
-        except Exception:
+            # Get the set of experiments in df02 vs df03
+            import pandas as pd
+            
+            df02 = pd.read_csv(self.df02_path)
+            df03 = pd.read_csv(self.df03_path)
+            
+            # Get unique experiment dates from each file
+            df02_experiments = set(df02['experiment_date'].unique()) if 'experiment_date' in df02.columns else set()
+            df03_experiments = set(df03['experiment_date'].unique()) if 'experiment_date' in df03.columns else set()
+            
+            # Check if there are experiments in df02 that aren't in df03
+            missing_from_df03 = df02_experiments - df03_experiments
+            if missing_from_df03:
+                return True
+            
+            # Check if any experiment's latent files are newer than df03
+            # (but only for experiments that should be in the final dataset)
+            df03_time = self.df03_path.stat().st_mtime
+            for exp in self.experiments.values():
+                if exp.date in df02_experiments and exp.has_latents():
+                    latent_path = exp.get_latent_path()
+                    if latent_path.exists() and latent_path.stat().st_mtime > df03_time:
+                        return True
+                            
             return False
+        except Exception as e:
+            # Fallback to simple timestamp comparison if DataFrame operations fail
+            try:
+                return self.df02_path.stat().st_mtime > self.df03_path.stat().st_mtime
+            except Exception:
+                return False
+
+    # ——— Stage 3: Global orchestration methods ——————————————————————————
+
+    def run_build04(self, **kwargs):
+        """Execute global Build04 step (df01 -> df02)"""
+        print("🔄 Running Build04 (global QC + staging)")
+        from ..run_morphseq_pipeline.steps.run_build04 import run_build04
+        return run_build04(root=str(self.root), **kwargs)
+
+    def run_build06(self, model_name: str = "20241107_ds_sweep01_optimum", **kwargs):
+        """Execute global Build06 step (df02 + latents -> df03)"""
+        print("🔄 Running Build06 (global embeddings merge)")
+        from ..run_morphseq_pipeline.steps.run_build06 import run_build06
+        return run_build06(
+            morphseq_repo_root=str(self.root.parent.parent if "data" in str(self.root) else self.root),
+            data_root=str(self.root),
+            model_name=model_name,
+            **kwargs
+        )
 
 
     def discover_experiments(self):
