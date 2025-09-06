@@ -21,6 +21,7 @@ conda activate segmentation_grounded_sam
 
 # ─── Path Configuration ──────────────────────────────────────────────────────
 ROOT=/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox
+# ROOT=/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox
 CONFIG=$ROOT/configs/pipeline_config.yaml
 DATA_DIR=$ROOT/data/
 STITCHED_DIR_OF_EXPERIMENTS=/net/trapnell/vol1/home/nlammers/projects/data/morphseq/built_image_data/stitched_FF_images/
@@ -33,8 +34,8 @@ MASK_EXPORT=$ROOT/data/exported_masks
 mkdir -p logs
 
 # Example experiments (uncomment to process specific experiments)
-# EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6,20231206,20240418,20250305"
-EXAMPLE_EXPS="20250612_30hpf_ctrl_atf6"
+# EXAMPLE_EXPS="20250529_30hpf_ctrl_atf6,20231206,20240418,20250305"
+EXAMPLE_EXPS="20250529_30hpf_ctrl_atf6"
 
 # Colors for output
 RED='\033[0;31m'

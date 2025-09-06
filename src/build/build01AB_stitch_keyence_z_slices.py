@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Union
 import sys
 
 # Path to the project *root* (the directory that contains the `src/` folder)
@@ -195,7 +196,7 @@ def stitch_well_z(
     return {}
 
 
-def stitch_z_from_keyence(data_root: Path | str, 
+def stitch_z_from_keyence(data_root: Union[Path, str], 
                           exp_name: str,
                           n_workers:int=4, 
                           overwrite: bool=False):

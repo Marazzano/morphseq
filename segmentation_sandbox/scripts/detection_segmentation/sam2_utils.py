@@ -77,6 +77,7 @@ import tempfile
 import shutil
 import random
 
+    
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
@@ -99,12 +100,12 @@ from scripts.utils.parsing_utils import (
     extract_frame_number, 
     extract_experiment_id,
     extract_embryo_id,
-    get_entity_type
+    get_entity_type,
+    build_snip_id
 )
 from scripts.utils.entity_id_tracker import EntityIDTracker
 from scripts.utils.base_file_handler import BaseFileHandler
 from scripts.metadata.experiment_metadata import ExperimentMetadata
-
 
 def load_config(config_path: Union[str, Path]) -> Dict:
     """Load pipeline configuration from YAML file."""
@@ -943,14 +944,22 @@ class GroundedSamAnnotations(BaseFileHandler):
 
 # REFACTORED: Fix create_snip_id to use standard format with '_s' prefix
 def create_snip_id(embryo_id: str, image_id: str) -> str:
-    """Create snip_id using standard format with '_s' prefix."""
-    frame_number = extract_frame_number(image_id)
-    return f"{embryo_id}_s{frame_number:04d}"
+    """Create snip_id via parsing_utils using canonical t-style (embryo_id_t####)."""
+    frame = extract_frame_number(image_id)
+    if frame is None:
+        raise ValueError(f"Could not extract frame number from image_id: {image_id}")
+
+    snip_id = build_snip_id(embryo_id, frame)
+
+    print(snip_id)
+
+    return snip_id
 
 
 def extract_frame_suffix(image_id: str) -> str:
     """Extract frame suffix from image_id using parsing_utils."""
-    return f"{extract_frame_number(image_id):04d}"
+    frame = extract_frame_number(image_id)
+    return f"{frame:04d}" if frame is not None else ""
 
 
 def convert_sam2_mask_to_rle(binary_mask: np.ndarray) -> Dict:

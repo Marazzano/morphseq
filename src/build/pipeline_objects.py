@@ -64,7 +64,7 @@ def record(step: str):
 @dataclass
 class Experiment:
     date: str
-    data_root: Path | str
+    data_root: Union[Path, str]
     n_workers: int = 1
     flags:      Dict[str,bool] = field(init=False)
     timestamps: Dict[str,str]  = field(init=False)

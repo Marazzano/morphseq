@@ -147,8 +147,8 @@ def run_sam2(
         print("📹 Stage 1: Preparing videos and metadata...")
         stitched_images_dir = root / "built_image_data" / "stitched_FF_images"
         stage1_args = [
-            "--directory_with_experiments", str(stitched_images_dir),
-            "--output_parent_dir", str(sam2_root),
+            "--directory_with_experiments", str(stitched_images_dir.absolute()),
+            "--output_parent_dir", str(sam2_root.absolute()),
             "--experiments_to_process", exp,
             "--workers", str(workers)
         ]
@@ -173,8 +173,8 @@ def run_sam2(
         
         stage2_args = [
             "--config", config_path,
-            "--metadata", str(metadata_path),
-            "--annotations", str(annotations_path),
+            "--metadata", str(metadata_path.absolute()),
+            "--annotations", str(annotations_path.absolute()),
             "--confidence-threshold", str(confidence_threshold),
             "--iou-threshold", str(iou_threshold),
             "--prompt", target_prompt
@@ -196,9 +196,9 @@ def run_sam2(
         
         sam2_args = [
             "--config", config_path,
-            "--metadata", str(metadata_path), 
-            "--annotations", str(annotations_path),
-            "--output", str(sam2_output_path),
+            "--metadata", str(metadata_path.absolute()), 
+            "--annotations", str(annotations_path.absolute()),
+            "--output", str(sam2_output_path.absolute()),
             "--target-prompt", target_prompt,
             "--segmentation-format", segmentation_format,
             "--device", device,
@@ -217,7 +217,7 @@ def run_sam2(
         # Stage 4: QC Analysis
         print("📊 Stage 4: Quality control analysis...")
         qc_args = [
-            "--input", str(sam2_output_path),
+            "--input", str(sam2_output_path.absolute()),
             "--experiments", exp
         ]
         if verbose:
@@ -236,8 +236,8 @@ def run_sam2(
         masks_output_dir.mkdir(parents=True, exist_ok=True)
         
         export_args = [
-            "--sam2-annotations", str(sam2_output_path),
-            "--output", str(masks_output_dir),
+            "--sam2-annotations", str(sam2_output_path.absolute()),
+            "--output", str(masks_output_dir.absolute()),
             "--entities-to-process", exp
         ]
         if verbose:
@@ -257,10 +257,10 @@ def run_sam2(
         csv_output_path = csv_output_dir / f"sam2_metadata_{exp}.csv"
         
         csv_args = [
-            str(sam2_output_path),
-            "-o", str(csv_output_path),
+            str(sam2_output_path.absolute()),
+            "-o", str(csv_output_path.absolute()),
             "--experiment-filter", exp,
-            "--masks-dir", str(masks_output_dir / exp / "masks")
+            "--masks-dir", str((masks_output_dir / exp / "masks").absolute())
         ]
         if verbose:
             csv_args.append("-v")

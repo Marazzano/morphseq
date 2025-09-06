@@ -12,7 +12,7 @@ ID FORMATS:
     video_id:      "20250624_chem02_28C_T00_1356_H01"
     image_id:      "20250624_chem02_28C_T00_1356_H01_ch00_t0042"  (with channel + 't' prefix)
     embryo_id:     "20250624_chem02_28C_T00_1356_H01_e01"
-    snip_id:       "20250624_chem02_28C_T00_1356_H01_e01_s0034"
+    snip_id:       "20250624_chem02_28C_T00_1356_H01_e01_t0034"
 
 MAIN FUNCTIONS:
     parse_entity_id()     - Auto-detect and parse any ID type
@@ -26,8 +26,8 @@ MAIN FUNCTIONS:
     build_embryo_id()     - Create embryo ID from video + number
         Output: e.g. '20250624_chem02_28C_T00_1356_H01_e01'
     build_snip_id()       - Create snip ID from embryo + frame
-        Output: e.g. '20250624_chem02_28C_T00_1356_H01_e01_s0034'
-    
+        Output: e.g. '20250624_chem02_28C_T00_1356_H01_e01_t0034'
+
 EXTRACTION FUNCTIONS:
     extract_frame_number()    - Get frame from image/snip ID
     extract_experiment_id()   - Get experiment ID from any child ID
@@ -68,16 +68,18 @@ CHANNEL_PATTERN = r'\d+'                        # Channel numbers
 # End patterns for backward parsing
 WELL_END_PATTERN = rf'_({WELL_PATTERN})$'       # _A01$ at end
 EMBRYO_END_PATTERN = rf'_e({EMBRYO_NUM_PATTERN})$'  # _e01$ at end
-SNIP_END_PATTERN = rf'_s?({FRAME_PATTERN})$'    # _s0042$ or _0042$ at end  
+SNIP_END_PATTERN = rf'_[st]?({FRAME_PATTERN})$'  # _s0042$, _t0042$, or _0042$ at end  
 IMAGE_CH_END_PATTERN = rf'_ch({CHANNEL_PATTERN})_t({FRAME_PATTERN})$'  # _ch00_t0042$ at end
 IMAGE_LEGACY_END_PATTERN = rf'_t({FRAME_PATTERN})$'  # _t0042$ at end
 
 # Detection patterns for get_entity_type  
 HAS_WELL_PATTERN = rf'_{WELL_PATTERN}$'         # Ends with well
 HAS_EMBRYO_PATTERN = rf'_e{EMBRYO_NUM_PATTERN}$'  # Ends with embryo
-HAS_SNIP_PATTERN = rf'_s?{FRAME_PATTERN}$'      # Ends with snip frame
+HAS_SNIP_PATTERN = rf'_[st]?{FRAME_PATTERN}$'    # Ends with snip frame (_s####, _t####, or ####)
 HAS_IMAGE_CH_PATTERN = rf'_ch{CHANNEL_PATTERN}_t{FRAME_PATTERN}$'  # Ends with ch+frame
 HAS_IMAGE_LEGACY_PATTERN = rf'_t{FRAME_PATTERN}$'  # Ends with frame only
+# Canonical snip t-suffix (embryo_id_t####)
+SNIP_T_SUFFIX_PATTERN = rf'_t({FRAME_PATTERN})$'
 
 # Validation patterns
 WELL_STANDALONE_PATTERN = rf'^{WELL_PATTERN}$'  # Full well validation  
@@ -136,31 +138,51 @@ def parse_entity_id(entity_id: str, entity_type: Optional[str] = None) -> Dict[s
 
 
 def get_entity_type(entity_id: str) -> str:
-    """Return: experiment/video/image/embryo/snip."""
+    """Return: experiment/video/image/embryo/snip.
+
+    Prioritize treating embryo_id_t#### as snip (canonical) when no channel exists.
+    """
+    # Canonical snip with t-suffix and embryo marker, no channel segment
+    if ('_e' in entity_id) and re.search(SNIP_T_SUFFIX_PATTERN, entity_id) and not re.search(HAS_IMAGE_CH_PATTERN, entity_id):
+        return "snip"
+
+    # Legacy/bare snip handling
     if re.search(HAS_SNIP_PATTERN, entity_id) and '_e' in entity_id:
         return "snip"
-    elif re.search(HAS_EMBRYO_PATTERN, entity_id):
+
+    if re.search(HAS_EMBRYO_PATTERN, entity_id):
         return "embryo"
-    elif re.search(HAS_IMAGE_CH_PATTERN, entity_id) or re.search(HAS_IMAGE_LEGACY_PATTERN, entity_id):
+
+    # Images: channel images first
+    if re.search(HAS_IMAGE_CH_PATTERN, entity_id):
         return "image"
-    elif re.search(HAS_WELL_PATTERN, entity_id):
+    # Frame-only images are images only if no embryo component is present
+    if re.search(HAS_IMAGE_LEGACY_PATTERN, entity_id) and ('_e' not in entity_id):
+        return "image"
+
+    if re.search(HAS_WELL_PATTERN, entity_id):
         return "video"
-    else:
-        return "experiment"
+    return "experiment"
 
 
 def extract_frame_number(entity_id: str) -> Optional[int]:
     """Extract frame from snip_id/image_id."""
-    # Try image pattern first
+    # Image with channel: _ch## _t####
+    match = re.search(IMAGE_CH_END_PATTERN, entity_id)
+    if match:
+        # group(2) is the frame component in IMAGE_CH_END_PATTERN
+        return int(match.group(2))
+
+    # Any t-suffix (image or snip without channel): _t####
     match = re.search(IMAGE_LEGACY_END_PATTERN, entity_id)
     if match:
         return int(match.group(1))
-    
-    # Try snip pattern (ensure has _e)
+
+    # Legacy snip (s#### or bare ####) with embryo marker
     match = re.search(SNIP_END_PATTERN, entity_id)
     if match and '_e' in entity_id:
         return int(match.group(1))
-    
+
     return None
 
 
@@ -283,8 +305,10 @@ def _parse_backwards_embryo(embryo_id: str) -> Dict[str, str]:
 
 
 def _parse_backwards_snip(snip_id: str) -> Dict[str, str]:
-    """Parse snip_id: {embryo_id}_{FRAME} or {embryo_id}_s{FRAME}."""
-    match = re.search(SNIP_END_PATTERN, snip_id)
+    """Parse snip_id: embryo_id_t{FRAME} (canonical) or legacy variants."""
+    match = re.search(SNIP_T_SUFFIX_PATTERN, snip_id)
+    if not match:
+        match = re.search(SNIP_END_PATTERN, snip_id)
     if not match:
         raise ValueError(f"Invalid snip_id: {snip_id}")
     
@@ -300,6 +324,27 @@ def _parse_backwards_snip(snip_id: str) -> Dict[str, str]:
         "snip_id": snip_id,
         "entity_type": "snip"
     }
+
+
+# ========== VALIDATORS (CANONICAL STYLE) ==========
+
+def is_snip_t_style(entity_id: str) -> bool:
+    """Return True if entity_id is a canonical snip in the form embryo_id_t####.
+
+    Requirements:
+    - Contains an embryo marker ("_e<digits>")
+    - Ends with "_t####" (3-4 digits supported)
+    - Does NOT contain a channel segment ("_ch##")
+    """
+    if ('_e' not in entity_id) or re.search(HAS_IMAGE_CH_PATTERN, entity_id):
+        return False
+    return re.search(SNIP_T_SUFFIX_PATTERN, entity_id) is not None
+
+
+def validate_snip_t_style(entity_id: str) -> None:
+    """Raise ValueError if entity_id is not canonical snip style embryo_id_t####."""
+    if not is_snip_t_style(entity_id):
+        raise ValueError(f"Invalid canonical snip_id (expected embryo_id_t####): {entity_id}")
 
 
 # ========== BUILDER FUNCTIONS ==========
@@ -320,10 +365,9 @@ def build_embryo_id(video_id: str, embryo_number: int) -> str:
     return f"{video_id}_e{embryo_number:02d}"
 
 
-def build_snip_id(embryo_id: str, frame_number: int, use_s_prefix: bool = True) -> str:
-    """Build snip ID from embryo_id and frame number."""
-    prefix = "_s" if use_s_prefix else "_"
-    return f"{embryo_id}{prefix}{frame_number:04d}"
+def build_snip_id(embryo_id: str, frame_number: int) -> str:
+    """Build canonical snip ID embryo_id_t#### from embryo_id and frame number."""
+    return f"{embryo_id}_t{frame_number:04d}"
 
 
 # ========== NORMALIZATION FUNCTIONS ==========
