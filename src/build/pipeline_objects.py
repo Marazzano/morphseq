@@ -36,7 +36,7 @@ from src.build.build02B_segment_bf_main import apply_unet
 
 
 log = logging.getLogger(__name__)
-logging.basicConfig(format="%(level_name)s | %(message)s", level=logging.INFO)
+logging.basicConfig(format="%(levelname)s | %(message)s", level=logging.INFO)
 
 
 
@@ -89,6 +89,35 @@ class Experiment:
         self.flags[step] = True
         self.timestamps[step] = now
         self._save_state()
+
+    # ——— timestamp helpers ————————————————————————————————————————————
+    def _ts(self, key: str, default: float = 0.0) -> float:
+        """
+        Safely return a float UNIX timestamp for a recorded step.
+        Accepts either float seconds or ISO-8601 string in the state file.
+        """
+        val = self.timestamps.get(key, None)
+        if val is None:
+            return default
+        try:
+            # common case: already a float (mtime)
+            if isinstance(val, (int, float)):
+                return float(val)
+            # maybe an ISO string
+            return datetime.fromisoformat(str(val)).timestamp()
+        except Exception:
+            return default
+
+    def _safe_mtime_compare(self, file_path: Path, timestamp_key: str) -> bool:
+        """Return True if file is newer than recorded timestamp for key."""
+        try:
+            if not file_path or not file_path.exists():
+                return False
+            file_mtime = file_path.stat().st_mtime
+            last_run = self._ts(timestamp_key)
+            return file_mtime > last_run
+        except Exception:
+            return False
 
     # ——— path properties ———————————————————————————————————————————————
     @property
@@ -188,6 +217,60 @@ class Experiment:
         candidate = masks[0]/self.date
         return candidate if candidate.exists() else None
 
+    # ——— new per-experiment tracking properties ————————————————
+    @property
+    def sam2_csv_path(self) -> Path:
+        """Expected per-experiment SAM2 metadata CSV path."""
+        try:
+            return self.data_root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.date}.csv"
+        except Exception:
+            # Fall back to simple join; avoids raising in status views
+            return Path(str(self.data_root)) / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.date}.csv"
+
+    def qc_mask_status(self) -> tuple[int, int]:
+        """Return (present_count, total_count) across the 5 QC mask model outputs."""
+        mask_types = [
+            "mask_v0_0100",
+            "yolk_v1_0050",
+            "focus_v0_0100",
+            "bubble_v0_0100",
+            "via_v1_0100",
+        ]
+        present = 0
+        try:
+            seg_root = self.data_root / "segmentation"
+            for mt in mask_types:
+                if (seg_root / f"{mt}_predictions" / self.date).exists():
+                    present += 1
+        except Exception:
+            # treat as zero present on errors
+            present = 0
+        return present, len(mask_types)
+
+    @property
+    def has_all_qc_masks(self) -> bool:
+        p, t = self.qc_mask_status()
+        return p == t and t > 0
+
+    def get_latent_path(self, model_name: str) -> Path:
+        try:
+            return (
+                self.data_root
+                / "analysis"
+                / "latent_embeddings"
+                / "legacy"
+                / model_name
+                / f"morph_latents_{self.date}.csv"
+            )
+        except Exception:
+            return Path(str(self.data_root)) / "analysis" / "latent_embeddings" / "legacy" / model_name / f"morph_latents_{self.date}.csv"
+
+    def has_latents(self, model_name: str = "20241107_ds_sweep01_optimum") -> bool:
+        try:
+            return self.get_latent_path(model_name).exists()
+        except Exception:
+            return False
+
     @property
     def state_file(self) -> Path:
         p = self.data_root/"metadata"/"experiments"/f"{self.date}.json"
@@ -227,6 +310,18 @@ class Experiment:
         last_run = newest_mtime(self.mask_path, PATTERNS["snips"])
         newest   = newest_mtime(self.snip_path, PATTERNS["segment"])
         return newest >= last_run
+
+    @property
+    def needs_build03(self) -> bool:
+        """
+        Build03 appends to a global df01 but is driven per-experiment.
+        We consider it needed when a SAM2 CSV exists and is newer than the
+        last recorded build03 timestamp for this experiment.
+        """
+        try:
+            return self._safe_mtime_compare(self.sam2_csv_path, "build03")
+        except Exception:
+            return False
 
     # ——— internal sync logic —————————————————————————————————————————————
     def _sync_with_disk(self) -> None:
@@ -348,6 +443,43 @@ class ExperimentManager:
         self.discover_experiments()
         self.update_experiment_status()
 
+    # ——— global tracking (combined metadata) ————————————————————————
+    @property
+    def df01_path(self) -> Path:
+        return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
+
+    @property
+    def df02_path(self) -> Path:
+        return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
+
+    @property
+    def df03_path(self) -> Path:
+        return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
+
+    @property
+    def needs_build04(self) -> bool:
+        # Can't run without input
+        if not self.df01_path.exists():
+            return False
+        # Needs run if output missing
+        if not self.df02_path.exists():
+            return True
+        try:
+            return self.df01_path.stat().st_mtime > self.df02_path.stat().st_mtime
+        except Exception:
+            return False
+
+    @property
+    def needs_build06(self) -> bool:
+        if not self.df02_path.exists():
+            return False
+        if not self.df03_path.exists():
+            return True
+        try:
+            return self.df02_path.stat().st_mtime > self.df03_path.stat().st_mtime
+        except Exception:
+            return False
+
 
     def discover_experiments(self):
         # scan "raw_image_data" subfolders for dates
@@ -386,16 +518,16 @@ class ExperimentManager:
                 log.exception("Metadata build failed for %s", exp.date)
 
     def export_experiment_metadata(self, experiments=None):
-
+        # Build and run a filtered list of experiments
         if experiments is None:
-            experiments_list =  exp in self.experiments.values()
+            experiments_list = list(self.experiments.values())
         else:
-            experiments_list = [exp for exp in self.experiments.values() if exp.date in experiments]
+            experiments_list = [exp for exp in self.experiments.values() if exp.date in set(experiments)]
 
         for exp in experiments_list:
             try:
                 exp.export_metadata()
-            except:
+            except Exception:
                 log.exception("Metadata build failed for %s", exp.date)
             
     def stitch_all(self):

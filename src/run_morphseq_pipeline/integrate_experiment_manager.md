@@ -1,417 +1,622 @@
-# Integrating ExperimentManager Into MorphSeq CLI (Codex Plnan)
 
-This document outlines a focused rollout to make `src/build/pipeline_objects.py` the first‑class orchestrator behind the unified CLI, enabling robust end‑to‑end processing of one or many experiments.
+# laud Opus tracking plan 
+# Understanding the New Tracking Requirements from the Integration Documents
 
-## Objectives
-- Unify orchestration: Drive Build01→SAM2→Build03→Build04→Build05→Build06 via a single CLI entry.
-- Centralize state: Use `Experiment` flags/timestamps for resumability and cohort runs.
-- Standardize IDs: Use canonical snip_id `embryo_id_t####` with parsing_utils as the single source of truth.
-- Keep steps pluggable: Thin adapters call existing step functions; no hard rewrites.
+Based on my analysis of the integration documents, particularly the detailed tracking improvements outlined at the end of `integrate_experiment_manager.md`, here's what needs to be tracked:
 
-## Scope
-- Add a `pipeline` subcommand to `src/run_morphseq_pipeline/cli.py` that delegates to `ExperimentManager`.
-- Extend `Experiment` with thin wrappers for modern steps (SAM2 + Build03–06).
-- Extend `ExperimentManager` with façade methods for each step and `e2e`.
-- Add `needs_*` detection for SAM2/Build03/04/05/06 artifacts.
+## The Critical Tracking Distinction: Per-Experiment vs Global
 
-## Architecture
-- Source of truth for snip_ids: `segmentation_sandbox/scripts/utils/parsing_utils.py`
-  - Canonical builder: `build_snip_id(embryo_id, frame_number) → embryo_id_t####`
-  - Validators: `is_snip_t_style(...)`, `validate_snip_t_style(...)`
-- Orchestration mapping:
-  - `Experiment.run_sam2()` → `src/run_morphseq_pipeline/steps/run_sam2.py`
-  - `Experiment.run_build03()` → `src/build/build03A_process_images.py`
-  - `Experiment.run_build04()` → `src/build/build04_perform_embryo_qc.py`
-  - `Experiment.run_build05()` → `src/build/build05_prepare_training_data.py` (existing entry)
-  - `Experiment.run_build06()` → `src/run_morphseq_pipeline/services/gen_embeddings.build_df03_with_embeddings`
+The documents identify a fundamental issue that the current system doesn't handle: **some pipeline steps produce per-experiment artifacts while others produce global (cohort-level) files**.
 
-## CLI Changes
-- New subcommand: `pipeline`
-  - Global flags: `--data-root`, `--experiments exp1,exp2 | --later-than YYYYMMDD [--earlier-than YYYYMMDD]`, `--force-update`, `--workers`.
-  - Actions (pick one): `report | export | stitch | sam2 | build03 | build04 | build05 | build06 | e2e`.
-  - Build06 options: `--model-name`, `--enable-env-switch`, `--export-analysis-copies`, `--overwrite`.
-  - Build05 options: `--train-name`, `--overwrite`.
+### Per-Experiment Artifacts (Need Individual Tracking)
 
-Examples:
-- `python -m src.run_morphseq_pipeline.cli pipeline --data-root <root> report`
-- `python -m src.run_morphseq_pipeline.cli pipeline --data-root <root> sam2 --experiments 20250529_30hpf_ctrl_atf6`
-- `python -m src.run_morphseq_pipeline.cli pipeline --data-root <root> e2e --later-than 20250101 --workers 8`
+1. **Build02 (QC Masks)**
+   - **Artifacts**: 5 UNet model predictions directories
+   - **Paths**: 
+     - `<data_root>/segmentation/mask_v0_0100_predictions/{exp}/`
+     - `<data_root>/segmentation/yolk_v1_0050_predictions/{exp}/`
+     - `<data_root>/segmentation/focus_v0_0100_predictions/{exp}/`
+     - `<data_root>/segmentation/bubble_v0_0100_predictions/{exp}/`
+     - `<data_root>/segmentation/via_v1_0100_predictions/{exp}/`
+   - **Tracking**: Check if all 5 directories exist for each experiment
 
-## Experiment Methods (new)
-- `run_sam2(self, workers: int = 8, **kwargs)`
-  - Calls SAM2 wrapper; writes CSV/masks under `sam2_pipeline_files/...` in `data_root`.
-- `run_build03(self)`
-  - Calls Build03A; SAM2 aware paths already supported.
-- `run_build04(self)`
-  - Calls QC + stage inference to produce df02.
-- `run_build05(self, train_name: str, overwrite: bool)`
-  - Prepares training snips; writes under `training_data/bf_embryo_snips/<date>`.
-- `run_build06(self, model_name: str, export_analysis: bool, overwrite: bool, enable_env_switch: bool)`
-  - Calls `build_df03_with_embeddings(...)` and enforces Python 3.9 (env switch opt‑in via `MSEQ_ENABLE_ENV_SWITCH`).
+2. **SAM2 Segmentation**
+   - **Artifact**: Per-experiment metadata CSV
+   - **Path**: `<data_root>/sam2_pipeline_files/sam2_expr_files/sam2_metadata_{exp}.csv`
+   - **Tracking**: Check file existence for each experiment
 
-Each method is decorated with `@record("step")` to update flags/timestamps and persist state.
+3. **Build03 (Contributes to df01)**
+   - **Special Case**: This step APPENDS to a global file but needs per-experiment tracking
+   - **Logic**: Track via timestamp comparison - has this experiment's inputs (SAM2 CSV) changed since last Build03 run?
 
-## `needs_*` Detection (artifacts)
-- `needs_sam2`: missing `sam2_pipeline_files/sam2_expr_files/sam2_metadata_<date>.csv`.
-- `needs_build03`: missing `metadata/combined_metadata_files/embryo_metadata_df01.csv`.
-- `needs_build04`: missing `metadata/combined_metadata_files/embryo_metadata_df02.csv`.
-- `needs_build05`: missing `training_data/bf_embryo_snips/<date>/`.
-- `needs_build06`: missing `metadata/combined_metadata_files/embryo_metadata_df03.csv` (or model‑tagged copies under data_root).
+4. **Build06 Latent Embeddings (Critical Intermediate File)**
+   - **Artifact**: Per-experiment embedding file
+   - **Path**: `<data_root>/analysis/latent_embeddings/legacy/{model_name}/morph_latents_{exp}.csv`
+   - **Tracking**: Check if latent file exists for given model
 
-## ExperimentManager Façades
-- `sam2_experiments(...)` → `_run_step("run_sam2", "needs_sam2", extra_filter=…)`
-- `build03_experiments(...)` → `_run_step("run_build03", "needs_build03")`
-- `build04_experiments(...)` → `_run_step("run_build04", "needs_build04")`
-- `build05_experiments(...)` → `_run_step("run_build05", "needs_build05")`
-- `build06_experiments(...)` → `_run_step("run_build06", "needs_build06")`
-- `e2e_experiments(...)`: orchestrates all in order using the above (respect `needs_*` and `--force-update`).
+### Global Artifacts (Need Cohort-Level Tracking)
 
-## Environment & Performance
-- Python 3.9 enforced for Build06: default env `mseq_pipeline_py3.9`. Opt‑in auto switch via `--enable-env-switch` (sets `MSEQ_ENABLE_ENV_SWITCH=1`).
-- Workers: pass `Experiment.num_cpu_workers` or CLI `--workers` to steps that support parallelism.
-- GPU: `Experiment.has_gpu/gpu_names` available for step‑specific branching (optional).
+1. **Build04 (QC & Staging)**
+   - **Input**: Combined `df01.csv` (from all Build03 runs)
+   - **Output**: Combined `df02.csv`
+   - **Tracking**: Compare timestamps - if df01 newer than df02, needs rerun
 
-## Data Paths (canonical)
-- Raw: `<root>/raw_image_data/<Keyence|YX1>/<date>/`
-- SAM2 masks/CSV: `<root>/sam2_pipeline_files/.../sam2_metadata_<date>.csv`
-- Build03 df01: `<root>/metadata/combined_metadata_files/embryo_metadata_df01.csv`
-- Build04 df02: `<root>/metadata/combined_metadata_files/embryo_metadata_df02.csv`
-- Build05 snips: `<root>/training_data/bf_embryo_snips/<date>/`
-- Build06 df03: `<root>/metadata/combined_metadata_files/embryo_metadata_df03.csv`
+2. **Build06 Final Combination**
+   - **Input**: `df02.csv` + all individual latent files
+   - **Output**: Final `df03.csv`
+   - **Tracking**: Compare timestamps - if df02 newer than df03, needs rerun
 
-## Validation & Testing
-- Unit: add light tests for manager filters/needs detection on temp dirs.
-- Functional: run `pipeline report/stitch/sam2/build03/build04/build05/build06` on a small experiment.
-- E2E: exercise `pipeline e2e --experiments <date>` including Build06 env switch path.
+## The Problem This Solves
 
-## Rollout Plan
-1) Implement CLI `pipeline` subcommand + wiring (no behavior change for existing subcommands).
-2) Add `Experiment.run_*` wrappers (SAM2, Build03–06) with `@record()`.
-3) Add `needs_*` detection for new steps.
-4) Document in `README.md` with usage examples.
-5) Smoke test on a single experiment, then a date window.
-6) Optional: add CI jobs for `pipeline report` and a dry-run smoke (`--dry-run` in Build06).
+Currently, if you check whether `df02.csv` exists, you can't tell:
+- Which experiments contributed to it
+- Whether a new experiment needs to be added
+- Whether an experiment's data has been updated since df02 was created
 
-## Risks & Mitigations
-- Path mismatches: Use existing path helpers in Build03/04/05/06 to avoid hardcoding; log discovered paths.
-- Environment drift: Hard‑fail Build06 on Python ≠ 3.9 unless `--enable-env-switch` is set.
-- Long‑running steps: Surface `--workers`, print progress summaries per experiment.
+The hybrid tracking model solves this by:
+1. Tracking per-experiment steps individually in each experiment's state file
+2. Tracking global steps by timestamp comparison at the manager level
+3. Using the combination to determine what needs to run
 
-## Open Questions
-- Do we want `pipeline e2e` to skip heavy legacy UNets by default and rely on SAM2? (Current CLI supports SAM2; legacy runs remain available.)
-- Should we add a metadata registry per experiment under `<root>/metadata/experiments/<date>.json` for richer status? (Flags/timestamps already persisted; registry could add provenance.)
+## Implementation Requirements from Documents
 
----
-
-Implementation is intentionally thin and composable: `Experiment` shells call the step functions you already use in the CLI, while `ExperimentManager` provides cohort selection and resumability. This keeps refactors safe and local while delivering a "true pipeline" operator experience.
-
----
-
-# Claude Sonnet's Plan - Comprehensive ExperimentManager Integration
-**Transform CLI from individual commands to true pipeline orchestration**
-
-**Note**: This is a more comprehensive alternative approach focusing on enterprise-grade orchestration features.
-
-## Executive Summary
-
-The current CLI system executes individual pipeline commands but lacks **true orchestration**. The existing `pipeline_objects.py` contains a sophisticated `ExperimentManager` system for batch operations and dependency tracking that is currently unused by the CLI.
-
-**Goal**: Integrate `ExperimentManager` to provide:
-- **Automatic experiment discovery** from data structure
-- **Dependency tracking** and state persistence
-- **Batch processing** across multiple experiments  
-- **Resource optimization** with automatic GPU/CPU detection
-- **True pipeline orchestration** with resume capabilities
-
-## Current Architecture Problems
-
-### CLI Command Issues
-1. **Manual experiment specification**: Users must know which experiments exist
-2. **No dependency tracking**: Steps run regardless of input freshness  
-3. **No state persistence**: Cannot resume interrupted pipelines
-4. **Individual execution**: Must run each experiment separately
-5. **Resource blindness**: No automatic detection of available resources
-
-### Missing Orchestration Features
-- **No batch discovery**: Cannot find all experiments automatically
-- **No status reporting**: Cannot see pipeline state across experiments
-- **No intelligent resumption**: Cannot skip completed steps
-- **No resource management**: Manual CPU/GPU worker specification
-- **No progress visibility**: No unified view of pipeline progress
-
-## Solution: Advanced ExperimentManager Integration
-
-### Integration Plan
-
-#### **Phase 1: Basic Integration (2-3 days)**
-
-**1.1 Enhanced CLI Commands**
-Add orchestration mode to existing commands:
-
+### In `Experiment` class (pipeline_objects.py):
 ```python
-# New CLI arguments for all commands
-parser.add_argument("--use-orchestration", action="store_true",
-                   help="Use ExperimentManager for dependency tracking")
-parser.add_argument("--discover-experiments", action="store_true", 
-                   help="Auto-discover experiments from data structure")
-parser.add_argument("--batch-mode", action="store_true",
-                   help="Process multiple experiments in batch")
+# New properties needed:
+@property
+def sam2_csv_path(self) -> Path:
+    return self.data_root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.date}.csv"
+
+@property
+def needs_build03(self) -> bool:
+    # Check if SAM2 output is newer than last Build03 run
+    last_run = self.timestamps.get("build03", 0)
+    if self.sam2_csv_path.exists():
+        newest = self.sam2_csv_path.stat().st_mtime
+        return newest > last_run
+    return False
+
+def get_latent_path(self, model_name: str) -> Path:
+    return (self.data_root / "analysis" / "latent_embeddings" / 
+            "legacy" / model_name / f"morph_latents_{self.date}.csv")
+
+def has_latents(self, model_name: str) -> bool:
+    return self.get_latent_path(model_name).exists()
 ```
 
-**1.2 ExperimentManager CLI Wrapper**
+### In `ExperimentManager` class:
 ```python
-# New file: src/run_morphseq_pipeline/orchestration.py
-class CLIOrchestrator:
-    def __init__(self, data_root: Path):
-        self.manager = ExperimentManager(data_root)
-        
-    def run_with_orchestration(self, command: str, **kwargs):
-        """Execute CLI command with ExperimentManager orchestration"""
-        if kwargs.get('discover_experiments'):
-            experiments = self.manager.discover_experiments()
-        else:
-            experiments = kwargs.get('experiments', [])
-            
-        for exp in experiments:
-            if self.should_run_step(exp, command):
-                self.execute_step(exp, command, **kwargs)
-                exp.record_step(command)
+# New properties for global files:
+@property
+def df01_path(self) -> Path:
+    return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
+
+@property
+def df02_path(self) -> Path:
+    return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
+
+@property
+def df03_path(self) -> Path:
+    return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
+
+@property
+def needs_build04(self) -> bool:
+    # Global check: is df01 newer than df02?
+    if not self.df01_path.exists():
+        return False
+    if not self.df02_path.exists():
+        return True
+    return self.df01_path.stat().st_mtime > self.df02_path.stat().st_mtime
+
+@property
+def needs_build06(self) -> bool:
+    # Global check: is df02 newer than df03?
+    if not self.df02_path.exists():
+        return False
+    if not self.df03_path.exists():
+        return True
+    return self.df02_path.stat().st_mtime > self.df03_path.stat().st_mtime
 ```
 
-**1.3 Extend Experiment Class for SAM2/Build06**
+## The Phased Rollout Strategy
+
+The documents recommend a careful three-phase approach:
+
+**Phase 1**: Implement tracking logic only (no behavior changes)
+**Phase 2**: Add read-only `status` command to test tracking
+**Phase 3**: Enable actual orchestration with the tracking
+
+This ensures the tracking logic is correct before it drives any actual processing decisions.
+
+
+# Detailed Phased Rollout Strategy for MorphSeq Pipeline Tracking
+
+## Phase 1: Implement Tracking Logic Only (Days 1-2)
+**Goal**: Add all tracking infrastructure without changing any existing behavior
+
+### Step 1.1: Extend `pipeline_objects.py` with New Properties
+
+Add to the `Experiment` class:
 ```python
-# Extend pipeline_objects.py Experiment class
-class Experiment:
-    # Add new pipeline steps
-    @property
-    def needs_sam2(self) -> bool:
-        last_run = self.timestamps.get("sam2", 0)
-        newest = newest_mtime(self.stitch_ff_path, PATTERNS["stitch"])
-        return newest >= last_run
+# New tracking properties - READ ONLY, no side effects
+@property
+def sam2_csv_path(self) -> Path:
+    """Path where SAM2 output should be for this experiment"""
+    return self.data_root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.date}.csv"
+
+@property
+def needs_sam2(self) -> bool:
+    """Check if SAM2 needs to run for this experiment"""
+    # Simple existence check for MVP
+    return not self.sam2_csv_path.exists()
+
+@property
+def needs_build03(self) -> bool:
+    """Check if Build03 needs to run based on SAM2 output timestamp"""
+    last_run = self.timestamps.get("build03", 0)
+    if self.sam2_csv_path.exists():
+        newest = self.sam2_csv_path.stat().st_mtime
+        return newest > last_run
+    # If no SAM2 output, check for legacy masks
+    return self.mask_path and self.mask_path.exists() and not self.flags.get("build03", False)
+
+def get_latent_path(self, model_name: str) -> Path:
+    """Construct path to latent embedding file"""
+    return (self.data_root / "analysis" / "latent_embeddings" / 
+            "legacy" / model_name / f"morph_latents_{self.date}.csv")
+
+def has_latents(self, model_name: str = "20241107_ds_sweep01_optimum") -> bool:
+    """Check if latent embeddings exist for this experiment"""
+    return self.get_latent_path(model_name).exists()
+
+@property
+def has_all_qc_masks(self) -> bool:
+    """Check if all 5 Build02 QC masks exist"""
+    mask_types = ["mask_v0_0100", "yolk_v1_0050", "focus_v0_0100", 
+                  "bubble_v0_0100", "via_v1_0100"]
+    seg_root = self.data_root / "segmentation"
+    for mask_type in mask_types:
+        mask_dir = seg_root / f"{mask_type}_predictions" / self.date
+        if not mask_dir.exists():
+            return False
+    return True
+```
+
+Add to the `ExperimentManager` class:
+```python
+# Global tracking properties
+@property
+def df01_path(self) -> Path:
+    return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
+
+@property
+def df02_path(self) -> Path:
+    return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
+
+@property
+def df03_path(self) -> Path:
+    return self.root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
+
+@property
+def needs_build04(self) -> bool:
+    """Check if Build04 needs to run (df01 -> df02)"""
+    if not self.df01_path.exists():
+        return False  # Can't run without input
+    if not self.df02_path.exists():
+        return True  # Output doesn't exist
+    return self.df01_path.stat().st_mtime > self.df02_path.stat().st_mtime
+
+@property
+def needs_build06(self) -> bool:
+    """Check if Build06 final combination needs to run (df02 -> df03)"""
+    if not self.df02_path.exists():
+        return False  # Can't run without input
+    if not self.df03_path.exists():
+        return True  # Output doesn't exist
+    return self.df02_path.stat().st_mtime > self.df03_path.stat().st_mtime
+```
+
+### Step 1.2: Create Standalone Test Script
+
+Create `test_tracking_logic.py`:
+```python
+#!/usr/bin/env python3
+"""Test script to verify tracking logic without modifying any data"""
+
+from pathlib import Path
+from src.build.pipeline_objects import ExperimentManager
+
+def test_tracking(data_root: str):
+    """Test the new tracking properties"""
+    manager = ExperimentManager(data_root)
     
-    @property  
-    def needs_build06(self) -> bool:
-        last_run = self.timestamps.get("build06", 0)
-        newest = newest_mtime(self.meta_path_embryo, PATTERNS["meta"])
-        return newest >= last_run
+    print("=" * 60)
+    print("TRACKING LOGIC TEST REPORT")
+    print("=" * 60)
     
-    # Add new pipeline methods
-    @record("sam2")
-    def run_sam2_pipeline(self, **kwargs):
-        from ..run_morphseq_pipeline.steps.run_sam2 import run_sam2
-        return run_sam2(root=self.data_root, exp=self.date, **kwargs)
+    # Test per-experiment tracking
+    for date, exp in sorted(manager.experiments.items())[:3]:  # Test first 3
+        print(f"\nExperiment: {date}")
+        print(f"  Microscope: {exp.microscope}")
+        print(f"  Has all QC masks: {exp.has_all_qc_masks}")
+        print(f"  SAM2 CSV exists: {exp.sam2_csv_path.exists()}")
+        print(f"  Needs SAM2: {exp.needs_sam2}")
+        print(f"  Needs Build03: {exp.needs_build03}")
+        print(f"  Has latents: {exp.has_latents()}")
         
-    @record("build06")  
-    def run_build06_pipeline(self, **kwargs):
-        from ..run_morphseq_pipeline.steps.run_build06 import run_build06
-        return run_build06(data_root=self.data_root, experiments=[self.date], **kwargs)
+    # Test global tracking
+    print(f"\nGlobal Files:")
+    print(f"  df01 exists: {manager.df01_path.exists()}")
+    print(f"  df02 exists: {manager.df02_path.exists()}")
+    print(f"  df03 exists: {manager.df03_path.exists()}")
+    print(f"  Needs Build04: {manager.needs_build04}")
+    print(f"  Needs Build06 final: {manager.needs_build06_final}")
+
+if __name__ == "__main__":
+    test_tracking("/path/to/data")
 ```
 
-#### **Phase 2: New Orchestration Commands (2-3 days)**
+### Step 1.3: Verification
+- Run the test script against real data
+- Manually verify the output matches expected state
+- Check that no files are modified (use `ls -la` timestamps)
+- Commit these changes as "feat: add tracking logic (read-only)"
 
-**2.1 Status Command**
-```bash
-# Show pipeline state across all experiments
-python -m src.run_morphseq_pipeline.cli status --data-root /data
+## Phase 2: Add Read-Only Status Command (Day 3)
+**Goal**: Integrate tracking into CLI without running any processing
 
-# Output:
-# Experiment Status Report
-# ========================
-# 20250529_24hpf_ctrl_atf6: [✅ build01] [✅ build02] [❌ sam2] [❌ build03] [❌ build04] [❌ build06] 
-# 20250529_30hpf_ctrl_atf6: [✅ build01] [✅ build02] [✅ sam2] [✅ build03] [❌ build04] [❌ build06]
-# 20250612_48hpf_heat_atf6: [✅ build01] [❌ build02] [❌ sam2] [❌ build03] [❌ build04] [❌ build06]
-# 
-# Summary: 3 experiments discovered, 1 ready for build04
-```
+### Step 2.1: Add Status Command to CLI
 
-**2.2 Discover Command** 
-```bash
-# Auto-discover and register new experiments
-python -m src.run_morphseq_pipeline.cli discover --data-root /data
-
-# Output:  
-# Scanning raw_image_data/ for experiments...
-# Found: 20250529_24hpf_ctrl_atf6 (Keyence, 2.1GB)
-# Found: 20250529_30hpf_ctrl_atf6 (Keyence, 1.8GB) 
-# Found: 20250612_48hpf_heat_atf6 (YX1, 3.2GB)
-# 
-# Registered 3 experiments in metadata/experiments/
-```
-
-**2.3 Orchestrate Command - The Power Feature**
-```bash
-# Run complete pipeline on all discovered experiments
-python -m src.run_morphseq_pipeline.cli orchestrate \
-  --data-root /data \
-  --run-sam2 \
-  --train-name batch_run_20250906
-
-# Run pipeline on specific experiments only  
-python -m src.run_morphseq_pipeline.cli orchestrate \
-  --data-root /data \
-  --experiments exp1,exp2,exp3 \
-  --run-sam2 \
-  --skip-build01
-
-# Resume interrupted pipeline (skips completed steps)
-python -m src.run_morphseq_pipeline.cli orchestrate \
-  --data-root /data \
-  --resume \
-  --run-sam2
-```
-
-**Orchestrate Logic**:
+In `cli.py`, add the new subcommand:
 ```python
-def orchestrate_pipeline(experiments, **options):
-    for exp in experiments:
-        print(f"\n🧪 Processing {exp.date}")
-        
-        # Build01 (if needed and not skipped)
-        if not options['skip_build01'] and exp.needs_export:
-            exp.export_images()
-            
-        # Build02 (if needed and not skipped)  
-        if not options['skip_build02'] and exp.needs_segment:
-            exp.segment_images()
-            
-        # SAM2 (if requested and build01 complete)
-        if options['run_sam2'] and exp.flags['stitch'] and exp.needs_sam2:
-            exp.run_sam2_pipeline(**sam2_options)
-            
-        # Build03 (if build02 or sam2 complete)
-        if (exp.flags['segment'] or exp.flags['sam2']) and exp.needs_build03:
-            exp.run_build03_pipeline(**build03_options)
-            
-        # Continue with build04, build06...
+# Add to build_parser()
+p_status = sub.add_parser("status", help="Show pipeline status for all experiments")
+p_status.add_argument("--data-root", required=True)
+p_status.add_argument("--experiments", help="Comma-separated list (default: all)")
+p_status.add_argument("--verbose", action="store_true", help="Show detailed status")
 ```
 
-#### **Phase 3: Advanced Features (1-2 days)**
+### Step 2.2: Implement Status Handler
 
-**3.1 Resource-Aware Scheduling**
+In `cli.py`, add to main():
 ```python
-class ResourceAwareOrchestrator(CLIOrchestrator):
-    def optimize_workers(self, step: str) -> dict:
-        """Auto-select optimal worker counts based on resources"""
-        if step in ["build02", "sam2"] and self.manager.has_gpu:
-            return {"num_workers": self.manager.num_cpu_workers // 2}  # Share CPU with GPU
-        else:
-            return {"num_workers": self.manager.num_cpu_workers}
+elif args.cmd == "status":
+    from src.build.pipeline_objects import ExperimentManager
+    
+    manager = ExperimentManager(resolve_root(args))
+    
+    # Filter experiments if specified
+    if args.experiments:
+        exp_list = args.experiments.split(",")
+        experiments = {k: v for k, v in manager.experiments.items() if k in exp_list}
+    else:
+        experiments = manager.experiments
+    
+    print("\n" + "=" * 80)
+    print("MORPHSEQ PIPELINE STATUS REPORT")
+    print("=" * 80)
+    print(f"Data root: {resolve_root(args)}")
+    print(f"Total experiments: {len(experiments)}")
+    
+    # Per-experiment status
+    for date, exp in sorted(experiments.items()):
+  
+  elif args.cmd == "status":
+    from src.build.pipeline_objects import ExperimentManager
+    import traceback
+    
+    try:
+        manager = ExperimentManager(resolve_root(args))
+    except Exception as e:
+        print(f"ERROR: Failed to initialize ExperimentManager: {e}")
+        return 1
+    
+    # ... experiment filtering code ...
+    
+    # Per-experiment status with error handling
+    failed_experiments = []
+    for date, exp in sorted(experiments.items()):
+        try:
+            status_line = f"\n{date}: "
+            status_bits = []
             
-    def schedule_experiments(self, experiments: List[Experiment]) -> List[Experiment]:
-        """Sort experiments by resource requirements and data size"""
-        return sorted(experiments, key=lambda e: e.data_size, reverse=True)
-```
-
-**3.2 Progress Reporting**
-```python  
-def run_orchestrated_pipeline():
-    with ProgressReporter() as reporter:
-        for i, exp in enumerate(experiments):
-            reporter.update_experiment(i, len(experiments), exp.date)
-            
-            for step in pipeline_steps:
-                if exp.should_run_step(step):
-                    reporter.update_step(step, "running")
-                    exp.run_step(step)  
-                    reporter.update_step(step, "complete")
+            # Wrap each check in try-except
+            try:
+                if exp.flags.get("ff", False):
+                    status_bits.append("✅ FF")
                 else:
-                    reporter.update_step(step, "skipped")
-```
-
-**3.3 Pipeline Validation**
-```python
-def validate_pipeline_readiness(experiments: List[Experiment]) -> Dict[str, List[str]]:
-    """Check if experiments are ready for pipeline execution"""
-    issues = {"missing_inputs": [], "disk_space": [], "dependencies": []}
-    
-    for exp in experiments:
-        if not exp.raw_path or not exp.raw_path.exists():
-            issues["missing_inputs"].append(f"{exp.date}: Raw data not found")
+                    status_bits.append("❌ FF")
+            except Exception:
+                status_bits.append("⚠️ FF")
             
-        if not exp.meta_path or not exp.meta_path.exists():
-            issues["missing_inputs"].append(f"{exp.date}: Metadata not found") 
+            try:
+                if exp.has_all_qc_masks:
+                    status_bits.append("✅ QC")
+                else:
+                    status_bits.append("❌ QC")
+            except Exception:
+                status_bits.append("⚠️ QC")
+                
+            try:
+                if exp.sam2_csv_path.exists():
+                    status_bits.append("✅ SAM2")
+                else:
+                    status_bits.append("❌ SAM2")
+            except (PermissionError, OSError):
+                status_bits.append("⚠️ SAM2")
             
-        # Check disk space requirements
-        estimated_size = exp.estimate_pipeline_output_size()
-        if get_free_space(exp.data_root) < estimated_size:
-            issues["disk_space"].append(f"{exp.date}: Need {estimated_size}GB free space")
+            print(status_line + " | ".join(status_bits))
+            
+        except Exception as e:
+            print(f"\n{date}: ⚠️ ERROR - Could not check status")
+            failed_experiments.append((date, str(e)))
+            if args.verbose:
+                print(f"  Error details: {e}")
+                traceback.print_exc()
     
-    return issues
+    # Report failures at the end
+    if failed_experiments:
+        print(f"\n⚠️ Warning: {len(failed_experiments)} experiments had errors during status check")
+        if args.verbose:
+            for exp_date, error in failed_experiments:
+                print(f"  - {exp_date}: {error}")
 ```
 
-## Usage Examples
-
-### Current vs. Future Workflow
-
-**Current (Manual)**:
+### Step 2.3: Test Status Command
 ```bash
-# User must manually track experiments and run individually
-python -m src.run_morphseq_pipeline.cli build01 --exp exp1 --microscope keyence --data-root /data
-python -m src.run_morphseq_pipeline.cli build02 --data-root /data  
-python -m src.run_morphseq_pipeline.cli sam2 --exp exp1 --data-root /data
-python -m src.run_morphseq_pipeline.cli build03 --exp exp1 --data-root /data
-python -m src.run_morphseq_pipeline.cli build04 --data-root /data
-python -m src.run_morphseq_pipeline.cli build06 --morphseq-repo-root /repo --data-root /data --experiments exp1
-
-# Repeat for each experiment...
-```
-
-**Future (Orchestrated)**:
-```bash
-# Automatic discovery and batch processing
-python -m src.run_morphseq_pipeline.cli orchestrate --data-root /data --run-sam2 --train-name batch_20250906
-
-# Or resume an interrupted pipeline
-python -m src.run_morphseq_pipeline.cli orchestrate --data-root /data --resume
-
-# Or check status across all experiments  
+# Test on full dataset
 python -m src.run_morphseq_pipeline.cli status --data-root /data
+
+# Test on specific experiments
+python -m src.run_morphseq_pipeline.cli status --data-root /data --experiments exp1,exp2
+
+# Test verbose mode
+python -m src.run_morphseq_pipeline.cli status --data-root /data --verbose
 ```
 
-## Benefits
+### Step 2.4: Verification
+- Confirm status output matches manual inspection
+- Verify no data files are modified
+- Test with various experiment states (complete, partial, missing)
+- Commit as "feat: add status command (read-only)"
 
-### **For Users**
-- **Zero experiment tracking**: Automatic discovery and management
-- **Intelligent execution**: Only run steps when inputs have changed  
-- **Batch processing**: Process dozens of experiments with one command
-- **Resume capabilities**: Never lose progress from interruptions
-- **Resource optimization**: Automatic CPU/GPU worker selection
+## Phase 3: Enable Orchestration (Days 4-5)
+**Goal**: Use tracking to drive actual pipeline execution
 
-### **For Development**  
-- **Clean architecture**: Separation of orchestration from individual steps
-- **Extensible design**: Easy to add new pipeline steps
-- **State management**: Robust tracking of pipeline progress
-- **Error resilience**: Graceful handling of partial failures
-- **Testing friendly**: Mock orchestration for unit tests
+### Step 3.1: Add Step Execution Methods to Experiment
 
-### **For Operations**
-- **Progress visibility**: Clear status reporting across experiments
-- **Resource management**: Optimal utilization of compute resources  
-- **Error diagnosis**: Clear identification of failed steps and reasons
-- **Scalability**: Handle large experiment batches efficiently
+In `pipeline_objects.py`, add execution wrappers:
+```python
+# In Experiment class
+@record("sam2")
+def run_sam2(self, workers: int = 8, **kwargs):
+    """Execute SAM2 segmentation for this experiment"""
+    from ..run_morphseq_pipeline.steps.run_sam2 import run_sam2
+    print(f"🎯 Running SAM2 for {self.date}")
+    result = run_sam2(root=self.data_root, exp=self.date, workers=workers, **kwargs)
+    return result
 
-## Implementation Timeline
+@record("build03")
+def run_build03(self, by_embryo: int = None, frames_per_embryo: int = None, **kwargs):
+    """Execute Build03 for this experiment with SAM2/legacy detection"""
+    print(f"🔬 Running Build03 for {self.date}")
+    
+    # Import here to avoid circular dependencies
+    from ..run_morphseq_pipeline.steps.run_build03 import run_build03 as run_build03_step
+    
+    # Determine which path to use
+    sam2_csv = None
+    if self.sam2_csv_path.exists():
+        print(f"  Using SAM2 masks from {self.sam2_csv_path}")
+        sam2_csv = str(self.sam2_csv_path)
+    else:
+        print(f"  Using legacy Build02 masks")
+        # Check if legacy masks exist
+        if not self.has_all_qc_masks:
+            raise RuntimeError(f"No SAM2 CSV and missing QC masks for {self.date}")
+    
+    # Call the actual Build03 function with proper parameters
+    try:
+        result = run_build03_step(
+            root=str(self.data_root),
+            exp=self.date,
+            sam2_csv=sam2_csv,  # Will be None for legacy path
+            by_embryo=by_embryo,
+            frames_per_embryo=frames_per_embryo,
+            n_workers=kwargs.get('n_workers', self.num_cpu_workers),
+            df01_out=kwargs.get('df01_out', None)  # Use default if not specified
+        )
+        
+        # Update df01 contribution tracking
+        if result:
+            self.flags['contributed_to_df01'] = True
+            self.timestamps['last_df01_contribution'] = datetime.utcnow().isoformat()
+            
+        return result
+        
+    except Exception as e:
+        print(f"  ❌ Build03 failed: {e}")
+        raise
+Supporting Code in run_build03.py
+The run_build03 function needs to handle both paths:
+def run_build03(root: str, exp: str, sam2_csv: str = None, **kwargs):
+    """
+    Unified Build03 entry point that handles both SAM2 and legacy paths
+    """
+    root_path = Path(root)
+    
+    if sam2_csv:
+        # SAM2 path - use the CSV directly
+        print(f"Processing with SAM2 metadata: {sam2_csv}")
+        # Read SAM2 CSV and process
+        sam2_df = pd.read_csv(sam2_csv)
+        # ... process SAM2 data ...
+        
+    else:
+        # Legacy path - use Build02 masks
+        print(f"Processing with legacy Build02 masks")
+        from src.build.build03A_process_images import segment_wells, compile_embryo_stats
+        
+        tracked_df = segment_wells(root=root_path, exp_name=exp)
+        stats_df = compile_embryo_stats(root=root_path, tracked_df=tracked_df)
+        # ... continue with legacy processing ...
+    
+    # Common path - append to df01
+    df01_path = root_path / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
+    # ... append results to df01 ...
+    
+    return True
 
-### Week 1: Core Integration
-- **Day 1-2**: Extend `Experiment` class with SAM2/Build06 methods
-- **Day 3-4**: Create `CLIOrchestrator` wrapper class
-- **Day 5**: Add `--use-orchestration` mode to existing commands
 
-### Week 2: New Commands  
-- **Day 1-2**: Implement `status` and `discover` commands
-- **Day 3-5**: Implement powerful `orchestrate` command with dependency logic
+@record("latents")
+def generate_latents(self, model_name: str = "20241107_ds_sweep01_optimum", **kwargs):
+    """Generate latent embeddings for this experiment"""
+    from ..analyze.gen_embeddings import ensure_embeddings_for_experiments
+    print(f"🧬 Generating latents for {self.date}")
+    success = ensure_embeddings_for_experiments(
+        data_root=self.data_root,
+        experiments=[self.date],
+        model_name=model_name,
+        **kwargs
+    )
+    return success
+```
 
-### Week 3: Advanced Features
-- **Day 1-2**: Resource-aware scheduling and progress reporting
-- **Day 3**: Pipeline validation and error handling
-- **Day 4-5**: Testing and documentation
+### Step 3.2: Add Pipeline Command
 
-## Key Differences from Focused Plan
+In `cli.py`:
+```python
+# Add to build_parser()
+p_pipe = sub.add_parser("pipeline", help="Orchestrated pipeline execution")
+p_pipe.add_argument("--data-root", required=True)
+p_pipe.add_argument("action", choices=["e2e", "sam2", "build03", "build04", "build06"])
+p_pipe.add_argument("--experiments", help="Comma-separated list")
+p_pipe.add_argument("--later-than", type=int, help="Process after YYYYMMDD")
+p_pipe.add_argument("--force", action="store_true", help="Force rerun even if not needed")
+p_pipe.add_argument("--dry-run", action="store_true", help="Show what would run")
+# In cli.py - Add model-name argument to pipeline command
+p_pipe.add_argument("--model-name", 
+                    default="20241107_ds_sweep01_optimum",
+                    help="Model name for embedding generation")
 
-1. **More comprehensive orchestration**: Full `status`, `discover`, and `orchestrate` commands vs focused `pipeline` subcommand
-2. **Advanced features**: Resource-aware scheduling, progress reporting, pipeline validation
-3. **Enterprise focus**: Designed for large-scale batch processing with dozens of experiments
-4. **Gradual migration**: Opt-in orchestration features vs integrated approach
-5. **Extensive validation**: Pre-flight checks and error diagnosis capabilities
+# In the pipeline handler
+elif args.cmd == "pipeline":
+    model_name = args.model_name  # Get from CLI
+    
+    if args.action == "e2e":
+        for exp in selected:
+            # Pass model_name down to the methods
+            if args.force or not exp.has_latents(model_name):
+                if not args.dry_run:
+                    exp.generate_latents(model_name=model_name)
+                    
+    # Also need to pass to Build06 final
+    if manager.needs_build06:
+        # Call build06 with model_name parameter
+        run_build06(..., model_name=model_name)
 
-This comprehensive approach provides enterprise-grade pipeline orchestration capabilities while maintaining backward compatibility with existing workflows.
+# In main()
+elif args.cmd == "pipeline":
+    from src.build.pipeline_objects import ExperimentManager
+    
+    manager = ExperimentManager(resolve_root(args))
+    
+    # Select experiments
+    if args.experiments:
+        exp_list = args.experiments.split(",")
+        selected = [manager.experiments[e] for e in exp_list if e in manager.experiments]
+    elif args.later_than:
+        selected = [e for e in manager.experiments.values() 
+                   if int(e.date[:8]) > args.later_than]
+    else:
+        selected = list(manager.experiments.values())
+    
+    if args.dry_run:
+        print("DRY RUN - No changes will be made")
+    
+    if args.action == "e2e":
+        # Full pipeline for selected experiments
+        for exp in selected:
+            print(f"\n{'='*60}")
+            print(f"Processing {exp.date}")
+            
+            # Per-experiment steps
+            if args.force or exp.needs_sam2:
+                if not args.dry_run:
+                    exp.run_sam2()
+                else:
+                    print(f"  Would run SAM2")
+                    
+            if args.force or exp.needs_build03:
+                if not args.dry_run:
+                    exp.run_build03()
+                else:
+                    print(f"  Would run Build03")
+                    
+            if args.force or not exp.has_latents():
+                if not args.dry_run:
+                    exp.generate_latents()
+                else:
+                    print(f"  Would generate latents")
+        
+        # Global steps (after all experiments processed)
+        if args.force or manager.needs_build04:
+            if not args.dry_run:
+                print("\n🔄 Running Build04 (global)")
+                # Call build04 function
+            else:
+                print("\nWould run Build04 (global)")
+                
+        if args.force or manager.needs_build06_final:
+            if not args.dry_run:
+                print("\n🔄 Running Build06 final (global)")
+                # Call build06 function
+            else:
+                print("\nWould run Build06 final (global)")
+```
+
+### Step 3.3: Progressive Testing
+
+1. **Dry run first** (no actual execution):
+   ```bash
+   python -m src.run_morphseq_pipeline.cli pipeline --data-root /data e2e --dry-run --experiments test_exp
+   ```
+
+2. **Single experiment test**:
+   ```bash
+   python -m src.run_morphseq_pipeline.cli pipeline --data-root /data e2e --experiments small_test_exp
+   ```
+
+3. **Small batch test**:
+   ```bash
+   python -m src.run_morphseq_pipeline.cli pipeline --data-root /data e2e --later-than 20250901
+   ```
+
+4. **Verify with status**:
+   ```bash
+   python -m src.run_morphseq_pipeline.cli status --data-root /data --experiments small_test_exp
+   ```
+# Use default model
+python -m src.run_morphseq_pipeline.cli pipeline --data-root /data e2e
+
+# Use different model
+python -m src.run_morphseq_pipeline.cli pipeline --data-root /data e2e --model-name new_model_v2
+
+### Step 3.4: Validation Points
+
+After each test:
+- Check that only needed steps ran (via logs)
+- Verify state files updated correctly
+- Confirm output files created where expected
+- Run status command to see updated state
+- Test resume capability by interrupting and rerunning
+
+## Safety Measures Throughout
+
+1. **All changes are additive** - existing CLI commands remain unchanged
+2. **Dry-run capability** at every phase
+3. **Progressive rollout** - start with read-only, then single experiments
+4. **State verification** after each phase via status command
+5. **Easy rollback** - can always fall back to original CLI commands
+
+This phased approach ensures that the tracking logic is thoroughly tested before it drives any actual processing, minimizing risk while delivering the core orchestration benefits.
