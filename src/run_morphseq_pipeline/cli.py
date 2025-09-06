@@ -18,6 +18,7 @@ import argparse
 import os
 from pathlib import Path
 import sys
+import json
 
 from .steps.run_build03 import run_build03
 from .steps.run_build04 import run_build04
@@ -219,6 +220,15 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Write training metadata with embeddings")
     p06.add_argument("--dry-run", action="store_true",
                      help="Print planned actions without executing")
+
+    # status (read-only tracking view)
+    p_status = sub.add_parser("status", help="Show pipeline status for experiments and global files")
+    p_status.add_argument("--data-root", required=True)
+    p_status.add_argument("--experiments", help="Comma-separated experiment IDs to show (default: all)")
+    p_status.add_argument("--verbose", action="store_true", help="Show detailed status (e.g., QC 3/5)")
+    p_status.add_argument("--format", choices=["table", "json"], default="table", help="Output format")
+    p_status.add_argument("--model-name", default="20241107_ds_sweep01_optimum",
+                          help="Model name for latent check (default: 20241107_ds_sweep01_optimum)")
 
     return p
 
@@ -495,6 +505,91 @@ def main(argv: list[str] | None = None) -> int:
             overwrite=args.overwrite,
             dry_run=args.dry_run,
         )
+
+    elif args.cmd == "status":
+        # Lazy import to avoid heavy imports for other commands
+        try:
+            from src.build.pipeline_objects import ExperimentManager
+        except Exception as e:
+            print(f"ERROR: Failed to import ExperimentManager: {e}")
+            return 1
+
+        root = resolve_root(args)
+        try:
+            manager = ExperimentManager(root)
+        except Exception as e:
+            print(f"ERROR: Failed to initialize ExperimentManager: {e}")
+            return 1
+
+        # Filter experiments, if requested
+        if args.experiments:
+            allow = {e.strip() for e in args.experiments.split(',') if e.strip()}
+            exps = {k: v for k, v in manager.experiments.items() if k in allow}
+        else:
+            exps = manager.experiments
+
+        # Assemble status data
+        model_name = args.model_name
+        data = {
+            "root": root,
+            "global": {
+                "df01_exists": manager.df01_path.exists(),
+                "df02_exists": manager.df02_path.exists(),
+                "df03_exists": manager.df03_path.exists(),
+                "needs_build04": manager.needs_build04,
+                "needs_build06": manager.needs_build06,
+                "df01_path": str(manager.df01_path),
+                "df02_path": str(manager.df02_path),
+                "df03_path": str(manager.df03_path),
+            },
+            "experiments": {}
+        }
+
+        for date, exp in sorted(exps.items()):
+            # Each field in try/except to keep reporting robust
+            def safe(fn, fallback=None):
+                try:
+                    return fn()
+                except Exception:
+                    return fallback
+
+            qc_present, qc_total = safe(exp.qc_mask_status, (0, 5))
+            status = {
+                "microscope": safe(lambda: exp.microscope, None),
+                "ff": bool(exp.flags.get("ff", False)),
+                "qc_all": qc_present == qc_total and qc_total > 0,
+                "qc_present": qc_present,
+                "qc_total": qc_total,
+                "sam2_csv": safe(lambda: exp.sam2_csv_path.exists(), False),
+                "needs_build03": safe(lambda: exp.needs_build03, False),
+                "has_latents": safe(lambda: exp.has_latents(model_name), False),
+            }
+            data["experiments"][date] = status
+
+        if args.format == "json":
+            print(json.dumps(data, indent=2))
+        else:
+            # Human readable table-ish view
+            print("\n" + "=" * 80)
+            print("MORPHSEQ PIPELINE STATUS REPORT")
+            print("=" * 80)
+            print(f"Data root: {root}")
+            g = data["global"]
+            print(f"Global: df01={g['df01_exists']} df02={g['df02_exists']} df03={g['df03_exists']} | "
+                  f"needs_build04={g['needs_build04']} needs_build06={g['needs_build06']}")
+
+            for date, st in data["experiments"].items():
+                bits = []
+                bits.append("FF✅" if st["ff"] else "FF❌")
+                if args.verbose:
+                    bits.append(f"QC {st['qc_present']}/{st['qc_total']}")
+                else:
+                    bits.append("QC✅" if st["qc_all"] else "QC❌")
+                bits.append("SAM2✅" if st["sam2_csv"] else "SAM2❌")
+                bits.append("B03🔁" if st["needs_build03"] else "B03✔️")
+                bits.append("LAT✅" if st["has_latents"] else "LAT❌")
+                mic = st["microscope"] or "?"
+                print(f"{date} [{mic}]: " + " ".join(bits))
 
     return 0
 
