@@ -94,3 +94,7 @@ test_data/
 
 
 morphseq_playground/
+
+# Ignore log directories
+logs/
+log/

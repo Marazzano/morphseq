@@ -1,16 +1,49 @@
 #!/usr/bin/env python3
 """
-Centralized MorphSeq pipeline runner.
+MorphSeq Pipeline CLI: Intelligent Experiment Management and Orchestration
 
-Usage examples:
-    python -m src.run_morphseq_pipeline.cli build03 --data-root /data/morphseq --exp 20250612_30hpf_ctrl_atf6 \
-        --sam2-csv /data/morphseq/sam2_metadata_20250612_30hpf_ctrl_atf6.csv --by-embryo 5 --frames-per-embryo 3
+This CLI provides comprehensive control over MorphSeq experiments with intelligent
+tracking, dependency management, and automated orchestration capabilities.
 
-    python -m src.run_morphseq_pipeline.cli build04 --data-root /data/morphseq
-    python -m src.run_morphseq_pipeline.cli build05 --data-root /data/morphseq --train-name train_ff_20250612
+Key Commands:
+=============
 
-Build01/02 orchestration is provided via thin wrappers to existing build scripts.
-SAM2 segmentation is now integrated as a first-class CLI citizen with the 'sam2' subcommand.
+Individual Steps:
+    build01     Raw data → FF images + metadata
+    build02     FF images → QC masks (legacy segmentation)  
+    sam2        FF images → SAM2 segmentation (modern)
+    build03     Segmentation → embryo processing → df01
+    build04     df01 → global QC + staging → df02
+    build06     df02 + latents → final dataset → df03
+
+Orchestration:
+    pipeline    Intelligent multi-step execution with dependency tracking
+    status      View pipeline status across all experiments
+
+Intelligence Features:
+=====================
+✓ **Smart Execution**: Only runs steps that are actually needed
+✓ **Resume Support**: Automatically resumes interrupted pipelines  
+✓ **Duplicate Prevention**: Avoids reprocessing existing data
+✓ **Dependency Tracking**: Ensures correct execution order
+✓ **Progress Visibility**: Clear status reporting at each step
+
+Pipeline Flow:
+=============
+Per-experiment: Raw → FF → [QC|SAM2] → Build03 → Latents
+                              ↓
+Global: df01 → Build04 → df02 → Build06 → df03
+
+Examples:
+========
+# View pipeline status
+python -m src.run_morphseq_pipeline.cli status --data-root /data
+
+# Run full end-to-end pipeline  
+python -m src.run_morphseq_pipeline.cli pipeline e2e --data-root /data
+
+# Run specific steps only
+python -m src.run_morphseq_pipeline.cli pipeline sam2 --data-root /data --experiments exp1,exp2
 """
 
 from __future__ import annotations
@@ -98,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Number of parallel workers (default: 8)")
     p_sam2.add_argument("--batch", action="store_true",
                        help="Batch mode: process all experiments in data-root (ignores --exp)")
+    p_sam2.add_argument("--verbose", action="store_true", help="Stream SAM2 subprocess output live")
 
     # build03
     p03 = sub.add_parser("build03", help="Build03A using SAM2 bridge CSV or legacy tracked metadata")
@@ -157,6 +191,7 @@ def build_parser() -> argparse.ArgumentParser:
                      help="SAM2 detection prompt (default: 'individual embryo')")
     pe2e.add_argument("--sam2-workers", type=int, default=8,
                      help="SAM2 parallel workers (default: 8)")
+    pe2e.add_argument("--sam2-verbose", action="store_true", help="Stream SAM2 subprocess output live")
     
     # Build01 parameters (only used if not --skip-build01)
     pe2e.add_argument("--microscope", choices= MISCROSCOPE_CHOICES, 
@@ -209,8 +244,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Generate missing latent files [REDUNDANT with --process-missing, kept for CLI standardization]")
     p06.add_argument("--py39-env", default="/net/trapnell/vol1/home/nlammers/micromamba/envs/vae-env-cluster",
                      help="Python 3.9 environment path for legacy model compatibility")
-    p06.add_argument("--overwrite", action="store_true",
-                     help="Force reprocess - REQUIRES --experiments specification (use 'all' for everything)")
+    p06.add_argument("--overwrite-latents", action="store_true",
+                     help="Force regeneration of latent embeddings for specified experiments (or 'all')")
     
     # Optional outputs
     p06.add_argument("--export-analysis-copies", action="store_true",
@@ -275,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
                 confidence_threshold=args.confidence_threshold,
                 iou_threshold=args.iou_threshold,
                 target_prompt=args.target_prompt,
-                workers=args.workers
+                workers=args.workers,
+                verbose=args.verbose
             )
             print(f"✅ Batch SAM2 completed: {len(results)} experiments processed")
         else:
@@ -289,7 +325,8 @@ def main(argv: list[str] | None = None) -> int:
                 confidence_threshold=args.confidence_threshold,
                 iou_threshold=args.iou_threshold,
                 target_prompt=args.target_prompt,
-                workers=args.workers
+                workers=args.workers,
+                verbose=args.verbose
             )
             print(f"✅ SAM2 completed: {csv_path}")
 
@@ -498,7 +535,7 @@ def main(argv: list[str] | None = None) -> int:
                     experiments=exp_list,
                     model_name=args.model_name,
                     py39_env_path=args.py39_env,
-                    overwrite=args.overwrite,
+                    overwrite=args.overwrite_latents,
                     process_missing=args.process_missing,
                     verbose=False
                 )
@@ -517,10 +554,11 @@ def main(argv: list[str] | None = None) -> int:
             model_name=args.model_name,
             experiments=experiments,
             generate_missing=args.generate_missing_latents,
+            overwrite_latents=args.overwrite_latents,
             export_analysis=args.export_analysis_copies,
             train_name=args.train_run,
             write_train_output=args.write_train_output,
-            overwrite=args.overwrite,
+            overwrite=False,
             dry_run=args.dry_run,
         )
 
@@ -628,9 +666,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.experiments:
             exp_list = [e.strip() for e in args.experiments.split(',') if e.strip()]
             selected = [manager.experiments[e] for e in exp_list if e in manager.experiments]
-            if len(selected) != len(exp_list):
-                missing = [e for e in exp_list if e not in manager.experiments]
-                print(f"WARNING: Missing experiments: {missing}")
+            missing = [e for e in exp_list if e not in manager.experiments]
+            if missing:
+                print(f"ℹ️ Experiments not found in raw data: {missing}")
         elif args.later_than:
             selected = []
             for exp in manager.experiments.values():
@@ -667,17 +705,88 @@ def main(argv: list[str] | None = None) -> int:
                 print("  📋 Pipeline Steps:")
                 
                 # Step 1: Raw data (Build01)
-                if exp.flags.get("ff", False):
-                    print("    1️⃣ ✅ Raw data → FF images (Build01)")
-                else:
-                    print("    1️⃣ ❌ Raw data → FF images (Build01) - Missing")
+                # Be explicit about what's present vs. built to avoid confusion.
+                try:
+                    raw_present = bool(getattr(exp, "raw_path", None))
+                except Exception:
+                    raw_present = False
+                try:
+                    # Consider either the explicit flag or the existence of the FF output folder
+                    ff_present = bool(exp.flags.get("ff", False)) or bool(getattr(exp, "ff_path", None))
+                except Exception:
+                    ff_present = False
+                try:
+                    stitch_done = bool(exp.flags.get("stitch", False))
+                except Exception:
+                    stitch_done = False
+
+                parts = [
+                    f"RAW {'✅' if raw_present else '❌'}",
+                    f"FF {'✅' if ff_present else '❌'}",
+                ]
+                # Only show stitch state when relevant (Keyence data) or when flag exists
+                # STITCH is a Keyence-only step; show only for Keyence
+                try:
+                    if getattr(exp, "microscope", None) == "Keyence":
+                        parts.append(f"STITCH (Keyence only) {'✅' if stitch_done else '❌'}")
+                except Exception:
+                    pass
+
+                print("    1️⃣ " + " | ".join(parts) + " (Build01)")
+
+                # Auto-run Build01 if RAW is present but FF/STITCH outputs are missing
+                # This unblocks downstream SAM2 which requires stitched images.
+                try:
+                    need_build01 = raw_present and (not ff_present)
+                    # For Keyence specifically, also require stitch flag/output; if missing, we still run Build01
+                    mic = getattr(exp, "microscope", None)
+                except Exception:
+                    need_build01 = False
+                    mic = None
+
+                if need_build01:
+                    if args.dry_run:
+                        print(f"       ↳ 🔄 Build01 would run (microscope={mic or '?'})")
+                    else:
+                        if not mic:
+                            print("       ↳ ❌ Cannot run Build01: microscope not detected from raw layout")
+                        else:
+                            try:
+                                # Use ExperimentManager orchestration for Build01
+                                print(f"       ↳ 🔄 Running Build01 via manager (microscope={mic})...")
+                                manager.export_experiments(experiments=[exp.date])
+                                # Refresh status after build
+                                exp._sync_with_disk()
+                            except Exception as e:
+                                print(f"       ↳ ❌ Build01 failed: {e}")
                 
-                # Step 2: QC Masks (Build02) 
+                # Step 2: QC Masks (Build02)
                 qc_present, qc_total = exp.qc_mask_status()
-                if qc_present == qc_total and qc_total > 0:
-                    print(f"    2️⃣ ✅ QC mask generation (Build02) - {qc_present}/{qc_total}")
-                else:
+                need_build02 = (qc_total > 0 and qc_present < qc_total)
+                if not need_build02 and qc_total == 0:
+                    # If we couldn't enumerate expected outputs, use needs_segment as a fallback
+                    try:
+                        need_build02 = exp.needs_segment
+                    except Exception:
+                        need_build02 = False
+
+                if need_build02:
                     print(f"    2️⃣ ❌ QC mask generation (Build02) - {qc_present}/{qc_total}")
+                    # Run Build02 via manager
+                    if args.dry_run:
+                        print("       ↳ 🔄 Build02 would run (5 UNets)")
+                    else:
+                        try:
+                            print("       ↳ 🔄 Running Build02 via manager (5 UNets)...")
+                            manager.segment_experiments(experiments=[exp.date])
+                            exp._sync_with_disk()
+                            # Refresh QC status after run
+                            qc_present, qc_total = exp.qc_mask_status()
+                            print(f"       ↳ ✅ Build02 complete - {qc_present}/{qc_total}")
+                        except Exception as e:
+                            print(f"       ↳ ❌ Build02 failed: {e}")
+                else:
+                    print(f"    2️⃣ ✅ QC mask generation (Build02) - {qc_present}/{qc_total}")
                 
                 # Step 3: SAM2 segmentation
                 if args.force or exp.needs_sam2:
@@ -688,15 +797,26 @@ def main(argv: list[str] | None = None) -> int:
                         exp.run_sam2(
                             workers=args.sam2_workers,
                             confidence_threshold=args.sam2_confidence,
-                            iou_threshold=args.sam2_iou
+                            iou_threshold=args.sam2_iou,
+                            verbose=args.sam2_verbose
                         )
                 else:
                     print("    3️⃣ ✅ SAM2 segmentation complete")
                 
                 # Step 4: Build03 (embryo processing)
-                if args.force or exp.needs_build03:
+                try:
+                    in_df01 = exp.is_in_df01()
+                except Exception:
+                    in_df01 = False
+                try:
+                    in_df02 = exp.is_in_df02()
+                except Exception:
+                    in_df02 = False
+                if args.force or exp.needs_build03 or not in_df01:
                     if args.dry_run:
-                        print("    4️⃣ 🔄 Embryo processing (Build03) - would run")
+                        # Show whether df01/df02 currently contain this experiment
+                        tag = f"df01={'yes' if in_df01 else 'no'}, df02={'yes' if in_df02 else 'no'}"
+                        print(f"    4️⃣ 🔄 Embryo processing (Build03) - would run ({tag})")
                     else:
                         print("    4️⃣ 🔄 Running embryo processing (Build03)...")
                         exp.run_build03(
@@ -704,7 +824,7 @@ def main(argv: list[str] | None = None) -> int:
                             frames_per_embryo=args.frames_per_embryo
                         )
                 else:
-                    print("    4️⃣ ✅ Embryo processing (Build03) complete")
+                    print("    4️⃣ ✅ Embryo processing (Build03) complete (df01/df02 present)")
                 
                 # Step 5: Latent embeddings
                 if args.force or not exp.has_latents(args.model_name):
@@ -716,21 +836,58 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     print("    5️⃣ ✅ Latent embeddings exist")
             
+            # Show pipeline steps for missing experiments (not in raw data)
+            if args.experiments and missing:
+                for exp_name in missing:
+                    print(f"\n{'='*40}")
+                    print(f"Processing {exp_name}")
+                    print(f"{'='*40}")
+                    print("  ⚠️ Experiment not detected in raw data")
+                    print("  📋 Required Pipeline Steps:")
+                    print("    1️⃣ ❌ Raw data → FF images (Build01) - Need raw data")
+                    print("    2️⃣ ❌ QC mask generation (Build02) - Need FF images")
+                    print("    3️⃣ ❌ SAM2 segmentation - Need FF images")
+                    print("    4️⃣ ❌ Embryo processing (Build03) - Need segmentation")
+                    print("    5️⃣ ❌ Latent embeddings - Need Build03 output")
+            
             # Global steps after all experiments
             print(f"\n{'='*40}")
             print("Global Pipeline Steps")
             print(f"{'='*40}")
             print("  📋 Global Steps:")
+            # Clarify scope to avoid confusion with per-experiment status
+            print("  ℹ️ Global steps are aggregate across ALL experiments.")
+            print("     They may show complete even if THIS experiment isn't yet in df01/df02.")
+            
+            # Build simple reasons for freshness decisions
+            try:
+                from pathlib import Path as _P
+                _df01 = _P(root) / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
+                _df02 = _P(root) / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
+                _df03 = _P(root) / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
+                def _freshness_reason(inp, out):
+                    if not inp.exists():
+                        return "input missing"
+                    if not out.exists():
+                        return "output missing"
+                    try:
+                        return "input newer" if inp.stat().st_mtime > out.stat().st_mtime else "input older/equal"
+                    except Exception:
+                        return "unknown"
+                b04_reason = _freshness_reason(_df01, _df02)
+                b06_reason = _freshness_reason(_df02, _df03)
+            except Exception:
+                b04_reason = b06_reason = "unknown"
             
             # Step 6: Build04 (df01 → df02 QC)
             if args.force or manager.needs_build04:
                 if args.dry_run:
-                    print("    6️⃣ 🔄 Global QC & staging (Build04: df01→df02) - would run")
+                    print(f"    6️⃣ 🔄 Global QC & staging (Build04: df01→df02) - would run (reason: {b04_reason})")
                 else:
                     print("    6️⃣ 🔄 Running global QC & staging (Build04: df01→df02)...")
                     manager.run_build04()
             else:
-                print("    6️⃣ ✅ Global QC & staging (Build04: df01→df02) complete")
+                print(f"    6️⃣ ✅ Global QC & staging (Build04: df01→df02) complete (reason: {b04_reason})")
                 
             # Step 7: Build06 (df02 + latents → df03)
             if args.force or manager.needs_build06:
@@ -742,7 +899,7 @@ def main(argv: list[str] | None = None) -> int:
                 
                 if args.dry_run:
                     if experiments_needing_merge:
-                        print(f"    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run")
+                        print(f"    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run (reason: {b06_reason})")
                         print(f"        📋 Experiments needing merge: {len(experiments_needing_merge)}")
                         if args.verbose:
                             for exp_date in experiments_needing_merge[:3]:  # Show first 3
@@ -750,14 +907,16 @@ def main(argv: list[str] | None = None) -> int:
                             if len(experiments_needing_merge) > 3:
                                 print(f"            • ... and {len(experiments_needing_merge) - 3} more")
                     else:
-                        print("    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run (other experiments)")
+                        print(f"    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run (other experiments; reason: {b06_reason})")
                 else:
                     print("    7️⃣ 🔄 Running final merge (Build06: df02+latents→df03)...")
                     if experiments_needing_merge:
                         print(f"        📋 {len(experiments_needing_merge)} experiments need merging")
-                    manager.run_build06(model_name=args.model_name)
+                        manager.run_build06(model_name=args.model_name, experiments=experiments_needing_merge)
+                    else:
+                        manager.run_build06(model_name=args.model_name)
             else:
-                print("    7️⃣ ✅ Final merge (Build06: df02+latents→df03) complete")
+                print(f"    7️⃣ ✅ Final merge (Build06: df02+latents→df03) complete (reason: {b06_reason})")
 
         elif args.action == "sam2":
             for exp in selected:

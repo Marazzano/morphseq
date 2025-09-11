@@ -212,6 +212,7 @@ def ensure_latents_for_experiments(
     model_name: str,
     experiments: List[str],
     generate_missing: bool = False,
+    overwrite: bool = False,
     repo_root: Optional[Union[str, Path]] = None,
     logger: Optional[logging.Logger] = None
 ) -> Dict[str, Path]:
@@ -247,7 +248,7 @@ def ensure_latents_for_experiments(
     for exp in experiments:
         latent_path = latent_dir / f"morph_latents_{exp}.csv"
         
-        if latent_path.exists():
+        if latent_path.exists() and not overwrite:
             # Check if latents are up-to-date with available snips
             needs_regeneration = False
             
@@ -293,8 +294,12 @@ def ensure_latents_for_experiments(
             missing_experiments.append(exp)
             logger.info(f"Need to generate latents for {exp}: {latent_path}")
     
+    if overwrite:
+        # Force regeneration for all requested experiments
+        missing_experiments = experiments
+    
     if missing_experiments:
-        if generate_missing:
+        if generate_missing or overwrite:
             logger.info(f"🤖 Generating embeddings for {len(missing_experiments)} experiments using legacy model")
             
             # Lazy import to avoid heavy dependency chain
@@ -701,6 +706,7 @@ def build_df03_with_embeddings(
     latents_tag: Optional[str] = None,
     experiments: Optional[List[str]] = None,
     generate_missing: bool = False,
+    overwrite_latents: bool = False,
     use_repo_snips: bool = False,
     export_analysis: bool = False,
     train_name: Optional[str] = None,
@@ -786,28 +792,24 @@ def build_df03_with_embeddings(
     # 1.3) Determine df03 path for incremental processing
     df03_path = data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
     
-    # 1.4) Detect which experiments need processing (incremental logic)
-    if not overwrite:
-        logger.info("🔄 Detecting missing experiments (incremental mode)")
-        experiments_to_process = detect_missing_experiments(df02_path, df03_path, experiments, logger)
-        
-        if not experiments_to_process:
-            logger.info("✅ All target experiments already processed - nothing to do!")
-            if df03_path.exists():
-                return df03_path
-            else:
-                logger.warning("No df03 exists but no experiments to process - this shouldn't happen")
-                experiments_to_process = experiments or []
-    else:
-        # Overwrite mode - process specified experiments or all available
+    # 1.4) Decide which experiments to process for df03 merge
+    # If caller provides an explicit experiment list, treat it as a re-merge list
+    # regardless of df03 membership (used when latents are newer than df03).
+    if experiments is not None:
         if experiments == "all":
             experiments_to_process = df02['experiment_date'].dropna().unique().tolist()
-            logger.info(f"⚠️  OVERWRITE ALL mode - processing {len(experiments_to_process)} experiments")
-        elif experiments:
-            experiments_to_process = experiments
-            logger.info(f"⚠️  OVERWRITE mode - processing {len(experiments_to_process)} specified experiments")
+            logger.info(f"🎯 Explicit ALL experiments requested - processing {len(experiments_to_process)} experiments")
         else:
-            raise ValueError("Overwrite mode requires explicit experiment specification")
+            experiments_to_process = list(experiments)
+            logger.info(f"🎯 Explicit re-merge for {len(experiments_to_process)} experiment(s)")
+    else:
+        # Incremental mode: process experiments missing from df03
+        logger.info("🔄 Detecting missing experiments (incremental mode)")
+        experiments_to_process = detect_missing_experiments(df02_path, df03_path, None, logger)
+        if not experiments_to_process:
+            # Nothing to merge; keep existing df03
+            logger.info("✅ All experiments already present in df03 - nothing to do")
+            return df03_path if df03_path.exists() else df02_path
     
     logger.info(f"🎯 Final processing list: {len(experiments_to_process)} experiments")
     if experiments_to_process:
@@ -820,6 +822,7 @@ def build_df03_with_embeddings(
         if experiments_to_process:
             logger.info(f"📋 Experiment list: {sorted(experiments_to_process)}")
         logger.info(f"🤖 Generate missing latents: {generate_missing}")
+        logger.info(f"🧨 Overwrite latents: {overwrite_latents}")
         logger.info(f"📂 Use repo snips: {use_repo_snips}")
         logger.info(f"📤 Export analysis copies: {export_analysis}")
         logger.info(f"🎓 Write training output: {write_train_output}")
@@ -839,7 +842,7 @@ def build_df03_with_embeddings(
     latents_dir_name = latents_tag or model_name
     try:
         latent_paths = ensure_latents_for_experiments(
-            data_root, latents_dir_name, experiments_to_process, False, root, logger
+            data_root, latents_dir_name, experiments_to_process, False, overwrite_latents, root, logger
         )
     except FileNotFoundError:
         # Missing are expected in first pass; we'll generate below if requested
@@ -847,16 +850,16 @@ def build_df03_with_embeddings(
 
     # Generate missing if requested
     missing = [exp for exp in experiments_to_process if exp not in latent_paths]
-    if missing and generate_missing:
+    if missing and (generate_missing or overwrite_latents):
         if use_repo_snips:
             logger.info("Generating missing latents from repo snips (SAM2-aligned)")
             generate_latents_with_repo_images(root, data_root, model_name, latents_dir_name, missing, logger)
         else:
             # Use standard generator, which writes under the given model_name (latents_dir_name)
-            _ = ensure_latents_for_experiments(data_root, latents_dir_name, missing, True, root, logger)
+            _ = ensure_latents_for_experiments(data_root, latents_dir_name, missing, True, overwrite_latents, root, logger)
         # Reload paths after generation
         latent_paths = ensure_latents_for_experiments(
-            data_root, latents_dir_name, experiments_to_process, False, root, logger
+            data_root, latents_dir_name, experiments_to_process, False, False, root, logger
         )
     
     # 4) Load and combine all embeddings
@@ -864,7 +867,9 @@ def build_df03_with_embeddings(
     latents_df = load_latents(latent_paths, logger)
     
     # 5) Merge with quality-filtered df02 to create df03
-    df03_path = merge_df02_with_embeddings(data_root, latents_df, df02_filtered=df02, overwrite=overwrite, logger=logger)
+    # Overwrite df03 if we have experiments to process (re-merge) or if overwrite=True
+    allow_overwrite = overwrite or bool(experiments_to_process)
+    df03_path = merge_df02_with_embeddings(data_root, latents_df, df02_filtered=df02, overwrite=allow_overwrite, logger=logger)
     
     # 6) Optional training output
     if write_train_output and train_name:

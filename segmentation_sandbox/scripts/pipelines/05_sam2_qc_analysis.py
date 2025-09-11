@@ -47,6 +47,28 @@ def decode_segmentation_mask(segmentation: Dict) -> np.ndarray:
     else:
         raise ValueError(f"Unsupported segmentation format: {fmt}")
 
+def _embryo_segmentation_format(embryo_data: dict) -> Optional[str]:
+    """Return segmentation format from embryo data or embedded segmentation dict.
+
+    Falls back to segmentation["format"] if embryo-level 'segmentation_format' is missing.
+    """
+    fmt = embryo_data.get("segmentation_format")
+    if fmt in ("rle", "rle_base64"):
+        return fmt
+    seg = embryo_data.get("segmentation")
+    if isinstance(seg, dict):
+        fmt2 = seg.get("format")
+        if fmt2 in ("rle", "rle_base64"):
+            return fmt2
+    return None
+
+def _has_decodable_segmentation(embryo_data: dict) -> bool:
+    seg = embryo_data.get("segmentation")
+    if not seg:
+        return False
+    fmt = _embryo_segmentation_format(embryo_data)
+    return fmt in ("rle", "rle_base64")
+
 def ensure_json_serializable(obj):
     """
     Recursively convert numpy types and other non-serializable objects to JSON-safe types.
@@ -484,8 +506,7 @@ class GSAMQualityControl(BaseFileHandler):
                         area = embryo_data.get("area")
                         if area is None:
                             segmentation = embryo_data.get("segmentation")
-                            segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                            if segmentation and segmentation_format in ["rle", "rle_base64"]:
+                            if _has_decodable_segmentation(embryo_data):
                                 try:
                                     mask = decode_segmentation_mask(segmentation)
                                     area = float(np.sum(mask))
@@ -542,8 +563,7 @@ class GSAMQualityControl(BaseFileHandler):
                         current_area = embryo_data.get("area")
                         if current_area is None:
                             segmentation = embryo_data.get("segmentation")
-                            segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                            if segmentation and segmentation_format in ["rle", "rle_base64"]:
+                            if _has_decodable_segmentation(embryo_data):
                                 try:
                                     mask = decode_segmentation_mask(segmentation)
                                     current_area = float(np.sum(mask))
@@ -638,9 +658,8 @@ class GSAMQualityControl(BaseFileHandler):
                             continue
                         
                         segmentation = embryo_data.get("segmentation")
-                        segmentation_format = embryo_data.get("segmentation_format", "unknown")
                         
-                        if segmentation and segmentation_format in ["rle", "rle_base64"]:
+                        if _has_decodable_segmentation(embryo_data):
                             try:
                                 mask = decode_segmentation_mask(segmentation)
                                 height, width = mask.shape
@@ -771,11 +790,8 @@ class GSAMQualityControl(BaseFileHandler):
                             
                             seg1 = embryo_data1.get("segmentation")
                             seg2 = embryo_data2.get("segmentation")
-                            format1 = embryo_data1.get("segmentation_format", "unknown")
-                            format2 = embryo_data2.get("segmentation_format", "unknown")
                             
-                            if (seg1 and seg2 and 
-                                format1 in ["rle", "rle_base64"] and format2 in ["rle", "rle_base64"]):
+                            if _has_decodable_segmentation(embryo_data1) and _has_decodable_segmentation(embryo_data2):
                                 try:
                                     mask1 = decode_segmentation_mask(seg1)
                                     mask2 = decode_segmentation_mask(seg2)
@@ -915,8 +931,7 @@ class GSAMQualityControl(BaseFileHandler):
                             continue
                         
                         segmentation = embryo_data.get("segmentation")
-                        segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                        if segmentation and segmentation_format in ["rle", "rle_base64"]:
+                        if _has_decodable_segmentation(embryo_data):
                             try:
                                 mask = decode_segmentation_mask(segmentation)
                                 mask_area = np.sum(mask)
@@ -986,8 +1001,7 @@ class GSAMQualityControl(BaseFileHandler):
                             continue
                         
                         segmentation = embryo_data.get("segmentation")
-                        segmentation_format = embryo_data.get("segmentation_format", "unknown")
-                        if segmentation and segmentation_format in ["rle", "rle_base64"]:
+                        if _has_decodable_segmentation(embryo_data):
                             try:
                                 mask = decode_segmentation_mask(segmentation)
                                 labeled_mask = label(mask)
@@ -1376,6 +1390,18 @@ Examples:
             progress=args.progress and not args.no_progress
         )
         
+        # Warn early if there is nothing to process in incremental mode
+        if not args.process_all:
+            total_new = (
+                len(qc.new_experiment_ids)
+                + len(qc.new_video_ids)
+                + len(qc.new_image_ids)
+                + len(qc.new_snip_ids)
+            )
+            if total_new == 0 and args.verbose:
+                print("⚠️  No new entities to process (incremental mode).")
+                print("   Tip: use --process-all or specify --experiments to force reprocessing.")
+        
         # Prepare target entities (if specified)
         target_entities = None
         if any([args.experiments, args.videos, args.images, args.snips]):
@@ -1409,6 +1435,16 @@ Examples:
 
         # Print summary
         qc.print_summary()
+        
+        # Warn if this run added no flags
+        try:
+            last_run = qc.gsam_data.get("flags", {}).get("qc_history", [])[-1]
+            flags_added = int(last_run.get("flags_added", 0)) if last_run else 0
+            if flags_added == 0 and args.verbose:
+                print("⚠️  This QC run added 0 flags.")
+                print("   If you expected flags, re-run with --process-all or verify segmentation format.")
+        except Exception:
+            pass
 
         if args.dry_run:
             print("\n🚫 Dry run complete. No changes were saved.")
@@ -1428,3 +1464,47 @@ if __name__ == "__main__":
 
 
 # python scripts/pipelines/05_sam2_qc_analysis.py --input /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/data/segmentation/grounded_sam_segmentations.json --dry-run
+
+# -----------------------------------------------------------------------------
+# PROPOSED OVERWRITE SEMANTICS (Documentation / Future Work)
+# -----------------------------------------------------------------------------
+# Goal: Add an explicit, safe "overwrite" mode to control reprocessing.
+#
+# Current behavior (today):
+# - Default: Incremental processing. Only "new" entities (experiments/videos/images/snip_ids)
+#   are processed based on flags.qc_meta processed_* tracking.
+# - Force full pass: Use --process-all (optionally with selectors like --experiments) to
+#   ignore processed tracking and re-run QC checks.
+#
+# Proposed behavior (future):
+# - Flag: --overwrite (boolean). Enables forced reprocessing while enforcing explicit scope.
+# - Selector: --experiments controls the scope at the experiment level.
+# - Defaults:
+#   - If no selectors are provided and no overwrite: process ALL experiments incrementally
+#     (i.e., only new entities).
+# - Overwrite semantics (REQUIRES explicit experiments):
+#   - --overwrite --experiments "exp1,exp2"   → reprocess specified experiments
+#   - --overwrite --experiments "all"         → reprocess ALL experiments (explicit)
+#   - --overwrite                              → ERROR (ambiguous, dangerous)
+#
+# Usage examples (current and future intent):
+# - Incremental (default across all):
+#   python 05_sam2_qc_analysis.py --input grounded_sam_segmentations.json
+#
+# - Incremental, specific experiment:
+#   python 05_sam2_qc_analysis.py --input grounded_sam_segmentations.json \
+#     --experiments 20240418
+#
+# - Force reprocess (today):
+#   python 05_sam2_qc_analysis.py --input grounded_sam_segmentations.json \
+#     --experiments 20240418 --process-all
+#
+# - Force reprocess (future, explicit overwrite):
+#   python 05_sam2_qc_analysis.py --input grounded_sam_segmentations.json \
+#     --experiments 20240418 --overwrite
+#
+# Notes:
+# - When implementing --overwrite, keep --process-all for backward compatibility, but
+#   prefer --overwrite for clarity and safety. If both are provided, --overwrite should
+#   take precedence (with a warning).
+# -----------------------------------------------------------------------------

@@ -218,6 +218,13 @@ ls src/analyze/gen_embeddings/
 ### Build02/Build03 Issues  
 - **Missing models**: Check Build02 model availability in conda environment
 - **Dead flag errors**: Ensure via masks exist in `segmentation/via_v1_0100_predictions/`
+
+### Build06 Embeddings – Note on Split Logic (Tech Debt)
+- Current implementation uses two related paths for embeddings:
+  - `src/run_morphseq_pipeline/services/gen_embeddings.py` orchestrates Build06 (df02 filtering, experiment selection, merge) and can generate latents as a fallback.
+  - `src/analyze/gen_embeddings/` provides a centralized CLI/wrapper for embedding generation, including Python 3.9 subprocess switching for legacy models.
+- Both are wired into the pipeline: the CLI may call the centralized `analyze/gen_embeddings` helpers to (re)generate latents, and Build06 services will also check/generate as needed.
+- Future consolidation: unify latent generation under a single module and have Build06 call only that path, keeping Build06 focused on orchestration/merge. This is intentional tech debt to be resolved later.
 - **Mask loading failures**: Verify Build02 completed all 5 UNet models successfully
 
 ### Build06/Embedding Issues
