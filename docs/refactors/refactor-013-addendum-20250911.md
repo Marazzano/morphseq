@@ -39,7 +39,7 @@ Proposed CLI (run Build03 directly)
   - python run_build03.py --data-root <root> --exp {exp}
   - Optional overrides:
     - --sam2-csv, --sam2-json, --masks-dir, --mask-manifest, --built01-csv, --out-dir
-  - Flags: --overwrite, --validate-only, --no-manifest-check, --verbose
+  - Flags: --overwrite, --validate-only, --no-manifest-check, --no-geometry, --verbose
 
 Intake/Validation
 - Prefer sam2_csv if present; otherwise derive from sam2_json + masks_dir.
@@ -108,6 +108,11 @@ Notes
    - Calculation: `um_per_pixel_x = width_um / width_px`, `um_per_pixel_y = height_um / height_px`
    - Fallback: If SAM2 data missing, calculate from Build01 CSV Width/Height columns
 
+4. **Geometry Computation Made Default**:
+   - Changed from optional `--compute-geometry` flag to default behavior
+   - Now use `--no-geometry` to skip (geometry is critical for Build04)
+   - Ensures all downstream processing has required geometric measurements
+
 ### Pixel Scale Data Flow Verification
 
 **SAM2 CSV** (enriched with per-experiment metadata):
@@ -126,6 +131,6 @@ pixel_size_um = meta['Width (um)'] / meta['Width (px)']
 ### Current Status
 - ✅ SAM2 CSV export with per-experiment metadata: Working
 - ✅ predicted_stage_hpf calculation: Working (36.00 hpf for t=0000 at 24°C)
-- ✅ Pixel geometry extraction: Working with `--compute-geometry` flag
+- ✅ Pixel geometry extraction: Working by default (critical for Build04)
 - ✅ Micron conversions: Working using SAM2 CSV pixel scale data
 - 🔄 Testing: Complete validation with test experiment 20250529_36hpf_ctrl_atf6

@@ -86,7 +86,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--overwrite", action="store_true", help="Overwrite output CSV if exists")
     p.add_argument("--validate-only", action="store_true", help="Validate inputs, do not write output")
     p.add_argument("--no-manifest-check", action="store_true", help="Skip manifest existence check")
-    p.add_argument("--compute-geometry", action="store_true", help="Compute geometry from labeled mask images (optional)")
+    p.add_argument("--no-geometry", action="store_true", help="Skip geometry computation (geometry computed by default)")
     p.add_argument("--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
@@ -277,8 +277,8 @@ def main() -> int:
     rows = df.to_dict('records')
     _log(verbose, f"   • Applied predicted_stage_hpf calculation to {len(rows)} rows")
 
-    # Optionally compute geometry if image libs available and masks are present
-    if args.compute_geometry and _HAS_IMAGE_LIBS and masks_dir.exists():
+    # Compute geometry by default (critical for Build04) unless --no-geometry specified
+    if not args.no_geometry and _HAS_IMAGE_LIBS and masks_dir.exists():
         _log(verbose, "🧮 Computing geometry from labeled masks…")
         scale_map = _load_scale_map(
             built01_csv,
@@ -291,10 +291,12 @@ def main() -> int:
         for r in rows:
             _compute_row_geometry(r, masks_dir, scale_map, verbose=verbose)
     else:
-        if args.compute_geometry and not _HAS_IMAGE_LIBS:
+        if not _HAS_IMAGE_LIBS:
             _log(verbose, "⚠️ Image libraries (cv2/numpy) unavailable; skipping geometry computation")
-        if args.compute_geometry and not masks_dir.exists():
+        elif not masks_dir.exists():
             _log(verbose, f"⚠️ Masks dir missing; skipping geometry: {masks_dir}")
+        elif args.no_geometry:
+            _log(verbose, "ℹ️ Geometry computation skipped due to --no-geometry flag")
     if args.validate_only:
         print("✅ Inputs validated and rows collectable; not writing output due to --validate-only")
         return 0
