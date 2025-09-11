@@ -62,7 +62,7 @@ def main():
                        help="Detection prompt (default: individual embryo)")
     
     # Processing options
-    parser.add_argument("--entities_to_process", default=None,
+    parser.add_argument("--entities-to-process", default=None,
                        help="Comma-separated list of entities to process (experiments, videos, or images)")
     parser.add_argument("--max-images", type=int, default=None,
                        help="Maximum number of images to process (for testing)")

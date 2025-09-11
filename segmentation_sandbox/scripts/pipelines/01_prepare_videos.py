@@ -382,7 +382,18 @@ Examples:
                 print(f"   - {exp}")
         else:
             print(f"✨ All requested experiments are fully processed!")
-            print(f"📋 Next step: Run 03_gdino_detection.py with --metadata {metadata_path}")
+            # Print per-experiment next steps
+            if experiment_names and len(experiment_names) == 1:
+                exp = experiment_names[0]
+                exp_metadata_path = output_dir / "raw_data_organized" / exp / f"experiment_metadata_{exp}.json"
+                print(f"📋 Next step: 03_gdino_detection.py --metadata {exp_metadata_path}")
+            elif experiment_names:
+                print(f"📋 Next steps for experiments:")
+                for exp in experiment_names:
+                    exp_metadata_path = output_dir / "raw_data_organized" / exp / f"experiment_metadata_{exp}.json"
+                    print(f"   {exp}: 03_gdino_detection.py --metadata {exp_metadata_path}")
+            else:
+                print(f"📋 Next step: Run 03_gdino_detection.py with --metadata {metadata_path}")
             return
     else:
         print(f"📌 Processing ALL experiments (will analyze each for new files)")
@@ -435,7 +446,19 @@ Examples:
         metadata_path = output_dir / "raw_data_organized" / "experiment_metadata.json"
 
         print(f"✅ Data organization complete!")
-        print(f"📋 Next step: Run 03_gdino_detection.py with --metadata {metadata_path}")
+        
+        # Print per-experiment next steps
+        if experiments_to_process and len(experiments_to_process) == 1:
+            exp = experiments_to_process[0]
+            exp_metadata_path = output_dir / "raw_data_organized" / exp / f"experiment_metadata_{exp}.json"
+            print(f"📋 Next step: 03_gdino_detection.py --metadata {exp_metadata_path}")
+        elif experiments_to_process and len(experiments_to_process) > 1:
+            print(f"📋 Next steps for processed experiments:")
+            for exp in experiments_to_process:
+                exp_metadata_path = output_dir / "raw_data_organized" / exp / f"experiment_metadata_{exp}.json"
+                print(f"   {exp}: 03_gdino_detection.py --metadata {exp_metadata_path}")
+        else:
+            print(f"📋 Next step: Run 03_gdino_detection.py with --metadata {metadata_path}")
         
     except Exception as e:
         print(f"❌ Error during processing: {e}")

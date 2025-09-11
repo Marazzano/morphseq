@@ -283,3 +283,20 @@ results_20250711 = test_timestamp_extraction("20250711")
 if __name__ == "__main__":
     # If run as script, test default experiments
     results = run_multiple_tests()
+
+
+
+
+/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python segmentation_sandbox/scripts/pipelines/03_gdino_detection.py \
+  --config segmentation_sandbox/configs/pipeline_config.yaml \
+  --metadata /net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/sam2_pipeline_files/raw_data_organized/20250529_36hpf_ctrl_atf6/experiment_metadata_20250529_36hpf_ctrl_atf6.json \
+  --annotations /net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/sam2_pipeline_files/detections/gdino_detections_20250529_36hpf_ctrl_atf6.json \
+  --confidence-threshold 0.45 \
+  --iou-threshold 0.5 \
+  --prompt "individual embryo" 
+
+
+
+  python src/run_morphseq_pipeline/steps/run_sam2.py \
+  --experiment 20250529_36hpf_ctrl_atf6 \
+  --data-root /net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground

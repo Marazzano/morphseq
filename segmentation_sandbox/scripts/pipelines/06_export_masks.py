@@ -39,12 +39,12 @@ def parse_args():
         help="Output directory for exported masks"
     )
     
-    # Optional arguments
-    parser.add_argument(
-        "--entities-to-process",
-        type=str,
-        help="Comma-separated list of experiment IDs to process (default: all)"
-    )
+    # Optional arguments - entities filtering removed since input is per-experiment
+    # parser.add_argument(
+    #     "--entities-to-process", 
+    #     type=str,
+    #     help="Comma-separated list of experiment IDs to process (default: all)"
+    # )
     parser.add_argument(
         "--export-format",
         type=str,
@@ -82,12 +82,12 @@ def main():
     
     output_dir = Path(args.output)
     
-    # Parse experiment IDs
-    experiment_ids = None
-    if args.entities_to_process:
-        experiment_ids = [exp.strip() for exp in args.entities_to_process.split(",")]
-        if args.verbose:
-            print(f"📋 Processing specific experiments: {experiment_ids}")
+    # Experiment filtering removed - input is already per-experiment
+    # experiment_ids = None
+    # if args.entities_to_process:
+    #     experiment_ids = [exp.strip() for exp in args.entities_to_process.split(",")]
+    #     if args.verbose:
+    #         print(f"📋 Processing specific experiments: {experiment_ids}")
     
     # Initialize exporter
     if args.verbose:
@@ -117,25 +117,8 @@ def main():
             print(f"   Missing/new: {status['missing_images']}")
             print(f"   Available experiments: {status['available_experiments']}")
         
-        # Filter by experiments if specified
-        if experiment_ids:
-            # Validate requested experiments exist
-            available_experiments = set(status['available_experiments'])
-            requested_experiments = set(experiment_ids)
-            missing_experiments = requested_experiments - available_experiments
-            
-            if missing_experiments:
-                print(f"⚠️  Requested experiments not found in SAM2 data: {missing_experiments}")
-                print(f"   Available: {available_experiments}")
-                
-            valid_experiments = requested_experiments & available_experiments
-            if not valid_experiments:
-                print(f"❌ No valid experiments to process")
-                sys.exit(1)
-                
-            experiment_ids = list(valid_experiments)
-            if args.verbose:
-                print(f"✅ Processing {len(experiment_ids)} experiments: {experiment_ids}")
+        # Experiment filtering removed - input is already per-experiment
+        # All experiments in the SAM2 file will be processed
         
     except Exception as e:
         print(f"❌ Failed to get export status: {e}")
@@ -150,8 +133,7 @@ def main():
         else:
             print(f"   Would export {status['missing_images']} missing images")
             
-        if experiment_ids:
-            print(f"   Filtered to experiments: {experiment_ids}")
+        # Experiment filtering removed - processing all experiments in per-experiment file
             
         print(f"   Output format: {args.export_format}")
         print(f"   Output directory: {output_dir}")
@@ -164,7 +146,7 @@ def main():
             print(f"🔄 Starting export ({action} masks)...")
         
         exported = exporter.process_missing_masks(
-            experiment_ids=experiment_ids,
+            experiment_ids=None,  # Process all experiments in per-experiment file
             overwrite=args.overwrite
         )
         

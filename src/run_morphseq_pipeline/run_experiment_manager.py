@@ -189,19 +189,23 @@ def process_experiments_through_pipeline(manager, target_experiments, dry_run=Fa
             print(f"  Processing {exp_name}...")
             # Show concise status like CLI (RAW/FF/STITCH/QC/SAM2/DF01/LATENTS)
             try:
-                raw_ok   = bool(exp.raw_path)
-                ff_ok    = bool(exp.ff_path)
-                st_ok    = bool(exp.stitch_ff_path)
-                qc_p, qc_t = exp.qc_mask_status()
-                sam2_ok  = exp.sam2_csv_path.exists()
-                df01_ok  = exp.is_in_df01()
-                lat_ok   = exp.has_latents()
+                raw_ok    = bool(exp.raw_path)
+                ff_ok     = bool(exp.ff_path)
+                st_ok     = bool(exp.stitch_ff_path)
+                qc_p, qc_t= exp.qc_mask_status()
+                gdino_ok  = exp.gdino_detections_path.exists()
+                seg_ok    = exp.sam2_segmentations_path.exists()
+                sam2_ok   = exp.sam2_csv_path.exists()
+                df01_ok   = exp.is_in_df01()
+                lat_ok    = exp.has_latents()
                 parts = [
                     f"RAW {'✅' if raw_ok else '❌'}",
                     f"FF {'✅' if ff_ok else '❌'}",
                     f"STITCH {'✅' if st_ok else '❌'}",
                     f"QC {qc_p}/{qc_t}",
-                    f"SAM2 {'✅' if sam2_ok else '❌'}",
+                    f"GDINO {'✅' if gdino_ok else '❌'}",
+                    f"SAM2-SEG {'✅' if seg_ok else '❌'}",
+                    f"SAM2-CSV {'✅' if sam2_ok else '❌'}",
                     f"DF01 {'✅' if df01_ok else '❌'}",
                     f"LATENTS {'✅' if lat_ok else '❌'}",
                 ]

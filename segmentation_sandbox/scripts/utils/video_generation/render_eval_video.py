@@ -13,8 +13,18 @@ Example:
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
-from video_generation.video_generator import VideoGenerator
+
+# Robust import: allow running this file directly without PYTHONPATH set
+try:
+    from video_generation.video_generator import VideoGenerator
+except ModuleNotFoundError:
+    # Add the package root (…/scripts/utils) to sys.path
+    _pkg_root = Path(__file__).resolve().parents[1]
+    if str(_pkg_root) not in sys.path:
+        sys.path.insert(0, str(_pkg_root))
+    from video_generation.video_generator import VideoGenerator
 
 
 def main() -> int:
