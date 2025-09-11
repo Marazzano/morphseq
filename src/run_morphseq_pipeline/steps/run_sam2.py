@@ -274,7 +274,7 @@ def run_sam2(
                 verbose=verbose
             )
         metadata_path = per_meta
-        # Always remove monolithic to avoid confusion
+        # Remove monolithic to avoid confusion unless explicitly kept
         if cleanup_monolithic_metadata and mono_meta.exists():
             try:
                 mono_meta.unlink()
@@ -404,7 +404,8 @@ def run_sam2(
             str(sam2_output_path.absolute()),
             "-o", str(csv_output_path.absolute()),
             "--experiment-filter", exp_id,
-            "--masks-dir", str((masks_output_dir / exp_id / "masks").absolute())
+            "--masks-dir", str((masks_output_dir / exp_id / "masks").absolute()),
+            "--metadata-json", str(metadata_path.absolute())
         ]
         if verbose:
             csv_args.append("-v")
@@ -782,3 +783,6 @@ def run_sam2_batch(
             print(f"  - {exp}: {error}")
     
     return results
+
+
+# python src/run_morphseq_pipeline/steps/run_sam2.py   --experiment 20250622_chem_28C_T00_1425   --data-root /net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground 
