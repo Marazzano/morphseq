@@ -122,7 +122,7 @@ class Experiment:
     - Avoids duplicate processing by checking downstream file inclusion
     
     Attributes:
-        date: Experiment date identifier (e.g., "20250529_30hpf_ctrl_atf6")
+        date: Historical experiment string (commonly the raw folder name)
         data_root: Path to MorphSeq data directory
         n_workers: Number of CPU workers for processing (auto-calculated if not set)
         flags: Dict tracking which pipeline steps have completed
@@ -186,6 +186,20 @@ class Experiment:
             return False
 
     # ——— path properties ———————————————————————————————————————————————
+    @property
+    def experiment_id(self) -> str:
+        """Canonical per-experiment identifier used in filenames.
+
+        We derive this from the raw_image_data folder name when available to make
+        intent explicit. Fallback to `self.date` to preserve existing behavior.
+        """
+        try:
+            rp = self.raw_path
+            if rp is not None and rp.exists():
+                return rp.name
+        except Exception:
+            pass
+        return self.date
     @property
     def num_cpu_workers(self, prefactor: float = 0.25, min_workers: int = 1, max_workers: int = 24) -> int:
         """
@@ -288,10 +302,46 @@ class Experiment:
     def sam2_csv_path(self) -> Path:
         """Expected per-experiment SAM2 metadata CSV path."""
         try:
-            return self.data_root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.date}.csv"
+            return self.data_root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.experiment_id}.csv"
         except Exception:
             # Fall back to simple join; avoids raising in status views
-            return Path(str(self.data_root)) / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.date}.csv"
+            return Path(str(self.data_root)) / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.experiment_id}.csv"
+
+    # ——— planned per-experiment intermediate/final artifacts —————————————
+    @property
+    def gdino_detections_path(self) -> Path:
+        """Per-experiment GroundingDINO detections JSON path."""
+        base = Path(self.data_root) / "sam2_pipeline_files" / "detections"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"gdino_detections_{self.experiment_id}.json"
+
+    @property
+    def sam2_segmentations_path(self) -> Path:
+        """Per-experiment SAM2 segmentations JSON path."""
+        base = Path(self.data_root) / "sam2_pipeline_files" / "segmentation"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"grounded_sam_segmentations_{self.experiment_id}.json"
+
+    @property
+    def build03_path(self) -> Path:
+        """Per-experiment Build03 embryo metadata CSV path."""
+        base = Path(self.data_root) / "metadata" / "build03" / "per_experiment"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"expr_embryo_metadata_{self.experiment_id}.csv"
+
+    @property
+    def build04_path(self) -> Path:
+        """Per-experiment Build04 QC+staged CSV path."""
+        base = Path(self.data_root) / "metadata" / "build04" / "per_experiment"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"qc_staged_{self.experiment_id}.csv"
+
+    @property
+    def build06_final_path(self) -> Path:
+        """Per-experiment Build06 final CSV (embeddings merged) path."""
+        base = Path(self.data_root) / "metadata" / "build06" / "per_experiment"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / f"embryo_latents_final_{self.experiment_id}.csv"
 
     def qc_mask_status(self) -> tuple[int, int]:
         """Return (present_count, total_count) across the 5 QC mask model outputs."""
@@ -509,7 +559,7 @@ class Experiment:
         except Exception:
             return False
 
-    # ——— Stage 3: Pipeline step requirements ————————————————————————
+    # ——— Stage 3: Pipeline step requirements ———————————————————————
 
     @property
     def needs_sam2(self) -> bool:

@@ -21,6 +21,7 @@ class SimpleMaskExporter:
         self.sam2_path = Path(sam2_path)
         self.output_dir = Path(output_dir)
         self.format = format.lower()
+        # Default (monolithic) manifest path; may be overridden to per-experiment below
         self.manifest_path = self.output_dir / "mask_export_manifest.json"
         
         if self.format not in ['jpg', 'jpeg', 'png', 'tiff']:
@@ -31,6 +32,18 @@ class SimpleMaskExporter:
         # Load SAM2 data
         with open(self.sam2_path) as f:
             self.sam2_data = json.load(f)
+
+        # If the annotations file is per-experiment (single experiment present),
+        # write the manifest under that experiment's directory to avoid a monolithic manifest.
+        try:
+            experiments = list(self.sam2_data.get("experiments", {}).keys())
+        except Exception:
+            experiments = []
+
+        if len(experiments) == 1:
+            exp_id = experiments[0]
+            exp_dir = self.output_dir / exp_id
+            self.manifest_path = exp_dir / f"mask_export_manifest_{exp_id}.json"
     
     def process_missing_masks(self, experiment_ids: Optional[List[str]] = None, 
                             overwrite: bool = False) -> Dict[str, Path]:
@@ -60,9 +73,8 @@ class SimpleMaskExporter:
         # Export images
         exported = self._export_images(target_images)
         
-        # Update manifest
-        if exported:
-            self._update_manifest()
+        # Update manifest (always), so per-experiment manifest is created/kept current
+        self._update_manifest()
         
         return exported
     

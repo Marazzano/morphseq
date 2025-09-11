@@ -34,6 +34,68 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import tempfile
 import yaml
+import json
+
+
+def _ensure_per_experiment_metadata(metadata_parent_dir: Path, exp_id: str, verbose: bool = False) -> Path:
+    """Ensure per-experiment metadata JSON exists under metadata_parent_dir/exp_id/.
+
+    If a monolithic metadata JSON exists, attempt to split/filter it to the
+    specific experiment and write `experiment_metadata_{exp_id}.json` atomically.
+
+    Heuristic filtering supports common shapes:
+      - dict with key 'experiments' mapping exp_id -> data
+      - dict with top-level key exp_id
+      - list of records containing 'experiment' or 'experiment_id' == exp_id
+    Falls back to copying monolithic file if filtering is not possible.
+    """
+    mono = metadata_parent_dir / "experiment_metadata.json"
+    per_dir = metadata_parent_dir / exp_id
+    per_dir.mkdir(parents=True, exist_ok=True)
+    per  = per_dir / f"experiment_metadata_{exp_id}.json"
+    if per.exists():
+        return per
+    if not mono.exists():
+        # Nothing to split; leave it to upstream scripts if they write per-exp directly
+        raise FileNotFoundError(f"Expected metadata at {per} or monolithic {mono} not found")
+
+    try:
+        with open(mono, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        new_data = None
+        if isinstance(data, dict):
+            if "experiments" in data and isinstance(data["experiments"], dict):
+                new_data = {"experiments": {exp_id: data["experiments"].get(exp_id, {})}}
+            elif exp_id in data:
+                new_data = {exp_id: data.get(exp_id, {})}
+        elif isinstance(data, list):
+            filt = [rec for rec in data if isinstance(rec, dict) and (rec.get("experiment") == exp_id or rec.get("experiment_id") == exp_id or rec.get("exp") == exp_id)]
+            new_data = filt
+
+        if new_data is None:
+            if verbose:
+                print(f"⚠️ Could not structurally filter metadata; copying monolithic to {per.name}")
+            new_data = data
+
+        tmp = per.with_suffix(per.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            # Pretty-print for readability; files are per-experiment and small
+            json.dump(new_data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, per)
+        return per
+    except Exception as e:
+        # As a last resort, copy the file
+        try:
+            if verbose:
+                print(f"⚠️ Falling back to copy monolithic metadata for {exp_id}: {e}")
+            import shutil
+            shutil.copy2(mono, per)
+            return per
+        except Exception:
+            raise
 import shutil
 
 
@@ -49,6 +111,10 @@ def run_sam2(
     save_interval: int = 10,
     dry_run: bool = False,
     verbose: bool = False,
+    use_per_experiment_metadata: bool = True,
+    cleanup_monolithic_metadata: bool = True,
+    force_detection: bool = False,
+    ensure_built_metadata: bool = False,
     **kwargs
 ) -> Path:
     """Run SAM2 segmentation pipeline for a single experiment.
@@ -75,11 +141,40 @@ def run_sam2(
         RuntimeError: If any pipeline stage fails
     """
     root = Path(root)
+    # Canonical experiment identifier (matches raw_image_data folder name)
+    exp_id = str(exp)
     
     # Validate data inputs
-    stitched_dir = root / "built_image_data" / "stitched_FF_images" / exp
+    stitched_dir = root / "built_image_data" / "stitched_FF_images" / exp_id
     if not stitched_dir.exists():
         raise FileNotFoundError(f"Stitched images not found: {stitched_dir}")
+
+    # Verify Build01-built metadata CSV exists (required by data_organizer)
+    built_meta_csv = root / "metadata" / "built_metadata_files" / f"{exp_id}_metadata.csv"
+    if not built_meta_csv.exists():
+        if ensure_built_metadata:
+            try:
+                if verbose:
+                    print(f"🧰 Missing built metadata CSV; generating: {built_meta_csv}")
+                # Lazy import to avoid heavy deps unless needed
+                from ...build.pipeline_objects import Experiment as _Experiment
+                _exp = _Experiment(date=exp_id, data_root=root)
+                _exp.export_metadata()
+            except Exception as e:
+                raise FileNotFoundError(
+                    f"Built metadata CSV not found and generation failed: {built_meta_csv}. Error: {e}\n"
+                    f"Hint: run Build01 metadata export for {exp_id} before SAM2."
+                ) from e
+            if not built_meta_csv.exists():
+                raise FileNotFoundError(
+                    f"Built metadata CSV still not found after export: {built_meta_csv}\n"
+                    f"Hint: ensure Build01 metadata exists for {exp_id}."
+                )
+        else:
+            raise FileNotFoundError(
+                f"Built metadata CSV required for SAM2 not found: {built_meta_csv}\n"
+                f"Run Build01 metadata export for this experiment or pass --ensure-built-metadata to generate it."
+            )
     
     # Find repository root (contains segmentation_sandbox/)
     repo_root = _find_repo_root(root)
@@ -98,7 +193,7 @@ def run_sam2(
     env = os.environ.copy()
     env["MORPHSEQ_SANDBOX_MASKS_DIR"] = str(sam2_root / "exported_masks")
     
-    print(f"🚀 Starting SAM2 pipeline for experiment: {exp}")
+    print(f"🚀 Starting SAM2 pipeline for experiment: {exp_id}")
     print(f"📁 Data root: {root}")
     print(f"📁 Repo root: {repo_root}")
     print(f"🛠️ Scripts: {scripts_dir}")
@@ -149,7 +244,7 @@ def run_sam2(
         stage1_args = [
             "--directory_with_experiments", str(stitched_images_dir.absolute()),
             "--output_parent_dir", str(sam2_root.absolute()),
-            "--experiments_to_process", exp,
+            "--experiments_to_process", exp_id,
             "--workers", str(workers)
         ]
         if verbose:
@@ -162,15 +257,52 @@ def run_sam2(
             cwd=sandbox_dir,
             stream_output=True
         )
+
+        # Locate metadata for downstream steps (canonical per-experiment only)
+        metadata_parent_dir = sam2_root / "raw_data_organized"
+        metadata_parent_dir.mkdir(parents=True, exist_ok=True)
+        mono_meta = metadata_parent_dir / "experiment_metadata.json"
+        per_meta_dir = metadata_parent_dir / exp_id
+        per_meta_dir.mkdir(parents=True, exist_ok=True)
+        per_meta = per_meta_dir / f"experiment_metadata_{exp_id}.json"
+
+        # Ensure per-experiment metadata exists; if only monolithic exists, split it
+        if not per_meta.exists():
+            per_meta = _ensure_per_experiment_metadata(
+                metadata_parent_dir=metadata_parent_dir,
+                exp_id=exp_id,
+                verbose=verbose
+            )
+        metadata_path = per_meta
+        # Always remove monolithic to avoid confusion
+        if cleanup_monolithic_metadata and mono_meta.exists():
+            try:
+                mono_meta.unlink()
+                if verbose:
+                    print(f"🧹 Removed monolithic metadata: {mono_meta}")
+            except Exception as e:
+                if verbose:
+                    print(f"⚠️ Could not remove monolithic metadata: {e}")
         
         # Stage 2: GroundingDINO Detection  
         print("🔍 Stage 2: Running GroundingDINO detection...")
-        metadata_path = sam2_root / "raw_data_organized" / "experiment_metadata.json"
-        annotations_path = sam2_root / "detections" / "gdino_detections.json"
+        # Use per-experiment metadata path
+        # Per-experiment detections JSON
+        annotations_path = sam2_root / "detections" / f"gdino_detections_{exp_id}.json"
         
         # Ensure directories exist
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
         annotations_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Optional: force re-detection by removing existing per-experiment annotations
+        if force_detection and annotations_path.exists():
+            try:
+                annotations_path.unlink()
+                if verbose:
+                    print(f"🧹 Removed existing annotations to force detection: {annotations_path}")
+            except Exception as e:
+                if verbose:
+                    print(f"⚠️ Could not remove existing annotations: {e}")
         
         stage2_args = [
             "--config", config_path,
@@ -180,6 +312,10 @@ def run_sam2(
             "--iou-threshold", str(iou_threshold),
             "--prompt", target_prompt
         ]
+        # Try to restrict detection to this experiment only (if script supports it)
+        # Many sandbox scripts accept one of these flags; safe to include if recognized.
+        # If unrecognized, the script will ignore or error; use --verbose to inspect.
+        stage2_args += ["--entities-to-process", exp_id]
         if verbose:
             stage2_args.append("--verbose")
         
@@ -193,7 +329,8 @@ def run_sam2(
         
         # Stage 3: SAM2 Video Processing
         print("🎯 Stage 3: SAM2 video segmentation...")
-        sam2_output_path = sam2_root / "segmentation" / "grounded_sam_segmentations.json"
+        # Per-experiment SAM2 segmentations JSON
+        sam2_output_path = sam2_root / "segmentation" / f"grounded_sam_segmentations_{exp_id}.json"
         sam2_output_path.parent.mkdir(parents=True, exist_ok=True)
         
         sam2_args = [
@@ -221,7 +358,7 @@ def run_sam2(
         print("📊 Stage 4: Quality control analysis...")
         qc_args = [
             "--input", str(sam2_output_path.absolute()),
-            "--experiments", exp,
+            "--experiments", exp_id,
             "--process-all",  # force reprocess for this experiment (overwrite semantics)
             "--no-progress"
         ]
@@ -242,9 +379,9 @@ def run_sam2(
         masks_output_dir.mkdir(parents=True, exist_ok=True)
         
         export_args = [
-            "--sam2-annotations", str(sam2_output_path.absolute()),
+            "--sam2-annotations", str(sam2_output_path.absolute()),  # Now per-experiment file
             "--output", str(masks_output_dir.absolute()),
-            "--entities-to-process", exp
+            # Remove --entities-to-process since input is already experiment-scoped
         ]
         if verbose:
             export_args.append("--verbose")
@@ -261,13 +398,13 @@ def run_sam2(
         print("📋 Stage 6: Generating metadata CSV...")
         csv_output_dir = sam2_root / "sam2_expr_files"
         csv_output_dir.mkdir(parents=True, exist_ok=True)
-        csv_output_path = csv_output_dir / f"sam2_metadata_{exp}.csv"
+        csv_output_path = csv_output_dir / f"sam2_metadata_{exp_id}.csv"
         
         csv_args = [
             str(sam2_output_path.absolute()),
             "-o", str(csv_output_path.absolute()),
-            "--experiment-filter", exp,
-            "--masks-dir", str((masks_output_dir / exp / "masks").absolute())
+            "--experiment-filter", exp_id,
+            "--masks-dir", str((masks_output_dir / exp_id / "masks").absolute())
         ]
         if verbose:
             csv_args.append("-v")
@@ -517,6 +654,14 @@ Examples:
                         help="Segmentation output format (default: rle)")
     parser.add_argument("--save-interval", type=int, default=10,
                         help="Auto-save interval for processing (default: 10)")
+    parser.add_argument("--use-monolithic-metadata", action="store_true",
+                        help="Use legacy monolithic metadata file (deprecated)")
+    parser.add_argument("--keep-monolithic-metadata", action="store_true",
+                        help="Do not delete monolithic experiment_metadata.json after per-experiment split")
+    parser.add_argument("--force-detection", action="store_true",
+                        help="Force rerun GDINO detection by removing per-experiment annotations JSON before Stage 2")
+    parser.add_argument("--ensure-built-metadata", action="store_true",
+                        help="If built metadata CSV is missing, generate it via Build01 export before running SAM2")
     
     # Execution options
     parser.add_argument("--dry-run", action="store_true",
@@ -536,7 +681,11 @@ Examples:
         "segmentation_format": args.segmentation_format,
         "save_interval": args.save_interval,
         "dry_run": args.dry_run,
-        "verbose": args.verbose
+        "verbose": args.verbose,
+        "use_per_experiment_metadata": not args.use_monolithic_metadata,
+        "cleanup_monolithic_metadata": (not args.keep_monolithic_metadata),
+        "force_detection": args.force_detection,
+        "ensure_built_metadata": args.ensure_built_metadata,
     }
     
     try:

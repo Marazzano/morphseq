@@ -580,14 +580,14 @@ class DataOrganizer:
                 if verbose:
                     print("📋 Creating metadata file from existing processed experiments...")
                 # Scan existing organized data to create metadata
-                metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, verbose=False)
+                metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, experiment_names=experiment_names, verbose=False)
             else:
                 if verbose:
                     print("📋 Updating existing metadata file with entity tracking...")
                 # Use existing metadata and update it
                 metadata = existing_metadata
                 # Re-scan to ensure we have current data
-                current_scan = DataOrganizer.scan_organized_experiments(raw_data_dir, verbose=False)
+                current_scan = DataOrganizer.scan_organized_experiments(raw_data_dir, experiment_names=experiment_names, verbose=False)
                 metadata['experiments'] = current_scan.get('experiments', {})
                 
             # Add entity tracker (consistent with normal processing)
@@ -625,7 +625,7 @@ class DataOrganizer:
             # if verbose:
             #     print(f"   💾 Updating metadata for {experiment_id}...")
                 
-            current_metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, verbose=False)
+            current_metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, experiment_names=experiment_names, verbose=False)
             
             # Add entity tracker to autosave (consistent with final save)
             current_metadata = EntityIDTracker.add_entity_tracker(
@@ -646,7 +646,7 @@ class DataOrganizer:
 
         # Final metadata generation and validation
         print("\n📋 Generating final experiment metadata...")
-        final_metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, verbose=True)  # Keep verbose for our debug
+        final_metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, experiment_names=experiment_names, verbose=True)  # Keep verbose for our debug
 
         # Add entity tracker (MANDATORY for downstream modules)
         # if verbose:
@@ -910,7 +910,7 @@ class DataOrganizer:
             return
 
     @staticmethod
-    def scan_organized_experiments(raw_data_dir, verbose=True):
+    def scan_organized_experiments(raw_data_dir, experiment_names=None, verbose=True):
         metadata = {
             "file_info": {
                 "creation_time": datetime.now().isoformat(),
@@ -919,9 +919,19 @@ class DataOrganizer:
             "experiments": {}
         }
         
-        experiment_dirs = [d for d in Path(raw_data_dir).iterdir() if d.is_dir() and d.name != "experiment_metadata.json"]
-        if verbose:
-            print(f"📂 Scanning {len(experiment_dirs)} experiment directories...")
+        all_experiment_dirs = [d for d in Path(raw_data_dir).iterdir() if d.is_dir() and d.name != "experiment_metadata.json"]
+        
+        # Filter to only requested experiments if specified
+        if experiment_names:
+            experiment_dirs = [d for d in all_experiment_dirs if d.name in experiment_names]
+            if verbose:
+                print(f"📂 Scanning {len(experiment_dirs)} experiment directories (filtered from {len(all_experiment_dirs)} total)...")
+                print(f"🎯 Filtering to experiments: {experiment_names}")
+                print(f"📁 Directories found: {[d.name for d in experiment_dirs]}")
+        else:
+            experiment_dirs = all_experiment_dirs
+            if verbose:
+                print(f"📂 Scanning {len(experiment_dirs)} experiment directories...")
         
         # Add progress bar for scanning experiments
         experiment_iter = tqdm(experiment_dirs, desc="Scanning experiments", disable=not verbose) if TQDM_AVAILABLE and verbose else experiment_dirs

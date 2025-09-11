@@ -762,6 +762,23 @@ class ExperimentMetadata(BaseFileHandler):
             # Unknown field, allow anything
             return True
     
+    def get_processed_images_dir_for_video(self, video_id: str) -> str:
+        """Get the processed images directory path for a specific video."""
+        
+        video_info = self.get_video_metadata(video_id)
+        
+        if video_info and "processed_jpg_images_dir" in video_info:
+            path = video_info["processed_jpg_images_dir"]
+            return path
+        else:
+            # Fallback: construct from metadata file location
+            # Remove the experiment metadata filename and go to images/video_id
+            metadata_dir = self.filepath.parent
+            fallback_path = str(metadata_dir / "images" / video_id)
+            print(f"DEBUG: Using fallback path construction: {fallback_path}")
+            print(f"DEBUG: Fallback path exists: {Path(fallback_path).exists()}")
+            return fallback_path
+    
     def __str__(self) -> str:
         summary = self.get_entity_summary()
         counts = summary["counts"]

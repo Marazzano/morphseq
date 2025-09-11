@@ -115,10 +115,10 @@ def parse_entity_id(entity_id: str, entity_type: Optional[str] = None) -> Dict[s
             )
     else:
         # Warn when no explicit entity_type was provided and autodetection will be used
-        warnings.warn(
-            "No entity_type provided; will autodetect entity type from the provided entity_id.",
-            UserWarning,
-        )
+        # warnings.warn(
+        #     "No entity_type provided; will autodetect entity type from the provided entity_id.",
+        #     UserWarning,
+        # )
         entity_type = get_entity_type(entity_id)
 
     # Dispatch to the correct backwards parser

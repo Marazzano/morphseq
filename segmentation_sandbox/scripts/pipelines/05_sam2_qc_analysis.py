@@ -16,6 +16,10 @@ from datetime import datetime
 from collections import defaultdict
 from time import time
 
+# Import parsing utilities for proper entity detection
+sys.path.append(str(Path(__file__).parent.parent))
+from utils.parsing_utils import get_entity_type, parse_entity_id, extract_experiment_id, extract_video_id
+
 # Optional imports with fallbacks
 try:
     from tqdm import tqdm
@@ -37,6 +41,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from utils.base_file_handler import BaseFileHandler
 from utils.mask_utils import decode_mask_rle
+from utils.parsing_utils import get_entity_type, parse_entity_id
 
 def decode_segmentation_mask(segmentation: Dict) -> np.ndarray:
     """Decode segmentation mask using mask_utils, handling both rle and rle_base64 formats."""
@@ -155,23 +160,71 @@ class GSAMQualityControl(BaseFileHandler):
         self.processed_image_ids = set(qc_meta.get("processed_image_ids", []))
         self.processed_snip_ids = set(qc_meta.get("processed_snip_ids", []))
         
-        # Find all current entities by iterating through the data structure directly
+        # Find all current entities by scanning the entire data structure
         all_experiment_ids = set()
         all_video_ids = set()
         all_image_ids = set()
         all_snip_ids = set()
 
+        # Check if we have a direct annotation structure (like GDINO/SAM2 results)
+        if "high_quality_annotations" in self.gsam_data:
+            # Handle GDINO/SAM2 annotation structure
+            for exp_id, exp_data in self.gsam_data["high_quality_annotations"].items():
+                all_experiment_ids.add(exp_id)
+                
+                # Check filtered annotations (typical SAM2 structure)
+                if "filtered" in exp_data:
+                    for entity_id in exp_data["filtered"].keys():
+                        # Use parsing utilities to determine entity type
+                        try:
+                            entity_type = get_entity_type(entity_id)
+                            if entity_type == "experiment":
+                                all_experiment_ids.add(entity_id)
+                            elif entity_type == "video":
+                                all_video_ids.add(entity_id)
+                            elif entity_type == "image":
+                                all_image_ids.add(entity_id)
+                            elif entity_type == "snip":
+                                all_snip_ids.add(entity_id)
+                                
+                            # Also extract parent entities using parsing utilities
+                            try:
+                                parsed = parse_entity_id(entity_id)
+                                if "experiment_id" in parsed:
+                                    all_experiment_ids.add(parsed["experiment_id"])
+                                if "video_id" in parsed:
+                                    all_video_ids.add(parsed["video_id"])
+                            except Exception:
+                                pass  # Skip parsing errors
+                                
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"⚠️ Could not parse entity ID '{entity_id}': {e}")
+                            continue
+
+        # Also handle legacy experiments structure if present
         experiments_items = self.gsam_data.get("experiments", {}).items()
         for exp_id, exp_data in experiments_items:
             all_experiment_ids.add(exp_id)
             for video_id, video_data in exp_data.get("videos", {}).items():
                 all_video_ids.add(video_id)
                 for image_id, image_data in video_data.get("image_ids", {}).items():
-                    all_image_ids.add(image_id)
+                    # Use parsing utilities to determine entity type
+                    entity_type = get_entity_type(image_id)
+                    if entity_type == "image":
+                        all_image_ids.add(image_id)
+                    elif entity_type == "snip":
+                        all_snip_ids.add(image_id)
+                    
+                    # Also check for embryo data and snip_ids within
                     for embryo_id, embryo_data in image_data.get("embryos", {}).items():
                         snip_id = embryo_data.get("snip_id")
                         if snip_id:
-                            all_snip_ids.add(snip_id)
+                            snip_entity_type = get_entity_type(snip_id)
+                            if snip_entity_type == "snip":
+                                all_snip_ids.add(snip_id)
+                            elif snip_entity_type == "image":
+                                all_image_ids.add(snip_id)
         
         # New entities = all entities - processed entities
         self.new_experiment_ids = all_experiment_ids - self.processed_experiment_ids
@@ -238,13 +291,18 @@ class GSAMQualityControl(BaseFileHandler):
                     if image_sample_count >= 2:  # Limit image samples
                         break
                         
-                    print(f"      🖼️  Image: {image_id}")
+                    # Use parsing utilities to identify entity type
+                    entity_type = get_entity_type(image_id)
+                    print(f"      🖼️  Image: {image_id} (detected as: {entity_type})")
                     embryos = image_data.get("embryos", {})
                     print(f"         Embryos: {len(embryos)}")
                     
                     if not embryos:
                         print("         ❌ No embryos found in this image!")
                         print(f"         Available keys in image: {list(image_data.keys())}")
+                        # If this is actually a snip, that explains the missing embryos
+                        if entity_type == "snip":
+                            print(f"         ℹ️  This is actually a snip ID, not an image ID!")
                         continue
                     
                     embryo_sample_count = 0
@@ -977,27 +1035,20 @@ class GSAMQualityControl(BaseFileHandler):
         experiments_items = list(self.gsam_data.get("experiments", {}).items())
         for exp_id, exp_data in self._progress_iter(experiments_items, desc="Discontinuous", total=len(experiments_items)):
             
-            # Check if experiment should be processed
             if not self._should_process_experiment(exp_id, entities):
                 continue
             
             for video_id, video_data in exp_data.get("videos", {}).items():
-                # Check if video should be processed
                 if not self._should_process_video(video_id, entities):
                     continue
                 
                 for image_id, image_data in video_data.get("image_ids", {}).items():
-                    # Check if image should be processed
                     if not self._should_process_image(image_id, entities):
                         continue
                         
                     for embryo_id, embryo_data in image_data.get("embryos", {}).items():
                         snip_id = embryo_data.get("snip_id")
-                        if not snip_id:
-                            continue
-                            
-                        # Check if snip should be processed
-                        if not self._should_process_snip(snip_id, entities):
+                        if not snip_id or not self._should_process_snip(snip_id, entities):
                             continue
                         
                         segmentation = embryo_data.get("segmentation")
@@ -1008,23 +1059,38 @@ class GSAMQualityControl(BaseFileHandler):
                                 num_components = int(np.max(labeled_mask))
                                 
                                 if num_components > 1:
-                                    component_areas = [int(np.sum(labeled_mask == comp_id)) 
-                                                       for comp_id in range(1, num_components + 1)]
+                                    # --- MODIFICATION START ---
+                                    # Define what percentage of the largest component a smaller
+                                    # component must be to be considered significant.
+                                    RELATIVE_SIZE_THRESHOLD = 0.05  # 5%
+
+                                    component_areas = [int(np.sum(labeled_mask == i)) 
+                                                    for i in range(1, num_components + 1)]
                                     
-                                    flag_data = {
-                                        "snip_id": snip_id,
-                                        "embryo_id": embryo_id,
-                                        "image_id": image_id,
-                                        "num_components": num_components,
-                                        "component_areas": component_areas,
-                                        "total_area": int(np.sum(mask)),
-                                        "largest_component_area": int(max(component_areas)),
-                                        "smallest_component_area": int(min(component_areas)),
-                                        "author": author,
-                                        "timestamp": datetime.now().isoformat()
-                                    }
-                                    self._add_flag("DISCONTINUOUS_MASK", flag_data, "snip", snip_id)
-                                    flag_count += 1
+                                    largest_area = max(component_areas)
+                                    min_significant_area = largest_area * RELATIVE_SIZE_THRESHOLD
+                                    
+                                    # Count only components larger than the calculated minimum area.
+                                    num_significant_components = sum(1 for area in component_areas 
+                                                                    if area > min_significant_area)
+                                    
+                                    # Only flag if there is more than one SIGNIFICANT component.
+                                    if num_significant_components > 1:
+                                    # --- MODIFICATION END ---
+                                        flag_data = {
+                                            "snip_id": snip_id,
+                                            "embryo_id": embryo_id,
+                                            "image_id": image_id,
+                                            "num_components": num_components,
+                                            "component_areas": component_areas,
+                                            "total_area": int(np.sum(mask)),
+                                            "largest_component_area": int(largest_area),
+                                            "smallest_component_area": int(min(component_areas)),
+                                            "author": author,
+                                            "timestamp": datetime.now().isoformat()
+                                        }
+                                        self._add_flag("DISCONTINUOUS_MASK", flag_data, "snip", snip_id)
+                                        flag_count += 1
 
                             except Exception:
                                 continue
@@ -1032,7 +1098,7 @@ class GSAMQualityControl(BaseFileHandler):
         if self.verbose:
             elapsed = time() - t0
             print(f"   ✓ Discontinuous mask check completed in {elapsed:.2f}s ({flag_count} masks flagged)")
-    
+
     def _save_qc_summary(self, author: str):
         """Save QC summary and write updated GSAM file."""
         # Count flags from newly processed entities only
@@ -1107,7 +1173,7 @@ class GSAMQualityControl(BaseFileHandler):
                         flag_counts[flag_type] += len(flag_instances)
         
         return dict(flag_counts)
-   
+
     def generate_overview(self, entities: Dict[str, List[str]]):
         """
         Generate flag_overview section with ALL flagged entity IDs.

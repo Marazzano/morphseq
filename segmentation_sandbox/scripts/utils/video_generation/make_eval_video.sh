@@ -1,54 +1,117 @@
 #!/usr/bin/env bash
-# Simple wrapper to render a SAM2 evaluation video using VideoGenerator.
-# Edit the defaults below and run: ./make_eval_video.sh
+# Render SAM2 evaluation videos using VideoGenerator.
+#
+# Auto-detects per-experiment SAM2 JSONs under the MorphSeq playground:
+#   morphseq_playground/sam2_pipeline_files/segmentation/grounded_sam_segmentations_<EXP>.json
+# Falls back to monolithic grounded_sam_segmentations.json if per-experiment is not found.
 
 set -euo pipefail
 
-# --- Defaults (edit these) -------------------------------------------------
-RESULTS_JSON="/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/sam2_pipeline_files/segmentation/grounded_sam_segmentations.json"
-# EXP_ID is optional; if empty, it will be derived from VIDEO_ID
+# --- User-configurable inputs (optional) -----------------------------------
+# EXP_ID is optional; if empty, it will be derived from VIDEO_ID/VIDEOS.
 EXP_ID=""
-# Provide either a single VIDEO_ID or a comma-separated list in VIDEOS
-VIDEO_ID="20240418_D04"
-VIDEOS=""  # e.g., `"20240418_D04,20240418_D05" (overrides VIDEO_ID if set)
 
-# Output policy: use directory + suffix to form filenames
-OUT_DIR="./net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/videos/20250907"
+# Provide either a single VIDEO_ID or a comma-separated list in VIDEOS.
+VIDEO_ID=""          # e.g., "20250529_36hpf_ctrl_atf6_A04"
+VIDEOS=""            # e.g., "20250529_36hpf_ctrl_atf6_A04,20250529_36hpf_ctrl_atf6_G06"
+
+# Explicit JSON override (leave empty to auto-detect).
+RESULTS_JSON=""
+
+# Output policy: directory + suffix → video filenames.
+OUT_DIR=""
 OUT_SUFFIX="_eval"
 
-# Overlay options
-SHOW_BBOX=true
+# Overlay options.
+SHOW_BBOX=false
 SHOW_MASK=true
 SHOW_METRICS=true
-SHOW_QC=true
+SHOW_QC=false
 # --------------------------------------------------------------------------
 
 script_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
+# segmentation_sandbox (3 up), repo root (4 up)
+repo_root="$(cd -- "${script_dir}/../../../.." && pwd)"
 
-# Ensure Python can import the video_generation package
+# Default output directory if not provided.
+if [[ -z "${OUT_DIR}" ]]; then
+  OUT_DIR="${repo_root}/segmentation_sandbox/results/sam2_eval_videos/$(date +%Y%m%d)"
+fi
+mkdir -p "${OUT_DIR}"
+
+# Ensure Python can import the video_generation package.
 export PYTHONPATH="${script_dir}/..:${PYTHONPATH:-}"
 
-# Build flag list based on booleans
+# Derive EXP_ID from VIDEO_ID/VIDEOS if not set.
+derive_exp_from_video() {
+  local vid="$1"
+  if [[ "${vid}" =~ ^(.+)_([A-H][0-9]{2})$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo "${vid%_*}"
+  fi
+}
+
+if [[ -z "${EXP_ID}" ]]; then
+  if [[ -n "${VIDEO_ID}" ]]; then
+    EXP_ID="$(derive_exp_from_video "${VIDEO_ID}")"
+  elif [[ -n "${VIDEOS}" ]]; then
+    IFS="," read -r first_video _ <<< "${VIDEOS}"
+    EXP_ID="$(derive_exp_from_video "${first_video}")"
+  fi
+fi
+
+# SAM2 root inside MorphSeq playground.
+sam2_root="${repo_root}/morphseq_playground/sam2_pipeline_files"
+seg_dir="${sam2_root}/segmentation"
+
+# Auto-detect JSON when not explicitly provided.
+if [[ -z "${RESULTS_JSON}" ]]; then
+  if [[ -n "${EXP_ID}" && -f "${seg_dir}/grounded_sam_segmentations_${EXP_ID}.json" ]]; then
+    RESULTS_JSON="${seg_dir}/grounded_sam_segmentations_${EXP_ID}.json"
+  elif [[ -f "${seg_dir}/grounded_sam_segmentations.json" ]]; then
+    RESULTS_JSON="${seg_dir}/grounded_sam_segmentations.json"
+  else
+    echo "❌ Could not find SAM2 JSON. Looked for:" >&2
+    echo "   • ${seg_dir}/grounded_sam_segmentations_<EXP>.json (EXP=${EXP_ID:-unset})" >&2
+    echo "   • ${seg_dir}/grounded_sam_segmentations.json" >&2
+    echo "Available files in ${seg_dir}:" >&2
+    ls -1 "${seg_dir}" 2>/dev/null || true
+    exit 1
+  fi
+fi
+
+echo "📁 Repo root: ${repo_root}"
+echo "💾 SAM2 root: ${sam2_root}"
+echo "🧪 Experiment: ${EXP_ID:-<derived per video>}"
+echo "📄 Using JSON: ${RESULTS_JSON}"
+echo "📂 Output dir: ${OUT_DIR}"
+
+# Build flags based on booleans.
 flags=( )
 [[ "${SHOW_BBOX}" == "true" ]] && flags+=("--show-bbox")
 [[ "${SHOW_MASK}" != "true" ]] && flags+=("--no-mask")
 [[ "${SHOW_METRICS}" != "true" ]] && flags+=("--no-metrics")
 [[ "${SHOW_QC}" == "true" ]] && flags+=("--show-qc")
 
-# Build base args
+# Base args.
 args=( --json "${RESULTS_JSON}" --out-dir "${OUT_DIR}" --suffix "${OUT_SUFFIX}" )
 
-# Pass video ids: either comma list or single
+# Pass video ids: either comma list or single.
 if [[ -n "${VIDEOS}" ]]; then
   args+=( --videos "${VIDEOS}" )
-else
+elif [[ -n "${VIDEO_ID}" ]]; then
   args+=( --video "${VIDEO_ID}" )
+else
+  echo "❌ Provide VIDEO_ID or VIDEOS (comma-separated)." >&2
+  exit 1
 fi
 
-# Only pass --exp if set; otherwise the CLI derives it from video_id
+# Only pass --exp if set; otherwise the CLI derives it from video_id.
 if [[ -n "${EXP_ID}" ]]; then
-  args+=(--exp "${EXP_ID}")
+  args+=( --exp "${EXP_ID}" )
 fi
 
 python3 "${script_dir}/render_eval_video.py" "${args[@]}" "${flags[@]}"
 echo "✅ Done. Outputs written under: ${OUT_DIR}"
+

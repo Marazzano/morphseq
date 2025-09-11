@@ -10,7 +10,7 @@ This version uses the modular utilities from Module 0 and Module 1:
 - Uses EntityIDTracker for entity validation
 - Uses ExperimentMetadata for metadata management
 - Uses BaseFileHandler for atomic JSON operations
-- Maintains snip_id format with '_s' prefix
+- Maintains standard entity ID formats via parsing_utils
 
 Output Structure:
 ================
@@ -21,7 +21,7 @@ GroundedSam2Annotations.json format (refactored):
     "creation_time": "YYYY-MM-DDThh:mm:ss",
     "last_updated": "YYYY-MM-DDThh:mm:ss",
     "entity_tracking": {...},  # Added/updated by EntityIDTracker
-    "snip_ids": ["20240411_A01_e01_s0000", "20240411_A01_e01_s0001", ...],  # Note '_s' prefix
+    "snip_ids": ["20240411_A01_e01_t0000", "20240411_A01_e01_t0001", ...],  # Standard format via parsing_utils
     "segmentation_format": "rle",  # canonical format stored at top-level
     "experiments": {
         "20240411": {
@@ -45,7 +45,7 @@ GroundedSam2Annotations.json format (refactored):
                             "embryos": {
                                 "20240411_A01_e01": {
                                     "embryo_id": "20240411_A01_e01",
-                                    "snip_id": "20240411_A01_e01_s0000",  # standardized '_s' prefix
+                                    "snip_id": "20240411_A01_e01_t0000",  # Standard format via parsing_utils
                                     "segmentation": {...},
                                     "bbox": [x, y, x, y],
                                     "area": 1234.5,
@@ -101,7 +101,8 @@ from scripts.utils.parsing_utils import (
     extract_experiment_id,
     extract_embryo_id,
     get_entity_type,
-    build_snip_id
+    build_snip_id,
+    build_embryo_id
 )
 from scripts.utils.entity_id_tracker import EntityIDTracker
 from scripts.utils.base_file_handler import BaseFileHandler
@@ -195,7 +196,7 @@ class GroundedSamAnnotations(BaseFileHandler):
     - Video grouping and seed frame selection
     - SAM2 video segmentation and tracking
     - Structured output generation matching experiment metadata format
-    - Entity validation and snip_id standardization
+    - Entity validation and ID standardization via parsing_utils
     """
 
     def __init__(self, 
@@ -380,10 +381,16 @@ class GroundedSamAnnotations(BaseFileHandler):
                 if self.verbose:
                     print(f"⚠️ Entity validation warnings: {validation_result.get('violations', [])}")
             
-            # REFACTORED: Verify snip IDs use '_s' format
+            # REFACTORED: Verify entity IDs using parsing_utils (schema-drift protection)
             for snip_id in entities.get("snips", []):
-                if not snip_id.count("_s") == 1:
-                    print(f"⚠️ Non-standard snip_id format: {snip_id}")
+                entity_type = get_entity_type(snip_id)
+                if entity_type != "snip":
+                    print(f"⚠️ Non-standard snip_id format: {snip_id} (detected as: {entity_type})")
+            
+            for embryo_id in entities.get("embryos", []):
+                entity_type = get_entity_type(embryo_id)
+                if entity_type != "embryo":
+                    print(f"⚠️ Non-standard embryo_id format: {embryo_id} (detected as: {entity_type})")
                     
             if self.verbose:
                 entity_counts = EntityIDTracker.get_counts(entities)
@@ -942,9 +949,9 @@ class GroundedSamAnnotations(BaseFileHandler):
         return converted
 
 
-# REFACTORED: Fix create_snip_id to use standard format with '_s' prefix
+# REFACTORED: Use parsing_utils for consistent snip_id creation
 def create_snip_id(embryo_id: str, image_id: str) -> str:
-    """Create snip_id via parsing_utils using canonical t-style (embryo_id_t####)."""
+    """Create snip_id via parsing_utils using canonical format for schema consistency."""
     frame = extract_frame_number(image_id)
     if frame is None:
         raise ValueError(f"Could not extract frame number from image_id: {image_id}")
@@ -1018,18 +1025,11 @@ def run_sam2_propagation(predictor, video_dir: Path, seed_frame_idx: int,
             # Use parsing utils for consistent filename construction
             from scripts.utils.parsing_utils import get_image_filename_from_id
             image_filename = get_image_filename_from_id(image_id)
-            # video_dir may point to the video file's parent; try to find images dir
-            # Prefer ExperimentMetadata if available
-            try:
-                images_dir = None
-                if hasattr(self, 'exp_metadata') and self.exp_metadata:
-                    # ExperimentMetadata exposes a method to get processed_jpg_images_dir for a video
-                    images_dir = Path(self.exp_metadata.get_processed_images_dir_for_video(video_id)) if hasattr(self.exp_metadata, 'get_processed_images_dir_for_video') else None
-                if not images_dir:
-                    images_dir = video_dir
-                src_path = Path(images_dir) / image_filename
-            except Exception:
-                src_path = video_dir / image_filename
+            # Simple path construction - video_dir is already correct from metadata
+            src_path = video_dir / image_filename
+            print(f"DEBUG: Simple path construction for image_filename={image_filename}")
+            print(f"DEBUG: src_path: {src_path}")
+            print(f"DEBUG: src_path exists: {src_path.exists()}")
             dst_path = temp_dir / f"{i:05d}.jpg"
             
             if src_path.exists():
@@ -1262,8 +1262,18 @@ def process_single_video_from_annotations(video_id: str, video_annotations: Dict
         if not video_info:
             raise ValueError(f"Video {video_id} not found in experiment metadata")
         
-        # Get video directory and image order from metadata
-        video_dir = grounded_sam_instance.exp_metadata.get_video_directory_path(video_id)
+        # Get video directory directly from metadata - no complex path construction needed!
+        print(f"DEBUG: Getting processed_jpg_images_dir directly from metadata for video_id={video_id}")
+        if "processed_jpg_images_dir" in video_info:
+            video_dir = Path(video_info["processed_jpg_images_dir"])
+            print(f"DEBUG: Found processed_jpg_images_dir in metadata: {video_dir}")
+        else:
+            # Fallback: construct from metadata file location
+            metadata_dir = Path(grounded_sam_instance.exp_metadata.filepath).parent
+            video_dir = metadata_dir / "images" / video_id
+            print(f"DEBUG: No processed_jpg_images_dir found, using fallback: {video_dir}")
+        
+        print(f"DEBUG: video_dir exists: {video_dir.exists()}")
         image_ids_data = video_info['image_ids']
         # Canonicalize to ordered list of image_ids (dict going forward)
         image_ids_list = (sorted(image_ids_data.keys())
@@ -1463,10 +1473,10 @@ def find_seed_frame_from_video_annotations(video_annotations: Dict[str, List[Dic
 
 
 def assign_embryo_ids(video_id: str, num_embryos: int) -> List[str]:
-    """Assign embryo IDs for detected embryos in a video."""
+    """Assign embryo IDs for detected embryos in a video using parsing_utils."""
     embryo_ids = []
     for i in range(num_embryos):
-        embryo_id = f"{video_id}_e{i+1:02d}"
+        embryo_id = build_embryo_id(video_id, i+1)  # Use parsing_utils for consistent format
         embryo_ids.append(embryo_id)
     
     return embryo_ids
