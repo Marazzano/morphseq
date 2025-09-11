@@ -775,8 +775,6 @@ class ExperimentMetadata(BaseFileHandler):
             # Remove the experiment metadata filename and go to images/video_id
             metadata_dir = self.filepath.parent
             fallback_path = str(metadata_dir / "images" / video_id)
-            print(f"DEBUG: Using fallback path construction: {fallback_path}")
-            print(f"DEBUG: Fallback path exists: {Path(fallback_path).exists()}")
             return fallback_path
     
     def __str__(self) -> str:

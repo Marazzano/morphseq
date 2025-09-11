@@ -40,17 +40,17 @@ Output:
 - Boolean is_seed_frame indicates seed frames used for SAM2 initialization
 
 Usage:
-    # Basic usage
-    python export_sam2_metadata_to_csv.py annotations.json -o output.csv
+    # Basic usage with per-experiment metadata
+    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --metadata-json experiment_metadata_20240418.json
     
     # With mask validation  
-    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --masks-dir ./masks
+    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --masks-dir ./masks --metadata-json experiment_metadata_20240418.json
     
     # Filter specific experiments
-    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --experiment-filter 20240418 20240419
+    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --experiment-filter 20240418 --metadata-json experiment_metadata_20240418.json
     
     # Verbose logging
-    python export_sam2_metadata_to_csv.py annotations.json -o output.csv -v
+    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --metadata-json experiment_metadata_20240418.json -v
 
 Error Handling:
 - Graceful handling of malformed JSON with specific error messages
@@ -140,16 +140,18 @@ class SAM2MetadataExporter:
     CSV schema required by downstream processing steps.
     """
     
-    def __init__(self, sam2_json_path: Path, masks_dir: Optional[Path] = None):
+    def __init__(self, sam2_json_path: Path, masks_dir: Optional[Path] = None, metadata_json_path: Optional[Path] = None):
         """
         Initialize the exporter.
         
         Args:
             sam2_json_path: Path to GroundedSam2Annotations.json
             masks_dir: Directory containing exported mask PNG files
+            metadata_json_path: Path to per-experiment metadata JSON file
         """
         self.sam2_json_path = Path(sam2_json_path)
         self.masks_dir = Path(masks_dir) if masks_dir else None
+        self.metadata_json_path = Path(metadata_json_path) if metadata_json_path else None
         self.sam2_data = None
         self.experiment_metadata = None
         self.build01_wells = set()
@@ -187,25 +189,23 @@ class SAM2MetadataExporter:
 
     def load_experiment_metadata(self) -> None:
         """
-        Load experiment metadata from experiment_metadata.json if available.
+        Load per-experiment metadata JSON if path provided.
         This provides pixel dimensions and other raw image data missing from SAM2 segmentation JSON.
         """
-        # Try to find experiment_metadata.json in the same directory structure
-        sam2_dir = self.sam2_json_path.parent
-        while sam2_dir.name and sam2_dir != sam2_dir.parent:
-            metadata_path = sam2_dir / "raw_data_organized" / "experiment_metadata.json"
-            if metadata_path.exists():
-                logger.info(f"Loading experiment metadata from {metadata_path}")
-                try:
-                    with open(metadata_path, 'r') as f:
-                        self.experiment_metadata = json.load(f)
-                    logger.info(f"Successfully loaded experiment metadata with {len(self.experiment_metadata.get('experiments', {}))} experiments")
-                    return
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to load experiment metadata: {e}")
-            sam2_dir = sam2_dir.parent
+        if not self.metadata_json_path:
+            logger.warning("No metadata JSON path provided - pixel dimensions will be missing")
+            return
+            
+        if not self.metadata_json_path.exists():
+            raise FileNotFoundError(f"Per-experiment metadata JSON not found: {self.metadata_json_path}")
         
-        logger.warning("No experiment_metadata.json found - pixel dimensions will be missing")
+        logger.info(f"Loading per-experiment metadata from {self.metadata_json_path}")
+        try:
+            with open(self.metadata_json_path, 'r') as f:
+                self.experiment_metadata = json.load(f)
+            logger.info(f"Successfully loaded per-experiment metadata")
+        except json.JSONDecodeError as e:
+            raise json.JSONDecodeError(f"Invalid JSON format in {self.metadata_json_path}: {e}")
 
     def load_build01_metadata(self, experiment_id: str) -> None:
         """
@@ -664,11 +664,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Basic usage
-    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --masks-dir ./masks
+    # Basic usage with per-experiment metadata
+    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --masks-dir ./masks --metadata-json experiment_metadata_20240418.json
 
-    # Filter specific experiment
-    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --masks-dir ./masks --experiment-filter 20240418
+    # Filter specific experiment  
+    python export_sam2_metadata_to_csv.py annotations.json -o output.csv --masks-dir ./masks --experiment-filter 20240418 --metadata-json experiment_metadata_20240418.json
         """
     )
     
@@ -692,6 +692,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--metadata-json',
+        type=Path,
+        help='Path to per-experiment metadata JSON file (e.g., experiment_metadata_{exp}.json)'
+    )
+    
+    parser.add_argument(
         '--experiment-filter',
         nargs='+',
         help='Filter to specific experiment IDs (e.g., 20240418)'
@@ -710,7 +716,7 @@ Examples:
     
     try:
         # Initialize exporter
-        exporter = SAM2MetadataExporter(args.input_json, args.masks_dir)
+        exporter = SAM2MetadataExporter(args.input_json, args.masks_dir, args.metadata_json)
         
         # Load and validate
         exporter.load_and_validate_json()
