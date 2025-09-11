@@ -84,3 +84,48 @@ Test Plan (experiment 20250529_36hpf_ctrl_atf6)
 Notes
 - This direct Build03 entry point lets us iterate on per‑experiment I/O without invoking upstream stages.
 - Once stabilized, ExperimentManager can call run_build03.py after Stage 6 for each experiment.
+
+## Build03 Implementation Updates (2025-09-11)
+
+### Issues Resolved
+
+1. **SAM2 CSV Exporter Fixed**: 
+   - Updated `export_sam2_metadata_to_csv.py` to accept `--metadata-json` argument
+   - Now reads per-experiment metadata JSON directly instead of searching for monolithic files
+   - Updated `run_sam2.py` to pass the per-experiment metadata path automatically
+
+2. **predicted_stage_hpf Calculation Fixed**:
+   - Issue: Field was empty in Build03 output CSV
+   - Root cause: Column already existed (as empty string), so DataFrame calculation was skipped
+   - Solution: Removed existence check, always calculate if input columns present
+   - Uses legacy Kimmel et al 1995 formula: `start_age_hpf + (Time Rel (s)/3600) * (0.055*temperature - 0.57)`
+
+3. **Micron Scale Calculations Fixed**:
+   - Issue: `area_um2`, `perimeter_um`, `centroid_x_um`, `centroid_y_um` fields empty despite pixel scale data being available
+   - Root cause: Script looked for pixel scale in Build01 CSV, but no dedicated `pixel_size_um` column exists there
+   - Investigation: Build01 calculates `pixel_size_um = width_um / width_px` but doesn't store it in CSV
+   - Solution: Use pixel scale data directly from SAM2 CSV (`width_um`, `width_px`, `height_um`, `height_px`)
+   - Calculation: `um_per_pixel_x = width_um / width_px`, `um_per_pixel_y = height_um / height_px`
+   - Fallback: If SAM2 data missing, calculate from Build01 CSV Width/Height columns
+
+### Pixel Scale Data Flow Verification
+
+**SAM2 CSV** (enriched with per-experiment metadata):
+- `width_um=3623.441, width_px=1920, height_um=2717.581, height_px=1440`
+- Pixel scale: `x=1.887 um/px, y=1.887 um/px`
+
+**Build01 CSV** (raw image metadata):
+- `Width (um)=3623.441, Width (px)=1920, Height (um)=2717.581, Height (px)=1440`
+- No stored pixel scale column - calculated on-demand
+
+**Build01 Source** (diffusion-dev:src/build/build01A_compile_keyence_torch.py:L123):
+```python
+pixel_size_um = meta['Width (um)'] / meta['Width (px)']
+```
+
+### Current Status
+- ✅ SAM2 CSV export with per-experiment metadata: Working
+- ✅ predicted_stage_hpf calculation: Working (36.00 hpf for t=0000 at 24°C)
+- ✅ Pixel geometry extraction: Working with `--compute-geometry` flag
+- ✅ Micron conversions: Working using SAM2 CSV pixel scale data
+- 🔄 Testing: Complete validation with test experiment 20250529_36hpf_ctrl_atf6
