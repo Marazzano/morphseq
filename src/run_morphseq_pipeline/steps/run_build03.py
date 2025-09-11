@@ -20,7 +20,7 @@ def run_build03(
     frames_per_embryo: int | None = None,
     max_samples: int | None = None,
     n_workers: int = 1,
-    df01_out: str | Path = "metadata/combined_metadata_files/embryo_metadata_df01.csv",
+    df01_out: str | Path | None = "metadata/combined_metadata_files/embryo_metadata_df01.csv",
 ) -> Path:
     """Run Build03A with either SAM2 CSV bridge or legacy segmentation metadata.
     
@@ -64,6 +64,9 @@ def run_build03(
     extract_embryo_snips(root=str(root), stats_df=stats_df, n_workers=n_workers)
 
     # 6) Write df01 where Build04 expects it
+    # Allow callers to omit df01_out; fall back to default location
+    if df01_out is None:
+        df01_out = "metadata/combined_metadata_files/embryo_metadata_df01.csv"
     out_path = Path(df01_out)
     if not out_path.is_absolute():
         out_path = root / out_path

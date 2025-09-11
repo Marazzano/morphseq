@@ -159,7 +159,8 @@ def run_sam2(
             script_path=scripts_dir / "01_prepare_videos.py",
             args=stage1_args,
             env=env,
-            cwd=sandbox_dir
+            cwd=sandbox_dir,
+            stream_output=True
         )
         
         # Stage 2: GroundingDINO Detection  
@@ -186,7 +187,8 @@ def run_sam2(
             script_path=scripts_dir / "03_gdino_detection.py", 
             args=stage2_args,
             env=env,
-            cwd=sandbox_dir
+            cwd=sandbox_dir,
+            stream_output=True
         )
         
         # Stage 3: SAM2 Video Processing
@@ -211,14 +213,17 @@ def run_sam2(
             script_path=scripts_dir / "04_sam2_video_processing.py",
             args=sam2_args,
             env=env,
-            cwd=sandbox_dir
+            cwd=sandbox_dir,
+            stream_output=True
         )
         
         # Stage 4: QC Analysis
         print("📊 Stage 4: Quality control analysis...")
         qc_args = [
             "--input", str(sam2_output_path.absolute()),
-            "--experiments", exp
+            "--experiments", exp,
+            "--process-all",  # force reprocess for this experiment (overwrite semantics)
+            "--no-progress"
         ]
         if verbose:
             qc_args.append("--verbose")
@@ -227,7 +232,8 @@ def run_sam2(
             script_path=scripts_dir / "05_sam2_qc_analysis.py",
             args=qc_args,
             env=env,
-            cwd=sandbox_dir
+            cwd=sandbox_dir,
+            stream_output=True
         )
         
         # Stage 5: Export Masks
@@ -247,7 +253,8 @@ def run_sam2(
             script_path=scripts_dir / "06_export_masks.py",
             args=export_args,
             env=env,
-            cwd=sandbox_dir
+            cwd=sandbox_dir,
+            stream_output=True
         )
         
         # Stage 6: Export Metadata CSV
@@ -269,7 +276,8 @@ def run_sam2(
             script_path=utils_dir / "export_sam2_metadata_to_csv.py",
             args=csv_args,
             env=env,
-            cwd=sandbox_dir
+            cwd=sandbox_dir,
+            stream_output=True
         )
         
         # Cleanup
@@ -345,7 +353,8 @@ def _run_pipeline_script(
     script_path: Path,
     args: list[str],
     env: dict,
-    cwd: Path
+    cwd: Path,
+    stream_output: bool = True
 ) -> subprocess.CompletedProcess:
     """Run a pipeline script with error handling.
     
@@ -364,13 +373,24 @@ def _run_pipeline_script(
     if not script_path.exists():
         raise FileNotFoundError(f"Pipeline script not found: {script_path}")
     
-    cmd = [sys.executable, str(script_path)] + args
+    cmd = [sys.executable] + (["-u"] if stream_output else []) + [str(script_path)] + args
     
     print(f"🔧 Running: {script_path.name}")
     print(f"📂 Working directory: {cwd}")
     print(f"⚙️ Arguments: {' '.join(args)}")
     
-    try:
+    if stream_output:
+        # Encourage unbuffered output from child and stream directly to console
+        env_stream = env.copy()
+        env_stream["PYTHONUNBUFFERED"] = "1"
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=env_stream,
+            check=True
+        )
+        return result
+    else:
         result = subprocess.run(
             cmd,
             cwd=cwd,
@@ -379,23 +399,12 @@ def _run_pipeline_script(
             text=True,
             check=True
         )
-        
-        # Print stdout for progress tracking
+        # Print stdout for progress tracking after completion
         if result.stdout:
             for line in result.stdout.strip().split('\n'):
                 if line.strip():
                     print(f"📝 {line}")
-            
         return result
-    
-    except subprocess.CalledProcessError as e:
-        error_msg = f"Pipeline script failed: {script_path.name}\n"
-        error_msg += f"Return code: {e.returncode}\n"
-        if e.stdout:
-            error_msg += f"STDOUT:\n{e.stdout}\n"
-        if e.stderr:
-            error_msg += f"STDERR:\n{e.stderr}\n"
-        raise RuntimeError(error_msg) from e
 
 
 def run_sam2_batch(

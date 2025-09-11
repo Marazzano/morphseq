@@ -272,12 +272,13 @@ class VideoGenerator:
             
         video_data = videos[video_id]
         images = video_data.get("image_ids", {})
-        print(video_data)
   
 
-        # Find video directory - use experiment metadata to locate images
-        # Standard path structure: data/raw_data_organized/{experiment_id}/images/{video_id}/
-        video_dir = Path("data/raw_data_organized") / experiment_id / "images" / video_id
+        # Find video directory relative to the SAM2 pipeline root.
+        # Results JSON typically lives at: <sam2_root>/segmentation/grounded_sam_segmentations.json
+        # Frames live at:                 <sam2_root>/raw_data_organized/<experiment_id>/images/<video_id>/
+        sam2_root = results_json_path.parent.parent
+        video_dir = sam2_root / "raw_data_organized" / experiment_id / "images" / video_id
         
         if not video_dir.exists():
             if verbose:
@@ -322,9 +323,13 @@ class VideoGenerator:
             if frame is None:
                 continue
                 
-            # Generate image_id from filename - use the actual filename as it appears in SAM2 data
-            frame_num = image_file.stem  # This is already the full frame name like "20250612_30hpf_ctrl_atf6_A01_ch00_t0000"
-            image_id = frame_num  # Don't add video_id prefix since it's already in the filename
+            # Generate image_id to match keys used in JSON (image_ids)
+            # Common convention is: <video_id>_<frame_stem>, e.g., "..._A01_ch00_t0000".
+            frame_stem = image_file.stem
+            if frame_stem.startswith(video_id):
+                image_id = frame_stem
+            else:
+                image_id = f"{video_id}_{frame_stem}"
             
             # Add image_id overlay (foundation)
             frame = self._add_image_id_overlay(frame, image_id)
@@ -345,17 +350,18 @@ class VideoGenerator:
                     frames_with_overlays += 1
                 elif verbose:
                     print(f"⚠️ No embryos found for image {image_id}")
-            elif verbose:
-                print(f"⚠️ Image {image_id} not found in SAM2 data. Available: {list(images.keys())[:3]}...")
-                    
-                # Add QC flags overlay if requested and available
-                # Add QC flags overlay if requested and available
+
+                # Optionally add QC flags overlay
                 if show_qc_flags and image_data.get("qc_flags"):
                     frame = self.overlay_manager.add_overlay(
                         frame,
                         image_data["qc_flags"],
                         "qc_flags"
                     )
+            else:
+                if verbose:
+                    sample_keys = list(images.keys())[:3]
+                    print(f"⚠️ Image {image_id} not found in SAM2 data. Sample keys: {sample_keys} ...")
                     
             video_writer.write(frame)
             frames_written += 1

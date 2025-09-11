@@ -285,6 +285,7 @@ def build_ff_from_keyence(data_root: Union[Path, str],
 
 
     # get path info
+    import os
     RAW   = Path(data_root) / "raw_image_data" / "Keyence"
     BUILT = Path(data_root) / "built_image_data" / "Keyence"
     META  = Path(data_root) / "metadata" / "built_metadata_files"
@@ -303,13 +304,35 @@ def build_ff_from_keyence(data_root: Union[Path, str],
         well_list = sorted(raw_dir.glob("W0*"))
     else:
         well_list = sorted(raw_dir.glob("XY*"))
+    # Debug summary
+    dbg = str(os.environ.get("MSEQ_BUILD01_DEBUG", "0")).lower() in ("1","true","yes","on")
+    if dbg:
+        log.info("Keyence Build01: cytometer_flag=%s wells=%d in %s", cytometer_flag, len(well_list), raw_dir)
     
     # call function to walk through directories and compile list of image paths
     sample_list, meta_df = get_image_paths(well_list=well_list, cytometer_flag=cytometer_flag)
+    if dbg:
+        log.info("Keyence Build01: discovered frames=%d", len(sample_list))
 
     meta_df = build_experiment_metadata(repo_root=Path(repo_root), exp_name=exp_name, meta_df=meta_df)
 
     if not metadata_only:
+        # Resume optimization: skip frames already stitched when overwrite=False
+        stitched_root = Path(data_root) / "built_image_data" / "stitched_FF_images" / exp_name
+        if not overwrite and stitched_root.exists():
+            before = len(sample_list)
+            def _stitched_exists(s):
+                try:
+                    well = s.get("well") if hasattr(s, 'get') else s["well"]
+                    t    = int(s.get("time_id") if hasattr(s, 'get') else s["time_id"]) 
+                    out  = stitched_root / f"{well}_t{t:04}_stitch.jpg"
+                    return out.exists()
+                except Exception:
+                    return False
+            sample_list = [s for s in sample_list if not _stitched_exists(s)]
+            skipped = before - len(sample_list)
+            if skipped > 0:
+                log.info("Resuming: skipping %d stitched frames for %s", skipped, exp_name)
         # sample_list = [sample_list[i] for i in range(28, len(sample_list))]
         if exp_name == "20231207": # this one experiment has variable numbers of tiles
             EXPECTED_TILES = 2      # or 3, whatever the normal case is
@@ -329,6 +352,9 @@ def build_ff_from_keyence(data_root: Union[Path, str],
         if bs > 2:
             bs = 2
         print(f"Batch size: {bs}")
+        if dbg:
+            log.info("Keyence Build01: device=%s, ZYX per-tile=%s, tiles=%d, stitched X=%d, batch=%d",
+                     device, (Z, Y, im0[0].shape[-1]), len(im0), X, bs)
         log.info("Calculating FF for %s", exp_name)
 
         loader = DataLoader(ds,
@@ -375,6 +401,12 @@ def build_ff_from_keyence(data_root: Union[Path, str],
             save_images_parallel(images=ff_list,
                                 paths=all_paths,
                                 n_workers=min(2, bs))
+            if dbg:
+                try:
+                    ex = all_paths[0] if all_paths else None
+                    log.info("Keyence Build01: saved %d FF tiles (example: %s)", len(ff_list), ex)
+                except Exception:
+                    pass
     else:
         log.info("Skipping FF for %s", exp_name)
     # load previous metadata
@@ -414,6 +446,7 @@ def stitch_ff_from_keyence(data_root: str | Path,
     META_ROOT  = Path(data_root) / "metadata" / "built_metadata_files"
 
     log.info("Stitching FF tiles for %s", exp_name)
+    dbg = str(os.environ.get("MSEQ_BUILD01_DEBUG", "0")).lower() in ("1","true","yes","on")
     # -----------------------------------------------------------------------
     # for acq, orientation in zip(acq_dirs, orientation_list):
         # inside stitch_ff_from_keyence() – one acquisition folder “acq”
@@ -427,6 +460,8 @@ def stitch_ff_from_keyence(data_root: str | Path,
 
     ff_folders = sorted(ff_tile_root.glob("ff_*"))
     n_tiles    = len(list(ff_folders[0].glob("*.jpg")))  # assume constant
+    if dbg:
+        log.info("Keyence Stitch: ff_folders=%d, n_tiles/folder=%d, overwrite=%s, orientation=%s", len(ff_folders), n_tiles, overwrite, orientation)
 
     # ----- build (or reuse) master params once -------------------------------
     prior_file = ff_tile_root / "master_params.json"

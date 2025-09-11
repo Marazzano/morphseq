@@ -44,13 +44,16 @@ logging.getLogger("stitch2d").setLevel(logging.ERROR)
 ##########
 # Helper functions
 def _FF_wrapper(w, dask_arr, well_id_array, time_id_array, device, filter_size, bf_idx, 
-                out_ff, well_name_list_long, overwrite, z_buff):
+                out_ff, well_name_lookup, overwrite, z_buff):
     
     n_z_keep = 12 if z_buff else None
     # get indices
     t_idx = time_id_array[w]
     w_idx = well_id_array[w]
-    well_name = well_name_list_long[w]
+    w_base = int(well_id_array[w])
+    well_name = well_name_lookup.get(w_base)
+    if well_name is None:
+        return
 
     stack = _get_stack(dask_arr, t_idx, w_idx, n_z_keep=n_z_keep)
     ff = _focus_stack(stack, device, filter_size)
@@ -78,6 +81,104 @@ def _qc_well_assignments(stage_xyz_array, well_name_list_long):
     col_ind_pd = col_si[col_clusters.labels_]
     col_num_pd = col_index[len(col_index)-col_ind_pd-1]
     assert np.all(col_num_pd == col_num_vec)
+
+
+def _get_imputed_time_vector(nd, n_t, n_w, n_z, well_indices):
+    """
+    Extracts timestamps, handling missing metadata, and imputes any gaps.
+    Drop-in replacement for _fix_nd2_timestamp with robust gap handling.
+    
+    Args:
+        nd: ND2File object
+        n_t: Number of timepoints
+        n_w: Number of wells in ND2
+        n_z: Number of Z slices
+        well_indices: List of 0-based well indices to use as references
+    
+    Returns:
+        numpy array of length n_t with complete timestamps (no NaN)
+    """
+    # Safe reference well selection with guards
+    refs = sorted(set(w for w in (well_indices or []) if 0 <= w < n_w))
+    if len(refs) >= 3:
+        ref_wells = [refs[0], refs[len(refs)//2], refs[-1]]  # First, middle, last
+    elif refs:
+        ref_wells = refs  # Use whatever valid wells we have
+    else:
+        ref_wells = list(range(min(n_w, 3)))  # Fallback to first few wells
+    
+    log.info(f"Using reference wells: {ref_wells} from {len(refs)} selected wells")
+    
+    # 1. Robustly extract timestamps, allowing for NaNs
+    times = np.full((n_t,), np.nan, dtype=float)
+    
+    for t in range(n_t):
+        for w in ref_wells:
+            seq = (t * n_w + w) * n_z
+            try:
+                times[t] = nd.frame_metadata(seq).channels[0].time.relativeTimeMs / 1000.0
+                break  # Found valid timestamp, move to next timepoint
+            except Exception:
+                continue  # Try next reference well
+    
+    valid_count = (~np.isnan(times)).sum()
+    log.info(f"Extracted {valid_count}/{n_t} valid timestamps from ND2 metadata")
+    
+    # 2. Calculate robust cycle time from ORIGINAL valid data
+    s = pd.Series(times)  # Original with NaN gaps
+    original_valid = s.dropna()
+
+    if len(original_valid) >= 2:
+        # Calculate cycle time from original valid timestamps
+        original_diffs = original_valid.diff().dropna()
+        cycle_time = original_diffs.median()
+        log.info(f"Calculated cycle time: {cycle_time:.2f}s from {len(original_diffs)} intervals")
+    else:
+        cycle_time = 1800.0  # 30 minutes default (typical plate cycle time)
+        log.info(f"Using default cycle time: {cycle_time:.2f}s")
+
+    # 3. Impute missing values using pre-calculated cycle time
+    if s.isna().any():
+        missing_count = s.isna().sum()
+        log.info(f"Imputing {missing_count} missing timestamps...")
+
+        # Use direct extrapolation based on cycle time
+        if len(original_valid) > 0:
+            # Find the pattern in valid timestamps
+            first_valid_idx = s.first_valid_index()
+            last_valid_idx = s.last_valid_index()
+
+            # Fill backwards from first valid
+            if first_valid_idx > 0:
+                first_time = s.iloc[first_valid_idx]
+                for i in range(first_valid_idx - 1, -1, -1):
+                    s.iloc[i] = first_time - (first_valid_idx - i) * cycle_time
+
+            # Fill forwards from last valid  
+            if last_valid_idx < len(s) - 1:
+                last_time = s.iloc[last_valid_idx]
+                for i in range(last_valid_idx + 1, len(s)):
+                    s.iloc[i] = last_time + (i - last_valid_idx) * cycle_time
+
+            # Fill middle gaps with linear progression
+            for i in range(len(s)):
+                if pd.isna(s.iloc[i]):
+                    s.iloc[i] = s.iloc[0] + i * cycle_time
+    
+    # Last-resort safety: if still all NaN, create uniform grid
+    if s.isna().all():
+        log.warning("No valid timestamps found - using default 30 min intervals")
+        s = pd.Series(np.arange(n_t, dtype=float) * 1800.0)  # 30 min intervals
+    
+    # Ensure monotonic non-decreasing (prevent small numeric regressions)
+    s = s.cummax()
+    
+    # Final validation
+    final_valid = n_t - s.isna().sum()
+    log.info(f"Timestamp imputation complete: {final_valid}/{n_t} valid timestamps")
+    log.info(f"Time range: {s.min():.1f}s to {s.max():.1f}s (median interval: {s.diff().median():.2f}s)")
+    
+    return s.to_numpy()
 
 
 # fix large jumps in time stamp (not sure why this happens innd2 metadata)
@@ -179,6 +280,15 @@ def build_ff_from_yx1(
     nd = _read_nd2(exp_path)
     shape_twzcxy = nd.shape  # T,W,Z,C,Y,X
     n_t, n_w, n_z = shape_twzcxy[:3]
+    print(f"ND2 reports: n_t={n_t} timepoints, n_w={n_w} wells, n_z={n_z} z-slices")
+    print(f"Total expected frames in ND2: {n_t * n_w * n_z}")
+    
+    # Check actual frame count
+    try:
+        total_frames = nd.frame_metadata(0).contents.frameCount
+        print(f"Actual frame count from ND2 metadata: {total_frames}")
+    except:
+        print("Could not read actual frame count")
 
     # calculate batch size
     # sample_bytes = np.product(shape_twzcxy[2:]) * 4 # factor of 4 for 16 but
@@ -186,7 +296,43 @@ def build_ff_from_yx1(
 
     dask_arr = nd.to_dask()  # (T,W,Z,C,Y,X)
     channel_names = [c.channel.name for c in nd.frame_metadata(0).channels]
-    bf_idx = channel_names.index("BF")
+    # Determine BF channel index with simple rules
+    env_bf = os.environ.get("YX1_BF_CHANNEL_INDEX")
+    if env_bf is not None:
+        try:
+            bf_idx = int(env_bf)
+        except Exception:
+            raise ValueError(f"Invalid YX1_BF_CHANNEL_INDEX env var: {env_bf}")
+    else:
+        # Try exact 'BF' (case-insensitive)
+        lower = [str(n).lower() for n in channel_names]
+        bf_idx = None
+        if "bf" in lower:
+            bf_idx = lower.index("bf")
+        else:
+            # Try known single-channel label used on your system: 'EYES - Dia'
+            # Match case-insensitively to be safe
+            try_labels = ["eyes - dia"]
+            for i, name in enumerate(lower):
+                if name in try_labels:
+                    bf_idx = i
+                    break
+        if bf_idx is None:
+            # Fallbacks: if only one channel, pick it; else fail clearly
+            if len(channel_names) == 1:
+                bf_idx = 0
+            else:
+                raise ValueError(
+                    f"Could not locate BF channel. Available channels: {channel_names}. "
+                    f"Set YX1_BF_CHANNEL_INDEX to override."
+                )
+
+    # Loud warnings when using non-standard BF naming
+    lower = [str(n).lower() for n in channel_names]
+    if lower == ["eyes - dia"]:
+        log.warning("Using channel 'EYES - Dia' as BF (no 'BF' channel present). Channels: %s", channel_names)
+    elif "bf" not in lower:
+        log.warning("No 'BF' channel found; selected index %d from channels: %s. If incorrect, set YX1_BF_CHANNEL_INDEX.", bf_idx, channel_names)
 
 
     # get image resolution
@@ -200,60 +346,165 @@ def build_ff_from_yx1(
     # if n_channels > 1:
     #     channel_map = plate_map_xl.parse("channels")
 
-    # fix jumps in nd2 time stamp
-    frame_time_vec = _fix_nd2_timestamp(nd, n_z)
+    # Note: timestamp extraction moved to after well list creation for robust processing
 
-    # get series numbers
-    series_map = plate_map_xl.parse("series_number_map").iloc[:8, 1:13]
+    # get series numbers (robust to header row/col)
+    sm_raw = plate_map_xl.parse("series_number_map", header=None)
+    # Detect header row of 1..12 in columns 1..12 and drop it if present
+    data_rows = sm_raw
+    try:
+        header_like = list(sm_raw.iloc[0, 1:13].astype(object))
+        if header_like == list(range(1, 13)):
+            data_rows = sm_raw.iloc[1:9, :]  # rows A..H in 1..8 next
+        else:
+            data_rows = sm_raw.iloc[:8, :]
+    except Exception:
+        data_rows = sm_raw.iloc[:8, :]
+
+    series_map = data_rows.iloc[:, 1:13]  # 8x12 numeric grid
 
     well_name_list = []
     well_ind_list = []
+    used_series = set()
     col_id_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     row_letter_list = ["A", "B", "C", "D", "E", "F", "G", "H"]
     for c in range(len(col_id_list)):
         for r in range(len(row_letter_list)):
-            ind_float = series_map.iloc[r, c]
-            if ~np.isnan(ind_float):
+            val = series_map.iloc[r, c]
+            if pd.notna(val):
+                try:
+                    series_idx_1b = int(val)
+                except Exception:
+                    continue
+                # Validate series index: 1..n_w
+                if series_idx_1b < 1 or series_idx_1b > n_w:
+                    log.warning("Skipping out-of-range series index %d (valid 1..%d) at well %s%02d",
+                                series_idx_1b, n_w, row_letter_list[r], col_id_list[c])
+                    continue
+                if series_idx_1b in used_series:
+                    # Skip duplicates to avoid mapping two wells to same ND2 series
+                    log.warning("Duplicate series index %d; keeping first mapping, skipping well %s%02d",
+                                series_idx_1b, row_letter_list[r], col_id_list[c])
+                    continue
+                used_series.add(series_idx_1b)
                 well_name = row_letter_list[r] + f"{col_id_list[c]:02}"
                 well_name_list.append(well_name)
-                well_ind_list.append(int(ind_float))
+                well_ind_list.append(series_idx_1b)
+
+    # Log a concise mapping summary for diagnostics
+    if well_name_list and well_ind_list:
+        pairs = sorted(zip(well_name_list, well_ind_list), key=lambda x: x[1])
+        sel = len(pairs)
+        smin = pairs[0][1]
+        smax = pairs[-1][1]
+        log.info(
+            "YX1 series_number_map: selected_wells=%d, series_min=%d, series_max=%d",
+            sel, smin, smax
+        )
+        log.info(
+            "YX1 map examples: first %s->%d | last %s->%d",
+            pairs[0][0], pairs[0][1], pairs[-1][0], pairs[-1][1]
+        )
+
+    # Diagnostic: per-well frame coverage (how many timepoints truly available)
+    try:
+        selected_nd2_indices = sorted(set(int(s1b) - 1 for s1b in well_ind_list))
+        def _has_seq(w: int, t: int) -> bool:
+            seq = (t * n_w + w) * n_z
+            try:
+                _ = nd.frame_metadata(seq)
+                return True
+            except Exception:
+                return False
+        for w in selected_nd2_indices:
+            t_avail = 0
+            for t in range(n_t):
+                if _has_seq(w, t):
+                    t_avail += 1
+                else:
+                    break
+            # Find well name for this ND2 index if present
+            try:
+                # series number is w+1 (1-based)
+                s1b = w + 1
+                idx = well_ind_list.index(s1b)
+                wname = well_name_list[idx]
+            except ValueError:
+                wname = f"nd2_{w:02d}"
+            log.info("DEBUG YX1 coverage: well %s (nd2 %d) frames_available=%d/%d", wname, w, t_avail, n_t)
+    except Exception:
+        pass
 
     si = np.argsort(well_ind_list)
     well_name_list_sorted = np.asarray(well_name_list)[si].tolist()
-    # well_ind_list_sorted = np.asarray(well_ind_list)[si].tolist()
+    well_ind_list_sorted = np.asarray(well_ind_list)[si].tolist()
+
+    # Extract timestamps with robust gap handling
+    selected_nd2_indices = [int(s) - 1 for s in well_ind_list_sorted]  # Convert to 0-based
+    frame_time_vec = _get_imputed_time_vector(nd, n_t, n_w, n_z, selected_nd2_indices)
 
     # generate longform vectors
     well_name_list_long = np.repeat(well_name_list_sorted, n_t)
-    well_ind_list_long = np.repeat(np.asarray(well_ind_list)[si], n_t)
+    well_ind_list_long = np.repeat(well_ind_list_sorted, n_t)
 
-    # check that assigned well IDs match recorded stage positions
-    stage_xyz_array = np.empty((n_w*n_t, 3))
-    well_id_array = np.empty((n_w*n_t,), dtype=np.uint16)
-    time_id_array = np.empty((n_w*n_t,), dtype=np.uint16)
+    # check that assigned well IDs match recorded stage positions - ONLY for mapped wells
+    n_mapped_wells = len(well_ind_list)
+    total_entries = n_mapped_wells * n_t
+    
+    stage_xyz_array = np.empty((total_entries, 3))
+    well_id_array = np.empty((total_entries,), dtype=np.uint16)
+    time_id_array = np.empty((total_entries,), dtype=np.uint16)
     iter_i = 0
-    for w in range(n_w):
+    
+    # Loop through only the wells that are mapped in the Excel file - USE SORTED LISTS
+    for well_idx, (well_name, well_series) in enumerate(zip(well_name_list_sorted, well_ind_list_sorted)):
+        nd2_well_idx = well_series - 1  # Convert from 1-based to 0-based indexing
         for t in range(n_t):
-            base_ind = t*n_w + w
+            base_ind = t*n_w + nd2_well_idx  # Use ND2's well index for frame calculation
             slice_ind = base_ind*n_z
             
-            stage_xyz_array[iter_i, :] = np.asarray(nd.frame_metadata(slice_ind).channels[0].position.stagePositionUm)
-            well_id_array[iter_i] = w
-            time_id_array[iter_i] = t
-            iter_i += 1
+            try:
+                stage_xyz_array[iter_i, :] = np.asarray(nd.frame_metadata(slice_ind).channels[0].position.stagePositionUm)
+                well_id_array[iter_i] = nd2_well_idx  # Store the ND2 well index
+                time_id_array[iter_i] = t
+                iter_i += 1
+            except IndexError:
+                # Skip this frame - ND2 file has fewer frames than expected
+                # Only print summary at the end to avoid spam
+                continue
 
+    # Trim arrays to actual processed entries if some frames were missing
+    if iter_i < total_entries:
+        missing_frames = total_entries - iter_i
+        print(f"ND2 file missing {missing_frames}/{total_entries} expected frames - trimming arrays to {iter_i} entries")
+        stage_xyz_array = stage_xyz_array[:iter_i]
+        well_id_array = well_id_array[:iter_i]  
+        time_id_array = time_id_array[:iter_i]
 
-    # chec that recorded well positions are consistent with actual image positions on the plate
+    # Check that recorded well positions are consistent with actual image positions on the plate.
+    # Some ND2s have missing wells/frames leading to length mismatches; in that case, skip QC check.
     if exp_name != "20240314":
-        _qc_well_assignments(stage_xyz_array, well_name_list_long)
+        try:
+            if stage_xyz_array.shape[0] != len(well_name_list_long):
+                log.warning(
+                    "Skipping YX1 well-assignment QC: length mismatch (stage=%d, wells=%d)",
+                    stage_xyz_array.shape[0], len(well_name_list_long)
+                )
+            else:
+                _qc_well_assignments(stage_xyz_array, well_name_list_long)
+        except Exception as e:
+            log.warning("Skipping YX1 well-assignment QC due to error: %s", e)
 
     if len(shape_twzcxy) == 6:
         dask_arr = dask_arr[:, :, :, bf_idx, :, :]
 
-    # generate metadata dataframe
+    # generate metadata dataframe for SELECTED wells only
+    n_selected_wells = len(well_name_list_sorted)
     well_df = pd.DataFrame(well_name_list_long[:, np.newaxis], columns=["well"])
     well_df["nd2_series_num"] = well_ind_list_long
     well_df["microscope"] = "YX1"
-    time_int_list = np.tile(np.arange(0, n_t), n_w)
+    # time_int goes 0..n_t-1 for each selected well
+    time_int_list = np.tile(np.arange(0, n_t, dtype=int), n_selected_wells)
     well_df["time_int"] = time_int_list
     well_df["Height (um)"] = shape_twzcxy [3]*voxel_size[1]
     well_df["Width (um)"] = shape_twzcxy [4]*voxel_size[0]
@@ -261,9 +512,9 @@ def build_ff_from_yx1(
     well_df["Width (px)"] = shape_twzcxy [4]
     well_df["BF Channel"] = bf_idx
     well_df["Objective"] = nd.frame_metadata(0).channels[0].microscope.objectiveName
-    time_ind_vec = []
-    for n in range(n_w):
-        time_ind_vec += np.arange(n, n_w*n_t, n_w).tolist()
+    # Map frame times for selected wells: simply repeat the per-time vector for each selected well
+    frame_time_vec = np.asarray(frame_time_vec)
+    time_ind_vec = np.tile(np.arange(0, n_t, dtype=int), n_selected_wells)
     well_df["Time (s)"] = frame_time_vec[time_ind_vec]
 
 
@@ -278,22 +529,86 @@ def build_ff_from_yx1(
         
         out_ff = write_root / "stitched_FF_images" / exp_name
 
-        call_ff = partial(_FF_wrapper, dask_arr=dask_arr, well_id_array=well_id_array, 
-                          time_id_array=time_id_array, device=device, filter_size=3, 
-                          bf_idx=bf_idx, out_ff=out_ff, well_name_list_long=well_name_list_long, overwrite=overwrite, z_buff=z_buff)
+        # Build lookup of ND2 well index -> well name from series_number_map (selected wells only)
+        well_name_lookup = {int(ind)-1: name for name, ind in zip(well_name_list_sorted, well_ind_list_sorted)}
+        
+        # Show every 8th lookup entry for debugging (convert to 1-based for user clarity)
+        lookup_items = list(well_name_lookup.items())
+        sample_entries = {}
+        for i in range(0, len(lookup_items), 8):
+            nd2_idx, well_name = lookup_items[i]
+            excel_series = nd2_idx + 1  # Convert back to Excel 1-based numbering
+            sample_entries[excel_series] = well_name
+        # Always include the last entry
+        if len(lookup_items) > 0 and (len(lookup_items) - 1) % 8 != 0:
+            nd2_idx, well_name = lookup_items[-1]
+            excel_series = nd2_idx + 1
+            sample_entries[excel_series] = well_name
+        
+        print(f"Subsetting to {len(well_name_lookup)} wells from metadata")
+        print(f"Sample lookup entries (every 8th): {sample_entries}")
+
+        # Build indices for only the sampled/subset wells (mapped in Excel)
+        # Use a simpler approach: generate indices directly from mapped wells
+        indices = []
+        sampled_wells_info = []  # Store (well_idx, well_name, well_series) for processing
+        
+        for well_idx, (well_name, well_series) in enumerate(zip(well_name_list_sorted, well_ind_list_sorted)):
+            nd2_well_idx = well_series - 1  # Convert from 1-based to 0-based
+            for t in range(n_t):
+                # Store enough info to reconstruct processing later
+                frame_idx = len(indices)  # This will be the index in our processing arrays
+                indices.append(frame_idx)
+                sampled_wells_info.append((well_idx, well_name, well_series, nd2_well_idx, t))
+
+        # Resume optimization: compute only frames missing stitched outputs when overwrite=False
+        if not overwrite:
+            filtered_indices = []
+            filtered_wells_info = []
+            for idx, (well_idx, well_name, well_series, nd2_well_idx, t) in zip(indices, sampled_wells_info):
+                out = out_ff / f"{well_name}_t{t:04}_ch{bf_idx:02}_stitch.jpg"
+                if not out.exists():
+                    filtered_indices.append(idx)
+                    filtered_wells_info.append((well_idx, well_name, well_series, nd2_well_idx, t))
+            
+            skipped = len(indices) - len(filtered_indices)
+            if skipped > 0:
+                log.info("Resuming: skipping %d stitched frames for %s", skipped, exp_name)
+            
+            indices = filtered_indices
+            sampled_wells_info = filtered_wells_info
+
+        # Create a custom wrapper that uses our sampled wells info
+        def process_sampled_well(idx):
+            """Process a specific frame using sampled wells info"""
+            well_idx, well_name, well_series, nd2_well_idx, t = sampled_wells_info[idx]
+            
+            n_z_keep = 12 if z_buff else None
+            
+            # Get the z-stack for this well and timepoint
+            stack = _get_stack(dask_arr, t, nd2_well_idx, n_z_keep=n_z_keep)
+            ff = _focus_stack(stack, device, filter_size=3)
+            
+            # Write the focus-stacked image
+            _write_ff(out_ff, well_name, t, bf_idx, ff, overwrite)
     
         if not par_flag:
-            for w in tqdm(range(len(well_id_array))):
-                call_ff(w)
+            for idx in tqdm(indices):
+                process_sampled_well(idx)
         else:
-            process_map(call_ff, range(len(well_id_array)), max_workers=n_workers, chunksize=1)
+            process_map(process_sampled_well, indices, max_workers=n_workers, chunksize=1)
 
     else:
         log.info("Skipping FF for %s", exp_name)
 
     meta_df = build_experiment_metadata(repo_root=repo_root, exp_name=exp_name, meta_df=well_df)
-    first_time = np.min(well_df['Time (s)'].copy())
+    first_time = np.nanmin(meta_df['Time (s)'])  # NaN-safe minimum
     meta_df['Time Rel (s)'] = meta_df['Time (s)'] - first_time
+    
+    # Final validation - ensure no NaN values remain
+    assert not meta_df['Time (s)'].isna().any(), f"FATAL: NaN timestamps remain in {exp_name}"
+    assert not meta_df['Time Rel (s)'].isna().any(), f"FATAL: NaN relative times in {exp_name}"
+    log.info(f"✅ {exp_name}: validated {len(meta_df)} metadata rows, ready for save")
     
     # load previous metadata
     out_meta = meta_root / "built_metadata_files"

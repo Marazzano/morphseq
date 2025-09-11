@@ -341,13 +341,13 @@ class Experiment:
     
     def is_in_df01(self) -> bool:
         """
-        Check if this experiment exists in the combined embryo metadata (df01).
-        
-        df01 is created by Build03 and contains processed embryo data from all experiments.
-        If an experiment is in df01, it means Build03 has already been run for it.
-        
-        Returns:
-            bool: True if experiment_date appears in df01.csv
+        Check if this experiment exists in df01.
+
+        Robust detection:
+        - If `experiment_date` column exists, check exact match against self.date.
+        - Otherwise, derive experiment ID from `embryo_id`/`video_id` by dropping the
+          trailing well/embryo tokens, e.g.,
+              20250529_30hpf_ctrl_atf6_A01_e01 -> 20250529_30hpf_ctrl_atf6
         """
         try:
             import pandas as pd
@@ -355,19 +355,54 @@ class Experiment:
             if not df01_path.exists():
                 return False
             df01 = pd.read_csv(df01_path)
-            return self.date in df01['experiment_date'].values if 'experiment_date' in df01.columns else False
+
+            # Preferred explicit column
+            if 'experiment_date' in df01.columns:
+                vals = df01['experiment_date'].astype(str)
+                return self.date in set(vals.values)
+
+            # Fallback: derive experiment id from embryo/video identifiers
+            def derive_experiment(series):
+                parts = series.astype(str).str.split('_')
+                # Drop last two tokens (well, embryo index) when present
+                return parts.apply(lambda p: '_'.join(p[:-2]) if len(p) >= 3 else p[0])
+
+            for col in ("embryo_id", "EmbryoID", "embryoID", "video_id", "VideoID", "videoID"):
+                if col in df01.columns:
+                    exps = set(derive_experiment(df01[col]).values)
+                    return self.date in exps
+            
+            # Final fallback: stream-scan for pattern in the CSV text
+            patt = f"{self.date}_"
+            try:
+                with open(df01_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if patt in line or self.date in line:
+                            return True
+            except Exception:
+                pass
+            return False
         except Exception:
+            # If pandas fails, do the same streaming fallback
+            try:
+                df01_path = self.data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
+                if not df01_path.exists():
+                    return False
+                patt = f"{self.date}_"
+                with open(df01_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if patt in line or self.date in line:
+                            return True
+            except Exception:
+                return False
             return False
 
     def is_in_df02(self) -> bool:
         """
-        Check if this experiment exists in the QC'd embryo metadata (df02).
-        
-        df02 is created by Build04 and contains QC'd + staged embryo data.
-        If an experiment is in df02, it has passed through global QC processing.
-        
-        Returns:
-            bool: True if experiment_date appears in df02.csv
+        Check if this experiment exists in df02.
+
+        Preferred: `experiment_id` (present in many df02 builds).
+        Fallbacks: `experiment_date`, or derive from `embryo_id`/`video_id` like df01.
         """
         try:
             import pandas as pd
@@ -375,8 +410,45 @@ class Experiment:
             if not df02_path.exists():
                 return False
             df02 = pd.read_csv(df02_path)
-            return self.date in df02['experiment_date'].values if 'experiment_date' in df02.columns else False
+
+            if 'experiment_id' in df02.columns:
+                vals = df02['experiment_id'].astype(str)
+                return self.date in set(vals.values)
+            if 'experiment_date' in df02.columns:
+                vals = df02['experiment_date'].astype(str)
+                return self.date in set(vals.values)
+
+            def derive_experiment(series):
+                parts = series.astype(str).str.split('_')
+                return parts.apply(lambda p: '_'.join(p[:-2]) if len(p) >= 3 else p[0])
+
+            for col in ("embryo_id", "EmbryoID", "embryoID", "video_id", "VideoID", "videoID"):
+                if col in df02.columns:
+                    exps = set(derive_experiment(df02[col]).values)
+                    return self.date in exps
+            
+            # Final fallback: stream-scan the CSV for a simple pattern
+            patt = f"{self.date}_"
+            try:
+                with open(df02_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if patt in line or self.date in line:
+                            return True
+            except Exception:
+                pass
+            return False
         except Exception:
+            try:
+                df02_path = self.data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
+                if not df02_path.exists():
+                    return False
+                patt = f"{self.date}_"
+                with open(df02_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if patt in line or self.date in line:
+                            return True
+            except Exception:
+                return False
             return False
 
     def is_in_df03(self) -> bool:
@@ -488,8 +560,19 @@ class Experiment:
 
     @property
     def needs_segment(self) -> bool:
-        return (_mod_time(self.mask_path) >
-                datetime.fromisoformat(self.timestamps.get("segment", "1970-01-01T00:00:00")).timestamp())
+        # If any of the 5 QC mask outputs are missing, we need to run Build02
+        try:
+            present, total = self.qc_mask_status()
+            if total > 0 and present < total:
+                return True
+        except Exception:
+            # Be conservative: if we can't determine, fall back to timestamps
+            pass
+        # Otherwise use freshness to decide if an update is needed
+        return (
+            _mod_time(self.mask_path)
+            > self._ts("segment", 0.0)
+        )
     
     @property
     def needs_stats(self) -> bool:
@@ -533,16 +616,20 @@ class Experiment:
                     self._save_state()
                 return False  # Already processed globally
             
-            # PRIORITY 2: If locally recorded as complete, check input freshness
+            # PRIORITY 2: If locally recorded as complete, ensure df01 actually contains this experiment.
+            # If it doesn't, we still need to (re)run Build03, even if inputs aren't newer.
             last_build03 = self._ts("build03", 0)
             if last_build03 > 0:
-                # Check if SAM2 output is newer than last Build03 run
+                # If df01 now contains the experiment, we're done.
+                if self.is_in_df01():
+                    return False
+                # Otherwise, consider input freshness; if updated, definitely rerun…
                 if self.sam2_csv_path.exists():
                     sam2_time = self.sam2_csv_path.stat().st_mtime
                     if sam2_time > last_build03:
-                        return True  # SAM2 data updated, needs reprocessing
-                # Note: Could also check QC mask timestamps here if needed
-                return False  # Local tracking shows complete and current
+                        return True
+                # …and even if not updated, we still need to contribute to df01.
+                return True
             
             # PRIORITY 3: Never run locally, check if segmentation data available
             has_sam2_data = self.sam2_csv_path.exists()
@@ -598,10 +685,16 @@ class Experiment:
     # ——— call pipeline functions —————————————————————————————————————————————
     @record("ff")
     def export_images(self):
+        import os
+        def _as_bool(val: str) -> bool:
+            return str(val).lower() in ("1", "true", "yes", "on")
+        overwrite_env = _as_bool(os.environ.get("MSEQ_OVERWRITE_BUILD01", "0"))
         if self.microscope == "Keyence":
-            build_ff_from_keyence(data_root=self.data_root, repo_root=self.repo_root, exp_name=self.date, overwrite=True)
+            # Default resume-by-skip; enable full recompute with MSEQ_OVERWRITE_BUILD01=1
+            build_ff_from_keyence(data_root=self.data_root, repo_root=self.repo_root, exp_name=self.date, overwrite=overwrite_env)
         else:
-            build_ff_from_yx1(data_root=self.data_root, repo_root=self.repo_root, exp_name=self.date, overwrite=True)
+            # For YX1, overwrite=False skips existing frames; set MSEQ_OVERWRITE_BUILD01=1 to recompute
+            build_ff_from_yx1(data_root=self.data_root, repo_root=self.repo_root, exp_name=self.date, overwrite=overwrite_env)
 
     @record("meta_built")
     def export_metadata(self):
@@ -613,8 +706,13 @@ class Experiment:
 
     @record("stitch")
     def stitch_images(self):
+        import os
+        def _as_bool(val: str) -> bool:
+            return str(val).lower() in ("1", "true", "yes", "on")
+        overwrite_stitch = _as_bool(os.environ.get("MSEQ_OVERWRITE_STITCH", "0"))
         if self.microscope == "Keyence":
-            stitch_ff_from_keyence(data_root=self.data_root, exp_name=self.date, overwrite=True, n_workers=self.num_cpu_workers)
+            # Default is resume mode; set MSEQ_OVERWRITE_STITCH=1 to force restitch
+            stitch_ff_from_keyence(data_root=self.data_root, exp_name=self.date, overwrite=overwrite_stitch, n_workers=self.num_cpu_workers)
             stitch_z_from_keyence(data_root=self.data_root, exp_name=self.date, overwrite=True, n_workers=self.num_cpu_workers)
         else:
             pass
@@ -687,15 +785,19 @@ class Experiment:
         
         # Call the actual Build03 function with proper parameters
         try:
-            result = run_build03_step(
+            # Build argument dict while avoiding overriding defaults with None
+            _args = dict(
                 root=str(self.data_root),
                 exp=self.date,
                 sam2_csv=sam2_csv,  # Will be None for legacy path
                 by_embryo=by_embryo,
                 frames_per_embryo=frames_per_embryo,
                 n_workers=kwargs.get('n_workers', self.num_cpu_workers),
-                df01_out=kwargs.get('df01_out', None)  # Use default if not specified
             )
+            if 'df01_out' in kwargs and kwargs['df01_out'] is not None:
+                _args['df01_out'] = kwargs['df01_out']
+
+            result = run_build03_step(**_args)
             
             # Update df01 contribution tracking
             if result:
@@ -904,7 +1006,8 @@ class ExperimentManager:
         print("🔄 Running Build06 (global embeddings merge)")
         from ..run_morphseq_pipeline.steps.run_build06 import run_build06
         return run_build06(
-            morphseq_repo_root=str(self.root.parent.parent if "data" in str(self.root) else self.root),
+            # In two-root mode, `root` is the repo root (for snips); `data_root` is the central data dir
+            root=str(self.root.parent.parent if "data" in str(self.root) else self.root),
             data_root=str(self.root),
             model_name=model_name,
             **kwargs
@@ -1083,6 +1186,24 @@ class ExperimentManager:
     def report(self):
         for date, exp in self.experiments.items():
             print(f"{date}: raw={exp.flags['raw']}, meta={exp.flags['meta']}, ff={exp.flags['ff']}, stitch={exp.flags['stitch']}, stitch_z={exp.flags['stitch_z']}, segment={exp.flags['segment']}")
+
+    # TODO: Add pipeline status summary functionality
+    # Current dry-run shows individual experiment needs but doesn't provide aggregate statistics.
+    # Future enhancement: Add methods like:
+    # - summary_report(): Show counts of experiments at each pipeline stage
+    # - pipeline_status_table(): Tabular view of all experiments and their completion status
+    # - completion_stats(): Percentages of experiments that have completed each stage
+    # - bottleneck_analysis(): Identify which stages are blocking the most experiments
+    # 
+    # Example desired output:
+    # Pipeline Status Summary:
+    # - Total experiments: 102
+    # - FF images complete: 95 (93%)
+    # - QC masks complete: 67 (66%)  
+    # - SAM2 complete: 23 (23%)
+    # - Build03 complete: 78 (76%)
+    # - Latents complete: 45 (44%)
+    # - In df01: 78, In df02: 78, In df03: 45
 
 
 

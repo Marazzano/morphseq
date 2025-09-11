@@ -16,7 +16,7 @@ Key Features:
 - Uses existing parsing_utils.py for ID consistency
 - Supports experiment filtering for selective processing
 
-CSV Schema (Enhanced with Raw Metadata - 37 columns):
+CSV Schema (Enhanced with Raw Metadata + QC Flags - 40 columns):
     Core SAM2 columns (14): image_id, embryo_id, snip_id, frame_index, area_px, bbox_x_min, bbox_y_min, 
     bbox_x_max, bbox_y_max, mask_confidence, exported_mask_path, experiment_id, video_id, is_seed_frame
     
@@ -26,6 +26,8 @@ CSV Schema (Enhanced with Raw Metadata - 37 columns):
     
     Well-level metadata (7): medium, genotype, chem_perturbation, start_age_hpf, embryos_per_well, 
     temperature, well_qc_flag
+    
+    SAM2 QC flags (1): sam2_qc_flags
 
 Input Requirements:
 - GroundedSam2Annotations.json with standard SAM2 structure
@@ -116,7 +118,10 @@ CSV_COLUMNS = [
     
     # Well-level metadata
     'medium', 'genotype', 'chem_perturbation', 'start_age_hpf',
-    'embryos_per_well', 'temperature', 'well_qc_flag'
+    'embryos_per_well', 'temperature', 'well_qc_flag',
+    
+    # SAM2 QC flags (Refactor-011-B)
+    'sam2_qc_flags'
 ]
 
 # Setup logging
@@ -307,6 +312,43 @@ class SAM2MetadataExporter:
         
         return df
     
+    def _extract_qc_flags_for_snip(self, snip_id: str) -> str:
+        """
+        Extract SAM2 QC flags from flag_overview compiled summary.
+        
+        Uses the flag_overview section which compiles all flagged snip_ids by flag type,
+        making this a simple and efficient lookup operation.
+        
+        Args:
+            snip_id: Snip ID to check for flags (e.g., "20250529_30hpf_ctrl_atf6_A01_e01_t0000")
+            
+        Returns:
+            Comma-separated string of flag types, or empty string if no flags
+            
+        Example:
+            "HIGH_SEGMENTATION_VAR_SNIP,MASK_ON_EDGE"
+        """
+        flag_overview = self.sam2_data.get("flags", {}).get("flag_overview", {})
+        
+        # Define which flag types we care about at snip level (from 05_sam2_qc_analysis.py)
+        SNIP_LEVEL_FLAGS = [
+            "HIGH_SEGMENTATION_VAR_SNIP",  # High area variance between frames
+            "MASK_ON_EDGE",                # Mask touches image edges
+            "LARGE_MASK",                  # Abnormally large segmentation
+            "SMALL_MASK",                  # Abnormally small segmentation
+            "DISCONTINUOUS_MASK"           # Fragmented segmentation
+            # Note: OVERLAPPING_MASKS and DETECTION_FAILURE are image-level flags
+        ]
+        
+        flags_for_snip = []
+        for flag_type in SNIP_LEVEL_FLAGS:
+            if flag_type in flag_overview:
+                snip_ids_with_flag = flag_overview[flag_type].get("snip_ids", [])
+                if snip_id in snip_ids_with_flag:
+                    flags_for_snip.append(flag_type)
+        
+        return ",".join(flags_for_snip)
+    
     def _generate_csv_rows(self, experiment_filter: Optional[List[str]] = None) -> List[List[Any]]:
         """
         Generate CSV rows from nested SAM2 JSON structure.
@@ -448,6 +490,9 @@ class SAM2MetadataExporter:
                             logger.error(f"Error processing {embryo_id} in {image_id}: {e}")
                             continue
                         
+                        # Extract SAM2 QC flags for this snip (Refactor-011-B)
+                        sam2_qc_flags = self._extract_qc_flags_for_snip(snip_id)
+                        
                         # Create row with enhanced metadata
                         row = [
                             image_id,                    # image_id
@@ -495,7 +540,10 @@ class SAM2MetadataExporter:
                             well_metadata['start_age_hpf'],
                             well_metadata['embryos_per_well'],
                             well_metadata['temperature'],
-                            well_metadata['well_qc_flag']
+                            well_metadata['well_qc_flag'],
+                            
+                            # SAM2 QC flags (Refactor-011-B)
+                            sam2_qc_flags
                         ]
                         
                         rows.append(row)

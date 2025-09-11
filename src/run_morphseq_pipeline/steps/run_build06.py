@@ -14,6 +14,7 @@ def run_build06(
     model_name: str = "20241107_ds_sweep01_optimum",
     experiments: Optional[List[str]] = None,
     generate_missing: bool = False,
+    overwrite_latents: bool = False,
     export_analysis: bool = False,
     train_name: Optional[str] = None,
     write_train_output: bool = False,
@@ -61,6 +62,7 @@ def run_build06(
         model_name=model_name,
         experiments=experiments,
         generate_missing=generate_missing,
+        overwrite_latents=overwrite_latents,
         export_analysis=export_analysis,
         train_name=train_name,
         write_train_output=write_train_output,
@@ -68,4 +70,3 @@ def run_build06(
         dry_run=dry_run,
         logger=logger,
     )
-

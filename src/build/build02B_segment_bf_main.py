@@ -193,15 +193,17 @@ def apply_unet(root, model_name, n_classes, overwrite_flag=False, segment_list=N
                         ticks=range(n_classes+1)
                     )
                     # save
-                    im_name = path_leaf(suffix)
-                    subfolder = suffix.replace(im_name, "")
-                    im_name = im_name.replace("jpg", "").replace(".tif", "").replace(".png", "")
+                    # Derive a stable figure name from the image path
+                    base = ntpath.basename(im_path)
+                    name_no_ext = ntpath.splitext(base)[0]
+                    parent = ntpath.basename(ntpath.dirname(im_path))
 
-                    out_path = os.path.join(sample_fig_path) #, subfolder)
+                    out_path = os.path.join(sample_fig_path)
                     if not os.path.isdir(out_path):
-                        os.makedirs(out_path)
+                        os.makedirs(out_path, exist_ok=True)
 
-                    plt.savefig(os.path.join(out_path, subfolder[:-1] + "_" + im_name + '_prediction.jpg'))
+                    fig_name = f"{parent}_{name_no_ext}_prediction.jpg"
+                    plt.savefig(os.path.join(out_path, fig_name))
                     plt.close()
 
                 iter_i += 1

@@ -114,53 +114,28 @@ def _load_build02_masks_for_row(root: Path, row, target_shape: tuple[int, int], 
     stub = f"{well}_t{time_int:04d}"
 
     seg_root = Path(root) / "segmentation"
-    print(f"DEBUG: Searching for masks in: {seg_root}")
     if not seg_root.exists():
-        print(f"DEBUG: Segmentation root does not exist: {seg_root}")
         return {}
 
-    print(f"DEBUG: Available directories in {seg_root}: {[p.name for p in seg_root.iterdir() if p.is_dir()]}")
-
     def _find_and_read(keyword: str):
-        print(f"DEBUG: Looking for keyword '{keyword}' in directory names")
         for p in seg_root.iterdir():
             if p.is_dir() and keyword in p.name:
-                print(f"DEBUG: Found matching directory: {p.name}")
                 date_dir = p / date
-                print(f"DEBUG: Looking in date directory: {date_dir}")
                 if date_dir.exists():
                     candidates = sorted(date_dir.glob(f"*{stub}*"))
-                    print(f"DEBUG: Found {len(candidates)} candidates for {stub}: {[c.name for c in candidates]}")
                     if candidates:
-                        print(f"DEBUG: Reading mask from: {candidates[0]}")
                         arr_raw = io.imread(candidates[0])
-                        print(f"DEBUG: Raw {keyword} mask - shape: {arr_raw.shape}, unique values: {np.unique(arr_raw)}, min: {arr_raw.min()}, max: {arr_raw.max()}")
-                        
-                        # Apply different processing based on pipeline type
                         if is_sam2_pipeline:
-                            # SAM2 pipeline: masks should be clean binary, use simple thresholding
-                            print(f"DEBUG: Using SAM2 pipeline processing")
-                            threshold = 127  # Standard binary threshold
+                            threshold = 127
                             arr = (arr_raw > threshold).astype(np.uint8)
                         else:
-                            # Legacy Build02 pipeline: use diffusion-dev processing
-                            print(f"DEBUG: Using legacy diffusion-dev processing")
                             arr = (np.round(arr_raw / 255 * 2) - 1).astype(np.uint8)
-                            print(f"DEBUG: After legacy processing - unique values: {np.unique(arr)}, min: {arr.min()}, max: {arr.max()}")
-                            # Convert to proper binary (handle negative values from legacy processing)
                             arr = (arr > 0).astype(np.uint8)
-                        print(f"DEBUG: After thresholding - unique values: {np.unique(arr)}, sum: {arr.sum()}")
                         if arr.shape != target_shape:
-                            print(f"DEBUG: Resizing from {arr.shape} to {target_shape}")
                             arr = resize(
                                 arr.astype(float), target_shape, order=0, preserve_range=True, anti_aliasing=False
                             ).astype(np.uint8)
-                            print(f"DEBUG: After resize - unique values: {np.unique(arr)}, sum: {arr.sum()}")
-                        print(f"DEBUG: Final {keyword} mask - shape: {arr.shape}, unique values: {np.unique(arr)}, sum: {arr.sum()}")
                         return arr
-                else:
-                    print(f"DEBUG: Date directory does not exist: {date_dir}")
-        print(f"DEBUG: No matching directory found for keyword '{keyword}'")
         return None
 
     out = {}
@@ -302,7 +277,7 @@ def export_embryo_snips(r: int,
         raw_stitch_path = Path(row['raw_stitch_image_path'])
         if raw_stitch_path.exists():
             im_ff = io.imread(raw_stitch_path)
-            print(f"Using raw stitched image: {raw_stitch_path}")
+            # print(f"Using raw stitched image: {raw_stitch_path}")
     
     # Fallback to organized JPEG copies if raw path not available
     if im_ff is None:
@@ -329,7 +304,7 @@ def export_embryo_snips(r: int,
             return True
         
         im_ff = io.imread(ff_image_paths[0])
-        print(f"Using JPEG copy: {ff_image_paths[0]}")
+        # print(f"Using JPEG copy: {ff_image_paths[0]}")
 
     # --- Continue with legacy processing ---
     if 'Height (um)' in row and 'Height (px)' in row and row['Height (px)'] > 0:
@@ -731,42 +706,42 @@ def get_embryo_stats(index: int,
     # Load Build02 auxiliary masks (best-effort) and compute fraction_alive + QC flags
     well = row.get("well")
     time_int = int(row.get("time_int", 0))
-    print(f"DEBUG: Processing well {well}, time {time_int}")
+    # print(f"DEBUG: Processing well {well}, time {time_int}")
     
     # Detect if we're using SAM2 pipeline (check if we loaded SAM2 mask)
     is_sam2_pipeline = 'exported_mask_path' in row and pd.notna(row.get('exported_mask_path'))
-    print(f"DEBUG: Detected pipeline type: {'SAM2' if is_sam2_pipeline else 'Legacy Build02'}")
+    # print(f"DEBUG: Detected pipeline type: {'SAM2' if is_sam2_pipeline else 'Legacy Build02'}")
     
     aux = _load_build02_masks_for_row(Path(root), row, target_shape=im_mask_lb.shape, is_sam2_pipeline=is_sam2_pipeline)
-    print(f"DEBUG: aux masks loaded: {list(aux.keys())}")
+    # print(f"DEBUG: aux masks loaded: {list(aux.keys())}")
     
     via_mask = aux.get("via")
-    if via_mask is not None:
-        print(f"DEBUG: Via mask found - shape: {via_mask.shape}, unique values: {np.unique(via_mask)}, sum: {via_mask.sum()}")
-    else:
-        print(f"DEBUG: Via mask is None")
+    # if via_mask is not None:
+    #     # print(f"DEBUG: Via mask found - shape: {via_mask.shape}, unique values: {np.unique(via_mask)}, sum: {via_mask.sum()}")
+    # else:
+    #     # print(f"DEBUG: Via mask is None")
     
     emb_mask_binary = (im_mask_lb > 0).astype(np.uint8)
-    print(f"DEBUG: Embryo mask - shape: {emb_mask_binary.shape}, unique values: {np.unique(emb_mask_binary)}, sum: {emb_mask_binary.sum()}")
+    # print(f"DEBUG: Embryo mask - shape: {emb_mask_binary.shape}, unique values: {np.unique(emb_mask_binary)}, sum: {emb_mask_binary.sum()}")
     
     frac_alive = compute_fraction_alive(emb_mask_binary, via_mask)
-    print(f"DEBUG: Raw fraction_alive result: {frac_alive} (type: {type(frac_alive)})")
+    # print(f"DEBUG: Raw fraction_alive result: {frac_alive} (type: {type(frac_alive)})")
     
     row.loc["fraction_alive"] = frac_alive
-    print(f"DEBUG: ld_rat_thresh value: {ld_rat_thresh}")
+    # print(f"DEBUG: ld_rat_thresh value: {ld_rat_thresh}")
     
     if np.isfinite(frac_alive):
         comparison_result = frac_alive < ld_rat_thresh
-        print(f"DEBUG: frac_alive < ld_rat_thresh: {frac_alive} < {ld_rat_thresh} = {comparison_result}")
+        # print(f"DEBUG: frac_alive < ld_rat_thresh: {frac_alive} < {ld_rat_thresh} = {comparison_result}")
         row.loc["dead_flag"] = bool(comparison_result)
-        print(f"DEBUG: dead_flag set to: {bool(comparison_result)}")
+        # print(f"DEBUG: dead_flag set to: {bool(comparison_result)}")
     else:
-        print(f"DEBUG: frac_alive is not finite: {frac_alive}")
+        # print(f"DEBUG: frac_alive is not finite: {frac_alive}")
         row.loc["dead_flag"] = False
-        print(f"DEBUG: dead_flag set to False (non-finite frac_alive)")
+        # print(f"DEBUG: dead_flag set to False (non-finite frac_alive)")
     
-    print(f"DEBUG: Final values - fraction_alive: {row.loc['fraction_alive']}, dead_flag: {row.loc['dead_flag']}")
-    print(f"DEBUG: --- End processing well {well} ---")
+    # print(f"DEBUG: Final values - fraction_alive: {row.loc['fraction_alive']}, dead_flag: {row.loc['dead_flag']}")
+    # print(f"DEBUG: --- End processing well {well} ---")
 
     flags = compute_qc_flags(
         (im_mask_lb > 0).astype(np.uint8),
@@ -854,6 +829,17 @@ def segment_wells_sam2_csv(
     exp_df = sam2_df[sam2_df['experiment_id'] == exp_name].copy()
     
     print(f"📊 SAM2 data loaded: {len(exp_df)} snips from experiment {exp_name}")
+    
+    # Add SAM2 QC flag processing (Refactor-011-B)
+    if 'sam2_qc_flags' in exp_df.columns:
+        exp_df['sam2_qc_flag'] = exp_df['sam2_qc_flags'].apply(
+            lambda x: len(str(x).strip()) > 0 if pd.notna(x) else False
+        )
+        flagged_count = exp_df['sam2_qc_flag'].sum()
+        print(f"🚩 SAM2 QC flags detected: {flagged_count} snips flagged for quality issues")
+    else:
+        exp_df['sam2_qc_flag'] = False
+        print(f"ℹ️ No SAM2 QC flags column found - skipping QC flag processing")
     
     # Transform SAM2 CSV format to legacy format expected by compile_embryo_stats
     # Key transformation: CSV has one row per snip, legacy expects one row per embryo per well per time
@@ -1097,11 +1083,11 @@ def compile_embryo_stats(root: str,
     assert np.all(snip1==snip2)
     tracked_df.loc[indices_to_process, new_cols] = emb_df.loc[:, new_cols].values
 
-    # make master flag
+    # make master flag (enhanced with SAM2 QC flags - Refactor-011-B)
     tracked_df["use_embryo_flag"] = ~(
             tracked_df["bubble_flag"].values.astype(bool) | tracked_df["focus_flag"].values.astype(bool) |
             tracked_df["frame_flag"].values.astype(bool) | tracked_df["dead_flag"].values.astype(bool) |
-            tracked_df["no_yolk_flag"].values.astype(bool)
+            tracked_df["no_yolk_flag"].values.astype(bool) | tracked_df.get("sam2_qc_flag", False).astype(bool)
             ) #| (tracked_df["well_qc_flag"].values==1).astype(bool))
 
     # tracked_df.to_csv(os.path.join(meta_root, "embryo_metadata_df.csv"))
