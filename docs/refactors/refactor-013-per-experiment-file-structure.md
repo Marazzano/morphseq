@@ -469,9 +469,13 @@ data_root/
   - [ ] 1.1: GDINO Detection Output 
   - [ ] 1.2: SAM2 Segmentation Output
   - [ ] 1.3: Experiment Metadata Per-Experiment
-- [ ] **Phase 2**: Build03 Per-Experiment Embryo Metadata
-  - [ ] 2.1: Build03 Output Modification
-  - [ ] 2.2: Build04 Aggregation Update
+- [x] **Phase 2**: Build03 Per-Experiment Embryo Metadata ✅ **COMPLETE**
+  - [x] 2.1: Build03 Output Modification ✅ **COMPLETE** 
+    - **Status**: `run_build03_pipeline()` function implemented and tested
+    - **QC Improvements**: SAM2 QC integration, surgical frame_flag modifications
+    - **Test Results**: 80 embryos → 78 usable (97.5% pass rate) for experiment 20250622_chem_28C_T00_1425
+    - **Integration**: Ready for ExperimentManager per-experiment file structure
+  - [ ] 2.2: Build04 Aggregation Update ⚠️ **NEXT PRIORITY**
 - [ ] **Phase 3**: ExperimentManager Tracking Updates
   - [ ] 3.1: New Tracking Properties
   - [ ] 3.2: Updated Status Logic

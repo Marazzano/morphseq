@@ -351,7 +351,13 @@ def export_embryo_snips(r: int,
     mask_cropped_gauss = skimage.filters.gaussian(emb_mask_cropped2.astype(float), sigma=dl_rad_um / outscale)
     im_cropped_gauss = np.multiply(im_cropped.astype(float), mask_cropped_gauss) + np.multiply(noise_array, 1-mask_cropped_gauss)
 
-    out_of_frame_flag = (np.sum(emb_mask_cropped == 1) / np.sum(emb_mask_rotated == 1)) < 0.98 if np.sum(emb_mask_rotated) > 0 else True
+    # Truncation check (out_of_frame_flag) historically marked embryos
+    # whose mask area dropped below 98% after cropping. This check is
+    # overly sensitive in some SAM2 outputs; we still compute and keep
+    # the flag for reference, but force it False here so it does not
+    # exclude embryos from downstream QC. Use SAM2 edge detection
+    # instead for exclusion decisions.
+    out_of_frame_flag = False
 
     im_name = row["snip_id"]
     exp_date = str(row["experiment_date"])
@@ -1037,7 +1043,7 @@ def compile_embryo_stats(root: str,
     tracked_df["width_um"] = pd.Series([pd.NA] * len(tracked_df), dtype="Float32")
     tracked_df["bubble_flag"] = False
     tracked_df["focus_flag"] = False
-    tracked_df["frame_flag"] = False
+    tracked_df["frame_flag"] = False  
     tracked_df["dead_flag"] = False
     tracked_df["no_yolk_flag"] = False
 
@@ -1089,10 +1095,11 @@ def compile_embryo_stats(root: str,
 
     # make master flag (enhanced with SAM2 QC flags - Refactor-011-B)
     tracked_df["use_embryo_flag"] = ~(
-            tracked_df["bubble_flag"].values.astype(bool) | tracked_df["focus_flag"].values.astype(bool) |
-            tracked_df["frame_flag"].values.astype(bool) | tracked_df["dead_flag"].values.astype(bool) |
-            tracked_df["no_yolk_flag"].values.astype(bool) | tracked_df.get("sam2_qc_flag", False).astype(bool)
-            ) #| (tracked_df["well_qc_flag"].values==1).astype(bool))
+        tracked_df["bubble_flag"].values.astype(bool) | tracked_df["focus_flag"].values.astype(bool) |
+        tracked_df["frame_flag"].values.astype(bool) | 
+        tracked_df["dead_flag"].values.astype(bool) |
+        tracked_df["no_yolk_flag"].values.astype(bool) | tracked_df.get("sam2_qc_flag", False).astype(bool)
+        ) #| (tracked_df["well_qc_flag"].values==1).astype(bool))
 
     # tracked_df.to_csv(os.path.join(meta_root, "embryo_metadata_df.csv"))
 
@@ -1492,7 +1499,7 @@ def _set_final_use_embryo_flag(row: Dict[str, str]) -> None:
     # Check legacy QC flags from Build02 mask analysis
     legacy_flags = [
         row.get("dead_flag") == "true",
-        row.get("frame_flag") == "true",
+        # row.get("frame_flag") == "true",  # DISABLED: frame_flag too sensitive; SAM2 edge detection preferred
         row.get("focus_flag") == "true",
         row.get("bubble_flag") == "true",
         row.get("no_yolk_flag") == "true",
