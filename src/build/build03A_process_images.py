@@ -17,6 +17,10 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import os
 import glob
+import csv
+import re
+from datetime import datetime
+from typing import Dict, Optional
 from tqdm import tqdm
 from skimage.measure import label, regionprops, find_contours
 import skimage
@@ -1189,6 +1193,387 @@ def extract_embryo_snips(root: str | Path,
     build04_meta_root = root / 'metadata' / "combined_metadata_files"
     os.makedirs(build04_meta_root, exist_ok=True)
     stats_df.to_csv(build04_meta_root / "embryo_metadata_df01.csv", index=False)
+
+
+# ========================================================================================
+# SAM2 Integration Functions (Moved from run_build03.py for QC Restoration)
+# ========================================================================================
+
+def _ensure_predicted_stage_hpf(df: pd.DataFrame, verbose: bool = False) -> pd.DataFrame:
+    """Add `predicted_stage_hpf` using the legacy Kimmel-style formula if missing.
+    
+    Formula (hours post fertilization):
+      start_age_hpf + (Time Rel (s)/3600) * (0.055*temperature - 0.57)
+    
+    Only applies if the requisite columns exist. Otherwise, the input is
+    returned unchanged.
+    
+    This is the exact same logic from the legacy build03A_process_images.py.
+    """
+    needed = {"start_age_hpf", "Time Rel (s)", "temperature"}
+    
+    if verbose:
+        print(f"      • DataFrame columns: {list(df.columns)}")
+        print(f"      • Needed columns: {needed}")
+        print(f"      • Columns present: {needed.intersection(set(df.columns))}")
+        print(f"      • All needed present: {needed.issubset(df.columns)}")
+        print(f"      • predicted_stage_hpf already exists: {'predicted_stage_hpf' in df.columns}")
+    
+    if needed.issubset(df.columns):
+        try:
+            df = df.copy()
+            
+            if verbose:
+                print(f"      • Sample values:")
+                for col in needed:
+                    sample_vals = df[col].head(3).tolist()
+                    print(f"        - {col}: {sample_vals}")
+            
+            df["predicted_stage_hpf"] = (
+                df["start_age_hpf"].astype(float)
+                + (df["Time Rel (s)"].astype(float) / 3600.0)
+                  * (0.055 * df["temperature"].astype(float) - 0.57)
+            )
+            
+            if verbose:
+                print(f"      • Calculated predicted_stage_hpf: {df['predicted_stage_hpf'].head(3).tolist()}")
+                
+        except Exception as e:
+            # Leave silently unchanged if types are malformed; downstream code will not rely on this.
+            if verbose:
+                print(f"      • ERROR in calculation: {e}")
+            pass
+    return df
+
+
+def _log(verbose: bool, msg: str):
+    """Helper function for conditional logging."""
+    if verbose:
+        print(msg)
+
+
+def _parse_embryo_number(embryo_id: str) -> Optional[int]:
+    """Parse embryo number from embryo_id (e.g., 'embryo_id_e01' -> 1)."""
+    m = re.search(r"_e(\d+)$", embryo_id)
+    if not m:
+        return None
+    return int(m.group(1).lstrip("0") or "0")
+
+
+def _collect_rows_from_sam2_csv(csv_path: Path, exp: str, verbose: bool = False) -> list[Dict[str, str]]:
+    """Parse SAM2 CSV and generate row data with QC flag detection.
+    
+    Note: Does NOT compute final use_embryo_flag - that's handled by _set_final_use_embryo_flag()
+    which considers both SAM2 and legacy QC flags.
+    """
+    rows: list[Dict[str, str]] = []
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        header = set(reader.fieldnames or [])
+        need_any = {"image_id", "embryo_id"}
+        if not need_any.issubset(header):
+            raise ValueError(f"CSV missing required columns: {need_any - header}")
+        for r in reader:
+            image_id = r.get("image_id", "").strip()
+            embryo_id = r.get("embryo_id", "").strip()
+            if not image_id or not embryo_id:
+                continue
+                
+            # Extract directly from CSV
+            video_id = r.get("video_id", "").strip()
+            well_id = r.get("well_id", "").strip()
+            snip_id = r.get("snip_id", "").strip()
+            time_int = r.get("time_int", "").strip() or r.get("frame_index", "").strip()
+            
+            # Generate snip_id if missing
+            if not snip_id and time_int:
+                snip_id = f"{embryo_id}_t{int(time_int):04d}"
+            
+            out = {
+                "exp_id": exp,
+                "video_id": video_id,
+                "well_id": well_id,
+                "image_id": image_id,
+                "embryo_id": embryo_id,
+                "snip_id": snip_id,
+                "time_int": time_int,
+                # Geometry placeholders (to be populated by _compute_row_geometry_and_qc)
+                "area_px": "",
+                "perimeter_px": "",
+                "centroid_x_px": "",
+                "centroid_y_px": "",
+                "area_um2": "",
+                "perimeter_um": "",
+                "centroid_x_um": "",
+                "centroid_y_um": "",
+                # QC flags placeholders (to be populated by _compute_row_geometry_and_qc)
+                "dead_flag": "",
+                "no_yolk_flag": "",
+                "focus_flag": "",
+                "bubble_flag": "",
+                "frame_flag": "",
+                "fraction_alive": "",
+                "speed": "",
+                # Provenance
+                "exported_mask_path": r.get("exported_mask_path", ""),
+                "computed_at": datetime.now().isoformat(),
+                # Final flag (will be set by _set_final_use_embryo_flag)
+                "use_embryo_flag": "",
+                "predicted_stage_hpf": "",
+                # Raw metadata for stage calculation
+                "start_age_hpf": r.get("start_age_hpf", ""),
+                "Time Rel (s)": r.get("Time Rel (s)", "") or r.get("relative_time_s", ""),
+                "temperature": r.get("temperature", ""),
+                # Pixel scale data (eliminates Build01 dependency)
+                "width_um": r.get("width_um", ""),
+                "width_px": r.get("width_px", ""), 
+                "height_um": r.get("height_um", ""),
+                "height_px": r.get("height_px", ""),
+                # SAM2 QC flags for final decision logic
+                "sam2_qc_flags": r.get("sam2_qc_flags", ""),
+            }
+            rows.append(out)
+    _log(verbose, f"   • Collected {len(rows)} rows from {csv_path.name}")
+    return rows
+
+
+def _compute_row_geometry_and_qc(row: Dict[str, str], root: Path, verbose: bool = False) -> None:
+    """Compute geometry and comprehensive QC for a row using SAM2 + Build02 masks.
+    
+    This function combines basic geometry computation with comprehensive QC analysis:
+    1. Loads SAM2 labeled mask and computes geometry (area, perimeter, centroids)
+    2. Loads Build02 auxiliary masks (via, yolk, focus, bubble) 
+    3. Computes legacy QC flags using proven QC functions
+    4. Updates row with all computed geometry and QC data
+    
+    Uses existing _load_build02_masks_for_row() with is_sam2_pipeline=True for proper
+    mask processing that avoids the "all embryos flagged as dead" bug.
+    """
+    try:
+        # Load SAM2 labeled mask using CSV path
+        mask_path = resolve_sandbox_embryo_mask_from_csv(root, row)
+        if not mask_path.exists():
+            _log(verbose, f"⚠️ SAM2 mask not found: {mask_path}")
+            row["frame_flag"] = "true"
+            return
+            
+        img = cv2.imread(str(mask_path), cv2.IMREAD_UNCHANGED)
+        if img is None:
+            _log(verbose, f"⚠️ Could not read mask: {mask_path}")
+            row["frame_flag"] = "true"
+            return
+            
+        if img.ndim == 3:
+            img = img[:, :, 0]  # Take first channel if RGB
+            
+        # Parse embryo number and select label
+        embryo_num = _parse_embryo_number(row.get("embryo_id", ""))
+        if embryo_num is None:
+            _log(verbose, f"⚠️ Could not parse embryo number from {row.get('embryo_id')}")
+            row["frame_flag"] = "true"
+            return
+            
+        # Create binary mask for this specific embryo
+        binary_mask = (img == embryo_num).astype("uint8")
+        area_px = int(binary_mask.sum())
+        
+        if area_px == 0:
+            _log(verbose, f"⚠️ No pixels found for embryo {embryo_num}")
+            row["frame_flag"] = "true"
+            return
+            
+        # Compute geometry using OpenCV
+        contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            row["frame_flag"] = "true"
+            return
+            
+        largest_contour = max(contours, key=cv2.contourArea)
+        perimeter_px = float(cv2.arcLength(largest_contour, True))
+        
+        # Compute centroids
+        M = cv2.moments(binary_mask)
+        if M["m00"] > 0:
+            cx_px = float(M["m10"] / M["m00"])
+            cy_px = float(M["m01"] / M["m00"])
+        else:
+            cx_px = cy_px = 0.0
+            
+        # Store pixel geometry
+        row["area_px"] = str(area_px)
+        row["perimeter_px"] = f"{perimeter_px:.2f}"
+        row["centroid_x_px"] = f"{cx_px:.2f}"
+        row["centroid_y_px"] = f"{cy_px:.2f}"
+        
+        # Get pixel scale from SAM2 CSV data
+        sx, sy = None, None
+        try:
+            width_um = float(row.get("width_um", "") or 0)
+            width_px = float(row.get("width_px", "") or 0)
+            height_um = float(row.get("height_um", "") or 0)
+            height_px = float(row.get("height_px", "") or 0)
+            if width_um > 0 and width_px > 0 and height_um > 0 and height_px > 0:
+                sx = width_um / width_px   # um per pixel in X
+                sy = height_um / height_px # um per pixel in Y
+        except (ValueError, TypeError, ZeroDivisionError):
+            pass
+            
+        # Convert to microns if pixel scale available
+        if sx and sy and sx > 0 and sy > 0:
+            area_um2 = area_px * sx * sy
+            per_um = perimeter_px * (sx + sy) / 2.0
+            row["area_um2"] = f"{area_um2:.4f}"
+            row["perimeter_um"] = f"{per_um:.4f}"
+            row["centroid_x_um"] = f"{cx_px * sx:.4f}"
+            row["centroid_y_um"] = f"{cy_px * sy:.4f}"
+            px_dim_um = (sx + sy) / 2.0
+        else:
+            px_dim_um = 1.0
+            
+        # Load Build02 auxiliary masks using existing proven function
+        # CRITICAL: Use is_sam2_pipeline=True for proper mask processing
+        aux_masks = _load_build02_masks_for_row(
+            root, row, target_shape=binary_mask.shape, is_sam2_pipeline=True
+        )
+        _log(verbose, f"   • Loaded auxiliary masks: {list(aux_masks.keys())}")
+        
+        # Compute comprehensive QC using existing proven functions
+        via_mask = aux_masks.get("via")
+        frac_alive = compute_fraction_alive(binary_mask, via_mask)
+        row["fraction_alive"] = str(frac_alive) if np.isfinite(frac_alive) else ""
+        
+        # Compute QC flags using existing qc_utils functions
+        qc_flags = compute_qc_flags(
+            binary_mask,
+            px_dim_um=px_dim_um,
+            qc_scale_um=150,  # Standard QC scale
+            yolk_mask=aux_masks.get("yolk"),
+            focus_mask=aux_masks.get("focus"),
+            bubble_mask=aux_masks.get("bubble"),
+        )
+        
+        # Update row with QC flags
+        for flag_name, flag_value in qc_flags.items():
+            row[flag_name] = "true" if flag_value else "false"
+            
+        # Compute dead flag based on fraction_alive threshold
+        if np.isfinite(frac_alive):
+            row["dead_flag"] = "true" if frac_alive < 0.9 else "false"
+        else:
+            row["dead_flag"] = "false"
+            
+        _log(verbose, f"   • Computed geometry and QC for {row.get('embryo_id')}")
+        
+    except Exception as e:
+        _log(verbose, f"⚠️ Error in geometry/QC computation: {e}")
+        # Set frame_flag to mark as unusable but keep row valid
+        row["frame_flag"] = "true"
+
+
+def _set_final_use_embryo_flag(row: Dict[str, str]) -> None:
+    """Set final use_embryo_flag by combining SAM2 and legacy QC sources.
+    
+    Decision logic: exclude embryo if ANY QC issue detected from either source
+    - SAM2 QC flags: any non-empty sam2_qc_flags string 
+    - Legacy QC flags: dead_flag, frame_flag, focus_flag, bubble_flag, no_yolk_flag
+    """
+    # Check SAM2 QC flags from CSV (handle pandas NaN conversion artifacts)
+    sam2_qc_flags_raw = row.get("sam2_qc_flags", "")
+    if pd.isna(sam2_qc_flags_raw):
+        # Handle actual pandas NaN
+        sam2_qc_flags = ""
+    else:
+        # Handle string conversion and strip whitespace
+        sam2_qc_flags = str(sam2_qc_flags_raw).strip()
+    
+    # Check for meaningful QC flags (exclude pandas artifacts)
+    has_sam2_flags = sam2_qc_flags and sam2_qc_flags.lower() not in ["", "nan", "none", "null"]
+    
+    # Check legacy QC flags from Build02 mask analysis
+    legacy_flags = [
+        row.get("dead_flag") == "true",
+        row.get("frame_flag") == "true",
+        row.get("focus_flag") == "true",
+        row.get("bubble_flag") == "true",
+        row.get("no_yolk_flag") == "true",
+    ]
+    has_legacy_flags = any(legacy_flags)
+    
+    # Final decision: exclude if ANY QC issues detected
+    use_embryo = not (has_sam2_flags or has_legacy_flags)
+    row["use_embryo_flag"] = "true" if use_embryo else "false"
+
+
+def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_workers: int = 1) -> pd.DataFrame:
+    """Compile comprehensive embryo statistics for SAM2 pipeline with full QC restoration.
+    
+    This function provides the complete SAM2 integration workflow:
+    1. Processes each row with geometry computation and comprehensive QC analysis
+    2. Combines SAM2 QC flags with legacy Build02 mask-based QC
+    3. Sets final use_embryo_flag based on all QC sources
+    
+    This replaces the functionality lost in run_build03.py by consolidating all
+    processing logic in build03A with proven QC capabilities.
+    
+    Args:
+        root: Project root directory
+        tracked_df: DataFrame from segment_wells_sam2_csv() 
+        n_workers: Number of workers (currently single-threaded)
+        
+    Returns:
+        DataFrame with complete geometry and QC data
+    """
+    root = Path(root)
+    df = tracked_df.copy()
+    
+    print(f"🔄 Processing {len(df)} embryo records with comprehensive QC...")
+    
+    # Convert DataFrame to list of dicts for row-by-row processing
+    rows = df.to_dict('records')
+    
+    # Process each row with geometry and QC computation
+    for i, row in enumerate(tqdm(rows, desc="Computing geometry and QC")):
+        _compute_row_geometry_and_qc(row, root, verbose=False)
+        
+        # Apply final QC decision logic after all individual QC computed
+        _set_final_use_embryo_flag(row)
+        
+        rows[i] = row
+    
+    # Convert back to DataFrame
+    result_df = pd.DataFrame(rows)
+    
+    # Add predicted stage calculation at DataFrame level
+    result_df = _ensure_predicted_stage_hpf(result_df, verbose=False)
+    
+    # Summary statistics
+    total_embryos = len(result_df)
+    usable_embryos = (result_df["use_embryo_flag"] == "true").sum()
+    
+    # Count SAM2 flags using robust logic (exclude pandas NaN artifacts)
+    def is_meaningful_qc_flag(val):
+        if pd.isna(val):
+            return False
+        flag_str = str(val).strip().lower()
+        return flag_str and flag_str not in ["", "nan", "none", "null"]
+    
+    sam2_flagged = result_df["sam2_qc_flags"].apply(is_meaningful_qc_flag).sum()
+    
+    legacy_flagged = (
+        (result_df["dead_flag"] == "true") |
+        (result_df["frame_flag"] == "true") | 
+        (result_df["focus_flag"] == "true") |
+        (result_df["bubble_flag"] == "true") |
+        (result_df["no_yolk_flag"] == "true")
+    ).sum()
+    
+    print(f"✅ QC Processing Complete:")
+    print(f"   • Total embryos: {total_embryos}")
+    print(f"   • SAM2 QC flagged: {sam2_flagged}")
+    print(f"   • Legacy QC flagged: {legacy_flagged}")
+    print(f"   • Final usable: {usable_embryos} ({usable_embryos/total_embryos*100:.1f}%)")
+    
+    return result_df
 
 
 if __name__ == "__main__":

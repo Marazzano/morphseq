@@ -86,7 +86,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--overwrite", action="store_true", help="Overwrite output CSV if exists")
     p.add_argument("--validate-only", action="store_true", help="Validate inputs, do not write output")
     p.add_argument("--no-manifest-check", action="store_true", help="Skip manifest existence check")
-    p.add_argument("--no-geometry", action="store_true", help="Skip geometry computation (geometry computed by default)")
+    p.add_argument("--compute-geometry", action="store_true", help="Compute geometry from labeled mask images (optional)")
     p.add_argument("--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
@@ -180,6 +180,11 @@ def _collect_rows_from_sam2_csv(csv_path: Path, exp: str, verbose: bool = False)
             snip_id = r.get("snip_id") or (f"{embryo_id}_t{_derive_time_int(image_id):04d}" if _derive_time_int(image_id) is not None else "")
             time_int = r.get("time_int") or (str(_derive_time_int(image_id)) if _derive_time_int(image_id) is not None else "")
             
+            # Check SAM2 QC flags to determine use_embryo_flag
+            sam2_qc_flags = r.get("sam2_qc_flags", "")
+            has_qc_flags = sam2_qc_flags and str(sam2_qc_flags).strip() and str(sam2_qc_flags).strip().lower() != "nan"
+            use_embryo_flag_value = "false" if has_qc_flags else "true"
+            
             out = {
                 "exp_id": exp,
                 "video_id": video_id,
@@ -202,7 +207,7 @@ def _collect_rows_from_sam2_csv(csv_path: Path, exp: str, verbose: bool = False)
                 "sam2_source_json": "",
                 "computed_at": datetime.now().isoformat(),
                 # Flags
-                "use_embryo_flag": "true",
+                "use_embryo_flag": use_embryo_flag_value,
                 "predicted_stage_hpf": "",  # Will be calculated at DataFrame level
                 "notes": "",
                 # Include raw metadata for stage calculation
@@ -277,8 +282,8 @@ def main() -> int:
     rows = df.to_dict('records')
     _log(verbose, f"   • Applied predicted_stage_hpf calculation to {len(rows)} rows")
 
-    # Compute geometry by default (critical for Build04) unless --no-geometry specified
-    if not args.no_geometry and _HAS_IMAGE_LIBS and masks_dir.exists():
+    # Optionally compute geometry if image libs available and masks are present
+    if args.compute_geometry and _HAS_IMAGE_LIBS and masks_dir.exists():
         _log(verbose, "🧮 Computing geometry from labeled masks…")
         scale_map = _load_scale_map(
             built01_csv,
@@ -291,12 +296,10 @@ def main() -> int:
         for r in rows:
             _compute_row_geometry(r, masks_dir, scale_map, verbose=verbose)
     else:
-        if not _HAS_IMAGE_LIBS:
+        if args.compute_geometry and not _HAS_IMAGE_LIBS:
             _log(verbose, "⚠️ Image libraries (cv2/numpy) unavailable; skipping geometry computation")
-        elif not masks_dir.exists():
+        if args.compute_geometry and not masks_dir.exists():
             _log(verbose, f"⚠️ Masks dir missing; skipping geometry: {masks_dir}")
-        elif args.no_geometry:
-            _log(verbose, "ℹ️ Geometry computation skipped due to --no-geometry flag")
     if args.validate_only:
         print("✅ Inputs validated and rows collectable; not writing output due to --validate-only")
         return 0
