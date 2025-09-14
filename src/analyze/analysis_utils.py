@@ -119,8 +119,7 @@ def calculate_morph_embeddings(data_root: Union[str, Path],
     import sys
     import subprocess
     
-    if (model_class == "legacy" and 
-        os.environ.get("MSEQ_ENABLE_ENV_SWITCH") == "1" and 
+    if (model_class == "legacy" and
         sys.version_info[:2] != (3, 9)):
         
         print(f"⚠️  Legacy model requires Python 3.9, current version: {sys.version_info[0]}.{sys.version_info[1]}")
@@ -133,7 +132,7 @@ def calculate_morph_embeddings(data_root: Union[str, Path],
         repo_root = Path(current_script).parent.parent.parent  # Go up to morphseq root
         
         # Use dedicated Python 3.9 script to avoid import compatibility issues
-        script_path = repo_root / "generate_embeddings_py39.py"
+        script_path = repo_root / "src" / "run_morphseq_pipeline" / "services" / "generate_embeddings_py39.py"
         experiments_json = str(experiments).replace("'", '"')  # Convert to JSON format
         
         # Try different conda/mamba paths
@@ -185,7 +184,8 @@ def calculate_morph_embeddings(data_root: Union[str, Path],
             if 'CONDA_PREFIX' not in env:
                 env['CONDA_PREFIX'] = "/net/trapnell/vol1/home/mdcolon/software/miniconda3"
             
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+            # Run subprocess from repo root so script can use sys.path.insert(0, ".")
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env, cwd=repo_root)
             print("✅ Python 3.9 subprocess completed successfully")
             print(result.stdout)
             return  # Exit early - the subprocess handled the work

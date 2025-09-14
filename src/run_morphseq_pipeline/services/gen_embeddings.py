@@ -200,9 +200,10 @@ def get_available_snip_ids_for_experiment(repo_root: Union[str, Path], experimen
         return set()
     
     snip_ids = set()
-    for snip_file in snip_dir.glob("*.png"):  # Assuming snips are PNG files
-        snip_id = snip_file.stem  # Remove .png extension
-        snip_ids.add(snip_id)
+    # Support both PNG and JPG snips
+    for pattern in ("*.png", "*.jpg", "*.jpeg"):
+        for snip_file in snip_dir.glob(pattern):
+            snip_ids.add(snip_file.stem)
     
     return snip_ids
 
@@ -394,11 +395,9 @@ def generate_latents_with_repo_images(
     try:
         from .legacy_model_utils import load_legacy_model_safe
         logger.info(f"Loading legacy model from {model_dir} with compatibility handling")
-        # Allow optional auto-switch via env var
-        import os as _os
-        _switch_env = str(_os.getenv("MSEQ_ENABLE_ENV_SWITCH", "0")).lower() in {"1", "true", "yes", "on"}
+        # Automatic subprocess routing to Python 3.9 when needed
         lit_model = load_legacy_model_safe(
-            str(model_dir), device=device, logger=logger, enable_env_switch=_switch_env
+            str(model_dir), device=device, logger=logger
         )
     except Exception as e:
         logger.warning(f"Safe model loading failed: {e}")

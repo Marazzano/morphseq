@@ -12,7 +12,7 @@ set -euo pipefail
 EXP_ID=""
 
 # Provide either a single VIDEO_ID or a comma-separated list in VIDEOS.
-VIDEO_ID=""          # e.g., "20250529_36hpf_ctrl_atf6_A04"
+VIDEO_ID="20250529_36hpf_ctrl_atf6_A04"          # e.g., "20250529_36hpf_ctrl_atf6_A04"
 VIDEOS=""            # e.g., "20250529_36hpf_ctrl_atf6_A04,20250529_36hpf_ctrl_atf6_G06"
 
 # Explicit JSON override (leave empty to auto-detect).

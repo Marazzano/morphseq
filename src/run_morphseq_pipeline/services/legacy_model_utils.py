@@ -98,14 +98,14 @@ def load_legacy_model_safe(
     device: str = "cpu",
     target_python_env: str = "mseq_pipeline_py3.9",
     logger: Optional[logging.Logger] = None,
-    enable_env_switch: bool = False,
+    enable_env_switch: bool = True,
 ) -> torch.nn.Module:
     """
     Safely load a legacy model, handling Python version compatibility issues.
 
-    Policy: No automatic environment switching by default. If Python != 3.9,
-    raise a clear error instructing the user to activate `mseq_pipeline_py3.9`.
-    An optional escape hatch `enable_env_switch=True` remains for advanced use.
+    Policy: Automatic environment switching by default. If Python != 3.9,
+    automatically route to subprocess using `mseq_pipeline_py3.9` environment.
+    Set `enable_env_switch=False` to disable and get error instead.
     
     Args:
         model_path: Path to model directory
