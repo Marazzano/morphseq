@@ -19,6 +19,7 @@ from typing import Union
 # Non-generated inputs
 STAGE_REF_CSV = "{root}/metadata/stage_ref_df.csv"
 PERTURBATION_NAME_KEY_CSV = "{root}/metadata/perturbation_name_key.csv"
+WELL_METADATA_XLSX = "{root}/metadata/well_metadata/{exp}_well_metadata.xlsx" #or /metadata/plate_metadata/...
 
 # Build01: Raw → Stitched FF images + metadata
 STITCHED_FF_IMAGES_DIR = "{root}/built_image_data/stitched_FF_images/{exp}"
@@ -67,6 +68,11 @@ def get_stage_ref_csv(root: _PathLike) -> Path:
 def get_perturbation_key_csv(root: _PathLike) -> Path:
     """Path to the global perturbation name key CSV."""
     return _fmt(PERTURBATION_NAME_KEY_CSV, root=root)
+
+
+def get_well_metadata_xlsx(root: _PathLike, exp: str) -> Path:
+    """Path to the per‑experiment well metadata Excel (non‑generated input)."""
+    return _fmt(WELL_METADATA_XLSX, root=root, exp=exp)
 
 
 # Build01
@@ -126,4 +132,3 @@ def get_latents_csv(root: _PathLike, model: str, exp: str) -> Path:
 
 def get_build06_output(root: _PathLike, exp: str) -> Path:
     return _fmt(BUILD06_OUTPUT_CSV, root=root, exp=exp)
-
