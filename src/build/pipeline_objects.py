@@ -331,10 +331,10 @@ class Experiment:
 
     @property
     def build04_path(self) -> Path:
-        """Per-experiment Build04 QC+staged CSV path."""
-        base = Path(self.data_root) / "metadata" / "build04" / "per_experiment"
+        """Per-experiment Build04 QC+staged CSV path (matches actual implementation)."""
+        base = Path(self.data_root) / "metadata" / "build04_output"
         base.mkdir(parents=True, exist_ok=True)
-        return base / f"qc_staged_{self.experiment_id}.csv"
+        return base / f"qc_staged_{self.date}.csv"
 
     @property
     def build06_path(self) -> Path:
