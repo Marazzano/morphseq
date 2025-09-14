@@ -36,8 +36,9 @@ def main():
     print(f"  Build04 exists: {exp.build04_path.exists()}")
     print(f"  Build06 path: {exp.build06_path}")
     print(f"  Build06 exists: {exp.build06_path.exists()}")
-    print(f"  Latents path: {exp.get_latent_path()}")
-    print(f"  Latents exist: {exp.has_latents()}")
+    model_name = "20241107_ds_sweep01_optimum"
+    print(f"  Latents path: {exp.get_latent_path(model_name)}")
+    print(f"  Latents exist: {exp.has_latents(model_name)}")
 
     # Test needs check
     print(f"\n🔍 Needs Assessment:")
