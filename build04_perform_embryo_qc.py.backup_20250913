@@ -1,185 +1,16 @@
 import os
 import pandas as pd
 import scipy
-import scipy.signal
 import numpy as np
 import time
 from tqdm import tqdm
-from pathlib import Path
-from typing import Optional
 # Dependency simplification note: OLS usage can avoid statsmodels.
 # Replace with NumPy least squares:
 #   beta = np.linalg.lstsq(X_ft.values, Y_ft.values, rcond=None)[0]
 #   predictions_full = X_full.values @ beta
 import statsmodels.api as sm
 from src.build.build_utils import bootstrap_perturbation_key_from_df01
-
-
-def build04_stage_per_experiment(
-    root: Path,
-    exp: str,
-    in_csv: Optional[Path] = None,
-    out_dir: Optional[Path] = None,
-    stage_ref: Optional[Path] = None,
-    dead_lead_time: float = 2.0,
-    sg_window: Optional[int] = 5,
-    sg_poly: int = 2,
-) -> Path:
-    """Load Build03 CSV for `exp`, run stage inference and QC, write per‑experiment Build04 CSV, and return its path.
-
-    Parameters
-    ----------
-    root : Path
-        Data root directory
-    exp : str
-        Experiment name/ID
-    in_csv : Optional[Path], default None
-        Input Build03 CSV path. If None, discovers from root/metadata/build03_output/expr_embryo_metadata_{exp}.csv
-    out_dir : Optional[Path], default None
-        Output directory. If None, uses root/metadata/build04_output/
-    stage_ref : Optional[Path], default None
-        Stage reference CSV. If None, uses root/metadata/stage_ref_df.csv
-    dead_lead_time : float, default 2.0
-        Hours before death to retroactively flag embryos
-    sg_window : Optional[int], default 5
-        Savitzky-Golay window length for smoothing. If None or insufficient data, skip smoothing
-    sg_poly : int, default 2
-        Savitzky-Golay polynomial order
-
-    Returns
-    -------
-    Path
-        Path to the output CSV file
-    """
-    # Convert to Path objects
-    root = Path(root)
-
-    # Discover input path if not provided
-    if in_csv is None:
-        in_csv = root / "metadata" / "build03_output" / f"expr_embryo_metadata_{exp}.csv"
-        if not in_csv.exists():
-            raise FileNotFoundError(f"Build03 CSV not found: {in_csv}")
-    else:
-        in_csv = Path(in_csv)
-
-    # Set up output directory and path
-    if out_dir is None:
-        out_dir = root / "metadata" / "build04_output"
-    else:
-        out_dir = Path(out_dir)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_csv = out_dir / f"qc_staged_{exp}.csv"
-
-    # Set up stage reference path
-    if stage_ref is None:
-        stage_ref = root / "metadata" / "stage_ref_df.csv"
-    else:
-        stage_ref = Path(stage_ref)
-
-    if not stage_ref.exists():
-        raise FileNotFoundError(f"Stage reference not found: {stage_ref}")
-
-    # Read input
-    df = pd.read_csv(in_csv)
-    print(f"📊 Loaded {len(df)} rows from Build03 CSV: {in_csv.name}")
-    print(f"🔍 Available columns: {list(df.columns)}")
-
-    # Map Build03 column names to Build04 expected names
-    if "area_um2" in df.columns and "surface_area_um" not in df.columns:
-        df["surface_area_um"] = df["area_um2"] 
-        print("✅ Mapped surface_area_um from area_um2")
-    
-    # Map Time Rel (s) if it exists with different name
-    if "Time Rel (s)" not in df.columns and "relative_time_s" in df.columns:
-        df["Time Rel (s)"] = df["relative_time_s"]
-        print("✅ Mapped 'Time Rel (s)' from relative_time_s")
-    
-    # Add phenotype mapping from genotype if needed  
-    if "phenotype" not in df.columns and "genotype" in df.columns:
-        df["phenotype"] = df["genotype"]
-        print("✅ Mapped phenotype from genotype")
-    
-    # Add short_pert_name mapping from chem_perturbation if needed
-    if "short_pert_name" not in df.columns and "chem_perturbation" in df.columns:
-        df["short_pert_name"] = df["chem_perturbation"]
-        print("✅ Mapped short_pert_name from chem_perturbation")
-    
-    # Add control_flag - assume all are controls for now, can refine later
-    if "control_flag" not in df.columns:
-        df["control_flag"] = True  # Conservative assumption for now
-        print("✅ Added default control_flag: True")
-
-    # Ensure required columns exist for stage inference
-    if "experiment_date" not in df.columns:
-        if "experiment" in df.columns:
-            df["experiment_date"] = df["experiment"]
-            print("✅ Added experiment_date from experiment column")
-        elif exp:
-            df["experiment_date"] = exp
-            print(f"✅ Added experiment_date from exp parameter: {exp}")
-        else:
-            # Extract from filename as fallback
-            basename = os.path.basename(in_csv)
-            if "expr_embryo_metadata_" in basename:
-                exp_name = basename.replace("expr_embryo_metadata_", "").replace(".csv", "")
-                df["experiment_date"] = exp_name
-                print(f"✅ Added experiment_date from filename: {exp_name}")
-            else:
-                df["experiment_date"] = "unknown"
-                print("⚠️ Using default experiment_date: unknown")
-
-    # Add stage inference
-    print("🧬 Running stage inference...")
-    df = infer_embryo_stage(str(root), df, stage_ref=stage_ref)
-    inferred_count = (~df["inferred_stage_hpf"].isna()).sum()
-    print(f"✅ Added inferred_stage_hpf to {inferred_count} rows")
-
-    # Implement QC flags
-    print("🔍 Computing QC flags...")
-    df = _compute_qc_flags(df, stage_ref, dead_lead_time, sg_window, sg_poly)
-
-    # Update perturbation key (enabled by default)
-    print("🔑 Updating perturbation key...")
-    df = _update_perturbation_key(df, root)
-
-    # Generate summary
-    summary = _generate_summary(df)
-    print(f"📋 Summary: {summary['total_rows']} total, {summary['usable_rows']} usable")
-    for flag, count in summary['flag_counts'].items():
-        if count > 0:
-            print(f"   {flag}: {count}")
-
-    # Print SA QC summary
-    _print_sa_qc_summary(df)
-
-    # Write output
-    df.to_csv(out_csv, index=False)
-    print(f"💾 Wrote {len(df)} rows to Build04 CSV: {out_csv}")
-
-    return out_csv
-
-
-def test_build04_io(in_csv, out_csv):
-    """
-    Tiny smoke test: copy input to output using the minimal I/O function.
-    Returns a dict with basic counts to aid manual verification.
-    """
-    print(f"🧪 Testing Build04 I/O: {in_csv} → {out_csv}")
-    out_path = build04_stage_per_experiment(root="test", exp="test", in_csv=in_csv, out_csv=out_csv)
-    
-    df_in = pd.read_csv(in_csv, nrows=5)
-    df_out = pd.read_csv(out_path, nrows=5)
-    
-    result = {
-        "out_path": out_path,
-        "in_preview_rows": len(df_in),
-        "out_preview_rows": len(df_out),
-        "columns_match": list(df_in.columns) == list(df_out.columns),
-    }
-    
-    print(f"✅ Test completed: {result}")
-    return result
+from src.build.build_utils import bootstrap_perturbation_key_from_df01
 
 
 def infer_embryo_stage_orig(embryo_metadata_df, ref_date="20240626"):
@@ -365,19 +196,10 @@ def infer_embryo_stage_sigmoid(root, embryo_metadata_df):
 
     return embryo_metadata_df
 
-def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = None):
+def infer_embryo_stage(root, embryo_metadata_df):
 
     # load ref dataset
-    if stage_ref is None:
-        ref_path = os.path.join(root, "metadata", "stage_ref_df.csv")
-    else:
-        ref_path = str(stage_ref)
-
-    print(f"🔍 DEBUG: Loading stage reference from: {ref_path}")
-    stage_key_df = pd.read_csv(ref_path)
-    print(f"🔍 DEBUG: Stage ref loaded, shape: {stage_key_df.shape}")
-    print(f"🔍 DEBUG: Stage ref columns: {list(stage_key_df.columns)}")
-    print(f"🔍 DEBUG: SA range: {stage_key_df['sa_um'].min():.1f} - {stage_key_df['sa_um'].max():.1f}")
+    stage_key_df = pd.read_csv(os.path.join(root, "metadata", "stage_ref_df.csv"))
     # stage_key_df = stage_key_df.loc[stage_key_df["stage_hpf"] <= 72] # not reliable after this point
 
     # get interpolator
@@ -385,7 +207,6 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
                                     kind="linear", fill_value=np.nan, bounds_error=False)
     # iterate through dates
     date_index, date_indices = np.unique(embryo_metadata_df["experiment_date"], return_inverse=True)
-    print(f"Found {len(date_index)} unique experiment date(s) to process")
 
     # initialize new field
     embryo_metadata_df["inferred_stage_hpf"] = np.nan
@@ -394,9 +215,7 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
         date_df = embryo_metadata_df.loc[date_indices == d, ["snip_id", "embryo_id", "time_int", "Time Rel (s)", "short_pert_name",
                         "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um", "use_embryo_flag"]].reset_index(drop=True)
 
-        print(f"\nProcessing date {date} ({d+1}/{len(date_index)}): {len(date_df)} embryos")
-        print(f"Surface-area range: {date_df['surface_area_um'].min():.1f} - {date_df['surface_area_um'].max():.1f}")
-
+        date_df["abs_time_hr"] = date_df["Time Rel (s)"] / 3600
         # check for multiple age cohorts
         min_t = np.min(date_df["time_int"])
         cohort_key = date_df.loc[date_df["time_int"] == min_t, ["embryo_id", "predicted_stage_hpf"]]
@@ -406,7 +225,7 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
         else:
             cohort_key["cohort_id"] = 0
         cohort_key = cohort_key.drop_duplicates(subset=["embryo_id"])
-
+        
         # join onto main df
         date_df = date_df.merge(cohort_key.loc[:, ["embryo_id", "cohort_id"]], how="left", on="embryo_id")
 
@@ -420,30 +239,21 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
         ref_bool = (date_df.loc[:, "phenotype"].to_numpy() == "wt") | (date_df.loc[:, "control_flag"].to_numpy() == 1)
         if date == "20240314":   # special allowance for this one dataset
             ref_bool = ref_bool | True
+
+        # date_df["abs_time_hpf"] = np.round(date_df["predicted_stage_hpf"])
+
         ref_bool = ref_bool & date_df["use_embryo_flag"]
-
         date_df_ref = date_df.loc[ref_bool]
-        if len(date_df_ref) == 0:
-            print(f"🔍 DEBUG: No reference embryos found for date {date}, skipping")
-            continue
-
         # date_df["length_um"] = date_df["length_um"]*1.5
         date_df_ref["stage_group_hpf"] = np.round(date_df_ref["predicted_stage_hpf"])   # ["predicted_stage_hpf"])
         date_key_df = date_df_ref.loc[:, ["stage_group_hpf", "cohort_id", "surface_area_um"]].groupby(
                                                         ['stage_group_hpf', "cohort_id"]).quantile(.95).reset_index()
 
-        print(f"Date key rows: {date_key_df.shape[0]}")
         # get interp predictions
         date_key_df["stage_hpf_interp"] = stage_interpolator(date_key_df["surface_area_um"])
-        nan_interp = date_key_df['stage_hpf_interp'].isna().sum()
-        if nan_interp > 0:
-            print(f"Interpolated stages - NaN count: {nan_interp}")
 
         if snapshot_flag:
-            # snapshot mode: infer directly from surface-area
-            date_df["inferred_stage_hpf"] = stage_interpolator(date_df["surface_area_um"])
-            inferred_count = (~date_df["inferred_stage_hpf"].isna()).sum()
-            print(f"Snapshot inferred {inferred_count}/{len(date_df)} embryos for date {date}")
+            date_df["inferred_stage_hpf"] = stage_interpolator(date_df["predicted_stage_hpf"])
             # stage_skel = date_df.loc[:, ["snip_id", "stage_group_hpf"]]
             # stage_skel = stage_skel.merge(date_key_df.loc[:, ["stage_group_hpf", "stage_hpf_interp"]], how="left", on="stage_group_hpf").rename(
             #                 columns={"stage_hpf_interp":"inferred_stage_hpf"})
@@ -500,354 +310,7 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
 
         embryo_metadata_df.loc[date_indices == d, "inferred_stage_hpf"] = date_df["inferred_stage_hpf"].to_numpy()
 
-    total_inferred = (~embryo_metadata_df["inferred_stage_hpf"].isna()).sum()
-    print(f"Total inferred stages: {total_inferred}/{len(embryo_metadata_df)}")
     return embryo_metadata_df
-
-
-def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2):
-    """
-    Compute QC flags for Build04: sa_outlier_flag and dead_flag2.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input dataframe with embryo data
-    stage_ref : Path
-        Path to stage reference CSV file
-    dead_lead_time : float
-        Hours before death to retroactively flag
-    sg_window : int
-        Savitzky-Golay window length
-    sg_poly : int
-        Savitzky-Golay polynomial order
-
-    Returns
-    -------
-    pd.DataFrame
-        Dataframe with added QC flags
-    """
-    df = df.copy()
-
-    # Initialize QC flags
-    df["sa_outlier_flag"] = False
-    df["dead_flag2"] = False
-
-    # Validate critical inputs and coerce dtypes
-    df = _validate_and_prepare_inputs(df)
-
-    # Surface area outlier detection: internal controls first, stage_ref fallback
-    df = _sa_qc_with_fallback(
-        df=df,
-        stage_ref_path=stage_ref,
-        sg_window=sg_window,
-        sg_poly=sg_poly,
-        percentile=95.0,
-        bin_step=0.5,
-        hpf_window=0.75,
-        min_embryos=2,
-        margin_k=1.40,
-        calibrate_scale=True,
-    )
-
-    # Death lead-time flagging
-    df = _compute_dead_flag2(df, dead_lead_time)
-
-    # Update final use_embryo_flag
-    df["use_embryo_flag"] = (
-        df["use_embryo_flag"].astype(bool)
-        & (~df["dead_flag2"].astype(bool))
-        & (~df["sa_outlier_flag"].astype(bool))
-    )
-
-    return df
-
-
-def _sa_qc_with_fallback(
-    df: pd.DataFrame,
-    stage_ref_path: Optional[Path],
-    sg_window: Optional[int] = 5,
-    sg_poly: int = 2,
-    percentile: float = 95.0,
-    bin_step: float = 0.5,
-    hpf_window: float = 0.75,
-    min_embryos: int = 2,
-    margin_k: float = 1.40,
-    calibrate_scale: bool = True,
-) -> pd.DataFrame:
-    """
-    SA QC: internal controls vs predicted_stage_hpf; fallback to stage_ref with margin.
-
-    Note: This performs one-sided outlier detection, only flagging embryos that are
-    unusually large (surface_area > threshold). Small embryos are not flagged as they
-    may represent valid biological phenotypes rather than technical errors.
-    """
-    df = df.copy()
-
-    if "surface_area_um" not in df.columns:
-        print("⚠️  Warning: surface_area_um not found, skipping SA outlier detection")
-        df["sa_outlier_flag"] = False
-        return df
-    if "predicted_stage_hpf" not in df.columns:
-        raise ValueError("Missing required column 'predicted_stage_hpf' for SA QC")
-
-    # Reference subset: (phenotype == 'wt') OR control_flag, AND use_embryo_flag
-    use_mask = df.get("use_embryo_flag", True)
-    if isinstance(use_mask, bool):
-        use_mask = pd.Series([use_mask] * len(df), index=df.index)
-    use_mask = use_mask.astype(bool)
-    ph_wt = (df["phenotype"].astype(str).str.lower() == "wt") if ("phenotype" in df.columns) else pd.Series(False, index=df.index)
-    ctrl = df["control_flag"].astype(bool) if ("control_flag" in df.columns) else pd.Series(False, index=df.index)
-    ref_mask = (ph_wt | ctrl) & use_mask
-
-    # Build 95th percentile curve across bins
-    time_bins = np.arange(0, 72 + bin_step, bin_step)
-    perc_curve = np.full_like(time_bins, np.nan, dtype=float)
-
-    have_reference = ref_mask.sum() >= min_embryos
-    valid_bins = 0
-    # Force stage_ref usage for testing
-    if False:  # Temporarily disable internal controls
-        for i, t in enumerate(time_bins):
-            win = (
-                (df["predicted_stage_hpf"] >= t - hpf_window)
-                & (df["predicted_stage_hpf"] <= t + hpf_window)
-                & ref_mask
-                & (~df["surface_area_um"].isna())
-            )
-            n = win.sum()
-            if n >= min_embryos:
-                perc_curve[i] = df.loc[win, "surface_area_um"].quantile(percentile / 100.0)
-                valid_bins += 1
-
-    if False and valid_bins >= 3:  # Also disable this path
-        # Fill edges and smooth
-        valid_mask = ~np.isnan(perc_curve)
-        first_valid = np.where(valid_mask)[0][0]
-        last_valid = np.where(valid_mask)[0][-1]
-        perc_curve[:first_valid] = perc_curve[first_valid]
-        perc_curve[last_valid + 1 :] = perc_curve[last_valid]
-
-        if sg_window is not None:
-            npts = valid_mask.sum()
-            w = int(sg_window)
-            if w % 2 == 0:
-                w = max(3, w - 1)
-            w = min(max(3, w), max(3, npts if npts % 2 == 1 else npts - 1))
-            try:
-                perc_curve = scipy.signal.savgol_filter(perc_curve, w, sg_poly)
-            except Exception as e:
-                print(f"⚠️  Savitzky-Golay smoothing failed (w={w}, p={sg_poly}): {e}")
-
-        # Assign thresholds by nearest bin
-        idx = np.searchsorted(time_bins, df["predicted_stage_hpf"].to_numpy())
-        idx = np.clip(idx, 0, len(perc_curve) - 1)
-        thresholds = perc_curve[idx]
-        df["sa_outlier_flag"] = df["surface_area_um"].to_numpy() > thresholds
-        print(f"✅ SA QC: used internal controls (valid bins={valid_bins}, ref_n={int(ref_mask.sum())})")
-        return df
-
-    # Fallback: stage_ref-based threshold
-    if stage_ref_path is None or not Path(stage_ref_path).exists():
-        print("⚠️  SA QC fallback requested, but stage_ref missing; skipping SA QC")
-        df["sa_outlier_flag"] = False
-        return df
-    try:
-        ref_df = pd.read_csv(stage_ref_path)
-    except Exception as e:
-        print(f"⚠️  SA QC fallback: failed reading stage_ref: {e}")
-        df["sa_outlier_flag"] = False
-        return df
-    if not {"stage_hpf", "sa_um"}.issubset(ref_df.columns):
-        print("⚠️  SA QC fallback: stage_ref missing ['stage_hpf','sa_um']")
-        df["sa_outlier_flag"] = False
-        return df
-    try:
-        sa_of_stage = scipy.interpolate.interp1d(
-            ref_df["stage_hpf"].to_numpy(),
-            ref_df["sa_um"].to_numpy(),
-            kind="linear",
-            bounds_error=False,
-            fill_value=np.nan,
-        )
-    except Exception as e:
-        print(f"⚠️  SA QC fallback: failed to build ref interpolator: {e}")
-        df["sa_outlier_flag"] = False
-        return df
-
-    stage_vals = df["predicted_stage_hpf"].to_numpy()
-    sa_ref = sa_of_stage(stage_vals)
-    scale = 1.0
-    if calibrate_scale:
-        valid = (~np.isnan(sa_ref)) & (~df["surface_area_um"].isna())
-        if valid.sum() >= 5:
-            ratio = (df.loc[valid, "surface_area_um"].to_numpy() / sa_ref[valid])
-            high = np.quantile(ratio, 0.975)
-            ratio = ratio[ratio <= high]
-            if len(ratio) > 0:
-                scale = float(np.median(ratio))
-    thresholds = scale * margin_k * sa_ref  # margin_k=1.40 (increased from 1.25 to be less aggressive)
-    df["sa_outlier_flag"] = df["surface_area_um"].to_numpy() > thresholds
-    print(f"✅ SA QC: used stage_ref fallback (scale={scale:.3f}, margin_k={margin_k})")
-    return df
-
-
-def _compute_dead_flag2(df, dead_lead_time=2.0):
-    """
-    Compute death lead-time flags (dead_flag2).
-
-    For embryos with any dead_flag timepoint, retroactively flag all timepoints
-    within dead_lead_time hours preceding the first death.
-    """
-    df = df.copy()
-
-    if "dead_flag" not in df.columns:
-        print("⚠️  Warning: dead_flag not found, skipping death lead-time detection")
-        df["dead_flag2"] = False
-        return df
-
-    if "embryo_id" not in df.columns:
-        print("⚠️  Warning: embryo_id not found, skipping death lead-time detection")
-        df["dead_flag2"] = False
-        return df
-
-    # Use predicted_stage_hpf for parity with legacy
-    time_col = "predicted_stage_hpf"
-
-    dead_lead_count = 0
-
-    # Process each embryo
-    for embryo_id in df["embryo_id"].unique():
-        embryo_mask = df["embryo_id"] == embryo_id
-        embryo_data = df.loc[embryo_mask]
-
-        # Check if this embryo ever dies
-        dead_timepoints = embryo_data[embryo_data["dead_flag"] == True]
-        if len(dead_timepoints) == 0:
-            continue
-
-        # Find first death time
-        first_death_time = dead_timepoints[time_col].min()
-        if pd.isna(first_death_time):
-            continue
-
-        # Flag timepoints within lead time before death
-        lead_mask = ((embryo_data[time_col] >= first_death_time - dead_lead_time) &
-                     (embryo_data[time_col] <= first_death_time))
-
-        dead_lead_indices = embryo_data.loc[lead_mask].index
-        df.loc[dead_lead_indices, "dead_flag2"] = True
-        dead_lead_count += len(dead_lead_indices)
-
-    print(f"✅ Flagged {dead_lead_count} timepoints in death lead-time")
-    return df
-
-
-def _update_perturbation_key(df, root):
-    """
-    Update perturbation key by default (bootstrap and augment if needed).
-    """
-    try:
-        from src.build.build_utils import bootstrap_perturbation_key_from_df01
-
-        key_path = root / "metadata" / "perturbation_name_key.csv"
-
-        # Load or bootstrap perturbation key
-        try:
-            pert_name_key = pd.read_csv(key_path)
-        except Exception:
-            print(f"ℹ️  Perturbation key not found, bootstrapping from data...")
-            pert_name_key = bootstrap_perturbation_key_from_df01(root=str(root), df01=df, out_path=str(key_path))
-            print(f"📝 Wrote bootstrapped perturbation key to {key_path}")
-
-        # Merge perturbation info if master_perturbation column exists
-        if "master_perturbation" in df.columns and "master_perturbation" in pert_name_key.columns:
-            df = df.merge(pert_name_key, how="left", on="master_perturbation")
-            print(f"✅ Merged perturbation key information")
-        else:
-            print("ℹ️  Skipping perturbation key merge (master_perturbation column not found)")
-
-    except Exception as e:
-        print(f"⚠️  Warning: Perturbation key update failed: {e}")
-
-    return df
-
-
-def _generate_summary(df):
-    """
-    Generate summary statistics for Build04 output.
-
-    Returns
-    -------
-    dict
-        Summary with total_rows, usable_rows, and flag_counts
-    """
-    summary = {
-        "total_rows": len(df),
-        "usable_rows": df.get("use_embryo_flag", pd.Series([True] * len(df))).sum(),
-        "flag_counts": {}
-    }
-
-    # Count various flags
-    flag_columns = ["dead_flag", "dead_flag2", "sa_outlier_flag", "bubble_flag",
-                   "focus_flag", "frame_flag", "no_yolk_flag"]
-
-    for flag_col in flag_columns:
-        if flag_col in df.columns:
-            summary["flag_counts"][flag_col] = df[flag_col].sum()
-
-    return summary
-
-
-def _print_sa_qc_summary(df: pd.DataFrame) -> None:
-    """Print percent of rows and snip_ids flagged by SA QC."""
-    if "sa_outlier_flag" not in df.columns:
-        return
-    n = len(df)
-    if n == 0:
-        return
-    sa_flags = df["sa_outlier_flag"].astype(bool)
-    pct_rows = 100.0 * sa_flags.sum() / n
-    # Prefer snip_id; else embryo_id if available
-    id_col = "snip_id" if "snip_id" in df.columns else ("embryo_id" if "embryo_id" in df.columns else None)
-    if id_col:
-        total_ids = df[id_col].nunique(dropna=True)
-        flagged_ids = df.loc[sa_flags, id_col].nunique(dropna=True)
-        pct_ids = 100.0 * (flagged_ids / total_ids) if total_ids else 0.0
-        print(f"📈 SA QC: {pct_rows:.1f}% rows flagged; {pct_ids:.1f}% {id_col}s flagged")
-    else:
-        print(f"📈 SA QC: {pct_rows:.1f}% rows flagged; id-level metric unavailable")
-
-
-def _validate_and_prepare_inputs(df: pd.DataFrame) -> pd.DataFrame:
-    """Fail-loud validation and dtype coercion for critical columns."""
-    required = [
-        "embryo_id",
-        "predicted_stage_hpf",
-        "surface_area_um",
-    ]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required columns for Build04: {missing}")
-
-    # Coerce booleans and provide defaults
-    for col in [
-        "use_embryo_flag",
-        "dead_flag",
-        "control_flag",
-        "bubble_flag",
-        "focus_flag",
-        "frame_flag",
-        "no_yolk_flag",
-    ]:
-        if col in df.columns:
-            df[col] = df[col].astype(bool)
-        else:
-            if col == "use_embryo_flag":
-                df[col] = True
-            else:
-                df[col] = False
-    return df
 
 
 def perform_embryo_qc(
@@ -993,7 +456,7 @@ def perform_embryo_qc(
     # flag outliers
     t_ids = np.digitize(time_vec_all, bins=time_index)
 
-    for t in range(len(time_index)):
+    for t in range(len(time_index) - 1):
         t_indices = np.where(t_ids == t)
         sa_vec_t_all = sa_vec_all[t_indices].copy()
         embryo_metadata_df.loc[t_indices[0], 'sa_outlier_flag'] = sa_vec_t_all > sa_bound_sm[t]
@@ -1271,24 +734,3 @@ if __name__ == "__main__":
 
     # print('Extracting embryo snips...')
     perform_embryo_qc(root)
-
-"""
-Refactor Plan and Technical Debt (2025-09-14)
-
-Context
-- The per‑experiment pipeline (`build04_stage_per_experiment`) is the production path.
-- Legacy combined workflow (`perform_embryo_qc`) remains for historical parity but diverges from the production logic.
-
-Plan (implemented)
-- Wire stage_ref through stage inference and validate file.
-- SA QC: use internal controls first ((phenotype == 'wt' OR control_flag) AND use_embryo_flag) vs predicted_stage_hpf with ±0.75 hpf window, 0.5 hpf bins, SG smoothing; fallback to stage_ref (threshold = scale × margin_k × sa_ref(stage)).
-- Death lead-time QC: use predicted_stage_hpf for parity.
-- Fail‑loud input validation and dtype coercion.
-- Clear logging, including % rows and % snip_ids flagged by SA QC.
-
-Technical Debt (to address next)
-- Single source of truth: move legacy functions to `build04_legacy.py` with deprecation warnings; keep only `build04_stage_per_experiment` as production.
-- Parameterize “magic values” (hpf_window, percentile, sg_window/poly, margin_k) via config; remove date/well hardcodes.
-- Remove unused stage inference variants (`_orig`, `_sigmoid`) unless test‑referenced.
-- Align CLI and docs around `--out-dir` and discovery paths; add small synthetic tests.
-"""

@@ -337,11 +337,16 @@ class Experiment:
         return base / f"qc_staged_{self.experiment_id}.csv"
 
     @property
-    def build06_final_path(self) -> Path:
-        """Per-experiment Build06 final CSV (embeddings merged) path."""
-        base = Path(self.data_root) / "metadata" / "build06" / "per_experiment"
+    def build06_path(self) -> Path:
+        """Per-experiment Build06 df03 path (matches actual implementation)."""
+        base = Path(self.data_root) / "metadata" / "build06_output"
         base.mkdir(parents=True, exist_ok=True)
-        return base / f"embryo_latents_final_{self.experiment_id}.csv"
+        return base / f"df03_final_ouput_with_latents_{self.date}.csv"
+
+    @property
+    def build06_final_path(self) -> Path:
+        """Legacy property - use build06_path instead."""
+        return self.build06_path
 
     def qc_mask_status(self) -> tuple[int, int]:
         """Return (present_count, total_count) across the 5 QC mask model outputs."""
@@ -524,37 +529,57 @@ class Experiment:
     def needs_build06_merge(self, model_name: str = "20241107_ds_sweep01_optimum") -> bool:
         """
         Determine if THIS specific experiment needs to be merged in Build06.
-        
+
         This is the most precise check for Build06 requirements. An experiment needs
         merging if its latent embeddings are newer than the current df03 file.
-        
+
         Logic:
         - If no df03 exists → needs merge (if has latents)
-        - If latent embeddings are newer than df03 → needs merge  
+        - If latent embeddings are newer than df03 → needs merge
         - If latent embeddings are older than df03 → already merged
-        
+
         This avoids unnecessary rebuilds when experiments are already current in df03.
-        
+
         Args:
             model_name: Model name for latent embeddings (default: latest model)
-            
+
         Returns:
             bool: True if this experiment's latents need merging into df03
         """
         try:
             df03_path = self.data_root / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
-            
+
             # If no df03 exists, needs merge if we have latents
             if not df03_path.exists():
                 return self.has_latents(model_name)
-            
+
             # Key insight: Compare latent timestamp vs df03 timestamp
             if self.has_latents(model_name):
                 latent_path = self.get_latent_path(model_name)
                 df03_time = df03_path.stat().st_mtime
                 latent_time = latent_path.stat().st_mtime
                 return latent_time > df03_time  # Latents newer = needs merge
-                
+
+            return False
+        except Exception:
+            return False
+
+    def needs_build06_per_experiment(self, model_name: str = "20241107_ds_sweep01_optimum") -> bool:
+        """Check if per-experiment Build06 needs to run."""
+        try:
+            # Missing per-experiment output
+            if not self.build06_path.exists():
+                return True
+
+            # Build04 per-experiment newer than Build06 per-experiment
+            if self.build04_path.exists() and self.build04_path.stat().st_mtime > self.build06_path.stat().st_mtime:
+                return True
+
+            # Latents newer than Build06 per-experiment
+            latents_path = self.get_latent_path(model_name)
+            if latents_path.exists() and latents_path.stat().st_mtime > self.build06_path.stat().st_mtime:
+                return True
+
             return False
         except Exception:
             return False
@@ -872,6 +897,32 @@ class Experiment:
             **kwargs
         )
         return success
+
+    @record("build06_per_experiment")
+    def run_build06_per_experiment(self, model_name: str = "20241107_ds_sweep01_optimum", **kwargs):
+        """Execute per-experiment Build06 (df02 + latents -> df03)"""
+        print(f"🧬 Running Build06 per-experiment for {self.date}")
+
+        # Import here to avoid circular dependencies
+        from ..run_morphseq_pipeline.steps.run_build06_per_exp import build06_merge_per_experiment
+
+        try:
+            result = build06_merge_per_experiment(
+                root=Path(self.data_root),
+                exp=self.date,
+                model_name=model_name,
+                verbose=kwargs.get('verbose', False),
+                generate_missing=kwargs.get('generate_missing', True),
+                overwrite=kwargs.get('overwrite', False),
+                dry_run=kwargs.get('dry_run', False)
+            )
+
+            print(f"  ✅ Per-experiment df03 created: {result}")
+            return result
+
+        except Exception as e:
+            print(f"  ❌ Build06 per-experiment failed: {e}")
+            raise
 
     # ——— load/save ——————————————————————————————————————————————————
 
@@ -1225,6 +1276,16 @@ class ExperimentManager:
         self._run_step(
             "process_image_masks", "needs_stats",
             friendly_name="mask_stats",
+            **kwargs
+        )
+
+    def build06_per_experiments(self, model_name: str = "20241107_ds_sweep01_optimum", **kwargs):
+        """Run Build06 per-experiment for experiments that need it."""
+        self._run_step(
+            "run_build06_per_experiment",
+            "needs_build06_per_experiment",  # Use string attribute name
+            friendly_name="build06_per_experiment",
+            extra_filter=lambda e: e.needs_build06_per_experiment(model_name),
             **kwargs
         )
 

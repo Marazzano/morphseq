@@ -275,40 +275,41 @@ def export_embryo_snips(r: int,
         im_yolk = np.zeros_like(im_mask)
 
     # --- Load Full-Frame Image ---
-    # Try to use raw stitched image path from enhanced metadata first
+    # Prefer stitched FF images by default (least compressed), then raw path if needed
     im_ff = None
-    if 'raw_stitch_image_path' in row and row['raw_stitch_image_path']:
-        raw_stitch_path = Path(row['raw_stitch_image_path'])
-        if raw_stitch_path.exists():
-            im_ff = io.imread(raw_stitch_path)
-            # print(f"Using raw stitched image: {raw_stitch_path}")
-    
-    # Fallback to organized JPEG copies if raw path not available
-    if im_ff is None:
-        ff_image_path = root / 'built_image_data' / 'stitched_FF_images'
-        
-        # Try both full format and legacy format
-        full_stub = f"{row['image_id']}*"
-        ff_image_paths = sorted((ff_image_path / date).glob(full_stub))
-        
-        if not ff_image_paths:
-            # Try legacy format: extract well and time from image_id using regex
-            # image_id format: "20250612_30hpf_ctrl_atf6_C12_ch00_t0000"
-            # legacy format: "C12_t0000_stitch.jpg"
-            import re
-            image_id = row['image_id']
-            match = re.search(r'_([A-H]\d{2})_.*_(t\d{4})$', image_id)
-            if match:
-                well_part, time_part = match.groups()
-                legacy_stub = f"{well_part}_{time_part}*"
-                ff_image_paths = sorted((ff_image_path / date).glob(legacy_stub))
-        
-        if not ff_image_paths:
-            warnings.warn(f"FF image not found for {full_stub} or legacy format in {ff_image_path / date}", stacklevel=2)
-            return True
-        
+    ff_image_path = root / 'built_image_data' / 'stitched_FF_images'
+
+    # Try both full format and legacy format under stitched_FF_images
+    full_stub = f"{row['image_id']}*"
+    ff_image_paths = sorted((ff_image_path / date).glob(full_stub))
+
+    if not ff_image_paths:
+        # Try legacy format: extract well and time from image_id using regex
+        # image_id format: "20250612_30hpf_ctrl_atf6_C12_ch00_t0000"
+        # legacy format: "C12_t0000_stitch.jpg"
+        import re
+        image_id = row['image_id']
+        match = re.search(r'_([A-H]\d{2})_.*_(t\d{4})$', image_id)
+        if match:
+            well_part, time_part = match.groups()
+            legacy_stub = f"{well_part}_{time_part}*"
+            ff_image_paths = sorted((ff_image_path / date).glob(legacy_stub))
+
+    if ff_image_paths:
         im_ff = io.imread(ff_image_paths[0])
-        # print(f"Using JPEG copy: {ff_image_paths[0]}")
+    else:
+        # Fallback to raw stitched image path from metadata if available
+        if 'raw_stitch_image_path' in row and row['raw_stitch_image_path']:
+            raw_stitch_path = Path(row['raw_stitch_image_path'])
+            if raw_stitch_path.exists():
+                im_ff = io.imread(raw_stitch_path)
+        if im_ff is None:
+            warnings.warn(
+                f"FF image not found under {ff_image_path / date} for stub '{full_stub}' and legacy pattern; "
+                f"no raw_stitch_image_path usable.",
+                stacklevel=2,
+            )
+            return True
 
     # --- Continue with legacy processing ---
     if 'Height (um)' in row and 'Height (px)' in row and row['Height (px)'] > 0:
