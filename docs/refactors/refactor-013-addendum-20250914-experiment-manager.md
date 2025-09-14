@@ -86,6 +86,16 @@ Optional combine utilities
 
 ---
 
+## Global / Nonâ€‘Generated Inputs (Track for Visibility)
+
+- Stage reference CSV: `{root}/metadata/stage_ref_df.csv`
+- Perturbation name key CSV: `{root}/metadata/perturbation_name_key.csv`
+- Well metadata Excel (per experiment): `{root}/metadata/plate_metadata/{exp}_well_metadata.xlsx`
+
+ExperimentManager should expose these as properties so UIs/status views can quickly show their presence and timestamps. Build04 can bootstrap the perturbation key if missing, but managers should still surface it.
+
+---
+
 ## `snip_id` Normalization (Single Source of Truth)
 
 - Use the normalizer from `gen_embeddings.py` (and reuse in Build06 merge) to make joins deterministic.
@@ -113,6 +123,10 @@ For class `Experiment` (or equivalent), add properties that map directly to perâ
   - `snips_dir`: `{root}/training_data/bf_embryo_snips/{exp}`
 - Build04
   - `build04_path`: `{root}/metadata/build04_output/qc_staged_{exp}.csv`
+  - `stage_ref_csv`: `{root}/metadata/stage_ref_df.csv`
+  - `perturbation_key_csv`: `{root}/metadata/perturbation_name_key.csv`
+- Build01 (inputs)
+  - `well_metadata_xlsx`: `{root}/metadata/plate_metadata/{exp}_well_metadata.xlsx`
 - Build06
   - `latents_path(model_name)`: `{root}/analysis/latent_embeddings/legacy/{model}/morph_latents_{exp}.csv`
   - `build06_path`: `{root}/metadata/build06_output/df03_final_ouput_with_latents_{exp}.csv`
