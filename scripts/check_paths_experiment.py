@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from src.run_morphseq_pipeline.paths import (
     get_stage_ref_csv,
@@ -52,8 +52,9 @@ def _dir_nonempty(p: Path) -> str:
         return "❌"
 
 
-def check_experiment(root: Path, exp: str, model_name: str) -> None:
+def check_experiment(root: Path, exp: str, model_name: str) -> Tuple[bool, List[str]]:
     print(f"\n=== Experiment: {exp} ===")
+    errors: List[str] = []
 
     # Global refs
     stage_ref = get_stage_ref_csv(root)
@@ -67,7 +68,10 @@ def check_experiment(root: Path, exp: str, model_name: str) -> None:
     well_xlsx = get_well_metadata_xlsx(root, exp)
     print(f"Stitched FF dir: {_dir_nonempty(ff_dir)} {ff_dir}")
     print(f"Built metadata CSV: {_exists(built_meta)} {built_meta}")
-    print(f"Well metadata XLSX: {_exists(well_xlsx)} {well_xlsx}")
+    wm_exists = well_xlsx.exists()
+    print(f"Well metadata XLSX: {'✅' if wm_exists else '❌'} {well_xlsx}")
+    if not wm_exists:
+        errors.append(f"CRITICAL: Well metadata Excel missing → {well_xlsx}")
 
     # SAM2
     sam2_csv = get_sam2_csv(root, exp)
@@ -99,6 +103,12 @@ def check_experiment(root: Path, exp: str, model_name: str) -> None:
     print(f"Latents CSV: {_exists(latents)} {latents}")
     print(f"Build06 df03: {_exists(b06)} {b06}")
 
+    has_error = len(errors) > 0
+    if has_error:
+        for e in errors:
+            print(e)
+    return has_error, errors
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Check per‑experiment path existence")
@@ -111,12 +121,17 @@ def main() -> int:
     print(f"Root: {root}")
     print(f"Model: {args.model_name}")
 
+    any_errors = False
     for exp in args.exp:
-        check_experiment(root, exp, args.model_name)
+        err, _ = check_experiment(root, exp, args.model_name)
+        any_errors = any_errors or err
+
+    if any_errors:
+        print("\nOne or more critical checks failed.")
+        return 1
 
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

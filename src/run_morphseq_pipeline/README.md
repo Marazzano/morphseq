@@ -24,8 +24,19 @@
 
 ## Install/Run
 
-- Run via module:
+- Easiest: use the wrapper script from the repo root:
+  - `./morphseq-runner <subcommand> [args]`
+  - Examples:
+    - `./morphseq-runner status --data-root /data`
+    - `./morphseq-runner pipeline --data-root /data`  ← defaults to `e2e`
+    - `./morphseq-runner pipeline --data-root /data --action sam2`
+    - `./morphseq-runner pipeline --data-root /data --action build01`
+
+- Or run via module:
   - `python -m src.run_morphseq_pipeline.cli <subcommand> [args]`
+  - `python -m src.run_morphseq_pipeline.cli pipeline --data-root /data`  ← defaults to `e2e`
+  - `python -m src.run_morphseq_pipeline.cli pipeline --data-root /data --action build04`
+  - `python -m src.run_morphseq_pipeline.cli pipeline --data-root /data --action build01`
 
 ## Data Structure & Path Conventions
 

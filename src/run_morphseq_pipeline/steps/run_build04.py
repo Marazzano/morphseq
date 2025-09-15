@@ -119,3 +119,50 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
+
+
+# Thin function wrapper for CLI imports and programmatic use
+def run_build04(
+    root: Path | str,
+    exp: str | None = None,
+    in_csv: Path | str | None = None,
+    out_csv: Path | str | None = None,
+    out_dir: Path | str | None = None,
+    stage_ref: Path | str | None = None,
+    dead_lead_time: float = 2.0,
+    sg_window: int = 5,
+    sg_poly: int = 2,
+) -> Path | None:
+    """Programmatic entry for Build04 per-experiment QC.
+
+    Prefer passing `exp` to auto-discover input and choose default output.
+    Alternatively, specify `in_csv` and `out_csv` explicitly.
+    Returns the output path if successful.
+    """
+    root_p = Path(root)
+    if in_csv and out_csv:
+        in_p = Path(in_csv)
+        out_p = Path(out_csv)
+        sel_exp = exp or in_p.stem.replace("expr_embryo_metadata_", "")
+    elif exp:
+        sel_exp = exp
+        in_p = _discover_build03_csv(root_p, sel_exp)
+        if out_dir:
+            od = Path(out_dir)
+        else:
+            od = root_p / "metadata" / "build04_output"
+        od.mkdir(parents=True, exist_ok=True)
+        out_p = od / f"qc_staged_{sel_exp}.csv"
+    else:
+        raise ValueError("Provide either exp or both in_csv and out_csv")
+
+    return build04_stage_per_experiment(
+        root=root_p,
+        exp=sel_exp,
+        in_csv=in_p,
+        out_dir=out_p.parent,
+        stage_ref=Path(stage_ref) if stage_ref else None,
+        dead_lead_time=dead_lead_time,
+        sg_window=sg_window,
+        sg_poly=sg_poly,
+    )

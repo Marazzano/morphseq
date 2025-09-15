@@ -13,7 +13,7 @@ from src.functions.utilities import path_leaf
 import skimage.io as io
 
 def apply_unet(root, model_name, n_classes, overwrite_flag=False, segment_list=None, im_dims=None, batch_size=64,
-               checkpoint_path=None, n_workers=None, make_sample_figures=False, n_sample_figures=100):
+               checkpoint_path=None, n_workers=None, make_sample_figures=False, n_sample_figures=100, exp_name=None):
 
 
     """
@@ -48,14 +48,23 @@ def apply_unet(root, model_name, n_classes, overwrite_flag=False, segment_list=N
             os.makedirs(sample_fig_path)
 
     # get list of images to classify
-    path_to_images = os.path.join(root, "built_image_data", 'stitched_FF_images', '*')
-    if segment_list is None:
-        project_list = sorted(glob.glob(path_to_images))
-        project_list = [p for p in project_list if "ignore" not in p.lower()]
-        project_list = [p for p in project_list if "_archive" not in p.lower()]
-        project_list = [p for p in project_list if os.path.isdir(p)]
+    if exp_name is not None:
+        # Process only the specified experiment
+        path_to_images = os.path.join(root, "built_image_data", 'stitched_FF_images', exp_name)
+        if os.path.isdir(path_to_images):
+            project_list = [path_to_images]
+        else:
+            project_list = []
     else:
-        project_list = [os.path.join(root, "built_image_data", 'stitched_FF_images', p) for p in segment_list]
+        # Process all experiments (legacy behavior)
+        path_to_images = os.path.join(root, "built_image_data", 'stitched_FF_images', '*')
+        if segment_list is None:
+            project_list = sorted(glob.glob(path_to_images))
+            project_list = [p for p in project_list if "ignore" not in p.lower()]
+            project_list = [p for p in project_list if "_archive" not in p.lower()]
+            project_list = [p for p in project_list if os.path.isdir(p)]
+        else:
+            project_list = [os.path.join(root, "built_image_data", 'stitched_FF_images', p) for p in segment_list]
 
     # select subset of images to label
     image_path_list = []

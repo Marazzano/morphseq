@@ -1172,6 +1172,22 @@ def extract_embryo_snips(root: str | Path,
     # print("Estimating background...")
     px_mean, px_std = 10, 5 #estimate_image_background(root, stats_df, bkg_seed=309, n_bkg_samples=100)
 
+    # Normalize boolean dtypes to avoid pandas bitwise errors
+    if "use_embryo_flag" in stats_df.columns and stats_df["use_embryo_flag"].dtype != bool:
+        _s = stats_df["use_embryo_flag"].astype(str).str.strip().str.lower()
+        stats_df["use_embryo_flag"] = _s.map({
+            "true": True, "false": False,
+            "1": True, "0": False,
+            "yes": True, "no": False
+        }).fillna(False).astype(bool)
+    if "out_of_frame_flag" in stats_df.columns and stats_df["out_of_frame_flag"].dtype != bool:
+        _o = stats_df["out_of_frame_flag"].astype(str).str.strip().str.lower()
+        stats_df["out_of_frame_flag"] = _o.map({
+            "true": True, "false": False,
+            "1": True, "0": False,
+            "yes": True, "no": False
+        }).fillna(False).astype(bool)
+
     # extract snips
     out_of_frame_flags = []
 

@@ -13,10 +13,9 @@ STATUS: ✅ PIPELINE FUNCTIONAL - QC IMPROVEMENTS APPLIED & REFACTOR-013 COMPLET
 - Per-experiment file structure: refactor-013 implementation complete
 - Production validated: 97.5% pass rate with balanced QC sensitivity
 
-USAGE - TWO MODES AVAILABLE:
-
-1. EXPERIMENT MANAGER MODE (RECOMMENDED FOR AUTOMATION):
-   Use run_build03_pipeline() function with explicit paths for full control:
+USAGE FOR EXPERIMENT MANAGER:
+The ExperimentManager should use run_build03_pipeline() with explicit paths for 
+refactor-013 per-experiment file structure:
 
 ```python
 from src.run_morphseq_pipeline.steps.run_build03 import run_build03_pipeline
@@ -31,28 +30,6 @@ def run_build03(self):
         verbose=True
     )
 ```
-
-2. CLI MODE (FOR MANUAL/INTERACTIVE USE):
-   Use command line with auto-discovery:
-
-```bash
-# Simple experiment discovery mode
-python -m src.run_morphseq_pipeline.steps.run_build03 \
-    --data-root /path/to/data \
-    --exp 20250622_chem_28C_T00_1425 \
-    --verbose
-
-# Or with custom paths
-python -m src.run_morphseq_pipeline.steps.run_build03 \
-    --data-root /path/to/data \
-    --exp 20250622_chem_28C_T00_1425 \
-    --sam2-csv /custom/path/sam2_metadata.csv \
-    --output-dir /custom/output/dir \
-    --verbose
-```
-
-⚠️  EXPERIMENT MANAGER SHOULD USE MODE 1 (function call) for explicit path control
-    CLI mode uses auto-discovery and may not match ExperimentManager's file structure
 
 RECENT TEST RESULTS (20250622_chem_28C_T00_1425):
 ✅ Total embryos: 80
@@ -93,12 +70,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--sam2-csv", help="Override SAM2 CSV path")
     p.add_argument("--output-dir", help="Override output directory")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing output")
-    p.add_argument("--no-export-snips", action="store_true", help="Do not export BF snips (default is to export)")
     p.add_argument("--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
 
-def run_build03_pipeline(experiment_name, sam2_csv_path, output_file_path, root_dir=None, verbose=False):
+def run_build03_pipeline(experiment_name, sam2_csv_path, output_file_path, root_dir=None, verbose=False,
+                         export_snips: bool = True,
+                         snip_outscale: float = 6.5,
+                         snip_dl_rad_um: float = 50,
+                         snip_overwrite: bool = False,
+                         snip_workers: int = 1):
     """
     Thin wrapper that calls segment_wells_sam2_csv -> compile_embryo_stats_sam2
     and writes the embryo metadata to the specified output path.
@@ -143,6 +124,20 @@ def run_build03_pipeline(experiment_name, sam2_csv_path, output_file_path, root_
             print(f"💾 Step 3: Writing results to {output_file_path}")
         stats_df.to_csv(output_file_path, index=False)
         
+        # Optionally export snips for downstream embedding generation
+        if export_snips:
+            from src.build.build03A_process_images import extract_embryo_snips
+            if verbose:
+                print("🖼️  Exporting BF snips for embedding generation...")
+            extract_embryo_snips(
+                root=Path(root_dir) if root_dir else Path.cwd(),
+                stats_df=stats_df,
+                outscale=snip_outscale,
+                dl_rad_um=snip_dl_rad_um,
+                overwrite_flag=snip_overwrite,
+                n_workers=snip_workers,
+            )
+        
         if verbose:
             total_embryos = len(stats_df)
             usable_embryos = (stats_df["use_embryo_flag"] == "true").sum() if "use_embryo_flag" in stats_df.columns else 0
@@ -155,6 +150,45 @@ def run_build03_pipeline(experiment_name, sam2_csv_path, output_file_path, root_
     except Exception as e:
         print(f"❌ Build03 pipeline failed: {e}")
         raise
+
+
+# Thin wrapper matching manager/CLI expectations
+def run_build03(
+    root: str | Path,
+    exp: str,
+    sam2_csv: str | Path | None = None,
+    by_embryo: int | None = None,
+    frames_per_embryo: int | None = None,
+    n_workers: int | None = None,
+    verbose: bool = False,
+    overwrite: bool = False,
+) -> "object":
+    """Programmatic entry for Build03 (per-experiment).
+
+    Parameters beyond SAM2 CSV are accepted for compatibility but currently unused
+    by the consolidated pipeline. They may be wired in future enhancements.
+    Returns the DataFrame produced by the pipeline.
+    """
+    root_p = Path(root)
+    sam2_csv_path = Path(sam2_csv) if sam2_csv else _discover_sam2_csv(root_p, exp)
+
+    # Default per-experiment output
+    out_dir = root_p / "metadata" / "build03_output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_csv = out_dir / f"expr_embryo_metadata_{exp}.csv"
+
+    if out_csv.exists() and not overwrite and verbose:
+        print(f"ℹ️  Build03 output exists (overwrite=False): {out_csv}")
+
+    return run_build03_pipeline(
+        experiment_name=exp,
+        sam2_csv_path=str(sam2_csv_path),
+        output_file_path=str(out_csv),
+        root_dir=str(root_p),
+        verbose=verbose,
+        export_snips=True,
+        snip_workers=(n_workers if n_workers is not None else 1),
+    )
 
 
 def _discover_sam2_csv(root: Path, exp: str) -> Path:
@@ -183,11 +217,11 @@ def main() -> int:
     # Discover SAM2 CSV
     sam2_csv = Path(args.sam2_csv) if args.sam2_csv else _discover_sam2_csv(root, exp)
     
-    # Set output path to match current build03_output structure
+    # Set output path according to per-experiment structure
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
-        output_dir = root / "metadata" / "build03_output"
+        output_dir = root / "metadata" / "build03" / "per_experiment"
     
     output_dir.mkdir(parents=True, exist_ok=True)
     output_csv = output_dir / f"expr_embryo_metadata_{exp}.csv"
@@ -242,25 +276,7 @@ def main() -> int:
         if verbose:
             print(f"💾 Step 3: Writing results to {output_csv}")
         stats_df.to_csv(output_csv, index=False)
-
-        # Export BF snips from stitched FF images by default (unless disabled)
-        if not args.no_export_snips:
-            if verbose:
-                print("🖼️  Step 4: Exporting BF snips from stitched FF images (default path)")
-            try:
-                from src.build.build03A_process_images import extract_embryo_snips
-                extract_embryo_snips(
-                    root=root,
-                    stats_df=stats_df,
-                    outscale=6.5,
-                    dl_rad_um=50,
-                    overwrite_flag=False,
-                )
-                if verbose:
-                    print("🖼️  Snip export completed (training_data/bf_embryo_snips)")
-            except Exception as e:
-                print(f"⚠️  Snip export failed: {e}")
-
+        
         # Summary
         total_embryos = len(stats_df)
         usable_embryos = (stats_df["use_embryo_flag"] == "true").sum() if "use_embryo_flag" in stats_df.columns else 0
@@ -269,8 +285,6 @@ def main() -> int:
         print(f"   📈 Total embryos: {total_embryos}")
         print(f"   ✔️  Usable embryos: {usable_embryos}")
         print(f"   📁 Output: {output_csv}")
-        if not args.no_export_snips:
-            print("   🖼️  Snips: training_data/bf_embryo_snips/<exp>/, bf_embryo_snips_uncropped/<exp>/, bf_embryo_masks/")
         
         return 0
         
