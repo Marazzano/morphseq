@@ -63,6 +63,31 @@ import os
 import logging
 import itertools
 from src.build.export_utils import PATTERNS, _match_files, has_output, newest_mtime, _mod_time
+from src.run_morphseq_pipeline.paths import (
+    # Global/non-generated inputs
+    get_stage_ref_csv,
+    get_perturbation_key_csv,
+    get_well_metadata_xlsx,
+    # Build01
+    get_keyence_ff_dir,
+    get_stitched_ff_dir,
+    get_built_metadata_csv,
+    # SAM2
+    get_sam2_csv,
+    get_sam2_masks_dir,
+    get_gdino_detections_json,
+    get_sam2_segmentations_json,
+    get_sam2_mask_export_manifest,
+    get_experiment_metadata_json,
+    # Build03
+    get_build03_output,
+    get_snips_dir,
+    # Build04
+    get_build04_output,
+    # Build06
+    get_latents_csv,
+    get_build06_output,
+)
 from src.build.build03A_process_images import segment_wells, compile_embryo_stats, extract_embryo_snips
 from src.build.build02B_segment_bf_main import apply_unet
 
@@ -247,13 +272,21 @@ class Experiment:
     
     @property
     def meta_path(self) -> Optional[Path]:
-        p = self.repo_root/"metadata"/"plate_metadata"/ f"{self.date}_well_metadata.xlsx"
-        return p if p.exists() else None
+        """Well metadata Excel file path."""
+        try:
+            p = get_well_metadata_xlsx(self.data_root, self.date)
+            return p if p.exists() else None
+        except Exception:
+            return None
     
     @property
     def meta_path_built(self) -> Optional[Path]:
-        p = self.data_root/"metadata"/"built_metadata_files"/ f"{self.date}_metadata.csv"
-        return p if p.exists() else None
+        """Built metadata CSV file path."""
+        try:
+            p = get_built_metadata_csv(self.data_root, self.date)
+            return p if p.exists() else None
+        except Exception:
+            return None
     
     @property
     def meta_path_embryo(self) -> Optional[Path]:
@@ -262,24 +295,26 @@ class Experiment:
     
     @property
     def snip_path(self) -> Optional[Path]:
-        p = self.data_root/"training_data"/"bf_embryo_snips"/ self.date
-        return p if p.exists() else None
+        """Training snips directory path."""
+        try:
+            p = get_snips_dir(self.data_root, self.date)
+            return p if p.exists() else None
+        except Exception:
+            return None
 
     @property
     def ff_path(self) -> Optional[Path]:
-        if self.microscope=="Keyence":
-            p = self.data_root/"built_image_data"/"Keyence"/"FF_images"/self.date
-        else:
-            p = self.data_root/"built_image_data"/"stitched_FF_images"/self.date
-        return p if p.exists() else None
+        """Path to stitched FF images - final output location for both microscope types."""
+        try:
+            p = get_stitched_ff_dir(self.data_root, self.date)
+            return p if p.exists() else None
+        except Exception:
+            return None
 
     @property
     def stitch_ff_path(self) -> Optional[Path]:
-        if self.microscope=="Keyence":
-            p = self.data_root/"built_image_data"/"stitched_FF_images"/self.date
-        else:
-            p = self.raw_path
-        return p if p and p.exists() else None
+        """Path to stitched FF images - same as ff_path, SAM2 input location."""
+        return self.ff_path  # Same location for both microscope types
     
     @property
     def stitch_z_path(self) -> Optional[Path]:
@@ -302,46 +337,70 @@ class Experiment:
     def sam2_csv_path(self) -> Path:
         """Expected per-experiment SAM2 metadata CSV path."""
         try:
-            return self.data_root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.experiment_id}.csv"
+            return get_sam2_csv(self.data_root, self.date)
         except Exception:
-            # Fall back to simple join; avoids raising in status views
-            return Path(str(self.data_root)) / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.experiment_id}.csv"
+            return Path(str(self.data_root)) / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{self.date}.csv"
 
     # ——— planned per-experiment intermediate/final artifacts —————————————
     @property
     def gdino_detections_path(self) -> Path:
         """Per-experiment GroundingDINO detections JSON path."""
-        base = Path(self.data_root) / "sam2_pipeline_files" / "detections"
-        base.mkdir(parents=True, exist_ok=True)
-        return base / f"gdino_detections_{self.experiment_id}.json"
+        try:
+            p = get_gdino_detections_json(self.data_root, self.date)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            base = Path(self.data_root) / "sam2_pipeline_files" / "detections"
+            base.mkdir(parents=True, exist_ok=True)
+            return base / f"gdino_detections_{self.date}.json"
 
     @property
     def sam2_segmentations_path(self) -> Path:
         """Per-experiment SAM2 segmentations JSON path."""
-        base = Path(self.data_root) / "sam2_pipeline_files" / "segmentation"
-        base.mkdir(parents=True, exist_ok=True)
-        return base / f"grounded_sam_segmentations_{self.experiment_id}.json"
+        try:
+            p = get_sam2_segmentations_json(self.data_root, self.date)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            base = Path(self.data_root) / "sam2_pipeline_files" / "segmentation"
+            base.mkdir(parents=True, exist_ok=True)
+            return base / f"grounded_sam_segmentations_{self.date}.json"
 
     @property
     def build03_path(self) -> Path:
         """Per-experiment Build03 embryo metadata CSV path."""
-        base = Path(self.data_root) / "metadata" / "build03" / "per_experiment"
-        base.mkdir(parents=True, exist_ok=True)
-        return base / f"expr_embryo_metadata_{self.experiment_id}.csv"
+        try:
+            p = get_build03_output(self.data_root, self.date)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            base = Path(self.data_root) / "metadata" / "build03_output"
+            base.mkdir(parents=True, exist_ok=True)
+            return base / f"expr_embryo_metadata_{self.date}.csv"
 
     @property
     def build04_path(self) -> Path:
         """Per-experiment Build04 QC+staged CSV path (matches actual implementation)."""
-        base = Path(self.data_root) / "metadata" / "build04_output"
-        base.mkdir(parents=True, exist_ok=True)
-        return base / f"qc_staged_{self.date}.csv"
+        try:
+            p = get_build04_output(self.data_root, self.date)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            base = Path(self.data_root) / "metadata" / "build04_output"
+            base.mkdir(parents=True, exist_ok=True)
+            return base / f"qc_staged_{self.date}.csv"
 
     @property
     def build06_path(self) -> Path:
         """Per-experiment Build06 df03 path (matches actual implementation)."""
-        base = Path(self.data_root) / "metadata" / "build06_output"
-        base.mkdir(parents=True, exist_ok=True)
-        return base / f"df03_final_ouput_with_latents_{self.date}.csv"
+        try:
+            p = get_build06_output(self.data_root, self.date)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            base = Path(self.data_root) / "metadata" / "build06_output"
+            base.mkdir(parents=True, exist_ok=True)
+            return base / f"df03_final_ouput_with_latents_{self.date}.csv"
 
     @property
     def build06_final_path(self) -> Path:
@@ -375,14 +434,7 @@ class Experiment:
 
     def get_latent_path(self, model_name: str) -> Path:
         try:
-            return (
-                self.data_root
-                / "analysis"
-                / "latent_embeddings"
-                / "legacy"
-                / model_name
-                / f"morph_latents_{self.date}.csv"
-            )
+            return get_latents_csv(self.data_root, model_name, self.date)
         except Exception:
             return Path(str(self.data_root)) / "analysis" / "latent_embeddings" / "legacy" / model_name / f"morph_latents_{self.date}.csv"
 
@@ -391,6 +443,28 @@ class Experiment:
             return self.get_latent_path(model_name).exists()
         except Exception:
             return False
+
+    # ——— Additional SAM2 convenience paths (prep + masks) ————————————
+    @property
+    def sam2_masks_dir(self) -> Path:
+        try:
+            return get_sam2_masks_dir(self.data_root, self.date)
+        except Exception:
+            return Path(str(self.data_root)) / "sam2_pipeline_files" / "exported_masks" / self.date / "masks"
+
+    @property
+    def sam2_mask_export_manifest(self) -> Path:
+        try:
+            return get_sam2_mask_export_manifest(self.data_root, self.date)
+        except Exception:
+            return Path(str(self.data_root)) / "sam2_pipeline_files" / "exported_masks" / self.date / f"mask_export_manifest_{self.date}.json"
+
+    @property
+    def sam2_experiment_metadata_json(self) -> Path:
+        try:
+            return get_experiment_metadata_json(self.data_root, self.date)
+        except Exception:
+            return Path(str(self.data_root)) / "sam2_pipeline_files" / "raw_data_organized" / f"experiment_metadata_{self.date}.json"
 
     # ——— Stage 3: Downstream file tracking ————————————————————————————
     
@@ -564,6 +638,39 @@ class Experiment:
         except Exception:
             return False
 
+    def needs_build04(self) -> bool:
+        """
+        Determine if per-experiment Build04 needs to run for this experiment.
+
+        Per-experiment Build04 processes the experiment's Build03 output through
+        quality control and staging to produce a per-experiment df02 file.
+
+        Logic:
+        - If Build03 output doesn't exist → False (no input available)
+        - If Build04 output doesn't exist → True (needs processing)
+        - If Build03 output is newer than Build04 output → True (stale output)
+
+        Returns:
+            bool: True if per-experiment Build04 needs to run
+        """
+        try:
+            build03_file = self.build03_path
+            build04_file = self.build04_path
+
+            # No input available
+            if not build03_file.exists():
+                return False
+
+            # Output missing
+            if not build04_file.exists():
+                return True
+
+            # Check if input is newer than output
+            return build03_file.stat().st_mtime > build04_file.stat().st_mtime
+
+        except Exception:
+            return False
+
     def needs_build06_per_experiment(self, model_name: str = "20241107_ds_sweep01_optimum") -> bool:
         """Check if per-experiment Build06 needs to run."""
         try:
@@ -590,17 +697,38 @@ class Experiment:
     def needs_sam2(self) -> bool:
         """
         Determine if SAM2 segmentation needs to run for this experiment.
-        
-        SAM2 is the modern embryo segmentation approach that produces superior
-        segmentation compared to legacy Build02 QC masks. 
-        
-        Logic: SAM2 is needed if the SAM2 metadata CSV doesn't exist yet.
-        
+
+        Simple, robust rule for containerization:
+        - Run if the SAM2 CSV is missing, OR
+        - Run if stitched FF inputs are newer than the SAM2 CSV (stale outputs).
+
+        This avoids complex dependency checks while ensuring we refresh SAM2 when
+        upstream images change.
+
         Returns:
-            bool: True if SAM2 segmentation needs to run
+            bool: True if SAM2 should run
         """
         try:
-            return not self.sam2_csv_path.exists()
+            csv_path = self.sam2_csv_path
+            # Missing CSV => need to run
+            if not csv_path.exists():
+                return True
+
+            # Freshness check: if stitched FF (or FF) inputs are newer than CSV, rerun
+            try:
+                # Prefer stitched FF path; fall back to FF path
+                in_base = self.stitch_ff_path or self.ff_path
+                if in_base is None:
+                    return False  # No inputs to compare; treat as up-to-date
+
+                # Choose appropriate pattern key for newest_mtime
+                patt_key = "stitch" if (self.stitch_ff_path and in_base == self.stitch_ff_path) else "ff"
+                input_time = newest_mtime(in_base, PATTERNS[patt_key])
+                csv_time = csv_path.stat().st_mtime
+                return input_time > csv_time
+            except Exception:
+                # On failure to compare, don't force rerun
+                return False
         except Exception:
             return False
 
@@ -658,60 +786,38 @@ class Experiment:
     @property
     def needs_build03(self) -> bool:
         """
-        Determine if Build03 embryo processing needs to run for this experiment.
-        
-        Build03 processes embryo segmentation data (from SAM2 or QC masks) and 
-        appends the results to the global df01.csv file. This is the bridge between
-        per-experiment segmentation and global embryo datasets.
-        
-        Multi-layered Logic:
-        1. If experiment already exists in df01 → auto-sync local state, return False
-        2. If recorded locally as complete → check if inputs are newer than last run
-        3. If never run locally → check if segmentation data is available
-        
-        Segmentation Sources (in order of preference):
-        - SAM2 CSV (modern, superior segmentation)
-        - Build02 QC masks (legacy, 5 UNet models)
-        
-        State Sync:
-        Automatically updates local JSON state if experiment found in df01 but not
-        tracked locally (handles legacy processing or external pipeline runs).
-        
-        Returns:
-            bool: True if Build03 needs to run for this experiment
+        Determine if Build03 needs to run based solely on per‑experiment outputs.
+
+        Policy (df01 deprecated):
+        - Inputs: SAM2 CSV if present; otherwise legacy QC masks.
+        - If no inputs available → False.
+        - If per‑experiment Build03 CSV exists and is newer than inputs → False.
+        - Otherwise → True (missing or stale output).
         """
         try:
-            # PRIORITY 1: Check if already processed (exists in df01)
-            if self.is_in_df01():
-                # Auto-sync: Update local state if missing timestamp
-                if "build03" not in self.timestamps:
-                    self.flags['build03'] = True
-                    self.flags['contributed_to_df01'] = True  
-                    self.timestamps['build03'] = datetime.utcnow().isoformat()
-                    self._save_state()
-                return False  # Already processed globally
-            
-            # PRIORITY 2: If locally recorded as complete, ensure df01 actually contains this experiment.
-            # If it doesn't, we still need to (re)run Build03, even if inputs aren't newer.
-            last_build03 = self._ts("build03", 0)
-            if last_build03 > 0:
-                # If df01 now contains the experiment, we're done.
-                if self.is_in_df01():
-                    return False
-                # Otherwise, consider input freshness; if updated, definitely rerun…
-                if self.sam2_csv_path.exists():
-                    sam2_time = self.sam2_csv_path.stat().st_mtime
-                    if sam2_time > last_build03:
-                        return True
-                # …and even if not updated, we still need to contribute to df01.
-                return True
-            
-            # PRIORITY 3: Never run locally, check if segmentation data available
-            has_sam2_data = self.sam2_csv_path.exists()
-            has_qc_masks = self.has_all_qc_masks
-            
-            return has_sam2_data or has_qc_masks  # Can run if either source available
-            
+            # Determine inputs and their freshness timestamp
+            inputs_available = False
+            input_time = 0.0
+            if self.sam2_csv_path.exists():
+                inputs_available = True
+                input_time = self.sam2_csv_path.stat().st_mtime
+            elif self.has_all_qc_masks:
+                inputs_available = True
+                try:
+                    input_time = newest_mtime(self.mask_path, PATTERNS["segment"]) or 0.0
+                except Exception:
+                    input_time = 0.0
+
+            if not inputs_available:
+                return False
+
+            b03 = self.build03_path
+            if b03.exists():
+                b03_time = b03.stat().st_mtime
+                return b03_time < input_time
+
+            # No per-exp output yet → needs run
+            return True
         except Exception:
             return False
 
@@ -785,10 +891,16 @@ class Experiment:
         def _as_bool(val: str) -> bool:
             return str(val).lower() in ("1", "true", "yes", "on")
         overwrite_stitch = _as_bool(os.environ.get("MSEQ_OVERWRITE_STITCH", "0"))
+        skip_z_stitch = _as_bool(os.environ.get("MSEQ_SKIP_Z_STITCH", "0"))
         if self.microscope == "Keyence":
             # Default is resume mode; set MSEQ_OVERWRITE_STITCH=1 to force restitch
+            print("       ↳ Build01: FF stitch (Keyence) — required for SAM2")
             stitch_ff_from_keyence(data_root=self.data_root, exp_name=self.date, overwrite=overwrite_stitch, n_workers=self.num_cpu_workers)
-            stitch_z_from_keyence(data_root=self.data_root, exp_name=self.date, overwrite=True, n_workers=self.num_cpu_workers)
+            print("       ↳ Build01: FF stitch complete")
+            if not skip_z_stitch:
+                print("       ↳ Build01: Z-stitch (Keyence) — optional, not required for SAM2")
+                stitch_z_from_keyence(data_root=self.data_root, exp_name=self.date, overwrite=True, n_workers=self.num_cpu_workers)
+                print("       ↳ Build01: Z-stitch complete")
         else:
             pass
 
@@ -803,18 +915,21 @@ class Experiment:
     @record("segment")
     def segment_images(self, force_update: bool=False):
         # We need to pull the current models
-        model_name_vec = ["mask_v0_0100", "via_v1_0100", "yolk_v1_0050", "focus_v0_0100", "bubble_v0_0100"] 
+        model_name_vec = ["mask_v0_0100", "via_v1_0100", "yolk_v1_0050", "focus_v0_0100", "bubble_v0_0100"]
         # apply unet for each model
+        # Use a conservative worker count to avoid system warnings/freezes
+        safe_workers = min(2, self.num_cpu_workers)
         for model_name in model_name_vec:
             apply_unet(
                 root=self.data_root,
                 model_name=model_name,
                 n_classes=1,
                 checkpoint_path=None,  # use the latest checkpoint
-                n_workers=self.num_cpu_workers,
+                n_workers=safe_workers,
                 overwrite_flag=force_update,
                 make_sample_figures=True,
-                n_sample_figures=100
+                n_sample_figures=100,
+                segment_list=[self.date],  # Only process this experiment
             )
 
     # @record()
@@ -874,8 +989,8 @@ class Experiment:
 
             result = run_build03_step(**_args)
             
-            # Update df01 contribution tracking
-            if result:
+            # Update df01 contribution tracking on successful return
+            if result is not None:
                 self.flags['contributed_to_df01'] = True
                 self.timestamps['last_df01_contribution'] = datetime.utcnow().isoformat()
                 
@@ -897,6 +1012,23 @@ class Experiment:
             **kwargs
         )
         return success
+
+    @record("build04")
+    def run_build04_per_experiment(self, **kwargs):
+        """Execute per-experiment Build04 (QC + staging → df02)."""
+        print(f"🧪 Running Build04 per-experiment for {self.date}")
+        from ..run_morphseq_pipeline.steps.run_build04 import run_build04 as run_build04_step
+        try:
+            out_path = run_build04_step(
+                root=str(self.data_root),
+                exp=self.date,
+                **kwargs
+            )
+            print(f"  ✅ Build04 complete: {out_path}")
+            return out_path
+        except Exception as e:
+            print(f"  ❌ Build04 failed: {e}")
+            raise
 
     @record("build06_per_experiment")
     def run_build06_per_experiment(self, model_name: str = "20241107_ds_sweep01_optimum", **kwargs):
@@ -975,6 +1107,30 @@ class ExperimentManager:
         self.discover_experiments()
         self.update_experiment_status()
 
+    # ——— Global / Non‑Generated Inputs ——————————————————————————————
+    @property
+    def stage_ref_csv(self) -> Path:
+        """Global stage reference CSV path."""
+        try:
+            return get_stage_ref_csv(self.root)
+        except Exception:
+            return self.root / "metadata" / "stage_ref_df.csv"
+
+    @property
+    def perturbation_key_csv(self) -> Path:
+        """Global perturbation name key CSV path."""
+        try:
+            return get_perturbation_key_csv(self.root)
+        except Exception:
+            return self.root / "metadata" / "perturbation_name_key.csv"
+
+    def get_well_metadata_xlsx(self, exp: str) -> Path:
+        """Per‑experiment well metadata Excel path."""
+        try:
+            return get_well_metadata_xlsx(self.root, exp)
+        except Exception:
+            return self.root / "metadata" / "well_metadata" / f"{exp}_well_metadata.xlsx"
+
     # ——— Global File Management: Combined Metadata Files ————————————————
 
     @property
@@ -1022,20 +1178,25 @@ class ExperimentManager:
     @property
     def needs_build04(self) -> bool:
         """
-        Determine if Build04 global QC processing needs to run.
-        
-        Build04 processes the combined df01 embryo data through quality control,
-        outlier detection, and developmental stage inference to produce df02.
-        This is a global operation that processes all experiments together.
-        
-        Logic:
-        - If df01 doesn't exist → False (no input data available)
-        - If df02 doesn't exist → True (output needs to be created)
-        - If df01 is newer than df02 → True (input has been updated)
-        
+        DEPRECATED: Use per-experiment exp.needs_build04() instead.
+
+        Legacy global Build04 check for backwards compatibility.
+        The new architecture uses per-experiment Build04 processing.
+
+        Build04 now processes per-experiment Build03 output through quality control
+        and staging to produce per-experiment df02 files, rather than global processing.
+
         Returns:
-            bool: True if Build04 global QC needs to run
+            bool: True if Build04 global QC needs to run (legacy)
         """
+        import warnings
+        warnings.warn(
+            "ExperimentManager.needs_build04 is deprecated. Use per-experiment "
+            "exp.needs_build04() for the new per-experiment architecture.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         # Can't run without input data
         if not self.df01_path.exists():
             return False
@@ -1051,32 +1212,46 @@ class ExperimentManager:
     @property
     def needs_build06(self) -> bool:
         """
-        Build06 is needed if:
-        1. df02 exists but df03 doesn't, OR
-        2. There are experiments in df02 that aren't in df03, OR
-        3. There are latent files newer than df03 for experiments that should be included
+        DEPRECATED: Use per-experiment exp.needs_build06_per_experiment() instead.
+
+        Legacy global Build06 check for backwards compatibility.
+        The new architecture uses per-experiment Build06 processing.
+
+        Build06 now processes per-experiment Build04 output with latents to produce
+        per-experiment df03 files, rather than global merge processing.
+
+        Returns:
+            bool: True if Build06 global merge needs to run (legacy)
         """
+        import warnings
+        warnings.warn(
+            "ExperimentManager.needs_build06 is deprecated. Use per-experiment "
+            "exp.needs_build06_per_experiment() for the new per-experiment architecture.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         if not self.df02_path.exists():
             return False
         if not self.df03_path.exists():
             return True
-        
+
         try:
             # Get the set of experiments in df02 vs df03
             import pandas as pd
-            
+
             df02 = pd.read_csv(self.df02_path)
             df03 = pd.read_csv(self.df03_path)
-            
+
             # Get unique experiment dates from each file
             df02_experiments = set(df02['experiment_date'].unique()) if 'experiment_date' in df02.columns else set()
             df03_experiments = set(df03['experiment_date'].unique()) if 'experiment_date' in df03.columns else set()
-            
+
             # Check if there are experiments in df02 that aren't in df03
             missing_from_df03 = df02_experiments - df03_experiments
             if missing_from_df03:
                 return True
-            
+
             # Check if any experiment's latent files are newer than df03
             # (but only for experiments that should be in the final dataset)
             df03_time = self.df03_path.stat().st_mtime
@@ -1085,7 +1260,7 @@ class ExperimentManager:
                     latent_path = exp.get_latent_path()
                     if latent_path.exists() and latent_path.stat().st_mtime > df03_time:
                         return True
-                            
+
             return False
         except Exception as e:
             # Fallback to simple timestamp comparison if DataFrame operations fail
@@ -1121,11 +1296,16 @@ class ExperimentManager:
         # collect all the dates first
         dates = []
         for mic in raw.iterdir():
-            if (not mic.is_dir()) or (mic.name=="ignore"): 
+            if (not mic.is_dir()) or (mic.name.lower()=="ignore"): 
                 continue
             for d in mic.iterdir():
-                if d.is_dir():
-                    dates.append(d.name)
+                if not d.is_dir():
+                    continue
+                name = d.name
+                # Skip common ignore patterns and hidden/temp dirs
+                if name.startswith('.') or name.startswith('_') or name.lower().startswith('ignore'):
+                    continue
+                dates.append(name)
                     
         # dedupe & sort
         for date in sorted(set(dates)):

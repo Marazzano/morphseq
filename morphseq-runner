@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Use $PYTHON if set, otherwise fall back to python (conda envs usually provide it)
+PY_BIN="${PYTHON:-python}"
+
+exec "$PY_BIN" -m src.run_morphseq_pipeline.cli "$@"
+

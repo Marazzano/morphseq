@@ -216,7 +216,86 @@ Persist a small sidecar `*.status.json` next to df03 per‑exp is optional (not 
 
 ---
 
-## Refinements Adopted (MVP)
+## Implementation Complete (2025‑09‑14)
+
+### Completed Tasks ✅
+
+1. **Centralized Path Integration**
+   - ExperimentManager successfully imports and uses path functions from `src/run_morphseq_pipeline/paths.py`
+   - All per-experiment paths now use centralized helpers: `get_build03_output()`, `get_build04_output()`, `get_build06_output()`
+   - No inline path formatting - single source of truth maintained
+
+2. **Per-Experiment `needs_*` Methods**
+   - Added `exp.needs_build04()` for per-experiment Build04 logic
+   - Updated `exp.needs_build06_per_experiment()` for per-experiment Build06 logic
+   - Both use proper timestamp-based freshness checks with per-experiment file paths
+
+3. **Deprecated Global Pipeline Checks**
+   - `manager.needs_build04` marked deprecated with warning
+   - `manager.needs_build06` marked deprecated with warning
+   - Clear migration path provided to per-experiment methods
+
+4. **Updated Pipeline Orchestration Display**
+   - CLI now shows correct per-experiment flow:
+     ```
+     4️⃣ 🔄 Embryo processing (Build03) → per-exp df01 - would run
+     5️⃣ 🔄 Per-exp QC & staging (Build04) → per-exp df02 - would run
+     6️⃣ 🔄 Latent embeddings - would generate
+     7️⃣ 🔄 Final merge (Build06) → per-exp df03 - would run
+     ```
+   - Removed confusing global df01/df02 status displays
+   - Added clear dry-run completion messaging
+
+5. **Pipeline Testing**
+   - Tested with experiment `20250529_24hpf_ctrl_atf6`
+   - Confirmed per-experiment architecture working correctly
+   - Pipeline shows proper step-by-step per-experiment flow
+
+### Current Status
+
+**Primary Interface (Working):**
+```bash
+# Preview per-experiment pipeline
+python -m src.run_morphseq_pipeline.cli pipeline e2e \
+  --data-root /net/trapnell/vol1/home/nlammers/projects/data/morphseq \
+  --experiments 20250529_24hpf_ctrl_atf6 \
+  --dry-run \
+  --model-name 20241107_ds_sweep01_optimum
+
+# Execute per-experiment pipeline
+python -m src.run_morphseq_pipeline.cli pipeline e2e \
+  --data-root /net/trapnell/vol1/home/nlammers/projects/data/morphseq \
+  --experiments 20250529_24hpf_ctrl_atf6 \
+  --model-name 20241107_ds_sweep01_optimum
+```
+
+**Pipeline Flow (Per-Experiment):**
+- Build01 → FF images + metadata
+- Build02/SAM2 → QC masks / SAM2 segmentation
+- Build03 → `{root}/metadata/build03_output/expr_embryo_metadata_{exp}.csv`
+- Build04 → `{root}/metadata/build04_output/qc_staged_{exp}.csv`
+- Build06 → `{root}/metadata/build06_output/df03_final_ouput_with_latents_{exp}.csv`
+
+### File Status Verification
+
+**Check exact file paths and status:**
+```bash
+# Status view (read-only per-experiment files)
+python -m src.run_morphseq_pipeline.cli status \
+  --data-root /net/trapnell/vol1/home/nlammers/projects/data/morphseq \
+  --model-name 20241107_ds_sweep01_optimum
+
+# Detailed path verification (per-experiment file checker)
+python -m scripts.check_paths_experiment \
+  --data-root /net/trapnell/vol1/home/nlammers/projects/data/morphseq \
+  --exp 20250529_24hpf_ctrl_atf6
+```
+
+### Next Steps (TODO)
+
+1. **Implement per-experiment Build04 runner** (currently shows warning)
+2. **Add combine utilities** for creating global df01/df02/df03 from per-experiment files
+3. **Remove legacy helper script** `scripts/test_manager_run_upto.py` → moved to `services/experiment_planner.py`
 
 - Centralized paths (paths.py)
   - Single source of truth for all path templates, e.g., `get_sam2_csv(root, exp)`, `get_build04_output(root, exp)`, etc.

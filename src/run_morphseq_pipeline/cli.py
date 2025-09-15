@@ -52,8 +52,10 @@ import os
 from pathlib import Path
 import sys
 import json
+from .paths import get_well_metadata_xlsx
 
-from .steps.run_build03 import run_build03
+# Build03 wrapper exports `run_build03_pipeline`; alias to `run_build03` for compatibility
+from .steps.run_build03 import run_build03_pipeline as run_build03
 from .steps.run_build04 import run_build04
 from .steps.run_build05 import run_build05
 from .steps.run_build01 import run_build01
@@ -268,17 +270,22 @@ def build_parser() -> argparse.ArgumentParser:
     # pipeline (orchestrated execution)
     p_pipe = sub.add_parser("pipeline", help="Orchestrated pipeline execution")
     p_pipe.add_argument("--data-root", required=True)
-    p_pipe.add_argument("action", choices=["e2e", "sam2", "build03", "build04", "build06"])
+    # Make action optional positional (defaults to e2e) and also accept --action alias
+    p_pipe.add_argument("action", nargs="?", choices=["e2e", "build01", "sam2", "build03", "build04", "build06"],
+                        help="Pipeline action (default: e2e)")
+    p_pipe.add_argument("--action", dest="action_opt", choices=["e2e", "build01", "sam2", "build03", "build04", "build06"],
+                        help="[Alias] Specify pipeline action explicitly")
     p_pipe.add_argument("--experiments", help="Comma-separated experiment IDs")
     p_pipe.add_argument("--later-than", type=int, help="Process experiments after YYYYMMDD")
     p_pipe.add_argument("--force", action="store_true", help="Force rerun even if not needed")
     p_pipe.add_argument("--dry-run", action="store_true", help="Show what would run without executing")
     p_pipe.add_argument("--model-name", default="20241107_ds_sweep01_optimum",
-                        help="Model name for embedding generation")
+                        help="Model name for embedding generation (default: 20241107_ds_sweep01_optimum)")
     # SAM2 parameters
     p_pipe.add_argument("--sam2-workers", type=int, default=8, help="SAM2 parallel workers")
     p_pipe.add_argument("--sam2-confidence", type=float, default=0.45, help="SAM2 confidence threshold")
     p_pipe.add_argument("--sam2-iou", type=float, default=0.5, help="SAM2 IoU threshold")
+    p_pipe.add_argument("--sam2-verbose", action="store_true", help="Stream SAM2 subprocess output live")
     # Build03 parameters
     p_pipe.add_argument("--by-embryo", type=int, help="Sample this many embryos")
     p_pipe.add_argument("--frames-per-embryo", type=int, help="Sample this many frames per embryo")
@@ -288,6 +295,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # Backward + forward compatible handling for `pipeline` action:
+    # - Supports positional `action` (original behavior)
+    # - Supports `--action <name>` alias
+    # - Defaults to `e2e` if neither provided
+    if getattr(args, 'cmd', None) == "pipeline":
+        act = getattr(args, 'action_opt', None) or getattr(args, 'action', None) or "e2e"
+        setattr(args, 'action', act)
 
     if args.cmd == "build01":
         run_build01(root=resolve_root(args), exp=args.exp, microscope=args.microscope,
@@ -609,16 +624,30 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception:
                     return fallback
 
-            qc_present, qc_total = safe(exp.qc_mask_status, (0, 5))
+            masks_present, masks_total = safe(exp.qc_mask_status, (0, 5))
+            # Well metadata presence (non-generated input)
+            try:
+                well_meta_exists = get_well_metadata_xlsx(root, date).exists()
+            except Exception:
+                well_meta_exists = False
+
             status = {
                 "microscope": safe(lambda: exp.microscope, None),
-                "ff": bool(exp.flags.get("ff", False)),
-                "qc_all": qc_present == qc_total and qc_total > 0,
-                "qc_present": qc_present,
-                "qc_total": qc_total,
+                # Image generation (stitched outputs only)
+                # FF images: use stitch_ff_path (SAM2 input location for both microscope types)
+                "ff": safe(lambda: bool(getattr(exp, "stitch_ff_path", None)), False),
+                "ff_z": safe(lambda: bool(getattr(exp, "stitch_z_path", None)), False),
+                # Legacy Build02 mask presence
+                "masks_all": masks_present == masks_total and masks_total > 0,
+                "masks_present": masks_present,
+                "masks_total": masks_total,
                 "sam2_csv": safe(lambda: exp.sam2_csv_path.exists(), False),
-                "needs_build03": safe(lambda: exp.needs_build03, False),
+                # Per-experiment stage presence
+                "b03_exists": safe(lambda: exp.build03_path.exists(), False),
+                "b04_exists": safe(lambda: exp.build04_path.exists(), False),
                 "has_latents": safe(lambda: exp.has_latents(model_name), False),
+                "b06_exists": safe(lambda: exp.build06_path.exists(), False),
+                "well_meta": well_meta_exists,
             }
             data["experiments"][date] = status
 
@@ -637,15 +666,23 @@ def main(argv: list[str] | None = None) -> int:
             for date, st in data["experiments"].items():
                 bits = []
                 bits.append("FF✅" if st["ff"] else "FF❌")
-                if args.verbose:
-                    bits.append(f"QC {st['qc_present']}/{st['qc_total']}")
+                # Z_STITCH only applies to Keyence; show N/A for YX1
+                if st.get("microscope") == "Keyence":
+                    bits.append("Z_STITCH✅" if st.get("ff_z") else "Z_STITCH❌")
                 else:
-                    bits.append("QC✅" if st["qc_all"] else "QC❌")
+                    bits.append("Z_STITCH—")  # N/A for YX1
+                if args.verbose:
+                    bits.append(f"MASKS {st['masks_present']}/{st['masks_total']}")
+                else:
+                    bits.append("MASKS✅" if st["masks_all"] else "MASKS❌")
                 bits.append("SAM2✅" if st["sam2_csv"] else "SAM2❌")
-                bits.append("B03🔁" if st["needs_build03"] else "B03✔️")
+                bits.append("B03✅" if st["b03_exists"] else "B03❌")
+                bits.append("B04✅" if st["b04_exists"] else "B04❌")
                 bits.append("LAT✅" if st["has_latents"] else "LAT❌")
+                bits.append("B06✅" if st["b06_exists"] else "B06❌")
                 mic = st["microscope"] or "?"
-                print(f"{date} [{mic}]: " + " ".join(bits))
+                suffix = " (NO Well_Metadta)" if not st.get("well_meta", True) else ""
+                print(f"{date} [{mic}]: " + " ".join(bits) + suffix)
 
     elif args.cmd == "pipeline":
         # Lazy import to avoid heavy imports for other commands
@@ -711,14 +748,17 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception:
                     raw_present = False
                 try:
-                    # Consider either the explicit flag or the existence of the FF output folder
-                    ff_present = bool(exp.flags.get("ff", False)) or bool(getattr(exp, "ff_path", None))
+                    # Check Build01 outputs separately:
+                    #  - ff_images_exist: stitched FF images (required for SAM2 on Keyence)
+                    #  - built_metadata_exist: per-exp built metadata CSV
+                    ff_images_exist = bool(getattr(exp, "stitch_ff_path", None))
+                    built_metadata_exist = bool(getattr(exp, "meta_path_built", None))
+                    # Display FF presence based purely on stitched images to avoid confusion with stale flags
+                    ff_present = ff_images_exist
                 except Exception:
+                    ff_images_exist = False
+                    built_metadata_exist = False
                     ff_present = False
-                try:
-                    stitch_done = bool(exp.flags.get("stitch", False))
-                except Exception:
-                    stitch_done = False
 
                 parts = [
                     f"RAW {'✅' if raw_present else '❌'}",
@@ -726,35 +766,44 @@ def main(argv: list[str] | None = None) -> int:
                 ]
                 # Only show stitch state when relevant (Keyence data) or when flag exists
                 # STITCH is a Keyence-only step; show only for Keyence
-                try:
-                    if getattr(exp, "microscope", None) == "Keyence":
-                        parts.append(f"STITCH (Keyence only) {'✅' if stitch_done else '❌'}")
-                except Exception:
-                    pass
+                # Intentionally omit Z_STITCH indicator from e2e flow output to reduce confusion;
+                # Z-stitch is not required for SAM2.
 
+                # Show both components for clarity
+                parts.append(f"META {'✅' if built_metadata_exist else '❌'}")
                 print("    1️⃣ " + " | ".join(parts) + " (Build01)")
 
-                # Auto-run Build01 if RAW is present but FF/STITCH outputs are missing
-                # This unblocks downstream SAM2 which requires stitched images.
+                # Auto-run Build01 if RAW/FF/STITCH outputs are missing
+                # This unblocks downstream SAM2 which requires stitched images for Keyence.
                 try:
-                    need_build01 = raw_present and (not ff_present)
-                    # For Keyence specifically, also require stitch flag/output; if missing, we still run Build01
                     mic = getattr(exp, "microscope", None)
+                    # Export builds metadata and prerequisite artifacts; decide based on metadata presence
+                    need_export = not built_metadata_exist
+                    # For Keyence specifically, ensure stitched FF images exist for SAM2
+                    need_ff_stitch = (mic == "Keyence") and (not ff_images_exist)
                 except Exception:
-                    need_build01 = False
+                    need_export = False
+                    need_ff_stitch = False
                     mic = None
 
-                if need_build01:
+                if need_export or need_ff_stitch:
                     if args.dry_run:
-                        print(f"       ↳ 🔄 Build01 would run (microscope={mic or '?'})")
+                        if need_export:
+                            print(f"       ↳ 🔄 Build01 export would run (microscope={mic or '?'})")
+                        if need_ff_stitch:
+                            print("       ↳ 🔄 Build01 FF stitch (Keyence) would run")
                     else:
                         if not mic:
                             print("       ↳ ❌ Cannot run Build01: microscope not detected from raw layout")
                         else:
                             try:
                                 # Use ExperimentManager orchestration for Build01
-                                print(f"       ↳ 🔄 Running Build01 via manager (microscope={mic})...")
-                                manager.export_experiments(experiments=[exp.date])
+                                if need_export:
+                                    print(f"       ↳ 🔄 Running Build01 export via manager (microscope={mic})...")
+                                    manager.export_experiments(experiments=[exp.date])
+                                if need_ff_stitch and mic == "Keyence":
+                                    print("       ↳ 🔄 Running Build01 FF stitch via manager (Keyence)...")
+                                    manager.stitch_experiments(experiments=[exp.date])
                                 # Refresh status after build
                                 exp._sync_with_disk()
                             except Exception as e:
@@ -763,8 +812,9 @@ def main(argv: list[str] | None = None) -> int:
                 # Step 2: QC Masks (Build02)
                 qc_present, qc_total = exp.qc_mask_status()
                 need_build02 = (qc_total > 0 and qc_present < qc_total)
-                if not need_build02 and qc_total == 0:
-                    # If we couldn't enumerate expected outputs, use needs_segment as a fallback
+
+                # Also check if stitched images are newer than existing masks (freshness)
+                if not need_build02:
                     try:
                         need_build02 = exp.needs_segment
                     except Exception:
@@ -804,19 +854,10 @@ def main(argv: list[str] | None = None) -> int:
                     print("    3️⃣ ✅ SAM2 segmentation complete")
                 
                 # Step 4: Build03 (embryo processing)
-                try:
-                    in_df01 = exp.is_in_df01()
-                except Exception:
-                    in_df01 = False
-                try:
-                    in_df02 = exp.is_in_df02()
-                except Exception:
-                    in_df02 = False
-                if args.force or exp.needs_build03 or not in_df01:
+                if args.force or exp.needs_build03:
                     if args.dry_run:
-                        # Show whether df01/df02 currently contain this experiment
-                        tag = f"df01={'yes' if in_df01 else 'no'}, df02={'yes' if in_df02 else 'no'}"
-                        print(f"    4️⃣ 🔄 Embryo processing (Build03) - would run ({tag})")
+                        build03_exists = exp.build03_path.exists()
+                        print(f"    4️⃣ 🔄 Embryo processing (Build03) → per-exp df01 - would run (current: {'exists' if build03_exists else 'missing'})")
                     else:
                         print("    4️⃣ 🔄 Running embryo processing (Build03)...")
                         exp.run_build03(
@@ -824,17 +865,39 @@ def main(argv: list[str] | None = None) -> int:
                             frames_per_embryo=args.frames_per_embryo
                         )
                 else:
-                    print("    4️⃣ ✅ Embryo processing (Build03) complete (df01/df02 present)")
+                    print("    4️⃣ ✅ Embryo processing (Build03) → per-exp df01 complete")
                 
-                # Step 5: Latent embeddings
+                # Step 5: Build04 (per-experiment QC)
+                if args.force or exp.needs_build04():
+                    if args.dry_run:
+                        build04_exists = exp.build04_path.exists()
+                        print(f"    5️⃣ 🔄 Per-exp QC & staging (Build04) → per-exp df02 - would run (current: {'exists' if build04_exists else 'missing'})")
+                    else:
+                        print("    5️⃣ 🔄 Running per-experiment QC & staging (Build04)...")
+                        exp.run_build04_per_experiment()
+                else:
+                    print("    5️⃣ ✅ Per-exp QC & staging (Build04) → per-exp df02 complete")
+
+                # Step 6: Latent embeddings
                 if args.force or not exp.has_latents(args.model_name):
                     if args.dry_run:
-                        print("    5️⃣ 🔄 Latent embeddings - would generate")
+                        print("    6️⃣ 🔄 Latent embeddings - would generate")
                     else:
-                        print("    5️⃣ 🔄 Generating latent embeddings...")
+                        print("    6️⃣ 🔄 Generating latent embeddings...")
                         exp.generate_latents(model_name=args.model_name)
                 else:
-                    print("    5️⃣ ✅ Latent embeddings exist")
+                    print("    6️⃣ ✅ Latent embeddings exist")
+
+                # Step 7: Build06 (per-experiment merge)
+                if args.force or exp.needs_build06_per_experiment(args.model_name):
+                    if args.dry_run:
+                        build06_exists = exp.build06_path.exists()
+                        print(f"    7️⃣ 🔄 Final merge (Build06) → per-exp df03 - would run (current: {'exists' if build06_exists else 'missing'})")
+                    else:
+                        print("    7️⃣ 🔄 Running final merge (Build06)...")
+                        exp.run_build06_per_experiment(model_name=args.model_name)
+                else:
+                    print("    7️⃣ ✅ Final merge (Build06) → per-exp df03 complete")
             
             # Show pipeline steps for missing experiments (not in raw data)
             if args.experiments and missing:
@@ -847,76 +910,55 @@ def main(argv: list[str] | None = None) -> int:
                     print("    1️⃣ ❌ Raw data → FF images (Build01) - Need raw data")
                     print("    2️⃣ ❌ QC mask generation (Build02) - Need FF images")
                     print("    3️⃣ ❌ SAM2 segmentation - Need FF images")
-                    print("    4️⃣ ❌ Embryo processing (Build03) - Need segmentation")
-                    print("    5️⃣ ❌ Latent embeddings - Need Build03 output")
+                    print("    4️⃣ ❌ Embryo processing (Build03) → per-exp df01 - Need segmentation")
+                    print("    5️⃣ ❌ Per-exp QC & staging (Build04) → per-exp df02 - Need Build03 output")
+                    print("    6️⃣ ❌ Latent embeddings - Need Build03 output")
+                    print("    7️⃣ ❌ Final merge (Build06) → per-exp df03 - Need Build04 output + latents")
             
-            # Global steps after all experiments
+            # Per-experiment pipeline complete summary
             print(f"\n{'='*40}")
-            print("Global Pipeline Steps")
+            print("Per-Experiment Pipeline Complete")
             print(f"{'='*40}")
-            print("  📋 Global Steps:")
-            # Clarify scope to avoid confusion with per-experiment status
-            print("  ℹ️ Global steps are aggregate across ALL experiments.")
-            print("     They may show complete even if THIS experiment isn't yet in df01/df02.")
-            
-            # Build simple reasons for freshness decisions
-            try:
-                from pathlib import Path as _P
-                _df01 = _P(root) / "metadata" / "combined_metadata_files" / "embryo_metadata_df01.csv"
-                _df02 = _P(root) / "metadata" / "combined_metadata_files" / "embryo_metadata_df02.csv"
-                _df03 = _P(root) / "metadata" / "combined_metadata_files" / "embryo_metadata_df03.csv"
-                def _freshness_reason(inp, out):
-                    if not inp.exists():
-                        return "input missing"
-                    if not out.exists():
-                        return "output missing"
-                    try:
-                        return "input newer" if inp.stat().st_mtime > out.stat().st_mtime else "input older/equal"
-                    except Exception:
-                        return "unknown"
-                b04_reason = _freshness_reason(_df01, _df02)
-                b06_reason = _freshness_reason(_df02, _df03)
-            except Exception:
-                b04_reason = b06_reason = "unknown"
-            
-            # Step 6: Build04 (df01 → df02 QC)
-            if args.force or manager.needs_build04:
-                if args.dry_run:
-                    print(f"    6️⃣ 🔄 Global QC & staging (Build04: df01→df02) - would run (reason: {b04_reason})")
-                else:
-                    print("    6️⃣ 🔄 Running global QC & staging (Build04: df01→df02)...")
-                    manager.run_build04()
+            print(f"✅ {len(selected)} experiment(s) processed")
+            print("ℹ️  Each experiment now has its own per-experiment files:")
+            print("   • Build03 → per-exp df01 (embryo metadata)")
+            print("   • Build04 → per-exp df02 (QC + staged)")
+            print("   • Build06 → per-exp df03 (final with latents)")
+            print("ℹ️  Use combine utilities to create global df01/df02/df03 if needed.")
+
+        elif args.action == "build01":
+            # Build01 comprises exporting FF images and stitching (for Keyence)
+            if args.dry_run:
+                print("🔄 Would run Build01 (export FF images + stitch for Keyence) where needed")
             else:
-                print(f"    6️⃣ ✅ Global QC & staging (Build04: df01→df02) complete (reason: {b04_reason})")
-                
-            # Step 7: Build06 (df02 + latents → df03)
-            if args.force or manager.needs_build06:
-                # Show which specific experiments need merging
-                experiments_needing_merge = []
-                for exp in selected:
-                    if exp.needs_build06_merge(args.model_name):
-                        experiments_needing_merge.append(exp.date)
-                
-                if args.dry_run:
-                    if experiments_needing_merge:
-                        print(f"    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run (reason: {b06_reason})")
-                        print(f"        📋 Experiments needing merge: {len(experiments_needing_merge)}")
-                        if args.verbose:
-                            for exp_date in experiments_needing_merge[:3]:  # Show first 3
-                                print(f"            • {exp_date}")
-                            if len(experiments_needing_merge) > 3:
-                                print(f"            • ... and {len(experiments_needing_merge) - 3} more")
-                    else:
-                        print(f"    7️⃣ 🔄 Final merge (Build06: df02+latents→df03) - would run (other experiments; reason: {b06_reason})")
+                print("🔄 Running Build01 where needed (export + stitch)...")
+
+            # Export FF images
+            if args.dry_run:
+                to_export = [e for e in selected if getattr(e, 'needs_export', False)]
+                if to_export:
+                    print("   ↳ Export FF images:", ", ".join(sorted([e.date for e in to_export])))
                 else:
-                    print("    7️⃣ 🔄 Running final merge (Build06: df02+latents→df03)...")
-                    if experiments_needing_merge:
-                        print(f"        📋 {len(experiments_needing_merge)} experiments need merging")
-                        manager.run_build06(model_name=args.model_name, experiments=experiments_needing_merge)
-                    else:
-                        manager.run_build06(model_name=args.model_name)
+                    print("   ↳ Export FF images: none needed")
             else:
-                print(f"    7️⃣ ✅ Final merge (Build06: df02+latents→df03) complete (reason: {b06_reason})")
+                manager.export_experiments(experiments=[e.date for e in selected], force_update=args.force)
+
+            # Stitch (Keyence only)
+            if args.dry_run:
+                to_stitch = [e for e in selected if getattr(e, 'needs_stitch', False) and getattr(e, 'microscope', None) == 'Keyence']
+                if to_stitch:
+                    print("   ↳ Stitch FF (Keyence):", ", ".join(sorted([e.date for e in to_stitch])))
+                else:
+                    print("   ↳ Stitch FF (Keyence): none needed")
+            else:
+                manager.stitch_experiments(experiments=[e.date for e in selected], force_update=args.force)
+
+            # Deliberately omit Z-stitch from automated Build01 action; not required for SAM2.
+
+            if args.dry_run:
+                print("\n🔍 DRY RUN COMPLETE - Build01 summary above")
+            else:
+                print("\n🎉 Build01 completed where needed")
 
         elif args.action == "sam2":
             for exp in selected:
@@ -967,7 +1009,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print("✅ Build06 already complete")
 
-        print(f"\n🎉 Pipeline {args.action} completed!")
+        if args.dry_run:
+            print(f"\n🔍 DRY RUN COMPLETE - No files were changed")
+            print(f"🎯 Pipeline {args.action} analysis finished!")
+        else:
+            print(f"\n🎉 Pipeline {args.action} completed!")
 
     return 0
 

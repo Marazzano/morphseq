@@ -439,9 +439,10 @@ def build_ff_from_yx1(
     well_name_list_sorted = np.asarray(well_name_list)[si].tolist()
     well_ind_list_sorted = np.asarray(well_ind_list)[si].tolist()
 
-    # Extract timestamps with robust gap handling
-    selected_nd2_indices = [int(s) - 1 for s in well_ind_list_sorted]  # Convert to 0-based
-    frame_time_vec = _get_imputed_time_vector(nd, n_t, n_w, n_z, selected_nd2_indices)
+    # Extract timestamps using robust method (handles NaNs and jumps)
+    # Convert well series (1-based) to 0-based indices for reference selection
+    ref_indices = [int(s) - 1 for s in well_ind_list_sorted]
+    frame_time_vec = _get_imputed_time_vector(nd, n_t=n_t, n_w=n_w, n_z=n_z, well_indices=ref_indices)
 
     # generate longform vectors
     well_name_list_long = np.repeat(well_name_list_sorted, n_t)

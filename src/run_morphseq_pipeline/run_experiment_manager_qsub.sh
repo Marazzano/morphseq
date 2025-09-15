@@ -80,10 +80,11 @@ fi
 # Ensure Python can import the repo
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 
-CMD=( python "${REPO_ROOT}/src/run_morphseq_pipeline/run_experiment_manager.py" \
+CMD=( python -m src.run_morphseq_pipeline.cli pipeline \
       --data-root "${DATA_ROOT}" \
-      --repo-root "${REPO_ROOT}" \
-      --experiments "${EXPERIMENTS}" )
+      --experiments "${EXPERIMENTS}" \
+      --action e2e \
+      --model-name 20241107_ds_sweep01_optimum )
 
 if [[ "${DRY_RUN}" == "1" || "${DRY_RUN}" == "true" ]]; then
   CMD+=( --dry-run )
@@ -94,3 +95,8 @@ echo "[morphseq] Running: ${CMD[*]}"
 
 echo "[morphseq] Done."
 
+
+
+# qsub -t 1-14 -tc 3 \
+#   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
+#   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_manager_qsub.sh

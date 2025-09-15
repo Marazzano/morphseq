@@ -22,6 +22,7 @@ PERTURBATION_NAME_KEY_CSV = "{root}/metadata/perturbation_name_key.csv"
 WELL_METADATA_XLSX = "{root}/metadata/well_metadata/{exp}_well_metadata.xlsx" #or /metadata/plate_metadata/...
 
 # Build01: Raw → Stitched FF images + metadata
+KEYENCE_FF_IMAGES_DIR = "{root}/built_image_data/Keyence/FF_images/{exp}"
 STITCHED_FF_IMAGES_DIR = "{root}/built_image_data/stitched_FF_images/{exp}"
 BUILT_METADATA_CSV = "{root}/metadata/built_metadata_files/{exp}_metadata.csv"
 
@@ -34,9 +35,9 @@ SAM2_MASK_EXPORT_MANIFEST = "{root}/sam2_pipeline_files/exported_masks/{exp}/mas
 SAM2_METADATA_CSV = "{root}/sam2_pipeline_files/sam2_expr_files/sam2_metadata_{exp}.csv"
 
 
-# Build03: Snip extraction
+# Build03: Snip extraction & metadata
 BUILD03_OUTPUT_CSV = "{root}/metadata/build03_output/expr_embryo_metadata_{exp}.csv"
-SNIPS_DIR = "{root}/training_data/bf_embryo_snips/{exp}"
+BUILD03_SNIPS_DIR = "{root}/training_data/bf_embryo_snips/{exp}"
 
 # Build04: QC & staging
 BUILD04_OUTPUT_CSV = "{root}/metadata/build04_output/qc_staged_{exp}.csv"
@@ -76,7 +77,13 @@ def get_well_metadata_xlsx(root: _PathLike, exp: str) -> Path:
 
 
 # Build01
+def get_keyence_ff_dir(root: _PathLike, exp: str) -> Path:
+    """Path to Keyence raw FF images directory."""
+    return _fmt(KEYENCE_FF_IMAGES_DIR, root=root, exp=exp)
+
+
 def get_stitched_ff_dir(root: _PathLike, exp: str) -> Path:
+    """Path to stitched FF images directory (SAM2 input for both microscope types)."""
     return _fmt(STITCHED_FF_IMAGES_DIR, root=root, exp=exp)
 
 
@@ -117,7 +124,8 @@ def get_build03_output(root: _PathLike, exp: str) -> Path:
 
 
 def get_snips_dir(root: _PathLike, exp: str) -> Path:
-    return _fmt(SNIPS_DIR, root=root, exp=exp)
+    """Path to Build03 training snips directory for an experiment."""
+    return _fmt(BUILD03_SNIPS_DIR, root=root, exp=exp)
 
 
 # Build04

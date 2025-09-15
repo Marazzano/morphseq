@@ -385,18 +385,24 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
                                     kind="linear", fill_value=np.nan, bounds_error=False)
     # iterate through dates
     date_index, date_indices = np.unique(embryo_metadata_df["experiment_date"], return_inverse=True)
-    print(f"Found {len(date_index)} unique experiment date(s) to process")
+    print(f"🔍 DEBUG: Unique dates found: {date_index}")
+    print(f"🔍 DEBUG: Input data shape: {embryo_metadata_df.shape}")
+    print(f"🔍 DEBUG: Available columns: {list(embryo_metadata_df.columns)}")
 
     # initialize new field
     embryo_metadata_df["inferred_stage_hpf"] = np.nan
 
     for d, date in enumerate(tqdm(date_index)):
+        print(f"\n🔍 DEBUG: Processing date {d}: {date}")
         date_df = embryo_metadata_df.loc[date_indices == d, ["snip_id", "embryo_id", "time_int", "Time Rel (s)", "short_pert_name",
                         "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um", "use_embryo_flag"]].reset_index(drop=True)
 
-        print(f"\nProcessing date {date} ({d+1}/{len(date_index)}): {len(date_df)} embryos")
-        print(f"Surface-area range: {date_df['surface_area_um'].min():.1f} - {date_df['surface_area_um'].max():.1f}")
+        print(f"🔍 DEBUG: Date {date} - {len(date_df)} embryos")
+        print(f"🔍 DEBUG: Phenotype values: {date_df['phenotype'].value_counts().to_dict()}")
+        print(f"🔍 DEBUG: Control flag values: {date_df['control_flag'].value_counts().to_dict()}")
+        print(f"🔍 DEBUG: SA range: {date_df['surface_area_um'].min():.1f} - {date_df['surface_area_um'].max():.1f}")
 
+        date_df["abs_time_hr"] = date_df["Time Rel (s)"] / 3600
         # check for multiple age cohorts
         min_t = np.min(date_df["time_int"])
         cohort_key = date_df.loc[date_df["time_int"] == min_t, ["embryo_id", "predicted_stage_hpf"]]
@@ -413,6 +419,7 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
         # check to see if this is a timeseries dataset
         _, embryo_counts = np.unique(date_df["embryo_id"], return_counts=True)
         snapshot_flag = np.max(embryo_counts) == 1
+        print(f"🔍 DEBUG: Snapshot flag: {snapshot_flag}")
         if snapshot_flag:
             embryo_metadata_df.loc[date_indices == d, "use_embryo_flag"] = True
 
@@ -420,7 +427,11 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
         ref_bool = (date_df.loc[:, "phenotype"].to_numpy() == "wt") | (date_df.loc[:, "control_flag"].to_numpy() == 1)
         if date == "20240314":   # special allowance for this one dataset
             ref_bool = ref_bool | True
+
+        # date_df["abs_time_hpf"] = np.round(date_df["predicted_stage_hpf"])
+
         ref_bool = ref_bool & date_df["use_embryo_flag"]
+        print(f"🔍 DEBUG: Reference embryos after filtering: {ref_bool.sum()} out of {len(ref_bool)}")
 
         date_df_ref = date_df.loc[ref_bool]
         if len(date_df_ref) == 0:
@@ -432,18 +443,17 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
         date_key_df = date_df_ref.loc[:, ["stage_group_hpf", "cohort_id", "surface_area_um"]].groupby(
                                                         ['stage_group_hpf', "cohort_id"]).quantile(.95).reset_index()
 
-        print(f"Date key rows: {date_key_df.shape[0]}")
+        print(f"🔍 DEBUG: Date key shape after groupby: {date_key_df.shape}")
         # get interp predictions
         date_key_df["stage_hpf_interp"] = stage_interpolator(date_key_df["surface_area_um"])
-        nan_interp = date_key_df['stage_hpf_interp'].isna().sum()
-        if nan_interp > 0:
-            print(f"Interpolated stages - NaN count: {nan_interp}")
+        print(f"🔍 DEBUG: Interpolated stages - NaN count: {date_key_df['stage_hpf_interp'].isna().sum()}")
 
         if snapshot_flag:
-            # snapshot mode: infer directly from surface-area
+            print(f"🔍 DEBUG: Using snapshot mode - direct interpolation from SA")
+            # BUG FIX: snapshot_flag should use surface_area_um, not predicted_stage_hpf!
             date_df["inferred_stage_hpf"] = stage_interpolator(date_df["surface_area_um"])
             inferred_count = (~date_df["inferred_stage_hpf"].isna()).sum()
-            print(f"Snapshot inferred {inferred_count}/{len(date_df)} embryos for date {date}")
+            print(f"🔍 DEBUG: Snapshot - inferred {inferred_count} out of {len(date_df)} embryos")
             # stage_skel = date_df.loc[:, ["snip_id", "stage_group_hpf"]]
             # stage_skel = stage_skel.merge(date_key_df.loc[:, ["stage_group_hpf", "stage_hpf_interp"]], how="left", on="stage_group_hpf").rename(
             #                 columns={"stage_hpf_interp":"inferred_stage_hpf"})
@@ -497,11 +507,15 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
 
             # merge back to full df
             date_df["inferred_stage_hpf"] = predictions_full
+            print(f"🔍 DEBUG: Timeseries mode - predicted {len(predictions_full)} stages")
 
+        # Copy results back to main dataframe
+        valid_inferred = (~date_df["inferred_stage_hpf"].isna()).sum()
         embryo_metadata_df.loc[date_indices == d, "inferred_stage_hpf"] = date_df["inferred_stage_hpf"].to_numpy()
+        print(f"🔍 DEBUG: Copied {valid_inferred} inferred stages back to main dataframe for date {date}")
 
     total_inferred = (~embryo_metadata_df["inferred_stage_hpf"].isna()).sum()
-    print(f"Total inferred stages: {total_inferred}/{len(embryo_metadata_df)}")
+    print(f"🔍 DEBUG: FINAL - Total inferred stages: {total_inferred} out of {len(embryo_metadata_df)}")
     return embryo_metadata_df
 
 
@@ -546,7 +560,7 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2)
         bin_step=0.5,
         hpf_window=0.75,
         min_embryos=2,
-        margin_k=1.40,
+        margin_k=2.0,
         calibrate_scale=True,
     )
 
@@ -558,6 +572,7 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2)
         df["use_embryo_flag"].astype(bool)
         & (~df["dead_flag2"].astype(bool))
         & (~df["sa_outlier_flag"].astype(bool))
+        & (~df.get("sam2_qc_flag", pd.Series([False] * len(df))).astype(bool))
     )
 
     return df
@@ -572,7 +587,7 @@ def _sa_qc_with_fallback(
     bin_step: float = 0.5,
     hpf_window: float = 0.75,
     min_embryos: int = 2,
-    margin_k: float = 1.40,
+    margin_k: float = 2.0,
     calibrate_scale: bool = True,
 ) -> pd.DataFrame:
     """
@@ -686,7 +701,7 @@ def _sa_qc_with_fallback(
             ratio = ratio[ratio <= high]
             if len(ratio) > 0:
                 scale = float(np.median(ratio))
-    thresholds = scale * margin_k * sa_ref  # margin_k=1.40 (increased from 1.25 to be less aggressive)
+    thresholds = scale * margin_k * sa_ref  # margin_k=2.0 (increased from 1.40 to be less exclusionary)
     df["sa_outlier_flag"] = df["surface_area_um"].to_numpy() > thresholds
     print(f"✅ SA QC: used stage_ref fallback (scale={scale:.3f}, margin_k={margin_k})")
     return df
@@ -789,7 +804,7 @@ def _generate_summary(df):
     }
 
     # Count various flags
-    flag_columns = ["dead_flag", "dead_flag2", "sa_outlier_flag", "bubble_flag",
+    flag_columns = ["dead_flag", "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "bubble_flag",
                    "focus_flag", "frame_flag", "no_yolk_flag"]
 
     for flag_col in flag_columns:
@@ -878,7 +893,7 @@ def perform_embryo_qc(
 
     # Ensure essential columns exist with safe defaults to avoid brittle failures
     defaults_bool_false = [
-        "bubble_flag", "focus_flag", "frame_flag", "no_yolk_flag",
+        "bubble_flag", "focus_flag", "frame_flag", "no_yolk_flag", "sam2_qc_flag",
     ]
     for col in defaults_bool_false:
         if col not in embryo_metadata_df.columns:
