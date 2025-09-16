@@ -310,9 +310,9 @@ def build_ff_from_yx1(
         if "bf" in lower:
             bf_idx = lower.index("bf")
         else:
-            # Try known single-channel label used on your system: 'EYES - Dia'
+            # Try known single-channel labels used on your system
             # Match case-insensitively to be safe
-            try_labels = ["eyes - dia"]
+            try_labels = ["eyes - dia", "empty"]
             for i, name in enumerate(lower):
                 if name in try_labels:
                     bf_idx = i
