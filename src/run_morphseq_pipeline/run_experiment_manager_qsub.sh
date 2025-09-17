@@ -13,12 +13,29 @@
 
 set -euo pipefail
 
+# Organize runtime logs by date so multiple runs don't collide.
+LOG_DATE="$(date +%Y%m%d)"
+LOG_DIR="logs/${LOG_DATE}"
+mkdir -p "${LOG_DIR}"
+
+# Build a descriptive log stem; fall back to "manual" when launched outside SGE.
+LOG_STEM="${LOG_DIR}/${JOB_ID:-manual}"
+if [[ -n "${SGE_TASK_ID:-}" ]]; then
+  LOG_STEM+="_task${SGE_TASK_ID}"
+fi
+
+# Mirror stdout/err into the dated log file while preserving SGE capture.
+exec > >(tee -a "${LOG_STEM}.log")
+exec 2>&1
+
 # --- EDIT THESE DEFAULTS (simple assignments) -------------------------------
 REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
 DATA_ROOT="${REPO_ROOT}/morphseq_playground"
 # EXPERIMENTS="all"
-EXPERIMENTS="20250512,20250711,20250515_part2,20250519,20250520"
+EXPERIMENTS="20250912,20250305"
+ACTION="${ACTION:-e2e}"     # default to e2e, but can be overridden with -v ACTION=build03
 DRY_RUN="0"                 # set to 1 to enable --dry-run
+FORCE_OVERWRITE="0"         # set to 1 to enable --force (rerun even if not needed)
 ENV_NAME="segmentation_grounded_sam"
 MSEQ_OVERWRITE_BUILD01="0"   # force FF recompute (both Keyence/YX1)
 MSEQ_OVERWRITE_STITCH="0"    # force restitch (Keyence)
@@ -60,9 +77,6 @@ fi
 echo "[morphseq] Experiments: ${EXPERIMENTS}"
 [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]] && echo "[morphseq] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 
-# Create logs dir if running interactively without SGE stdout redirection
-mkdir -p logs
-
 # Activate conda environment (robust to libmamba issues)
 if command -v conda >/dev/null 2>&1; then
   CONDA_BASE="$(conda info --base 2>/dev/null || true)"
@@ -83,11 +97,15 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 CMD=( python -m src.run_morphseq_pipeline.cli pipeline \
       --data-root "${DATA_ROOT}" \
       --experiments "${EXPERIMENTS}" \
-      --action e2e \
+      --action "${ACTION}" \
       --model-name 20241107_ds_sweep01_optimum )
 
 if [[ "${DRY_RUN}" == "1" || "${DRY_RUN}" == "true" ]]; then
   CMD+=( --dry-run )
+fi
+
+if [[ "${FORCE_OVERWRITE}" == "1" || "${FORCE_OVERWRITE}" == "true" ]]; then
+  CMD+=( --force )
 fi
 
 echo "[morphseq] Running: ${CMD[*]}"
@@ -95,8 +113,27 @@ echo "[morphseq] Running: ${CMD[*]}"
 
 echo "[morphseq] Done."
 
-
-
+# Example usage with array jobs:
+#
+# Run SAM2 for all experiments:
 # qsub -t 1-14 -tc 3 \
 #   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
-#   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+#   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+#
+# Run Build03 for all experiments:
+# qsub -t 1-14 -tc 3 \
+#   -v ACTION=build03,EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
+#   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+#
+# Run Build04 for all experiments:
+# qsub -t 1-14 -tc 3 \
+#   -v ACTION=build04,EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
+#   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+#
+# Run Build06 for all experiments:
+# qsub -t 1-14 -tc 3 \
+#   -v ACTION=build06,EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
+#   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+
+
+# qsub -t 2 src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
