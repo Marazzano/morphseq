@@ -400,7 +400,7 @@ class Experiment:
         except Exception:
             base = Path(self.data_root) / "metadata" / "build06_output"
             base.mkdir(parents=True, exist_ok=True)
-            return base / f"df03_final_ouput_with_latents_{self.date}.csv"
+            return base / f"df03_final_output_with_latents_{self.date}.csv"
 
     @property
     def build06_final_path(self) -> Path:
@@ -744,6 +744,36 @@ class Experiment:
         # newest   = newest_mtime(self.raw_path, PATTERNS["raw"])
         return not self.flags["ff"]
 
+    @property
+    def needs_metadata_export(self) -> bool:
+        """Return True when the built metadata CSV is missing or stale."""
+        try:
+            # Missing CSV → need to rebuild
+            meta_csv = self.meta_path_built
+            if meta_csv is None:
+                return True
+
+            # Compare metadata timestamp to freshest inputs we have
+            input_time = 0.0
+            try:
+                if self.ff_path and has_output(self.ff_path, PATTERNS["ff"]):
+                    input_time = max(input_time, newest_mtime(self.ff_path, PATTERNS["ff"]) or 0.0)
+            except Exception:
+                pass
+
+            try:
+                if self.raw_path and has_output(self.raw_path, PATTERNS["raw"]):
+                    input_time = max(input_time, newest_mtime(self.raw_path, PATTERNS["raw"]) or 0.0)
+            except Exception:
+                pass
+
+            if input_time == 0.0:
+                return False  # No usable upstream timestamp; assume up-to-date
+
+            return input_time > meta_csv.stat().st_mtime
+        except Exception:
+            return False
+
     # @property
     # def needs_build_metadata(self) -> bool:
     #     return (_mod_time(self.ff_path) >
@@ -882,7 +912,13 @@ class Experiment:
         if self.microscope == "Keyence":
             build_ff_from_keyence(data_root=self.data_root, exp_name=self.date, overwrite=True, metadata_only=True)
         else:
-            build_ff_from_yx1(data_root=self.data_root, exp_name=self.date, overwrite=True, metadata_only=True)
+            build_ff_from_yx1(
+                data_root=self.data_root,
+                repo_root=self.repo_root,
+                exp_name=self.date,
+                overwrite=True,
+                metadata_only=True,
+            )
 
 
     @record("stitch")
@@ -1331,19 +1367,6 @@ class ExperimentManager:
             except:
                 log.exception("Metadata build failed for %s", exp.date)
 
-    def export_experiment_metadata(self, experiments=None):
-        # Build and run a filtered list of experiments
-        if experiments is None:
-            experiments_list = list(self.experiments.values())
-        else:
-            experiments_list = [exp for exp in self.experiments.values() if exp.date in set(experiments)]
-
-        for exp in experiments_list:
-            try:
-                exp.export_metadata()
-            except Exception:
-                log.exception("Metadata build failed for %s", exp.date)
-            
     def stitch_all(self):
         for exp in self.experiments.values():
             if exp.needs_stitch:
@@ -1423,8 +1446,8 @@ class ExperimentManager:
     # thin façade methods
     def export_experiment_metadata(self, **kwargs):
         self._run_step(
-            "export_images", "needs_export",
-            friendly_name="export",
+            "export_metadata", "needs_metadata_export",
+            friendly_name="metadata export",
             **kwargs
         )
 

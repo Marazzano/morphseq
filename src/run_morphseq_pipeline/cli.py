@@ -30,9 +30,9 @@ Intelligence Features:
 
 Pipeline Flow:
 =============
-Per-experiment: Raw → FF → [QC|SAM2] → Build03 → Latents
+Per-experiment: Raw → FF → [QC|SAM2] → Build03 → Build04 → Build06 → Latents → df03_final
                               ↓
-Global: df01 → Build04 → df02 → Build06 → df03
+
 
 Examples:
 ========
@@ -779,17 +779,20 @@ def main(argv: list[str] | None = None) -> int:
                     mic = getattr(exp, "microscope", None)
                     # Export builds metadata and prerequisite artifacts; decide based on metadata presence
                     need_export = not built_metadata_exist
+                    metadata_only = need_export and ff_images_exist
                     # For Keyence specifically, ensure stitched FF images exist for SAM2
                     need_ff_stitch = (mic == "Keyence") and (not ff_images_exist)
                 except Exception:
                     need_export = False
+                    metadata_only = False
                     need_ff_stitch = False
                     mic = None
 
                 if need_export or need_ff_stitch:
                     if args.dry_run:
                         if need_export:
-                            print(f"       ↳ 🔄 Build01 export would run (microscope={mic or '?'})")
+                            action = "metadata export" if metadata_only else "export"
+                            print(f"       ↳ 🔄 Build01 {action} would run (microscope={mic or '?'})")
                         if need_ff_stitch:
                             print("       ↳ 🔄 Build01 FF stitch (Keyence) would run")
                     else:
@@ -799,8 +802,12 @@ def main(argv: list[str] | None = None) -> int:
                             try:
                                 # Use ExperimentManager orchestration for Build01
                                 if need_export:
-                                    print(f"       ↳ 🔄 Running Build01 export via manager (microscope={mic})...")
-                                    manager.export_experiments(experiments=[exp.date])
+                                    if metadata_only:
+                                        print(f"       ↳ 🔄 Running Build01 metadata export via manager (microscope={mic})...")
+                                        manager.export_experiment_metadata(experiments=[exp.date])
+                                    else:
+                                        print(f"       ↳ 🔄 Running Build01 export via manager (microscope={mic})...")
+                                        manager.export_experiments(experiments=[exp.date])
                                 if need_ff_stitch and mic == "Keyence":
                                     print("       ↳ 🔄 Running Build01 FF stitch via manager (Keyence)...")
                                     manager.stitch_experiments(experiments=[exp.date])
@@ -884,20 +891,32 @@ def main(argv: list[str] | None = None) -> int:
                         print("    6️⃣ 🔄 Latent embeddings - would generate")
                     else:
                         print("    6️⃣ 🔄 Generating latent embeddings...")
-                        exp.generate_latents(model_name=args.model_name)
+                        lat_kwargs = {"model_name": args.model_name}
+                        if args.force:
+                            # Force latent regeneration for this experiment
+                            lat_kwargs.update({"overwrite": True, "generate_missing": True})
+                        exp.generate_latents(**lat_kwargs)
                 else:
                     print("    6️⃣ ✅ Latent embeddings exist")
 
-                # Step 7: Build06 (per-experiment merge)
-                if args.force or exp.needs_build06_per_experiment(args.model_name):
-                    if args.dry_run:
-                        build06_exists = exp.build06_path.exists()
-                        print(f"    7️⃣ 🔄 Final merge (Build06) → per-exp df03 - would run (current: {'exists' if build06_exists else 'missing'})")
-                    else:
-                        print("    7️⃣ 🔄 Running final merge (Build06)...")
-                        exp.run_build06_per_experiment(model_name=args.model_name)
+                # Step 7: Build06 (per-experiment: Build04 + latents)
+                # Use run_build06 service but restrict to this experiment; allow overwrite on --force
+                if args.dry_run:
+                    print(f"    7️⃣ 🔄 Build06 (merge per-exp Build04 + latents) for {exp.date} - would run")
                 else:
-                    print("    7️⃣ ✅ Final merge (Build06) → per-exp df03 complete")
+                    print(f"    7️⃣ 🔄 Running Build06 (merge per-exp Build04 + latents) for {exp.date}...")
+                    # Import lazily to avoid heavy deps
+                    from .steps.run_build06 import run_build06 as run_build06_service
+                    run_build06_service(
+                        root=resolve_root(args),
+                        data_root=resolve_root(args),
+                        model_name=args.model_name,
+                        experiments=[exp.date],
+                        generate_missing=True,
+                        overwrite_latents=args.force,
+                        overwrite=args.force,
+                        dry_run=False,
+                    )
             
             # Show pipeline steps for missing experiments (not in raw data)
             if args.experiments and missing:
@@ -967,11 +986,21 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"🔄 SAM2 needed for {exp.date} - would run")
                     else:
                         print(f"🔄 Running SAM2 for {exp.date}...")
-                        exp.run_sam2(
+                        # When --force is provided at the pipeline level, propagate
+                        # stronger overwrite semantics to the SAM2 runner so that
+                        # existing detection/segmentation artifacts are regenerated.
+                        run_kwargs = dict(
                             workers=args.sam2_workers,
                             confidence_threshold=args.sam2_confidence,
-                            iou_threshold=args.sam2_iou
+                            iou_threshold=args.sam2_iou,
                         )
+                        if args.force:
+                            # Force re-detection and ensure built metadata is present
+                            run_kwargs.update(
+                                force_detection=True,
+                                ensure_built_metadata=True,
+                            )
+                        exp.run_sam2(**run_kwargs)
                 else:
                     print(f"✅ SAM2 already complete for {exp.date}")
 
@@ -990,24 +1019,41 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"✅ Build03 already complete for {exp.date}")
 
         elif args.action == "build04":
-            if args.force or manager.needs_build04:
-                if args.dry_run:
-                    print("🔄 Build04 needed - would run global QC")
+            # Run per-experiment Build04 for selected experiments
+            if not selected:
+                print("ℹ️ No experiments selected; nothing to do for Build04 per-experiment")
+            for exp in selected:
+                if args.force or exp.needs_build04():
+                    if args.dry_run:
+                        exists = exp.build04_path.exists()
+                        print(f"🔄 Build04 per-experiment for {exp.date} - would run (current: {'exists' if exists else 'missing'})")
+                    else:
+                        print(f"🔄 Running Build04 per-experiment for {exp.date}...")
+                        exp.run_build04_per_experiment()
                 else:
-                    print("🔄 Running Build04 (global QC)...")
-                    manager.run_build04()
-            else:
-                print("✅ Build04 already complete")
+                    print(f"✅ Build04 per-experiment already complete for {exp.date}")
 
         elif args.action == "build06":
-            if args.force or manager.needs_build06:
-                if args.dry_run:
-                    print("🔄 Build06 needed - would run global merge")
-                else:
-                    print("🔄 Running Build06 (global merge)...")
-                    manager.run_build06(model_name=args.model_name)
+            # Use the standard Build06 service but filter to selected experiments (per-exp Build04 input)
+            if not selected:
+                print("ℹ️ No experiments selected; nothing to do for Build06")
             else:
-                print("✅ Build06 already complete")
+                exps = [e.date for e in selected]
+                if args.dry_run:
+                    print(f"🔄 Build06 (merge per-exp Build04 + latents) - would run for {len(exps)} experiment(s)")
+                else:
+                    print(f"🔄 Running Build06 (merge per-exp Build04 + latents) for {len(exps)} experiment(s)...")
+                    from .steps.run_build06 import run_build06 as run_build06_service
+                    run_build06_service(
+                        root=resolve_root(args),
+                        data_root=resolve_root(args),
+                        model_name=args.model_name,
+                        experiments=exps,
+                        generate_missing=True,
+                        overwrite_latents=args.force,
+                        overwrite=args.force,
+                        dry_run=False,
+                    )
 
         if args.dry_run:
             print(f"\n🔍 DRY RUN COMPLETE - No files were changed")
