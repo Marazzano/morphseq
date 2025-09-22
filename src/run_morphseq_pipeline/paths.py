@@ -45,7 +45,7 @@ BUILD04_OUTPUT_CSV = "{root}/metadata/build04_output/qc_staged_{exp}.csv"
 # Build06: Embeddings & per‑experiment df03
 LATENTS_CSV = "{root}/analysis/latent_embeddings/legacy/{model}/morph_latents_{exp}.csv"
 BUILD06_OUTPUT_CSV = (
-    "{root}/metadata/build06_output/df03_final_ouput_with_latents_{exp}.csv"
+    "{root}/metadata/build06_output/df03_final_output_with_latents_{exp}.csv"
 )
 
 

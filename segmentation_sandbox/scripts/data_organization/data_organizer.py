@@ -465,31 +465,18 @@ class DataOrganizer:
         raw_data_dir = Path(output_dir) / "raw_data_organized"
         raw_data_dir.mkdir(parents=True, exist_ok=True)
         
-        metadata_path = raw_data_dir / "experiment_metadata.json"
-        
         if verbose:
-            pass
-            # print(f"📂 Source directory: {source_dir}")
-            # print(f"📂 Output directory: {raw_data_dir}")
-            # print(f"📋 Metadata file: {metadata_path}")
-            # print(f"🔄 Overwrite mode: {overwrite}")
-            # if not PYVIPS_AVAILABLE:
-            #     print("⚠️  PyVips not available - using OpenCV (slower). Install with: pip install pyvips")
+            print(f"📂 Source directory: {source_dir}")
+            print(f"📂 Output directory: {raw_data_dir}")
+            print(f"🔄 Overwrite mode: {overwrite}")
 
-        # Load existing metadata to check what's already processed
-        existing_metadata = {}
-        if metadata_path.exists():
-            try:
-                with open(metadata_path, 'r') as f:
-                    existing_metadata = json.load(f)
-                if verbose:
-                    pass
-                    # existing_count = len(existing_metadata.get('experiments', {}))
-                    # print(f"📖 Found existing metadata with {existing_count} experiments")
-            except Exception as e:
-                if verbose:
-                    print(f"⚠️  Could not load existing metadata: {e}")
-                existing_metadata = {}
+        # Load existing per-experiment metadata to check what's already processed
+        existing_metadata = DataOrganizer.load_existing_per_experiment_metadata(
+            raw_data_dir, experiment_names, verbose
+        )
+        if verbose and existing_metadata.get('experiments'):
+            existing_count = len(existing_metadata.get('experiments', {}))
+            print(f"📖 Found existing metadata for {existing_count} experiments")
 
         # Find experiments to process
         if experiment_names:
@@ -505,28 +492,6 @@ class DataOrganizer:
 
         if not experiment_dirs:
             print("❌ No experiments found to process!")
-            
-            # Initialize empty metadata file if it doesn't exist
-            if not metadata_path.exists():
-                if verbose:
-                    print("📋 Initializing empty experiment_metadata.json...")
-                empty_metadata = {
-                    "file_info": {
-                        "creation_time": datetime.now().isoformat(),
-                        "script_version": "Module_0_Simplified"
-                    },
-                    "experiments": {}
-                }
-                try:
-                    with open(metadata_path, 'w') as f:
-                        json.dump(empty_metadata, f, indent=2)
-                    if verbose:
-                        print(f"✅ Empty metadata file created: {metadata_path}")
-                except Exception as e:
-                    print(f"⚠️  Failed to create empty metadata file: {e}")
-            else:
-                if verbose:
-                    print(f"📋 Metadata file already exists: {metadata_path}")
             return
 
         # Filter experiments based on existing metadata and overwrite setting
@@ -575,38 +540,30 @@ class DataOrganizer:
             else:
                 print("📋 All experiments processed but entity tracking incomplete - fixing...")
                 
-            # Ensure metadata file has complete entity tracking
-            if not metadata_path.exists():
-                if verbose:
-                    print("📋 Creating metadata file from existing processed experiments...")
-                # Scan existing organized data to create metadata
-                metadata = DataOrganizer.scan_organized_experiments(raw_data_dir, experiment_names=experiment_names, verbose=False)
-            else:
-                if verbose:
-                    print("📋 Updating existing metadata file with entity tracking...")
-                # Use existing metadata and update it
-                metadata = existing_metadata
-                # Re-scan to ensure we have current data
-                current_scan = DataOrganizer.scan_organized_experiments(raw_data_dir, experiment_names=experiment_names, verbose=False)
-                metadata['experiments'] = current_scan.get('experiments', {})
-                
+            # Ensure per-experiment metadata files have complete entity tracking
+            if verbose:
+                print("📋 Updating per-experiment metadata files with entity tracking...")
+
+            # Re-scan to ensure we have current data
+            current_scan = DataOrganizer.scan_organized_experiments(raw_data_dir, experiment_names=experiment_names, verbose=False)
+
             # Add entity tracker (consistent with normal processing)
             metadata = EntityIDTracker.add_entity_tracker(
-                metadata, 
+                current_scan,
                 pipeline_step="module_0_data_organization"
             )
-            
-            try:
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=2)
-                if verbose:
-                    exp_count = len(metadata.get('experiments', {}))
-                    entities = EntityIDTracker.extract_entities(metadata)
-                    entity_counts = {k: len(v) for k, v in entities.items()}
-                    print(f"✅ Metadata updated with entity tracking ({exp_count} experiments)")
-                    print(f"📊 Entities: {entity_counts}")
-            except Exception as e:
-                print(f"⚠️  Failed to save metadata: {e}")
+
+            # Save per-experiment files with entity tracking
+            processed_experiments = metadata.get('experiments', {})
+            for exp_id in processed_experiments.keys():
+                DataOrganizer.save_per_experiment_metadata(raw_data_dir, metadata, exp_id, verbose)
+
+            if verbose:
+                exp_count = len(processed_experiments)
+                entities = EntityIDTracker.extract_entities(metadata)
+                entity_counts = {k: len(v) for k, v in entities.items()}
+                print(f"✅ Per-experiment metadata updated with entity tracking ({exp_count} experiments)")
+                print(f"📊 Entities: {entity_counts}")
             return
 
         # Process experiments one by one with incremental saves
@@ -635,14 +592,13 @@ class DataOrganizer:
             
             # Save metadata after each experiment (autosave)
             try:
-                current_metadata_clean = DataOrganizer.convert_to_json_serializable(current_metadata)
-                with open(metadata_path, 'w') as f:
-                    json.dump(current_metadata_clean, f, indent=2)
+                # Save per-experiment file
+                DataOrganizer.save_per_experiment_metadata(raw_data_dir, current_metadata, experiment_id, verbose)
+
                 if verbose:
-                    exp_count = len(current_metadata.get('experiments', {}))
-                    print(f"   ✅ Metadata saved ({exp_count} total experiments)")
+                    print(f"   ✅ Per-experiment metadata saved for {experiment_id}")
             except Exception as e:
-                print(f"   ⚠️  Failed to save metadata: {e}")
+                print(f"   ⚠️  Failed to save per-experiment metadata: {e}")
 
         # Final metadata generation and validation
         print("\n📋 Generating final experiment metadata...")
@@ -664,10 +620,16 @@ class DataOrganizer:
 
         # Final save with JSON serialization fix
         final_metadata_clean = DataOrganizer.convert_to_json_serializable(final_metadata)
-        with open(metadata_path, 'w') as f:
-            json.dump(final_metadata_clean, f, indent=2)
-            
-        print(f"✅ Complete! Metadata saved to: {metadata_path}")
+
+        # Save per-experiment files only
+        processed_experiments = final_metadata.get('experiments', {})
+        for exp_id in processed_experiments.keys():
+            DataOrganizer.save_per_experiment_metadata(raw_data_dir, final_metadata, exp_id, verbose)
+
+        print(f"✅ Complete! Per-experiment metadata files created for {len(processed_experiments)} experiments:")
+        for exp_id in processed_experiments.keys():
+            per_exp_path = raw_data_dir / exp_id / f"experiment_metadata_{exp_id}.json"
+            print(f"   📄 {per_exp_path}")
         
         if verbose:
             exp_count = len(final_metadata.get('experiments', {}))
@@ -919,7 +881,7 @@ class DataOrganizer:
             "experiments": {}
         }
         
-        all_experiment_dirs = [d for d in Path(raw_data_dir).iterdir() if d.is_dir() and d.name != "experiment_metadata.json"]
+        all_experiment_dirs = [d for d in Path(raw_data_dir).iterdir() if d.is_dir()]
         
         # Filter to only requested experiments if specified
         if experiment_names:
@@ -1079,6 +1041,87 @@ class DataOrganizer:
         inside the `images_dir` for the corresponding video.
         """
         return Path(images_dir) / f"{image_id}.jpg"
+
+    @staticmethod
+    def load_existing_per_experiment_metadata(raw_data_dir, experiment_names=None, verbose=False):
+        """Load existing per-experiment metadata files and combine into a unified structure."""
+        combined_metadata = {
+            "file_info": {
+                "creation_time": datetime.now().isoformat(),
+                "script_version": "Module_0_Simplified"
+            },
+            "experiments": {}
+        }
+
+        if experiment_names:
+            # Check specific experiments
+            experiments_to_check = experiment_names
+        else:
+            # Check all experiment directories that exist
+            experiments_to_check = [d.name for d in raw_data_dir.iterdir()
+                                   if d.is_dir() and (d / f"experiment_metadata_{d.name}.json").exists()]
+
+        for exp_id in experiments_to_check:
+            per_exp_path = raw_data_dir / exp_id / f"experiment_metadata_{exp_id}.json"
+            if per_exp_path.exists():
+                try:
+                    with open(per_exp_path, 'r') as f:
+                        exp_data = json.load(f)
+
+                    # Extract experiment data (handle different structures)
+                    if 'experiments' in exp_data and exp_id in exp_data['experiments']:
+                        combined_metadata['experiments'][exp_id] = exp_data['experiments'][exp_id]
+                    elif exp_id in exp_data:
+                        combined_metadata['experiments'][exp_id] = exp_data[exp_id]
+
+                    # Preserve other metadata from the first file found
+                    if not combined_metadata.get('entity_tracker') and exp_data.get('entity_tracker'):
+                        combined_metadata['entity_tracker'] = exp_data['entity_tracker']
+
+                    if verbose:
+                        print(f"   📖 Loaded existing metadata for {exp_id}")
+
+                except Exception as e:
+                    if verbose:
+                        print(f"   ⚠️  Could not load metadata for {exp_id}: {e}")
+
+        return combined_metadata
+
+    @staticmethod
+    def save_per_experiment_metadata(raw_data_dir, metadata, experiment_id, verbose=False):
+        """Save metadata for a single experiment to its own JSON file."""
+        exp_dir = raw_data_dir / experiment_id
+        exp_dir.mkdir(parents=True, exist_ok=True)
+
+        per_exp_metadata_path = exp_dir / f"experiment_metadata_{experiment_id}.json"
+
+        # Extract just this experiment's data
+        if 'experiments' in metadata and experiment_id in metadata['experiments']:
+            experiment_data = {
+                'experiments': {
+                    experiment_id: metadata['experiments'][experiment_id]
+                }
+            }
+            # Preserve top-level metadata like entity tracking
+            for key in metadata:
+                if key != 'experiments':
+                    experiment_data[key] = metadata[key]
+
+            try:
+                clean_data = DataOrganizer.convert_to_json_serializable(experiment_data)
+                with open(per_exp_metadata_path, 'w') as f:
+                    json.dump(clean_data, f, indent=2)
+                if verbose:
+                    print(f"   📄 Per-experiment metadata saved: {per_exp_metadata_path}")
+                return per_exp_metadata_path
+            except Exception as e:
+                if verbose:
+                    print(f"   ⚠️  Failed to save per-experiment metadata for {experiment_id}: {e}")
+                return None
+        else:
+            if verbose:
+                print(f"   ⚠️  No data found for experiment {experiment_id}")
+            return None
 
     @staticmethod
     def get_images_for_detection(metadata, experiment_ids=None):

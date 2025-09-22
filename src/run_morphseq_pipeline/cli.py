@@ -851,12 +851,19 @@ def main(argv: list[str] | None = None) -> int:
                         print("    3️⃣ 🔄 SAM2 segmentation - would run")
                     else:
                         print("    3️⃣ 🔄 Running SAM2 segmentation...")
-                        exp.run_sam2(
-                            workers=args.sam2_workers,
-                            confidence_threshold=args.sam2_confidence,
-                            iou_threshold=args.sam2_iou,
-                            verbose=args.sam2_verbose
-                        )
+                        sam2_kwargs = {
+                            'workers': args.sam2_workers,
+                            'confidence_threshold': args.sam2_confidence,
+                            'iou_threshold': args.sam2_iou,
+                            'verbose': args.sam2_verbose
+                        }
+                        if args.force:
+                            sam2_kwargs.update({
+                                'force_detection': True,
+                                'ensure_built_metadata': True,
+                                'force_metadata_overwrite': True,
+                            })
+                        exp.run_sam2(**sam2_kwargs)
                 else:
                     print("    3️⃣ ✅ SAM2 segmentation complete")
                 
@@ -999,6 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
                             run_kwargs.update(
                                 force_detection=True,
                                 ensure_built_metadata=True,
+                                force_metadata_overwrite=True,
                             )
                         exp.run_sam2(**run_kwargs)
                 else:

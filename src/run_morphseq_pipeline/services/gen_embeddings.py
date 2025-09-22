@@ -40,9 +40,29 @@ def filter_high_quality_embryos(df02: pd.DataFrame, logger: Optional[logging.Log
     if 'use_embryo_flag' not in df02.columns:
         logger.warning("use_embryo_flag column not found in df02 - using all embryos")
         return df02.copy()
-    
+
+    # Robust coercion: handle 0/1 and string encodings (e.g., 'true','false')
+    flag = df02['use_embryo_flag']
+    try:
+        if flag.dtype != bool:
+            if str(flag.dtype).startswith('int') or str(flag.dtype).startswith('float'):
+                flag_bool = flag.fillna(0).astype(int).astype(bool)
+            else:
+                vals = flag.astype(str).str.strip().str.lower()
+                mapping = {
+                    'true': True, 't': True, '1': True, 'yes': True, 'y': True,
+                    'false': False, 'f': False, '0': False, 'no': False, 'n': False,
+                    '': False, 'nan': False
+                }
+                flag_bool = vals.map(mapping).fillna(False).astype(bool)
+        else:
+            flag_bool = flag
+    except Exception:
+        # Fallback to pandas truthiness if unexpected dtype
+        flag_bool = flag.astype(bool)
+
     # Apply quality filter
-    filtered_df = df02[df02["use_embryo_flag"] == True].copy()
+    filtered_df = df02[flag_bool].copy()
     final_count = len(filtered_df)
     
     # Log filtering statistics
@@ -399,11 +419,23 @@ def generate_latents_with_repo_images(
         lit_model = load_legacy_model_safe(
             str(model_dir), device=device, logger=logger
         )
+        metadata_msg = (
+            f"Loaded legacy model metadata: name={getattr(lit_model, 'model_name', None)}, "
+            f"latent_dim={getattr(lit_model, 'latent_dim', None)}, "
+            f"nuisance_len={len(list(getattr(lit_model, 'nuisance_indices', [])))}"
+        )
+        logger.info(metadata_msg)
     except Exception as e:
         logger.warning(f"Safe model loading failed: {e}")
         logger.info("Attempting direct model loading (may fail on Python != 3.9)")
         from src.vae.models.auto_model import AutoModel
         lit_model = AutoModel.load_from_folder(str(model_dir))
+        logger.info(
+            "Direct legacy model load metadata: "
+            f"name={getattr(lit_model, 'model_name', None)}, "
+            f"latent_dim={getattr(lit_model, 'latent_dim', None)}, "
+            f"nuisance_len={len(list(getattr(lit_model, 'nuisance_indices', [])))}"
+        )
 
     # Build dataloader using repo's snips
     input_size = (288, 128)  # matches legacy defaults

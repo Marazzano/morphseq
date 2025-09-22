@@ -725,7 +725,17 @@ class Experiment:
                 patt_key = "stitch" if (self.stitch_ff_path and in_base == self.stitch_ff_path) else "ff"
                 input_time = newest_mtime(in_base, PATTERNS[patt_key])
                 csv_time = csv_path.stat().st_mtime
-                return input_time > csv_time
+                if input_time > csv_time:
+                    return True
+
+                # Built metadata is injected into the SAM2 JSON/CSV outputs, so treat
+                # metadata edits as stale SAM2 results and rerun when detected.
+                meta_csv = self.meta_path_built
+                if meta_csv is not None and meta_csv.exists():
+                    meta_time = meta_csv.stat().st_mtime
+                    if meta_time > csv_time:
+                        return True
+                return False
             except Exception:
                 # On failure to compare, don't force rerun
                 return False
@@ -754,23 +764,61 @@ class Experiment:
                 return True
 
             # Compare metadata timestamp to freshest inputs we have
-            input_time = 0.0
+            input_times: list[float] = []
             try:
                 if self.ff_path and has_output(self.ff_path, PATTERNS["ff"]):
-                    input_time = max(input_time, newest_mtime(self.ff_path, PATTERNS["ff"]) or 0.0)
+                    mt = newest_mtime(self.ff_path, PATTERNS["ff"]) or 0.0
+                    if mt:
+                        input_times.append(mt)
             except Exception:
                 pass
 
             try:
                 if self.raw_path and has_output(self.raw_path, PATTERNS["raw"]):
-                    input_time = max(input_time, newest_mtime(self.raw_path, PATTERNS["raw"]) or 0.0)
+                    mt = newest_mtime(self.raw_path, PATTERNS["raw"]) or 0.0
+                    if mt:
+                        input_times.append(mt)
             except Exception:
                 pass
 
-            if input_time == 0.0:
+            try:
+                excel_paths: list[Path] = []
+                if self.meta_path:
+                    excel_paths.append(self.meta_path)
+
+                expected_name = f"{self.date}_well_metadata.xlsx"
+                for base in (
+                    self.repo_root / "metadata" / "well_metadata",
+                    self.repo_root / "metadata" / "plate_metadata",
+                ):
+                    try:
+                        if not base.exists():
+                            continue
+                        candidate = base / expected_name
+                        if candidate.exists():
+                            excel_paths.append(candidate)
+                            break
+                        variants = sorted(base.glob(f"{self.date}_well_metadata*.xlsx"))
+                        if variants:
+                            excel_paths.extend(variants)
+                            break
+                    except Exception:
+                        continue
+
+                for excel in excel_paths:
+                    try:
+                        mt = excel.stat().st_mtime
+                        if mt:
+                            input_times.append(mt)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+            if not input_times:
                 return False  # No usable upstream timestamp; assume up-to-date
 
-            return input_time > meta_csv.stat().st_mtime
+            return max(input_times) > meta_csv.stat().st_mtime
         except Exception:
             return False
 
@@ -837,6 +885,15 @@ class Experiment:
                     input_time = newest_mtime(self.mask_path, PATTERNS["segment"]) or 0.0
                 except Exception:
                     input_time = 0.0
+
+            # Incorporate built metadata timestamp (genotype/treatment updates)
+            try:
+                meta_csv = self.meta_path_built
+                if meta_csv is not None and meta_csv.exists():
+                    input_time = max(input_time, meta_csv.stat().st_mtime)
+                    inputs_available = True
+            except Exception:
+                pass
 
             if not inputs_available:
                 return False

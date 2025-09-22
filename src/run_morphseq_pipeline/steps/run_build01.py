@@ -34,40 +34,67 @@ def validate_build01_inputs(root: Path, exp: str, microscope: str) -> None:
             if not image_files:
                 errors.append(f"No YX1 ND2 files found in: {raw_data_dir}")
     
-    # Check well/plate metadata Excel file exists in either location
+    # Check well/plate metadata Excel file exists (brittle success with clear warning)
     well_meta_dir = root / "metadata" / "well_metadata"
     plate_meta_dir = root / "metadata" / "plate_metadata"
+    candidate_dirs = [d for d in [well_meta_dir, plate_meta_dir] if d.exists()]
+    warnings: list[str] = []
 
-    # Prefer well_metadata if present, otherwise fall back to plate_metadata
-    if well_meta_dir.exists():
-        metadata_dir = well_meta_dir
-    else:
-        metadata_dir = plate_meta_dir
+    chosen_path = None
+    expected_name = f"{exp}_well_metadata.xlsx"
+    expected_paths = [d / expected_name for d in candidate_dirs]
 
-    well_metadata_file = metadata_dir / f"{exp}_well_metadata.xlsx"
-
-    if not (well_meta_dir.exists() or plate_meta_dir.exists()):
+    if not candidate_dirs:
         errors.append(f"❌ No metadata directory found. Expected one of: {well_meta_dir} or {plate_meta_dir}")
-    elif not well_metadata_file.exists():
-        errors.append(f"❌ Required metadata file not found: {well_metadata_file}")
-        errors.append(f"   This Excel file should contain experimental metadata sheets")
     else:
-        # Basic validation - just check that required sheets exist
+        # Prefer exact filename in preferred order, else tolerant single match across dirs
+        for p in expected_paths:
+            if p.exists():
+                chosen_path = p
+                break
+        if chosen_path is None:
+            candidates = []
+            for d in candidate_dirs:
+                candidates += list(d.glob(f"{exp}_well_metadata*.xlsx"))
+            candidates = [p for p in candidates if p.is_file()]
+            if len(candidates) == 1:
+                chosen_path = candidates[0]
+                warn_msg = (
+                    "⚠ Expected metadata Excel not found at standard paths: "
+                    + ", ".join(str(p) for p in expected_paths)
+                    + f". Using non-standard filename: {chosen_path.name}"
+                )
+                warnings.append(warn_msg)
+            elif len(candidates) > 1:
+                errors.append(
+                    "❌ Multiple candidate well metadata files found. Keep a single file named "
+                    f"{expected_name}. Candidates:\n  • " + "\n  • ".join(str(p) for p in candidates)
+                )
+            else:
+                errors.append(
+                    f"❌ Required metadata file not found. Expected: "
+                    + " or ".join(str(p) for p in expected_paths)
+                )
+
+    # Basic validation - check required sheets if we have a candidate
+    if chosen_path and not errors:
         try:
             import pandas as pd
-            with pd.ExcelFile(well_metadata_file) as xlf:
+            with pd.ExcelFile(chosen_path) as xlf:
                 required_sheets = ["medium", "genotype", "start_age_hpf", "temperature"]
                 missing_sheets = [s for s in required_sheets if s not in xlf.sheet_names]
-
                 if missing_sheets:
-                    errors.append(f"❌ Missing required sheets in {well_metadata_file.name}: {', '.join(missing_sheets)}")
-
+                    errors.append(f"❌ Missing required sheets in {chosen_path.name}: {', '.join(missing_sheets)}")
         except Exception as e:
-            errors.append(f"❌ Cannot read Excel file {well_metadata_file}: {e}")
+            errors.append(f"❌ Cannot read Excel file {chosen_path}: {e}")
     
     if errors:
         error_message = "❌ Build01 validation failed:\n\n" + "\n".join(f"  • {error}" for error in errors)
         raise FileNotFoundError(error_message)
+    elif warnings:
+        print("⚠ Build01 validation warnings:")
+        for w in warnings:
+            print(f"  • {w}")
 
 
 def run_build01(

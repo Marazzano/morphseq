@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Render SAM2 evaluation videos using VideoGenerator.
 #
+# Usage:
+#   bash make_eval_video.sh                              # Use default videos from script
+#   bash make_eval_video.sh 20250711_A02                 # Single video
+#   bash make_eval_video.sh 20250711_A02,20250711_B03    # Multiple videos
+#
 # Auto-detects per-experiment SAM2 JSONs under the MorphSeq playground:
 #   morphseq_playground/sam2_pipeline_files/segmentation/grounded_sam_segmentations_<EXP>.json
 # Falls back to monolithic grounded_sam_segmentations.json if per-experiment is not found.
@@ -11,9 +16,21 @@ set -euo pipefail
 # EXP_ID is optional; if empty, it will be derived from VIDEO_ID/VIDEOS.
 EXP_ID=""
 
-# Provide either a single VIDEO_ID or a comma-separated list in VIDEOS.
-VIDEO_ID=""      # e.g., "20250529_36hpf_ctrl_atf6_A04"
-VIDEOS="20250529_24hpf_ctrl_atf6_C12, 20250529_24hpf_ctrl_atf6_E11, 20250529_24hpf_ctrl_atf6_F06, 20250529_24hpf_ctrl_atf6_H12"            # e.g., "20250529_36hpf_ctrl_atf6_A04,20250529_36hpf_ctrl_atf6_G06"
+# Default videos (used if no command line arguments provided)
+DEFAULT_VIDEOS="20250912_A04,20250912_C04,20250912_C06,20250912_B08"
+
+# Check for command line arguments
+if [[ $# -gt 0 ]]; then
+    # Use command line arguments
+    VIDEOS="$1"
+    VIDEO_ID=""
+    echo "🎬 Using videos from command line: ${VIDEOS}"
+else
+    # Use defaults from script
+    VIDEO_ID=""      # e.g., "20250529_36hpf_ctrl_atf6_A04"
+    VIDEOS="${DEFAULT_VIDEOS}"            # e.g., "20250529_36hpf_ctrl_atf6_A04,20250529_36hpf_ctrl_atf6_G06"
+    echo "🎬 Using default videos from script: ${VIDEOS}"
+fi
 
 # Explicit JSON override (leave empty to auto-detect).
 RESULTS_JSON=""
@@ -23,7 +40,7 @@ OUT_DIR=""
 OUT_SUFFIX="_eval"
 
 # Overlay options.
-SHOW_BBOX=false
+SHOW_BBOX=true
 SHOW_MASK=true
 SHOW_METRICS=true
 SHOW_QC=false
