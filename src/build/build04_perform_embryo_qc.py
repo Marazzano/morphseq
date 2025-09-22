@@ -567,13 +567,27 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2)
     # Death lead-time flagging
     df = _compute_dead_flag2(df, dead_lead_time)
 
-    # Update final use_embryo_flag
-    df["use_embryo_flag"] = (
-        df["use_embryo_flag"].astype(bool)
-        & (~df["dead_flag2"].astype(bool))
-        & (~df["sa_outlier_flag"].astype(bool))
-        & (~df.get("sam2_qc_flag", pd.Series([False] * len(df))).astype(bool))
-    )
+    # Update final use_embryo_flag using clear, robust syntax
+    # 1. Define all flag columns in a single list
+    flag_columns = [
+        "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "dead_flag",
+        "frame_flag", "no_yolk_flag", "focus_flag", "bubble_flag"
+    ]
+
+    # 2. Ensure all flag columns exist, filling missing ones with False
+    for col in flag_columns:
+        if col not in df.columns:
+            df[col] = False
+        # Explicitly fill any NaN values with False to prevent the bug
+        df[col] = df[col].fillna(False).astype(bool)
+
+    # 3. Use .any(axis=1) to check if ANY flag is True for a given row
+    # This is highly readable and efficient
+    qc_any = df[flag_columns].any(axis=1)
+
+    # 4. The final assignment logic remains the same
+    base_use = df.get("use_embryo_flag", True).astype(bool)
+    df["use_embryo_flag"] = base_use & (~qc_any)
 
     return df
 
@@ -1030,10 +1044,26 @@ def perform_embryo_qc(
             d_indices = np.where(hours_from_death > -dead_lead_time)
             embryo_metadata_df.loc[e_indices[d_indices], "dead_flag2"] = True
 
-    # Update use_embryo_flag
-    embryo_metadata_df.loc[:, "use_embryo_flag"] = embryo_metadata_df.loc[:, "use_embryo_flag"] & \
-                                                   (~embryo_metadata_df.loc[:, "dead_flag2"]) & \
-                                                   (~embryo_metadata_df.loc[:, "sa_outlier_flag"])
+    # Update use_embryo_flag (legacy path) using clear, robust syntax
+    # 1. Define all flag columns in a single list
+    flag_columns = [
+        "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "dead_flag", "bubble_flag"]
+         # "frame_flag", "focus_flag", "no_yolk_flag"  disabbling as causing flagged on good images
+
+    # 2. Ensure all flag columns exist, filling missing ones with False
+    for col in flag_columns:
+        if col not in embryo_metadata_df.columns:
+            embryo_metadata_df[col] = False
+        # Explicitly fill any NaN values with False to prevent the bug
+        embryo_metadata_df[col] = embryo_metadata_df[col].fillna(False).astype(bool)
+
+    # 3. Use .any(axis=1) to check if ANY flag is True for a given row
+    # This is highly readable and efficient
+    qc_any = embryo_metadata_df[flag_columns].any(axis=1)
+
+    # 4. The final assignment logic remains the same
+    base_use = embryo_metadata_df.get("use_embryo_flag", True).astype(bool)
+    embryo_metadata_df.loc[:, "use_embryo_flag"] = base_use & (~qc_any)
 
     
     # join on additional perturbation info

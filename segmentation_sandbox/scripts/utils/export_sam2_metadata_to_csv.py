@@ -16,17 +16,19 @@ Key Features:
 - Uses existing parsing_utils.py for ID consistency
 - Supports experiment filtering for selective processing
 
-CSV Schema (Enhanced with Raw Metadata + QC Flags - 40 columns):
-    Core SAM2 columns (14): image_id, embryo_id, snip_id, frame_index, area_px, bbox_x_min, bbox_y_min, 
+CSV Schema (Enhanced with Raw Metadata + Build03 Compatibility + QC Flags - 43 columns):
+    Core SAM2 columns (14): image_id, embryo_id, snip_id, frame_index, area_px, bbox_x_min, bbox_y_min,
     bbox_x_max, bbox_y_max, mask_confidence, exported_mask_path, experiment_id, video_id, is_seed_frame
-    
+
     Raw image metadata (16): Height (um), Height (px), Width (um), Width (px), BF Channel, Objective,
-    Time (s), Time Rel (s), height_um, height_px, width_um, width_px, bf_channel, objective, 
+    Time (s), Time Rel (s), height_um, height_px, width_um, width_px, bf_channel, objective,
     raw_time_s, relative_time_s, microscope, nd2_series_num
-    
-    Well-level metadata (7): medium, genotype, chem_perturbation, start_age_hpf, embryos_per_well, 
+
+    Well-level metadata (7): medium, genotype, chem_perturbation, start_age_hpf, embryos_per_well,
     temperature, well_qc_flag
-    
+
+    Build03 compatibility columns (3): well, time_int, time_string
+
     SAM2 QC flags (1): sam2_qc_flags
 
 Input Requirements:
@@ -105,21 +107,24 @@ except ImportError:
 # CSV Schema Constants - Enhanced with raw metadata
 CSV_COLUMNS = [
     'image_id', 'embryo_id', 'snip_id', 'frame_index', 'area_px',
-    'bbox_x_min', 'bbox_y_min', 'bbox_x_max', 'bbox_y_max', 
-    'mask_confidence', 'exported_mask_path', 'experiment_id', 
+    'bbox_x_min', 'bbox_y_min', 'bbox_x_max', 'bbox_y_max',
+    'mask_confidence', 'exported_mask_path', 'experiment_id',
     'video_id', 'is_seed_frame',
-    
+
     # Raw image metadata from legacy CSV (both original names and aliases)
-    'Height (um)', 'Height (px)', 'Width (um)', 'Width (px)', 
+    'Height (um)', 'Height (px)', 'Width (um)', 'Width (px)',
     'BF Channel', 'Objective', 'Time (s)', 'Time Rel (s)',
-    'height_um', 'height_px', 'width_um', 'width_px', 
+    'height_um', 'height_px', 'width_um', 'width_px',
     'bf_channel', 'objective', 'raw_time_s', 'relative_time_s',
     'microscope', 'nd2_series_num',
-    
+
     # Well-level metadata
     'medium', 'genotype', 'chem_perturbation', 'start_age_hpf',
     'embryos_per_well', 'temperature', 'well_qc_flag',
-    
+
+    # Build03 compatibility columns (extracted from SAM2 JSON)
+    'well', 'time_int', 'time_string',
+
     # SAM2 QC flags (Refactor-011-B)
     'sam2_qc_flags'
 ]
@@ -541,7 +546,12 @@ class SAM2MetadataExporter:
                             well_metadata['embryos_per_well'],
                             well_metadata['temperature'],
                             well_metadata['well_qc_flag'],
-                            
+
+                            # Build03 compatibility columns (extracted from SAM2 JSON)
+                            video_data.get('well_id'),              # well
+                            frame_index + 1,                        # time_int (convert from 0-based to 1-based)
+                            f"T{frame_index + 1:04d}",             # time_string (e.g., "T0001")
+
                             # SAM2 QC flags (Refactor-011-B)
                             sam2_qc_flags
                         ]

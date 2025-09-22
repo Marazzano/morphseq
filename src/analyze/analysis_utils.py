@@ -290,6 +290,9 @@ def calculate_morph_embeddings(data_root: Union[str, Path],
     return {}
 
 
+import logging
+
+
 def extract_embeddings_legacy(
                         lit_model:  Any,
                         dataloader: torch.utils.data.DataLoader,   # {"train":…, "eval":…, "test":…}
@@ -298,13 +301,33 @@ def extract_embeddings_legacy(
 
     lit_model.to(device).eval()
 
+    logger = logging.getLogger(__name__)
+    raw_nuisance = getattr(lit_model, 'nuisance_indices', None)
+    nuisance_set = None
+    if raw_nuisance is not None:
+        try:
+            if hasattr(raw_nuisance, 'tolist'):
+                nuisance_set = {int(v) for v in raw_nuisance.tolist()}
+            else:
+                nuisance_set = {int(v) for v in raw_nuisance}
+        except Exception:
+            nuisance_set = None
+    nuisance_len = len(nuisance_set) if nuisance_set is not None else 0
+    logger.info(
+        "extract_embeddings_legacy metadata: "
+        f"model_name={getattr(lit_model, 'model_name', None)}, "
+        f"latent_dim={getattr(lit_model, 'latent_dim', None)}, "
+        f"nuisance_len={nuisance_len}, "
+        f"nuisance_type={type(raw_nuisance)}"
+    )
+
     new_mu_cols = []
     new_sigma_cols = []
     
     for n in range(lit_model.latent_dim):
 
         if (lit_model.model_name == "MetricVAE") or (lit_model.model_name == "SeqVAE"):
-            if n in lit_model.nuisance_indices:
+            if nuisance_set is not None and n in nuisance_set:
                 new_mu_cols.append(f"z_mu_n_{n:02}")
                 new_sigma_cols.append(f"z_sigma_n_{n:02}")
             else:

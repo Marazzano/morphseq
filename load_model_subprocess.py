@@ -40,12 +40,32 @@ def main():
         
         print(f"Loading model from {model_path}")
         lit_model = AutoModel.load_from_folder(str(model_path))
-        
+
         # Move to specified device
         device = args.device
         lit_model.to(device)
         lit_model.eval()
-        
+
+        # Capture lightweight metadata needed downstream (e.g. MetricVAE splits)
+        metadata = {
+            'model_name': getattr(lit_model, 'model_name', None),
+            'latent_dim': getattr(lit_model, 'latent_dim', None),
+            'nuisance_indices': None,
+        }
+        nuisance_indices = getattr(lit_model, 'nuisance_indices', None)
+        if nuisance_indices is not None:
+            try:
+                if hasattr(nuisance_indices, 'detach'):
+                    nuisance_indices = nuisance_indices.detach()
+                if hasattr(nuisance_indices, 'cpu'):
+                    nuisance_indices = nuisance_indices.cpu()
+                if hasattr(nuisance_indices, 'tolist'):
+                    nuisance_indices = nuisance_indices.tolist()
+                metadata['nuisance_indices'] = nuisance_indices
+            except Exception:
+                # Best-effort capture; downstream code will handle None gracefully
+                metadata['nuisance_indices'] = None
+
         # Save the full model using torch.jit.script for better compatibility
         try:
             # Try to script the model for cross-version compatibility
@@ -54,7 +74,8 @@ def main():
                 'scripted_model': scripted_model,
                 'model_type': 'scripted',
                 'python_version': f"{sys.version_info[0]}.{sys.version_info[1]}",
-                'device': str(device)
+                'device': str(device),
+                'metadata': metadata,
             }
         except Exception as script_error:
             print(f"Warning: Could not script model ({script_error}), falling back to state dict")
@@ -65,7 +86,8 @@ def main():
                 'model_class': lit_model.__class__.__name__,
                 'model_type': 'state_dict',
                 'python_version': f"{sys.version_info[0]}.{sys.version_info[1]}",
-                'device': str(device)
+                'device': str(device),
+                'metadata': metadata,
             }
         
         print(f"Saving model to {output_path}")

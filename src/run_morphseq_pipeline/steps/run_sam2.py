@@ -115,6 +115,7 @@ def run_sam2(
     cleanup_monolithic_metadata: bool = True,
     force_detection: bool = False,
     ensure_built_metadata: bool = False,
+    force_metadata_overwrite: bool = False,
     **kwargs
 ) -> Path:
     """Run SAM2 segmentation pipeline for a single experiment.
@@ -131,6 +132,7 @@ def run_sam2(
         save_interval: Auto-save interval for processing (default: 10)
         dry_run: Show commands without executing (default: False)
         verbose: Enable verbose logging (default: False)
+        force_metadata_overwrite: Force overwrite existing experiment metadata even if it exists (default: False)
         **kwargs: Additional parameters passed to pipeline scripts
         
     Returns:
@@ -249,6 +251,8 @@ def run_sam2(
         ]
         if verbose:
             stage1_args.append("--verbose")
+        if force_metadata_overwrite:
+            stage1_args.append("--overwrite-metadata")
             
         result = _run_pipeline_script(
             script_path=scripts_dir / "01_prepare_videos.py",
@@ -332,6 +336,16 @@ def run_sam2(
         # Per-experiment SAM2 segmentations JSON
         sam2_output_path = sam2_root / "segmentation" / f"grounded_sam_segmentations_{exp_id}.json"
         sam2_output_path.parent.mkdir(parents=True, exist_ok=True)
+        # If forcing, remove any existing per-experiment segmentation output to
+        # guarantee the segmentation stage re-runs instead of reusing stale files
+        if force_detection and sam2_output_path.exists():
+            try:
+                sam2_output_path.unlink()
+                if verbose:
+                    print(f"🧹 Removed existing segmentation to force re-run: {sam2_output_path}")
+            except Exception as e:
+                if verbose:
+                    print(f"⚠️ Could not remove existing segmentation: {e}")
         
         sam2_args = [
             "--config", config_path,

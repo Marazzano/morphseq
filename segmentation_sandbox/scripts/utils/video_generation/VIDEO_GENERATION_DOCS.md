@@ -1,4 +1,4 @@
-# Video Generation System Documentation
+so # Video Generation System Documentation
 
 This document explains the video generation system used in the MorphSeq pipeline for creating annotated videos from microscopy image sequences.
 

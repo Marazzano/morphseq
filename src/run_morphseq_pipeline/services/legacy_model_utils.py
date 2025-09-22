@@ -16,6 +16,46 @@ from pathlib import Path
 from typing import Optional, Tuple
 import torch
 
+
+class ScriptedLegacyModelAdapter:
+    """Lightweight adapter that restores metadata lost during TorchScript export."""
+
+    def __init__(self, scripted_model: torch.jit.ScriptModule, metadata: Optional[dict] = None):
+        self._scripted = scripted_model
+        self._metadata = metadata or {}
+
+        self.model_name = self._metadata.get('model_name') or getattr(scripted_model, 'model_name', None)
+
+        latent_dim = self._metadata.get('latent_dim')
+        if latent_dim is None and hasattr(scripted_model, 'latent_dim'):
+            latent_dim = getattr(scripted_model, 'latent_dim')
+        try:
+            self.latent_dim = int(latent_dim) if latent_dim is not None else None
+        except (TypeError, ValueError):
+            self.latent_dim = None
+
+        nuisance = self._metadata.get('nuisance_indices')
+        if nuisance is None and hasattr(scripted_model, 'nuisance_indices'):
+            nuisance = getattr(scripted_model, 'nuisance_indices')
+            if hasattr(nuisance, 'tolist'):
+                nuisance = nuisance.tolist()
+
+        try:
+            self.nuisance_indices = {int(idx) for idx in nuisance} if nuisance is not None else set()
+        except (TypeError, ValueError):
+            self.nuisance_indices = set()
+
+    def to(self, device: str):
+        self._scripted.to(device)
+        return self
+
+    def eval(self):
+        self._scripted.eval()
+        return self
+
+    def __getattr__(self, item):
+        return getattr(self._scripted, item)
+
 def get_current_conda_env() -> Optional[str]:
     """
     Detect the currently active conda environment.
@@ -192,9 +232,11 @@ def load_legacy_model_safe(
         
         # Handle different model save formats
         if model_data.get('model_type') == 'scripted':
-            # Use scripted model directly - this should be cross-version compatible
+            # Use scripted model directly - restore metadata via adapter
             logger.info("Loading scripted model (cross-version compatible)")
-            lit_model = model_data['scripted_model']
+            metadata = model_data.get('metadata', {})
+            scripted_model = model_data['scripted_model']
+            lit_model = ScriptedLegacyModelAdapter(scripted_model, metadata)
             lit_model.to(device).eval()
         else:
             # Fallback to state dict approach - this still has the reconstruction problem

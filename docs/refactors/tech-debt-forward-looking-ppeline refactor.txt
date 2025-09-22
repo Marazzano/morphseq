@@ -1,0 +1,15 @@
+
+
+Overall the pieline is in a fractured sate things are in ideallcation, for example some sscipts ar ein segmentation_sandbox 
+and there might be too many layers of abstraction. 
+
+- build03 and build04 both do QC build03 used ot do tracking, but thats no longer necessary with sam2
+
+- file naming, scirpts should nt be numvered. There should be an orchestrator that somple asays step1, a simple docs can help this out . 
+
+
+Step 1A Compile Image Data from files from diferent scripts. a script for each datatype is sufficient
+- we need the output to be in a standard format with clear expectiation, width_u hiehgt, whatver allows from pixes to actual dimension concversion
+- we neeed a way to standardize channels (naming conveniton as well ch00 shiuld be brightfield )
+
+Step 1B then we write the images to FF

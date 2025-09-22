@@ -73,6 +73,14 @@ Examples:
     --output_parent_dir data \\
     --dry-run \\
     --verbose
+
+  # Force overwrite existing metadata (useful when Build01 metadata has been updated)
+  python 01_prepare_videos.py \\
+    --directory_with_experiments /net/trapnell/vol1/home/nlammers/projects/data/morphseq/built_image_data/stitched_FF_images \\
+    --output_parent_dir data \\
+    --experiments_to_process "20250305" \\
+    --overwrite-metadata \\
+    --verbose
         """
     )
     
@@ -115,9 +123,14 @@ Examples:
         help="Verbose output"
     )
     parser.add_argument(
-        "--dry-run", 
-        action="store_true", 
+        "--dry-run",
+        action="store_true",
         help="Show what would be processed without actually doing it"
+    )
+    parser.add_argument(
+        "--overwrite-metadata",
+        action="store_true",
+        help="Force overwrite existing experiment metadata (useful when Build01 metadata has been updated)"
     )
     
     args = parser.parse_args()
@@ -439,7 +452,7 @@ Examples:
             output_dir=output_dir,
             experiment_names=experiments_to_process,
             verbose=args.verbose,
-            overwrite=False
+            overwrite=args.overwrite_metadata
         )
 
         # DataOrganizer automatically creates/updates the metadata file

@@ -262,24 +262,31 @@ class OverlayManager:
                                 show_bbox: bool = True,
                                 show_mask: bool = True,
                                 show_metrics: bool = True,
+                                show_embryo_id: bool = True,
                                 min_fill_ratio: float = 0.3,
                                 max_fill_ratio: float = 0.9,
                                 min_area_px: int = 500) -> np.ndarray:
         """
         Add SAM2 embryo overlays with QC metrics.
-        
+
         Args:
             frame: Input frame
             embryos_data: Dict of embryo_id -> embryo_data from SAM2 results
             show_bbox: Whether to show bounding boxes
             show_mask: Whether to show segmentation masks
             show_metrics: Whether to show QC metrics text
+            show_embryo_id: Whether to show embryo ID labels
             min_fill_ratio: Minimum mask/bbox fill ratio for good quality
             max_fill_ratio: Maximum mask/bbox fill ratio for good quality
             min_area_px: Minimum mask area in pixels
-            
+
         Returns:
             Frame with overlays applied
+
+        Note:
+            KNOWN ISSUE: Mask overlay display may not be working correctly.
+            Embryo ID labels and bounding boxes are functioning properly.
+            Bbox format is [x_min, y_min, x_max, y_max] normalized coordinates.
         """
         # Upfront validation
         if not isinstance(embryos_data, dict) or not embryos_data:
@@ -323,8 +330,23 @@ class OverlayManager:
                 if len(bbox) != 4:
                     raise ValueError(f"Invalid bbox for embryo {embryo_id}: expected 4 coordinates [x,y,w,h], got {len(bbox)} values: {bbox}. Available embryo_data keys: {list(embryo_data.keys())}, segmentation keys: {list(segmentation.keys()) if isinstance(segmentation, dict) else 'not dict'}")
                     
-                x, y, w, h = bbox
-                
+                # Convert normalized coordinates to pixel coordinates
+                # Bbox format is [x1, y1, x2, y2] (top-left and bottom-right)
+                frame_height, frame_width = frame.shape[:2]
+                x1_norm, y1_norm, x2_norm, y2_norm = bbox
+
+                # Convert to pixel coordinates
+                x1 = int(x1_norm * frame_width)
+                y1 = int(y1_norm * frame_height)
+                x2 = int(x2_norm * frame_width)
+                y2 = int(y2_norm * frame_height)
+
+                # Calculate x, y, width, height for positioning
+                x = x1
+                y = y1
+                w = x2 - x1
+                h = y2 - y1
+
                 # Calculate metrics
                 mask_area = int(np.sum(mask))
                 bbox_area = w * h
@@ -337,8 +359,8 @@ class OverlayManager:
                 is_good_quality = (min_fill_ratio <= fill_ratio <= max_fill_ratio and 
                                  mask_area >= min_area_px)
                 
-                # Get color for this embryo
-                color = self._get_detection_color(i)
+                # Get color for this embryo (consistent across frames)
+                color = self._get_embryo_color(embryo_id)
                 warning_color = OVERLAY_COLORS['qc_flag_warning']
                 
                 # Show mask overlay
@@ -378,45 +400,112 @@ class OverlayManager:
                     bbox_color = color if is_good_quality else warning_color
                     cv2.rectangle(
                         frame,
-                        (int(x), int(y)),
-                        (int(x + w), int(y + h)),
+                        (x1, y1),
+                        (x2, y2),
                         bbox_color,
                         self.config.BBOX_THICKNESS
                     )
-                
-                # Show metrics text
+
+                # Show embryo ID prominently (always visible if enabled)
+                if show_embryo_id:
+                    embryo_display = self._format_embryo_id(embryo_id)
+                    text_color = color if is_good_quality else warning_color
+
+                    # Position ID prominently at top-left of bounding box
+                    margin = 8
+                    text_x = x + margin
+
+                    # Use larger font for embryo ID
+                    id_scale = 0.9
+                    (text_width, text_height), _ = cv2.getTextSize(
+                        embryo_display,
+                        self.config.FONT,
+                        id_scale,
+                        self.config.FONT_THICKNESS
+                    )
+
+                    # Adjust scale if too wide for bounding box
+                    bbox_width = w
+                    max_text_width = bbox_width - (2 * margin)
+                    if text_width > max_text_width and max_text_width > 0:
+                        id_scale = id_scale * (max_text_width / text_width)
+                        id_scale = max(id_scale, 0.4)  # Minimum readable size
+
+                    text_y = y + text_height + margin
+
+                    # Add prominent embryo ID with strong background
+                    self._add_text_with_background(
+                        frame,
+                        embryo_display,
+                        (text_x, text_y),
+                        text_color,
+                        scale=id_scale
+                    )
+
+                # Show metrics text (below embryo ID if both enabled)
                 if show_metrics:
-                    # Create embryo short ID (e.g., "e01")
-                    embryo_short = embryo_id.split('_')[-1] if '_' in embryo_id else embryo_id
-                    
-                    # Prepare text lines
-                    lines = [
-                        f"{embryo_short}",
-                        f"Conf: {confidence:.2f}" if confidence > 0 else "",
+                    # Prepare metrics lines (without embryo ID since it's shown separately)
+                    lines = []
+                    if confidence > 0:
+                        lines.append(f"Conf: {confidence:.2f}")
+                    lines.extend([
                         f"Fill: {fill_ratio:.2f}",
                         f"Area: {mask_area}"
-                    ]
-                    
+                    ])
+
                     # Filter out empty lines
                     lines = [line for line in lines if line]
-                    
-                    # Position text near bounding box
-                    text_x = int(x)
-                    text_y = int(y) - 10
-                    
-                    # Use warning color for poor quality
-                    text_color = color if is_good_quality else warning_color
-                    
-                    # Draw each line
-                    for j, line in enumerate(lines):
-                        if text_y - (j * 20) > 0:  # Don't go off screen
-                            self._add_text_with_background(
-                                frame,
-                                line,
-                                (text_x, text_y - (j * 20)),
-                                text_color,
-                                scale=0.5
+
+                    if lines:  # Only show if there are metrics to display
+                        # Use warning color for poor quality
+                        text_color = color if is_good_quality else warning_color
+
+                        # Position text inside bounding box (left margin, below embryo ID)
+                        margin = 8
+                        text_x = x + margin
+
+                        # Calculate font scale for metrics
+                        metrics_scale = 0.5  # Smaller font for metrics
+                        bbox_width = w
+                        max_text_width = bbox_width - (2 * margin)
+
+                        # Get text height for spacing
+                        (_, metrics_text_height), _ = cv2.getTextSize(
+                            "Sample",
+                            self.config.FONT,
+                            metrics_scale,
+                            self.config.FONT_THICKNESS
+                        )
+
+                        # Start below embryo ID if it's shown
+                        if show_embryo_id:
+                            # Get embryo ID height to position below it
+                            (_, id_text_height), _ = cv2.getTextSize(
+                                self._format_embryo_id(embryo_id),
+                                self.config.FONT,
+                                0.9,  # Same scale as embryo ID
+                                self.config.FONT_THICKNESS
                             )
+                            text_y = y + id_text_height + margin + metrics_text_height + 5
+                        else:
+                            text_y = y + metrics_text_height + margin
+
+                        # Draw each metric line
+                        line_spacing = int(metrics_text_height * 1.3)
+                        bbox_bottom = y + h
+
+                        for j, line in enumerate(lines):
+                            current_y = text_y + (j * line_spacing)
+
+                            # Only draw if line fits within bounding box
+                            if current_y + metrics_text_height <= bbox_bottom:
+                                self._add_text_with_background(
+                                    frame,
+                                    line,
+                                    (text_x, current_y),
+                                    text_color,
+                                    scale=metrics_scale
+                                )
                             
             except Exception as e:
                 print(f"❌ FATAL ERROR processing embryo {embryo_id} in add_sam2_embryos_overlay()")
@@ -472,6 +561,33 @@ class OverlayManager:
         """Get color for detection/mask based on index."""
         colors = list(COLORBLIND_PALETTE.values())
         return colors[index % len(colors)]
+
+    def _get_embryo_color(self, embryo_id: str) -> Tuple[int, int, int]:
+        """Get consistent color for embryo based on ID hash."""
+        colors = list(COLORBLIND_PALETTE.values())
+        # Use hash of embryo_id for consistent color across frames
+        color_index = hash(embryo_id) % len(colors)
+        return colors[color_index]
+
+    def _format_embryo_id(self, embryo_id: str, max_width: int = None) -> str:
+        """Format embryo ID for display, prioritizing readability and fit."""
+        import re
+
+        # Try to extract embryo suffix pattern (e01, e02, etc.)
+        suffix_match = re.search(r'_e(\d+)$', embryo_id)
+        if suffix_match:
+            return f"e{suffix_match.group(1)}"
+
+        # Fallback: use last part after underscore
+        parts = embryo_id.split('_')
+        if len(parts) > 1:
+            return parts[-1]
+
+        # Final fallback: truncate if too long
+        if max_width and len(embryo_id) > max_width:
+            return embryo_id[:max_width-2] + ".."
+
+        return embryo_id
         
     def _get_color_cycle(self):
         """Generate cycling iterator of colorblind-friendly colors."""

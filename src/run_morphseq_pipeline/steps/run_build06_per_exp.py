@@ -66,7 +66,7 @@ def _prepare_output_path(root: Path, exp: str, overwrite: bool) -> Path:
     """Prepare and validate output path."""
     output_dir = root / "metadata" / "build06_output"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"df03_final_ouput_with_latents_{exp}.csv"
+    output_path = output_dir / f"df03_final_output_with_latents_{exp}.csv"
 
     if output_path.exists() and not overwrite:
         raise FileExistsError(f"❌ Output exists (use --overwrite): {output_path}")

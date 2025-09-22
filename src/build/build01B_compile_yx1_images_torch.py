@@ -331,6 +331,8 @@ def build_ff_from_yx1(
     lower = [str(n).lower() for n in channel_names]
     if lower == ["eyes - dia"]:
         log.warning("Using channel 'EYES - Dia' as BF (no 'BF' channel present). Channels: %s", channel_names)
+    elif lower == ["empty"]:
+        log.warning("Using channel 'Empty' as BF (mislabeled brightfield channel). Channels: %s", channel_names)
     elif "bf" not in lower:
         log.warning("No 'BF' channel found; selected index %d from channels: %s. If incorrect, set YX1_BF_CHANNEL_INDEX.", bf_idx, channel_names)
 
@@ -340,8 +342,37 @@ def build_ff_from_yx1(
 
     # n_channels = len(nd.frame_metadata(0).channels)
 
-    # read in plate map
-    plate_map_xl = pd.ExcelFile(meta_root / "well_metadata" / f"{exp_name}_well_metadata.xlsx")
+    # read in plate map (prefer well_metadata/, fall back to plate_metadata/)
+    excel_name = f"{exp_name}_well_metadata.xlsx"
+    xl_well = meta_root / "well_metadata" / excel_name
+    xl_plate = meta_root / "plate_metadata" / excel_name
+    if xl_well.exists():
+        xl_path = xl_well
+    elif xl_plate.exists():
+        xl_path = xl_plate
+    else:
+        # Try a tolerant glob (handles stray suffixes like *_well_metadata1.xlsx)
+        candidates = []
+        candidates += list((meta_root / "well_metadata").glob(f"{exp_name}_well_metadata*.xlsx"))
+        candidates += list((meta_root / "plate_metadata").glob(f"{exp_name}_well_metadata*.xlsx"))
+        candidates = [p for p in candidates if p.is_file()]
+        if len(candidates) == 1:
+            xl_path = candidates[0]
+            log.warning(
+                "Expected Excel not found at standard paths:\n  • %s\n  • %s\nUsing non-standard metadata filename: %s",
+                xl_well, xl_plate, xl_path.name,
+            )
+        elif len(candidates) > 1:
+            raise FileNotFoundError(
+                "❌ Multiple candidate well metadata files found. Please keep a single file with the standard name.\n"
+                + "\n".join(f"  • {p}" for p in candidates)
+            )
+        else:
+            raise FileNotFoundError(
+                f"❌ Required well metadata Excel not found in either location.\n"
+                f"Expected one of:\n  • {xl_well}\n  • {xl_plate}"
+            )
+    plate_map_xl = pd.ExcelFile(xl_path)
 
     # if n_channels > 1:
     #     channel_map = plate_map_xl.parse("channels")

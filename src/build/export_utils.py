@@ -1,4 +1,5 @@
 import numpy as np
+import logging
 import cv2
 from typing import List, Sequence, Optional, Iterable, Union
 # Note: stitch2d is an external dep; consider guarding import behind try/except
@@ -16,6 +17,7 @@ import os, psutil, torch
 import itertools
 import pandas as pd
 
+log = logging.getLogger(__name__)
 
 def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_df: pd.DataFrame): #, microscope: str):
 
@@ -24,14 +26,47 @@ def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_d
     # set paths
     # data_root = Path(data_root)
     repo_root = Path(repo_root)
-    well_meta_path = repo_root / "metadata" / "well_metadata" / f"{exp_name}_well_metadata.xlsx"
-    plate_meta_path = repo_root / "metadata" / "plate_metadata" / f"{exp_name}_well_metadata.xlsx"
-
-    # Prefer well_metadata directory if present, otherwise fall back to plate_metadata
-    if (repo_root / "metadata" / "well_metadata").exists():
-        plate_meta_path = well_meta_path
-    else:
-        plate_meta_path = plate_meta_path
+    well_meta_dir = repo_root / "metadata" / "well_metadata"
+    plate_meta_dir = repo_root / "metadata" / "plate_metadata"
+    expected_name = f"{exp_name}_well_metadata.xlsx"
+    
+    # Prefer well_metadata directory if present
+    search_dirs = []
+    if well_meta_dir.exists():
+        search_dirs.append(well_meta_dir)
+    if plate_meta_dir.exists():
+        search_dirs.append(plate_meta_dir)
+    
+    # Try exact expected name first across preferred dirs
+    plate_meta_path = None
+    for d in search_dirs:
+        p = d / expected_name
+        if p.exists():
+            plate_meta_path = p
+            break
+    
+    # If not found, try a tolerant glob once
+    if plate_meta_path is None:
+        candidates = []
+        for d in search_dirs:
+            candidates += list(d.glob(f"{exp_name}_well_metadata*.xlsx"))
+        candidates = [p for p in candidates if p.is_file()]
+        if len(candidates) == 1:
+            plate_meta_path = candidates[0]
+            expected_list = "\n  • ".join(str(d / expected_name) for d in search_dirs)
+            log.warning(
+                "Expected Excel not found at standard paths:\n  • %s\nUsing non-standard metadata filename: %s",
+                expected_list,
+                plate_meta_path.name,
+            )
+        elif len(candidates) > 1:
+            raise FileNotFoundError(
+                "❌ Multiple candidate well metadata files found. Please keep a single file with the standard name.\n"
+                + "\n".join(f"  • {p}" for p in candidates)
+            )
+        else:
+            # Set to expected path in preferred dir for clearer error message below
+            plate_meta_path = (search_dirs[0] / expected_name) if search_dirs else (repo_root / "metadata" / "well_metadata" / expected_name)
     # built_meta = meta_root / "built_metadata_files"
     # well_meta = meta_root / "well_metadata"
     # combined_out = meta_root / "combined_metadata_files"

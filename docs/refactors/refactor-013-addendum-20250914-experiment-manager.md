@@ -291,6 +291,36 @@ python -m scripts.check_paths_experiment \
   --exp 20250529_24hpf_ctrl_atf6
 ```
 
+## Pipeline Data Flow Accomplishments (2025‑09‑15)
+
+### Major Bug Fixes & Data Success ✅
+
+**1. YX1 Timestamp Extraction Fixed**
+- **Issue:** YX1 `_get_imputed_time_vector()` was replacing ALL timestamps with incorrect ~20-second intervals
+- **Fix:** Reverted to working legacy `_fix_nd2_timestamp()` function that preserves actual ND2 timestamps
+- **Result:** YX1 experiments now show proper developmental time intervals (20+ minutes vs 20 seconds)
+- **Impact:** `predicted_stage_hpf` values are now biologically meaningful
+- **Example:** 20250519 experiment duration: 0.29h → 21.13h (proper developmental timeline)
+
+**2. SAM2 Metadata Compatibility Fixed**
+- **Issue:** SAM2 CSV missing `well`, `time_int`, `time_string` columns required by Build03
+- **Fix:** Updated `export_sam2_metadata_to_csv.py` to extract these from SAM2 JSON structure:
+  - `well` = `video_data.get('well_id')` (e.g., "E09")
+  - `time_int` = `frame_index + 1` (0-based → 1-based)
+  - `time_string` = `f"T{time_int:04d}"` (e.g., "T0001")
+- **Result:** SAM2 CSV now fully compatible with Build03 pipeline
+
+**3. Build06 --force Flag Fixed**
+- **Issue:** CLI `--force` flag wasn't being passed to Build06 step causing "Output exists" errors
+- **Fix:** Updated CLI to pass `overwrite=args.force` to `run_build06_per_experiment()`
+- **Result:** Pipeline can now successfully overwrite existing outputs during reprocessing
+
+**4. End-to-End Data Flow Verified**
+- **Pipeline Status:** Successfully processed YX1 experiments through complete pipeline
+- **Experiments Tested:** 20250519, 20250711, 20250515_part2, etc.
+- **Data Quality:** Proper timestamp extraction → correct developmental staging → valid downstream analysis
+- **Output Generation:** Per-experiment df03 files with correct latent embeddings
+
 ### Next Steps (TODO)
 
 1. **Implement per-experiment Build04 runner** (currently shows warning)
