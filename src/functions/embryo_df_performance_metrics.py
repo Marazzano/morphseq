@@ -2087,81 +2087,81 @@ class LocalPrincipalCurve:
         self._compute_equal_arc_length_spline_points()
 
         # If end_point provided, correct for the looping back issue
-        if end_point is not None:
-            try:
-                # Assuming a single path scenario
-                spline_points = self.cubic_splines[0]
+        # if end_point is not None:
+        #     try:
+        #         # Assuming a single path scenario
+        #         spline_points = self.cubic_splines[0]
                 
-                # 1) Find closest point on cubic_spline to end_point
-                dists = np.linalg.norm(spline_points - end_point, axis=1)
-                closest_idx = np.argmin(dists)
+        #         # 1) Find closest point on cubic_spline to end_point
+        #         dists = np.linalg.norm(spline_points - end_point, axis=1)
+        #         closest_idx = np.argmin(dists)
 
-                # 2) Determine end_direction_vector using points around closest_idx
-                # We'll take up to 3 points: [closest_idx-1, closest_idx, closest_idx+1]
-                # If closest_idx is at the boundary, adjust accordingly
-                if closest_idx == 0:
-                    # At start, use next two points if available
-                    if len(spline_points) > 2:
-                        p0 = spline_points[closest_idx]
-                        p1 = spline_points[closest_idx + 1]
-                        p2 = spline_points[closest_idx + 2]
-                        end_direction_vector = ((p1 - p0) + (p2 - p1)) / 2.0
-                    else:
-                        # If very short, just fallback
-                        end_direction_vector = np.array([1, 0, 0])
-                elif closest_idx == len(spline_points) - 1:
-                    # At the end, we might not have a point after it
-                    # use the two points before it if possible
-                    if len(spline_points) > 2:
-                        p_end = spline_points[closest_idx]
-                        p_endm1 = spline_points[closest_idx - 1]
-                        p_endm2 = spline_points[closest_idx - 2]
-                        end_direction_vector = ((p_end - p_endm1) + (p_endm1 - p_endm2)) / 2.0
-                    else:
-                        end_direction_vector = np.array([1, 0, 0])
-                else:
-                    # Middle somewhere, use prev and next
-                    p_before = spline_points[closest_idx - 1]
-                    p_mid = spline_points[closest_idx]
-                    p_after = spline_points[closest_idx + 1]
-                    end_direction_vector = ((p_mid - p_before) + (p_after - p_mid)) / 2.0
+        #         # 2) Determine end_direction_vector using points around closest_idx
+        #         # We'll take up to 3 points: [closest_idx-1, closest_idx, closest_idx+1]
+        #         # If closest_idx is at the boundary, adjust accordingly
+        #         if closest_idx == 0:
+        #             # At start, use next two points if available
+        #             if len(spline_points) > 2:
+        #                 p0 = spline_points[closest_idx]
+        #                 p1 = spline_points[closest_idx + 1]
+        #                 p2 = spline_points[closest_idx + 2]
+        #                 end_direction_vector = ((p1 - p0) + (p2 - p1)) / 2.0
+        #             else:
+        #                 # If very short, just fallback
+        #                 end_direction_vector = np.array([1, 0, 0])
+        #         elif closest_idx == len(spline_points) - 1:
+        #             # At the end, we might not have a point after it
+        #             # use the two points before it if possible
+        #             if len(spline_points) > 2:
+        #                 p_end = spline_points[closest_idx]
+        #                 p_endm1 = spline_points[closest_idx - 1]
+        #                 p_endm2 = spline_points[closest_idx - 2]
+        #                 end_direction_vector = ((p_end - p_endm1) + (p_endm1 - p_endm2)) / 2.0
+        #             else:
+        #                 end_direction_vector = np.array([1, 0, 0])
+        #         else:
+        #             # Middle somewhere, use prev and next
+        #             p_before = spline_points[closest_idx - 1]
+        #             p_mid = spline_points[closest_idx]
+        #             p_after = spline_points[closest_idx + 1]
+        #             end_direction_vector = ((p_mid - p_before) + (p_after - p_mid)) / 2.0
 
-                # Normalize end_direction_vector
-                norm_edv = np.linalg.norm(end_direction_vector)
-                if norm_edv > 0:
-                    end_direction_vector = end_direction_vector / norm_edv
-                else:
-                    warnings.warn("end_direction_vector has zero magnitude. Using default direction.")
-                    end_direction_vector = np.array([1, 0, 0])
+        #         # Normalize end_direction_vector
+        #         norm_edv = np.linalg.norm(end_direction_vector)
+        #         if norm_edv > 0:
+        #             end_direction_vector = end_direction_vector / norm_edv
+        #         else:
+        #             warnings.warn("end_direction_vector has zero magnitude. Using default direction.")
+        #             end_direction_vector = np.array([1, 0, 0])
 
-                # 3) Check directionality after closest_idx
-                # We'll look at pairs of points (p_j, p_{j+1}) for j > closest_idx
-                cutoff_index = None
-                for j in range(closest_idx + 1, len(spline_points) - 1):
-                    seg_vec = spline_points[j + 1] - spline_points[j]
-                    csim = cosine_similarity(seg_vec, end_direction_vector)
-                    if csim < 0.5:
-                        cutoff_index = j + 1
-                        break
+        #         # 3) Check directionality after closest_idx
+        #         # We'll look at pairs of points (p_j, p_{j+1}) for j > closest_idx
+        #         cutoff_index = None
+        #         for j in range(closest_idx + 1, len(spline_points) - 1):
+        #             seg_vec = spline_points[j + 1] - spline_points[j]
+        #             csim = cosine_similarity(seg_vec, end_direction_vector)
+        #             if csim < 0.5:
+        #                 cutoff_index = j + 1
+        #                 break
 
-                # If we found a cutoff_index, truncate the spline
-                if cutoff_index is not None:
-                    spline_points = spline_points[:cutoff_index]
+        #         # If we found a cutoff_index, truncate the spline
+        #         if cutoff_index is not None:
+        #             spline_points = spline_points[:cutoff_index]
 
-                    # Refit with truncated spline_points
-                    self.paths = [spline_points]
-                    self._fit_cubic_splines_eq()
-                    self._compute_equal_arc_length_spline_points()
+        #             # Refit with truncated spline_points
+        #             self.paths = [spline_points]
+        #             self._fit_cubic_splines_eq()
+        #             self._compute_equal_arc_length_spline_points()
 
-            except (ValueError, IndexError, TypeError) as e:
-                # Log a warning and exit the if block gracefully
-                warnings.warn(
-                    f"Error processing spline with end_point: {e}. Skipping spline adjustment."
-                )
-                # Optionally, you can log more details for debugging
-                # For example:
-                # warnings.warn(f"Error processing spline: {e}. spline_points shape: {spline_points.shape}, end_point shape: {np.shape(end_point)}")
-                return  # Exit the if block
+        #     except (ValueError, IndexError, TypeError) as e:
+        #         # Log a warning and exit the if block gracefully
+        #         warnings.warn(
+        #             f"Error processing spline with end_point: {e}. Skipping spline adjustment."
+        #         )
+        #         # Optionally, you can log more details for debugging
+        #         # For example:
+        #         # warnings.warn(f"Error processing spline: {e}. spline_points shape: {spline_points.shape}, end_point shape: {np.shape(end_point)}")
+        #         return  # Exit the if block
 
         return self.paths
 
