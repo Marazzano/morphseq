@@ -7,7 +7,7 @@ import re
 from tqdm import tqdm
 import pandas as pd
 
-def spline_fit_wrapper(df, fit_cols=None, stage_col="predicted_stage_hpf", bandwidth=0.5, max_iter=2500, tol=1e-5,
+def spline_fit_wrapper(df, fit_cols=None, stage_col="predicted_stage_hpf", bandwidth=0.5, h=None, max_iter=2500, tol=1e-5,
                        angle_penalty_exp=1, n_boots=10, boot_size=2500, n_spline_points=500, time_window=2,
                        obs_weights=None):
 
@@ -57,6 +57,7 @@ def spline_fit_wrapper(df, fit_cols=None, stage_col="predicted_stage_hpf", bandw
         # Fit LocalPrincipalCurve
         lpc = LocalPrincipalCurve(
             bandwidth=bandwidth,
+            h=h,
             max_iter=max_iter,
             tol=tol,
             angle_penalty_exp=angle_penalty_exp

@@ -134,24 +134,17 @@ def point_to_segment_distance(point, seg_start, seg_end):
     projection = seg_start + t * seg_vec
     return np.linalg.norm(point - projection)
 
-def assign_points_to_segments(pert_df, segments):
-    """
-    Assign each point to the closest segment, create a 'segment_id' column in pert_df.
-    """
+from scipy.spatial.distance import cdist
+
+def assign_points_to_segments_vectorized(pert_df, segment_list):
     points = pert_df[["PCA_1", "PCA_2", "PCA_3"]].values
-    assigned_segments = []
+    segment_midpoints = np.array([(s + e) / 2 for s, e in segment_list])
     
-    for p in points:
-        min_dist = float('inf')
-        seg_idx = -1
-        for i, (s0, s1) in enumerate(segments):
-            dist = point_to_segment_distance(p, s0, s1)
-            if dist < min_dist:
-                min_dist = dist
-                seg_idx = i
-        assigned_segments.append(seg_idx)
+    # Compute all distances at once
+    distances = cdist(points, segment_midpoints)
+    segment_ids = distances.argmin(axis=1)
     
-    pert_df["segment_id"] = assigned_segments
+    pert_df["segment_id"] = segment_ids
     return pert_df
 
 def perform_robust_pca(seg_points):
@@ -358,64 +351,6 @@ def build_splines_and_segments(
     """
 
     # ----------------------------
-    # 0. Check for PCA columns and apply PCA if needed
-    # ----------------------------
-    pca_columns = ["PCA_1", "PCA_2", "PCA_3"]
-    has_pca = all(col in df.columns for col in pca_columns)
-
-    if not has_pca:
-        print("PCA columns not found. Applying PCA...")
-
-        # If z_mu_biological_columns not provided, try to auto-detect
-        if z_mu_biological_columns is None:
-            # Look for common biological feature column patterns
-            potential_cols = [col for col in df.columns if any(pattern in col.lower()
-                            for pattern in ['z_mu', 'embedding', 'feature', 'latent', 'biological'])]
-
-            if not potential_cols:
-                # Fallback: use numeric columns excluding obvious metadata
-                exclude_patterns = ['id', 'time', 'stage', 'experiment', 'plate', 'well',
-                                   'embryo', 'snip', 'phenotype', 'genotype', 'treatment']
-                potential_cols = [col for col in df.select_dtypes(include=[np.number]).columns
-                                if not any(pattern in col.lower() for pattern in exclude_patterns)]
-
-            z_mu_biological_columns = potential_cols
-
-        if not z_mu_biological_columns:
-            raise ValueError("No suitable columns found for PCA. Please provide z_mu_biological_columns parameter.")
-
-        print(f"Using columns for PCA: {z_mu_biological_columns[:5]}..." +
-              (f" (and {len(z_mu_biological_columns)-5} more)" if len(z_mu_biological_columns) > 5 else ""))
-
-        # Apply PCA using the existing function
-        df = apply_pca_on_pert_comparisons(
-            df=df,
-            z_mu_biological_columns=z_mu_biological_columns,
-            pert_comparisons=None,  # Use all data for PCA
-            n_components=n_components
-        )
-        print("PCA applied successfully.")
-    else:
-        print("PCA columns found. Using existing PCA coordinates.")
-
-    # ----------------------------
-    # 1. Generate a color palette
-    # and Handle `comparisons` Parameter
-    # ----------------------------
-    if comparisons is None:
-        comparisons = list(df[group_by_col].unique())
-        print(f"No comparisons specified. Using all available {group_by_col} values: {comparisons}")
-    else:
-        print(f"Using specified comparisons for spline building: {comparisons}")
-        
-
-    color_palette = px.colors.qualitative.Plotly
-    if len(comparisons) > len(color_palette):
-        extended_palette = color_palette * (len(comparisons) // len(color_palette) + 1)
-    else:
-        extended_palette = color_palette
-
-    # ----------------------------
     # 2. Build Spline Data
     # ----------------------------
     print(f"Building spline data for each {group_by_col}...")
@@ -447,16 +382,6 @@ def build_splines_and_segments(
         # Downsample for curve fitting (example: 5% for wt, 10% for others)
         if len(pert_3d) == 0:
             continue
-        
-        if pert == "wt":
-            subset_size = max(1, int(0.05 * len(pert_3d)))
-        else:
-            subset_size = max(1, int(0.10 * len(pert_3d)))
-
-        # Randomly select a subset of points for fitting
-        rng = np.random.RandomState(42)
-        subset_indices = rng.choice(len(pert_3d), size=subset_size, replace=False)
-        pert_3d_subset = pert_3d[subset_indices, :]
 
         # Fit LocalPrincipalCurve
         lpc = LocalPrincipalCurveClass(
@@ -470,8 +395,6 @@ def build_splines_and_segments(
         lpc.fit(
             pert_3d_subset,
             start_points=avg_early_timepoint,
-            end_point=avg_late_timepoint,
-            remove_similar_end_start_points=True
         )
         
         spline_points = None
