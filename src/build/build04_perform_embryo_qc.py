@@ -13,6 +13,7 @@ from typing import Optional
 #   predictions_full = X_full.values @ beta
 import statsmodels.api as sm
 from src.build.build_utils import bootstrap_perturbation_key_from_df01
+from src.data_pipeline.quality_control.death_detection import compute_dead_flag2_persistence
 
 
 def build04_stage_per_experiment(
@@ -564,8 +565,11 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2)
         calibrate_scale=True,
     )
 
-    # Death lead-time flagging
-    df = _compute_dead_flag2(df, dead_lead_time)
+    # Death lead-time flagging - NEW METHOD
+    df = compute_dead_flag2_persistence(df, dead_lead_time)
+
+    # OLD METHOD (commented out for rollback capability)
+    # df = _compute_dead_flag2(df, dead_lead_time)
 
     # Update final use_embryo_flag using clear, robust syntax
     # 1. Define all flag columns in a single list
@@ -721,55 +725,56 @@ def _sa_qc_with_fallback(
     return df
 
 
-def _compute_dead_flag2(df, dead_lead_time=2.0):
-    """
-    Compute death lead-time flags (dead_flag2).
-
-    For embryos with any dead_flag timepoint, retroactively flag all timepoints
-    within dead_lead_time hours preceding the first death.
-    """
-    df = df.copy()
-
-    if "dead_flag" not in df.columns:
-        print("⚠️  Warning: dead_flag not found, skipping death lead-time detection")
-        df["dead_flag2"] = False
-        return df
-
-    if "embryo_id" not in df.columns:
-        print("⚠️  Warning: embryo_id not found, skipping death lead-time detection")
-        df["dead_flag2"] = False
-        return df
-
-    # Use predicted_stage_hpf for parity with legacy
-    time_col = "predicted_stage_hpf"
-
-    dead_lead_count = 0
-
-    # Process each embryo
-    for embryo_id in df["embryo_id"].unique():
-        embryo_mask = df["embryo_id"] == embryo_id
-        embryo_data = df.loc[embryo_mask]
-
-        # Check if this embryo ever dies
-        dead_timepoints = embryo_data[embryo_data["dead_flag"] == True]
-        if len(dead_timepoints) == 0:
-            continue
-
-        # Find first death time
-        first_death_time = dead_timepoints[time_col].min()
-        if pd.isna(first_death_time):
-            continue
-
-        # Flag timepoints within lead time before death
-        lead_mask = ((embryo_data[time_col] >= first_death_time - dead_lead_time) &
-                     (embryo_data[time_col] <= first_death_time))
-
-        dead_lead_indices = embryo_data.loc[lead_mask].index
-        df.loc[dead_lead_indices, "dead_flag2"] = True
-        dead_lead_count += len(dead_lead_indices)
-
-    print(f"✅ Flagged {dead_lead_count} timepoints in death lead-time")
-    return df
+# OLD METHOD - Commented out for rollback capability
+# def _compute_dead_flag2(df, dead_lead_time=2.0):
+#     """
+#     Compute death lead-time flags (dead_flag2).
+#
+#     For embryos with any dead_flag timepoint, retroactively flag all timepoints
+#     within dead_lead_time hours preceding the first death.
+#     """
+#     df = df.copy()
+#
+#     if "dead_flag" not in df.columns:
+#         print("⚠️  Warning: dead_flag not found, skipping death lead-time detection")
+#         df["dead_flag2"] = False
+#         return df
+#
+#     if "embryo_id" not in df.columns:
+#         print("⚠️  Warning: embryo_id not found, skipping death lead-time detection")
+#         df["dead_flag2"] = False
+#         return df
+#
+#     # Use predicted_stage_hpf for parity with legacy
+#     time_col = "predicted_stage_hpf"
+#
+#     dead_lead_count = 0
+#
+#     # Process each embryo
+#     for embryo_id in df["embryo_id"].unique():
+#         embryo_mask = df["embryo_id"] == embryo_id
+#         embryo_data = df.loc[embryo_mask]
+#
+#         # Check if this embryo ever dies
+#         dead_timepoints = embryo_data[embryo_data["dead_flag"] == True]
+#         if len(dead_timepoints) == 0:
+#             continue
+#
+#         # Find first death time
+#         first_death_time = dead_timepoints[time_col].min()
+#         if pd.isna(first_death_time):
+#             continue
+#
+#         # Flag timepoints within lead time before death
+#         lead_mask = ((embryo_data[time_col] >= first_death_time - dead_lead_time) &
+#                      (embryo_data[time_col] <= first_death_time))
+#
+#         dead_lead_indices = embryo_data.loc[lead_mask].index
+#         df.loc[dead_lead_indices, "dead_flag2"] = True
+#         dead_lead_count += len(dead_lead_indices)
+#
+#     print(f"✅ Flagged {dead_lead_count} timepoints in death lead-time")
+#     return df
 
 
 def _update_perturbation_key(df, root):
