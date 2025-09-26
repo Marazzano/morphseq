@@ -76,32 +76,36 @@ Author: SAM2 Pipeline Integration
 Version: 1.0.0
 """
 
-import json
-import pandas as pd
 import argparse
-import sys
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from datetime import datetime
+import json
 import logging
+import re
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
 
 # Import parsing utilities from segmentation sandbox
 try:
     from .parsing_utils import (
-        extract_experiment_id, 
-        extract_video_id, 
+        extract_experiment_id,
+        extract_video_id,
         parse_entity_id,
-        normalize_frame_number
+        normalize_frame_number,
+        extract_frame_number
     )
 except ImportError:
     # Handle direct execution case
     import os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from utils.parsing_utils import (
-        extract_experiment_id, 
-        extract_video_id, 
+        extract_experiment_id,
+        extract_video_id,
         parse_entity_id,
-        normalize_frame_number
+        normalize_frame_number,
+        extract_frame_number
     )
 
 # CSV Schema Constants - Enhanced with raw metadata
@@ -547,10 +551,10 @@ class SAM2MetadataExporter:
                             well_metadata['temperature'],
                             well_metadata['well_qc_flag'],
 
-                            # Build03 compatibility columns (extracted from SAM2 JSON)
+                            # Build03 compatibility columns (preserve original time indexing from image_id)
                             video_data.get('well_id'),              # well
-                            frame_index + 1,                        # time_int (convert from 0-based to 1-based)
-                            f"T{frame_index + 1:04d}",             # time_string (e.g., "T0001")
+                            extract_frame_number(image_id),         # time_int
+                            f"T{extract_frame_number(image_id):04d}",  # time_string
 
                             # SAM2 QC flags (Refactor-011-B)
                             sam2_qc_flags
@@ -565,7 +569,7 @@ class SAM2MetadataExporter:
     def _generate_mask_path(self, image_id: str, embryos: Dict[str, Any]) -> str:
         """
         Generate exported mask file path following naming convention.
-        
+
         Convention: {image_id}_masks_emnum_{embryo_count}.png
         
         Args:
@@ -580,7 +584,7 @@ class SAM2MetadataExporter:
         
         # Always return just the filename - path resolution handled in validation
         return mask_filename
-    
+
     def _validate_csv_schema(self, df: pd.DataFrame) -> None:
         """
         Validate that DataFrame matches expected CSV schema.
