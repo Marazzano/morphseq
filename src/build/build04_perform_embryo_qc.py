@@ -14,6 +14,7 @@ from typing import Optional
 import statsmodels.api as sm
 from src.build.build_utils import bootstrap_perturbation_key_from_df01
 from src.data_pipeline.quality_control.death_detection import compute_dead_flag2_persistence
+from src.data_pipeline.quality_control.surface_area_outlier_detection import compute_sa_outlier_flag
 
 
 def build04_stage_per_experiment(
@@ -22,6 +23,7 @@ def build04_stage_per_experiment(
     in_csv: Optional[Path] = None,
     out_dir: Optional[Path] = None,
     stage_ref: Optional[Path] = None,
+    sa_ref_path: Optional[Path] = None,
     dead_lead_time: float = 2.0,
     sg_window: Optional[int] = 5,
     sg_poly: int = 2,
@@ -40,6 +42,8 @@ def build04_stage_per_experiment(
         Output directory. If None, uses root/metadata/build04_output/
     stage_ref : Optional[Path], default None
         Stage reference CSV. If None, uses root/metadata/stage_ref_df.csv
+    sa_ref_path : Optional[Path], default None
+        SA reference curves CSV. If None, uses root/metadata/sa_reference_curves.csv
     dead_lead_time : float, default 2.0
         Hours before death to retroactively flag embryos
     sg_window : Optional[int], default 5
@@ -80,6 +84,12 @@ def build04_stage_per_experiment(
 
     if not stage_ref.exists():
         raise FileNotFoundError(f"Stage reference not found: {stage_ref}")
+
+    # Set up SA reference path
+    if sa_ref_path is None:
+        sa_ref_path = root / "metadata" / "sa_reference_curves.csv"
+    else:
+        sa_ref_path = Path(sa_ref_path)
 
     # Read input
     df = pd.read_csv(in_csv)
@@ -138,7 +148,7 @@ def build04_stage_per_experiment(
 
     # Implement QC flags
     print("🔍 Computing QC flags...")
-    df = _compute_qc_flags(df, stage_ref, dead_lead_time, sg_window, sg_poly)
+    df = _compute_qc_flags(df, stage_ref, dead_lead_time, sg_window, sg_poly, sa_ref_path)
 
     # Update perturbation key (enabled by default)
     print("🔑 Updating perturbation key...")
@@ -520,7 +530,7 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
     return embryo_metadata_df
 
 
-def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2):
+def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2, sa_ref_path=None):
     """
     Compute QC flags for Build04: sa_outlier_flag and dead_flag2.
 
@@ -536,6 +546,8 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2)
         Savitzky-Golay window length
     sg_poly : int
         Savitzky-Golay polynomial order
+    sa_ref_path : Optional[Path]
+        Path to SA reference curves CSV file
 
     Returns
     -------
@@ -551,19 +563,29 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2)
     # Validate critical inputs and coerce dtypes
     df = _validate_and_prepare_inputs(df)
 
-    # Surface area outlier detection: internal controls first, stage_ref fallback
-    df = _sa_qc_with_fallback(
-        df=df,
-        stage_ref_path=stage_ref,
-        sg_window=sg_window,
-        sg_poly=sg_poly,
-        percentile=95.0,
-        bin_step=0.5,
-        hpf_window=0.75,
-        min_embryos=2,
-        margin_k=2.0,
-        calibrate_scale=True,
-    )
+    # Surface area outlier detection - NEW METHOD (two-sided)
+    if sa_ref_path and Path(sa_ref_path).exists():
+        df = compute_sa_outlier_flag(
+            df=df,
+            sa_reference_path=sa_ref_path,
+            k_upper=1.2,
+            k_lower=0.9,
+        )
+    else:
+        # Fallback to old method if reference not available
+        print(f"⚠️  SA reference not found at {sa_ref_path}, using fallback method")
+        df = _sa_qc_with_fallback(
+            df=df,
+            stage_ref_path=stage_ref,
+            sg_window=sg_window,
+            sg_poly=sg_poly,
+            percentile=95.0,
+            bin_step=0.5,
+            hpf_window=0.75,
+            min_embryos=2,
+            margin_k=2.0,
+            calibrate_scale=True,
+        )
 
     # Death lead-time flagging - NEW METHOD
     df = compute_dead_flag2_persistence(df, dead_lead_time)
@@ -609,12 +631,23 @@ def _sa_qc_with_fallback(
     calibrate_scale: bool = True,
 ) -> pd.DataFrame:
     """
+    DEPRECATED: Use compute_sa_outlier_flag() from
+    src.data_pipeline.quality_control.surface_area_outlier_detection instead.
+
+    This function will be removed in a future version. Kept for legacy compatibility.
+
     SA QC: internal controls vs predicted_stage_hpf; fallback to stage_ref with margin.
 
     Note: This performs one-sided outlier detection, only flagging embryos that are
     unusually large (surface_area > threshold). Small embryos are not flagged as they
     may represent valid biological phenotypes rather than technical errors.
     """
+    import warnings
+    warnings.warn(
+        "_sa_qc_with_fallback is deprecated. Use compute_sa_outlier_flag() instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     df = df.copy()
 
     if "surface_area_um" not in df.columns:
