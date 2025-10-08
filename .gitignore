@@ -99,3 +99,4 @@ morphseq_playground/
 # Ignore log directories
 logs/
 log/
+_Archive/

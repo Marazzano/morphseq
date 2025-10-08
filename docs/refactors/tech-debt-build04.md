@@ -45,3 +45,8 @@
 - For now, the legacy functions remain to avoid disruption; use the per‑experiment path for new work.
 - When ready, migrate callers off the legacy workflow, then delete it after parity validation.
 
+**Surface Area QC Refactor Plan (2025-10-08)**
+- Current gap: one-sided SA outlier detection only flags oversized embryos, so undersized cases (e.g., 20250711 F06_e01 and H07_e01 at 0.3–0.9× reference) slip through.
+- Phase 1 – Reference dataset: gather all `build04` QC CSVs, keep true WT controls (`genotype` in {`wik`,`ab`,`wik-ab`}, `chem_perturbation` is `None`, `use_embryo_flag` true), bin by stage, and compute p5/p50/p95 curves saved to `metadata/sa_reference_curves.csv`.
+- Phase 2 – Flagging implementation: add `surface_area_outlier_detection.py` alongside the death persistence check, expose two-sided thresholds (upper `k_upper × p95`, lower `k_lower × p5`), and call this from `build04_perform_embryo_qc.py` while deprecating `_sa_qc_with_fallback`.
+- Phase 3 – Validation & docs: tune `k_upper`/`k_lower` using observed variation, confirm known positives flag, snapshot rates across experiments, and update QC documentation plus lightweight regression scripts in `tests/sa_outlier_analysis/`.
