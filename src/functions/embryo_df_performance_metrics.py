@@ -101,7 +101,7 @@ def split_train_test(df, test_size=0.2, random_state=42):
 # df_hld_train, df_hld_test, df_hld = split_train_test(df_hld)
 
 
-def logistic_regression_multiclass(train_df, test_df, z_mu_biological_columns, pert_comparisons, tol=1e-3, balanced=False):
+def logistic_regression_multiclass(train_df, test_df, z_mu_biological_columns, pert_comparisons, tol=1e-3, balanced=False, group_by_col='phenotype'):
     """
     Perform logistic regression for a multiclass classification problem.
 
@@ -120,16 +120,20 @@ def logistic_regression_multiclass(train_df, test_df, z_mu_biological_columns, p
     - train_df (pd.DataFrame): Modified training DataFrame with 'class_num'.
     - test_df (pd.DataFrame): Modified test DataFrame with 'class_num'.
     """
+    # Make explicit copies to avoid SettingWithCopyWarning
+    train_df = train_df.copy()
+    test_df = test_df.copy()
+
     # Create a mapping for the perturbations to integer labels
     perturbation_to_label = {pert: int(i) for i, pert in enumerate(pert_comparisons)}
 
     # Add 'class_num' column to both train_df and test_df
-    train_df['class_num'] = train_df['phenotype'].map(perturbation_to_label)
-    test_df['class_num'] = test_df['phenotype'].map(perturbation_to_label)
+    train_df['class_num'] = train_df[group_by_col].map(perturbation_to_label)
+    test_df['class_num'] = test_df[group_by_col].map(perturbation_to_label)
 
     # Remove any rows where class_num is NaN
-    train_df = train_df.dropna(subset=['class_num'])
-    test_df = test_df.dropna(subset=['class_num'])
+    train_df = train_df.dropna(subset=['class_num']).copy()
+    test_df = test_df.dropna(subset=['class_num']).copy()
 
     # After mapping 'class_num' and dropping NaNs
     train_df['class_num'] = train_df['class_num'].astype(int)

@@ -778,10 +778,10 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     mic = getattr(exp, "microscope", None)
                     # Export builds metadata and prerequisite artifacts; decide based on metadata presence
-                    need_export = not built_metadata_exist
-                    metadata_only = need_export and ff_images_exist
+                    need_export = args.force or not built_metadata_exist
+                    metadata_only = (not args.force) and need_export and ff_images_exist
                     # For Keyence specifically, ensure stitched FF images exist for SAM2
-                    need_ff_stitch = (mic == "Keyence") and (not ff_images_exist)
+                    need_ff_stitch = args.force or ((mic == "Keyence") and (not ff_images_exist))
                 except Exception:
                     need_export = False
                     metadata_only = False
@@ -804,13 +804,22 @@ def main(argv: list[str] | None = None) -> int:
                                 if need_export:
                                     if metadata_only:
                                         print(f"       ↳ 🔄 Running Build01 metadata export via manager (microscope={mic})...")
-                                        manager.export_experiment_metadata(experiments=[exp.date])
+                                        manager.export_experiment_metadata(
+                                            experiments=[exp.date],
+                                            force_update=args.force,
+                                        )
                                     else:
                                         print(f"       ↳ 🔄 Running Build01 export via manager (microscope={mic})...")
-                                        manager.export_experiments(experiments=[exp.date])
+                                        manager.export_experiments(
+                                            experiments=[exp.date],
+                                            force_update=args.force,
+                                        )
                                 if need_ff_stitch and mic == "Keyence":
                                     print("       ↳ 🔄 Running Build01 FF stitch via manager (Keyence)...")
-                                    manager.stitch_experiments(experiments=[exp.date])
+                                    manager.stitch_experiments(
+                                        experiments=[exp.date],
+                                        force_update=args.force,
+                                    )
                                 # Refresh status after build
                                 exp._sync_with_disk()
                             except Exception as e:

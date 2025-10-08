@@ -17,7 +17,7 @@ set -euo pipefail
 EXP_ID=""
 
 # Default videos (used if no command line arguments provided)
-DEFAULT_VIDEOS="20250912_A04,20250912_C04,20250912_C06,20250912_B08"
+DEFAULT_VIDEOS="20250711_F06,20250711_H07"  # e.g., "20250529_36hpf_ctrl_atf6_A04,20250529_36hpf_ctrl_atf6_G06"
 
 # Check for command line arguments
 if [[ $# -gt 0 ]]; then

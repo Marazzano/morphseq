@@ -102,6 +102,37 @@ def resolve_sandbox_embryo_mask_from_csv(root: str | Path, row) -> Path:
     
     return mask_path
 
+
+def _extract_time_stub(row) -> str:
+    """Return the acquisition time suffix (####) for a given metadata row."""
+
+    def _from_value(value) -> str:
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return ""
+        text = str(value).strip()
+        if not text or text.lower() == 'nan':
+            return ""
+        if text[0].lower() == 't' and len(text) > 1:
+            text = text[1:]
+        if text.isdigit():
+            return f"{int(text):04d}"
+        return ""
+
+    for key in ("time_key", "time_string", "time_int", "frame_index"):
+        if key not in row:
+            continue
+        value = row[key]
+        if key == "time_int" or key == "frame_index":
+            try:
+                return f"{int(value):04d}"
+            except (TypeError, ValueError):
+                continue
+        stub = _from_value(value)
+        if stub:
+            return stub
+
+    raise ValueError("Unable to derive time stub from row metadata")
+
 def _load_build02_masks_for_row(root: Path, row, target_shape: tuple[int, int], is_sam2_pipeline: bool = False) -> dict:
     """Load Build02 masks (via/yolk/focus/bubble) for a row if available.
 
@@ -114,8 +145,8 @@ def _load_build02_masks_for_row(root: Path, row, target_shape: tuple[int, int], 
 
     date = str(row.get("experiment_date"))
     well = row.get("well")
-    time_int = int(row.get("time_int", 0))
-    stub = f"{well}_t{time_int:04d}"
+    time_stub = _extract_time_stub(row)
+    stub = f"{well}_t{time_stub}"
 
     seg_root = Path(root) / "segmentation"
     if not seg_root.exists():
@@ -181,13 +212,13 @@ def estimate_image_background(root, embryo_metadata_df, bkg_seed=309, n_bkg_samp
         via_path = [m for m in seg_dirs if via_mdl_name in m][0]
 
         well = row["well"]
-        time_int = row["time_int"]
+        time_stub = _extract_time_stub(row)
         date = str(row["experiment_date"])
 
         ############
         # Load masks from segmentation
         ############
-        stub_name = well + f"_t{time_int:04}*"
+        stub_name = well + f"_t{time_stub}*"
         im_emb_path = glob.glob(os.path.join(emb_path, date, stub_name))[0]
         im_via_path = glob.glob(os.path.join(via_path, date, stub_name))[0]
 
@@ -243,7 +274,7 @@ def export_embryo_snips(r: int,
     
     # Extract key variables from row data  
     well = row.get("well")
-    time_int = int(row.get("time_int", 0))
+    time_stub = _extract_time_stub(row)
     date = str(row.get("experiment_date"))
 
     # --- Load embryo mask from segmentation_sandbox (integer-labeled) ---
@@ -258,7 +289,7 @@ def export_embryo_snips(r: int,
     if seg_root.exists():
         yolk_dirs = [p for p in seg_root.glob("*") if p.is_dir() and "yolk" in p.name]
         if yolk_dirs:
-            stub = f"{well}_t{time_int:04}*"
+            stub = f"{well}_t{time_stub}*"
             candidates = sorted((yolk_dirs[0] / date).glob(stub))
             if candidates:
                 im_yolk_raw = io.imread(candidates[0])
@@ -716,8 +747,6 @@ def get_embryo_stats(index: int,
 
     # Load Build02 auxiliary masks (best-effort) and compute fraction_alive + QC flags
     well = row.get("well")
-    time_int = int(row.get("time_int", 0))
-    # print(f"DEBUG: Processing well {well}, time {time_int}")
     
     # Detect if we're using SAM2 pipeline (check if we loaded SAM2 mask)
     is_sam2_pipeline = 'exported_mask_path' in row and pd.notna(row.get('exported_mask_path'))
@@ -838,9 +867,70 @@ def segment_wells_sam2_csv(
         raise ValueError(f"Experiment {exp_name} not found in SAM2 CSV")
     
     exp_df = sam2_df[sam2_df['experiment_id'] == exp_name].copy()
-    
+
     print(f"📊 SAM2 data loaded: {len(exp_df)} snips from experiment {exp_name}")
-    
+
+    has_time_string = 'time_string' in exp_df.columns
+    has_time_int = 'time_int' in exp_df.columns
+    if not (has_time_string or has_time_int):
+        raise ValueError(
+            "SAM2 CSV is missing both 'time_string' and 'time_int'."
+            " Cannot continue without acquisition indices."
+        )
+
+    def _normalize_time_string(value: pd.Series) -> pd.Series:
+        def _convert(x):
+            if pd.isna(x):
+                return pd.NA
+            s = str(x).strip()
+            if not s or s.lower() == 'nan':
+                return pd.NA
+            if s[0].lower() == 't':
+                s = s[1:]
+            try:
+                return f"T{int(s):04d}"
+            except ValueError:
+                return pd.NA
+        return value.apply(_convert)
+
+    if has_time_string:
+        exp_df['time_string'] = _normalize_time_string(exp_df['time_string'])
+    else:
+        exp_df['time_string'] = pd.Series([pd.NA] * len(exp_df), dtype="string")
+
+    if has_time_int:
+        exp_df['time_int'] = pd.to_numeric(exp_df['time_int'], errors='coerce').astype('Int64')
+    else:
+        exp_df['time_int'] = pd.Series([pd.NA] * len(exp_df), dtype='Int64')
+
+    missing_str_mask = exp_df['time_string'].isna() & exp_df['time_int'].notna()
+    exp_df.loc[missing_str_mask, 'time_string'] = exp_df.loc[missing_str_mask, 'time_int'].astype(int).apply(lambda x: f"T{x:04d}")
+
+    missing_int_mask = exp_df['time_int'].isna() & exp_df['time_string'].notna()
+    exp_df.loc[missing_int_mask, 'time_int'] = exp_df.loc[missing_int_mask, 'time_string'].str[1:].astype(int)
+
+    if exp_df['time_string'].isna().any() or exp_df['time_int'].isna().any():
+        unresolved = exp_df.loc[exp_df['time_string'].isna() | exp_df['time_int'].isna(), ['image_id', 'frame_index']]
+        raise ValueError(
+            "Unable to resolve acquisition indices for the following rows:\n"
+            + unresolved.head().to_string(index=False)
+        )
+
+    mismatch_nonzero = (
+        exp_df['time_int'] == 0
+    ) & (
+        exp_df['time_string'].str[1:].astype(int) != 0
+    )
+    if mismatch_nonzero.any():
+        sample = exp_df.loc[mismatch_nonzero, ['image_id', 'time_int', 'time_string']].head()
+        print(
+            "⚠️ Warning: Detected rows where time_int == 0 but time_string indicates non-zero frame."
+            " Review the first mismatches below:\n" + sample.to_string(index=False)
+        )
+
+    exp_df['time_key'] = exp_df['time_string'].str[1:]
+    exp_df['frame_index_0'] = exp_df['frame_index']
+
     # Add SAM2 QC flag processing (Refactor-011-B)
     if 'sam2_qc_flags' in exp_df.columns:
         exp_df['sam2_qc_flag'] = exp_df['sam2_qc_flags'].apply(
@@ -867,7 +957,6 @@ def segment_wells_sam2_csv(
     exp_df['experiment_date'] = exp_name
     exp_df['well_id'] = exp_df['video_id'].str.extract(r'_([A-H]\d{2})$')[0]
     exp_df['well'] = exp_df['well_id']  # Add 'well' column for legacy compatibility
-    exp_df['time_int'] = exp_df['frame_index']
     
     # Calculate predicted developmental stage using legacy formula (Kimmel et al 1995)
     # Formula: predicted_stage_hpf = start_age_hpf + time_hours * (0.055 * temperature - 0.57)
@@ -1049,7 +1138,13 @@ def compile_embryo_stats(root: str,
     tracked_df["no_yolk_flag"] = False
 
     # make stable embryo ID
-    tracked_df["snip_id"] = tracked_df["embryo_id"] + "_t" + tracked_df["time_int"].astype(str).str.zfill(4)
+    if 'time_key' in tracked_df.columns:
+        time_component = tracked_df['time_key'].astype(str)
+    elif 'time_string' in tracked_df.columns:
+        time_component = tracked_df['time_string'].astype(str).str.replace(r'^[Tt]', '', regex=True)
+    else:
+        time_component = tracked_df['time_int'].astype(int).astype(str)
+    tracked_df["snip_id"] = tracked_df["embryo_id"] + "_t" + time_component.str.zfill(4)
 
     # check for existing embryo metadata
     # if os.path.isfile(os.path.join(meta_root, "embryo_metadata_df.csv")) and not overwrite_flag:
@@ -1307,11 +1402,36 @@ def _collect_rows_from_sam2_csv(csv_path: Path, exp: str, verbose: bool = False)
             video_id = r.get("video_id", "").strip()
             well_id = r.get("well_id", "").strip()
             snip_id = r.get("snip_id", "").strip()
-            time_int = r.get("time_int", "").strip() or r.get("frame_index", "").strip()
-            
+
+            raw_time_key = r.get("time_key", "").strip()
+            time_stub = ""
+            if raw_time_key:
+                time_stub = f"{int(raw_time_key):04d}" if raw_time_key.isdigit() else raw_time_key
+            else:
+                time_string = r.get("time_string", "").strip()
+                if time_string:
+                    if time_string[0].lower() == 't':
+                        time_string = time_string[1:]
+                    if time_string.isdigit():
+                        time_stub = f"{int(time_string):04d}"
+                if not time_stub:
+                    raw_time_int = r.get("time_int", "").strip()
+                    if raw_time_int:
+                        try:
+                            time_stub = f"{int(raw_time_int):04d}"
+                        except ValueError:
+                            time_stub = ""
+                if not time_stub:
+                    frame_index = r.get("frame_index", "").strip()
+                    if frame_index:
+                        try:
+                            time_stub = f"{int(frame_index):04d}"
+                        except ValueError:
+                            time_stub = ""
+
             # Generate snip_id if missing
-            if not snip_id and time_int:
-                snip_id = f"{embryo_id}_t{int(time_int):04d}"
+            if not snip_id and time_stub:
+                snip_id = f"{embryo_id}_t{time_stub}"
             
             out = {
                 "exp_id": exp,
@@ -1320,7 +1440,8 @@ def _collect_rows_from_sam2_csv(csv_path: Path, exp: str, verbose: bool = False)
                 "image_id": image_id,
                 "embryo_id": embryo_id,
                 "snip_id": snip_id,
-                "time_int": time_int,
+                "time_int": time_stub,
+                "time_key": time_stub,
                 # Geometry placeholders (to be populated by _compute_row_geometry_and_qc)
                 "area_px": "",
                 "perimeter_px": "",
