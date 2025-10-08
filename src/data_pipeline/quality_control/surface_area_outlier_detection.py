@@ -35,8 +35,8 @@ from typing import Optional
 def compute_sa_outlier_flag(
     df: pd.DataFrame,
     sa_reference_path: Path,
-    k_upper: float = 1.4,
-    k_lower: float = 0.7,
+    k_upper: float = 1.2,
+    k_lower: float = 0.9,
     stage_col: str = "predicted_stage_hpf",
     sa_col: str = "surface_area_um",
 ) -> pd.DataFrame:
@@ -57,9 +57,9 @@ def compute_sa_outlier_flag(
     sa_reference_path : Path
         Path to sa_reference_curves.csv containing columns:
         [stage_hpf, p5, p50, p95, n]
-    k_upper : float, default 1.4
+    k_upper : float, default 1.2
         Upper threshold multiplier (SA > k_upper × p95 flagged)
-    k_lower : float, default 0.7
+    k_lower : float, default 0.9
         Lower threshold multiplier (SA < k_lower × p5 flagged)
     stage_col : str, default "predicted_stage_hpf"
         Column name for developmental stage in hours post-fertilization
@@ -96,8 +96,8 @@ def compute_sa_outlier_flag(
     -----
     - Reference curves are pre-smoothed with Savitzky-Golay filter
     - Gaps and edge bins are filled during reference generation
-    - Default thresholds (k_upper=1.4, k_lower=0.7) validated on test cases:
-      20250711_F03_e01, F06_e01, H07_e01 (all caught with ~7-8% overall flagging rate)
+    - Default thresholds (k_upper=1.2, k_lower=0.9) validated on test cases:
+      20250711_F03_e01, F06_e01, H07_e01 (all caught, including early stages <50 hpf)
 
     See Also
     --------
