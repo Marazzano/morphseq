@@ -108,8 +108,8 @@ Components:
 
 2. **All downstream modules use existing snip_id:**
    - extract_snips: reads snip_id from tracking_table.csv
-   - compute_spatial_features: reads snip_id from tracking_table.csv
-   - compute_shape_features: reads snip_id from tracking_table.csv
+   - compute_pose_kinematics_metrics: reads snip_id from tracking_table.csv
+   - compute_mask_geometry_metrics: reads snip_id from tracking_table.csv
    - ALL QC modules: use snip_id from tracking_table.csv
 
 3. **tracking_table.csv is the SOURCE OF TRUTH** for:
@@ -343,8 +343,8 @@ rule qc_tracking:
 ```
 sam2_format_csv → tracking_table.csv (includes snip_id, bbox, area_px)
     ↓
-compute_spatial_features → spatial.csv (NEW: centroid, orientation)
-compute_shape_features → shape.csv (NEW: perimeter, circularity)
+compute_pose_kinematics_metrics → pose_kinematics_metrics.csv (NEW: centroid, orientation, motion deltas)
+compute_mask_geometry_metrics → mask_geometry_metrics.csv (NEW: perimeter, circularity)
 infer_embryo_stage → stage.csv
     ↓
 consolidate_snip_features → consolidated_snip_features.csv ⭐
