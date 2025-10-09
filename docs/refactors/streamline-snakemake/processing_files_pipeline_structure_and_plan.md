@@ -21,31 +21,38 @@ SEGMENTATION
   - UNet: Auxiliary masks (yolk, bubble, focus, viability)
 
 SNIP PROCESSING & FEATURE EXTRACTION
-  Masks + images → Cropped/rotated snips + morphology features
-  - Extract embryo regions
-  - Compute shape, spatial features
-  - Infer developmental stage
+  Masks + images → Cropped snips + SAM2-derived features
+  - Extract embryo regions and assign stable snip_id
+  - Compute mask-geometry metrics + pose/kinematics metrics from SAM2 masks and tracking table
+  - Infer developmental stage (HPF)
+  - Consolidate per-snip features into one table
 
 QUALITY CONTROL
-  Features + masks → QC flags + validation
-  - Imaging quality (frame, focus, bubbles, yolk)
-  - Viability tracking (death detection)
-  - Tracking validation (movement, trajectory)
-  - Segmentation quality (mask validation)
-  - Size validation (area thresholds)
+  Features + masks → QC flags grouped by dependency
+  - Auxiliary mask QC (UNet viability & imaging signals)
+  - Segmentation QC (SAM2-only validation + tracking metrics)
+  - Morphology QC (feature-based surface area outliers)
+
+QC CONSOLIDATION
+  Merge all QC flags → consolidated_qc_flags + use_embryo gating
 
 EMBEDDING GENERATION
   QC-approved snips (`use_embryo == True`) → Latent embeddings
   (VAE-based, note Python 3.9 subprocess)
+
+ANALYSIS-READY TABLE
+  Features + QC flags + embeddings → features_qc_embeddings.csv
+  (`embedding_calculated` column for downstream filtering)
 ```
 
 **Key Principles:**
-- SAM2 is the **primary segmentation method** (tracking + masks)
-- UNet provides **auxiliary masks** for QC (yolk, bubble, focus, viability, embryo)
-  - UNet embryo masks used for validation/comparison only
-  - SAM2 embryo masks are authoritative for the pipeline
-- Each task maps cleanly to Snakemake rules
-- Flexible, extensible structure (no hardcoded stage numbers)
+- Step boundaries stay explicit: preprocessing → segmentation → feature extraction → QC → QC consolidation → embeddings → analysis-ready hand-off
+- `consolidated_snip_features.csv` is the single feature source for every QC module (no duplicate joins)
+- Surface-area metrics must be converted to `area_um2` using microscope metadata before downstream use (no pure pixel-area logic)
+- QC modules are grouped by dependency (`auxiliary_mask_qc`, `segmentation_qc`, `morphology_qc`), and their merge is tracked in `consolidated_qc_flags.csv`
+- `use_embryo_flags.csv` is the only gate for embeddings; no rule reaches back into individual QC tables
+- `features_qc_embeddings.csv` contains everything analysis notebooks need, with an `embedding_calculated` helper column when embeddings lag the QC outputs
+- SAM2 remains the **authoritative segmentation method**; UNet masks exist strictly for QC/auxiliary logic
 
 ---
 
@@ -102,38 +109,48 @@ src/data_pipeline/
 │       └── metadata.py                        # YX1 metadata extraction
 │
 ├── segmentation/                               # Segmentation
-│   ├── grounded_sam2/                                  # SAM2 embryo tracking (PRIMARY)
-│   │   ├── frame_organization_for_sam2.py    # Organize images into video structure
-│   │   ├── gdino_detection.py                # Grounded DINO embryo detection
-│   │   ├── propagation.py                    # SAM2 mask propagation
-│   │   ├── mask_export.py                    # Export masks to PNG
-│   │   └── sam2_output_csv_formatter.py                  # Flatten JSON to CSV
+│   ├── grounded_sam2/                          # SAM2 embryo tracking (PRIMARY)
+│   │   ├── frame_organization_for_sam2.py     # Organize images into video structure
+│   │   ├── gdino_detection.py                 # Grounded DINO embryo detection
+│   │   ├── propagation.py                     # SAM2 mask propagation
+│   │   ├── mask_export.py                     # Export masks to PNG
+│   │   └── sam2_output_csv_formatter.py       # Flatten JSON to CSV (tracking_table w/ snip_id)
 │   ├── unet/                                  # UNet auxiliary masks
-│   │   ├── inference.py                      # Core inference pipeline
-│   │   └── model_loader.py                   # Load 5 models (mask, via, yolk, focus, bubble)
-│   └── mask_utilities.py                     # Shared RLE/polygon/bbox utilities
+│   │   ├── inference.py                       # Core inference pipeline
+│   │   └── model_loader.py                    # Load 5 models (mask, via, yolk, focus, bubble)
+│   └── mask_utilities.py                      # Shared RLE/polygon/bbox utilities
 │
-├── snip_processing/                            # Snips & Features
+├── snip_processing/                            # Snip extraction utilities
 │   ├── extraction.py                          # Crop embryo regions from images
 │   ├── rotation.py                            # PCA-based rotation alignment
-│   ├── augmentation.py                        # Synthetic noise (training data)
-│   ├── io.py                                  # Save snip images
-│   └── embryo_features/                       # Features from snips
-│       ├── shape.py                           # Area, perimeter, contours
-│       ├── spatial.py                         # Centroids, bboxes, orientation
-│       └── stage_inference.py                 # HPF (developmental stage) prediction
+│   └── io.py                                  # Save snip images + manifest helpers
+│
+├── feature_extraction/                         # SAM2-derived feature computations
+│   ├── mask_geometry_metrics.py               # Area, perimeter, contour stats + px→μm² conversion → mask_geometry_metrics.csv
+│   ├── pose_kinematics_metrics.py             # Centroid, bbox, orientation, deltas → pose_kinematics_metrics.csv
+│   ├── stage_inference.py                     # HPF (developmental stage) prediction
+│   └── consolidate.py                         # Assemble consolidated_snip_features.csv
 │
 ├── quality_control/                            # Quality Control signals
-│   ├── auxiliary_unet_imaging_quality_qc.py  # Frame, yolk, focus, bubble flags (from UNet)
-│   ├── viability_tracking_qc.py              # Death detection with persistence validation
-│   ├── tracking_metrics_qc.py                # Movement speed, trajectory smoothing, tracking validation
-│   ├── segmentation_quality_qc.py            # SAM2 mask quality checks
-│   └── size_validation_qc.py                 # Area thresholds, abnormal growth detection
+│   ├── auxiliary_mask_qc/
+│   │   ├── imaging_quality_qc.py              # Frame, yolk, focus, bubble flags (from UNet)
+│   │   └── embryo_viability_qc.py             # fraction_alive + dead_flag (UNet viability + SAM2)
+│   ├── segmentation_qc/
+│   │   ├── segmentation_quality_qc.py         # SAM2 mask quality checks
+│   │   └── tracking_metrics_qc.py             # Movement speed, trajectory validation
+│   ├── morphology_qc/
+│   │   └── size_validation_qc.py              # Surface area outlier detection
+│   └── consolidation/
+│       ├── consolidate_qc.py                  # Merge all QC CSVs per snip_id
+│       └── compute_use_embryo.py              # Apply gating logic → use_embryo_flags.csv
 │
 ├── embeddings/                                 # Latent Embeddings (QC-passed snips only)
 │   ├── inference.py                           # VAE embedding generation
 │   ├── subprocess_wrapper.py                  # Python 3.9 subprocess orchestration
 │   └── file_validation.py                     # Check existing embeddings
+│
+├── analysis_ready/                             # Final analysis hand-off helpers
+│   └── assemble_features_qc_embeddings.py     # Join features + QC + embeddings
 │
 ├── pipeline_orchestrator/                     # Snakemake entry point & helpers
 │   ├── Snakefile                             # Task DAG importing data_pipeline modules
@@ -204,75 +221,50 @@ Shared utilities for all segmentation methods:
 ---
 
 ### **snip_processing/**
-**Purpose:** Extract, align, and measure embryo regions
+**Purpose:** Extract and align embryo crops ahead of feature/QC stages
 
-**Snip operations:**
-- **extraction.py**: Crop embryo regions with padding
+**Core operations:**
+- **extraction.py**: Crop embryo regions with padding using SAM2 masks
 - **rotation.py**: PCA-based alignment to standard orientation
-- **augmentation.py**: Add synthetic noise for training data
-- **io.py**: Save snip images to disk
+- **io.py**: Persist snip JPEGs + manifest with frame paths and rotation metadata
 
-**Feature extraction (subfolder):**
-- **embryo_features/shape.py**: Area, perimeter, aspect ratio, contours
-- **embryo_features/spatial.py**: Centroids, bounding boxes, orientation angles
-- **embryo_features/stage_inference.py**: Predict HPF (hours post-fertilization) from morphology
+**snip_id management:**
+- `snip_id` is assigned during extraction using the SAM2 tracking table
+- Format: `{embryo_id}_s{frame:04d}` (e.g., `embryo_001_s0005`)
+- Written once to `extracted_snips/{experiment_id}/snip_manifest.csv` and reused downstream
 
-**Why nested?** embryo_features are extracted FROM processed snips (logical hierarchy)
+---
+
+### **feature_extraction/**
+**Purpose:** Derive per-snip metrics directly from SAM2 masks and tracking outputs
+
+**Modules:**
+- **mask_geometry_metrics.py**: Area, perimeter, contour stats derived from SAM2 masks with pixel-size metadata to produce `area_um2` → `mask_geometry_metrics.csv`
+- **pose_kinematics_metrics.py**: Centroid, orientation, bbox geometry and frame deltas derived from `tracking_table.csv` → `pose_kinematics_metrics.csv`
+- **stage_inference.py**: HPF prediction + confidence using surface-area reference curves (requires `area_um2`)
+- **consolidate.py**: Merge tracking_table + mask_geometry + pose_kinematics + stage into `consolidated_snip_features.csv`
+
+**Key principle:** Features operate on masks/tracking metadata (not raw snip pixels); the merge output is the single source consumed by all QC modules.
 
 ---
 
 ### **quality_control/**
-**Purpose:** Validate data quality, flag issues
+**Purpose:** Validate data quality with dependency-scoped subpackages
 
-#### **auxiliary_unet_imaging_quality_qc.py**
-Checks imaging quality and biological context using UNet auxiliary masks:
-- `frame_flag`: Embryo near image boundary
-- `no_yolk_flag`: Yolk sac missing (abnormal development)
-- `focus_flag`: Out-of-focus regions nearby (imaging issue)
-- `bubble_flag`: Air bubbles nearby (contamination)
-- `out_of_frame_flag`: Embryo truncated at edge (legacy, Build03)
+#### **auxiliary_mask_qc/**
+- **imaging_quality_qc.py**: Boundary, yolk, focus, and bubble flags computed from UNet auxiliary masks with SAM2 geometry for proximity
+- **embryo_viability_qc.py**: Option 1 architecture (approved) producing `fraction_alive`, unified `dead_flag`, and `dead_inflection_time_int` using UNet viability + SAM2 masks + stage metadata
 
-**Source:** UNet auxiliary masks + spatial proximity analysis
+#### **segmentation_qc/**
+- **segmentation_quality_qc.py**: Mask integrity checks for SAM2 output (edge contact, overlaps, area drift, disconnected components, etc.)
+- **tracking_metrics_qc.py**: Trajectory smoothness, speed outliers, and ID persistence derived from SAM2 tracking data
 
-#### **viability_tracking_qc.py**
-Tracks embryo viability over time:
-- Detects persistent decline in `fraction_alive`
-- Validates death inflection points (25% persistence threshold)
-- Flags dead embryos with 2hr buffer
-- `dead_flag`: Initial viability threshold (Build03)
-- `dead_flag2`: Death with persistence validation (Build04)
-- Adds `dead_inflection_time_int` column
+#### **morphology_qc/**
+- **size_validation_qc.py**: Surface-area outlier detection leveraging consolidated features (SA outlier remains a critical QC signal)
 
-**Source:** UNet viability mask + persistence algorithm
-
-#### **tracking_metrics_qc.py**
-Validates embryo tracking quality:
-- `compute_speed()`: Movement speed between frames
-- `smooth_trajectory()`: Savitzky-Golay trajectory smoothing
-- `detect_tracking_errors()`: Identify jumps, discontinuities
-
-**Note:** This is QC for tracking results, NOT the tracking itself
-
-#### **segmentation_quality_qc.py**
-Validates SAM2 segmentation quality using multiple checks:
-- `HIGH_SEGMENTATION_VAR_SNIP`: High area variance vs nearby frames (>20% change)
-- `MASK_ON_EDGE`: Mask touches image edges (within 2 pixels)
-- `DETECTION_FAILURE`: Missing expected embryos in frame
-- `OVERLAPPING_MASKS`: Embryo masks overlap (IoU > 0.1)
-- `LARGE_MASK`: Unusually large mask (>15% of frame area)
-- `SMALL_MASK`: Unusually small mask (<0.1% of frame area)
-- `DISCONTINUOUS_MASK`: Multiple disconnected mask components
-- `sam2_qc_flag`: General SAM2 quality issue (legacy)
-
-**Source:** SAM2 output JSON from `segmentation_sandbox/scripts/pipelines/05_sam2_qc_analysis.py`
-
-#### **size_validation_qc.py**
-Validates embryo sizes are biologically plausible:
-- `sa_outlier_flag`: Surface area outlier (Build04)
-  - Compares to internal controls or stage reference
-  - One-sided detection (flags abnormally large only)
-
-**Source:** Morphology measurements + HPF stage predictions
+#### **consolidation/**
+- **consolidate_qc.py**: Row-wise merge of all QC CSVs (keys on `snip_id`) into `consolidated_qc_flags.csv`
+- **compute_use_embryo.py**: Applies gating logic to produce `use_embryo_flags.csv`, the single contract consumed by embeddings and analysis
 
 ---
 
@@ -286,6 +278,15 @@ Validates embryo sizes are biologically plausible:
 - Filters inputs to `use_embryo == True` before launching inference
 
 **Already well-organized** - just needs to move from `src/analyze/gen_embeddings/`
+
+---
+
+### **analysis_ready/**
+**Purpose:** Assemble the final analysis table per experiment
+
+- **assemble_features_qc_embeddings.py**: Join `consolidated_snip_features.csv`, `consolidated_qc_flags.csv`, `use_embryo_flags.csv`, and embedding latents.
+- Adds `embedding_calculated` boolean for rows missing embeddings (e.g., re-runs or alternate models).
+- Optional `embedding_model` metadata when multiple latent spaces are mixed; default pipeline produces one CSV per experiment in `analysis_ready/{experiment_id}/`.
 
 ---
 
@@ -343,17 +344,19 @@ rule preprocess_yx1:
     run: from data_pipeline.preprocessing.yx1 import process_images
 
 # Segmentation rules
-# NOTE: Frame organization integrated into propagation (not a separate rule)
-# propagate_masks() internally creates temp video structure, runs SAM2, cleans up
+# NOTE: frame organization handled inside propagate_masks()
 
 rule gdino_detect:
-    run: from data_pipeline.segmentation.sam2.gdino_detection import detect_embryos
+    run: from data_pipeline.segmentation.grounded_sam2.gdino_detection import detect_embryos
 
 rule sam2_segment_and_track:
-    run: from data_pipeline.segmentation.sam2.propagation import propagate_masks
+    run: from data_pipeline.segmentation.grounded_sam2.propagation import propagate_masks
+
+rule sam2_format_csv:
+    run: from data_pipeline.segmentation.grounded_sam2.sam2_output_csv_formatter import flatten_to_csv
 
 rule sam2_export_masks:
-    run: from data_pipeline.segmentation.sam2.mask_export import export_masks
+    run: from data_pipeline.segmentation.grounded_sam2.mask_export import export_masks
 
 rule unet_segment:
     run: from data_pipeline.segmentation.unet.inference import run_all_models
@@ -362,31 +365,47 @@ rule unet_segment:
 rule extract_snips:
     run: from data_pipeline.snip_processing.extraction import crop_embryos
 
-rule compute_morphology_features:
-    run: from data_pipeline.snip_processing.embryo_features.shape import compute_morphology
+rule compute_mask_geometry_metrics:
+    run: from data_pipeline.feature_extraction.mask_geometry_metrics import compute_mask_geometry_metrics
+
+rule compute_pose_kinematics_metrics:
+    run: from data_pipeline.feature_extraction.pose_kinematics_metrics import compute_pose_kinematics_metrics
 
 rule infer_embryo_stage:
-    run: from data_pipeline.snip_processing.embryo_features.stage_inference import infer_hpf_stage
+    run: from data_pipeline.feature_extraction.stage_inference import infer_hpf_stage
+
+rule consolidate_snip_features:
+    run: from data_pipeline.feature_extraction.consolidate import build_consolidated_snip_features
 
 # Quality control
 rule qc_imaging:
-    run: from data_pipeline.quality_control.auxiliary_unet_imaging_quality_qc import compute_qc_flags
+    run: from data_pipeline.quality_control.auxiliary_mask_qc.imaging_quality_qc import compute_imaging_qc_flags
 
 rule qc_viability:
-    run: from data_pipeline.quality_control.viability_tracking_qc import compute_dead_flag2_persistence
+    run: from data_pipeline.quality_control.auxiliary_mask_qc.embryo_viability_qc import compute_viability_qc
 
 rule qc_tracking:
-    run: from data_pipeline.quality_control.tracking_metrics_qc import compute_speed
+    run: from data_pipeline.quality_control.segmentation_qc.tracking_metrics_qc import compute_tracking_qc
 
 rule qc_segmentation:
-    run: from data_pipeline.quality_control.segmentation_quality_qc import validate_masks
+    run: from data_pipeline.quality_control.segmentation_qc.segmentation_quality_qc import validate_masks
 
 rule qc_size:
-    run: from data_pipeline.quality_control.size_validation_qc import validate_sizes
+    run: from data_pipeline.quality_control.morphology_qc.size_validation_qc import validate_sizes
+
+rule consolidate_qc_flags:
+    run: from data_pipeline.quality_control.consolidation.consolidate_qc import merge_qc_tables
+
+rule compute_use_embryo:
+    run: from data_pipeline.quality_control.consolidation.compute_use_embryo import derive_use_flags
 
 # Embeddings (QC-gated)
 rule generate_embeddings:
     run: from data_pipeline.embeddings.inference import ensure_embeddings
+
+# Analysis-ready
+rule combine_features_qc_embeddings:
+    run: from data_pipeline.analysis_ready.assemble_features_qc_embeddings import assemble_analysis_table
 ```
 
 ---
@@ -398,8 +417,8 @@ rule generate_embeddings:
 
 **Move as-is:**
 1. `segmentation_sandbox/scripts/utils/parsing_utils.py` → `identifiers/parsing.py` (~800 lines)
-2. `src/build/qc_utils.py` → `quality_control/auxiliary_unet_imaging_quality_qc.py` (135 lines)
-3. `src/data_pipeline/quality_control/death_detection.py` → `quality_control/viability_tracking_qc.py` (317 lines)
+2. `src/build/qc_utils.py` → `quality_control/auxiliary_mask_qc/imaging_quality_qc.py` (135 lines)
+3. `src/data_pipeline/quality_control/death_detection.py` → `quality_control/auxiliary_mask_qc/embryo_viability_qc.py` (317 lines)
 4. `segmentation_sandbox/scripts/utils/mask_utils.py` → `segmentation/mask_utilities.py` (~200 lines)
 5. `src/analyze/gen_embeddings/*.py` → `embeddings/*.py` (~300 lines total)
 
@@ -474,26 +493,32 @@ rule generate_embeddings:
 
 ### **Week 4: Extract Snip Processing & QC Modules**
 
-**Snip processing & features**
-- Extract from `build03A_process_images.py` (1753 lines → ~200 lines across 7 files)
+**Snip processing & feature extraction**
+- Extract from `build03A_process_images.py` (1753 lines → ~200 lines across focused modules)
   - `snip_processing/extraction.py`
   - `snip_processing/rotation.py`
-  - `snip_processing/augmentation.py`
   - `snip_processing/io.py`
-  - `snip_processing/embryo_features/*.py`
+  - `feature_extraction/mask_geometry_metrics.py`
+  - `feature_extraction/pose_kinematics_metrics.py`
+  - `feature_extraction/stage_inference.py`
+  - `feature_extraction/consolidate.py` (new joiner for consolidated_snip_features)
 
 **Quality control**
-- Extract from `build04_perform_embryo_qc.py`:
-  - `quality_control/tracking_metrics_qc.py`
-  - `quality_control/size_validation_qc.py`
-  - `snip_processing/embryo_features/stage_inference.py`
+- Extract from `build04_perform_embryo_qc.py` into dependency-scoped packages:
+  - `quality_control/auxiliary_mask_qc/imaging_quality_qc.py`
+  - `quality_control/auxiliary_mask_qc/embryo_viability_qc.py`
+  - `quality_control/segmentation_qc/tracking_metrics_qc.py`
+  - `quality_control/segmentation_qc/segmentation_quality_qc.py`
+  - `quality_control/morphology_qc/size_validation_qc.py`
+  - `quality_control/consolidation/consolidate_qc.py`
+  - `quality_control/consolidation/compute_use_embryo.py`
 
 **Deliverable:** Build03 and Build04 run via Snakemake
 
 ---
 
 ### **Week 5: Workflow Wiring & Cleanup**
-- Ensure Snakemake rules enforce QC gating before embeddings (use `use_embryo` filters)
+- Ensure Snakemake rules enforce QC gating before embeddings (use `use_embryo` filters) and finish the `combine_features_qc_embeddings` hand-off
 - Update CLI entry points to call Snakemake targets instead of `ExperimentManager`
 - Remove deprecated orchestration layers once parity is achieved
 - Add regression checks or smoke tests covering preprocessing → QC → embeddings handoff
@@ -522,10 +547,15 @@ rule generate_embeddings:
 - Separate modules for Keyence vs YX1
 - Easy to add new microscope types
 
+### ✅ **Single-Source Tables**
+- `consolidated_snip_features.csv` joins SAM2 tracking data with mask_geometry/pose_kinematics/stage metrics
+- `consolidated_qc_flags.csv` + `use_embryo_flags.csv` provide the only QC inputs for embeddings/analysis
+- `analysis_ready/{experiment_id}/features_qc_embeddings.csv` adds `embedding_calculated` so downstream consumers can filter when embeddings lag behind QC
+
 ### ✅ **Explicit, Descriptive Names**
 - Long names OK if they eliminate ambiguity
-- `auxiliary_unet_imaging_quality_qc.py` > `spatial_qc.py`
-- `frame_organization_for_sam2.py` > `video_prep.py`
+- `quality_control/auxiliary_mask_qc/imaging_quality_qc.py` > `spatial_qc.py`
+- `segmentation/grounded_sam2/frame_organization_for_sam2.py` > `video_prep.py`
 
 ### ✅ **Functions Over Classes**
 - Extract pure functions from overengineered classes
@@ -533,7 +563,8 @@ rule generate_embeddings:
 - Let Snakemake handle orchestration
 
 ### ✅ **Logical Hierarchies**
-- `snip_processing/embryo_features/` - features extracted FROM snips
+- `feature_extraction/` - SAM2-derived per-snip metrics + consolidation
+- `quality_control/auxiliary_mask_qc|segmentation_qc|morphology_qc` - QC grouped by dependency footprint
 - `segmentation/grounded_sam2/` - SAM2 + GDINO components grouped together
 - `segmentation/unet/` - UNet components grouped together
 

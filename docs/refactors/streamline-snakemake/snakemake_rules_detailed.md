@@ -42,15 +42,16 @@ STEP 2: STANDARDIZED IMAGES → SEGMENTATION MASKS
 
 STEP 3: MASKS + IMAGES → SNIPS + FEATURES
 ├─ extract_snips
-├─ compute_morphology_features
+├─ compute_mask_geometry_metrics
+├─ compute_pose_kinematics_metrics
 └─ infer_embryo_stage
 
 STEP 4: FEATURES + MASKS → QC FLAGS
 ├─ qc_imaging         (UNet yolk/focus/bubble + SAM2 tracking)
 ├─ qc_death_detection (UNet viability + SAM2 tracking) ← UNIFIED
-├─ qc_tracking        (SAM2 tracking + morphology)
+├─ qc_tracking        (SAM2 tracking + pose/kinematics metrics)
 ├─ qc_segmentation    (SAM2 masks)
-└─ qc_size            (morphology + stage)
+└─ qc_size            (mask geometry + stage)
 
 STEP 5: QC-GATED EMBEDDINGS
 └─ generate_embeddings (snips + all QC flags)
@@ -302,43 +303,85 @@ from data_pipeline.snip_processing.extraction import crop_embryos
 
 ---
 
-### `rule compute_morphology_features`
+### `rule compute_mask_geometry_metrics`
 
-**Purpose:** Compute shape features from snips
+**Purpose:** Derive mask-intrinsic geometry metrics from SAM2 masks
 
 **Input:**
 ```
-snips: extracted_snips/{experiment_id}/
-manifest: extracted_snips/{experiment_id}/snip_manifest.csv
+tracking_csv: segmentation/embryo_tracking/{experiment_id}/tracking_table.csv
+sam2_masks: segmentation/embryo_tracking/{experiment_id}/masks/
 ```
 
 **Output:**
 ```
-computed_features/{experiment_id}/morphology.csv
+computed_features/{experiment_id}/mask_geometry_metrics.csv
 ```
 
 **Columns:**
 ```
 - snip_id
-- area, perimeter, aspect_ratio
-- contour_data
-- orientation_angle
+- area_um2, area_px (both retained; μm² uses metadata pixel size)
+- convex_hull_area_um2, convex_hull_area_px
+- solidity, circularity, elongation
+- contour_statistics (json or encoded)
 ```
 
 **Run:**
 ```python
-from data_pipeline.snip_processing.embryo_features.shape import compute_morphology
+from data_pipeline.feature_extraction.mask_geometry_metrics import compute_mask_geometry_metrics
 ```
+
+**Notes:**
+- Consumes SAM2 masks directly; no dependence on JPEG snips
+- Applies microscope pixel-size metadata to convert per-mask area to μm² (critical for biology-facing metrics)
+- Focuses exclusively on geometry intrinsic to the mask footprint
+- Provides the surface-area series (area_um2) used for stage inference and SA QC
+
+---
+
+### `rule compute_pose_kinematics_metrics`
+
+**Purpose:** Capture embryo pose and frame-to-frame motion using tracking outputs
+
+**Input:**
+```
+tracking_csv: segmentation/embryo_tracking/{experiment_id}/tracking_table.csv
+mask_geometry: computed_features/{experiment_id}/mask_geometry_metrics.csv
+```
+
+**Output:**
+```
+computed_features/{experiment_id}/pose_kinematics_metrics.csv
+```
+
+**Columns:**
+```
+- snip_id
+- centroid_x, centroid_y (frame coordinates)
+- bbox_center_x, bbox_center_y, bbox_width, bbox_height
+- orientation_angle_rad
+- delta_centroid_x, delta_centroid_y, speed_px_per_frame
+```
+
+**Run:**
+```python
+from data_pipeline.feature_extraction.pose_kinematics_metrics import compute_pose_kinematics_metrics
+```
+
+**Notes:**
+- Operates on tracking metadata; no image reads required
+- Feeds tracking QC (speed/outlier detection) and imaging QC (proximity flags)
 
 ---
 
 ### `rule infer_embryo_stage`
 
-**Purpose:** Predict developmental stage (HPF) from morphology
+**Purpose:** Predict developmental stage (HPF) from mask geometry
 
 **Input:**
 ```
-computed_features/{experiment_id}/morphology.csv
+mask_geometry: computed_features/{experiment_id}/mask_geometry_metrics.csv
 ```
 
 **Output:**
@@ -355,12 +398,12 @@ computed_features/{experiment_id}/developmental_stage.csv
 
 **Run:**
 ```python
-from data_pipeline.snip_processing.embryo_features.stage_inference import infer_hpf_stage
+from data_pipeline.feature_extraction.stage_inference import infer_hpf_stage
 ```
 
 **Notes:**
-- Uses surface area reference lookup
-- Required for death buffer calculation (2hr before death)
+- Uses surface-area reference curves (area_um2 → HPF mapping; area_um2 derived from pixel metadata)
+- Stage predictions support viability persistence buffer and SA QC (2 hr buffer logic)
 
 ---
 
@@ -459,7 +502,7 @@ from data_pipeline.quality_control.embryo_viability_qc import compute_viability_
 **Input:**
 ```
 tracking_csv: segmentation/embryo_tracking/{experiment_id}/tracking_table.csv
-morphology: computed_features/{experiment_id}/morphology.csv
+pose_metrics: computed_features/{experiment_id}/pose_kinematics_metrics.csv
 ```
 
 **Output:**
@@ -468,17 +511,16 @@ quality_control_flags/{experiment_id}/tracking_metrics.csv
 ```
 
 **Columns:**
-```
 - embryo_id
 - time_int
-- speed                    # Movement speed between frames
-- trajectory_smoothness    # Savitzky-Golay smoothed trajectory
-- tracking_error_flag      # Jumps, discontinuities detected (image_id level sense no embryo)
+- speed_px_per_frame          # Movement speed between frames
+- trajectory_smoothness       # Savitzky-Golay smoothed trajectory
+- tracking_error_flag         # Jumps, discontinuities detected
 ```
 
 **Run:**
 ```python
-from data_pipeline.quality_control.tracking_metrics_qc import compute_tracking_qc
+from data_pipeline.quality_control.segmentation_qc.tracking_metrics_qc import compute_tracking_qc
 ```
 
 **Notes:**
@@ -531,7 +573,7 @@ from data_pipeline.quality_control.segmentation_quality_qc import validate_masks
 
 **Input:**
 ```
-morphology: computed_features/{experiment_id}/morphology.csv
+mask_geometry: computed_features/{experiment_id}/mask_geometry_metrics.csv
 stage: computed_features/{experiment_id}/developmental_stage.csv
 ```
 
@@ -548,10 +590,11 @@ quality_control_flags/{experiment_id}/size_validation.csv
 
 **Run:**
 ```python
-from data_pipeline.quality_control.size_validation_qc import validate_sizes
+from data_pipeline.quality_control.morphology_qc.size_validation_qc import validate_sizes
 ```
 
 **Notes:**
+- Operates on `area_um2` to evaluate biologically meaningful growth (pixel areas alone are insufficient)
 - Compares to internal controls or stage reference
 - One-sided detection (flags abnormally large only, by default)
 
@@ -625,15 +668,15 @@ preprocess_keyence/yx1
     ↓
 gdino_detect → sam2_segment_and_track → sam2_format_csv → sam2_export_masks
     ↓                                          ↓
-unet_segment                            extract_snips
+unet_segment                         compute_mask_geometry_metrics
     ↓                                          ↓
-qc_viability (uses UNet via + SAM2 masks)    compute_morphology_features
-    ↓                                          ↓
-    ↓                                    infer_embryo_stage
-    ↓                                          ↓
-    └──────────→ ALL QC RULES ←──────────────┘
-                      ↓
-              generate_embeddings
+qc_viability (uses UNet + SAM2)     compute_pose_kinematics_metrics
+                                               ↓
+                                       infer_embryo_stage
+                                               ↓
+extract_snips ─────────────────────────────────┴──→ ALL QC RULES
+                                                   ↓
+                                           generate_embeddings
 ```
 
 ### UNet Auxiliary Mask Usage:
