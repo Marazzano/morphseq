@@ -7,7 +7,7 @@ Directory Structure
 │   │   └── YX1/{experiment_id}/
 │   │
 │   ├── reference_data/
-│   │   ├── developmental_stages.csv         # HPF stage reference (was: stage_ref_df.csv)
+│   │   ├── surface_area_ref.csv         # HPF stage reference (was: stage_ref_df.csv)
 │   │   └── perturbation_catalog.csv         # Perturbation metadata (was: perturbation_name_key.csv)
 │   │
 │   └── plate_metadata/                       # Per-experiment well annotations (was: well_metadata/)
@@ -34,13 +34,14 @@ Directory Structure
 │       ├── morphology_vae_2024/             # Current production VAE
 │       └── legacy/                          # Older models
 │
-├── processed_images/                        # Standardized FF images
-│   ├── {experiment_id}/
-│   │   └── {well_id}/
-│   │       └── {image_id}.jpg
-│   │
-│   └── preprocessing_logs/
-│       └── {experiment_id}_preprocessing.csv  # Build metadata (microscope, paths, timestamps)
+├── processed_images/                           # Processed image outputs
+│   └── stitched_FF/                           # Standardized FF images
+│       ├── {experiment_id}/
+│       │   └── {well_id}/
+│       │       └── {image_id}.jpg
+│       │
+│       └── preprocessing_logs/
+│           └── {experiment_id}_preprocessing.csv  # Build metadata (microscope, paths, timestamps)
 │
 ├── segmentation/                            # Segmentation outputs
 │   ├── embryo_tracking/                     # Primary SAM2 segmentation + tracking
@@ -60,7 +61,7 @@ Directory Structure
 │           ├── focus/                       # Out-of-focus regions
 │           └── bubbles/                     # Air bubbles
 │
-├── extracted_regions/                       # Cropped embryo images + manifest
+├── extracted_snips/                       # Cropped embryo images + manifest
 │   └── {experiment_id}/
 │       ├── snip_manifest.csv               # snip_id, frame_path, crop_path, rotation metadata
 │       └── {snip_id}.jpg
@@ -72,7 +73,7 @@ Directory Structure
 │       ├── developmental_stage.csv          # Predicted HPF, confidence
 │       └── movement.csv                     # Speed, trajectory, displacement
 │
-├── quality_flags/                           # QC assessments (per flag family)
+├── quality_control_flags/                           # QC assessments (pr flag family)
 │   └── {experiment_id}/
 │       ├── auxiliary_unet_imaging_quality.csv    # Boundary, yolk, focus, bubble flags (UNet-derived)
 │       ├── viability_tracking.csv                # Death detection, inflection points
