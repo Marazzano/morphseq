@@ -22,7 +22,7 @@ Goal: extract the minimal functions needed to run GroundingDINO + SAM2 and the a
 **Cleanup notes**
 - Remove filesystem discovery; accept explicit directories.
 - Ensure deterministic frame ordering (sort by `time_int`).
-- Device preference handled via shared `resolve_device` helper.
+- Device preference handled via shared `data_pipeline.config.runtime.resolve_device`.
 - Emit simple JSON/CSV manifest describing generated video tensors.
 
 ---
@@ -125,9 +125,10 @@ Goal: extract the minimal functions needed to run GroundingDINO + SAM2 and the a
 - Include detection scores, mask areas, centroid coordinates.
 
 **Functions to implement**
-- `sam2_result_to_records(result: SAM2Result) -> list[dict]`
-- `write_tracking_table(records: list[dict], output_csv: Path) -> None`
+- `sam2_result_to_records(result: SAM2Result, pixel_size_um: float) -> list[dict]`
 - `merge_with_detection_metadata(records: list[dict], detections: list[Detection]) -> list[dict]`
+- `assign_snip_ids(records: list[dict], experiment_id: str) -> list[dict]`
+- `write_tracking_table(records: list[dict], output_csv: Path) -> None`
 
 **Source material**
 - `segmentation_sandbox/scripts/utils/export_sam2_metadata_to_csv.py`
@@ -135,8 +136,9 @@ Goal: extract the minimal functions needed to run GroundingDINO + SAM2 and the a
 
 **Cleanup notes**
 - Use `identifiers.parsing` for ID parsing instead of regex inline.
-- Output schema documented in docstring (columns, dtypes).
-- Provide optional Parquet export if needed later.
+- Compute both `area_px` and `area_um2` (using microscope metadata) so downstream features don't guess pixel size.
+- Tracking table owns `snip_id = {embryo_id}_s{frame:04d}`; enforce uniqueness before writing.
+- Output schema documented in docstring (columns, dtypes). Optional Parquet export can follow once CSV path is validated.
 
 ---
 
@@ -206,3 +208,4 @@ Goal: extract the minimal functions needed to run GroundingDINO + SAM2 and the a
 - Keep all GPU inference optional but default-on; include CPU fallback in docs for testing.
 - Provide clear logging (per experiment, per well) without the previous logging hierarchy.
 - Add smoke tests that mock small tensors to ensure the modules compose end-to-end.
+- Ensure pixel-size metadata from preprocessing reaches the CSV formatter (probably by threading values through Snakemake config); revisit a shared helper only if duplication becomes painful.
