@@ -21,11 +21,10 @@ Goal: extract the minimal, well-documented functions needed to turn raw microsco
 - `src/build/build01A_compile_keyence_torch.py`
 - `src/build/build01AB_stitch_keyence_z_slices.py` (focus measures)
 
-**Cleanup notes**
 - Retain GPU acceleration via torch (CPU fallback only for debugging).
 - Pull layout constants from `data_pipeline.config.microscopes`.
 - No filesystem discovery inside functions; all paths flow in via Snakemake inputs.
-- Manage device selection centrally (Snakemake param or config flag).
+- Manage device selection via shared helper (`data_pipeline.config.runtime.resolve_device`).
 
 ---
 
@@ -46,6 +45,7 @@ Goal: extract the minimal, well-documented functions needed to turn raw microsco
 - Remove ad-hoc filesystem globbing; accept `Path` arguments.
 - Ensure deterministic ordering of z-slices (sort filenames once).
 - Expose focus measure thresholds via `config.microscopes`.
+- Reuse `resolve_device` helper where torch tensors are created.
 
 ---
 

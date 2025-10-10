@@ -331,82 +331,6 @@ Functions:
 
 ---
 
-## Snakemake Rule Mapping
-
-Each folder maps to a logical group of Snakemake rules:
-
-```python
-# Preprocessing rules
-rule preprocess_keyence:
-    run: from data_pipeline.preprocessing.keyence import stitch, extract_metadata
-
-rule preprocess_yx1:
-    run: from data_pipeline.preprocessing.yx1 import process_images
-
-# Segmentation rules
-# NOTE: frame organization handled inside propagate_masks()
-
-rule gdino_detect:
-    run: from data_pipeline.segmentation.grounded_sam2.gdino_detection import detect_embryos
-
-rule sam2_segment_and_track:
-    run: from data_pipeline.segmentation.grounded_sam2.propagation import propagate_masks
-
-rule sam2_format_csv:
-    run: from data_pipeline.segmentation.grounded_sam2.sam2_output_csv_formatter import flatten_to_csv
-
-rule sam2_export_masks:
-    run: from data_pipeline.segmentation.grounded_sam2.mask_export import export_masks
-
-rule unet_segment:
-    run: from data_pipeline.segmentation.unet.inference import run_all_models
-
-# Snip processing & features
-rule extract_snips:
-    run: from data_pipeline.snip_processing.extraction import crop_embryos
-
-rule compute_mask_geometry_metrics:
-    run: from data_pipeline.feature_extraction.mask_geometry_metrics import compute_mask_geometry_metrics
-
-rule compute_pose_kinematics_metrics:
-    run: from data_pipeline.feature_extraction.pose_kinematics_metrics import compute_pose_kinematics_metrics
-
-rule infer_embryo_stage:
-    run: from data_pipeline.feature_extraction.stage_inference import infer_hpf_stage
-
-rule consolidate_snip_features:
-    run: from data_pipeline.feature_extraction.consolidate import build_consolidated_snip_features
-
-# Quality control
-rule qc_imaging:
-    run: from data_pipeline.quality_control.auxiliary_mask_qc.imaging_quality_qc import compute_imaging_qc_flags
-
-rule qc_viability:
-    run: from data_pipeline.quality_control.auxiliary_mask_qc.embryo_viability_qc import compute_viability_qc
-
-rule qc_tracking:
-    run: from data_pipeline.quality_control.segmentation_qc.tracking_metrics_qc import compute_tracking_qc
-
-rule qc_segmentation:
-    run: from data_pipeline.quality_control.segmentation_qc.segmentation_quality_qc import validate_masks
-
-rule qc_size:
-    run: from data_pipeline.quality_control.morphology_qc.size_validation_qc import validate_sizes
-
-rule consolidate_qc_flags:
-    run: from data_pipeline.quality_control.consolidation.consolidate_qc import merge_qc_tables
-
-rule compute_use_embryo:
-    run: from data_pipeline.quality_control.consolidation.compute_use_embryo import derive_use_flags
-
-# Embeddings (QC-gated)
-rule generate_embeddings:
-    run: from data_pipeline.embeddings.inference import ensure_embeddings
-
-# Analysis-ready
-rule combine_features_qc_embeddings:
-    run: from data_pipeline.analysis_ready.assemble_features_qc_embeddings import assemble_analysis_table
-```
 
 ---
 
@@ -599,3 +523,4 @@ rule combine_features_qc_embeddings:
 - Easy to understand and extend
 
 **The goal: Boring, predictable code that works.**
+

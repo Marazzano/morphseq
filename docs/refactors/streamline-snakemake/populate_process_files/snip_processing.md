@@ -1,6 +1,6 @@
 # Snip Processing Module Population Plan
 
-Goal: break the Build03 monolith into focused functions for cropping, rotating, augmenting, writing snip images, and computing features, while keeping behaviour identical to the current pipeline.
+Goal: split the Build03/04 monolith into focused, importable modules. Snip extraction stays separate from feature computation. Feature modules live under `feature_extraction/` so QC can consume a single consolidated table. Surface-area metrics must always be converted to μm² (pixel size from metadata) before any biology-facing logic runs.
 
 ---
 
@@ -17,12 +17,13 @@ Goal: break the Build03 monolith into focused functions for cropping, rotating, 
 
 **Source material**
 - `build03A_process_images.py` (cropping helpers)
-- `segmentation_sandbox/scripts/pipelines/06_export_masks.py` (mask/file naming)
+- `segmentation_sandbox/scripts/pipelines/06_export_masks.py` (mask file naming)
 
 **Cleanup notes**
 - Avoid in-function globbing; rely on explicit paths passed from Snakemake.
 - Return plain dicts describing each snip (`snip_id`, `frame_path`, `crop_path`, metadata).
 - Handle GPU acceleration only where necessary; majority can stay in NumPy.
+- When torch is required, obtain devices via `data_pipeline.config.runtime.resolve_device`.
 
 ---
 
@@ -77,67 +78,91 @@ Goal: break the Build03 monolith into focused functions for cropping, rotating, 
 - Existing analysis scripts consuming snip manifests
 
 **Cleanup notes**
-- Centralize file naming (snip IDs) via `identifiers` helpers.
-- Ensure manifests include references to masks, rotations, and feature rows.
+- Centralize file naming (`snip_id` convention) via `identifiers.parsing`.
+- Ensure manifests include references to masks, rotations, feature rows, and QC-ready flags.
 
 ---
 
-## `snip_processing/embryo_features/shape.py`
+## `feature_extraction/mask_geometry_metrics.py`
 **Responsibilities**
-- Compute geometry-based features (area, perimeter, contour-based metrics).
+- Compute SAM2-mask intrinsic geometry, converting all areas to μm² using microscope metadata.
 
 **Functions to implement**
-- `compute_shape_features(mask: np.ndarray) -> dict`
-- `compute_contour_stats(contour: np.ndarray) -> dict`
+- `compute_mask_geometry(mask: np.ndarray, pixel_size_um: float) -> dict`
+- `summarize_contour(contour: np.ndarray) -> dict`
 
 **Source material**
-- Feature calculations in `build03A_process_images.py`
+- Geometry calculations in `build03A_process_images.py`
+- Pixel-size lookups in Build01 metadata code
 
 **Cleanup notes**
-- Stick to NumPy/scikit-image; no external dependencies.
-- Document feature schema (keys, units).
+- Return both `area_px` and `area_um2`; downstream biology must use `area_um2`.
+- Keep implementation pure NumPy/scikit-image; no torch dependencies.
+- Document schema clearly (keys, units) so QC/analysis stay consistent.
 
 ---
 
-## `snip_processing/embryo_features/spatial.py`
+## `feature_extraction/pose_kinematics_metrics.py`
 **Responsibilities**
-- Compute spatial features (centroid, bounding boxes, positional metadata).
+- Derive pose and motion metrics from SAM2 tracking table + mask geometry output.
 
 **Functions to implement**
-- `compute_spatial_features(mask: np.ndarray, pixel_size_um: float) -> dict`
-- `compute_movement_metrics(current_snip: dict, previous_snip: dict) -> dict`
+- `compute_pose_metrics(record: dict) -> dict`
+- `compute_frame_deltas(current: dict, previous: dict) -> dict`
+- `build_pose_table(tracking_table: pd.DataFrame, pixel_size_um: float) -> pd.DataFrame`
 
 **Source material**
-- `build03A_process_images.py`
-- Portions of Build04 QC for positional deltas
+- Positional/motion logic in `build03A_process_images.py`
+- Tracking QC helpers from `build04_perform_embryo_qc.py`
 
 **Cleanup notes**
-- Keep everything in real units (microns) when possible; use config to define pixel size.
-- Avoid global state; functions work on the snip dicts.
+- Accept explicit tracking rows; never re-read CSV inside loops.
+- Expose centroid/bbox in both px and μm for flexibility.
+- Provide velocity in μm/hour when stage metadata available.
 
 ---
 
-## `snip_processing/embryo_features/stage_inference.py`
+## `feature_extraction/stage_inference.py`
 **Responsibilities**
-- Infer developmental stage (HPF) from morphology features.
+- Infer developmental stage (HPF) from surface-area curves expressed in μm².
 
 **Functions to implement**
-- `load_stage_model(model_path: Path) -> object`
-- `predict_stage(features: dict, model: object, config: dict) -> dict`
-- `annotate_snips_with_stage(snips: list[dict], model: object, config: dict) -> list[dict]`
+- `load_stage_reference(csv_path: Path) -> pd.DataFrame`
+- `infer_stage(area_um2: float, reference: pd.DataFrame, params: StageParams) -> dict`
+- `annotate_features_with_stage(features: pd.DataFrame, reference: pd.DataFrame, params: StageParams) -> pd.DataFrame`
 
 **Source material**
-- Stage inference logic in `build04_perform_embryo_qc.py`
-- Existing analysis notebooks referencing HPF predictions
+- Stage inference block in `build04_perform_embryo_qc.py`
+- Legacy `surface_area_ref.csv` usage
 
 **Cleanup notes**
-- Keep model interactions minimal (likely scikit-learn joblib model).
-- Return per-snip stage predictions with confidence/metadata.
+- Treat stage model as data-driven lookup (no heavy ML assumption).
+- Raise if area values are still in pixels—hard fail avoids grave regressions.
+
+---
+
+## `feature_extraction/consolidate.py`
+**Responsibilities**
+- Merge tracking table, mask geometry, pose/kinematics, and stage outputs into `consolidated_snip_features.csv`.
+
+**Functions to implement**
+- `merge_feature_tables(tracking: pd.DataFrame, mask_geom: pd.DataFrame, pose: pd.DataFrame, stage: pd.DataFrame) -> pd.DataFrame`
+- `write_consolidated_features(df: pd.DataFrame, output_csv: Path) -> None`
+
+**Source material**
+- Manual merges inside `build03A_process_images.py`
+- Recent notebooks creating per-experiment feature tables
+
+**Cleanup notes**
+- Use `snip_id` as the only join key—validate presence/uniqueness before writing.
+- Preserve `area_um2` and `embedding_calculated` placeholders so QC + embeddings can extend later.
+- Keep function side-effect free apart from writing the final CSV.
 
 ---
 
 ## Cross-cutting refactor tasks
 - Align naming conventions with `identifiers` module (`snip_id`, `well_id`, etc.).
-- Ensure all functions return plain dicts/lists suitable for CSV serialization.
+- Ensure all functions return plain dicts/lists/DataFrames suitable for CSV serialization.
 - Factor shared config (padding, rotation defaults) into `data_pipeline.config.snips`.
 - Provide smoke tests that run extraction → rotation → feature computation on a tiny sample.
+- Document in code comments where pixel-size metadata enters the flow so area conversions stay explicit.

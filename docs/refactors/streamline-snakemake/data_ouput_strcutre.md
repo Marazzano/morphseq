@@ -59,7 +59,7 @@ Directory Structure
 │
 ├── computed_features/                                # Feature extraction outputs (per snip_id)
 │   └── {experiment_id}/
-│       ├── mask_geometry_metrics.csv                 # SAM2 mask geometry w/ per-mask area_um2 (pixel size from metadata) (feature_extraction/mask_geometry_metrics.py)
+│       ├── mask_geometry_metrics.csv                 # SAM2 mask geometry w/ px→μm² conversions (feature_extraction/mask_geometry_metrics.py)
 │       ├── pose_kinematics_metrics.csv               # Embryo pose + motion (feature_extraction/pose_kinematics_metrics.py)
 │       ├── developmental_stage.csv                   # Predicted HPF + confidence (stage_inference.py)
 │       └── consolidated_snip_features.csv            # Merge of tracking_table + mask_geometry + pose_kinematics + stage (one row per snip_id)
