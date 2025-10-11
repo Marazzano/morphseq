@@ -144,7 +144,7 @@ src/data_pipeline/
 │   ├── unet/                                  # UNet auxiliary masks
 │   │   ├── inference.py                       # Core inference pipeline
 │   │   └── model_loader.py                    # Load 5 models (mask, via, yolk, focus, bubble)
-│   └── mask_utilities.py                      # Shared RLE/polygon/bbox utilities
+│   └── mask_utilities.py                      # Shared RLE/polygon/bbox utilities (for example redonling unet derived masks and sam2 derived masks )
 │
 ├── snip_processing/                            # Snip extraction utilities
 │   ├── extraction.py                          # Crop embryo regions from images
@@ -337,12 +337,13 @@ Shared utilities for all segmentation methods:
 **Core operations:**
 - **extraction.py**: Crop embryo regions with padding using SAM2 masks
 - **rotation.py**: PCA-based alignment to standard orientation
-- **io.py**: Persist snip JPEGs + manifest with frame paths and rotation metadata
+- **augmentation.py**: CLAHE, background noise injection, and edge blending for model-ready crops
+- **manifest_generation.py**: Scan processed snips, attach metadata, and write schema-validated manifest
 
 **snip_id management:**
 - `snip_id` is assigned during extraction using `segmentation_tracking.csv`
 - Format: `{embryo_id}_s{frame:04d}` (e.g., `embryo_001_s0005`)
-- Written once to `extracted_snips/{experiment_id}/snip_manifest.csv` (validated via `REQUIRED_COLUMNS_SNIP_MANIFEST`) and reused downstream
+- Manifest resides in `processed_snips/{experiment_id}/snip_manifest.csv` (schema-backed) combining raw + processed paths
 
 ---
 
@@ -352,8 +353,9 @@ Shared utilities for all segmentation methods:
 **Modules:**
 - **mask_geometry_metrics.py**: Area, perimeter, contour stats derived from SAM2 masks with pixel-size metadata to produce `area_um2` → `mask_geometry_metrics.csv`
 - **pose_kinematics_metrics.py**: Centroid, orientation, bbox geometry and frame deltas derived from `segmentation_tracking.csv` → `pose_kinematics_metrics.csv`
+- **fraction_alive.py**: Aggregates UNet viability masks to compute per-snip viability fraction → `fraction_alive.csv`
 - **stage_inference.py**: HPF prediction + confidence using surface-area reference curves (requires `area_um2`)
-- **consolidate_features.py**: Merge segmentation_tracking + mask_geometry + pose_kinematics + stage (plus plate/scope metadata columns) into `consolidated_snip_features.csv` with schema validation
+- **consolidate_features.py**: Merge segmentation_tracking + mask_geometry + pose_kinematics + fraction_alive + stage data (plus plate/scope metadata columns) into `consolidated_snip_features.csv` with schema validation
 
 **Key principle:** Features operate on masks/tracking metadata (not raw snip pixels); the merge output is the single source consumed by all QC modules.
 
@@ -364,7 +366,7 @@ Shared utilities for all segmentation methods:
 
 #### **auxiliary_mask_qc/**
 - **imaging_quality_qc.py**: Boundary, yolk, focus, and bubble flags computed from UNet auxiliary masks with SAM2 geometry for proximity
-- **embryo_viability_qc.py**: Option 1 architecture (approved) producing `fraction_alive`, unified `dead_flag`, and `dead_inflection_time_int` using UNet viability + SAM2 masks + stage metadata
+- **embryo_viability_qc.py**: Ingests `fraction_alive` from `feature_extraction/fraction_alive.py`, thresholds it to produce the single canonical `dead_flag`, and computes `death_inflection_time_int`. All downstream rules consume this `dead_flag`; no other module emits alternate death flags.
 
 #### **segmentation_qc/**
 - **segmentation_quality_qc.py**: Mask integrity checks for SAM2 output (edge contact, overlaps, area drift, disconnected components, etc.)
@@ -542,9 +544,11 @@ Functions:
 - Extract from `build03A_process_images.py` (1753 lines → ~200 lines across focused modules)
   - `snip_processing/extraction.py`
   - `snip_processing/rotation.py`
-  - `snip_processing/io.py`
+  - `snip_processing/augmentation.py`
+  - `snip_processing/manifest_generation.py`
   - `feature_extraction/mask_geometry_metrics.py`
   - `feature_extraction/pose_kinematics_metrics.py`
+  - `feature_extraction/fraction_alive.py`
   - `feature_extraction/stage_inference.py`
   - `feature_extraction/consolidate_features.py` (schema-backed joiner for consolidated_snip_features)
 

@@ -180,6 +180,9 @@ REQUIRED_COLUMNS_FEATURES = [
     # Developmental stage
     'predicted_stage_hpf',  # Critical for QC and downstream analysis
 
+    # Fraction alive detection (used to determine dead_flag in QC)
+    'fraction_alive',
+
     # Pose/kinematics
     'orientation_angle',
     'bbox_width_um',
@@ -641,7 +644,7 @@ for col in REQUIRED_COLUMNS:
 2. ✅ **Scope Metadata** → `experiment_metadata/{exp}/scope_metadata.csv` (validates microscope extraction - per-microscope)
 3. ✅ **Scope & Plate Metadata** → `experiment_metadata/{exp}/scope_and_plate_metadata.csv` (joins validated inputs - SHARED)
 4. ✅ **Segmentation** → `segmentation/{exp}/segmentation_tracking.csv` (includes mask_rle + paths + metadata)
-5. ✅ **Snip Processing** → `extracted_snips/{exp}/snip_manifest.csv` (validates extraction completeness)
+5. ✅ **Snip Processing** → `processed_snips/{exp}/snip_manifest.csv` (validates extraction completeness)
 6. ✅ **Features** → `computed_features/{exp}/consolidated_snip_features.csv` (includes exp_id + well_id + calibration)
 7. ✅ **QC** → `quality_control/{exp}/consolidated/consolidated_qc_flags.csv` (includes death timing)
 8. ✅ **Analysis-Ready** → `analysis_ready/{exp}/features_qc_embeddings.csv` (critical final hand-off)
@@ -689,8 +692,8 @@ DOWNSTREAM PROCESSING
 4. Rename + modify preprocessing extraction (per-microscope: keyence/extract_scope_metadata.py, yx1/extract_scope_metadata.py)
 5. Create shared `preprocessing/consolidate_plate_n_scope_metadata.py`
 6. Modify segmentation csv_formatter.py (add mask_rle + source_image_path + well_id + is_seed_frame + validation)
-7. Add validation to snip_processing/io.py
-8. Rename + modify feature_extraction/consolidate_features.py (add experiment_id + well_id + calibration metadata + validation)
+7. Add validation to snip_processing/manifest_generation.py (raw/processed paths + rotation metadata)
+8. Add validation to feature_extraction/fraction_alive.py + consolidate_features.py (ensure calibration, viability fraction, metadata included)
 9. Modify quality_control/consolidation files (add death timing metadata + consolidate_qc.py + compute_use_embryo.py)
 10. Add validation to analysis_ready/assemble_features_qc_embeddings.py
 11. Test with one experiment end-to-end
