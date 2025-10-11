@@ -35,11 +35,10 @@ REQUIRED_COLUMNS_PLATE_METADATA = [
     'start_age_hpf',
 
     # Experimental conditions
-    'temperature_c',          # Critical for developmental timing normalization
+    'temperature_c',          # Critical for developmental timing normalization (note plates currently have temperature so it'd need to be mapped)
     'medium',
 
-    # Optional QC
-    'well_qc_flag',          # User-annotated well quality
+
 ]
 ```
 
@@ -49,12 +48,12 @@ REQUIRED_COLUMNS_SCOPE_METADATA = [
     # Core identifiers
     'experiment_id',
     'well_id',
+    'well_index',
     'image_id',
     'time_int',
 
     # Spatial calibration (extracted from microscope)
     'micrometers_per_pixel',
-    'pixels_per_micrometer',
     'image_width_px',
     'image_height_px',
     'objective_magnification',
@@ -68,6 +67,7 @@ REQUIRED_COLUMNS_SCOPE_METADATA = [
     'microscope_id',
     'channel',
     'z_position',
+    'frame_index',
 ]
 ```
 
@@ -77,8 +77,10 @@ REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA = [
     # Core identifiers
     'experiment_id',
     'well_id',
+    'well_index',
     'image_id',
     'time_int',
+    'frame_index',
     'embryo_id',
 
     # From plate_metadata
@@ -89,7 +91,6 @@ REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA = [
 
     # From scope_metadata
     'micrometers_per_pixel',
-    'pixels_per_micrometer',
     'frame_interval_s',
     'absolute_start_time',
     'image_width_px',
@@ -104,6 +105,7 @@ REQUIRED_COLUMNS_SEGMENTATION_TRACKING = [
     'experiment_id',
     'video_id',
     'well_id',              # Well identifier for grouping
+    'well_index',
     'image_id',
     'embryo_id',
     'snip_id',
@@ -143,7 +145,7 @@ REQUIRED_COLUMNS_SNIP_MANIFEST = [
     'time_int',
 
     # File paths
-    'source_frame_path',    # Path to stitched FF image
+    'source_image_path',    # Path to stitched FF image
     'cropped_snip_path',    # Path to extracted snip JPG
 
     # Extraction metadata
@@ -163,7 +165,7 @@ REQUIRED_COLUMNS_FEATURES = [
     'embryo_id',
     'experiment_id',        # For cross-experiment analysis
     'well_id',              # Well identifier
-    'time_int',
+    'frame_index',
 
     # Calibration (document what was used for conversions)
     'micrometers_per_pixel',
@@ -198,20 +200,22 @@ REQUIRED_COLUMNS_QC = [
     'use_embryo',           # Final gate for embeddings/analysis
 
     # Viability QC
-    'qc_dead',
     'dead_flag',
     'fraction_alive',
-    'dead_inflection_time_int',  # When embryo died
-    'stage_at_death_hpf',        # Developmental stage at death
+    'death_inflection_time_int',  # When embryo died  
+    'death_predicted_stage_hpf',        # Developmental stage at death(age  at death)
 
-    # Imaging QC
-    'edge_flag',
-    'focus_flag',
-    'bubble_flag',
-    'yolk_flag',
+    # Imaging QC 
+    'focus_flag', #(from_auxiliary masks)
+    'bubble_flag', #(from_auxiliary masks)
+    'yolk_flag', #(from_auxiliary masks)
+    'edge_flag', 
+    'discontinuous_mask_flag',
+    'overlapping_mask_flag',
+    #...etc check sam2 for snip_level flags and the restof codebase. 
+    
 
     # Segmentation QC
-    'tracking_error_flag',
     'mask_quality_flag',
 
     # Morphology QC
@@ -219,10 +223,14 @@ REQUIRED_COLUMNS_QC = [
 ]
 
 QC_FAIL_FLAGS = [
-    'qc_dead',
-    'edge_flag',
+    'dead_flag',
     'sa_outlier_flag',
-    'tracking_error_flag',
+    'yolk_flag',
+    'edge_flag',
+    'discontinuous_mask_flag',
+    'overlapping_mask_flag',
+    'focus_flag',
+    'bubble_flag',
 ]
 ```
 
@@ -235,26 +243,14 @@ REQUIRED_COLUMNS_ANALYSIS_READY = [
     'experiment_id',
     'time_int',
     'well_id',
-
-    # Critical features (from consolidated_snip_features)
-    'area_um2',
-    'predicted_stage_hpf',
-    'centroid_x_um',
-    'centroid_y_um',
-    'micrometers_per_pixel',
-
-    # QC gates (from consolidated_qc_flags)
-    'use_embryo',
-    'qc_dead',
-    'dead_flag',
+    'well_index',
 
     # Embedding status
     'embedding_calculated',  # Boolean: True if embeddings present
 
     # Note: Embedding columns (z0...z{dim-1}) are optional and checked separately
-]
+] + REQUIRED_COLUMNS_FEATURES + REQUIRED_COLUMNS_QC + REQUIRED_COLUMNS_PLATE_METADATA + REQUIRED_COLUMNS_SCOPE_METADATA #we want these as well 
 ```
-
 ---
 
 ### 2. Integration with Inline Validation
@@ -641,9 +637,9 @@ for col in REQUIRED_COLUMNS:
 
 ## Consolidation Points (8 Total)
 
-1. ✅ **Plate Metadata** → `processed_metadata/{exp}/plate_metadata.csv` (validates input plate layouts)
-2. ✅ **Scope Metadata** → `processed_metadata/{exp}/scope_metadata.csv` (validates microscope extraction - per-microscope)
-3. ✅ **Scope & Plate Metadata** → `processed_metadata/{exp}/scope_and_plate_metadata.csv` (joins validated inputs - SHARED)
+1. ✅ **Plate Metadata** → `experiment_metadata/{exp}/plate_metadata.csv` (validates input plate layouts)
+2. ✅ **Scope Metadata** → `experiment_metadata/{exp}/scope_metadata.csv` (validates microscope extraction - per-microscope)
+3. ✅ **Scope & Plate Metadata** → `experiment_metadata/{exp}/scope_and_plate_metadata.csv` (joins validated inputs - SHARED)
 4. ✅ **Segmentation** → `segmentation/{exp}/segmentation_tracking.csv` (includes mask_rle + paths + metadata)
 5. ✅ **Snip Processing** → `extracted_snips/{exp}/snip_manifest.csv` (validates extraction completeness)
 6. ✅ **Features** → `computed_features/{exp}/consolidated_snip_features.csv` (includes exp_id + well_id + calibration)
@@ -661,13 +657,13 @@ INPUT VALIDATION
 │   ↓
 │   metadata/plate_processing.py
 │   ↓
-│   processed_metadata/{exp}/plate_metadata.csv  [VALIDATED]
+│   experiment_metadata/{exp}/plate_metadata.csv  [VALIDATED]
 │
 └─ Raw Microscope Files (Keyence or YX1)
     ↓
     preprocessing/{microscope}/extract_scope_metadata.py  [MICROSCOPE-SPECIFIC]
     ↓
-    processed_metadata/{exp}/scope_metadata.csv  [VALIDATED]
+    experiment_metadata/{exp}/scope_metadata.csv  [VALIDATED]
 
 CONSOLIDATION (SHARED)
 │
@@ -675,7 +671,7 @@ CONSOLIDATION (SHARED)
     ↓
     preprocessing/consolidate_plate_n_scope_metadata.py  [MICROSCOPE-AGNOSTIC]
     ↓
-    processed_metadata/{exp}/scope_and_plate_metadata.csv  [VALIDATED]
+    experiment_metadata/{exp}/scope_and_plate_metadata.csv  [VALIDATED]
 
 DOWNSTREAM PROCESSING
     ↓

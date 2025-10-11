@@ -13,6 +13,13 @@ Directory Structure
 │   └── plate_metadata/                               # Per-experiment well annotations
 │       └── {experiment_id}_plate_layout.xlsx
 │
+├── experiment_metadata/                              # VALIDATED EXPERIMENT CONTEXT (schema-backed)
+│   └── {experiment_id}/
+│       ├── plate_metadata.csv                        # REQUIRED_COLUMNS_PLATE_METADATA (experiment, well, genotype, temp, etc.)
+│       ├── scope_metadata.csv                        # REQUIRED_COLUMNS_SCOPE_METADATA (microscope + timing calibration)
+│       ├── scope_and_plate_metadata.csv              # REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA (joins prior two)
+│       └── experiment_image_manifest.json            # REQUIRED_IMAGE_MANIFEST_* (per-well channel inventory, normalized frame list)
+│
 ├── models/                                           # PRE-TRAINED MODEL CHECKPOINTS (symlink targets)
 │   ├── segmentation/
 │   │   ├── unet/
@@ -31,7 +38,8 @@ Directory Structure
 │   └── stitched_FF/
 │       ├── {experiment_id}/
 │       │   └── {well_id}/
-│       │       └── {image_id}.jpg
+│       │       └── {channel_name}/                  # Normalized channel name (BF, GFP, etc.)
+│       │           └── {image_id}.jpg               # Manifest-enforced naming: {exp}_{well}_{channel}_t{frame}
 │       └── preprocessing_logs/
 │           └── {experiment_id}_preprocessing.csv     # Microscope + stitching metadata
 │
@@ -40,7 +48,7 @@ Directory Structure
 │   │   └── {experiment_id}/
 │   │       ├── initial_detections.json               # GroundingDINO seed bounding boxes
 │   │       ├── propagated_masks.json                 # SAM2 tracked masks (all frames)
-│   │       ├── tracking_table.csv                    # Flattened table incl. snip_id, bbox, area_px
+│   │       ├── segmentation_tracking.csv             # Flattened table incl. snip_id, well_id, mask_rle, bbox, area_px, seed flag
 │   │       └── masks/
 │   │           └── {video_id}/
 │   │               └── {image_id}_embryo_{N}.png
@@ -52,17 +60,20 @@ Directory Structure
 │           ├── focus/                                # Out-of-focus regions
 │           └── bubbles/                              # Air bubbles
 │
-├── extracted_snips/                                  # Cropped embryo images + manifest
+├── processed_snips/                                  # Cropped embryo images + manifest
 │   └── {experiment_id}/
-│       ├── snip_manifest.csv                         # snip_id, frame_path, crop_path, rotation metadata
-│       └── {snip_id}.jpg
+│       ├── raw_crops/                                # Intermediate TIF crops (pre-rotation)
+│       │   └── {snip_id}.tif
+│       ├── processed/                                # Final JPEG crops (rotation + CLAHE + noise)
+│       │   └── {snip_id}.jpg
+│       └── snip_manifest.csv                         # REQUIRED_COLUMNS_SNIP_MANIFEST (paths, rotation angle, timestamps)
 │
 ├── computed_features/                                # Feature extraction outputs (per snip_id)
 │   └── {experiment_id}/
 │       ├── mask_geometry_metrics.csv                 # SAM2 mask geometry w/ px→μm² conversions (feature_extraction/mask_geometry_metrics.py)
 │       ├── pose_kinematics_metrics.csv               # Embryo pose + motion (feature_extraction/pose_kinematics_metrics.py)
-│       ├── developmental_stage.csv                   # Predicted HPF + confidence (stage_inference.py)
-│       └── consolidated_snip_features.csv            # Merge of tracking_table + mask_geometry + pose_kinematics + stage (one row per snip_id)
+│       ├── stage_predictions.csv                     # Predicted HPF + confidence (predict_developmental_stage.py)
+│       └── consolidated_snip_features.csv            # Merge of segmentation_tracking + mask_geometry + pose_kinematics + stage (+ experiment & well IDs)
 │
 ├── quality_control/                                  # QC assessments organised by dependency
 │   └── {experiment_id}/
@@ -75,7 +86,7 @@ Directory Structure
 │       ├── morphology_qc/                            # Feature-derived validations
 │       │   └── size_validation.csv                   # Surface area outlier flags (SA outlier = critical signal)
 │       └── consolidated/
-│           ├── consolidated_qc_flags.csv             # Row-wise merge of all QC outputs
+│           ├── consolidated_qc_flags.csv             # REQUIRED_COLUMNS_QC (QC_FAIL_FLAGS + viability timing, etc.)
 │           └── use_embryo_flags.csv                  # Final boolean gating for embeddings/analysis
 │
 ├── latent_embeddings/                                # VAE latents (QC-passed `use_embryo == True`)
@@ -83,8 +94,8 @@ Directory Structure
 │       └── {experiment_id}_latents.csv               # snip_id, z0, z1, ..., z{dim-1}
 │
 ├── analysis_ready/                                   # Final analysis tables (per experiment)
-│   └── {experiment_id}features_qc_embeddings.csv
-│                                                     # consolidated_snip_features + consolidated_qc_flags + embeddings
+│   └── {experiment_id}/
+│       └── features_qc_embeddings.csv                # REQUIRED_COLUMNS_ANALYSIS_READY (features + QC + plate/scope metadata + embeddings)
 │                                                     # Includes `embedding_calculated` column for filtering and, when multi-model,
 │                                                     # optional `embedding_model` metadata
 │
