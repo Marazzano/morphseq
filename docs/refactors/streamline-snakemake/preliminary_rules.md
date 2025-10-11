@@ -679,6 +679,24 @@ OUTPUT_COLUMNS_POSE_KINEMATICS = [
 
 ---
 
+### `rule compute_fraction_alive`
+**Input:**
+- `segmentation/{exp}/segmentation_tracking.csv` [VALIDATED]
+- `segmentation/{exp}/unet_masks/viability/`
+
+**Output:**
+- `computed_features/{exp}/fraction_alive.csv`
+
+**Module:**
+- `feature_extraction/fraction_alive.py`
+
+**Purpose:**
+- Measure the proportion of viable pixels per snip using UNet viability masks
+- Aggregate by `snip_id` using SAM2 masks to normalize for embryo area
+- Emits continuous `fraction_alive` plus helper metadata (e.g., total viability pixels)
+
+---
+
 ### `rule predict_developmental_stage`
 **Input:**
 - `computed_features/{exp}/mask_geometry_metrics.csv` [needs area_um2]
@@ -713,6 +731,7 @@ OUTPUT_COLUMNS_STAGE_PREDICTIONS = [
 - `segmentation/{exp}/segmentation_tracking.csv` [base table with snip_id]
 - `computed_features/{exp}/mask_geometry_metrics.csv`
 - `computed_features/{exp}/pose_kinematics_metrics.csv`
+- `computed_features/{exp}/fraction_alive.csv`
 - `computed_features/{exp}/stage_predictions.csv`
 - `experiment_metadata/{exp}/scope_and_plate_metadata.csv` [for joining experiment_id, well_id]
 
@@ -744,6 +763,7 @@ QC modules compute independent quality flags from various sources (SAM2, UNet ma
 **Input**
 - `segmentation/{exp}/segmentation_tracking.csv` `[VALIDATED]`
 - `segmentation/{exp}/unet_masks/` (viability, yolk, focus, bubble from Phase 3b)
+- `computed_features/{exp}/fraction_alive.csv`
 - `experiment_metadata/{exp}/scope_and_plate_metadata.csv`
 
 **Output**
@@ -753,14 +773,10 @@ QC modules compute independent quality flags from various sources (SAM2, UNet ma
 - `quality_control/auxiliary_mask_qc.py`
 - Uses `qc_utils.compute_qc_flags()`, `qc_utils.compute_fraction_alive()`
 
-**Purpose**
-- Compute QC flags from UNet auxiliary masks:
-  - `dead_flag` - viability mask indicates dead regions (`fraction_alive < 0.9`)
-  - `no_yolk_flag` - no yolk sac detected
-  - `focus_flag` - out-of-focus regions near embryo
-  - `bubble_flag` - air bubbles near embryo
-  - `frame_flag` - embryo touches frame (disabled in SAM2 pipeline, kept for legacy)
-- Compute `fraction_alive` from embryo + viability masks
+- **Purpose**
+  - Join `fraction_alive` with auxiliary mask overlays
+  - Threshold viability (`fraction_alive < dead_threshold`, default 0.9) to produce the canonical `dead_flag`
+  - Emit imaging QC flags derived from UNet masks (`no_yolk_flag`, `focus_flag`, `bubble_flag`, `frame_flag` legacy)
 
 **Columns**
 `snip_id`, `fraction_alive`, `dead_flag`, `no_yolk_flag`, `focus_flag`, `bubble_flag`, `frame_flag`
@@ -792,7 +808,7 @@ QC modules compute independent quality flags from various sources (SAM2, UNet ma
 
 ---
 
-### `rule compute_death_lead_time_flags`
+### `rule compute_death_lead_time_flag`
 **Input**
 - `quality_control/{exp}/auxiliary_mask_qc.csv` (for `dead_flag`)
 - `computed_features/{exp}/consolidated_snip_features.csv` (for `embryo_id`, `predicted_stage_hpf`)
@@ -802,17 +818,17 @@ QC modules compute independent quality flags from various sources (SAM2, UNet ma
 
 **Module**
 - `quality_control/death_detection.py`
-- Function: `compute_dead_flag2_persistence()`
+- Function: `compute_death_lead_time_flag()`
 
 **Purpose**
-- Retroactively flag embryos in hours leading up to death
-- For embryos with any `dead_flag==True`:
+- Retroactively flag embryos in hours leading up to the canonical `dead_flag`
+- For embryos with any `dead_flag == True`:
   - Find first death time
   - Flag all timepoints within `dead_lead_time` hours before death (default 2.0)
-- Rationale: Embryos show abnormal morphology before death is detectable
+- Column is named `death_lead_time_flag` to avoid introducing a second death flag; gating treats it as a separate QC signal.
 
 **Columns**
-`snip_id`, `dead_flag2`
+`snip_id`, `death_lead_time_flag`
 
 **Parameter**
 `dead_lead_time = 2.0` hours (configurable)
@@ -839,7 +855,7 @@ QC modules compute independent quality flags from various sources (SAM2, UNet ma
 - Compute final `use_embryo_flag`:
   ```python
   use_embryo_flag = NOT (
-      dead_flag OR dead_flag2 OR sa_outlier_flag OR
+      dead_flag OR death_lead_time_flag OR sa_outlier_flag OR
       sam2_qc_flag OR focus_flag OR bubble_flag OR no_yolk_flag
       # frame_flag DISABLED (too sensitive; SAM2 edge detection preferred)
   )
@@ -891,13 +907,24 @@ src/data_pipeline/schemas/
 src/data_pipeline/
 ├── metadata/
 │   ├── plate_processing.py
-│   └── generate_image_manifest.py    # NEW - Builds + validates manifest
-└── preprocessing/
-    ├── keyence/
-    │   └── extract_scope_metadata.py  # Modified - adds channel normalization
-    ├── yx1/
-    │   └── extract_scope_metadata.py  # Modified - adds channel normalization
-    └── consolidate_plate_n_scope_metadata.py
+│   └── generate_image_manifest.py
+├── preprocessing/
+│   ├── keyence/
+│   │   └── extract_scope_metadata.py
+│   ├── yx1/
+│   │   └── extract_scope_metadata.py
+│   └── consolidate_plate_n_scope_metadata.py
+├── snip_processing/
+│   ├── extraction.py
+│   ├── rotation.py
+│   ├── augmentation.py
+│   └── manifest_generation.py
+└── feature_extraction/
+    ├── mask_geometry_metrics.py
+├── pose_kinematics_metrics.py
+├── fraction_alive.py
+├── stage_inference.py
+└── consolidate_features.py
 ```
 
 ### **New Data Outputs**
@@ -919,6 +946,18 @@ segmentation/{exp}/
 ├── sam2_raw_output.json
 ├── segmentation_tracking.csv [VALIDATED]
 └── mask_images/
+
+processed_snips/{exp}/
+├── raw_crops/{snip_id}.tif
+├── processed/{snip_id}.jpg
+└── snip_manifest.csv [VALIDATED]
+
+computed_features/{exp}/
+├── mask_geometry_metrics.csv
+├── pose_kinematics_metrics.csv
+├── fraction_alive.csv
+├── stage_predictions.csv
+└── consolidated_snip_features.csv [VALIDATED]
 ```
 
 ### **Key Changes from Original Plan**
