@@ -6,8 +6,12 @@ Snakemake data-flow plan.  Each phase document links back to the
 original component deep-dives while highlighting the specific files
 and deliverables required to unlock that phase of the pipeline.
 
-- `phase_1.md` – experiment metadata bootstrap (plate/scope manifests,
-  joined metadata, image manifest).  
+- `phase_1.md` – input metadata alignment (plate/scope parsing,
+  series-number mapping, joined metadata).  
+- `phase_2.md` – stitched FF image build (microscope-specific builders,
+  diagnostics, ID generation).  
+- `phase_3.md` – segmentation & UNet auxiliary masks (GroundingDINO,
+  SAM2, tracking CSV, UNet viability/bubble/focus/yolk outputs).  
 - Additional phase guides will be added as the refactor advances
   beyond Phase 1.
 

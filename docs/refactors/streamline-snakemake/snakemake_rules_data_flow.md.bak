@@ -105,7 +105,7 @@ Perform microscope-specific z-stack collapse and tile stitching to produce norma
 - `experiment_metadata/{exp}/experiment_image_manifest.json` [VALIDATED]
 
 **Module:**
-- `metadata_ingest/manifests/generate_image_manifest.py`
+- `metadata_ingest/manifests/generate_image_manifest.py` *(location may move once Phase 3 plan is finalized)*
 - Schema: `schemas/image_manifest.py` (REQUIRED_EXPERIMENT_FIELDS, REQUIRED_WELL_FIELDS, REQUIRED_CHANNEL_FIELDS, REQUIRED_FRAME_FIELDS)
 
 **Purpose:**

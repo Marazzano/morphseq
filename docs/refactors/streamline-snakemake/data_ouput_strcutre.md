@@ -43,13 +43,8 @@ This document defines the complete data output structure for the MorphSeq pipeli
 │   └── embeddings/
 │       ├── morphology_vae_2024/                      # Current production VAE
 │       └── legacy/
-│
-├── built_image_data/                                 # Standardized stitched FF images (generation of ids up to image_id)
-│   └── {experiment_id}/                              # e.g., EXP1234_T30_etc/
-│       └── stitched_images/
-│           └── {well_id}/                            # e.g., well_id = {experiment_id}_{well_index}
-│               └── {channel_name}/                   # Normalized channel name (BF, GFP, etc.)
-│                   └── {well_id}_{channel_name}_t{frame_index}.tif  # e.g., EXP1234_T30_etc_BF_t0000.tiff the {image_id}.tiff
+├── identifiers/                                # Shared utilities
+│   └── parsing.py                             # ID parsing (from parsing_utils.py)
 │
 ├── segmentation/                                     # Segmentation outputs (per experiment) embryo_ids and snip_ids generated here
 │   └── {experiment_id}/
