@@ -18,7 +18,7 @@
    - No redundant intermediate files
 
 3. **Unified Viability Handling:**
-   - Single `qc_viability` rule computes `fraction_alive` + `dead_flag`
+   - Single `compute_embryo_death_qc` rule computes `fraction_alive` + `dead_flag`
    - No separate `dead_flag` vs `dead_flag2` (unified robust flag)
    - All death detection logic in one module
 
@@ -447,9 +447,9 @@ from data_pipeline.quality_control.auxiliary_unet_imaging_quality_qc import comp
 
 ---
 
-### `rule qc_viability` ✨ UNIFIED MODULE
+### `rule compute_embryo_death_qc` ✨ UNIFIED MODULE
 
-**Purpose:** Compute fraction_alive + death detection with persistence validation
+**Purpose:** Compute fraction_alive + persistent embryo death detection
 
 **Input:**
 ```
@@ -461,7 +461,7 @@ stage_data: computed_features/{experiment_id}/developmental_stage.csv
 
 **Output:**
 ```
-quality_control_flags/{experiment_id}/embryo_viability.csv
+quality_control_flags/{experiment_id}/embryo_death_qc.csv
 ```
 
 **Columns:**
@@ -471,12 +471,13 @@ quality_control_flags/{experiment_id}/embryo_viability.csv
 - time_int
 - fraction_alive             # Raw viability: 1 - (necrotic/total)
 - dead_flag                  # Unified death flag (persistence + 2hr buffer)
-- dead_inflection_time_int   # Death timepoint (same for all snips of embryo)
+- dead_inflection_time_int   # Frame index where persistent death is detected
+- death_predicted_stage_hpf  # Predicted HPF at the inflection point
 ```
 
 **Run:**
 ```python
-from data_pipeline.quality_control.embryo_viability_qc import compute_viability_qc
+from data_pipeline.quality_control.embryo_death_qc import compute_embryo_death_qc
 ```
 
 **Algorithm:**
@@ -485,7 +486,8 @@ from data_pipeline.quality_control.embryo_viability_qc import compute_viability_
 3. For each embryo, detect `fraction_alive` decline points
 4. Validate persistence: ≥25% of post-inflection points must have simple threshold
 5. If persistent, set `dead_inflection_time_int` for all snips of embryo
-6. Apply 2hr buffer using `predicted_stage_hpf`, set `dead_flag=True`
+6. Capture `death_predicted_stage_hpf` from `predicted_stage_hpf` at inflection
+7. Apply 2hr buffer using `predicted_stage_hpf`, set `dead_flag=True`
 
 **Notes:**
 - **CONSOLIDATES** legacy `dead_flag` (simple threshold) + `dead_flag2` (persistence)
@@ -644,7 +646,7 @@ from data_pipeline.embeddings.inference import ensure_embeddings
 1. **`sam2_format_csv`** - Critical missing rule to create tracking_table.csv
 
 ### ✅ Unified Rules:
-2. **`qc_viability`** - Consolidates fraction_alive computation + death detection
+2. **`compute_embryo_death_qc`** - Consolidates fraction_alive computation + death detection
    - Old: Split across `qc_utils.py` (Build03) + `death_detection.py` (Build04)
    - New: Single module, single output file
 
@@ -656,7 +658,7 @@ from data_pipeline.embeddings.inference import ensure_embeddings
 
 ### ✅ Output Consolidation:
 4. **Unified death flag** - No more `dead_flag` vs `dead_flag2`
-5. **Single viability output** - `embryo_viability.csv` contains both raw metric + flag
+5. **Single death QC output** - `embryo_death_qc.csv` contains both raw metric + flag
 
 ---
 
@@ -670,7 +672,7 @@ gdino_detect → sam2_segment_and_track → sam2_format_csv → sam2_export_mask
     ↓                                          ↓
 unet_segment                         compute_mask_geometry_metrics
     ↓                                          ↓
-qc_viability (uses UNet + SAM2)     compute_pose_kinematics_metrics
+compute_embryo_death_qc (uses UNet + SAM2)     compute_pose_kinematics_metrics
                                                ↓
                                        infer_embryo_stage
                                                ↓
@@ -683,7 +685,7 @@ extract_snips ──────────────────────
 ```
 unet_segment → {embryo, viability, yolk, focus, bubbles}
     │
-    ├─ viability → qc_viability (fraction_alive + dead_flag)
+    ├─ viability → compute_embryo_death_qc (fraction_alive + dead_flag)
     ├─ yolk      → qc_imaging (no_yolk_flag)
     ├─ focus     → qc_imaging (focus_flag)
     ├─ bubble    → qc_imaging (bubble_flag)
@@ -696,6 +698,6 @@ unet_segment → {embryo, viability, yolk, focus, bubbles}
 
 1. ✅ Review this rule specification
 2. ⚠️ Implement `sam2_format_csv` rule (critical missing piece)
-3. ⚠️ Create unified `embryo_viability_qc.py` module
+3. ⚠️ Create unified `embryo_death_qc.py` module
 4. ⚠️ Update Snakefile with these rules
 5. ⚠️ Test DAG dependency resolution

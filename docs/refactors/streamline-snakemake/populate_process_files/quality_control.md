@@ -25,7 +25,7 @@ Goal: replace the sprawling Build04 QC script with dependency-scoped modules tha
 
 ---
 
-## `quality_control/auxiliary_mask_qc/embryo_viability_qc.py`
+## `quality_control/auxiliary_mask_qc/embryo_death_qc.py`
 **Responsibilities**
 - Compute `fraction_alive`, persistent death detection, and `dead_flag` using UNet viability masks plus SAM2 tracks.
 - Respect the approved Option 1 architecture (persistence + 2 hour buffer).
@@ -34,7 +34,7 @@ Goal: replace the sprawling Build04 QC script with dependency-scoped modules tha
 - `load_viability_masks(mask_root: Path, experiment_id: str) -> dict[str, list[np.ndarray]]`
 - `compute_fraction_alive(mask_geometry: pd.DataFrame, viability_masks: dict[str, list[np.ndarray]]) -> pd.DataFrame`
 - `detect_persistent_death(fraction_alive: pd.DataFrame, stage_table: pd.DataFrame, params: ViabilityParams) -> pd.DataFrame`
-- `write_viability_qc(df: pd.DataFrame, output_csv: Path) -> None`
+- `write_embryo_death_qc(df: pd.DataFrame, output_csv: Path) -> None`
 
 **Source material**
 - `build04_perform_embryo_qc.py` (`dead_flag`, persistence logic)
@@ -43,7 +43,7 @@ Goal: replace the sprawling Build04 QC script with dependency-scoped modules tha
 **Cleanup notes**
 - Fraction alive must use mask areas in μm² (sourced from mask geometry module).
 - Stage table provides HPF to compute the 2 hr buffer; enforce presence of `predicted_stage_hpf`.
-- Output schema: `snip_id`, `embryo_id`, `time_int`, `fraction_alive`, `dead_flag`, `dead_inflection_time_int`.
+- Output schema: `snip_id`, `embryo_id`, `time_int`, `fraction_alive`, `dead_flag`, `dead_inflection_time_int`, `death_predicted_stage_hpf`.
 
 ---
 
@@ -121,7 +121,7 @@ Goal: replace the sprawling Build04 QC script with dependency-scoped modules tha
 **Cleanup notes**
 - Join on `snip_id`; fail loudly if mismatched sets appear.
 - Ensure boolean columns remain boolean (no NaN). Use explicit fill defaults (`False`).
-- Keep QC provenance columns (e.g., `dead_inflection_time_int`) intact for downstream analysis.
+- Keep QC provenance columns (e.g., `dead_inflection_time_int`, `death_predicted_stage_hpf`) intact for downstream analysis.
 
 ---
 
