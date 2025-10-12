@@ -53,7 +53,7 @@ ANALYSIS-READY TABLE
 **Key Principles:**
 - Step boundaries stay explicit: preprocessing → segmentation → feature extraction → QC → QC consolidation → embeddings → analysis-ready hand-off
 - Schema-backed validation at every consolidation point: REQUIRED_COLUMNS_* live in `src/data_pipeline/schemas/` and each writer enforces column existence + non-null.
-- Plate metadata normalization is isolated: `metadata/plate_processing.py` standardizes Excel inputs, microscopes export only scope metadata, and `preprocessing/consolidate_plate_n_scope_metadata.py` performs the shared join.
+- Plate metadata normalization is isolated: `metadata/plate_processing.py` standardizes Excel inputs, microscopes export only scope metadata, `metadata_mapping/series_well_mapper.py` records series→well alignment, and `metadata_mapping/align_metadata.py` performs the shared join.
 - The experiment image manifest (`metadata/generate_image_manifest.py`) is the single source of truth for per-well, per-channel frame ordering; all segmentation rules consume `experiment_metadata/{exp}/experiment_image_manifest.json`.
 - `consolidated_snip_features.csv` is the single feature source for every QC module (no duplicate joins)
 - Surface-area metrics must be converted to `area_um2` using microscope metadata before downstream use (no pure pixel-area logic)
@@ -121,20 +121,24 @@ src/data_pipeline/
 │   ├── quality_control.py
 │   └── analysis_ready.py
 │
-├── metadata/                                   # Metadata operations
-│   ├── plate_processing.py                    # Normalize Excel layouts → plate_metadata.csv (schema-backed)
-│   ├── generate_image_manifest.py            # Build experiment_image_manifest.json (channel-normalized frame inventory)
-│   └── enrichment.py                          # Perturbation metadata merging
+├── metadata_ingest/                           # Phase 1a/1b metadata capture & alignment
+│   ├── plate/
+│   │   └── plate_processing.py            # Normalize Excel layouts → plate_metadata.csv (schema-backed)
+│   ├── scope/
+│   │   ├── keyence_scope_metadata.py      # Keyence scope metadata extractor (schema-backed)
+│   │   └── yx1_scope_metadata.py          # YX1 scope metadata extractor (schema-backed)
+│   ├── mapping/
+│   │   ├── series_well_mapper.py          # Explicit series ↔ well mapping with provenance
+│   │   └── align_scope_plate.py           # Join validated plate + scope metadata
+│   └── manifests/
+│       └── generate_image_manifest.py     # Build experiment_image_manifest.json (Phase 3) — may relocate once Phase 3 plan is finalized
 │
-├── preprocessing/                              # Raw → stitched images + scope metadata
+├── image_building/                            # Phase 2 stitched image generation
 │   ├── keyence/
-│   │   ├── stitching.py                       # Tile stitching logic
-│   │   ├── z_stacking.py                      # Z-slice focus stacking
-│   │   └── extract_scope_metadata.py          # Keyence scope metadata extractor (schema-backed)
-│   ├── yx1/
-│   │   ├── processing.py                      # YX1-specific processing
-│   │   └── extract_scope_metadata.py          # YX1 scope metadata extractor (schema-backed)
-│   └── consolidate_plate_n_scope_metadata.py  # Join validated plate + scope metadata (shared)
+│   │   ├── stitched_ff_builder.py          # Tile stitching → built_image_data/*/stitched_ff_images
+│   │   └── z_stacking.py                   # Keyence Z-slice focus stacking
+│   └── yx1/
+│       └── stitched_ff_builder.py          # YX1 pipeline → built_image_data/*/stitched_ff_images
 │
 ├── segmentation/                               # Segmentation
 │   ├── grounded_sam2/                          # SAM2 embryo tracking (PRIMARY)
@@ -216,7 +220,7 @@ src/data_pipeline/
 - **yx1/**: YX1 microscope processing plus `extract_scope_metadata.py` tailored to the YX1 header formats.
 
 **Shared joiner:**
-- `consolidate_plate_n_scope_metadata.py` merges validated plate + scope CSVs (microscope-agnostic) and enforces `REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA`.
+- `metadata_mapping/series_well_mapper.py` emits explicit series→well mapping + provenance, feeding `metadata_mapping/align_metadata.py`, which merges validated plate + scope CSVs and enforces `REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA`.
 
 **Why separate?** Different microscopes have different:
 - File formats
@@ -505,7 +509,7 @@ Functions:
 **Preprocessing**
 - Extract from `build01A_compile_keyence_torch.py` → `preprocessing/keyence/` (stitching + `extract_scope_metadata.py` that emits schema-aligned CSV)
 - Extract from `build01B_compile_yx1_images_torch.py` → `preprocessing/yx1/` (processing + `extract_scope_metadata.py` for YX1 headers)
-- Implement shared `preprocessing/consolidate_plate_n_scope_metadata.py` joiner that consumes validated plate + scope metadata and enforces `REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA`
+- Implement shared `metadata_mapping/series_well_mapper.py` + `metadata_mapping/align_metadata.py` pipeline that consumes validated plate + scope metadata, enforces `REQUIRED_COLUMNS_SERIES_MAPPING`, and yields schema-checked `scope_and_plate.csv`
 - Wire up `metadata/generate_image_manifest.py` to read consolidated metadata + stitched images and emit `experiment_image_manifest.json`
 
 **UNet segmentation (auxiliary masks)**
@@ -667,7 +671,20 @@ Functions:
 
 This section provides the complete data pipeline output structure aligned with the Snakemake rules defined in `preliminary_rules.md`.
 
-### **Experiment Metadata** (Phase 1-2 outputs)
+### **Input Metadata Alignment** (Phase 1 outputs)
+```
+input_metadata_alignment/{exp}/
+├── raw_inputs/
+│   ├── plate_layout.csv                # Parsed plate layout (schema: REQUIRED_COLUMNS_PLATE_METADATA)
+│   └── {microscope}_scope_raw.csv      # Per-microscope scope metadata (schema: REQUIRED_COLUMNS_SCOPE_METADATA)
+├── series_mapping/
+│   ├── series_well_mapping.csv         # Explicit series_number → well_index mapping (with mapping_method)
+│   └── mapping_provenance.json         # Mapping summary, warnings, provenance info
+└── aligned_metadata/
+    └── scope_and_plate.csv             # Joined & validated metadata (schema: REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA)
+```
+
+### **Experiment Metadata** (Phase 1 hand-off → Phase 2)
 ```
 experiment_metadata/{exp}/
 ├── plate_metadata.csv [VALIDATED]                # Normalized well annotations from Excel
@@ -679,10 +696,13 @@ experiment_metadata/{exp}/
 ### **Built Image Data** (Phase 2 outputs)
 ```
 built_image_data/{exp}/
-└── stitched_images/
+└── stitched_ff_images/
     └── {well_id}/                                # well_id = {experiment_id}_{well_index}
-        └── {channel_name}/                       # Normalized: BF, GFP, etc.
-            └── {well_id}_{channel_name}_t{frame_index}.tif  # image_id format
+        └── {channel_name}/                       # Normalized channel name (BF, GFP, etc.)
+            └── {well_id}_{channel_name}_t{frame_index}.tif  # image_id-based filename
+
+build_diagnostics/{exp}/
+└── stitching_{microscope}.csv                    # Z-stack / stitching QA logs per microscope
 ```
 
 **Key points:**
