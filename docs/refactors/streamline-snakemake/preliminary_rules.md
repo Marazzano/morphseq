@@ -841,7 +841,7 @@ Generate the **ONLY** death flag by thresholding `fraction_alive` metric.
 - `dead_flag` - THE ONLY SOURCE of death detection (threshold: fraction_alive < 0.9)
 
 **Output columns:**
-`snip_id`, `embryo_id`, `time_int`, `fraction_alive`, `dead_flag`, `first_death_time_int`
+`snip_id`, `embryo_id`, `time_int`, `fraction_alive`, `dead_flag`, `dead_inflection_time_int`, `death_predicted_stage_hpf`
 
 **Key point:** This is the single authoritative source for `dead_flag`. No other module generates death-related flags.
 

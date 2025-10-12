@@ -464,7 +464,7 @@ Functions:
 **Move as-is:**
 1. `segmentation_sandbox/scripts/utils/parsing_utils.py` → `identifiers/parsing.py` (~800 lines)
 2. `src/build/qc_utils.py` → `quality_control/auxiliary_mask_qc/imaging_quality_qc.py` (135 lines)
-3. `src/data_pipeline/quality_control/death_detection.py` → `quality_control/auxiliary_mask_qc/embryo_viability_qc.py` (317 lines)
+3. `src/data_pipeline/quality_control/death_detection.py` → `quality_control/auxiliary_mask_qc/embryo_death_qc.py` (317 lines)
 4. `segmentation_sandbox/scripts/utils/mask_utils.py` → `segmentation/mask_utilities.py` (~200 lines)
 5. `src/analyze/gen_embeddings/*.py` → `embeddings/*.py` (~300 lines total)
 
@@ -561,7 +561,7 @@ Functions:
 **Quality control**
 - Extract from `build04_perform_embryo_qc.py` into dependency-scoped packages:
   - `quality_control/auxiliary_mask_qc/imaging_quality_qc.py`
-  - `quality_control/auxiliary_mask_qc/embryo_viability_qc.py`
+  - `quality_control/auxiliary_mask_qc/embryo_death_qc.py`
   - `quality_control/segmentation_qc/tracking_metrics_qc.py`
   - `quality_control/segmentation_qc/segmentation_quality_qc.py`
   - `quality_control/morphology_qc/size_validation_qc.py`

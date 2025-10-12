@@ -49,7 +49,7 @@ src/data_pipeline/quality_control/
 ├── auxiliary_mask_qc/                  # UNet auxiliary mask-dependent QC
 │   ├── __init__.py
 │   ├── imaging_quality.py              # frame, yolk, focus, bubble flags
-│   └── embryo_viability.py             # fraction_alive + dead_flag (unified)
+│   └── embryo_death_qc.py              # fraction_alive + dead_flag (unified)
 │
 ├── segmentation_qc/                    # SAM2-only QC
 │   ├── __init__.py
@@ -113,7 +113,7 @@ Columns:
 
 ---
 
-### 2. `auxiliary_mask_qc/embryo_viability.py`
+### 2. `auxiliary_mask_qc/embryo_death_qc.py`
 
 **Purpose:** Unified viability QC (fraction_alive + death detection)
 
@@ -150,13 +150,15 @@ def compute_viability_qc(
     Algorithm:
         1. Compute fraction_alive for each snip
         2. Detect persistent death inflection points per embryo
-        3. Apply 2hr buffer using predicted_stage_hpf
-        4. Flag dead embryos
+        3. Capture predicted_stage_hpf at inflection
+        4. Apply 2hr buffer using predicted_stage_hpf
+        5. Flag dead embryos
 
     Returns DataFrame with:
         - fraction_alive
         - dead_flag (unified, persistence-validated)
         - dead_inflection_time_int
+        - death_predicted_stage_hpf
     """
 ```
 
@@ -165,7 +167,7 @@ def compute_viability_qc(
 - UNet viability masks
 - Stage predictions (for buffer calculation)
 
-**Output:** `quality_control_flags/{experiment_id}/embryo_viability.csv`
+**Output:** `quality_control_flags/{experiment_id}/embryo_death_qc.csv`
 ```
 Columns:
     - snip_id
@@ -174,6 +176,7 @@ Columns:
     - fraction_alive
     - dead_flag
     - dead_inflection_time_int
+    - death_predicted_stage_hpf
 ```
 
 **Migrated from:**
@@ -367,7 +370,7 @@ Columns:
 ```
 quality_control_flags/{experiment_id}/
     ├── imaging_quality.csv        # frame, yolk, focus, bubble flags
-    └── embryo_viability.csv       # fraction_alive, dead_flag, dead_inflection_time_int
+    └── embryo_death_qc.csv        # fraction_alive, dead_flag, dead_inflection_time_int, death_predicted_stage_hpf
 ```
 
 **SAM2-Only:**
@@ -392,7 +395,7 @@ quality_control_flags/{experiment_id}/
 1. **Create:** `auxiliary_mask_qc/imaging_quality.py`
    - Extract from: `src/build/qc_utils.py::compute_qc_flags()`
 
-2. **Create:** `auxiliary_mask_qc/embryo_viability.py`
+2. **Create:** `auxiliary_mask_qc/embryo_death_qc.py`
    - Extract from: `src/build/qc_utils.py::compute_fraction_alive()`
    - Merge with: `death_detection.py` (entire module)
 
@@ -406,7 +409,7 @@ quality_control_flags/{experiment_id}/
 
 6. **Move:** `generate_references/build_sa_reference.py` → `references/build_sa_reference.py`
 
-7. **Delete:** `death_detection.py` (merged into embryo_viability.py)
+7. **Delete:** `death_detection.py` (merged into embryo_death_qc.py)
 
 8. **Delete:** `qc_utils.py` (functions distributed to proper modules)
 
@@ -425,7 +428,7 @@ quality_control_flags/{experiment_id}/
 ```python
 # Can run in parallel (no shared dependencies):
 - imaging_quality (UNet yolk/focus/bubble)
-- embryo_viability (UNet viability)
+- embryo_death_qc (UNet viability)
 - segmentation_quality (SAM2 JSON)
 - tracking_quality (SAM2 tracking)
 - size_validation (morphology features)
@@ -454,7 +457,7 @@ quality_control_flags/{experiment_id}/
 ```
 quality_control/
     ├── imaging_quality_qc.py
-    ├── embryo_viability_qc.py
+    ├── embryo_death_qc.py
     ├── mask_quality_qc.py
     ├── tracking_quality_qc.py
     └── size_validation_qc.py

@@ -50,7 +50,7 @@ src/data_pipeline/
 ├── quality_control/
 │   ├── auxiliary_mask_qc/              # UNet-dependent QC
 │   │   ├── imaging_quality.py          # frame, yolk, focus, bubble
-│   │   └── embryo_viability.py         # fraction_alive, dead_flag
+│   │   └── embryo_death_qc.py          # fraction_alive, dead_flag, inflection metadata
 │   │
 │   ├── segmentation_qc/                # SAM2-only QC
 │   │   ├── mask_quality.py             # SAM2 validation (7 checks)
@@ -98,7 +98,7 @@ computed_features/{experiment_id}/      # NEW: Mask-based features
 
 quality_control_flags/{experiment_id}/
     ├── imaging_quality.csv             # frame, yolk, focus, bubble
-    ├── embryo_viability.csv            # fraction_alive, dead_flag, dead_inflection_time_int
+    ├── embryo_death_qc.csv             # fraction_alive, dead_flag, dead_inflection_time_int, death_predicted_stage_hpf
     ├── segmentation_quality.csv        # 7 SAM2 validation flags
     ├── tracking_quality.csv            # speed, trajectory, tracking_error_flag
     ├── size_validation.csv             # sa_outlier_flag
@@ -220,7 +220,7 @@ def infer_hpf_stage(surface_area_um: float, reference_df: pd.DataFrame) -> Tuple
 ```
 quality_control_flags/{experiment_id}/
     ├── imaging_quality.csv
-    ├── embryo_viability.csv
+    ├── embryo_death_qc.csv
     ├── segmentation_quality.csv
     ├── tracking_quality.csv
     └── size_validation.csv
@@ -239,10 +239,11 @@ Columns:
     - focus_flag
     - bubble_flag
 
-    # Viability (3 columns)
+    # Embryo death QC (4 columns)
     - fraction_alive
     - dead_flag
     - dead_inflection_time_int
+    - death_predicted_stage_hpf
 
     # Segmentation quality (7 flags)
     - HIGH_SEGMENTATION_VAR_SNIP
@@ -445,7 +446,7 @@ rule infer_embryo_stage:
 rule consolidate_qc:
     input:
         imaging=quality_control_flags/{experiment_id}/imaging_quality.csv,
-        viability=quality_control_flags/{experiment_id}/embryo_viability.csv,
+        embryo_death=quality_control_flags/{experiment_id}/embryo_death_qc.csv,
         segmentation=quality_control_flags/{experiment_id}/segmentation_quality.csv,
         tracking=quality_control_flags/{experiment_id}/tracking_quality.csv,
         size=quality_control_flags/{experiment_id}/size_validation.csv
