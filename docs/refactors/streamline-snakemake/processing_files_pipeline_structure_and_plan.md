@@ -154,21 +154,20 @@ src/data_pipeline/
 ├── feature_extraction/                         # SAM2-derived feature computations
 │   ├── mask_geometry_metrics.py               # Area, perimeter, contour stats + px→μm² conversion → mask_geometry_metrics.csv
 │   ├── pose_kinematics_metrics.py             # Centroid, bbox, orientation, deltas → pose_kinematics_metrics.csv
+│   ├── fraction_alive.py                      # Viability metric from UNet masks → fraction_alive.csv (0-1 continuous)
 │   ├── stage_inference.py                     # HPF (developmental stage) prediction
 │   └── consolidate_features.py                # Assemble consolidated_snip_features.csv (imports REQUIRED_COLUMNS_FEATURES)
 │
 ├── quality_control/                            # Quality Control signals
 │   ├── auxiliary_mask_qc/
-│   │   ├── imaging_quality_qc.py              # Frame, yolk, focus, bubble flags (from UNet)
-│   │   └── embryo_viability_qc.py             # fraction_alive + dead_flag (UNet viability + SAM2)
+│   │   ├── imaging_quality_qc.py              # Yolk, focus, bubble flags (from UNet masks)
+│   │   └── death_detection.py                 # ONLY takes fraction_alive.csv, GENERATES dead_flag (threshold < 0.9)
 │   ├── segmentation_qc/
-│   │   ├── segmentation_quality_qc.py         # SAM2 mask quality checks
-│   │   └── tracking_metrics_qc.py             # Movement speed, trajectory validation
+│   │   └── segmentation_quality_qc.py         # SAM2 mask quality checks (extracts functions from gsam_qc_class.py)
 │   ├── morphology_qc/
-│   │   └── size_validation_qc.py              # Surface area outlier detection
+│   │   └── size_validation_qc.py              # Surface area outlier detection (from features)
 │   └── consolidation/
-│       ├── consolidate_qc.py                  # Merge all QC CSVs per snip_id (imports REQUIRED_COLUMNS_QC)
-│       └── compute_use_embryo.py              # Apply gating logic → use_embryo_flags.csv
+│       └── consolidate_qc.py                  # Merge all QC CSVs per snip_id, compute use_embryo_flag (imports REQUIRED_COLUMNS_QC)
 │
 ├── embeddings/                                 # Latent Embeddings (QC-passed snips only)
 │   ├── inference.py                           # VAE embedding generation
@@ -384,13 +383,14 @@ Shared utilities for all segmentation methods:
 ### **embeddings/**
 **Purpose:** Generate latent representations for QC-approved snips
 
-**Complex subprocess logic:**
-- Uses Python 3.9 for legacy model compatibility
-- Subprocess orchestration with error handling
-- File validation to avoid recomputation
-- Filters inputs to `use_embryo == True` before launching inference
+**Core pieces:**
+- `prepare_manifest.py`: Filter `use_embryo == True`, verify JPEGs exist, and write a stable embedding manifest per experiment/model.
+- `inference.py` + `subprocess_wrapper.py`: Launch VAE inference in a Python 3.9 subprocess (GPU/CPU selection via `config/runtime.py`).
+- `file_validation.py`: Ensure latent CSVs match manifest rows, contain the expected dimensions, and include `embedding_model` metadata.
 
-**Already well-organized** - just needs to move from `src/analyze/gen_embeddings/`
+**Notes:**
+- Reuses the legacy embedding stack from `src/analyze/gen_embeddings/`, but now runs under Snakemake control.
+- Staging the manifest allows cheap revalidation without re-running inference.
 
 ---
 

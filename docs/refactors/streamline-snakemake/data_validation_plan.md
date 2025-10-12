@@ -254,6 +254,21 @@ REQUIRED_COLUMNS_ANALYSIS_READY = [
     # Note: Embedding columns (z0...z{dim-1}) are optional and checked separately
 ] + REQUIRED_COLUMNS_FEATURES + REQUIRED_COLUMNS_QC + REQUIRED_COLUMNS_PLATE_METADATA + REQUIRED_COLUMNS_SCOPE_METADATA #we want these as well 
 ```
+
+#### `embeddings.py`
+```python
+REQUIRED_COLUMNS_EMBEDDING_MANIFEST = [
+    'snip_id',
+    'processed_snip_path',
+    'use_embryo_flag',
+]
+
+REQUIRED_COLUMNS_LATENTS = [
+    'snip_id',
+    'embedding_model',
+    # Followed by z0 … z{dim-1}; validator checks expected dimensionality per model
+]
+```
 ---
 
 ### 2. Integration with Inline Validation
@@ -708,6 +723,7 @@ DOWNSTREAM PROCESSING
 - [ ] Pipeline fails with clear error if `well_id` or `is_seed_frame` missing in segmentation
 - [ ] Pipeline fails with clear error if `cropped_snip_path` is missing/null in snip_manifest
 - [ ] Pipeline fails with clear error if `predicted_stage_hpf` is null in features
+- [ ] Pipeline fails with clear error if `fraction_alive` is null or missing in features
 - [ ] Pipeline fails with clear error if `experiment_id` or `well_id` missing in features
 - [ ] Pipeline fails with clear error if `dead_inflection_time_int` missing in QC
 - [ ] Pipeline fails with clear error if `use_embryo` or `embedding_calculated` missing in analysis_ready
@@ -717,6 +733,8 @@ DOWNSTREAM PROCESSING
 - [ ] `use_embryo` flag is correctly computed using `QC_FAIL_FLAGS`
 - [ ] All validation logic lives inline in consolidation functions
 - [ ] Consolidation function is shared (not duplicated per-microscope)
+- [ ] Embedding manifest contains only gated snips and verified file paths
+- [ ] Latent CSVs include `embedding_model` and expected latent dimensions for each snip
 
 ---
 
