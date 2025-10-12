@@ -131,14 +131,16 @@ src/data_pipeline/
 │   │   ├── series_well_mapper.py          # Explicit series ↔ well mapping with provenance
 │   │   └── align_scope_plate.py           # Join validated plate + scope metadata
 │   └── manifests/
-│       └── generate_image_manifest.py     # Build experiment_image_manifest.json (Phase 3) — may relocate once Phase 3 plan is finalized
+│       └── generate_image_manifest.py     # Build experiment_image_manifest.json  — may relocate once Phase 3 plan is finalized
 │
 ├── image_building/                            # Phase 2 stitched image generation
 │   ├── keyence/
 │   │   ├── stitched_ff_builder.py          # Tile stitching → built_image_data/*/stitched_ff_images
 │   │   └── z_stacking.py                   # Keyence Z-slice focus stacking
-│   └── yx1/
-│       └── stitched_ff_builder.py          # YX1 pipeline → built_image_data/*/stitched_ff_images
+│   ├── yx1/
+│   │   └── stitched_ff_builder.py          # YX1 pipeline → built_image_data/*/stitched_ff_images
+│   └── shared/
+│       └── layout.py                       # Helpers wrapping identifiers/parsing for path & ID generation
 │
 ├── segmentation/                               # Segmentation
 │   ├── grounded_sam2/                          # SAM2 embryo tracking (PRIMARY)
@@ -544,7 +546,7 @@ Functions:
 
 **Extract pure functions, delete class hierarchies**
 
-**Deliverable:** SAM2 pipeline runs via Snakemake
+**Deliverable:** segmentation with sam2 runs via Snakemake
 
 ---
 
