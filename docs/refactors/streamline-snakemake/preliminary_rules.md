@@ -755,128 +755,225 @@ OUTPUT_COLUMNS_STAGE_PREDICTIONS = [
 
 ## Phase 6: Quality Control
 
-QC modules compute independent quality flags from various sources (SAM2, UNet masks, features). A final consolidation rule combines all flags into `use_embryo_flag`.
+**Key principle:** QC modules compute quality flags from pure data sources. Phase 3 outputs NO QC flags - all quality assessment happens here in Phase 6.
+
+QC modules are organized by data provenance:
+- **Segmentation QC:** Flags from SAM2 mask analysis
+- **Auxiliary Mask QC:** Flags from UNet masks (imaging + viability)
+- **Morphology QC:** Flags from feature analysis
+
+---
+
+### `rule compute_segmentation_quality_qc`
+
+**Input:**
+- `segmentation/{exp}/segmentation_tracking.csv` [VALIDATED] (pure segmentation data, includes image dimensions)
+
+**Output:**
+- `quality_control/{exp}/segmentation_quality_qc.csv`
+
+**Module:**
+- `quality_control/segmentation_qc/segmentation_quality_qc.py`
+
+**Purpose:**
+Run SAM2 mask quality checks using functions extracted from `gsam_qc_class.py`:
+- `check_segmentation_variability()` - Detect area variance across frames
+- `check_mask_on_edge()` - Detect masks touching image boundaries
+- `check_discontinuous_masks()` - Detect fragmented/disconnected masks
+- `check_overlapping_masks()` - Detect embryo mask overlaps (bbox check + IoU)
+
+**Flags generated:**
+- `edge_flag` - Mask bbox within 5px of image edge
+- `discontinuous_mask_flag` - Mask has multiple disconnected components
+- `overlapping_mask_flag` - Masks overlap (IoU-based after bbox check)
+- (Note: high_segmentation_var flags computed but not used in QC_FAIL_FLAGS - informational only)
+
+**Output columns:**
+`snip_id`, `edge_flag`, `discontinuous_mask_flag`, `overlapping_mask_flag`
+
+**Key point:** `gsam_qc_class.py` is deprecated - only the QC check functions are extracted and reused here.
 
 ---
 
 ### `rule compute_auxiliary_mask_qc`
-**Input**
-- `segmentation/{exp}/segmentation_tracking.csv` `[VALIDATED]`
-- `segmentation/{exp}/unet_masks/` (viability, yolk, focus, bubble from Phase 3b)
-- `computed_features/{exp}/fraction_alive.csv`
-- `experiment_metadata/{exp}/scope_and_plate_metadata.csv`
 
-**Output**
+**Input:**
+- `segmentation/{exp}/segmentation_tracking.csv` [VALIDATED] (for snip_ids, mask locations, image dims)
+- `segmentation/{exp}/unet_masks/` (yolk, focus, bubble subdirectories)
+
+**Output:**
 - `quality_control/{exp}/auxiliary_mask_qc.csv`
 
-**Module**
-- `quality_control/auxiliary_mask_qc.py`
-- Uses `qc_utils.compute_qc_flags()`, `qc_utils.compute_fraction_alive()`
+**Module:**
+- `quality_control/auxiliary_mask_qc/imaging_quality_qc.py`
 
-- **Purpose**
-  - Join `fraction_alive` with auxiliary mask overlays
-  - Threshold viability (`fraction_alive < dead_threshold`, default 0.9) to produce the canonical `dead_flag`
-  - Emit imaging QC flags derived from UNet masks (`no_yolk_flag`, `focus_flag`, `bubble_flag`, `frame_flag` legacy)
+**Purpose:**
+Analyze UNet auxiliary masks to detect imaging quality issues:
+- Yolk sac detection (missing or abnormal)
+- Out-of-focus regions
+- Air bubble artifacts
 
-**Columns**
-`snip_id`, `fraction_alive`, `dead_flag`, `no_yolk_flag`, `focus_flag`, `bubble_flag`, `frame_flag`
+**Flags generated:**
+- `yolk_flag` - No yolk sac detected or abnormal yolk
+- `focus_flag` - Out-of-focus regions detected
+- `bubble_flag` - Air bubble artifacts detected
+
+**Output columns:**
+`snip_id`, `yolk_flag`, `focus_flag`, `bubble_flag`
+
+---
+
+### `rule compute_embryo_viability_qc`
+
+**Input:**
+- `computed_features/{exp}/fraction_alive.csv` (from Phase 5 feature extraction)
+
+**Output:**
+- `quality_control/{exp}/embryo_viability_qc.csv`
+
+**Module:**
+- `quality_control/auxiliary_mask_qc/death_detection.py`
+
+**Purpose:**
+Generate the **ONLY** death flag by thresholding `fraction_alive` metric.
+
+**Flags generated:**
+- `dead_flag` - THE ONLY SOURCE of death detection (threshold: fraction_alive < 0.9)
+
+**Output columns:**
+`snip_id`, `embryo_id`, `time_int`, `fraction_alive`, `dead_flag`, `first_death_time_int`
+
+**Key point:** This is the single authoritative source for `dead_flag`. No other module generates death-related flags.
 
 ---
 
 ### `rule compute_surface_area_outliers`
-**Input**
-- `computed_features/{exp}/consolidated_snip_features.csv`
-- `metadata/sa_reference_curves.csv` (reference SA curves)
 
-**Output**
-- `quality_control/{exp}/sa_outlier_qc.csv`
+**Input:**
+- `computed_features/{exp}/consolidated_snip_features.csv` (needs `area_um2` + `predicted_stage_hpf`)
+- `metadata/sa_reference_curves.csv` (reference growth curves)
 
-**Module**
-- `quality_control/surface_area_outlier_detection.py`
-- Function: `compute_sa_outlier_flag()`
+**Output:**
+- `quality_control/{exp}/surface_area_outliers_qc.csv`
 
-**Purpose**
-- Flag embryos with abnormal surface area for their stage
-- Two-sided outlier detection:
-  - Upper: `area_um2 > k_upper × reference(stage_hpf)` (k = 1.2)
-  - Lower: `area_um2 < k_lower × reference(stage_hpf)` (k = 0.9)
-- Uses control embryos (wt, control_flag) to build reference curve
-- Fallback to `stage_ref.csv` if insufficient controls
+**Module:**
+- `quality_control/morphology_qc/size_validation_qc.py`
 
-**Columns**
+**Purpose:**
+Flag embryos with abnormal surface area for their developmental stage.
+
+Two-sided outlier detection:
+- Upper bound: `area_um2 > k_upper × reference(stage_hpf)` (k = 1.2)
+- Lower bound: `area_um2 < k_lower × reference(stage_hpf)` (k = 0.9)
+
+Uses control embryos (wt, control_flag) to build reference curve; falls back to `stage_ref.csv` if insufficient controls.
+
+**Flags generated:**
+- `sa_outlier_flag` - Abnormal area for developmental stage
+
+**Output columns:**
 `snip_id`, `sa_outlier_flag`
 
 ---
 
-### `rule compute_death_lead_time_flag`
-**Input**
-- `quality_control/{exp}/auxiliary_mask_qc.csv` (for `dead_flag`)
-- `computed_features/{exp}/consolidated_snip_features.csv` (for `embryo_id`, `predicted_stage_hpf`)
-
-**Output**
-- `quality_control/{exp}/death_lead_time_qc.csv`
-
-**Module**
-- `quality_control/death_detection.py`
-- Function: `compute_death_lead_time_flag()`
-
-**Purpose**
-- Retroactively flag embryos in hours leading up to the canonical `dead_flag`
-- For embryos with any `dead_flag == True`:
-  - Find first death time
-  - Flag all timepoints within `dead_lead_time` hours before death (default 2.0)
-- Column is named `death_lead_time_flag` to avoid introducing a second death flag; gating treats it as a separate QC signal.
-
-**Columns**
-`snip_id`, `death_lead_time_flag`
-
-**Parameter**
-`dead_lead_time = 2.0` hours (configurable)
-
----
-
 ### `rule consolidate_qc_flags`
-**Input**
-- `computed_features/{exp}/consolidated_snip_features.csv` (base table)
+
+**Input:**
+- `quality_control/{exp}/segmentation_quality_qc.csv`
 - `quality_control/{exp}/auxiliary_mask_qc.csv`
-- `quality_control/{exp}/sa_outlier_qc.csv`
-- `quality_control/{exp}/death_lead_time_qc.csv`
-- `segmentation/{exp}/segmentation_tracking.csv` (for `sam2_qc_flags`)
+- `quality_control/{exp}/embryo_viability_qc.csv`
+- `quality_control/{exp}/surface_area_outliers_qc.csv`
 
-**Output**
-- `quality_control/{exp}/consolidated_qc_flags.csv` `[VALIDATED]`
+**Output:**
+- `quality_control/{exp}/consolidated_qc_flags.csv` [VALIDATED]
 
-**Module**
-- `quality_control/consolidate_qc.py`
-- Schema: `REQUIRED_COLUMNS_QC_FLAGS`
+**Module:**
+- `quality_control/consolidation/consolidate_qc.py`
+- Schema: `REQUIRED_COLUMNS_QC_FLAGS` + `QC_FAIL_FLAGS` from `schemas/quality_control.py`
 
-**Purpose**
-- Merge all QC flags onto consolidated features
-- Compute final `use_embryo_flag`:
-  ```python
-  use_embryo_flag = NOT (
-      dead_flag OR death_lead_time_flag OR sa_outlier_flag OR
-      sam2_qc_flag OR focus_flag OR bubble_flag OR no_yolk_flag
-      # frame_flag DISABLED (too sensitive; SAM2 edge detection preferred)
-  )
-  ```
-- Generate QC summary statistics (counts per flag)
-- Authoritative QC table consumed by analysis modules
+**Purpose:**
+Merge all QC flags on `snip_id` and compute final quality gate.
 
-**Validation**
+**Compute `use_embryo_flag`:**
+```python
+# From schemas/quality_control.py
+QC_FAIL_FLAGS = [
+    'dead_flag',
+    'sa_outlier_flag',
+    'yolk_flag',
+    'edge_flag',
+    'discontinuous_mask_flag',
+    'overlapping_mask_flag',
+    'focus_flag',
+    'bubble_flag',
+]
+
+# Final gate
+use_embryo_flag = NOT (any flag in QC_FAIL_FLAGS is True)
+```
+
+**Validation:**
 1. All snips from consolidated_features present
 2. No duplicate snip_ids
 3. All flags are boolean (fillna with False)
 4. `use_embryo_flag` correctly computed
+5. QC summary statistics generated (counts per flag)
 
-**Key point:** Consolidates QC from three sources:
-- SAM2 QC (edge detection, tracking issues)
-- Auxiliary mask QC (viability, focus, bubbles)
-- Feature-based QC (SA outliers, death lead-time)
+**Output columns:**
+All QC flags + `use_embryo_flag` + QC provenance metadata
+
+**Key point:** This is the authoritative QC table consumed by embeddings and analysis modules
 
 ---
 
-## Phase 7: Embeddings - PENDING
+## Phase 7: Embeddings
+
+Embeddings run only on snips that pass QC (`use_embryo_flag == True`). We stage a manifest of eligible snips, launch the VAE in a Python 3.9 subprocess, and validate the resulting latent vectors.
+
+---
+
+### `rule prepare_embedding_manifest`
+**Input:**
+- `processed_snips/{exp}/processed/` (final JPEG crops)
+- `quality_control/{exp}/use_embryo_flags.csv` `[VALIDATED]`
+
+**Output:**
+- `latent_embeddings/{model_name}/{exp}_embedding_manifest.csv` `[VALIDATED]`
+
+**Module:**
+- `embeddings/prepare_manifest.py`
+- Schema: `REQUIRED_COLUMNS_EMBEDDING_MANIFEST` (snip_id, processed_snip_path, use_embryo_flag, file_size_bytes)
+
+**Purpose:**
+- Join the QC gate with processed snip paths, keeping only rows where `use_embryo_flag == True`
+- Validate file existence/size so the inference step never dereferences stale paths
+- Emit one manifest per experiment/model, making reruns idempotent even when additional snips are added later
+
+---
+
+### `rule generate_embeddings`
+**Input:**
+- `latent_embeddings/{model_name}/{exp}_embedding_manifest.csv` `[VALIDATED]`
+- `models/embeddings/{model_name}/` (checkpoint + config)
+
+**Output:**
+- `latent_embeddings/{model_name}/{exp}_latents.csv` `[VALIDATED]`
+
+**Module:**
+- `embeddings/inference.py` (invoked via `embeddings/subprocess_wrapper.py`)
+- Post-checks handled by `embeddings/file_validation.py`
+- Schema: `REQUIRED_COLUMNS_LATENTS` (`snip_id`, `embedding_model`, `z0` … `z{dim-1}`)
+
+**Purpose:**
+- Launch VAE inference inside an isolated Python 3.9 environment to match training dependencies
+- Stream manifest rows into the model, produce latent vectors, and write a CSV aligned with manifest ordering
+- Validate that column counts match model dimensionality, every manifest row appears once, and no latent entry is NaN
+- Tag each row with `embedding_model` so downstream aggregation can mix models safely
+
+**Key parameters:**
+- `model_name` (Snakemake config; default `morphology_vae_2024`)
+- `batch_size` (configurable, defaults to 256)
+- `device` resolved via `config/runtime.py`
 
 ---
 
@@ -919,12 +1016,17 @@ src/data_pipeline/
 │   ├── rotation.py
 │   ├── augmentation.py
 │   └── manifest_generation.py
-└── feature_extraction/
-    ├── mask_geometry_metrics.py
-├── pose_kinematics_metrics.py
-├── fraction_alive.py
-├── stage_inference.py
-└── consolidate_features.py
+├── feature_extraction/
+│   ├── mask_geometry_metrics.py
+│   ├── pose_kinematics_metrics.py
+│   ├── fraction_alive.py
+│   ├── stage_inference.py
+│   └── consolidate_features.py
+└── embeddings/
+    ├── prepare_manifest.py
+    ├── inference.py
+    ├── subprocess_wrapper.py
+    └── file_validation.py
 ```
 
 ### **New Data Outputs**
@@ -958,6 +1060,10 @@ computed_features/{exp}/
 ├── fraction_alive.csv
 ├── stage_predictions.csv
 └── consolidated_snip_features.csv [VALIDATED]
+
+latent_embeddings/{model_name}/
+├── {experiment_id}_embedding_manifest.csv [VALIDATED]
+└── {experiment_id}_latents.csv [VALIDATED]
 ```
 
 ### **Key Changes from Original Plan**

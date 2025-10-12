@@ -91,7 +91,8 @@ Directory Structure
 │
 ├── latent_embeddings/                                # VAE latents (QC-passed `use_embryo == True`)
 │   └── {model_name}/
-│       └── {experiment_id}_latents.csv               # snip_id, z0, z1, ..., z{dim-1}
+│       ├── {experiment_id}_embedding_manifest.csv    # Filtered inputs + file metadata
+│       └── {experiment_id}_latents.csv               # snip_id, embedding_model, z0 … z{dim-1}
 │
 ├── analysis_ready/                                   # Final analysis tables (per experiment)
 │   └── {experiment_id}/
