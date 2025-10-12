@@ -1,4 +1,14 @@
-Directory Structure
+# MorphSeq Pipeline: Data Output Structure
+**Status:** APPROVED - Aligned with Snakemake rules
+
+This document defines the complete data output structure for the MorphSeq pipeline refactor. It is synchronized with:
+- `preliminary_rules.md` - Snakemake rule definitions
+- `processing_files_pipeline_structure_and_plan.md` - Module organization and implementation plan
+
+---
+
+## Directory Structure
+
 {data_pipeline_root}/
 │
 ├── inputs/                                           # ALL USER-PROVIDED INPUTS
@@ -34,31 +44,31 @@ Directory Structure
 │       ├── morphology_vae_2024/                      # Current production VAE
 │       └── legacy/
 │
-├── processed_images/                                 # Standardized stitched FF images
-│   └── stitched_FF/
-│       ├── {experiment_id}/
-│       │   └── {well_id}/
-│       │       └── {channel_name}/                  # Normalized channel name (BF, GFP, etc.)
-│       │           └── {image_id}.jpg               # Manifest-enforced naming: {exp}_{well}_{channel}_t{frame}
-│       └── preprocessing_logs/
-│           └── {experiment_id}_preprocessing.csv     # Microscope + stitching metadata
+├── built_image_data/                                 # Standardized stitched FF images (generation of ids up to image_id)
+│   └── {experiment_id}/                              # e.g., EXP1234_T30_etc/
+│       └── stitched_images/
+│           └── {well_id}/                            # e.g., well_id = {experiment_id}_{well_index}
+│               └── {channel_name}/                   # Normalized channel name (BF, GFP, etc.)
+│                   └── {well_id}_{channel_name}_t{frame_index}.tif  # e.g., EXP1234_T30_etc_BF_t0000.tiff the {image_id}.tiff
 │
-├── segmentation/                                     # Segmentation outputs (per experiment)
-│   ├── embryo_tracking/                              # SAM2 primary segmentation/tracking
-│   │   └── {experiment_id}/
-│   │       ├── initial_detections.json               # GroundingDINO seed bounding boxes
-│   │       ├── propagated_masks.json                 # SAM2 tracked masks (all frames)
-│   │       ├── segmentation_tracking.csv             # Flattened table incl. snip_id, well_id, mask_rle, bbox, area_px, seed flag
-│   │       └── masks/
-│   │           └── {video_id}/
-│   │               └── {image_id}_embryo_{N}.png
-│   └── auxiliary_masks/                              # UNet auxiliary masks for QC
-│       └── {experiment_id}/
-│           ├── embryo/                               # Validation only (SAM2 is authoritative)
-│           ├── viability/                            # Dead/alive regions
+├── segmentation/                                     # Segmentation outputs (per experiment) embryo_ids and snip_ids generated here
+│   └── {experiment_id}/
+│       ├── gdino_detections.json                     # GroundingDINO seed bounding boxes (per-well)
+│       ├── sam2_raw_output.json                      # SAM2 tracked masks (nested: video/embryo/frame)
+│       ├── segmentation_tracking.csv [VALIDATED]     # Flattened table: snip_id, embryo_id, well_id, mask_rle, is_seed_frame, source paths (embryo_id = {image_id}_{embryo_index (e.g. eNN)}, snip_id = {embryo_id}_t{frame_index})
+│       ├── mask_images/                              # Integer-labeled PNG masks
+│       │   └── {image_id}_masks.png
+│       └── unet_masks/                               # UNet auxiliary masks for QC
+│           ├── via/                                  # Viability/dead regions
+│           │   └── {image_id}_via.png
 │           ├── yolk/                                 # Yolk sac
+│           │   └── {image_id}_yolk.png
 │           ├── focus/                                # Out-of-focus regions
-│           └── bubbles/                              # Air bubbles
+│           │   └── {image_id}_focus.png
+│           ├── bubble/                               # Air bubbles
+│           │   └── {image_id}_bubble.png
+│           └── mask/                                 # UNet embryo (validation only, SAM2 is authoritative)
+│               └── {image_id}_mask.png
 │
 ├── processed_snips/                                  # Cropped embryo images + manifest
 │   └── {experiment_id}/
@@ -77,17 +87,11 @@ Directory Structure
 │
 ├── quality_control/                                  # QC assessments organised by dependency
 │   └── {experiment_id}/
-│       ├── auxiliary_mask_qc/                        # Requires UNet auxiliary masks
-│       │   ├── imaging_quality.csv                   # Frame boundary, focus, yolk, bubble flags
-│       │   └── embryo_viability.csv                  # fraction_alive + dead_flag (embryo_viability_qc.py)
-│       ├── segmentation_qc/                          # SAM2-only validations
-│       │   ├── segmentation_quality.csv              # Mask integrity flags
-│       │   └── tracking_metrics.csv                  # Tracking speed / discontinuity checks
-│       ├── morphology_qc/                            # Feature-derived validations
-│       │   └── size_validation.csv                   # Surface area outlier flags (SA outlier = critical signal)
-│       └── consolidated/
-│           ├── consolidated_qc_flags.csv             # REQUIRED_COLUMNS_QC (QC_FAIL_FLAGS + viability timing, etc.)
-│           └── use_embryo_flags.csv                  # Final boolean gating for embeddings/analysis
+│       ├── segmentation_quality_qc.csv               # SAM2 mask integrity (edge, discontinuous, overlap flags)
+│       ├── auxiliary_mask_qc.csv                     # UNet imaging quality (yolk, focus, bubble flags)
+│       ├── embryo_death_qc.csv                        # fraction_alive + dead_flag (THE ONLY death flag source)
+│       ├── surface_area_outliers_qc.csv              # Surface area outlier flags
+│       └── consolidated_qc_flags.csv [VALIDATED]     # Merged QC flags + use_embryo_flag
 │
 ├── latent_embeddings/                                # VAE latents (QC-passed `use_embryo == True`)
 │   └── {model_name}/
@@ -101,3 +105,60 @@ Directory Structure
 │                                                     # optional `embedding_model` metadata
 │
 └── (optional downstream tables handled per analysis)
+
+---
+
+## Key Naming Conventions
+
+### **ID Hierarchy**
+```
+experiment_id                                     # User-defined experiment identifier
+└── well_index                                    # e.g., A01, B02 (plate position)
+    └── well_id = {experiment_id}_{well_index}   # Full well identifier
+        └── channel_name                          # Normalized: BF, GFP, etc.
+            └── frame_index                       # Temporal index (0-based)
+                └── image_id = {well_id}_{channel_name}_t{frame_index}  # e.g., exp_A01_BF_t0000
+                    └── embryo_index              # Embryo within frame (e.g., e01, e02)
+                        └── embryo_id = {image_id}_{embryo_index}       # e.g., exp_A01_BF_t0000_e01
+                            └── snip_id = {embryo_id}_t{frame_index}    # e.g., exp_A01_BF_t0000_e01_t0000
+```
+
+### **Channel Normalization**
+All microscope-specific channel names are normalized during Phase 1 (`extract_scope_metadata`):
+
+**YX1 Normalization:**
+- "EYES - Dia" → "BF"
+- "Empty" → "BF"
+- "GFP" → "GFP"
+
+**Keyence Normalization:**
+- "Brightfield" → "BF"
+- "bf" → "BF"
+- "gfp" → "GFP"
+
+**Valid normalized names:**
+- Brightfield: `BF`, `Phase`
+- Fluorescence: `GFP`, `RFP`, `CFP`, `YFP`, `mCherry`, `DAPI`
+
+### **Validation Markers**
+Files marked `[VALIDATED]` enforce schema on write:
+- Column existence checks (all `REQUIRED_COLUMNS_*` present)
+- Non-null validation (required fields cannot be empty)
+- Schema alignment (correct data types, value ranges when applicable)
+
+**Validated outputs:**
+- Phase 1-2: `plate_metadata.csv`, `scope_metadata.csv`, `scope_and_plate_metadata.csv`, `experiment_image_manifest.json`
+- Phase 3: `segmentation_tracking.csv`
+- Phase 4: `snip_manifest.csv`
+- Phase 5: `consolidated_snip_features.csv`
+- Phase 6: `consolidated_qc_flags.csv`
+- Phase 7: `{exp}_embedding_manifest.csv`, `{exp}_latents.csv`
+- Phase 8: `features_qc_embeddings.csv`
+
+---
+
+## Cross-Reference
+
+- **Snakemake Rules:** See `preliminary_rules.md` for rule-by-rule pipeline definition
+- **Module Implementation:** See `processing_files_pipeline_structure_and_plan.md` for code organization
+- **Schema Definitions:** All schemas in `src/data_pipeline/schemas/`

@@ -1,4 +1,4 @@
-# MorphSeq Pipeline Refactor: Final Structure & Implementation Plan
+****# MorphSeq Pipeline Refactor: Final Structure & Implementation Plan
 
 **Author:** Claude Code Analysis
 **Date:** 2025-10-06
@@ -110,6 +110,8 @@ src/data_pipeline/
 
 ├── schemas/                                     # REQUIRED_COLUMNS_* definitions (imported everywhere)
 │   ├── __init__.py
+│   ├── channel_normalization.py                # NEW - Channel name mappings (CHANNEL_NORMALIZATION_MAP, VALID_CHANNEL_NAMES)
+│   ├── image_manifest.py                       # NEW - Image manifest schema validation
 │   ├── plate_metadata.py
 │   ├── scope_metadata.py
 │   ├── scope_and_plate_metadata.py
@@ -147,9 +149,10 @@ src/data_pipeline/
 │   └── mask_utilities.py                      # Shared RLE/polygon/bbox utilities (for example redonling unet derived masks and sam2 derived masks )
 │
 ├── snip_processing/                            # Snip extraction utilities
-│   ├── extraction.py                          # Crop embryo regions from images
+│   ├── extraction.py                          # Crop embryo regions from images → raw_crops/
 │   ├── rotation.py                            # PCA-based rotation alignment
-│   └── io.py                                  # Save snip images + manifest helpers (schema-backed)
+│   ├── augmentation.py                        # CLAHE, noise injection, edge blending → processed/
+│   └── manifest_generation.py                 # Scan processed snips + validate → snip_manifest.csv (schema-backed)
 │
 ├── feature_extraction/                         # SAM2-derived feature computations
 │   ├── mask_geometry_metrics.py               # Area, perimeter, contour stats + px→μm² conversion → mask_geometry_metrics.csv
@@ -160,19 +163,20 @@ src/data_pipeline/
 │
 ├── quality_control/                            # Quality Control signals
 │   ├── auxiliary_mask_qc/
-│   │   ├── imaging_quality_qc.py              # Yolk, focus, bubble flags (from UNet masks)
-│   │   └── death_detection.py                 # ONLY takes fraction_alive.csv, GENERATES dead_flag (threshold < 0.9)
+│   │   ├── imaging_quality_qc.py              # Yolk, focus, bubble flags (from UNet masks) → auxiliary_mask_qc.csv
+│   │   └── death_detection.py                 # Takes fraction_alive.csv → embryo_death_qc.csv (dead_flag, THE ONLY death source)
 │   ├── segmentation_qc/
-│   │   └── segmentation_quality_qc.py         # SAM2 mask quality checks (extracts functions from gsam_qc_class.py)
+│   │   └── segmentation_quality_qc.py         # SAM2 mask quality checks → segmentation_quality_qc.csv (edge, discontinuous, overlap)
 │   ├── morphology_qc/
-│   │   └── size_validation_qc.py              # Surface area outlier detection (from features)
+│   │   └── size_validation_qc.py              # Surface area outlier detection → surface_area_outliers_qc.csv
 │   └── consolidation/
-│       └── consolidate_qc.py                  # Merge all QC CSVs per snip_id, compute use_embryo_flag (imports REQUIRED_COLUMNS_QC)
+│       └── consolidate_qc.py                  # Merge all QC CSVs → consolidated_qc_flags.csv (imports REQUIRED_COLUMNS_QC + computes use_embryo_flag)
 │
 ├── embeddings/                                 # Latent Embeddings (QC-passed snips only)
+│   ├── prepare_manifest.py                    # Filter use_embryo == True → {exp}_embedding_manifest.csv
 │   ├── inference.py                           # VAE embedding generation
 │   ├── subprocess_wrapper.py                  # Python 3.9 subprocess orchestration
-│   └── file_validation.py                     # Check existing embeddings
+│   └── file_validation.py                     # Validate latent CSVs match manifest
 │
 ├── analysis_ready/                             # Final analysis hand-off helpers
 │   └── assemble_features_qc_embeddings.py     # Join features + QC + embeddings (imports REQUIRED_COLUMNS_ANALYSIS_READY)
@@ -364,19 +368,17 @@ Shared utilities for all segmentation methods:
 **Purpose:** Validate data quality with dependency-scoped subpackages
 
 #### **auxiliary_mask_qc/**
-- **imaging_quality_qc.py**: Boundary, yolk, focus, and bubble flags computed from UNet auxiliary masks with SAM2 geometry for proximity
-- **embryo_viability_qc.py**: Ingests `fraction_alive` from `feature_extraction/fraction_alive.py`, thresholds it to produce the single canonical `dead_flag`, and computes `death_inflection_time_int`. All downstream rules consume this `dead_flag`; no other module emits alternate death flags.
+- **imaging_quality_qc.py**: Yolk, focus, and bubble flags computed from UNet auxiliary masks → `auxiliary_mask_qc.csv`
+- **death_detection.py**: Ingests `fraction_alive.csv` from feature_extraction, thresholds to produce `dead_flag` (THE ONLY death flag source, threshold < 0.9) → `embryo_death_qc.csv`
 
 #### **segmentation_qc/**
-- **segmentation_quality_qc.py**: Mask integrity checks for SAM2 output (edge contact, overlaps, area drift, disconnected components, etc.)
-- **tracking_metrics_qc.py**: Trajectory smoothness, speed outliers, and ID persistence derived from SAM2 tracking data
+- **segmentation_quality_qc.py**: SAM2 mask integrity checks (edge contact, overlaps, disconnected components) → `segmentation_quality_qc.csv`
 
 #### **morphology_qc/**
-- **size_validation_qc.py**: Surface-area outlier detection leveraging consolidated features (SA outlier remains a critical QC signal)
+- **size_validation_qc.py**: Surface-area outlier detection from consolidated features → `surface_area_outliers_qc.csv`
 
 #### **consolidation/**
-- **consolidate_qc.py**: Row-wise merge of all QC CSVs (keys on `snip_id`) into `consolidated_qc_flags.csv`, enforcing `REQUIRED_COLUMNS_QC` + `QC_FAIL_FLAGS`.
-- **compute_use_embryo.py**: Applies gating logic to produce `use_embryo_flags.csv`, the single contract consumed by embeddings and analysis
+- **consolidate_qc.py**: Row-wise merge of all QC CSVs (segmentation_quality_qc, auxiliary_mask_qc, embryo_death_qc, surface_area_outliers_qc) on `snip_id` → `consolidated_qc_flags.csv`, enforcing `REQUIRED_COLUMNS_QC` + `QC_FAIL_FLAGS`. Computes `use_embryo_flag` as the final gating logic (NOT any flag in QC_FAIL_FLAGS) for embeddings and analysis.
 
 ---
 
@@ -384,9 +386,13 @@ Shared utilities for all segmentation methods:
 **Purpose:** Generate latent representations for QC-approved snips
 
 **Core pieces:**
-- `prepare_manifest.py`: Filter `use_embryo == True`, verify JPEGs exist, and write a stable embedding manifest per experiment/model.
-- `inference.py` + `subprocess_wrapper.py`: Launch VAE inference in a Python 3.9 subprocess (GPU/CPU selection via `config/runtime.py`).
-- `file_validation.py`: Ensure latent CSVs match manifest rows, contain the expected dimensions, and include `embedding_model` metadata.
+- `prepare_manifest.py`: Filter `use_embryo == True` from `consolidated_qc_flags.csv`, verify processed JPEGs exist, and write `{exp}_embedding_manifest.csv` per experiment/model.
+- `inference.py` + `subprocess_wrapper.py`: Launch VAE inference in a Python 3.9 subprocess (GPU/CPU selection via `config/runtime.py`) to generate `{exp}_latents.csv`.
+- `file_validation.py`: Validate latent CSVs match manifest rows, contain expected dimensions (z0...z{dim-1}), and include `embedding_model` metadata.
+
+**Output:**
+- `latent_embeddings/{model_name}/{experiment_id}_embedding_manifest.csv` [VALIDATED]
+- `latent_embeddings/{model_name}/{experiment_id}_latents.csv` [VALIDATED]
 
 **Notes:**
 - Reuses the legacy embedding stack from `src/analyze/gen_embeddings/`, but now runs under Snakemake control.
@@ -654,3 +660,131 @@ Functions:
 - Easy to understand and extend
 
 **The goal: Boring, predictable code that works.**
+
+---
+
+## Data Output Structure Summary
+
+This section provides the complete data pipeline output structure aligned with the Snakemake rules defined in `preliminary_rules.md`.
+
+### **Experiment Metadata** (Phase 1-2 outputs)
+```
+experiment_metadata/{exp}/
+├── plate_metadata.csv [VALIDATED]                # Normalized well annotations from Excel
+├── scope_metadata.csv [VALIDATED]                # Microscope metadata (px/μm, frame_interval_s, etc.)
+├── scope_and_plate_metadata.csv [VALIDATED]      # Joined metadata (authoritative source)
+└── experiment_image_manifest.json [VALIDATED]    # Per-well channel inventory + normalized frame lists
+```
+
+### **Built Image Data** (Phase 2 outputs)
+```
+built_image_data/{exp}/
+└── stitched_images/
+    └── {well_id}/                                # well_id = {experiment_id}_{well_index}
+        └── {channel_name}/                       # Normalized: BF, GFP, etc.
+            └── {well_id}_{channel_name}_t{frame_index}.tif  # image_id format
+```
+
+**Key points:**
+- Channel names normalized during `extract_scope_metadata` (Phase 1)
+- `image_id` format: `{experiment_id}_{well_index}_{channel_name}_t{frame_index}` (self-documenting)
+- Provenance tracked in `experiment_image_manifest.json` (`raw_name`, `microscope_channel_index`)
+
+### **Segmentation Outputs** (Phase 3 outputs)
+```
+segmentation/{exp}/
+├── gdino_detections.json                         # GroundingDINO seed boxes (per-well)
+├── sam2_raw_output.json                          # SAM2 tracking results (nested: video/embryo/frame)
+├── segmentation_tracking.csv [VALIDATED]         # Authoritative SAM2 output (snip_id, embryo_id, well_id, mask_rle, is_seed_frame, paths)
+├── mask_images/                                  # Integer-labeled PNG masks
+│   └── {image_id}_masks.png
+└── unet_masks/                                   # UNet auxiliary masks (QC only)
+    ├── via/{image_id}_via.png                    # Viability/dead regions
+    ├── yolk/{image_id}_yolk.png                  # Yolk sac
+    ├── focus/{image_id}_focus.png                # Out-of-focus
+    ├── bubble/{image_id}_bubble.png              # Air bubbles
+    └── mask/{image_id}_mask.png                  # UNet embryo (validation only, SAM2 is authoritative)
+```
+
+**ID generation:**
+- `embryo_id` = `{image_id}_{embryo_index}` (e.g., `exp_A01_BF_t0000_e01`)
+- `snip_id` = `{embryo_id}_t{frame_index}` (e.g., `exp_A01_BF_t0000_e01_t0000`)
+
+### **Snip Processing** (Phase 4 outputs)
+```
+processed_snips/{exp}/
+├── raw_crops/                                    # Unprocessed TIF crops (pre-rotation)
+│   └── {snip_id}.tif
+├── processed/                                    # Fully processed JPEGs (rotation + CLAHE + noise)
+│   └── {snip_id}.jpg
+└── snip_manifest.csv [VALIDATED]                 # Authoritative snip inventory (paths, rotation, timestamps)
+```
+
+### **Feature Extraction** (Phase 5 outputs)
+```
+computed_features/{exp}/
+├── mask_geometry_metrics.csv                     # SAM2 mask geometry (area_um2, perimeter, length, width, centroid)
+├── pose_kinematics_metrics.csv                   # Pose + motion (bbox, orientation, displacement, speed, angular_velocity)
+├── fraction_alive.csv                            # Viability from UNet masks (continuous 0-1 metric)
+├── stage_predictions.csv                         # Developmental stage (predicted_stage_hpf + confidence)
+└── consolidated_snip_features.csv [VALIDATED]    # SINGLE SOURCE for all QC (merges all above + metadata)
+```
+
+**Critical:**
+- `area_um2` required for stage inference (pixel→μm² conversion mandatory)
+- `consolidated_snip_features.csv` is the only input for all QC modules
+
+### **Quality Control** (Phase 6 outputs)
+```
+quality_control/{exp}/
+├── segmentation_quality_qc.csv                   # SAM2 mask QC (edge_flag, discontinuous_mask_flag, overlapping_mask_flag)
+├── auxiliary_mask_qc.csv                         # UNet imaging QC (yolk_flag, focus_flag, bubble_flag)
+├── embryo_death_qc.csv                           # THE ONLY death flag source (dead_flag from fraction_alive < 0.9)
+├── surface_area_outliers_qc.csv                  # SA outlier detection (sa_outlier_flag)
+└── consolidated_qc_flags.csv [VALIDATED]         # Merged QC + use_embryo_flag (NOT any flag in QC_FAIL_FLAGS)
+```
+
+**QC_FAIL_FLAGS:**
+- `dead_flag`, `sa_outlier_flag`, `yolk_flag`, `edge_flag`, `discontinuous_mask_flag`, `overlapping_mask_flag`, `focus_flag`, `bubble_flag`
+- `use_embryo_flag` = NOT (any QC_FAIL_FLAG is True)
+
+### **Embeddings** (Phase 7 outputs)
+```
+latent_embeddings/{model_name}/
+├── {experiment_id}_embedding_manifest.csv [VALIDATED]  # Filtered inputs (use_embryo == True)
+└── {experiment_id}_latents.csv [VALIDATED]             # Latent vectors (snip_id, embedding_model, z0...z{dim-1})
+```
+
+### **Analysis-Ready** (Phase 8 outputs)
+```
+analysis_ready/{experiment_id}/
+└── features_qc_embeddings.csv [VALIDATED]        # Features + QC + embeddings + metadata
+                                                  # Includes embedding_calculated column for filtering
+```
+
+---
+
+## Schema Files Summary
+
+All schema files live in `src/data_pipeline/schemas/`:
+
+```
+schemas/
+├── channel_normalization.py          # CHANNEL_NORMALIZATION_MAP, VALID_CHANNEL_NAMES, BRIGHTFIELD_CHANNELS
+├── image_manifest.py                 # REQUIRED_EXPERIMENT_FIELDS, REQUIRED_WELL_FIELDS, REQUIRED_CHANNEL_FIELDS, REQUIRED_FRAME_FIELDS
+├── plate_metadata.py                 # REQUIRED_COLUMNS_PLATE_METADATA
+├── scope_metadata.py                 # REQUIRED_COLUMNS_SCOPE_METADATA
+├── scope_and_plate_metadata.py       # REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA
+├── segmentation.py                   # REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+├── snip_processing.py                # REQUIRED_COLUMNS_SNIP_MANIFEST
+├── features.py                       # REQUIRED_COLUMNS_CONSOLIDATED_FEATURES
+├── quality_control.py                # REQUIRED_COLUMNS_QC_FLAGS, QC_FAIL_FLAGS
+└── analysis_ready.py                 # REQUIRED_COLUMNS_ANALYSIS_READY
+```
+
+**Schema enforcement:**
+- All consolidation points (CSVs marked `[VALIDATED]`) enforce schema on write
+- Fail-fast on missing/empty required columns
+- Catches schema drift before downstream propagation
+
+---

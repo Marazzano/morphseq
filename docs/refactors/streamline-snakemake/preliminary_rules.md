@@ -823,13 +823,13 @@ Analyze UNet auxiliary masks to detect imaging quality issues:
 
 ---
 
-### `rule compute_embryo_viability_qc`
+### `rule compute_embryo_death_qc`
 
 **Input:**
 - `computed_features/{exp}/fraction_alive.csv` (from Phase 5 feature extraction)
 
 **Output:**
-- `quality_control/{exp}/embryo_viability_qc.csv`
+- `quality_control/{exp}/embryo_death_qc.csv`
 
 **Module:**
 - `quality_control/auxiliary_mask_qc/death_detection.py`
@@ -881,7 +881,7 @@ Uses control embryos (wt, control_flag) to build reference curve; falls back to 
 **Input:**
 - `quality_control/{exp}/segmentation_quality_qc.csv`
 - `quality_control/{exp}/auxiliary_mask_qc.csv`
-- `quality_control/{exp}/embryo_viability_qc.csv`
+- `quality_control/{exp}/embryo_death_qc.csv`
 - `quality_control/{exp}/surface_area_outliers_qc.csv`
 
 **Output:**
@@ -1035,13 +1035,8 @@ experiment_metadata/{exp}/
 ├── plate_metadata.csv [VALIDATED]
 ├── scope_metadata.csv [VALIDATED]
 ├── scope_and_plate_metadata.csv [VALIDATED]
-└── experiment_image_manifest.json [VALIDATED]  # NEW - Single manifest per experiment
+└── experiment_image_manifest.json [VALIDATED]  # NEW - Single manifest per experiment 
 
-built_image_data/{exp}/
-└── stitched_images/
-    └── {well_index}/
-        └── {channel_name}/              # NEW - Organized by normalized channel
-            └── {well_index}_{channel_name}_t{time}.tif
 
 segmentation/{exp}/
 ├── gdino_detections.json
