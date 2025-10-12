@@ -32,7 +32,7 @@ Each file must pass the schemas outlined in
 
 ## Modules to Populate
 
-### `metadata/plate_processing.py`
+### `metadata_ingest/plate/plate_processing.py`
 
 - Responsibilities: read Keyence/YX1 plate layout exports, normalize
   columns, coerce types, and emit schema-aligned `plate_metadata.csv`.
@@ -46,8 +46,8 @@ Each file must pass the schemas outlined in
   `segmentation_sandbox/scripts/utils/parsing_utils.py`, plus plate
   parsing blocks in `build01A/ build01B`.
 
-### `preprocessing/keyence/metadata.py`
-### `preprocessing/yx1/metadata.py`
+### `metadata_ingest/scope/keyence_scope_metadata.py`
+### `metadata_ingest/scope/yx1_scope_metadata.py`
 
 - Responsibilities: extract microscope-specific acquisition metadata,
   normalize to shared column names, and write `scope_metadata.csv`.
@@ -60,7 +60,7 @@ Each file must pass the schemas outlined in
   - De-duplicate/merge multiple exports per experiment.
   - Record provenance columns (`raw_filename`, `acquisition_timestamp`).
 
-### `metadata_mapping/series_well_mapper.py`
+### `metadata_ingest/mapping/series_well_mapper.py`
 
 - Responsibilities: generate
   `series_mapping/series_well_mapping.csv` and
@@ -74,7 +74,7 @@ Each file must pass the schemas outlined in
   - Deterministic implicit mapping with validation when missing.
   - Schema for the mapping CSV (new `REQUIRED_COLUMNS_SERIES_MAPPING`).
 
-### `metadata_mapping/align_metadata.py`
+### `metadata_ingest/mapping/align_scope_plate.py`
 
 - Responsibility: join validated plate + scope metadata using the
   mapping output to write
