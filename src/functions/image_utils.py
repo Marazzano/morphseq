@@ -124,6 +124,9 @@ def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape
 
     y_indices = np.where(np.max(emb_mask_rotated, axis=1) > 0.5)[0]
     x_indices = np.where(np.max(emb_mask_rotated, axis=0) > 0.5)[0]
+    if y_indices.size == 0 or x_indices.size == 0:
+        # Degenerate mask after interpolation/rotation; treat as empty crop to keep pipeline moving.
+        return np.zeros(outshape), np.zeros(outshape), np.zeros(outshape)
     y_mean = int(np.mean(y_indices))
     x_mean = int(np.mean(x_indices))
 

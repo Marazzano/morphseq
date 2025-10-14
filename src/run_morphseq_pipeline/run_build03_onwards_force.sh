@@ -18,6 +18,7 @@
 #   RUN_METADATA_REBUILD=0   # skip Build01 metadata-only refresh
 #   RUN_SAM2=0               # skip re-running SAM2
 #   RUN_BUILD03=0            # skip Build03 action
+#   RUN_SNIP_EXPORT=1        # export snips only (use existing Build03 metadata)
 #   RUN_BUILD04=0            # skip Build04 action
 #   RUN_BUILD06=0            # skip Build06 action
 #   SAM2_WORKERS=8           # SAM2 worker count (default 8)
@@ -33,7 +34,7 @@ MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20250305,20250912"
+DEFAULT_EXPERIMENTS="20250305"
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -47,17 +48,32 @@ DEFAULT_EXPERIMENTS="20250305,20250912"
 # Pipeline stage toggles (1=run, 0=skip)
 : "${RUN_METADATA_REBUILD:=0}"
 : "${RUN_SAM2:=0}"
-: "${RUN_BUILD03:=1}"
+: "${RUN_BUILD03:=0}"
+: "${BUILD03_SKIP_GEOMETRY_QC:=0}"
 : "${RUN_BUILD04:=1}"
 : "${RUN_BUILD06:=1}"
+: "${RUN_SNIP_EXPORT:=0}"
+
+# Snip export knobs (outscale fixed at 6.5 to match embedding expectations)
+: "${SNIP_WORKERS:=1}"
+: "${SNIP_DL_RAD_UM:=50}"
+: "${SNIP_OVERWRITE:=0}"
 # ----------------------------------------------------------------------------
+
+if [[ "${SNIP_OVERWRITE}" == "1" ]]; then
+  SNIP_OVERWRITE_PY="True"
+else
+  SNIP_OVERWRITE_PY="False"
+fi
 
 echo "[sam2-onwards] JOB_ID=${JOB_ID:-unknown} TASK=${SGE_TASK_ID:-0}"
 echo "[sam2-onwards] Repo root : ${REPO_ROOT}"
 echo "[sam2-onwards] Data root : ${DATA_ROOT}"
 
-echo "[sam2-onwards] Run flags - metadata:${RUN_METADATA_REBUILD} sam2:${RUN_SAM2} b03:${RUN_BUILD03} b04:${RUN_BUILD04} b06:${RUN_BUILD06}"
+echo "[sam2-onwards] Run flags - metadata:${RUN_METADATA_REBUILD} sam2:${RUN_SAM2} b03:${RUN_BUILD03} snip:${RUN_SNIP_EXPORT} b04:${RUN_BUILD04} b06:${RUN_BUILD06}"
+echo "[sam2-onwards] Build03 flags - skip_geometry_qc:${BUILD03_SKIP_GEOMETRY_QC}"
 echo "[sam2-onwards] SAM2 params - workers:${SAM2_WORKERS} conf:${SAM2_CONFIDENCE} iou:${SAM2_IOU}"
+echo "[sam2-onwards] Snip params - workers:${SNIP_WORKERS} dl_rad:${SNIP_DL_RAD_UM} overwrite:${SNIP_OVERWRITE}"
 
 # Support SGE array jobs: select one experiment per task using SGE_TASK_ID
 if [[ -n "${SGE_TASK_ID:-}" ]]; then
@@ -140,12 +156,49 @@ fi
 
 if [[ "${RUN_BUILD03}" == "1" ]]; then
   echo "🔄 Step 2: Running Build03 for ${EXPERIMENT}..."
+  # Export flag for Python to read
+  export BUILD03_SKIP_GEOMETRY_QC
   python -m src.run_morphseq_pipeline.cli pipeline \
     --data-root "${DATA_ROOT}" \
     --experiments "${EXPERIMENT}" \
     --action build03 \
     --model-name "${MODEL_NAME}" \
     --force
+fi
+
+if [[ "${RUN_SNIP_EXPORT}" == "1" ]]; then
+  echo "🖼️  Step 2b: Exporting BF snips for ${EXPERIMENT}..."
+  for exp_name in "${SELECTED_EXPERIMENTS[@]}"; do
+    python - <<PY
+from pathlib import Path
+import pandas as pd
+from src.build.build03A_process_images import extract_embryo_snips
+
+data_root = Path("${DATA_ROOT}")
+exp = "${exp_name}"
+candidates = [
+    data_root / "metadata" / "build03_output" / f"expr_embryo_metadata_{exp}.csv",
+    data_root / "metadata" / "build03" / "per_experiment" / f"expr_embryo_metadata_{exp}.csv",
+]
+for csv_path in candidates:
+    if csv_path.exists():
+        stats_df = pd.read_csv(csv_path)
+        break
+else:
+    checked = "\n   - ".join(str(p) for p in candidates)
+    raise SystemExit(f"❌ Build03 metadata not found for {exp}. Checked paths:\\n   - {checked}")
+
+extract_embryo_snips(
+    root=data_root,
+    stats_df=stats_df,
+    outscale=6.5,
+    dl_rad_um=float("${SNIP_DL_RAD_UM}"),
+    overwrite_flag=${SNIP_OVERWRITE_PY},
+    n_workers=int("${SNIP_WORKERS}"),
+)
+print(f"✅ Snip export complete for {exp}")
+PY
+  done
 fi
 
 if [[ "${RUN_BUILD04}" == "1" ]]; then
@@ -181,3 +234,5 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 # qsub -t 1 \
 #   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
 #   run_build03_onwards_force.sh
+# qsub -t 1-2 -tc 2 \
+#   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh

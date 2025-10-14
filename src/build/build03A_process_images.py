@@ -263,25 +263,34 @@ def export_embryo_snips(r: int,
                         px_mean: float, px_std: float):
     """
     Refactored function to use SAM2 metadata and disable unavailable QC checks.
-    
+
     This function is refactored to use pre-computed SAM2 metadata. It loads
     the embryo mask from the path specified in the SAM2 CSV. Since yolk masks
     are not available in the SAM2 pipeline output, a dummy yolk mask is used.
     """
-    
+
     root = Path(root)
     row = stats_df.iloc[r].copy()
-    
-    # Extract key variables from row data  
+
+    # DEBUG: Track problem embryos
+    snip_id = row.get("snip_id", "")
+    is_debug_embryo = any(snip_id.startswith(prefix) for prefix in ["20250305_H04_e01", "20250305_A11_e01"])
+
+    # Extract key variables from row data
     well = row.get("well")
     time_stub = _extract_time_stub(row)
     date = str(row.get("experiment_date"))
 
     # --- Load embryo mask from segmentation_sandbox (integer-labeled) ---
-    mask_path = resolve_sandbox_embryo_mask_from_csv(root, row)
-    im_mask_int = io.imread(mask_path)
-    lbi = int(row["region_label"])  # assumes present; MVP scope
-    im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
+    try:
+        mask_path = resolve_sandbox_embryo_mask_from_csv(root, row)
+        im_mask_int = io.imread(mask_path)
+        lbi = int(row["region_label"])  # assumes present; MVP scope
+        im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
+    except Exception as e:
+        if is_debug_embryo:
+            print(f"   ❌ ERROR loading mask for {snip_id}: {e}")
+        raise
     
     # Load yolk from Build02 segmentation (keep non-embryo masks unchanged)
     im_yolk = None
@@ -293,7 +302,6 @@ def export_embryo_snips(r: int,
             candidates = sorted((yolk_dirs[0] / date).glob(stub))
             if candidates:
                 im_yolk_raw = io.imread(candidates[0])
-                from skimage.transform import resize
                 im_yolk = resize(
                     (im_yolk_raw > (127 if im_yolk_raw.max() >= 255 else 0)).astype(np.uint8),
                     im_mask.shape,
@@ -335,6 +343,10 @@ def export_embryo_snips(r: int,
             if raw_stitch_path.exists():
                 im_ff = io.imread(raw_stitch_path)
         if im_ff is None:
+            if is_debug_embryo:
+                print(f"   ❌ ERROR: FF image not found for {snip_id}")
+                print(f"      • Tried full_stub: {full_stub}")
+                print(f"      • Search path: {ff_image_path / date}")
             warnings.warn(
                 f"FF image not found under {ff_image_path / date} for stub '{full_stub}' and legacy pattern; "
                 f"no raw_stitch_image_path usable.",
@@ -1230,20 +1242,45 @@ def extract_embryo_snips(root: str | Path,
     mask_snip_dir.mkdir(parents=True, exist_ok=True)
     #embryo_metadata_df["embryo_id"] + "_" + embryo_metadata_df["time_int"].astype(str)
 
-    if not os.path.isdir(im_snip_dir) | overwrite_flag:
-        os.makedirs(im_snip_dir)
+    if overwrite_flag or not im_snip_dir.is_dir():
+        im_snip_dir.mkdir(parents=True, exist_ok=True)
         export_indices = range(stats_df.shape[0])
         stats_df["out_of_frame_flag"] = False
         stats_df["snip_um_per_pixel"] = outscale
-    else: 
+    else:
         # get list of exported images
         dates = stats_df["experiment_date"].unique()
+        # BUG FIX: Use glob (non-recursive) instead of rglob to search only in the specific date directory
         extant_images = list(chain.from_iterable(
-                                sorted(im_snip_dir.rglob(f"{d}*.jpg")) for d in dates
+                                sorted((im_snip_dir / str(d)).glob(f"{d}*.jpg")) for d in dates
                             ))
         extant_snip_array = np.asarray([e.name.replace(".jpg", "") for e in extant_images])
-        curr_snip_array = stats_df["snip_id"].unique()
-        export_indices = np.where(~np.isin(curr_snip_array, extant_snip_array))[0]
+
+        # Find which snip_ids need to be exported (not in extant_snip_array)
+        # BUG FIX: Map missing snip IDs back to DataFrame row indices
+        missing_snips = set(stats_df["snip_id"]) - set(extant_snip_array)
+        export_indices = stats_df[stats_df["snip_id"].isin(missing_snips)].index.tolist()
+
+        # DEBUG: Track specific problem embryos (H04_e01, A11_e01)
+        debug_embryos = ["20250305_H04_e01", "20250305_A11_e01"]
+        for embryo_id in debug_embryos:
+            embryo_rows = stats_df[stats_df["snip_id"].str.startswith(embryo_id)]
+            if len(embryo_rows) > 0:
+                total_snips = len(embryo_rows)
+                existing_snips = [sid for sid in embryo_rows["snip_id"] if sid in extant_snip_array]
+                missing_snips_count = len([sid for sid in embryo_rows["snip_id"] if sid in missing_snips])
+                to_export = embryo_rows[embryo_rows["snip_id"].isin(missing_snips)]
+                print(f"\n🔍 DEBUG: {embryo_id}")
+                print(f"   • Total snips in metadata: {total_snips}")
+                print(f"   • Already exported: {len(existing_snips)}")
+                print(f"   • Missing (to export): {missing_snips_count}")
+                print(f"   • Export indices count: {len(to_export)}")
+                if len(existing_snips) > 0:
+                    print(f"   • Sample existing: {existing_snips[:3]}")
+                if missing_snips_count > 0:
+                    missing_samples = [sid for sid in embryo_rows["snip_id"] if sid in missing_snips][:3]
+                    print(f"   • Sample missing: {missing_samples}")
+
         # embryo_metadata_df = embryo_metadata_df.drop(labels=["_merge"], axis=1)
 
         # # transfer info from previous version of df01
@@ -1286,6 +1323,11 @@ def extract_embryo_snips(root: str | Path,
     # extract snips
     out_of_frame_flags = []
 
+    # DEBUG: Track export attempts for problem embryos
+    debug_snip_prefixes = ["20250305_H04_e01", "20250305_A11_e01"]
+    debug_export_attempts = {prefix: [] for prefix in debug_snip_prefixes}
+    debug_export_failures = {prefix: [] for prefix in debug_snip_prefixes}
+
     run_export_snips = partial(export_embryo_snips,root=root, stats_df=stats_df,
                                       dl_rad_um=dl_rad_um, outscale=outscale, outshape=outshape,
                                       px_mean=px_mean, px_std=px_std)
@@ -1294,10 +1336,43 @@ def extract_embryo_snips(root: str | Path,
 
     else:
         for r in tqdm(export_indices, "Exporting snips..."):
-            oof = run_export_snips(r)
-            out_of_frame_flags.append(oof)
+            # DEBUG: Track attempts for problem embryos
+            snip_id = stats_df.iloc[r]["snip_id"]
+            for prefix in debug_snip_prefixes:
+                if snip_id.startswith(prefix):
+                    debug_export_attempts[prefix].append(snip_id)
+
+            try:
+                oof = run_export_snips(r)
+                out_of_frame_flags.append(oof)
+            except Exception as e:
+                # Track failures
+                for prefix in debug_snip_prefixes:
+                    if snip_id.startswith(prefix):
+                        debug_export_failures[prefix].append((snip_id, str(e)))
+                # Re-raise to maintain original behavior
+                raise
         
     out_of_frame_flags = np.asarray(out_of_frame_flags)
+
+    # DEBUG: Print export summary for problem embryos
+    print("\n" + "="*80)
+    print("📊 DEBUG: Export Summary for Problem Embryos")
+    print("="*80)
+    for prefix in debug_snip_prefixes:
+        attempted = len(debug_export_attempts[prefix])
+        failed = len(debug_export_failures[prefix])
+        if attempted > 0 or failed > 0:
+            print(f"\n{prefix}:")
+            print(f"   • Export attempts: {attempted}")
+            print(f"   • Export failures: {failed}")
+            if failed > 0:
+                print(f"   • Failed snips:")
+                for snip_id, error in debug_export_failures[prefix][:5]:  # Show first 5
+                    print(f"      - {snip_id}: {error}")
+            if attempted > 0:
+                print(f"   • Sample attempted: {debug_export_attempts[prefix][:3]}")
+    print("="*80 + "\n")
 
     # add oof flag
     stats_df.loc[export_indices, "out_of_frame_flag"] = out_of_frame_flags
@@ -1649,42 +1724,73 @@ def _set_final_use_embryo_flag(row: Dict[str, str]) -> None:
     row["use_embryo_flag"] = "true" if use_embryo else "false"
 
 
-def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_workers: int = 1) -> pd.DataFrame:
+def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_workers: int = 1, skip_geometry_qc: bool = False) -> pd.DataFrame:
     """Compile comprehensive embryo statistics for SAM2 pipeline with full QC restoration.
-    
+
     This function provides the complete SAM2 integration workflow:
     1. Processes each row with geometry computation and comprehensive QC analysis
     2. Combines SAM2 QC flags with legacy Build02 mask-based QC
     3. Sets final use_embryo_flag based on all QC sources
-    
+
     This replaces the functionality lost in run_build03.py by consolidating all
     processing logic in build03A with proven QC capabilities.
-    
+
     Args:
         root: Project root directory
-        tracked_df: DataFrame from segment_wells_sam2_csv() 
+        tracked_df: DataFrame from segment_wells_sam2_csv()
         n_workers: Number of workers (currently single-threaded)
-        
+        skip_geometry_qc: If True, skip geometry computation and QC checks (only export snip IDs)
+
     Returns:
         DataFrame with complete geometry and QC data
     """
     root = Path(root)
     df = tracked_df.copy()
-    
+
+    # Check environment variable if not explicitly set
+    if not skip_geometry_qc:
+        skip_geometry_qc = os.environ.get("BUILD03_SKIP_GEOMETRY_QC", "0") == "1"
+
+    if skip_geometry_qc:
+        print(f"⚡ Fast mode: Skipping geometry QC computation (only exporting snip IDs)")
+        # Set all QC flags to empty/false and use_embryo_flag to true for all records
+        df["area_px"] = ""
+        df["perimeter_px"] = ""
+        df["centroid_x_px"] = ""
+        df["centroid_y_px"] = ""
+        df["area_um2"] = ""
+        df["perimeter_um"] = ""
+        df["centroid_x_um"] = ""
+        df["centroid_y_um"] = ""
+        df["dead_flag"] = "false"
+        df["no_yolk_flag"] = "false"
+        df["focus_flag"] = "false"
+        df["bubble_flag"] = "false"
+        df["frame_flag"] = "false"
+        df["fraction_alive"] = "1.0"
+        df["speed"] = ""
+        df["use_embryo_flag"] = "true"
+
+        # Add predicted stage calculation at DataFrame level
+        result_df = _ensure_predicted_stage_hpf(df, verbose=False)
+
+        print(f"✅ Fast mode complete: {len(result_df)} snip IDs exported (all flagged as usable)")
+        return result_df
+
     print(f"🔄 Processing {len(df)} embryo records with comprehensive QC...")
-    
+
     # Convert DataFrame to list of dicts for row-by-row processing
     rows = df.to_dict('records')
-    
+
     # Process each row with geometry and QC computation
     for i, row in enumerate(tqdm(rows, desc="Computing geometry and QC")):
         _compute_row_geometry_and_qc(row, root, verbose=False)
-        
+
         # Apply final QC decision logic after all individual QC computed
         _set_final_use_embryo_flag(row)
-        
+
         rows[i] = row
-    
+
     # Convert back to DataFrame
     result_df = pd.DataFrame(rows)
     
