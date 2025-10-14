@@ -188,6 +188,7 @@ def run_build03(
         verbose=verbose,
         export_snips=True,
         snip_workers=(n_workers if n_workers is not None else 1),
+        snip_overwrite=overwrite,
     )
 
 

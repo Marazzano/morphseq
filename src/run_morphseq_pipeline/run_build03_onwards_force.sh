@@ -33,17 +33,23 @@ MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20230531,20230525,20230615"
+DEFAULT_EXPERIMENTS="20250305,20250912"
 
-METADATA_MICROSCOPE="${METADATA_MICROSCOPE:-Keyence}"
-SAM2_WORKERS="${SAM2_WORKERS:-8}"
-SAM2_CONFIDENCE="${SAM2_CONFIDENCE:-0.45}"
-SAM2_IOU="${SAM2_IOU:-0.5}"
-RUN_METADATA_REBUILD="${RUN_METADATA_REBUILD:-1}"
-RUN_SAM2="${RUN_SAM2:-1}"
-RUN_BUILD03="${RUN_BUILD03:-1}"
-RUN_BUILD04="${RUN_BUILD04:-1}"
-RUN_BUILD06="${RUN_BUILD06:-1}"
+# Tunable defaults — override by exporting the variable before invoking this script.
+# Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
+: "${METADATA_MICROSCOPE:=Keyence}"
+
+# SAM2 inference knobs
+: "${SAM2_WORKERS:=8}"
+: "${SAM2_CONFIDENCE:=0.45}"
+: "${SAM2_IOU:=0.5}"
+
+# Pipeline stage toggles (1=run, 0=skip)
+: "${RUN_METADATA_REBUILD:=0}"
+: "${RUN_SAM2:=0}"
+: "${RUN_BUILD03:=1}"
+: "${RUN_BUILD04:=1}"
+: "${RUN_BUILD06:=1}"
 # ----------------------------------------------------------------------------
 
 echo "[sam2-onwards] JOB_ID=${JOB_ID:-unknown} TASK=${SGE_TASK_ID:-0}"
