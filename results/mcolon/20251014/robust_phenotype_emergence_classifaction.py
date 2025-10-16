@@ -5,8 +5,6 @@ import seaborn as sns
 import plotly.express as px
 from sklearn.decomposition import PCA
 import plotly.graph_objects as go
-import plotly.express as px
-import matplotlib.cm as cm
 from matplotlib.colors import Normalize
 try:
     from matplotlib import colormaps as mpl_colormaps
@@ -81,7 +79,8 @@ print(f"  Alpha: {ALPHA}")
 
 from sklearn.model_selection import StratifiedKFold
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, balanced_accuracy_score
+from sklearn.utils.class_weight import compute_class_weight
 import matplotlib.pyplot as plt
 
 
@@ -204,6 +203,7 @@ def predictive_signal_test(
     n_perm=100,
     random_state=None,
     return_embryo_probs=True,
+    use_class_weights=True,
 ):
     """
     Predictive classifier + label-shuffling test across time bins.
@@ -230,6 +230,9 @@ def predictive_signal_test(
         Random seed for reproducibility.
     return_embryo_probs : bool
         If True, return per-embryo prediction probabilities in addition to aggregate stats.
+    use_class_weights : bool
+        If True, use balanced class weights to handle class imbalance. Default: True.
+        This helps prevent bias when one class (e.g., wildtype/het) is much larger.
 
     Returns
     -------
@@ -533,39 +536,20 @@ def plot_auroc_with_significance(df_auc, group1, group2, alpha=0.05, output_path
 # EMBRYO-LEVEL VISUALIZATION FUNCTIONS
 # ============================================================================
 
-def plot_embryo_heatmap(df_embryo_probs, df_penetrance, group1, group2, output_path=None):
+def plot_signed_margin_heatmap(df_embryo_probs, df_penetrance, group1, group2, output_path=None):
     """
-    Multi-metric heatmaps showing per-embryo trajectories split by genotype.
+    Heatmap showing signed-margin trajectories per embryo, split by genotype.
 
-    Visualises confidence magnitude, support for the true class, and signed
-    margins across time bins. Embryos are grouped by their true genotype and,
-    when SciPy is available, clustered within group using Ward linkage to
-    highlight substructure.
-
-    Parameters
-    ----------
-    df_embryo_probs : pd.DataFrame
-        Per-embryo predictions from predictive_signal_test()
-    df_penetrance : pd.DataFrame
-        Penetrance metrics from compute_embryo_penetrance()
-    group1, group2 : str
-        Names of comparison groups
-    output_path : str or None
-        Path to save figure
+    Signed margin measures distance from the 0.5 decision boundary with sign,
+    making it a direct proxy for phenotype penetrance (positive = predicted
+    genotype, negative = wildtype-like).
     """
     if df_embryo_probs.empty or df_penetrance.empty:
         print("  Skipping heatmap: no embryo data")
         return None
 
-    metrics_config = [
-        ("confidence", "Prediction Confidence (|p - 0.5|)", "RdYlBu_r", (0.0, 0.5)),
-        ("support_true", "Support for True Class", "Greens", (0.0, 1.0)),
-        ("signed_margin", "Signed Margin vs 0.5", "coolwarm", (-0.5, 0.5)),
-    ]
-    available_metrics = [cfg for cfg in metrics_config if cfg[0] in df_embryo_probs.columns]
-
-    if not available_metrics:
-        print("  Skipping heatmap: required metric columns not found")
+    if 'signed_margin' not in df_embryo_probs.columns:
+        print("  Skipping heatmap: signed_margin column not found")
         return None
 
     embryo_to_label = df_penetrance.set_index('embryo_id')['true_label'].to_dict()
@@ -575,11 +559,10 @@ def plot_embryo_heatmap(df_embryo_probs, df_penetrance, group1, group2, output_p
 
     time_bins = sorted(df_embryo_probs['time_bin'].unique())
 
-    base_metric = available_metrics[0][0]
-    base_pivot = df_embryo_probs.pivot_table(
+    pivot = df_embryo_probs.pivot_table(
         index='embryo_id',
         columns='time_bin',
-        values=base_metric,
+        values='signed_margin',
         aggfunc='mean'
     )
 
@@ -601,10 +584,10 @@ def plot_embryo_heatmap(df_embryo_probs, df_penetrance, group1, group2, output_p
                     cluster = linkage(dist, method='ward')
                     ordered_index = list(filled.index[leaves_list(cluster)])
             except Exception as exc:
-                print(f"  Ward clustering failed for {label}: {exc}. Falling back to metric-based ordering.")
+                print(f"  Ward clustering failed for {label}: {exc}")
 
         if ordered_index is None:
-            ranking_metric = 'mean_support_true' if 'mean_support_true' in df_penetrance.columns else 'mean_confidence'
+            ranking_metric = 'mean_signed_margin' if 'mean_signed_margin' in df_penetrance.columns else 'mean_confidence'
             ordered_index = list(
                 df_penetrance[df_penetrance['embryo_id'].isin(subset.index)]
                 .sort_values(ranking_metric, ascending=False)
@@ -615,82 +598,71 @@ def plot_embryo_heatmap(df_embryo_probs, df_penetrance, group1, group2, output_p
 
     row_sections = []
     for label in label_order:
-        ordered_ids = _order_embryos_for_label(label, base_pivot)
+        ordered_ids = _order_embryos_for_label(label, pivot)
         if ordered_ids:
             row_sections.append((label, ordered_ids))
-
-    # Include any embryos whose labels were not in the provided order
-    included_ids = {eid for _, ids in row_sections for eid in ids}
-    remaining_ids = [eid for eid in base_pivot.index if eid not in included_ids]
-    if remaining_ids:
-        row_sections.append(("other", remaining_ids))
 
     row_order = [eid for _, ids in row_sections for eid in ids]
     if not row_order:
         print("  Skipping heatmap: no embryos to plot")
         return None
 
-    fig_height = max(6.0, len(row_order) * 0.18)
-    fig, axes = plt.subplots(
-        1,
-        len(available_metrics),
-        figsize=(5.5 * len(available_metrics), fig_height),
-        sharey=True
-    )
-    axes = np.atleast_1d(axes)
+    fig_height = max(8.0, len(row_order) * 0.2)
+    fig, ax = plt.subplots(figsize=(16, fig_height))
 
-    row_labels = []
-    for eid in row_order:
-        label = embryo_to_label.get(eid, "unknown")
-        short_id = str(eid)
-        if len(short_id) > 12:
-            short_id = f"{short_id[:12]}…"
-        row_labels.append(f"{short_id} ({label})")
+    pivot_plot = pivot.reindex(row_order).reindex(columns=time_bins)
+    data = pivot_plot.values.astype(float)
+    mask = np.isnan(data)
+
+    cmap_name = 'RdBu_r'
+    if mpl_colormaps is not None:
+        cmap_instance = mpl_colormaps[cmap_name].copy()
+    else:
+        cmap_instance = plt.get_cmap(cmap_name).copy()
+    cmap_instance.set_bad(color='lightgray')
+    data_masked = np.ma.masked_array(data, mask=mask)
+
+    im = ax.imshow(data_masked, aspect='auto', cmap=cmap_instance, vmin=-0.5, vmax=0.5)
+
+    ax.set_xticks(np.arange(len(time_bins)))
+    ax.set_xticklabels(time_bins, rotation=45, ha='right', fontsize=10)
+    ax.set_xlabel('Developmental Time (hpf)', fontsize=13, fontweight='bold')
+
+    row_labels = [str(eid)[:15] for eid in row_order]
+    ax.set_yticks(np.arange(len(row_order)))
+    ax.set_yticklabels(row_labels, fontsize=7)
+    ax.set_ylabel('Embryo ID', fontsize=13, fontweight='bold')
 
     section_sizes = [len(ids) for _, ids in row_sections if ids]
     section_boundaries = np.cumsum(section_sizes)
 
-    for ax, (metric, title, cmap, (vmin, vmax)) in zip(axes, available_metrics):
-        pivot_metric = df_embryo_probs.pivot_table(
-            index='embryo_id',
-            columns='time_bin',
-            values=metric,
-            aggfunc='mean'
-        ).reindex(row_order)
-        pivot_metric = pivot_metric.reindex(columns=time_bins)
-        data = pivot_metric.values.astype(float)
-        mask = np.isnan(data)
-        if mpl_colormaps is not None:
-            cmap_instance = mpl_colormaps[cmap].copy()
-        else:
-            cmap_instance = plt.get_cmap(cmap).copy()
-        cmap_instance.set_bad(color='lightgray')
-        data = np.ma.masked_array(data, mask=mask)
+    for idx, (label, ids) in enumerate(row_sections):
+        if not ids:
+            continue
+        start_pos = section_boundaries[idx - 1] if idx > 0 else 0
+        end_pos = section_boundaries[idx]
+        center_pos = (start_pos + end_pos) / 2
 
-        im = ax.imshow(data, aspect='auto', cmap=cmap_instance, vmin=vmin, vmax=vmax)
+        ax.text(len(time_bins) + 0.6, center_pos, label.split('_')[-1].upper(),
+                fontsize=12, fontweight='bold', va='center',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='black', linewidth=2))
 
-        ax.set_xticks(np.arange(len(time_bins)))
-        ax.set_xticklabels(time_bins, rotation=45, ha='right')
-        ax.set_title(title, fontsize=12, fontweight='bold')
-        ax.set_xlabel('Time (hpf)', fontsize=11)
-        ax.grid(False)
+        if idx < len(row_sections) - 1:
+            ax.axhline(end_pos - 0.5, color='black', linewidth=3, alpha=0.85)
 
-        for boundary in section_boundaries[:-1]:
-            ax.axhline(boundary - 0.5, color='black', linewidth=1, alpha=0.25)
+    cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label('Signed Margin\n(RED: predicted genotype, BLUE: wildtype-like)',
+                   rotation=270, labelpad=25, fontsize=11, fontweight='bold')
+    cbar.ax.tick_params(labelsize=10)
 
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.ax.tick_params(labelsize=9)
+    ax.set_title(
+        f'Embryo Signed-Margin Trajectories: {group1.split("_")[-1].upper()} vs {group2.split("_")[-1].upper()}',
+        fontsize=16,
+        fontweight='bold',
+        pad=22
+    )
 
-    axes[0].set_yticks(np.arange(len(row_order)))
-    axes[0].set_yticklabels(row_labels, fontsize=8)
-    axes[0].set_ylabel('Embryo (genotype)', fontsize=11)
-
-    for ax in axes[1:]:
-        ax.set_yticks(np.arange(len(row_order)))
-        ax.set_yticklabels([])
-
-    fig.suptitle(f'Per-Embryo Metrics: {group1} vs {group2}', fontsize=14, fontweight='bold', y=1.02)
-    fig.tight_layout(rect=[0, 0, 1, 0.98])
+    plt.tight_layout()
 
     if output_path:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -701,141 +673,99 @@ def plot_embryo_heatmap(df_embryo_probs, df_penetrance, group1, group2, output_p
     return fig
 
 
-def plot_embryo_trajectories(df_embryo_probs, df_penetrance, group1, group2, output_path=None, max_embryos=20, metric='confidence'):
+def plot_signed_margin_trajectories(df_embryo_probs, df_penetrance, group1, group2,
+                                    output_path=None, max_embryos=30):
     """
-    Spaghetti plot showing prediction trajectories for top embryos, split by genotype.
-
-    Embryos are split into separate panels by their true genotype. Within each panel,
-    top embryos are selected and optionally clustered using Ward linkage to highlight
-    similar developmental trajectories.
-
-    Parameters
-    ----------
-    df_embryo_probs : pd.DataFrame
-        Per-embryo predictions from predictive_signal_test()
-    df_penetrance : pd.DataFrame
-        Penetrance metrics from compute_embryo_penetrance()
-    group1, group2 : str
-        Comparison groups (genotype labels)
-    output_path : str or None
-        Path to save figure
-    max_embryos : int
-        Maximum number of embryos to plot per genotype
-    metric : str
-        Which metric to plot: 'confidence', 'support_true', or 'signed_margin'
+    Plot signed-margin trajectories per genotype highlighting decision-boundary crossings.
+    Line colours encode the embryo's mean signed margin (blue = negative / wildtype-like, red = positive).
     """
     if df_embryo_probs.empty or df_penetrance.empty:
         print("  Skipping trajectories: no embryo data")
         return None
 
-    if metric not in df_embryo_probs.columns:
-        print(f"  Skipping trajectories: metric '{metric}' not found in data")
+    if 'signed_margin' not in df_embryo_probs.columns:
+        print("  Skipping trajectories: signed_margin column not found")
         return None
 
-    # Set up metric-specific display parameters
-    metric_configs = {
-        'confidence': {
-            'ylabel': 'Prediction Confidence (|p - 0.5|)',
-            'ylim': (0, 0.5),
-            'ref_lines': [(0.1, 'red', 'Low threshold'), (0.2, 'orange', 'Medium threshold')]
-        },
-        'support_true': {
-            'ylabel': 'Support for True Class',
-            'ylim': (0, 1.0),
-            'ref_lines': [(0.5, 'red', 'Chance level')]
-        },
-        'signed_margin': {
-            'ylabel': 'Signed Margin vs 0.5',
-            'ylim': (-0.5, 0.5),
-            'ref_lines': [(0.0, 'red', 'Decision boundary')]
-        }
-    }
-    config = metric_configs.get(metric, metric_configs['confidence'])
-
-    # Get unique genotypes
     genotype_candidates = df_penetrance['true_label'].dropna().unique()
     genotypes = [g for g in [group1, group2] if g in genotype_candidates]
     if not genotypes:
         genotypes = sorted(genotype_candidates)
-    n_panels = len(genotypes)
-
-    if n_panels == 0:
+    if len(genotypes) == 0:
         print("  Skipping trajectories: no genotypes found")
         return None
 
-    fig, axes = plt.subplots(1, n_panels, figsize=(7 * n_panels, 6), sharey=True)
+    fig, axes = plt.subplots(1, len(genotypes), figsize=(8 * max(1, len(genotypes)), 6), sharey=True)
     axes = np.atleast_1d(axes)
 
-    # Determine ranking metric for top embryo selection
-    default_ranking = 'mean_confidence'
-    metric_to_ranking = {
-        'confidence': 'mean_confidence',
-        'support_true': 'mean_support_true',
-        'signed_margin': 'mean_signed_margin'
-    }
-    ranking_metric = metric_to_ranking.get(metric, default_ranking)
-    if ranking_metric not in df_penetrance.columns:
-        ranking_metric = default_ranking
-
     for ax, genotype in zip(axes, genotypes):
-        # Filter to this genotype
-        genotype_embryos = df_penetrance[df_penetrance['true_label'] == genotype]
-
-        # Select top embryos for this genotype
-        if genotype_embryos.empty:
+        genotype_penetrance = df_penetrance[df_penetrance['true_label'] == genotype].copy()
+        if genotype_penetrance.empty:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f'{genotype} (n=0)', fontsize=12, fontweight='bold')
+            ax.set_title(f'{genotype} (n=0)', fontsize=13, fontweight='bold')
             continue
 
-        if metric == 'signed_margin' and ranking_metric in genotype_embryos.columns:
-            genotype_embryos = genotype_embryos.assign(_ranking=np.abs(genotype_embryos[ranking_metric]))
-            genotype_embryos = genotype_embryos.sort_values('_ranking', ascending=False).head(max_embryos)
-        else:
-            genotype_embryos = genotype_embryos.sort_values(ranking_metric, ascending=False).head(max_embryos)
+        genotype_penetrance = genotype_penetrance.assign(
+            abs_margin=np.abs(genotype_penetrance.get('mean_signed_margin', np.nan))
+        )
+        genotype_penetrance = genotype_penetrance.sort_values(
+            by=['abs_margin', 'mean_signed_margin'], ascending=[False, False]
+        ).head(max_embryos)
+        top_embryos = genotype_penetrance['embryo_id'].values
 
-        top_embryos = genotype_embryos['embryo_id'].values
+        norm = Normalize(vmin=-0.5, vmax=0.5)
+        cmap = plt.cm.RdBu_r
+        alphas = np.linspace(0.35, 0.9, len(top_embryos)) if len(top_embryos) > 0 else []
+        highlight_id = genotype_penetrance.iloc[0]['embryo_id'] if len(genotype_penetrance) > 0 else None
+        penetrance_lookup = genotype_penetrance.set_index('embryo_id')
 
-        if len(top_embryos) == 0:
-            ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(f'{genotype} (n=0)', fontsize=12, fontweight='bold')
-            continue
+        for alpha, embryo_id in zip(alphas, top_embryos):
+            embryo_curve = df_embryo_probs[df_embryo_probs['embryo_id'] == embryo_id].sort_values('time_bin')
+            if embryo_curve.empty:
+                continue
 
-        # Plot trajectories for each embryo
-        if metric == 'signed_margin':
-            norm = Normalize(vmin=-0.5, vmax=0.5)
-            cmap = plt.cm.coolwarm
-            color_values = genotype_embryos.set_index('embryo_id')[ranking_metric].reindex(top_embryos).fillna(0.0)
-            colors = [cmap(norm(val)) for val in color_values]
-        else:
-            colors = plt.cm.viridis(np.linspace(0.2, 0.9, len(top_embryos)))
+            mean_margin = np.nan
+            if 'mean_signed_margin' in penetrance_lookup.columns:
+                mean_margin = penetrance_lookup.at[embryo_id, 'mean_signed_margin']
+            if np.isnan(mean_margin):
+                mean_margin = embryo_curve['signed_margin'].mean()
 
-        for embryo_id, color in zip(top_embryos, colors):
-            embryo_data = df_embryo_probs[df_embryo_probs['embryo_id'] == embryo_id].sort_values('time_bin')
-            if len(embryo_data) > 0:
-                ax.plot(embryo_data['time_bin'], embryo_data[metric],
-                       alpha=0.7, linewidth=1.5, marker='o', markersize=3,
-                       color=color)
+            base_color = cmap(norm(mean_margin))
+            color_rgba = (base_color[0], base_color[1], base_color[2], alpha)
+            linewidth = 1.6
+            marker_size = 3
 
-        # Add reference lines
-        ref_handles = []
-        ref_labels = []
-        for value, color_ref, label in config['ref_lines']:
-            line = ax.axhline(value, color=color_ref, linestyle='--', linewidth=1.5,
-                              alpha=0.6, label=label, zorder=0)
-            if label not in ref_labels:
-                ref_handles.append(line)
-                ref_labels.append(label)
+            if embryo_id == highlight_id:
+                linewidth = 2.8
+                marker_size = 4
+                color_rgba = cmap(norm(mean_margin))
 
-        ax.set_xlabel('Time (hpf)', fontsize=11)
-        ax.set_ylabel(config['ylabel'], fontsize=11)
-        ax.set_title(f'{genotype} (n={len(top_embryos)})', fontsize=12, fontweight='bold')
-        ax.set_ylim(config['ylim'])
-        if ref_handles:
-            ax.legend(ref_handles, ref_labels, fontsize=9, loc='best')
+            ax.plot(
+                embryo_curve['time_bin'],
+                embryo_curve['signed_margin'],
+                color=color_rgba,
+                linewidth=linewidth,
+                marker='o',
+                markersize=marker_size,
+                alpha=0.95
+            )
+
+        ax.axhline(0.0, color='red', linestyle='--', linewidth=1.3, alpha=0.7, label='Decision boundary')
+        ax.set_xlabel('Time (hpf)', fontsize=12)
+        ax.set_ylabel('Signed Margin vs 0.5', fontsize=12)
+        ax.set_ylim([-0.5, 0.5])
         ax.grid(alpha=0.3)
+        ax.set_title(f'{genotype} (n={len(top_embryos)})', fontsize=14, fontweight='bold')
 
-    fig.suptitle(f'Embryo {metric.replace("_", " ").title()} Trajectories: {group1} vs {group2}',
-                fontsize=14, fontweight='bold', y=1.02)
+        if len(top_embryos) > 0:
+            ax.legend(loc='upper left', fontsize=9)
+
+    fig.suptitle(
+        f'Embryo Signed Margin Trajectories: {group1.split("_")[-1]} vs {group2.split("_")[-1]}',
+        fontsize=16,
+        fontweight='bold',
+        y=1.02
+    )
 
     plt.tight_layout()
 
@@ -871,9 +801,9 @@ def plot_penetrance_distribution(df_penetrance, group1, group2, output_path=None
 
     # Detect which metrics are available
     metrics_config = [
-        ('mean_confidence', 'Mean Confidence', 'steelblue', (0, 0.5)),
-        ('mean_support_true', 'Mean Support (True Class)', 'forestgreen', (0, 1.0)),
         ('mean_signed_margin', 'Mean Signed Margin', 'coral', (-0.5, 0.5)),
+        ('mean_support_true', 'Mean Support (True Class)', 'forestgreen', (0, 1.0)),
+        ('mean_confidence', 'Mean Confidence (|p - 0.5|)', 'steelblue', (0, 0.5)),
         ('temporal_consistency', 'Temporal Consistency', 'darkorange', (0, 1.0))
     ]
     available_metrics = [(col, title, color, xlim) for col, title, color, xlim in metrics_config if col in df_penetrance.columns]
@@ -1077,37 +1007,25 @@ for genotype_label, genotype_values in GENOTYPE_GROUPS.items():
             output_path=os.path.join(plot_dir, f'classification_auroc_with_pvalues_{safe_comp_name}.png')
         )
 
-        # Embryo-level penetrance plots
-        plot_embryo_heatmap(
+        # Embryo-level signed margin heatmap with genotype emphasis
+        plot_signed_margin_heatmap(
             df_embryo_probs,
             df_penetrance,
             group1,
             group2,
-            output_path=os.path.join(plot_dir, f'embryo_heatmap_{safe_comp_name}.png')
+            output_path=os.path.join(plot_dir, f'embryo_signed_margin_heatmap_{safe_comp_name}.png')
         )
 
-        trajectory_metrics = [
-            ('confidence', 'confidence'),
-            ('support_true', 'support'),
-            ('signed_margin', 'signed_margin')
-        ]
-        for metric_name, suffix in trajectory_metrics:
-            if metric_name in df_embryo_probs.columns:
-                plot_embryo_trajectories(
-                    df_embryo_probs,
-                    df_penetrance,
-                    group1,
-                    group2,
-                    metric=metric_name,
-                    output_path=os.path.join(plot_dir, f'embryo_trajectories_{suffix}_{safe_comp_name}.png')
-                )
-
-        plot_penetrance_distribution(
-            df_penetrance,
-            group1,
-            group2,
-            output_path=os.path.join(plot_dir, f'penetrance_distribution_{safe_comp_name}.png')
-        )
+        # Signed margin trajectory plot
+        if 'signed_margin' in df_embryo_probs.columns:
+            plot_signed_margin_trajectories(
+                df_embryo_probs,
+                df_penetrance,
+                group1,
+                group2,
+                max_embryos=30,
+                output_path=os.path.join(plot_dir, f'embryo_signed_margin_trajectories_{safe_comp_name}.png')
+            )
 
         # Save embryo-level data
         if not df_embryo_probs.empty:
