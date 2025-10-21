@@ -133,8 +133,25 @@ def predictive_signal_test(
             if len(class_order) != 2:
                 raise ValueError("Expected binary classification with two classes.")
 
-            positive_class = class_order[1]
-            positive_prob = proba[:, 1]
+            # IMPORTANT: Determine which class is "mutant" (non-WT)
+            # Assumes WT labels contain 'wildtype', 'wik', or 'ab'
+            wt_classes = [c for c in class_order if 'wildtype' in str(c).lower() or str(c).lower() in ['wik', 'ab', 'wik-ab']]
+            mutant_classes = [c for c in class_order if c not in wt_classes]
+
+            if len(wt_classes) == 1 and len(mutant_classes) == 1:
+                # Explicitly identify mutant class
+                mutant_class = mutant_classes[0]
+                wt_class = wt_classes[0]
+                mutant_idx = np.where(class_order == mutant_class)[0][0]
+
+                # pred_prob_mutant = probability of MUTANT class (regardless of alphabetical order)
+                positive_prob = proba[:, mutant_idx]
+                positive_class = mutant_class
+            else:
+                # Fallback to alphabetical second class if can't determine WT/mutant
+                positive_class = class_order[1]
+                positive_prob = proba[:, 1]
+
             aucs.append(roc_auc_score(y[test_idx], positive_prob))
 
             # Collect per-embryo predictions
@@ -153,11 +170,13 @@ def predictive_signal_test(
                         'embryo_id': embryo_ids[idx],
                         'time_bin': t,
                         'true_label': true_label,
-                        'pred_proba': p_pos,
+                        'pred_proba': p_pos,  # Now explicitly P(mutant)
                         'confidence': np.abs(p_pos - 0.5),
-                        'predicted_label': positive_class if p_pos > 0.5 else class_order[0],
+                        'predicted_label': positive_class if p_pos > 0.5 else class_order[0] if positive_class == class_order[1] else class_order[1],
                         'support_true': support_true,
-                        'signed_margin': signed_margin
+                        'signed_margin': signed_margin,
+                        'mutant_class': mutant_class if len(wt_classes) == 1 else None,
+                        'wt_class': wt_class if len(wt_classes) == 1 else None
                     })
 
         true_auc = np.mean(aucs)
@@ -176,7 +195,19 @@ def predictive_signal_test(
                     class_weight=class_weight  # <-- THIS WAS ALSO MISSING!
                 )
                 model.fit(X[train_idx], y_shuff[train_idx])
-                prob = model.predict_proba(X[test_idx])[:, 1]
+                proba_perm = model.predict_proba(X[test_idx])
+
+                # Use same mutant class detection logic for consistency
+                class_order_perm = model.classes_
+                wt_classes_perm = [c for c in class_order_perm if 'wildtype' in str(c).lower() or str(c).lower() in ['wik', 'ab', 'wik-ab']]
+                mutant_classes_perm = [c for c in class_order_perm if c not in wt_classes_perm]
+
+                if len(wt_classes_perm) == 1 and len(mutant_classes_perm) == 1:
+                    mutant_idx_perm = np.where(class_order_perm == mutant_classes_perm[0])[0][0]
+                    prob = proba_perm[:, mutant_idx_perm]
+                else:
+                    prob = proba_perm[:, 1]
+
                 perm_aucs.append(roc_auc_score(y_shuff[test_idx], prob))
 
             null_aucs.append(np.mean(perm_aucs))
