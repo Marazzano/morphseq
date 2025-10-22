@@ -26,8 +26,9 @@ def compute_embryo_penetrance(
     ----------
     df_embryo_probs : pd.DataFrame
         Per-embryo predictions from predictive_signal_test().
-        Must have columns: embryo_id, time_bin, true_label, pred_proba,
-        confidence, predicted_label, support_true, signed_margin
+        Must have columns: embryo_id, time_bin, true_label, confidence,
+        predicted_label, support_true, signed_margin, mutant_class, and
+        per-class probability columns (e.g., pred_proba_wildtype, pred_proba_mutant)
     confidence_threshold : float, default=0.1
         Minimum confidence (|p - 0.5|) to consider a prediction "confident"
     penetrance_bins : list of float, optional
@@ -114,8 +115,20 @@ def compute_embryo_penetrance(
         # Get true label (should be constant per embryo)
         true_label = grp['true_label'].iloc[0]
 
-        # Mean predicted probability
-        mean_pred_prob = grp['pred_proba'].mean() if 'pred_proba' in grp.columns else np.nan
+        prob_cols = [c for c in grp.columns if c.startswith('pred_proba_')]
+
+        mutant_prob_col = None
+        if 'mutant_class' in grp.columns:
+            mutant_vals = grp['mutant_class'].dropna().unique()
+            if len(mutant_vals) == 1:
+                candidate = f"pred_proba_{str(mutant_vals[0])}"
+                if candidate in grp.columns:
+                    mutant_prob_col = candidate
+
+        if mutant_prob_col is None and len(prob_cols) == 1:
+            mutant_prob_col = prob_cols[0]
+
+        mean_pred_prob = grp[mutant_prob_col].mean() if mutant_prob_col else np.nan
 
         penetrance_metrics.append({
             'embryo_id': embryo_id,

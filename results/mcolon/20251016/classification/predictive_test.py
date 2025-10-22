@@ -7,10 +7,127 @@ genotype labels can be predicted from morphological features better than chance.
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 from sklearn.model_selection import StratifiedKFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
+from sklearn.base import clone
+
+
+def _identify_wt_mutant_classes(class_order: np.ndarray) -> Tuple[str, str, int, int]:
+    """
+    Identify which class corresponds to WT vs mutant labels.
+
+    Parameters
+    ----------
+    class_order : np.ndarray
+        Class labels returned by a fitted classifier via `classes_`.
+
+    Returns
+    -------
+    Tuple[str, str, int, int]
+        wt_class, mutant_class, wt_idx, mutant_idx
+    """
+    wt_candidates = [
+        c for c in class_order
+        if 'wildtype' in str(c).lower() or str(c).lower() in ['wik', 'ab', 'wik-ab']
+    ]
+    mutant_candidates = [c for c in class_order if c not in wt_candidates]
+
+    if len(wt_candidates) == 1 and len(mutant_candidates) == 1:
+        wt_class = wt_candidates[0]
+        mutant_class = mutant_candidates[0]
+        wt_idx = int(np.where(class_order == wt_class)[0][0])
+        mutant_idx = int(np.where(class_order == mutant_class)[0][0])
+        return wt_class, mutant_class, wt_idx, mutant_idx
+
+    # Fallback: assume the second class is the positive/mutant class
+    wt_class = class_order[0]
+    mutant_class = class_order[1]
+    return wt_class, mutant_class, 0, 1
+
+
+def _run_single_cv_fold(
+    model,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_test: np.ndarray,
+    y_test: np.ndarray,
+    embryo_ids_test: Optional[np.ndarray],
+    time_bin,
+    return_predictions: bool = False
+) -> Tuple[float, Optional[List[dict]]]:
+    """
+    Train and evaluate a single cross-validation fold.
+
+    Parameters
+    ----------
+    model :
+        Base estimator to clone and fit for the fold.
+    X_train, y_train, X_test, y_test :
+        Training and test splits for the fold.
+    embryo_ids_test : np.ndarray or None
+        Embryo identifiers corresponding to X_test (required if return_predictions=True).
+    time_bin :
+        Time bin label associated with the fold.
+    return_predictions : bool, default=False
+        Whether to collect per-embryo prediction diagnostics.
+
+    Returns
+    -------
+    Tuple[float, Optional[List[dict]]]
+        AUROC for the fold and optional list of embryo-level prediction records.
+    """
+    estimator = clone(model)
+    estimator.fit(X_train, y_train)
+    proba = estimator.predict_proba(X_test)
+
+    class_order = estimator.classes_
+    if len(class_order) != 2:
+        raise ValueError("Expected binary classification with two classes.")
+
+    wt_class, mutant_class, wt_idx, mutant_idx = _identify_wt_mutant_classes(class_order)
+    mutant_probs = proba[:, mutant_idx]
+    auroc = roc_auc_score(y_test, mutant_probs)
+
+    if not return_predictions:
+        return auroc, None
+
+    if embryo_ids_test is None:
+        raise ValueError("embryo_ids_test is required when return_predictions=True.")
+
+    predictions: List[dict] = []
+    for i, (true_label, embryo_id) in enumerate(zip(y_test, embryo_ids_test)):
+        row_proba = proba[i]
+        predicted_idx = int(np.argmax(row_proba))
+        predicted_label = class_order[predicted_idx]
+
+        # Probability columns with explicit class labels
+        proba_cols = {
+            f"pred_proba_{str(class_order[0])}": row_proba[0],
+            f"pred_proba_{str(class_order[1])}": row_proba[1],
+        }
+
+        true_idx_matches = np.where(class_order == true_label)[0]
+        true_idx = int(true_idx_matches[0]) if len(true_idx_matches) else predicted_idx
+        support_true = row_proba[true_idx]
+        mutant_prob = row_proba[mutant_idx]
+        signed_margin = (1 if true_label == mutant_class else -1) * (mutant_prob - 0.5)
+
+        predictions.append({
+            'embryo_id': embryo_id,
+            'time_bin': time_bin,
+            'true_label': true_label,
+            **proba_cols,
+            'predicted_label': predicted_label,
+            'confidence': abs(mutant_prob - 0.5),
+            'support_true': support_true,
+            'signed_margin': signed_margin,
+            'mutant_class': mutant_class,
+            'wt_class': wt_class
+        })
+
+    return auroc, predictions
 
 
 def predictive_signal_test(
@@ -61,8 +178,9 @@ def predictive_signal_test(
         Columns: time_bin, AUROC_obs, AUROC_null_mean, AUROC_null_std, pval, n_samples
     df_embryo_probs : pd.DataFrame or None
         Per-embryo prediction probabilities if return_embryo_probs=True.
-        Columns: embryo_id, time_bin, true_label, pred_proba, confidence,
-                predicted_label, support_true, signed_margin
+        Columns include: embryo_id, time_bin, true_label,
+        pred_proba_<class0>, pred_proba_<class1>, predicted_label, confidence,
+        support_true, signed_margin, mutant_class, wt_class
 
     Notes
     -----
@@ -117,67 +235,28 @@ def predictive_signal_test(
             random_state=random_state
         )
 
+        base_model = LogisticRegression(
+            max_iter=200,
+            random_state=random_state,
+            class_weight=class_weight
+        )
+
         aucs = []
         for train_idx, test_idx in skf.split(X, y):
-            # FIXED: Pass class_weight parameter to LogisticRegression
-            model = LogisticRegression(
-                max_iter=200,
-                random_state=random_state,
-                class_weight=class_weight  # <-- THIS WAS MISSING!
+            fold_auc, fold_predictions = _run_single_cv_fold(
+                base_model,
+                X_train=X[train_idx],
+                y_train=y[train_idx],
+                X_test=X[test_idx],
+                y_test=y[test_idx],
+                embryo_ids_test=embryo_ids[test_idx],
+                time_bin=t,
+                return_predictions=return_embryo_probs
             )
-            model.fit(X[train_idx], y[train_idx])
-            proba = model.predict_proba(X[test_idx])
+            aucs.append(fold_auc)
 
-            # Ensure we consistently reference the positive-class column
-            class_order = model.classes_
-            if len(class_order) != 2:
-                raise ValueError("Expected binary classification with two classes.")
-
-            # IMPORTANT: Determine which class is "mutant" (non-WT)
-            # Assumes WT labels contain 'wildtype', 'wik', or 'ab'
-            wt_classes = [c for c in class_order if 'wildtype' in str(c).lower() or str(c).lower() in ['wik', 'ab', 'wik-ab']]
-            mutant_classes = [c for c in class_order if c not in wt_classes]
-
-            if len(wt_classes) == 1 and len(mutant_classes) == 1:
-                # Explicitly identify mutant class
-                mutant_class = mutant_classes[0]
-                wt_class = wt_classes[0]
-                mutant_idx = np.where(class_order == mutant_class)[0][0]
-
-                # pred_prob_mutant = probability of MUTANT class (regardless of alphabetical order)
-                positive_prob = proba[:, mutant_idx]
-                positive_class = mutant_class
-            else:
-                # Fallback to alphabetical second class if can't determine WT/mutant
-                positive_class = class_order[1]
-                positive_prob = proba[:, 1]
-
-            aucs.append(roc_auc_score(y[test_idx], positive_prob))
-
-            # Collect per-embryo predictions
-            if return_embryo_probs:
-                for i, idx in enumerate(test_idx):
-                    true_label = y[idx]
-                    p_pos = positive_prob[i]
-
-                    # Support for true class
-                    support_true = p_pos if true_label == positive_class else 1.0 - p_pos
-
-                    # Signed margin: positive = correct direction, negative = wrong direction
-                    signed_margin = (1 if true_label == positive_class else -1) * (p_pos - 0.5)
-
-                    embryo_predictions.append({
-                        'embryo_id': embryo_ids[idx],
-                        'time_bin': t,
-                        'true_label': true_label,
-                        'pred_proba': p_pos,  # Now explicitly P(mutant)
-                        'confidence': np.abs(p_pos - 0.5),
-                        'predicted_label': positive_class if p_pos > 0.5 else class_order[0] if positive_class == class_order[1] else class_order[1],
-                        'support_true': support_true,
-                        'signed_margin': signed_margin,
-                        'mutant_class': mutant_class if len(wt_classes) == 1 else None,
-                        'wt_class': wt_class if len(wt_classes) == 1 else None
-                    })
+            if return_embryo_probs and fold_predictions:
+                embryo_predictions.extend(fold_predictions)
 
         true_auc = np.mean(aucs)
 
@@ -188,27 +267,17 @@ def predictive_signal_test(
             perm_aucs = []
 
             for train_idx, test_idx in skf.split(X, y_shuff):
-                # FIXED: Also apply class_weight in permutation tests
-                model = LogisticRegression(
-                    max_iter=200,
-                    random_state=random_state,
-                    class_weight=class_weight  # <-- THIS WAS ALSO MISSING!
+                perm_auc, _ = _run_single_cv_fold(
+                    base_model,
+                    X_train=X[train_idx],
+                    y_train=y_shuff[train_idx],
+                    X_test=X[test_idx],
+                    y_test=y_shuff[test_idx],
+                    embryo_ids_test=None,
+                    time_bin=t,
+                    return_predictions=False
                 )
-                model.fit(X[train_idx], y_shuff[train_idx])
-                proba_perm = model.predict_proba(X[test_idx])
-
-                # Use same mutant class detection logic for consistency
-                class_order_perm = model.classes_
-                wt_classes_perm = [c for c in class_order_perm if 'wildtype' in str(c).lower() or str(c).lower() in ['wik', 'ab', 'wik-ab']]
-                mutant_classes_perm = [c for c in class_order_perm if c not in wt_classes_perm]
-
-                if len(wt_classes_perm) == 1 and len(mutant_classes_perm) == 1:
-                    mutant_idx_perm = np.where(class_order_perm == mutant_classes_perm[0])[0][0]
-                    prob = proba_perm[:, mutant_idx_perm]
-                else:
-                    prob = proba_perm[:, 1]
-
-                perm_aucs.append(roc_auc_score(y_shuff[test_idx], prob))
+                perm_aucs.append(perm_auc)
 
             null_aucs.append(np.mean(perm_aucs))
 

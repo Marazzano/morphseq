@@ -522,6 +522,271 @@ def LoG_focus_stacker_batch(
 
     return ff, abs_log
 
+
+# ============================================================================
+# Z-Stack Filtering Functions (Motion Blur & Out-of-Focus Rejection)
+# ============================================================================
+
+def compute_slice_quality_metrics(
+    data_zyx: torch.Tensor,      # shape (Z, Y, X) or (N, Z, Y, X)
+    log_scores: torch.Tensor,    # shape (Z, Y, X) or (N, Z, Y, X)
+    enable_correlation: bool = True
+) -> dict:
+    """
+    Compute per-slice quality metrics from LoG focus stacker outputs.
+
+    Parameters:
+    -----------
+    data_zyx : torch.Tensor
+        Input z-stack, shape (Z, Y, X) or (N, Z, Y, X)
+    log_scores : torch.Tensor
+        LoG response from LoG_focus_stacker, same shape as data_zyx
+    enable_correlation : bool
+        If True, compute frame-to-frame correlation metrics
+
+    Returns:
+    --------
+    metrics : dict
+        - mean_log_per_slice: np.ndarray, mean |LoG| response per slice
+        - peak_log: float, maximum mean |LoG| across slices
+        - mean_log: float, average mean |LoG| across slices
+        - min_corr: float, minimum frame-to-frame correlation (if enabled)
+        - median_corr: float, median correlation (if enabled)
+    """
+    # Handle batched input (process first sample only)
+    if data_zyx.ndim == 4:
+        data = data_zyx[0]  # shape (Z, Y, X)
+        log_s = log_scores[0]
+    else:
+        data = data_zyx
+        log_s = log_scores
+
+    # Per-slice mean LoG
+    mean_log_per_slice = log_s.mean(dim=(1, 2)).cpu().numpy()  # shape (Z,)
+
+    metrics = {
+        "mean_log_per_slice": mean_log_per_slice,
+        "peak_log": float(mean_log_per_slice.max()),
+        "mean_log": float(mean_log_per_slice.mean()),
+    }
+
+    if enable_correlation:
+        Z = data.shape[0]
+        correlations = []
+        for i in range(Z - 1):
+            a = data[i].cpu().numpy().ravel()
+            b = data[i+1].cpu().numpy().ravel()
+            # Normalize
+            a = (a - a.mean()) / (a.std() + 1e-8)
+            b = (b - b.mean()) / (b.std() + 1e-8)
+            # Pearson correlation
+            corr = np.dot(a, b) / len(a)
+            correlations.append(corr)
+
+        if correlations:
+            metrics["min_corr"] = float(np.min(correlations))
+            metrics["median_corr"] = float(np.median(correlations))
+        else:
+            metrics["min_corr"] = 1.0
+            metrics["median_corr"] = 1.0
+
+    return metrics
+
+
+def filter_bad_slices(
+    data_zyx: torch.Tensor,      # shape (Z, Y, X) or (N, Z, Y, X)
+    log_scores: torch.Tensor,    # same shape as data_zyx
+    alpha: float = 0.7,
+    corr_threshold: float = 0.9,
+    method: str = "peak_relative"
+) -> tuple:
+    """
+    Filter out bad slices before focus stacking.
+
+    Parameters:
+    -----------
+    data_zyx : torch.Tensor
+        Input z-stack
+    log_scores : torch.Tensor
+        LoG response from LoG_focus_stacker
+    alpha : float
+        Peak-relative threshold (0.5-0.8 typical)
+        Slices with mean_log < peak * alpha are rejected
+    corr_threshold : float
+        Correlation threshold (0.85-0.95 typical)
+        Frame pairs with corr < threshold are rejected (both frames)
+    method : str
+        "peak_relative" - filter by sharpness only
+        "correlation" - filter by motion only
+        "hybrid" - combine both (recommended)
+
+    Returns:
+    --------
+    filtered_data : torch.Tensor
+        Stack with bad slices removed
+    kept_indices : np.ndarray
+        Boolean mask of kept slices
+    metrics : dict
+        Quality and filtering diagnostics
+    """
+    # Handle batched input (process first sample only)
+    if data_zyx.ndim == 4:
+        data = data_zyx[0]
+        log_s = log_scores[0]
+        was_batched = True
+    else:
+        data = data_zyx
+        log_s = log_scores
+        was_batched = False
+
+    Z = data.shape[0]
+
+    # Compute mean LoG per slice
+    mean_log_per_slice = log_s.mean(dim=(1, 2)).cpu().numpy()
+
+    # Filter by sharpness (peak-relative)
+    if method in ["peak_relative", "hybrid"]:
+        peak_score = mean_log_per_slice.max()
+        threshold = peak_score * alpha
+        is_sharp = mean_log_per_slice >= threshold
+    else:
+        is_sharp = np.ones(Z, dtype=bool)
+
+    # Filter by correlation (motion detection)
+    if method in ["correlation", "hybrid"]:
+        is_stable = np.ones(Z, dtype=bool)
+        for i in range(Z - 1):
+            a = data[i].cpu().numpy().ravel()
+            b = data[i+1].cpu().numpy().ravel()
+            # Normalize
+            a = (a - a.mean()) / (a.std() + 1e-8)
+            b = (b - b.mean()) / (b.std() + 1e-8)
+            # Pearson correlation
+            corr = np.dot(a, b) / len(a)
+
+            # Bilateral flagging: if correlation is bad, flag BOTH frames
+            if corr < corr_threshold:
+                is_stable[i] = False
+                is_stable[i+1] = False
+    else:
+        is_stable = np.ones(Z, dtype=bool)
+
+    # Combine filters
+    keep_mask = is_sharp & is_stable
+
+    # Safety: never drop all frames
+    if not keep_mask.any():
+        keep_mask = is_sharp if is_sharp.any() else np.ones(Z, dtype=bool)
+
+    # Filter the data
+    kept_indices_torch = torch.from_numpy(keep_mask).to(data.device)
+    filtered_data = data[kept_indices_torch]
+
+    if was_batched:
+        filtered_data = filtered_data.unsqueeze(0)  # restore batch dimension
+
+    metrics = {
+        "n_total": Z,
+        "n_sharp": int(is_sharp.sum()),
+        "n_stable": int(is_stable.sum()),
+        "n_kept": int(keep_mask.sum()),
+        "rejection_rate": 1.0 - (keep_mask.sum() / Z),
+    }
+
+    return filtered_data, keep_mask, metrics
+
+
+def LoG_focus_stacker_with_filtering(
+    data_zyx: Union[torch.Tensor, np.ndarray],
+    filter_size: int,
+    device: Union[str, torch.device] = "cpu",
+    enable_filtering: bool = False,
+    filter_alpha: float = 0.7,
+    filter_corr_threshold: float = 0.9,
+    filter_method: str = "peak_relative",
+    return_metrics: bool = False
+):
+    """
+    LoG focus stacker with optional pre-filtering of bad slices.
+
+    This wrapper extends LoG_focus_stacker to optionally filter out:
+    - Out-of-focus frames (via peak-relative sharpness threshold)
+    - Motion artifacts (via frame-to-frame correlation)
+
+    Parameters:
+    -----------
+    data_zyx : torch.Tensor or np.ndarray
+        Input z-stack, shape (Z, Y, X) or (N, Z, Y, X)
+    filter_size : int
+        Kernel size for LoG filter
+    device : str or torch.device
+        Device to run computation on
+    enable_filtering : bool
+        If True, filter bad slices before stacking
+    filter_alpha : float
+        Peak-relative threshold (0.5-0.8 typical)
+    filter_corr_threshold : float
+        Correlation threshold (0.85-0.95 typical)
+    filter_method : str
+        "peak_relative" (sharpness only),
+        "correlation" (motion only),
+        "hybrid" (both - recommended)
+    return_metrics : bool
+        If True, return quality metrics dict
+
+    Returns:
+    --------
+    ff : torch.Tensor
+        Full-focus image
+    abs_log : torch.Tensor
+        LoG scores (from filtered stack if filtering enabled)
+    metrics : dict (only if return_metrics=True)
+        Quality and filtering diagnostics
+    """
+    device = torch.device(device)
+
+    # Convert to tensor if needed
+    if not torch.is_tensor(data_zyx):
+        data = torch.from_numpy(np.asarray(data_zyx))
+    else:
+        data = data_zyx
+    data = data.to(device, dtype=torch.float32)
+
+    # First pass: compute LoG scores on full stack
+    ff_initial, log_scores_initial = LoG_focus_stacker(data, filter_size, device)
+
+    metrics = {}
+
+    if enable_filtering:
+        # Filter bad slices
+        filtered_data, keep_mask, filter_metrics = filter_bad_slices(
+            data, log_scores_initial,
+            alpha=filter_alpha,
+            corr_threshold=filter_corr_threshold,
+            method=filter_method
+        )
+        metrics.update(filter_metrics)
+
+        # Second pass: focus stack on filtered data
+        ff, log_scores = LoG_focus_stacker(filtered_data, filter_size, device)
+    else:
+        ff = ff_initial
+        log_scores = log_scores_initial
+        keep_mask = np.ones(data.shape[0] if data.ndim == 3 else data.shape[1], dtype=bool)
+
+    # Compute quality metrics
+    if return_metrics:
+        quality_metrics = compute_slice_quality_metrics(
+            data if not enable_filtering else filtered_data,
+            log_scores,
+            enable_correlation=True
+        )
+        metrics.update(quality_metrics)
+        return ff, log_scores, metrics
+
+    return ff, log_scores
+
+
 def valid_acq_dirs(root: Path, dir_list: Optional[list[str]]) -> list[Path]:
     if dir_list is not None:
         dirs = [root / d for d in dir_list]
