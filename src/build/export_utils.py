@@ -133,18 +133,24 @@ def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_d
                     block = df.iloc[:8, 1:13]                    # whatever made it through
 
                     # ensure 8 rows, 12 cols
-                    if sheet in ["start_age_hpf", "temperature", "embryos_per_well"]:
+                    if sheet in ["temperature", "embryos_per_well"]:
+                        # Numeric sheets only
                         block = block.reindex(index=range(8), columns=range(1,13), fill_value=np.nan)
-                        arr = block.to_numpy(dtype=float).ravel() 
+                        arr = block.to_numpy(dtype=float).ravel()
+                    elif sheet == "start_age_hpf":
+                        # Can be string identifiers OR numeric values
+                        block = block.reindex(index=range(8), columns=range(1,13), fill_value='')
+                        arr = block.to_numpy(dtype=str).ravel()
                     else:
                         block = block.reindex(index=range(8), columns=range(1,13), fill_value='')
-                        arr = block.to_numpy(dtype=str).ravel() 
+                        arr = block.to_numpy(dtype=str).ravel()
                     plate_df[sheet] = arr
                 else:                   
                     plate_df[sheet] = np.nan
                 
 
-            plate_df = plate_df.dropna(subset=["start_age_hpf"]).reset_index(drop=True)
+            # Drop rows where start_age_hpf is empty (now stored as string)
+            plate_df = plate_df[plate_df["start_age_hpf"] != ''].reset_index(drop=True)
     
     except FileNotFoundError as e:
         raise FileNotFoundError(
