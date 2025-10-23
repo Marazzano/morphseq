@@ -972,8 +972,18 @@ def segment_wells_sam2_csv(
     
     # Calculate predicted developmental stage using legacy formula (Kimmel et al 1995)
     # Formula: predicted_stage_hpf = start_age_hpf + time_hours * (0.055 * temperature - 0.57)
-    exp_df['predicted_stage_hpf'] = exp_df['start_age_hpf'] + \
-        (exp_df['Time Rel (s)'] / 3600.0) * (0.055 * exp_df['temperature'] - 0.57)
+    # Try to convert start_age_hpf to numeric; if it fails (e.g., string identifiers), leave as NaN
+    exp_df['start_age_hpf_numeric'] = pd.to_numeric(exp_df['start_age_hpf'], errors='coerce')
+
+    # Only calculate predicted_stage_hpf for rows with numeric start_age
+    mask = exp_df['start_age_hpf_numeric'].notna()
+    exp_df['predicted_stage_hpf'] = np.nan
+
+    if mask.any():
+        exp_df.loc[mask, 'predicted_stage_hpf'] = (
+            exp_df.loc[mask, 'start_age_hpf_numeric'] +
+            (exp_df.loc[mask, 'Time Rel (s)'] / 3600.0) * (0.055 * exp_df.loc[mask, 'temperature'] - 0.57)
+        )
     
     print(f"✅ SAM2 data transformed to legacy format: {len(exp_df)} rows ready")
     
@@ -1422,15 +1432,29 @@ def _ensure_predicted_stage_hpf(df: pd.DataFrame, verbose: bool = False) -> pd.D
                 for col in needed:
                     sample_vals = df[col].head(3).tolist()
                     print(f"        - {col}: {sample_vals}")
-            
-            df["predicted_stage_hpf"] = (
-                df["start_age_hpf"].astype(float)
-                + (df["Time Rel (s)"].astype(float) / 3600.0)
-                  * (0.055 * df["temperature"].astype(float) - 0.57)
-            )
-            
+
+            # Try to convert start_age_hpf to numeric; if it fails (e.g., string identifiers), leave as NaN
+            df["start_age_hpf_numeric"] = pd.to_numeric(df["start_age_hpf"], errors='coerce')
+
+            # Only calculate predicted_stage_hpf for rows with numeric start_age
+            mask = df["start_age_hpf_numeric"].notna()
+            df["predicted_stage_hpf"] = np.nan
+
+            if mask.any():
+                df.loc[mask, "predicted_stage_hpf"] = (
+                    df.loc[mask, "start_age_hpf_numeric"].astype(float)
+                    + (df.loc[mask, "Time Rel (s)"].astype(float) / 3600.0)
+                      * (0.055 * df.loc[mask, "temperature"].astype(float) - 0.57)
+                )
+
             if verbose:
-                print(f"      • Calculated predicted_stage_hpf: {df['predicted_stage_hpf'].head(3).tolist()}")
+                n_numeric = mask.sum()
+                n_total = len(df)
+                print(f"      • Calculated predicted_stage_hpf for {n_numeric}/{n_total} rows with numeric start_age")
+                if n_numeric > 0:
+                    print(f"      • Sample predicted_stage_hpf: {df.loc[mask, 'predicted_stage_hpf'].head(3).tolist()}")
+                if (n_total - n_numeric) > 0:
+                    print(f"      • {n_total - n_numeric} rows have string identifiers in start_age_hpf (will need group resolution)")
                 
         except Exception as e:
             # Leave silently unchanged if types are malformed; downstream code will not rely on this.

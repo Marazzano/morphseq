@@ -16,9 +16,10 @@ Key Features:
 - Uses existing parsing_utils.py for ID consistency
 - Supports experiment filtering for selective processing
 
-CSV Schema (Enhanced with Raw Metadata + Build03 Compatibility + QC Flags - 43 columns):
-    Core SAM2 columns (14): image_id, embryo_id, snip_id, frame_index, area_px, bbox_x_min, bbox_y_min,
-    bbox_x_max, bbox_y_max, mask_confidence, exported_mask_path, experiment_id, video_id, is_seed_frame
+CSV Schema (Enhanced with Raw Metadata + Build03 Compatibility + QC Flags - 47 columns):
+    Core SAM2 columns (18): image_id, embryo_id, snip_id, frame_index, area_px, bbox_x_min, bbox_y_min,
+    bbox_x_max, bbox_y_max, mask_confidence, mask_rle, mask_height_px, mask_width_px, exported_mask_path,
+    image_path, experiment_id, video_id, is_seed_frame
 
     Raw image metadata (16): Height (um), Height (px), Width (um), Width (px), BF Channel, Objective,
     Time (s), Time Rel (s), height_um, height_px, width_um, width_px, bf_channel, objective,
@@ -112,7 +113,8 @@ except ImportError:
 CSV_COLUMNS = [
     'image_id', 'embryo_id', 'snip_id', 'frame_index', 'area_px',
     'bbox_x_min', 'bbox_y_min', 'bbox_x_max', 'bbox_y_max',
-    'mask_confidence', 'exported_mask_path', 'experiment_id',
+    'mask_confidence', 'mask_rle', 'mask_height_px', 'mask_width_px',
+    'exported_mask_path', 'image_path', 'experiment_id',
     'video_id', 'is_seed_frame',
 
     # Raw image metadata from legacy CSV (both original names and aliases)
@@ -450,6 +452,21 @@ class SAM2MetadataExporter:
                             area_px = seg_data.get('area', 0.0)
                             bbox = seg_data.get('bbox', [0, 0, 0, 0])
                             mask_confidence = embryo_data.get('mask_confidence', 0.0)
+                            mask_rle = None
+                            mask_height_px = None
+                            mask_width_px = None
+                            if isinstance(seg_data, dict):
+                                counts = seg_data.get('counts') or seg_data.get('rle')
+                                if counts is not None:
+                                    mask_rle = counts if isinstance(counts, str) else json.dumps(counts)
+                                size = seg_data.get('size') or seg_data.get('dimensions')
+                                if isinstance(size, (list, tuple)) and len(size) >= 2:
+                                    try:
+                                        mask_height_px = int(size[0])
+                                        mask_width_px = int(size[1])
+                                    except (TypeError, ValueError):
+                                        mask_height_px = size[0]
+                                        mask_width_px = size[1]
                             
                             # Validate bbox format
                             if not isinstance(bbox, list) or len(bbox) != 4:
@@ -470,19 +487,24 @@ class SAM2MetadataExporter:
                             # Extract raw metadata from enhanced schema
                             raw_image_data = image_data.get('raw_image_data_info', {}) if isinstance(image_data, dict) else {}
                             
-                            # If raw_image_data is empty, try to merge from experiment metadata
-                            exp_metadata = {}
-                            video_metadata = {}
-                            if not raw_image_data and self.experiment_metadata:
-                                exp_metadata = self.experiment_metadata.get('experiments', {}).get(experiment_id, {})
-                                video_metadata = exp_metadata.get('videos', {}).get(video_id_parsed, {})
-                                image_metadata = video_metadata.get('image_ids', {}).get(image_id, {})
-                                raw_image_data = image_metadata.get('raw_image_data_info', {})
+                            exp_metadata: Dict[str, Any] = {}
+                            video_metadata: Dict[str, Any] = {}
+                            image_metadata: Dict[str, Any] = {}
+                            if self.experiment_metadata:
+                                experiments_meta = self.experiment_metadata.get('experiments', {})
+                                exp_metadata = experiments_meta.get(experiment_id, {}) if isinstance(experiments_meta, dict) else {}
+                                if isinstance(exp_metadata, dict):
+                                    videos_meta = exp_metadata.get('videos', {})
+                                    video_metadata = videos_meta.get(video_id_parsed, {}) if isinstance(videos_meta, dict) else {}
+                                    if isinstance(video_metadata, dict):
+                                        image_ids_meta = video_metadata.get('image_ids', {})
+                                        image_metadata = image_ids_meta.get(image_id, {}) if isinstance(image_ids_meta, dict) else {}
                             
-                            # Always try to get experiment metadata for well-level data
-                            if not exp_metadata and self.experiment_metadata:
-                                exp_metadata = self.experiment_metadata.get('experiments', {}).get(experiment_id, {})
-                                video_metadata = exp_metadata.get('videos', {}).get(video_id_parsed, {})
+                            if not raw_image_data and isinstance(image_metadata, dict):
+                                raw_image_data = image_metadata.get('raw_image_data_info', {}) or {}
+                            
+                            if not isinstance(video_metadata, dict):
+                                video_metadata = {}
                             
                             # Well-level metadata from experiment metadata (not SAM2 video_data)
                             well_metadata = {
@@ -494,6 +516,32 @@ class SAM2MetadataExporter:
                                 'temperature': video_metadata.get('temperature', video_data.get('temperature')),
                                 'well_qc_flag': video_metadata.get('well_qc_flag', video_data.get('well_qc_flag'))
                             }
+
+                            # Prefer processed image path; fall back to raw stitched or inferred location
+                            image_path = None
+                            if isinstance(image_metadata, dict):
+                                image_path = image_metadata.get('processed_image_path') or image_metadata.get('raw_stitch_image_path')
+
+                            if not image_path:
+                                processed_dir = None
+                                if isinstance(image_metadata, dict):
+                                    processed_dir = image_metadata.get('processed_jpg_images_dir')
+                                if not processed_dir and isinstance(video_metadata, dict):
+                                    processed_dir = video_metadata.get('processed_jpg_images_dir')
+                                if not processed_dir:
+                                    processed_dir = video_data.get('processed_jpg_images_dir')
+                                if processed_dir:
+                                    suffix = None
+                                    if isinstance(image_metadata, dict):
+                                        proc_path = image_metadata.get('processed_image_path')
+                                        raw_path = image_metadata.get('raw_stitch_image_path')
+                                        if proc_path:
+                                            suffix = Path(proc_path).suffix
+                                        elif raw_path:
+                                            suffix = Path(raw_path).suffix
+                                    if not suffix:
+                                        suffix = ".jpg"
+                                    image_path = str(Path(processed_dir) / f"{image_id}{suffix}")
                             
                         except Exception as e:
                             logger.error(f"Error processing {embryo_id} in {image_id}: {e}")
@@ -514,7 +562,11 @@ class SAM2MetadataExporter:
                             bbox[2],                     # bbox_x_max
                             bbox[3],                     # bbox_y_max
                             mask_confidence,             # mask_confidence
+                            mask_rle,                    # mask_rle
+                            mask_height_px,              # mask_height_px
+                            mask_width_px,               # mask_width_px
                             exported_mask_path,          # exported_mask_path
+                            image_path,                  # image_path
                             experiment_id,               # experiment_id
                             video_id_parsed,             # video_id
                             is_seed_frame,               # is_seed_frame
