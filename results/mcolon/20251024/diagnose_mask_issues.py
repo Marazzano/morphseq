@@ -32,48 +32,97 @@ def clean_embryo_mask(mask: np.ndarray, verbose: bool = False):
     Clean embryo mask to remove artifacts before centerline extraction.
 
     Cleaning steps:
-    1. Fill holes
-    2. Morphological closing to connect nearby parts
-    3. Keep largest connected component only
+    1. Remove small debris (<10% of total area)
+    2. Iterative adaptive closing to connect components
+    3. Fill holes
     4. Adaptive morphological opening to remove spindly protrusions
+    5. Keep largest component (safety check)
     """
     original_area = mask.sum()
+    total_area = original_area
 
     # Count initial components
     initial_labeled = measure.label(mask)
     n_components_initial = initial_labeled.max()
 
-    # Step 1: Fill holes
+    # Step 1: Remove small debris (<10% of total area)
+    labeled = measure.label(mask)
+    debris_removed = 0
+    if labeled.max() > 1:
+        component_areas = [(i, np.sum(labeled == i)) for i in range(1, labeled.max() + 1)]
+        threshold = 0.10 * total_area
+
+        # Keep components >= 10% of total area
+        keep_labels = [label for label, area in component_areas if area >= threshold]
+
+        if len(keep_labels) == 0:
+            # Safety: if all components are small, keep largest
+            keep_labels = [max(component_areas, key=lambda x: x[1])[0]]
+
+        debris_removed = labeled.max() - len(keep_labels)
+        mask_filtered = np.zeros_like(mask, dtype=bool)
+        for label in keep_labels:
+            mask_filtered |= (labeled == label)
+        mask = mask_filtered
+
+    n_components_after_debris = measure.label(mask).max()
+
+    # Step 2: Iterative adaptive CLOSING to connect components
+    closing_iterations = 0
+    closing_radius = 0
+    n_components_after_closing = n_components_after_debris
+
+    if n_components_after_debris > 1:
+        # Calculate initial adaptive radius
+        props_temp = measure.regionprops(measure.label(mask))[0]
+        perimeter_temp = props_temp.perimeter
+        closing_radius = max(5, int(perimeter_temp / 100))
+
+        closed = mask.copy()
+        max_iterations = 5
+        max_radius = 50
+
+        for iteration in range(max_iterations):
+            selem_close = morphology.disk(closing_radius)
+            closed = morphology.binary_closing(closed, selem_close)
+
+            # Check if now 1 component
+            closed_labeled = measure.label(closed)
+            n_components_after_closing = closed_labeled.max()
+            closing_iterations = iteration + 1
+
+            if n_components_after_closing == 1:
+                break
+
+            # Increase radius for next iteration
+            closing_radius = min(closing_radius + 5, max_radius)
+
+            if closing_radius >= max_radius:
+                break
+
+        mask = closed
+
+    # Step 3: Fill holes
     filled = ndimage.binary_fill_holes(mask)
     holes_filled = filled.sum() - mask.sum()
 
-    # Step 2: Morphological CLOSING to connect nearby parts
-    closing_radius = 5  # Connect parts within ~5 pixels
-    selem_close = morphology.disk(closing_radius)
-    closed = morphology.binary_closing(filled, selem_close)
-
-    # Check if closing connected components
-    closed_labeled = measure.label(closed)
-    n_components_after_closing = closed_labeled.max()
-
-    # Step 3: Keep largest connected component
-    labeled = measure.label(closed)
-    if labeled.max() > 1:
-        component_sizes = [(i, np.sum(labeled == i)) for i in range(1, labeled.max() + 1)]
-        largest_label = max(component_sizes, key=lambda x: x[1])[0]
-        closed = (labeled == largest_label)
-        n_components_removed = labeled.max() - 1
-    else:
-        n_components_removed = 0
-
     # Step 4: Adaptive morphological opening
-    props = measure.regionprops(measure.label(closed))[0]
+    props = measure.regionprops(measure.label(filled))[0]
     perimeter = props.perimeter
-    adaptive_radius = max(3, int(perimeter / 100))
+    # Use perimeter/150 for gentler smoothing (was /100)
+    # This preserves thin tails while still removing spindly protrusions
+    adaptive_radius = max(3, int(perimeter / 150))
     solidity_before = props.solidity
 
     selem_open = morphology.disk(adaptive_radius)
-    cleaned = morphology.binary_opening(closed, selem_open)
+    cleaned = morphology.binary_opening(filled, selem_open)
+
+    # Step 5: Final safety check - keep largest component
+    final_labeled = measure.label(cleaned)
+    if final_labeled.max() > 1:
+        component_sizes = [(i, np.sum(final_labeled == i)) for i in range(1, final_labeled.max() + 1)]
+        largest_label = max(component_sizes, key=lambda x: x[1])[0]
+        cleaned = (final_labeled == largest_label)
 
     # Get final stats
     final_props = measure.regionprops(measure.label(cleaned))[0]
@@ -82,11 +131,13 @@ def clean_embryo_mask(mask: np.ndarray, verbose: bool = False):
 
     cleaning_stats = {
         'original_area': original_area,
-        'holes_filled': holes_filled,
         'n_components_initial': n_components_initial,
-        'n_components_after_closing': n_components_after_closing,
-        'n_components_removed': n_components_removed,
+        'debris_removed': debris_removed,
+        'n_components_after_debris': n_components_after_debris,
+        'closing_iterations': closing_iterations,
         'closing_radius': closing_radius,
+        'n_components_after_closing': n_components_after_closing,
+        'holes_filled': holes_filled,
         'adaptive_radius': adaptive_radius,
         'solidity_before': solidity_before,
         'solidity_after': solidity_after,
@@ -162,8 +213,8 @@ def analyze_mask_quality(mask: np.ndarray, snip_id: str):
 def visualize_mask_diagnostics(mask: np.ndarray, snip_id: str, diagnostics: dict, ax=None):
     """
     Create diagnostic visualization showing:
-    - Original mask
-    - Filled mask (highlighting holes)
+    - Original mask (before cleaning if available)
+    - Cleaned mask (or filled mask if no cleaning)
     - Skeleton
     - Connected components
     """
@@ -172,24 +223,24 @@ def visualize_mask_diagnostics(mask: np.ndarray, snip_id: str, diagnostics: dict
     else:
         axes = ax
 
-    # Original mask
-    axes[0].imshow(mask, cmap='gray')
-    axes[0].set_title(f'{snip_id[:30]}\nOriginal Mask\nArea: {diagnostics["total_area"]:,} px',
-                         fontsize=9)
+    # Panel 1: Original mask (before cleaning)
+    if 'mask_original' in diagnostics:
+        # Show ORIGINAL mask before cleaning
+        original_mask = diagnostics['mask_original']
+        axes[0].imshow(original_mask, cmap='gray')
+        axes[0].set_title(f'{snip_id[:30]}\nBEFORE Cleaning\nArea: {original_mask.sum():,} px',
+                             fontsize=9)
+    else:
+        # No original, just show current mask
+        axes[0].imshow(mask, cmap='gray')
+        axes[0].set_title(f'{snip_id[:30]}\nOriginal Mask\nArea: {diagnostics["total_area"]:,} px',
+                             fontsize=9)
     axes[0].axis('off')
 
-    # Filled mask (holes highlighted)
-    filled = ndimage.binary_fill_holes(mask)
-    holes = filled & ~mask
-
-    # Create RGB image to show holes in red
-    display_img = np.zeros((*mask.shape, 3))
-    display_img[mask > 0] = [1, 1, 1]  # White for mask
-    display_img[holes > 0] = [1, 0, 0]  # Red for holes
-
-    axes[1].imshow(display_img)
-    axes[1].set_title(f'Holes (red)\nHole area: {diagnostics["hole_area"]:,} px\n' +
-                         f'Hole fraction: {diagnostics["hole_fraction"]:.2%}',
+    # Panel 2: Cleaned mask (AFTER cleaning)
+    axes[1].imshow(mask, cmap='gray')
+    axes[1].set_title(f'AFTER Cleaning\nArea: {diagnostics["total_area"]:,} px\n' +
+                         f'Components: {diagnostics["n_components"]}',
                          fontsize=9)
     axes[1].axis('off')
 
@@ -245,9 +296,9 @@ def main():
     """Main diagnostic execution."""
     # Embryos to diagnose
     problem_embryos = [
-        '20251017_part2_B05_e01_t0037',  # User mentioned - might have spindly parts/holes
-        '20251017_part2_G07_e01_t0013',  # User asked about this one
-        '20251017_part2_B04_e01_t0039',  # User just mentioned - geodesic spline didn't work
+        '20251017_part2_B05_e01_t0037',  # 2 components (75%/25% split), 109 branch points
+        '20251017_part2_G07_e01_t0013',  # 8 components, 40 branch points
+        '20251017_part2_B05_e01_t0005',  # User requested - test case
     ]
 
     csv_path = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/metadata/build06_output/df03_final_output_with_latents_20251017_part2.csv")
@@ -298,9 +349,13 @@ def main():
         # CLEAN MASK
         print(f"\n  CLEANING MASK...")
         mask_cleaned, cleaning_stats = clean_embryo_mask(mask, verbose=False)
+        print(f"    Debris removed (<10%): {cleaning_stats['debris_removed']}")
+        print(f"    Components after debris removal: {cleaning_stats['n_components_after_debris']}")
+        if cleaning_stats['closing_iterations'] > 0:
+            print(f"    Closing: {cleaning_stats['closing_iterations']} iterations, final radius: {cleaning_stats['closing_radius']} px")
+            print(f"    Components after closing: {cleaning_stats['n_components_after_closing']}")
         print(f"    Holes filled: {cleaning_stats['holes_filled']} px")
-        print(f"    Components removed: {cleaning_stats['n_components_removed']}")
-        print(f"    Adaptive radius: {cleaning_stats['adaptive_radius']} px")
+        print(f"    Opening radius: {cleaning_stats['adaptive_radius']} px")
         print(f"    Area removed: {cleaning_stats['area_removed']:,} px ({cleaning_stats['area_removed_pct']:.1f}%)")
 
         # Analyze AFTER cleaning
