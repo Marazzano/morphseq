@@ -88,6 +88,25 @@ from .trajectory_viz_loeo import (
     plot_penetrance_classification
 )
 
+from .simple_trajectory import (
+    create_start_time_pairs,
+    get_model,
+    train_model_loeo_single_time,
+    train_all_horizons_parallel,
+    aggregate_metrics_across_horizons,
+    compare_models_across_horizons,
+    get_best_model_per_horizon
+)
+
+from .simple_viz import (
+    plot_model_comparison_curves,
+    plot_trajectory_examples,
+    plot_model_performance_heatmap,
+    plot_error_distributions,
+    plot_model_ranking_table,
+    plot_best_model_per_horizon
+)
+
 __all__ = [
     # Correlation
     'compute_per_embryo_metrics',
@@ -157,5 +176,20 @@ __all__ = [
     'plot_temporal_breakdown',
     'plot_per_embryo_error_distribution',
     'plot_model_comparison_3x3',
-    'plot_penetrance_classification'
+    'plot_penetrance_classification',
+    # Simple Trajectory Prediction
+    'create_start_time_pairs',
+    'get_model',
+    'train_model_loeo_single_time',
+    'train_all_horizons_parallel',
+    'aggregate_metrics_across_horizons',
+    'compare_models_across_horizons',
+    'get_best_model_per_horizon',
+    # Simple Trajectory Visualization
+    'plot_model_comparison_curves',
+    'plot_trajectory_examples',
+    'plot_model_performance_heatmap',
+    'plot_error_distributions',
+    'plot_model_ranking_table',
+    'plot_best_model_per_horizon'
 ]

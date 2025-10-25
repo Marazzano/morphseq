@@ -38,7 +38,7 @@ DEFAULT_EXPERIMENTS="20250305"
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
-: "${METADATA_MICROSCOPE:=Keyence}"
+: "${METADATA_MICROSCOPE:=YX1}"
 
 # SAM2 inference knobs
 : "${SAM2_WORKERS:=8}"
@@ -46,13 +46,13 @@ DEFAULT_EXPERIMENTS="20250305"
 : "${SAM2_IOU:=0.5}"
 
 # Pipeline stage toggles (1=run, 0=skip)
-: "${RUN_METADATA_REBUILD:=0}"
-: "${RUN_SAM2:=0}"
-: "${RUN_BUILD03:=0}"
+: "${RUN_METADATA_REBUILD:=1}"
+: "${RUN_SAM2:=1}"
+: "${RUN_BUILD03:=1}"
 : "${BUILD03_SKIP_GEOMETRY_QC:=0}"
 : "${RUN_BUILD04:=1}"
 : "${RUN_BUILD06:=1}"
-: "${RUN_SNIP_EXPORT:=0}"
+: "${RUN_SNIP_EXPORT:=1}"
 
 # Snip export knobs (outscale fixed at 6.5 to match embedding expectations)
 : "${SNIP_WORKERS:=1}"
@@ -226,10 +226,10 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 # Example usage with array jobs:
 #
 # Run for all experiments in list:
-# qsub -t 1-24 -tc 3 \
+# qsub -t 1-30 -tc 3 \
 #   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
 #   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
-#
+
 # Run for single experiment (test):
 # qsub -t 1 \
 #   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
