@@ -969,22 +969,14 @@ def segment_wells_sam2_csv(
     exp_df['experiment_date'] = exp_name
     exp_df['well_id'] = exp_df['video_id'].str.extract(r'_([A-H]\d{2})$')[0]
     exp_df['well'] = exp_df['well_id']  # Add 'well' column for legacy compatibility
-    
+
     # Calculate predicted developmental stage using legacy formula (Kimmel et al 1995)
     # Formula: predicted_stage_hpf = start_age_hpf + time_hours * (0.055 * temperature - 0.57)
-    # Try to convert start_age_hpf to numeric; if it fails (e.g., string identifiers), leave as NaN
-    exp_df['start_age_hpf_numeric'] = pd.to_numeric(exp_df['start_age_hpf'], errors='coerce')
+    # Handle both 'temperature' and 'temperature_c' column names
+    temp_col = 'temperature' if 'temperature' in exp_df.columns else 'temperature_c'
+    exp_df['predicted_stage_hpf'] = exp_df['start_age_hpf'] + \
+        (exp_df['Time Rel (s)'] / 3600.0) * (0.055 * exp_df[temp_col] - 0.57)
 
-    # Only calculate predicted_stage_hpf for rows with numeric start_age
-    mask = exp_df['start_age_hpf_numeric'].notna()
-    exp_df['predicted_stage_hpf'] = np.nan
-
-    if mask.any():
-        exp_df.loc[mask, 'predicted_stage_hpf'] = (
-            exp_df.loc[mask, 'start_age_hpf_numeric'] +
-            (exp_df.loc[mask, 'Time Rel (s)'] / 3600.0) * (0.055 * exp_df.loc[mask, 'temperature'] - 0.57)
-        )
-    
     print(f"✅ SAM2 data transformed to legacy format: {len(exp_df)} rows ready")
     
     return exp_df
@@ -1405,57 +1397,46 @@ def extract_embryo_snips(root: str | Path,
 
 def _ensure_predicted_stage_hpf(df: pd.DataFrame, verbose: bool = False) -> pd.DataFrame:
     """Add `predicted_stage_hpf` using the legacy Kimmel-style formula if missing.
-    
+
     Formula (hours post fertilization):
       start_age_hpf + (Time Rel (s)/3600) * (0.055*temperature - 0.57)
-    
+
     Only applies if the requisite columns exist. Otherwise, the input is
     returned unchanged.
-    
+
     This is the exact same logic from the legacy build03A_process_images.py.
+    Handles both 'temperature' and 'temperature_c' column names.
     """
-    needed = {"start_age_hpf", "Time Rel (s)", "temperature"}
-    
+    # Check for temperature column (either 'temperature' or 'temperature_c')
+    temp_col = 'temperature' if 'temperature' in df.columns else 'temperature_c'
+    needed = {"start_age_hpf", "Time Rel (s)", temp_col}
+
     if verbose:
         print(f"      • DataFrame columns: {list(df.columns)}")
         print(f"      • Needed columns: {needed}")
         print(f"      • Columns present: {needed.intersection(set(df.columns))}")
         print(f"      • All needed present: {needed.issubset(df.columns)}")
         print(f"      • predicted_stage_hpf already exists: {'predicted_stage_hpf' in df.columns}")
-    
+
     if needed.issubset(df.columns):
         try:
             df = df.copy()
-            
+
             if verbose:
                 print(f"      • Sample values:")
                 for col in needed:
                     sample_vals = df[col].head(3).tolist()
                     print(f"        - {col}: {sample_vals}")
 
-            # Try to convert start_age_hpf to numeric; if it fails (e.g., string identifiers), leave as NaN
-            df["start_age_hpf_numeric"] = pd.to_numeric(df["start_age_hpf"], errors='coerce')
-
-            # Only calculate predicted_stage_hpf for rows with numeric start_age
-            mask = df["start_age_hpf_numeric"].notna()
-            df["predicted_stage_hpf"] = np.nan
-
-            if mask.any():
-                df.loc[mask, "predicted_stage_hpf"] = (
-                    df.loc[mask, "start_age_hpf_numeric"].astype(float)
-                    + (df.loc[mask, "Time Rel (s)"].astype(float) / 3600.0)
-                      * (0.055 * df.loc[mask, "temperature"].astype(float) - 0.57)
-                )
+            df["predicted_stage_hpf"] = (
+                df["start_age_hpf"].astype(float)
+                + (df["Time Rel (s)"].astype(float) / 3600.0)
+                  * (0.055 * df[temp_col].astype(float) - 0.57)
+            )
 
             if verbose:
-                n_numeric = mask.sum()
-                n_total = len(df)
-                print(f"      • Calculated predicted_stage_hpf for {n_numeric}/{n_total} rows with numeric start_age")
-                if n_numeric > 0:
-                    print(f"      • Sample predicted_stage_hpf: {df.loc[mask, 'predicted_stage_hpf'].head(3).tolist()}")
-                if (n_total - n_numeric) > 0:
-                    print(f"      • {n_total - n_numeric} rows have string identifiers in start_age_hpf (will need group resolution)")
-                
+                print(f"      • Calculated predicted_stage_hpf: {df['predicted_stage_hpf'].head(3).tolist()}")
+
         except Exception as e:
             # Leave silently unchanged if types are malformed; downstream code will not rely on this.
             if verbose:
@@ -1817,10 +1798,10 @@ def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_work
 
     # Convert back to DataFrame
     result_df = pd.DataFrame(rows)
-    
+
     # Add predicted stage calculation at DataFrame level
     result_df = _ensure_predicted_stage_hpf(result_df, verbose=False)
-    
+
     # Summary statistics
     total_embryos = len(result_df)
     usable_embryos = (result_df["use_embryo_flag"] == "true").sum()

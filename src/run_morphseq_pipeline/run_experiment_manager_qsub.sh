@@ -17,7 +17,7 @@ set -euo pipefail
 REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
 DATA_ROOT="${REPO_ROOT}/morphseq_playground"
 # EXPERIMENTS="all"
-EXPERIMENTS="20250305,20230531,20230525,20230615" #"20250711,20250519"
+EXPERIMENTS=20251020,20251017_part1,20251017_part2 #"20250305,20230531,20230525,20230615" #"20250711,20250519"
 ACTION="${ACTION:-e2e}"     # default to e2e, but can be overridden with -v ACTION=build03
 DRY_RUN="0"                 # set to 1 to enable --dry-run
 FORCE_OVERWRITE="0"         # set to 1 to enable --force (rerun even if not needed)
@@ -124,6 +124,6 @@ echo "[morphseq] Done."
 #   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
 
 
-# qsub -t 2 src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+# qsub -t 1-3 src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
 
 # qsub src/run_morphseq_pipeline/run_experiment_manager_qsub.sh

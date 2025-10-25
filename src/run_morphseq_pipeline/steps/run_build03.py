@@ -198,12 +198,12 @@ def _discover_sam2_csv(root: Path, exp: str) -> Path:
     per_exp_csv = root / "sam2_pipeline_files" / "sam2_expr_files" / f"sam2_metadata_{exp}.csv"
     if per_exp_csv.exists():
         return per_exp_csv
-    
+
     # Fallback to root location
     root_csv = root / f"sam2_metadata_{exp}.csv"
     if root_csv.exists():
         return root_csv
-    
+
     raise FileNotFoundError(f"SAM2 CSV not found for experiment {exp}")
 
 
