@@ -40,10 +40,11 @@ def clean_embryo_mask(mask: np.ndarray, verbose: bool = False):
     Clean embryo mask to remove artifacts before centerline extraction.
 
     Cleaning steps:
-    1. Fill holes
-    2. Morphological closing to connect nearby parts
-    3. Keep largest connected component only
+    1. Remove small debris (<10% of total area)
+    2. Iterative adaptive closing to connect components
+    3. Fill holes
     4. Adaptive morphological opening to remove spindly protrusions
+    5. Keep largest component (safety check)
 
     Args:
         mask: Binary mask (H, W)
@@ -54,51 +55,90 @@ def clean_embryo_mask(mask: np.ndarray, verbose: bool = False):
         cleaning_stats: Dict with before/after metrics
     """
     original_area = mask.sum()
+    total_area = original_area
 
     # Count initial components
     initial_labeled = measure.label(mask)
     n_components_initial = initial_labeled.max()
 
-    # Step 1: Fill holes
+    # Step 1: Remove small debris (<10% of total area)
+    labeled = measure.label(mask)
+    debris_removed = 0
+    if labeled.max() > 1:
+        component_areas = [(i, np.sum(labeled == i)) for i in range(1, labeled.max() + 1)]
+        threshold = 0.10 * total_area
+
+        # Keep components >= 10% of total area
+        keep_labels = [label for label, area in component_areas if area >= threshold]
+
+        if len(keep_labels) == 0:
+            # Safety: if all components are small, keep largest
+            keep_labels = [max(component_areas, key=lambda x: x[1])[0]]
+
+        debris_removed = labeled.max() - len(keep_labels)
+        mask_filtered = np.zeros_like(mask, dtype=bool)
+        for label in keep_labels:
+            mask_filtered |= (labeled == label)
+        mask = mask_filtered
+
+    n_components_after_debris = measure.label(mask).max()
+
+    # Step 2: Iterative adaptive CLOSING to connect components
+    closing_iterations = 0
+    closing_radius = 0
+    n_components_after_closing = n_components_after_debris
+
+    if n_components_after_debris > 1:
+        # Calculate initial adaptive radius
+        props_temp = measure.regionprops(measure.label(mask))[0]
+        perimeter_temp = props_temp.perimeter
+        closing_radius = max(5, int(perimeter_temp / 100))
+
+        closed = mask.copy()
+        max_iterations = 5
+        max_radius = 50
+
+        for iteration in range(max_iterations):
+            selem_close = morphology.disk(closing_radius)
+            closed = morphology.binary_closing(closed, selem_close)
+
+            # Check if now 1 component
+            closed_labeled = measure.label(closed)
+            n_components_after_closing = closed_labeled.max()
+            closing_iterations = iteration + 1
+
+            if n_components_after_closing == 1:
+                break
+
+            # Increase radius for next iteration
+            closing_radius = min(closing_radius + 5, max_radius)
+
+            if closing_radius >= max_radius:
+                break
+
+        mask = closed
+
+    # Step 3: Fill holes
     filled = ndimage.binary_fill_holes(mask)
     holes_filled = filled.sum() - mask.sum()
 
-    # Step 2: Morphological CLOSING to connect nearby parts
-    # Use smaller radius for closing to avoid over-expansion
-    closing_radius = 5  # Connect parts within ~5 pixels
-    selem_close = morphology.disk(closing_radius)
-    closed = morphology.binary_closing(filled, selem_close)
-
-    # Check if closing connected components
-    closed_labeled = measure.label(closed)
-    n_components_after_closing = closed_labeled.max()
-
-    # Step 3: Keep largest connected component
-    labeled = measure.label(closed)
-    if labeled.max() > 1:
-        # Get component sizes
-        component_sizes = [(i, np.sum(labeled == i)) for i in range(1, labeled.max() + 1)]
-        largest_label = max(component_sizes, key=lambda x: x[1])[0]
-        closed = (labeled == largest_label)
-        n_components_removed = labeled.max() - 1
-    else:
-        n_components_removed = 0
-
     # Step 4: Adaptive morphological opening
-    # Calculate adaptive radius based on perimeter
-    props = measure.regionprops(measure.label(closed))[0]
+    props = measure.regionprops(measure.label(filled))[0]
     perimeter = props.perimeter
-
-    # Adaptive radius: perimeter / 100 (can tune this divisor)
-    # Larger perimeter = larger radius (proportional cleaning)
-    adaptive_radius = max(3, int(perimeter / 100))
-
-    # Detect if mask is "very thin" by checking solidity
+    # Use perimeter/150 for gentler smoothing (was /100)
+    # This preserves thin tails while still removing spindly protrusions
+    adaptive_radius = max(3, int(perimeter / 150))
     solidity_before = props.solidity
 
-    # Apply opening
     selem_open = morphology.disk(adaptive_radius)
-    cleaned = morphology.binary_opening(closed, selem_open)
+    cleaned = morphology.binary_opening(filled, selem_open)
+
+    # Step 5: Final safety check - keep largest component
+    final_labeled = measure.label(cleaned)
+    if final_labeled.max() > 1:
+        component_sizes = [(i, np.sum(final_labeled == i)) for i in range(1, final_labeled.max() + 1)]
+        largest_label = max(component_sizes, key=lambda x: x[1])[0]
+        cleaned = (final_labeled == largest_label)
 
     # Get final stats
     final_props = measure.regionprops(measure.label(cleaned))[0]
@@ -107,11 +147,13 @@ def clean_embryo_mask(mask: np.ndarray, verbose: bool = False):
 
     cleaning_stats = {
         'original_area': original_area,
-        'holes_filled': holes_filled,
         'n_components_initial': n_components_initial,
-        'n_components_after_closing': n_components_after_closing,
-        'n_components_removed': n_components_removed,
+        'debris_removed': debris_removed,
+        'n_components_after_debris': n_components_after_debris,
+        'closing_iterations': closing_iterations,
         'closing_radius': closing_radius,
+        'n_components_after_closing': n_components_after_closing,
+        'holes_filled': holes_filled,
         'adaptive_radius': adaptive_radius,
         'solidity_before': solidity_before,
         'solidity_after': solidity_after,
@@ -122,9 +164,11 @@ def clean_embryo_mask(mask: np.ndarray, verbose: bool = False):
 
     if verbose:
         print(f"  Mask Cleaning:")
+        print(f"    Initial components: {n_components_initial}")
+        print(f"    Debris removed (<10%): {debris_removed} → {n_components_after_debris} components")
+        if closing_iterations > 0:
+            print(f"    Closing: {closing_iterations} iterations, radius: {closing_radius} px → {n_components_after_closing} component(s)")
         print(f"    Holes filled: {holes_filled} px")
-        print(f"    Closing: {n_components_initial} → {n_components_after_closing} components (radius: {closing_radius} px)")
-        print(f"    Components removed: {n_components_removed}")
         print(f"    Opening radius: {adaptive_radius} px")
         print(f"    Solidity: {solidity_before:.3f} → {solidity_after:.3f}")
         print(f"    Area: {original_area:,} → {area_after:,} px ({cleaning_stats['area_removed_pct']:.1f}% removed)")
@@ -251,71 +295,29 @@ def identify_by_local_area(mask: np.ndarray, endpoint1: np.ndarray,
 def identify_by_taper_direction(mask: np.ndarray, centerline: np.ndarray,
                                 n_samples: int = 20, window_size: int = 10) -> int:
     """
-    Width decreases from head to tail (measured from centerline midpoint).
-
-    Strategy:
-    - Split centerline at midpoint
-    - Measure width gradient: midpoint → endpoint1
-    - Measure width gradient: midpoint → endpoint2
-    - Positive slope (increasing width) = HEAD direction
-    - Negative slope (decreasing/tapering) = TAIL direction
+    Width decreases from head to tail.
 
     Args:
         mask: Binary mask
         centerline: (N, 2) array of centerline points
-        n_samples: Number of points along each half to sample
+        n_samples: Number of points along centerline to sample
         window_size: Window for width measurement
 
     Returns:
         0 if centerline[0] is head, 1 if centerline[-1] is head
     """
-    if len(centerline) < 6:
-        # Too short, fall back to simple method
-        return 0
+    if len(centerline) < n_samples:
+        n_samples = len(centerline)
 
-    # Find midpoint
-    mid_idx = len(centerline) // 2
-
-    # Split into two halves: start→mid, mid→end
-    half1 = centerline[:mid_idx+1]  # Include midpoint
-    half2 = centerline[mid_idx:]     # Include midpoint
-
-    # Measure width gradients for each half
-    slope1 = _measure_width_gradient(mask, half1, n_samples, window_size)
-    slope2 = _measure_width_gradient(mask, half2, n_samples, window_size)
-
-    # Interpretation:
-    # slope1: gradient from START → MIDPOINT
-    # slope2: gradient from MIDPOINT → END
-    #
-    # If slope1 > slope2: width increases more toward start → START is HEAD
-    # If slope2 > slope1: width increases more toward end → END is HEAD
-
-    return 1 if slope2 > slope1 else 0
-
-
-def _measure_width_gradient(mask: np.ndarray, centerline_segment: np.ndarray,
-                            n_samples: int, window_size: int) -> float:
-    """
-    Measure width gradient along a centerline segment.
-
-    Returns:
-        slope: Linear regression slope of width vs. position
-               Positive = increasing width, Negative = decreasing width
-    """
-    if len(centerline_segment) < 2:
-        return 0.0
-
-    # Sample points along segment
-    n_samples = min(n_samples, len(centerline_segment))
-    indices = np.linspace(0, len(centerline_segment)-1, n_samples, dtype=int)
-    sample_points = centerline_segment[indices]
+    # Sample points along centerline
+    indices = np.linspace(0, len(centerline)-1, n_samples, dtype=int)
+    sample_points = centerline[indices]
 
     # Measure width at each point
     widths = []
     for i, point in enumerate(sample_points):
         if i == 0 or i == len(sample_points) - 1:
-            # For endpoints, measure local radius
+            # For endpoints, just measure local radius
             widths.append(_measure_local_width(mask, point, window_size))
         else:
             # For middle points, measure perpendicular width
@@ -335,14 +337,16 @@ def _measure_width_gradient(mask: np.ndarray, centerline_segment: np.ndarray,
 
     widths = np.array(widths)
 
-    if len(widths) < 2:
-        return 0.0
-
-    # Compute width gradient using linear regression
+    # Compute width gradient (positive = increasing toward end)
+    # Use linear regression to get overall trend
     x = np.arange(len(widths))
     slope = np.polyfit(x, widths, 1)[0]
 
-    return slope
+    # If slope is negative, width decreases from start to end
+    # So start is head (return 0)
+    # If slope is positive, width increases from start to end
+    # So end is head (return 1)
+    return 1 if slope > 0 else 0
 
 
 def _measure_local_width(mask: np.ndarray, point: np.ndarray, radius: int) -> float:
