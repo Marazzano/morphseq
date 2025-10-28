@@ -256,7 +256,8 @@ class GeodesicCenterlineAnalyzer:
                 'n_centerline_points': len(centerline),
                 'n_skeleton_points': np.sum(skeleton),
                 'bspline_smoothing': self.bspline_smoothing,
-                'method': 'geodesic'
+                'method': 'geodesic',
+                'fast_mode': self.fast
             }
         }
 
