@@ -16,7 +16,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 
 
-def apply_gaussian_preprocessing(mask: np.ndarray, sigma: float = 10.0, threshold: float = 0.7) -> np.ndarray:
+def apply_gaussian_preprocessing(mask: np.ndarray, sigma: float = 15.0, threshold: float = 0.7) -> np.ndarray:
     """
     Preprocess mask using Gaussian blur and re-thresholding.
 
@@ -31,8 +31,9 @@ def apply_gaussian_preprocessing(mask: np.ndarray, sigma: float = 10.0, threshol
 
     Args:
         mask: Binary mask (2D numpy array)
-        sigma: Gaussian blur sigma parameter (default=10.0)
+        sigma: Gaussian blur sigma parameter (default=15.0)
                Higher = more smoothing, removes finer details
+               Optimized value determined empirically (see Phase 3 analysis)
         threshold: Re-threshold value after blur (default=0.7)
                    Higher = more aggressive smoothing
 
@@ -42,6 +43,8 @@ def apply_gaussian_preprocessing(mask: np.ndarray, sigma: float = 10.0, threshol
     Note:
         This is always applied before spline fitting as it's cheap and fast.
         Typical processing time: <0.1s per mask
+        Sigma=15.0 was selected after testing on multiple embryos to prevent
+        fin extension while preserving embryo body structure.
     """
     # Apply Gaussian blur
     blurred = gaussian_filter(mask.astype(float), sigma=sigma)
@@ -65,17 +68,17 @@ def apply_preprocessing(mask: np.ndarray, method: str = 'gaussian_blur', **kwarg
                 Default='gaussian_blur'
                 (Note: 'alpha_shape' is experimental and not yet implemented)
         **kwargs: Method-specific parameters:
-            For 'gaussian_blur': sigma (default=10.0), threshold (default=0.7)
+            For 'gaussian_blur': sigma (default=15.0), threshold (default=0.7)
 
     Returns:
         preprocessed_mask: Smoothed binary mask
 
     Example:
-        >>> # Default Gaussian blur
+        >>> # Default Gaussian blur with sigma=15.0
         >>> clean_mask = apply_preprocessing(mask)
         >>>
         >>> # Custom Gaussian blur
-        >>> clean_mask = apply_preprocessing(mask, method='gaussian_blur', sigma=15.0)
+        >>> clean_mask = apply_preprocessing(mask, method='gaussian_blur', sigma=20.0)
     """
     if method == 'gaussian_blur':
         return apply_gaussian_preprocessing(mask, **kwargs)
