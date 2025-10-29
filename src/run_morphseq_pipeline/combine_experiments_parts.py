@@ -145,6 +145,10 @@ def _combine_build04(
     print(f"   • Regenerating snip_ids with new time_int...")
     df_part2 = _regenerate_snip_ids(df_part2, combined_exp)
 
+    # Regenerate image_ids with new time_int
+    print(f"   • Regenerating image_ids with new time_int...")
+    df_part2 = _regenerate_image_ids(df_part2, combined_exp)
+
     # Rename IDs in part2
     print(f"   • Renaming IDs to use '{combined_exp}'...")
     df_part2 = _rename_experiment_ids(df_part2, part2_exp, combined_exp)
@@ -152,6 +156,11 @@ def _combine_build04(
     # Also rename IDs in part1
     print(f"\n🔧 Renaming part1 IDs to use '{combined_exp}'...")
     df_part1 = _rename_experiment_ids(df_part1, part1_exp, combined_exp)
+
+    # Fix start_age_hpf for continuous experiments to prevent double-counting time
+    if 'start_age_hpf' in df_part2.columns:
+        print(f"   • Adjusting start_age_hpf for continuous time...")
+        df_part2 = _adjust_start_age_for_continuity(df_part1, df_part2)
 
     # Recalculate predicted_stage_hpf for part2 (with continuous time)
     has_start_age = 'start_age_hpf' in df_part2.columns
@@ -236,6 +245,10 @@ def _combine_build06(
     print(f"   • Regenerating snip_ids with new time_int...")
     df_part2 = _regenerate_snip_ids(df_part2, combined_exp)
 
+    # Regenerate image_ids with new time_int
+    print(f"   • Regenerating image_ids with new time_int...")
+    df_part2 = _regenerate_image_ids(df_part2, combined_exp)
+
     # Rename IDs in part2
     print(f"   • Renaming IDs to use '{combined_exp}'...")
     df_part2 = _rename_experiment_ids(df_part2, part2_exp, combined_exp)
@@ -243,6 +256,11 @@ def _combine_build06(
     # Also rename IDs in part1
     print(f"\n🔧 Renaming part1 IDs to use '{combined_exp}'...")
     df_part1 = _rename_experiment_ids(df_part1, part1_exp, combined_exp)
+
+    # Fix start_age_hpf for continuous experiments to prevent double-counting time
+    if 'start_age_hpf' in df_part2.columns:
+        print(f"   • Adjusting start_age_hpf for continuous time...")
+        df_part2 = _adjust_start_age_for_continuity(df_part1, df_part2)
 
     # Recalculate predicted_stage_hpf for part2 (with continuous time)
     has_start_age = 'start_age_hpf' in df_part2.columns
@@ -307,6 +325,41 @@ def _regenerate_snip_ids(df: pd.DataFrame, experiment_name: str) -> pd.DataFrame
     return df
 
 
+def _regenerate_image_ids(df: pd.DataFrame, experiment_name: str) -> pd.DataFrame:
+    """
+    Regenerate image_ids based on current time_int values.
+
+    Image ID format: {experiment}_{well}_ch{channel}_t{time_int:04d}
+
+    Args:
+        df: DataFrame with image_id, time_int columns
+        experiment_name: New experiment name to use
+
+    Returns:
+        DataFrame with regenerated image_ids
+    """
+    df = df.copy()
+
+    # Extract well and channel from existing image_id pattern
+    # Example: "20251017_part2_A01_ch00_t0002" → well="A01", channel="00"
+    image_id_parts = df['image_id'].str.extract(r'_([A-H]\d{2})_ch(\d+)_t\d+')
+    df['_well'] = image_id_parts[0]
+    df['_channel'] = image_id_parts[1]
+
+    # Regenerate image_id with new experiment name and updated time_int
+    df['image_id'] = (
+        experiment_name + '_' +
+        df['_well'] + '_ch' +
+        df['_channel'] + '_t' +
+        df['time_int'].astype(int).apply(lambda x: f'{x:04d}')
+    )
+
+    # Clean up temporary columns
+    df = df.drop(columns=['_well', '_channel'])
+
+    return df
+
+
 def _rename_experiment_ids(df: pd.DataFrame, old_exp: str, new_exp: str) -> pd.DataFrame:
     """
     Rename all experiment-related ID columns.
@@ -340,6 +393,51 @@ def _rename_experiment_ids(df: pd.DataFrame, old_exp: str, new_exp: str) -> pd.D
         df['experiment_id'] = new_exp
 
     return df
+
+
+def _adjust_start_age_for_continuity(df_part1: pd.DataFrame, df_part2: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adjust start_age_hpf in part2 to maintain temporal continuity with part1.
+
+    For continuous experiments split into parts, part2's start_age_hpf should match
+    part1's original start_age_hpf (not the biological age when part2 started).
+    This prevents double-counting time when Time Rel (s) is offset.
+
+    Algorithm:
+    1. Find unique start_age pairs between part1 and part2 that represent the same embryos
+    2. Map part2's start_age back to part1's original start_age
+    3. For example: part1 (start=60) → part2 (start=97) should become part2 (start=60)
+
+    Args:
+        df_part1: Part1 DataFrame with original start_age_hpf
+        df_part2: Part2 DataFrame with start_age_hpf to adjust
+
+    Returns:
+        DataFrame with adjusted start_age_hpf values
+    """
+    df_part2 = df_part2.copy()
+
+    # Get unique start ages from each part
+    part1_ages = sorted(df_part1['start_age_hpf'].unique())
+    part2_ages = sorted(df_part2['start_age_hpf'].unique())
+
+    print(f"      Part1 start_ages: {part1_ages}")
+    print(f"      Part2 start_ages: {part2_ages}")
+
+    # Create mapping: part2_age -> part1_age
+    # Assumption: Same number of unique ages, sorted order matches
+    if len(part1_ages) == len(part2_ages):
+        age_mapping = dict(zip(part2_ages, part1_ages))
+        print(f"      Mapping: {age_mapping}")
+
+        # Apply mapping
+        df_part2['start_age_hpf'] = df_part2['start_age_hpf'].map(age_mapping)
+        print(f"      ✓ Adjusted start_age_hpf for continuity")
+    else:
+        print(f"      ⚠️  WARNING: Mismatched number of start ages ({len(part1_ages)} vs {len(part2_ages)})")
+        print(f"      ⚠️  Skipping start_age adjustment - manual review needed")
+
+    return df_part2
 
 
 def _recalculate_predicted_stage_hpf(df: pd.DataFrame) -> pd.DataFrame:
