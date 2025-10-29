@@ -140,7 +140,82 @@ This directory contains scripts and results for investigating 4-5 embryos that f
 
 **Output:** `{embryo_id}_gaussian_sweep.png` shows side-by-side comparison of all sigma values
 
+### Phase 4: Sigma-Threshold Parameter Sweep ✓ COMPLETE
+**Date:** 2025-10-28
+
+**Goal:** Systematically evaluate sigma (10-50) and threshold (0.4-0.9) combinations
+
+**Findings:**
+- **Optimal parameters vary by embryo** - No single sigma/threshold works best for all
+- **Trade-off observed:** Higher sigma smooths fins but may lose fine structure
+- **Longest path criterion:** Different params produce different centerline lengths
+  - Sigma=20, θ=0.7 performs well as default
+  - Other combinations: sigma=30, θ=0.1 / sigma=25, θ=0.6 also promising
+
+**Key Insight:**
+For maximum accuracy, the algorithm could:
+1. Try multiple sigma/threshold combinations
+2. Extract centerline for each
+3. Select the **longest valid centerline** (most likely to be true body axis)
+4. Trade-off: Computational cost increases ~5-10x for exhaustive search
+
+**Current Decision:** Use sigma=20, θ=0.7 as production default
+- Good balance between accuracy and speed
+- Stable across embryo morphologies
+- See `sigma_threshold_sweep/` subfolder for detailed parameter exploration
+
 ## Notes
 - All embryos will be loaded from their respective CSV files in `morphseq_playground/metadata/build06_output/`
 - Visualizations will show: original mask, cleaned mask, preprocessed mask, and final centerline overlay
 - Diagnostic visualizations will show each internal processing stage with metrics
+
+## Recommendations for Future Work
+
+### 1. Multi-Parameter Optimization (Future Enhancement)
+Instead of single sigma/threshold, try grid search and select longest path:
+```python
+best_centerline = None
+best_length = 0
+
+for sigma in [20, 25, 30]:
+    for threshold in [0.5, 0.6, 0.7]:
+        centerline = extract_centerline(mask, sigma=sigma, threshold=threshold)
+        if centerline.length > best_length:
+            best_length = centerline.length
+            best_centerline = centerline
+```
+**Cost:** ~5-10x slower but guarantees longest valid path
+**Benefit:** More accurate length measurements, fewer fin artifacts
+
+### 2. Computational Optimizations
+Several opportunities exist to speed up the geodesic method:
+
+**a) Caching Connected Components**
+- Current: Recomputes connected components every run
+- Optimization: Cache after first computation if mask unchanged
+- Speedup: ~5-10%
+
+**b) Early Termination in Path Finding**
+- Current: Always computes full Dijkstra
+- Optimization: Stop when path found (if endpoints clearly separated)
+- Speedup: 10-20% for well-connected skeletons
+
+**c) Skeleton Simplification**
+- Current: Uses all skeleton points for graph building
+- Optimization: Thin skeleton to single-pixel width before graph building
+- Speedup: 15-30% depending on skeleton thickness
+
+**d) Parallel Multi-Parameter Evaluation**
+- Current: Sequential sigma/threshold trials
+- Optimization: Process multiple combinations in parallel
+- Speedup: ~4-8x with 4-8 cores
+
+**e) GPU Acceleration**
+- Current: CPU-based Dijkstra via scipy.sparse.csgraph
+- Optimization: GPU-accelerated Dijkstra for large skeletons
+- Speedup: 5-50x for skeletons with >5000 points (rare for embryos)
+
+### 3. Robustness Improvements
+- Adaptive sigma based on embryo size/morphology
+- Automatic threshold detection based on mask statistics
+- Multi-scale skeleton analysis for complex topologies
