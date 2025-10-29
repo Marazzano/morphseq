@@ -25,6 +25,7 @@ def extract_centerline(mask: np.ndarray,
                        um_per_pixel: float = 1.0,
                        bspline_smoothing: float = 5.0,
                        random_seed: int = 42,
+                       fast: bool = True,
                        return_intermediate: bool = False,
                        **kwargs) -> tuple:
     """
@@ -47,6 +48,8 @@ def extract_centerline(mask: np.ndarray,
         bspline_smoothing: B-spline smoothing parameter (default=5.0)
                           Passed to both geodesic and PCA methods
         random_seed: Seed for reproducible geodesic endpoint detection (default=42)
+        fast: Use optimized O(N) geodesic graph building (default=True)
+              Set to False to use original O(N²) method for backward compatibility
         return_intermediate: If True, return full analysis results dict (default=False)
         **kwargs: Additional preprocessing parameters (passed to apply_preprocessing)
 
@@ -90,7 +93,8 @@ def extract_centerline(mask: np.ndarray,
     if method == 'geodesic':
         results = _extract_geodesic(preprocessed_mask, um_per_pixel,
                                    bspline_smoothing=bspline_smoothing,
-                                   random_seed=random_seed)
+                                   random_seed=random_seed,
+                                   fast=fast)
     elif method == 'pca':
         results = _extract_pca(preprocessed_mask, um_per_pixel,
                              bspline_smoothing=bspline_smoothing)
@@ -118,7 +122,8 @@ def extract_centerline(mask: np.ndarray,
 
 def _extract_geodesic(mask: np.ndarray, um_per_pixel: float,
                       bspline_smoothing: float = 5.0,
-                      random_seed: int = 42) -> dict:
+                      random_seed: int = 42,
+                      fast: bool = True) -> dict:
     """
     Extract centerline using Geodesic method.
 
@@ -127,6 +132,7 @@ def _extract_geodesic(mask: np.ndarray, um_per_pixel: float,
         um_per_pixel: Conversion factor
         bspline_smoothing: B-spline smoothing parameter
         random_seed: Seed for reproducible endpoint detection
+        fast: Use optimized O(N) graph building (default=True)
 
     Returns:
         results: Analysis dictionary
@@ -137,7 +143,8 @@ def _extract_geodesic(mask: np.ndarray, um_per_pixel: float,
     try:
         analyzer = GeodesicCenterlineAnalyzer(mask, um_per_pixel=um_per_pixel,
                                              bspline_smoothing=bspline_smoothing,
-                                             random_seed=random_seed)
+                                             random_seed=random_seed,
+                                             fast=fast)
         results = analyzer.analyze()
         return results
     except Exception as e:
@@ -172,7 +179,8 @@ def _extract_pca(mask: np.ndarray, um_per_pixel: float,
 def compare_methods(mask: np.ndarray, um_per_pixel: float = 1.0,
                    preprocess: str = 'gaussian_blur',
                    bspline_smoothing: float = 5.0,
-                   random_seed: int = 42) -> dict:
+                   random_seed: int = 42,
+                   fast: bool = True) -> dict:
     """
     Compare both Geodesic and PCA methods on the same mask.
 
@@ -184,6 +192,7 @@ def compare_methods(mask: np.ndarray, um_per_pixel: float = 1.0,
         preprocess: Preprocessing method (default='gaussian_blur')
         bspline_smoothing: B-spline smoothing parameter (default=5.0)
         random_seed: Seed for reproducible geodesic endpoint detection (default=42)
+        fast: Use optimized O(N) geodesic graph building (default=True)
 
     Returns:
         comparison: Dictionary with results from both methods:
@@ -205,7 +214,8 @@ def compare_methods(mask: np.ndarray, um_per_pixel: float = 1.0,
         # Extract with both methods
         geodesic_results = _extract_geodesic(preprocessed_mask, um_per_pixel,
                                             bspline_smoothing=bspline_smoothing,
-                                            random_seed=random_seed)
+                                            random_seed=random_seed,
+                                            fast=fast)
         pca_results = _extract_pca(preprocessed_mask, um_per_pixel,
                                    bspline_smoothing=bspline_smoothing)
 
