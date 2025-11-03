@@ -45,7 +45,7 @@ GENOTYPE_SHORT = load_data.GENOTYPE_SHORT
 # ============================================================================
 
 # Test mode: set to False for full analysis
-TEST_MODE = True
+TEST_MODE = False
 N_TEST_EMBRYOS = 10
 
 # Analysis parameters
@@ -54,7 +54,7 @@ GENOTYPE_FILTER = 'cep290_homozygous'
 EARLY_WINDOW = (44, 50)  # hpf
 LATE_WINDOW = (80, 100)  # hpf
 DTW_WINDOW = 3  # Sakoe-Chiba band
-CLUSTER_K_VALUES = [2, 3, 4]
+CLUSTER_K_VALUES = [2, 3, 4, 5, 6, 7]
 INTERPOLATION_GRID_STEP = 0.5  # hpf
 
 # Output directory
@@ -734,78 +734,106 @@ def generate_plots(clustering_results, distance_matrix, best_k, best_assignments
     except Exception as e:
         print(f"    Error generating DTW distance matrix plot: {e}")
 
-    # Temporal Trends by Cluster
-    print(f"\n  Generating: Temporal Trends by Cluster...")
-    try:
-        n_clusters = len(unique_clusters)
-        fig, axes = plt.subplots(1, n_clusters, figsize=(7*n_clusters, 5.5), dpi=100)
-        if n_clusters == 1:
-            axes = [axes]
+    # Temporal Trends by Cluster - Generate for all k values
+    print(f"\n  Generating: Temporal Trends by Cluster for all k values...")
 
-        for ax_idx, cluster_id in enumerate(sorted(unique_clusters)):
-            ax = axes[ax_idx]
-            cluster_mask = best_assignments == cluster_id
-            cluster_embryo_indices = np.where(cluster_mask)[0]
+    for k_value in sorted(clustering_results.keys()):
+        try:
+            k_assignments = clustering_results[k_value]['assignments']
+            k_unique_clusters = np.unique(k_assignments)
+            n_clusters = len(k_unique_clusters)
 
-            # Get trajectories for this cluster
-            cluster_trajs = [interpolated_trajs[i] for i in cluster_embryo_indices]
-            max_len = max([len(t) for t in cluster_trajs])
+            fig, axes = plt.subplots(1, n_clusters, figsize=(7*n_clusters, 5.5), dpi=100)
+            if n_clusters == 1:
+                axes = [axes]
 
-            # Plot individual trajectories (light gray)
-            for traj in cluster_trajs:
-                ax.plot(np.arange(len(traj)), traj, color='gray', alpha=0.12, linewidth=0.8)
+            # First pass: collect all y values to determine shared y-axis limits
+            all_y_values = []
+            for cluster_id in sorted(k_unique_clusters):
+                cluster_mask = k_assignments == cluster_id
+                cluster_embryo_indices = np.where(cluster_mask)[0]
+                cluster_trajs = [interpolated_trajs[i] for i in cluster_embryo_indices]
+                max_len = max([len(t) for t in cluster_trajs])
 
-            # Pad to same length for statistics
-            padded_trajs = []
-            for traj in cluster_trajs:
-                padded = np.full(max_len, np.nan)
-                padded[:len(traj)] = traj
-                padded_trajs.append(padded)
-            padded_trajs = np.array(padded_trajs)
+                padded_trajs = []
+                for traj in cluster_trajs:
+                    padded = np.full(max_len, np.nan)
+                    padded[:len(traj)] = traj
+                    padded_trajs.append(padded)
+                    all_y_values.extend([v for v in traj if not np.isnan(v)])
+                padded_trajs = np.array(padded_trajs)
 
-            mean_traj = np.nanmean(padded_trajs, axis=0)
-            std_traj = np.nanstd(padded_trajs, axis=0)
+                mean_traj = np.nanmean(padded_trajs, axis=0)
+                std_traj = np.nanstd(padded_trajs, axis=0)
+                all_y_values.extend(mean_traj + std_traj)
+                all_y_values.extend(mean_traj - std_traj)
 
-            # Plot mean and std band
-            ax.plot(np.arange(len(mean_traj)), mean_traj, color='black', linewidth=2.8, label='Mean', zorder=3)
-            ax.fill_between(np.arange(len(mean_traj)),
-                            mean_traj - std_traj,
-                            mean_traj + std_traj,
-                            color='blue', alpha=0.18, label='±1 SD', zorder=2)
+            y_min = np.nanmin(all_y_values) if all_y_values else 0
+            y_max = np.nanmax(all_y_values) if all_y_values else 1
+            y_margin = (y_max - y_min) * 0.1
+            y_lim = (y_min - y_margin, y_max + y_margin)
 
-            # Fit linear regression to mean trajectory
-            valid_mask = ~np.isnan(mean_traj)
-            if np.sum(valid_mask) > 2:
-                x_valid = np.arange(len(mean_traj))[valid_mask]
-                y_valid = mean_traj[valid_mask]
-                slope, intercept, r_value, p_value, std_err = linregress(x_valid, y_valid)
-                fit_line = slope * np.arange(len(mean_traj)) + intercept
-                ax.plot(np.arange(len(mean_traj)), fit_line, 'r--', linewidth=2,
-                       label=f'Linear fit (R²={r_value**2:.3f})', zorder=2.5)
+            # Second pass: plot with shared y-axis
+            for ax_idx, cluster_id in enumerate(sorted(k_unique_clusters)):
+                ax = axes[ax_idx]
+                cluster_mask = k_assignments == cluster_id
+                cluster_embryo_indices = np.where(cluster_mask)[0]
 
-            # Get anticorr info if available
-            title = f'Cluster {cluster_id}  •  n={len(cluster_trajs)}'
-            if cluster_id in anticorr_results:
-                result = anticorr_results[cluster_id]
-                r = result['pearson_r']
-                interpretation = result['interpretation']
-                title += f'\nr={r:.3f} ({interpretation})'
+                # Get trajectories for this cluster
+                cluster_trajs = [interpolated_trajs[i] for i in cluster_embryo_indices]
+                max_len = max([len(t) for t in cluster_trajs])
 
-            ax.set_xlabel('Timepoint Index', fontsize=11)
-            ax.set_ylabel('Normalized Baseline Deviation', fontsize=11)
-            ax.set_title(title, fontsize=12, fontweight='bold')
-            ax.grid(True, alpha=0.25, linestyle='--')
-            ax.set_axisbelow(True)
-            if ax_idx == 0:
-                ax.legend(fontsize=9, loc='best', framealpha=0.95)
+                # Plot individual trajectories (increased alpha to 0.3)
+                for traj in cluster_trajs:
+                    ax.plot(np.arange(len(traj)), traj, color='gray', alpha=0.3, linewidth=0.8)
 
-        plt.tight_layout()
-        plot_path = PLOTS_DIR / 'temporal_trends_by_cluster.png'
-        plt.savefig(plot_path, dpi=200, bbox_inches='tight')
-        plt.close()
-        print(f"    Saved: {plot_path.name}")
-    except Exception as e:
-        print(f"    Error generating temporal trends plot: {e}")
+                # Pad to same length for statistics
+                padded_trajs = []
+                for traj in cluster_trajs:
+                    padded = np.full(max_len, np.nan)
+                    padded[:len(traj)] = traj
+                    padded_trajs.append(padded)
+                padded_trajs = np.array(padded_trajs)
+
+                mean_traj = np.nanmean(padded_trajs, axis=0)
+                std_traj = np.nanstd(padded_trajs, axis=0)
+
+                # Plot mean and std band
+                ax.plot(np.arange(len(mean_traj)), mean_traj, color='black', linewidth=2.8, label='Mean', zorder=3)
+                ax.fill_between(np.arange(len(mean_traj)),
+                                mean_traj - std_traj,
+                                mean_traj + std_traj,
+                                color='blue', alpha=0.18, label='±1 SD', zorder=2)
+
+                # Fit linear regression to mean trajectory
+                valid_mask = ~np.isnan(mean_traj)
+                if np.sum(valid_mask) > 2:
+                    x_valid = np.arange(len(mean_traj))[valid_mask]
+                    y_valid = mean_traj[valid_mask]
+                    slope, intercept, r_value, p_value, std_err = linregress(x_valid, y_valid)
+                    fit_line = slope * np.arange(len(mean_traj)) + intercept
+                    ax.plot(np.arange(len(mean_traj)), fit_line, 'r--', linewidth=2,
+                           label=f'Linear fit (R²={r_value**2:.3f})', zorder=2.5)
+
+                # Get anticorr info if available (note: anticorr_results is for best_k, use generic title for other k)
+                title = f'Cluster {cluster_id}  •  n={len(cluster_trajs)}'
+
+                ax.set_xlabel('Timepoint Index', fontsize=11)
+                ax.set_ylabel('Normalized Baseline Deviation', fontsize=11)
+                ax.set_ylim(y_lim)
+                ax.set_title(title, fontsize=12, fontweight='bold')
+                ax.grid(True, alpha=0.25, linestyle='--')
+                ax.set_axisbelow(True)
+                if ax_idx == 0:
+                    ax.legend(fontsize=9, loc='best', framealpha=0.95)
+
+            plt.tight_layout()
+            plot_path = PLOTS_DIR / f'temporal_trends_by_cluster_k{k_value}.png'
+            plt.savefig(plot_path, dpi=200, bbox_inches='tight')
+            plt.close()
+            print(f"    Saved: {plot_path.name}")
+        except Exception as e:
+            print(f"    Error generating temporal trends plot for k={k_value}: {e}")
 
     # Cluster Trajectories Overlay (Two Panels) - Generate for all k values
     print(f"\n  Generating: Cluster Trajectories Overlays for all k values...")
@@ -819,13 +847,35 @@ def generate_plots(clustering_results, distance_matrix, best_k, best_assignments
 
             fig, axes = plt.subplots(1, 2, figsize=(14, 5.5), dpi=100)
 
-            # Get maximum length across all clusters
+            # Get maximum length across all clusters and collect all y values for shared axis
             all_max_len = 0
+            all_y_values = []
             for cluster_id in k_unique_clusters:
                 cluster_mask = k_assignments == cluster_id
                 cluster_embryo_indices = np.where(cluster_mask)[0]
                 cluster_trajs = [interpolated_trajs[i] for i in cluster_embryo_indices]
                 all_max_len = max(all_max_len, max([len(t) for t in cluster_trajs]))
+
+                # Collect y values for limits
+                for traj in cluster_trajs:
+                    all_y_values.extend([v for v in traj if not np.isnan(v)])
+
+                # Compute mean for limits
+                padded_trajs = []
+                for traj in cluster_trajs:
+                    padded = np.full(all_max_len, np.nan)
+                    padded[:len(traj)] = traj
+                    padded_trajs.append(padded)
+                padded_trajs = np.array(padded_trajs)
+                mean_traj = np.nanmean(padded_trajs, axis=0)
+                std_traj = np.nanstd(padded_trajs, axis=0)
+                all_y_values.extend(mean_traj + std_traj)
+                all_y_values.extend(mean_traj - std_traj)
+
+            y_min = np.nanmin(all_y_values) if all_y_values else 0
+            y_max = np.nanmax(all_y_values) if all_y_values else 1
+            y_margin = (y_max - y_min) * 0.1
+            y_lim = (y_min - y_margin, y_max + y_margin)
 
             # ===== LEFT PANEL: Individual Trajectories =====
             ax_left = axes[0]
@@ -850,11 +900,13 @@ def generate_plots(clustering_results, distance_matrix, best_k, best_assignments
                 mean_traj = np.nanmean(padded_trajs, axis=0)
 
                 # Plot mean trajectory (no CI)
+                n_embryos = len(cluster_trajs)
                 ax_left.plot(np.arange(len(mean_traj)), mean_traj,
-                            color=color, linewidth=2.8, label=f'Cluster {cluster_id} mean', zorder=3)
+                            color=color, linewidth=2.8, label=f'Cluster {cluster_id} mean (n={n_embryos})', zorder=3)
 
             ax_left.set_xlabel('Timepoint Index', fontsize=12)
             ax_left.set_ylabel('Normalized Baseline Deviation', fontsize=12)
+            ax_left.set_ylim(y_lim)
             ax_left.set_title(f'Individual Trajectories (k={k_value})', fontsize=13, fontweight='bold')
             ax_left.legend(fontsize=10, loc='best', framealpha=0.95)
             ax_left.grid(True, alpha=0.25, linestyle='--')
@@ -881,8 +933,9 @@ def generate_plots(clustering_results, distance_matrix, best_k, best_assignments
                 std_traj = np.nanstd(padded_trajs, axis=0)
 
                 # Plot mean trajectory
+                n_embryos = len(cluster_trajs)
                 ax_right.plot(np.arange(len(mean_traj)), mean_traj,
-                             color=color, linewidth=2.8, label=f'Cluster {cluster_id}', zorder=3)
+                             color=color, linewidth=2.8, label=f'Cluster {cluster_id} (n={n_embryos})', zorder=3)
 
                 # Plot CI band
                 ax_right.fill_between(np.arange(len(mean_traj)),
@@ -902,6 +955,7 @@ def generate_plots(clustering_results, distance_matrix, best_k, best_assignments
 
             ax_right.set_xlabel('Timepoint Index', fontsize=12)
             ax_right.set_ylabel('Normalized Baseline Deviation', fontsize=12)
+            ax_right.set_ylim(y_lim)
             ax_right.set_title(f'Mean Trajectories with ±1 SD & Linear Fit (k={k_value})', fontsize=13, fontweight='bold')
             ax_right.legend(fontsize=11, loc='best', framealpha=0.95)
             ax_right.grid(True, alpha=0.25, linestyle='--')
@@ -922,9 +976,10 @@ def generate_plots(clustering_results, distance_matrix, best_k, best_assignments
 # STEP 11: Generate Tables
 # ============================================================================
 
-def generate_tables(output_df, anticorr_results, best_assignments):
+def generate_tables(output_df, anticorr_results, best_assignments, clustering_results,
+                   distance_matrix, embryo_ids_interp, early_means_arr, late_means_arr, df):
     """
-    Generate output CSV tables.
+    Generate output CSV tables and save distance matrix.
     """
     print(f"\n{'='*80}")
     print("STEP 11: GENERATE TABLES")
@@ -1000,6 +1055,56 @@ def generate_tables(output_df, anticorr_results, best_assignments):
         print(f"    Saved: {table_6_path.name}")
     except Exception as e:
         print(f"    Error generating Table 6: {e}")
+
+    # Cluster Assignments for Each k Value
+    print(f"\n  Generating: Cluster Assignments for all k values...")
+    try:
+        for k_value in sorted(clustering_results.keys()):
+            k_assignments = clustering_results[k_value]['assignments']
+
+            # Create dataframe with assignments and characteristics
+            k_df = pd.DataFrame({
+                'embryo_id': embryo_ids_interp,
+                'cluster': k_assignments,
+                'genotype': [df[df['embryo_id'] == e_id]['genotype'].iloc[0] if e_id in df['embryo_id'].values else 'unknown'
+                            for e_id in embryo_ids_interp],
+                'early_mean': early_means_arr,
+                'late_mean': late_means_arr
+            })
+
+            k_path = TABLES_DIR / f'cluster_assignments_k{k_value}.csv'
+            k_df.to_csv(k_path, index=False)
+            print(f"    Saved: {k_path.name}")
+    except Exception as e:
+        print(f"    Error generating cluster assignments for k values: {e}")
+
+    # Save Raw DTW Distance Matrix
+    print(f"\n  Generating: Raw DTW Distance Matrix...")
+    try:
+        # Create dataframe with embryo IDs as row/column labels
+        dist_df = pd.DataFrame(
+            distance_matrix,
+            index=embryo_ids_interp,
+            columns=embryo_ids_interp
+        )
+        dist_path = TABLES_DIR / 'dtw_distance_matrix.csv'
+        dist_df.to_csv(dist_path)
+        print(f"    Saved: {dist_path.name}")
+    except Exception as e:
+        print(f"    Error saving DTW distance matrix: {e}")
+
+    # Save Embryo ID Mapping (Index to Embryo ID)
+    print(f"\n  Generating: Embryo ID Mapping...")
+    try:
+        mapping_df = pd.DataFrame({
+            'index': np.arange(len(embryo_ids_interp)),
+            'embryo_id': embryo_ids_interp
+        })
+        mapping_path = TABLES_DIR / 'embryo_id_mapping.csv'
+        mapping_df.to_csv(mapping_path, index=False)
+        print(f"    Saved: {mapping_path.name}")
+    except Exception as e:
+        print(f"    Error saving embryo ID mapping: {e}")
 
 
 # ============================================================================
@@ -1094,7 +1199,8 @@ def main():
                       interpolated_trajs, embryo_ids_interp, trajectories_df, df, common_grid)
 
         # STEP 11: Generate tables
-        generate_tables(output_df, anticorr_results, best_assignments)
+        generate_tables(output_df, anticorr_results, best_assignments, clustering_results,
+                       distance_matrix, embryo_ids_interp, early_means_arr, late_means_arr, df)
 
         # STEP 12: Print summary
         print_summary(output_df, RESULTS_DIR)

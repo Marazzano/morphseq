@@ -1,13 +1,29 @@
 #!/usr/bin/env python3
 """
-Batch process curvature metrics for all embryos in a combined experiment.
+[LEGACY - ARCHIVED] Standalone batch curvature processing script.
 
-Input:
-    df03_final_output_with_latents_20251017_combined.csv
+DEPRECATION NOTICE:
+    This script has been integrated into the main Build04 pipeline.
+    Curvature metrics are now automatically computed during Build04 stage inference.
 
-Outputs:
-    morphseq_playground/metadata/body_axis/summary/curvature_metrics_summary_20251017_combined.csv
-    morphseq_playground/metadata/body_axis/arrays/curvature_arrays_20251017_combined.csv
+    Legacy usage (for validation/testing only):
+        python process_curvature_batch_legacy.py
+
+    New integrated approach:
+        - Build03: Masks are cleaned during snip export
+        - Build04: Curvature metrics computed for all rows with valid mask data
+        - Result: Curvature metrics in DF03 alongside other morphology metrics
+
+Original usage (if needed for testing):
+    Input: df03_final_output_with_latents_{exp}.csv
+    Outputs:
+        - metadata/body_axis/summary/curvature_metrics_summary_{exp}.csv
+        - metadata/body_axis/arrays/curvature_arrays_{exp}.csv
+
+Kept for validation against integrated version.
+See: src/build/build04_perform_embryo_qc.py for integrated implementation.
+See: src/build/utils/curvature_utils.py for extracted utility functions.
+See docs/refactors/mask_cleaning_curvature_integration.md for details.
 """
 
 import pandas as pd
@@ -30,6 +46,7 @@ if str(repo_root) not in sys.path:
 
 # Import after path setup
 from segmentation_sandbox.scripts.body_axis_analysis.centerline_extraction import extract_centerline
+from segmentation_sandbox.scripts.body_axis_analysis.curvature_metrics import compute_all_simple_metrics
 from segmentation_sandbox.scripts.utils.mask_utils import decode_mask_rle
 from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 
@@ -116,12 +133,26 @@ def process_single_embryo(row_data: Tuple) -> Dict:
             result['std_curvature_per_um'] = float(np.std(curvature))
             result['max_curvature_per_um'] = float(np.max(curvature))
             result['n_centerline_points'] = len(spline_x)
+
+            # 5a. Compute simple curvature metrics (baseline deviation, arc-length ratio, keypoint deviations)
+            simple_metrics = compute_all_simple_metrics(spline_x, spline_y, um_per_pixel=um_per_pixel)
+            result.update(simple_metrics)
         else:
             result['total_length_um'] = np.nan
             result['mean_curvature_per_um'] = np.nan
             result['std_curvature_per_um'] = np.nan
             result['max_curvature_per_um'] = np.nan
             result['n_centerline_points'] = 0
+            # Set NaN for simple metrics if extraction failed
+            result['baseline_deviation_um'] = np.nan
+            result['max_baseline_deviation_um'] = np.nan
+            result['baseline_deviation_std_um'] = np.nan
+            result['arc_length_ratio'] = np.nan
+            result['arc_length_um'] = np.nan
+            result['chord_length_um'] = np.nan
+            result['keypoint_deviation_q1_um'] = np.nan
+            result['keypoint_deviation_mid_um'] = np.nan
+            result['keypoint_deviation_q3_um'] = np.nan
 
         # 6. Store arrays as JSON strings
         result['centerline_x'] = json.dumps(spline_x.tolist() if isinstance(spline_x, np.ndarray) else spline_x)
@@ -156,7 +187,7 @@ def process_single_embryo(row_data: Tuple) -> Dict:
     return result
 
 
-def main(test_mode=False, n_test=5, serial=False):
+def main(test_mode=False, n_test=5, serial=False, parallel_strategy='individual', batch_size=10, n_workers=None):
     """Main processing pipeline."""
 
     # Paths
@@ -214,38 +245,80 @@ def main(test_mode=False, n_test=5, serial=False):
                 if 'traceback' in result:
                     print(result['traceback'])
     else:
-        # Process in large batches to minimize overhead
-        # Each batch is one task, so we only pickle data once per batch
-        n_workers = min(32, max(1, mp.cpu_count() // 4))  # Use 1/4 of cores
-        batch_size = 100  # Each worker processes 100 embryos per batch
+        # Parallel processing with configurable strategies
+        if n_workers is None:
+            n_workers = min(32, max(1, mp.cpu_count() // 2))  # Use 1/2 of cores by default
 
-        print(f"Processing with {n_workers} workers...")
-        print(f"Batch size: {batch_size} embryos per batch (reduces pickling overhead by {batch_size}x)")
+        if parallel_strategy == 'batched':
+            # Strategy 1: Batched processing
+            # Pros: Balance between pickling overhead and responsiveness
+            # Cons: Less granular progress tracking
+            print(f"Processing with {n_workers} workers in BATCHED mode...")
+            print(f"Batch size: {batch_size} embryos per batch")
 
-        # Split data into batches
-        batches = []
-        for i in range(0, len(row_data_list), batch_size):
-            batch = row_data_list[i:i+batch_size]
-            batches.append(batch)
+            # Split data into batches
+            batches = []
+            for i in range(0, len(row_data_list), batch_size):
+                batch = row_data_list[i:i+batch_size]
+                batches.append(batch)
 
-        print(f"Created {len(batches)} batches of ~{batch_size} embryos each")
+            print(f"Created {len(batches)} batches of ~{batch_size} embryos each")
 
-        # Process batches in parallel
-        all_results = []
-        with Pool(processes=n_workers) as pool:
-            # Each task processes a full batch of embryos
-            batch_results = list(tqdm(
-                pool.imap(process_embryo_batch, batches),
-                total=len(batches),
-                desc="Processing batches",
-                unit="batch"
-            ))
+            # Process batches in parallel
+            all_results = []
+            with Pool(processes=n_workers) as pool:
+                batch_results = list(tqdm(
+                    pool.imap(process_embryo_batch, batches),
+                    total=len(batches),
+                    desc="Processing batches",
+                    unit="batch"
+                ))
 
-            # Flatten results from all batches
-            for batch_result in batch_results:
-                all_results.extend(batch_result)
+                for batch_result in batch_results:
+                    all_results.extend(batch_result)
 
-        results = all_results
+            results = all_results
+
+        elif parallel_strategy == 'individual':
+            # Strategy 2: Individual embryo processing (one task per embryo)
+            # Pros: Most granular progress tracking, better load balancing
+            # Cons: More pickling overhead
+            print(f"Processing with {n_workers} workers in INDIVIDUAL mode...")
+            print(f"One task per embryo (maximum granularity)")
+
+            all_results = []
+            with Pool(processes=n_workers) as pool:
+                results_iter = tqdm(
+                    pool.imap(process_single_embryo, row_data_list, chunksize=5),
+                    total=len(row_data_list),
+                    desc="Processing embryos",
+                    unit="embryo"
+                )
+                all_results = list(results_iter)
+
+            results = all_results
+
+        elif parallel_strategy == 'chunksize':
+            # Strategy 3: Use chunksize parameter (imap_unordered with chunksize)
+            # Pros: Efficient - processes chunks but returns results as ready
+            # Cons: Results not in order (need to sort by snip_id later if needed)
+            print(f"Processing with {n_workers} workers in CHUNKSIZE mode...")
+            print(f"Chunk size: {batch_size} embryos per chunk (unordered results)")
+
+            all_results = []
+            with Pool(processes=n_workers) as pool:
+                results_iter = tqdm(
+                    pool.imap_unordered(process_single_embryo, row_data_list, chunksize=batch_size),
+                    total=len(row_data_list),
+                    desc="Processing embryos",
+                    unit="embryo"
+                )
+                all_results = list(results_iter)
+
+            results = all_results
+
+        else:
+            raise ValueError(f"Unknown parallel strategy: {parallel_strategy}")
 
         # Report any failures
         for result in results:
@@ -270,6 +343,11 @@ def main(test_mode=False, n_test=5, serial=False):
     summary_cols = ['snip_id', 'embryo_id', 'predicted_stage_hpf', 'genotype',
                    'frame_index', 'um_per_pixel', 'total_length_um', 'mean_curvature_per_um',
                    'std_curvature_per_um', 'max_curvature_per_um', 'n_centerline_points',
+                   # Simple curvature metrics
+                   'baseline_deviation_um', 'max_baseline_deviation_um', 'baseline_deviation_std_um',
+                   'arc_length_ratio', 'arc_length_um', 'chord_length_um',
+                   'keypoint_deviation_q1_um', 'keypoint_deviation_mid_um', 'keypoint_deviation_q3_um',
+                   # Processing metadata
                    'processing_time_s', 'cleaning_applied', 'success', 'error']
 
     arrays_cols = ['snip_id', 'embryo_id', 'predicted_stage_hpf', 'genotype',
@@ -309,7 +387,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Batch process curvature metrics")
     parser.add_argument("--test", action="store_true", help="Run in test mode (5 embryos, serial)")
     parser.add_argument("--n-test", type=int, default=5, help="Number of embryos in test mode")
-    parser.add_argument("--serial", action="store_true", help="Run serially (no parallelism) on all data")
+    parser.add_argument("--serial", action="store_true", help="Run in serial mode (default is parallel individual)")
+    parser.add_argument("--strategy", type=str, default='individual',
+                       choices=['batched', 'individual', 'chunksize'],
+                       help="Parallelization strategy (default: individual)")
+    parser.add_argument("--batch-size", type=int, default=10,
+                       help="Batch/chunk size for parallel processing (default: 10)")
+    parser.add_argument("--n-workers", type=int, default=None,
+                       help="Number of worker processes (default: cpu_count//2)")
     args = parser.parse_args()
 
-    main(test_mode=args.test, n_test=args.n_test, serial=args.serial)
+    main(test_mode=args.test, n_test=args.n_test, serial=args.serial,
+         parallel_strategy=args.strategy, batch_size=args.batch_size, n_workers=args.n_workers)

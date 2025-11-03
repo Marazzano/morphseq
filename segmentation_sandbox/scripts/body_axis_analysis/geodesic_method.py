@@ -214,7 +214,7 @@ class GeodesicCenterlineAnalyzer:
         # For each point, find the one farthest from it
         max_dist_overall = 0
         best_pair = (0, min(1, n_points - 1))
-        
+
         # Use sampling for large skeletons (>100 points) to avoid expensive computation
         if n_points > 100:
             sample_size = min(100, n_points)
@@ -222,25 +222,25 @@ class GeodesicCenterlineAnalyzer:
             sample_indices = rng.choice(n_points, size=sample_size, replace=False)
         else:
             sample_indices = np.arange(n_points)
-        
+
         # Vectorized computation: for each sampled point, find distances to all others
         all_max_distances = np.zeros(len(sample_indices))
         all_furthest_indices = np.zeros(len(sample_indices), dtype=int)
-        
+
         for i, idx in enumerate(sample_indices):
             distances = dijkstra(adj_matrix, indices=idx, directed=False)
             finite_mask = np.isfinite(distances)
-            
+
             if np.any(finite_mask):
                 furthest_idx = np.argmax(distances)
                 max_dist = distances[furthest_idx]
                 all_max_distances[i] = max_dist
                 all_furthest_indices[i] = furthest_idx
-                
+
                 if max_dist > max_dist_overall:
                     max_dist_overall = max_dist
                     best_pair = (idx, furthest_idx)
-        
+
         start_idx, end_idx = best_pair
         endpoints = np.array([skel_points[start_idx], skel_points[end_idx]])
 

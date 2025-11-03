@@ -15,6 +15,190 @@ import statsmodels.api as sm
 from src.build.build_utils import bootstrap_perturbation_key_from_df01
 from src.data_pipeline.quality_control.death_detection import compute_dead_flag2_persistence
 from src.data_pipeline.quality_control.surface_area_outlier_detection import compute_sa_outlier_flag
+from src.build.utils.curvature_utils import compute_embryo_curvature
+from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
+import skimage.io as io
+from src.build.build03A_process_images import resolve_sandbox_embryo_mask_from_csv
+from functools import partial
+from tqdm.contrib.concurrent import process_map
+
+
+def _compute_curvature_for_row(row_idx: int, df: pd.DataFrame, root: Path) -> dict:
+    """
+    Compute curvature metrics for a single embryo row.
+
+    Args:
+        row_idx: Index of row in dataframe
+        df: Build04 dataframe with mask information
+        root: Project root directory
+
+    Returns:
+        Dictionary of curvature metrics indexed by row_idx, or None on failure
+    """
+    try:
+        row = df.iloc[row_idx]
+
+        # Skip if critical columns are missing
+        if pd.isna(row.get("exported_mask_path")) or pd.isna(row.get("Height (um)")):
+            return (row_idx, None)
+
+        # Load mask from integer-labeled PNG
+        try:
+            mask_path = resolve_sandbox_embryo_mask_from_csv(root, row)
+            im_mask_int = io.imread(mask_path)
+            lbi = int(row["region_label"])
+            im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
+        except Exception as e:
+            # Mask loading failed - return NaN metrics
+            return (row_idx, None)
+
+        # Clean mask
+        try:
+            im_mask_clean, _ = clean_embryo_mask(im_mask, verbose=False)
+        except Exception:
+            # Cleaning failed - use original mask
+            im_mask_clean = im_mask
+
+        # Compute um_per_pixel
+        um_per_pixel = float(row["Height (um)"]) / float(row["Height (px)"])
+
+        # Compute curvature
+        metrics = compute_embryo_curvature(im_mask_clean, um_per_pixel, verbose=False)
+
+        return (row_idx, metrics)
+
+    except Exception as e:
+        # Return None for failed rows
+        return (row_idx, None)
+
+
+def _add_curvature_metrics(df: pd.DataFrame, root: Path, exp: str, n_workers: int = 4) -> pd.DataFrame:
+    """
+    Add curvature metrics to Build04 dataframe for all rows.
+
+    For DF03: Keep only 3 essential columns
+    - total_length_um
+    - baseline_deviation_um
+    - baseline_deviation_normalized (computed as baseline_deviation_um / total_length_um)
+
+    For body_axis metadata: Write complete metrics to separate files
+    - summary: All detailed metrics (mean/std/max curvature, keypoint deviations, etc.)
+    - arrays: JSON-serialized centerline and curvature arrays
+
+    Args:
+        df: Build04 dataframe
+        root: Project root directory
+        exp: Experiment name (for body_axis file naming)
+        n_workers: Number of parallel workers
+
+    Returns:
+        DataFrame with only 3 curvature columns added (for DF03)
+    """
+    print("📏 Computing curvature metrics...")
+
+    # Define columns for DF03 (only 3 essential metrics)
+    df03_columns = ['total_length_um', 'baseline_deviation_um', 'baseline_deviation_normalized']
+
+    # Initialize columns with NaN
+    for col in df03_columns:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    # Compute curvature for all rows in parallel
+    compute_func = partial(_compute_curvature_for_row, df=df, root=root)
+
+    results = process_map(
+        compute_func,
+        range(len(df)),
+        max_workers=n_workers,
+        desc="Computing curvature",
+        chunksize=max(1, len(df) // (n_workers * 10))
+    )
+
+    # Process results: add to DF03 and collect for body_axis files
+    successful_count = 0
+    summary_rows = []
+    array_rows = []
+
+    for row_idx, metrics in results:
+        if metrics is not None:
+            # Add essential columns to DF03
+            df.loc[row_idx, 'total_length_um'] = metrics.get('total_length_um', np.nan)
+            df.loc[row_idx, 'baseline_deviation_um'] = metrics.get('baseline_deviation_um', np.nan)
+
+            # Compute normalized baseline deviation
+            total_length = metrics.get('total_length_um', np.nan)
+            if pd.notna(total_length) and total_length > 0:
+                df.loc[row_idx, 'baseline_deviation_normalized'] = (
+                    metrics.get('baseline_deviation_um', np.nan) / total_length
+                )
+            else:
+                df.loc[row_idx, 'baseline_deviation_normalized'] = np.nan
+
+            # Collect metrics for body_axis files
+            snip_id = df.iloc[row_idx].get('snip_id', f'row_{row_idx}')
+
+            # Summary metrics (all curvature stats)
+            summary_row = {'snip_id': snip_id}
+            summary_row.update({
+                k: v for k, v in metrics.items()
+                if k not in ['centerline_x_json', 'centerline_y_json', 'curvature_values_json', 'arc_length_values_json', 'error']
+            })
+            summary_rows.append(summary_row)
+
+            # Array data (centerline and curvature arrays)
+            array_row = {
+                'snip_id': snip_id,
+                'centerline_x_json': metrics.get('centerline_x_json'),
+                'centerline_y_json': metrics.get('centerline_y_json'),
+                'curvature_values_json': metrics.get('curvature_values_json'),
+                'arc_length_values_json': metrics.get('arc_length_values_json'),
+            }
+            array_rows.append(array_row)
+
+            successful_count += 1
+
+    print(f"✅ Computed curvature for {successful_count}/{len(df)} rows")
+
+    # Write to body_axis metadata files
+    _write_body_axis_files(summary_rows, array_rows, root, exp)
+
+    return df
+
+
+def _write_body_axis_files(summary_rows: list, array_rows: list, root: Path, exp: str):
+    """
+    Write curvature metrics and arrays to body_axis metadata files (per-experiment).
+
+    Per-experiment files allow for independent experiment processing without conflicts.
+
+    Args:
+        summary_rows: List of summary metric dictionaries
+        array_rows: List of array data dictionaries
+        root: Project root directory
+        exp: Experiment name (used in filename)
+    """
+    root = Path(root)
+
+    # Create body_axis directories
+    summary_dir = root / "metadata" / "body_axis" / "summary"
+    arrays_dir = root / "metadata" / "body_axis" / "arrays"
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    arrays_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write summary metrics (per-experiment file)
+    summary_path = summary_dir / f"curvature_metrics_{exp}.csv"
+    if summary_rows:
+        summary_df = pd.DataFrame(summary_rows)
+        summary_df.to_csv(summary_path, index=False)
+        print(f"💾 Wrote {len(summary_rows)} summary metric rows to {summary_path.name}")
+
+    # Write array data (per-experiment file)
+    arrays_path = arrays_dir / f"curvature_arrays_{exp}.csv"
+    if array_rows:
+        arrays_df = pd.DataFrame(array_rows)
+        arrays_df.to_csv(arrays_path, index=False)
+        print(f"💾 Wrote {len(array_rows)} array data rows to {arrays_path.name}")
 
 
 def build04_stage_per_experiment(
@@ -153,6 +337,11 @@ def build04_stage_per_experiment(
     # Update perturbation key (enabled by default)
     print("🔑 Updating perturbation key...")
     df = _update_perturbation_key(df, root)
+
+    # Add curvature metrics (NEW: integrated from standalone process_curvature_batch.py)
+    # Computes for all rows with valid mask data; NaN where computation fails
+    # DF03 keeps only 3 essential columns; detailed metrics written to body_axis metadata
+    df = _add_curvature_metrics(df, root, exp=exp, n_workers=4)
 
     # Generate summary
     summary = _generate_summary(df)
