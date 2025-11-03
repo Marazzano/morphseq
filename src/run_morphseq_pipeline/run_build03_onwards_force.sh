@@ -34,7 +34,7 @@ MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20250305"
+DEFAULT_EXPERIMENTS="20250529_24hpf_ctrl_atf6"
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -226,7 +226,7 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 # Example usage with array jobs:
 #
 # Run for all experiments in list:
-# qsub -t 1-30 -tc 3 \
+# qsub -t 1-40 -tc 3 \
 #   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
 #   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 

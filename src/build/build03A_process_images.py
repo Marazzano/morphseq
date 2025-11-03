@@ -45,11 +45,12 @@ from skimage.transform import rescale, resize
 from src.build.export_utils import trim_to_shape
 from sklearn.decomposition import PCA
 from src.build.qc_utils import compute_fraction_alive, compute_qc_flags, compute_speed
-import warnings 
+import warnings
 from pathlib import Path
 from typing import Sequence, List
 from itertools import chain
 import os
+from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 
 def resolve_sandbox_embryo_mask(root: str | Path, date: str, well: str, time_int: int) -> Path:
     """Legacy mask resolver - DEPRECATED. Use resolve_sandbox_embryo_mask_from_csv instead.
@@ -291,7 +292,17 @@ def export_embryo_snips(r: int,
         if is_debug_embryo:
             print(f"   ❌ ERROR loading mask for {snip_id}: {e}")
         raise
-    
+
+    # --- Clean mask using 5-step pipeline ---
+    try:
+        im_mask, cleaning_stats = clean_embryo_mask(im_mask, verbose=False)
+        if is_debug_embryo:
+            print(f"   ✓ Mask cleaned: removed {cleaning_stats['area_removed_pct']:.1f}% of pixels")
+    except Exception as e:
+        if is_debug_embryo:
+            print(f"   ⚠️  Mask cleaning failed for {snip_id}: {e}, using original mask")
+        # Continue with original (uncleaned) mask on failure
+
     # Load yolk from Build02 segmentation (keep non-embryo masks unchanged)
     im_yolk = None
     seg_root = root / 'segmentation'

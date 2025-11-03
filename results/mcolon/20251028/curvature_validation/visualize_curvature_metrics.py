@@ -31,9 +31,12 @@ warnings.filterwarnings('ignore')
 
 def load_data() -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load curvature summary with simple metrics and full build metadata."""
-    # Load the enhanced summary with simple metrics
-    summary_path = project_root / "morphseq_playground/metadata/body_axis/summary/curvature_metrics_summary_with_simple_20251017_combined.csv"
+    # Load the summary with simple metrics (now included in standard output)
+    summary_path = project_root / "morphseq_playground/metadata/body_axis/summary/curvature_metrics_summary_20251017_combined.csv"
     build_path = project_root / "morphseq_playground/metadata/build06_output/df03_final_output_with_latents_20251017_combined.csv"
+
+    if not summary_path.exists():
+        raise FileNotFoundError(f"Summary file not found: {summary_path}")
 
     summary_df = pd.read_csv(summary_path)
     build_df = pd.read_csv(build_path)

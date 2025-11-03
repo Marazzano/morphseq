@@ -199,10 +199,12 @@ if __name__ == "__main__":
 
     # Test these embryos with sigma and threshold combinations
     embryos = [
-        "20251017_combined_A02_e01_t0064",
-        "20251017_combined_D12_e01_t0057",
-        "20251017_combined_D10_e01_t0108",
-        "20250512_E06_e01_t0086",  # Curvy embryo - baseline for comparison
+        "20251017_combined_D11_e01_t0073",
+        "20251017_combined_D12_e01_t0059",
+        # "20251017_combined_A02_e01_t0064",
+        # "20251017_combined_D12_e01_t0057",
+        # "20251017_combined_D10_e01_t0108",
+        # "20250512_E06_e01_t0086",  # Curvy embryo - baseline for comparison
     ]
 
     sigma_values = [10, 15, 20, 25, 30, 35, 40, 45, 50]

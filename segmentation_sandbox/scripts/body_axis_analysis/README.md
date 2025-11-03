@@ -142,6 +142,7 @@ from segmentation_sandbox.scripts.body_axis_analysis import (
 # Advanced usage with custom parameters
 analyzer = GeodesicCenterlineAnalyzer(mask, um_per_pixel=1.0, bspline_smoothing=5.0)
 results = analyzer.analyze()
+
 ```
 
 ## Documentation
