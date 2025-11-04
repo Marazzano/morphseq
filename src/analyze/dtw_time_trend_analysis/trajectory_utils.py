@@ -266,7 +266,8 @@ def interpolate_to_common_grid(
         # Interpolate - will have NaN where outside observed range
         interpolated = f(common_grid)
 
-        # Only keep timepoints within observed range (no padding)
+        # Trim to observed range (remove NaN padding)
+        # This keeps trajectories variable-length but NaN-free for DTW
         valid_mask = ~np.isnan(interpolated)
         interpolated_trimmed = interpolated[valid_mask]
 
@@ -277,11 +278,103 @@ def interpolate_to_common_grid(
     if verbose:
         print(f"\n  Interpolated shape: {len(interpolated_trajectories)} embryos")
         if interpolated_trajectories:
-            print(f"  Interpolated lengths: min={min([len(t) for t in interpolated_trajectories])}, "
-                  f"max={max([len(t) for t in interpolated_trajectories])}, "
-                  f"mean={np.mean([len(t) for t in interpolated_trajectories]):.1f}")
+            lengths = [len(t) for t in interpolated_trajectories]
+            print(f"  Trajectory lengths: min={min(lengths)}, max={max(lengths)}, mean={np.mean(lengths):.1f}")
+            print(f"  Variable lengths (trimmed to observed ranges, no NaN padding)")
 
     return interpolated_trajectories, embryo_ids_ordered, original_lengths, common_grid
+
+
+def pad_trajectories_for_plotting(
+    trajectories: List[np.ndarray],
+    common_grid: np.ndarray,
+    df_long: pd.DataFrame,
+    embryo_ids: List[str],
+    verbose: bool = False
+) -> List[np.ndarray]:
+    """
+    Pad variable-length trajectories to uniform length for plotting.
+
+    Takes trimmed trajectories (only observed ranges) and pads them with NaN
+    to align to the common grid. This allows uniform-length arrays needed for
+    certain plotting operations (heatmaps, aligned statistics).
+
+    Parameters
+    ----------
+    trajectories : list of np.ndarray
+        Variable-length trajectories (trimmed to observed ranges, no NaN)
+    common_grid : np.ndarray
+        Common time grid for alignment
+    df_long : pd.DataFrame
+        Original long-format data with columns: embryo_id, hpf, metric_value
+    embryo_ids : list of str
+        Embryo IDs corresponding to trajectories (same order)
+    verbose : bool, default=False
+        Print progress information
+
+    Returns
+    -------
+    padded_trajectories : list of np.ndarray
+        All arrays have length = len(common_grid), with NaN padding outside
+        observed ranges
+
+    Examples
+    --------
+    >>> # Variable length trajectories
+    >>> trajs = [[0.5, 0.6, 0.7], [0.4, 0.5]]  # lengths 3 and 2
+    >>> grid = np.array([40, 45, 50, 55, 60])
+    >>> # After padding, both will have length 5 with NaN where no data
+    """
+    if verbose:
+        print(f"\n  Padding {len(trajectories)} trajectories to common grid...")
+
+    padded_trajectories = []
+
+    for embryo_id, traj in zip(embryo_ids, trajectories):
+        # Find this embryo's observed time range from original data
+        embryo_data = df_long[df_long['embryo_id'] == embryo_id].sort_values('hpf')
+        if len(embryo_data) == 0:
+            # No data for this embryo, return all NaN
+            padded_trajectories.append(np.full(len(common_grid), np.nan))
+            continue
+
+        min_hpf = embryo_data['hpf'].min()
+        max_hpf = embryo_data['hpf'].max()
+
+        # Find start and end indices in common grid
+        start_idx = np.searchsorted(common_grid, min_hpf, side='left')
+        end_idx = np.searchsorted(common_grid, max_hpf, side='right')
+
+        # Handle edge case where trajectory extends beyond grid
+        traj_len = len(traj)
+        grid_span = end_idx - start_idx
+
+        if grid_span != traj_len:
+            # Adjust end_idx if mismatch (can happen due to interpolation grid steps)
+            end_idx = start_idx + traj_len
+
+        # Create padded array
+        padded_traj = np.full(len(common_grid), np.nan)
+
+        # Insert trajectory data at correct position
+        if end_idx <= len(common_grid):
+            padded_traj[start_idx:end_idx] = traj
+        else:
+            # Trajectory extends beyond grid, truncate
+            available = len(common_grid) - start_idx
+            padded_traj[start_idx:] = traj[:available]
+
+        padded_trajectories.append(padded_traj)
+
+    if verbose:
+        # Verify all same length
+        lengths = [len(t) for t in padded_trajectories]
+        if len(set(lengths)) == 1:
+            print(f"  ✓ All {len(padded_trajectories)} trajectories padded to uniform length: {lengths[0]}")
+        else:
+            print(f"  WARNING: Inconsistent lengths after padding: {set(lengths)}")
+
+    return padded_trajectories
 
 
 def extract_early_late_means(

@@ -129,11 +129,183 @@ def analyze_membership(D: np.ndarray, labels: np.ndarray, C: np.ndarray,
     }
 
 
-# ============ PLOTTING FUNCTIONS (signatures only) ============
+# ============ PLOTTING FUNCTIONS ============
 
-def plot_membership_distribution(classification, title="Membership Categories"):
-    """Bar chart of core/uncertain/outlier counts."""
-    pass
+def plot_membership_distribution(classification, cluster_stats=None, title="Membership Distribution", dpi=100):
+    """
+    Plot membership category distribution.
+
+    Parameters
+    ----------
+    classification : dict
+        Classification results from analyze_membership
+    cluster_stats : dict, optional
+        Per-cluster statistics
+    title : str
+        Figure title
+    dpi : int
+        Figure DPI
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure object
+    """
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5), dpi=dpi)
+
+    # ========== LEFT PANEL: Overall distribution ==========
+    ax = axes[0]
+
+    # Count categories
+    categories = {'core': 0, 'uncertain': 0, 'outlier': 0}
+    for c in classification.values():
+        cat = c['category']
+        if cat in categories:
+            categories[cat] += 1
+
+    colors = {'core': 'green', 'uncertain': 'yellow', 'outlier': 'red'}
+    cat_colors = [colors[cat] for cat in categories.keys()]
+    bars = ax.bar(categories.keys(), categories.values(), color=cat_colors, alpha=0.7, edgecolor='black', linewidth=2)
+
+    # Add value labels on bars
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height,
+               f'{int(height)}',
+               ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+    ax.set_ylabel('Count', fontsize=11)
+    ax.set_title('Overall Membership Distribution', fontsize=12, fontweight='bold')
+    ax.set_ylim([0, max(categories.values()) * 1.15])
+    ax.grid(True, alpha=0.3, axis='y')
+
+    # ========== RIGHT PANEL: Per-cluster breakdown ==========
+    ax = axes[1]
+
+    if cluster_stats is not None:
+        clusters = sorted(cluster_stats.keys())
+        core_counts = [cluster_stats[c]['core'] for c in clusters]
+        uncertain_counts = [cluster_stats[c]['uncertain'] for c in clusters]
+        outlier_counts = [cluster_stats[c]['outlier'] for c in clusters]
+
+        x = np.arange(len(clusters))
+        width = 0.6
+
+        p1 = ax.bar(x, core_counts, width, label='Core', color='green', alpha=0.7)
+        p2 = ax.bar(x, uncertain_counts, width, bottom=core_counts,
+                   label='Uncertain', color='yellow', alpha=0.7)
+        p3 = ax.bar(x, outlier_counts, width,
+                   bottom=np.array(core_counts) + np.array(uncertain_counts),
+                   label='Outlier', color='red', alpha=0.7)
+
+        ax.set_ylabel('Count', fontsize=11)
+        ax.set_xlabel('Cluster', fontsize=11)
+        ax.set_title('Per-Cluster Membership Breakdown', fontsize=12, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels([f'C{c}' for c in clusters])
+        ax.legend(loc='upper right', fontsize=10)
+        ax.grid(True, alpha=0.3, axis='y')
+    else:
+        ax.text(0.5, 0.5, 'No per-cluster statistics provided',
+               ha='center', va='center', fontsize=12, transform=ax.transAxes)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_membership_vs_k(all_k_membership, best_k=None, title="Membership Distribution Across K Values", dpi=100):
+    """
+    Plot membership category percentages as k varies.
+
+    Parameters
+    ----------
+    all_k_membership : dict
+        Membership results for all k values (k -> membership_results)
+    best_k : int, optional
+        Best k value to highlight with vertical line
+    title : str
+        Figure title
+    dpi : int
+        Figure DPI
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure object
+    """
+    import matplotlib.pyplot as plt
+
+    # Extract k values and compute percentages
+    k_values = sorted(all_k_membership.keys())
+    core_pcts = []
+    uncertain_pcts = []
+    outlier_pcts = []
+
+    for k in k_values:
+        summary = all_k_membership[k]['summary']
+        n_total = (summary['n_core'] + summary['n_uncertain'] + summary['n_outlier'])
+        if n_total > 0:
+            core_pcts.append(100.0 * summary['n_core'] / n_total)
+            uncertain_pcts.append(100.0 * summary['n_uncertain'] / n_total)
+            outlier_pcts.append(100.0 * summary['n_outlier'] / n_total)
+        else:
+            core_pcts.append(0)
+            uncertain_pcts.append(0)
+            outlier_pcts.append(0)
+
+    # Create two-panel figure
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5), dpi=dpi)
+
+    # ========== LEFT PANEL: Line plot ==========
+    ax = axes[0]
+    ax.plot(k_values, core_pcts, 'o-', color='green', linewidth=2.5, markersize=8,
+           label='Core', alpha=0.8)
+    ax.plot(k_values, uncertain_pcts, 's-', color='orange', linewidth=2.5, markersize=8,
+           label='Uncertain', alpha=0.8)
+    ax.plot(k_values, outlier_pcts, '^-', color='red', linewidth=2.5, markersize=8,
+           label='Outlier', alpha=0.8)
+
+    if best_k is not None and best_k in k_values:
+        ax.axvline(best_k, color='black', linestyle='--', linewidth=2, alpha=0.5)
+        ax.text(best_k, ax.get_ylim()[1] * 0.95, f'best k={best_k}',
+               ha='center', fontsize=10, bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.3))
+
+    ax.set_xlabel('k (number of clusters)', fontsize=11)
+    ax.set_ylabel('Percentage (%)', fontsize=11)
+    ax.set_title('Membership Category Percentages', fontsize=12, fontweight='bold')
+    ax.set_xticks(k_values)
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 105])
+
+    # ========== RIGHT PANEL: Stacked area ==========
+    ax = axes[1]
+    ax.fill_between(k_values, 0, core_pcts, label='Core', color='green', alpha=0.6)
+    ax.fill_between(k_values, core_pcts, np.array(core_pcts) + np.array(uncertain_pcts),
+                   label='Uncertain', color='orange', alpha=0.6)
+    ax.fill_between(k_values, np.array(core_pcts) + np.array(uncertain_pcts), 100,
+                   label='Outlier', color='red', alpha=0.6)
+
+    if best_k is not None and best_k in k_values:
+        ax.axvline(best_k, color='black', linestyle='--', linewidth=2, alpha=0.5)
+
+    ax.set_xlabel('k (number of clusters)', fontsize=11)
+    ax.set_ylabel('Percentage (%)', fontsize=11)
+    ax.set_title('Membership Category Composition', fontsize=12, fontweight='bold')
+    ax.set_xticks(k_values)
+    ax.legend(loc='upper right', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 100])
+
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
 
 def plot_membership_scatter(D, classification, title="Membership Visualization"):
     """2D projection colored by membership category."""
