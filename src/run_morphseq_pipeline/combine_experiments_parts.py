@@ -53,7 +53,7 @@ def combine_experiment_parts(
         >>> print(f"Combined {result['build04']['combined_rows']} rows")
     """
     if build_stages is None:
-        build_stages = ['build04', 'build06']
+        build_stages = ['build04', 'build06', 'curvature']
 
     data_root = Path(data_root)
     metadata_dir = data_root / "morphseq_playground" / "metadata"
@@ -72,6 +72,11 @@ def combine_experiment_parts(
             )
         elif build_stage == 'build06':
             result = _combine_build06(
+                part1_experiment, part2_experiment, combined_experiment_name,
+                metadata_dir
+            )
+        elif build_stage == 'curvature':
+            result = _combine_curvature(
                 part1_experiment, part2_experiment, combined_experiment_name,
                 metadata_dir
             )
@@ -290,6 +295,173 @@ def _combine_build06(
     }
 
 
+def _combine_curvature(
+    part1_exp: str,
+    part2_exp: str,
+    combined_exp: str,
+    metadata_dir: Path
+) -> Dict[str, any]:
+    """
+    Combine curvature metrics files from body_axis/summary directory.
+
+    This function needs the combined build06 metadata to exist first, as it uses
+    the snip_id mapping from there to properly update the curvature snip_ids with
+    the correct time offsets.
+
+    Args:
+        part1_exp: Part 1 experiment name
+        part2_exp: Part 2 experiment name
+        combined_exp: Combined experiment name
+        metadata_dir: Path to metadata directory
+
+    Returns:
+        Dict with combination summary
+    """
+    curvature_dir = metadata_dir / "body_axis" / "summary"
+    build06_dir = metadata_dir / "build06_output"
+
+    # Load part1 and part2 curvature files
+    part1_file = curvature_dir / f"curvature_metrics_{part1_exp}.csv"
+    part2_file = curvature_dir / f"curvature_metrics_{part2_exp}.csv"
+
+    if not part1_file.exists():
+        print(f"⚠️  Part1 curvature file not found: {part1_file}")
+        print(f"   Skipping curvature combination")
+        return {
+            'part1_rows': 0,
+            'part2_rows': 0,
+            'combined_rows': 0,
+            'output_file': 'N/A (skipped)'
+        }
+
+    if not part2_file.exists():
+        print(f"⚠️  Part2 curvature file not found: {part2_file}")
+        print(f"   Skipping curvature combination")
+        return {
+            'part1_rows': 0,
+            'part2_rows': 0,
+            'combined_rows': 0,
+            'output_file': 'N/A (skipped)'
+        }
+
+    print(f"📂 Loading {part1_file.name}...")
+    df_curv_part1 = pd.read_csv(part1_file)
+    print(f"   → {len(df_curv_part1)} rows loaded")
+
+    print(f"📂 Loading {part2_file.name}...")
+    df_curv_part2 = pd.read_csv(part2_file)
+    print(f"   → {len(df_curv_part2)} rows loaded")
+
+    # Load the original part1 and part2 metadata, and the combined metadata
+    # to create a mapping from old snip_ids to new snip_ids
+    part1_metadata_file = build06_dir / f"df03_final_output_with_latents_{part1_exp}.csv"
+    part2_metadata_file = build06_dir / f"df03_final_output_with_latents_{part2_exp}.csv"
+    combined_metadata_file = build06_dir / f"df03_final_output_with_latents_{combined_exp}.csv"
+
+    if not combined_metadata_file.exists():
+        print(f"⚠️  Combined metadata not found: {combined_metadata_file}")
+        print(f"   Cannot map snip_ids without metadata - run build04/build06 combination first")
+        return {
+            'part1_rows': 0,
+            'part2_rows': 0,
+            'combined_rows': 0,
+            'output_file': 'N/A (skipped - no metadata)'
+        }
+
+    print(f"\n🔧 Building snip_id mapping from metadata...")
+
+    # Create mapping dictionary: old_snip_id -> new_snip_id
+    snip_id_mapping = {}
+
+    # Load part1 metadata and create mapping
+    if part1_metadata_file.exists():
+        print(f"   Loading part1 metadata...")
+        df_part1_meta = pd.read_csv(part1_metadata_file, usecols=['snip_id'])
+        # For part1, new snip_id is just experiment name replacement
+        for old_snip_id in df_part1_meta['snip_id']:
+            new_snip_id = old_snip_id.replace(part1_exp, combined_exp)
+            snip_id_mapping[old_snip_id] = new_snip_id
+        print(f"   → Added {len(df_part1_meta)} part1 mappings")
+
+    # Load part2 metadata and create mapping
+    if part2_metadata_file.exists():
+        print(f"   Loading part2 metadata...")
+        df_part2_meta = pd.read_csv(part2_metadata_file, usecols=['snip_id'])
+        # For part2, we need to load the combined metadata to get the new snip_ids
+        # because they have time offsets applied
+        df_combined_meta = pd.read_csv(combined_metadata_file, usecols=['snip_id'])
+
+        # The combined file has part2 snip_ids with time offsets already applied
+        # Extract just the part2 entries (those that were renamed from part2_exp)
+        part2_snip_ids_in_combined = [sid for sid in df_combined_meta['snip_id']
+                                       if combined_exp in sid and sid not in snip_id_mapping.values()]
+
+        # Map part2 old snip_ids to new ones
+        # We need to match based on well_embryo pattern
+        for old_snip_id in df_part2_meta['snip_id']:
+            # Extract well and embryo: e.g., "20251017_part2_A01_e01_t0034" -> "A01_e01"
+            parts = old_snip_id.split('_')
+            if len(parts) >= 5:
+                well = parts[-3]
+                embryo = parts[-2]
+                well_embryo = f"{well}_{embryo}"
+
+                # Find matching snip_id in combined that has same well_embryo
+                for new_snip_id in part2_snip_ids_in_combined:
+                    if well_embryo in new_snip_id:
+                        # Check if this mapping already exists (avoid duplicates)
+                        if old_snip_id not in snip_id_mapping:
+                            snip_id_mapping[old_snip_id] = new_snip_id
+                            break
+
+        print(f"   → Added {len([k for k in snip_id_mapping if part2_exp in k])} part2 mappings")
+
+    print(f"   Total mappings created: {len(snip_id_mapping)}")
+
+    # Apply mapping to curvature data
+    print(f"\n🔧 Applying snip_id mapping to curvature data...")
+
+    df_curv_part1['snip_id_new'] = df_curv_part1['snip_id'].map(snip_id_mapping)
+    df_curv_part2['snip_id_new'] = df_curv_part2['snip_id'].map(snip_id_mapping)
+
+    # Filter to rows that were successfully mapped
+    df_curv_part1_matched = df_curv_part1[df_curv_part1['snip_id_new'].notna()].copy()
+    df_curv_part2_matched = df_curv_part2[df_curv_part2['snip_id_new'].notna()].copy()
+
+    n_part1_unmatched = len(df_curv_part1) - len(df_curv_part1_matched)
+    n_part2_unmatched = len(df_curv_part2) - len(df_curv_part2_matched)
+
+    if n_part1_unmatched > 0:
+        print(f"   ⚠️  Part1: {n_part1_unmatched} curvature rows not mapped (likely QC filtered)")
+    if n_part2_unmatched > 0:
+        print(f"   ⚠️  Part2: {n_part2_unmatched} curvature rows not mapped (likely QC filtered)")
+
+    # Replace snip_id with the new mapped values
+    df_curv_part1_matched['snip_id'] = df_curv_part1_matched['snip_id_new']
+    df_curv_part2_matched['snip_id'] = df_curv_part2_matched['snip_id_new']
+
+    df_curv_part1_matched = df_curv_part1_matched.drop(columns=['snip_id_new'])
+    df_curv_part2_matched = df_curv_part2_matched.drop(columns=['snip_id_new'])
+
+    # Concatenate
+    print(f"\n🔗 Concatenating part1 + part2...")
+    df_combined = pd.concat([df_curv_part1_matched, df_curv_part2_matched], ignore_index=True)
+    print(f"   → Combined: {len(df_combined)} rows")
+
+    # Save with standard naming (no "summary" prefix)
+    output_file = curvature_dir / f"curvature_metrics_{combined_exp}.csv"
+    print(f"\n💾 Saving to {output_file.name}...")
+    df_combined.to_csv(output_file, index=False)
+    print(f"   ✅ Saved successfully")
+
+    return {
+        'part1_rows': len(df_curv_part1_matched),
+        'part2_rows': len(df_curv_part2_matched),
+        'combined_rows': len(df_combined),
+        'output_file': str(output_file)
+    }
+
+
 def _regenerate_snip_ids(df: pd.DataFrame, experiment_name: str) -> pd.DataFrame:
     """
     Regenerate snip_ids based on current time_int values.
@@ -498,7 +670,7 @@ if __name__ == "__main__":
     part1 = sys.argv[1]
     part2 = sys.argv[2]
     combined = sys.argv[3]
-    data_root = sys.argv[4] if len(sys.argv) > 4 else "/net/trapnell/vol1/home/nlammers/projects/data/morphseq"
+    data_root = sys.argv[4] if len(sys.argv) > 4 else "/net/trapnell/vol1/home/mdcolon/proj/morphseq/"
 
     print(f"Combining experiments:")
     print(f"  Part 1: {part1}")
@@ -517,5 +689,6 @@ if __name__ == "__main__":
         print(f"  Part 1: {result['part1_rows']:,} rows")
         print(f"  Part 2: {result['part2_rows']:,} rows")
         print(f"  Combined: {result['combined_rows']:,} rows")
-        print(f"  Time offsets: time_int +{result['time_int_offset']}, Time Rel +{result['time_rel_offset_s']:.2f}s")
+        if 'time_int_offset' in result:
+            print(f"  Time offsets: time_int +{result['time_int_offset']}, Time Rel +{result['time_rel_offset_s']:.2f}s")
         print(f"  Output: {result['output_file']}")
