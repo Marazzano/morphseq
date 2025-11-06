@@ -257,15 +257,14 @@ def build_ff_from_yx1(
     overwrite: bool = False,
     # dir_list: Sequence[str] | None = None,
     # write_dir: str | Path | None = None,
-    # device: str="cpu",
+    device: str = "cuda" if torch.cuda.is_available() else "cpu",
     n_workers: int=1,
     metadata_only: bool = False,
     # n_z_keep: Sequence[int | None] | None = None,
 ):
-    
+
 
     par_flag = n_workers > 1
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     data_root = Path(data_root)
     read_root = data_root / "raw_image_data" / "YX1"
