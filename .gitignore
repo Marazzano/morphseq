@@ -84,8 +84,13 @@ src/build/__pychache__/
 **/data/
 .aider*
 
-# Ignore generated test data
-test_data/
+# Ignore large test data files (but keep structure and documentation)
+test_data/**/*.tif
+test_data/**/*.tiff
+test_data/**/*.nd2
+test_data/**/*.jpg
+test_data/**/*.jpeg
+test_data/**/*.png
 # *.csv
 *.mp4
 # *.jpg
