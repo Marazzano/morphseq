@@ -14,10 +14,9 @@ REQUIRED_COLUMNS_PLATE_METADATA = [
     # Biological metadata
     'genotype',
     'treatment',              # or 'chem_perturbation'
-    'embryos_per_well',
     'start_age_hpf',
 
     # Experimental conditions
-    'temperature_c',          # Critical for developmental timing normalization
+    'temperature',          # Critical for developmental timing normalization
     'medium',
 ]

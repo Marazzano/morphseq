@@ -22,6 +22,32 @@ from src.analyze.dtw_time_trend_analysis.trajectory_utils import (
 )
 
 
+def get_membership_category_colors(categories: list) -> dict:
+    """
+    Get standardized colors for membership categories.
+
+    Parameters
+    ----------
+    categories : list
+        List of category names
+
+    Returns
+    -------
+    dict
+        Mapping of category to RGB color
+    """
+    color_map = {
+        'core': '#2ecc71',      # Green
+        'uncertain': '#f1c40f',  # Yellow
+        'outlier': '#e74c3c'     # Red
+    }
+
+    result = {}
+    for cat in categories:
+        result[cat] = color_map.get(cat, '#95a5a6')  # Gray for unknown
+    return result
+
+
 def plot_embryos_metric_over_time(
     df: pd.DataFrame,
     metric: str = 'normalized_baseline_deviation',

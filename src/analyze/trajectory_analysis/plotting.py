@@ -94,7 +94,22 @@ def plot_cluster_trajectories_df(
     """
     fig, ax = plt.subplots(figsize=figsize)
 
-    unique_embryo_ids = sorted(df_interpolated['embryo_id'].unique())
+    # Use provided embryo_ids (aligned with cluster_labels) or extract from DataFrame
+    if embryo_ids is not None:
+        unique_embryo_ids = np.array(embryo_ids)
+    else:
+        # Fallback: extract from DataFrame in sorted order for determinism
+        # WARNING: cluster_labels must be aligned with this sorted order!
+        unique_embryo_ids = np.array(sorted(df_interpolated['embryo_id'].unique()))
+
+    # Validate alignment
+    if len(unique_embryo_ids) != len(cluster_labels):
+        raise ValueError(
+            f"Mismatch between number of embryos ({len(unique_embryo_ids)}) "
+            f"and cluster_labels length ({len(cluster_labels)}). "
+            f"Ensure cluster_labels is aligned with embryo_ids."
+        )
+
     n_clusters = int(np.max(cluster_labels)) + 1
     colors = plt.cm.tab10(np.linspace(0, 1, min(n_clusters, 10)))
     if n_clusters > 10:
@@ -112,7 +127,7 @@ def plot_cluster_trajectories_df(
     if show_mean:
         for c in range(n_clusters):
             mask = cluster_labels == c
-            cluster_embryos = unique_embryo_ids[mask]
+            cluster_embryos = unique_embryo_ids[mask]  # Now works with numpy array
             cluster_data = df_interpolated[
                 df_interpolated['embryo_id'].isin(cluster_embryos)
             ]
