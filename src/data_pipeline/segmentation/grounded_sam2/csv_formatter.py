@@ -61,25 +61,85 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+# Import centralized schema
+from ...schemas.segmentation import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
 
-# CSV schema definition (aligned with preliminary_rules.md Phase 3)
-REQUIRED_CSV_COLUMNS = [
-    "image_id",
-    "embryo_id",
-    "snip_id",
-    "frame_index",
-    "area_px",
-    "bbox_x_min",
-    "bbox_y_min",
-    "bbox_x_max",
-    "bbox_y_max",
-    "mask_confidence",
-    "mask_rle",
-    "exported_mask_path",
-    "well_id",
-    "is_seed_frame",
-    "source_image_path",
-]
+# Use centralized schema (more authoritative than local copy)
+REQUIRED_CSV_COLUMNS = REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+
+
+def extract_well_index(well_id: str) -> int:
+    """
+    Extract well index from well identifier.
+
+    Converts standard plate well format (A01-H12) to linear index (1-96).
+    Format: Letter (A-H) + Number (01-12)
+
+    Args:
+        well_id: Well identifier (e.g., "A01", "H12")
+
+    Returns:
+        Linear well index (1-96)
+
+    Example:
+        >>> extract_well_index("A01")
+        1
+        >>> extract_well_index("B01")
+        13
+        >>> extract_well_index("H12")
+        96
+    """
+    if not well_id or len(well_id) < 2:
+        return 0
+
+    row_letter = well_id[0].upper()
+    col_str = well_id[1:]
+
+    # Map letter to row (A=0, B=1, ..., H=7)
+    row = ord(row_letter) - ord('A')
+    if row < 0 or row > 7:
+        return 0
+
+    # Extract column number
+    try:
+        col = int(col_str)
+        if col < 1 or col > 12:
+            return 0
+    except ValueError:
+        return 0
+
+    # Linear index (1-based): row * 12 + col
+    return row * 12 + col
+
+
+def extract_time_int(image_id: str) -> int:
+    """
+    Extract time index from image identifier.
+
+    Typically image_id format is: "exp_well_tXXXX" where XXXX is time index.
+
+    Args:
+        image_id: Image identifier (e.g., "exp_A01_t0000")
+
+    Returns:
+        Time index as integer, or 0 if not found
+
+    Example:
+        >>> extract_time_int("exp_A01_t0000")
+        0
+        >>> extract_time_int("exp_A01_t0042")
+        42
+    """
+    if '_t' not in image_id:
+        return 0
+
+    try:
+        # Extract the part after 't'
+        time_part = image_id.split('_t')[-1]
+        # Convert to int (handle leading zeros)
+        return int(time_part)
+    except (ValueError, IndexError):
+        return 0
 
 
 def flatten_sam2_json_to_csv(
@@ -173,23 +233,45 @@ def flatten_sam2_json_to_csv(
                     # Generate exported mask path
                     exported_mask_path = f"{image_id}_masks.png"
 
-                    # Build row
+                    # Extract well_index from well_id (e.g., "A01" -> 1, "B01" -> 13)
+                    # Standard 96-well plate: rows A-H, columns 01-12
+                    well_index = extract_well_index(well_id)
+
+                    # Extract time_int from image_id (last numerical component after 't')
+                    time_int = extract_time_int(image_id)
+
+                    # Calculate centroid from bounding box
+                    centroid_x_px = (bbox[0] + bbox[2]) / 2.0 if len(bbox) >= 4 else 0.0
+                    centroid_y_px = (bbox[1] + bbox[3]) / 2.0 if len(bbox) >= 4 else 0.0
+
+                    # Build row with all required schema columns
                     row = {
+                        # Core IDs
+                        "experiment_id": exp_id,
+                        "video_id": video_id,
+                        "well_id": well_id,
+                        "well_index": well_index,
                         "image_id": image_id,
                         "embryo_id": embryo_id,
                         "snip_id": snip_id,
                         "frame_index": frame_index,
+                        "time_int": time_int,
+                        # Mask data
+                        "mask_rle": mask_rle,
                         "area_px": area_px,
                         "bbox_x_min": bbox[0] if len(bbox) > 0 else 0,
                         "bbox_y_min": bbox[1] if len(bbox) > 1 else 0,
                         "bbox_x_max": bbox[2] if len(bbox) > 2 else 0,
                         "bbox_y_max": bbox[3] if len(bbox) > 3 else 0,
                         "mask_confidence": mask_confidence,
-                        "mask_rle": mask_rle,
-                        "exported_mask_path": exported_mask_path,
-                        "well_id": well_id,
+                        # Geometry
+                        "centroid_x_px": centroid_x_px,
+                        "centroid_y_px": centroid_y_px,
+                        # SAM2 metadata
                         "is_seed_frame": is_seed_frame,
+                        # File references
                         "source_image_path": source_image_path,
+                        "exported_mask_path": exported_mask_path,
                     }
 
                     rows.append(row)
