@@ -7,6 +7,7 @@ Extracted from build03A_process_images.py (lines 257-414).
 
 import numpy as np
 import skimage.io as io
+import skimage.exposure
 from pathlib import Path
 from typing import Tuple, Optional
 import warnings

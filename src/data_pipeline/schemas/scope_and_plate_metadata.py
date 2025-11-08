@@ -13,7 +13,8 @@ REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA = [
     'image_id',
     'time_int',
     'frame_index',
-    'embryo_id',
+    # Note: embryo_id is not available at Phase 1 metadata alignment
+    # It is generated during Phase 3 SAM2 segmentation
 
     # From plate_metadata
     'genotype',

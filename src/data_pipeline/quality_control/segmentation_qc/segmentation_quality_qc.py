@@ -16,8 +16,9 @@ Date: 2025-11-06
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 import warnings
+import json
 
 # Optional imports for discontinuous mask detection
 try:
@@ -29,12 +30,31 @@ except ImportError:
     warnings.warn("skimage/pycocotools not available - discontinuous mask check disabled")
 
 
-def decode_mask_rle(rle_data: dict) -> np.ndarray:
-    """Decode RLE mask to binary array."""
+def decode_mask_rle(rle_data: Union[dict, str]) -> np.ndarray:
+    """
+    Decode RLE mask to binary array.
+
+    Handles both dict and JSON string formats.
+
+    Args:
+        rle_data: RLE data as dict (pycocotools format) or JSON string
+
+    Returns:
+        Binary mask as np.ndarray
+    """
     if not _HAS_IMAGE_LIBS:
         raise ImportError("pycocotools required for mask decoding")
 
-    # Handle both rle and rle_base64 formats
+    # Handle JSON string format (from csv_formatter)
+    if isinstance(rle_data, str):
+        if rle_data.strip() == "":
+            raise ValueError("Empty RLE string")
+        try:
+            rle_data = json.loads(rle_data)
+        except json.JSONDecodeError:
+            raise ValueError(f"Invalid JSON in RLE string: {rle_data}")
+
+    # Handle dict format
     if isinstance(rle_data, dict):
         if 'counts' in rle_data and 'size' in rle_data:
             # Already in pycocotools format
@@ -42,7 +62,7 @@ def decode_mask_rle(rle_data: dict) -> np.ndarray:
         else:
             raise ValueError(f"Unknown RLE format: {rle_data.keys()}")
     else:
-        raise TypeError(f"Expected dict, got {type(rle_data)}")
+        raise TypeError(f"Expected dict or str, got {type(rle_data)}")
 
     return mask.astype(bool)
 
