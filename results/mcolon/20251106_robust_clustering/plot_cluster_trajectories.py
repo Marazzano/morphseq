@@ -23,7 +23,7 @@ from typing import Dict, Optional
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.analyze.utils.plotting import plot_embryos_metric_over_time
+from src.analyze.utils.plotting import plot_embryos_metric_over_time, get_membership_category_colors
 
 
 def load_analysis_results(genotype: str, method: str = 'hierarchical', data_dir: str = 'output/data') -> Dict:
@@ -231,8 +231,8 @@ def plot_trajectories_by_membership(genotype: str, k: int, method: str = 'hierar
         ordered_categories = ['unlabeled']
         df['category'] = 'unlabeled'
 
-    palette = plt.cm.Set2(np.linspace(0, 1, max(3, len(ordered_categories))))[:len(ordered_categories)]
-    category_colors = dict(zip(ordered_categories, palette))
+    # Use standardized colors for membership categories
+    category_colors = get_membership_category_colors(ordered_categories)
 
     n_clusters = len(clusters)
     ncols = min(3, max(1, n_clusters))

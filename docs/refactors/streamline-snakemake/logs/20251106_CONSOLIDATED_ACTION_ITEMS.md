@@ -162,7 +162,7 @@ Two independent reviews of commit 0dd2857 agree on several **critical blocking i
 **Problem:** Schema requires `experiment_id`, `time_int`, `fraction_alive` per row, but consolidation:
 1. Starts from segmentation_qc which only has `snip_id`, `embryo_id`, `image_id`
 2. Never merges tracking table to recover experiment/time context
-3. Doesn't create `fraction_alive` column if death_detection skipped
+
 
 **Fix:** Merge in segmentation_tracking or scope metadata to populate experiment/time columns
 
@@ -283,7 +283,7 @@ Two independent reviews of commit 0dd2857 agree on several **critical blocking i
 
 **3. Fix Runtime Errors** (30 minutes)
    - [ ] Add `import skimage.exposure` to snip_processing/extraction.py
-   - [ ] Fix mask_rle serialization (either JSON structure or json.loads in QC)
+   - [ ] Fix mask_rle serialization (either JSON structure or json.loads in QC) (do it however the current code handles it as we know this works, i think we serialize it into a the json)
 
 **4. Implement Missing Outputs** (3-4 hours)
    - [ ] Write snip_manifest.csv in snip processing module

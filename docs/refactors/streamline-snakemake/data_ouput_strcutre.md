@@ -3,12 +3,12 @@
 
 This document defines the complete data output structure for the MorphSeq pipeline refactor. It is synchronized with:
 - `preliminary_rules.md` - Snakemake rule definitions
-- `processing_files_pipeline_structure_and_plan.md` - Module organization and implementation plan
+- `**processing_files_pipeline_structure_and_plan**.md` - Module organization and implementation plan
 
 ---
 
 ## Directory Structure
-
+**
 {data_pipeline_root}/
 │
 ├── inputs/                                           # ALL USER-PROVIDED INPUTS
@@ -30,7 +30,7 @@ This document defines the complete data output structure for the MorphSeq pipeli
 │       ├── scope_and_plate_metadata.csv              # REQUIRED_COLUMNS_SCOPE_AND_PLATE_METADATA (joins prior two)
 │       └── experiment_image_manifest.json            # REQUIRED_IMAGE_MANIFEST_* (per-well channel inventory, normalized frame list)
 │
-├── models/                                           # PRE-TRAINED MODEL CHECKPOINTS (symlink targets)
+**├── models/                                           # PRE-TRAINED MODEL CHECKPOINTS (symlink targets)
 │   ├── segmentation/
 │   │   ├── unet/
 │   │   │   ├── embryo_mask_v0_0100/
