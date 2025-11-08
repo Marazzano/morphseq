@@ -3,14 +3,24 @@ Plotting Functions
 
 Visualization for trajectory analysis, clustering, and quality assessment.
 
-Functions
----------
-- plot_posterior_heatmap: Posterior probability heatmap
-- plot_2d_scatter: 2D scatter of max_p vs log_odds_gap
-- plot_cluster_trajectories: Trajectories colored by cluster
-- plot_membership_trajectories: Trajectories colored by membership category
+This module provides DataFrame-centric plotting functions where time column (hpf)
+is used directly from the DataFrame. This eliminates time-axis alignment bugs
+that occurred with array-based plotting.
+
+Functions (New API - DataFrame-first, recommended)
+--------------------------------------------------
+- plot_cluster_trajectories_df: Plot trajectories by cluster (uses DataFrame)
+- plot_membership_trajectories_df: Plot trajectories by membership (uses DataFrame)
+- plot_posterior_heatmap: Posterior probability heatmap (works with both APIs)
+- plot_2d_scatter: 2D scatter plot (works with both APIs)
+
+Functions (Legacy API - deprecated)
+-----------------------------------
+- plot_cluster_trajectories: DEPRECATED - use plot_cluster_trajectories_df()
+- plot_membership_trajectories: DEPRECATED - use plot_membership_trajectories_df()
 """
 
+import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -18,6 +28,232 @@ import seaborn as sns
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, List
 from .config import DEFAULT_DPI, DEFAULT_FIGSIZE, MEMBERSHIP_COLORS
+
+
+# ============================================================================
+# NEW API: DataFrame-first plotting (recommended)
+# ============================================================================
+
+def plot_cluster_trajectories_df(
+    df_interpolated: pd.DataFrame,
+    cluster_labels: np.ndarray,
+    embryo_ids: Optional[List[str]] = None,
+    *,
+    show_mean: bool = True,
+    show_individual: bool = True,
+    figsize: tuple = DEFAULT_FIGSIZE,
+    save_path: Optional[Union[str, Path]] = None,
+    dpi: int = DEFAULT_DPI
+) -> plt.Figure:
+    """
+    Plot trajectories colored by cluster - DataFrame version.
+
+    Uses the hpf column directly from the DataFrame, preserving correct time alignment.
+    No manual padding or grid index tracking needed.
+
+    Parameters
+    ----------
+    df_interpolated : pd.DataFrame
+        Trajectory data with columns [embryo_id, hpf, metric_value]
+        Should come from interpolate_to_common_grid_df()
+    cluster_labels : np.ndarray
+        Cluster assignment for each unique embryo_id (length = n_unique_embryos)
+    embryo_ids : list of str, optional
+        Embryo identifiers (for reference, computed from DataFrame if not provided)
+    show_mean : bool
+        Plot cluster mean trajectories in bold
+    show_individual : bool
+        Plot individual trajectories faintly in background
+    figsize : tuple
+        Figure size (width, height)
+    save_path : str or Path, optional
+        Path to save figure
+    dpi : int
+        Resolution for saved figure
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The resulting figure object
+
+    Examples
+    --------
+    >>> df_filtered = extract_trajectories_df(df)
+    >>> df_interpolated = interpolate_to_common_grid_df(df_filtered)
+    >>> trajectories, ids, grid = df_to_trajectories(df_interpolated)
+    >>> D = compute_dtw_distance_matrix(trajectories)
+    >>> results = run_bootstrap_hierarchical(D, k=3, embryo_ids=ids)
+    >>> posteriors = analyze_bootstrap_results(results)
+    >>>
+    >>> # Plot using DataFrame - time column preserved!
+    >>> fig = plot_cluster_trajectories_df(
+    ...     df_interpolated,
+    ...     posteriors['modal_cluster'],
+    ...     embryo_ids=ids
+    ... )
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    unique_embryo_ids = sorted(df_interpolated['embryo_id'].unique())
+    n_clusters = int(np.max(cluster_labels)) + 1
+    colors = plt.cm.tab10(np.linspace(0, 1, min(n_clusters, 10)))
+    if n_clusters > 10:
+        colors = plt.cm.tab20(np.linspace(0, 1, n_clusters))
+
+    # Plot individual trajectories
+    if show_individual:
+        for i, embryo_id in enumerate(unique_embryo_ids):
+            subset = df_interpolated[df_interpolated['embryo_id'] == embryo_id]
+            cluster = cluster_labels[i]
+            ax.plot(subset['hpf'], subset['metric_value'],
+                   color=colors[cluster], alpha=0.3, linewidth=0.8)
+
+    # Plot cluster means
+    if show_mean:
+        for c in range(n_clusters):
+            mask = cluster_labels == c
+            cluster_embryos = unique_embryo_ids[mask]
+            cluster_data = df_interpolated[
+                df_interpolated['embryo_id'].isin(cluster_embryos)
+            ]
+            mean_traj = cluster_data.groupby('hpf')['metric_value'].mean()
+            ax.plot(mean_traj.index, mean_traj.values,
+                   color=colors[c], linewidth=2.5, label=f'Cluster {c}')
+
+    ax.set_xlabel('HPF', fontsize=12)
+    ax.set_ylabel('Metric Value', fontsize=12)
+    ax.set_title('Trajectories by Cluster', fontsize=14, fontweight='bold')
+    if show_mean:
+        ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    return fig
+
+
+def plot_membership_trajectories_df(
+    df_interpolated: pd.DataFrame,
+    classification: Dict[str, Any],
+    *,
+    per_cluster: bool = True,
+    figsize: tuple = (15, 10),
+    save_path: Optional[Union[str, Path]] = None,
+    dpi: int = DEFAULT_DPI
+) -> plt.Figure:
+    """
+    Plot trajectories colored by membership category - DataFrame version.
+
+    Uses the hpf column directly from DataFrame, preserving correct time alignment.
+    Trajectories are colored by membership quality (core/uncertain/outlier).
+
+    Parameters
+    ----------
+    df_interpolated : pd.DataFrame
+        Trajectory data with columns [embryo_id, hpf, metric_value]
+    classification : dict
+        Output from classify_membership_2d() with keys:
+        'embryo_ids', 'category', 'cluster'
+    per_cluster : bool
+        If True, create one subplot per cluster showing membership breakdown
+    figsize : tuple
+        Figure size (width, height)
+    save_path : str or Path, optional
+        Path to save figure
+    dpi : int
+        Resolution for saved figure
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The resulting figure object
+
+    Examples
+    --------
+    >>> classification = classify_membership_2d(...)
+    >>> fig = plot_membership_trajectories_df(df_interpolated, classification)
+    """
+    categories = classification['category']
+    clusters = classification['cluster']
+    embryo_ids = classification.get('embryo_ids',
+                                   sorted(df_interpolated['embryo_id'].unique()))
+
+    n_clusters = int(np.max(clusters)) + 1
+
+    if per_cluster:
+        fig, axes = plt.subplots(1, n_clusters, figsize=figsize, sharey=True)
+        if n_clusters == 1:
+            axes = [axes]
+
+        for c in range(n_clusters):
+            ax = axes[c]
+
+            for category in ['outlier', 'uncertain', 'core']:
+                cat_mask = (clusters == c) & (categories == category)
+                if np.sum(cat_mask) > 0:
+                    cat_embryo_ids = np.array(embryo_ids)[cat_mask]
+                    cat_data = df_interpolated[
+                        df_interpolated['embryo_id'].isin(cat_embryo_ids)
+                    ]
+
+                    color = MEMBERSHIP_COLORS.get(category, 'gray')
+                    for embryo_id in cat_embryo_ids:
+                        subset = cat_data[cat_data['embryo_id'] == embryo_id]
+                        ax.plot(subset['hpf'], subset['metric_value'],
+                               color=color, alpha=0.4, linewidth=0.8)
+
+            ax.set_title(f'Cluster {c}', fontweight='bold')
+            ax.set_xlabel('HPF')
+            if c == 0:
+                ax.set_ylabel('Metric Value')
+            ax.grid(True, alpha=0.3)
+
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor=MEMBERSHIP_COLORS.get(cat, 'gray'), label=cat.capitalize())
+            for cat in ['core', 'uncertain', 'outlier']
+        ]
+        fig.legend(handles=legend_elements, loc='upper right')
+
+    else:
+        fig, ax = plt.subplots(figsize=figsize)
+
+        for category in ['outlier', 'uncertain', 'core']:
+            cat_mask = categories == category
+            if np.sum(cat_mask) > 0:
+                cat_embryo_ids = np.array(embryo_ids)[cat_mask]
+                cat_data = df_interpolated[
+                    df_interpolated['embryo_id'].isin(cat_embryo_ids)
+                ]
+
+                color = MEMBERSHIP_COLORS.get(category, 'gray')
+                for embryo_id in cat_embryo_ids:
+                    subset = cat_data[cat_data['embryo_id'] == embryo_id]
+                    label = category if embryo_id == cat_embryo_ids[0] else ''
+                    ax.plot(subset['hpf'], subset['metric_value'],
+                           color=color, alpha=0.4, linewidth=0.8, label=label)
+
+        ax.set_xlabel('HPF', fontsize=12)
+        ax.set_ylabel('Metric Value', fontsize=12)
+        ax.set_title('Trajectories by Membership Category', fontsize=14, fontweight='bold')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    return fig
+
+
+# ============================================================================
+# LEGACY API: Array-based plotting (deprecated)
+# ============================================================================
 
 
 def plot_posterior_heatmap(
@@ -171,33 +407,23 @@ def plot_cluster_trajectories(
     dpi: int = DEFAULT_DPI
 ) -> plt.Figure:
     """
-    Plot trajectories colored by cluster assignment.
+    DEPRECATED: Use plot_cluster_trajectories_df() instead.
 
-    Parameters
-    ----------
-    trajectories : list of np.ndarray
-        Individual trajectories
-    common_grid : np.ndarray
-        Common time grid
-    cluster_labels : np.ndarray
-        Cluster assignments
-    embryo_ids : list of str, optional
-        Embryo identifiers
-    show_mean : bool
-        Show cluster means
-    show_individual : bool
-        Show individual trajectories
-    figsize : tuple
-        Figure size
-    save_path : str or Path, optional
-        Path to save
-    dpi : int
-        Resolution
+    Plot trajectories colored by cluster assignment (legacy array API).
 
-    Returns
-    -------
-    fig : matplotlib.figure.Figure
+    This function has a time-axis alignment bug: trimmed arrays don't preserve
+    each trajectory's start time, causing late-start embryos to be plotted against
+    wrong time values. Use plot_cluster_trajectories_df() with DataFrame input
+    to preserve correct time alignment.
     """
+    warnings.warn(
+        "plot_cluster_trajectories() is deprecated. Use plot_cluster_trajectories_df() instead, "
+        "which uses the DataFrame's hpf column to preserve correct time alignment. "
+        "See migration guide in README.md",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     n_clusters = int(np.max(cluster_labels)) + 1
     colors = plt.cm.tab10(np.linspace(0, 1, n_clusters))
 
@@ -251,6 +477,12 @@ def plot_membership_trajectories(
 
     If per_cluster=True, creates panel grid with one subplot per cluster.
 
+    .. deprecated:: 0.2.0
+        Use :func:`plot_membership_trajectories_df` instead. This function has a
+        time-axis alignment bug where late-start trajectories are plotted against
+        incorrect times. The new version uses the DataFrame's hpf column to preserve
+        correct alignment. See migration guide in README.md
+
     Parameters
     ----------
     trajectories : list of np.ndarray
@@ -272,6 +504,13 @@ def plot_membership_trajectories(
     -------
     fig : matplotlib.figure.Figure
     """
+    warnings.warn(
+        "plot_membership_trajectories() is deprecated (v0.2.0). Use plot_membership_trajectories_df() instead, "
+        "which uses the DataFrame's hpf column to preserve correct time alignment. "
+        "See migration guide in README.md",
+        DeprecationWarning,
+        stacklevel=2
+    )
     categories = classification['category']
     clusters = classification['cluster']
     n_clusters = int(np.max(clusters)) + 1

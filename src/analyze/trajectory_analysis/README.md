@@ -1,7 +1,7 @@
 # Trajectory Analysis Package
 
 **Location:** `src/analyze/trajectory_analysis/`
-**Status:** In Development (Migration from `dtw_time_trend_analysis` + consensus clustering)
+**Status:** Beta (v0.2.0 - DataFrame-centric API with time-axis alignment fixes)
 **Version:** 0.2.0
 
 ---
@@ -9,6 +9,8 @@
 ## Overview
 
 The `trajectory_analysis` package provides a comprehensive framework for analyzing temporal trajectories using Dynamic Time Warping (DTW), bootstrap-based consensus clustering, and probabilistic quality assessment.
+
+**v0.2.0 Major Change:** The package now uses a **DataFrame-centric API** where the time column (hpf - hours post fertilization) travels with trajectory data throughout the entire pipeline. This eliminates the time-axis misalignment bugs present in v0.1.x where array indices were assumed to correspond to a shared time grid.
 
 ### Scope
 
@@ -492,70 +494,88 @@ print(f"Ready for DTW clustering!")
 
 ---
 
-## Example Usage
+## Example Usage (v0.2.0 - Current API)
 
-### Complete End-to-End Pipeline
+### Complete End-to-End Pipeline with DataFrame-Centric API
 
 ```python
 from src.analyze.trajectory_analysis import (
-    extract_trajectories,
-    interpolate_to_common_grid,
+    extract_trajectories_df,
+    interpolate_to_common_grid_df,
+    df_to_trajectories,
     compute_dtw_distance_matrix,
     run_bootstrap_hierarchical,
     analyze_bootstrap_results,
     classify_membership_2d,
+    plot_cluster_trajectories_df,
+    plot_membership_trajectories_df,
     plot_posterior_heatmap,
     plot_2d_scatter
 )
 
-# 1. Load and process trajectories
-df_long = load_my_data()  # Your data loading function
-trajectories, embryo_ids, orig_lens = extract_trajectories(
-    df_long,
-    genotype='wildtype',
+# 1. Load and process trajectories (DataFrame-centric)
+df_raw = load_my_data()  # Your data loading function → DataFrame
+
+df_filtered = extract_trajectories_df(
+    df_raw,
+    genotype_filter='wildtype',
     min_timepoints=3
 )
-# embryo_ids is now ['cep290_wt_run1_emb_01', 'cep290_wt_run1_emb_02', ...]
+# df_filtered has columns: [embryo_id, hpf, metric_value, ...]
 
-trajs_interp, embryo_ids, common_grid = interpolate_to_common_grid(
-    df_long,
+df_interpolated = interpolate_to_common_grid_df(
+    df_filtered,
     grid_step=0.5
 )
+# df_interpolated: same columns, all embryos aligned to common hpf grid
 
-# 2. Compute DTW distance matrix
-D = compute_dtw_distance_matrix(trajs_interp, window=5, verbose=True)
+# 2. Convert to arrays for DTW (using helper function)
+trajectories, embryo_ids, common_grid = df_to_trajectories(df_interpolated)
 
-# 3. Bootstrap clustering (with embryo_ids for tracking)
+# 3. Compute DTW distance matrix
+D = compute_dtw_distance_matrix(trajectories, window=5, verbose=True)
+
+# 4. Bootstrap clustering (with embryo_ids for tracking)
 k = 3
 bootstrap_results = run_bootstrap_hierarchical(
     D,
     k=k,
-    embryo_ids=embryo_ids,  # REQUIRED: for explicit tracking
+    embryo_ids=embryo_ids,
     n_bootstrap=100,
     frac=0.8,
     random_state=42
 )
-# bootstrap_results now includes 'embryo_ids' key
 
-# 4. Analyze posterior probabilities
+# 5. Analyze posterior probabilities
 posterior_analysis = analyze_bootstrap_results(bootstrap_results)
-# posterior_analysis includes 'embryo_ids' (copied from bootstrap_results)
 
-# 5. Classify membership quality
+# 6. Classify membership quality
 classification = classify_membership_2d(
     max_p=posterior_analysis['max_p'],
     log_odds_gap=posterior_analysis['log_odds_gap'],
     modal_cluster=posterior_analysis['modal_cluster'],
-    threshold_max_p=0.8,
-    threshold_log_odds=0.7
+    embryo_ids=posterior_analysis['embryo_ids']
 )
-# classification includes 'embryo_ids' (copied from posterior_analysis)
 
-# 6. Visualize results
-fig1 = plot_posterior_heatmap(posterior_analysis)  # embryo_ids used for labeling
-fig2 = plot_2d_scatter(classification)             # embryo_ids used for labeling
+# 7. Visualize results using DataFrame (preserves time alignment)
+fig1 = plot_cluster_trajectories_df(
+    df_interpolated,
+    posterior_analysis['modal_cluster'],
+    embryo_ids=posterior_analysis['embryo_ids'],
+    show_mean=True
+)
 
-# 7. Examine results - look up by embryo ID
+fig2 = plot_membership_trajectories_df(
+    df_interpolated,
+    classification,
+    embryo_ids=classification['embryo_ids'],
+    per_cluster=True
+)
+
+fig3 = plot_posterior_heatmap(posterior_analysis)
+fig4 = plot_2d_scatter(classification)
+
+# 8. Examine results - look up by embryo ID
 embryo_id = 'cep290_wt_run1_emb_05'
 idx = classification['embryo_ids'].index(embryo_id)
 print(f"{embryo_id}:")
@@ -563,25 +583,124 @@ print(f"  Category: {classification['category'][idx]}")
 print(f"  Cluster: {classification['cluster'][idx]}")
 print(f"  Max probability: {classification['max_p'][idx]:.3f}")
 
-# 8. Filter and analyze
+# 9. Filter and analyze
 core_mask = classification['category'] == 'core'
 core_embryo_ids = [eid for eid, is_core in zip(classification['embryo_ids'], core_mask) if is_core]
 print(f"\nCore members: {len(core_embryo_ids)}/{len(classification['embryo_ids'])}")
-print(f"Core embryos: {core_embryo_ids}")
-
-# 9. Cross-experiment comparison
-# Results automatically track which experiment each embryo came from
-for result in [bootstrap_results, posterior_analysis, classification]:
-    for embryo_id in result['embryo_ids']:
-        print(f"{embryo_id} → experiment/run encoded in ID")
 ```
 
 **Key Points:**
-- All functions accept `embryo_ids` as a list of strings
-- All results include `embryo_ids` in the same order as array indices
-- Embryo IDs should encode experiment info: `'cep290_wt_run1_embryo_05'`
-- Lookup by ID: `idx = result['embryo_ids'].index(embryo_id)`
-- No ambiguity about which embryo is which index
+- Use `extract_trajectories_df()` and `interpolate_to_common_grid_df()` to keep data in DataFrame format
+- Use `df_to_trajectories()` helper for one-line conversion to arrays when needed for DTW
+- Use `plot_*_df()` versions which accept `df_interpolated` directly, preserving time alignment
+- Time column (hpf) is always explicit and never lost during transformations
+- No more worrying about grid index slicing - the DataFrame handles alignment automatically
+
+---
+
+## Migration Guide (v0.1.x → v0.2.0)
+
+### What Changed
+
+v0.2.0 introduces a **DataFrame-centric API** to fix time-axis misalignment bugs:
+
+| Issue | v0.1.x Problem | v0.2.0 Solution |
+|-------|----------------|-----------------|
+| **Time axis alignment** | Arrays assumed shared grid; late-start embryos plotted against wrong times | Keep DataFrame with explicit hpf column throughout pipeline |
+| **Grid index tracking** | `pad_trajectories_for_plotting()` trims arrays, losing time info | Use DataFrame groupby for natural time alignment |
+| **API clarity** | Function names ambiguous; easy to mix array/DataFrame stages | Clear naming: `extract_trajectories_df()`, `interpolate_to_common_grid_df()` |
+| **Parameter confusion** | Unused `consensus_method` parameter in `compute_consensus_labels()` | Parameter removed; function simplified |
+| **Single-cluster edge case** | IndexError when k=1 in `compute_quality_metrics()` | Added k=1 guard for `second_best_cluster` |
+
+### Updating Your Code
+
+#### Old API (v0.1.x) - Array-based
+```python
+from src.analyze.trajectory_analysis import (
+    extract_trajectories,
+    interpolate_to_common_grid,
+    plot_cluster_trajectories
+)
+
+# Returns separate arrays and grid
+trajectories, embryo_ids, orig_lens = extract_trajectories(df, genotype='wildtype')
+trajs_interp, _, common_grid = interpolate_to_common_grid(trajectories)
+
+# Plotting requires manual grid slicing (error-prone!)
+fig = plot_cluster_trajectories(trajs_interp, common_grid, labels)
+```
+
+#### New API (v0.2.0) - DataFrame-centric
+```python
+from src.analyze.trajectory_analysis import (
+    extract_trajectories_df,
+    interpolate_to_common_grid_df,
+    plot_cluster_trajectories_df
+)
+
+# Data stays in DataFrame, time never lost
+df_filtered = extract_trajectories_df(df, genotype_filter='wildtype')
+df_interpolated = interpolate_to_common_grid_df(df_filtered)
+
+# Plotting uses DataFrame directly, time alignment automatic
+fig = plot_cluster_trajectories_df(df_interpolated, labels, embryo_ids=ids)
+```
+
+### Migration Steps
+
+**If you're using array-based functions:**
+
+1. **For data processing:**
+   - Replace `extract_trajectories()` → `extract_trajectories_df()`
+   - Replace `interpolate_to_common_grid()` → `interpolate_to_common_grid_df()`
+   - Keep data in DataFrame format as long as possible
+
+2. **For DTW computation:**
+   - Use new `df_to_trajectories()` helper: `trajectories, ids, grid = df_to_trajectories(df_interpolated)`
+   - This handles the array conversion cleanly in one line
+
+3. **For plotting:**
+   - Replace `plot_cluster_trajectories()` → `plot_cluster_trajectories_df(df_interpolated, labels, ...)`
+   - Replace `plot_membership_trajectories()` → `plot_membership_trajectories_df(df_interpolated, classification, ...)`
+   - No need to pass `common_grid` separately; it's in the DataFrame
+
+4. **For bootstrap:**
+   - `run_bootstrap_hierarchical()` signature unchanged
+   - `compute_consensus_labels()` no longer accepts `consensus_method` parameter (removed unused param)
+
+### Backward Compatibility
+
+Old array-based functions are **still available but deprecated**:
+- `extract_trajectories()` → DeprecationWarning (use `extract_trajectories_df()`)
+- `interpolate_to_common_grid()` → DeprecationWarning (use `interpolate_to_common_grid_df()`)
+- `pad_trajectories_for_plotting()` → DeprecationWarning (use DataFrame directly)
+- `plot_cluster_trajectories()` → DeprecationWarning (use `plot_cluster_trajectories_df()`)
+- `plot_membership_trajectories()` → DeprecationWarning (use `plot_membership_trajectories_df()`)
+
+**Important:** Deprecated functions have time-axis alignment bugs. Use new API for correct results.
+
+### Example Migration
+
+**Before (v0.1.x):**
+```python
+trajectories, embryo_ids, orig_lens = extract_trajectories(df, genotype='wildtype')
+trajs_interp, _, grid = interpolate_to_common_grid(trajectories)
+D = compute_dtw_distance_matrix(trajs_interp, window=5)
+bootstrap_results = run_bootstrap_hierarchical(D, k=3, embryo_ids=embryo_ids, n_bootstrap=100)
+posteriors = analyze_bootstrap_results(bootstrap_results)
+fig = plot_cluster_trajectories(trajs_interp, grid, posteriors['modal_cluster'])  # BUG: wrong times!
+```
+
+**After (v0.2.0):**
+```python
+df_filtered = extract_trajectories_df(df, genotype_filter='wildtype')
+df_interpolated = interpolate_to_common_grid_df(df_filtered)
+trajectories, embryo_ids, grid = df_to_trajectories(df_interpolated)
+D = compute_dtw_distance_matrix(trajectories, window=5)
+bootstrap_results = run_bootstrap_hierarchical(D, k=3, embryo_ids=embryo_ids, n_bootstrap=100)
+posteriors = analyze_bootstrap_results(bootstrap_results)
+fig = plot_cluster_trajectories_df(df_interpolated, posteriors['modal_cluster'])  # CORRECT!
+```
 
 ---
 
@@ -654,22 +773,28 @@ threshold_outlier_max_p: float = 0.5
 
 ## Development Status
 
-### Completed
-- ✅ Package structure defined
-- ✅ Migration plan documented
-- ✅ Function workflow mapped
+### Completed (v0.2.0)
+- ✅ DataFrame-centric API implementation
+- ✅ Time-axis alignment bug fixes
+- ✅ Deprecation warnings for v0.1.x functions
+- ✅ Migration guide and documentation
+- ✅ Edge case fixes (k=1 single-cluster support)
+- ✅ Parameter cleanup (removed unused `consensus_method`)
 
-### In Progress
-- 🔄 Creating placeholder files
-- 🔄 Migrating core functions
-- 🔄 API standardization
-- 🔄 Adding type hints
+### Tested & Working
+- ✅ DTW distance computation with Sakoe-Chiba band
+- ✅ DBA (DTW Barycenter Averaging)
+- ✅ Bootstrap hierarchical clustering
+- ✅ Posterior probability computation with Hungarian alignment
+- ✅ Membership classification (2D gating and adaptive)
+- ✅ Trajectory visualization (DataFrame-based)
 
-### To Do
-- ⏳ Comprehensive docstrings with examples
-- ⏳ Unit tests for each module
-- ⏳ Integration tests for full pipeline
-- ⏳ Update project documentation
+### Known Limitations (Not Planned for Future)
+- ❌ k-medoids clustering (would require additional distance metric handling)
+- ❌ Membership proportion plots across k values (complex multi-k aggregation)
+- ❌ Coassociation matrix computation (deprecated in favor of posteriors)
+- ❌ Mean ARI metric (replaced by per-embryo posterior metrics)
+- ❌ Greedy Hungarian fallback (direct assignment always used now)
 
 ---
 

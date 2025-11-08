@@ -174,8 +174,12 @@ def compute_quality_metrics(p_matrix: np.ndarray) -> Dict[str, np.ndarray]:
 
     log_odds_gap = np.log2((p_top1 + 1e-10) / (p_top2 + 1e-10))
 
-    # Second-best cluster
-    second_best_cluster = np.argsort(p_matrix, axis=1)[:, -2]
+    # Second-best cluster (guard for k=1 case)
+    if p_matrix.shape[1] > 1:
+        second_best_cluster = np.argsort(p_matrix, axis=1)[:, -2]
+    else:
+        # Single cluster case: no second-best cluster, use -1 to indicate undefined
+        second_best_cluster = np.full(n_embryos, -1, dtype=int)
 
     return {
         'max_p': max_p,

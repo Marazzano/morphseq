@@ -3,21 +3,270 @@ Trajectory Utilities
 
 Data extraction, interpolation, and preprocessing for temporal trajectories.
 
-Functions
----------
-- extract_trajectories: Convert long-format DataFrame to per-embryo trajectories
-- interpolate_trajectories: Fill missing values via linear interpolation
-- interpolate_to_common_grid: Align trajectories to common time grid
-- pad_trajectories_for_plotting: Pad to uniform length for visualization
-- extract_early_late_means: Extract window-based mean values
+This module provides a DataFrame-centric API where time column (hpf) travels
+with data through the entire pipeline, eliminating time-axis alignment bugs.
+
+Functions (New API - DataFrame-first)
+-------------------------------------
+- extract_trajectories_df: Extract filtered trajectory DataFrame
+- interpolate_trajectories: Fill missing values via linear interpolation (operates on DataFrame)
+- interpolate_to_common_grid_df: Align trajectories to common time grid (returns DataFrame)
+- df_to_trajectories: Convert DataFrame to arrays for DTW computation
+- extract_early_late_means: Extract window-based mean values (operates on DataFrame)
+
+Functions (Legacy API - deprecated, kept for backward compatibility)
+-------------------------------------------------------------------
+- extract_trajectories: DEPRECATED - use extract_trajectories_df()
+- interpolate_to_common_grid: DEPRECATED - use interpolate_to_common_grid_df()
+- pad_trajectories_for_plotting: DEPRECATED - use plotting functions with DataFrame directly
 """
 
+import warnings
 import numpy as np
 import pandas as pd
 from scipy import interpolate
 from typing import Tuple, List, Dict, Optional
 from .config import DEFAULT_EMBRYO_ID_COL, DEFAULT_METRIC_COL, DEFAULT_TIME_COL, MIN_TIMEPOINTS, GRID_STEP
 
+
+# ============================================================================
+# NEW API: DataFrame-first (recommended)
+# ============================================================================
+
+def extract_trajectories_df(
+    df: pd.DataFrame,
+    genotype_filter: Optional[str] = None,
+    metric_name: str = 'normalized_baseline_deviation',
+    min_timepoints: int = MIN_TIMEPOINTS,
+    verbose: bool = False
+) -> pd.DataFrame:
+    """
+    Extract and filter trajectory data, returning long-format DataFrame.
+
+    Converts raw data into a long-format DataFrame with columns [embryo_id, hpf, metric_value].
+    Filters by genotype and requires minimum number of timepoints per embryo.
+    Time column (hpf) is preserved and will travel with data through the pipeline.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw data with columns: embryo_id, predicted_stage_hpf, metric_name, and optionally genotype
+    genotype_filter : str, optional
+        If specified, filter dataframe to only this genotype
+    metric_name : str, default='normalized_baseline_deviation'
+        Name of the metric column to extract
+    min_timepoints : int, default=MIN_TIMEPOINTS
+        Minimum number of non-NaN timepoints required per embryo
+    verbose : bool, default=False
+        If True, print progress information
+
+    Returns
+    -------
+    df_filtered : pd.DataFrame
+        Filtered trajectories with columns [embryo_id, hpf, metric_value].
+        Only includes embryos with >= min_timepoints observations.
+        Time column (hpf) is preserved for downstream processing.
+
+    Examples
+    --------
+    >>> df_filtered = extract_trajectories_df(
+    ...     df,
+    ...     genotype_filter='cep290_homozygous',
+    ...     metric_name='curvature'
+    ... )
+    >>> print(f"Extracted {df_filtered['embryo_id'].nunique()} embryos")
+    >>> print(df_filtered.head())
+    """
+    if verbose:
+        print(f"\n{'='*80}")
+        print("STEP 1: DATA EXTRACTION & PREPARATION")
+        print(f"{'='*80}")
+
+    df = df.copy()
+
+    # Filter for genotype if specified
+    if genotype_filter is not None:
+        df = df[df['genotype'] == genotype_filter].copy()
+        if verbose:
+            print(f"\n  Filtered to {genotype_filter}: {len(df)} timepoints")
+
+    # Extract relevant columns
+    df_filtered = df[['embryo_id', 'predicted_stage_hpf', metric_name]].copy()
+    df_filtered.columns = ['embryo_id', 'hpf', 'metric_value']
+
+    # Drop NaN values
+    initial_rows = len(df_filtered)
+    df_filtered = df_filtered.dropna(subset=['metric_value'])
+    dropped = initial_rows - len(df_filtered)
+    if verbose:
+        print(f"  Dropped {dropped} rows with NaN metric values: {len(df_filtered)} remaining")
+
+    # Filter for minimum timepoints per embryo
+    embryo_counts = df_filtered.groupby('embryo_id').size()
+    embryos_to_keep = embryo_counts[embryo_counts >= min_timepoints].index
+    df_filtered = df_filtered[df_filtered['embryo_id'].isin(embryos_to_keep)]
+
+    if verbose:
+        print(f"\n  Extracted {df_filtered['embryo_id'].nunique()} embryo trajectories (min {min_timepoints} timepoints)")
+        embryo_lens = df_filtered.groupby('embryo_id').size()
+        print(f"  Mean trajectory length: {embryo_lens.mean():.1f} timepoints")
+
+    return df_filtered
+
+
+def interpolate_to_common_grid_df(
+    df_filtered: pd.DataFrame,
+    grid_step: float = GRID_STEP,
+    verbose: bool = False
+) -> pd.DataFrame:
+    """
+    Interpolate all trajectories to a common time grid, returning DataFrame.
+
+    Aligns variable-length trajectories to a regular grid of timepoints.
+    All embryos will share the same set of hpf values (the common grid).
+    Time column (hpf) is preserved in output DataFrame.
+
+    Parameters
+    ----------
+    df_filtered : pd.DataFrame
+        Filtered trajectory data from extract_trajectories_df()
+        Must have columns: embryo_id, hpf, metric_value
+    grid_step : float, default=GRID_STEP
+        Step size for common time grid (in HPF units)
+    verbose : bool, default=False
+        If True, print progress information
+
+    Returns
+    -------
+    df_interpolated : pd.DataFrame
+        Trajectories on common grid with columns [embryo_id, hpf, metric_value].
+        All embryos now share identical hpf values (the global common grid).
+        Time column is preserved for plotting and downstream use.
+
+    Examples
+    --------
+    >>> df_interpolated = interpolate_to_common_grid_df(df_filtered, grid_step=0.5)
+    >>> print(f"Grid size: {df_interpolated['hpf'].nunique()}")
+    >>> print(f"HPF range: {df_interpolated['hpf'].min():.1f} to {df_interpolated['hpf'].max():.1f}")
+    """
+    if verbose:
+        print(f"\n{'='*80}")
+        print("STEP 3: TRAJECTORY INTERPOLATION TO COMMON TIMEPOINTS")
+        print(f"{'='*80}")
+
+    df_filtered = df_filtered.copy()
+
+    # Find global min/max hpf across all trajectories
+    min_hpf = df_filtered['hpf'].min()
+    max_hpf = df_filtered['hpf'].max()
+
+    if verbose:
+        print(f"\n  HPF range: {min_hpf:.1f} to {max_hpf:.1f}")
+
+    # Create common timepoint grid
+    common_grid = np.arange(min_hpf, max_hpf + grid_step, grid_step)
+    if verbose:
+        print(f"  Common grid: {len(common_grid)} timepoints (step={grid_step} hpf)")
+
+    # Interpolate each trajectory to common grid
+    rows_list = []
+
+    for embryo_id, group in df_filtered.groupby('embryo_id'):
+        group_sorted = group.sort_values('hpf')
+        hpf_vals = group_sorted['hpf'].values
+        metric_vals = group_sorted['metric_value'].values
+
+        # Linear interpolation to common grid
+        f = interpolate.interp1d(
+            hpf_vals,
+            metric_vals,
+            kind='linear',
+            bounds_error=False,
+            fill_value=np.nan
+        )
+
+        # Interpolate - will have NaN where outside observed range
+        interpolated = f(common_grid)
+
+        # Create DataFrame rows (keep time column!)
+        for hpf, metric_value in zip(common_grid, interpolated):
+            if not np.isnan(metric_value):  # Only keep valid values
+                rows_list.append({
+                    'embryo_id': embryo_id,
+                    'hpf': hpf,
+                    'metric_value': metric_value
+                })
+
+    df_interpolated = pd.DataFrame(rows_list)
+
+    if verbose:
+        n_embryos = df_interpolated['embryo_id'].nunique()
+        print(f"\n  Interpolated shape: {n_embryos} embryos")
+        embryo_lens = df_interpolated.groupby('embryo_id').size()
+        print(f"  Trajectory lengths: min={embryo_lens.min()}, max={embryo_lens.max()}, mean={embryo_lens.mean():.1f}")
+        print(f"  ✓ All trajectories on common grid, time column preserved")
+
+    return df_interpolated
+
+
+def df_to_trajectories(
+    df_interpolated: pd.DataFrame,
+    embryo_id_col: str = 'embryo_id',
+    value_col: str = 'metric_value'
+) -> Tuple[List[np.ndarray], List[str], np.ndarray]:
+    """
+    Convert interpolated DataFrame to trajectory arrays for DTW computation.
+
+    Extracts value arrays and embryo ordering from the long-format DataFrame.
+    This is a lightweight conversion step - use only when array form is needed
+    (e.g., for DTW distance computation). For plotting, keep data in DataFrame form
+    to preserve time information.
+
+    Parameters
+    ----------
+    df_interpolated : pd.DataFrame
+        Regularized trajectory data from interpolate_to_common_grid_df()
+        Must have columns: embryo_id, hpf, metric_value
+    embryo_id_col : str, default='embryo_id'
+        Column name for embryo identifiers
+    value_col : str, default='metric_value'
+        Column name for metric values
+
+    Returns
+    -------
+    trajectories : list of np.ndarray
+        Value arrays for each embryo
+    embryo_ids : list of str
+        Embryo identifiers in same order as trajectories
+    common_grid : np.ndarray
+        Unique time values (hpf) from the common grid
+
+    Examples
+    --------
+    >>> trajectories, embryo_ids, common_grid = df_to_trajectories(df_interpolated)
+    >>> # Now can use for DTW:
+    >>> from .dtw_distance import compute_dtw_distance_matrix
+    >>> D = compute_dtw_distance_matrix(trajectories)
+    """
+    # Get unique embryo IDs in order
+    embryo_ids = df_interpolated[embryo_id_col].unique().tolist()
+
+    # Extract trajectory arrays
+    trajectories = []
+    for embryo_id in embryo_ids:
+        subset = df_interpolated[df_interpolated[embryo_id_col] == embryo_id]
+        subset_sorted = subset.sort_values('hpf')
+        trajectories.append(subset_sorted[value_col].values)
+
+    # Extract common grid
+    common_grid = np.sort(df_interpolated['hpf'].unique())
+
+    return trajectories, embryo_ids, common_grid
+
+
+# ============================================================================
+# LEGACY API: Array-based (deprecated, kept for backward compatibility)
+# ============================================================================
 
 def extract_trajectories(
     df: pd.DataFrame,
@@ -27,24 +276,13 @@ def extract_trajectories(
     verbose: bool = False
 ) -> Tuple[List[np.ndarray], List[str], pd.DataFrame]:
     """
-    Extract per-embryo trajectories from long-format dataframe.
+    DEPRECATED: Use extract_trajectories_df() instead.
 
-    Converts long-format data (embryo_id, predicted_stage_hpf, metric_value)
-    into a list of per-embryo trajectories. Optionally filters by genotype
-    and requires minimum number of timepoints per embryo.
+    Extract per-embryo trajectories from long-format dataframe (legacy array API).
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Long-format dataframe with columns: embryo_id, predicted_stage_hpf, metric
-    genotype_filter : str, optional
-        If specified, filter dataframe to only this genotype
-    metric_name : str, default='normalized_baseline_deviation'
-        Name of the metric column to extract as trajectory values
-    min_timepoints : int, default=MIN_TIMEPOINTS
-        Minimum number of non-NaN timepoints required per embryo
-    verbose : bool, default=False
-        If True, print progress information
+    This function returns arrays and a separate dataframe, which loses time context.
+    Use extract_trajectories_df() for the new DataFrame-centric API that preserves
+    time information throughout the pipeline.
 
     Returns
     -------
@@ -54,21 +292,18 @@ def extract_trajectories(
         Embryo IDs corresponding to trajectories
     trajectories_df : pd.DataFrame
         Long-format dataframe used for extraction (with NaN removed)
-        Columns: embryo_id, hpf, metric_value
-
-    Examples
-    --------
-    >>> trajectories, embryo_ids, df_long = extract_trajectories(
-    ...     df,
-    ...     genotype_filter='cep290_homozygous',
-    ...     metric_name='curvature'
-    ... )
-    >>> print(f"Extracted {len(trajectories)} embryos")
-    >>> print(f"Mean trajectory length: {np.mean([len(t) for t in trajectories]):.1f}")
     """
+    warnings.warn(
+        "extract_trajectories() is deprecated. Use extract_trajectories_df() instead, "
+        "which returns a DataFrame with time column preserved. "
+        "See migration guide in README.md",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     if verbose:
         print(f"\n{'='*80}")
-        print("STEP 1: DATA EXTRACTION & PREPARATION")
+        print("STEP 1: DATA EXTRACTION & PREPARATION (LEGACY - DEPRECATED)")
         print(f"{'='*80}")
 
     df = df.copy()
@@ -184,48 +419,25 @@ def interpolate_to_common_grid(
     verbose: bool = False
 ) -> Tuple[List[np.ndarray], List[str], Dict[str, int], np.ndarray]:
     """
-    Interpolate all trajectories to a common timepoint grid.
+    DEPRECATED: Use interpolate_to_common_grid_df() instead.
 
-    Aligns variable-length trajectories to a regular grid of timepoints.
-    Trajectories are truncated to their observed range (no edge padding).
+    Interpolate all trajectories to a common timepoint grid (legacy array API).
 
-    Parameters
-    ----------
-    df_long : pd.DataFrame
-        Long-format dataframe with columns: embryo_id, hpf, metric_value
-    grid_step : float, default=GRID_STEP
-        Step size for timepoint grid (in HPF units)
-    verbose : bool, default=False
-        If True, print progress information
-
-    Returns
-    -------
-    interpolated_trajectories : list of np.ndarray
-        Trajectories at common timepoint grid (variable lengths due to truncation)
-    embryo_ids_ordered : list of str
-        Embryo IDs in same order as interpolated_trajectories
-    original_lengths : dict
-        Original trajectory lengths {embryo_id: n_timepoints}
-    common_grid : np.ndarray
-        Common timepoint grid (HPF values)
-
-    Notes
-    -----
-    - Common grid spans from global min_hpf to max_hpf across all embryos
-    - Each trajectory is truncated to its observed range
-    - Trajectories with no valid data are excluded
-
-    Examples
-    --------
-    >>> interp_trajs, embryo_ids, orig_lens, grid = interpolate_to_common_grid(
-    ...     df_long, grid_step=0.5
-    ... )
-    >>> print(f"Grid size: {len(grid)}")
-    >>> print(f"HPF range: {grid[0]:.1f} to {grid[-1]:.1f}")
+    This function returns trimmed arrays without time context, leading to plotting bugs.
+    Use interpolate_to_common_grid_df() for the new DataFrame-centric API that
+    preserves time information.
     """
+    warnings.warn(
+        "interpolate_to_common_grid() is deprecated. Use interpolate_to_common_grid_df() instead, "
+        "which returns a DataFrame with time column preserved. "
+        "See migration guide in README.md",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     if verbose:
         print(f"\n{'='*80}")
-        print("STEP 3: TRAJECTORY INTERPOLATION TO COMMON TIMEPOINTS")
+        print("STEP 3: TRAJECTORY INTERPOLATION TO COMMON TIMEPOINTS (LEGACY - DEPRECATED)")
         print(f"{'='*80}")
 
     # Find min/max hpf across all trajectories
@@ -291,40 +503,24 @@ def pad_trajectories_for_plotting(
     verbose: bool = False
 ) -> List[np.ndarray]:
     """
-    Pad variable-length trajectories to uniform length for plotting.
+    DEPRECATED: No longer needed with DataFrame-centric API.
 
-    Takes trimmed trajectories (only observed ranges) and pads them with NaN
-    to align to the common grid. This allows uniform-length arrays needed for
-    certain plotting operations (heatmaps, aligned statistics).
+    This function is deprecated. Use plotting functions with df_interpolated
+    DataFrame directly instead. The DataFrame version automatically preserves
+    time information without manual padding.
 
-    Parameters
-    ----------
-    trajectories : list of np.ndarray
-        Variable-length trajectories (trimmed to observed ranges, no NaN)
-    common_grid : np.ndarray
-        Common time grid for alignment
-    df_long : pd.DataFrame
-        Original long-format data with columns: embryo_id, hpf, metric_value
-    embryo_ids : list of str
-        Embryo IDs corresponding to trajectories (same order)
-    verbose : bool, default=False
-        Print progress information
-
-    Returns
-    -------
-    padded_trajectories : list of np.ndarray
-        All arrays have length = len(common_grid), with NaN padding outside
-        observed ranges
-
-    Examples
-    --------
-    >>> # Variable length trajectories
-    >>> trajs = [[0.5, 0.6, 0.7], [0.4, 0.5]]  # lengths 3 and 2
-    >>> grid = np.array([40, 45, 50, 55, 60])
-    >>> # After padding, both will have length 5 with NaN where no data
+    See migration guide in README.md for updated plotting workflow.
     """
+    warnings.warn(
+        "pad_trajectories_for_plotting() is deprecated. "
+        "Use plotting functions with df_interpolated DataFrame directly. "
+        "See migration guide in README.md",
+        DeprecationWarning,
+        stacklevel=2
+    )
+
     if verbose:
-        print(f"\n  Padding {len(trajectories)} trajectories to common grid...")
+        print(f"\n  Padding {len(trajectories)} trajectories to common grid (LEGACY - DEPRECATED)...")
 
     padded_trajectories = []
 

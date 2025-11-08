@@ -144,18 +144,19 @@ def run_bootstrap_hierarchical(
 
 
 def compute_consensus_labels(
-    bootstrap_results: Dict[str, Any],
-    consensus_method: str = 'majority'
+    bootstrap_results: Dict[str, Any]
 ) -> np.ndarray:
     """
     Compute consensus labels from bootstrap results.
+
+    Uses majority voting (argmax of assignment frequency matrix) to determine
+    the most frequently assigned cluster for each sample across all bootstrap
+    iterations.
 
     Parameters
     ----------
     bootstrap_results : dict
         Output from run_bootstrap_hierarchical()
-    consensus_method : str, default='majority'
-        Method for consensus: 'majority', 'mode', or 'mean'
 
     Returns
     -------
