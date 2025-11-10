@@ -29,37 +29,116 @@ def _load_df03_format(experiment_id: str) -> pd.DataFrame:
     Load df03 format CSVs (current format).
 
     Internal function. Isolates format-specific logic.
+    Searches standard locations for curvature and metadata files.
+
     If CSV structure changes, only update this function.
 
     Parameters
     ----------
     experiment_id : str
-        Experiment identifier
+        Experiment identifier (e.g., '20251017_combined')
 
     Returns
     -------
     pd.DataFrame
         Raw merged data with all original columns
+
+    Raises
+    ------
+    FileNotFoundError
+        If curvature or metadata files cannot be found
     """
-    # TODO: Update these paths to your actual data locations
-    curv_dir = Path('/morphseq_playground/metadata/build06_output')
-    meta_dir = Path('/morphseq_playground/metadata/build06_output')
+    # Standard file locations (search order)
+    project_root = Path(__file__).resolve().parents[3]
 
-    # Load curvature and metadata CSVs
-    # (adjust filenames as needed for your structure)
-    curv_path = curv_dir / f'{experiment_id}_curvature.csv'
-    meta_path = meta_dir / f'{experiment_id}_metadata.csv'
+    # Try standard locations
+    search_paths = [
+        (project_root / 'morphseq_playground' / 'metadata' / 'body_axis' / 'summary',
+         project_root / 'morphseq_playground' / 'metadata' / 'build06_output'),
+        (project_root / 'morphseq_playground' / 'metadata' / 'body_axis' / 'summary',
+         project_root / 'morphseq_playground' / 'metadata' / 'body_axis' / 'summary'),
+    ]
 
-    if not curv_path.exists():
-        raise FileNotFoundError(f"Curvature data not found: {curv_path}")
-    if not meta_path.exists():
-        raise FileNotFoundError(f"Metadata not found: {meta_path}")
+    curv_path = None
+    meta_path = None
+
+    # Search for curvature file
+    curv_patterns = [
+        f'curvature_metrics_{experiment_id}.csv',
+        f'{experiment_id}_curvature.csv',
+    ]
+
+    # Search for metadata file
+    meta_patterns = [
+        f'df03_final_output_with_latents_{experiment_id}.csv',
+        f'{experiment_id}_metadata.csv',
+    ]
+
+    # Try to find files in search paths
+    for curv_dir, meta_dir in search_paths:
+        if curv_path is None:
+            for pattern in curv_patterns:
+                candidate = curv_dir / pattern
+                if candidate.exists():
+                    curv_path = candidate
+                    break
+
+        if meta_path is None:
+            for pattern in meta_patterns:
+                candidate = meta_dir / pattern
+                if candidate.exists():
+                    meta_path = candidate
+                    break
+
+        if curv_path and meta_path:
+            break
+
+    # If still not found, raise error with helpful message
+    if not curv_path:
+        available_curv = curv_patterns
+        search_locs = [p[0] for p in search_paths]
+        raise FileNotFoundError(
+            f"Curvature data not found for experiment '{experiment_id}'\n"
+            f"  Searched for: {available_curv}\n"
+            f"  Searched in: {search_locs}\n"
+            f"  Tip: Use load_experiment_dataframe(experiment_id) and provide full paths if needed"
+        )
+
+    if not meta_path:
+        available_meta = meta_patterns
+        search_locs = [p[1] for p in search_paths]
+        raise FileNotFoundError(
+            f"Metadata not found for experiment '{experiment_id}'\n"
+            f"  Searched for: {available_meta}\n"
+            f"  Searched in: {search_locs}\n"
+            f"  Tip: Use load_experiment_dataframe(experiment_id) and provide full paths if needed"
+        )
+
+    print(f"  Loading curvature from: {curv_path}")
+    print(f"  Loading metadata from: {meta_path}")
 
     df_curv = pd.read_csv(curv_path)
     df_meta = pd.read_csv(meta_path)
 
-    # Merge on embryo_id
-    df_merged = df_curv.merge(df_meta, on='embryo_id', how='inner')
+    print(f"    Curvature: {len(df_curv)} rows")
+    print(f"    Metadata: {len(df_meta)} rows")
+
+    # Merge on snip_id (common key in this data structure)
+    if 'snip_id' in df_curv.columns and 'snip_id' in df_meta.columns:
+        df_merged = df_curv.merge(df_meta, on='snip_id', how='inner')
+        print(f"    Merged on 'snip_id': {len(df_merged)} rows")
+    elif 'embryo_id' in df_curv.columns and 'embryo_id' in df_meta.columns:
+        df_merged = df_curv.merge(df_meta, on='embryo_id', how='inner')
+        print(f"    Merged on 'embryo_id': {len(df_merged)} rows")
+    else:
+        raise ValueError(
+            f"Could not find common merge key. "
+            f"Curvature columns: {list(df_curv.columns)} "
+            f"Metadata columns: {list(df_meta.columns)}"
+        )
+
+    if len(df_merged) == 0:
+        raise ValueError("Merge resulted in empty dataframe - no matching records")
 
     return df_merged
 

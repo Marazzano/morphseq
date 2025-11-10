@@ -10,7 +10,7 @@
 
 This document addresses all 5 critical questions from `2025-11-06_initial-implementation.md`:
 
-1. ✅ **Test Data Access** - Network mount accessible; using `20240418` (YX1) and `20240509_24hpf` (Keyence)
+1. ✅ **Test Data Access** - Network mount accessible; using `20250912` (YX1) and `20240509_24hpf` (Keyence)
 2. ✅ **Snakefile Priority** - Create test data structure via symlinks first, then write Snakefile
 3. ✅ **Testing Strategy** - Recommend **Option 1** (extract test subset → Snakefile → validate incrementally)
 4. ✅ **MVP Stubs** - UNet and embeddings OK to leave stubbed for initial validation
