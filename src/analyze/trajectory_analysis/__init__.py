@@ -126,7 +126,8 @@ from .cluster_classification import (
 # Plotting - NEW API (DataFrame-centric, v0.2.0+)
 from .plotting import (
     plot_cluster_trajectories_df,
-    plot_membership_trajectories_df
+    plot_membership_trajectories_df,
+    plot_membership_vs_k
 )
 
 # Plotting - DEPRECATED (v0.1.x, kept for backward compatibility)
@@ -176,6 +177,7 @@ __all__ = [
     # Plotting - NEW API (v0.2.0+)
     'plot_cluster_trajectories_df',
     'plot_membership_trajectories_df',
+    'plot_membership_vs_k',
 
     # Plotting - DEPRECATED (v0.1.x)
     'plot_posterior_heatmap',

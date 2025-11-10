@@ -13,6 +13,7 @@ Functions (New API - DataFrame-first, recommended)
 - plot_membership_trajectories_df: Plot trajectories by membership (uses DataFrame)
 - plot_posterior_heatmap: Posterior probability heatmap (works with both APIs)
 - plot_2d_scatter: 2D scatter plot (works with both APIs)
+- plot_membership_vs_k: Plot membership quality trends across k values
 
 Functions (Legacy API - deprecated)
 -----------------------------------
@@ -171,7 +172,9 @@ def plot_membership_trajectories_df(
         Trajectory data with columns [embryo_id, hpf, metric_value]
     classification : dict
         Output from classify_membership_2d() with keys:
-        'embryo_ids', 'category', 'cluster'
+        'embryo_ids' (required), 'category', 'cluster'.
+        Note: 'embryo_ids' must be present and aligned with category/cluster arrays
+        to ensure correct trajectory-to-category mapping
     per_cluster : bool
         If True, create one subplot per cluster showing membership breakdown
     figsize : tuple
@@ -193,20 +196,44 @@ def plot_membership_trajectories_df(
     """
     categories = classification['category']
     clusters = classification['cluster']
-    embryo_ids = classification.get('embryo_ids',
-                                   sorted(df_interpolated['embryo_id'].unique()))
+
+    # Get embryo_ids from classification or warn if missing
+    if 'embryo_ids' not in classification:
+        warnings.warn(
+            "classification dict missing 'embryo_ids' key. Falling back to sorted "
+            "embryo IDs from DataFrame, but this may not match the classification "
+            "order, causing incorrect trajectory-to-category mapping. "
+            "Ensure classify_membership_2d() includes 'embryo_ids' in output.",
+            UserWarning,
+            stacklevel=2
+        )
+        embryo_ids = np.array(sorted(df_interpolated['embryo_id'].unique()))
+    else:
+        embryo_ids = np.array(classification['embryo_ids'])
+
+    # Validate alignment
+    if len(embryo_ids) != len(categories) or len(embryo_ids) != len(clusters):
+        raise ValueError(
+            f"Mismatch in classification dict: embryo_ids length ({len(embryo_ids)}) "
+            f"!= categories length ({len(categories)}) or clusters length ({len(clusters)}). "
+            f"All arrays must be aligned."
+        )
 
     n_clusters = int(np.max(clusters)) + 1
 
     if per_cluster:
-        fig, axes = plt.subplots(1, n_clusters, figsize=figsize, sharey=True)
+        # Create n_clusters rows × 3 columns (one column per membership category)
+        if figsize == (15, 10):  # Default figsize
+            figsize = (15, 4 * n_clusters)
+
+        fig, axes = plt.subplots(n_clusters, 3, figsize=figsize, sharey=True)
         if n_clusters == 1:
-            axes = [axes]
+            axes = axes.reshape(1, -1)  # Ensure 2D shape for consistency
 
         for c in range(n_clusters):
-            ax = axes[c]
+            for cat_idx, category in enumerate(['core', 'uncertain', 'outlier']):
+                ax = axes[c, cat_idx]
 
-            for category in ['outlier', 'uncertain', 'core']:
                 cat_mask = (clusters == c) & (categories == category)
                 if np.sum(cat_mask) > 0:
                     cat_embryo_ids = np.array(embryo_ids)[cat_mask]
@@ -218,21 +245,23 @@ def plot_membership_trajectories_df(
                     for embryo_id in cat_embryo_ids:
                         subset = cat_data[cat_data['embryo_id'] == embryo_id]
                         ax.plot(subset['hpf'], subset['metric_value'],
-                               color=color, alpha=0.4, linewidth=0.8)
+                               color=color, alpha=0.5, linewidth=1.0)
 
-            ax.set_title(f'Cluster {c}', fontweight='bold')
-            ax.set_xlabel('HPF')
-            if c == 0:
-                ax.set_ylabel('Metric Value')
-            ax.grid(True, alpha=0.3)
+                # Titles and labels
+                if c == 0:
+                    ax.set_title(f'{category.capitalize()}', fontweight='bold', fontsize=11)
+                if cat_idx == 0:
+                    ax.set_ylabel(f'Cluster {c}\nMetric Value', fontsize=10, fontweight='bold')
+                else:
+                    ax.set_ylabel('')
 
-        # Add legend
-        from matplotlib.patches import Patch
-        legend_elements = [
-            Patch(facecolor=MEMBERSHIP_COLORS.get(cat, 'gray'), label=cat.capitalize())
-            for cat in ['core', 'uncertain', 'outlier']
-        ]
-        fig.legend(handles=legend_elements, loc='upper right')
+                if c == n_clusters - 1:
+                    ax.set_xlabel('HPF', fontsize=10)
+
+                ax.grid(True, alpha=0.3)
+
+        # Add suptitle
+        fig.suptitle('Membership Trajectories by Cluster and Category', fontsize=14, fontweight='bold', y=0.995)
 
     else:
         fig, ax = plt.subplots(figsize=figsize)
@@ -400,6 +429,108 @@ def plot_2d_scatter(
     ax.set_title('2D Membership Classification', fontsize=14, fontweight='bold')
     ax.legend(loc='best')
     ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+    return fig
+
+
+def plot_membership_vs_k(
+    results: Dict[str, Any],
+    genotype: Optional[str] = None,
+    figsize: tuple = (14, 5.5),
+    save_path: Optional[Union[str, Path]] = None,
+    dpi: int = DEFAULT_DPI
+) -> plt.Figure:
+    """
+    Plot membership category percentages as k varies (1×2 layout).
+
+    Shows line plot and stacked area chart tracking how core/uncertain/outlier
+    proportions change across different k values.
+
+    Parameters
+    ----------
+    results : dict
+        Multi-k analysis results with structure:
+        {
+            'results': {
+                k1: {'classification': {'category': np.ndarray, ...}},
+                k2: {'classification': {'category': np.ndarray, ...}},
+                ...
+            },
+            'genotype': str (optional)
+        }
+        Each k should have a 'classification' dict from classify_membership_2d()
+    genotype : str, optional
+        Genotype name for plot title (overrides results['genotype'] if provided)
+    figsize : tuple
+        Figure size (width, height). Default (14, 5.5)
+    save_path : str or Path, optional
+        Path to save figure
+    dpi : int
+        Resolution for saved figure
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        Figure object
+    """
+    # Extract k values and compute percentages
+    k_values = sorted(results['results'].keys())
+    core_pcts = []
+    uncertain_pcts = []
+    outlier_pcts = []
+
+    for k in k_values:
+        if results['results'][k] is None:
+            continue
+
+        classification = results['results'][k]['classification']
+        categories = classification['category']
+
+        n_core = np.sum(categories == 'core')
+        n_uncertain = np.sum(categories == 'uncertain')
+        n_outlier = np.sum(categories == 'outlier')
+        n_total = n_core + n_uncertain + n_outlier
+
+        if n_total > 0:
+            core_pcts.append(100.0 * n_core / n_total)
+            uncertain_pcts.append(100.0 * n_uncertain / n_total)
+            outlier_pcts.append(100.0 * n_outlier / n_total)
+        else:
+            core_pcts.append(0)
+            uncertain_pcts.append(0)
+            outlier_pcts.append(0)
+
+    # Create single figure with line plot
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    # Plot membership trends across k values
+    ax.plot(k_values, core_pcts, 'o-', color='green', linewidth=2.5, markersize=8,
+           label='Core', alpha=0.8)
+    ax.plot(k_values, uncertain_pcts, 's-', color='orange', linewidth=2.5, markersize=8,
+           label='Uncertain', alpha=0.8)
+    ax.plot(k_values, outlier_pcts, '^-', color='red', linewidth=2.5, markersize=8,
+           label='Outlier', alpha=0.8)
+
+    ax.set_xlabel('k (number of clusters)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Percentage (%)', fontsize=12, fontweight='bold')
+    ax.set_title('Membership Category Trends Across k', fontsize=13, fontweight='bold')
+    ax.set_xticks(k_values)
+    ax.legend(loc='best', fontsize=11)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim([0, 105])
+
+    # Main title
+    title = 'Membership Distribution Across K Values'
+    if genotype is None:
+        genotype = results.get('genotype')
+    if genotype:
+        title = f'{genotype}: {title}'
+    fig.suptitle(title, fontsize=14, fontweight='bold')
 
     plt.tight_layout()
 

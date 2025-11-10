@@ -25,7 +25,7 @@ def classify_membership_2d(
     embryo_ids: Optional[List[str]] = None,
     *,
     threshold_max_p: float = THRESHOLD_MAX_P,
-    threshold_log_odds: float = THRESHOLD_LOG_ODDS_GAP,
+    threshold_log_odds_gap: float = THRESHOLD_LOG_ODDS_GAP,
     threshold_outlier_max_p: float = THRESHOLD_OUTLIER_MAX_P
 ) -> Dict[str, Any]:
     """
@@ -84,7 +84,7 @@ def classify_membership_2d(
     for i in range(n_embryos):
         if max_p[i] < threshold_outlier_max_p:
             categories[i] = 'outlier'
-        elif max_p[i] >= threshold_max_p and log_odds_gap[i] >= threshold_log_odds:
+        elif max_p[i] >= threshold_max_p and log_odds_gap[i] >= threshold_log_odds_gap:
             categories[i] = 'core'
 
     result = {
@@ -94,7 +94,7 @@ def classify_membership_2d(
         'log_odds_gap': log_odds_gap.copy(),
         'thresholds': {
             'threshold_max_p': threshold_max_p,
-            'threshold_log_odds_gap': threshold_log_odds,
+            'threshold_log_odds_gap': threshold_log_odds_gap,
             'threshold_outlier_max_p': threshold_outlier_max_p
         }
     }
