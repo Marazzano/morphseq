@@ -786,8 +786,9 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2,
     # 1. Define all flag columns in a single list
     flag_columns = [
         "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "dead_flag",
-        "frame_flag", "no_yolk_flag", "focus_flag", "bubble_flag"
+        "frame_flag", "no_yolk_flag"
     ]
+    # focus_flag/bubble_flag remain informational but no longer drive exclusion to many false positives.
 
     # 2. Ensure all flag columns exist, filling missing ones with False
     for col in flag_columns:
@@ -1274,8 +1275,9 @@ def perform_embryo_qc(
     # Update use_embryo_flag (legacy path) using clear, robust syntax
     # 1. Define all flag columns in a single list
     flag_columns = [
-        "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "dead_flag", "bubble_flag"]
-         # "frame_flag", "focus_flag", "no_yolk_flag"  disabbling as causing flagged on good images
+        "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "dead_flag"
+    ]
+    # Bubble/focus/frame/no_yolk flags are tracked for reporting but no longer drive auto-exclusion.
 
     # 2. Ensure all flag columns exist, filling missing ones with False
     for col in flag_columns:

@@ -33,7 +33,7 @@ try:
     from skimage.measure import regionprops, label
     _HAS_IMAGE_LIBS = True
 except ImportError:
-    _HAS_IMAGE_LIBS = False
+_HAS_IMAGE_LIBS = False
 
 # Pipeline imports
 SCRIPTS_DIR = Path(__file__).parent.parent
@@ -42,6 +42,12 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from utils.base_file_handler import BaseFileHandler
 from utils.mask_utils import decode_mask_rle
 from utils.parsing_utils import get_entity_type, parse_entity_id
+
+# Flags that should remain informational and not propagate to downstream SAM2 QC gating.
+NON_BLOCKING_FLAG_TYPES = {
+    "HIGH_SEGMENTATION_VAR_SNIP",
+    "HIGH_SEGMENTATION_VAR_EMBRYO",
+}
 
 def decode_segmentation_mask(segmentation: Dict) -> np.ndarray:
     """Decode segmentation mask using mask_utils, handling both rle and rle_base64 formats."""
@@ -1170,6 +1176,8 @@ class GSAMQualityControl(BaseFileHandler):
                 # Only count flags for newly processed entities
                 if entity_is_new:
                     for flag_type, flag_instances in entity_flags.items():
+                        if flag_type in NON_BLOCKING_FLAG_TYPES:
+                            continue
                         flag_counts[flag_type] += len(flag_instances)
         
         return dict(flag_counts)
@@ -1191,6 +1199,8 @@ class GSAMQualityControl(BaseFileHandler):
             if entity_type in flags_section:
                 for entity_id, entity_flags in flags_section[entity_type].items():
                     for flag_type, flag_instances in entity_flags.items():
+                        if flag_type in NON_BLOCKING_FLAG_TYPES:
+                            continue
                         if flag_type not in overview:
                             overview[flag_type] = {
                                 "experiment_ids": set(),
@@ -1270,6 +1280,8 @@ class GSAMQualityControl(BaseFileHandler):
             entity_flags = flags_section.get(entity_key, {})
             for entity_id, entity_flag_data in entity_flags.items():
                 for flag_type, flag_list in entity_flag_data.items():
+                    if flag_type in NON_BLOCKING_FLAG_TYPES:
+                        continue
                     count = len(flag_list)
                     flag_counts[flag_type] += count
         
