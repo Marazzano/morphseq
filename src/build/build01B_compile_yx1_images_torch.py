@@ -20,7 +20,8 @@ import os, json, time, logging
 from pathlib import Path
 from typing import List, Sequence, Tuple
 from functools import partial
-from tqdm.contrib.concurrent import process_map
+from queue import Queue
+from threading import Thread
 import numpy as np
 import pandas as pd
 import torch
@@ -226,23 +227,53 @@ def _get_stack(
     )
 
 
+_profiler_counter = 0  # Global counter for profiler traces
+
 def _focus_stack(
     stack_zyx: np.ndarray,
     device: str,
     filter_size: int = 3
 ) -> np.ndarray:
+    global _profiler_counter
 
     # instead of torch.quantile, use numpy
     norm, _, _ = im_rescale(stack_zyx)
     norm = norm.astype(np.float32)
     tensor = torch.from_numpy(norm).to(device)
 
-    ff_t, _ = LoG_focus_stacker(tensor, filter_size, device)
+    # Debug logging when MSEQ_YX1_DEBUG is set
+    debug_enabled = os.environ.get("MSEQ_YX1_DEBUG") == "1"
+    if debug_enabled:
+        log.info("_focus_stack: tensor shape=%s device=%s cuda_available=%s",
+                 tensor.shape, tensor.device, torch.cuda.is_available())
+        if torch.cuda.is_available() and device == "cuda":
+            log.info("_focus_stack: cuda mem allocated %.1f MB",
+                     torch.cuda.memory_allocated() / 1e6)
+
+    # Profile the focus stacker when debug is enabled (first 3 stacks only)
+    if debug_enabled and _profiler_counter < 3:
+        from torch.profiler import profile, ProfilerActivity
+
+        with profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True,
+            with_stack=True
+        ) as prof:
+            ff_t, _ = LoG_focus_stacker(tensor, filter_size, device)
+
+        # Save profiler trace
+        trace_path = f"profiler_trace_stack_{_profiler_counter:03d}.json"
+        prof.export_chrome_trace(trace_path)
+        log.info("Saved profiler trace to: %s", trace_path)
+        _profiler_counter += 1
+    else:
+        ff_t, _ = LoG_focus_stacker(tensor, filter_size, device)
+
     arr = ff_t.cpu().numpy()
     arr_clipped = np.clip(arr, 0, 65535)
     ff_i = arr_clipped.astype(np.uint16)
 
-    # convert to 8 bit 
+    # convert to 8 bit
     ff_8 = skimage.util.img_as_ubyte(ff_i)
 
     return ff_8 #(65535 - ff.cpu().numpy()).astype(np.uint16)
@@ -265,6 +296,24 @@ def build_ff_from_yx1(
 
 
     par_flag = n_workers > 1
+
+    # Debug logging when MSEQ_YX1_DEBUG is set
+    if os.environ.get("MSEQ_YX1_DEBUG") == "1":
+        log.info("=" * 60)
+        log.info("GPU DIAGNOSTICS - build_ff_from_yx1")
+        log.info("Torch CUDA available: %s", torch.cuda.is_available())
+        if torch.cuda.is_available():
+            log.info("CUDA device count: %d", torch.cuda.device_count())
+            log.info("CUDA version: %s", torch.version.cuda)
+            log.info("Selected device: %s", device)
+            for i in range(torch.cuda.device_count()):
+                log.info("GPU %d: %s", i, torch.cuda.get_device_name(i))
+        else:
+            log.warning("CUDA NOT AVAILABLE - will use CPU (slow!)")
+            log.info("Selected device: %s", device)
+        log.info("n_workers: %d %s", n_workers,
+                 "(GPU works best with n_workers=1)" if n_workers > 1 and device == "cuda" else "")
+        log.info("=" * 60)
 
     data_root = Path(data_root)
     read_root = data_root / "raw_image_data" / "YX1"
@@ -609,25 +658,63 @@ def build_ff_from_yx1(
             indices = filtered_indices
             sampled_wells_info = filtered_wells_info
 
-        # Create a custom wrapper that uses our sampled wells info
-        def process_sampled_well(idx):
-            """Process a specific frame using sampled wells info"""
-            well_idx, well_name, well_series, nd2_well_idx, t = sampled_wells_info[idx]
-            
-            n_z_keep = 12 if z_buff else None
-            
-            # Get the z-stack for this well and timepoint
-            stack = _get_stack(dask_arr, t, nd2_well_idx, n_z_keep=n_z_keep)
-            ff = _focus_stack(stack, device, filter_size=3)
-            
-            # Write the focus-stacked image
-            _write_ff(out_ff, well_name, t, bf_idx, ff, overwrite)
-    
-        if not par_flag:
+        if par_flag:
+            log.warning("Parallel workers with CUDA batching are not supported; running sequentially on a single worker.")
+            par_flag = False
+
+        batch_size = int(os.environ.get("MSEQ_YX1_BATCH_SIZE", "4") or 4)
+        batch_size = max(1, batch_size)
+        queue_size = int(os.environ.get("MSEQ_YX1_WRITE_QUEUE", str(batch_size * 2)) or (batch_size * 2))
+        queue_size = max(2, queue_size)
+
+        write_queue: Queue[tuple[str, int, np.ndarray]] = Queue(maxsize=queue_size)
+        WRITE_SENTINEL = object()
+
+        def _writer_worker():
+            while True:
+                item = write_queue.get()
+                if item is WRITE_SENTINEL:
+                    write_queue.task_done()
+                    break
+                well_name, t, ff_img = item
+                try:
+                    _write_ff(out_ff, well_name, t, bf_idx, ff_img, overwrite)
+                finally:
+                    write_queue.task_done()
+
+        writer_thread = Thread(target=_writer_worker, name="yx1_ff_writer", daemon=True)
+        writer_thread.start()
+
+        n_z_keep = 12 if z_buff else None
+        batch_stacks: list[np.ndarray] = []
+        batch_infos: list[tuple[int, str, int, int, int]] = []
+
+        def flush_batch():
+            if not batch_stacks:
+                return
+            stacked = np.stack(batch_stacks, axis=0)
+            ff_batch = _focus_stack(stacked, device, filter_size=3)
+            if ff_batch.ndim == 2:
+                ff_batch = ff_batch[np.newaxis, ...]
+            for ff_img, (_, well_name, _, _, t) in zip(ff_batch, batch_infos):
+                write_queue.put((well_name, t, ff_img))
+            batch_stacks.clear()
+            batch_infos.clear()
+
+        try:
             for idx in tqdm(indices):
-                process_sampled_well(idx)
-        else:
-            process_map(process_sampled_well, indices, max_workers=n_workers, chunksize=1)
+                well_idx, well_name, well_series, nd2_well_idx, t = sampled_wells_info[idx]
+                stack = _get_stack(dask_arr, t, nd2_well_idx, n_z_keep=n_z_keep)
+                batch_stacks.append(stack)
+                batch_infos.append((well_idx, well_name, well_series, nd2_well_idx, t))
+                if len(batch_stacks) >= batch_size:
+                    flush_batch()
+            flush_batch()
+        finally:
+            # Ensure all pending writes are flushed before shutting down the writer
+            write_queue.join()
+            write_queue.put(WRITE_SENTINEL)
+            writer_thread.join()
 
     else:
         log.info("Skipping FF for %s", exp_name)
