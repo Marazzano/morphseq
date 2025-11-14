@@ -15,9 +15,11 @@ import statsmodels.api as sm
 from src.build.build_utils import bootstrap_perturbation_key_from_df01
 from src.data_pipeline.quality_control.death_detection import compute_dead_flag2_persistence
 from src.data_pipeline.quality_control.surface_area_outlier_detection import compute_sa_outlier_flag
+from src.data_pipeline.quality_control.config import QC_DEFAULTS
 from src.build.utils.curvature_utils import compute_embryo_curvature
 from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 import skimage.io as io
+from src.build.qc import determine_use_embryo_flag
 from src.build.build03A_process_images import resolve_sandbox_embryo_mask_from_csv
 from functools import partial
 from tqdm.contrib.concurrent import process_map
@@ -208,7 +210,7 @@ def build04_stage_per_experiment(
     out_dir: Optional[Path] = None,
     stage_ref: Optional[Path] = None,
     sa_ref_path: Optional[Path] = None,
-    dead_lead_time: float = 2.0,
+    dead_lead_time: float = None,
     sg_window: Optional[int] = 5,
     sg_poly: int = 2,
 ) -> Path:
@@ -228,8 +230,9 @@ def build04_stage_per_experiment(
         Stage reference CSV. If None, uses root/metadata/stage_ref_df.csv
     sa_ref_path : Optional[Path], default None
         SA reference curves CSV. If None, uses root/metadata/sa_reference_curves.csv
-    dead_lead_time : float, default 2.0
-        Hours before death to retroactively flag embryos
+    dead_lead_time : float, optional
+        Hours before death to retroactively flag embryos.
+        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
     sg_window : Optional[int], default 5
         Savitzky-Golay window length for smoothing. If None or insufficient data, skip smoothing
     sg_poly : int, default 2
@@ -240,6 +243,10 @@ def build04_stage_per_experiment(
     Path
         Path to the output CSV file
     """
+    # Use default from config if not specified
+    if dead_lead_time is None:
+        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+
     # Convert to Path objects
     root = Path(root)
 
@@ -325,10 +332,12 @@ def build04_stage_per_experiment(
                 print("⚠️ Using default experiment_date: unknown")
 
     # Add stage inference
-    print("🧬 Running stage inference...")
-    df = infer_embryo_stage(str(root), df, stage_ref=stage_ref)
-    inferred_count = (~df["inferred_stage_hpf"].isna()).sum()
-    print(f"✅ Added inferred_stage_hpf to {inferred_count} rows")
+    # DEPRECATED: Stage inference moved to Build03 (_ensure_predicted_stage_hpf)
+    # predicted_stage_hpf is already computed in Build03, so we skip this step
+    # print("🧬 Running stage inference...")
+    # df = infer_embryo_stage(str(root), df, stage_ref=stage_ref)
+    # inferred_count = (~df["inferred_stage_hpf"].isna()).sum()
+    # print(f"✅ Added inferred_stage_hpf to {inferred_count} rows")
 
     # Implement QC flags
     print("🔍 Computing QC flags...")
@@ -385,12 +394,13 @@ def test_build04_io(in_csv, out_csv):
 def infer_embryo_stage_orig(embryo_metadata_df, ref_date="20240626"):
 
     # build the reference set
-    stage_df = embryo_metadata_df.loc[embryo_metadata_df["experiment_date"]==ref_date, 
-                    ["snip_id", "embryo_id", "short_pert_name", "phenotype", "control_flag", "predicted_stage_hpf",
-                     "surface_area_um", "use_embryo_flag"]].reset_index(drop=True)
+    stage_cols = ["snip_id", "embryo_id", "short_pert_name", "phenotype", "control_flag",
+                  "predicted_stage_hpf", "surface_area_um"]
+    if "use_embryo_flag" in embryo_metadata_df.columns:
+        stage_cols.append("use_embryo_flag")
+    stage_df = embryo_metadata_df.loc[embryo_metadata_df["experiment_date"] == ref_date, stage_cols].reset_index(drop=True)
     ref_bool = (stage_df.loc[:, "phenotype"].to_numpy() == "wt") | (stage_df.loc[:, "control_flag"].to_numpy() == 1)
     ref_bool = ref_bool | (stage_df.loc[:, "phenotype"].to_numpy() == "uncertain")
-    ref_bool = ref_bool & stage_df["use_embryo_flag"]
     stage_df = stage_df.loc[ref_bool]
     stage_df["stage_group_hpf"] = np.round(stage_df["predicted_stage_hpf"])
     stage_df["stage_group_hpf"] = stage_df["stage_group_hpf"].astype(np.float)
@@ -410,8 +420,11 @@ def infer_embryo_stage_orig(embryo_metadata_df, ref_date="20240626"):
     embryo_metadata_df["inferred_stage_hpf"] = np.nan
 
     for d, date in enumerate(tqdm(date_index)):
-        date_df = embryo_metadata_df.loc[date_indices==d, ["snip_id", "embryo_id", "time_int","short_pert_name", 
-                        "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um", "use_embryo_flag"]].reset_index(drop=True)
+        date_cols = ["snip_id", "embryo_id", "time_int", "short_pert_name",
+                     "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um"]
+        if "use_embryo_flag" in embryo_metadata_df.columns:
+            date_cols.append("use_embryo_flag")
+        date_df = embryo_metadata_df.loc[date_indices == d, date_cols].reset_index(drop=True)
 
         # check for multiple age cohorts
         min_t = np.min(date_df["time_int"])
@@ -425,13 +438,10 @@ def infer_embryo_stage_orig(embryo_metadata_df, ref_date="20240626"):
         # check to see if this is a timeseries dataset
         _, embryo_counts = np.unique(date_df["embryo_id"], return_counts=True)
         snapshot_flag = np.max(embryo_counts) == 1
-        if snapshot_flag:
-            embryo_metadata_df["use_embryo_flag"] = True
         # calculate length percentiles
         ref_bool = (date_df.loc[:, "phenotype"].to_numpy() == "wt") | (date_df.loc[:, "control_flag"].to_numpy() == 1)
         if date == "20240314":   # special allowance for this one dataset
             ref_bool = ref_bool | True
-        ref_bool = ref_bool & date_df["use_embryo_flag"]
 
         date_df_ref = date_df.loc[ref_bool]
         # date_df["length_um"] = date_df["length_um"]*1.5
@@ -505,8 +515,11 @@ def infer_embryo_stage_sigmoid(root, embryo_metadata_df):
     embryo_metadata_df["inferred_stage_hpf"] = np.nan
 
     for d, date in enumerate(tqdm(date_index)):
-        date_df = embryo_metadata_df.loc[date_indices==d, ["snip_id", "embryo_id", "time_int", "Time Rel (s)", "short_pert_name",
-                        "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um", "use_embryo_flag"]].reset_index(drop=True)
+        date_cols = ["snip_id", "embryo_id", "time_int", "Time Rel (s)", "short_pert_name",
+                     "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um"]
+        if "use_embryo_flag" in embryo_metadata_df.columns:
+            date_cols.append("use_embryo_flag")
+        date_df = embryo_metadata_df.loc[date_indices == d, date_cols].reset_index(drop=True)
 
         # check for multiple age cohorts
         min_t = np.min(date_df["time_int"])
@@ -522,13 +535,10 @@ def infer_embryo_stage_sigmoid(root, embryo_metadata_df):
         # check to see if this is a timeseries dataset
         _, embryo_counts = np.unique(date_df["embryo_id"], return_counts=True)
         snapshot_flag = np.max(embryo_counts) == 1
-        if snapshot_flag:
-            embryo_metadata_df["use_embryo_flag"] = True
         # calculate length percentiles
         ref_bool = (date_df.loc[:, "phenotype"].to_numpy() == "wt") | (date_df.loc[:, "control_flag"].to_numpy() == 1)
         if date == "20240314":   # special allowance for this one dataset
             ref_bool = ref_bool | True
-        ref_bool = ref_bool & date_df["use_embryo_flag"]
 
         date_df_ref = date_df.loc[ref_bool]
         # date_df["length_um"] = date_df["length_um"]*1.5
@@ -594,8 +604,11 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
 
     for d, date in enumerate(tqdm(date_index)):
         print(f"\n🔍 DEBUG: Processing date {d}: {date}")
-        date_df = embryo_metadata_df.loc[date_indices == d, ["snip_id", "embryo_id", "time_int", "Time Rel (s)", "short_pert_name",
-                        "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um", "use_embryo_flag"]].reset_index(drop=True)
+        date_cols = ["snip_id", "embryo_id", "time_int", "Time Rel (s)", "short_pert_name",
+                     "phenotype", "control_flag", "predicted_stage_hpf", "surface_area_um"]
+        if "use_embryo_flag" in embryo_metadata_df.columns:
+            date_cols.append("use_embryo_flag")
+        date_df = embryo_metadata_df.loc[date_indices == d, date_cols].reset_index(drop=True)
 
         print(f"🔍 DEBUG: Date {date} - {len(date_df)} embryos")
         print(f"🔍 DEBUG: Phenotype values: {date_df['phenotype'].value_counts().to_dict()}")
@@ -620,9 +633,6 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
         _, embryo_counts = np.unique(date_df["embryo_id"], return_counts=True)
         snapshot_flag = np.max(embryo_counts) == 1
         print(f"🔍 DEBUG: Snapshot flag: {snapshot_flag}")
-        if snapshot_flag:
-            embryo_metadata_df.loc[date_indices == d, "use_embryo_flag"] = True
-
         # calculate length percentiles
         ref_bool = (date_df.loc[:, "phenotype"].to_numpy() == "wt") | (date_df.loc[:, "control_flag"].to_numpy() == 1)
         if date == "20240314":   # special allowance for this one dataset
@@ -630,7 +640,6 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
 
         # date_df["abs_time_hpf"] = np.round(date_df["predicted_stage_hpf"])
 
-        ref_bool = ref_bool & date_df["use_embryo_flag"]
         print(f"🔍 DEBUG: Reference embryos after filtering: {ref_bool.sum()} out of {len(ref_bool)}")
 
         date_df_ref = date_df.loc[ref_bool]
@@ -719,7 +728,7 @@ def infer_embryo_stage(root, embryo_metadata_df, stage_ref: Optional[Path] = Non
     return embryo_metadata_df
 
 
-def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2, sa_ref_path=None):
+def _compute_qc_flags(df, stage_ref, dead_lead_time=None, sg_window=5, sg_poly=2, sa_ref_path=None):
     """
     Compute QC flags for Build04: sa_outlier_flag and dead_flag2.
 
@@ -729,8 +738,9 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2,
         Input dataframe with embryo data
     stage_ref : Path
         Path to stage reference CSV file
-    dead_lead_time : float
-        Hours before death to retroactively flag
+    dead_lead_time : float, optional
+        Hours before death to retroactively flag.
+        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
     sg_window : int
         Savitzky-Golay window length
     sg_poly : int
@@ -743,6 +753,10 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2,
     pd.DataFrame
         Dataframe with added QC flags
     """
+    # Use default from config if not specified
+    if dead_lead_time is None:
+        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+
     df = df.copy()
 
     # Initialize QC flags
@@ -782,28 +796,8 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=2.0, sg_window=5, sg_poly=2,
     # OLD METHOD (commented out for rollback capability)
     # df = _compute_dead_flag2(df, dead_lead_time)
 
-    # Update final use_embryo_flag using clear, robust syntax
-    # 1. Define all flag columns in a single list
-    flag_columns = [
-        "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "dead_flag",
-        "frame_flag", "no_yolk_flag"
-    ]
-    # focus_flag/bubble_flag remain informational but no longer drive exclusion to many false positives.
-
-    # 2. Ensure all flag columns exist, filling missing ones with False
-    for col in flag_columns:
-        if col not in df.columns:
-            df[col] = False
-        # Explicitly fill any NaN values with False to prevent the bug
-        df[col] = df[col].fillna(False).astype(bool)
-
-    # 3. Use .any(axis=1) to check if ANY flag is True for a given row
-    # This is highly readable and efficient
-    qc_any = df[flag_columns].any(axis=1)
-
-    # 4. The final assignment logic remains the same
-    base_use = df.get("use_embryo_flag", True).astype(bool)
-    df["use_embryo_flag"] = base_use & (~qc_any)
+    # Use centralized function - THE ONLY place that determines use_embryo_flag
+    df["use_embryo_flag"] = determine_use_embryo_flag(df)
 
     return df
 
@@ -1109,7 +1103,7 @@ def _validate_and_prepare_inputs(df: pd.DataFrame) -> pd.DataFrame:
 
 def perform_embryo_qc(
     root,
-    dead_lead_time=2,
+    dead_lead_time=None,
     pert_key_path: str | None = None,
     auto_augment_pert_key: bool = True,
     write_augmented_key: bool = False,
@@ -1125,9 +1119,26 @@ def perform_embryo_qc(
     - Fills safe defaults for optional df01 columns (flags, stage/time/surface
       area, plus `temperature`/`medium`) to avoid brittle failures.
 
+    Parameters
+    ----------
+    root : str or Path
+        Data root directory
+    dead_lead_time : float, optional
+        Hours before death to retroactively flag embryos.
+        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
+    pert_key_path : str, optional
+        Path to perturbation key file
+    auto_augment_pert_key : bool, default True
+        Whether to auto-augment missing perturbation rows
+    write_augmented_key : bool, default False
+        Whether to write augmented perturbation key
+
     Outputs: df02 and curation CSVs written under
     `metadata/combined_metadata_files/`.
     """
+    # Use default from config if not specified
+    if dead_lead_time is None:
+        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
 
     # read in metadata
     metadata_path = os.path.join(root, 'metadata', "combined_metadata_files", '')
@@ -1135,7 +1146,7 @@ def perform_embryo_qc(
 
     # Ensure essential columns exist with safe defaults to avoid brittle failures
     defaults_bool_false = [
-        "bubble_flag", "focus_flag", "frame_flag", "no_yolk_flag", "sam2_qc_flag",
+        "bubble_flag", "focus_flag", "frame_flag", "no_yolk_flag", "sam2_qc_flag", "out_of_frame_flag",
     ]
     for col in defaults_bool_false:
         if col not in embryo_metadata_df.columns:
@@ -1272,27 +1283,8 @@ def perform_embryo_qc(
             d_indices = np.where(hours_from_death > -dead_lead_time)
             embryo_metadata_df.loc[e_indices[d_indices], "dead_flag2"] = True
 
-    # Update use_embryo_flag (legacy path) using clear, robust syntax
-    # 1. Define all flag columns in a single list
-    flag_columns = [
-        "dead_flag2", "sa_outlier_flag", "sam2_qc_flag", "dead_flag"
-    ]
-    # Bubble/focus/frame/no_yolk flags are tracked for reporting but no longer drive auto-exclusion.
-
-    # 2. Ensure all flag columns exist, filling missing ones with False
-    for col in flag_columns:
-        if col not in embryo_metadata_df.columns:
-            embryo_metadata_df[col] = False
-        # Explicitly fill any NaN values with False to prevent the bug
-        embryo_metadata_df[col] = embryo_metadata_df[col].fillna(False).astype(bool)
-
-    # 3. Use .any(axis=1) to check if ANY flag is True for a given row
-    # This is highly readable and efficient
-    qc_any = embryo_metadata_df[flag_columns].any(axis=1)
-
-    # 4. The final assignment logic remains the same
-    base_use = embryo_metadata_df.get("use_embryo_flag", True).astype(bool)
-    embryo_metadata_df.loc[:, "use_embryo_flag"] = base_use & (~qc_any)
+    # Use centralized function - THE ONLY place that determines use_embryo_flag
+    embryo_metadata_df["use_embryo_flag"] = determine_use_embryo_flag(embryo_metadata_df)
 
     
     # join on additional perturbation info
@@ -1387,7 +1379,7 @@ def perform_embryo_qc(
 
     # generate dataset to use for manual curation
     keep_cols = ["snip_id", 'short_pert_name', 'master_perturbation', 'temperature', 'medium',
-                 'bubble_flag', 'focus_flag', 'frame_flag', 'dead_flag2', 'no_yolk_flag', #'out_of_frame_flag',
+                 'bubble_flag', 'focus_flag', 'frame_flag', 'dead_flag2', 'no_yolk_flag', 'out_of_frame_flag',
                  "use_embryo_flag", "predicted_stage_hpf"]
 
     curation_df = embryo_metadata_df[keep_cols].copy()
@@ -1533,7 +1525,7 @@ def perform_embryo_qc(
     pert_metric_key.to_csv(os.path.join(curation_path, "perturbation_metric_key.csv"), index=True)
     print("Done.")
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     # root = "/Users/nick/Dropbox (Cole Trapnell's Lab)/Nick/morphseq/"
     root = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq"
 

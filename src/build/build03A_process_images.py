@@ -275,7 +275,7 @@ def export_embryo_snips(r: int,
 
     # DEBUG: Track problem embryos
     snip_id = row.get("snip_id", "")
-    is_debug_embryo = any(snip_id.startswith(prefix) for prefix in ["20250305_H04_e01", "20250305_A11_e01"])
+  
 
     # Extract key variables from row data
     well = row.get("well")
@@ -296,8 +296,6 @@ def export_embryo_snips(r: int,
     # --- Clean mask using 5-step pipeline ---
     try:
         im_mask, cleaning_stats = clean_embryo_mask(im_mask, verbose=False)
-        if is_debug_embryo:
-            print(f"   ✓ Mask cleaned: removed {cleaning_stats['area_removed_pct']:.1f}% of pixels")
     except Exception as e:
         if is_debug_embryo:
             print(f"   ⚠️  Mask cleaning failed for {snip_id}: {e}, using original mask")
@@ -393,8 +391,10 @@ def export_embryo_snips(r: int,
     emb_mask_rotated = rotate_image(mask_emb_rs, np.rad2deg(angle_to_use))
     im_yolk_rotated = rotate_image(mask_yolk_rs, np.rad2deg(angle_to_use))
 
-    im_cropped, emb_mask_cropped, yolk_mask_cropped = crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape=outshape)
-    
+    im_cropped, emb_mask_cropped, yolk_mask_cropped, out_of_frame_flag = crop_embryo_image(
+        im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape=outshape, return_metrics=True
+    )
+
     emb_mask_cropped2 = scipy.ndimage.binary_fill_holes(emb_mask_cropped > 0.5).astype(np.uint8)
     yolk_mask_cropped = scipy.ndimage.binary_fill_holes(yolk_mask_cropped > 0.5).astype(np.uint8)
 
@@ -406,14 +406,9 @@ def export_embryo_snips(r: int,
     mask_cropped_gauss = skimage.filters.gaussian(emb_mask_cropped2.astype(float), sigma=dl_rad_um / outscale)
     im_cropped_gauss = np.multiply(im_cropped.astype(float), mask_cropped_gauss) + np.multiply(noise_array, 1-mask_cropped_gauss)
 
-    # Truncation check (out_of_frame_flag) historically marked embryos
-    # whose mask area dropped below 98% after cropping. This check is
-    # overly sensitive in some SAM2 outputs; we still compute and keep
-    # the flag for reference, but force it False here so it does not
-    # exclude embryos from downstream QC. Use SAM2 edge detection
-    # instead for exclusion decisions.
-    out_of_frame_flag = False
-
+    # out_of_frame_flag now computed by crop_embryo_image() based on mask area retention
+    # Flags embryos where <98% of mask area is retained after cropping
+   
     im_name = row["snip_id"]
     exp_date = str(row["experiment_date"])
     im_snip_dir = root / 'training_data' / 'bf_embryo_snips'
@@ -840,6 +835,99 @@ def get_embryo_stats(index: int,
 # Main process function 2
 ####################
 
+def _merge_with_build01_metadata(sam2_df: pd.DataFrame, build01_metadata: pd.DataFrame, exp_name: str) -> pd.DataFrame:
+    """
+    Merge SAM2 dataframe with fresh Build01 metadata to update well-level information.
+
+    This allows Build03 to pick up metadata changes (genotype updates, etc.) without
+    re-running SAM2 segmentation.
+
+    Args:
+        sam2_df: DataFrame from SAM2 CSV with mask/tracking data
+        build01_metadata: Fresh metadata from Build01
+        exp_name: Experiment name for logging
+
+    Returns:
+        DataFrame with updated metadata from Build01
+    """
+    print(f"🔄 Merging SAM2 data with fresh Build01 metadata for {exp_name}...")
+
+    # Identify well-level metadata columns that should come from Build01
+    # (These are per-well, not per-embryo)
+    build01_well_cols = [
+        'genotype', 'perturbation', 'master_perturbation', 'phenotype',
+        'temperature', 'temperature_c', 'start_age_hpf', 'medium',
+        'control_flag', 'notes'
+    ]
+
+    # Filter to columns that actually exist in Build01 metadata
+    available_cols = [col for col in build01_well_cols if col in build01_metadata.columns]
+
+    if not available_cols:
+        print("⚠️  Warning: No well metadata columns found in Build01 - skipping merge")
+        return sam2_df
+
+    # SAM2 CSV has 'well' and 'time_int' columns (from export_sam2_metadata_to_csv.py)
+    # Build01 has 'well' or 'well_id' and 'time_int'
+    # We merge on: well + time_int (matching the original SAM2 export logic)
+
+    # Ensure SAM2 has 'well' column
+    if 'well' not in sam2_df.columns:
+        print("⚠️  Warning: SAM2 data missing 'well' column - cannot merge")
+        return sam2_df
+
+    # Ensure Build01 has 'well' column (might be 'well_id' instead)
+    if 'well' not in build01_metadata.columns:
+        if 'well_id' in build01_metadata.columns:
+            build01_metadata = build01_metadata.copy()
+            build01_metadata['well'] = build01_metadata['well_id']
+        else:
+            print("⚠️  Warning: Build01 metadata missing 'well' or 'well_id' column - cannot merge")
+            return sam2_df
+
+    # Check for time_int in both
+    if 'time_int' not in sam2_df.columns or 'time_int' not in build01_metadata.columns:
+        print(f"⚠️  Warning: Missing 'time_int' column (SAM2: {'time_int' in sam2_df.columns}, Build01: {'time_int' in build01_metadata.columns})")
+        return sam2_df
+
+    # Prepare Build01 metadata for merging - merge on well + time_int (same as SAM2 export logic)
+    merge_keys = ['well', 'time_int']
+    merge_cols = merge_keys + available_cols
+
+    # Only select columns that exist in build01_metadata
+    merge_cols = [col for col in merge_cols if col in build01_metadata.columns]
+    build01_merge = build01_metadata[merge_cols].copy()
+
+    # Perform left merge: keep all SAM2 rows, update metadata where available
+    result_df = sam2_df.merge(
+        build01_merge,
+        on=merge_keys,
+        how='left',
+        suffixes=('_sam2', '_build01')
+    )
+
+    # For each metadata column, prefer Build01 value if available
+    updated_cols = []
+    for col in available_cols:
+        build01_col = f"{col}_build01"
+        sam2_col = f"{col}_sam2"
+
+        if build01_col in result_df.columns:
+            # Update with Build01 values, keeping SAM2 values where Build01 is missing
+            if sam2_col in result_df.columns:
+                result_df[col] = result_df[build01_col].fillna(result_df[sam2_col])
+                result_df.drop(columns=[sam2_col, build01_col], inplace=True)
+            else:
+                result_df[col] = result_df[build01_col]
+                result_df.drop(columns=[build01_col], inplace=True)
+            updated_cols.append(col)
+
+    if updated_cols:
+        print(f"✅ Updated {len(updated_cols)} metadata columns from Build01: {', '.join(updated_cols)}")
+
+    return result_df
+
+
 def segment_wells_sam2_csv(
     root: str | Path,
     exp_name: str,
@@ -892,6 +980,25 @@ def segment_wells_sam2_csv(
     exp_df = sam2_df[sam2_df['experiment_id'] == exp_name].copy()
 
     print(f"📊 SAM2 data loaded: {len(exp_df)} snips from experiment {exp_name}")
+
+    # Auto-merge with Build01 metadata if it's newer (Option 5: Hybrid approach)
+    build01_metadata_path = root / "metadata" / "built_metadata_files" / f"{exp_name}_metadata.csv"
+
+    if build01_metadata_path.exists():
+        # Check if Build01 metadata is significantly newer than SAM2 CSV
+        sam2_mtime = sam2_csv_path.stat().st_mtime
+        build01_mtime = build01_metadata_path.stat().st_mtime
+        time_diff = build01_mtime - sam2_mtime
+
+        # If Build01 is more than 30 seconds newer, it was likely updated after SAM2
+        if time_diff > 30:
+            print(f"🔄 Build01 metadata is fresher ({time_diff:.0f}s newer) - auto-merging for updated well metadata")
+            build01_metadata = pd.read_csv(build01_metadata_path, low_memory=False)
+            exp_df = _merge_with_build01_metadata(exp_df, build01_metadata, exp_name)
+        else:
+            print(f"✅ Using SAM2 CSV metadata as-is (SAM2 is up-to-date, time diff: {time_diff:.0f}s)")
+    else:
+        print(f"ℹ️  No Build01 metadata found at {build01_metadata_path} - using SAM2 CSV metadata as-is")
 
     has_time_string = 'time_string' in exp_df.columns
     has_time_int = 'time_int' in exp_df.columns
@@ -1214,33 +1321,50 @@ def compile_embryo_stats(root: str,
     assert np.all(snip1==snip2)
     tracked_df.loc[indices_to_process, new_cols] = emb_df.loc[:, new_cols].values
 
-    # make master flag (enhanced with SAM2 QC flags - Refactor-011-B)
-    tracked_df["use_embryo_flag"] = ~(
-        tracked_df["bubble_flag"].values.astype(bool) | tracked_df["focus_flag"].values.astype(bool) |
-        tracked_df["frame_flag"].values.astype(bool) | 
-        tracked_df["dead_flag"].values.astype(bool) |
-        tracked_df["no_yolk_flag"].values.astype(bool) | tracked_df.get("sam2_qc_flag", False).astype(bool)
-        ) #| (tracked_df["well_qc_flag"].values==1).astype(bool))
+    # Build03 does NOT compute use_embryo_flag - that happens in Build04
+    # Individual QC flags are computed and stored for Build04 to use
 
     # tracked_df.to_csv(os.path.join(meta_root, "embryo_metadata_df.csv"))
 
     return tracked_df
 
 
-def extract_embryo_snips(root: str | Path, 
-                         stats_df: pd.DataFrame, 
-                         outscale: float=6.5, 
+def extract_embryo_snips(root: str | Path,
+                         stats_df: pd.DataFrame,
+                         outscale: float=7.8,
                          n_workers: int=1,
                          overwrite_flag: bool=False, outshape=None, dl_rad_um=75):
+    """
+    Extract embryo snips from full-frame images.
 
-    
+    Parameters
+    ----------
+    root : Path
+        Project root directory
+    stats_df : pd.DataFrame
+        Metadata dataframe with embryo information
+    outscale : float, default 7.8
+        Target resolution in μm/pixel. Default 7.8 μm/px provides 4.5mm × 2.0mm
+        capture window (576×256 px), ensuring large embryos (~3.5mm) fill max 75%
+        of frame with margin for rotation. Previous default (6.5 μm/px) caused
+        clipping for large embryos.
+    n_workers : int, default 1
+        Number of parallel workers
+    overwrite_flag : bool, default False
+        Whether to overwrite existing snips
+    outshape : list, optional
+        Output shape [height, width] in pixels. Default [576, 256]
+    dl_rad_um : float, default 75
+        Radius for Gaussian smoothing in micrometers
+    """
+
     par_flag = n_workers > 1
     root = Path(root)
 
     if outshape == None:
         outshape = [576, 256]
 
-    dates = stats_df["experiment_date"].unique()
+    dates = stats_df["experiment_id"].unique()
     if len(dates) > 1:
         raise Exception(f"Detected multiple dates in input dataset: {dates}")
     
@@ -1262,7 +1386,7 @@ def extract_embryo_snips(root: str | Path,
         stats_df["snip_um_per_pixel"] = outscale
     else:
         # get list of exported images
-        dates = stats_df["experiment_date"].unique()
+        dates = stats_df["experiment_id"].unique()
         # BUG FIX: Use glob (non-recursive) instead of rglob to search only in the specific date directory
         extant_images = list(chain.from_iterable(
                                 sorted((im_snip_dir / str(d)).glob(f"{d}*.jpg")) for d in dates
@@ -1274,39 +1398,6 @@ def extract_embryo_snips(root: str | Path,
         missing_snips = set(stats_df["snip_id"]) - set(extant_snip_array)
         export_indices = stats_df[stats_df["snip_id"].isin(missing_snips)].index.tolist()
 
-        # DEBUG: Track specific problem embryos (H04_e01, A11_e01)
-        debug_embryos = ["20250305_H04_e01", "20250305_A11_e01"]
-        for embryo_id in debug_embryos:
-            embryo_rows = stats_df[stats_df["snip_id"].str.startswith(embryo_id)]
-            if len(embryo_rows) > 0:
-                total_snips = len(embryo_rows)
-                existing_snips = [sid for sid in embryo_rows["snip_id"] if sid in extant_snip_array]
-                missing_snips_count = len([sid for sid in embryo_rows["snip_id"] if sid in missing_snips])
-                to_export = embryo_rows[embryo_rows["snip_id"].isin(missing_snips)]
-                print(f"\n🔍 DEBUG: {embryo_id}")
-                print(f"   • Total snips in metadata: {total_snips}")
-                print(f"   • Already exported: {len(existing_snips)}")
-                print(f"   • Missing (to export): {missing_snips_count}")
-                print(f"   • Export indices count: {len(to_export)}")
-                if len(existing_snips) > 0:
-                    print(f"   • Sample existing: {existing_snips[:3]}")
-                if missing_snips_count > 0:
-                    missing_samples = [sid for sid in embryo_rows["snip_id"] if sid in missing_snips][:3]
-                    print(f"   • Sample missing: {missing_samples}")
-
-        # embryo_metadata_df = embryo_metadata_df.drop(labels=["_merge"], axis=1)
-
-        # # transfer info from previous version of df01
-        # embryo_metadata_df01 = pd.read_csv(os.path.join(meta_root, "embryo_metadata_df01.csv"))
-        # embryo_metadata_df01["snip_um_per_pixel"] = outscale
-
-        # embryo_df_new.update(embryo_metadata_df, overwrite=False)
-        # embryo_metadata_df = embryo_metadata_df.merge(embryo_metadata_df01.loc[:, ["snip_id", "out_of_frame_flag", "snip_um_per_pixel"]], how="left", on="snip_id", indicator=True)
-        # export_indices_df = np.where(embryo_metadata_df["_merge"]=="left_only")[0]
-        # embryo_metadata_df = embryo_metadata_df.drop(labels=["_merge"], axis=1)
-
-        # embryo_metadata_df = embryo_df_new.copy()
-        # export_indices = np.union1d(export_indices_im, export_indices_df)
         stats_df.loc[export_indices, "out_of_frame_flag"] = False
         stats_df.loc[export_indices, "snip_um_per_pixel"] = outscale
 
@@ -1318,13 +1409,6 @@ def extract_embryo_snips(root: str | Path,
     px_mean, px_std = 10, 5 #estimate_image_background(root, stats_df, bkg_seed=309, n_bkg_samples=100)
 
     # Normalize boolean dtypes to avoid pandas bitwise errors
-    if "use_embryo_flag" in stats_df.columns and stats_df["use_embryo_flag"].dtype != bool:
-        _s = stats_df["use_embryo_flag"].astype(str).str.strip().str.lower()
-        stats_df["use_embryo_flag"] = _s.map({
-            "true": True, "false": False,
-            "1": True, "0": False,
-            "yes": True, "no": False
-        }).fillna(False).astype(bool)
     if "out_of_frame_flag" in stats_df.columns and stats_df["out_of_frame_flag"].dtype != bool:
         _o = stats_df["out_of_frame_flag"].astype(str).str.strip().str.lower()
         stats_df["out_of_frame_flag"] = _o.map({
@@ -1389,8 +1473,7 @@ def extract_embryo_snips(root: str | Path,
 
     # add oof flag
     stats_df.loc[export_indices, "out_of_frame_flag"] = out_of_frame_flags
-    stats_df.loc[export_indices, "use_embryo_flag_orig"] = stats_df.loc[export_indices, "use_embryo_flag"].copy()
-    stats_df.loc[export_indices, "use_embryo_flag"] = stats_df.loc[export_indices, "use_embryo_flag"] & ~stats_df.loc[export_indices, "out_of_frame_flag"]
+    # Note: use_embryo_flag is NOT set in Build03 - Build04 will compute it based on all QC flags
 
     # save
     exp_name = dates[0]
@@ -1472,9 +1555,9 @@ def _parse_embryo_number(embryo_id: str) -> Optional[int]:
 
 def _collect_rows_from_sam2_csv(csv_path: Path, exp: str, verbose: bool = False) -> list[Dict[str, str]]:
     """Parse SAM2 CSV and generate row data with QC flag detection.
-    
-    Note: Does NOT compute final use_embryo_flag - that's handled by _set_final_use_embryo_flag()
-    which considers both SAM2 and legacy QC flags.
+
+    Note: Does NOT compute use_embryo_flag - that's handled by Build04
+    using determine_use_embryo_flag() from src.build.qc.embryo_flags.
     """
     rows: list[Dict[str, str]] = []
     with csv_path.open("r", newline="", encoding="utf-8") as f:
@@ -1553,8 +1636,7 @@ def _collect_rows_from_sam2_csv(csv_path: Path, exp: str, verbose: bool = False)
                 # Provenance
                 "exported_mask_path": r.get("exported_mask_path", ""),
                 "computed_at": datetime.now().isoformat(),
-                # Final flag (will be set by _set_final_use_embryo_flag)
-                "use_embryo_flag": "",
+                # use_embryo_flag NOT computed in Build03 - Build04 will create it
                 "predicted_stage_hpf": "",
                 # Raw metadata for stage calculation
                 "start_age_hpf": r.get("start_age_hpf", ""),
@@ -1706,50 +1788,23 @@ def _compute_row_geometry_and_qc(row: Dict[str, str], root: Path, verbose: bool 
         row["frame_flag"] = "true"
 
 
-def _set_final_use_embryo_flag(row: Dict[str, str]) -> None:
-    """Set final use_embryo_flag by combining SAM2 and legacy QC sources.
-    
-    Decision logic: exclude embryo if ANY QC issue detected from either source
-    - SAM2 QC flags: any non-empty sam2_qc_flags string 
-    - Legacy QC flags: dead_flag, frame_flag, focus_flag, bubble_flag, no_yolk_flag
-    """
-    # Check SAM2 QC flags from CSV (handle pandas NaN conversion artifacts)
-    sam2_qc_flags_raw = row.get("sam2_qc_flags", "")
-    if pd.isna(sam2_qc_flags_raw):
-        # Handle actual pandas NaN
-        sam2_qc_flags = ""
-    else:
-        # Handle string conversion and strip whitespace
-        sam2_qc_flags = str(sam2_qc_flags_raw).strip()
-    
-    # Check for meaningful QC flags (exclude pandas artifacts)
-    has_sam2_flags = sam2_qc_flags and sam2_qc_flags.lower() not in ["", "nan", "none", "null"]
-    
-    # Check legacy QC flags from Build02 mask analysis
-    legacy_flags = [
-        row.get("dead_flag") == "true",
-        # row.get("frame_flag") == "true",  # DISABLED: frame_flag too sensitive; SAM2 edge detection preferred
-        row.get("focus_flag") == "true",
-        row.get("bubble_flag") == "true",
-        row.get("no_yolk_flag") == "true",
-    ]
-    has_legacy_flags = any(legacy_flags)
-    
-    # Final decision: exclude if ANY QC issues detected
-    use_embryo = not (has_sam2_flags or has_legacy_flags)
-    row["use_embryo_flag"] = "true" if use_embryo else "false"
+# REMOVED: _set_final_use_embryo_flag() function
+# Build03 no longer computes use_embryo_flag - that happens in Build04
+# using determine_use_embryo_flag() from src.build.qc.embryo_flags
 
 
 def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_workers: int = 1, skip_geometry_qc: bool = False) -> pd.DataFrame:
-    """Compile comprehensive embryo statistics for SAM2 pipeline with full QC restoration.
+    """Compile comprehensive embryo statistics for SAM2 pipeline with full QC flag computation.
 
     This function provides the complete SAM2 integration workflow:
-    1. Processes each row with geometry computation and comprehensive QC analysis
-    2. Combines SAM2 QC flags with legacy Build02 mask-based QC
-    3. Sets final use_embryo_flag based on all QC sources
+    1. Processes each row with geometry computation and comprehensive QC flag analysis
+
+    Note: Does NOT compute use_embryo_flag - that happens in Build04.
+    2. Computes individual QC flags (focus, bubble, frame, dead, no_yolk)
+    3. Combines SAM2 QC flags with legacy Build02 mask-based QC flags
 
     This replaces the functionality lost in run_build03.py by consolidating all
-    processing logic in build03A with proven QC capabilities.
+    processing logic in build03A with comprehensive QC flag computation.
 
     Args:
         root: Project root directory
@@ -1769,7 +1824,7 @@ def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_work
 
     if skip_geometry_qc:
         print(f"⚡ Fast mode: Skipping geometry QC computation (only exporting snip IDs)")
-        # Set all QC flags to empty/false and use_embryo_flag to true for all records
+        # Set all QC flags to empty/false (no use_embryo_flag - Build04 will create it)
         df["area_px"] = ""
         df["perimeter_px"] = ""
         df["centroid_x_px"] = ""
@@ -1785,12 +1840,12 @@ def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_work
         df["frame_flag"] = "false"
         df["fraction_alive"] = "1.0"
         df["speed"] = ""
-        df["use_embryo_flag"] = "true"
+        # use_embryo_flag NOT set in Build03 - Build04 will create it
 
         # Add predicted stage calculation at DataFrame level
         result_df = _ensure_predicted_stage_hpf(df, verbose=False)
 
-        print(f"✅ Fast mode complete: {len(result_df)} snip IDs exported (all flagged as usable)")
+        print(f"✅ Fast mode complete: {len(result_df)} snip IDs exported")
         return result_df
 
     print(f"🔄 Processing {len(df)} embryo records with comprehensive QC...")
@@ -1802,8 +1857,8 @@ def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_work
     for i, row in enumerate(tqdm(rows, desc="Computing geometry and QC")):
         _compute_row_geometry_and_qc(row, root, verbose=False)
 
-        # Apply final QC decision logic after all individual QC computed
-        _set_final_use_embryo_flag(row)
+        # Build03 does NOT compute use_embryo_flag - that happens in Build04
+        # Individual QC flags (focus, bubble, frame, dead, no_yolk) are computed above
 
         rows[i] = row
 
@@ -1815,25 +1870,31 @@ def compile_embryo_stats_sam2(root: str | Path, tracked_df: pd.DataFrame, n_work
 
     # Summary statistics
     total_embryos = len(result_df)
-    usable_embryos = (result_df["use_embryo_flag"] == "true").sum()
-    
-    # Count SAM2 flags using robust logic (exclude pandas NaN artifacts)
+
+    # Count QC flags using robust logic (exclude pandas NaN artifacts)
     def is_meaningful_qc_flag(val):
         if pd.isna(val):
             return False
         flag_str = str(val).strip().lower()
         return flag_str and flag_str not in ["", "nan", "none", "null"]
-    
-    sam2_flagged = result_df["sam2_qc_flags"].apply(is_meaningful_qc_flag).sum()
-    
-    legacy_flagged = (
-        (result_df["dead_flag"] == "true") |
-        (result_df["frame_flag"] == "true") | 
-        (result_df["focus_flag"] == "true") |
-        (result_df["bubble_flag"] == "true") |
-        (result_df["no_yolk_flag"] == "true")
-    ).sum()
-    
+
+    # Auto-detect all columns with "flag" in the name
+    flag_columns = [col for col in result_df.columns if "flag" in col.lower()]
+
+    # Count SAM2 flags separately (if present)
+    sam2_flagged = 0
+    if "sam2_qc_flags" in result_df.columns:
+        sam2_flagged = result_df["sam2_qc_flags"].apply(is_meaningful_qc_flag).sum()
+
+    # Count embryos with any disqualifying flag
+    flagged_mask = pd.Series([False] * len(result_df), index=result_df.index)
+    for flag_col in flag_columns:
+        if flag_col != "sam2_qc_flags":  # Skip sam2_qc_flags as it's counted separately
+            flagged_mask |= (result_df[flag_col] == "true")
+
+    legacy_flagged = flagged_mask.sum()
+    usable_embryos = total_embryos - legacy_flagged
+
     print(f"✅ QC Processing Complete:")
     print(f"   • Total embryos: {total_embryos}")
     print(f"   • SAM2 QC flagged: {sam2_flagged}")
