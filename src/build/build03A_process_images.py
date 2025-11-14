@@ -839,8 +839,8 @@ def _merge_with_build01_metadata(sam2_df: pd.DataFrame, build01_metadata: pd.Dat
     """
     Merge SAM2 dataframe with fresh Build01 metadata to update well-level information.
 
-    This allows Build03 to pick up metadata changes (genotype updates, etc.) without
-    re-running SAM2 segmentation.
+    This function automatically merges ALL columns from Build01 metadata (except merge keys),
+    allowing Build03 to pick up metadata changes without re-running SAM2 segmentation.
 
     Args:
         sam2_df: DataFrame from SAM2 CSV with mask/tracking data
@@ -851,21 +851,6 @@ def _merge_with_build01_metadata(sam2_df: pd.DataFrame, build01_metadata: pd.Dat
         DataFrame with updated metadata from Build01
     """
     print(f"🔄 Merging SAM2 data with fresh Build01 metadata for {exp_name}...")
-
-    # Identify well-level metadata columns that should come from Build01
-    # (These are per-well, not per-embryo)
-    build01_well_cols = [
-        'genotype', 'perturbation', 'master_perturbation', 'phenotype',
-        'temperature', 'temperature_c', 'start_age_hpf', 'medium',
-        'control_flag', 'notes'
-    ]
-
-    # Filter to columns that actually exist in Build01 metadata
-    available_cols = [col for col in build01_well_cols if col in build01_metadata.columns]
-
-    if not available_cols:
-        print("⚠️  Warning: No well metadata columns found in Build01 - skipping merge")
-        return sam2_df
 
     # SAM2 CSV has 'well' and 'time_int' columns (from export_sam2_metadata_to_csv.py)
     # Build01 has 'well' or 'well_id' and 'time_int'
@@ -890,12 +875,10 @@ def _merge_with_build01_metadata(sam2_df: pd.DataFrame, build01_metadata: pd.Dat
         print(f"⚠️  Warning: Missing 'time_int' column (SAM2: {'time_int' in sam2_df.columns}, Build01: {'time_int' in build01_metadata.columns})")
         return sam2_df
 
-    # Prepare Build01 metadata for merging - merge on well + time_int (same as SAM2 export logic)
+    # Get ALL columns from Build01 metadata EXCEPT merge keys (automatically includes everything: pair, notes, etc.)
     merge_keys = ['well', 'time_int']
-    merge_cols = merge_keys + available_cols
-
-    # Only select columns that exist in build01_metadata
-    merge_cols = [col for col in merge_cols if col in build01_metadata.columns]
+    all_build01_cols = [col for col in build01_metadata.columns if col not in merge_keys]
+    merge_cols = merge_keys + all_build01_cols
     build01_merge = build01_metadata[merge_cols].copy()
 
     # Perform left merge: keep all SAM2 rows, update metadata where available
@@ -906,9 +889,9 @@ def _merge_with_build01_metadata(sam2_df: pd.DataFrame, build01_metadata: pd.Dat
         suffixes=('_sam2', '_build01')
     )
 
-    # For each metadata column, prefer Build01 value if available
+    # For each metadata column, prefer Build01 value if available (handles duplicates)
     updated_cols = []
-    for col in available_cols:
+    for col in all_build01_cols:
         build01_col = f"{col}_build01"
         sam2_col = f"{col}_sam2"
 
@@ -923,7 +906,9 @@ def _merge_with_build01_metadata(sam2_df: pd.DataFrame, build01_metadata: pd.Dat
             updated_cols.append(col)
 
     if updated_cols:
-        print(f"✅ Updated {len(updated_cols)} metadata columns from Build01: {', '.join(updated_cols)}")
+        print(f"✅ Merged {len(updated_cols)} metadata columns from Build01: {', '.join(updated_cols[:10])}{'...' if len(updated_cols) > 10 else ''}")
+    else:
+        print("ℹ️  No duplicate columns to merge (SAM2 already has all Build01 metadata)")
 
     return result_df
 
