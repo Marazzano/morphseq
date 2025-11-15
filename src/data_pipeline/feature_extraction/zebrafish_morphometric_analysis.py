@@ -142,7 +142,7 @@ def compute_mask_area_percentages(
 
 def load_dlma_predictions(
     prediction_path: Path,
-    format: str = 'detectron2',
+    format: str = 'numpy',
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Load DLMA model predictions from various formats.
@@ -150,33 +150,45 @@ def load_dlma_predictions(
     Args:
         prediction_path: Path to prediction file
         format: Format of predictions:
-            - 'detectron2': Detectron2 pickle output
-            - 'numpy': .npz file with 'masks' and 'classes' keys
-            - 'masks_dir': Directory with individual mask PNGs
+            - 'numpy': .npz file with 'masks' and 'classes' keys (RECOMMENDED - no Detectron2 required)
+            - 'detectron2': Detectron2 pickle output (requires Detectron2/PyTorch installed)
+            - 'masks_dir': Directory with individual mask PNGs (not yet implemented)
 
     Returns:
         Tuple of (instance_masks, class_ids)
         - instance_masks: (N, H, W) array
         - class_ids: (N,) array
+
+    Note:
+        For deployment, use 'numpy' format to avoid Detectron2 dependency.
+        Convert predictions using: python convert_dlma_to_npz.py predictions/
     """
-    if format == 'detectron2':
-        # Detectron2 outputs are typically pickled
-        import pickle
-        with open(prediction_path, 'rb') as f:
-            outputs = pickle.load(f)
-
-        instances = outputs['instances']
-        masks = instances.pred_masks.cpu().numpy()  # (N, H, W)
-        classes = instances.pred_classes.cpu().numpy()  # (N,)
-
-        return masks, classes
-
-    elif format == 'numpy':
-        # Numpy archive format
+    if format == 'numpy':
+        # Numpy archive format - RECOMMENDED (no Detectron2 required)
         data = np.load(prediction_path)
         masks = data['masks']
         classes = data['classes']
         return masks, classes
+
+    elif format == 'detectron2':
+        # Detectron2 outputs are typically pickled
+        # WARNING: Requires Detectron2 + PyTorch installed
+        try:
+            import pickle
+            with open(prediction_path, 'rb') as f:
+                outputs = pickle.load(f)
+
+            instances = outputs['instances']
+            masks = instances.pred_masks.cpu().numpy()  # (N, H, W)
+            classes = instances.pred_classes.cpu().numpy()  # (N,)
+
+            return masks, classes
+
+        except ImportError as e:
+            raise ImportError(
+                "Loading Detectron2 format requires PyTorch/Detectron2. "
+                "Convert to numpy format first: python convert_dlma_to_npz.py predictions/"
+            ) from e
 
     elif format == 'masks_dir':
         # Individual mask files named like: {class_id}_{instance_id}.png
@@ -190,8 +202,8 @@ def extract_morphometric_features_batch(
     tracking_df: pd.DataFrame,
     dlma_predictions_dir: Path,
     embryo_mask_dir: Optional[Path] = None,
-    prediction_format: str = 'detectron2',
-    pixel_size_col: str = 'micrometers_per_pixel',
+    prediction_format: str = 'numpy',
+    pixel_size_col: str = 'um_per_pixel',
 ) -> pd.DataFrame:
     """
     Extract DLMA morphometric features for batch of snips.
@@ -203,8 +215,8 @@ def extract_morphometric_features_batch(
         tracking_df: Segmentation tracking DataFrame with snip_id
         dlma_predictions_dir: Directory containing DLMA prediction files
         embryo_mask_dir: Optional directory with total embryo masks
-        prediction_format: Format of DLMA predictions ('detectron2', 'numpy')
-        pixel_size_col: Column name for pixel size (for future micrometer conversion)
+        prediction_format: Format of DLMA predictions ('numpy' recommended, 'detectron2' requires torch)
+        pixel_size_col: Column name for pixel size in micrometers (e.g., 'um_per_pixel')
 
     Returns:
         DataFrame with columns:
@@ -212,6 +224,10 @@ def extract_morphometric_features_batch(
         - {class_name}_area_pct for each DLMA class
         - total_embryo_area_px
         - total_embryo_area_um2 (if pixel_size available)
+
+    Note:
+        For deployment without Detectron2, use prediction_format='numpy'.
+        Convert predictions first: python convert_dlma_to_npz.py predictions/
     """
     results = []
 

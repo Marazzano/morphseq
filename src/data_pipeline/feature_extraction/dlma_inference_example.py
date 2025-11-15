@@ -330,18 +330,30 @@ def example_full_pipeline(
         tracking_df = pd.DataFrame({
             'snip_id': [Path(p).stem for p in inference_results['image_path']],
             'image_id': [Path(p).stem for p in inference_results['image_path']],
-            'micrometers_per_pixel': 1.0,  # Update with actual value
+            'um_per_pixel': 1.0,  # Update with actual value from microscope calibration
         })
     else:
         print(f"\nStep 2: Loading tracking DataFrame from {tracking_csv_path}...")
         tracking_df = pd.read_csv(tracking_csv_path)
+
+    # Step 2.5: Convert predictions to NumPy format (optional but recommended)
+    print("\nStep 2.5: Converting predictions to NumPy format...")
+    from convert_dlma_to_npz import convert_directory
+    try:
+        convert_directory(predictions_dir, verbose=False)
+        print("  ✓ Converted to .npz format (no Detectron2 needed for feature extraction)")
+        prediction_format_to_use = 'numpy'
+    except Exception as e:
+        print(f"  Warning: Could not convert to .npz: {e}")
+        print("  Will use Detectron2 format (requires Detectron2 installed)")
+        prediction_format_to_use = 'detectron2'
 
     # Step 3: Extract morphometric features
     print("\nStep 3: Extracting morphometric features...")
     features_df = extract_morphometric_features_batch(
         tracking_df=tracking_df,
         dlma_predictions_dir=predictions_dir,
-        prediction_format='detectron2',
+        prediction_format=prediction_format_to_use,
     )
     features_df.to_csv(features_dir / "morphometric_features.csv", index=False)
     print(f"Extracted features for {len(features_df)} snips")

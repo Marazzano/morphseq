@@ -129,7 +129,7 @@ try:
     tracking_df = pd.DataFrame({
         'snip_id': ['test_001', 'test_002', 'test_003'],
         'image_id': ['test_001', 'test_002', 'test_003'],
-        'micrometers_per_pixel': [1.5, 1.5, 1.5],
+        'um_per_pixel': [1.5, 1.5, 1.5],
     })
 
     # This will return NaN for missing files, which is expected
