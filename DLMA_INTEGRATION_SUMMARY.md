@@ -170,14 +170,16 @@ features = features.merge(extract_morphometric_features_batch(...), on='snip_id'
 src/data_pipeline/feature_extraction/
 ├── zebrafish_morphometric_analysis.py    (413 lines) - Main module
 ├── dlma_inference_example.py             (381 lines) - Inference script
+├── dlma_output_example.py                (450 lines) - Output format examples
 ├── test_dlma_integration.py              (215 lines) - Test suite
 ├── DLMA_INSTALLATION.md                  (255 lines) - Installation guide
-└── README_DLMA_INTEGRATION.md            (314 lines) - Usage guide
+├── README_DLMA_INTEGRATION.md            (314 lines) - Usage guide
+└── DLMA_OUTPUT_FORMATS.md                (495 lines) - Output format documentation
 
 DLMA_INTEGRATION_SUMMARY.md               (This file)
 ```
 
-**Total**: ~1,600 lines of code and documentation
+**Total**: ~2,500+ lines of code and documentation
 
 ## Usage Example
 
