@@ -273,10 +273,6 @@ def export_embryo_snips(r: int,
     root = Path(root)
     row = stats_df.iloc[r].copy()
 
-    # DEBUG: Track problem embryos
-    snip_id = row.get("snip_id", "")
-  
-
     # Extract key variables from row data
     well = row.get("well")
     time_stub = _extract_time_stub(row)
@@ -289,17 +285,14 @@ def export_embryo_snips(r: int,
         lbi = int(row["region_label"])  # assumes present; MVP scope
         im_mask = ((im_mask_int == lbi) * 255).astype(np.uint8)
     except Exception as e:
-        if is_debug_embryo:
-            print(f"   ❌ ERROR loading mask for {snip_id}: {e}")
         raise
 
     # --- Clean mask using 5-step pipeline ---
     try:
         im_mask, cleaning_stats = clean_embryo_mask(im_mask, verbose=False)
     except Exception as e:
-        if is_debug_embryo:
-            print(f"   ⚠️  Mask cleaning failed for {snip_id}: {e}, using original mask")
         # Continue with original (uncleaned) mask on failure
+        pass
 
     # Load yolk from Build02 segmentation (keep non-embryo masks unchanged)
     im_yolk = None
@@ -352,10 +345,6 @@ def export_embryo_snips(r: int,
             if raw_stitch_path.exists():
                 im_ff = io.imread(raw_stitch_path)
         if im_ff is None:
-            if is_debug_embryo:
-                print(f"   ❌ ERROR: FF image not found for {snip_id}")
-                print(f"      • Tried full_stub: {full_stub}")
-                print(f"      • Search path: {ff_image_path / date}")
             warnings.warn(
                 f"FF image not found under {ff_image_path / date} for stub '{full_stub}' and legacy pattern; "
                 f"no raw_stitch_image_path usable.",
@@ -966,22 +955,14 @@ def segment_wells_sam2_csv(
 
     print(f"📊 SAM2 data loaded: {len(exp_df)} snips from experiment {exp_name}")
 
-    # Auto-merge with Build01 metadata if it's newer (Option 5: Hybrid approach)
+    # Always merge with Build01 metadata to ensure all columns propagate through
     build01_metadata_path = root / "metadata" / "built_metadata_files" / f"{exp_name}_metadata.csv"
 
     if build01_metadata_path.exists():
-        # Check if Build01 metadata is significantly newer than SAM2 CSV
-        sam2_mtime = sam2_csv_path.stat().st_mtime
-        build01_mtime = build01_metadata_path.stat().st_mtime
-        time_diff = build01_mtime - sam2_mtime
-
-        # If Build01 is more than 30 seconds newer, it was likely updated after SAM2
-        if time_diff > 30:
-            print(f"🔄 Build01 metadata is fresher ({time_diff:.0f}s newer) - auto-merging for updated well metadata")
-            build01_metadata = pd.read_csv(build01_metadata_path, low_memory=False)
-            exp_df = _merge_with_build01_metadata(exp_df, build01_metadata, exp_name)
-        else:
-            print(f"✅ Using SAM2 CSV metadata as-is (SAM2 is up-to-date, time diff: {time_diff:.0f}s)")
+        # Always merge with Build01 metadata to ensure ALL columns (pair, notes, etc.) propagate through
+        print(f"🔄 Merging with Build01 metadata to ensure all columns propagate...")
+        build01_metadata = pd.read_csv(build01_metadata_path, low_memory=False)
+        exp_df = _merge_with_build01_metadata(exp_df, build01_metadata, exp_name)
     else:
         print(f"ℹ️  No Build01 metadata found at {build01_metadata_path} - using SAM2 CSV metadata as-is")
 
