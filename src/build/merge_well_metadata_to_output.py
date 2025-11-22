@@ -150,35 +150,48 @@ def merge_metadata(output_df: pd.DataFrame, metadata_df: pd.DataFrame, verbose: 
         verbose: Print merge statistics
 
     Returns:
-        Merged dataframe
+        Merged dataframe with metadata values prioritized, original values saved as _previous
     """
     if verbose:
         print(f"\n🔗 Merging metadata on 'well'...")
         print(f"   Output: {len(output_df)} rows, {output_df['well'].nunique()} unique wells")
         print(f"   Metadata: {len(metadata_df)} rows, {metadata_df['well'].nunique()} unique wells")
 
-    # Get columns to merge (exclude 'well' which is the key)
+    result_df = output_df.copy()
+
+    # Get all metadata columns except 'well'
     merge_cols = [col for col in metadata_df.columns if col != 'well']
 
-    result_df = output_df.merge(
-        metadata_df[['well'] + merge_cols],
-        on='well',
-        how='left',
-        suffixes=('_output', '_metadata')
-    )
+    overwritten_cols = []
+
+    # Create a mapping dict for each metadata column
+    for col in merge_cols:
+        # Create a dict: well -> metadata_value
+        metadata_dict = dict(zip(metadata_df['well'], metadata_df[col]))
+
+        if col in result_df.columns:
+            # Column exists in output - check for differences and save as _previous
+            original_values = result_df[col].copy()
+            new_values = result_df['well'].map(metadata_dict)
+
+            # Check if there are any actual differences
+            diff_mask = (original_values.fillna('__NA__') != new_values.fillna('__NA__'))
+            if diff_mask.any():
+                result_df[f"{col}_previous"] = original_values
+                overwritten_cols.append(col)
+
+            # Update with metadata values, keeping original where metadata is missing
+            result_df[col] = new_values.fillna(original_values)
+        else:
+            # New column - just add the metadata values
+            result_df[col] = result_df['well'].map(metadata_dict)
 
     if verbose:
-        # Check for unmatched wells - use a column that's definitely from metadata
-        # Look for metadata-only columns (ones not in output_df)
-        metadata_only_cols = [col for col in merge_cols if col not in output_df.columns]
-
-        if metadata_only_cols:
-            matched = result_df[metadata_only_cols[0]].notna().sum()
-        else:
-            matched = len(result_df)
-
+        matched = len(result_df)
         print(f"   ✅ Matched {matched}/{len(result_df)} rows ({100*matched/len(result_df):.1f}%)")
-        print(f"   ✓ Added {len(merge_cols)} metadata columns: {', '.join(merge_cols[:5])}{'...' if len(merge_cols) > 5 else ''}")
+        print(f"   ✓ Merged {len(merge_cols)} metadata columns: {', '.join(merge_cols[:5])}{'...' if len(merge_cols) > 5 else ''}")
+        if overwritten_cols:
+            print(f"   ⚠️  Overwrote {len(overwritten_cols)} existing columns (saved as _previous): {', '.join(overwritten_cols[:5])}{'...' if len(overwritten_cols) > 5 else ''}")
 
     return result_df
 
@@ -191,8 +204,8 @@ def main():
 Examples:
   # Merge pair data into Build06 output
   python merge_well_metadata_to_output.py \\
-    morphseq_playground/metadata/build06_output/df03_final_output_with_latents_20251106.csv \\
-    metadata/plate_metadata/20251106_well_metadata.xlsx \\
+    morphseq_playground/metadata/build06_output/df03_final_output_with_latents_20251112.csv \\
+    metadata/plate_metadata/20251112_well_metadata.xlsx \\
     --backup
 
   # Update Build04 output with metadata
