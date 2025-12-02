@@ -17,6 +17,7 @@ from pathlib import Path
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.build.build04_perform_embryo_qc import build04_stage_per_experiment
+from src.data_pipeline.quality_control.config import QC_DEFAULTS
 
 
 def _parse_args() -> argparse.Namespace:
@@ -31,7 +32,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out-csv", help="Output Build04 CSV path (overrides default)")
     parser.add_argument("--out-dir", help="Output directory (overrides default)")
     parser.add_argument("--stage-ref", help="Stage reference CSV path")
-    parser.add_argument("--dead-lead-time", type=float, default=2.0, help="Hours before death to retroactively flag")
+    parser.add_argument("--dead-lead-time", type=float, default=QC_DEFAULTS['dead_lead_time_hours'], help="Hours before death to retroactively flag")
     parser.add_argument("--sg-window", type=int, default=5, help="Savitzky-Golay window length")
     parser.add_argument("--sg-poly", type=int, default=2, help="Savitzky-Golay polynomial order")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
@@ -129,7 +130,7 @@ def run_build04(
     out_csv: Path | str | None = None,
     out_dir: Path | str | None = None,
     stage_ref: Path | str | None = None,
-    dead_lead_time: float = 2.0,
+    dead_lead_time: float = None,
     sg_window: int = 5,
     sg_poly: int = 2,
 ) -> Path | None:
@@ -138,7 +139,32 @@ def run_build04(
     Prefer passing `exp` to auto-discover input and choose default output.
     Alternatively, specify `in_csv` and `out_csv` explicitly.
     Returns the output path if successful.
+
+    Parameters
+    ----------
+    root : Path or str
+        Data root directory
+    exp : str, optional
+        Experiment ID for auto-discovery
+    in_csv : Path or str, optional
+        Input Build03 CSV path
+    out_csv : Path or str, optional
+        Output Build04 CSV path
+    out_dir : Path or str, optional
+        Output directory
+    stage_ref : Path or str, optional
+        Stage reference CSV path
+    dead_lead_time : float, optional
+        Hours before death to retroactively flag.
+        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
+    sg_window : int, default 5
+        Savitzky-Golay window length
+    sg_poly : int, default 2
+        Savitzky-Golay polynomial order
     """
+    # Use default from config if not specified
+    if dead_lead_time is None:
+        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
     root_p = Path(root)
     if in_csv and out_csv:
         in_p = Path(in_csv)

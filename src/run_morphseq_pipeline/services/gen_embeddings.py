@@ -20,14 +20,19 @@ import logging
 def filter_high_quality_embryos(df02: pd.DataFrame, logger: Optional[logging.Logger] = None) -> pd.DataFrame:
     """
     Filter df02 to only embryos with use_embryo_flag=True (high quality).
-    
-    This replaces Build05's quality filtering by using the comprehensive QC flag from Build03:
-    use_embryo_flag = ~(bubble_flag | focus_flag | frame_flag | dead_flag | no_yolk_flag)
-    
+
+    This replaces Build05's quality filtering by using the comprehensive QC flag from Build04.
+
+    use_embryo_flag is computed by determine_use_embryo_flag() in src.build.qc.embryo_flags
+    and excludes embryos with: dead_flag, dead_flag2, sa_outlier_flag, sam2_qc_flag,
+    frame_flag, no_yolk_flag.
+
+    Note: focus_flag and bubble_flag are NOT used for exclusion (too many false positives).
+
     Args:
         df02: Input dataframe from Build04
         logger: Optional logger for progress reporting
-        
+
     Returns:
         Filtered dataframe containing only high-quality embryos
     """

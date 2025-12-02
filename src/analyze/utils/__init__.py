@@ -2,13 +2,14 @@
 General-purpose utilities for morphseq analysis.
 
 This package provides helper functions for data loading, time binning,
-and file I/O operations.
+splitting, and file I/O operations.
 
 Submodules
 ==========
 - binning : Time-based aggregation of VAE embeddings
 - data_loading : Load and combine experiment data from build06 outputs
 - file_utils : Path management and file I/O helpers
+- splitting : Group-aware train/test splitting for ML tasks
 """
 
 # Data loading
@@ -35,6 +36,18 @@ from .file_utils import (
     extract_genotype_short_names,
 )
 
+# Plotting
+from .plotting import plot_embryos_metric_over_time
+from .plotting_faceted import plot_embryos_metric_over_time_faceted
+
+# Splitting
+from .splitting import (
+    train_test_split_by_group,
+    leave_one_out_by_group,
+    get_group_split_masks,
+    get_split_info,
+)
+
 __all__ = [
     # Data loading
     "load_experiment",
@@ -51,4 +64,12 @@ __all__ = [
     "get_data_path",
     "save_dataframe",
     "extract_genotype_short_names",
+    # Plotting
+    "plot_embryos_metric_over_time",
+    "plot_embryos_metric_over_time_faceted",
+    # Splitting
+    "train_test_split_by_group",
+    "leave_one_out_by_group",
+    "get_group_split_masks",
+    "get_split_info",
 ]

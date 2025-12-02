@@ -15,15 +15,16 @@
 # Usage with array jobs:
 #   qsub -t 1-14 -tc 3 -v EXP_FILE=/path/to/experiment_list.txt run_build03_onwards_force.sh
 # Override behaviour with env vars:
-#   RUN_METADATA_REBUILD=0   # skip Build01 metadata-only refresh
-#   RUN_SAM2=0               # skip re-running SAM2
-#   RUN_BUILD03=0            # skip Build03 action
-#   RUN_SNIP_EXPORT=1        # export snips only (use existing Build03 metadata)
-#   RUN_BUILD04=0            # skip Build04 action
-#   RUN_BUILD06=0            # skip Build06 action
-#   SAM2_WORKERS=8           # SAM2 worker count (default 8)
-#   SAM2_CONFIDENCE=0.45     # SAM2 confidence threshold
-#   SAM2_IOU=0.5             # SAM2 IoU threshold
+#   RUN_METADATA_REBUILD=0      # skip Build01 metadata-only refresh
+#   RUN_SAM2=0                  # skip re-running SAM2
+#   RUN_BUILD03=0               # skip Build03 action
+#   BUILD03_SKIP_GEOMETRY_QC=1  # skip geometry QC computation (fast mode, all embryos marked usable)
+#   RUN_SNIP_EXPORT=1           # export snips only (use existing Build03 metadata)
+#   RUN_BUILD04=0               # skip Build04 action
+#   RUN_BUILD06=0               # skip Build06 action
+#   SAM2_WORKERS=8              # SAM2 worker count (default 8)
+#   SAM2_CONFIDENCE=0.45        # SAM2 confidence threshold
+#   SAM2_IOU=0.5                # SAM2 IoU threshold
 
 set -euo pipefail
 
@@ -34,7 +35,7 @@ MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20250529_24hpf_ctrl_atf6"
+DEFAULT_EXPERIMENTS="20250529_24hpf_ctrl_atf6" #20250529_24hpf_ctrl_atf6
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -46,10 +47,10 @@ DEFAULT_EXPERIMENTS="20250529_24hpf_ctrl_atf6"
 : "${SAM2_IOU:=0.5}"
 
 # Pipeline stage toggles (1=run, 0=skip)
-: "${RUN_METADATA_REBUILD:=1}"
-: "${RUN_SAM2:=1}"
+: "${RUN_METADATA_REBUILD:=0}"
+: "${RUN_SAM2:=0}"
 : "${RUN_BUILD03:=1}"
-: "${BUILD03_SKIP_GEOMETRY_QC:=0}"
+: "${BUILD03_SKIP_GEOMETRY_QC:=0}"  # 0=compute full geometry QC (default), 1=fast mode (skip QC, mark all embryos usable)
 : "${RUN_BUILD04:=1}"
 : "${RUN_BUILD06:=1}"
 : "${RUN_SNIP_EXPORT:=1}"
@@ -191,7 +192,7 @@ else:
 extract_embryo_snips(
     root=data_root,
     stats_df=stats_df,
-    outscale=6.5,
+    outscale=7.8,
     dl_rad_um=float("${SNIP_DL_RAD_UM}"),
     overwrite_flag=${SNIP_OVERWRITE_PY},
     n_workers=int("${SNIP_WORKERS}"),
@@ -226,7 +227,7 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 # Example usage with array jobs:
 #
 # Run for all experiments in list:
-# qsub -t 1-40 -tc 3 \
+# qsub -t 1-27 -tc 2 \
 #   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
 #   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
@@ -234,5 +235,8 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 # qsub -t 1 \
 #   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20250905_list_all.txt \
 #   run_build03_onwards_force.sh
-# qsub -t 1-2 -tc 2 \
+# qsub -t 1-2 -tc 1 \
 #   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
+# qsub -t 1 -tc 1 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
+
+

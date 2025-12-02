@@ -1,0 +1,2 @@
+experiment_id,target_metric,n_samples,n_embryos,cv_strategy,alpha_median,alpha_iqr,r2_mean,r2_std,mae_mean,rmse_mean,pearson_mean
+20251106,baseline_deviation_um,6187,95,GroupKFold(5),100.0,0.0,0.8583677385474211,0.03411221483297963,44.241993174121696,57.76761294413198,0.9300752203427068

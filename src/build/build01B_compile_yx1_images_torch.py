@@ -279,6 +279,63 @@ def _focus_stack(
     return ff_8 #(65535 - ff.cpu().numpy()).astype(np.uint16)
 
 
+def _resolve_batch_size(
+    n_z: int,
+    height_px: int,
+    width_px: int,
+    device: str,
+) -> int:
+    """
+    Determine a safe batching factor for YX1 focus stacking.
+    Prefers env override (MSEQ_YX1_BATCH_SIZE); otherwise estimates using free CUDA memory.
+    """
+    env_override = os.environ.get("MSEQ_YX1_BATCH_SIZE")
+    if env_override:
+        try:
+            val = int(env_override)
+            if val > 0:
+                log.info("YX1 batching: using env override batch size=%d", val)
+                return val
+        except ValueError:
+            log.warning("Invalid MSEQ_YX1_BATCH_SIZE=%s; falling back to auto sizing", env_override)
+
+    if not (torch.cuda.is_available() and str(device).startswith("cuda")):
+        return 1
+
+    try:
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+    except RuntimeError as exc:
+        log.warning("YX1 batching: unable to query CUDA memory (%s); using batch size 1", exc)
+        return 1
+
+    per_stack_bytes = (
+        max(n_z, 1)
+        * max(height_px, 1)
+        * max(width_px, 1)
+        * np.dtype(np.float32).itemsize
+    )
+    if per_stack_bytes <= 0:
+        return 1
+
+    safety = float(os.environ.get("MSEQ_YX1_BATCH_SAFETY", "0.7"))
+    safety = min(max(safety, 0.1), 0.95)
+    usable_bytes = int(free_bytes * safety)
+
+    est_batch = max(usable_bytes // per_stack_bytes, 1)
+    max_batch = int(os.environ.get("MSEQ_YX1_BATCH_MAX", "16") or 16)
+    if max_batch > 0:
+        est_batch = min(est_batch, max_batch)
+
+    log.info(
+        "YX1 batching auto-tune: free=%.1f GB total=%.1f GB per-stack=%.1f MB safety=%.0f%% -> batch=%d",
+        free_bytes / 1e9,
+        total_bytes / 1e9,
+        per_stack_bytes / 1e6,
+        safety * 100.0,
+        est_batch,
+    )
+    return est_batch
+
 
 
 def build_ff_from_yx1(
@@ -328,6 +385,8 @@ def build_ff_from_yx1(
     nd = _read_nd2(exp_path)
     shape_twzcxy = nd.shape  # T,W,Z,C,Y,X
     n_t, n_w, n_z = shape_twzcxy[:3]
+    height_px = shape_twzcxy[4] if len(shape_twzcxy) > 4 else nd.shape[-2]
+    width_px = shape_twzcxy[5] if len(shape_twzcxy) > 5 else nd.shape[-1]
     print(f"ND2 reports: n_t={n_t} timepoints, n_w={n_w} wells, n_z={n_z} z-slices")
     print(f"Total expected frames in ND2: {n_t * n_w * n_z}")
     
@@ -662,10 +721,18 @@ def build_ff_from_yx1(
             log.warning("Parallel workers with CUDA batching are not supported; running sequentially on a single worker.")
             par_flag = False
 
-        batch_size = int(os.environ.get("MSEQ_YX1_BATCH_SIZE", "4") or 4)
-        batch_size = max(1, batch_size)
-        queue_size = int(os.environ.get("MSEQ_YX1_WRITE_QUEUE", str(batch_size * 2)) or (batch_size * 2))
-        queue_size = max(2, queue_size)
+        batch_size = max(1, _resolve_batch_size(n_z, height_px, width_px, device))
+
+        env_queue = os.environ.get("MSEQ_YX1_WRITE_QUEUE")
+        if env_queue:
+            try:
+                queue_size = int(env_queue)
+            except ValueError:
+                log.warning("Invalid MSEQ_YX1_WRITE_QUEUE=%s; using default", env_queue)
+                queue_size = batch_size * 2
+        else:
+            queue_size = batch_size * 2
+        queue_size = max(queue_size, 2)
 
         write_queue: Queue[tuple[str, int, np.ndarray]] = Queue(maxsize=queue_size)
         WRITE_SENTINEL = object()

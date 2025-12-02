@@ -33,7 +33,7 @@ try:
     from skimage.measure import regionprops, label
     _HAS_IMAGE_LIBS = True
 except ImportError:
-_HAS_IMAGE_LIBS = False
+    _HAS_IMAGE_LIBS = False
 
 # Pipeline imports
 SCRIPTS_DIR = Path(__file__).parent.parent

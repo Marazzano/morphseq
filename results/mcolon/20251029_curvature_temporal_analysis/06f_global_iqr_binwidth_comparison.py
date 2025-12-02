@@ -30,7 +30,8 @@ from load_data import (
 warnings.filterwarnings('ignore')
 
 # Configuration
-METRIC_NAME = 'normalized_baseline_deviation'
+METRIC_NAME = 'baseline_deviation_normalized'
+ALT_METRIC_NAME = 'normalized_baseline_deviation'
 RANDOM_SEED = 42
 BINWIDTHS = [2.0, 5.0, 10.0]  # hpf
 
@@ -46,6 +47,34 @@ TABLE_DIR.mkdir(parents=True, exist_ok=True)
 WT_GENOTYPE = 'cep290_wildtype'
 
 np.random.seed(RANDOM_SEED)
+
+
+# ============================================================================
+# Metric Column Handling
+# ============================================================================
+
+def ensure_metric_column(df, metric=METRIC_NAME, alt_metric=ALT_METRIC_NAME):
+    """
+    Ensure the preferred metric column exists, falling back to alternative names.
+
+    If the preferred column is missing but the alternative exists, duplicate the
+    alternative into the preferred column name so the rest of the analysis can
+    consistently reference `metric`.
+    """
+    if metric in df.columns:
+        return df
+
+    if alt_metric in df.columns:
+        df = df.copy()
+        df[metric] = df[alt_metric]
+        print(
+            f"  NOTE: '{metric}' not found. Using '{alt_metric}' values instead.",
+        )
+        return df
+
+    raise KeyError(
+        f"Required metric column not found. Expected '{metric}' or '{alt_metric}'."
+    )
 
 
 # ============================================================================
@@ -339,6 +368,7 @@ def main():
     # Load data
     print("\nLoading data...")
     df, metadata = get_analysis_dataframe()
+    df = ensure_metric_column(df, metric=METRIC_NAME, alt_metric=ALT_METRIC_NAME)
     print(f"  Loaded {len(df)} timepoints from {df['embryo_id'].nunique()} embryos")
 
     # Extract WT data for global threshold

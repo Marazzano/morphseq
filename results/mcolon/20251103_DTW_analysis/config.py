@@ -56,7 +56,7 @@ GRID_STEP = 0.5
 # ============================================================================
 
 # K values to test
-K_VALUES = [2, 3, 4, 5]
+K_VALUES = [2, 3, 4, 5, 6, 7, 8]
 
 # Prior/expected k value for methods that need it
 PRIOR_K = 3
@@ -82,10 +82,10 @@ K_SELECTION_METHODS = ['elbow', 'gap_statistic', 'eigengap', 'consensus']
 # ============================================================================
 
 # Threshold for core membership (must be >= this to be "core")
-CORE_THRESHOLD = 0.80
+CORE_THRESHOLD = 0.70
 
 # Threshold for outlier classification (must be <= this to be "outlier")
-OUTLIER_THRESHOLD = 0.3
+OUTLIER_THRESHOLD = 0.4
 
 # ============================================================================
 # MODEL FITTING PARAMETERS
