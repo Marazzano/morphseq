@@ -243,15 +243,9 @@ def test_build03_integration():
     for idx, row in df.iterrows():
         print(f"  snip {idx}: '{row['sam2_qc_flags']}' → sam2_qc_flag={row['sam2_qc_flag']}")
     
-    # Simulate use_embryo_flag calculation
-    df['use_embryo_flag'] = ~(
-        df['bubble_flag'].astype(bool) |
-        df['focus_flag'].astype(bool) |
-        df['frame_flag'].astype(bool) |
-        df['dead_flag'].astype(bool) |
-        df['no_yolk_flag'].astype(bool) |
-        df.get('sam2_qc_flag', pd.Series([False]*len(df))).astype(bool)
-    )
+    # Calculate use_embryo_flag using centralized function
+    from src.build.qc import determine_use_embryo_flag
+    df['use_embryo_flag'] = determine_use_embryo_flag(df)
     
     print("\nFinal use_embryo_flag calculation:")
     print(df[['snip_id', 'sam2_qc_flag', 'focus_flag', 'use_embryo_flag']].to_string(index=False))
@@ -297,15 +291,9 @@ def test_backward_compatibility():
         df['sam2_qc_flag'] = False
         print("Created sam2_qc_flag with default value: False")
     
-    # Calculate use_embryo_flag
-    df['use_embryo_flag'] = ~(
-        df['bubble_flag'].astype(bool) |
-        df['focus_flag'].astype(bool) |
-        df['frame_flag'].astype(bool) |
-        df['dead_flag'].astype(bool) |
-        df['no_yolk_flag'].astype(bool) |
-        df.get('sam2_qc_flag', pd.Series([False]*len(df))).astype(bool)
-    )
+    # Calculate use_embryo_flag using centralized function
+    from src.build.qc import determine_use_embryo_flag
+    df['use_embryo_flag'] = determine_use_embryo_flag(df)
     
     print(f"\nuse_embryo_flag calculated successfully: {df['use_embryo_flag'].iloc[0]}")
     print("✓ PASS: Backward compatibility maintained")

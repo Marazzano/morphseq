@@ -48,3 +48,14 @@ Analyze curvature trends over developmental time for individual embryos, compari
 - Using `predicted_stage_hpf` for developmental time alignment (not absolute frame numbers)
 - Baseline deviation normalized by `total_length_um` to make comparable across embryos
 - Statistical comparisons use leave-one-embryo-out cross-validation to avoid data leakage
+
+## Penetrance Threshold Pipeline (Step 07) Status
+
+The Step 07 scripts explore different approaches for deriving genotype-specific penetrance thresholds. Current status:
+
+- **07a – Validate imputation methods:** active.
+- **07b – DTW clustering analysis:** active; cluster assignments directly describe how penetrance evolves per temporal cluster.
+- **07c – Bayesian with DTW priors:** _deprecated_. Because the DTW clusters already provide the penetrance trajectories we care about, the Bayesian threshold layer is no longer maintained. The script remains in the repository for reference, but it is not part of the current workflow.
+- **07d / 07e:** active comparison/reporting utilities.
+
+If threshold modeling needs to revisit Bayesian priors in the future, revive `07c_bayesian_with_dtw_priors.py` with updated requirements; for now the DTW clustering outputs supersede it.

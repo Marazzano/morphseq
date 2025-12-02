@@ -15,7 +15,7 @@ Key Features:
 
 Algorithm:
 1. For each embryo, find fraction_alive decline points (rate < -0.05)
-2. For each decline candidate, check if ≥25% of subsequent points have dead_flag=True
+2. For each decline candidate, check if ≥80% of subsequent points have dead_flag=True
 3. If persistent, mark as valid death inflection point
 4. Apply 2-hour buffer before inflection using predicted_stage_hpf
 5. Set dead_inflection_time_int to time_int of inflection for all embryo rows
@@ -30,8 +30,10 @@ from scipy.signal import savgol_filter
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
+from src.data_pipeline.quality_control.config import QC_DEFAULTS
 
-def validate_death_persistence(embryo_data: pd.DataFrame, inflection_time: float, threshold: float = 0.25) -> Tuple[bool, Dict[str, Any]]:
+
+def validate_death_persistence(embryo_data: pd.DataFrame, inflection_time: float, threshold: float = 0.80) -> Tuple[bool, Dict[str, Any]]:
     """
     Validate that an inflection point is followed by persistent death.
 
@@ -203,7 +205,7 @@ def detect_persistent_death_inflection(embryo_data: pd.DataFrame,
     return None
 
 
-def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = 2.0) -> pd.DataFrame:
+def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = None) -> pd.DataFrame:
     """
     Compute dead_flag2 using death persistence validation method.
 
@@ -214,8 +216,9 @@ def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = 2.0
     ----------
     df : pd.DataFrame
         Input dataframe with embryo data
-    dead_lead_time : float, default 2.0
-        Hours before death to retroactively flag embryos (buffer time)
+    dead_lead_time : float, optional
+        Hours before death to retroactively flag embryos (buffer time).
+        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
 
     Returns
     -------
@@ -235,6 +238,10 @@ def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = 2.0
 
     Expected detection rate: ~80% of embryos (vs lower rate with legacy method)
     """
+    # Use default from config if not specified
+    if dead_lead_time is None:
+        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+
     df = df.copy()
 
     # Initialize new columns

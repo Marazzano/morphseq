@@ -30,7 +30,7 @@ from src.analyze.trajectory_analysis.pair_analysis import (
 )
 
 # Configuration
-EXPERIMENT_ID = '20251112'
+EXPERIMENT_ID = '20251113'
 METRIC_NAME = 'baseline_deviation_normalized'
 TIME_COL = 'predicted_stage_hpf'
 EMBRYO_ID_COL = 'embryo_id'
@@ -38,7 +38,7 @@ PAIR_COL = 'pair'
 GENOTYPE_COL = 'genotype'
 
 # Output paths
-OUTPUT_DIR = Path('/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20251113_curvature_pair_analysis/output_20251112')
+OUTPUT_DIR = Path('/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20251113_curvature_pair_analysis/output_20251113')
 FIGURES_DIR = OUTPUT_DIR / 'figures'
 TABLES_DIR = OUTPUT_DIR / 'tables'
 

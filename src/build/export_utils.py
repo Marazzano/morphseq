@@ -10,6 +10,7 @@ from skimage import exposure, util
 from pathlib import Path
 import torch
 import torch.nn.functional as F
+from torch.profiler import profile, ProfilerActivity
 from concurrent.futures import ThreadPoolExecutor
 import skimage.io as skio
 # psutil appears unused here; safe to remove to reduce dependencies.
@@ -112,7 +113,15 @@ def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_d
 
     # 3) load per-well Excel sheets and stack
     # if well_sheets is None:
-    well_sheets = ["medium", "genotype", "chem_perturbation", "start_age_hpf", "embryos_per_well", "temperature"]
+    well_sheets = [
+        "medium",
+        "genotype",
+        "chem_perturbation",
+        "start_age_hpf",
+        "embryos_per_well",
+        "temperature",
+        "pair",
+    ]
     # well_meta_dir = meta_root / "well_metadata"
     # well_xl_paths = sorted(well_meta.glob("*_well_metadata.xlsx"))
 
@@ -169,7 +178,8 @@ def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_d
             f"  • chem_perturbation\n"
             f"  • start_age_hpf\n"
             f"  • embryos_per_well\n"
-            f"  • temperature\n\n"
+            f"  • temperature\n"
+            f"  • pair\n\n"
             f"Each sheet should have 8 rows × 12 columns (A01-H12 plate layout)"
         ) from e
     
@@ -179,7 +189,7 @@ def build_experiment_metadata(repo_root: Union[str, Path], exp_name: str, meta_d
             f"File exists but cannot be processed. Common issues:\n"
             f"  • File is corrupted or not a valid Excel file\n"
             f"  • File is currently open in Excel (close it and try again)\n"
-            f"  • Missing required sheets (medium, genotype, chem_perturbation, start_age_hpf, embryos_per_well, temperature)\n"
+            f"  • Missing required sheets (medium, genotype, chem_perturbation, start_age_hpf, embryos_per_well, temperature, pair)\n"
             f"  • Incorrect sheet format (should be 8 rows × 12 columns)\n\n"
             f"Original error: {e}"
         ) from e

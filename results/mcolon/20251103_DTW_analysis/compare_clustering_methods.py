@@ -17,12 +17,13 @@ For each method and k value, computes:
 - Membership classification (core/uncertain/outlier)
 - Cross-method agreement (ARI between methods)
 
-Generates:
-- 16 temporal trends plots (4 methods × 4 k values)
-- 4 method agreement heatmaps
-- 4 core membership distributions
-- 4 bootstrap stability plots
-- 1 aggregate comparison plot (like membership_vs_k.png)
+Generates (organized by plot type):
+SECTION A: Co-association matrices (28 plots: 4 methods × 7 k values)
+SECTION B: Temporal trends with membership coloring (28 plots: 4 methods × 7 k values)
+SECTION C: Cluster trajectory overlays (28 plots: 4 methods × 7 k values)
+SECTION D: Membership vs K plots (4 plots: 1 per method)
+
+Total: 88 plots
 
 Usage
 -----
@@ -72,15 +73,21 @@ dtw_precompute_module = load_module("dtw_precompute", "0_dtw_precompute.py")
 # Extract functions
 from sklearn_extra.cluster import KMedoids
 run_bootstrap = cluster_module.run_bootstrap
+plot_coassoc_matrix = cluster_module.plot_coassoc_matrix
 consensus_clustering = select_k_module.consensus_clustering
 analyze_membership = membership_module.analyze_membership
+plot_membership_vs_k = membership_module.plot_membership_vs_k
 load_data = io_module.load_data
 save_data = io_module.save_data
 save_plot = io_module.save_plot
 precompute_dtw = dtw_precompute_module.precompute_dtw
 
 # Import plot utilities
-from plot_utils import plot_temporal_trends_by_cluster
+from plot_utils import (
+    plot_temporal_trends_by_cluster,
+    plot_cluster_trajectory_overlay,
+    plot_temporal_trends_with_membership
+)
 from src.analyze.dtw_time_trend_analysis.trajectory_utils import pad_trajectories_for_plotting
 
 import warnings
@@ -440,9 +447,52 @@ def main():
 
         all_results[k] = results_k
 
-        # Generate temporal trends plots for each method
+    # ============================================================================
+    # SECTION A: CO-ASSOCIATION MATRICES
+    # ============================================================================
+    if VERBOSE_OUTPUT:
+        print(f"\n{'='*80}")
+        print(f"SECTION A: Generating Co-association Matrix Heatmaps")
+        print(f"{'='*80}")
+
+    for k in K_VALUES:
+        results_k = all_results[k]
         if VERBOSE_OUTPUT:
-            print(f"\nGenerating plots for k={k}...")
+            print(f"\n  k={k}:")
+
+        for method_name, method_result in results_k.items():
+            if method_name not in ['ari_matrix', 'methods']:
+                try:
+                    C = method_result['coassoc']
+                    labels = method_result['labels']
+
+                    fig = plot_coassoc_matrix(
+                        C, labels=labels, k=k,
+                        title=f"Co-association Matrix - {method_name.replace('_', ' ').title()} (k={k})"
+                    )
+
+                    plot_name = f"coassoc_{method_name}_k{k}"
+                    save_plot(7, plot_name, fig, OUTPUT_DIR)
+                    plt.close(fig)
+
+                    if VERBOSE_OUTPUT:
+                        print(f"    ✓ Saved {plot_name}")
+                except Exception as e:
+                    if VERBOSE_OUTPUT:
+                        print(f"    Warning: Could not generate co-assoc plot for {method_name}: {e}")
+
+    # ============================================================================
+    # SECTION B: TEMPORAL TRENDS WITH MEMBERSHIP COLORING
+    # ============================================================================
+    if VERBOSE_OUTPUT:
+        print(f"\n{'='*80}")
+        print(f"SECTION B: Generating Temporal Trends with Membership Coloring")
+        print(f"{'='*80}")
+
+    for k in K_VALUES:
+        results_k = all_results[k]
+        if VERBOSE_OUTPUT:
+            print(f"\n  k={k}:")
 
         for method_name, method_result in results_k.items():
             if method_name not in ['ari_matrix', 'methods', 'coassoc']:
@@ -451,16 +501,104 @@ def main():
                         precomp_results, method_result, k, method_name, verbose=False
                     )
 
-                    # Save plot
                     plot_name = f"temporal_trends_{method_name}_k{k}"
                     save_plot(7, plot_name, fig, OUTPUT_DIR)
                     plt.close(fig)
 
                     if VERBOSE_OUTPUT:
-                        print(f"  ✓ Saved {plot_name}")
+                        print(f"    ✓ Saved {plot_name}")
                 except Exception as e:
                     if VERBOSE_OUTPUT:
-                        print(f"  Warning: Could not generate plot for {method_name}: {e}")
+                        print(f"    Warning: Could not generate plot for {method_name}: {e}")
+
+    # ============================================================================
+    # SECTION C: CLUSTER TRAJECTORY OVERLAYS
+    # ============================================================================
+    if VERBOSE_OUTPUT:
+        print(f"\n{'='*80}")
+        print(f"SECTION C: Generating Cluster Trajectory Overlay Plots")
+        print(f"{'='*80}")
+
+    for k in K_VALUES:
+        results_k = all_results[k]
+        if VERBOSE_OUTPUT:
+            print(f"\n  k={k}:")
+
+        for method_name, method_result in results_k.items():
+            if method_name not in ['ari_matrix', 'methods', 'coassoc']:
+                try:
+                    # Prepare trajectories by cluster
+                    trajectories = precomp_results['trajectories']
+                    common_grid = precomp_results['common_grid']
+                    df_long = precomp_results['df_long']
+                    embryo_ids = precomp_results['embryo_ids']
+                    labels = method_result['labels']
+
+                    trajectories_by_cluster = {}
+                    for cluster_id in np.unique(labels):
+                        cluster_indices = np.where(labels == cluster_id)[0]
+                        cluster_trajs = [trajectories[i] for i in cluster_indices]
+                        cluster_embryo_ids = [embryo_ids[i] for i in cluster_indices]
+
+                        # Pad for plotting
+                        cluster_trajs_padded = pad_trajectories_for_plotting(
+                            cluster_trajs, common_grid, df_long, cluster_embryo_ids, verbose=False
+                        )
+                        trajectories_by_cluster[cluster_id] = cluster_trajs_padded
+
+                    # Generate overlay plot
+                    fig = plot_cluster_trajectory_overlay(
+                        trajectories_by_cluster,
+                        common_grid,
+                        k=k,
+                        title=f"Cluster Trajectory Overlay - {method_name.replace('_', ' ').title()} (k={k})"
+                    )
+
+                    plot_name = f"cluster_overlay_{method_name}_k{k}"
+                    save_plot(7, plot_name, fig, OUTPUT_DIR)
+                    plt.close(fig)
+
+                    if VERBOSE_OUTPUT:
+                        print(f"    ✓ Saved {plot_name}")
+                except Exception as e:
+                    if VERBOSE_OUTPUT:
+                        print(f"    Warning: Could not generate overlay plot for {method_name}: {e}")
+
+    # ============================================================================
+    # SECTION D: MEMBERSHIP VS K PLOTS (one per method)
+    # ============================================================================
+    if VERBOSE_OUTPUT:
+        print(f"\n{'='*80}")
+        print(f"SECTION D: Generating Membership vs K Plots")
+        print(f"{'='*80}")
+
+    # Organize membership data by method across all k values
+    methods = ['kmedoids_dtw', 'hierarchical_dtw', 'kmedoids_consensus', 'hierarchical_consensus']
+
+    for method_name in methods:
+        try:
+            # Collect membership data across all k values for this method
+            all_k_membership = {}
+            for k in K_VALUES:
+                method_result = all_results[k][method_name]
+                all_k_membership[k] = method_result['membership']
+
+            # Generate membership vs k plot
+            fig = plot_membership_vs_k(
+                all_k_membership,
+                best_k=None,
+                title=f"Membership Distribution Across K Values - {method_name.replace('_', ' ').title()}"
+            )
+
+            plot_name = f"membership_vs_k_{method_name}"
+            save_plot(7, plot_name, fig, OUTPUT_DIR)
+            plt.close(fig)
+
+            if VERBOSE_OUTPUT:
+                print(f"  ✓ Saved {plot_name}")
+        except Exception as e:
+            if VERBOSE_OUTPUT:
+                print(f"  Warning: Could not generate membership vs k plot for {method_name}: {e}")
 
     # Save results
     if VERBOSE_OUTPUT:

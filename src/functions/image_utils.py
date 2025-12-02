@@ -117,15 +117,19 @@ def process_masks(im_mask, im_yolk, row, close_radius=15):
     return em_bin.astype(int), yolk_bin.astype(int)
 
 
-def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape):
+def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape, return_metrics=False):
 
     if np.sum(emb_mask_rotated) == 0:
+        if return_metrics:
+            return np.zeros(outshape), np.zeros(outshape), np.zeros(outshape), True
         return np.zeros(outshape), np.zeros(outshape), np.zeros(outshape)
 
     y_indices = np.where(np.max(emb_mask_rotated, axis=1) > 0.5)[0]
     x_indices = np.where(np.max(emb_mask_rotated, axis=0) > 0.5)[0]
     if y_indices.size == 0 or x_indices.size == 0:
         # Degenerate mask after interpolation/rotation; treat as empty crop to keep pipeline moving.
+        if return_metrics:
+            return np.zeros(outshape), np.zeros(outshape), np.zeros(outshape), True
         return np.zeros(outshape), np.zeros(outshape), np.zeros(outshape)
     y_mean = int(np.mean(y_indices))
     x_mean = int(np.mean(x_indices))
@@ -139,6 +143,9 @@ def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape
     from_range_x = np.asarray([np.max([raw_range_x[0], 0]), np.min([raw_range_x[1], fromshape[1]])])
     to_range_x = [0 + (from_range_x[0] - raw_range_x[0]), outshape[1] + (from_range_x[1] - raw_range_x[1])]
 
+    # Calculate mask area before and after cropping for out_of_frame detection
+    mask_area_before = np.sum(emb_mask_rotated > 0.5)
+
     if len(im_ff_rotated.shape) == 2:
         im_cropped = np.zeros(outshape).astype(np.uint8)
         im_cropped[to_range_y[0]:to_range_y[1], to_range_x[0]:to_range_x[1]] = \
@@ -147,7 +154,7 @@ def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape
         im_cropped = np.zeros((im_ff_rotated.shape[0], outshape[0], outshape[1]), dtype=im_ff_rotated.dtype)
         im_cropped[:, to_range_y[0]:to_range_y[1], to_range_x[0]:to_range_x[1]] = \
             im_ff_rotated[:, from_range_y[0]:from_range_y[1], from_range_x[0]:from_range_x[1]]
-        
+
     emb_mask_cropped = np.zeros(outshape)#.astype(np.uint8)
     emb_mask_cropped[to_range_y[0]:to_range_y[1], to_range_x[0]:to_range_x[1]] = \
         emb_mask_rotated[from_range_y[0]:from_range_y[1], from_range_x[0]:from_range_x[1]]
@@ -155,6 +162,14 @@ def crop_embryo_image(im_ff_rotated, emb_mask_rotated, im_yolk_rotated, outshape
     yolk_mask_cropped = np.zeros(outshape)#.astype(np.uint8)
     yolk_mask_cropped[to_range_y[0]:to_range_y[1], to_range_x[0]:to_range_x[1]] = \
         im_yolk_rotated[from_range_y[0]:from_range_y[1], from_range_x[0]:from_range_x[1]]
+
+    # Calculate out_of_frame flag based on mask area retention
+    if return_metrics:
+        mask_area_after = np.sum(emb_mask_cropped > 0.5)
+        area_retained = mask_area_after / mask_area_before if mask_area_before > 0 else 0.0
+        # Flag if less than 98% of mask area is retained
+        out_of_frame_flag = area_retained < 0.98
+        return im_cropped, emb_mask_cropped, yolk_mask_cropped, out_of_frame_flag
 
     return im_cropped, emb_mask_cropped, yolk_mask_cropped
 

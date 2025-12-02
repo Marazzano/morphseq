@@ -446,7 +446,7 @@ def plot_membership_vs_k(
     dpi: int = DEFAULT_DPI
 ) -> plt.Figure:
     """
-    Plot membership category percentages as k varies (1×2 layout).
+    Plot membership category percentages as k varies.
 
     Shows line plot and stacked area chart tracking how core/uncertain/outlier
     proportions change across different k values.
