@@ -36,6 +36,8 @@ def plot_genotypes_overlaid(
     title: str = 'Curvature Trajectories by Group - All Genotypes Compared',
     figsize: Tuple[int, int] = (15, 4.5),
     bin_width: float = 0.5,
+    smooth_method: Optional[str] = 'gaussian',
+    smooth_params: Optional[Dict] = None,
 ) -> plt.Figure:
     """Create a 1xN plot showing all genotypes overlaid for each group.
 
@@ -53,6 +55,9 @@ def plot_genotypes_overlaid(
         title: Figure title
         figsize: Figure size as (width, height)
         bin_width: Width of bins for mean calculation
+        smooth_method: Smoothing method ('gaussian' or None for no smoothing).
+            Default: 'gaussian'
+        smooth_params: Parameters for smoothing (see get_trajectories_for_group)
 
     Returns:
         matplotlib Figure object
@@ -82,6 +87,8 @@ def plot_genotypes_overlaid(
                 time_col=time_col,
                 metric_col=metric_col,
                 embryo_id_col=embryo_id_col,
+                smooth_method=smooth_method,
+                smooth_params=smooth_params,
             )
             all_data[(group, genotype)] = (trajectories, embryo_ids, n_embryos)
             if trajectories:
@@ -146,6 +153,8 @@ def plot_faceted_trajectories(
     title: str = 'Curvature Trajectories - Faceted Overview',
     figsize: Optional[Tuple[int, int]] = None,
     bin_width: float = 0.5,
+    smooth_method: Optional[str] = 'gaussian',
+    smooth_params: Optional[Dict] = None,
 ) -> plt.Figure:
     """Create a faceted plot with rows and columns of subplots.
 
@@ -163,6 +172,9 @@ def plot_faceted_trajectories(
         title: Figure title
         figsize: Figure size (auto-calculated if None)
         bin_width: Width of bins for mean calculation
+        smooth_method: Smoothing method ('gaussian' or None for no smoothing).
+            Default: 'gaussian'
+        smooth_params: Parameters for smoothing (see get_trajectories_for_group)
 
     Returns:
         matplotlib Figure object
@@ -197,6 +209,8 @@ def plot_faceted_trajectories(
                 time_col=time_col,
                 metric_col=metric_col,
                 embryo_id_col=embryo_id_col,
+                smooth_method=smooth_method,
+                smooth_params=smooth_params,
             )
             all_data[(row_group, col_group)] = (trajectories, embryo_ids, n_embryos)
             if trajectories:
