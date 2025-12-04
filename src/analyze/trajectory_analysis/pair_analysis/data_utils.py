@@ -7,6 +7,7 @@ Functions for extracting trajectories and computing statistics.
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Tuple, Any
+from scipy.ndimage import gaussian_filter1d
 
 
 def get_trajectories_for_group(
@@ -15,6 +16,8 @@ def get_trajectories_for_group(
     time_col: str = 'predicted_stage_hpf',
     metric_col: str = 'baseline_deviation_normalized',
     embryo_id_col: str = 'embryo_id',
+    smooth_method: Optional[str] = 'gaussian',
+    smooth_params: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[List[Dict]], Optional[np.ndarray], int]:
     """Extract trajectories for a specific group defined by filter conditions.
 
@@ -24,6 +27,11 @@ def get_trajectories_for_group(
         time_col: Column name for time values
         metric_col: Column name for metric values
         embryo_id_col: Column name for embryo IDs
+        smooth_method: Smoothing method ('gaussian' or None for no smoothing).
+            Default: 'gaussian'
+        smooth_params: Parameters for smoothing. Defaults:
+            - gaussian: {'sigma': 1.5}
+            - None: no smoothing applied (raw data)
 
     Returns:
         Tuple of (trajectories, embryo_ids, n_embryos)
@@ -36,7 +44,9 @@ def get_trajectories_for_group(
             df,
             {'pair': 'cep290_pair_1', 'genotype': 'cep290_homozygous'},
             time_col='predicted_stage_hpf',
-            metric_col='baseline_deviation_normalized'
+            metric_col='baseline_deviation_normalized',
+            smooth_method='gaussian',
+            smooth_params={'sigma': 1.5}
         )
     """
     # Apply filters
@@ -49,6 +59,13 @@ def get_trajectories_for_group(
     if len(filtered) == 0:
         return None, None, 0
 
+    # Set default smoothing parameters
+    if smooth_params is None:
+        if smooth_method == 'gaussian':
+            smooth_params = {'sigma': 1.5}
+        else:
+            smooth_params = {}
+
     # Group by embryo and get trajectories
     embryo_ids = filtered[embryo_id_col].unique()
     trajectories = []
@@ -56,10 +73,19 @@ def get_trajectories_for_group(
     for embryo_id in embryo_ids:
         embryo_data = filtered[filtered[embryo_id_col] == embryo_id].sort_values(time_col)
         if len(embryo_data) > 1:
+            times = embryo_data[time_col].values
+            metrics = embryo_data[metric_col].values
+
+            # Apply Gaussian smoothing if requested
+            if smooth_method == 'gaussian':
+                sigma = smooth_params.get('sigma', 1.5)
+                metrics = gaussian_filter1d(metrics, sigma=sigma)
+            # else: use raw data (no smoothing)
+
             trajectories.append({
                 'embryo_id': embryo_id,
-                'times': embryo_data[time_col].values,
-                'metrics': embryo_data[metric_col].values,
+                'times': times,
+                'metrics': metrics,
             })
 
     return trajectories, embryo_ids, len(trajectories)
