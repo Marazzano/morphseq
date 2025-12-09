@@ -34,8 +34,8 @@ from src.analyze.trajectory_analysis.pair_analysis import (
 
 # Configuration - will loop over these
 # NOTE: 20251104 doesn't have df03 file yet in build06_output, so only analyzing 20251119
-EXPERIMENT_IDS = ['20251119']  # ['20251104', '20251119'] when 20251104 is processed
-METRICS = ['baseline_deviation_normalized', 'total_length_um']
+EXPERIMENT_IDS = ['20251104']  # ['20251104', '20251119'] when 20251104 is processed
+METRICS = ['baseline_deviation_normalized', 'total_length_um', 'surface_area_um']
 
 # Constants
 TIME_COL = 'predicted_stage_hpf'
@@ -58,6 +58,7 @@ GENOTYPE_COLORS = {
 METRIC_DISPLAY_NAMES = {
     'baseline_deviation_normalized': 'Normalized Baseline Deviation',
     'total_length_um': 'Total Length (µm)',
+    'surface_area_um': 'Surface Area (µm²)',
 }
 
 # Smoothing configuration
