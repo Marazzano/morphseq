@@ -16,10 +16,10 @@ QC_DEFAULTS = {
     # to exclude data from compromised embryos.
 
     # Persistence threshold for dead flag confirmation
-    "persistence_threshold": 0.25,
+    "persistence_threshold": 0.80,
     # Fraction of time steps that must be flagged as dead to confirm death detection.
-    # Default 0.25 means 25% of time steps after initial death detection must maintain
-    # the dead status for robustness against noise.
+    # Default 0.80 means 80% of time steps after initial death detection must maintain
+    # the dead status for biological persistence (death is permanent).
 
     # Minimum decline rate for death detection
     "min_decline_rate": 0.05,

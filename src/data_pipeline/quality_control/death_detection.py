@@ -10,7 +10,7 @@ checking whether they are followed by sustained death signals.
 Key Features:
 - Uses fraction_alive decline detection with persistence validation
 - Adds dead_inflection_time_int column for precise death time tracking
-- Parameters: 25% persistence threshold, 0.05 decline rate, 2hr buffer
+- Parameters: 80% persistence threshold, 0.05 decline rate, 4hr buffer
 - Maintains compatibility with existing dead_flag2 interface
 
 Algorithm:
@@ -43,7 +43,7 @@ def validate_death_persistence(embryo_data: pd.DataFrame, inflection_time: float
         Data for single embryo, sorted by time
     inflection_time : float
         Time of proposed inflection point
-    threshold : float, default 0.25
+    threshold : float, default 0.80
         Minimum fraction of post-inflection points that must be dead_flag=True
 
     Returns
@@ -154,7 +154,7 @@ def detect_persistent_death_inflection(embryo_data: pd.DataFrame,
     ----------
     embryo_data : pd.DataFrame
         Data for single embryo
-    persistence_threshold : float, default 0.25
+    persistence_threshold : float, default 0.80
         Minimum fraction of post-inflection points that must be dead_flag=True
     min_decline_rate : float, default 0.05
         Minimum decline rate to consider as inflection candidate
@@ -231,9 +231,9 @@ def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = Non
     -----
     Algorithm:
     1. For each embryo, detect fraction_alive decline points using time_int
-    2. Validate persistence: ≥25% of post-inflection points must have dead_flag=True
+    2. Validate persistence: ≥80% of post-inflection points must have dead_flag=True
     3. If persistent, set dead_inflection_time_int for all rows of that embryo
-    4. Apply 2-hour buffer using predicted_stage_hpf for flagging
+    4. Apply 4-hour buffer using predicted_stage_hpf for flagging
     5. Flag dead_flag2=True for timepoints >= buffer_start_hpf
 
     Expected detection rate: ~80% of embryos (vs lower rate with legacy method)
@@ -300,8 +300,8 @@ def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = Non
     print(f"Death Persistence Validation Results:")
     print(f"├─ Detected death in: {detected_count}/{total_embryos} embryos ({detected_count/total_embryos:.1%})")
     print(f"├─ Flagged timepoints: {flagged_count}")
-    print(f"├─ Parameters: 25% persistence threshold, 0.05 decline rate, {dead_lead_time}hr buffer")
-    print(f"└─ Algorithm: fraction_alive decline → validate ≥25% post-inflection dead_flag=True")
+    print(f"├─ Parameters: 80% persistence threshold, 0.05 decline rate, {dead_lead_time}hr buffer")
+    print(f"└─ Algorithm: fraction_alive decline → validate ≥80% post-inflection dead_flag=True")
 
     return df
 
@@ -314,9 +314,9 @@ def main():
     print("=" * 50)
     print("This module provides biologically-grounded death detection for build04.")
     print("Key features:")
-    print("- Persistent death validation (25% threshold)")
+    print("- Persistent death validation (80% threshold)")
     print("- Precise death time tracking (dead_inflection_time_int)")
-    print("- 2-hour buffer using predicted_stage_hpf")
+    print("- 4-hour buffer using predicted_stage_hpf")
     print("- ~80% embryo detection rate")
 
 
