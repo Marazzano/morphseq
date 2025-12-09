@@ -30,8 +30,9 @@ from sklearn.cluster import KMeans
 import nd2
 import skimage.io as skio
 import skimage
-from stitch2d import StructuredMosaic      
+from stitch2d import StructuredMosaic
 from src.build.export_utils import (LoG_focus_stacker, im_rescale, _write_ff, build_experiment_metadata)
+from src.data_pipeline.metadata_ingest.mapping.series_well_mapper_yx1 import map_nd2_to_wells_by_xy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -486,48 +487,88 @@ def build_ff_from_yx1(
 
     # Note: timestamp extraction moved to after well list creation for robust processing
 
-    # get series numbers (robust to header row/col)
-    sm_raw = plate_map_xl.parse("series_number_map", header=None)
-    # Detect header row of 1..12 in columns 1..12 and drop it if present
-    data_rows = sm_raw
-    try:
-        header_like = list(sm_raw.iloc[0, 1:13].astype(object))
-        if header_like == list(range(1, 13)):
-            data_rows = sm_raw.iloc[1:9, :]  # rows A..H in 1..8 next
-        else:
-            data_rows = sm_raw.iloc[:8, :]
-    except Exception:
-        data_rows = sm_raw.iloc[:8, :]
-
-    series_map = data_rows.iloc[:, 1:13]  # 8x12 numeric grid
+    # TRY XY-BASED MAPPING FIRST (default, most reliable)
+    # Get ND2 file path for XY extraction
+    nd2_files = list(exp_path.glob("*.nd2"))
+    nd2_path = nd2_files[0] if nd2_files else None
 
     well_name_list = []
     well_ind_list = []
-    used_series = set()
-    col_id_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    row_letter_list = ["A", "B", "C", "D", "E", "F", "G", "H"]
-    for c in range(len(col_id_list)):
-        for r in range(len(row_letter_list)):
-            val = series_map.iloc[r, c]
-            if pd.notna(val):
-                try:
-                    series_idx_1b = int(val)
-                except Exception:
-                    continue
-                # Validate series index: 1..n_w
-                if series_idx_1b < 1 or series_idx_1b > n_w:
-                    log.warning("Skipping out-of-range series index %d (valid 1..%d) at well %s%02d",
-                                series_idx_1b, n_w, row_letter_list[r], col_id_list[c])
-                    continue
-                if series_idx_1b in used_series:
-                    # Skip duplicates to avoid mapping two wells to same ND2 series
-                    log.warning("Duplicate series index %d; keeping first mapping, skipping well %s%02d",
-                                series_idx_1b, row_letter_list[r], col_id_list[c])
-                    continue
-                used_series.add(series_idx_1b)
-                well_name = row_letter_list[r] + f"{col_id_list[c]:02}"
+    mapping_method = "unknown"
+
+    if nd2_path:
+        try:
+            log.info("Attempting XY-based reference mapping...")
+            p_to_well_map, xy_diag = map_nd2_to_wells_by_xy(nd2_path)
+
+            # Convert P-based mapping (0-based) to series-based (1-based)
+            # Sort by P index to maintain order
+            for p_idx in sorted(p_to_well_map.keys()):
+                well_name = p_to_well_map[p_idx]
+                series_idx_1b = p_idx + 1  # Convert 0-based P to 1-based series
                 well_name_list.append(well_name)
                 well_ind_list.append(series_idx_1b)
+
+            mapping_method = "xy_reference"
+            log.info("✓ XY-based mapping SUCCESS: %d wells mapped", len(well_name_list))
+            log.info("  Distance stats: min=%.1f, max=%.1f, mean=%.1f µm",
+                     min(xy_diag['distances']) if xy_diag['distances'] else 0,
+                     max(xy_diag['distances']) if xy_diag['distances'] else 0,
+                     np.mean(xy_diag['distances']) if xy_diag['distances'] else 0)
+            if xy_diag['rejected']:
+                log.warning("  Rejected %d positions (distance > threshold)", len(xy_diag['rejected']))
+
+        except Exception as e:
+            log.warning("XY-based mapping failed: %s", str(e))
+            log.warning("Falling back to Excel series_number_map...")
+            well_name_list = []
+            well_ind_list = []
+
+    # FALLBACK TO EXCEL-BASED MAPPING if XY failed or unavailable
+    if not well_name_list:
+        log.info("Using Excel-based series_number_map (fallback)")
+        # get series numbers (robust to header row/col)
+        sm_raw = plate_map_xl.parse("series_number_map", header=None)
+        # Detect header row of 1..12 in columns 1..12 and drop it if present
+        data_rows = sm_raw
+        try:
+            header_like = list(sm_raw.iloc[0, 1:13].astype(object))
+            if header_like == list(range(1, 13)):
+                data_rows = sm_raw.iloc[1:9, :]  # rows A..H in 1..8 next
+            else:
+                data_rows = sm_raw.iloc[:8, :]
+        except Exception:
+            data_rows = sm_raw.iloc[:8, :]
+
+        series_map = data_rows.iloc[:, 1:13]  # 8x12 numeric grid
+
+        used_series = set()
+        col_id_list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        row_letter_list = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        for c in range(len(col_id_list)):
+            for r in range(len(row_letter_list)):
+                val = series_map.iloc[r, c]
+                if pd.notna(val):
+                    try:
+                        series_idx_1b = int(val)
+                    except Exception:
+                        continue
+                    # Validate series index: 1..n_w
+                    if series_idx_1b < 1 or series_idx_1b > n_w:
+                        log.warning("Skipping out-of-range series index %d (valid 1..%d) at well %s%02d",
+                                    series_idx_1b, n_w, row_letter_list[r], col_id_list[c])
+                        continue
+                    if series_idx_1b in used_series:
+                        # Skip duplicates to avoid mapping two wells to same ND2 series
+                        log.warning("Duplicate series index %d; keeping first mapping, skipping well %s%02d",
+                                    series_idx_1b, row_letter_list[r], col_id_list[c])
+                        continue
+                    used_series.add(series_idx_1b)
+                    well_name = row_letter_list[r] + f"{col_id_list[c]:02}"
+                    well_name_list.append(well_name)
+                    well_ind_list.append(series_idx_1b)
+
+        mapping_method = "excel_series_number_map"
 
     # Log a concise mapping summary for diagnostics
     if well_name_list and well_ind_list:
@@ -536,8 +577,8 @@ def build_ff_from_yx1(
         smin = pairs[0][1]
         smax = pairs[-1][1]
         log.info(
-            "YX1 series_number_map: selected_wells=%d, series_min=%d, series_max=%d",
-            sel, smin, smax
+            "YX1 well mapping [%s]: selected_wells=%d, series_min=%d, series_max=%d",
+            mapping_method, sel, smin, smax
         )
         log.info(
             "YX1 map examples: first %s->%d | last %s->%d",
