@@ -35,7 +35,7 @@ MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20250529_24hpf_ctrl_atf6" #20250529_24hpf_ctrl_atf6
+DEFAULT_EXPERIMENTS="20251121" #20251104,20250529_24hpf_ctrl_atf6
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -49,13 +49,13 @@ DEFAULT_EXPERIMENTS="20250529_24hpf_ctrl_atf6" #20250529_24hpf_ctrl_atf6
 # Pipeline stage toggles (1=run, 0=skip)
 : "${RUN_METADATA_REBUILD:=0}"
 : "${RUN_SAM2:=0}"
-: "${RUN_BUILD03:=1}"
+: "${RUN_BUILD03:=0}"
 : "${BUILD03_SKIP_GEOMETRY_QC:=0}"  # 0=compute full geometry QC (default), 1=fast mode (skip QC, mark all embryos usable)
-: "${RUN_BUILD04:=1}"
+: "${RUN_BUILD04:=0}"
 : "${RUN_BUILD06:=1}"
 : "${RUN_SNIP_EXPORT:=1}"
 
-# Snip export knobs (outscale fixed at 6.5 to match embedding expectations)
+# Snip export knobs (outscale fixed at 7.8 to match embedding expectations)
 : "${SNIP_WORKERS:=1}"
 : "${SNIP_DL_RAD_UM:=50}"
 : "${SNIP_OVERWRITE:=0}"

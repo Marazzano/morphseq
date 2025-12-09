@@ -72,6 +72,7 @@ def ensure_embeddings_for_experiments(
     py39_env_path: str = "/net/trapnell/vol1/home/nlammers/micromamba/envs/vae-env-cluster",
     overwrite: bool = False,
     process_missing: bool = False,
+    generate_missing: Optional[bool] = None,
     verbose: bool = False
 ) -> bool:
     """
@@ -87,6 +88,7 @@ def ensure_embeddings_for_experiments(
         py39_env_path: Path to Python 3.9 environment
         overwrite: Force regeneration even if embeddings exist
         process_missing: Only process missing embeddings
+        generate_missing: Alias for process_missing (kept for CLI compatibility)
         verbose: Print verbose output
         
     Returns:
@@ -124,6 +126,10 @@ def ensure_embeddings_for_experiments(
         if verbose:
             print(f"   Missing: {missing}")
         missing_experiments = missing
+    
+    # Support legacy callers that pass generate_missing (e.g., experiment manager)
+    if generate_missing is not None:
+        process_missing = generate_missing
     
     # Generate missing embeddings
     success = run_embedding_generation_subprocess(
