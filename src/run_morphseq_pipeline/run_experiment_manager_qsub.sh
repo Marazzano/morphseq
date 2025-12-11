@@ -17,17 +17,19 @@ set -euo pipefail
 REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
 DATA_ROOT="${REPO_ROOT}/morphseq_playground"
 # EXPERIMENTS="all"
-EXPERIMENTS="20251121,20251125,20251104" #"20250305,20230531,20230525,20230615" #"20250711,20250519"
+EXPERIMENTS="20251104,20251106,20251113,20251119,20251121,20251125,20251020,20251017_part1,20251017_part2" #"20250305,20230531,20230525,20230615" #"20250711,20250519"
 ACTION="${ACTION:-e2e}"     # default to e2e, but can be overridden with -v ACTION=build03
 DRY_RUN="0"                 # set to 1 to enable --dry-run
-FORCE_OVERWRITE="1"         # set to 1 to enable --force (rerun even if not needed)
+FORCE_OVERWRITE="1"         # set to 1 to enable --force (regenerates FF files AND reruns steps)
 ENV_NAME="segmentation_grounded_sam"
-MSEQ_OVERWRITE_BUILD01="0"   # force FF recompute (both Keyence/YX1)
-MSEQ_OVERWRITE_STITCH="0"    # force restitch (Keyence)
+# Note: With --force, the CLI automatically sets MSEQ_OVERWRITE_BUILD01=1 and MSEQ_OVERWRITE_STITCH=1
+# See src/run_morphseq_pipeline/cli.py for details.
+# If you need to set these WITHOUT using --force, uncomment below:
+# export MSEQ_OVERWRITE_BUILD01="1"
+# export MSEQ_OVERWRITE_STITCH="1"
 # MSEQ_BUILD01_DEBUG="1"       # enable verbose logging in build01 step
 # MSEQ_TRACE="1"
 # MSEQ_YX1_DEBUG="1"
-# export MSEQ_OVERWRITE_BUILD01 MSEQ_OVERWRITE_STITCH MSEQ_BUILD01_DEBUG
 
 # ----------------------------------------------------------------------------
 
@@ -124,6 +126,6 @@ echo "[morphseq] Done."
 #   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
 
 
-# qsub -t 1-3 -tc 3 src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+# qsub -t 1-9 -tc 3 src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
 
 # qsub src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
