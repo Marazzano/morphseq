@@ -728,34 +728,26 @@ def build_ff_from_yx1(
         print(f"Subsetting to {len(well_name_lookup)} wells from metadata")
         print(f"Sample lookup entries (every 8th): {sample_entries}")
 
-        # Build indices for only the sampled/subset wells (mapped in Excel)
-        # Use a simpler approach: generate indices directly from mapped wells
-        indices = []
-        sampled_wells_info = []  # Store (well_idx, well_name, well_series) for processing
-        
+        # Build well info for only the sampled/subset wells (mapped in Excel)
+        sampled_wells_info = []  # Store (well_idx, well_name, well_series, nd2_well_idx, t) for processing
+
         for well_idx, (well_name, well_series) in enumerate(zip(well_name_list_sorted, well_ind_list_sorted)):
             nd2_well_idx = well_series - 1  # Convert from 1-based to 0-based
             for t in range(n_t):
-                # Store enough info to reconstruct processing later
-                frame_idx = len(indices)  # This will be the index in our processing arrays
-                indices.append(frame_idx)
                 sampled_wells_info.append((well_idx, well_name, well_series, nd2_well_idx, t))
 
         # Resume optimization: compute only frames missing stitched outputs when overwrite=False
         if not overwrite:
-            filtered_indices = []
             filtered_wells_info = []
-            for idx, (well_idx, well_name, well_series, nd2_well_idx, t) in zip(indices, sampled_wells_info):
+            for well_idx, well_name, well_series, nd2_well_idx, t in sampled_wells_info:
                 out = out_ff / f"{well_name}_t{t:04}_ch{bf_idx:02}_stitch.jpg"
                 if not out.exists():
-                    filtered_indices.append(idx)
                     filtered_wells_info.append((well_idx, well_name, well_series, nd2_well_idx, t))
-            
-            skipped = len(indices) - len(filtered_indices)
+
+            skipped = len(sampled_wells_info) - len(filtered_wells_info)
             if skipped > 0:
                 log.info("Resuming: skipping %d stitched frames for %s", skipped, exp_name)
-            
-            indices = filtered_indices
+
             sampled_wells_info = filtered_wells_info
 
         if par_flag:
@@ -810,8 +802,7 @@ def build_ff_from_yx1(
             batch_infos.clear()
 
         try:
-            for idx in tqdm(indices):
-                well_idx, well_name, well_series, nd2_well_idx, t = sampled_wells_info[idx]
+            for well_idx, well_name, well_series, nd2_well_idx, t in tqdm(sampled_wells_info):
                 stack = _get_stack(dask_arr, t, nd2_well_idx, n_z_keep=n_z_keep)
                 batch_stacks.append(stack)
                 batch_infos.append((well_idx, well_name, well_series, nd2_well_idx, t))

@@ -730,6 +730,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"🧪 Selected experiments: {len(selected)}")
         if args.force:
             print("⚡ Force mode: Will rerun steps even if not needed")
+            # When --force is used, automatically set file regeneration env vars
+            # so that files are actually overwritten, not just steps re-executed
+            import os
+            os.environ['MSEQ_OVERWRITE_BUILD01'] = '1'
+            os.environ['MSEQ_OVERWRITE_STITCH'] = '1'
+            print("   ✓ Set MSEQ_OVERWRITE_BUILD01=1 and MSEQ_OVERWRITE_STITCH=1 for actual file regeneration")
 
         # Execute based on action
         if args.action == "e2e":
@@ -828,7 +834,7 @@ def main(argv: list[str] | None = None) -> int:
                 
                 # Step 2: QC Masks (Build02)
                 qc_present, qc_total = exp.qc_mask_status()
-                need_build02 = (qc_total > 0 and qc_present < qc_total)
+                need_build02 = args.force or (qc_total > 0 and qc_present < qc_total)
 
                 # Also check if stitched images are newer than existing masks (freshness)
                 if not need_build02:
