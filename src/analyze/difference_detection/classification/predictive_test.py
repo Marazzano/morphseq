@@ -13,6 +13,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.base import clone
 
+from ..permutation_utils import compute_pvalue
+
 
 def _identify_wt_mutant_classes(class_order: np.ndarray) -> Tuple[str, str, int, int]:
     """
@@ -282,7 +284,7 @@ def predictive_signal_test(
             null_aucs.append(np.mean(perm_aucs))
 
         null_aucs = np.array(null_aucs)
-        pval = (np.sum(null_aucs >= true_auc) + 1) / (len(null_aucs) + 1)
+        pval = compute_pvalue(true_auc, null_aucs, alternative="greater", pseudo_count=True)
 
         results.append({
             "time_bin": t,
