@@ -1,4 +1,0 @@
-metric,split,n_samples,r2,mae
-baseline_deviation_normalized,overall,953,0.8210886807514026,0.018930378765237232
-baseline_deviation_normalized,cep290_homozygous,849,0.7960611949467641,0.019078964785389906
-baseline_deviation_normalized,cep290_heterozygous,104,-6.9527170723032805,0.017717402504567808
