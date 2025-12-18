@@ -9,22 +9,35 @@ This package provides tools for:
 
 Submodules
 ==========
-- classification : Predictive models and onset detection (placeholder)
-- distribution : Statistical tests for distribution differences
+- permutation_utils : Core permutation testing utilities (p-value, shuffles)
+- statistics : Test statistic functions (energy, MMD, mean distance, etc.)
+- distribution_test : Distribution-based permutation tests
+- classification : Predictive models and onset detection
 - horizon_plots : Heatmap visualization utilities
 - time_matrix : Temporal data reshaping and analysis
 - pipelines : High-level orchestration workflows
-- plotting : General visualization helpers (placeholder)
-- metrics : Statistical metrics computation (placeholder)
 """
 
-# Core utilities (newly extracted)
-from . import horizon_plots
-from . import time_matrix
-from . import distribution
+# Core utilities (conditionally import if available)
+try:
+    from . import horizon_plots
+except ImportError:
+    horizon_plots = None
 
-# Distribution-based testing (newly implemented)
-from . import pipelines
+try:
+    from . import time_matrix
+except ImportError:
+    time_matrix = None
+
+try:
+    from . import pipelines
+except ImportError:
+    pipelines = None
+
+# Permutation testing framework (NEW)
+from . import permutation_utils
+from . import statistics
+from . import distribution_test
 
 # Classification module
 from . import classification
@@ -35,48 +48,85 @@ from .classification import (
     get_high_penetrance_embryos,
 )
 
-# Expose key functions at package level for convenience
-from .horizon_plots import (
-    plot_horizon_grid,
-    plot_single_horizon,
-    plot_best_condition_map,
-    compute_shared_colorscale,
+# Expose key functions at package level for convenience (if modules exist)
+try:
+    from .horizon_plots import (
+        plot_horizon_grid,
+        plot_single_horizon,
+        plot_best_condition_map,
+        compute_shared_colorscale,
+    )
+except ImportError:
+    pass
+
+try:
+    from .time_matrix import (
+        load_time_matrix_results,
+        build_metric_matrices,
+        align_matrix_times,
+        compute_matrix_statistics,
+        filter_matrices_by_time_range,
+        interpolate_missing_times,
+    )
+except ImportError:
+    pass
+
+try:
+    from .pipelines import (
+        HorizonPlotContext,
+        load_and_prepare_time_matrices,
+        render_horizon_grid,
+        summarise_bundles,
+    )
+except ImportError:
+    pass
+
+# Permutation testing utilities (NEW)
+from .permutation_utils import (
+    compute_pvalue,
+    pool_shuffle,
+    label_shuffle,
+    PermutationResult,
 )
 
-from .time_matrix import (
-    load_time_matrix_results,
-    build_metric_matrices,
-    align_matrix_times,
-    compute_matrix_statistics,
-    filter_matrices_by_time_range,
-    interpolate_missing_times,
-)
-from .pipelines import (
-    HorizonPlotContext,
-    load_and_prepare_time_matrices,
-    render_horizon_grid,
-    summarise_bundles,
-)
-
-# Distribution-based testing functions
-from .distribution import (
+# Test statistics (NEW)
+from .statistics import (
     compute_energy_distance,
-    permutation_test_energy,
-    hotellings_t2_test,
     compute_mmd,
-    permutation_test_mmd,
-    mmd_kernel_width_test,
-    compute_mahalanobis_distance,
-    compute_euclidean_distance,
+    compute_mean_distance,
+    compute_rbf_kernel,
+    estimate_bandwidth_median,
 )
+
+# Distribution-based testing (NEW)
+from .distribution_test import (
+    permutation_test_distribution,
+    permutation_test_energy,
+    permutation_test_mmd,
+)
+
+# Legacy distribution imports (for backwards compatibility)
+# TODO: Phase these out as code migrates to new API
+try:
+    from .distribution import (
+        hotellings_t2_test,
+        mmd_kernel_width_test,
+        compute_mahalanobis_distance,
+        compute_euclidean_distance,
+    )
+except ImportError:
+    # If old distribution module is deleted, these won't be available
+    pass
 
 __all__ = [
     # Submodules
     'horizon_plots',
     'time_matrix',
-    'distribution',
     'classification',
     'pipelines',
+    'permutation_utils',
+    'statistics',
+    'distribution_test',
     # Horizon plots
     'plot_horizon_grid',
     'plot_single_horizon',
@@ -94,15 +144,21 @@ __all__ = [
     'load_and_prepare_time_matrices',
     'render_horizon_grid',
     'summarise_bundles',
-    # Distribution-based testing
+    # Permutation testing utilities (NEW)
+    'compute_pvalue',
+    'pool_shuffle',
+    'label_shuffle',
+    'PermutationResult',
+    # Test statistics (NEW)
     'compute_energy_distance',
-    'permutation_test_energy',
-    'hotellings_t2_test',
     'compute_mmd',
+    'compute_mean_distance',
+    'compute_rbf_kernel',
+    'estimate_bandwidth_median',
+    # Distribution-based testing (NEW)
+    'permutation_test_distribution',
+    'permutation_test_energy',
     'permutation_test_mmd',
-    'mmd_kernel_width_test',
-    'compute_mahalanobis_distance',
-    'compute_euclidean_distance',
     # Classification
     'predictive_signal_test',
     'compute_embryo_penetrance',
