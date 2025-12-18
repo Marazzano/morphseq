@@ -1,2 +1,0 @@
-experiment_id,target_metric,n_samples,n_embryos,cv_strategy,alpha_median,alpha_iqr,r2_mean,r2_std,mae_mean,rmse_mean,pearson_mean
-20251106,mean_curvature_per_um,6187,95,GroupKFold(5),100.0,0.0,0.5487320693877447,0.04230349724080299,0.00018183857485240665,0.000232711933817087,0.7537200951959453
