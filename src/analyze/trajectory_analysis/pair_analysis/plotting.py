@@ -1,275 +1,321 @@
 """
-Plotting utilities for pair analysis.
+Pair-specific plotting utilities (Level 2).
 
-Reusable plot functions for comparing trajectories across groups.
+Wraps Level 1 generic faceted_plotting with pair-specific logic and defaults.
+Automatically handles missing pair columns, genotype-based pair fallbacks, etc.
 """
 
-import numpy as np
+import warnings
 import pandas as pd
-import matplotlib.pyplot as plt
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Any
 
-from .data_utils import get_trajectories_for_group, compute_binned_mean, get_global_axis_ranges
-
-
-# Default genotype configuration
-GENOTYPE_ORDER = ['cep290_wildtype', 'cep290_heterozygous', 'cep290_homozygous']
-GENOTYPE_COLORS = {
-    'cep290_wildtype': '#2E7D32',      # Green
-    'cep290_heterozygous': '#FFA500',  # Orange
-    'cep290_homozygous': '#D32F2F',    # Red
-}
+from ..faceted_plotting import plot_trajectories_faceted
+from ..genotype_styling import build_genotype_style_config, sort_genotypes_by_suffix
 
 
-def plot_genotypes_overlaid(
+def _ensure_pair_column(df: pd.DataFrame, pair_col: str = 'pair', genotype_col: str = 'genotype') -> pd.DataFrame:
+    """Ensure pair column exists. Create fallback `{gene_prefix}_unknown_pair` if missing.
+
+    Args:
+        df: Input DataFrame
+        pair_col: Name of pair column
+        genotype_col: Name of genotype column
+
+    Returns:
+        DataFrame with pair column (modified if needed)
+
+    Note:
+        Uses gene prefix (not full genotype) so all genotypes from the same gene
+        share one unknown_pair. E.g., tmem67_homozygous → tmem67_unknown_pair
+    """
+    from ..genotype_styling import extract_genotype_prefix
+
+    df = df.copy()
+
+    if pair_col not in df.columns or df[pair_col].isna().all():
+        if genotype_col in df.columns:
+            # Create fallback: {gene_prefix}_unknown_pair (not {full_genotype}_unknown_pair)
+            # This groups all genotypes from same gene into one pair
+            df[pair_col] = df[genotype_col].apply(
+                lambda g: f"{extract_genotype_prefix(str(g))}_unknown_pair"
+            )
+        else:
+            # Last resort: all embryos treated as one "unknown" pair
+            df[pair_col] = 'unknown_pair'
+
+    return df
+
+
+def plot_pairs_overview(
     df: pd.DataFrame,
-    groups: List[str],
-    group_col: str = 'pair',
+    pairs: Optional[List[str]] = None,
+    genotypes: Optional[List[str]] = None,
+    pair_col: str = 'pair',
     genotype_col: str = 'genotype',
-    time_col: str = 'predicted_stage_hpf',
-    metric_col: str = 'baseline_deviation_normalized',
-    embryo_id_col: str = 'embryo_id',
-    genotype_order: List[str] = None,
-    genotype_colors: Dict[str, str] = None,
+    x_col: str = 'predicted_stage_hpf',
+    y_col: str = 'baseline_deviation_normalized',
+    line_by: str = 'embryo_id',
+    backend: str = 'plotly',
     output_path: Optional[Path] = None,
-    title: str = 'Curvature Trajectories by Group - All Genotypes Compared',
-    figsize: Tuple[int, int] = (15, 4.5),
+    title: Optional[str] = None,
+    x_label: str = 'Time (hpf)',
+    y_label: str = 'Value',
     bin_width: float = 0.5,
     smooth_method: Optional[str] = 'gaussian',
     smooth_params: Optional[Dict] = None,
-) -> plt.Figure:
-    """Create a 1xN plot showing all genotypes overlaid for each group.
+    **kwargs
+) -> Any:
+    """Create NxM grid: pairs (rows) × genotypes (columns).
+
+    Level 2: Pair-specific wrapper around plot_trajectories_faceted.
 
     Args:
         df: DataFrame with trajectory data
-        groups: List of group values (e.g., ['cep290_pair_1', 'cep290_pair_2', ...])
-        group_col: Column name for groups (e.g., 'pair')
+        pairs: Specific pairs to plot (if None, uses all in df)
+        genotypes: Specific genotypes to plot (if None, uses all in df)
+        pair_col: Column name for pairs
         genotype_col: Column name for genotypes
-        time_col: Column name for time values
-        metric_col: Column name for metric values
-        embryo_id_col: Column name for embryo IDs
-        genotype_order: List of genotypes in plotting order
-        genotype_colors: Dict mapping genotype to color
-        output_path: Path to save figure (optional)
+        x_col: X-axis column
+        y_col: Y-axis column
+        line_by: Column defining individual lines
+        backend: 'plotly', 'matplotlib', or 'both'
+        output_path: Save location
         title: Figure title
-        figsize: Figure size as (width, height)
-        bin_width: Width of bins for mean calculation
-        smooth_method: Smoothing method ('gaussian' or None for no smoothing).
-            Default: 'gaussian'
-        smooth_params: Parameters for smoothing (see get_trajectories_for_group)
+        **kwargs: Additional arguments passed to plot_trajectories_faceted
 
     Returns:
-        matplotlib Figure object
+        Figure(s) depending on backend
     """
-    if genotype_order is None:
-        genotype_order = GENOTYPE_ORDER
-    if genotype_colors is None:
-        genotype_colors = GENOTYPE_COLORS
+    # Ensure pair column exists
+    df = _ensure_pair_column(df, pair_col, genotype_col)
 
-    n_groups = len(groups)
-    fig, axes = plt.subplots(1, n_groups, figsize=figsize)
+    # Auto-detect pairs/genotypes if not specified
+    if pairs is None:
+        pairs = sorted(df[pair_col].unique())
+    if genotypes is None:
+        genotypes = sorted(df[genotype_col].unique())
 
-    if n_groups == 1:
-        axes = [axes]
+    # Build genotype styling
+    style_config = build_genotype_style_config(genotypes)
+    ordered_genotypes = style_config['order']
 
-    fig.suptitle(title, fontsize=14, fontweight='bold')
+    # Set title
+    if title is None:
+        title = f"All Pairs × Genotypes Overview"
 
-    # First pass: collect all data for global axis ranges
-    all_data = {}
-    all_trajectories = []
-
-    for group in groups:
-        for genotype in genotype_order:
-            trajectories, embryo_ids, n_embryos = get_trajectories_for_group(
-                df,
-                {group_col: group, genotype_col: genotype},
-                time_col=time_col,
-                metric_col=metric_col,
-                embryo_id_col=embryo_id_col,
-                smooth_method=smooth_method,
-                smooth_params=smooth_params,
-            )
-            all_data[(group, genotype)] = (trajectories, embryo_ids, n_embryos)
-            if trajectories:
-                all_trajectories.append(trajectories)
-
-    time_min, time_max, metric_min, metric_max = get_global_axis_ranges(all_trajectories)
-
-    # Second pass: plot with aligned axes
-    for col_idx, group in enumerate(groups):
-        ax = axes[col_idx]
-
-        for genotype in genotype_order:
-            trajectories, embryo_ids, n_embryos = all_data[(group, genotype)]
-
-            if trajectories is None or n_embryos == 0:
-                continue
-
-            color = genotype_colors.get(genotype, '#888888')
-
-            # Plot individual trajectories (faded)
-            for traj in trajectories:
-                ax.plot(traj['times'], traj['metrics'], alpha=0.2, linewidth=0.8, color=color)
-
-            # Plot mean trajectory
-            all_times = np.concatenate([t['times'] for t in trajectories])
-            all_metrics = np.concatenate([t['metrics'] for t in trajectories])
-            bin_times, bin_means = compute_binned_mean(all_times, all_metrics, bin_width)
-
-            if bin_times:
-                label = f'{genotype.replace("cep290_", "").title()} (n={n_embryos})'
-                ax.plot(bin_times, bin_means, color=color, linewidth=2.5, label=label, zorder=5)
-
-        ax.set_xlabel('Time (hpf)', fontsize=10)
-        ax.set_ylabel('Normalized Baseline Deviation', fontsize=10)
-        ax.set_title(f'{group}', fontweight='bold', fontsize=11)
-        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
-        ax.legend(fontsize=9, loc='upper right')
-        ax.set_xlim(time_min, time_max)
-        ax.set_ylim(metric_min, metric_max)
-        ax.tick_params(labelsize=9)
-
-    plt.tight_layout()
-
-    if output_path:
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {output_path}")
+    # Create faceted plot with pair as rows, genotype as columns
+    fig = plot_trajectories_faceted(
+        df[df[pair_col].isin(pairs)],
+        x_col=x_col,
+        y_col=y_col,
+        line_by=line_by,
+        row_by=pair_col,
+        col_by=genotype_col,
+        color_by_grouping=None,
+        facet_order={genotype_col: ordered_genotypes},
+        backend=backend,
+        output_path=output_path,
+        title=title,
+        x_label=x_label,
+        y_label=y_label,
+        bin_width=bin_width,
+        smooth_method=smooth_method,
+        smooth_params=smooth_params,
+        **kwargs
+    )
 
     return fig
 
 
-def plot_faceted_trajectories(
+def plot_genotypes_by_pair(
     df: pd.DataFrame,
-    row_groups: List[str],
-    col_groups: List[str],
-    row_col: str = 'pair',
-    col_col: str = 'genotype',
-    time_col: str = 'predicted_stage_hpf',
-    metric_col: str = 'baseline_deviation_normalized',
-    embryo_id_col: str = 'embryo_id',
-    group_colors: Dict[str, str] = None,
+    pairs: Optional[List[str]] = None,
+    pair_col: str = 'pair',
+    genotype_col: str = 'genotype',
+    x_col: str = 'predicted_stage_hpf',
+    y_col: str = 'baseline_deviation_normalized',
+    line_by: str = 'embryo_id',
+    backend: str = 'plotly',
     output_path: Optional[Path] = None,
-    title: str = 'Curvature Trajectories - Faceted Overview',
-    figsize: Optional[Tuple[int, int]] = None,
+    title: Optional[str] = None,
+    x_label: str = 'Time (hpf)',
+    y_label: str = 'Value',
     bin_width: float = 0.5,
     smooth_method: Optional[str] = 'gaussian',
     smooth_params: Optional[Dict] = None,
-) -> plt.Figure:
-    """Create a faceted plot with rows and columns of subplots.
+    **kwargs
+) -> Any:
+    """Create 1xN plot with genotypes overlaid per pair.
+
+    Level 2: Pair-specific wrapper around plot_trajectories_faceted.
 
     Args:
         df: DataFrame with trajectory data
-        row_groups: List of row group values (e.g., pairs)
-        col_groups: List of column group values (e.g., genotypes)
-        row_col: Column name for row groups
-        col_col: Column name for column groups
-        time_col: Column name for time values
-        metric_col: Column name for metric values
-        embryo_id_col: Column name for embryo IDs
-        group_colors: Dict mapping col_groups to colors
-        output_path: Path to save figure (optional)
+        pairs: Specific pairs to plot (if None, uses all in df)
+        pair_col: Column name for pairs
+        genotype_col: Column name for genotypes
+        x_col: X-axis column
+        y_col: Y-axis column
+        line_by: Column defining individual lines
+        backend: 'plotly', 'matplotlib', or 'both'
+        output_path: Save location
         title: Figure title
-        figsize: Figure size (auto-calculated if None)
-        bin_width: Width of bins for mean calculation
-        smooth_method: Smoothing method ('gaussian' or None for no smoothing).
-            Default: 'gaussian'
-        smooth_params: Parameters for smoothing (see get_trajectories_for_group)
+        **kwargs: Additional arguments passed to plot_trajectories_faceted
 
     Returns:
-        matplotlib Figure object
+        Figure(s) depending on backend
     """
-    if group_colors is None:
-        group_colors = GENOTYPE_COLORS
+    # Ensure pair column exists
+    df = _ensure_pair_column(df, pair_col, genotype_col)
 
-    n_rows = len(row_groups)
-    n_cols = len(col_groups)
+    # Auto-detect pairs if not specified
+    if pairs is None:
+        pairs = sorted(df[pair_col].unique())
 
-    if figsize is None:
-        figsize = (5 * n_cols, 4.5 * n_rows)
+    # Get all unique genotypes and sort by suffix
+    all_genotypes = sorted(df[genotype_col].unique())
+    style_config = build_genotype_style_config(all_genotypes)
+    ordered_genotypes = style_config['order']
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+    # Set title
+    if title is None:
+        title = f"Genotypes by Pair (All Overlaid)"
 
-    if n_rows == 1:
-        axes = axes.reshape(1, -1)
-    if n_cols == 1:
-        axes = axes.reshape(-1, 1)
-
-    fig.suptitle(title, fontsize=16, fontweight='bold', y=0.995)
-
-    # First pass: collect all data for global axis ranges
-    all_data = {}
-    all_trajectories = []
-
-    for row_group in row_groups:
-        for col_group in col_groups:
-            trajectories, embryo_ids, n_embryos = get_trajectories_for_group(
-                df,
-                {row_col: row_group, col_col: col_group},
-                time_col=time_col,
-                metric_col=metric_col,
-                embryo_id_col=embryo_id_col,
-                smooth_method=smooth_method,
-                smooth_params=smooth_params,
-            )
-            all_data[(row_group, col_group)] = (trajectories, embryo_ids, n_embryos)
-            if trajectories:
-                all_trajectories.append(trajectories)
-
-    time_min, time_max, metric_min, metric_max = get_global_axis_ranges(all_trajectories)
-
-    # Second pass: plot with aligned axes
-    for row_idx, row_group in enumerate(row_groups):
-        for col_idx, col_group in enumerate(col_groups):
-            ax = axes[row_idx, col_idx]
-
-            trajectories, embryo_ids, n_embryos = all_data[(row_group, col_group)]
-
-            if trajectories is None or n_embryos == 0:
-                ax.text(0.5, 0.5, 'No data', ha='center', va='center',
-                       transform=ax.transAxes, fontsize=10, color='lightgray')
-            else:
-                color = group_colors.get(col_group, '#888888')
-
-                # Plot individual trajectories
-                for traj in trajectories:
-                    ax.plot(traj['times'], traj['metrics'], alpha=0.25, linewidth=0.8, color=color)
-
-                # Plot mean trajectory
-                all_times = np.concatenate([t['times'] for t in trajectories])
-                all_metrics = np.concatenate([t['metrics'] for t in trajectories])
-                bin_times, bin_means = compute_binned_mean(all_times, all_metrics, bin_width)
-
-                if bin_times:
-                    ax.plot(bin_times, bin_means, color=color, linewidth=2.2, label='Mean', zorder=5)
-
-            # Labels and styling
-            ax.set_xlabel('Time (hpf)', fontsize=9)
-
-            if col_idx == 0:
-                ax.set_ylabel(f'{row_group}\n\nNormalized Baseline Deviation', fontsize=9)
-            else:
-                ax.set_ylabel('')
-
-            if row_idx == 0:
-                col_label = col_group.replace('cep290_', '').title()
-                ax.set_title(f'{col_label} (n={n_embryos})', fontweight='bold', fontsize=10)
-            else:
-                ax.set_title(f'n={n_embryos}', fontsize=9)
-
-            ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.5)
-            ax.tick_params(labelsize=8)
-            ax.set_xlim(time_min, time_max)
-            ax.set_ylim(metric_min, metric_max)
-
-            # Legend only on top-left
-            if row_idx == 0 and col_idx == 0:
-                ax.legend(fontsize=8, loc='upper right')
-
-    plt.tight_layout()
-
-    if output_path:
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"Saved: {output_path}")
+    # Create faceted plot with pairs as columns, genotypes overlaid
+    fig = plot_trajectories_faceted(
+        df[df[pair_col].isin(pairs)],
+        x_col=x_col,
+        y_col=y_col,
+        line_by=line_by,
+        row_by=None,
+        col_by=pair_col,
+        color_by_grouping=genotype_col,
+        facet_order={genotype_col: ordered_genotypes},
+        backend=backend,
+        output_path=output_path,
+        title=title,
+        x_label=x_label,
+        y_label=y_label,
+        bin_width=bin_width,
+        smooth_method=smooth_method,
+        smooth_params=smooth_params,
+        **kwargs
+    )
 
     return fig
+
+
+def plot_single_genotype_across_pairs(
+    df: pd.DataFrame,
+    genotype: str,
+    pairs: Optional[List[str]] = None,
+    pair_col: str = 'pair',
+    genotype_col: str = 'genotype',
+    x_col: str = 'predicted_stage_hpf',
+    y_col: str = 'baseline_deviation_normalized',
+    line_by: str = 'embryo_id',
+    backend: str = 'plotly',
+    output_path: Optional[Path] = None,
+    title: Optional[str] = None,
+    x_label: str = 'Time (hpf)',
+    y_label: str = 'Value',
+    bin_width: float = 0.5,
+    smooth_method: Optional[str] = 'gaussian',
+    smooth_params: Optional[Dict] = None,
+    **kwargs
+) -> Any:
+    """Create 1xN plot for single genotype across pairs.
+
+    Level 2: Pair-specific wrapper around plot_trajectories_faceted.
+
+    Args:
+        df: DataFrame with trajectory data
+        genotype: Genotype to plot
+        pairs: Specific pairs to plot (if None, uses all in df)
+        pair_col: Column name for pairs
+        genotype_col: Column name for genotypes
+        x_col: X-axis column
+        y_col: Y-axis column
+        line_by: Column defining individual lines
+        backend: 'plotly', 'matplotlib', or 'both'
+        output_path: Save location
+        title: Figure title
+        **kwargs: Additional arguments passed to plot_trajectories_faceted
+
+    Returns:
+        Figure(s) depending on backend
+    """
+    # Ensure pair column exists
+    df = _ensure_pair_column(df, pair_col, genotype_col)
+
+    # Filter to single genotype
+    df_filtered = df[df[genotype_col] == genotype].copy()
+
+    # Auto-detect pairs if not specified
+    if pairs is None:
+        pairs = sorted(df_filtered[pair_col].unique())
+
+    # Set title
+    if title is None:
+        title = f"{genotype} Across Pairs"
+
+    # Create faceted plot with pairs as columns, single genotype
+    fig = plot_trajectories_faceted(
+        df_filtered[df_filtered[pair_col].isin(pairs)],
+        x_col=x_col,
+        y_col=y_col,
+        line_by=line_by,
+        row_by=None,
+        col_by=pair_col,
+        color_by_grouping=None,
+        backend=backend,
+        output_path=output_path,
+        title=title,
+        x_label=x_label,
+        y_label=y_label,
+        bin_width=bin_width,
+        smooth_method=smooth_method,
+        smooth_params=smooth_params,
+        **kwargs
+    )
+
+    return fig
+
+
+# Backward compatibility: keep old names pointing to new functions
+def plot_genotypes_overlaid(*args, **kwargs):
+    """Deprecated: Use plot_genotypes_by_pair instead."""
+    warnings.warn(
+        "plot_genotypes_overlaid is deprecated. Use plot_genotypes_by_pair instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return plot_genotypes_by_pair(*args, **kwargs)
+
+
+def plot_all_pairs_overview(*args, **kwargs):
+    """Deprecated: Use plot_pairs_overview instead."""
+    warnings.warn(
+        "plot_all_pairs_overview is deprecated. Use plot_pairs_overview instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return plot_pairs_overview(*args, **kwargs)
+
+
+def plot_homozygous_across_pairs(df: pd.DataFrame, pairs: Optional[List[str]] = None, **kwargs):
+    """Deprecated: Use plot_single_genotype_across_pairs instead."""
+    warnings.warn(
+        "plot_homozygous_across_pairs is deprecated. Use plot_single_genotype_across_pairs instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    # Try to infer homozygous genotype
+    genotype_col = kwargs.get('genotype_col', 'genotype')
+    genotypes = df[genotype_col].unique()
+    homozygous = [g for g in genotypes if 'homo' in g.lower()]
+    if homozygous:
+        return plot_single_genotype_across_pairs(df, homozygous[0], pairs=pairs, **kwargs)
+    else:
+        raise ValueError("No homozygous genotype found in data")

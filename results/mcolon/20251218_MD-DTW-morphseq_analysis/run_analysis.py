@@ -38,6 +38,7 @@ from md_dtw_prototype import (
     prepare_multivariate_array,
     compute_md_dtw_distance_matrix,
     plot_dendrogram,
+    plot_dendrogram_with_categories,
     identify_outliers,
 )
 
@@ -52,8 +53,28 @@ from src.analyze.trajectory_analysis.faceted_plotting import plot_multimetric_tr
 
 
 # =============================================================================
-# Configuration
+# Configuration (editable at top of file)
 # =============================================================================
+
+# *** USER CONFIGURATION - MODIFY HERE ***
+# K values to evaluate in clustering analysis
+K_VALUES = [3, 4, 5, 6]
+
+# Primary K for visualization focus
+K_FOCUS = 3
+
+# Experiment IDs to analyze (choose one approach):
+# Option 1: Single experiment
+EXPERIMENT_ID = '20251121'
+
+# Option 2: Multiple experiments combined (uncomment to use, comment out EXPERIMENT_ID above)
+# EXPERIMENT_IDS = ['20251121', '20251119', '20251125', '20251104']
+EXPERIMENT_IDS = None
+
+# Optional: Filter to specific genotype (None = all b9d2)
+GENOTYPE_FILTER = None  # e.g., 'b9d2_homozygous'
+
+# *** END USER CONFIGURATION ***
 
 # Default metrics for MD-DTW (curvature + length)
 DEFAULT_METRICS = [
@@ -62,7 +83,8 @@ DEFAULT_METRICS = [
 ]
 
 # Default analysis parameters
-DEFAULT_K_VALUES = [2, 3, 4, 5]
+DEFAULT_K_VALUES = K_VALUES
+DEFAULT_K_FOCUS = K_FOCUS
 DEFAULT_SAKOE_CHIBA_RADIUS = 3
 DEFAULT_N_BOOTSTRAP = 100
 DEFAULT_BOOTSTRAP_FRAC = 0.8
@@ -171,6 +193,15 @@ def load_b9d2_data(
     if verbose:
         print(f"  b9d2 rows: {len(df_b9d2)}")
         print(f"  b9d2 genotypes: {df_b9d2['genotype'].unique()}")
+
+    # # Filter out wildtype and unknown genotypes
+    # wildtype_mask = df_b9d2['genotype'].str.contains('wildtype', case=False, na=False)
+    # unknown_mask = df_b9d2['genotype'].str.contains('unknown', case=False, na=False)
+    # df_b9d2 = df_b9d2[~(wildtype_mask | unknown_mask)]
+
+    if verbose:
+        print(f"  After removing wildtype/unknown: {len(df_b9d2)} rows")
+        print(f"  Remaining genotypes: {df_b9d2['genotype'].unique()}")
 
     # Apply specific genotype filter if provided
     if genotype_filter:
@@ -424,6 +455,47 @@ def generate_visualizations(
     )
     plt.close(fig_dendro)
 
+    # 1b. Dendrogram with category annotations (pair, genotype)
+    print("\n" + "-" * 50)
+    print("Generating dendrogram with category bars...")
+    print("-" * 50)
+
+    # Prepare category dataframe
+    category_df = results['df_assignments'][['embryo_id']].copy()
+
+    # Add pair column (get first value per embryo from original df)
+    if 'pair' in df.columns:
+        pair_map = df.groupby('embryo_id')['pair'].first().to_dict()
+        category_df['pair'] = category_df['embryo_id'].map(pair_map)
+    else:
+        category_df['pair'] = 'unknown_pair'
+
+    # Add genotype column
+    if 'genotype' in df.columns:
+        genotype_map = df.groupby('embryo_id')['genotype'].first().to_dict()
+        category_df['genotype'] = category_df['embryo_id'].map(genotype_map)
+    else:
+        category_df['genotype'] = 'unknown_genotype'
+
+    # Generate categorized dendrogram
+    try:
+        fig_dendro_cat, dendro_cat_info = plot_dendrogram_with_categories(
+            D,
+            embryo_ids,
+            category_df=category_df,
+            category_cols=['pair', 'genotype'],
+            k_highlight=k_values,
+            title='b9d2 Clustering with Pair and Genotype Context',
+            save_path=output_dir / 'dendrogram_md_dtw_categorized.png',
+            verbose=verbose,
+        )
+        plt.close(fig_dendro_cat)
+    except Exception as e:
+        print(f"  WARNING: Could not generate categorized dendrogram: {e}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+
     # 2. Multimetric trajectory plots for ALL k values
     print("\n" + "-" * 50)
     print(f"Generating multimetric trajectory plots for all k values...")
@@ -435,6 +507,10 @@ def generate_visualizations(
         if k not in results['clustering_results']:
             print(f"    WARNING: No results for k={k}, skipping...")
             continue
+
+        # Create subdirectory for this k value
+        k_dir = output_dir / f'k{k}'
+        k_dir.mkdir(parents=True, exist_ok=True)
 
         # Get cluster labels for this k
         cluster_labels = results['df_assignments'][f'cluster_k{k}'].values
@@ -461,25 +537,37 @@ def generate_visualizations(
             if verbose:
                 print(f"    Note: No pair labels found, assigning 'b9d2_spawn' to all embryos")
 
-        # Define plotting variants: (suffix, color_by, title_suffix)
-        plot_variants = [
-            ('by_cluster', 'md_dtw_cluster', 'by MD-DTW Cluster'),
-            ('by_genotype', 'genotype', 'by Genotype'),
-            ('by_pair', 'pair', 'by Pair'),
+        # Define plot configurations: (suffix, col_by, overlay, title_suffix)
+        plot_configs = [
+            # Cluster-based views (existing)
+            ('clusters_by_cluster', 'md_dtw_cluster', 'md_dtw_cluster', 'Clusters by Cluster'),
+            ('clusters_by_genotype', 'md_dtw_cluster', 'genotype', 'Clusters by Genotype'),
+            ('clusters_by_pair', 'md_dtw_cluster', 'pair', 'Clusters by Pair'),
+            # Pair-based views (NEW)
+            ('pairs_by_genotype', 'pair', 'genotype', 'Pairs by Genotype'),
+            ('pairs_by_cluster', 'pair', 'md_dtw_cluster', 'Pairs by Cluster'),
         ]
 
         # Generate all plotting variants
-        for suffix, color_by_col, title_suffix in plot_variants:
-            # Validate column exists
-            if color_by_col not in df_plot.columns:
+        for suffix, col_by_val, overlay_val, title_suffix in plot_configs:
+            # Validate columns exist
+            if col_by_val not in df_plot.columns:
                 if verbose:
-                    print(f"    Skipping '{suffix}' - column '{color_by_col}' not found")
+                    print(f"    Skipping '{suffix}' - column '{col_by_val}' not found")
+                continue
+            if overlay_val not in df_plot.columns:
+                if verbose:
+                    print(f"    Skipping '{suffix}' - column '{overlay_val}' not found")
                 continue
 
-            # Validate column has data
-            if df_plot[color_by_col].isna().all():
+            # Validate columns have data
+            if df_plot[col_by_val].isna().all():
                 if verbose:
-                    print(f"    Skipping '{suffix}' - column '{color_by_col}' is all NaN")
+                    print(f"    Skipping '{suffix}' - column '{col_by_val}' is all NaN")
+                continue
+            if df_plot[overlay_val].isna().all():
+                if verbose:
+                    print(f"    Skipping '{suffix}' - column '{overlay_val}' is all NaN")
                 continue
 
             # Generate multimetric plot
@@ -487,20 +575,115 @@ def generate_visualizations(
                 fig_multi = plot_multimetric_trajectories(
                     df_plot,
                     metrics=metrics,
-                    col_by='md_dtw_cluster',
-                    overlay=color_by_col,  # Creates separate mean trajectories per overlay group within each cluster
+                    col_by=col_by_val,
+                    color_by_grouping=overlay_val,
                     x_col='predicted_stage_hpf',
                     title=f'b9d2 Trajectories {title_suffix} (k={k})',
                     backend='matplotlib',
                 )
-                output_filename = f'multimetric_trajectories_k{k}_{suffix}.png'
-                fig_multi.savefig(output_dir / output_filename,
+                output_filename = f'multimetric_trajectories_{suffix}.png'
+                fig_multi.savefig(k_dir / output_filename,
                                  dpi=150, bbox_inches='tight')
                 plt.close(fig_multi)
                 if verbose:
-                    print(f"    Saved: {output_filename}")
+                    print(f"    Saved: k{k}/{output_filename}")
             except Exception as e:
                 print(f"    WARNING: Could not generate '{suffix}' plot for k={k}: {e}")
+
+    # 2.5. Count plots (cluster and genotype distributions)
+    print("\n" + "-" * 50)
+    print("Generating count plots...")
+    print("-" * 50)
+
+    for k in k_values:
+        print(f"\n  k={k}:")
+
+        if k not in results['clustering_results']:
+            print(f"    WARNING: No results for k={k}, skipping...")
+            continue
+
+        k_dir = output_dir / f'k{k}'
+        k_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get cluster labels for this k
+        cluster_labels = results['df_assignments'][f'cluster_k{k}'].values
+        label_lookup = dict(zip(results['df_assignments']['embryo_id'], cluster_labels))
+
+        # Create count dataframe with cluster assignments
+        df_counts = df.copy()
+        df_counts['md_dtw_cluster'] = df_counts['embryo_id'].map(label_lookup)
+
+        # Remove embryos without cluster assignments (outliers)
+        df_counts = df_counts.dropna(subset=['md_dtw_cluster'])
+        df_counts['md_dtw_cluster'] = df_counts['md_dtw_cluster'].astype(int)
+
+        # Ensure pair column exists
+        if 'pair' not in df_counts.columns or df_counts['pair'].isna().all():
+            df_counts['pair'] = 'b9d2_spawn'
+
+        # Get unique embryos only (one row per embryo)
+        df_unique_embryos = df_counts.groupby('embryo_id').first().reset_index()
+
+        if verbose:
+            print(f"    Unique embryos with assignments: {len(df_unique_embryos)}")
+
+        # Plot 1: Cluster counts by pair
+        try:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            counts = pd.crosstab(df_unique_embryos['pair'], df_unique_embryos['md_dtw_cluster'])
+            counts.plot(kind='bar', stacked=False, ax=ax, edgecolor='black', linewidth=0.5)
+            ax.set_title(f'Cluster Distribution by Pair (k={k})', fontsize=14)
+            ax.set_xlabel('Pair', fontsize=12)
+            ax.set_ylabel('Number of Embryos', fontsize=12)
+            ax.legend(title='Cluster', bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.grid(axis='y', alpha=0.3)
+            plt.xticks(rotation=45, ha='right')
+            plt.tight_layout()
+            fig.savefig(k_dir / 'cluster_counts_by_pair.png', dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            if verbose:
+                print(f"    Saved: k{k}/cluster_counts_by_pair.png")
+        except Exception as e:
+            print(f"    WARNING: Could not generate cluster counts by pair for k={k}: {e}")
+
+        # Plot 2: Genotype counts by pair
+        try:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            counts = pd.crosstab(df_unique_embryos['pair'], df_unique_embryos['genotype'])
+            counts.plot(kind='bar', stacked=False, ax=ax, edgecolor='black', linewidth=0.5)
+            ax.set_title(f'Genotype Distribution by Pair (k={k})', fontsize=14)
+            ax.set_xlabel('Pair', fontsize=12)
+            ax.set_ylabel('Number of Embryos', fontsize=12)
+            ax.legend(title='Genotype', bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.grid(axis='y', alpha=0.3)
+            plt.xticks(rotation=45, ha='right')
+            plt.tight_layout()
+            fig.savefig(k_dir / 'genotype_counts_by_pair.png', dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            if verbose:
+                print(f"    Saved: k{k}/genotype_counts_by_pair.png")
+        except Exception as e:
+            print(f"    WARNING: Could not generate genotype counts by pair for k={k}: {e}")
+
+        # Plot 3: Genotype counts by cluster
+        try:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            counts = pd.crosstab(df_unique_embryos['md_dtw_cluster'], df_unique_embryos['genotype'])
+            counts.plot(kind='bar', stacked=False, ax=ax, edgecolor='black', linewidth=0.5)
+            ax.set_title(f'Genotype Distribution by Cluster (k={k})', fontsize=14)
+            ax.set_xlabel('Cluster', fontsize=12)
+            ax.set_ylabel('Number of Embryos', fontsize=12)
+            ax.legend(title='Genotype', bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax.grid(axis='y', alpha=0.3)
+            plt.tight_layout()
+            fig.savefig(k_dir / 'genotype_counts_by_cluster.png', dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            if verbose:
+                print(f"    Saved: k{k}/genotype_counts_by_cluster.png")
+        except Exception as e:
+            print(f"    WARNING: Could not generate genotype counts by cluster for k={k}: {e}")
+
+    print("\n✓ Count plots generated")
 
     # 3. Distance matrix heatmap
     print("\n" + "-" * 50)

@@ -57,71 +57,78 @@ def make_color_lookup(values: pd.Series) -> Dict:
     return {v: STANDARD_PALETTE[i % len(STANDARD_PALETTE)] for i, v in enumerate(unique_vals)}
 
 
-def get_color_for_value(value: Any, color_by_column: Optional[str] = None) -> str:
-    """Get color for a value, using genotype coloring if applicable, otherwise standard palette.
-    
-    Args:
-        value: The value to get a color for (could be genotype, cluster ID, pair name, etc.)
-        color_by_column: Optional column name to help determine if this is genotype data
-        
-    Returns:
-        Hex color string
-    """
-    value_str = str(value)
-    
-    # Check if this looks like genotype data
-    is_genotype = (
-        color_by_column in ['genotype', 'Genotype', 'geno'] or
-        any(keyword in value_str.lower() for keyword in ['wt', 'het', 'homo', 'wild', 'mutant'])
-    )
-    
-    if is_genotype:
-        # Use genotype-specific coloring
-        return get_color_for_genotype(value_str)
-    else:
-        # Use standard palette - hash the string to get consistent color assignment
-        unique_vals = [value]  # Will be expanded in actual usage
-        color_idx = abs(hash(value_str)) % len(STANDARD_PALETTE)
-        return STANDARD_PALETTE[color_idx]
+def build_color_lookup_for_column(df: pd.DataFrame, column: Optional[str]) -> Dict:
+    """Genotype-aware color lookup for a given column."""
+    if column is None or column not in df.columns:
+        return {}
+    if column == 'genotype':
+        unique_vals = list(pd.unique(df[column].dropna()))
+        return {v: get_color_for_genotype(str(v)) for v in unique_vals}
+    return make_color_lookup(df[column])
 
 
-def build_color_lookup_smart(df: pd.DataFrame, column: str) -> Dict:
-    """Build color lookup that uses genotype colors for genotypes, standard palette otherwise.
-    
-    Args:
-        df: DataFrame containing the data
-        column: Column name to build colors for
-        
-    Returns:
-        Dict mapping values to colors
-    """
-    unique_vals = df[column].dropna().unique()
-    color_lookup = {}
-    
-    # Check if this is a genotype column
-    is_genotype_col = (
-        column in ['genotype', 'Genotype', 'geno'] or
-        any(any(keyword in str(v).lower() for keyword in ['wt', 'het', 'homo', 'wild', 'mutant']) 
-            for v in unique_vals)
-    )
-    
-    if is_genotype_col:
-        # Use genotype coloring
-        for val in unique_vals:
-            color_lookup[val] = get_color_for_genotype(str(val))
+def build_color_state(
+    df: pd.DataFrame,
+    color_by: Optional[str],
+    col_by: Optional[str],
+    overlay: Optional[str],
+    line_by: str,
+) -> Dict[str, Dict]:
+    """Build all color lookups once for reuse across backends."""
+    primary_column = color_by or overlay or col_by
+    return {
+        'primary_lookup': build_color_lookup_for_column(df, primary_column),
+        'col_lookup': build_color_lookup_for_column(df, col_by),
+        'overlay_lookup': build_color_lookup_for_column(df, overlay),
+        'per_line': (
+            df[[line_by, color_by]]
+            .dropna(subset=[line_by])
+            .drop_duplicates(subset=[line_by])
+            .set_index(line_by)[color_by]
+            .to_dict()
+            if color_by and line_by in df.columns and color_by in df.columns
+            else {}
+        ),
+    }
+
+
+def resolve_color_value(
+    embryo_id: Optional[str],
+    col_val: Any,
+    overlay_val: Any,
+    color_by: Optional[str],
+    col_by: Optional[str],
+    overlay: Optional[str],
+    color_state: Dict[str, Dict],
+) -> str:
+    """Decide which value to color by and return a hex color."""
+    if color_by:
+        if overlay and color_by == overlay:
+            color_value = overlay_val
+        elif color_by == col_by:
+            color_value = col_val
+        else:
+            color_value = color_state['per_line'].get(embryo_id)
     else:
-        # Use standard palette
-        for i, val in enumerate(sorted(unique_vals, key=str)):
-            color_lookup[val] = STANDARD_PALETTE[i % len(STANDARD_PALETTE)]
-    
-    return color_lookup
+        color_value = overlay_val if overlay is not None else col_val
+
+    # Fallback to column value if we couldn't resolve
+    if color_value is None:
+        color_value = col_val
+
+    return (
+        color_state['primary_lookup'].get(color_value)
+        or color_state['overlay_lookup'].get(overlay_val)
+        or color_state['col_lookup'].get(col_val)
+        or STANDARD_PALETTE[0]
+    )
 
 
 def _validate_facet_params(row_by: Optional[str], col_by: Optional[str], overlay: Optional[str]):
     """Validate facet parameters for potential issues.
 
     Issues warning (not error) if facet params have duplicates, since user might
-    have a valid edge case. Exception: col_by == overlay is explicitly handled.
+    have a valid edge case.
     """
     params = [row_by, col_by, overlay]
     params_named = {'row_by': row_by, 'col_by': col_by, 'overlay': overlay}
@@ -129,17 +136,14 @@ def _validate_facet_params(row_by: Optional[str], col_by: Optional[str], overlay
     # Check for None values
     non_none = [p for p in params if p is not None]
 
-    # Check for duplicates (but col_by == overlay is explicitly handled, so skip warning)
+    # Check for duplicates
     if len(non_none) != len(set(non_none)):
         duplicates = [p for p in non_none if non_none.count(p) > 1]
-        
-        # If the only duplicate is col_by == overlay, this is intentional and handled
-        if not (len(duplicates) == 1 and col_by == overlay and col_by is not None):
-            warnings.warn(
-                f"Facet parameters have duplicates: {duplicates}. "
-                "Each of row_by, col_by, overlay should ideally be unique.",
-                UserWarning
-            )
+        warnings.warn(
+            f"Facet parameters have duplicates: {duplicates}. "
+            "Each of row_by, col_by, overlay should ideally be unique.",
+            UserWarning
+        )
 
 
 def _prepare_facet_grid_data(
@@ -659,7 +663,7 @@ def plot_multimetric_trajectories(
         x_col: X-axis column name (time)
         line_by: Column defining individual lines (default: embryo_id)
         overlay: Column for overlay grouping within columns (creates separate mean trajectories per group)
-        color_by: Column for determining trace color (auto-colors genotypes if not specified)
+        color_by: Column for determining trace color (e.g., 'cluster', 'genotype', 'pair')
         metric_labels: Optional display names for metrics {metric_col: label}
         col_order: Custom ordering for column facets
         share_y: Y-axis sharing: 'row' (per-metric), 'all', 'none' (default: 'row')
@@ -739,10 +743,21 @@ def plot_multimetric_trajectories(
     # Create backend-specific figures
     if backend in ['plotly', 'both']:
         fig_plotly = _plot_multimetric_plotly(
-            df, metric_data, metrics, col_values, col_by,
-            x_col, overlay, color_by, line_by, metric_labels,
-            height_per_row, width_per_col,
-            title, x_label, bin_width,
+            df=df,
+            metric_data=metric_data,
+            metrics=metrics,
+            col_values=col_values,
+            col_by=col_by,
+            x_col=x_col,
+            line_by=line_by,
+            overlay=overlay,
+            color_by=color_by,
+            metric_labels=metric_labels,
+            height_per_row=height_per_row,
+            width_per_col=width_per_col,
+            title=title,
+            x_label=x_label,
+            bin_width=bin_width,
         )
         if backend == 'plotly':
             if output_path:
@@ -751,9 +766,19 @@ def plot_multimetric_trajectories(
 
     if backend in ['matplotlib', 'both']:
         fig_mpl = _plot_multimetric_matplotlib(
-            df, metric_data, metrics, col_values, col_by,
-            x_col, overlay, color_by, line_by, metric_labels,
-            title, x_label, bin_width,
+            df=df,
+            metric_data=metric_data,
+            metrics=metrics,
+            col_values=col_values,
+            col_by=col_by,
+            x_col=x_col,
+            line_by=line_by,
+            overlay=overlay,
+            color_by=color_by,
+            metric_labels=metric_labels,
+            title=title,
+            x_label=x_label,
+            bin_width=bin_width,
         )
         if backend == 'matplotlib':
             if output_path:
@@ -778,9 +803,9 @@ def _plot_multimetric_plotly(
     col_values: List,
     col_by: str,
     x_col: str,
+    line_by: str,
     overlay: Optional[str],
     color_by: Optional[str],
-    line_by: str,
     metric_labels: Optional[Dict[str, str]],
     height_per_row: int,
     width_per_col: int,
@@ -804,62 +829,45 @@ def _plot_multimetric_plotly(
         horizontal_spacing=0.05,
     )
 
-    # Track legend groups shown (across all metrics to avoid duplicates)
-    shown_legend_groups = set()
-    
-    # Build smart color lookup for overlay/color_by column
-    color_column = color_by if color_by else (overlay if overlay else col_by)
-    color_lookup = build_color_lookup_smart(df, color_column)
+    # Track legend groups per metric row
+    legend_groups_per_row = {metric: set() for metric in metrics}
+
+    # Build shared color state once
+    color_state = build_color_state(df, color_by=color_by, col_by=col_by, overlay=overlay, line_by=line_by)
 
     for metric_idx, metric in enumerate(metrics, start=1):
         time_min, time_max = metric_data[metric]['time_range']
         metric_min, metric_max = metric_data[metric]['metric_range']
 
         for col_idx, col_val in enumerate(col_values, start=1):
-            # Iterate over all overlay groups for this (metric, col) cell
-            grid_data = metric_data[metric]['grid_data']
-            
-            for key, cell_data in grid_data.items():
-                row_val, key_col_val, overlay_val = key
-                
-                # Only process entries matching this column
-                if key_col_val != col_val:
-                    continue
-                
-                # When col_by == overlay, only show matching overlay groups
-                # (e.g., cluster 0 column should only show overlay cluster 0)
-                if overlay and overlay == col_by and overlay_val != col_val:
-                    continue
-                
+            # Determine overlay values present for this column
+            overlay_values = sorted({k[2] for k in metric_data[metric]['grid_data'].keys() if k[1] == col_val})
+
+            for overlay_val in overlay_values:
+                key = (None, col_val, overlay_val)  # (row_val, col_val, overlay_val)
+                cell_data = metric_data[metric]['grid_data'].get(key, {})
                 trajectories = cell_data.get('trajectories', [])
+
                 if not trajectories or cell_data.get('n_embryos', 0) == 0:
                     continue
 
-                # Determine color for this overlay group
-                # Priority: color_by (if specified), else overlay, else col_by
-                if color_by:
-                    if color_by == overlay:
-                        color_value = overlay_val
-                    elif color_by == col_by:
-                        color_value = col_val
-                    else:
-                        # color_by is some other column - use first value in this group
-                        # (all trajectories in this group should have same color_by value)
-                        color_value = overlay_val if overlay else col_val
-                else:
-                    # Default: color by overlay if present, else by column
-                    color_value = overlay_val if overlay else col_val
-                
-                # Get color from smart lookup
-                color = color_lookup.get(color_value, STANDARD_PALETTE[0])
-
-                y_label_text = metric_labels.get(metric, metric) if metric_labels else metric
-
-                # Plot individual trajectories (all same color for this overlay group)
+                # Plot individual trajectories with embryo hover
                 for traj in trajectories:
                     times = traj['times']
                     metric_vals = traj['metrics']
                     embryo_id = traj['embryo_id']
+
+                    color = resolve_color_value(
+                        embryo_id=embryo_id,
+                        col_val=col_val,
+                        overlay_val=overlay_val,
+                        color_by=color_by,
+                        col_by=col_by,
+                        overlay=overlay,
+                        color_state=color_state,
+                    )
+
+                    y_label_text = metric_labels.get(metric, metric) if metric_labels else metric
 
                     fig.add_trace(
                         go.Scatter(
@@ -879,31 +887,39 @@ def _plot_multimetric_plotly(
                         row=metric_idx, col=col_idx
                     )
 
-                # Plot mean trajectory for this overlay group
+                # Plot mean trajectory (match line color for overlay/color_by)
                 all_times = np.concatenate([t['times'] for t in trajectories])
                 all_metric_vals = np.concatenate([t['metrics'] for t in trajectories])
                 bin_times, bin_means = compute_binned_mean(all_times, all_metric_vals, bin_width)
 
                 if bin_times:
-                    # Label: show overlay value if present, else column value
+                    mean_color = resolve_color_value(
+                        embryo_id=None,
+                        col_val=col_val,
+                        overlay_val=overlay_val,
+                        color_by=color_by,
+                        col_by=col_by,
+                        overlay=overlay,
+                        color_state=color_state,
+                    )
+
                     if overlay:
                         label_text = str(overlay_val)
-                        legend_group = str(overlay_val)
+                        legend_group = f"{metric}_{overlay_val}"
                     else:
                         label_text = f"{col_by}={col_val}" if col_by else "mean"
-                        legend_group = f"{col_val}"
-                    
-                    # Show legend only once per overlay group (first occurrence)
-                    show_legend = legend_group not in shown_legend_groups
+                        legend_group = f"{metric}_{col_val}"
+
+                    show_legend = legend_group not in legend_groups_per_row[metric]
                     if show_legend:
-                        shown_legend_groups.add(legend_group)
+                        legend_groups_per_row[metric].add(legend_group)
 
                     fig.add_trace(
                         go.Scatter(
                             x=bin_times,
                             y=bin_means,
                             mode='lines',
-                            line=dict(color=color, width=MEAN_TRACE_LINEWIDTH),
+                            line=dict(color=mean_color, width=MEAN_TRACE_LINEWIDTH),
                             name=label_text,
                             legendgroup=legend_group,
                             showlegend=show_legend,
@@ -980,9 +996,9 @@ def _plot_multimetric_matplotlib(
     col_values: List,
     col_by: str,
     x_col: str,
+    line_by: str,
     overlay: Optional[str],
     color_by: Optional[str],
-    line_by: str,
     metric_labels: Optional[Dict[str, str]],
     title: str,
     x_label: str,
@@ -1004,10 +1020,9 @@ def _plot_multimetric_matplotlib(
         axes = [[ax] for ax in axes]
 
     fig.suptitle(title, fontsize=14, fontweight='bold')
-    
-    # Build smart color lookup for overlay/color_by column
-    color_column = color_by if color_by else (overlay if overlay else col_by)
-    color_lookup = build_color_lookup_smart(df, color_column)
+
+    # Build shared color state once
+    color_state = build_color_state(df, color_by=color_by, col_by=col_by, overlay=overlay, line_by=line_by)
 
     for metric_idx, metric in enumerate(metrics):
         time_min, time_max = metric_data[metric]['time_range']
@@ -1016,61 +1031,72 @@ def _plot_multimetric_matplotlib(
         for col_idx, col_val in enumerate(col_values):
             ax = axes[metric_idx][col_idx]
 
-            # Iterate over all overlay groups for this (metric, col) cell
-            grid_data = metric_data[metric]['grid_data']
+            # Determine overlay values present for this column
+            overlay_values = sorted({k[2] for k in metric_data[metric]['grid_data'].keys() if k[1] == col_val})
+
             has_data = False
-            
-            for key, cell_data in grid_data.items():
-                row_val, key_col_val, overlay_val = key
-                
-                # Only process entries matching this column
-                if key_col_val != col_val:
-                    continue
-                
-                # When col_by == overlay, only show matching overlay groups
-                # (e.g., cluster 0 column should only show overlay cluster 0)
-                if overlay and overlay == col_by and overlay_val != col_val:
-                    continue
-                
+
+            for overlay_val in overlay_values:
+                # Get trajectories for this (metric, col, overlay) cell
+                key = (None, col_val, overlay_val)
+                cell_data = metric_data[metric]['grid_data'].get(key, {})
                 trajectories = cell_data.get('trajectories', [])
+
                 if not trajectories or cell_data.get('n_embryos', 0) == 0:
                     continue
-                
+
                 has_data = True
 
-                # Determine color for this overlay group (same logic as plotly)
-                if color_by:
-                    if color_by == overlay:
-                        color_value = overlay_val
-                    elif color_by == col_by:
-                        color_value = col_val
-                    else:
-                        color_value = overlay_val if overlay else col_val
-                else:
-                    color_value = overlay_val if overlay else col_val
-                
-                # Get color from smart lookup
-                color = color_lookup.get(color_value, STANDARD_PALETTE[0])
-
-                # Plot individual trajectories (all same color for this overlay group)
+                # Plot individual trajectories
                 for traj in trajectories:
-                    ax.plot(traj['times'], traj['metrics'],
-                           color=color, alpha=INDIVIDUAL_TRACE_ALPHA,
-                           linewidth=INDIVIDUAL_TRACE_LINEWIDTH)
+                    color = resolve_color_value(
+                        embryo_id=traj['embryo_id'],
+                        col_val=col_val,
+                        overlay_val=overlay_val,
+                        color_by=color_by,
+                        col_by=col_by,
+                        overlay=overlay,
+                        color_state=color_state,
+                    )
 
-                # Plot mean trajectory for this overlay group
+                    ax.plot(
+                        traj['times'],
+                        traj['metrics'],
+                        color=color,
+                        alpha=INDIVIDUAL_TRACE_ALPHA,
+                        linewidth=INDIVIDUAL_TRACE_LINEWIDTH,
+                    )
+
+                # Plot mean trajectory (match line color for overlay/color_by)
                 all_times = np.concatenate([t['times'] for t in trajectories])
                 all_metric_vals = np.concatenate([t['metrics'] for t in trajectories])
                 bin_times, bin_means = compute_binned_mean(all_times, all_metric_vals, bin_width)
 
                 if bin_times:
+                    mean_color = resolve_color_value(
+                        embryo_id=None,
+                        col_val=col_val,
+                        overlay_val=overlay_val,
+                        color_by=color_by,
+                        col_by=col_by,
+                        overlay=overlay,
+                        color_state=color_state,
+                    )
+
                     if overlay:
                         label_text = str(overlay_val)
                     else:
                         label_text = f"{col_by}={col_val}" if col_by else "mean"
-                    ax.plot(bin_times, bin_means, color=color,
-                           linewidth=MEAN_TRACE_LINEWIDTH, label=label_text, zorder=5)
-            
+
+                    ax.plot(
+                        bin_times,
+                        bin_means,
+                        color=mean_color,
+                        linewidth=MEAN_TRACE_LINEWIDTH,
+                        label=label_text,
+                        zorder=5,
+                    )
+
             if not has_data:
                 ax.text(0.5, 0.5, 'No data', ha='center', va='center',
                        transform=ax.transAxes, fontsize=10, color='lightgray')
@@ -1149,3 +1175,5 @@ def _plot_multimetric_matplotlib(
 #    - Centralize title/label placement into tiny helper functions
 #
 # Benefits: ~30-40% less code, easier to maintain, same outputs
+
+# Completed: Added shared color utilities, overlay-aware multimetric plotting, and keyword-safe backend calls.
