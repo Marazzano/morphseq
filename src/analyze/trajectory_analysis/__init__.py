@@ -80,8 +80,14 @@ warnings. See README.md for detailed migration guide.
 __version__ = '0.2.0'
 
 # DTW & Distance Computation
-from .dtw_distance import compute_dtw_distance, compute_dtw_distance_matrix
+from .dtw_distance import (
+    compute_dtw_distance,
+    compute_dtw_distance_matrix,
+    prepare_multivariate_array,
+    compute_md_dtw_distance_matrix,
+)
 from .dba import dba
+from .data_loading import compute_dtw_distance_from_df
 
 # Trajectory Processing - NEW API (DataFrame-centric, v0.2.0+)
 from .trajectory_utils import (
@@ -105,7 +111,8 @@ from .correlation_analysis import test_anticorrelation
 # Bootstrap Clustering
 from .bootstrap_clustering import (
     run_bootstrap_hierarchical,
-    compute_consensus_labels
+    compute_consensus_labels,
+    get_cluster_assignments
 )
 
 # Posterior Analysis
@@ -138,10 +145,52 @@ from .plotting import (
     plot_membership_trajectories
 )
 
+# Genotype Styling (Level 0 - Styling)
+from .genotype_styling import (
+    extract_genotype_suffix,
+    extract_genotype_prefix,
+    get_color_for_genotype,
+    sort_genotypes_by_suffix,
+    build_genotype_style_config,
+    format_genotype_label
+)
+
+# Faceted Plotting (Level 1 - Generic)
+from .facetted_plotting_refactored import plot_trajectories_faceted, plot_multimetric_trajectories
+
+# Pair Analysis (Level 2 - Pair-specific)
+from .pair_analysis import (
+    plot_pairs_overview,
+    plot_genotypes_by_pair,
+    plot_single_genotype_across_pairs,
+    # Deprecated
+    plot_genotypes_overlaid,
+    plot_all_pairs_overview,
+    plot_homozygous_across_pairs,
+)
+
+# Outlier Detection
+from .outliers import (
+    identify_outliers,
+    remove_outliers_from_distance_matrix,
+)
+
+# Dendrogram Visualization
+from .dendrogram import (
+    generate_dendrograms,
+    plot_dendrogram,  # Deprecated, kept for backward compatibility
+    plot_dendrogram_with_categories,
+    add_cluster_column,
+    PASTEL_COLORS,
+)
+
 __all__ = [
     # DTW & Distance
     'compute_dtw_distance',
     'compute_dtw_distance_matrix',
+    'prepare_multivariate_array',
+    'compute_md_dtw_distance_matrix',
+    'compute_dtw_distance_from_df',
     'dba',
 
     # Trajectory Processing - NEW API (v0.2.0+)
@@ -162,6 +211,7 @@ __all__ = [
     # Bootstrap clustering
     'run_bootstrap_hierarchical',
     'compute_consensus_labels',
+    'get_cluster_assignments',
 
     # Posterior analysis
     'analyze_bootstrap_results',
@@ -184,4 +234,35 @@ __all__ = [
     'plot_2d_scatter',
     'plot_cluster_trajectories',
     'plot_membership_trajectories',
+
+    # Genotype Styling (Level 0)
+    'extract_genotype_suffix',
+    'extract_genotype_prefix',
+    'get_color_for_genotype',
+    'sort_genotypes_by_suffix',
+    'build_genotype_style_config',
+    'format_genotype_label',
+
+    # Faceted Plotting (Level 1)
+    'plot_trajectories_faceted',
+    'plot_multimetric_trajectories',
+
+    # Pair Analysis (Level 2)
+    'plot_pairs_overview',
+    'plot_genotypes_by_pair',
+    'plot_single_genotype_across_pairs',
+    'plot_genotypes_overlaid',  # Deprecated
+    'plot_all_pairs_overview',  # Deprecated
+    'plot_homozygous_across_pairs',  # Deprecated
+
+    # Outlier Detection
+    'identify_outliers',
+    'remove_outliers_from_distance_matrix',
+
+    # Dendrogram Visualization
+    'generate_dendrograms',
+    'plot_dendrogram',  # Deprecated
+    'plot_dendrogram_with_categories',
+    'add_cluster_column',
+    'PASTEL_COLORS',
 ]
