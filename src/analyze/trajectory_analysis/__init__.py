@@ -93,7 +93,8 @@ from .data_loading import compute_dtw_distance_from_df
 from .trajectory_utils import (
     extract_trajectories_df,
     interpolate_to_common_grid_df,
-    df_to_trajectories
+    df_to_trajectories,
+    compute_trend_line
 )
 
 # Trajectory Processing - DEPRECATED (v0.1.x, kept for backward compatibility)
@@ -112,7 +113,9 @@ from .correlation_analysis import test_anticorrelation
 from .bootstrap_clustering import (
     run_bootstrap_hierarchical,
     compute_consensus_labels,
-    get_cluster_assignments
+    get_cluster_assignments,
+    compute_coassociation_matrix,
+    coassociation_to_distance
 )
 
 # Posterior Analysis
@@ -156,7 +159,7 @@ from .genotype_styling import (
 )
 
 # Faceted Plotting (Level 1 - Generic)
-from .facetted_plotting_refactored import plot_trajectories_faceted, plot_multimetric_trajectories
+from .facetted_plotting import plot_trajectories_faceted, plot_multimetric_trajectories
 
 # Pair Analysis (Level 2 - Pair-specific)
 from .pair_analysis import (
@@ -173,6 +176,27 @@ from .pair_analysis import (
 from .outliers import (
     identify_outliers,
     remove_outliers_from_distance_matrix,
+)
+
+# Distance Filtering (Two-Stage)
+from .distance_filtering import (
+    identify_embryo_outliers_iqr,
+    filter_data_and_ids,
+    identify_cluster_outliers_combined
+)
+
+# Consensus Pipeline
+from .consensus_pipeline import (
+    run_consensus_pipeline,
+    create_filtering_log
+)
+
+# K Selection Pipeline
+from .k_selection import (
+    evaluate_k_range,
+    plot_k_selection,
+    run_k_selection_pipeline,
+    run_two_phase_pipeline,
 )
 
 # Dendrogram Visualization
@@ -197,6 +221,7 @@ __all__ = [
     'extract_trajectories_df',
     'interpolate_to_common_grid_df',
     'df_to_trajectories',
+    'compute_trend_line',
 
     # Trajectory Processing - DEPRECATED (v0.1.x)
     'extract_trajectories',
@@ -212,6 +237,8 @@ __all__ = [
     'run_bootstrap_hierarchical',
     'compute_consensus_labels',
     'get_cluster_assignments',
+    'compute_coassociation_matrix',
+    'coassociation_to_distance',
 
     # Posterior analysis
     'analyze_bootstrap_results',
@@ -258,6 +285,21 @@ __all__ = [
     # Outlier Detection
     'identify_outliers',
     'remove_outliers_from_distance_matrix',
+
+    # Distance Filtering (Two-Stage)
+    'identify_embryo_outliers_iqr',
+    'filter_data_and_ids',
+    'identify_cluster_outliers_combined',
+
+    # Consensus Pipeline
+    'run_consensus_pipeline',
+    'create_filtering_log',
+
+    # K Selection Pipeline
+    'evaluate_k_range',
+    'plot_k_selection',
+    'run_k_selection_pipeline',
+    'run_two_phase_pipeline',
 
     # Dendrogram Visualization
     'generate_dendrograms',
