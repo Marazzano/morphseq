@@ -147,6 +147,7 @@ def evaluate_k_range(
     embryo_ids: List[str],
     k_range: List[int] = [2, 3, 4, 5, 6],
     n_bootstrap: int = 100,
+    method: str = 'hierarchical',
     verbose: bool = True
 ) -> Dict[str, Any]:
     """
@@ -164,6 +165,8 @@ def evaluate_k_range(
         K values to evaluate (default: [2, 3, 4, 5, 6])
     n_bootstrap : int
         Bootstrap iterations per k (default: 100)
+    method : str, default='hierarchical'
+        Clustering method: 'hierarchical' or 'kmedoids'
     verbose : bool
         Print progress
 
@@ -220,29 +223,45 @@ def evaluate_k_range(
     """
     from src.analyze.trajectory_analysis import (
         run_bootstrap_hierarchical,
+        run_bootstrap_kmedoids,
         analyze_bootstrap_results,
     )
     from src.analyze.trajectory_analysis.cluster_classification import (
         classify_membership_2d,
     )
     from sklearn.metrics import silhouette_score
-    
+
+    # Validate method parameter
+    if method not in ['hierarchical', 'kmedoids']:
+        raise ValueError(
+            f"method must be 'hierarchical' or 'kmedoids', got '{method}'"
+        )
+
     results_by_k = {}
-    
+
     for k in k_range:
         if verbose:
             print(f"\n{'='*60}")
-            print(f"Evaluating k={k}")
+            print(f"Evaluating k={k} (method={method})")
             print('='*60)
-        
-        # Run bootstrap clustering
-        bootstrap_results = run_bootstrap_hierarchical(
-            D=D,
-            k=k,
-            embryo_ids=embryo_ids,
-            n_bootstrap=n_bootstrap,
-            verbose=verbose
-        )
+
+        # Run bootstrap clustering with selected method
+        if method == 'hierarchical':
+            bootstrap_results = run_bootstrap_hierarchical(
+                D=D,
+                k=k,
+                embryo_ids=embryo_ids,
+                n_bootstrap=n_bootstrap,
+                verbose=verbose
+            )
+        else:  # method == 'kmedoids'
+            bootstrap_results = run_bootstrap_kmedoids(
+                D=D,
+                k=k,
+                embryo_ids=embryo_ids,
+                n_bootstrap=n_bootstrap,
+                verbose=verbose
+            )
         
         # Compute posteriors
         posteriors = analyze_bootstrap_results(bootstrap_results)
@@ -662,6 +681,7 @@ def run_k_selection_with_plots(
     plotting_metrics: List[str] = None,
     k_range: List[int] = [2, 3, 4, 5, 6],
     n_bootstrap: int = 100,
+    method: str = 'hierarchical',
     x_col: str = 'predicted_stage_hpf',
     metric_labels: Optional[Dict[str, str]] = None,
     verbose: bool = True
@@ -692,6 +712,8 @@ def run_k_selection_with_plots(
         K values to evaluate (default: [2, 3, 4, 5, 6])
     n_bootstrap : int
         Bootstrap iterations per k (default: 100)
+    method : str, default='hierarchical'
+        Clustering method: 'hierarchical' or 'kmedoids'
     x_col : str
         Column name for x-axis (default: 'predicted_stage_hpf')
     metric_labels : Dict[str, str], optional
@@ -720,9 +742,6 @@ def run_k_selection_with_plots(
     from src.analyze.trajectory_analysis import (
         evaluate_k_range,
         plot_k_selection,
-        compute_coassociation_matrix,
-        generate_dendrograms,
-        add_cluster_column,
         plot_multimetric_trajectories,
     )
     import pickle
@@ -749,6 +768,7 @@ def run_k_selection_with_plots(
         print("K SELECTION WITH TRAJECTORY PLOTS")
         print("="*70)
         print(f"Output directory: {output_dir}")
+        print(f"Clustering method: {method}")
         print(f"Plotting metrics: {plotting_metrics}")
         print(f"K range: {k_range}")
         print("="*70)
@@ -761,6 +781,7 @@ def run_k_selection_with_plots(
         embryo_ids=embryo_ids,
         k_range=k_range,
         n_bootstrap=n_bootstrap,
+        method=method,
         verbose=verbose
     )
 
@@ -779,21 +800,14 @@ def run_k_selection_with_plots(
         # Get results for this k
         clustering_info = k_results['clustering_by_k'][k]
         classification = clustering_info['classification']
-        bootstrap_results = clustering_info['bootstrap_results']
 
-        # Generate dendrogram to get cluster assignments
-        consensus_matrix = compute_coassociation_matrix(bootstrap_results, verbose=False)
-        _, dendro_info = generate_dendrograms(
-            D, embryo_ids,
-            coassociation_matrix=consensus_matrix,
-            k_highlight=[k],
-            verbose=False
-        )
-        plt.close()  # Close dendrogram figure
+        # Use Phase 1 cluster assignments (method-agnostic, no dendrogram needed)
+        cluster_labels = clustering_info['assignments']['cluster_labels']
+        cluster_map = dict(zip(embryo_ids, cluster_labels))
 
         # Prepare DataFrame for this k
         df_k = df[df['embryo_id'].isin(embryo_ids)].copy()
-        df_k = add_cluster_column(df_k, dendro_info=dendro_info, k=k, column_name='cluster')
+        df_k['cluster'] = df_k['embryo_id'].map(cluster_map)
         df_k = add_membership_column(df_k, classification, column_name='membership')
 
         # Generate trajectory plot

@@ -112,6 +112,7 @@ from .correlation_analysis import test_anticorrelation
 # Bootstrap Clustering
 from .bootstrap_clustering import (
     run_bootstrap_hierarchical,
+    run_bootstrap_kmedoids,
     compute_consensus_labels,
     get_cluster_assignments,
     compute_coassociation_matrix,
@@ -236,6 +237,7 @@ __all__ = [
 
     # Bootstrap clustering
     'run_bootstrap_hierarchical',
+    'run_bootstrap_kmedoids',
     'compute_consensus_labels',
     'get_cluster_assignments',
     'compute_coassociation_matrix',
