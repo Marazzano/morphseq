@@ -10,10 +10,16 @@ Functions
 """
 
 import numpy as np
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 from .config import N_BOOTSTRAP, BOOTSTRAP_FRAC, RANDOM_SEED
+
+try:
+    from sklearn_extra.cluster import KMedoids
+    KMEDOIDS_AVAILABLE = True
+except ImportError:
+    KMEDOIDS_AVAILABLE = False
 
 
 def run_bootstrap_hierarchical(
@@ -138,6 +144,162 @@ def run_bootstrap_hierarchical(
         'reference_labels': reference_labels,
         'bootstrap_results': bootstrap_results,
         'n_clusters': k,
+        'distance_matrix': D,
+        'n_samples': n_samples
+    }
+
+
+def run_bootstrap_kmedoids(
+    D: np.ndarray,
+    k: int,
+    embryo_ids: List[str],
+    *,
+    n_bootstrap: int = N_BOOTSTRAP,
+    frac: float = BOOTSTRAP_FRAC,
+    random_state: int = RANDOM_SEED,
+    verbose: bool = False
+) -> Dict[str, Any]:
+    """
+    Bootstrap K-medoids clustering with label alignment.
+
+    Performs repeated K-medoids clustering on random subsamples of the data,
+    storing the resulting cluster labels for posterior probability computation.
+    K-medoids is more robust to outliers than hierarchical clustering.
+
+    Parameters
+    ----------
+    D : np.ndarray
+        Distance matrix (n × n)
+    k : int
+        Number of clusters
+    embryo_ids : list of str
+        Embryo identifiers (required for tracking). Should encode experiment/run info.
+        Example: ['cep290_wt_run1_emb_01', 'cep290_wt_run1_emb_02', ...]
+    n_bootstrap : int, default=100
+        Number of bootstrap iterations
+    frac : float, default=0.8
+        Fraction of samples per bootstrap
+    random_state : int, default=42
+        Random seed for reproducibility
+    verbose : bool, default=False
+        Print progress
+
+    Returns
+    -------
+    bootstrap_results_dict : dict
+        - 'embryo_ids': list of str (copy of input)
+        - 'reference_labels': np.ndarray, consensus labels from full data
+        - 'bootstrap_results': list of dicts
+            - 'labels': np.ndarray (-1 for unsampled)
+            - 'indices': np.ndarray of sampled indices
+            - 'silhouette': float
+        - 'n_clusters': int
+        - 'medoid_indices': np.ndarray, medoid indices from reference clustering
+        - 'distance_matrix': np.ndarray
+        - 'n_samples': int
+
+    Raises
+    ------
+    ImportError
+        If sklearn_extra is not installed
+
+    Examples
+    --------
+    >>> D = compute_dtw_distance_matrix(trajectories)
+    >>> embryo_ids = ['emb_01', 'emb_02', 'emb_03', ...]
+    >>> results = run_bootstrap_kmedoids(D, k=3, embryo_ids=embryo_ids, n_bootstrap=100)
+    >>> reference_labels = results['reference_labels']
+    >>> medoid_indices = results['medoid_indices']  # Representative embryos
+    >>> # Lookup embryo by ID
+    >>> idx = results['embryo_ids'].index('emb_02')
+    >>> label = results['reference_labels'][idx]
+
+    Notes
+    -----
+    - K-medoids uses actual data points as cluster centers (medoids)
+    - More robust to outliers than hierarchical clustering
+    - Output contract matches run_bootstrap_hierarchical() for compatibility
+    - Requires sklearn-extra package: pip install scikit-learn-extra
+    """
+    if not KMEDOIDS_AVAILABLE:
+        raise ImportError(
+            "K-medoids clustering requires scikit-learn-extra. "
+            "Install with: pip install scikit-learn-extra"
+        )
+
+    np.random.seed(random_state)
+    n_samples = len(D)
+
+    # Compute reference labels from full data
+    clusterer = KMedoids(
+        n_clusters=k,
+        metric='precomputed',
+        random_state=random_state,
+        init='k-medoids++',
+        max_iter=300
+    )
+    reference_labels = clusterer.fit_predict(D)
+    reference_medoid_indices = clusterer.medoid_indices_
+
+    # Bootstrap iterations
+    bootstrap_results = []
+    n_to_sample = max(int(np.ceil(frac * n_samples)), 1)
+
+    if verbose:
+        print(f"Running {n_bootstrap} bootstrap iterations (K-medoids)...")
+        print(f"  Sampling {n_to_sample}/{n_samples} samples per iteration")
+
+    for iter_idx in range(n_bootstrap):
+        if verbose and (iter_idx + 1) % 10 == 0:
+            print(f"  Progress: {iter_idx + 1}/{n_bootstrap}")
+
+        # Random sample
+        sampled_indices = np.random.choice(n_samples, size=n_to_sample, replace=False)
+        sampled_indices = np.sort(sampled_indices)
+
+        # Create submatrix
+        D_subset = D[np.ix_(sampled_indices, sampled_indices)]
+
+        # Cluster subset
+        try:
+            clusterer_boot = KMedoids(
+                n_clusters=k,
+                metric='precomputed',
+                random_state=random_state + iter_idx,  # Different seed per iteration
+                init='k-medoids++',
+                max_iter=300
+            )
+            labels_subset = clusterer_boot.fit_predict(D_subset)
+
+            # Create full-size label array with -1 for unsampled
+            labels_full = np.full(n_samples, -1, dtype=int)
+            labels_full[sampled_indices] = labels_subset
+
+            # Compute silhouette if possible
+            try:
+                silhouette = silhouette_score(D_subset, labels_subset, metric='precomputed')
+            except:
+                silhouette = np.nan
+
+            bootstrap_results.append({
+                'labels': labels_full,
+                'indices': sampled_indices,
+                'silhouette': silhouette
+            })
+        except Exception as e:
+            if verbose:
+                print(f"    Warning: Bootstrap iteration {iter_idx} failed: {e}")
+            continue
+
+    if verbose:
+        print(f"\nCompleted {len(bootstrap_results)} successful bootstrap iterations")
+
+    return {
+        'embryo_ids': list(embryo_ids),
+        'reference_labels': reference_labels,
+        'bootstrap_results': bootstrap_results,
+        'n_clusters': k,
+        'medoid_indices': reference_medoid_indices,
         'distance_matrix': D,
         'n_samples': n_samples
     }
