@@ -161,9 +161,19 @@ def load_series_number_map(exp_id: str) -> dict:
     mapping : dict
         Dictionary mapping series number (1-based) to well name (e.g., "A01")
     """
-    metadata_path = Path(f"/net/trapnell/vol1/home/mdcolon/proj/morphseq/metadata/plate_metadata/{exp_id}_well_metadata.xlsx")
+    # Check both possible metadata locations
+    candidate_paths = [
+        Path(f"/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/metadata/plate_metadata/{exp_id}_well_metadata.xlsx"),
+        Path(f"/net/trapnell/vol1/home/mdcolon/proj/morphseq/metadata/plate_metadata/{exp_id}_well_metadata.xlsx"),
+    ]
+    
+    metadata_path = None
+    for p in candidate_paths:
+        if p.exists():
+            metadata_path = p
+            break
 
-    if not metadata_path.exists():
+    if metadata_path is None:
         print(f"  ⚠️ No plate metadata found for {exp_id}")
         return {}
 
@@ -542,8 +552,8 @@ def main():
     """Main analysis pipeline."""
     import sys
 
-    # Get experiment ID from command line or default to 20250711
-    exp_id = sys.argv[1] if len(sys.argv) > 1 else "20250711"
+    # Get experiment ID from command line or default to 20251225
+    exp_id = sys.argv[1] if len(sys.argv) > 1 else "20251121"
 
     print("="*80)
     print(f"ND2 POSITION VERIFICATION - {exp_id}")

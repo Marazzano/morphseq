@@ -25,6 +25,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from scipy import interpolate
+from scipy.ndimage import gaussian_filter1d
 from typing import Tuple, List, Dict, Optional
 from .config import DEFAULT_EMBRYO_ID_COL, DEFAULT_METRIC_COL, DEFAULT_TIME_COL, MIN_TIMEPOINTS, GRID_STEP
 
@@ -208,6 +209,123 @@ def interpolate_to_common_grid_df(
 
     return df_interpolated
 
+
+def interpolate_to_common_grid_multi_df(
+    df: pd.DataFrame,
+    metrics: List[str] or str,
+    grid_step: float = GRID_STEP,
+    time_col: str = 'predicted_stage_hpf',
+    time_grid: Optional[np.ndarray] = None,
+    fill_edges: bool = False,
+    verbose: bool = False,
+) -> pd.DataFrame:
+    """Interpolate multiple metric columns to a common time grid.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing at least ['embryo_id', time_col] and the metric columns
+    metrics : List[str] or str
+        List of metric column names to interpolate (or a single metric name)
+    grid_step : float
+        Grid step size (hpf units)
+    time_col : str
+        Name of the time column in `df` and in the returned DataFrame (default: 'predicted_stage_hpf')
+    time_grid : Optional[np.ndarray]
+        Optional precomputed grid of timepoints to use. If provided, grid_step is ignored.
+    fill_edges : bool, default=False
+        Whether to fill edge NaNs by extending nearest values (interpolate limit_direction='both').
+        If False, values outside an embryo's observed range remain NaN (preferred; algorithm downstream
+        should handle NaNs or final imputation will be applied).
+    verbose : bool
+        If True, print progress
+
+    Returns
+    -------
+    df_interpolated : pd.DataFrame
+        Wide-format DataFrame with columns ['embryo_id', time_col, metric1, metric2, ...]
+        Only rows where at least one metric is not NaN are retained. The function also
+        preserves a column named 'hpf' for backward compatibility (duplicate of time_col).
+    """
+    if isinstance(metrics, str):
+        metrics = [metrics]
+
+    if verbose:
+        print(f"\nInterpolating {len(metrics)} metrics to common grid (step={grid_step})")
+
+    # Ensure required columns exist
+    required = {'embryo_id', time_col}.union(set(metrics))
+    if not required.issubset(set(df.columns)):
+        missing = required - set(df.columns)
+        raise ValueError(f"Missing columns for interpolation: {missing}")
+
+    # Determine global grid
+    if time_grid is None:
+        min_hpf = df[time_col].min()
+        max_hpf = df[time_col].max()
+        common_grid = np.arange(min_hpf, max_hpf + grid_step, grid_step)
+    else:
+        common_grid = np.asarray(time_grid)
+
+    rows = []
+
+    for embryo_id, group in df.groupby('embryo_id'):
+        group_sorted = group.sort_values(time_col)
+        hpf_vals = group_sorted[time_col].values
+
+        # For each metric, interpolate to common grid
+        interp_dict = {}
+        for metric in metrics:
+            metric_vals = group_sorted[metric].values
+            if len(hpf_vals) < 2:
+                interp = np.full_like(common_grid, np.nan, dtype=float)
+            else:
+                f = interpolate.interp1d(
+                    hpf_vals,
+                    metric_vals,
+                    kind='linear',
+                    bounds_error=False,
+                    fill_value=np.nan
+                )
+                interp = f(common_grid)
+            interp_dict[metric] = interp
+
+        # Build frame for this embryo
+        interp_df = pd.DataFrame({time_col: common_grid})
+        for metric in metrics:
+            interp_df[metric] = interp_dict[metric]
+            # fill interior NaNs
+            # Fill interior NaNs (use both directions so interior gaps are filled).
+            # Edge extrapolation will be masked later when fill_edges is False.
+            interp_df[metric] = interp_df[metric].interpolate(limit_direction='both')
+            # optionally fill edges (redundant when already using limit_direction='both')
+            if fill_edges:
+                interp_df[metric] = interp_df[metric].interpolate(limit_direction='both')
+            else:
+                # mask outside observed range
+                if len(hpf_vals) >= 1:
+                    mask_outside = (common_grid < hpf_vals.min()) | (common_grid > hpf_vals.max())
+                    interp_df.loc[mask_outside, metric] = np.nan
+
+        # Only keep rows where at least one metric is finite
+        mask_any = interp_df[metrics].notna().any(axis=1)
+        kept = interp_df[mask_any]
+
+        for _, row in kept.iterrows():
+            entry = {'embryo_id': embryo_id, time_col: row[time_col]}
+            # keep canonical 'hpf' column for backwards compatibility
+            if time_col != 'hpf':
+                entry['hpf'] = row[time_col]
+            for metric in metrics:
+                entry[metric] = row[metric]
+            rows.append(entry)
+
+    df_interpolated = pd.DataFrame(rows)
+
+    if verbose:
+        print(f"  Interpolated multi-metric shape: {df_interpolated.shape}")
+
+    return df_interpolated
 
 def df_to_trajectories(
     df_interpolated: pd.DataFrame,
@@ -657,3 +775,112 @@ def extract_early_late_means(
         print(f"  Late means: {np.nanmean(late_means_arr):.4f} ± {np.nanstd(late_means_arr):.4f}")
 
     return early_means_arr, late_means_arr
+
+
+# ============================================================================
+# Trend Line Computation
+# ============================================================================
+
+def compute_trend_line(
+    times: np.ndarray,
+    values: np.ndarray,
+    bin_width: float = 0.5,
+    statistic: str = 'median',
+    smooth_sigma: Optional[float] = 1.5,
+) -> Tuple[List[float], List[float]]:
+    """Compute binned trend line with optional Gaussian smoothing.
+
+    Aggregates time-series data into bins and computes a summary statistic
+    (mean or median) for each bin. Optionally applies Gaussian smoothing to
+    the resulting trend line to reduce noise from sparse timepoint data.
+
+    This function is used to generate smooth trend lines for trajectory
+    visualizations, particularly when dealing with sparse or irregularly
+    sampled data across multiple embryos.
+
+    Parameters
+    ----------
+    times : np.ndarray
+        Array of time values (e.g., hours post fertilization)
+    values : np.ndarray
+        Array of corresponding metric values
+    bin_width : float, default=0.5
+        Width of time bins in the same units as `times` (e.g., 0.5 hpf)
+    statistic : str, default='median'
+        Aggregation statistic to compute per bin. Options:
+        - 'median': More robust to outliers (recommended for biological data)
+        - 'mean': Standard average (sensitive to outliers)
+    smooth_sigma : float or None, default=1.5
+        Standard deviation for Gaussian kernel smoothing. If None, no smoothing
+        is applied. A value of 1.5 smooths over ~3 time bins, which works well
+        with the default bin_width of 0.5 hpf.
+
+    Returns
+    -------
+    bin_times : List[float]
+        Center times of each bin
+    bin_stats : List[float]
+        Computed statistic (mean or median) for each bin, optionally smoothed
+
+    Examples
+    --------
+    >>> times = np.array([24.1, 24.3, 24.7, 24.9, 25.2, 25.5])
+    >>> values = np.array([1.2, 1.3, 1.5, 1.4, 1.8, 1.9])
+    >>>
+    >>> # Compute median trend line with smoothing
+    >>> bin_times, bin_medians = compute_trend_line(
+    ...     times, values, bin_width=0.5, statistic='median', smooth_sigma=1.5
+    ... )
+    >>>
+    >>> # Compute mean trend line without smoothing
+    >>> bin_times, bin_means = compute_trend_line(
+    ...     times, values, bin_width=0.5, statistic='mean', smooth_sigma=None
+    ... )
+
+    Notes
+    -----
+    - Median is recommended for biological data as it's more robust to outlier embryos
+    - Gaussian smoothing reduces noise from sparse timepoints while preserving trends
+    - Default sigma=1.5 matches the smoothing applied to individual trajectories
+    - For very sparse data, consider increasing bin_width (e.g., to 2.0 hpf)
+    - Empty bins are skipped automatically
+
+    See Also
+    --------
+    interpolate_to_common_grid_df : Interpolate trajectories to common time grid
+    extract_trajectories_df : Extract and filter trajectory data
+    """
+    if len(times) == 0 or len(values) == 0:
+        return [], []
+
+    # Create time bins
+    time_bins = np.arange(
+        np.floor(times.min()),
+        np.ceil(times.max()) + bin_width,
+        bin_width
+    )
+
+    bin_stats = []
+    bin_times = []
+
+    # Compute statistic for each bin
+    for i in range(len(time_bins) - 1):
+        mask = (times >= time_bins[i]) & (times < time_bins[i + 1])
+        if mask.sum() > 0:
+            if statistic == 'median':
+                bin_stats.append(np.median(values[mask]))
+            elif statistic == 'mean':
+                bin_stats.append(np.mean(values[mask]))
+            else:
+                raise ValueError(f"statistic must be 'mean' or 'median', got '{statistic}'")
+            bin_times.append((time_bins[i] + time_bins[i + 1]) / 2)
+
+    # Apply Gaussian smoothing if requested
+    if smooth_sigma is not None and len(bin_stats) > 1:
+        bin_stats = gaussian_filter1d(bin_stats, sigma=smooth_sigma)
+
+    # Convert to list for return (handles both numpy arrays and lists)
+    if isinstance(bin_stats, np.ndarray):
+        bin_stats = bin_stats.tolist()
+
+    return bin_times, bin_stats

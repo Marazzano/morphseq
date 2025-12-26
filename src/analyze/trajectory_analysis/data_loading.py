@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
+from .dtw_distance import compute_dtw_distance_matrix
 
 
 # =============================================================================
@@ -123,19 +124,79 @@ def _load_df03_format(experiment_id: str) -> pd.DataFrame:
     print(f"    Curvature: {len(df_curv)} rows")
     print(f"    Metadata: {len(df_meta)} rows")
 
-    # Merge on snip_id (common key in this data structure)
+    # Determine merge key
     if 'snip_id' in df_curv.columns and 'snip_id' in df_meta.columns:
-        df_merged = df_curv.merge(df_meta, on='snip_id', how='inner')
-        print(f"    Merged on 'snip_id': {len(df_merged)} rows")
+        merge_key = 'snip_id'
     elif 'embryo_id' in df_curv.columns and 'embryo_id' in df_meta.columns:
-        df_merged = df_curv.merge(df_meta, on='embryo_id', how='inner')
-        print(f"    Merged on 'embryo_id': {len(df_merged)} rows")
+        merge_key = 'embryo_id'
     else:
         raise ValueError(
             f"Could not find common merge key. "
             f"Curvature columns: {list(df_curv.columns)} "
             f"Metadata columns: {list(df_meta.columns)}"
         )
+
+    # Assert merge key uniqueness (one-to-one merge guarantee)
+    if df_curv[merge_key].duplicated().any():
+        raise ValueError(
+            f"Curvature has duplicate {merge_key}s (merge key must be unique). "
+            f"Duplicates: {df_curv[df_curv[merge_key].duplicated()][merge_key].unique()}"
+        )
+    if df_meta[merge_key].duplicated().any():
+        raise ValueError(
+            f"Metadata has duplicate {merge_key}s (merge key must be unique). "
+            f"Duplicates: {df_meta[df_meta[merge_key].duplicated()][merge_key].unique()}"
+        )
+
+    # Smart column overlap handling
+    overlap_cols = sorted((set(df_curv.columns) & set(df_meta.columns)) - {merge_key})
+    
+    if overlap_cols:
+        # Compare overlapping columns: drop identical ones, suffix divergent ones
+        curv_cmp = df_curv.set_index(merge_key)
+        meta_cmp = df_meta.set_index(merge_key)
+        
+        cols_drop = []
+        cols_keep_both = []
+        
+        for col in overlap_cols:
+            if curv_cmp[col].equals(meta_cmp[col]):  # NaN-safe comparison
+                cols_drop.append(col)
+            else:
+                cols_keep_both.append(col)
+        
+        if cols_drop:
+            print(f"    ✅ Dropping identical metadata columns: {cols_drop}")
+            df_meta = df_meta.drop(columns=cols_drop)
+        
+        if cols_keep_both:
+            print(f"    ⚠️  Column divergence detected: {cols_keep_both}")
+            print(f"    📌 Suffixing: curvature keeps original, metadata gets '_meta'")
+
+    # Merge with one-to-one validation
+    df_merged = df_curv.merge(
+        df_meta,
+        on=merge_key,
+        how='inner',
+        suffixes=('', '_meta'),
+        validate='one_to_one'
+    )
+
+    # Report merge results
+    curv_unique = set(df_curv[merge_key].unique())
+    meta_unique = set(df_meta[merge_key].unique())
+    merged_unique = set(df_merged[merge_key].unique())
+
+    print(f"    Merged on '{merge_key}': {len(df_merged)} rows")
+    print(f"    Unique {merge_key}s: curvature={len(curv_unique)}, metadata={len(meta_unique)}, merged={len(merged_unique)}")
+
+    # Report any IDs that didn't merge
+    curv_only = curv_unique - meta_unique
+    meta_only = meta_unique - curv_unique
+    if curv_only:
+        print(f"    ⚠️  {len(curv_only)} {merge_key}s only in curvature (dropped)")
+    if meta_only:
+        print(f"    ⚠️  {len(meta_only)} {merge_key}s only in metadata (dropped)")
 
     if len(df_merged) == 0:
         raise ValueError("Merge resulted in empty dataframe - no matching records")
@@ -166,6 +227,50 @@ def _load_df04_format(experiment_id: str) -> pd.DataFrame:
     )
 
 
+def _load_qc_staged(experiment_id: str) -> pd.DataFrame:
+    """
+    Load build04 output (qc_staged) CSV files.
+
+    Internal function. Isolates format-specific logic for qc_staged format.
+    Data is already merged in a single file, so no merge needed.
+
+    Parameters
+    ----------
+    experiment_id : str
+        Experiment identifier (e.g., '20251121')
+
+    Returns
+    -------
+    pd.DataFrame
+        Raw data with all original columns from qc_staged file
+
+    Raises
+    ------
+    FileNotFoundError
+        If qc_staged file cannot be found
+    """
+    # Standard file location
+    project_root = Path(__file__).resolve().parents[3]
+    qc_staged_dir = project_root / 'morphseq_playground' / 'metadata' / 'build04_output'
+
+    # Try standard naming pattern
+    qc_staged_path = qc_staged_dir / f'qc_staged_{experiment_id}.csv'
+
+    if not qc_staged_path.exists():
+        raise FileNotFoundError(
+            f"QC staged data not found for experiment '{experiment_id}'\n"
+            f"  Searched for: {qc_staged_path}\n"
+            f"  Tip: Provide full path using load_experiment_dataframe() if needed"
+        )
+
+    print(f"  Loading qc_staged from: {qc_staged_path}")
+
+    df = pd.read_csv(qc_staged_path)
+    print(f"    Loaded: {len(df)} rows")
+
+    return df
+
+
 def _load_raw_data(experiment_id: str, format_version: str) -> pd.DataFrame:
     """
     Route to format-specific loader.
@@ -189,10 +294,12 @@ def _load_raw_data(experiment_id: str, format_version: str) -> pd.DataFrame:
         return _load_df03_format(experiment_id)
     elif format_version == 'df04':
         return _load_df04_format(experiment_id)
+    elif format_version == 'qc_staged':
+        return _load_qc_staged(experiment_id)
     else:
         raise ValueError(
             f"Unknown format: {format_version}. "
-            f"Supported formats: 'df03', 'df04'"
+            f"Supported formats: 'df03', 'df04', 'qc_staged'"
         )
 
 
@@ -492,3 +599,81 @@ def interpolate_trajectories(
         traj_grid.append(interpolated)
 
     return time_grid, traj_grid, embryo_ids
+
+
+def compute_dtw_distance_from_df(
+    df_traj: pd.DataFrame,
+    window: int = 3,
+    interpolate: bool = False,
+    grid_step: float = 0.5,
+    embryo_id_col: str = 'embryo_id',
+    sort_by: str = 'time',
+    return_arrays: bool = False,
+    verbose: bool = False
+) -> Tuple[np.ndarray, List[str], Optional[np.ndarray], Optional[List[np.ndarray]]]:
+    """
+    Convenience wrapper: go from a long-format trajectory DataFrame straight to
+    a DTW distance matrix.
+
+    Parameters
+    ----------
+    df_traj : pd.DataFrame
+        Long-format trajectory data (from extract_trajectory_dataframe or similar)
+    window : int, default=3
+        Sakoe-Chiba band width for DTW computation
+    interpolate : bool, default=False
+        If True, interpolate each trajectory to a common grid (using grid_step)
+        before computing distances.
+    grid_step : float, default=0.5
+        Step size for common grid when interpolate=True.
+    embryo_id_col : str, default='embryo_id'
+        Column containing embryo identifiers.
+    sort_by : str, default='time'
+        Column to sort within each embryo before extraction.
+    return_arrays : bool, default=False
+        If True, also return the trajectories used for DTW and the time grid
+        (None when interpolate=False).
+    verbose : bool, default=False
+        Verbosity flag passed to compute_dtw_distance_matrix.
+
+    Returns
+    -------
+    distance_matrix : np.ndarray
+        Symmetric DTW distance matrix.
+    embryo_ids : list of str
+        Embryo IDs in the same order as distance_matrix rows/cols.
+    time_grid : np.ndarray or None
+        Common grid if interpolate=True, otherwise None.
+    trajectories : list of np.ndarray or None
+        Trajectories actually used for DTW (interpolated or raw metric arrays)
+        when return_arrays=True, else None.
+    """
+    time_arrays, metric_arrays, embryo_ids = dataframe_to_trajectories(
+        df_traj,
+        embryo_id_col=embryo_id_col,
+        sort_by=sort_by
+    )
+
+    time_grid = None
+    trajectories: List[np.ndarray]
+
+    if interpolate:
+        time_grid, trajectories, embryo_ids = interpolate_trajectories(
+            time_arrays,
+            metric_arrays,
+            embryo_ids,
+            grid_step=grid_step
+        )
+    else:
+        trajectories = metric_arrays
+
+    distance_matrix = compute_dtw_distance_matrix(
+        trajectories,
+        window=window,
+        verbose=verbose
+    )
+
+    if return_arrays:
+        return distance_matrix, embryo_ids, time_grid, trajectories
+
+    return distance_matrix, embryo_ids, time_grid, None

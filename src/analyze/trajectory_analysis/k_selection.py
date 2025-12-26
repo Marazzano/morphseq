@@ -27,6 +27,80 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 
 
+# ============================================================================
+# HELPER FUNCTIONS: Create convenient mappings
+# ============================================================================
+
+def _create_cluster_mappings(
+    embryo_ids: List[str],
+    cluster_labels: np.ndarray,
+    k: int
+) -> Dict[str, Any]:
+    """
+    Create convenient cluster assignment mappings.
+
+    Parameters
+    ----------
+    embryo_ids : List[str]
+        Ordered list of embryo identifiers
+    cluster_labels : np.ndarray
+        Cluster assignment for each embryo (length = len(embryo_ids))
+    k : int
+        Number of clusters
+
+    Returns
+    -------
+    mappings : dict
+        - 'cluster_labels': np.array of assignments
+        - 'embryo_to_cluster': {embryo_id: cluster_id}
+        - 'cluster_to_embryos': {cluster_id: [embryo_ids]}
+    """
+    # embryo_id → cluster_id
+    embryo_to_cluster = dict(zip(embryo_ids, cluster_labels))
+
+    # cluster_id → [embryo_ids] (reverse mapping)
+    cluster_to_embryos = {}
+    for cluster_id in range(k):
+        mask = cluster_labels == cluster_id
+        cluster_to_embryos[cluster_id] = [
+            embryo_ids[i] for i in range(len(embryo_ids)) if mask[i]
+        ]
+
+    return {
+        'cluster_labels': cluster_labels,
+        'embryo_to_cluster': embryo_to_cluster,
+        'cluster_to_embryos': cluster_to_embryos,
+    }
+
+
+def _create_membership_mappings(
+    embryo_ids: List[str],
+    categories: np.ndarray
+) -> Dict[str, Any]:
+    """
+    Create convenient membership quality mappings.
+
+    Parameters
+    ----------
+    embryo_ids : List[str]
+        Ordered list of embryo identifiers
+    categories : np.ndarray
+        Membership quality for each embryo ('core', 'uncertain', 'outlier')
+
+    Returns
+    -------
+    mappings : dict
+        - 'membership_quality': np.array of quality categories
+        - 'embryo_to_membership_quality': {embryo_id: quality}
+    """
+    embryo_to_membership_quality = dict(zip(embryo_ids, categories))
+
+    return {
+        'membership_quality': categories,
+        'embryo_to_membership_quality': embryo_to_membership_quality,
+    }
+
+
 def add_membership_column(
     df: pd.DataFrame,
     classification: Dict[str, Any],
@@ -77,9 +151,9 @@ def evaluate_k_range(
 ) -> Dict[str, Any]:
     """
     Evaluate multiple k values for consensus clustering WITHOUT filtering.
-    
+
     This helps decide the optimal k before applying any outlier filtering.
-    
+
     Parameters
     ----------
     D : np.ndarray
@@ -92,14 +166,57 @@ def evaluate_k_range(
         Bootstrap iterations per k (default: 100)
     verbose : bool
         Print progress
-        
+
     Returns
     -------
     results : Dict
-        - 'k_values': list of k tested
-        - 'metrics': Dict[k] → quality metrics for each k
-        - 'summary_df': DataFrame with comparison
-        - 'best_k': recommended k based on core %
+        Complete k-selection results with structure:
+
+        {
+            'best_k': int,              # Recommended k (highest % core)
+            'k_values': [2, 3, 4, ...], # K values tested
+            'summary_df': DataFrame,    # Quality metrics comparison table
+            'embryo_ids': [embryo_ids], # Ordered list of embryo IDs
+            'clustering_by_k': {
+                k: {
+                    'quality': {
+                        'n_embryos': int,
+                        'n_core': int,
+                        'n_uncertain': int,
+                        'n_outlier': int,
+                        'pct_core': float,        # % core assignments
+                        'pct_uncertain': float,   # % uncertain assignments
+                        'pct_outlier': float,     # % outlier assignments
+                        'mean_max_p': float,      # Mean max posterior probability
+                        'mean_entropy': float,    # Mean assignment entropy
+                        'silhouette': float,      # Silhouette score
+                    },
+                    'assignments': {
+                        'cluster_labels': np.array,           # [embryo0_cluster, embryo1_cluster, ...]
+                        'embryo_to_cluster': dict,            # {embryo_id: cluster_id}
+                        'cluster_to_embryos': dict,           # {cluster_id: [embryo_ids]}
+                    },
+                    'membership': {
+                        'membership_quality': np.array,               # ['core', 'uncertain', 'outlier', ...]
+                        'embryo_to_membership_quality': dict,         # {embryo_id: 'core'/'uncertain'/'outlier'}
+                    },
+                    'posteriors': dict,         # Full posterior probabilities
+                    'bootstrap_results': dict,  # Bootstrap clustering results
+                    'classification': dict,     # Membership quality classification
+                }
+            }
+        }
+
+    Examples
+    --------
+    >>> results = evaluate_k_range(D, embryo_ids, k_range=[2, 3, 4, 5, 6])
+    >>> print(f"Best k: {results['best_k']}")
+    >>> # Get cluster assignment for specific embryo at k=3
+    >>> cluster_id = results['clustering_by_k'][3]['assignments']['embryo_to_cluster']['embryo_001']
+    >>> # Get all embryos in cluster 0 at k=4
+    >>> embryos_in_c0 = results['clustering_by_k'][4]['assignments']['cluster_to_embryos'][0]
+    >>> # Check membership quality
+    >>> membership_quality = results['clustering_by_k'][3]['membership']['embryo_to_membership_quality']['embryo_001']
     """
     from src.analyze.trajectory_analysis import (
         run_bootstrap_hierarchical,
@@ -150,65 +267,82 @@ def evaluate_k_range(
         n_core = np.sum(categories == 'core')
         n_uncertain = np.sum(categories == 'uncertain')
         n_outlier = np.sum(categories == 'outlier')
-        
-        metrics = {
-            'n_embryos': n_total,
-            'n_core': n_core,
-            'n_uncertain': n_uncertain,
-            'n_outlier': n_outlier,
-            'pct_core': 100.0 * n_core / n_total,
-            'pct_uncertain': 100.0 * n_uncertain / n_total,
-            'pct_outlier': 100.0 * n_outlier / n_total,
-            'mean_max_p': posteriors['max_p'].mean(),
-            'mean_entropy': posteriors['entropy'].mean(),
-            'silhouette': sil_score,
-            'bootstrap_results': bootstrap_results,
+
+        # Create convenient mappings
+        assignments = _create_cluster_mappings(
+            embryo_ids,
+            posteriors['modal_cluster'],
+            k
+        )
+
+        membership = _create_membership_mappings(
+            embryo_ids,
+            categories
+        )
+
+        # Organize results with clear naming
+        results_by_k[k] = {
+            'quality': {
+                'n_embryos': n_total,
+                'n_core': n_core,
+                'n_uncertain': n_uncertain,
+                'n_outlier': n_outlier,
+                'pct_core': 100.0 * n_core / n_total,
+                'pct_uncertain': 100.0 * n_uncertain / n_total,
+                'pct_outlier': 100.0 * n_outlier / n_total,
+                'mean_max_p': posteriors['max_p'].mean(),
+                'mean_entropy': posteriors['entropy'].mean(),
+                'silhouette': sil_score,
+            },
+            'assignments': assignments,
+            'membership': membership,
             'posteriors': posteriors,
+            'bootstrap_results': bootstrap_results,
             'classification': classification,
         }
-        
-        results_by_k[k] = metrics
-        
+
         if verbose:
+            quality = results_by_k[k]['quality']
             print(f"\nk={k} Summary:")
-            print(f"  Core: {n_core} ({metrics['pct_core']:.1f}%)")
-            print(f"  Uncertain: {n_uncertain} ({metrics['pct_uncertain']:.1f}%)")
-            print(f"  Outlier: {n_outlier} ({metrics['pct_outlier']:.1f}%)")
-            print(f"  Mean max_p: {metrics['mean_max_p']:.3f}")
-            print(f"  Mean entropy: {metrics['mean_entropy']:.3f}")
-            print(f"  Silhouette: {sil_score:.3f}")
+            print(f"  Core: {n_core} ({quality['pct_core']:.1f}%)")
+            print(f"  Uncertain: {n_uncertain} ({quality['pct_uncertain']:.1f}%)")
+            print(f"  Outlier: {n_outlier} ({quality['pct_outlier']:.1f}%)")
+            print(f"  Mean max_p: {quality['mean_max_p']:.3f}")
+            print(f"  Mean entropy: {quality['mean_entropy']:.3f}")
+            print(f"  Silhouette: {quality['silhouette']:.3f}")
     
     # Create summary DataFrame
     summary_data = []
     for k in k_range:
-        m = results_by_k[k]
+        quality = results_by_k[k]['quality']
         summary_data.append({
             'k': k,
-            'pct_core': m['pct_core'],
-            'pct_uncertain': m['pct_uncertain'],
-            'pct_outlier': m['pct_outlier'],
-            'mean_max_p': m['mean_max_p'],
-            'mean_entropy': m['mean_entropy'],
-            'silhouette': m['silhouette'],
+            'pct_core': quality['pct_core'],
+            'pct_uncertain': quality['pct_uncertain'],
+            'pct_outlier': quality['pct_outlier'],
+            'mean_max_p': quality['mean_max_p'],
+            'mean_entropy': quality['mean_entropy'],
+            'silhouette': quality['silhouette'],
         })
-    
+
     summary_df = pd.DataFrame(summary_data)
-    
+
     # Find best k (highest core %)
     best_k = summary_df.loc[summary_df['pct_core'].idxmax(), 'k']
-    
+
     if verbose:
         print(f"\n{'='*60}")
         print("K SELECTION SUMMARY")
         print('='*60)
         print(summary_df.to_string(index=False))
         print(f"\nRecommended k: {best_k} (highest % core assignments)")
-    
+
     return {
-        'k_values': k_range,
-        'metrics': results_by_k,
-        'summary_df': summary_df,
         'best_k': int(best_k),
+        'k_values': k_range,
+        'summary_df': summary_df,
+        'clustering_by_k': results_by_k,
+        'embryo_ids': embryo_ids,
     }
 
 
@@ -514,3 +648,249 @@ def run_two_phase_pipeline(
         'phase2_results': phase2_results,
         'best_k': best_k,
     }
+
+
+# ============================================================================
+# FILE-BASED K SELECTION WITH PLOTS & CLUSTERING RESULTS
+# ============================================================================
+
+def run_k_selection_with_plots(
+    df: pd.DataFrame,
+    D: np.ndarray,
+    embryo_ids: List[str],
+    output_dir: Path,
+    plotting_metrics: List[str] = None,
+    k_range: List[int] = [2, 3, 4, 5, 6],
+    n_bootstrap: int = 100,
+    x_col: str = 'predicted_stage_hpf',
+    metric_labels: Optional[Dict[str, str]] = None,
+    verbose: bool = True
+) -> Dict[str, Any]:
+    """
+    Complete k-selection pipeline with trajectory plots and cluster assignments.
+
+    Evaluates multiple k values and generates:
+    1. Individual membership trajectory plots for each k
+    2. Summary comparison plot across all k values
+    3. Summary metrics CSV
+    4. Cluster assignments CSV (embryo_id + clustering_k_N columns)
+    5. Full results pickle
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Trajectory DataFrame with embryo_id, predicted_stage_hpf, and metric columns
+    D : np.ndarray
+        Distance matrix (n × n)
+    embryo_ids : List[str]
+        Embryo identifiers
+    output_dir : Path
+        Directory to save all output files
+    plotting_metrics : List[str], optional
+        Which metrics to plot (default: curvature + body length)
+    k_range : List[int]
+        K values to evaluate (default: [2, 3, 4, 5, 6])
+    n_bootstrap : int
+        Bootstrap iterations per k (default: 100)
+    x_col : str
+        Column name for x-axis (default: 'predicted_stage_hpf')
+    metric_labels : Dict[str, str], optional
+        Pretty labels for metrics in plots
+    verbose : bool
+        Print progress
+
+    Returns
+    -------
+    results : Dict
+        K-selection results with keys:
+        - 'k_values': list of k tested
+        - 'metrics': Dict[k] → quality metrics for each k
+        - 'summary_df': DataFrame with comparison
+        - 'best_k': recommended k
+
+    Output Files
+    -----------
+    In output_dir/:
+    - k{N}_membership_trajectories.png : Trajectory plot for each k
+    - k_selection_comparison.png : 2x2 summary metrics plot
+    - k_selection_summary.csv : Metrics table
+    - cluster_assignments.csv : embryo_id + clustering_k_N columns
+    - k_results.pkl : Full results object (pickle)
+    """
+    from src.analyze.trajectory_analysis import (
+        evaluate_k_range,
+        plot_k_selection,
+        compute_coassociation_matrix,
+        generate_dendrograms,
+        add_cluster_column,
+        plot_multimetric_trajectories,
+    )
+    import pickle
+
+    # Default plotting metrics
+    if plotting_metrics is None:
+        plotting_metrics = ['baseline_deviation_normalized', 'total_length_um']
+
+    # Default metric labels
+    if metric_labels is None:
+        metric_labels = {
+            'baseline_deviation_normalized': 'Curvature (normalized)',
+            'total_length_um': 'Body Length (μm)',
+            'aspect_ratio': 'Aspect Ratio',
+            'centroid_velocity_um_per_hpf': 'Centroid Velocity (μm/hpf)',
+        }
+
+    # Create output directory
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print("="*70)
+        print("K SELECTION WITH TRAJECTORY PLOTS")
+        print("="*70)
+        print(f"Output directory: {output_dir}")
+        print(f"Plotting metrics: {plotting_metrics}")
+        print(f"K range: {k_range}")
+        print("="*70)
+
+    # =========================================================================
+    # STEP 1: Evaluate all k values
+    # =========================================================================
+    k_results = evaluate_k_range(
+        D=D,
+        embryo_ids=embryo_ids,
+        k_range=k_range,
+        n_bootstrap=n_bootstrap,
+        verbose=verbose
+    )
+
+    # =========================================================================
+    # STEP 2: Generate trajectory plots for each k
+    # =========================================================================
+    if verbose:
+        print("\n" + "="*70)
+        print("GENERATING TRAJECTORY PLOTS")
+        print("="*70)
+
+    for k in k_range:
+        if verbose:
+            print(f"\nGenerating plots for k={k}...")
+
+        # Get results for this k
+        clustering_info = k_results['clustering_by_k'][k]
+        classification = clustering_info['classification']
+        bootstrap_results = clustering_info['bootstrap_results']
+
+        # Generate dendrogram to get cluster assignments
+        consensus_matrix = compute_coassociation_matrix(bootstrap_results, verbose=False)
+        _, dendro_info = generate_dendrograms(
+            D, embryo_ids,
+            coassociation_matrix=consensus_matrix,
+            k_highlight=[k],
+            verbose=False
+        )
+        plt.close()  # Close dendrogram figure
+
+        # Prepare DataFrame for this k
+        df_k = df[df['embryo_id'].isin(embryo_ids)].copy()
+        df_k = add_cluster_column(df_k, dendro_info=dendro_info, k=k, column_name='cluster')
+        df_k = add_membership_column(df_k, classification, column_name='membership')
+
+        # Generate trajectory plot
+        try:
+            fig = plot_multimetric_trajectories(
+                df_k,
+                metrics=plotting_metrics,
+                col_by='cluster',
+                color_by_grouping='membership',
+                x_col=x_col,
+                metric_labels=metric_labels,
+                title=f'k={k}: Membership Quality by Cluster',
+                backend='matplotlib',
+                bin_width=2.0,
+            )
+
+            # Save plot
+            fig_path = output_dir / f'k{k}_membership_trajectories.png'
+            plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+            if verbose:
+                print(f"  ✓ Saved: {fig_path}")
+            plt.close(fig)
+
+        except Exception as e:
+            print(f"  ⚠ Plot generation failed for k={k}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # =========================================================================
+    # STEP 3: Generate summary comparison plot
+    # =========================================================================
+    if verbose:
+        print(f"\nGenerating summary comparison plot...")
+
+    fig = plot_k_selection(k_results)
+    summary_fig_path = output_dir / 'k_selection_comparison.png'
+    plt.savefig(summary_fig_path, dpi=300, bbox_inches='tight')
+    if verbose:
+        print(f"  ✓ Saved: {summary_fig_path}")
+    plt.close(fig)
+
+    # =========================================================================
+    # STEP 4: Save summary metrics CSV
+    # =========================================================================
+    if verbose:
+        print(f"Saving summary metrics...")
+
+    summary_csv_path = output_dir / 'k_selection_summary.csv'
+    k_results['summary_df'].to_csv(summary_csv_path, index=False)
+    if verbose:
+        print(f"  ✓ Saved: {summary_csv_path}")
+
+    # =========================================================================
+    # STEP 5: Create and save cluster assignments CSV
+    # =========================================================================
+    if verbose:
+        print(f"Saving cluster assignments...")
+
+    assignments_data = {'embryo_id': k_results['embryo_ids']}
+    for k in k_range:
+        cluster_labels = k_results['clustering_by_k'][k]['assignments']['cluster_labels']
+        assignments_data[f'clustering_k_{k}'] = cluster_labels
+
+    assignments_df = pd.DataFrame(assignments_data)
+    assignments_csv_path = output_dir / 'cluster_assignments.csv'
+    assignments_df.to_csv(assignments_csv_path, index=False)
+    if verbose:
+        print(f"  ✓ Saved: {assignments_csv_path}")
+
+    # =========================================================================
+    # STEP 6: Save full results pickle
+    # =========================================================================
+    if verbose:
+        print(f"Saving full results pickle...")
+
+    pkl_path = output_dir / 'k_results.pkl'
+    with open(pkl_path, 'wb') as f:
+        pickle.dump(k_results, f)
+    if verbose:
+        print(f"  ✓ Saved: {pkl_path}")
+
+    # =========================================================================
+    # SUMMARY
+    # =========================================================================
+    if verbose:
+        print("\n" + "="*70)
+        print("K SELECTION COMPLETE")
+        print("="*70)
+        print(f"\nBest k: {k_results['best_k']}")
+        print(f"\nOutput files:")
+        print(f"  - Trajectory plots: k{k_range[0]}_membership_trajectories.png → k{k_range[-1]}_membership_trajectories.png")
+        print(f"  - Summary metrics: k_selection_comparison.png")
+        print(f"  - Metrics table: k_selection_summary.csv")
+        print(f"  - Cluster assignments: cluster_assignments.csv")
+        print(f"  - Full results: k_results.pkl")
+        print(f"\nTo load cluster assignments:")
+        print(f"  >>> df_clusters = pd.read_csv('{assignments_csv_path}')")
+        print("="*70)
+
+    return k_results

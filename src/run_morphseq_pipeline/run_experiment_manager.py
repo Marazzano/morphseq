@@ -24,7 +24,7 @@ def setup_path(repo_root):
 DEFAULT_DATA_ROOT = "morphseq_playground"
 DEFAULT_REPO_ROOT = "."
 # DEFAULT_EXPERIMENTS = "all"
-DEFAULT_EXPERIMENTS = "20250512"
+DEFAULT_EXPERIMENTS = "20251207_pbx"
 
 def main():
     parser = argparse.ArgumentParser(

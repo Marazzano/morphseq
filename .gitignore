@@ -106,16 +106,5 @@ logs/
 log/
 _Archive/
 
-results/mcolon/20251014/plots
-
-# Analysis output files in mcolon's results (exclude by default)
-results/mcolon/**/*.png
-results/mcolon/**/*.csv
-results/mcolon/**/*.jpg
-results/mcolon/**/*.jpeg
-results/mcolon/**/*.pdf
-results/mcolon/**/*.html
-results/mcolon/**/*.mp4
-
-# Key results exception (allow tracking ALL files in key_results/)
-!results/mcolon/**/key_results/**
+# mdcolon results-specific rules moved to results/mcolon/.gitignore
+# (see results/mcolon/.gitignore for details)

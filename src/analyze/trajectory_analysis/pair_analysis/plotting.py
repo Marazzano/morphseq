@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from ..faceted_plotting import plot_trajectories_faceted
+from ..facetted_plotting import plot_trajectories_faceted
 from ..genotype_styling import build_genotype_style_config, sort_genotypes_by_suffix
 
 

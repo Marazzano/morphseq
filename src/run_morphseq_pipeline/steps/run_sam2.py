@@ -37,65 +37,23 @@ import yaml
 import json
 
 
-def _ensure_per_experiment_metadata(metadata_parent_dir: Path, exp_id: str, verbose: bool = False) -> Path:
+def _ensure_per_experiment_metadata(metadata_parent_dir: Path, exp_id: str, verbose: bool = False, overwrite: bool = False) -> Path:
     """Ensure per-experiment metadata JSON exists under metadata_parent_dir/exp_id/.
 
-    If a monolithic metadata JSON exists, attempt to split/filter it to the
-    specific experiment and write `experiment_metadata_{exp_id}.json` atomically.
-
-    Heuristic filtering supports common shapes:
-      - dict with key 'experiments' mapping exp_id -> data
-      - dict with top-level key exp_id
-      - list of records containing 'experiment' or 'experiment_id' == exp_id
-    Falls back to copying monolithic file if filtering is not possible.
+    The per-experiment file is created by 01_prepare_videos.py during Stage 1.
+    This function simply validates it exists.
     """
-    mono = metadata_parent_dir / "experiment_metadata.json"
     per_dir = metadata_parent_dir / exp_id
     per_dir.mkdir(parents=True, exist_ok=True)
-    per  = per_dir / f"experiment_metadata_{exp_id}.json"
+    per = per_dir / f"experiment_metadata_{exp_id}.json"
     if per.exists():
         return per
-    if not mono.exists():
-        # Nothing to split; leave it to upstream scripts if they write per-exp directly
-        raise FileNotFoundError(f"Expected metadata at {per} or monolithic {mono} not found")
+    raise FileNotFoundError(
+        f"Per-experiment metadata not found at {per}. "
+        f"Ensure Stage 1 (01_prepare_videos.py) completed successfully."
+    )
 
-    try:
-        with open(mono, "r", encoding="utf-8") as f:
-            data = json.load(f)
 
-        new_data = None
-        if isinstance(data, dict):
-            if "experiments" in data and isinstance(data["experiments"], dict):
-                new_data = {"experiments": {exp_id: data["experiments"].get(exp_id, {})}}
-            elif exp_id in data:
-                new_data = {exp_id: data.get(exp_id, {})}
-        elif isinstance(data, list):
-            filt = [rec for rec in data if isinstance(rec, dict) and (rec.get("experiment") == exp_id or rec.get("experiment_id") == exp_id or rec.get("exp") == exp_id)]
-            new_data = filt
-
-        if new_data is None:
-            if verbose:
-                print(f"⚠️ Could not structurally filter metadata; copying monolithic to {per.name}")
-            new_data = data
-
-        tmp = per.with_suffix(per.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            # Pretty-print for readability; files are per-experiment and small
-            json.dump(new_data, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, per)
-        return per
-    except Exception as e:
-        # As a last resort, copy the file
-        try:
-            if verbose:
-                print(f"⚠️ Falling back to copy monolithic metadata for {exp_id}: {e}")
-            import shutil
-            shutil.copy2(mono, per)
-            return per
-        except Exception:
-            raise
 import shutil
 
 
@@ -116,6 +74,7 @@ def run_sam2(
     force_detection: bool = False,
     ensure_built_metadata: bool = False,
     force_metadata_overwrite: bool = False,
+    force_mask_export: bool = False,
     **kwargs
 ) -> Path:
     """Run SAM2 segmentation pipeline for a single experiment.
@@ -133,6 +92,7 @@ def run_sam2(
         dry_run: Show commands without executing (default: False)
         verbose: Enable verbose logging (default: False)
         force_metadata_overwrite: Force overwrite existing experiment metadata even if it exists (default: False)
+        force_mask_export: Force re-export of mask PNG files even if they already exist (default: False)
         **kwargs: Additional parameters passed to pipeline scripts
         
     Returns:
@@ -271,11 +231,12 @@ def run_sam2(
         per_meta = per_meta_dir / f"experiment_metadata_{exp_id}.json"
 
         # Ensure per-experiment metadata exists; if only monolithic exists, split it
-        if not per_meta.exists():
+        if not per_meta.exists() or force_metadata_overwrite:
             per_meta = _ensure_per_experiment_metadata(
                 metadata_parent_dir=metadata_parent_dir,
                 exp_id=exp_id,
-                verbose=verbose
+                verbose=verbose,
+                overwrite=force_metadata_overwrite
             )
         metadata_path = per_meta
         # Remove monolithic to avoid confusion unless explicitly kept
@@ -392,6 +353,39 @@ def run_sam2(
         masks_output_dir = sam2_root / "exported_masks"
         masks_output_dir.mkdir(parents=True, exist_ok=True)
         
+        # When forcing, clean up ALL existing masks AND manifest for this experiment
+        # This prevents orphan masks/manifest entries from wells that no longer exist in metadata
+        exp_masks_dir = masks_output_dir / exp_id / "masks"
+        exp_manifest_path = masks_output_dir / exp_id / f"mask_export_manifest_{exp_id}.json"
+
+        if force_mask_export:
+            cleanup_items = []
+
+            # Collect mask PNGs
+            if exp_masks_dir.exists():
+                existing_masks = list(exp_masks_dir.glob("*.png"))
+                cleanup_items.extend(existing_masks)
+
+            # Collect manifest JSON
+            if exp_manifest_path.exists():
+                cleanup_items.append(exp_manifest_path)
+
+            # Delete all
+            if cleanup_items:
+                mask_count = len([f for f in cleanup_items if f.suffix == '.png'])
+                manifest_count = 1 if exp_manifest_path in cleanup_items else 0
+
+                print(f"   🧹 Cleaning up {len(cleanup_items)} files before re-export...")
+                print(f"      - {mask_count} mask PNGs")
+                if manifest_count:
+                    print(f"      - {manifest_count} manifest JSON")
+
+                for item in cleanup_items:
+                    try:
+                        item.unlink()
+                    except Exception as e:
+                        print(f"      ⚠️  Failed to delete {item.name}: {e}")
+        
         export_args = [
             "--sam2-annotations", str(sam2_output_path.absolute()),  # Now per-experiment file
             "--output", str(masks_output_dir.absolute()),
@@ -399,7 +393,9 @@ def run_sam2(
         ]
         if verbose:
             export_args.append("--verbose")
-        
+        if force_mask_export:
+            export_args.append("--overwrite")
+
         result = _run_pipeline_script(
             script_path=scripts_dir / "06_export_masks.py",
             args=export_args,

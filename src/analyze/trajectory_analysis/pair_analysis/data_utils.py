@@ -98,6 +98,10 @@ def compute_binned_mean(
 ) -> Tuple[List[float], List[float]]:
     """Compute binned mean of values over time.
 
+    .. deprecated::
+        Use :func:`~src.analyze.trajectory_analysis.trajectory_utils.compute_trend_line`
+        instead. This function is kept for backward compatibility.
+
     Args:
         times: Array of time values
         values: Array of metric values
@@ -106,20 +110,16 @@ def compute_binned_mean(
     Returns:
         Tuple of (bin_times, bin_means) as lists
     """
-    if len(times) == 0 or len(values) == 0:
-        return [], []
-
-    time_bins = np.arange(np.floor(times.min()), np.ceil(times.max()) + bin_width, bin_width)
-    bin_means = []
-    bin_times = []
-
-    for i in range(len(time_bins) - 1):
-        mask = (times >= time_bins[i]) & (times < time_bins[i + 1])
-        if mask.sum() > 0:
-            bin_means.append(values[mask].mean())
-            bin_times.append((time_bins[i] + time_bins[i + 1]) / 2)
-
-    return bin_times, bin_means
+    import warnings
+    warnings.warn(
+        "compute_binned_mean() is deprecated. Use compute_trend_line() from "
+        "trajectory_utils instead, which supports median aggregation and "
+        "Gaussian smoothing for cleaner trend lines.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    from ..trajectory_utils import compute_trend_line
+    return compute_trend_line(times, values, bin_width, statistic='mean', smooth_sigma=None)
 
 
 def get_global_axis_ranges(
@@ -154,3 +154,79 @@ def get_global_axis_ranges(
         metric_max += padding
 
     return time_min, time_max, metric_min, metric_max
+
+
+# ==============================================================================
+# TODO: Implement Median + Gaussian Smoothing for Trend Lines
+# ==============================================================================
+#
+# CURRENT ISSUE:
+# - compute_binned_mean() uses MEAN, which is sensitive to outliers
+# - No smoothing applied to the trend line (only individual trajectories are smoothed)
+#
+# PROPOSED SOLUTION:
+# Replace compute_binned_mean() with a more flexible function:
+#
+# def compute_binned_statistic(
+#     times: np.ndarray,
+#     values: np.ndarray,
+#     bin_width: float = 0.5,
+#     statistic: str = 'median',  # 'mean' or 'median'
+#     smooth_sigma: Optional[float] = 1.5,  # Gaussian smoothing sigma (None = no smoothing)
+# ) -> Tuple[List[float], List[float]]:
+#     """Compute binned statistic with optional Gaussian smoothing.
+#     
+#     Args:
+#         times: Array of time values
+#         values: Array of metric values
+#         bin_width: Width of time bins (default 0.5 hpf)
+#         statistic: 'mean' or 'median' (default: 'median' for robustness)
+#         smooth_sigma: Sigma for Gaussian smoothing. None = no smoothing.
+#     
+#     Returns:
+#         Tuple of (bin_times, bin_statistics) as lists
+#     """
+#     if len(times) == 0 or len(values) == 0:
+#         return [], []
+#     
+#     time_bins = np.arange(np.floor(times.min()), np.ceil(times.max()) + bin_width, bin_width)
+#     bin_stats = []
+#     bin_times = []
+#     
+#     for i in range(len(time_bins) - 1):
+#         mask = (times >= time_bins[i]) & (times < time_bins[i + 1])
+#         if mask.sum() > 0:
+#             if statistic == 'median':
+#                 bin_stats.append(np.median(values[mask]))
+#             else:  # mean
+#                 bin_stats.append(np.mean(values[mask]))
+#             bin_times.append((time_bins[i] + time_bins[i + 1]) / 2)
+#     
+#     # Apply Gaussian smoothing to the binned statistics
+#     if smooth_sigma is not None and len(bin_stats) > 1:
+#         bin_stats = gaussian_filter1d(bin_stats, sigma=smooth_sigma)
+#     
+#     return bin_times, bin_stats.tolist() if isinstance(bin_stats, np.ndarray) else bin_stats
+#
+# INTEGRATION STEPS:
+# 1. Add compute_binned_statistic() to this file
+# 2. Update facetted_plotting_refactored.py to expose trend_statistic and trend_smooth_sigma params
+# 3. Update plot_multimetric_trajectories() signature:
+#        def plot_multimetric_trajectories(
+#            ...,
+#            trend_statistic: str = 'median',  # NEW
+#            trend_smooth_sigma: Optional[float] = 1.5,  # NEW
+#            ...
+#        )
+# 4. Pass these params through to compute_binned_statistic()
+#
+# RATIONALE FOR GAUSSIAN 1D:
+# - Already used for individual trajectory smoothing (line 82 in this file)
+# - Simple, fast, and effective for time-series data
+# - Preserves temporal structure while reducing noise
+# - Sigma=1.5 is a good default (smooths over ~3 time bins)
+#
+# BENEFITS:
+# - Median: More robust to outlier embryos
+# - Smoothing: Produces cleaner, more interpretable trend lines
+# - Flexibility: Users can choose mean vs median and adjust smoothing
