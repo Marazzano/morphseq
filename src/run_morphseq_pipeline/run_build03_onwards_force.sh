@@ -5,7 +5,7 @@
 #$ -l mfree=8G
 #$ -l h_rt=120:00:00                    # walltime (adjust as needed)
 #$ -j y                                 # merge stdout/stderr
-#$ -pe serial 1
+#$ -pe serial 8
 #$ -cwd
 #$ -V
 #$ -o logs
@@ -35,7 +35,7 @@ MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20251121" #20251104,20250529_24hpf_ctrl_atf6
+DEFAULT_EXPERIMENTS="20251104,20251113,20251119,20251121,20251125,20250305,20250501,20251017_part1,20251017_part2,20251020" #20251104,20250529_24hpf_ctrl_atf6
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -49,9 +49,9 @@ DEFAULT_EXPERIMENTS="20251121" #20251104,20250529_24hpf_ctrl_atf6
 # Pipeline stage toggles (1=run, 0=skip)
 : "${RUN_METADATA_REBUILD:=0}"
 : "${RUN_SAM2:=0}"
-: "${RUN_BUILD03:=0}"
+: "${RUN_BUILD03:=1}"
 : "${BUILD03_SKIP_GEOMETRY_QC:=0}"  # 0=compute full geometry QC (default), 1=fast mode (skip QC, mark all embryos usable)
-: "${RUN_BUILD04:=0}"
+: "${RUN_BUILD04:=1}"
 : "${RUN_BUILD06:=1}"
 : "${RUN_SNIP_EXPORT:=1}"
 
@@ -239,4 +239,19 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 #   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 # qsub -t 1 -tc 1 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
+# qsub -t 1-11 -tc 4 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
+# qsub -t 1-11 -tc 7 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
+
+
+  # # SAM2 regeneration (11 experiments)
+  # python -m src.run_morphseq_pipeline.cli pipeline \
+  #   --data-root morphseq_playground \
+  #   --experiments 20250305,20250501,20251017_part1,20251017_part2,20251020,20251104,20251106,20251113,20251119,20251121,20251125 \
+  #   --action sam2 --force
+
+  # # Build03 regeneration (9 experiments)  
+  # python -m src.run_morphseq_pipeline.cli pipeline \
+  #   --data-root morphseq_playground \
+  #   --experiments 20250501,20250912,20251020,20251104,20251106,20251113,20251119,20251121,20251125 \
+  #   --action build03 --force

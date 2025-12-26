@@ -70,6 +70,23 @@ ADAPTIVE_PERCENTILE = 0.75
 
 
 # ==============================================================================
+# Two-Stage Outlier Filtering
+# ==============================================================================
+
+ENABLE_IQR_FILTERING = True
+"""Enable two-stage IQR filtering in consensus pipeline"""
+
+IQR_MULTIPLIER = 4.0
+"""IQR multiplier for outlier detection (4.0 is conservative, matches existing outlier detection)"""
+
+KNN_K = 5
+"""Number of nearest neighbors for k-NN distance calculation in Stage 1 filtering"""
+
+POSTERIOR_OUTLIER_THRESHOLD = 0.5
+"""Minimum max_p for Stage 2 filtering (embryos below this are removed)"""
+
+
+# ==============================================================================
 # Plotting Parameters
 # ==============================================================================
 

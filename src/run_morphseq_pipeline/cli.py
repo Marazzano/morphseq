@@ -1018,11 +1018,12 @@ def main(argv: list[str] | None = None) -> int:
                             iou_threshold=args.sam2_iou,
                         )
                         if args.force:
-                            # Force re-detection and ensure built metadata is present
+                            # Force re-detection, mask export, and ensure built metadata is present
                             run_kwargs.update(
                                 force_detection=True,
                                 ensure_built_metadata=True,
                                 force_metadata_overwrite=True,
+                                force_mask_export=True,
                             )
                         exp.run_sam2(**run_kwargs)
                 else:
@@ -1037,7 +1038,8 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"🔄 Running Build03 for {exp.date}...")
                         exp.run_build03(
                             by_embryo=args.by_embryo,
-                            frames_per_embryo=args.frames_per_embryo
+                            frames_per_embryo=args.frames_per_embryo,
+                            overwrite=args.force
                         )
                 else:
                     print(f"✅ Build03 already complete for {exp.date}")

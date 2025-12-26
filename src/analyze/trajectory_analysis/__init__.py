@@ -197,6 +197,7 @@ from .k_selection import (
     plot_k_selection,
     run_k_selection_pipeline,
     run_two_phase_pipeline,
+    run_k_selection_with_plots,
 )
 
 # Dendrogram Visualization
@@ -300,6 +301,7 @@ __all__ = [
     'plot_k_selection',
     'run_k_selection_pipeline',
     'run_two_phase_pipeline',
+    'run_k_selection_with_plots',
 
     # Dendrogram Visualization
     'generate_dendrograms',

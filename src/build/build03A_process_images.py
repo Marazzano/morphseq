@@ -100,8 +100,144 @@ def resolve_sandbox_embryo_mask_from_csv(root: str | Path, row) -> Path:
     
     if not mask_path.exists():
         raise FileNotFoundError(f"Sandbox embryo mask not found: {mask_path}")
-    
+
     return mask_path
+
+
+def validate_sam2_artifact_consistency(root: Path, exp_id: str) -> None:
+    """
+    Validate that mask_manifest and SAM2 JSON are consistent.
+
+    This catches the issue where SAM2 pipeline stages ran at different times,
+    causing the mask manifest to be out of sync with the SAM2 JSON source data.
+
+    Checks:
+    1. manifest.exports[image_id].embryo_count == len(sam2_json[...].embryos)
+    2. manifest.exports[image_id].output_path exists on disk
+
+    Args:
+        root: Project root directory
+        exp_id: Experiment ID (e.g., "20251121")
+
+    Raises:
+        RuntimeError: If artifacts are inconsistent, with actionable fix instructions
+    """
+    import json
+
+    root = Path(root)
+
+    # Locate SAM2 JSON
+    sam2_json_path = root / "sam2_pipeline_files" / "segmentation" / f"grounded_sam_segmentations_{exp_id}.json"
+    if not sam2_json_path.exists():
+        # If SAM2 JSON doesn't exist, skip validation (SAM2 not run yet)
+        return
+
+    # Locate mask manifest
+    manifest_path = root / "sam2_pipeline_files" / "exported_masks" / exp_id / f"mask_export_manifest_{exp_id}.json"
+    if not manifest_path.exists():
+        raise RuntimeError(
+            f"❌ Mask manifest not found: {manifest_path}\n"
+            f"SAM2 mask export (Stage 5) may not have completed.\n\n"
+            f"FIX: Re-run SAM2 pipeline:\n"
+            f"  python -m src.run_morphseq_pipeline.cli pipeline \\\n"
+            f"    --experiments {exp_id} --action sam2 --force"
+        )
+
+    # Load artifacts
+    with open(sam2_json_path, 'r') as f:
+        sam2_data = json.load(f)
+
+    with open(manifest_path, 'r') as f:
+        manifest = json.load(f)
+
+    # Build embryo count map from SAM2 JSON
+    # Structure: sam2_data["experiments"][exp]["videos"][video]["image_ids"][image]["embryos"]
+    json_embryo_counts = {}
+    experiments = sam2_data.get("experiments", {})
+    for exp, exp_data in experiments.items():
+        videos = exp_data.get("videos", {})
+        for video_id, video_data in videos.items():
+            image_ids = video_data.get("image_ids", {})
+            for image_id, image_data in image_ids.items():
+                embryos = image_data.get("embryos", {})
+                json_embryo_counts[image_id] = len(embryos)
+
+    # Compare with manifest
+    manifest_exports = manifest.get("exports", {})
+    mismatches = []
+
+    for image_id, export_info in manifest_exports.items():
+        manifest_count = export_info.get("embryo_count", 0)
+        json_count = json_embryo_counts.get(image_id, 0)
+
+        # Check 1: Embryo count mismatch
+        if manifest_count != json_count:
+            # Check if mask file exists to provide detailed diagnostic
+            output_path = Path(export_info.get("output_path", ""))
+            file_exists = output_path.exists() if output_path else False
+
+            # Check for alternative emnum files
+            if output_path and output_path.parent.exists():
+                stem = output_path.stem.rsplit("_emnum_", 1)[0]
+                alternatives = sorted(output_path.parent.glob(f"{stem}_emnum_*.png"))
+            else:
+                alternatives = []
+
+            mismatches.append({
+                "image_id": image_id,
+                "sam2_count": json_count,
+                "manifest_count": manifest_count,
+                "expected_file": output_path.name if output_path else "unknown",
+                "file_exists": file_exists,
+                "alternatives": [a.name for a in alternatives]
+            })
+        else:
+            # Check 2: Mask file existence (even if counts match)
+            output_path = Path(export_info.get("output_path", ""))
+            if output_path and not output_path.exists():
+                mismatches.append({
+                    "image_id": image_id,
+                    "sam2_count": json_count,
+                    "manifest_count": manifest_count,
+                    "expected_file": output_path.name if output_path else "unknown",
+                    "file_exists": False,
+                    "alternatives": []
+                })
+
+    if mismatches:
+        sample = mismatches[:5]
+        msg = [
+            f"❌ SAM2 ARTIFACT INCONSISTENCY DETECTED",
+            "",
+            f"Mask manifest is out of sync with SAM2 JSON for experiment {exp_id}.",
+            f"Found {len(mismatches)} inconsistencies.",
+            "",
+            "Sample mismatches:"
+        ]
+
+        for m in sample:
+            msg.append(f"  Image: {m['image_id']}")
+            msg.append(f"    - SAM2 JSON: {m['sam2_count']} embryos")
+            msg.append(f"    - Manifest:  {m['manifest_count']} embryos (emnum_{m['manifest_count']})")
+            if m['sam2_count'] != m['manifest_count']:
+                msg.append(f"    - Expected:  ...emnum_{m['sam2_count']}.png")
+            if not m['file_exists']:
+                msg.append(f"    - Status:    MISSING on disk")
+            if m['alternatives']:
+                msg.append(f"    - Found:     {m['alternatives']}")
+            msg.append("")
+
+        if len(mismatches) > 5:
+            msg.append(f"  ... and {len(mismatches) - 5} more inconsistencies")
+            msg.append("")
+
+        msg.append("This happens when SAM2 JSON is updated but masks are not re-exported.")
+        msg.append("")
+        msg.append("FIX: Re-run SAM2 with --force to regenerate masks:")
+        msg.append(f"  python -m src.run_morphseq_pipeline.cli pipeline \\")
+        msg.append(f"    --experiments {exp_id} --action sam2 --force")
+
+        raise RuntimeError("\n".join(msg))
 
 
 def _extract_time_stub(row) -> str:
@@ -1333,11 +1469,16 @@ def extract_embryo_snips(root: str | Path,
     dates = stats_df["experiment_id"].unique()
     if len(dates) > 1:
         raise Exception(f"Detected multiple dates in input dataset: {dates}")
-    
+
+    exp_id = str(dates[0])
+
     # read in metadata
     meta_root = root / 'metadata' / "embryo_metadata_files"
     os.makedirs(meta_root, exist_ok=True)
     stats_df = stats_df.drop_duplicates(subset=["snip_id"])
+
+    # Validate SAM2 artifact consistency before processing (fail-fast on pipeline sync issues)
+    validate_sam2_artifact_consistency(root, exp_id)
 
     # make directory for embryo snips
     im_snip_dir = root / 'training_data' / 'bf_embryo_snips'

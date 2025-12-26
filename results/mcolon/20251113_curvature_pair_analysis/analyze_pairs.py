@@ -30,7 +30,7 @@ from src.analyze.trajectory_analysis.pair_analysis import (
 )
 
 # Configuration
-EXPERIMENT_ID = '20251113'
+EXPERIMENT_ID = '202512'
 METRIC_NAME = 'baseline_deviation_normalized'
 TIME_COL = 'predicted_stage_hpf'
 EMBRYO_ID_COL = 'embryo_id'
@@ -38,7 +38,7 @@ PAIR_COL = 'pair'
 GENOTYPE_COL = 'genotype'
 
 # Output paths
-OUTPUT_DIR = Path('/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20251113_curvature_pair_analysis/output_20251113')
+OUTPUT_DIR = Path(f'/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20251113_curvature_pair_analysis/output_{EXPERIMENT_ID}')
 FIGURES_DIR = OUTPUT_DIR / 'figures'
 TABLES_DIR = OUTPUT_DIR / 'tables'
 
@@ -46,17 +46,18 @@ TABLES_DIR = OUTPUT_DIR / 'tables'
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
 
-# Genotype order and colors
-GENOTYPE_ORDER = ['cep290_wildtype', 'cep290_heterozygous', 'cep290_homozygous']
-GENOTYPE_COLORS = {
-    'cep290_wildtype': '#2E7D32',      # Green
-    'cep290_heterozygous': '#FFA500',  # Orange
-    'cep290_homozygous': '#D32F2F',    # Red
+# Color mapping based on genotype suffix (independent of prefix)
+GENOTYPE_SUFFIX_COLORS = {
+    'wildtype': '#2E7D32',      # Green
+    'heterozygous': '#FFA500',  # Orange
+    'homozygous': '#D32F2F',    # Red
 }
+
+# Genotype suffix order
+GENOTYPE_SUFFIX_ORDER = ['wildtype', 'heterozygous', 'homozygous']
 
 
 def load_and_prepare_data(experiment_id):
-    """Load 20251106 data and prepare for analysis."""
     print(f"Loading data for experiment {experiment_id}...")
 
     df = _load_df03_format(experiment_id)
@@ -72,6 +73,28 @@ def load_and_prepare_data(experiment_id):
     print(f"Genotypes: {df[GENOTYPE_COL].unique()}")
 
     return df
+
+
+def get_genotype_suffix(genotype):
+    """Extract the suffix (wildtype, heterozygous, homozygous) from full genotype name."""
+    for suffix in GENOTYPE_SUFFIX_ORDER:
+        if genotype.endswith(suffix):
+            return suffix
+    return genotype
+
+
+def get_color_for_genotype(genotype):
+    """Get color for a genotype based on its suffix."""
+    suffix = get_genotype_suffix(genotype)
+    return GENOTYPE_SUFFIX_COLORS.get(suffix, '#808080')  # Gray fallback
+
+
+def get_all_genotypes_sorted(df):
+    """Get all unique genotypes sorted by suffix order."""
+    genotypes = df[GENOTYPE_COL].unique()
+    return sorted(genotypes,
+                 key=lambda g: (GENOTYPE_SUFFIX_ORDER.index(get_genotype_suffix(g))
+                               if get_genotype_suffix(g) in GENOTYPE_SUFFIX_ORDER else 999))
 
 
 def get_trajectories_for_pair_genotype(df, pair, genotype):
@@ -99,10 +122,19 @@ def get_trajectories_for_pair_genotype(df, pair, genotype):
 
 def plot_trajectories_for_pair(df, pair, output_path, global_time_min=None, global_time_max=None,
                                global_metric_min=None, global_metric_max=None):
-    """Create a 1x3 faceted plot for a pair showing all three genotypes."""
+    """Create a faceted plot for a pair showing all genotypes for that pair."""
     print(f"\nCreating plot for {pair}...")
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    # Get unique genotypes for this pair, sorted by suffix order
+    pair_genotypes = sorted(df[df[PAIR_COL] == pair][GENOTYPE_COL].unique(),
+                           key=lambda g: (GENOTYPE_SUFFIX_ORDER.index(get_genotype_suffix(g))
+                                         if get_genotype_suffix(g) in GENOTYPE_SUFFIX_ORDER else 999))
+
+    n_genotypes = len(pair_genotypes) if pair_genotypes else 3  # fallback to 3
+    fig, axes = plt.subplots(1, n_genotypes, figsize=(5*n_genotypes, 4.5))
+    if n_genotypes == 1:
+        axes = [axes]
+
     fig.suptitle(f'Curvature Trajectories - {pair}', fontsize=14, fontweight='bold')
 
     # Collect data to determine axis ranges if not provided
@@ -111,7 +143,7 @@ def plot_trajectories_for_pair(df, pair, output_path, global_time_min=None, glob
         global_time_min, global_time_max = float('inf'), float('-inf')
         global_metric_min, global_metric_max = float('inf'), float('-inf')
 
-        for genotype in GENOTYPE_ORDER:
+        for genotype in pair_genotypes:
             trajectories, embryo_ids, n_embryos = get_trajectories_for_pair_genotype(df, pair, genotype)
             all_data[genotype] = (trajectories, embryo_ids, n_embryos)
 
@@ -121,9 +153,14 @@ def plot_trajectories_for_pair(df, pair, output_path, global_time_min=None, glob
                     global_time_max = max(global_time_max, traj['times'].max())
                     global_metric_min = min(global_metric_min, traj['metrics'].min())
                     global_metric_max = max(global_metric_max, traj['metrics'].max())
+
+        # If no data found for any genotype, use default ranges
+        if global_time_min == float('inf'):
+            global_time_min, global_time_max = 0, 10
+            global_metric_min, global_metric_max = -1, 1
     else:
         all_data = {}
-        for genotype in GENOTYPE_ORDER:
+        for genotype in pair_genotypes:
             all_data[genotype] = get_trajectories_for_pair_genotype(df, pair, genotype)
 
     # Add padding to metric axis
@@ -131,24 +168,25 @@ def plot_trajectories_for_pair(df, pair, output_path, global_time_min=None, glob
     global_metric_min -= metric_padding
     global_metric_max += metric_padding
 
-    for ax_idx, genotype in enumerate(GENOTYPE_ORDER):
+    for ax_idx, genotype in enumerate(pair_genotypes):
         ax = axes[ax_idx]
 
         trajectories, embryo_ids, n_embryos = all_data[genotype]
 
         if trajectories is None or n_embryos == 0:
-            ax.text(0.5, 0.5, f'No data for\n{genotype.replace("cep290_", "")}',
+            genotype_label = get_genotype_suffix(genotype).replace("_", " ").title()
+            ax.text(0.5, 0.5, f'No data for\n{genotype_label}',
                    ha='center', va='center', transform=ax.transAxes,
                    fontsize=12, color='gray')
             ax.set_xlabel('Time (hpf)')
             ax.set_ylabel('Normalized Baseline Deviation')
-            ax.set_title(f'{genotype.replace("cep290_", "").title()} (n={n_embryos})')
+            ax.set_title(f'{genotype_label} (n={n_embryos})')
             ax.set_xlim(global_time_min, global_time_max)
             ax.set_ylim(global_metric_min, global_metric_max)
             continue
 
         # Plot individual trajectories
-        color = GENOTYPE_COLORS[genotype]
+        color = get_color_for_genotype(genotype)
         for traj in trajectories:
             ax.plot(traj['times'], traj['metrics'], alpha=0.3, linewidth=1, color=color)
 
@@ -169,9 +207,10 @@ def plot_trajectories_for_pair(df, pair, output_path, global_time_min=None, glob
         if bin_times:
             ax.plot(bin_times, bin_means, color=color, linewidth=2.5, label='Mean', zorder=5)
 
+        genotype_label = get_genotype_suffix(genotype).replace("_", " ").title()
         ax.set_xlabel('Time (hpf)')
         ax.set_ylabel('Normalized Baseline Deviation')
-        ax.set_title(f'{genotype.replace("cep290_", "").title()} (n={n_embryos})')
+        ax.set_title(f'{genotype_label} (n={n_embryos})')
         ax.grid(True, alpha=0.3)
         ax.legend()
 
@@ -221,6 +260,11 @@ def plot_all_pairs_overview(df, pairs, output_path):
                     global_time_max = max(global_time_max, traj['times'].max())
                     global_metric_min = min(global_metric_min, traj['metrics'].min())
                     global_metric_max = max(global_metric_max, traj['metrics'].max())
+
+    # If no data found, use default ranges
+    if global_time_min == float('inf'):
+        global_time_min, global_time_max = 0, 10
+        global_metric_min, global_metric_max = -1, 1
 
     # Add padding to metric axis
     metric_padding = (global_metric_max - global_metric_min) * 0.1
@@ -335,6 +379,11 @@ def plot_genotypes_by_pair(df, pairs, output_path):
                     global_metric_min = min(global_metric_min, traj['metrics'].min())
                     global_metric_max = max(global_metric_max, traj['metrics'].max())
 
+    # If no data found, use default ranges
+    if global_time_min == float('inf'):
+        global_time_min, global_time_max = 0, 10
+        global_metric_min, global_metric_max = -1, 1
+
     # Add padding to metric axis
     metric_padding = (global_metric_max - global_metric_min) * 0.1
     global_metric_min -= metric_padding
@@ -393,10 +442,15 @@ def plot_genotypes_by_pair(df, pairs, output_path):
 
 
 def plot_homozygous_across_pairs(df, pairs, output_path):
-    """Create a 1x3 plot showing only homozygous genotype across all pairs."""
+    """Create a 1xN plot showing only homozygous genotype across all pairs."""
     print(f"\nCreating homozygous-only plot across {len(pairs)} pairs...")
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    fig, axes = plt.subplots(1, len(pairs), figsize=(5*len(pairs), 4.5))
+
+    # Ensure axes is always iterable
+    if len(pairs) == 1:
+        axes = [axes]
+
     fig.suptitle('Curvature Trajectories - Homozygous (cep290) Genotype Across Pairs',
                  fontsize=14, fontweight='bold')
 
@@ -418,6 +472,11 @@ def plot_homozygous_across_pairs(df, pairs, output_path):
                 global_time_max = max(global_time_max, traj['times'].max())
                 global_metric_min = min(global_metric_min, traj['metrics'].min())
                 global_metric_max = max(global_metric_max, traj['metrics'].max())
+
+    # If no data found, use default ranges
+    if global_time_min == float('inf'):
+        global_time_min, global_time_max = 0, 10
+        global_metric_min, global_metric_max = -1, 1
 
     # Add some padding to the metric axis
     metric_padding = (global_metric_max - global_metric_min) * 0.1
@@ -483,9 +542,10 @@ def create_summary_statistics(df):
     print("\nCreating summary statistics...")
 
     summary_rows = []
+    all_genotypes = get_all_genotypes_sorted(df)
 
     for pair in sorted(df[PAIR_COL].unique()):
-        for genotype in GENOTYPE_ORDER:
+        for genotype in all_genotypes:
             filtered = df[(df[PAIR_COL] == pair) & (df[GENOTYPE_COL] == genotype)]
 
             if len(filtered) == 0:
@@ -531,38 +591,10 @@ def main():
     pairs = sorted(df[PAIR_COL].unique())
     print(f"\nFound {len(pairs)} pair groups: {pairs}")
 
-    # Create per-pair plots (3 columns, one per genotype)
+    # Create per-pair plots (columns for each genotype in that pair)
     for pair in pairs:
-        output_path = FIGURES_DIR / f'pair_{pair.replace("cep290_", "").replace("_", "")}_all_genotypes.png'
+        output_path = FIGURES_DIR / f'pair_{pair}_all_genotypes.png'
         plot_trajectories_for_pair(df, pair, output_path)
-
-    # Create overview plot with all pairs side-by-side (using reusable function)
-    overview_path = FIGURES_DIR / 'all_pairs_overview.png'
-    plot_faceted_trajectories(
-        df, pairs, GENOTYPE_ORDER,
-        row_col=PAIR_COL, col_col=GENOTYPE_COL,
-        time_col=TIME_COL, metric_col=METRIC_NAME,
-        embryo_id_col=EMBRYO_ID_COL,
-        group_colors=GENOTYPE_COLORS,
-        output_path=overview_path,
-        title='Curvature Trajectories - All Pairs Overview',
-    )
-
-    # Create collapsed plot: all genotypes by pair (1x3 layout, using reusable function)
-    genotypes_by_pair_path = FIGURES_DIR / 'genotypes_by_pair_comparison.png'
-    plot_genotypes_overlaid(
-        df, pairs,
-        group_col=PAIR_COL, genotype_col=GENOTYPE_COL,
-        time_col=TIME_COL, metric_col=METRIC_NAME,
-        embryo_id_col=EMBRYO_ID_COL,
-        genotype_order=GENOTYPE_ORDER, genotype_colors=GENOTYPE_COLORS,
-        output_path=genotypes_by_pair_path,
-        title='Curvature Trajectories by Pair - All Genotypes Compared',
-    )
-
-    # Create homozygous-only plot across pairs
-    homozygous_path = FIGURES_DIR / 'homozygous_across_pairs.png'
-    plot_homozygous_across_pairs(df, pairs, homozygous_path)
 
     # Create summary statistics
     summary_df = create_summary_statistics(df)

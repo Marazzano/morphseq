@@ -145,8 +145,8 @@ def find_inflection_candidates(embryo_data: pd.DataFrame, min_decline_rate: floa
 
 
 def detect_persistent_death_inflection(embryo_data: pd.DataFrame,
-                                     persistence_threshold: float = 0.25,
-                                     min_decline_rate: float = 0.05) -> Optional[Dict[str, Any]]:
+                                     persistence_threshold: float = None,
+                                     min_decline_rate: float = None) -> Optional[Dict[str, Any]]:
     """
     Recursively find inflection point that is followed by persistent death.
 
@@ -154,10 +154,12 @@ def detect_persistent_death_inflection(embryo_data: pd.DataFrame,
     ----------
     embryo_data : pd.DataFrame
         Data for single embryo
-    persistence_threshold : float, default 0.80
-        Minimum fraction of post-inflection points that must be dead_flag=True
-    min_decline_rate : float, default 0.05
-        Minimum decline rate to consider as inflection candidate
+    persistence_threshold : float, optional
+        Minimum fraction of post-inflection points that must be dead_flag=True.
+        If None, uses QC_DEFAULTS['persistence_threshold'] (default 0.80)
+    min_decline_rate : float, optional
+        Minimum decline rate to consider as inflection candidate.
+        If None, uses QC_DEFAULTS['min_decline_rate'] (default 0.05)
 
     Returns
     -------
@@ -165,6 +167,12 @@ def detect_persistent_death_inflection(embryo_data: pd.DataFrame,
         If found: {'inflection_time': float, 'persistence_stats': dict, 'candidates_tested': list}
         If not found: None
     """
+    # Use defaults from config if not specified
+    if persistence_threshold is None:
+        persistence_threshold = QC_DEFAULTS['persistence_threshold']
+    if min_decline_rate is None:
+        min_decline_rate = QC_DEFAULTS['min_decline_rate']
+
     candidates_tested = []
     current_data = embryo_data.copy()
 
@@ -270,11 +278,7 @@ def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = Non
             continue
 
         # Detect persistent death inflection
-        result = detect_persistent_death_inflection(
-            embryo_data,
-            persistence_threshold=0.25,
-            min_decline_rate=0.05
-        )
+        result = detect_persistent_death_inflection(embryo_data)
 
         if result is not None:
             detected_count += 1

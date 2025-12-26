@@ -1048,7 +1048,7 @@ class Experiment:
         return result
 
     @record("build03")
-    def run_build03(self, by_embryo: int = None, frames_per_embryo: int = None, **kwargs):
+    def run_build03(self, by_embryo: int = None, frames_per_embryo: int = None, overwrite: bool = False, **kwargs):
         """Execute Build03 for this experiment with SAM2/legacy detection"""
         print(f"🔬 Running Build03 for {self.date}")
         
@@ -1076,6 +1076,7 @@ class Experiment:
                 by_embryo=by_embryo,
                 frames_per_embryo=frames_per_embryo,
                 n_workers=kwargs.get('n_workers', self.num_cpu_workers),
+                overwrite=overwrite,
             )
             if 'df01_out' in kwargs and kwargs['df01_out'] is not None:
                 _args['df01_out'] = kwargs['df01_out']

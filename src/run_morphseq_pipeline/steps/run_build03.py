@@ -249,7 +249,7 @@ def main() -> int:
                     stats_df=stats_df,
                     outscale=6.5,
                     dl_rad_um=50,
-                    overwrite_flag=False,
+                    overwrite_flag=args.overwrite,
                 )
                 print("   🖼️  Snips: training_data/bf_embryo_snips/<exp>/, bf_embryo_snips_uncropped/<exp>/, bf_embryo_masks/")
             except Exception as e:

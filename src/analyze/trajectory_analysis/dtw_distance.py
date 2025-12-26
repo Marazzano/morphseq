@@ -9,12 +9,21 @@ embryonic trajectory data.
 
 Functions
 =========
-- compute_dtw_distance : Compute DTW distance between two sequences
-- compute_dtw_distance_matrix : Compute pairwise DTW distances for multiple sequences
+Univariate DTW:
+- compute_dtw_distance : Compute DTW distance between two 1D sequences
+- compute_dtw_distance_matrix : Compute pairwise DTW distances for multiple 1D sequences
+
+Multivariate DTW (MD-DTW):
+- prepare_multivariate_array : Convert DataFrame to 3D array for MD-DTW
+- compute_md_dtw_distance_matrix : Compute pairwise MD-DTW distances
+- _dtw_multivariate_pair : Helper for pairwise multivariate DTW (internal)
 """
 
 import numpy as np
-from typing import Tuple, Optional
+import pandas as pd
+from scipy.spatial.distance import cdist
+from sklearn.preprocessing import StandardScaler
+from typing import List, Tuple, Optional
 
 
 def compute_dtw_distance(
@@ -196,3 +205,339 @@ def compute_dtw_distance_matrix(
         print(f"    Matrix shape: {distance_matrix.shape}")
 
     return distance_matrix
+
+
+# ============================================================================
+# Multivariate DTW (MD-DTW) Functions
+# ============================================================================
+
+
+def prepare_multivariate_array(
+    df: pd.DataFrame,
+    metrics: List[str],
+    time_col: str = 'predicted_stage_hpf',
+    embryo_id_col: str = 'embryo_id',
+    time_grid: Optional[np.ndarray] = None,
+    normalize: bool = True,
+    verbose: bool = True,
+) -> Tuple[np.ndarray, List[str], np.ndarray]:
+    """
+    Convert long-format DataFrame to 3D array for multivariate DTW.
+
+    Takes a DataFrame with multiple metric columns and converts to a 3D numpy array
+    suitable for multivariate DTW computation. Handles interpolation to common time
+    grid and optional Z-score normalization.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Long-format DataFrame with columns [embryo_id, time_col, metric1, metric2, ...]
+    metrics : List[str]
+        List of metric column names (e.g., ['baseline_deviation_normalized', 'total_length_um'])
+    time_col : str, default='predicted_stage_hpf'
+        Name of time column
+    embryo_id_col : str, default='embryo_id'
+        Name of embryo ID column
+    time_grid : np.ndarray, optional
+        Optional pre-defined time grid. If None, auto-computed from data
+    normalize : bool, default=True
+        Whether to Z-score normalize each metric globally
+    verbose : bool, default=True
+        Print progress information
+
+    Returns
+    -------
+    X : np.ndarray
+        Array with shape (n_embryos, n_timepoints, n_metrics)
+    embryo_ids : List[str]
+        List of embryo identifiers (same order as X rows)
+    time_grid : np.ndarray
+        Time values (same for all embryos)
+
+    Examples
+    --------
+    >>> df = load_experiment_dataframe('20251121')
+    >>> X, embryo_ids, time_grid = prepare_multivariate_array(
+    ...     df,
+    ...     metrics=['baseline_deviation_normalized', 'total_length_um']
+    ... )
+    >>> print(X.shape)  # (n_embryos, n_timepoints, 2)
+
+    Notes
+    -----
+    - All embryos are interpolated to the same common time grid
+    - Missing values (NaN) are handled by linear interpolation
+    - Z-score normalization ensures equal weight for all metrics in DTW
+    """
+    from .trajectory_utils import interpolate_to_common_grid_multi_df, GRID_STEP
+
+    if verbose:
+        print(f"Preparing multivariate array for {len(metrics)} metrics...")
+        print(f"  Metrics: {metrics}")
+        print(f"  Normalization: {normalize}")
+
+    # Step 1: Get embryo IDs in sorted order (for consistency)
+    embryo_ids = sorted(df[embryo_id_col].unique())
+    n_embryos = len(embryo_ids)
+    n_metrics = len(metrics)
+
+    if verbose:
+        print(f"  Embryos: {n_embryos}")
+
+    # Step 2: Interpolate each metric for all embryos using the trajectory utility
+    # If time_grid is provided, pass it through; otherwise let the utility derive the grid
+    df_interp = interpolate_to_common_grid_multi_df(
+        df,
+        metrics,
+        grid_step=(time_grid[1] - time_grid[0]) if time_grid is not None and len(time_grid) > 1 else GRID_STEP,
+        time_col=time_col,
+        time_grid=time_grid,
+        fill_edges=False,
+        verbose=verbose,
+    )
+
+    # Extract actual grid from interpolation results (safe in case bounds differ)
+    time_grid = np.sort(df_interp[time_col].unique())
+    n_timepoints = len(time_grid)
+
+    if verbose:
+        print(f"  Time points: {n_timepoints} ({time_grid.min():.1f} - {time_grid.max():.1f} hpf)")
+
+    # Step 3: Initialize 3D array
+    X = np.zeros((n_embryos, n_timepoints, n_metrics))
+
+    for i, embryo_id in enumerate(embryo_ids):
+        emb_df = df_interp[df_interp[embryo_id_col] == embryo_id].set_index(time_col)
+
+        if emb_df.empty:
+            if verbose:
+                print(f"  WARNING: Embryo {embryo_id} has no interpolated rows, using zeros")
+            continue
+
+        for j, metric in enumerate(metrics):
+            # Reindex onto full grid and fill missing values
+            ser = emb_df[metric].reindex(time_grid)
+            # Fill any remaining NaNs using interpolation then zeros
+            ser = ser.interpolate(limit_direction='both').fillna(0)
+            X[i, :, j] = ser.values
+
+    # Step 5: Handle remaining NaNs (e.g., at edges due to interpolation bounds)
+    mask = np.isnan(X)
+    if mask.any():
+        for i in range(n_embryos):
+            for j in range(n_metrics):
+                series = X[i, :, j]
+                nans = np.isnan(series)
+
+                if nans.all():
+                    # All NaNs - set to 0
+                    X[i, :, j] = 0
+                else:
+                    # Use pandas to fill NaNs with interpolation
+                    filled = pd.Series(series).interpolate(limit_direction='both').fillna(0)
+                    X[i, :, j] = filled.values
+
+    if verbose:
+        print(f"  Array shape: {X.shape}")
+        print(f"  Before normalization:")
+        for j, metric in enumerate(metrics):
+            print(f"    {metric}: mean={X[:, :, j].mean():.3f}, std={X[:, :, j].std():.3f}")
+
+    # Step 6: Global Z-score normalization (if enabled)
+    if normalize:
+        original_shape = X.shape
+        X_reshaped = X.reshape(-1, n_metrics)
+
+        # Z-score each metric globally
+        scaler = StandardScaler()
+        X_normalized = scaler.fit_transform(X_reshaped)
+
+        X = X_normalized.reshape(original_shape)
+
+        if verbose:
+            print(f"  After normalization:")
+            for j, metric in enumerate(metrics):
+                print(f"    {metric}: mean={X[:, :, j].mean():.6f}, std={X[:, :, j].std():.6f}")
+
+    if verbose:
+        print(f"✓ Multivariate array prepared successfully")
+
+    return X, embryo_ids, time_grid
+
+
+def _dtw_multivariate_pair(
+    ts_a: np.ndarray,
+    ts_b: np.ndarray,
+    window: Optional[int] = 3,
+) -> float:
+    """
+    Compute DTW distance between two multivariate time series.
+
+    Uses Euclidean distance in feature space as the local distance metric.
+    Implements dynamic programming with optional Sakoe-Chiba band constraint.
+
+    Parameters
+    ----------
+    ts_a : np.ndarray
+        2D array with shape (T_a, n_features) - time series A
+    ts_b : np.ndarray
+        2D array with shape (T_b, n_features) - time series B
+    window : int, optional
+        Sakoe-Chiba band width (None for unconstrained DTW)
+
+    Returns
+    -------
+    float
+        DTW distance between ts_a and ts_b
+
+    Notes
+    -----
+    - The "multivariate" part is handled by computing Euclidean distance
+      between feature vectors at each timepoint pair
+    - ts_a[i] and ts_b[j] are vectors in feature space
+    - Distance is computed as sqrt(sum((ts_a[i] - ts_b[j])^2))
+    """
+    # Step 1: Compute local cost matrix
+    # dist_matrix[i, j] = Euclidean distance between ts_a[i] and ts_b[j]
+    # This naturally handles multivariate data
+    dist_matrix = cdist(ts_a, ts_b, metric='euclidean')
+
+    n, m = dist_matrix.shape
+
+    # Step 2: Initialize accumulated cost matrix
+    # Set all to infinity initially
+    acc_cost = np.full((n + 1, m + 1), np.inf)
+    acc_cost[0, 0] = 0
+
+    # Step 3: Dynamic Programming with Sakoe-Chiba Constraint
+    # The window parameter limits how far we can warp in time
+    if window is None:
+        # Unconstrained DTW - compute all pairs
+        for i in range(1, n + 1):
+            for j in range(1, m + 1):
+                cost = dist_matrix[i - 1, j - 1]
+                acc_cost[i, j] = cost + min(
+                    acc_cost[i - 1, j],      # Insertion (skip in ts_a)
+                    acc_cost[i, j - 1],      # Deletion (skip in ts_b)
+                    acc_cost[i - 1, j - 1]   # Match
+                )
+    else:
+        # Constrained DTW - only compute within band
+        # The band width is determined by the window parameter
+        w = max(window, abs(n - m))
+
+        for i in range(1, n + 1):
+            # Determine valid range for j
+            start_j = max(1, i - w)
+            end_j = min(m + 1, i + w + 1)
+
+            for j in range(start_j, end_j):
+                cost = dist_matrix[i - 1, j - 1]
+                acc_cost[i, j] = cost + min(
+                    acc_cost[i - 1, j],
+                    acc_cost[i, j - 1],
+                    acc_cost[i - 1, j - 1]
+                )
+
+    return acc_cost[n, m]
+
+
+def compute_md_dtw_distance_matrix(
+    X: np.ndarray,
+    sakoe_chiba_radius: Optional[int] = 3,
+    n_jobs: int = 1,
+    verbose: bool = True,
+) -> np.ndarray:
+    """
+    Compute multivariate DTW distance matrix.
+
+    Computes pairwise multivariate DTW distances between all embryos using
+    pure Python/NumPy implementation (no tslearn required).
+
+    Parameters
+    ----------
+    X : np.ndarray
+        3D array with shape (n_embryos, n_timepoints, n_metrics)
+    sakoe_chiba_radius : int, optional
+        Sakoe-Chiba band constraint width.
+        Limits warping to within ±radius timepoints.
+        None for unconstrained DTW (slower).
+        Default: 3 (good balance of flexibility and speed)
+    n_jobs : int, default=1
+        Kept for API compatibility (single-threaded implementation)
+    verbose : bool, default=True
+        Print progress and diagnostics
+
+    Returns
+    -------
+    distance_matrix : np.ndarray
+        Array with shape (n_embryos, n_embryos).
+        Symmetric matrix where D[i,j] = DTW distance between embryo i and j
+
+    Examples
+    --------
+    >>> X, embryo_ids, time_grid = prepare_multivariate_array(df, metrics=['curvature', 'length'])
+    >>> D = compute_md_dtw_distance_matrix(X, sakoe_chiba_radius=3)
+    >>> print(D.shape)  # (n_embryos, n_embryos)
+    >>> # Use D for hierarchical clustering
+    >>> from src.analyze.trajectory_analysis import run_bootstrap_hierarchical
+    >>> results = run_bootstrap_hierarchical(D, k=3, embryo_ids=embryo_ids)
+
+    Notes
+    -----
+    - This is a pure Python implementation using NumPy/SciPy
+    - No external dependencies like tslearn required
+    - Time complexity: O(N^2 * T^2) where N=embryos, T=timepoints
+    - For N~50, T~50: ~25M operations (seconds to complete)
+    - Output is symmetric by construction: D[i,j] == D[j,i]
+    - Diagonal is zero: D[i,i] == 0
+    """
+    n_embryos = X.shape[0]
+
+    if verbose:
+        print(f"Computing MD-DTW distance matrix (Pure Python/NumPy)...")
+        print(f"  Embryos: {n_embryos}")
+        print(f"  Array shape: {X.shape}")
+        print(f"  Sakoe-Chiba radius: {sakoe_chiba_radius}")
+
+    # Initialize distance matrix
+    D = np.zeros((n_embryos, n_embryos))
+
+    # Total pairs to compute
+    total_pairs = (n_embryos * (n_embryos + 1)) // 2
+    pair_count = 0
+
+    # Compute pairwise distances (only upper triangle due to symmetry)
+    for i in range(n_embryos):
+        for j in range(i, n_embryos):
+            if i == j:
+                # Diagonal is always 0 (distance from embryo to itself)
+                dist = 0.0
+            else:
+                # Compute DTW distance between embryos i and j
+                dist = _dtw_multivariate_pair(X[i], X[j], window=sakoe_chiba_radius)
+
+            D[i, j] = dist
+            D[j, i] = dist  # Symmetric
+
+            pair_count += 1
+            if verbose and pair_count % max(1, total_pairs // 10) == 0:
+                print(f"  Processed {pair_count}/{total_pairs} pairs ({100*pair_count//total_pairs}%)...", end='\r')
+
+    if verbose:
+        # Verify properties
+        diagonal_max = np.max(np.abs(np.diag(D)))
+        asymmetry = np.max(np.abs(D - D.T))
+
+        print(f"\n✓ Distance matrix computed")
+        print(f"  Shape: {D.shape}")
+        print(f"  Distance range: [{D[D > 0].min():.4f}, {D.max():.4f}]")
+        print(f"  Max diagonal value: {diagonal_max:.2e} (should be ~0)")
+        print(f"  Max asymmetry: {asymmetry:.2e} (should be ~0)")
+
+        if diagonal_max > 1e-10:
+            print(f"  WARNING: Diagonal not zero (max={diagonal_max:.2e})")
+        if asymmetry > 1e-10:
+            print(f"  WARNING: Matrix not symmetric (max asymmetry={asymmetry:.2e})")
+
+    return D
