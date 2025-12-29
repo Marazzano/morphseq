@@ -451,7 +451,7 @@ class DataOrganizer:
         return True
     
     @staticmethod
-    def process_experiments(source_dir, output_dir, experiment_names=None, verbose=True, overwrite=False):
+    def process_experiments(source_dir, output_dir, experiment_names=None, verbose=True, overwrite=False, force_raw_data=False):
         """
         Organize experiments and create videos/metadata with autosave functionality.
         
@@ -509,11 +509,15 @@ class DataOrganizer:
             # Check if already processed AND entity tracking is complete
             already_processed = experiment_id in existing_metadata.get('experiments', {})
             needs_processing = not already_processed or not entity_tracking_complete
-            
-            if already_processed and entity_tracking_complete and not overwrite:
+
+            if already_processed and entity_tracking_complete and not overwrite and not force_raw_data:
                 experiments_skipped.append(experiment_id)
                 if verbose:
                     print(f"⏭️  Skipping already processed experiment: {experiment_id}")
+            elif already_processed and force_raw_data:
+                experiments_to_process.append(exp_dir)
+                if verbose:
+                    print(f"🔄 Force-regenerating raw data for: {experiment_id}")
             elif already_processed and not entity_tracking_complete:
                 experiments_to_process.append(exp_dir)
                 if verbose:
@@ -576,7 +580,7 @@ class DataOrganizer:
             #     print(f"   Found {stitch_count} stitch files")
                 
             # Process this experiment
-            DataOrganizer.organize_experiment(exp_dir, raw_data_dir, experiment_id, False, overwrite)  # Set verbose=False
+            DataOrganizer.organize_experiment(exp_dir, raw_data_dir, experiment_id, False, overwrite, force_raw_data)  # Set verbose=False
             
             # Update and save metadata incrementally for robustness
             # if verbose:
@@ -666,7 +670,7 @@ class DataOrganizer:
         return well_id, frame, channel
 
     @staticmethod
-    def organize_experiment(experiment_dir, output_dir, experiment_id, verbose=True, overwrite=False):
+    def organize_experiment(experiment_dir, output_dir, experiment_id, verbose=True, overwrite=False, force_raw_data=False):
         stitch_files = list(Path(experiment_dir).glob('*_stitch.*'))
         wells = defaultdict(list)
         
@@ -688,18 +692,20 @@ class DataOrganizer:
             video_id = f"{experiment_id}_{well_id}"
             if verbose:
                 print(f"   🎬 Processing well {well_id} with {len(files)} frames...")
-            DataOrganizer.process_well(files, Path(output_dir) / experiment_id, video_id, verbose, overwrite)
+            DataOrganizer.process_well(files, Path(output_dir) / experiment_id, video_id, verbose, overwrite, force_raw_data)
 
     @staticmethod
-    def process_well(image_files, exp_output_dir, video_id, verbose=True, overwrite=False):
+    def process_well(image_files, exp_output_dir, video_id, verbose=True, overwrite=False, force_raw_data=False):
         images_dir = Path(exp_output_dir) / "images" / video_id
         vids_dir = Path(exp_output_dir) / "vids"
         images_dir.mkdir(parents=True, exist_ok=True)
         vids_dir.mkdir(parents=True, exist_ok=True)
         
         video_path = vids_dir / f"{video_id}.mp4"
-        
-        if video_path.exists() and not overwrite:
+
+        # Skip video only if it exists AND force_raw_data is NOT set
+        # Keep overwrite for backward compatibility but force_raw_data is the primary control
+        if video_path.exists() and not force_raw_data and not overwrite:
             if verbose:
                 print(f"     ⏭️  Video already exists: {video_path.name}")
             return
@@ -729,9 +735,9 @@ class DataOrganizer:
                     image_id = f"{video_id}_ch{channel:02d}_t{str(frame).zfill(4)}"
                 jpeg_filename = f"{image_id}.jpg"
                 jpeg_path = images_dir / jpeg_filename
-                
-                if jpeg_path.exists() and not overwrite:
-                    # File exists, add to collection and update progress
+
+                if jpeg_path.exists() and not force_raw_data and not overwrite:
+                    # File exists, skip conversion (overwrite is for metadata only)
                     jpeg_paths.append((frame, jpeg_path))
                     if pbar:
                         pbar.update(1)
