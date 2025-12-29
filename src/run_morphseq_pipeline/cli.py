@@ -279,6 +279,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_pipe.add_argument("--experiments", help="Comma-separated experiment IDs")
     p_pipe.add_argument("--later-than", type=int, help="Process experiments after YYYYMMDD")
     p_pipe.add_argument("--force", action="store_true", help="Force rerun even if not needed")
+    p_pipe.add_argument("--force-raw-data-organization", action="store_true",
+                        help="Force regeneration of videos and JPEGs in raw_data_organized")
     p_pipe.add_argument("--dry-run", action="store_true", help="Show what would run without executing")
     p_pipe.add_argument("--model-name", default="20241107_ds_sweep01_optimum",
                         help="Model name for embedding generation (default: 20241107_ds_sweep01_optimum)")
@@ -878,7 +880,10 @@ def main(argv: list[str] | None = None) -> int:
                                 'force_detection': True,
                                 'ensure_built_metadata': True,
                                 'force_metadata_overwrite': True,
+                                'force_raw_data_organization': True,
                             })
+                        elif args.force_raw_data_organization:
+                            sam2_kwargs['force_raw_data_organization'] = True
                         exp.run_sam2(**sam2_kwargs)
                 else:
                     print("    3️⃣ ✅ SAM2 segmentation complete")
@@ -1024,7 +1029,10 @@ def main(argv: list[str] | None = None) -> int:
                                 ensure_built_metadata=True,
                                 force_metadata_overwrite=True,
                                 force_mask_export=True,
+                                force_raw_data_organization=True,
                             )
+                        elif args.force_raw_data_organization:
+                            run_kwargs['force_raw_data_organization'] = True
                         exp.run_sam2(**run_kwargs)
                 else:
                     print(f"✅ SAM2 already complete for {exp.date}")

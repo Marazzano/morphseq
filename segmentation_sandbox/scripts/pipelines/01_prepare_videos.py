@@ -132,6 +132,11 @@ Examples:
         action="store_true",
         help="Force overwrite existing experiment metadata (useful when Build01 metadata has been updated)"
     )
+    parser.add_argument(
+        "--force-raw-data-organization",
+        action="store_true",
+        help="Force regeneration of videos and JPEGs in raw_data_organized even if they exist"
+    )
     
     args = parser.parse_args()
     
@@ -394,20 +399,24 @@ Examples:
             for exp in sorted(needs_processing):
                 print(f"   - {exp}")
         else:
-            print(f"✨ All requested experiments are fully processed!")
-            # Print per-experiment next steps
-            if experiment_names and len(experiment_names) == 1:
-                exp = experiment_names[0]
-                exp_metadata_path = output_dir / "raw_data_organized" / exp / f"experiment_metadata_{exp}.json"
-                print(f"📋 Next step: 03_gdino_detection.py --metadata {exp_metadata_path}")
-            elif experiment_names:
-                print(f"📋 Next steps for experiments:")
-                for exp in experiment_names:
+            if not args.force_raw_data_organization:
+                print(f"✨ All requested experiments are fully processed!")
+                # Print per-experiment next steps
+                if experiment_names and len(experiment_names) == 1:
+                    exp = experiment_names[0]
                     exp_metadata_path = output_dir / "raw_data_organized" / exp / f"experiment_metadata_{exp}.json"
-                    print(f"   {exp}: 03_gdino_detection.py --metadata {exp_metadata_path}")
+                    print(f"📋 Next step: 03_gdino_detection.py --metadata {exp_metadata_path}")
+                elif experiment_names:
+                    print(f"📋 Next steps for experiments:")
+                    for exp in experiment_names:
+                        exp_metadata_path = output_dir / "raw_data_organized" / exp / f"experiment_metadata_{exp}.json"
+                        print(f"   {exp}: 03_gdino_detection.py --metadata {exp_metadata_path}")
+                else:
+                    print(f"📋 Next step: Run 03_gdino_detection.py with --metadata {metadata_path}")
+                return
             else:
-                print(f"📋 Next step: Run 03_gdino_detection.py with --metadata {metadata_path}")
-            return
+                print(f"🔄 Force-regenerating raw data for fully processed experiments")
+                # Continue to DataOrganizer.process_experiments()
     else:
         print(f"📌 Processing ALL experiments (will analyze each for new files)")
         needs_processing = set()
@@ -452,7 +461,8 @@ Examples:
             output_dir=output_dir,
             experiment_names=experiments_to_process,
             verbose=args.verbose,
-            overwrite=args.overwrite_metadata
+            overwrite=args.overwrite_metadata,
+            force_raw_data=args.force_raw_data_organization
         )
 
         # DataOrganizer automatically creates/updates the metadata file

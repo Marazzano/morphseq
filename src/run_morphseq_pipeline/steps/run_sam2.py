@@ -75,6 +75,7 @@ def run_sam2(
     ensure_built_metadata: bool = False,
     force_metadata_overwrite: bool = False,
     force_mask_export: bool = False,
+    force_raw_data_organization: bool = False,
     **kwargs
 ) -> Path:
     """Run SAM2 segmentation pipeline for a single experiment.
@@ -213,6 +214,8 @@ def run_sam2(
             stage1_args.append("--verbose")
         if force_metadata_overwrite:
             stage1_args.append("--overwrite-metadata")
+        if force_raw_data_organization:
+            stage1_args.append("--force-raw-data-organization")
             
         result = _run_pipeline_script(
             script_path=scripts_dir / "01_prepare_videos.py",
