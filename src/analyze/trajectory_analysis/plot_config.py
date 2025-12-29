@@ -23,6 +23,23 @@ GENOTYPE_SUFFIX_ORDER = ['wildtype', 'heterozygous', 'homozygous', 'unknown']
 """Default order for displaying genotype suffixes."""
 
 # ==============================================================================
+# Phenotype Styling (distinct from genotype colors)
+# ==============================================================================
+
+# Color mapping for phenotype categories (purple/cyan/pink spectrum - distinct from genotype)
+PHENOTYPE_COLORS = {
+    'CE': '#9467BD',           # Purple
+    'HTA': '#17BECF',          # Cyan/Teal
+    'BA_rescue': '#E377C2',    # Pink
+    'non_penetrant': '#7F7F7F', # Grey
+}
+"""Colors for phenotype categories. Distinct from genotype suffix colors."""
+
+# Standard ordering for phenotypes
+PHENOTYPE_ORDER = ['CE', 'HTA', 'BA_rescue', 'non_penetrant']
+"""Default order for displaying phenotypes."""
+
+# ==============================================================================
 # Matplotlib Styling
 # ==============================================================================
 
