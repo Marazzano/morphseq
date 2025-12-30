@@ -996,8 +996,8 @@ def plot_proportion_faceted(
 
                 ax.set_ylim(0, 1.05 if normalize else total * 1.1)
 
-            # Styling
-            ax.set_xlim(-0.6, 0.6)
+            # Styling - tighter bar spacing
+            ax.set_xlim(-0.5, 0.5)
             ax.set_xticks([])
 
             # Column titles on top row
@@ -1008,18 +1008,27 @@ def plot_proportion_faceted(
             if c_idx == 0 and row_by is not None and row_val is not None:
                 ax.set_ylabel(f'{row_val}', fontsize=10, fontweight='bold')
 
-            # Y-axis formatting
-            if c_idx == 0:
-                if normalize:
-                    ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+            # Y-axis formatting - set ticks on ALL facets for grid alignment
+            if normalize:
+                ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+                if c_idx == 0:
                     ax.set_yticklabels(['0%', '25%', '50%', '75%', '100%'])
+                else:
+                    ax.set_yticklabels([])  # Hide labels but keep ticks for grid
             else:
-                ax.set_yticks([])
+                if c_idx != 0:
+                    ax.set_yticklabels([])
 
-            # Clean up spines
+            # Add horizontal grid lines across all facets
+            ax.grid(True, axis='y', alpha=0.3, linestyle='-', linewidth=0.5, color='lightgray')
+            ax.set_axisbelow(True)
+
+            # Clean up spines - keep bottom for baseline
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.spines['bottom'].set_visible(False)
+            ax.spines['bottom'].set_visible(True)
+            ax.spines['bottom'].set_linewidth(0.5)
+            ax.spines['bottom'].set_color('gray')
 
     # Add single legend for all panels
     if legend_handles:
@@ -1046,7 +1055,7 @@ def plot_proportion_faceted(
         default_title = f'{color_by_grouping} Distribution {" ".join(parts)}'
         fig.suptitle(default_title, fontsize=12, fontweight='bold')
 
-    plt.tight_layout(rect=[0, 0, 0.85, 0.95])
+    plt.tight_layout(rect=[0, 0, 0.82, 0.96])
 
     if output_path:
         output_path = Path(output_path)
