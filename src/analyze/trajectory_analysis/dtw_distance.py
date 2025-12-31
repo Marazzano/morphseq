@@ -445,14 +445,14 @@ def _dtw_multivariate_pair(
 def compute_md_dtw_distance_matrix(
     X: np.ndarray,
     sakoe_chiba_radius: Optional[int] = 3,
-    n_jobs: int = 1,
+    n_jobs: int = -1,
     verbose: bool = True,
 ) -> np.ndarray:
     """
     Compute multivariate DTW distance matrix.
 
     Computes pairwise multivariate DTW distances between all embryos using
-    pure Python/NumPy implementation (no tslearn required).
+    pure Python/NumPy implementation with parallel processing.
 
     Parameters
     ----------
@@ -463,8 +463,9 @@ def compute_md_dtw_distance_matrix(
         Limits warping to within ±radius timepoints.
         None for unconstrained DTW (slower).
         Default: 3 (good balance of flexibility and speed)
-    n_jobs : int, default=1
-        Kept for API compatibility (single-threaded implementation)
+    n_jobs : int, default=-1
+        Number of parallel jobs. -1 means use all available CPUs.
+        1 means single-threaded (no parallelization).
     verbose : bool, default=True
         Print progress and diagnostics
 
@@ -486,43 +487,56 @@ def compute_md_dtw_distance_matrix(
     Notes
     -----
     - This is a pure Python implementation using NumPy/SciPy
-    - No external dependencies like tslearn required
-    - Time complexity: O(N^2 * T^2) where N=embryos, T=timepoints
-    - For N~50, T~50: ~25M operations (seconds to complete)
+    - Parallelized with joblib for multi-core speedup
+    - Time complexity: O(N^2 * T^2 / n_jobs) where N=embryos, T=timepoints
     - Output is symmetric by construction: D[i,j] == D[j,i]
     - Diagonal is zero: D[i,i] == 0
     """
+    from joblib import Parallel, delayed, cpu_count
+
     n_embryos = X.shape[0]
 
+    # Determine actual number of jobs
+    if n_jobs == -1:
+        actual_jobs = cpu_count()
+    else:
+        actual_jobs = min(n_jobs, cpu_count())
+
     if verbose:
-        print(f"Computing MD-DTW distance matrix (Pure Python/NumPy)...")
+        print(f"Computing MD-DTW distance matrix...")
         print(f"  Embryos: {n_embryos}")
         print(f"  Array shape: {X.shape}")
         print(f"  Sakoe-Chiba radius: {sakoe_chiba_radius}")
+        print(f"  Parallel jobs: {actual_jobs} (of {cpu_count()} CPUs available)")
 
-    # Initialize distance matrix
+    # Generate all unique pairs (i, j) where i < j
+    pairs = [(i, j) for i in range(n_embryos) for j in range(i + 1, n_embryos)]
+    total_pairs = len(pairs)
+
+    if verbose:
+        print(f"  Computing {total_pairs} pairwise distances...")
+
+    # Parallel computation of all pairwise distances
+    if actual_jobs == 1:
+        # Single-threaded fallback
+        results = []
+        for idx, (i, j) in enumerate(pairs):
+            dist = _dtw_multivariate_pair(X[i], X[j], window=sakoe_chiba_radius)
+            results.append(dist)
+            if verbose and (idx + 1) % max(1, total_pairs // 10) == 0:
+                print(f"  Progress: {idx + 1}/{total_pairs} ({100*(idx+1)//total_pairs}%)", end='\r')
+    else:
+        # Parallel computation
+        results = Parallel(n_jobs=actual_jobs, verbose=0)(
+            delayed(_dtw_multivariate_pair)(X[i], X[j], window=sakoe_chiba_radius)
+            for i, j in pairs
+        )
+
+    # Build symmetric distance matrix from results
     D = np.zeros((n_embryos, n_embryos))
-
-    # Total pairs to compute
-    total_pairs = (n_embryos * (n_embryos + 1)) // 2
-    pair_count = 0
-
-    # Compute pairwise distances (only upper triangle due to symmetry)
-    for i in range(n_embryos):
-        for j in range(i, n_embryos):
-            if i == j:
-                # Diagonal is always 0 (distance from embryo to itself)
-                dist = 0.0
-            else:
-                # Compute DTW distance between embryos i and j
-                dist = _dtw_multivariate_pair(X[i], X[j], window=sakoe_chiba_radius)
-
-            D[i, j] = dist
-            D[j, i] = dist  # Symmetric
-
-            pair_count += 1
-            if verbose and pair_count % max(1, total_pairs // 10) == 0:
-                print(f"  Processed {pair_count}/{total_pairs} pairs ({100*pair_count//total_pairs}%)...", end='\r')
+    for (i, j), dist in zip(pairs, results):
+        D[i, j] = dist
+        D[j, i] = dist
 
     if verbose:
         # Verify properties
@@ -541,3 +555,161 @@ def compute_md_dtw_distance_matrix(
             print(f"  WARNING: Matrix not symmetric (max asymmetry={asymmetry:.2e})")
 
     return D
+
+
+def compute_trajectory_distances(
+    df: pd.DataFrame,
+    metrics: List[str],
+    time_col: str = 'predicted_stage_hpf',
+    embryo_id_col: str = 'embryo_id',
+    time_window: Optional[Tuple[float, float]] = None,
+    normalize: bool = True,
+    sakoe_chiba_radius: int = 3,
+    n_jobs: int = -1,
+    verbose: bool = True,
+) -> Tuple[np.ndarray, List[str], np.ndarray]:
+    """
+    Compute MD-DTW distance matrix from trajectory DataFrame.
+
+    This is the PRIMARY convenience function for converting trajectory data into
+    a distance matrix for clustering analysis. Handles time filtering, array
+    preparation, and distance computation in one step.
+
+    This function combines three steps:
+    1. Optional time window filtering
+    2. Multivariate array preparation (prepare_multivariate_array)
+    3. MD-DTW distance computation (compute_md_dtw_distance_matrix)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Long-format trajectory data with columns for time, embryo_id, and metrics.
+    metrics : List[str]
+        Names of columns to use as features (e.g., ['curvature', 'length']).
+    time_col : str, default='predicted_stage_hpf'
+        Column name for time values.
+    embryo_id_col : str, default='embryo_id'
+        Column identifying unique embryos/trajectories.
+    time_window : Optional[Tuple[float, float]], default=None
+        If provided, filters to (min_time, max_time) before computing distances.
+        Example: (30, 60) to analyze only 30-60 hpf.
+    normalize : bool, default=True
+        If True, z-score normalize each metric across all embryos.
+    sakoe_chiba_radius : int, default=3
+        Warping window constraint for DTW (3 is a good default).
+    n_jobs : int, default=-1
+        Number of parallel jobs for distance computation.
+        -1 means use all available CPUs (auto-detect).
+        1 means single-threaded (no parallelization).
+    verbose : bool, default=True
+        Print progress information.
+
+    Returns
+    -------
+    D : np.ndarray
+        Distance matrix (n_embryos × n_embryos), symmetric.
+    embryo_ids : List[str]
+        Ordered list of embryo IDs corresponding to distance matrix rows/cols.
+    time_grid : np.ndarray
+        Common time grid used for interpolation.
+
+    Examples
+    --------
+    >>> # Compute distances on full time range
+    >>> D, embryo_ids, time_grid = compute_trajectory_distances(
+    ...     df,
+    ...     metrics=['baseline_deviation_normalized', 'total_length_um'],
+    ... )
+
+    >>> # Compute distances on specific time window (e.g., 30-60 hpf)
+    >>> D, embryo_ids, time_grid = compute_trajectory_distances(
+    ...     df,
+    ...     metrics=['baseline_deviation_normalized', 'total_length_um'],
+    ...     time_window=(30, 60),
+    ... )
+
+    >>> # Then cluster
+    >>> from src.analyze.trajectory_analysis import run_k_selection_with_plots
+    >>> results = run_k_selection_with_plots(
+    ...     df=df,
+    ...     D=D,
+    ...     embryo_ids=embryo_ids,
+    ...     output_dir=Path('results/clustering'),
+    ...     k_range=[2, 3, 4, 5],
+    ... )
+
+    Notes
+    -----
+    - This is a convenience wrapper that simplifies the common workflow
+    - For advanced use cases, you can still use prepare_multivariate_array()
+      and compute_md_dtw_distance_matrix() separately
+    - Time filtering happens BEFORE interpolation, which may result in fewer
+      embryos if some have no data in the specified window
+    """
+    if verbose:
+        print("="*70)
+        print("COMPUTE TRAJECTORY DISTANCES")
+        print("="*70)
+
+    # Step 1: Filter by time window if specified
+    if time_window is not None:
+        min_time, max_time = time_window
+        if verbose:
+            print(f"\n1. Filtering to time window: [{min_time}, {max_time}] {time_col}")
+
+        df_filtered = df[
+            (df[time_col] >= min_time) &
+            (df[time_col] <= max_time)
+        ].copy()
+
+        if verbose:
+            n_embryos_before = df[embryo_id_col].nunique()
+            n_embryos_after = df_filtered[embryo_id_col].nunique()
+            print(f"   Embryos before: {n_embryos_before}")
+            print(f"   Embryos after: {n_embryos_after}")
+
+            if n_embryos_after < n_embryos_before:
+                print(f"   WARNING: Lost {n_embryos_before - n_embryos_after} embryos")
+                print("            (no data in time window)")
+    else:
+        df_filtered = df.copy()
+        if verbose:
+            print("\n1. Using full time range")
+
+    # Step 2: Prepare multivariate array
+    if verbose:
+        print(f"\n2. Preparing multivariate array")
+        print(f"   Metrics: {metrics}")
+        print(f"   Normalize: {normalize}")
+
+    X, embryo_ids, time_grid = prepare_multivariate_array(
+        df_filtered,
+        metrics=metrics,
+        time_col=time_col,
+        embryo_id_col=embryo_id_col,
+        normalize=normalize,
+        verbose=verbose,
+    )
+
+    if verbose:
+        print(f"\n   Array shape: {X.shape} (embryos × timepoints × metrics)")
+        print(f"   Time grid: [{time_grid[0]:.1f}, {time_grid[-1]:.1f}] ({len(time_grid)} points)")
+
+    # Step 3: Compute MD-DTW distance matrix
+    if verbose:
+        print(f"\n3. Computing MD-DTW distances")
+        print(f"   Sakoe-Chiba radius: {sakoe_chiba_radius}")
+
+    D = compute_md_dtw_distance_matrix(
+        X,
+        sakoe_chiba_radius=sakoe_chiba_radius,
+        n_jobs=n_jobs,
+        verbose=verbose,
+    )
+
+    if verbose:
+        print(f"\nDistance matrix: {D.shape}")
+        print(f"  Range: [{D[D > 0].min():.3f}, {D.max():.3f}]")
+        print("="*70)
+
+    return D, embryo_ids, time_grid
