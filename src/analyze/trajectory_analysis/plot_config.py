@@ -26,14 +26,14 @@ GENOTYPE_SUFFIX_ORDER = ['wildtype', 'heterozygous', 'homozygous', 'unknown']
 # Phenotype Styling (distinct from genotype colors)
 # ==============================================================================
 
-# Color mapping for phenotype categories (purple/cyan/pink spectrum - distinct from genotype)
+# Color mapping for phenotype categories (muted/earthy tones - distinct from genotype)
 PHENOTYPE_COLORS = {
-    'CE': '#9467BD',           # Purple
-    'HTA': '#17BECF',          # Cyan/Teal
-    'BA_rescue': '#E377C2',    # Pink
-    'non_penetrant': '#7F7F7F', # Grey
+    'CE': '#5B7C99',           # Slate blue
+    'HTA': '#7FA87F',          # Sage green
+    'BA_rescue': '#C4956A',    # Terracotta/tan
+    'non_penetrant': '#9E9E9E', # Warm gray
 }
-"""Colors for phenotype categories. Distinct from genotype suffix colors."""
+"""Colors for phenotype categories. Muted/earthy tones, distinct from genotype suffix colors."""
 
 # Standard ordering for phenotypes
 PHENOTYPE_ORDER = ['CE', 'HTA', 'BA_rescue', 'non_penetrant']

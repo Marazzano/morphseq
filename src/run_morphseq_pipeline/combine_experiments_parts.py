@@ -396,23 +396,49 @@ def _combine_curvature(
         part2_snip_ids_in_combined = [sid for sid in df_combined_meta['snip_id']
                                        if combined_exp in sid and sid not in snip_id_mapping.values()]
 
-        # Map part2 old snip_ids to new ones
-        # We need to match based on well_embryo pattern
+        # Build lookup: well_embryo -> list of snip_ids sorted by time
+        from collections import defaultdict
+        combined_by_embryo = defaultdict(list)
+        for new_snip_id in part2_snip_ids_in_combined:
+            parts = new_snip_id.split('_')
+            if len(parts) >= 5:
+                well = parts[-3]
+                embryo = parts[-2]
+                time_str = parts[-1]  # e.g., "t0095"
+                well_embryo = f"{well}_{embryo}"
+                combined_by_embryo[well_embryo].append((new_snip_id, time_str))
+
+        # Sort each embryo's snip_ids by time
+        for well_embryo in combined_by_embryo:
+            combined_by_embryo[well_embryo].sort(key=lambda x: x[1])
+
+        # Build lookup for part2_meta: well_embryo -> list of old snip_ids sorted by time
+        part2_by_embryo = defaultdict(list)
         for old_snip_id in df_part2_meta['snip_id']:
-            # Extract well and embryo: e.g., "20251017_part2_A01_e01_t0034" -> "A01_e01"
             parts = old_snip_id.split('_')
             if len(parts) >= 5:
                 well = parts[-3]
                 embryo = parts[-2]
+                time_str = parts[-1]  # e.g., "t0034"
                 well_embryo = f"{well}_{embryo}"
+                part2_by_embryo[well_embryo].append((old_snip_id, time_str))
 
-                # Find matching snip_id in combined that has same well_embryo
-                for new_snip_id in part2_snip_ids_in_combined:
-                    if well_embryo in new_snip_id:
-                        # Check if this mapping already exists (avoid duplicates)
-                        if old_snip_id not in snip_id_mapping:
-                            snip_id_mapping[old_snip_id] = new_snip_id
-                            break
+        # Sort each embryo's snip_ids by time
+        for well_embryo in part2_by_embryo:
+            part2_by_embryo[well_embryo].sort(key=lambda x: x[1])
+
+        # Map part2 old snip_ids to new ones
+        # Match based on well_embryo AND position in sorted time sequence
+        for well_embryo in part2_by_embryo:
+            if well_embryo in combined_by_embryo:
+                old_list = part2_by_embryo[well_embryo]
+                new_list = combined_by_embryo[well_embryo]
+
+                # Map by position in sorted sequence
+                for i, (old_snip_id, _) in enumerate(old_list):
+                    if i < len(new_list):
+                        new_snip_id = new_list[i][0]
+                        snip_id_mapping[old_snip_id] = new_snip_id
 
         print(f"   → Added {len([k for k in snip_id_mapping if part2_exp in k])} part2 mappings")
 

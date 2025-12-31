@@ -42,6 +42,10 @@ src/analyze/trajectory_analysis/
 ├── cluster_posteriors.py        # Posterior probability computation
 ├── cluster_classification.py    # Core/uncertain/outlier classification
 │
+├── k_selection.py               # K-selection pipeline
+├── distance_filtering.py        # IQR and k-NN distance filtering
+├── consensus_pipeline.py        # Two-stage outlier filtering
+│
 └── plotting.py                  # Visualization functions
 ```
 
@@ -82,6 +86,22 @@ src/analyze/trajectory_analysis/
 - Label alignment across bootstrap iterations
 - Silhouette score computation
 
+#### `k_selection.py`
+- Evaluate multiple k values before filtering
+- Quality metrics comparison across k range
+- K-selection visualization
+- Two-phase pipeline (k-selection + consensus clustering)
+
+#### `distance_filtering.py`
+- IQR distance-based outlier filtering (default)
+- k-NN distance-based filtering (legacy)
+- Stage 1 and Stage 2 filtering
+
+#### `consensus_pipeline.py`
+- Two-stage outlier filtering workflow
+- Consensus clustering with filtering
+- Integration of bootstrap + filtering + classification
+
 #### `cluster_posteriors.py`
 - **Label alignment via Hungarian algorithm**: Align arbitrary bootstrap cluster IDs to reference labels by maximizing overlap
 - Compute posterior probabilities p_i(c) from bootstrap with frequency normalization
@@ -98,6 +118,222 @@ Bootstrap iterations produce arbitrary cluster labels (cluster "0" in iteration 
 - Adaptive per-cluster thresholds
 - Core/uncertain/outlier categorization
 - Classification summary statistics
+
+---
+
+### Choosing Between Clustering Methods
+
+Two clustering methods are available: **hierarchical** and **k-medoids**. Both are equal alternatives with different strengths. Users should be aware of the trade-offs and ideally use both methods to compare results.
+
+#### K-medoids Clustering (`run_bootstrap_kmedoids`)
+
+**Strengths:**
+- **Much less sensitive to noise** - does not get dominated by noisy data
+- Better for cross-experiment comparisons
+- Robust to outliers and extreme values
+- Uses actual data points as cluster centers (medoids), providing interpretable representatives
+
+**Requirements:**
+- Requires `scikit-learn-extra` package: `pip install scikit-learn-extra`
+
+**Usage:**
+```python
+from src.analyze.trajectory_analysis import run_bootstrap_kmedoids
+
+# Use k-medoids instead of hierarchical
+bootstrap_results = run_bootstrap_kmedoids(
+    D, k=3, embryo_ids=embryo_ids, n_bootstrap=100
+)
+medoid_indices = bootstrap_results['medoid_indices']  # Representative embryos
+```
+
+#### Hierarchical Clustering (`run_bootstrap_hierarchical`)
+
+**Strengths:**
+- Better at detecting subtle trends within groups
+- More granular at splitting trends
+- Standard method, widely understood
+- No additional dependencies
+
+**Limitations:**
+- Can be dominated by noise in the data
+- Less robust to outliers
+
+**Usage:**
+```python
+from src.analyze.trajectory_analysis import run_bootstrap_hierarchical
+
+# Standard hierarchical clustering
+bootstrap_results = run_bootstrap_hierarchical(
+    D, k=3, embryo_ids=embryo_ids, n_bootstrap=100
+)
+```
+
+#### Choosing the Right Method
+
+**Recommendation: Use both methods** when possible to compare results.
+
+Choose based on your data characteristics:
+- **Noisy data or cross-experiment analysis** → Use k-medoids
+- **Clean data with subtle within-group trends** → Use hierarchical
+- **Best practice:** Run both methods and compare cluster assignments and quality metrics
+
+**Comparison Example:**
+```python
+# Compare both methods
+results_hier = run_bootstrap_hierarchical(D, k=3, embryo_ids=embryo_ids)
+results_kmed = run_bootstrap_kmedoids(D, k=3, embryo_ids=embryo_ids)
+
+# Then compare cluster assignments and quality metrics
+posteriors_hier = analyze_bootstrap_results(results_hier)
+posteriors_kmed = analyze_bootstrap_results(results_kmed)
+```
+
+**Output Compatibility:**
+Both methods return identical data structures, making them fully interchangeable in downstream analysis. All posterior probability and quality assessment functions work with both methods.
+
+#### Advanced Workflow: Manual Selection and Subclustering
+
+For deeper investigation of cluster structure, **manual cluster selection and subclustering** is recommended:
+
+**Workflow:**
+1. **Initial clustering** - Run k-medoids or hierarchical to get preliminary clusters
+2. **Interactive exploration** - Use interactive plots (e.g., Plotly) to visualize trajectories by cluster
+3. **Manual selection** - Identify clusters that show heterogeneity or mixed trends
+4. **Subclustering** - Re-run clustering on selected cluster members only
+5. **Validation** - Confirm trends with interactive plots before accepting subcluster structure
+
+**Why Manual Selection?**
+- Automated k-selection may miss subtle within-cluster structure
+- Interactive plots reveal patterns not obvious in static visualizations
+- Domain expertise helps identify biologically meaningful subgroups
+- Allows iterative refinement based on visual inspection
+
+**Example Subclustering Workflow:**
+```python
+# 1. Initial clustering
+results = run_bootstrap_kmedoids(D, k=3, embryo_ids=embryo_ids)
+posteriors = analyze_bootstrap_results(results)
+
+# 2. Interactive exploration - identify cluster 1 has mixed trends
+# (Use Plotly or similar for interactive visualization)
+
+# 3. Manual selection - extract cluster 1 members
+cluster_1_mask = posteriors['modal_cluster'] == 1
+cluster_1_embryo_ids = [eid for eid, mask in zip(embryo_ids, cluster_1_mask) if mask]
+cluster_1_indices = [i for i, mask in enumerate(cluster_1_mask) if mask]
+
+# 4. Subclustering - re-cluster cluster 1 only
+D_subcluster = D[np.ix_(cluster_1_indices, cluster_1_indices)]
+subcluster_results = run_bootstrap_hierarchical(
+    D_subcluster, k=2, embryo_ids=cluster_1_embryo_ids
+)
+
+# 5. Validation - plot subclusters with interactive viewer
+# Confirm trends are consistent within each subcluster
+```
+
+**Best Practices:**
+- Use interactive plots (Plotly, Bokeh) to explore trajectories dynamically
+- Look for heterogeneity in trajectory shapes, timing, or amplitude
+- Subcluster only when visual inspection confirms mixed trends
+- Document selection criteria for reproducibility
+- Re-run quality assessment on subclusters to confirm coherence
+
+---
+
+### K-selection Pipeline
+
+The k-selection pipeline helps you choose the optimal number of clusters (k) before running the full consensus clustering workflow. This addresses the challenge of deciding k upfront when filtering might remove embryos that would form good clusters.
+
+#### Workflow: Two-Phase Approach
+
+**Phase 1: K Selection (No Filtering)**
+1. Compute distance matrix on all embryos (no filtering)
+2. Run bootstrap clustering for k in [2, 3, 4, 5, 6, ...]
+3. For each k, compute quality metrics:
+   - % Core (high confidence assignments)
+   - % Outlier (low confidence)
+   - Mean max_p (confidence)
+   - Mean entropy (uncertainty)
+   - Silhouette score
+4. Plot comparison and choose optimal k
+
+**Phase 2: Final Clustering (With Filtering)**
+5. Run consensus clustering with chosen k + IQR/posterior filtering
+6. Generate final cluster assignments and quality metrics
+
+#### Functions
+
+**`evaluate_k_range(D, embryo_ids, k_range=[2,3,4,5,6], method='hierarchical')`**
+- Evaluates multiple k values without filtering
+- Supports `method='hierarchical'` or `method='kmedoids'`
+- Returns comprehensive quality metrics for each k
+
+**Usage:**
+```python
+from src.analyze.trajectory_analysis import evaluate_k_range
+
+# Evaluate k range with k-medoids (recommended for noisy data)
+results = evaluate_k_range(
+    D, embryo_ids,
+    k_range=[2, 3, 4, 5],
+    method='kmedoids',
+    n_bootstrap=100
+)
+
+# Access results
+summary_df = results['summary_df']  # Quality metrics by k
+best_k = results['best_k']  # Recommended k based on metrics
+```
+
+**`plot_k_selection(results, output_path=None)`**
+- Creates 2x2 grid plot comparing metrics across k values:
+  - Membership % vs k (core/uncertain/outlier)
+  - Mean max_p vs k
+  - Mean entropy vs k
+  - Silhouette score vs k
+
+**`run_k_selection_with_plots(D, embryo_ids, df_interpolated, ...)`**
+- Complete pipeline with trajectory visualization
+- Generates individual membership trajectory plots for each k
+- Creates summary comparison plot
+- Saves metrics CSV, cluster assignments CSV, and full results pickle
+
+**`run_two_phase_pipeline(D, embryo_ids, df_interpolated, ...)`**
+- Combined k-selection + consensus clustering
+- Phase 1: Picks optimal k without filtering
+- Phase 2: Runs full consensus clustering with chosen k and filtering
+- Returns both k-selection results and final clustering results
+
+#### When to Use K-selection
+
+**Use k-selection when:**
+- You don't know the optimal number of clusters upfront
+- You want data-driven k selection
+- You're working with a new dataset or biological system
+
+**Skip k-selection when:**
+- k is known from biology (e.g., number of genotypes)
+- You're replicating a previous analysis with established k
+- You want to try multiple k values manually
+
+#### Quality Metrics
+
+The k-selection pipeline evaluates these metrics for each k:
+
+- **% Core members**: Fraction of embryos with high-confidence assignments (max_p > 0.8)
+- **% Outlier members**: Fraction with low confidence (max_p < 0.5)
+- **Mean max_p**: Average confidence in top cluster assignment
+- **Mean entropy**: Average uncertainty across all clusters
+- **Silhouette score**: Cluster separation quality (higher is better)
+
+**Interpretation:**
+- Higher % Core → More confident cluster structure
+- Lower % Outlier → Fewer ambiguous assignments
+- Higher Mean max_p → Stronger cluster memberships
+- Lower Mean entropy → Less uncertainty
+- Higher Silhouette → Better-separated clusters
 
 ---
 
@@ -145,7 +381,21 @@ THRESHOLD_OUTLIER_MAX_P = 0.5
 
 ## Function Workflow & Chaining
 
-### Complete Analysis Pipeline
+### Two Analysis Pathways
+
+The package supports two main workflows:
+
+**Option A: Direct Clustering** (when k is known)
+- Use when the number of clusters is predetermined (e.g., by biology)
+- See "Complete Analysis Pipeline" below
+
+**Option B: K-selection Pipeline** (when k is uncertain)
+- Use when you need data-driven k selection
+- See "K-selection Workflow" below
+
+---
+
+### Complete Analysis Pipeline (Option A)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -178,12 +428,20 @@ THRESHOLD_OUTLIER_MAX_P = 0.5
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      BOOTSTRAP CLUSTERING                        │
+│                   (Choose hierarchical or k-medoids)             │
 └─────────────────────────────────────────────────────────────────┘
                               │
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+         run_bootstrap_hierarchical()  OR  run_bootstrap_kmedoids()
+           - Standard method               - Robust to noise
+           - Better for subtle trends      - Better for cross-experiment
+           - No extra dependencies         - Requires scikit-learn-extra
+                    │                       │
+                    └─────────┬─────────────┘
                               ▼
-            bootstrap_clustering.run_bootstrap_hierarchical()
                     - Resample 80% of embryos (n_bootstrap times)
-                    - Hierarchical clustering on each subsample
+                    - Clustering on each subsample
                     - Align labels across iterations
                     - Returns: bootstrap_results_dict
                               │
@@ -236,6 +494,69 @@ THRESHOLD_OUTLIER_MAX_P = 0.5
                    plotting.plot_posterior_heatmap()
                    plotting.plot_2d_scatter()
                    plotting.plot_cluster_trajectories()
+```
+
+---
+
+### K-selection Workflow (Option B)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     DATA LOADING & PREPROCESSING                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                  [Same as Option A: extract + interpolate + DTW]
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                PHASE 1: K-SELECTION (NO FILTERING)               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+            k_selection.evaluate_k_range(D, embryo_ids,
+                                          k_range=[2,3,4,5,6],
+                                          method='hierarchical' or 'kmedoids')
+                    - For each k:
+                      * Run bootstrap clustering
+                      * Compute quality metrics:
+                        - % Core / % Outlier
+                        - Mean max_p, mean entropy
+                        - Silhouette score
+                    - Returns: quality metrics by k
+                              │
+                              ▼
+            k_selection.plot_k_selection(results)
+                    - 2x2 comparison plot
+                    - Visualize metrics vs k
+                              │
+                              ▼
+                    USER DECISION: Choose optimal k
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│          PHASE 2: FINAL CLUSTERING (WITH FILTERING)              │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+            consensus_pipeline.run_consensus_clustering(
+                D, embryo_ids, k=chosen_k, ...)
+                    - Stage 1: IQR distance filtering
+                    - Stage 2: Posterior probability filtering
+                    - Bootstrap clustering with chosen k
+                    - Quality assessment
+                    - Returns: final cluster assignments
+                              │
+                              ▼
+                         VISUALIZATION
+```
+
+**Shortcut Function:**
+```python
+# Run both phases automatically
+results = run_two_phase_pipeline(D, embryo_ids, df_interpolated, ...)
+# Phase 1: Picks optimal k based on quality metrics
+# Phase 2: Runs consensus clustering with chosen k and filtering
 ```
 
 ---
@@ -800,13 +1121,15 @@ threshold_outlier_max_p: float = 0.5
 - ✅ DTW distance computation with Sakoe-Chiba band
 - ✅ DBA (DTW Barycenter Averaging)
 - ✅ Bootstrap hierarchical clustering
+- ✅ **Bootstrap k-medoids clustering** (added Dec 26, 2025)
+- ✅ **K-selection pipeline with quality metrics** (added Dec 23, 2025)
+- ✅ **Two-phase consensus clustering** (k-selection + filtering)
+- ✅ **IQR distance-based filtering** (default, replaces k-NN)
 - ✅ Posterior probability computation with Hungarian alignment
 - ✅ Membership classification (2D gating and adaptive)
 - ✅ Trajectory visualization (DataFrame-based)
 
 ### Known Limitations (Not Planned for Future)
-- ❌ k-medoids clustering (would require additional distance metric handling)
-- ❌ Membership proportion plots across k values (complex multi-k aggregation)
 - ❌ Coassociation matrix computation (deprecated in favor of posteriors)
 - ❌ Mean ARI metric (replaced by per-embryo posterior metrics)
 - ❌ Greedy Hungarian fallback (direct assignment always used now)
@@ -838,4 +1161,4 @@ For questions about this package:
 
 ---
 
-**Last Updated:** 2025-11-07
+**Last Updated:** 2025-12-26

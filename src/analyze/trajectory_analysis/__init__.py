@@ -85,6 +85,7 @@ from .dtw_distance import (
     compute_dtw_distance_matrix,
     prepare_multivariate_array,
     compute_md_dtw_distance_matrix,
+    compute_trajectory_distances,
 )
 from .dba import dba
 from .data_loading import compute_dtw_distance_from_df
@@ -210,12 +211,25 @@ from .dendrogram import (
     PASTEL_COLORS,
 )
 
+# 3D Plotting
+from .plotting_3d import plot_3d_scatter
+
+# PCA Embedding Utilities
+from .pca_embedding import (
+    fit_pca_on_embeddings,
+    transform_embeddings_to_pca,
+    compute_wt_reference_by_time,
+    subtract_wt_reference,
+    fit_transform_pca,
+)
+
 __all__ = [
     # DTW & Distance
     'compute_dtw_distance',
     'compute_dtw_distance_matrix',
     'prepare_multivariate_array',
     'compute_md_dtw_distance_matrix',
+    'compute_trajectory_distances',
     'compute_dtw_distance_from_df',
     'dba',
 
@@ -311,4 +325,14 @@ __all__ = [
     'plot_dendrogram_with_categories',
     'add_cluster_column',
     'PASTEL_COLORS',
+
+    # 3D Plotting
+    'plot_3d_scatter',
+
+    # PCA Embedding Utilities
+    'fit_pca_on_embeddings',
+    'transform_embeddings_to_pca',
+    'compute_wt_reference_by_time',
+    'subtract_wt_reference',
+    'fit_transform_pca',
 ]
