@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Optional, Union, Tuple, List
 
 # Import DTW and trajectory utilities
-from src.analyze.dtw_time_trend_analysis.dtw_clustering import dba
-from src.analyze.dtw_time_trend_analysis.dtw_distance import compute_dtw_distance
-from src.analyze.dtw_time_trend_analysis.trajectory_utils import (
+from src.analyze.trajectory_analysis.dba import dba
+from src.analyze.trajectory_analysis.dtw_distance import compute_dtw_distance
+from src.analyze.trajectory_analysis.trajectory_utils import (
     interpolate_to_common_grid,
     pad_trajectories_for_plotting,
 )
