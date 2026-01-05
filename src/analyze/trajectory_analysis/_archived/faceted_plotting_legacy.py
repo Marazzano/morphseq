@@ -22,7 +22,7 @@ from .pair_analysis.data_utils import (
     get_global_axis_ranges,
 )
 from .genotype_styling import get_color_for_genotype, build_genotype_style_config
-from .plot_config import (
+from .config import (
     DEFAULT_PLOTLY_HEIGHT,
     DEFAULT_PLOTLY_WIDTH,
     HEIGHT_PER_ROW,

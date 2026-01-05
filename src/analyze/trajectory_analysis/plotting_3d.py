@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from .plot_config import (
+from .config import (
     PHENOTYPE_COLORS,
     INDIVIDUAL_TRACE_ALPHA,
     MEAN_TRACE_LINEWIDTH,

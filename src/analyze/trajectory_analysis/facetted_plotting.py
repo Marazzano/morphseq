@@ -23,7 +23,7 @@ from .pair_analysis.data_utils import (
 )
 from .trajectory_utils import compute_trend_line
 from .genotype_styling import get_color_for_genotype
-from .plot_config import (
+from .config import (
     DEFAULT_PLOTLY_HEIGHT,
     DEFAULT_PLOTLY_WIDTH,
     HEIGHT_PER_ROW,
@@ -563,8 +563,13 @@ def plot_trajectories_faceted(
     if show_error_band:
         validate_error_type(trend_statistic, error_type)
 
-    row_values = sorted(df[row_by].unique()) if row_by else [None]
-    col_values = sorted(df[col_by].unique()) if col_by else [None]
+    def _sorted_unique(values: pd.Series) -> list:
+        # Robust sort for mixed object dtypes (e.g., strings + NaN floats).
+        uniques = list(values.unique())
+        return sorted(uniques, key=lambda v: (pd.isna(v), str(v)))
+
+    row_values = _sorted_unique(df[row_by]) if row_by else [None]
+    col_values = _sorted_unique(df[col_by]) if col_by else [None]
 
     if facet_order:
         if row_by and row_by in facet_order:
@@ -834,12 +839,33 @@ def _render_plotly(data: FigureData) -> go.Figure:
         fig.update_xaxes(range=sub.xlim, title_text=sub.x_label, row=sub.row, col=sub.col)
         fig.update_yaxes(range=sub.ylim, title_text=sub.y_label, row=sub.row, col=sub.col)
 
+    # Add row labels on the left (rotated vertically)
     if data.row_labels and data.n_rows > 1:
         for idx, label in enumerate(data.row_labels, start=1):
             y_pos = 1 - (idx - 0.5) / data.n_rows
             fig.add_annotation(
-                text=f"<b>{label}</b>", xref="paper", yref="paper",
-                x=-0.06, y=y_pos, showarrow=False, xanchor="right", font=dict(size=12)
+                text=f"<b>{label}</b>",
+                xref="paper", yref="paper",
+                x=-0.06, y=y_pos,
+                showarrow=False,
+                xanchor="center",
+                yanchor="middle",
+                textangle=-90,  # Rotate 90° counterclockwise
+                font=dict(size=13)
+            )
+
+    # Add column labels on top (centered above each column)
+    if data.col_labels and data.n_cols > 1:
+        for idx, label in enumerate(data.col_labels, start=1):
+            x_pos = (idx - 0.5) / data.n_cols
+            fig.add_annotation(
+                text=f"<b>{label}</b>",
+                xref="paper", yref="paper",
+                x=x_pos, y=1.02,
+                showarrow=False,
+                xanchor="center",
+                yanchor="bottom",
+                font=dict(size=13)
             )
 
     # Set legend title from color_by_grouping parameter
@@ -849,7 +875,9 @@ def _render_plotly(data: FigureData) -> go.Figure:
     
     fig.update_layout(
         title_text=data.title, height=data.height, width=data.width,
-        hovermode='closest', template="plotly_white", legend=legend_config
+        hovermode='closest', template="plotly_white", legend=legend_config,
+        # Ensure row labels (left, rotated) and column labels (top) are visible
+        margin=dict(l=140, r=140, t=100, b=70),
     )
     return fig
 
@@ -1417,4 +1445,3 @@ def plot_proportion_faceted(
         fig.savefig(str(output_path), dpi=150, bbox_inches='tight')
 
     return fig
-

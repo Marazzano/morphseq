@@ -9,7 +9,7 @@ This enables consistent styling across all genes without hardcoding.
 """
 
 from typing import Dict, List, Optional
-from .plot_config import GENOTYPE_SUFFIX_COLORS, GENOTYPE_SUFFIX_ORDER
+from .config import GENOTYPE_SUFFIX_COLORS, GENOTYPE_SUFFIX_ORDER
 
 
 def extract_genotype_suffix(genotype: str) -> str:
