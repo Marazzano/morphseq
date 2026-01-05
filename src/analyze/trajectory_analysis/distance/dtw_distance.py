@@ -286,18 +286,34 @@ def prepare_multivariate_array(
 
     # Step 2: Interpolate each metric for all embryos using the trajectory utility
     # If time_grid is provided, pass it through; otherwise let the utility derive the grid
+    provided_time_grid = None
+    if time_grid is not None:
+        provided_time_grid = np.asarray(time_grid, dtype=float)
+        if provided_time_grid.ndim != 1:
+            raise ValueError(f"time_grid must be 1D, got shape {provided_time_grid.shape}")
+        if len(provided_time_grid) == 0:
+            raise ValueError("time_grid must be non-empty")
+        # Ensure strictly increasing, unique grid (dedupe protects against float replication)
+        provided_time_grid = np.unique(provided_time_grid)
+        if len(provided_time_grid) > 1 and not np.all(np.diff(provided_time_grid) > 0):
+            provided_time_grid = np.sort(provided_time_grid)
+
     df_interp = interpolate_to_common_grid_multi_df(
         df,
         metrics,
-        grid_step=(time_grid[1] - time_grid[0]) if time_grid is not None and len(time_grid) > 1 else GRID_STEP,
+        grid_step=(provided_time_grid[1] - provided_time_grid[0]) if provided_time_grid is not None and len(provided_time_grid) > 1 else GRID_STEP,
         time_col=time_col,
-        time_grid=time_grid,
+        time_grid=provided_time_grid,
         fill_edges=False,
         verbose=verbose,
     )
 
-    # Extract actual grid from interpolation results (safe in case bounds differ)
-    time_grid = np.sort(df_interp[time_col].unique())
+    # If a grid was provided, keep it exactly (critical for cross-dataset comparisons).
+    # Otherwise derive grid from interpolation output.
+    if provided_time_grid is not None:
+        time_grid = provided_time_grid
+    else:
+        time_grid = np.sort(df_interp[time_col].unique())
     n_timepoints = len(time_grid)
 
     if verbose:
@@ -317,8 +333,8 @@ def prepare_multivariate_array(
         for j, metric in enumerate(metrics):
             # Reindex onto full grid and fill missing values
             ser = emb_df[metric].reindex(time_grid)
-            # Fill any remaining NaNs using interpolation then zeros
-            ser = ser.interpolate(limit_direction='both').fillna(0)
+            # Fill interior gaps only; keep out-of-range edges as NaN then set to 0.
+            ser = ser.interpolate(limit_area='inside').fillna(0)
             X[i, :, j] = ser.values
 
     # Step 5: Handle remaining NaNs (e.g., at edges due to interpolation bounds)
@@ -334,7 +350,7 @@ def prepare_multivariate_array(
                     X[i, :, j] = 0
                 else:
                     # Use pandas to fill NaNs with interpolation
-                    filled = pd.Series(series).interpolate(limit_direction='both').fillna(0)
+                    filled = pd.Series(series).interpolate(limit_area='inside').fillna(0)
                     X[i, :, j] = filled.values
 
     if verbose:
