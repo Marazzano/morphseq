@@ -58,11 +58,18 @@ def test_clustering_subpackage():
         run_two_phase_pipeline,
         run_k_selection_with_plots,
         add_membership_column,
+        # Cluster extraction
+        extract_cluster_embryos,
+        get_cluster_summary,
+        map_clusters_to_phenotypes,
     )
 
     # Verify they're callable
     assert callable(run_bootstrap_hierarchical)
     assert callable(analyze_bootstrap_results)
+    assert callable(extract_cluster_embryos)
+    assert callable(get_cluster_summary)
+    assert callable(map_clusters_to_phenotypes)
     assert callable(classify_membership_2d)
     assert callable(run_consensus_pipeline)
     assert callable(evaluate_k_range)
@@ -219,6 +226,37 @@ def test_backward_compat_k_selection():
     return True
 
 
+def test_backward_compat_cluster_extraction():
+    """Test backward compatibility for cluster_extraction.py."""
+    print("Testing backward compatibility: cluster_extraction.py...")
+
+    # Should work but raise DeprecationWarning
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+
+        from analyze.trajectory_analysis.cluster_extraction import (
+            extract_cluster_embryos,
+            get_cluster_summary,
+            map_clusters_to_phenotypes,
+        )
+
+        # Check deprecation warning was raised
+        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+
+        if len(deprecation_warnings) > 0:
+            print(f"  ⚠ DeprecationWarning raised: {deprecation_warnings[0].message}")
+        else:
+            print("  ⚠ No DeprecationWarning raised (may be cached)")
+
+        # Verify functions work
+        assert callable(extract_cluster_embryos)
+        assert callable(get_cluster_summary)
+        assert callable(map_clusters_to_phenotypes)
+
+    print("✓ Backward compatibility (cluster_extraction.py) OK")
+    return True
+
+
 def test_main_init_imports():
     """Test that main __init__.py imports all clustering functions."""
     print("Testing main __init__.py imports...")
@@ -278,6 +316,7 @@ def run_all_tests():
         ("backward_compat_cluster_classification", test_backward_compat_cluster_classification),
         ("backward_compat_consensus_pipeline", test_backward_compat_consensus_pipeline),
         ("backward_compat_k_selection", test_backward_compat_k_selection),
+        ("backward_compat_cluster_extraction", test_backward_compat_cluster_extraction),
         ("main_init", test_main_init_imports),
     ]
 

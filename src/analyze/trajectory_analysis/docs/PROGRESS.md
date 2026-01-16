@@ -180,11 +180,16 @@ Reorganizing the trajectory_analysis module from 27 flat files into functional s
     backward_compat_cluster_classification: ✓ PASS
     backward_compat_consensus_pipeline: ✓ PASS
     backward_compat_k_selection: ✓ PASS
+    backward_compat_cluster_extraction: ✓ PASS
     main_init: ✓ PASS
   ============================================================
   All Phase 4 tests PASSED!
   ```
-- **Commit**: (pending)
+- **Commit**: 1340e1e8 "Phase 4: Create clustering subpackage with 6 modules"
+- **Post-commit fixes**: 
+  - Added missing backward-compat shim for cluster_extraction.py
+  - Updated dendrogram.py to import from new clustering package path
+  - Extended test_phase4.py to cover cluster extraction API
 
 ## Current Phase: Phase 5 - Viz Restructure (NEXT)
 
