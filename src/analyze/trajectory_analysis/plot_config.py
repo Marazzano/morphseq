@@ -6,20 +6,20 @@ for creating consistent plots across the analysis pipeline.
 """
 
 # ==============================================================================
-# Genotype Styling
+# Genotype Styling (works with any gene prefix)
 # ==============================================================================
 
 # Color mapping based on genotype suffix (independent of gene prefix)
 GENOTYPE_SUFFIX_COLORS = {
-    'wildtype': '#2E7D32',      # Green
-    'heterozygous': '#FFA500',  # Orange
     'homozygous': '#D32F2F',    # Red
+    'heterozygous': '#FFA500',  # Orange
+    'wildtype': '#2E7D32',      # Green
     'unknown': '#808080',       # Gray
 }
-"""Standard colors for genotype suffixes. Works with any gene prefix."""
+"""Colors for genotype suffixes. Works with any gene prefix (b9d2, cep290, etc.)."""
 
 # Standard ordering for genotype suffixes
-GENOTYPE_SUFFIX_ORDER = ['wildtype', 'heterozygous', 'homozygous', 'unknown']
+GENOTYPE_SUFFIX_ORDER = ['homozygous', 'heterozygous', 'wildtype', 'unknown']
 """Default order for displaying genotype suffixes."""
 
 # ==============================================================================
