@@ -31,6 +31,10 @@ from .config import (
     INDIVIDUAL_TRACE_ALPHA,
     INDIVIDUAL_TRACE_LINEWIDTH,
     MEAN_TRACE_LINEWIDTH,
+    GENOTYPE_SUFFIX_COLORS,
+    GENOTYPE_SUFFIX_ORDER,
+    PHENOTYPE_COLORS,
+    PHENOTYPE_ORDER,
 )
 
 # Standard qualitative color palette
@@ -92,31 +96,156 @@ class FigureData:
 # 2. Color & Data Helpers (Shared Logic)
 # ==============================================================================
 
-def make_color_lookup(values: pd.Series) -> Dict:
-    unique_vals = list(pd.unique(values.dropna()))
-    return {v: STANDARD_PALETTE[i % len(STANDARD_PALETTE)] for i, v in enumerate(unique_vals)}
+def _normalize_color(color) -> str:
+    """Convert any color format to hex string for Plotly compatibility.
+    
+    Handles:
+    - Hex strings (pass through)
+    - RGB/RGBA tuples (matplotlib format)
+    - Named colors
+    - rgb()/rgba() strings
+    """
+    import matplotlib.colors as mcolors
+    
+    # Already a valid hex string
+    if isinstance(color, str):
+        if color.startswith('#'):
+            return color
+        if color.startswith('rgb'):
+            return color  # Plotly accepts rgb() strings
+        # Try to convert named color to hex
+        try:
+            return mcolors.to_hex(color)
+        except ValueError:
+            return color  # Return as-is if conversion fails
+    
+    # Tuple (RGB or RGBA from matplotlib colormaps)
+    if isinstance(color, (tuple, list)):
+        try:
+            return mcolors.to_hex(color)
+        except ValueError:
+            # Fallback: format as rgba string
+            if len(color) == 4:
+                r, g, b, a = color
+                return f'rgba({int(r*255)},{int(g*255)},{int(b*255)},{a})'
+            elif len(color) == 3:
+                r, g, b = color
+                return f'rgb({int(r*255)},{int(g*255)},{int(b*255)})'
+    
+    return str(color)  # Last resort
 
-def build_color_lookup_for_column(df: pd.DataFrame, column: Optional[str]) -> Dict:
+
+def make_color_lookup(
+    values: pd.Series,
+    color_palette: Optional[List[str]] = None
+) -> Dict:
+    """Create color lookup dict, respecting Categorical ordering if present.
+    
+    Parameters
+    ----------
+    values : pd.Series
+        Values to create color mapping for. If this is an ordered Categorical,
+        the category order is preserved. Otherwise, order-of-first-occurrence
+        is used.
+    color_palette : Optional[List[str]]
+        Custom color palette. Colors can be hex strings, RGB tuples,
+        or any format matplotlib accepts. If None, uses STANDARD_PALETTE.
+    
+    Returns
+    -------
+    Dict mapping values to hex colors
+    """
+    palette = color_palette if color_palette is not None else STANDARD_PALETTE
+    # Normalize all colors to hex for Plotly compatibility
+    palette = [_normalize_color(c) for c in palette]
+    
+    # Respect Categorical ordering if present
+    if hasattr(values, 'cat') and values.cat.ordered:
+        present_cats = set(values.dropna().unique())
+        unique_vals = [c for c in values.cat.categories if c in present_cats]
+    else:
+        unique_vals = list(pd.unique(values.dropna()))
+    
+    return {v: palette[i % len(palette)] for i, v in enumerate(unique_vals)}
+
+def build_color_lookup_for_column(
+    df: pd.DataFrame,
+    column: Optional[str],
+    color_palette: Optional[List[str]] = None
+) -> Dict:
+    """Build color lookup for a column, optionally using custom palette.
+    
+    Parameters
+    ----------
+    color_palette : Optional[List[str] or Dict]
+        Can be a list of hex colors (converted to dict) or a dict mapping values to colors.
+        If a list, colors are applied to values in categorical order if present.
+    """
     if column is None or column not in df.columns:
         return {}
-    if column == 'genotype':
+    
+    # Auto-detect based on column name (if no custom palette)
+    if column == 'genotype' and color_palette is None:
+        # Use genotype suffix colors - extract suffix and map
         unique_vals = list(pd.unique(df[column].dropna()))
-        return {v: get_color_for_genotype(str(v)) for v in unique_vals}
-    return make_color_lookup(df[column])
+        lookup = {}
+        for val in unique_vals:
+            val_str = str(val)
+            # Try to match genotype suffix (e.g., 'b9d2_homozygous' -> 'homozygous')
+            matched = False
+            for suffix in GENOTYPE_SUFFIX_ORDER:
+                if val_str.endswith('_' + suffix) or val_str == suffix:
+                    lookup[val] = GENOTYPE_SUFFIX_COLORS[suffix]
+                    matched = True
+                    break
+            if not matched:
+                # Fallback to standard palette
+                lookup[val] = STANDARD_PALETTE[len(lookup) % len(STANDARD_PALETTE)]
+        return lookup
+    
+    # Handle dict-based color_palette (pass through to make_color_lookup)
+    if isinstance(color_palette, dict):
+        return color_palette
+    
+    # Handle list-based color_palette (convert to dict like plot_proportion_faceted does)
+    if isinstance(color_palette, (list, tuple)):
+        col_series = df[column]
+        # Respect Categorical ordering if present
+        if hasattr(col_series, 'cat') and col_series.cat.ordered:
+            present_cats = set(col_series.dropna().unique())
+            unique_vals = [c for c in col_series.cat.categories if c in present_cats]
+        else:
+            unique_vals = list(pd.unique(col_series.dropna()))
+        
+        # Normalize colors to hex
+        normalized_palette = [_normalize_color(c) for c in color_palette]
+        return {v: normalized_palette[i % len(normalized_palette)] 
+                for i, v in enumerate(unique_vals)}
+    
+    return make_color_lookup(df[column], color_palette)
 
 def build_color_state(
     df: pd.DataFrame,
     col_by: Optional[str],
     color_by_grouping: Optional[str],
-    line_by: str
+    line_by: str,
+    color_palette: Optional[List[str]] = None
 ) -> Dict[str, Dict]:
-
+    """Build color state for all relevant columns.
+    
+    Parameters
+    ----------
+    color_palette : Optional[List[str]]
+        Custom color palette. Applied to color_by_grouping if set,
+        otherwise to col_by.
+    """
     primary_column = color_by_grouping or col_by
 
+    # Apply custom palette to the primary coloring column
     return {
-        'primary_lookup': build_color_lookup_for_column(df, primary_column),
-        'col_lookup': build_color_lookup_for_column(df, col_by),
-        'grouping_lookup': build_color_lookup_for_column(df, color_by_grouping),
+        'primary_lookup': build_color_lookup_for_column(df, primary_column, color_palette),
+        'col_lookup': build_color_lookup_for_column(df, col_by, color_palette if not color_by_grouping else None),
+        'grouping_lookup': build_color_lookup_for_column(df, color_by_grouping, color_palette),
     }
 
 def resolve_color_value(
@@ -498,6 +627,7 @@ def plot_trajectories_faceted(
     row_by: Optional[str] = None,
     col_by: Optional[str] = None,
     color_by_grouping: Optional[str] = None,
+    color_palette: Optional[List[str]] = None,
     facet_order: Optional[Dict[str, List]] = None,
     height_per_row: int = HEIGHT_PER_ROW,
     width_per_col: int = WIDTH_PER_COL,
@@ -540,6 +670,8 @@ def plot_trajectories_faceted(
         Column to facet by columns
     color_by_grouping : Optional[str]
         Column to color trend lines by
+    color_palette : Optional[List[str]]
+        Custom color palette (list of hex colors). If None, uses STANDARD_PALETTE.
     show_individual : bool, default=True
         Whether to show individual trajectory traces
     show_error_band : bool, default=False
@@ -582,7 +714,7 @@ def plot_trajectories_faceted(
     t_min, t_max, m_min, m_max = get_global_axis_ranges([all_trajs] if all_trajs else [])
 
     subplots = []
-    color_state = build_color_state(df, col_by, color_by_grouping, line_by)
+    color_state = build_color_state(df, col_by, color_by_grouping, line_by, color_palette)
     legend_tracker = set()
 
     for r_idx, row_val in enumerate(row_values):
@@ -635,6 +767,7 @@ def plot_multimetric_trajectories(
     x_col: str = 'predicted_stage_hpf',
     line_by: str = 'embryo_id',
     color_by_grouping: Optional[str] = None,
+    color_palette: Optional[List[str]] = None,
     metric_labels: Optional[Dict[str, str]] = None,
     col_order: Optional[List] = None,
     height_per_row: int = HEIGHT_PER_ROW,
@@ -668,6 +801,8 @@ def plot_multimetric_trajectories(
         List of metric columns to plot (one per row)
     col_by : str
         Column to facet by columns
+    color_palette : Optional[List[str]]
+        Custom color palette (list of hex colors). If None, uses STANDARD_PALETTE.
     show_individual : bool, default=True
         Whether to show individual trajectory traces
     show_error_band : bool, default=False
@@ -702,7 +837,7 @@ def plot_multimetric_trajectories(
         metric_ranges[m] = (m_min, m_max)
 
     subplots = []
-    color_state = build_color_state(df, col_by, color_by_grouping, line_by)
+    color_state = build_color_state(df, col_by, color_by_grouping, line_by, color_palette)
     legend_tracker = set()
 
     for r_idx, metric in enumerate(row_values):
@@ -962,7 +1097,7 @@ def _render_matplotlib(data: FigureData) -> plt.Figure:
     return fig
     
 # ==============================================================================
-# 5. Proportion Grid Plot (Categorical Breakdown)
+# 5. Proportion Grid Plot (Categorical Breakdown) - DEPRECATED
 # ==============================================================================
 
 def plot_proportion_grid(
@@ -981,6 +1116,10 @@ def plot_proportion_grid(
     color_palette: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> plt.Figure:
     """
+    .. deprecated::
+        Use :func:`plot_proportion_faceted` instead. This function will be removed
+        in a future release.
+
     Plot proportion breakdown of categorical variables across groups.
 
     Creates a grid where:
@@ -1033,6 +1172,12 @@ def plot_proportion_grid(
     ...     title='Cluster Composition Breakdown',
     ... )
     """
+    import warnings
+    warnings.warn(
+        "plot_proportion_grid is deprecated. Use plot_proportion_faceted instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
     # Determine column values (clusters)
     col_values = sorted(df[col_by].unique())
     if col_order:
@@ -1265,29 +1410,44 @@ def plot_proportion_faceted(
     ... )
     """
     # Determine row and column values
+    # When row_by/col_by is None, use a single row/column with a placeholder label
     if row_by is not None:
         row_values = sorted(df[row_by].dropna().unique())
         if facet_order and 'row_by' in facet_order:
             row_values = [v for v in facet_order['row_by'] if v in row_values]
     else:
-        row_values = [None]
+        row_values = ['_all_']  # Placeholder for single row
 
     if col_by is not None:
         col_values = sorted(df[col_by].dropna().unique())
         if facet_order and 'col_by' in facet_order:
             col_values = [v for v in facet_order['col_by'] if v in col_values]
     else:
-        col_values = [None]
+        col_values = ['_all_']  # Placeholder for single column
 
     # Determine color_by_grouping values
-    color_values = sorted(df[color_by_grouping].dropna().unique())
+    # Use make_color_lookup for consistent color ordering with trajectory plots
+    # (preserves order-of-first-occurrence rather than alphabetical sort)
+    
+    # Get color values - respect Categorical ordering if present
+    col_series = df[color_by_grouping]
+    if hasattr(col_series, 'cat') and col_series.cat.ordered:
+        # Use Categorical order, but only for categories that exist in data
+        present_cats = set(col_series.dropna().unique())
+        color_values = [c for c in col_series.cat.categories if c in present_cats]
+    else:
+        color_values = list(pd.unique(col_series.dropna()))
+    
+    # Handle color_palette: can be None, a dict, or a list
+    if color_palette is None:
+        color_palette = make_color_lookup(df[color_by_grouping])
+    elif isinstance(color_palette, (list, tuple)):
+        # Convert list to dict using color_values order
+        normalized_palette = [_normalize_color(c) for c in color_palette]
+        color_palette = {v: normalized_palette[i % len(normalized_palette)] 
+                        for i, v in enumerate(color_values)}
     if color_order:
         color_values = [v for v in color_order if v in color_values]
-
-    # Build color palette
-    if color_palette is None:
-        color_palette = {v: STANDARD_PALETTE[i % len(STANDARD_PALETTE)]
-                        for i, v in enumerate(color_values)}
 
     n_rows = len(row_values)
     n_cols = len(col_values)
@@ -1305,15 +1465,15 @@ def plot_proportion_faceted(
         for c_idx, col_val in enumerate(col_values):
             ax = axes[r_idx, c_idx]
 
-            # Filter to this cell
+            # Filter to this cell (skip filtering if using '_all_' placeholder)
             subset = df.copy()
-            if row_by is not None and row_val is not None:
+            if row_by is not None and row_val != '_all_':
                 subset = subset[subset[row_by] == row_val]
-            if col_by is not None and col_val is not None:
+            if col_by is not None and col_val != '_all_':
                 subset = subset[subset[col_by] == col_val]
 
             # Count unique count_by values per color_by_grouping category
-            counts = subset.groupby(color_by_grouping)[count_by].nunique()
+            counts = subset.groupby(color_by_grouping, observed=True)[count_by].nunique()
             counts = counts.reindex(color_values, fill_value=0)
 
             total = counts.sum()
@@ -1382,12 +1542,12 @@ def plot_proportion_faceted(
             ax.set_xlim(-0.5, 0.5)
             ax.set_xticks([])
 
-            # Column titles on top row
-            if r_idx == 0 and col_by is not None and col_val is not None:
+            # Column titles on top row (skip if single column placeholder)
+            if r_idx == 0 and col_by is not None and col_val != '_all_':
                 ax.set_title(f'{col_val}', fontsize=10, fontweight='bold')
 
-            # Row labels on left column
-            if c_idx == 0 and row_by is not None and row_val is not None:
+            # Row labels on left column (skip if single row placeholder)
+            if c_idx == 0 and row_by is not None and row_val != '_all_':
                 ax.set_ylabel(f'{row_val}', fontsize=10, fontweight='bold')
 
             # Y-axis formatting - set ticks on ALL facets for grid alignment

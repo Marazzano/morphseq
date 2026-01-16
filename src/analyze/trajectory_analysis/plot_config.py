@@ -1,69 +1,91 @@
 """
-DEPRECATED: This module has been merged into config.py
+Plotting configuration and style defaults for trajectory analysis.
 
-All constants from this module are now available in config.py.
-This file is kept for backward compatibility only.
-
-Please update your imports:
-    OLD: from .plot_config import CONSTANT_NAME
-    NEW: from .config import CONSTANT_NAME
-
-This wrapper will be removed in a future version.
+Contains color mappings, sizing parameters, and other visual defaults
+for creating consistent plots across the analysis pipeline.
 """
-import warnings
 
-# Re-export everything from config
-from .config import (
-    # Genotype styling
-    GENOTYPE_SUFFIX_COLORS,
-    GENOTYPE_SUFFIX_ORDER,
-    # Phenotype styling
-    PHENOTYPE_COLORS,
-    PHENOTYPE_ORDER,
-    # Matplotlib styling
-    INDIVIDUAL_TRACE_ALPHA,
-    INDIVIDUAL_TRACE_LINEWIDTH,
-    MEAN_TRACE_LINEWIDTH,
-    OVERLAY_ALPHA,
-    FACETED_ALPHA,
-    TITLE_FONTSIZE,
-    SUBPLOT_TITLE_FONTSIZE,
-    AXIS_LABEL_FONTSIZE,
-    TICK_LABEL_FONTSIZE,
-    LEGEND_FONTSIZE,
-    GRID_ALPHA,
-    GRID_LINESTYLE,
-    GRID_LINEWIDTH,
-    # Plotly styling
-    DEFAULT_PLOTLY_HEIGHT,
-    DEFAULT_PLOTLY_WIDTH,
-    HEIGHT_PER_ROW,
-    WIDTH_PER_COL,
-    HOVER_TEMPLATE_BASE,
-    # Faceted sizing
-    MIN_FIGSIZE_WIDTH,
-    MIN_FIGSIZE_HEIGHT,
-    DEFAULT_FIGSIZE_WIDTH_PER_COL,
-    DEFAULT_FIGSIZE_HEIGHT_PER_ROW,
+# ==============================================================================
+# Genotype Styling (works with any gene prefix)
+# ==============================================================================
+
+# Color mapping based on genotype suffix (independent of gene prefix)
+GENOTYPE_SUFFIX_COLORS = {
+    'homozygous': '#D32F2F',    # Red
+    'heterozygous': '#FFA500',  # Orange
+    'wildtype': '#2E7D32',      # Green
+    'unknown': '#808080',       # Gray
+}
+"""Colors for genotype suffixes. Works with any gene prefix (b9d2, cep290, etc.)."""
+
+# Standard ordering for genotype suffixes
+GENOTYPE_SUFFIX_ORDER = ['homozygous', 'heterozygous', 'wildtype', 'unknown']
+"""Default order for displaying genotype suffixes."""
+
+# ==============================================================================
+# Phenotype Styling (distinct from genotype colors)
+# ==============================================================================
+
+# Color mapping for phenotype categories (muted/earthy tones - distinct from genotype)
+PHENOTYPE_COLORS = {
+    'CE': '#5B7C99',           # Slate blue
+    'HTA': '#7FA87F',          # Sage green
+    'BA_rescue': '#C4956A',    # Terracotta/tan
+    'non_penetrant': '#9E9E9E', # Warm gray
+}
+"""Colors for phenotype categories. Muted/earthy tones, distinct from genotype suffix colors."""
+
+# Standard ordering for phenotypes
+PHENOTYPE_ORDER = ['CE', 'HTA', 'BA_rescue', 'non_penetrant']
+"""Default order for displaying phenotypes."""
+
+# ==============================================================================
+# Matplotlib Styling
+# ==============================================================================
+
+# Line and trace styling
+INDIVIDUAL_TRACE_ALPHA = 0.2        # Faded individual trajectories
+INDIVIDUAL_TRACE_LINEWIDTH = 0.8    # Thin individual lines
+MEAN_TRACE_LINEWIDTH = 2.2          # Bold mean trajectory line
+OVERLAY_ALPHA = 0.25                # Faded when overlaying multiple groups
+FACETED_ALPHA = 0.25                # Faded when faceting
+
+# Font sizes
+TITLE_FONTSIZE = 14
+SUBPLOT_TITLE_FONTSIZE = 11
+AXIS_LABEL_FONTSIZE = 10
+TICK_LABEL_FONTSIZE = 9
+LEGEND_FONTSIZE = 9
+
+# Grid and styling
+GRID_ALPHA = 0.3
+GRID_LINESTYLE = '--'
+GRID_LINEWIDTH = 0.5
+
+# ==============================================================================
+# Plotly Styling
+# ==============================================================================
+
+# Figure defaults
+DEFAULT_PLOTLY_HEIGHT = 500
+DEFAULT_PLOTLY_WIDTH = 1400
+HEIGHT_PER_ROW = 350              # Height multiplier for row count
+WIDTH_PER_COL = 400               # Width multiplier for column count
+
+# Hover template defaults
+HOVER_TEMPLATE_BASE = (
+    '<b>Embryo:</b> %{customdata[0]}<br>'
+    '<b>Time:</b> %{x:.2f} hpf<br>'
+    '<b>Value:</b> %{y:.4f}<br>'
+    '<extra></extra>'
 )
 
-warnings.warn(
-    "plot_config module is deprecated. Import from config instead: "
-    "from .config import CONSTANT_NAME",
-    DeprecationWarning,
-    stacklevel=2
-)
+# ==============================================================================
+# Faceted Plot Sizing
+# ==============================================================================
 
-__all__ = [
-    'GENOTYPE_SUFFIX_COLORS', 'GENOTYPE_SUFFIX_ORDER',
-    'PHENOTYPE_COLORS', 'PHENOTYPE_ORDER',
-    'INDIVIDUAL_TRACE_ALPHA', 'INDIVIDUAL_TRACE_LINEWIDTH',
-    'MEAN_TRACE_LINEWIDTH', 'OVERLAY_ALPHA', 'FACETED_ALPHA',
-    'TITLE_FONTSIZE', 'SUBPLOT_TITLE_FONTSIZE', 'AXIS_LABEL_FONTSIZE',
-    'TICK_LABEL_FONTSIZE', 'LEGEND_FONTSIZE',
-    'GRID_ALPHA', 'GRID_LINESTYLE', 'GRID_LINEWIDTH',
-    'DEFAULT_PLOTLY_HEIGHT', 'DEFAULT_PLOTLY_WIDTH',
-    'HEIGHT_PER_ROW', 'WIDTH_PER_COL', 'HOVER_TEMPLATE_BASE',
-    'MIN_FIGSIZE_WIDTH', 'MIN_FIGSIZE_HEIGHT',
-    'DEFAULT_FIGSIZE_WIDTH_PER_COL', 'DEFAULT_FIGSIZE_HEIGHT_PER_ROW',
-]
+# Default sizing for dynamic faceted plots
+MIN_FIGSIZE_WIDTH = 6
+MIN_FIGSIZE_HEIGHT = 4
+DEFAULT_FIGSIZE_WIDTH_PER_COL = 5
+DEFAULT_FIGSIZE_HEIGHT_PER_ROW = 4.5
