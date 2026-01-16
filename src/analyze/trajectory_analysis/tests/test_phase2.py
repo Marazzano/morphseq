@@ -7,7 +7,18 @@ Includes runtime import checks to catch lazy/deferred imports that might fail.
 """
 
 import sys
-sys.path.insert(0, '/net/trapnell/vol1/home/mdcolon/proj/morphseq/src')
+import os
+from pathlib import Path
+
+# Determine repo root: prefer env var, fallback to __file__-based derivation
+# This file is at: <repo>/src/analyze/trajectory_analysis/tests/test_phase2.py
+REPO_ROOT = os.environ.get('MORPHSEQ_REPO_ROOT')
+if not REPO_ROOT:
+    REPO_ROOT = str(Path(__file__).resolve().parents[4])
+
+SRC_DIR = os.path.join(REPO_ROOT, 'src')
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
 def test_distance_imports():
     """Test distance subpackage imports"""

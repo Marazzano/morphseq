@@ -120,7 +120,7 @@ Reorganizing the trajectory_analysis module from 27 flat files into functional s
   ============================================================
   All Phase 3 tests PASSED!
   ```
-- **Commit**: (pending)
+- **Commit**: 8d3de397 "Phase 3: Create qc subpackage with consolidated quality control functions"
 
 ## Current Phase: Phase 4 - Clustering Subpackage (NEXT)
 
@@ -172,7 +172,9 @@ Using `git mv` to preserve history. One commit per phase with clear message.
 
 **Commits so far**:
 1. 44fb6b62 - Phase 1: Consolidate config files
-2. (pending) - Phase 2: Create distance, utilities, and io subpackages
+2. fb592d23 - Phase 2: Create distance, utilities, and io subpackages
+3. 6bd78b77 - Phase 2 follow-up: Fix broken imports and add backward-compat shims
+4. 8d3de397 - Phase 3: Create qc subpackage with consolidated quality control functions
 
 ## How to Resume
 

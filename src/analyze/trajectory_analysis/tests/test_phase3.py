@@ -13,11 +13,17 @@ Tests that:
 import sys
 import os
 import warnings
+from pathlib import Path
 
-# Add project root to path
-PROJECT_ROOT = "/net/trapnell/vol1/home/mdcolon/proj/morphseq"
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# Determine repo root: prefer env var, fallback to __file__-based derivation
+# This file is at: <repo>/src/analyze/trajectory_analysis/tests/test_phase3.py
+REPO_ROOT = os.environ.get('MORPHSEQ_REPO_ROOT')
+if not REPO_ROOT:
+    REPO_ROOT = str(Path(__file__).resolve().parents[4])
+
+SRC_DIR = os.path.join(REPO_ROOT, 'src')
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
 
 
 def test_qc_subpackage():
@@ -25,7 +31,7 @@ def test_qc_subpackage():
     print("Testing qc subpackage imports...")
 
     # Test direct import from qc
-    from src.analyze.trajectory_analysis.qc import (
+    from analyze.trajectory_analysis.qc import (
         identify_outliers,
         remove_outliers_from_distance_matrix,
         identify_embryo_outliers_iqr,
@@ -48,7 +54,7 @@ def test_qc_quality_control_module():
     """Test direct import from qc.quality_control module."""
     print("Testing qc.quality_control module imports...")
 
-    from src.analyze.trajectory_analysis.qc.quality_control import (
+    from analyze.trajectory_analysis.qc.quality_control import (
         identify_outliers,
         remove_outliers_from_distance_matrix,
         identify_embryo_outliers_iqr,
@@ -71,7 +77,7 @@ def test_backward_compat_outliers():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
 
-        from src.analyze.trajectory_analysis.outliers import (
+        from analyze.trajectory_analysis.outliers import (
             identify_outliers,
             remove_outliers_from_distance_matrix,
         )
@@ -100,7 +106,7 @@ def test_backward_compat_distance_filtering():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
 
-        from src.analyze.trajectory_analysis.distance_filtering import (
+        from analyze.trajectory_analysis.distance_filtering import (
             identify_embryo_outliers_iqr,
             filter_data_and_ids,
             identify_cluster_outliers_combined,
@@ -128,7 +134,7 @@ def test_consensus_pipeline_imports():
     print("Testing consensus_pipeline.py imports...")
 
     # This should work without errors
-    from src.analyze.trajectory_analysis.consensus_pipeline import (
+    from analyze.trajectory_analysis.consensus_pipeline import (
         run_consensus_pipeline,
         create_filtering_log,
     )
@@ -144,7 +150,7 @@ def test_main_init_imports():
     """Test that main __init__.py imports all QC functions."""
     print("Testing main __init__.py imports...")
 
-    from src.analyze.trajectory_analysis import (
+    from analyze.trajectory_analysis import (
         identify_outliers,
         remove_outliers_from_distance_matrix,
         identify_embryo_outliers_iqr,
@@ -204,6 +210,6 @@ def run_all_tests():
 
 
 if __name__ == "__main__":
-    os.chdir(PROJECT_ROOT)
+    os.chdir(REPO_ROOT)
     success = run_all_tests()
     sys.exit(0 if success else 1)
