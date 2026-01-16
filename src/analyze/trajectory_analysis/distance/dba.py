@@ -60,7 +60,7 @@ def dba(
 
     Examples
     --------
-    >>> from src.analyze.trajectory_analysis.dtw_distance import compute_dtw_distance
+    >>> from src.analyze.trajectory_analysis.distance import compute_dtw_distance
     >>>
     >>> # Define DTW function for DBA
     >>> def dtw_func(seq1, seq2):

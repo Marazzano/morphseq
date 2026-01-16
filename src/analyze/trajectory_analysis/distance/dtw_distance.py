@@ -269,7 +269,8 @@ def prepare_multivariate_array(
     - Missing values (NaN) are handled by linear interpolation
     - Z-score normalization ensures equal weight for all metrics in DTW
     """
-    from .trajectory_utils import interpolate_to_common_grid_multi_df, GRID_STEP
+    from ..utilities.trajectory_utils import interpolate_to_common_grid_multi_df
+    from ..config import GRID_STEP
 
     if verbose:
         print(f"Preparing multivariate array for {len(metrics)} metrics...")

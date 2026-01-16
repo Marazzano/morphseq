@@ -118,7 +118,7 @@ def compute_binned_mean(
         DeprecationWarning,
         stacklevel=2
     )
-    from ..trajectory_utils import compute_trend_line
+    from ..utilities.trajectory_utils import compute_trend_line
     return compute_trend_line(times, values, bin_width, statistic='mean', smooth_sigma=None)
 
 

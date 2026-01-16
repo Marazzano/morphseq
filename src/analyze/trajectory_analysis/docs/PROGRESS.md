@@ -1,6 +1,6 @@
 # Trajectory Analysis Reorganization - Progress Tracker
 
-**Last Updated**: 2026-01-16 11:45 UTC
+**Last Updated**: 2026-01-16 12:00 UTC
 **Current Phase**: Phase 3 - QC Consolidation (NEXT)
 **Branch**: feat/traj-reorg
 
@@ -64,7 +64,22 @@ Reorganizing the trajectory_analysis module from 27 flat files into functional s
   ============================================================
   All Phase 2 tests PASSED!
   ```
-- **Commit**: Phase 2 (pending)
+- **Commit**: fb592d23 "Phase 2: Create distance, utilities, and io subpackages"
+
+### Phase 2 Follow-up Fixes ✓
+- **Fixed broken deferred imports**:
+  - `distance/dtw_distance.py:272`: Changed `from .trajectory_utils` → `from ..utilities.trajectory_utils`
+  - `pair_analysis/data_utils.py:121`: Changed `from ..trajectory_utils` → `from ..utilities.trajectory_utils`
+- **Strengthened tests**: Added runtime import tests for `prepare_multivariate_array` and `compute_binned_mean`
+- **Created backward-compat shims** with deprecation warnings:
+  - `dtw_distance.py` → re-exports from `distance.dtw_distance`
+  - `dba.py` → re-exports from `distance.dba`
+  - `trajectory_utils.py` → re-exports from `utilities.trajectory_utils`
+  - `pca_embedding.py` → re-exports from `utilities.pca`
+  - `correlation_analysis.py` → re-exports from `utilities.correlation`
+  - `data_loading.py` → re-exports from `io.data_loading`
+- **Updated docs**: Added reorganization note to README, fixed example imports in dba.py and trajectory_utils.py
+- **Commit**: (pending - Phase 2 follow-up fixes)
 
 ## Current Phase: Phase 3 - QC Consolidation
 
