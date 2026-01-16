@@ -1,7 +1,7 @@
 # Trajectory Analysis Reorganization - Progress Tracker
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 4 - Clustering Subpackage (NEXT)
+**Current Phase**: Phase 5 - Viz Restructure (NEXT)
 **Branch**: feat/traj-reorg
 
 ## What We're Doing
@@ -122,11 +122,71 @@ Reorganizing the trajectory_analysis module from 27 flat files into functional s
   ```
 - **Commit**: 8d3de397 "Phase 3: Create qc subpackage with consolidated quality control functions"
 
-## Current Phase: Phase 4 - Clustering Subpackage (NEXT)
+### Phase 4: Clustering Subpackage ✓
+- **Moved files** to `clustering/`:
+  - `bootstrap_clustering.py`
+  - `consensus_pipeline.py`
+  - `cluster_posteriors.py`
+  - `cluster_classification.py`
+  - `cluster_extraction.py`
+  - `k_selection.py`
+- **Updated relative imports** in moved files:
+  - `consensus_pipeline.py`: Changed `.qc` → `..qc`, `.config` → `..config`
+  - `k_selection.py`: Changed absolute imports to relative imports for internal functions
+- **Created `clustering/__init__.py`** - Exports all clustering functions (23 functions total):
+  - Bootstrap clustering (6 functions)
+  - Posterior analysis (4 functions)
+  - Classification (3 functions)
+  - Consensus pipeline (2 functions)
+  - K selection (6 functions)
+  - Cluster extraction (3 functions)
+- **Updated main `__init__.py`** - Changed imports to use `from .clustering import ...`
+- **Created backward-compat shims** at old locations with DeprecationWarning:
+  - `bootstrap_clustering.py`
+  - `cluster_posteriors.py`
+  - `cluster_classification.py`
+  - `consensus_pipeline.py`
+  - `k_selection.py`
+- **Test Results**: All 7 tests passed
+  ```
+  ============================================================
+  Phase 4 Import Tests - Clustering Consolidation
+  ============================================================
+  Testing clustering subpackage imports...
+  ✓ Clustering subpackage imports OK
+  Testing backward compatibility: bootstrap_clustering.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.bootstrap_clustering is deprecated...
+  ✓ Backward compatibility (bootstrap_clustering.py) OK
+  Testing backward compatibility: cluster_posteriors.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.cluster_posteriors is deprecated...
+  ✓ Backward compatibility (cluster_posteriors.py) OK
+  Testing backward compatibility: cluster_classification.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.cluster_classification is deprecated...
+  ✓ Backward compatibility (cluster_classification.py) OK
+  Testing backward compatibility: consensus_pipeline.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.consensus_pipeline is deprecated...
+  ✓ Backward compatibility (consensus_pipeline.py) OK
+  Testing backward compatibility: k_selection.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.k_selection is deprecated...
+  ✓ Backward compatibility (k_selection.py) OK
+  Testing main __init__.py imports...
+  ✓ Main __init__.py imports OK
 
-### Phase 4: Clustering Subpackage
-- Move 6 clustering files: bootstrap_clustering.py, consensus_pipeline.py, cluster_posteriors.py, cluster_classification.py, cluster_extraction.py, k_selection.py
-- Update all relative imports (many!)
+  ============================================================
+  Summary:
+    clustering_subpackage: ✓ PASS
+    backward_compat_bootstrap_clustering: ✓ PASS
+    backward_compat_cluster_posteriors: ✓ PASS
+    backward_compat_cluster_classification: ✓ PASS
+    backward_compat_consensus_pipeline: ✓ PASS
+    backward_compat_k_selection: ✓ PASS
+    main_init: ✓ PASS
+  ============================================================
+  All Phase 4 tests PASSED!
+  ```
+- **Commit**: (pending)
+
+## Current Phase: Phase 5 - Viz Restructure (NEXT)
 
 ### Phase 5: Viz Restructure (Priority 2 - HIGH)
 - Move dendrogram.py → viz/
