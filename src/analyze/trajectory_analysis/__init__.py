@@ -80,35 +80,31 @@ warnings. See README.md for detailed migration guide.
 __version__ = '0.2.0'
 
 # DTW & Distance Computation
-from .dtw_distance import (
+from .distance import (
     compute_dtw_distance,
     compute_dtw_distance_matrix,
     prepare_multivariate_array,
     compute_md_dtw_distance_matrix,
     compute_trajectory_distances,
+    dba,
 )
-from .dba import dba
-from .data_loading import compute_dtw_distance_from_df
+from .io import compute_dtw_distance_from_df
 
 # Trajectory Processing - NEW API (DataFrame-centric, v0.2.0+)
-from .trajectory_utils import (
+from .utilities import (
     extract_trajectories_df,
     interpolate_to_common_grid_df,
     df_to_trajectories,
-    compute_trend_line
-)
-
-# Trajectory Processing - DEPRECATED (v0.1.x, kept for backward compatibility)
-from .trajectory_utils import (
+    compute_trend_line,
+    # DEPRECATED (v0.1.x, kept for backward compatibility)
     extract_trajectories,
     interpolate_trajectories,
     interpolate_to_common_grid,
     pad_trajectories_for_plotting,
-    extract_early_late_means
+    extract_early_late_means,
+    # Correlation Analysis
+    test_anticorrelation,
 )
-
-# Correlation Analysis
-from .correlation_analysis import test_anticorrelation
 
 # Bootstrap Clustering
 from .bootstrap_clustering import (
@@ -214,8 +210,8 @@ from .dendrogram import (
 # 3D Plotting
 from .plotting_3d import plot_3d_scatter
 
-# PCA Embedding Utilities
-from .pca_embedding import (
+# PCA Embedding Utilities (now in utilities subpackage)
+from .utilities import (
     fit_pca_on_embeddings,
     transform_embeddings_to_pca,
     compute_wt_reference_by_time,

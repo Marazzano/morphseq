@@ -21,7 +21,7 @@ from .pair_analysis.data_utils import (
     get_trajectories_for_group,
     get_global_axis_ranges,
 )
-from .trajectory_utils import compute_trend_line
+from .utilities.trajectory_utils import compute_trend_line
 from .genotype_styling import get_color_for_genotype
 from .config import (
     DEFAULT_PLOTLY_HEIGHT,

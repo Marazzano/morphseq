@@ -1,7 +1,7 @@
 # Trajectory Analysis Reorganization - Progress Tracker
 
-**Last Updated**: 2026-01-05 05:58 UTC
-**Current Phase**: Phase 2 - Distance/Utilities/IO subpackages (IN PROGRESS)
+**Last Updated**: 2026-01-16 11:45 UTC
+**Current Phase**: Phase 3 - QC Consolidation (NEXT)
 **Branch**: feat/traj-reorg
 
 ## What We're Doing
@@ -26,102 +26,71 @@ Reorganizing the trajectory_analysis module from 27 flat files into functional s
 - **Tested**: Config imports work, genotype_styling imports work
 - **Commit**: 44fb6b62 "Phase 1: Consolidate config files"
 
-## Current Phase: Phase 2 - Distance/Utilities/IO Subpackages
+### Phase 2: Distance/Utilities/IO Subpackages ✓
+- **Moved files**:
+  - `dtw_distance.py` → `distance/`
+  - `dba.py` → `distance/`
+  - `trajectory_utils.py` → `utilities/`
+  - `pca_embedding.py` → `utilities/pca.py`
+  - `correlation_analysis.py` → `utilities/correlation.py`
+  - `data_loading.py` → `io/`
+  - `phenotype_io.py` → `io/`
+- **Created `__init__.py`** files for distance/, utilities/, io/
+- **Updated imports**:
+  - `utilities/trajectory_utils.py`: `from ..config import ...`
+  - `io/data_loading.py`: `from ..distance.dtw_distance import ...`
+  - `facetted_plotting.py`: `from .utilities.trajectory_utils import compute_trend_line`
+  - `__init__.py`: Updated to import from new subpackages
+- **Test Results**: All 4 tests passed (distance, utilities, io, cross-imports)
+  ```
+  ============================================================
+  Phase 2 Import Tests
+  ============================================================
+  Testing distance imports...
+  ✓ Distance imports OK
+  Testing utilities imports...
+  ✓ Utilities imports OK
+  Testing io imports...
+  ✓ I/O imports OK
+  Testing cross-subpackage imports...
+  ✓ Cross-subpackage imports OK
 
-### What's Been Done (Partial)
-- ✓ Moved `dtw_distance.py` → `distance/` (git mv completed)
-- ✓ Moved `dba.py` → `distance/` (git mv completed)
+  ============================================================
+  Summary:
+    distance: ✓ PASS
+    utilities: ✓ PASS
+    io: ✓ PASS
+    cross-imports: ✓ PASS
+  ============================================================
+  All Phase 2 tests PASSED!
+  ```
+- **Commit**: Phase 2 (pending)
 
-### What Needs to Be Done Next
+## Current Phase: Phase 3 - QC Consolidation
 
-#### Step 2.1: Complete distance/ subpackage
-1. **Create `distance/__init__.py`** with exports:
-```python
-"""Distance Computation Algorithms"""
-from .dtw_distance import (
-    compute_dtw_distance,
-    compute_dtw_distance_matrix,
-    prepare_multivariate_array,
-    compute_md_dtw_distance_matrix,
-    compute_trajectory_distances,
-)
-from .dba import dba
+### What Needs to Be Done
 
-__all__ = [
-    'compute_dtw_distance', 'compute_dtw_distance_matrix',
-    'prepare_multivariate_array', 'compute_md_dtw_distance_matrix',
-    'compute_trajectory_distances', 'dba',
-]
-```
+#### Step 3.1: Create qc/quality_control.py
+Manually merge all functions from:
+- `outliers.py`: `identify_outliers()`, `remove_outliers_from_distance_matrix()`
+- `distance_filtering.py`: `identify_embryo_outliers_iqr()`, `filter_data_and_ids()`, `identify_cluster_outliers_combined()`
 
-2. **Update import in `data_loading.py`** (line 21):
-   - OLD: `from .dtw_distance import compute_dtw_distance_matrix`
-   - NEW: `from .distance.dtw_distance import compute_dtw_distance_matrix`
+#### Step 3.2: Create qc/__init__.py
+Export all 5 functions from `quality_control.py`
 
-#### Step 2.2: Move utilities/ files
-```bash
-git mv trajectory_utils.py utilities/
-git mv pca_embedding.py utilities/pca.py
-git mv correlation_analysis.py utilities/correlation.py
-```
+#### Step 3.3: Update consensus_pipeline.py imports
+Lines 35-40: Change to `from .qc.quality_control import (identify_outliers, identify_embryo_outliers_iqr, ...)`
 
-Then:
-1. **Update imports IN utilities files themselves**:
-   - `utilities/trajectory_utils.py` line ~30: Change `from .config` → `from ..config` (add `..`)
+#### Step 3.4: Convert originals to deprecation wrappers
+Replace `outliers.py` and `distance_filtering.py` contents with:
+- Import from `qc.quality_control`
+- Emit `DeprecationWarning`
+- Re-export all functions
 
-2. **Create `utilities/__init__.py`** exporting from all 3 files
-
-3. **Update import in `facetted_plotting.py`** (line 24):
-   - OLD: `from .trajectory_utils import compute_trend_line`
-   - NEW: `from .utilities.trajectory_utils import compute_trend_line`
-
-#### Step 2.3: Move io/ files
-```bash
-git mv data_loading.py io/
-git mv phenotype_io.py io/
-```
-
-Then:
-1. **Update import in `io/data_loading.py`** (line 21):
-   - OLD: `from .distance.dtw_distance import ...` (already updated in 2.1)
-   - NEW: `from ..distance.dtw_distance import ...` (add second `..`)
-
-2. **Create `io/__init__.py`** exporting:
-   - `compute_dtw_distance_from_df` (from data_loading)
-   - `load_phenotype_file`, `save_phenotype_file` (from phenotype_io)
-
-#### Step 2.4: Test Phase 2
-Create `test_phase2.py`:
-```python
-#!/usr/bin/env python3
-print("Testing distance imports...")
-from analyze.trajectory_analysis.distance import compute_dtw_distance_matrix, dba
-print("✓ Distance imports OK")
-
-print("Testing utilities imports...")
-from analyze.trajectory_analysis.utilities import extract_trajectories_df, fit_pca_on_embeddings
-print("✓ Utilities imports OK")
-
-print("Testing io imports...")
-from analyze.trajectory_analysis.io import compute_dtw_distance_from_df, load_phenotype_file
-print("✓ I/O imports OK")
-```
-
-Run: `cd /net/trapnell/vol1/home/mdcolon/proj/morphseq/src && python3 test_phase2.py`
-
-#### Step 2.5: Commit Phase 2
-```bash
-cd /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/analyze/trajectory_analysis
-git add distance/ utilities/ io/ data_loading.py facetted_plotting.py
-git commit -m "Phase 2: Create distance, utilities, and io subpackages"
-```
+#### Step 3.5: Test Phase 3
+Create `test_phase3.py` testing new QC imports + backward compatibility warnings.
 
 ## Remaining Phases (Not Started)
-
-### Phase 3: QC Consolidation (Priority 1 - HIGH)
-- Consolidate `outliers.py` + `distance_filtering.py` → `qc/quality_control.py`
-- Update `consensus_pipeline.py` imports
-- Create deprecation wrappers
 
 ### Phase 4: Clustering Subpackage
 - Move 6 clustering files: bootstrap_clustering.py, consensus_pipeline.py, cluster_posteriors.py, cluster_classification.py, cluster_extraction.py, k_selection.py
@@ -147,16 +116,14 @@ git commit -m "Phase 2: Create distance, utilities, and io subpackages"
 
 ## Key Files That Need Import Updates
 
-**Files already updated**:
+**Files already updated (Phase 1-2)**:
 - ✓ genotype_styling.py
-- ✓ facetted_plotting.py
+- ✓ facetted_plotting.py (from .config + from .utilities.trajectory_utils)
 - ✓ plotting_3d.py
 - ✓ _archived/faceted_plotting_legacy.py
-
-**Files that will need updates in Phase 2**:
-- data_loading.py (imports from dtw_distance)
-- facetted_plotting.py (imports from trajectory_utils) - needs second update
-- utilities/trajectory_utils.py (imports from config)
+- ✓ utilities/trajectory_utils.py (from ..config)
+- ✓ io/data_loading.py (from ..distance.dtw_distance)
+- ✓ __init__.py (partial - distance, utilities, io imports updated)
 
 **Files that will need updates in Phase 3**:
 - consensus_pipeline.py (imports from outliers + distance_filtering)
@@ -175,16 +142,14 @@ Using `git mv` to preserve history. One commit per phase with clear message.
 
 **Commits so far**:
 1. 44fb6b62 - Phase 1: Consolidate config files
-
-**Next commit**:
-2. Phase 2: Create distance, utilities, and io subpackages
+2. (pending) - Phase 2: Create distance, utilities, and io subpackages
 
 ## How to Resume
 
 If starting fresh, the next agent should:
 1. Read this file (PROGRESS.md)
 2. Read docs/IMPLEMENTATION_PLAN.md for full details
-3. Continue from "Step 2.1: Complete distance/ subpackage" above
+3. Continue from Phase 3: QC Consolidation
 4. Follow the plan step-by-step, testing after each phase
 5. Update this PROGRESS.md file as phases complete
 

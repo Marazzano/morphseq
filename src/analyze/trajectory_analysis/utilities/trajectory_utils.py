@@ -27,7 +27,7 @@ import pandas as pd
 from scipy import interpolate
 from scipy.ndimage import gaussian_filter1d
 from typing import Tuple, List, Dict, Optional
-from .config import DEFAULT_EMBRYO_ID_COL, DEFAULT_METRIC_COL, DEFAULT_TIME_COL, MIN_TIMEPOINTS, GRID_STEP
+from ..config import DEFAULT_EMBRYO_ID_COL, DEFAULT_METRIC_COL, DEFAULT_TIME_COL, MIN_TIMEPOINTS, GRID_STEP
 
 
 # ============================================================================

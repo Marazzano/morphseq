@@ -296,6 +296,8 @@ These are the most complex files requiring careful updates:
 
 ## Git Commit Strategy
 
+**IMPORTANT**: Make git commits after EACH phase is complete. Document test results in commit messages.
+
 Create 8 separate commits (one per phase) with clear messages:
 - Phase 1: Config consolidation
 - Phase 2: Distance, utilities, io subpackages
@@ -307,6 +309,12 @@ Create 8 separate commits (one per phase) with clear messages:
 - Phase 8: Tests
 
 Use `git mv` in all commits to preserve file history.
+
+Each commit should include:
+1. All file moves/changes for that phase
+2. All import updates for that phase
+3. Test file demonstrating the phase works
+4. Update to PROGRESS.md documenting completion
 
 ## Expected Final Structure
 
