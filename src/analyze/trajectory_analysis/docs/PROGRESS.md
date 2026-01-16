@@ -1,7 +1,7 @@
 # Trajectory Analysis Reorganization - Progress Tracker
 
-**Last Updated**: 2026-01-16 12:00 UTC
-**Current Phase**: Phase 3 - QC Consolidation (NEXT)
+**Last Updated**: 2026-01-16
+**Current Phase**: Phase 4 - Clustering Subpackage (NEXT)
 **Branch**: feat/traj-reorg
 
 ## What We're Doing
@@ -79,33 +79,50 @@ Reorganizing the trajectory_analysis module from 27 flat files into functional s
   - `correlation_analysis.py` → re-exports from `utilities.correlation`
   - `data_loading.py` → re-exports from `io.data_loading`
 - **Updated docs**: Added reorganization note to README, fixed example imports in dba.py and trajectory_utils.py
-- **Commit**: (pending - Phase 2 follow-up fixes)
+- **Commit**: 6bd78b77 "Phase 2 follow-up: Fix broken imports and add backward-compat shims"
 
-## Current Phase: Phase 3 - QC Consolidation
+### Phase 3: QC Consolidation ✓
+- **Created** `qc/quality_control.py` - Merged functions from outliers.py and distance_filtering.py:
+  - From `outliers.py`: `identify_outliers()`, `remove_outliers_from_distance_matrix()`
+  - From `distance_filtering.py`: `identify_embryo_outliers_iqr()`, `filter_data_and_ids()`, `identify_cluster_outliers_combined()`
+- **Created** `qc/__init__.py` - Exports all 5 QC functions
+- **Updated** `consensus_pipeline.py` imports (lines 35-40): `from .qc import (...)`
+- **Converted** `outliers.py` and `distance_filtering.py` to deprecation wrappers
+- **Updated** main `__init__.py` to import from `.qc` instead of old modules
+- **Test Results**: All 6 tests passed
+  ```
+  ============================================================
+  Phase 3 Import Tests - QC Consolidation
+  ============================================================
+  Testing qc subpackage imports...
+  ✓ QC subpackage imports OK
+  Testing qc.quality_control module imports...
+  ✓ QC quality_control module imports OK
+  Testing backward compatibility: outliers.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.outliers is deprecated...
+  ✓ Backward compatibility (outliers.py) OK
+  Testing backward compatibility: distance_filtering.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.distance_filtering is deprecated...
+  ✓ Backward compatibility (distance_filtering.py) OK
+  Testing consensus_pipeline.py imports...
+  ✓ consensus_pipeline.py imports OK
+  Testing main __init__.py imports...
+  ✓ Main __init__.py imports OK
 
-### What Needs to Be Done
+  ============================================================
+  Summary:
+    qc_subpackage: ✓ PASS
+    qc_quality_control: ✓ PASS
+    backward_compat_outliers: ✓ PASS
+    backward_compat_distance_filtering: ✓ PASS
+    consensus_pipeline: ✓ PASS
+    main_init: ✓ PASS
+  ============================================================
+  All Phase 3 tests PASSED!
+  ```
+- **Commit**: (pending)
 
-#### Step 3.1: Create qc/quality_control.py
-Manually merge all functions from:
-- `outliers.py`: `identify_outliers()`, `remove_outliers_from_distance_matrix()`
-- `distance_filtering.py`: `identify_embryo_outliers_iqr()`, `filter_data_and_ids()`, `identify_cluster_outliers_combined()`
-
-#### Step 3.2: Create qc/__init__.py
-Export all 5 functions from `quality_control.py`
-
-#### Step 3.3: Update consensus_pipeline.py imports
-Lines 35-40: Change to `from .qc.quality_control import (identify_outliers, identify_embryo_outliers_iqr, ...)`
-
-#### Step 3.4: Convert originals to deprecation wrappers
-Replace `outliers.py` and `distance_filtering.py` contents with:
-- Import from `qc.quality_control`
-- Emit `DeprecationWarning`
-- Re-export all functions
-
-#### Step 3.5: Test Phase 3
-Create `test_phase3.py` testing new QC imports + backward compatibility warnings.
-
-## Remaining Phases (Not Started)
+## Current Phase: Phase 4 - Clustering Subpackage (NEXT)
 
 ### Phase 4: Clustering Subpackage
 - Move 6 clustering files: bootstrap_clustering.py, consensus_pipeline.py, cluster_posteriors.py, cluster_classification.py, cluster_extraction.py, k_selection.py
@@ -131,17 +148,15 @@ Create `test_phase3.py` testing new QC imports + backward compatibility warnings
 
 ## Key Files That Need Import Updates
 
-**Files already updated (Phase 1-2)**:
+**Files already updated (Phase 1-3)**:
 - ✓ genotype_styling.py
 - ✓ facetted_plotting.py (from .config + from .utilities.trajectory_utils)
 - ✓ plotting_3d.py
 - ✓ _archived/faceted_plotting_legacy.py
 - ✓ utilities/trajectory_utils.py (from ..config)
 - ✓ io/data_loading.py (from ..distance.dtw_distance)
-- ✓ __init__.py (partial - distance, utilities, io imports updated)
-
-**Files that will need updates in Phase 3**:
-- consensus_pipeline.py (imports from outliers + distance_filtering)
+- ✓ __init__.py (distance, utilities, io, qc imports updated)
+- ✓ consensus_pipeline.py (from .qc import ...)
 
 **Files that will need updates in Phase 4**:
 - All 6 clustering files (change `.config` → `..config`, etc.)
@@ -164,7 +179,7 @@ Using `git mv` to preserve history. One commit per phase with clear message.
 If starting fresh, the next agent should:
 1. Read this file (PROGRESS.md)
 2. Read docs/IMPLEMENTATION_PLAN.md for full details
-3. Continue from Phase 3: QC Consolidation
+3. Continue from Phase 4: Clustering Subpackage
 4. Follow the plan step-by-step, testing after each phase
 5. Update this PROGRESS.md file as phases complete
 

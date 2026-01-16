@@ -170,17 +170,15 @@ from .pair_analysis import (
     plot_homozygous_across_pairs,
 )
 
-# Outlier Detection
-from .outliers import (
+# Quality Control (Outlier Detection + Distance Filtering)
+from .qc import (
+    # General outlier detection
     identify_outliers,
     remove_outliers_from_distance_matrix,
-)
-
-# Distance Filtering (Two-Stage)
-from .distance_filtering import (
+    # Two-stage filtering
     identify_embryo_outliers_iqr,
     filter_data_and_ids,
-    identify_cluster_outliers_combined
+    identify_cluster_outliers_combined,
 )
 
 # Consensus Pipeline

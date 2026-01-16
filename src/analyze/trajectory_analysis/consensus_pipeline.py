@@ -32,12 +32,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Dict, List, Any, Optional
 
-from .distance_filtering import (
+from .qc import (
+    identify_outliers,
     identify_embryo_outliers_iqr,
     filter_data_and_ids,
     identify_cluster_outliers_combined
 )
-from .outliers import identify_outliers
 from .bootstrap_clustering import (
     run_bootstrap_hierarchical,
     compute_coassociation_matrix
