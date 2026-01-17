@@ -47,7 +47,17 @@ def add_time_bins(
     [4, 6, 8, 10]
     """
     df = df.copy()
-    df[bin_col] = (np.floor(df[time_col] / bin_width) * bin_width).astype(int)
+    times = df[time_col]
+    bins = np.floor(times / bin_width) * bin_width
+
+    if times.isna().any():
+        bins = pd.Series(bins, index=df.index)
+        if float(bin_width).is_integer():
+            bins = bins.astype("Int64")
+        df[bin_col] = bins
+    else:
+        df[bin_col] = bins.astype(int)
+
     return df
 
 

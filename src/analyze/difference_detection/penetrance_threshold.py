@@ -53,7 +53,12 @@ def compute_iqr_bounds(
     >>> bounds['low'], bounds['high']
     (-2.1, 2.1)  # Approximate values
     """
-    values = wt_df[metric_col].dropna().to_numpy()
+    values = pd.to_numeric(wt_df[metric_col], errors="coerce").dropna().to_numpy()
+    if values.size == 0:
+        raise ValueError(
+            f"compute_iqr_bounds: no valid values in column '{metric_col}'. "
+            f"Rows={len(wt_df)}, non-null=0."
+        )
 
     q1 = np.percentile(values, 25)
     q3 = np.percentile(values, 75)

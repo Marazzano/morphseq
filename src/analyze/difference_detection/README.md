@@ -213,7 +213,7 @@ difference_detection/
 │   ├── label_shuffle()        # Classification test shuffling
 │   └── PermutationResult      # Standardized result class
 │
-├── statistics.py              # Pluggable test statistics
+├── distance_metrics.py        # Pluggable distance metrics
 │   ├── compute_energy_distance()
 │   ├── compute_mmd()
 │   └── compute_mean_distance()
@@ -254,7 +254,7 @@ from analyze.difference_detection.classification import (
 
 The framework is designed for easy extension. To add a new test:
 
-**Step 1:** Add function to `statistics.py`
+**Step 1:** Add function to `distance_metrics.py`
 
 ```python
 def compute_my_metric(X1, X2):
