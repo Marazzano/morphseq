@@ -243,12 +243,12 @@ Using `git mv` to preserve history. One commit per phase with clear message.
 
 ## How to Resume
 
-If starting fresh, the next agent should:
-1. Read this file (PROGRESS.md)
-2. Read docs/IMPLEMENTATION_PLAN.md for full details
-3. Continue from Phase 4: Clustering Subpackage
-4. Follow the plan step-by-step, testing after each phase
-5. Update this PROGRESS.md file as phases complete
+**For the next session, start here**:
+1. Read `docs/NEXT_STEPS.md` - **Quick-start guide for Phase 5**
+2. Read this file (PROGRESS.md) - Full progress history
+3. Read `docs/IMPLEMENTATION_PLAN.md` - Detailed plan for all phases
+4. Begin Phase 5: Viz Restructure (all details in NEXT_STEPS.md)
+5. Update PROGRESS.md as you complete tasks
 
 ## Working Directory
 
