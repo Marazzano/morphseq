@@ -10,7 +10,7 @@ This package provides tools for:
 Submodules
 ==========
 - permutation_utils : Core permutation testing utilities (p-value, shuffles)
-- statistics : Test statistic functions (energy, MMD, mean distance, etc.)
+- distance_metrics : Distance functions (energy, MMD, mean distance, etc.)
 - distribution_test : Distribution-based permutation tests
 - classification : Predictive models and onset detection
 - horizon_plots : Heatmap visualization utilities
@@ -36,7 +36,7 @@ except ImportError:
 
 # Permutation testing framework (NEW)
 from . import permutation_utils
-from . import statistics
+from . import distance_metrics
 from . import distribution_test
 
 # Classification module
@@ -89,8 +89,8 @@ from .permutation_utils import (
     PermutationResult,
 )
 
-# Test statistics (NEW)
-from .statistics import (
+# Distance metrics (NEW)
+from .distance_metrics import (
     compute_energy_distance,
     compute_mmd,
     compute_mean_distance,
@@ -125,7 +125,7 @@ __all__ = [
     'classification',
     'pipelines',
     'permutation_utils',
-    'statistics',
+    'distance_metrics',
     'distribution_test',
     # Horizon plots
     'plot_horizon_grid',
@@ -149,7 +149,7 @@ __all__ = [
     'pool_shuffle',
     'label_shuffle',
     'PermutationResult',
-    # Test statistics (NEW)
+    # Distance metrics (NEW)
     'compute_energy_distance',
     'compute_mmd',
     'compute_mean_distance',

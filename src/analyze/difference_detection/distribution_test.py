@@ -13,7 +13,7 @@ import numpy as np
 from typing import Optional, Callable, Dict, Any
 
 from .permutation_utils import compute_pvalue, pool_shuffle, PermutationResult
-from .statistics import compute_energy_distance, compute_mmd, compute_mean_distance
+from .distance_metrics import compute_energy_distance, compute_mmd, compute_mean_distance
 
 
 def permutation_test_distribution(

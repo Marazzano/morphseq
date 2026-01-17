@@ -10,6 +10,47 @@ import pandas as pd
 from typing import List, Optional
 
 
+def add_time_bins(
+    df: pd.DataFrame,
+    time_col: str = "predicted_stage_hpf",
+    bin_width: float = 2.0,
+    bin_col: str = "time_bin"
+) -> pd.DataFrame:
+    """
+    Add time_bin column without aggregating (observation-level labeling).
+
+    This function labels each observation with its time bin membership but
+    does NOT aggregate data. Useful for penetrance analysis and other methods
+    that need row-level bin assignments.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe containing time column.
+    time_col : str, default="predicted_stage_hpf"
+        Column name to bin by.
+    bin_width : float, default=2.0
+        Width of time bins (same units as time_col, usually hours).
+    bin_col : str, default="time_bin"
+        Name for the new bin column.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of input dataframe with time_bin column added.
+
+    Examples
+    --------
+    >>> df = pd.DataFrame({'predicted_stage_hpf': [5.2, 7.8, 8.1, 10.3]})
+    >>> df_binned = add_time_bins(df, bin_width=2.0)
+    >>> df_binned['time_bin'].tolist()
+    [4, 6, 8, 10]
+    """
+    df = df.copy()
+    df[bin_col] = (np.floor(df[time_col] / bin_width) * bin_width).astype(int)
+    return df
+
+
 def bin_embryos_by_time(
     df: pd.DataFrame,
     time_col: str = "predicted_stage_hpf",
