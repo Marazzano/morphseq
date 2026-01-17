@@ -226,7 +226,6 @@ difference_detection/
 ├── classification/            # Classification-based tests
 │   ├── predictive_test.py     # AUROC with label shuffle
 │   ├── penetrance.py          # Embryo-level metrics
-│   └── curvature_regression.py
 │
 └── horizon_plots/             # Visualization utilities
 ```
