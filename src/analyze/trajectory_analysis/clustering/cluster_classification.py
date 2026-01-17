@@ -15,7 +15,7 @@ Functions
 
 import numpy as np
 from typing import Dict, Any, Optional, List
-from .config import THRESHOLD_MAX_P, THRESHOLD_LOG_ODDS_GAP, THRESHOLD_OUTLIER_MAX_P, ADAPTIVE_PERCENTILE
+from ..config import THRESHOLD_MAX_P, THRESHOLD_LOG_ODDS_GAP, THRESHOLD_OUTLIER_MAX_P, ADAPTIVE_PERCENTILE
 
 
 def classify_membership_2d(

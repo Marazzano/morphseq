@@ -32,7 +32,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Dict, List, Any, Optional
 
-from .qc import (
+from ..qc import (
     identify_outliers,
     identify_embryo_outliers_iqr,
     filter_data_and_ids,
@@ -43,8 +43,8 @@ from .bootstrap_clustering import (
     compute_coassociation_matrix
 )
 from .cluster_posteriors import analyze_bootstrap_results
-from .dendrogram import generate_dendrograms
-from .config import (
+from ..dendrogram import generate_dendrograms
+from ..config import (
     N_BOOTSTRAP,
     BOOTSTRAP_FRAC,
     RANDOM_SEED,

@@ -13,7 +13,7 @@ import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
-from .config import N_BOOTSTRAP, BOOTSTRAP_FRAC, RANDOM_SEED
+from ..config import N_BOOTSTRAP, BOOTSTRAP_FRAC, RANDOM_SEED
 
 try:
     from sklearn_extra.cluster import KMedoids

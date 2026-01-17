@@ -6,12 +6,12 @@
 
 > **Note:** This package is being reorganized into subpackages. The old flat structure
 > is deprecated. Please use the new organized imports:
-> - `from trajectory_analysis.distance import compute_dtw_distance_matrix, dba`
-> - `from trajectory_analysis.utilities import extract_trajectories_df, fit_pca_on_embeddings`
-> - `from trajectory_analysis.io import load_phenotype_file`
-> - `from trajectory_analysis.qc import identify_outliers` (coming soon)
-> - `from trajectory_analysis.clustering import run_bootstrap_hierarchical` (coming soon)
-> - `from trajectory_analysis.viz import plot_trajectories_faceted` (coming soon)
+> - `from src.analyze.trajectory_analysis.distance import compute_dtw_distance_matrix, dba`
+> - `from src.analyze.trajectory_analysis.utilities import extract_trajectories_df, fit_pca_on_embeddings`
+> - `from src.analyze.trajectory_analysis.io import load_phenotype_file`
+> - `from src.analyze.trajectory_analysis.qc import identify_outliers` (coming soon)
+> - `from src.analyze.trajectory_analysis.clustering import run_bootstrap_hierarchical` (coming soon)
+> - `from src.analyze.trajectory_analysis.viz import plot_trajectories_faceted` (coming soon)
 >
 > Top-level imports still work but emit deprecation warnings. See `docs/PROGRESS.md`
 > for reorganization status.

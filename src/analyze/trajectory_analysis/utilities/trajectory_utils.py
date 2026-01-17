@@ -363,7 +363,7 @@ def df_to_trajectories(
     --------
     >>> trajectories, embryo_ids, common_grid = df_to_trajectories(df_interpolated)
     >>> # Now can use for DTW:
-    >>> from analyze.trajectory_analysis.distance import compute_dtw_distance_matrix
+    >>> from src.analyze.trajectory_analysis.distance import compute_dtw_distance_matrix
     >>> D = compute_dtw_distance_matrix(trajectories)
     """
     # Get unique embryo IDs in order

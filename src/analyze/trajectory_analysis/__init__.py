@@ -106,29 +106,29 @@ from .utilities import (
     test_anticorrelation,
 )
 
-# Bootstrap Clustering
-from .bootstrap_clustering import (
+# Bootstrap Clustering (now in clustering subpackage)
+from .clustering import (
     run_bootstrap_hierarchical,
     run_bootstrap_kmedoids,
     compute_consensus_labels,
     get_cluster_assignments,
     compute_coassociation_matrix,
-    coassociation_to_distance
+    coassociation_to_distance,
 )
 
-# Posterior Analysis
-from .cluster_posteriors import (
+# Posterior Analysis (now in clustering subpackage)
+from .clustering import (
     analyze_bootstrap_results,
     compute_assignment_posteriors,
     compute_quality_metrics,
-    align_bootstrap_labels
+    align_bootstrap_labels,
 )
 
-# Classification
-from .cluster_classification import (
+# Classification (now in clustering subpackage)
+from .clustering import (
     classify_membership_2d,
     classify_membership_adaptive,
-    get_classification_summary
+    get_classification_summary,
 )
 
 # Plotting - NEW API (DataFrame-centric, v0.2.0+)
@@ -181,14 +181,14 @@ from .qc import (
     identify_cluster_outliers_combined,
 )
 
-# Consensus Pipeline
-from .consensus_pipeline import (
+# Consensus Pipeline (now in clustering subpackage)
+from .clustering import (
     run_consensus_pipeline,
-    create_filtering_log
+    create_filtering_log,
 )
 
-# K Selection Pipeline
-from .k_selection import (
+# K Selection Pipeline (now in clustering subpackage)
+from .clustering import (
     evaluate_k_range,
     plot_k_selection,
     run_k_selection_pipeline,

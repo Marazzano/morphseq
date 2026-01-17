@@ -221,14 +221,12 @@ def evaluate_k_range(
     >>> # Check membership quality
     >>> membership_quality = results['clustering_by_k'][3]['membership']['embryo_to_membership_quality']['embryo_001']
     """
-    from src.analyze.trajectory_analysis import (
+    from .bootstrap_clustering import (
         run_bootstrap_hierarchical,
         run_bootstrap_kmedoids,
-        analyze_bootstrap_results,
     )
-    from src.analyze.trajectory_analysis.cluster_classification import (
-        classify_membership_2d,
-    )
+    from .cluster_posteriors import analyze_bootstrap_results
+    from .cluster_classification import classify_membership_2d
     from sklearn.metrics import silhouette_score
 
     # Validate method parameter
@@ -607,7 +605,7 @@ def run_two_phase_pipeline(
         - 'phase2_results': Final consensus pipeline results
         - 'best_k': Selected k value
     """
-    from src.analyze.trajectory_analysis import run_consensus_pipeline
+    from .consensus_pipeline import run_consensus_pipeline
     
     print("="*70)
     print("TWO-PHASE CONSENSUS CLUSTERING PIPELINE")
@@ -739,11 +737,7 @@ def run_k_selection_with_plots(
     - cluster_assignments.csv : embryo_id + clustering_k_N columns
     - k_results.pkl : Full results object (pickle)
     """
-    from src.analyze.trajectory_analysis import (
-        evaluate_k_range,
-        plot_k_selection,
-        plot_multimetric_trajectories,
-    )
+    from ..facetted_plotting import plot_multimetric_trajectories
     import pickle
 
     # Default plotting metrics
