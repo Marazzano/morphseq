@@ -1,7 +1,7 @@
 # Trajectory Analysis Reorganization - Progress Tracker
 
 **Last Updated**: 2026-01-16
-**Current Phase**: Phase 5 - Viz Restructure (NEXT)
+**Current Phase**: Phase 6 - Documentation (NEXT)
 **Branch**: feat/traj-reorg
 
 ## What We're Doing
@@ -191,13 +191,82 @@ Reorganizing the trajectory_analysis module from 27 flat files into functional s
   - Updated dendrogram.py to import from new clustering package path
   - Extended test_phase4.py to cover cluster extraction API
 
-## Current Phase: Phase 5 - Viz Restructure (NEXT)
+### Phase 5: Viz Restructure ✓
+- **Moved files** to `viz/` and `viz/plotting/`:
+  - `dendrogram.py` → `viz/dendrogram.py`
+  - `genotype_styling.py` → `viz/styling.py`
+  - `plotting.py` → `viz/plotting/core.py`
+  - `facetted_plotting.py` → `viz/plotting/faceted.py`
+  - `plotting_3d.py` → `viz/plotting/plotting_3d.py`
+- **Updated relative imports** in all moved files:
+  - `viz/dendrogram.py`: `.genotype_styling` → `.styling`
+  - `viz/styling.py`: `.config` → `..config`
+  - `viz/plotting/core.py`: `.config` → `...config`
+  - `viz/plotting/faceted.py`: `.config` → `...config`, `.utilities` → `...utilities`, `.genotype_styling` → `..styling`, `.pair_analysis` → `...pair_analysis`
+  - `viz/plotting/plotting_3d.py`: `.config` → `...config`
+- **Created `viz/__init__.py`** - Exports from dendrogram, styling, and plotting submodules
+- **Created `viz/plotting/__init__.py`** - Exports from core, faceted, and plotting_3d modules
+- **Updated main `__init__.py`** - Changed imports to use `from .viz import ...` and `from .viz.plotting import ...`
+- **Updated `pair_analysis/plotting.py`** - Changed imports from `..facetted_plotting` → `..viz.plotting.faceted` and `..genotype_styling` → `..viz.styling`
+- **Created backward-compat shims** at old locations with DeprecationWarning:
+  - `dendrogram.py`
+  - `genotype_styling.py`
+  - `plotting.py`
+  - `facetted_plotting.py`
+  - `plotting_3d.py`
+- **Test Results**: All 10 tests passed
+  ```
+  ======================================================================
+  Phase 5 Import Tests - Viz Restructure
+  ======================================================================
+  Testing viz subpackage imports...
+  ✓ viz subpackage imports OK
+  Testing viz.plotting subpackage imports...
+  ✓ viz.plotting subpackage imports OK
+  Testing viz.styling imports...
+  ✓ viz.styling imports OK
+  Testing backward compatibility: dendrogram.py...
+  ✓ dendrogram.py backward compatibility OK
+  Testing backward compatibility: genotype_styling.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.genotype_styling is deprecated...
+  ✓ genotype_styling.py backward compatibility OK
+  Testing backward compatibility: plotting.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.plotting is deprecated...
+  ✓ plotting.py backward compatibility OK
+  Testing backward compatibility: facetted_plotting.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.facetted_plotting is deprecated...
+  ✓ facetted_plotting.py backward compatibility OK
+  Testing backward compatibility: plotting_3d.py...
+    ⚠ DeprecationWarning raised: trajectory_analysis.plotting_3d is deprecated...
+  ✓ plotting_3d.py backward compatibility OK
+  Testing main __init__.py imports...
+  ✓ Main __init__.py imports OK
+  Testing pair_analysis imports...
+  ✓ pair_analysis imports OK
 
-### Phase 5: Viz Restructure (Priority 2 - HIGH)
-- Move dendrogram.py → viz/
-- Move plotting files → viz/plotting/ with renames
-- Move genotype_styling.py → viz/
-- Update pair_analysis/__init__.py
+  ======================================================================
+  Test Summary
+  ======================================================================
+  ✓ viz subpackage
+  ✓ viz.plotting subpackage
+  ✓ viz.styling
+  ✓ backward compat: dendrogram.py
+  ✓ backward compat: genotype_styling.py
+  ✓ backward compat: plotting.py
+  ✓ backward compat: facetted_plotting.py
+  ✓ backward compat: plotting_3d.py
+  ✓ main __init__.py
+  ✓ pair_analysis
+
+  Total: 10 tests
+  Passed: 10
+  Failed: 0
+  ======================================================================
+  🎉 All Phase 5 tests passed!
+  ```
+- **Commit**: (pending)
+
+## Current Phase: Phase 6 - Documentation (NEXT)
 
 ### Phase 6: Documentation
 - Create docs/WORKFLOW.md
@@ -240,6 +309,8 @@ Using `git mv` to preserve history. One commit per phase with clear message.
 2. fb592d23 - Phase 2: Create distance, utilities, and io subpackages
 3. 6bd78b77 - Phase 2 follow-up: Fix broken imports and add backward-compat shims
 4. 8d3de397 - Phase 3: Create qc subpackage with consolidated quality control functions
+5. 1340e1e8 - Phase 4: Create clustering subpackage with 6 modules
+6. (pending) - Phase 5: Create viz subpackage with plotting and styling modules
 
 ## How to Resume
 

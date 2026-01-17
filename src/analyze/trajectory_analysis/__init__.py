@@ -132,14 +132,14 @@ from .clustering import (
 )
 
 # Plotting - NEW API (DataFrame-centric, v0.2.0+)
-from .plotting import (
+from .viz.plotting import (
     plot_cluster_trajectories_df,
     plot_membership_trajectories_df,
     plot_membership_vs_k
 )
 
 # Plotting - DEPRECATED (v0.1.x, kept for backward compatibility)
-from .plotting import (
+from .viz.plotting import (
     plot_posterior_heatmap,
     plot_2d_scatter,
     plot_cluster_trajectories,
@@ -147,7 +147,7 @@ from .plotting import (
 )
 
 # Genotype Styling (Level 0 - Styling)
-from .genotype_styling import (
+from .viz.styling import (
     extract_genotype_suffix,
     extract_genotype_prefix,
     get_color_for_genotype,
@@ -157,7 +157,7 @@ from .genotype_styling import (
 )
 
 # Faceted Plotting (Level 1 - Generic)
-from .facetted_plotting import plot_trajectories_faceted, plot_multimetric_trajectories
+from .viz.plotting import plot_trajectories_faceted, plot_multimetric_trajectories
 
 # Pair Analysis (Level 2 - Pair-specific)
 from .pair_analysis import (
@@ -197,7 +197,7 @@ from .clustering import (
 )
 
 # Dendrogram Visualization
-from .dendrogram import (
+from .viz import (
     generate_dendrograms,
     plot_dendrogram,  # Deprecated, kept for backward compatibility
     plot_dendrogram_with_categories,
@@ -206,7 +206,7 @@ from .dendrogram import (
 )
 
 # 3D Plotting
-from .plotting_3d import plot_3d_scatter
+from .viz.plotting import plot_3d_scatter
 
 # PCA Embedding Utilities (now in utilities subpackage)
 from .utilities import (

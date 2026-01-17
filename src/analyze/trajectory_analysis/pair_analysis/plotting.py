@@ -10,8 +10,8 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from ..facetted_plotting import plot_trajectories_faceted
-from ..genotype_styling import build_genotype_style_config, sort_genotypes_by_suffix
+from ..viz.plotting.faceted import plot_trajectories_faceted
+from ..viz.styling import build_genotype_style_config, sort_genotypes_by_suffix
 
 
 def _ensure_pair_column(df: pd.DataFrame, pair_col: str = 'pair', genotype_col: str = 'genotype') -> pd.DataFrame:
@@ -29,7 +29,7 @@ def _ensure_pair_column(df: pd.DataFrame, pair_col: str = 'pair', genotype_col: 
         Uses gene prefix (not full genotype) so all genotypes from the same gene
         share one unknown_pair. E.g., tmem67_homozygous → tmem67_unknown_pair
     """
-    from ..genotype_styling import extract_genotype_prefix
+    from ..viz.styling import extract_genotype_prefix
 
     df = df.copy()
 
