@@ -9,7 +9,7 @@ with data through the entire pipeline, eliminating time-axis alignment bugs.
 Functions
 ---------
 - interpolate_to_common_grid : Interpolate trajectories to a common time grid
-- pad_trajectories_for_plotting : Pad trajectories to uniform length (deprecated)
+- pad_trajectories : Pad trajectories to uniform length with NaN
 """
 
 import warnings
@@ -130,7 +130,7 @@ def interpolate_to_common_grid(
     return interpolated_trajectories, ids_ordered, original_lengths, common_grid
 
 
-def pad_trajectories_for_plotting(
+def pad_trajectories(
     trajectories: List[np.ndarray],
     common_grid: np.ndarray,
     df_long: pd.DataFrame,
@@ -175,7 +175,7 @@ def pad_trajectories_for_plotting(
     Examples
     --------
     >>> trajs, ids, lens, grid = interpolate_to_common_grid(df, grid_step=0.5)
-    >>> padded = pad_trajectories_for_plotting(trajs, grid, df, ids)
+    >>> padded = pad_trajectories(trajs, grid, df, ids)
     >>> # Now all trajectories have same length
     >>> np.array(padded).shape  # (n_trajectories, len(grid))
     """
@@ -229,3 +229,17 @@ def pad_trajectories_for_plotting(
             print(f"  WARNING: Inconsistent lengths after padding: {set(lengths)}")
 
     return padded_trajectories
+
+
+# ==============================================================================
+# Backward Compatibility (Deprecated Aliases)
+# ==============================================================================
+
+def pad_trajectories_for_plotting(*args, **kwargs):
+    """Deprecated: Use pad_trajectories instead."""
+    warnings.warn(
+        "pad_trajectories_for_plotting is deprecated. Use pad_trajectories instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return pad_trajectories(*args, **kwargs)

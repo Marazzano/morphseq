@@ -20,18 +20,30 @@ from .core import (
     plot_membership_trajectories,
 )
 
-# Faceted plotting
+# Faceted plotting (now imports from modular faceted/ subdirectory)
 from .faceted import (
+    # Main plotting functions
     plot_trajectories_faceted,
     plot_multimetric_trajectories,
     plot_proportion_grid,
     plot_proportion_faceted,
-    # Data structures and utilities
+    # IR dataclasses (for advanced users)
+    TraceData,
+    SubplotData,
     FigureData,
+    # Color utilities
+    STANDARD_PALETTE,
+    # New names
+    create_color_lookup,
+    create_color_lookup_from_column,
+    create_color_state,
+    get_color_from_state,
+    # Deprecated aliases
     make_color_lookup,
     build_color_lookup_for_column,
     build_color_state,
     resolve_color_value,
+    # Error band utilities
     validate_error_type,
     compute_error_band,
     compute_linear_fit,
@@ -51,16 +63,28 @@ __all__ = [
     'plot_membership_vs_k',
     'plot_cluster_trajectories',  # deprecated
     'plot_membership_trajectories',  # deprecated
-    # Faceted plotting
+    # Faceted plotting (main functions)
     'plot_trajectories_faceted',
     'plot_multimetric_trajectories',
     'plot_proportion_grid',
     'plot_proportion_faceted',
+    # Faceted plotting (IR dataclasses)
+    'TraceData',
+    'SubplotData',
     'FigureData',
+    # Faceted plotting (color utilities)
+    'STANDARD_PALETTE',
+    # New names
+    'create_color_lookup',
+    'create_color_lookup_from_column',
+    'create_color_state',
+    'get_color_from_state',
+    # Deprecated aliases
     'make_color_lookup',
     'build_color_lookup_for_column',
     'build_color_state',
     'resolve_color_value',
+    # Faceted plotting (error band utilities)
     'validate_error_type',
     'compute_error_band',
     'compute_linear_fit',
