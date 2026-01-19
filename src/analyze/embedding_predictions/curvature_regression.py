@@ -22,7 +22,7 @@ from sklearn.model_selection import GroupKFold, KFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from analyze.trajectory_analysis.data_loading import load_experiment_dataframe
+from analyze.trajectory_analysis.io import load_experiment_dataframe
 
 
 DEFAULT_LATENT_PREFIX = "z_mu"
