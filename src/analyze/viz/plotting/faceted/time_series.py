@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import warnings
 from pathlib import Path
 from typing import Optional, Union, Tuple, List
 
@@ -19,7 +20,7 @@ from src.analyze.utils.timeseries.dba import dba
 from src.analyze.utils.timeseries.dtw import compute_dtw_distance
 from src.analyze.utils.timeseries.interpolation import (
     interpolate_to_common_grid,
-    pad_trajectories_for_plotting,
+    pad_trajectories,
 )
 
 
@@ -90,7 +91,7 @@ def _plot_single_group_on_axis(
             if len(interp_trajs) == 0:
                 raise ValueError("No trajectories available after interpolation")
 
-            padded_trajs = pad_trajectories_for_plotting(
+            padded_trajs = pad_trajectories(
                 trajectories=interp_trajs,
                 common_grid=common_grid,
                 df_long=group_long,
@@ -473,5 +474,64 @@ def plot_time_series_faceted(
     return fig
 
 
-# Alias for backward compatibility
-plot_embryos_metric_over_time_faceted = plot_time_series_faceted
+def plot_embryos_metric_over_time_faceted(
+    df: pd.DataFrame,
+    metric: str = 'normalized_baseline_deviation',
+    time_col: str = 'predicted_stage_hpf',
+    embryo_col: str = 'embryo_id',
+    color_by: str = 'genotype',
+    facet_by: str = 'experiment_id',
+    show_individual: bool = True,
+    trend_method: Optional[str] = 'mean',
+    show_sd_band: bool = False,
+    smooth_window: Optional[int] = None,
+    alpha_individual: float = 0.3,
+    alpha_trend: float = 0.9,
+    linewidth_individual: float = 0.8,
+    linewidth_trend: float = 2.5,
+    figsize_per_panel: Tuple[float, float] = (6, 5),
+    facet_ncols: Optional[int] = None,
+    facet_sharex: bool = True,
+    facet_sharey: bool = True,
+    title: Optional[str] = None,
+    xlabel: Optional[str] = None,
+    ylabel: Optional[str] = None,
+    save_path: Optional[Union[str, Path]] = None,
+    dpi: int = 100,
+    palette: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Backward-compatible wrapper for plot_time_series_faceted.
+    """
+    warnings.warn(
+        "plot_embryos_metric_over_time_faceted is deprecated. "
+        "Use plot_time_series_faceted instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return plot_time_series_faceted(
+        df,
+        metric=metric,
+        time_col=time_col,
+        id_col=embryo_col,
+        color_by=color_by,
+        facet_by=facet_by,
+        show_individual=show_individual,
+        trend_method=trend_method,
+        show_sd_band=show_sd_band,
+        smooth_window=smooth_window,
+        alpha_individual=alpha_individual,
+        alpha_trend=alpha_trend,
+        linewidth_individual=linewidth_individual,
+        linewidth_trend=linewidth_trend,
+        figsize_per_panel=figsize_per_panel,
+        facet_ncols=facet_ncols,
+        facet_sharex=facet_sharex,
+        facet_sharey=facet_sharey,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        save_path=save_path,
+        dpi=dpi,
+        palette=palette,
+    )
