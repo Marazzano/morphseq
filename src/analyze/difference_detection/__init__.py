@@ -12,7 +12,8 @@ Submodules
 - permutation_utils : Core permutation testing utilities (p-value, shuffles)
 - distance_metrics : Distance functions (energy, MMD, mean distance, etc.)
 - distribution_test : Distribution-based permutation tests
-- classification : Predictive models and onset detection
+- classification_test : Binary classification tests
+- classification_test_multiclass : Multiclass classification tests
 - horizon_plots : Heatmap visualization utilities
 - time_matrix : Temporal data reshaping and analysis
 - pipelines : High-level orchestration workflows
@@ -39,13 +40,15 @@ from . import permutation_utils
 from . import distance_metrics
 from . import distribution_test
 
-# Classification module
-from . import classification
-from .classification import (
-    predictive_signal_test,
-    compute_embryo_penetrance,
-    summarize_penetrance,
-    get_high_penetrance_embryos,
+# Classification tests
+from .classification_test import (
+    assign_group_labels,
+    run_binary_classification_test,
+    compute_timeseries_divergence,
+)
+from .classification_test_multiclass import (
+    run_multiclass_classification_test,
+    extract_temporal_confusion_profile,
 )
 
 # Expose key functions at package level for convenience (if modules exist)
@@ -122,7 +125,6 @@ __all__ = [
     # Submodules
     'horizon_plots',
     'time_matrix',
-    'classification',
     'pipelines',
     'permutation_utils',
     'distance_metrics',
@@ -159,9 +161,10 @@ __all__ = [
     'permutation_test_distribution',
     'permutation_test_energy',
     'permutation_test_mmd',
-    # Classification
-    'predictive_signal_test',
-    'compute_embryo_penetrance',
-    'summarize_penetrance',
-    'get_high_penetrance_embryos',
+    # Classification tests
+    'assign_group_labels',
+    'run_binary_classification_test',
+    'compute_timeseries_divergence',
+    'run_multiclass_classification_test',
+    'extract_temporal_confusion_profile',
 ]

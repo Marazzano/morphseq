@@ -36,14 +36,14 @@ class CompatImportTests(unittest.TestCase):
     def test_comparison_shim_warns_and_exports(self):
         _clear_modules("src.analyze.difference_detection.compat")
         with self.assertWarns(DeprecationWarning):
-            mod = _import_fresh("src.analyze.difference_detection.comparison")
+            mod = _import_fresh("src.analyze.difference_detection.compat.comparison")
         self.assertTrue(hasattr(mod, "compare_groups"))
 
     @unittest.skipIf(not SKLEARN_AVAILABLE, "sklearn not available")
     def test_comparison_multiclass_shim_warns_and_exports(self):
         _clear_modules("src.analyze.difference_detection.compat")
         with self.assertWarns(DeprecationWarning):
-            mod = _import_fresh("src.analyze.difference_detection.comparison_multiclass")
+            mod = _import_fresh("src.analyze.difference_detection.compat.comparison_multiclass")
         self.assertTrue(hasattr(mod, "compare_groups_multiclass"))
 
 

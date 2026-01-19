@@ -11,7 +11,7 @@ This module provides statistical tools for comparing genotypes and phenotypes us
 
 Built on a unified permutation testing infrastructure, enabling consistent methodology across different test statistics while remaining simple and extensible.
 
-## Quick Startx
+## Quick Start
 
 ```python
 # Distribution test: Are populations different?
@@ -20,12 +20,14 @@ result = permutation_test_energy(X_groupA, X_groupB, n_permutations=1000)
 print(result)  # PermutationResult(energy=0.2134, p=0.0099)
 
 # Classification test: Can we predict labels?
-from analyze.difference_detection import predictive_signal_test
-df_binned = bin_embryos_by_time(df, bin_width=2.0)
-results, probs = predictive_signal_test(
-    df_binned,
-    group1="wildtype",
-    group2="mutant"
+from analyze.difference_detection import assign_group_labels, run_binary_classification_test
+
+df = assign_group_labels(df, groups={"wildtype": wt_ids, "mutant": mut_ids})
+results = run_binary_classification_test(
+    df,
+    group_col="group",
+    group1="mutant",
+    group2="wildtype"
 )
 ```
 
@@ -63,7 +65,7 @@ Labels:   [WT, WT, Mut, Mut] → [Mut, WT, WT, Mut] (shuffled)
 ```
 
 **Tests:** "Are labels predictable from features?"
-**Example:** `predictive_signal_test()`
+**Example:** `run_binary_classification_test()`
 
 ### Why Both Matter: A Subtle But Important Distinction
 
@@ -83,7 +85,7 @@ Pool shuffle can succeed while label shuffle fails. This happens when distributi
 ```
 Raw Data
    ↓
-Bin by Time (e.g., 2-hour windows)
+Add Group Labels + Bin by Time (classification tests handle binning)
    ↓
 Choose Test Type
    ├─ Distribution Test → "Are populations different?"
@@ -110,37 +112,42 @@ if result.pvalue < 0.05:
 ### Classification Test Path
 
 ```python
-from analyze.difference_detection import predictive_signal_test
+from analyze.difference_detection import assign_group_labels, run_binary_classification_test
 
 # Test if labels are predictable from features
-df_results, df_embryo_probs = predictive_signal_test(
-    df_binned,
-    group1="wildtype",
-    group2="mutant",
+df = assign_group_labels(df_raw, groups={"wildtype": wt_ids, "mutant": mut_ids})
+results = run_binary_classification_test(
+    df,
+    group_col="group",
+    group1="mutant",
+    group2="wildtype",
     n_splits=5,
-    n_perm=100
+    n_permutations=100
 )
 
 # Time-resolved results
-print(df_results[['time_bin', 'AUROC_obs', 'pval']])
+df_results = results["classification"]
+print(df_results[["time_bin", "auroc_observed", "pval"]])
+
+Note: `group1` is treated as the positive/phenotype class for AUROC directionality.
 ```
 
 ## Data Contracts
 
-### Input: df_binned
+### Input: df
 
-Standard binned DataFrame with time-resolved embryo data.
+Raw trajectory DataFrame; classification tests bin time internally.
 
 **Required columns:**
 - `embryo_id`: str, unique identifier
-- `time_bin`: int/float, time point (e.g., 0, 2, 4, 6 hpf)
-- `genotype`: str, class label
-- `z_mu_b*_binned`: float, latent features (VAE embeddings)
+- `time_col`: float, time point (default: `predicted_stage_hpf`)
+- `group_col`: str, class label (default: `group`)
+- Feature columns: `z_mu_b*` or explicit feature list
 
 **Constraints:**
-- Minimum 5 samples per class per time bin
-- At least 2 genotypes for binary classification
-- Time bins should have consistent spacing
+- Minimum samples per class per time bin (after binning)
+- At least 2 groups for binary classification
+- Time values should be numeric and comparable
 
 ### Output: PermutationResult
 
@@ -178,18 +185,18 @@ result_mut1_mut2 = permutation_test_energy(X_mut1, X_mut2)
 Measures individual consistency relative to group prediction. One analysis option among many.
 
 ```python
-from analyze.difference_detection import compute_embryo_penetrance
+from analyze.difference_detection.penetrance_threshold import run_penetrance_threshold_analysis
 
-df_penetrance = compute_embryo_penetrance(
-    df_embryo_probs,
-    confidence_threshold=0.1
+results = run_penetrance_threshold_analysis(
+    df,
+    metric_col="total_length_um",
+    category_col="genotype",
+    wt_category="wildtype",
+    bin_width=2.0
 )
 
-# Can compare any phenotypes (not just vs WT)
-summary = df_penetrance.groupby('true_label').agg({
-    'mean_confidence': 'mean',
-    'mean_signed_margin': 'mean'
-})
+# Per-category penetrance over time
+penetrance_by_time = results["penetrance_by_time"]
 ```
 
 ### Time-Resolved Detection
@@ -197,7 +204,7 @@ summary = df_penetrance.groupby('true_label').agg({
 Test at each time point to detect onset of significant differences.
 
 ```python
-# df_results from predictive_signal_test contains one row per time_bin
+# df_results from run_binary_classification_test contains one row per time_bin
 significant_bins = df_results[df_results['pval'] < 0.05]
 onset_time = significant_bins['time_bin'].min()
 print(f"Significant signal onset at {onset_time} hpf")
@@ -223,11 +230,11 @@ difference_detection/
 │   ├── permutation_test_energy()
 │   └── permutation_test_mmd()
 │
-├── classification/            # Classification-based tests
-│   ├── predictive_test.py     # AUROC with label shuffle
-│   ├── penetrance.py          # Embryo-level metrics
-│
-└── horizon_plots/             # Visualization utilities
+├── classification_test.py              # Binary classification tests
+├── classification_test_multiclass.py   # Multiclass classification tests
+├── penetrance_threshold.py             # Threshold-based penetrance
+├── compat/                             # Deprecated API wrappers
+└── horizon_plots/                      # Visualization utilities
 ```
 
 ### Import Paths
@@ -237,15 +244,20 @@ difference_detection/
 from analyze.difference_detection import (
     permutation_test_energy,
     permutation_test_mmd,
-    predictive_signal_test,
+    assign_group_labels,
+    run_binary_classification_test,
+    run_multiclass_classification_test,
+    compute_timeseries_divergence,
     compute_pvalue,
     PermutationResult
 )
 
-# Old API (still works, backwards compatible)
-from analyze.difference_detection.classification import (
-    predictive_signal_test,
-    compute_embryo_penetrance
+# Deprecated compat imports
+from analyze.difference_detection.compat import (
+    add_group_column,
+    compare_groups,
+    compare_groups_multiclass,
+    compute_metric_divergence,
 )
 ```
 
@@ -280,8 +292,10 @@ That's it. Framework handles shuffling, p-value calculation, and standardized ou
 - `permutation_test_energy(X1, X2, ...)` — Energy distance permutation test
 - `permutation_test_mmd(X1, X2, ...)` — Maximum Mean Discrepancy test
 - `permutation_test_distribution(X1, X2, statistic=..., ...)` — Generic distribution test
-- `predictive_signal_test(df_binned, ...)` — AUROC classification test with time resolution
-- `compute_embryo_penetrance(df_probs, ...)` — Individual-level consistency metrics
+- `run_binary_classification_test(df, ...)` — AUROC classification test with time resolution
+- `run_multiclass_classification_test(df, ...)` — OvR AUROC multiclass test
+- `compute_timeseries_divergence(df, ...)` — Metric divergence between groups
+- `run_penetrance_threshold_analysis(df, ...)` — Threshold-based penetrance analysis
 - `compute_pvalue(observed, null_dist, ...)` — Core p-value utility for custom tests
 
 See docstrings in source files for detailed parameters and return values.

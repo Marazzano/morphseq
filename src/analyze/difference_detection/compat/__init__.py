@@ -14,21 +14,24 @@ import warnings
 warnings.warn(
     "The difference_detection.compat module is deprecated. "
     "Update your imports to use the new API:\n"
-    "  - For binary classification: Use classification_test module (when available)\n"
-    "  - For multiclass: Use classification_test_multiclass module (when available)\n"
-    "  - For distribution tests: Use distribution_test.permutation_test_distribution()\n"
-    "  - For penetrance: Use penetrance_threshold.run_penetrance_threshold_analysis()\n"
+    "  - Binary classification: classification_test.run_binary_classification_test()\n"
+    "  - Multiclass classification: classification_test_multiclass.run_multiclass_classification_test()\n"
+    "  - Group labeling: classification_test.assign_group_labels()\n"
+    "  - Divergence: classification_test.compute_timeseries_divergence()\n"
+    "  - Distribution tests: distribution_test.permutation_test_distribution()\n"
+    "  - Penetrance: penetrance_threshold.run_penetrance_threshold_analysis()\n"
     "See refactor.md for migration guide.",
     DeprecationWarning,
-    stacklevel=2
+    stacklevel=2,
 )
 
 # Re-export old comparison functions with deprecation
-from .comparison import add_group_column, compare_groups
+from .comparison import add_group_column, compare_groups, compute_metric_divergence
 from .comparison_multiclass import compare_groups_multiclass
 
 __all__ = [
     'add_group_column',
     'compare_groups',
+    'compute_metric_divergence',
     'compare_groups_multiclass',
 ]
