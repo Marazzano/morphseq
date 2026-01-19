@@ -46,7 +46,12 @@ __all__ = [
     'VALID_ERROR_TYPES',
     # Validation
     'validate_error_type',
-    # Color helpers
+    # Color helpers (canonical names)
+    'create_color_lookup',
+    'create_color_lookup_from_column',
+    'create_color_state',
+    'get_color_from_state',
+    # Color helpers (deprecated aliases)
     'make_color_lookup',
     'build_color_lookup_for_column',
     'build_color_state',
