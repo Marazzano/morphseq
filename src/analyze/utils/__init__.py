@@ -51,7 +51,7 @@ from .splitting import (
 
 # Note: Plotting utilities are now at src.analyze.viz.plotting
 # To avoid circular imports, they are not imported here.
-# Use: from src.analyze.viz.plotting import plot_time_series_by_group
+# Use: from src.analyze.viz.plotting import plot_feature_over_time
 # Or for backward compat (deprecated):
 #   from src.analyze.utils.plotting import plot_embryos_metric_over_time
 

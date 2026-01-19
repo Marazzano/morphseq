@@ -52,43 +52,43 @@ def get_membership_category_colors(categories: list) -> dict:
     return result
 
 
-def plot_time_series_by_group(
+def plot_feature_over_time(
     df: pd.DataFrame,
-    metric: str = 'metric_value',
+    feature: str = 'metric_value',
     time_col: str = 'hpf',
     id_col: str = 'id',
     color_by: str = 'group',
     show_individual: bool = True,
-    show_mean: bool = True,
+    trend_method: Optional[str] = 'mean',
+    show_trend: bool = True,
     show_sd_band: bool = False,
     smooth_window: Optional[int] = 5,
-    use_dba: bool = True,
     alpha_individual: float = 0.3,
-    alpha_mean: float = 0.8,
+    alpha_trend: float = 0.8,
     linewidth_individual: float = 0.8,
-    linewidth_mean: float = 2.5,
+    linewidth_trend: float = 2.5,
     figsize: Tuple[float, float] = (12, 6),
     title: Optional[str] = None,
     xlabel: Optional[str] = None,
     ylabel: Optional[str] = None,
     save_path: Optional[Union[str, Path]] = None,
     dpi: int = 100,
-    palette: Optional[str] = None
+    palette: Optional[str] = None,
 ) -> plt.Figure:
     """
-    Plot time series trajectories over time, colored by grouping variable.
+    Plot a feature over time, colored by grouping variable.
 
     Flexible function for visualizing time series data grouped by any categorical
-    variable. Shows individual trajectories and/or group means with optional
+    variable. Shows individual trajectories and/or group trends with optional
     standard deviation bands.
 
     Parameters
     ----------
     df : pd.DataFrame
         Long-format dataframe with time series data.
-        Required columns: id_col, time_col, metric, color_by
-    metric : str, default='metric_value'
-        Column name for metric to plot on y-axis
+        Required columns: id_col, time_col, feature, color_by
+    feature : str, default='metric_value'
+        Column name for feature to plot on y-axis
     time_col : str, default='hpf'
         Column name for time (x-axis)
     id_col : str, default='id'
@@ -97,36 +97,38 @@ def plot_time_series_by_group(
         Column name to use for grouping and coloring trajectories
     show_individual : bool, default=True
         If True, show individual trajectories (light/transparent lines)
-    show_mean : bool, default=True
-        If True, show mean trajectory per group (bold lines)
+    trend_method : str or None, default='mean'
+        Method for computing group trend. If None, no trend is computed.
+        Options:
+        - 'dba': DTW Barycenter Averaging (time-warped, accurate but slower)
+        - 'mean': Arithmetic mean per timepoint (fast, standard)
+        - 'median': Median per timepoint (robust to outliers)
+        - None: Don't compute trend line
+    show_trend : bool, default=True
+        If True, show trend line per group (bold lines)
     show_sd_band : bool, default=False
-        If True, show +/-1 standard deviation band around mean
+        If True, show +/-1 standard deviation band around trend
     smooth_window : int, optional, default=5
         Window size parameter used for both smoothing and DTW alignment. If None,
         no smoothing is applied. For individual trajectories, uses centered rolling
-        mean. For group means with DBA: (1) converted to Gaussian sigma for smoothing
+        mean. For group trends with DBA: (1) converted to Gaussian sigma for smoothing
         (smooth_window/2.0), and (2) used as DTW Sakoe-Chiba band width (default: 5).
-    use_dba : bool, default=True
-        If True, use DTW Barycenter Averaging for computing group means instead
-        of simple averaging. DBA aligns trajectories using DTW before averaging,
-        producing more accurate consensus trajectories. Falls back to averaging
-        if DBA fails.
     alpha_individual : float, default=0.3
         Transparency for individual trajectory lines (0=invisible, 1=opaque)
-    alpha_mean : float, default=0.8
-        Transparency for mean trajectory lines
+    alpha_trend : float, default=0.8
+        Transparency for trend lines
     linewidth_individual : float, default=0.8
         Line width for individual trajectories
-    linewidth_mean : float, default=2.5
-        Line width for mean trajectories
+    linewidth_trend : float, default=2.5
+        Line width for trend lines
     figsize : tuple, default=(12, 6)
         Figure size as (width, height) in inches
     title : str, optional
-        Plot title. If None, auto-generates based on metric and color_by
+        Plot title. If None, auto-generates based on feature and color_by
     xlabel : str, optional
         X-axis label. If None, uses time_col
     ylabel : str, optional
-        Y-axis label. If None, uses metric
+        Y-axis label. If None, uses feature
     save_path : str or Path, optional
         Path to save figure. If None, figure is not saved
     dpi : int, default=100
@@ -142,10 +144,10 @@ def plot_time_series_by_group(
     Examples
     --------
     >>> # Plot groups overlaid
-    >>> fig = plot_time_series_by_group(df, color_by='group')
+    >>> fig = plot_feature_over_time(df, color_by='group')
 
     >>> # Plot clusters with SD bands, no individual trajectories
-    >>> fig = plot_time_series_by_group(
+    >>> fig = plot_feature_over_time(
     ...     df,
     ...     color_by='cluster',
     ...     show_individual=False,
@@ -153,9 +155,9 @@ def plot_time_series_by_group(
     ... )
 
     >>> # Custom styling
-    >>> fig = plot_time_series_by_group(
+    >>> fig = plot_feature_over_time(
     ...     df,
-    ...     metric='value',
+    ...     feature='value',
     ...     color_by='category',
     ...     alpha_individual=0.1,
     ...     palette='Set2',
@@ -163,13 +165,13 @@ def plot_time_series_by_group(
     ... )
     """
     # Validate required columns
-    required_cols = [metric, time_col, id_col, color_by]
+    required_cols = [feature, time_col, id_col, color_by]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
 
     # Filter to non-null values
-    df = df[[id_col, time_col, metric, color_by]].dropna().copy()
+    df = df[[id_col, time_col, feature, color_by]].dropna().copy()
 
     if len(df) == 0:
         raise ValueError("No valid data after filtering NaN values")
@@ -201,13 +203,13 @@ def plot_time_series_by_group(
 
                 # Apply smoothing if requested
                 if smooth_window is not None:
-                    y_values = entity_df[metric].rolling(
+                    y_values = entity_df[feature].rolling(
                         window=smooth_window,
                         center=True,
                         min_periods=1
                     ).mean()
                 else:
-                    y_values = entity_df[metric]
+                    y_values = entity_df[feature]
 
                 ax.plot(
                     entity_df[time_col],
@@ -218,16 +220,20 @@ def plot_time_series_by_group(
                     zorder=1
                 )
 
-        # Compute mean and std per timepoint
-        if show_mean or show_sd_band:
+        compute_trend = show_trend or show_sd_band
+        if compute_trend and trend_method is None:
+            raise ValueError("trend_method must be set when show_trend or show_sd_band is True")
+
+        # Compute trend and std per timepoint
+        if compute_trend:
             # Prepare data for DBA or averaging
             # Convert to long format for interpolation
             group_long = (
-                group_df[[id_col, time_col, metric]]
+                group_df[[id_col, time_col, feature]]
                 .rename(columns={
                     id_col: 'embryo_id',
                     time_col: 'hpf',
-                    metric: 'metric_value'
+                    feature: 'metric_value'
                 })
             )
 
@@ -261,104 +267,112 @@ def plot_time_series_by_group(
                 with np.errstate(invalid='ignore'):
                     std_values = np.nanstd(padded_array, axis=0)
 
-                mean_values = None
-                if show_mean:
-                    if use_dba and len(interp_trajs) > 1:
-                        try:
-                            # Convert smooth_window to smooth_sigma for DBA and use as DTW window
-                            if smooth_window is not None:
-                                smooth_sigma = smooth_window / 2.0
-                                dtw_window = smooth_window
-                            else:
-                                smooth_sigma = 0.0
-                                dtw_window = 3  # Fallback to default DTW window
+                trend_values = None
+                agg_method = trend_method.lower() if trend_method is not None else None
 
-                            # Define DTW function for DBA
-                            def dtw_func(seq1, seq2):
-                                dist = compute_dtw_distance(seq1, seq2, window=dtw_window)
-                                # Create approximate path (diagonal alignment)
-                                min_len = min(len(seq1), len(seq2))
-                                path = [(i, i) for i in range(min_len)]
-                                return path, dist
+                if agg_method == 'dba' and len(interp_trajs) > 1:
+                    try:
+                        # Convert smooth_window to smooth_sigma for DBA and use as DTW window
+                        if smooth_window is not None:
+                            smooth_sigma = smooth_window / 2.0
+                            dtw_window = smooth_window
+                        else:
+                            smooth_sigma = 0.0
+                            dtw_window = 3  # Fallback to default DTW window
 
-                            # Compute DBA barycenter
-                            barycenter = dba(
-                                interp_trajs,
-                                dtw_func=dtw_func,
-                                weights=None,
-                                max_iter=10,
-                                smooth_sigma=smooth_sigma,
-                                verbose=False
-                            )
+                        # Define DTW function for DBA
+                        def dtw_func(seq1, seq2):
+                            dist = compute_dtw_distance(seq1, seq2, window=dtw_window)
+                            # Create approximate path (diagonal alignment)
+                            min_len = min(len(seq1), len(seq2))
+                            path = [(i, i) for i in range(min_len)]
+                            return path, dist
 
-                            orig_grid = np.linspace(aligned_grid[0], aligned_grid[-1], len(barycenter))
-                            mean_values = np.interp(
-                                aligned_grid,
-                                orig_grid,
-                                barycenter,
-                                left=np.nan,
-                                right=np.nan
-                            )
+                        # Compute DBA barycenter
+                        barycenter = dba(
+                            interp_trajs,
+                            dtw_func=dtw_func,
+                            weights=None,
+                            max_iter=10,
+                            smooth_sigma=smooth_sigma,
+                            verbose=False
+                        )
 
-                        except Exception as e:
-                            print(f"DBA failed for group {group}: {e}, falling back to averaging")
+                        orig_grid = np.linspace(aligned_grid[0], aligned_grid[-1], len(barycenter))
+                        trend_values = np.interp(
+                            aligned_grid,
+                            orig_grid,
+                            barycenter,
+                            left=np.nan,
+                            right=np.nan
+                        )
 
-                    if mean_values is None:
-                        with np.errstate(invalid='ignore'):
-                            mean_values = np.nanmean(padded_array, axis=0)
+                    except Exception as e:
+                        print(f"DBA failed for group {group}: {e}, falling back to averaging")
+                        agg_method = 'mean'
 
-                mean_df = pd.DataFrame({
+                if trend_values is None:
+                    with np.errstate(invalid='ignore'):
+                        if agg_method == 'median':
+                            trend_values = np.nanmedian(padded_array, axis=0)
+                        else:
+                            trend_values = np.nanmean(padded_array, axis=0)
+
+                trend_df = pd.DataFrame({
                     time_col: aligned_grid,
-                    'mean_smoothed': mean_values if mean_values is not None else np.nan,
+                    'trend_smoothed': trend_values if trend_values is not None else np.nan,
                     'std_smoothed': std_values
-                }).dropna(subset=['mean_smoothed', 'std_smoothed'], how='all')
+                }).dropna(subset=['trend_smoothed', 'std_smoothed'], how='all')
 
-                if mean_df.empty:
+                if trend_df.empty:
                     raise ValueError("Empty statistics dataframe after alignment")
 
             except Exception as e:
                 print(f"Interpolation failed for group {group}: {e}, using simple groupby")
-                # Fallback to simple groupby
-                mean_df = (
+                agg_method = trend_method.lower() if trend_method is not None else 'mean'
+                if agg_method == 'dba':
+                    agg_method = 'mean'
+
+                trend_df = (
                     group_df
-                    .groupby(time_col)[metric]
-                    .agg(['mean', 'std'])
+                    .groupby(time_col)[feature]
+                    .agg(['mean', 'std', 'median'])
                     .reset_index()
                 )
                 if smooth_window is not None:
-                    mean_df['mean_smoothed'] = mean_df['mean'].rolling(
+                    trend_df['trend_smoothed'] = trend_df[agg_method].rolling(
                         window=smooth_window,
                         center=True,
                         min_periods=1
                     ).mean()
-                    mean_df['std_smoothed'] = mean_df['std'].rolling(
+                    trend_df['std_smoothed'] = trend_df['std'].rolling(
                         window=smooth_window,
                         center=True,
                         min_periods=1
                     ).mean()
                 else:
-                    mean_df['mean_smoothed'] = mean_df['mean']
-                    mean_df['std_smoothed'] = mean_df['std']
+                    trend_df['trend_smoothed'] = trend_df[agg_method]
+                    trend_df['std_smoothed'] = trend_df['std']
 
             # Plot SD band
             if show_sd_band:
                 ax.fill_between(
-                    mean_df[time_col],
-                    mean_df['mean_smoothed'] - mean_df['std_smoothed'],
-                    mean_df['mean_smoothed'] + mean_df['std_smoothed'],
+                    trend_df[time_col],
+                    trend_df['trend_smoothed'] - trend_df['std_smoothed'],
+                    trend_df['trend_smoothed'] + trend_df['std_smoothed'],
                     color=color,
                     alpha=0.2,
                     zorder=2
                 )
 
-            # Plot mean
-            if show_mean:
+            # Plot trend
+            if show_trend:
                 ax.plot(
-                    mean_df[time_col],
-                    mean_df['mean_smoothed'],
+                    trend_df[time_col],
+                    trend_df['trend_smoothed'],
                     color=color,
-                    alpha=alpha_mean,
-                    linewidth=linewidth_mean,
+                    alpha=alpha_trend,
+                    linewidth=linewidth_trend,
                     label=str(group),
                     zorder=3
                 )
@@ -367,7 +381,7 @@ def plot_time_series_by_group(
     if xlabel is None:
         xlabel = time_col.replace('_', ' ').title()
     if ylabel is None:
-        ylabel = metric.replace('_', ' ').title()
+        ylabel = feature.replace('_', ' ').title()
     if title is None:
         title = f"{ylabel} Over {xlabel.split()[0]} by {color_by.replace('_', ' ').title()}"
 
@@ -376,7 +390,7 @@ def plot_time_series_by_group(
     ax.set_title(title, fontsize=13, fontweight='bold')
 
     # Add legend
-    if show_mean:
+    if show_trend:
         ax.legend(title=color_by.replace('_', ' ').title(), loc='best', fontsize=10)
 
     # Add grid
@@ -393,6 +407,69 @@ def plot_time_series_by_group(
         print(f"Saved plot: {save_path}")
 
     return fig
+
+
+def plot_time_series_by_group(
+    df: pd.DataFrame,
+    metric: str = 'metric_value',
+    time_col: str = 'hpf',
+    id_col: str = 'id',
+    color_by: str = 'group',
+    show_individual: bool = True,
+    show_mean: bool = True,
+    show_sd_band: bool = False,
+    smooth_window: Optional[int] = 5,
+    use_dba: bool = True,
+    alpha_individual: float = 0.3,
+    alpha_mean: float = 0.8,
+    linewidth_individual: float = 0.8,
+    linewidth_mean: float = 2.5,
+    figsize: Tuple[float, float] = (12, 6),
+    title: Optional[str] = None,
+    xlabel: Optional[str] = None,
+    ylabel: Optional[str] = None,
+    save_path: Optional[Union[str, Path]] = None,
+    dpi: int = 100,
+    palette: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Deprecated wrapper for plot_feature_over_time.
+    """
+    warnings.warn(
+        "plot_time_series_by_group is deprecated. "
+        "Use plot_feature_over_time instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    trend_method = None
+    if show_mean:
+        trend_method = 'dba' if use_dba else 'mean'
+    elif show_sd_band:
+        trend_method = 'mean'
+
+    return plot_feature_over_time(
+        df,
+        feature=metric,
+        time_col=time_col,
+        id_col=id_col,
+        color_by=color_by,
+        show_individual=show_individual,
+        trend_method=trend_method,
+        show_trend=show_mean,
+        show_sd_band=show_sd_band,
+        smooth_window=smooth_window,
+        alpha_individual=alpha_individual,
+        alpha_trend=alpha_mean,
+        linewidth_individual=linewidth_individual,
+        linewidth_trend=linewidth_mean,
+        figsize=figsize,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        save_path=save_path,
+        dpi=dpi,
+        palette=palette,
+    )
 
 
 def plot_embryos_metric_over_time(
@@ -419,29 +496,35 @@ def plot_embryos_metric_over_time(
     palette: Optional[str] = None,
 ) -> plt.Figure:
     """
-    Backward-compatible wrapper for plot_time_series_by_group.
+    Backward-compatible wrapper for plot_feature_over_time.
     """
     warnings.warn(
         "plot_embryos_metric_over_time is deprecated. "
-        "Use plot_time_series_by_group instead.",
+        "Use plot_feature_over_time instead.",
         DeprecationWarning,
         stacklevel=2,
     )
-    return plot_time_series_by_group(
+    trend_method = None
+    if show_mean:
+        trend_method = 'dba' if use_dba else 'mean'
+    elif show_sd_band:
+        trend_method = 'mean'
+
+    return plot_feature_over_time(
         df,
-        metric=metric,
+        feature=metric,
         time_col=time_col,
         id_col=embryo_col,
         color_by=color_by,
         show_individual=show_individual,
-        show_mean=show_mean,
+        trend_method=trend_method,
+        show_trend=show_mean,
         show_sd_band=show_sd_band,
         smooth_window=smooth_window,
-        use_dba=use_dba,
         alpha_individual=alpha_individual,
-        alpha_mean=alpha_mean,
+        alpha_trend=alpha_mean,
         linewidth_individual=linewidth_individual,
-        linewidth_mean=linewidth_mean,
+        linewidth_trend=linewidth_mean,
         figsize=figsize,
         title=title,
         xlabel=xlabel,

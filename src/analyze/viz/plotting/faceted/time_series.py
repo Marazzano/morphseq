@@ -1,7 +1,7 @@
 """
 Faceted time series plotting for multi-experiment analysis.
 
-Extends plot_time_series_by_group with faceting capability to create
+Extends plot_feature_over_time with faceting capability to create
 subplot grids for comparing multiple experiments/conditions side-by-side.
 
 Uses generic time-series algorithms from utils.timeseries (DTW, DBA, interpolation).
@@ -29,12 +29,13 @@ def _plot_single_group_on_axis(
     group_df: pd.DataFrame,
     group: str,
     color: tuple,
-    metric: str,
+    feature: str,
     time_col: str,
     id_col: str,
     show_individual: bool,
     show_sd_band: bool,
     trend_method: Optional[str],
+    show_trend: bool,
     smooth_window: Optional[int],
     alpha_individual: float,
     alpha_trend: float,
@@ -44,7 +45,7 @@ def _plot_single_group_on_axis(
     """
     Plot a single group's trajectories on a given axis.
 
-    Helper function used by plot_time_series_faceted.
+    Helper function used by plot_feature_over_time_faceted.
     """
     # Plot individual trajectories
     if show_individual:
@@ -53,13 +54,13 @@ def _plot_single_group_on_axis(
 
             # Apply smoothing if requested
             if smooth_window is not None:
-                y_values = entity_df[metric].rolling(
+                y_values = entity_df[feature].rolling(
                     window=smooth_window,
                     center=True,
                     min_periods=1
                 ).mean()
             else:
-                y_values = entity_df[metric]
+                y_values = entity_df[feature]
 
             ax.plot(
                 entity_df[time_col],
@@ -71,15 +72,18 @@ def _plot_single_group_on_axis(
             )
 
     # Compute trend and std per timepoint
-    if trend_method is not None or show_sd_band:
+    compute_trend = show_trend or show_sd_band
+    if compute_trend:
+        if trend_method is None:
+            raise ValueError("trend_method must be set when show_trend or show_sd_band is True")
         # Prepare data for DBA or averaging
         # Convert to long format for interpolation
         group_long = (
-            group_df[[id_col, time_col, metric]]
+            group_df[[id_col, time_col, feature]]
             .rename(columns={
                 id_col: 'embryo_id',
                 time_col: 'hpf',
-                metric: 'metric_value'
+                feature: 'metric_value'
             })
         )
 
@@ -114,56 +118,55 @@ def _plot_single_group_on_axis(
                 std_values = np.nanstd(padded_array, axis=0)
 
             trend_values = None
-            if trend_method is not None:
-                agg_method = trend_method.lower()
+            agg_method = trend_method.lower()
 
-                if agg_method == 'dba' and len(interp_trajs) > 1:
-                    try:
-                        # Convert smooth_window to smooth_sigma for DBA and use as DTW window
-                        if smooth_window is not None:
-                            smooth_sigma = smooth_window / 2.0
-                            dtw_window = smooth_window
-                        else:
-                            smooth_sigma = 0.0
-                            dtw_window = 3  # Fallback to default DTW window
+            if agg_method == 'dba' and len(interp_trajs) > 1:
+                try:
+                    # Convert smooth_window to smooth_sigma for DBA and use as DTW window
+                    if smooth_window is not None:
+                        smooth_sigma = smooth_window / 2.0
+                        dtw_window = smooth_window
+                    else:
+                        smooth_sigma = 0.0
+                        dtw_window = 3  # Fallback to default DTW window
 
-                        # Define DTW function for DBA
-                        def dtw_func(seq1, seq2):
-                            dist = compute_dtw_distance(seq1, seq2, window=dtw_window)
-                            # Create approximate path (diagonal alignment)
-                            min_len = min(len(seq1), len(seq2))
-                            path = [(i, i) for i in range(min_len)]
-                            return path, dist
+                    # Define DTW function for DBA
+                    def dtw_func(seq1, seq2):
+                        dist = compute_dtw_distance(seq1, seq2, window=dtw_window)
+                        # Create approximate path (diagonal alignment)
+                        min_len = min(len(seq1), len(seq2))
+                        path = [(i, i) for i in range(min_len)]
+                        return path, dist
 
-                        # Compute DBA barycenter
-                        barycenter = dba(
-                            interp_trajs,
-                            dtw_func=dtw_func,
-                            weights=None,
-                            max_iter=10,
-                            smooth_sigma=smooth_sigma,
-                            verbose=False
-                        )
+                    # Compute DBA barycenter
+                    barycenter = dba(
+                        interp_trajs,
+                        dtw_func=dtw_func,
+                        weights=None,
+                        max_iter=10,
+                        smooth_sigma=smooth_sigma,
+                        verbose=False
+                    )
 
-                        orig_grid = np.linspace(aligned_grid[0], aligned_grid[-1], len(barycenter))
-                        trend_values = np.interp(
-                            aligned_grid,
-                            orig_grid,
-                            barycenter,
-                            left=np.nan,
-                            right=np.nan
-                        )
+                    orig_grid = np.linspace(aligned_grid[0], aligned_grid[-1], len(barycenter))
+                    trend_values = np.interp(
+                        aligned_grid,
+                        orig_grid,
+                        barycenter,
+                        left=np.nan,
+                        right=np.nan
+                    )
 
-                    except Exception as e:
-                        agg_method = 'mean'  # Fall back to mean
+                except Exception as e:
+                    agg_method = 'mean'  # Fall back to mean
 
-                # Compute mean or median if DBA not used or failed
-                if trend_values is None:
-                    with np.errstate(invalid='ignore'):
-                        if agg_method == 'median':
-                            trend_values = np.nanmedian(padded_array, axis=0)
-                        else:  # mean
-                            trend_values = np.nanmean(padded_array, axis=0)
+            # Compute mean or median if DBA not used or failed
+            if trend_values is None:
+                with np.errstate(invalid='ignore'):
+                    if agg_method == 'median':
+                        trend_values = np.nanmedian(padded_array, axis=0)
+                    else:  # mean
+                        trend_values = np.nanmean(padded_array, axis=0)
 
             trend_df = pd.DataFrame({
                 time_col: aligned_grid,
@@ -185,7 +188,7 @@ def _plot_single_group_on_axis(
 
             trend_df = (
                 group_df
-                .groupby(time_col)[metric]
+                .groupby(time_col)[feature]
                 .agg(agg_funcs)
                 .reset_index()
             )
@@ -226,7 +229,7 @@ def _plot_single_group_on_axis(
             )
 
         # Plot trend line
-        if trend_method is not None:
+        if show_trend:
             ax.plot(
                 trend_df[time_col],
                 trend_df['trend'],
@@ -238,15 +241,16 @@ def _plot_single_group_on_axis(
             )
 
 
-def plot_time_series_faceted(
+def plot_feature_over_time_faceted(
     df: pd.DataFrame,
-    metric: str = 'metric_value',
+    feature: str = 'metric_value',
     time_col: str = 'hpf',
     id_col: str = 'id',
     color_by: str = 'group',
     facet_by: str = 'experiment',
     show_individual: bool = True,
     trend_method: Optional[str] = 'mean',
+    show_trend: bool = True,
     show_sd_band: bool = False,
     smooth_window: Optional[int] = None,
     alpha_individual: float = 0.3,
@@ -262,10 +266,10 @@ def plot_time_series_faceted(
     ylabel: Optional[str] = None,
     save_path: Optional[Union[str, Path]] = None,
     dpi: int = 100,
-    palette: Optional[str] = None
+    palette: Optional[str] = None,
 ) -> plt.Figure:
     """
-    Plot time series trajectories with faceting for multi-experiment comparison.
+    Plot a feature over time with faceting for multi-experiment comparison.
 
     Creates a grid of subplots, one per unique value in `facet_by` column.
     Within each subplot, trajectories are colored by `color_by` variable.
@@ -274,9 +278,9 @@ def plot_time_series_faceted(
     ----------
     df : pd.DataFrame
         Long-format dataframe with time series data.
-        Required columns: id_col, time_col, metric, color_by, facet_by
-    metric : str, default='metric_value'
-        Column name for metric to plot on y-axis
+        Required columns: id_col, time_col, feature, color_by, facet_by
+    feature : str, default='metric_value'
+        Column name for feature to plot on y-axis
     time_col : str, default='hpf'
         Column name for time (x-axis)
     id_col : str, default='id'
@@ -295,6 +299,8 @@ def plot_time_series_faceted(
         - 'mean': Arithmetic mean per timepoint (fast, standard)
         - 'median': Median per timepoint (robust to outliers)
         - None: Don't show trend line
+    show_trend : bool, default=True
+        If True, show trend line per group
     show_sd_band : bool, default=False
         If True, show +/-1 standard deviation band around trend
     smooth_window : int, optional, default=None
@@ -322,7 +328,7 @@ def plot_time_series_faceted(
     xlabel : str, optional
         X-axis label. If None, uses time_col
     ylabel : str, optional
-        Y-axis label. If None, uses metric
+        Y-axis label. If None, uses feature
     save_path : str or Path, optional
         Path to save figure
     dpi : int, default=100
@@ -338,15 +344,19 @@ def plot_time_series_faceted(
     Examples
     --------
     >>> # Compare groups across experiments
-    >>> fig = plot_time_series_faceted(
+    >>> fig = plot_feature_over_time_faceted(
     ...     df_all,
     ...     color_by='group',
     ...     facet_by='experiment',
     ...     facet_ncols=3
     ... )
     """
+    compute_trend = show_trend or show_sd_band
+    if compute_trend and trend_method is None:
+        raise ValueError("trend_method must be set when show_trend or show_sd_band is True")
+
     # Validate required columns
-    required_cols = [metric, time_col, id_col, color_by, facet_by]
+    required_cols = [feature, time_col, id_col, color_by, facet_by]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
@@ -415,9 +425,10 @@ def plot_time_series_faceted(
 
             _plot_single_group_on_axis(
                 ax, group_df, group, color,
-                metric, time_col, id_col,
+                feature, time_col, id_col,
                 show_individual, show_sd_band,
-                trend_method, smooth_window,
+                trend_method, show_trend,
+                smooth_window,
                 alpha_individual, alpha_trend,
                 linewidth_individual, linewidth_trend
             )
@@ -429,7 +440,7 @@ def plot_time_series_faceted(
             xlabel_text = xlabel
 
         if ylabel is None:
-            ylabel_text = metric.replace('_', ' ').title()
+            ylabel_text = feature.replace('_', ' ').title()
         else:
             ylabel_text = ylabel
 
@@ -442,7 +453,7 @@ def plot_time_series_faceted(
             ax.set_ylabel(ylabel_text, fontsize=10)
 
         # Add legend to first panel only
-        if trend_method is not None and facet_idx == 0:
+        if show_trend and facet_idx == 0:
             ax.legend(
                 title=color_by.replace('_', ' ').title(),
                 loc='best',
@@ -456,7 +467,7 @@ def plot_time_series_faceted(
     # Set overall title
     if title is None:
         if ylabel is None:
-            ylabel_text = metric.replace('_', ' ').title()
+            ylabel_text = feature.replace('_', ' ').title()
         title = f"{ylabel_text} Across {facet_by.replace('_', ' ').title()}"
 
     fig.suptitle(title, fontsize=14, fontweight='bold', y=0.995)
@@ -472,6 +483,75 @@ def plot_time_series_faceted(
         print(f"Saved faceted plot: {save_path}")
 
     return fig
+
+
+def plot_time_series_faceted(
+    df: pd.DataFrame,
+    metric: str = 'metric_value',
+    time_col: str = 'hpf',
+    id_col: str = 'id',
+    color_by: str = 'group',
+    facet_by: str = 'experiment',
+    show_individual: bool = True,
+    trend_method: Optional[str] = 'mean',
+    show_sd_band: bool = False,
+    smooth_window: Optional[int] = None,
+    alpha_individual: float = 0.3,
+    alpha_trend: float = 0.9,
+    linewidth_individual: float = 0.8,
+    linewidth_trend: float = 2.5,
+    figsize_per_panel: Tuple[float, float] = (6, 5),
+    facet_ncols: Optional[int] = None,
+    facet_sharex: bool = True,
+    facet_sharey: bool = True,
+    title: Optional[str] = None,
+    xlabel: Optional[str] = None,
+    ylabel: Optional[str] = None,
+    save_path: Optional[Union[str, Path]] = None,
+    dpi: int = 100,
+    palette: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Deprecated wrapper for plot_feature_over_time_faceted.
+    """
+    warnings.warn(
+        "plot_time_series_faceted is deprecated. "
+        "Use plot_feature_over_time_faceted instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    show_trend = trend_method is not None
+    if trend_method is None and show_sd_band:
+        trend_method = 'mean'
+        show_trend = False
+
+    return plot_feature_over_time_faceted(
+        df,
+        feature=metric,
+        time_col=time_col,
+        id_col=id_col,
+        color_by=color_by,
+        facet_by=facet_by,
+        show_individual=show_individual,
+        trend_method=trend_method,
+        show_trend=show_trend,
+        show_sd_band=show_sd_band,
+        smooth_window=smooth_window,
+        alpha_individual=alpha_individual,
+        alpha_trend=alpha_trend,
+        linewidth_individual=linewidth_individual,
+        linewidth_trend=linewidth_trend,
+        figsize_per_panel=figsize_per_panel,
+        facet_ncols=facet_ncols,
+        facet_sharex=facet_sharex,
+        facet_sharey=facet_sharey,
+        title=title,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        save_path=save_path,
+        dpi=dpi,
+        palette=palette,
+    )
 
 
 def plot_embryos_metric_over_time_faceted(
@@ -501,23 +581,29 @@ def plot_embryos_metric_over_time_faceted(
     palette: Optional[str] = None,
 ) -> plt.Figure:
     """
-    Backward-compatible wrapper for plot_time_series_faceted.
+    Backward-compatible wrapper for plot_feature_over_time_faceted.
     """
     warnings.warn(
         "plot_embryos_metric_over_time_faceted is deprecated. "
-        "Use plot_time_series_faceted instead.",
+        "Use plot_feature_over_time_faceted instead.",
         DeprecationWarning,
         stacklevel=2,
     )
-    return plot_time_series_faceted(
+    show_trend = trend_method is not None
+    if trend_method is None and show_sd_band:
+        trend_method = 'mean'
+        show_trend = False
+
+    return plot_feature_over_time_faceted(
         df,
-        metric=metric,
+        feature=metric,
         time_col=time_col,
         id_col=embryo_col,
         color_by=color_by,
         facet_by=facet_by,
         show_individual=show_individual,
         trend_method=trend_method,
+        show_trend=show_trend,
         show_sd_band=show_sd_band,
         smooth_window=smooth_window,
         alpha_individual=alpha_individual,
