@@ -1,21 +1,12 @@
 """
-DTW Distance Computation for Trajectory Analysis
+DTW Utility Functions for Trajectory Analysis
 
-This module provides DTW distance computation with domain-specific helper functions
-for embryo trajectory analysis.
-
-Generic DTW algorithms are re-exported from src.analyze.utils.timeseries.dtw.
-Domain-specific functions (prepare_multivariate_array, compute_trajectory_distances)
-remain in this module as they depend on trajectory_analysis config and utilities.
+Domain-specific helper functions for preparing trajectory data and computing
+DTW distance matrices. These functions bridge the gap between trajectory
+DataFrames and the generic DTW algorithms in utils.timeseries.
 
 Functions
 =========
-Generic (from utils.timeseries):
-- compute_dtw_distance : Compute DTW distance between two 1D sequences
-- compute_dtw_distance_matrix : Compute pairwise DTW distances for multiple 1D sequences
-- compute_md_dtw_distance_matrix : Compute pairwise MD-DTW distances
-
-Domain-Specific (trajectory analysis):
 - prepare_multivariate_array : Convert DataFrame to 3D array for MD-DTW
 - compute_trajectory_distances : High-level function to compute trajectory distances
 """
@@ -25,18 +16,7 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from typing import List, Tuple, Optional
 
-# Re-export generic DTW functions from canonical location
-from src.analyze.utils.timeseries.dtw import (
-    compute_dtw_distance,
-    compute_dtw_distance_matrix,
-    compute_md_dtw_distance_matrix,
-    _dtw_multivariate_pair,
-)
-
-
-# ============================================================================
-# Domain-Specific Functions (depend on trajectory_analysis config/utilities)
-# ============================================================================
+from src.analyze.utils.timeseries.dtw import compute_md_dtw_distance_matrix
 
 
 def prepare_multivariate_array(
@@ -368,12 +348,6 @@ def compute_trajectory_distances(
 
 
 __all__ = [
-    # Generic (re-exported from utils.timeseries)
-    'compute_dtw_distance',
-    'compute_dtw_distance_matrix',
-    'compute_md_dtw_distance_matrix',
-    '_dtw_multivariate_pair',
-    # Domain-specific
     'prepare_multivariate_array',
     'compute_trajectory_distances',
 ]

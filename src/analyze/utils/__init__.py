@@ -13,8 +13,7 @@ Submodules
 - timeseries : Generic time-series algorithms (DTW, DBA, interpolation)
 
 Note: Plotting utilities have been moved to src.analyze.viz.plotting
-The old imports from utils.plotting and utils.plotting_faceted still work
-but are deprecated.
+Use: from src.analyze.viz.plotting import plot_feature_over_time
 """
 
 # Data loading
@@ -52,8 +51,6 @@ from .splitting import (
 # Note: Plotting utilities are now at src.analyze.viz.plotting
 # To avoid circular imports, they are not imported here.
 # Use: from src.analyze.viz.plotting import plot_feature_over_time
-# Or for backward compat (deprecated):
-#   from src.analyze.utils.plotting import plot_embryos_metric_over_time
 
 __all__ = [
     # Data loading

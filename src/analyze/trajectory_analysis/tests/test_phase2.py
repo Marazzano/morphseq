@@ -65,7 +65,7 @@ def test_io_imports():
 def test_cross_imports():
     """Test that io correctly imports from distance"""
     print("Testing cross-subpackage imports...")
-    # This import chain: io.data_loading -> distance.dtw_distance
+    # This import chain: io.data_loading -> distance
     from analyze.trajectory_analysis.io.data_loading import compute_dtw_distance_from_df
     print("✓ Cross-subpackage imports OK")
     return True
@@ -78,7 +78,7 @@ def test_runtime_imports():
     # It imports from ..utilities.trajectory_utils inside the function
     import numpy as np
     import pandas as pd
-    from analyze.trajectory_analysis.distance.dtw_distance import prepare_multivariate_array
+    from analyze.trajectory_analysis.distance import prepare_multivariate_array
 
     # Create minimal test data
     test_df = pd.DataFrame({

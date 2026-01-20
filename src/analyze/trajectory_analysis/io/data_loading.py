@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional, Any
 from pathlib import Path
-from ..distance.dtw_distance import compute_dtw_distance_matrix
+from ..distance import compute_dtw_distance_matrix
 
 
 # =============================================================================

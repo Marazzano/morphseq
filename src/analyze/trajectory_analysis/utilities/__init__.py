@@ -1,13 +1,14 @@
 """Utility Functions for Trajectory Analysis
 
 This subpackage contains utility functions for trajectory data manipulation,
-PCA embedding, and correlation analysis.
+PCA embedding, correlation analysis, and DTW utilities.
 
 Modules
 =======
 trajectory_utils : Data extraction, interpolation, and preprocessing
 pca : PCA embedding and transformation functions
 correlation : Correlation analysis utilities
+dtw_utils : DTW utility functions for preparing trajectory data
 """
 
 # Trajectory utilities
@@ -39,6 +40,12 @@ from .correlation import (
     test_anticorrelation,
 )
 
+# DTW utilities
+from .dtw_utils import (
+    prepare_multivariate_array,
+    compute_trajectory_distances,
+)
+
 __all__ = [
     # Trajectory utilities (new API)
     'extract_trajectories_df',
@@ -60,4 +67,7 @@ __all__ = [
     'fit_transform_pca',
     # Correlation
     'test_anticorrelation',
+    # DTW utilities
+    'prepare_multivariate_array',
+    'compute_trajectory_distances',
 ]

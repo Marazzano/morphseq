@@ -43,7 +43,7 @@ from .bootstrap_clustering import (
     compute_coassociation_matrix
 )
 from .cluster_posteriors import analyze_bootstrap_results
-from ..dendrogram import generate_dendrograms
+from ..viz import generate_dendrograms
 from ..config import (
     N_BOOTSTRAP,
     BOOTSTRAP_FRAC,
