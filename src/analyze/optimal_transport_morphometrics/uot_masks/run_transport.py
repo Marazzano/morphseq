@@ -7,13 +7,22 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from .config import UOTConfig, UOTFramePair, UOTProblem, UOTResult
-from .density_transforms import mask_to_density, enforce_min_mass, mask_to_density_uniform
-from .multiscale_sampling import downsample_density, build_support
+from src.analyze.utils.optimal_transport import (
+    UOTConfig,
+    UOTFramePair,
+    UOTProblem,
+    UOTResult,
+    mask_to_density,
+    enforce_min_mass,
+    mask_to_density_uniform,
+    downsample_density,
+    build_support,
+    compute_transport_maps,
+    summarize_metrics,
+    POTBackend,
+    UOTBackend,
+)
 from .preprocess import preprocess_pair
-from .transport_maps import compute_transport_maps
-from .metrics import summarize_metrics
-from .backends import POTBackend, UOTBackend
 from .frame_mask_io import load_mask_pair_from_csv
 
 

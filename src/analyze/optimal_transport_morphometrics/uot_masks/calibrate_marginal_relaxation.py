@@ -8,7 +8,7 @@ from typing import Iterable, List
 import numpy as np
 import pandas as pd
 
-from .config import UOTConfig, UOTFrame, UOTFramePair
+from src.analyze.utils.optimal_transport import UOTConfig, UOTFrame, UOTFramePair
 from .frame_mask_io import load_mask_from_csv
 from .run_transport import run_uot_pair
 

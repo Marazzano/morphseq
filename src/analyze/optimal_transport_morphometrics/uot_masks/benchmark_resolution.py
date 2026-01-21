@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from .config import UOTConfig
+from src.analyze.utils.optimal_transport import UOTConfig
 from .frame_mask_io import load_mask_pair_from_csv
 from .run_transport import run_uot_pair
 

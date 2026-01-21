@@ -7,16 +7,16 @@ from typing import Dict
 import numpy as np
 import ot
 
-from .base import UOTBackend, BackendResult
-from ..config import UOTSupport, UOTConfig
+from src.analyze.utils.optimal_transport.backends.base import UOTBackend, BackendResult
+from src.analyze.utils.optimal_transport.config import UOTSupport, UOTConfig
 
 
 class POTBackend(UOTBackend):
     """Unbalanced OT backend using POT's Sinkhorn implementation."""
 
     def solve(self, src: UOTSupport, tgt: UOTSupport, config: UOTConfig) -> BackendResult:
-        coords_src = src.coords_yx.astype(np.float64)
-        coords_tgt = tgt.coords_yx.astype(np.float64)
+        coords_src = src.coords_yx.astype(np.float64) * float(config.coord_scale)
+        coords_tgt = tgt.coords_yx.astype(np.float64) * float(config.coord_scale)
         weights_src = src.weights.astype(np.float64)
         weights_tgt = tgt.weights.astype(np.float64)
 
@@ -53,6 +53,7 @@ class POTBackend(UOTBackend):
             "m_tgt": m_tgt,
             "reg": config.epsilon,
             "reg_m": config.marginal_relaxation,
+            "coord_scale": float(config.coord_scale),
             "log": log,
         }
 

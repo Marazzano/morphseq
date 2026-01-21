@@ -82,6 +82,7 @@ class UOTConfig:
     epsilon: float = 1e-2
     marginal_relaxation: float = 10.0
     metric: str = "sqeuclidean"
+    coord_scale: float = 1.0
 
     mass_mode: MassMode = MassMode.UNIFORM
     align_mode: str = "centroid"

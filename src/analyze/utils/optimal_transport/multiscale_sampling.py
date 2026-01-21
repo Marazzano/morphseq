@@ -7,7 +7,7 @@ from typing import Tuple
 import numpy as np
 from scipy import ndimage
 
-from .config import UOTSupport, SamplingMode
+from src.analyze.utils.optimal_transport.config import UOTSupport, SamplingMode
 
 
 def pad_to_divisible(arr: np.ndarray, divisor: int) -> Tuple[np.ndarray, Tuple[int, int]]:

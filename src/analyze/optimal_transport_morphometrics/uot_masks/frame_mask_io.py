@@ -14,7 +14,7 @@ from src.data_pipeline.segmentation.grounded_sam2.mask_export import (
     extract_individual_masks,
 )
 
-from .config import UOTFrame, UOTFramePair
+from src.analyze.utils.optimal_transport import UOTFrame, UOTFramePair
 
 
 DEFAULT_USECOLS = [

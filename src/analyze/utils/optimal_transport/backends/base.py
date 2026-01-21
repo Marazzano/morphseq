@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict
 from abc import ABC, abstractmethod
 
-from ..config import Coupling, UOTSupport, UOTConfig
+from src.analyze.utils.optimal_transport.config import Coupling, UOTSupport, UOTConfig
 
 
 @dataclass

@@ -9,8 +9,7 @@ from scipy import ndimage
 
 from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 
-from .config import UOTConfig
-from .multiscale_sampling import pad_to_divisible
+from src.analyze.utils.optimal_transport import UOTConfig, pad_to_divisible
 
 
 def qc_mask(mask: np.ndarray, verbose: bool = False) -> Tuple[np.ndarray, dict]:

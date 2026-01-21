@@ -11,7 +11,7 @@ try:
 except Exception:  # pragma: no cover
     sp = None
 
-from .config import Coupling
+from src.analyze.utils.optimal_transport.config import Coupling
 
 
 def _compute_marginals(coupling: Coupling) -> Tuple[np.ndarray, np.ndarray]:
