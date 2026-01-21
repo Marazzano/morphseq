@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from scipy import ndimage
 
 from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 
-from src.analyze.utils.optimal_transport import UOTConfig, pad_to_divisible
+from src.analyze.utils.optimal_transport import UOTConfig, pad_to_divisible, UOTFrame
+from .uot_grid import (
+    CanonicalGridConfig,
+    GridTransform,
+    compute_grid_transform,
+    apply_grid_transform,
+)
 
 
 def qc_mask(mask: np.ndarray, verbose: bool = False) -> Tuple[np.ndarray, dict]:
@@ -86,3 +92,97 @@ def preprocess_pair(
         "qc_stats_tgt": tgt_stats,
     }
     return src_pad, tgt_pad, meta
+
+
+def preprocess_pair_canonical(
+    src_frame: UOTFrame,
+    tgt_frame: UOTFrame,
+    config: UOTConfig,
+    canonical_config: CanonicalGridConfig,
+    verbose: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, dict]:
+    """
+    Preprocess mask pair using canonical grid transformation.
+
+    IMPORTANT: For mask pairs, we need to preserve spatial relationships.
+    This function assumes both masks are from the same embryo at the same
+    resolution, so they share a common transform.
+
+    Steps:
+    1. QC clean both masks
+    2. Compute shared transform based on union of masks
+    3. Apply transform to both masks
+    4. Return canonical masks + transform metadata
+
+    Args:
+        src_frame: Source frame with mask and metadata
+        tgt_frame: Target frame with mask and metadata
+        config: UOT configuration
+        canonical_config: Canonical grid configuration
+        verbose: Print debug info
+
+    Returns:
+        Tuple of (src_canonical, tgt_canonical, metadata)
+    """
+    mask_src = src_frame.embryo_mask
+    mask_tgt = tgt_frame.embryo_mask
+
+    # 1. QC clean
+    src_qc, src_stats = qc_mask(mask_src, verbose=verbose)
+    tgt_qc, tgt_stats = qc_mask(mask_tgt, verbose=verbose)
+
+    # 2. Extract um_per_pixel from metadata
+    src_um_per_pixel = src_frame.meta.get("um_per_pixel", np.nan)
+    tgt_um_per_pixel = tgt_frame.meta.get("um_per_pixel", np.nan)
+
+    if np.isnan(src_um_per_pixel) or np.isnan(tgt_um_per_pixel):
+        raise ValueError(
+            "um_per_pixel not found in frame metadata. "
+            "Ensure load_mask_from_csv was used or add um_per_pixel to meta dict."
+        )
+
+    # Verify both masks are at same resolution (for same embryo)
+    if abs(src_um_per_pixel - tgt_um_per_pixel) > 0.01:
+        raise ValueError(
+            f"Source and target have different resolutions: "
+            f"{src_um_per_pixel:.3f} vs {tgt_um_per_pixel:.3f} um/px. "
+            "Canonical grid preprocessing requires same-embryo mask pairs."
+        )
+
+    # 3. Load yolk masks if available (optional for now)
+    src_yolk = src_frame.meta.get("yolk_mask", None)
+    tgt_yolk = tgt_frame.meta.get("yolk_mask", None)
+
+    # 4. Compute shared transform based on union of masks
+    # This ensures spatial relationships are preserved
+    union_mask = (src_qc > 0) | (tgt_qc > 0)
+    union_yolk = None
+    if src_yolk is not None or tgt_yolk is not None:
+        yolk_a = src_yolk if src_yolk is not None else np.zeros_like(src_qc)
+        yolk_b = tgt_yolk if tgt_yolk is not None else np.zeros_like(tgt_qc)
+        union_yolk = (yolk_a > 0) | (yolk_b > 0)
+
+    shared_transform = compute_grid_transform(
+        mask=union_mask.astype(np.uint8),
+        source_um_per_pixel=src_um_per_pixel,
+        yolk_mask=union_yolk,
+        config=canonical_config,
+    )
+
+    # 5. Apply shared transform to both masks
+    src_canonical = apply_grid_transform(src_qc, shared_transform)
+    tgt_canonical = apply_grid_transform(tgt_qc, shared_transform)
+
+    # 6. Build metadata
+    meta = {
+        "orig_shape_src": tuple(mask_src.shape),
+        "orig_shape_tgt": tuple(mask_tgt.shape),
+        "qc_stats_src": src_stats,
+        "qc_stats_tgt": tgt_stats,
+        "src_transform": shared_transform,  # Same transform for both
+        "tgt_transform": shared_transform,  # Same transform for both
+        "canonical_shape_hw": canonical_config.grid_shape_hw,
+        "canonical_um_per_pixel": canonical_config.reference_um_per_pixel,
+    }
+
+    return src_canonical, tgt_canonical, meta

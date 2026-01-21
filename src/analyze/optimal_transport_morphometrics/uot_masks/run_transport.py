@@ -22,8 +22,9 @@ from src.analyze.utils.optimal_transport import (
     POTBackend,
     UOTBackend,
 )
-from .preprocess import preprocess_pair
+from .preprocess import preprocess_pair, preprocess_pair_canonical
 from .frame_mask_io import load_mask_pair_from_csv
+from .uot_grid import CanonicalGridConfig, rescale_velocity_to_um, rescale_distance_to_um
 
 
 def build_problem(
@@ -80,6 +81,12 @@ def run_uot_pair(
     config: Optional[UOTConfig] = None,
     backend: Optional[UOTBackend] = None,
 ) -> UOTResult:
+    """
+    Run UOT on a mask pair.
+
+    If config.use_canonical_grid is True, will use canonical grid preprocessing
+    with physical units. Otherwise uses legacy preprocessing.
+    """
     if config is None:
         config = UOTConfig()
     if backend is None:
@@ -88,8 +95,36 @@ def run_uot_pair(
     if pair.src.embryo_mask is None or pair.tgt.embryo_mask is None:
         raise ValueError("UOTFramePair must contain embryo masks.")
 
-    problem, transform_meta = build_problem(pair.src.embryo_mask, pair.tgt.embryo_mask, config)
+    # Choose preprocessing mode
+    if config.use_canonical_grid:
+        # Canonical grid mode: transform to standardized physical grid
+        canonical_config = CanonicalGridConfig(
+            reference_um_per_pixel=config.canonical_grid_um_per_pixel,
+            grid_shape_hw=config.canonical_grid_shape_hw,
+            align_mode=config.canonical_grid_align_mode,
+            downsample_factor=1,  # No additional downsampling on canonical grid
+        )
 
+        src_canonical, tgt_canonical, preprocess_meta = preprocess_pair_canonical(
+            pair.src,
+            pair.tgt,
+            config,
+            canonical_config,
+        )
+
+        # Build problem from canonical grids
+        problem, transform_meta = build_problem(src_canonical, tgt_canonical, config)
+
+        # Merge preprocessing metadata
+        transform_meta["preprocess"] = preprocess_meta
+        transform_meta["canonical_grid"] = True
+
+    else:
+        # Legacy mode: use original preprocessing
+        problem, transform_meta = build_problem(pair.src.embryo_mask, pair.tgt.embryo_mask, config)
+        transform_meta["canonical_grid"] = False
+
+    # Solve transport problem
     backend_result = backend.solve(problem.src, problem.tgt, config)
 
     mass_created_hw, mass_destroyed_hw, velocity_field = compute_transport_maps(
@@ -100,6 +135,13 @@ def run_uot_pair(
         problem.tgt.weights,
         problem.work_shape_hw,
     )
+
+    # If using canonical grid, rescale velocities to micrometers
+    if config.use_canonical_grid:
+        src_transform = preprocess_meta["src_transform"]
+        velocity_field = rescale_velocity_to_um(velocity_field, src_transform)
+        # Note: distances in metrics are still in pixels for now
+        # Could rescale them here if needed
 
     metrics = summarize_metrics(
         backend_result.cost,

@@ -91,3 +91,9 @@ class UOTConfig:
     random_seed: int = 0
     padding_px: int = 8
     downsample_divisor: int = 16
+
+    # Canonical grid settings
+    use_canonical_grid: bool = False
+    canonical_grid_um_per_pixel: float = 7.8
+    canonical_grid_shape_hw: tuple[int, int] = (256, 576)
+    canonical_grid_align_mode: str = "yolk"  # "yolk" | "centroid" | "none"

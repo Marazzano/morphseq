@@ -12,11 +12,14 @@ Key fixes made
 - Clamped creation/destruction plots to non-negative values so colorbars are comparable and not misleading.
 
 Open questions
-- The solver still sometimes creates/destroys small amounts of mass; we need to decide acceptable thresholds and whether to penalize this more aggressively.
+- The solver still sometimes creates/destroys small amounts of mass; we need to decide acceptable thresholds and whether to penalize this more aggressively.\The current method that we did to fix with the coordinate scaling might not be the correct approach. It might be better to actually just increase the epsilon value. 
 - Current plotting auto-scales per image; we should standardize the scale so comparisons across runs are meaningful.
 - We need an interpretable cost scale (ideally per-pixel). This may require choosing a canonical coordinate system and standardized units rather than ad hoc scaling.
 - Velocity field visualization is sensitive to small changes; we should normalize the field so small motions do not visually compete with large motions.
-
+Essentially, our next steps are going to focus on:
+1. Standardizing costs
+2. Getting our synthetic images onto a standardized grid so that we can make comparisons across masks
+3. Eventually across embryos and we know that these costs are comparable
 Next steps
 - Define a canonical grid for embryo masks and test it with synthetic cases.
 - Standardize units so transport cost and velocity magnitudes are interpretable per pixel.
