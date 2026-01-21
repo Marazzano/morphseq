@@ -105,6 +105,8 @@ fig = plot_3d_with_spline(
 
 ## Common Workflows
 
+Quick examples for common tasks. For detailed function documentation, see module descriptions below.
+
 ### 1. Fit a spline through trajectory data
 ```python
 from src.analyze.spline_fitting import LocalPrincipalCurve
@@ -158,3 +160,9 @@ from src.analyze.spline_fitting.utils import segment_direction_consistency
 aligned = quaternion_alignment(curve1, curve2)
 consistency = segment_direction_consistency(curve1, curve2)
 ```
+
+---
+
+## Module Details
+
+For detailed information about each module's functions and parameters, see sections below.
