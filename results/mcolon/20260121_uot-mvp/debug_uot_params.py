@@ -49,8 +49,8 @@ import ot
 # ==== CONSTANTS ====
 
 # CANONICAL GRID - All masks are created DIRECTLY on this grid
-# This matches the snip export pipeline and ensures resolution-independent comparisons
-# The preprocessing step (snip export) transforms embryos to fit in this grid using affine transforms
+# NOTE: With pair_frame enabled, these are now properly tracked through the pipeline
+# rather than hard-coded in every function
 CANONICAL_GRID_SHAPE = (256, 576)  # Height x Width in pixels
 CANONICAL_UM_PER_PX = 7.8  # Micrometers per pixel
 # Physical dimensions: 1996.8 μm (2.0 mm) × 4492.8 μm (4.5 mm)
@@ -560,9 +560,9 @@ def run_single_param_combo(
     config = UOTConfig(
         epsilon=epsilon,
         marginal_relaxation=marginal_relaxation,
-        downsample_factor=1,
+        downsample_factor=1,  # No downsampling on synthetic tests
         downsample_divisor=1,
-        padding_px=0,
+        padding_px=16,  # Use proper padding (was 0)
         mass_mode=MassMode.UNIFORM,
         align_mode="none",
         max_support_points=5000,
@@ -570,6 +570,7 @@ def run_single_param_combo(
         random_seed=42,
         metric="sqeuclidean",
         coord_scale=COORD_SCALE,
+        use_pair_frame=True,  # NEW: Enable pair frame
     )
 
     # Create frame pair
@@ -590,6 +591,15 @@ def run_single_param_combo(
             "cost_is_nan": True,
             "error": str(e),
         }
+
+    # NEW: Validate pair frame results
+    if config.use_pair_frame and hasattr(result, 'transform_meta'):
+        if result.transform_meta.get("preprocess", {}).get("pair_frame_used"):
+            # Verify outputs are canonical-shaped
+            assert result.mass_created_hw.shape == CANONICAL_GRID_SHAPE, \
+                f"Mass created not canonical shaped: {result.mass_created_hw.shape}"
+            assert result.velocity_field_yx_hw2.shape[:2] == CANONICAL_GRID_SHAPE, \
+                f"Velocity not canonical shaped: {result.velocity_field_yx_hw2.shape}"
 
     # Collect all diagnostics
     cost_is_nan = np.isnan(result.cost)
