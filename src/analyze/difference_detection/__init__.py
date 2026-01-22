@@ -57,14 +57,6 @@ from .results import (
     MulticlassOVRResults,
     ComparisonSpec,
 )
-    extract_temporal_confusion_profile,
-)
-
-# Result containers
-from .results import (
-    MulticlassOVRResults,
-    ComparisonSpec,
-)
 
 # Expose key functions at package level for convenience (if modules exist)
 try:
