@@ -48,7 +48,22 @@ from .classification_test import (
 )
 from .classification_test_multiclass import (
     run_multiclass_classification_test,
+    run_comparison_test,  # New Scanpy-style API
     extract_temporal_confusion_profile,
+)
+
+# Result containers
+from .results import (
+    MulticlassOVRResults,
+    ComparisonSpec,
+)
+    extract_temporal_confusion_profile,
+)
+
+# Result containers
+from .results import (
+    MulticlassOVRResults,
+    ComparisonSpec,
 )
 
 # Expose key functions at package level for convenience (if modules exist)
@@ -166,5 +181,9 @@ __all__ = [
     'run_binary_classification_test',
     'compute_timeseries_divergence',
     'run_multiclass_classification_test',
+    'run_comparison_test',  # New API
     'extract_temporal_confusion_profile',
+    # Result containers
+    'MulticlassOVRResults',
+    'ComparisonSpec',
 ]

@@ -28,16 +28,250 @@ Example
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 from sklearn.metrics import roc_auc_score, confusion_matrix
+
+from .results import ComparisonSpec, MulticlassOVRResults
 
 try:
     from joblib import Parallel, delayed
 except Exception:
     Parallel = None
     delayed = None
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def _resolve_comparison_groups(
+    df: pd.DataFrame,
+    groupby: str,
+    groups: Union[str, List[str]],
+    reference: Union[str, List[Union[str, Tuple[str, ...]]]],
+    embryo_id_col: str = 'embryo_id',
+    allow_many_comparisons: bool = False,
+    max_comparisons: int = 50,
+) -> List[ComparisonSpec]:
+    """
+    Parse flexible groups/reference inputs into structured ComparisonSpec objects.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data containing the groupby column and embryo IDs
+    groupby : str
+        Column name containing group labels
+    groups : str or list of str
+        Which groups to test. 
+        - "all": test all unique values in groupby column
+        - ["CE", "HTA"]: test only these groups
+    reference : str or list of str/tuple
+        Reference group(s) for comparison.
+        - "rest": compare each group against all others combined
+        - "WT": compare each group against this single group
+        - ["WT", "Het"]: compare each group against WT AND separately against Het
+        - [("WT", "Het")]: compare each group against pooled WT+Het
+        - ["WT", ("WT", "Het")]: both separate WT and pooled WT+Het comparisons
+    embryo_id_col : str
+        Column name for embryo IDs
+    allow_many_comparisons : bool
+        If True, allow > max_comparisons
+    max_comparisons : int
+        Maximum allowed comparisons before raising error (default 50)
+    
+    Returns
+    -------
+    List[ComparisonSpec]
+        List of comparison specifications to run
+    
+    Raises
+    ------
+    ValueError
+        If input format is invalid or too many comparisons requested
+    
+    Examples
+    --------
+    >>> # CE and HTA each vs WT
+    >>> specs = _resolve_comparison_groups(
+    ...     df, groupby='cluster', groups=['CE', 'HTA'], reference='WT'
+    ... )
+    
+    >>> # All groups vs rest (classic OvR)
+    >>> specs = _resolve_comparison_groups(
+    ...     df, groupby='cluster', groups='all', reference='rest'
+    ... )
+    
+    >>> # CE vs WT and CE vs pooled WT+Het
+    >>> specs = _resolve_comparison_groups(
+    ...     df, groupby='cluster', groups='CE', reference=['WT', ('WT', 'Het')]
+    ... )
+    """
+    # Validate groupby column exists
+    if groupby not in df.columns:
+        raise ValueError(
+            f"groupby column '{groupby}' not found in DataFrame. "
+            f"Available columns: {list(df.columns)}"
+        )
+    
+    # Get all unique groups from data
+    all_groups_in_data = df[groupby].dropna().unique().tolist()
+    
+    if not all_groups_in_data:
+        raise ValueError(f"No non-null values found in groupby column '{groupby}'")
+    
+    # Parse 'groups' parameter
+    if groups == "all":
+        positive_groups = all_groups_in_data
+    elif isinstance(groups, str):
+        # Single group specified
+        if groups not in all_groups_in_data:
+            raise ValueError(
+                f"Group '{groups}' not found in data. "
+                f"Available groups: {all_groups_in_data}"
+            )
+        positive_groups = [groups]
+    elif isinstance(groups, list):
+        # List of groups
+        missing = [g for g in groups if g not in all_groups_in_data]
+        if missing:
+            raise ValueError(
+                f"Groups not found in data: {missing}. "
+                f"Available groups: {all_groups_in_data}"
+            )
+        positive_groups = groups
+    else:
+        raise ValueError(
+            f"'groups' must be 'all', a string, or a list of strings. "
+            f"Got: {type(groups)}. "
+            f"Example: groups='CE' or groups=['CE', 'HTA'] or groups='all'"
+        )
+    
+    # Parse 'reference' parameter into list of reference items
+    if reference == "rest":
+        reference_items = ["rest"]
+    elif isinstance(reference, str):
+        # Single reference group
+        if reference not in all_groups_in_data:
+            raise ValueError(
+                f"Reference '{reference}' not found in data. "
+                f"Available groups: {all_groups_in_data}"
+            )
+        reference_items = [reference]
+    elif isinstance(reference, tuple):
+        # Single pooled reference
+        missing = [g for g in reference if g not in all_groups_in_data]
+        if missing:
+            raise ValueError(
+                f"Reference groups not found in data: {missing}. "
+                f"Available groups: {all_groups_in_data}"
+            )
+        reference_items = [reference]
+    elif isinstance(reference, list):
+        # List of references (can be strings or tuples)
+        reference_items = []
+        for item in reference:
+            if isinstance(item, str):
+                if item == "rest":
+                    reference_items.append("rest")
+                elif item not in all_groups_in_data:
+                    raise ValueError(
+                        f"Reference '{item}' not found in data. "
+                        f"Available groups: {all_groups_in_data}"
+                    )
+                else:
+                    reference_items.append(item)
+            elif isinstance(item, tuple):
+                missing = [g for g in item if g not in all_groups_in_data]
+                if missing:
+                    raise ValueError(
+                        f"Reference groups not found in data: {missing}. "
+                        f"Available groups: {all_groups_in_data}"
+                    )
+                reference_items.append(item)
+            else:
+                raise ValueError(
+                    f"Reference list items must be strings or tuples. "
+                    f"Got: {type(item)}. "
+                    f"Example: reference=['WT', ('WT', 'Het')]"
+                )
+    else:
+        raise ValueError(
+            f"'reference' must be 'rest', a string, a tuple, or a list. "
+            f"Got: {type(reference)}. "
+            f"Examples:\n"
+            f"  reference='rest' → compare against all other groups\n"
+            f"  reference='WT' → compare against WT only\n"
+            f"  reference=['WT', 'Het'] → separate comparisons vs WT and vs Het\n"
+            f"  reference=[('WT', 'Het')] → one comparison vs pooled WT+Het"
+        )
+    
+    # Check comparison count
+    n_comparisons = len(positive_groups) * len(reference_items)
+    if n_comparisons > max_comparisons and not allow_many_comparisons:
+        raise ValueError(
+            f"Too many comparisons requested: {n_comparisons} "
+            f"({len(positive_groups)} groups × {len(reference_items)} references). "
+            f"Maximum allowed: {max_comparisons}.\n"
+            f"To proceed anyway, set allow_many_comparisons=True.\n"
+            f"Or reduce comparisons by:\n"
+            f"  - Specifying fewer groups: groups=['CE', 'HTA'] instead of groups='all'\n"
+            f"  - Using fewer references: reference='WT' instead of reference={reference_items}"
+        )
+    
+    # Build ComparisonSpec objects
+    # Get embryo IDs for each group
+    group_to_embryos = {}
+    for group in all_groups_in_data:
+        group_mask = df[groupby] == group
+        group_to_embryos[group] = df.loc[group_mask, embryo_id_col].unique().tolist()
+    
+    specs = []
+    for pos_group in positive_groups:
+        pos_members = group_to_embryos[pos_group]
+        
+        for ref_item in reference_items:
+            if ref_item == "rest":
+                # Reference is all groups except positive
+                neg_members = []
+                for g in all_groups_in_data:
+                    if g != pos_group:
+                        neg_members.extend(group_to_embryos[g])
+                neg_label = "rest"
+                neg_mode = "rest"
+                neg_member_list = list(set(neg_members))  # deduplicate
+                
+            elif isinstance(ref_item, str):
+                # Single reference group
+                neg_label = ref_item
+                neg_member_list = group_to_embryos[ref_item]
+                neg_mode = "single"
+                
+            elif isinstance(ref_item, tuple):
+                # Pooled reference groups
+                neg_members = []
+                for g in ref_item:
+                    neg_members.extend(group_to_embryos[g])
+                neg_label = "+".join(ref_item)  # Preserve user order
+                neg_member_list = list(set(neg_members))  # deduplicate
+                neg_mode = "pooled"
+            else:
+                # Should not reach here due to validation above
+                raise ValueError(f"Unexpected reference item type: {type(ref_item)}")
+            
+            # Create ComparisonSpec
+            spec = ComparisonSpec(
+                positive=pos_group,
+                negative=neg_label,
+                positive_members=pos_members,
+                negative_members=neg_member_list,
+                negative_mode=neg_mode,
+            )
+            specs.append(spec)
+    
+    return specs
 
 
 def run_multiclass_classification_test(
@@ -680,7 +914,239 @@ def extract_temporal_confusion_profile(
     return pd.DataFrame(records)
 
 
+def run_comparison_test(
+    df: pd.DataFrame,
+    groupby: str,
+    groups: Union[str, List[str]] = "all",
+    reference: Union[str, List[Union[str, Tuple[str, ...]]]] = "rest",
+    features: Union[str, List[str]] = 'z_mu_b',
+    time_col: str = 'predicted_stage_hpf',
+    embryo_id_col: str = 'embryo_id',
+    bin_width: float = 4.0,
+    n_splits: int = 5,
+    n_permutations: int = 100,
+    n_jobs: int = 1,
+    min_samples_per_class: int = 3,
+    within_bin_time_stratification: bool = True,
+    within_bin_time_strata_width: float = 0.5,
+    allow_many_comparisons: bool = False,
+    max_comparisons: int = 50,
+    random_state: int = 42,
+    verbose: bool = True,
+) -> MulticlassOVRResults:
+    """
+    Run flexible group comparison tests with Scanpy-style API.
+    
+    This is the new recommended API for multiclass comparisons. It provides
+    flexible control over which groups to compare and what reference(s) to use.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw trajectory data with embryo_id and time columns
+    groupby : str
+        Column name containing group labels (e.g., 'cluster_categories', 'genotype')
+    groups : str or list of str
+        Which groups to test.
+        - "all" (default): Test all unique values in groupby column
+        - ["CE", "HTA"]: Test only these specific groups
+        - "CE": Test single group
+    reference : str or list of str/tuple
+        Reference group(s) for comparison.
+        - "rest" (default): Compare each group against all others combined (classic OvR)
+        - "WT": Compare each group against this single group
+        - ["WT", "Het"]: Compare each group separately against WT AND against Het
+        - [("WT", "Het")]: Compare each group against pooled WT+Het
+        - ["WT", ("WT", "Het")]: Both separate WT comparison and pooled comparison
+    features : str or list of str
+        'z_mu_b' to auto-select VAE biological features, or list of column names
+    time_col : str
+        Time column (default: 'predicted_stage_hpf')
+    embryo_id_col : str
+        Embryo ID column (default: 'embryo_id')
+    bin_width : float
+        Time binning width in hours (default: 4.0)
+    n_splits : int
+        Number of cross-validation folds (default: 5)
+    n_permutations : int
+        Number of permutations for p-value estimation (default: 100)
+    n_jobs : int
+        Number of parallel jobs for permutation testing (default: 1)
+    min_samples_per_class : int
+        Minimum samples per class per time bin (default: 3)
+    within_bin_time_stratification : bool
+        If True, permutation testing shuffles labels within fine time strata
+    within_bin_time_strata_width : float
+        Width (hours) of time strata for stratified permutation (default: 0.5)
+    allow_many_comparisons : bool
+        If True, allow more than max_comparisons (default: False)
+    max_comparisons : int
+        Maximum allowed comparisons before raising error (default: 50)
+    random_state : int
+        Random seed for reproducibility
+    verbose : bool
+        Print progress (default: True)
+    
+    Returns
+    -------
+    MulticlassOVRResults
+        Result container with dict-like access and iteration methods.
+        - results['CE', 'WT'] → DataFrame for CE vs WT comparison
+        - results.iter_comparisons() → iterate over all comparisons
+        - results.comparisons → full long-format DataFrame
+        - results.save(path) → save to disk
+    
+    Examples
+    --------
+    >>> # Classic One-vs-Rest (each class vs all others)
+    >>> results = run_comparison_test(
+    ...     df, groupby='cluster_categories', groups='all', reference='rest'
+    ... )
+    
+    >>> # CE and HTA each compared against WT
+    >>> results = run_comparison_test(
+    ...     df, groupby='cluster', groups=['CE', 'HTA'], reference='WT'
+    ... )
+    
+    >>> # CE against WT and against pooled WT+Het
+    >>> results = run_comparison_test(
+    ...     df, groupby='cluster', groups='CE', 
+    ...     reference=['WT', ('WT', 'Het')]
+    ... )
+    
+    >>> # Access results
+    >>> ce_vs_wt = results['CE', 'WT']
+    >>> for (pos, neg), df in results.iter_comparisons():
+    ...     print(f"{pos} vs {neg}: max AUROC = {df['auroc_obs'].max():.2f}")
+    
+    >>> # Save/load
+    >>> results.save('results/my_analysis/')
+    >>> loaded = MulticlassOVRResults.from_dir('results/my_analysis/')
+    
+    Notes
+    -----
+    This function provides a Scanpy/Seurat-style API for flexible comparisons.
+    For the legacy dict-based API, use `run_multiclass_classification_test()`.
+    """
+    from datetime import datetime
+    import json
+    
+    if verbose:
+        print(f"=== Flexible Group Comparison Test ===")
+        print(f"Groupby column: {groupby}")
+        print(f"Groups: {groups}")
+        print(f"Reference: {reference}")
+    
+    # Resolve comparisons
+    comparison_specs = _resolve_comparison_groups(
+        df=df,
+        groupby=groupby,
+        groups=groups,
+        reference=reference,
+        embryo_id_col=embryo_id_col,
+        allow_many_comparisons=allow_many_comparisons,
+        max_comparisons=max_comparisons,
+    )
+    
+    if verbose:
+        print(f"\n{len(comparison_specs)} comparisons to run:")
+        for spec in comparison_specs:
+            print(f"  {spec.positive} vs {spec.negative}")
+    
+    # Run each comparison using the existing function
+    all_rows = []
+    
+    for spec in comparison_specs:
+        if verbose:
+            print(f"\n--- Running: {spec.positive} vs {spec.negative} ---")
+        
+        # Create groups dict for legacy API
+        groups_dict = {
+            spec.positive: spec.positive_members,
+            spec.negative: spec.negative_members,
+        }
+        
+        # Run comparison
+        result = run_multiclass_classification_test(
+            df=df,
+            groups=groups_dict,
+            features=features,
+            time_col=time_col,
+            embryo_id_col=embryo_id_col,
+            bin_width=bin_width,
+            n_splits=n_splits,
+            n_permutations=n_permutations,
+            n_jobs=n_jobs,
+            min_samples_per_class=min_samples_per_class,
+            within_bin_time_stratification=within_bin_time_stratification,
+            within_bin_time_strata_width=within_bin_time_strata_width,
+            skip_bin_if_not_all_present=True,
+            random_state=random_state,
+            verbose=verbose,
+        )
+        
+        # Extract OvR AUROC for the positive class
+        positive_df = result['ovr_classification'].get(spec.positive)
+        if positive_df is None or positive_df.empty:
+            if verbose:
+                print(f"  Warning: No results for {spec.positive}")
+            continue
+        
+        # Add comparison metadata to each row
+        for _, row in positive_df.iterrows():
+            row_dict = row.to_dict()
+            row_dict['comparison_id'] = spec.comparison_id
+            row_dict['groupby'] = groupby
+            row_dict['positive'] = spec.positive
+            row_dict['negative'] = spec.negative
+            row_dict['negative_members'] = json.dumps(spec.negative_members)
+            row_dict['negative_mode'] = spec.negative_mode
+            # Rename for consistency
+            if 'auroc_observed' in row_dict:
+                row_dict['auroc_obs'] = row_dict.pop('auroc_observed')
+            all_rows.append(row_dict)
+    
+    if not all_rows:
+        raise ValueError("No valid comparisons produced results")
+    
+    # Build comparisons DataFrame
+    comparisons_df = pd.DataFrame(all_rows)
+    
+    # Build metadata
+    metadata = {
+        'groupby': groupby,
+        'groups': groups if isinstance(groups, list) else [groups] if groups != "all" else "all",
+        'reference': reference,
+        'features': features if isinstance(features, list) else [features],
+        'bin_width': bin_width,
+        'n_permutations': n_permutations,
+        'n_splits': n_splits,
+        'n_jobs': n_jobs,
+        'min_samples_per_class': min_samples_per_class,
+        'within_bin_time_stratification': within_bin_time_stratification,
+        'within_bin_time_strata_width': within_bin_time_strata_width,
+        'max_comparisons': max_comparisons,
+        'n_comparisons': len(comparison_specs),
+        'timestamp': datetime.now().isoformat(),
+        'random_state': random_state,
+    }
+    
+    # Create and return results object
+    results = MulticlassOVRResults(
+        comparisons=comparisons_df,
+        metadata=metadata,
+    )
+    
+    if verbose:
+        print(f"\n=== Complete ===")
+        print(f"{len(results)} comparisons")
+        print(f"{len(comparisons_df)} total rows")
+    
+    return results
+
+
 __all__ = [
     "run_multiclass_classification_test",
+    "run_comparison_test",  # New API
     "extract_temporal_confusion_profile",
 ]

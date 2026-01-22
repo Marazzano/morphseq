@@ -1,61 +1,9 @@
-# Testing Results for spline_fitting Module
+# Usage Examples for spline_fitting Module
 
-All tests passed successfully on 2026-01-20.
+This doc focuses on usage patterns and module layout. Refer to the examples below
+to validate end-to-end workflows.
 
-## Tests Run
-
-### 1. Core Functionality Test
-**File**: `test_spline_fitting.py`
-
-Tests:
-- ✅ All imports successful
-- ✅ LocalPrincipalCurve fitting (50 points in 3D)
-- ✅ Bootstrap spline fitting with SE estimates
-- ✅ Quaternion alignment (rotation + translation)
-- ✅ RMSE and segment direction consistency metrics
-
-**Results**: All 6 tests passed
-
-### 2. Group-by Feature Test
-**File**: `test_group_by.py`
-
-Tests:
-- ✅ Multi-phenotype data (wt, mut1, mut2)
-- ✅ spline_fit_wrapper with group_by='phenotype'
-- ✅ Correct output structure (45 rows, 8 columns)
-- ✅ All phenotypes present in output
-- ✅ Correct number of points per phenotype (15 each)
-
-**Results**: All assertions passed
-
-### 3. Import Patterns Test
-**File**: `test_imports.py`
-
-Tests:
-- ✅ Direct imports from main module
-- ✅ Imports from submodules
-- ✅ __all__ exports (20 public functions)
-- ✅ Clean namespace (no pollution)
-- ✅ Module version (0.1.0)
-- ✅ Module docstring present
-
-**Results**: All 6 tests passed
-
-## Key Features Verified
-
-1. **LocalPrincipalCurve**: Core algorithm works correctly
-2. **Bootstrap fitting**: Returns mean + SE for uncertainty quantification
-3. **NEW group_by feature**: Can fit multiple splines by group in single call
-4. **Alignment**: Quaternion-based curve alignment functional
-5. **Metrics**: RMSE, direction consistency working
-6. **API**: Clean imports, no namespace pollution, comprehensive exports
-
-## Performance
-
-- Bootstrap iterations: ~3-6 seconds per iteration (varies by data size)
-- Group-by fitting: Successfully handles 3 phenotypes in ~20 seconds (with 2 bootstrap iterations each)
-
-## Usage Examples Tested
+## Usage Examples
 
 ```python
 # Basic LPC fitting
@@ -68,7 +16,7 @@ curve = lpc.cubic_splines[0]
 from src.analyze.spline_fitting import spline_fit_wrapper
 spline_df = spline_fit_wrapper(df, pca_cols=['PC1', 'PC2', 'PC3'], n_bootstrap=100)
 
-# Multi-group fitting (NEW)
+# Multi-group fitting
 all_splines = spline_fit_wrapper(df, group_by='phenotype', pca_cols=['PC1', 'PC2', 'PC3'])
 
 # Alignment
@@ -81,7 +29,7 @@ error = rmse(curve1, curve2)
 sim, cov = segment_direction_consistency(curve1, curve2, k=10)
 ```
 
-## Module Organization Verified
+## Module Organization
 
 ```
 src/analyze/spline_fitting/
