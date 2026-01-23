@@ -159,16 +159,8 @@ from .viz.styling import (
 # Faceted Plotting (Level 1 - Generic)
 from .viz.plotting import plot_trajectories_faceted, plot_multimetric_trajectories
 
-# Pair Analysis (Level 2 - Pair-specific)
-from .pair_analysis import (
-    plot_pairs_overview,
-    plot_genotypes_by_pair,
-    plot_single_genotype_across_pairs,
-    # Deprecated
-    plot_genotypes_overlaid,
-    plot_all_pairs_overview,
-    plot_homozygous_across_pairs,
-)
+# Pair Analysis functions removed (extracted to generic utils)
+# Use: from src.analyze.utils.data_processing import get_trajectories_for_group
 
 # Quality Control (Outlier Detection + Distance Filtering)
 from .qc import (
@@ -285,13 +277,7 @@ __all__ = [
     'plot_trajectories_faceted',
     'plot_multimetric_trajectories',
 
-    # Pair Analysis (Level 2)
-    'plot_pairs_overview',
-    'plot_genotypes_by_pair',
-    'plot_single_genotype_across_pairs',
-    'plot_genotypes_overlaid',  # Deprecated
-    'plot_all_pairs_overview',  # Deprecated
-    'plot_homozygous_across_pairs',  # Deprecated
+    # Pair Analysis functions removed (see src.analyze.utils.data_processing)
 
     # Outlier Detection
     'identify_outliers',

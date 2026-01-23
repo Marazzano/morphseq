@@ -1,10 +1,8 @@
 """
-3D Plotly plotting utilities for trajectory analysis.
+Generic 3D Plotly plotting utilities.
 
 Provides interactive 3D scatter plots for visualizing embeddings, PCA spaces,
-and trajectory data. Follows the facetted_plotting.py API patterns for consistency.
-
-Level 1: Generic 3D plotting (can be called from any analysis script)
+and trajectory data. Domain-agnostic and reusable across analysis modules.
 """
 
 import numpy as np
@@ -13,13 +11,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from ...config import (
-    PHENOTYPE_COLORS,
-    INDIVIDUAL_TRACE_ALPHA,
-    MEAN_TRACE_LINEWIDTH,
-)
-
-# Standard qualitative color palette (same as facetted_plotting)
+# Standard qualitative color palette
 STANDARD_PALETTE = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
@@ -27,7 +19,7 @@ STANDARD_PALETTE = [
 
 
 # ==============================================================================
-# Color Helpers (follows facetted_plotting pattern)
+# Color Helpers
 # ==============================================================================
 
 def _build_color_lookup(
@@ -90,15 +82,15 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
 def plot_3d_scatter(
     df: pd.DataFrame,
     coords: List[str],
-    # Coloring (follows facetted_plotting pattern)
-    color_by: str = 'phenotype',
+    # Coloring
+    color_by: str = 'group',
     color_palette: Optional[Dict[str, str]] = None,
     color_order: Optional[List[str]] = None,
     color_continuous: bool = False,
     colorscale: str = 'Viridis',
     colorbar_title: Optional[str] = None,
     # Filtering
-    line_by: str = 'embryo_id',
+    line_by: str = 'id',
     min_points_per_line: int = 20,
     filter_groups: Optional[List[str]] = None,
     downsample_frac: Optional[Dict[str, float]] = None,
@@ -120,7 +112,7 @@ def plot_3d_scatter(
     axis_labels: Optional[Dict[str, str]] = None,
 ) -> go.Figure:
     """
-    Unified 3D scatter plot with optional trajectory lines.
+    Generic 3D scatter plot with optional trajectory lines.
 
     Parameters
     ----------
@@ -129,7 +121,7 @@ def plot_3d_scatter(
     coords : list of str
         Exactly 3 column names for x, y, z coordinates
         e.g., ['PCA_1', 'PCA_2', 'PCA_3']
-    color_by : str, default='phenotype'
+    color_by : str, default='group'
         Column to use for coloring points/lines
     color_palette : dict, optional
         Custom color mapping {value: hex_color}. If None, uses STANDARD_PALETTE.
@@ -144,7 +136,7 @@ def plot_3d_scatter(
         Options: 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Jet', etc.
     colorbar_title : str, optional
         Title for the colorbar when using continuous coloring. If None, uses color_by column name.
-    line_by : str, default='embryo_id'
+    line_by : str, default='id'
         Column identifying individual trajectories (for filtering and lines)
     min_points_per_line : int, default=20
         Minimum points required per line_by group to be included
@@ -164,7 +156,7 @@ def plot_3d_scatter(
         Show mean trajectory per color_by group
     mean_line_width : int, default=6
         Width for mean trajectory lines
-    point_opacity : float, default=0.7
+    point_opacity : float, default=0.65
         Opacity for scatter points
     point_size : int, default=4
         Size of scatter points
@@ -185,26 +177,33 @@ def plot_3d_scatter(
     Examples
     --------
     Basic usage (just points):
-        plot_3d_scatter(df, ['PCA_1', 'PCA_2', 'PCA_3'], color_by='phenotype')
+        >>> fig = plot_3d_scatter(df, ['PCA_1', 'PCA_2', 'PCA_3'], color_by='group')
+        >>> fig.show()
 
     With trajectories:
-        plot_3d_scatter(df, ['PCA_1', 'PCA_2', 'PCA_3'],
-                       color_by='phenotype',
-                       show_lines=True,
-                       x_col='predicted_stage_hpf')
+        >>> fig = plot_3d_scatter(
+        ...     df, ['PCA_1', 'PCA_2', 'PCA_3'],
+        ...     color_by='phenotype',
+        ...     show_lines=True,
+        ...     x_col='time'
+        ... )
 
     With mean trajectory per group:
-        plot_3d_scatter(df, ['PCA_1', 'PCA_2', 'PCA_3'],
-                       color_by='phenotype',
-                       show_mean=True,
-                       x_col='predicted_stage_hpf')
+        >>> fig = plot_3d_scatter(
+        ...     df, ['PCA_1', 'PCA_2', 'PCA_3'],
+        ...     color_by='phenotype',
+        ...     show_mean=True,
+        ...     x_col='time'
+        ... )
 
-    Color by continuous stage:
-        plot_3d_scatter(df, ['PCA_1', 'PCA_2', 'PCA_3'],
-                       color_by='predicted_stage_hpf',
-                       color_continuous=True,
-                       colorscale='Viridis',
-                       colorbar_title='Stage (hpf)')
+    Color by continuous variable:
+        >>> fig = plot_3d_scatter(
+        ...     df, ['PCA_1', 'PCA_2', 'PCA_3'],
+        ...     color_by='time',
+        ...     color_continuous=True,
+        ...     colorscale='Viridis',
+        ...     colorbar_title='Time (hpf)'
+        ... )
     """
     # Validate inputs
     if len(coords) != 3:

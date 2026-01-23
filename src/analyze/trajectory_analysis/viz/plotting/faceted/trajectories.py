@@ -11,7 +11,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from ....pair_analysis.data_utils import (
+from src.analyze.utils.data_processing import (
     get_trajectories_for_group,
     get_global_axis_ranges,
 )

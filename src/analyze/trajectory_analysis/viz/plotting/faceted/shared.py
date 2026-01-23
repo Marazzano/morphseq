@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
-from ....pair_analysis.data_utils import (
+from src.analyze.utils.data_processing import (
     get_trajectories_for_group,
     get_global_axis_ranges,
 )
-from ....utilities.trajectory_utils import compute_trend_line
+from src.analyze.utils.stats import compute_trend_line
 from ...styling import get_color_for_genotype
 from ....config import (
     DEFAULT_PLOTLY_HEIGHT,

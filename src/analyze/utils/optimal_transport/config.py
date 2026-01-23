@@ -135,9 +135,10 @@ class UOTResult:
     cost: float
     coupling: Optional[Coupling]
 
-    mass_created_hw: np.ndarray
-    mass_destroyed_hw: np.ndarray
-    velocity_field_yx_hw2: np.ndarray
+    # Primary data: canonical pixel units
+    mass_created_px: np.ndarray         # (Hc, Wc), mass per canonical pixel
+    mass_destroyed_px: np.ndarray       # (Hc, Wc), mass per canonical pixel
+    velocity_px_per_frame_yx: np.ndarray   # (Hc, Wc, 2), canonical pixels/frame
 
     support_src_yx: np.ndarray
     support_tgt_yx: np.ndarray
@@ -146,6 +147,29 @@ class UOTResult:
 
     transform_meta: dict
     diagnostics: Optional[dict] = None
+    pair_frame: Optional[PairFrameGeometry] = None  # Provides px_size_um for unit conversion
+
+    # Helper properties for μm units (no storage, computed on-the-fly)
+    @property
+    def mass_created_um2(self) -> Optional[np.ndarray]:
+        """Mass created in μm² (area covered)."""
+        if self.pair_frame is None:
+            return None
+        return self.mass_created_px * self.pair_frame.px_area_um2
+
+    @property
+    def mass_destroyed_um2(self) -> Optional[np.ndarray]:
+        """Mass destroyed in μm² (area covered)."""
+        if self.pair_frame is None:
+            return None
+        return self.mass_destroyed_px * self.pair_frame.px_area_um2
+
+    @property
+    def velocity_um_per_frame_yx(self) -> Optional[np.ndarray]:
+        """Velocity in μm/frame."""
+        if self.pair_frame is None:
+            return None
+        return self.velocity_px_per_frame_yx * self.pair_frame.px_size_um
 
 
 @dataclass

@@ -11,7 +11,7 @@ Visualization Patterns:
     Create complete scatter + spline figures in one call.
 
 Example - Augmentor pattern:
-    >>> from src.analyze.trajectory_analysis.viz.plotting import plot_3d_scatter
+    >>> from src.analyze.viz.plotting import plot_3d_scatter
     >>> from src.analyze.spline_fitting.viz import add_spline_to_fig
     >>>
     >>> fig = plot_3d_scatter(df, coords=['PC1', 'PC2', 'PC3'], color_by='phenotype')
@@ -222,13 +222,13 @@ def plot_3d_with_spline(
     Notes
     -----
     For more control, use the augmentor pattern instead:
-        >>> from src.analyze.trajectory_analysis.viz.plotting import plot_3d_scatter
+        >>> from src.analyze.viz.plotting import plot_3d_scatter
         >>> fig = plot_3d_scatter(df, coords=coords, color_by=color_by)
         >>> add_spline_to_fig(fig, spline, color='blue')
     """
     # Try to import the plotting module
     try:
-        from src.analyze.trajectory_analysis.viz.plotting import plot_3d_scatter
+        from src.analyze.viz.plotting import plot_3d_scatter
         fig = plot_3d_scatter(df, coords=coords, color_by=color_by, **scatter_kwargs)
     except ImportError:
         # Fallback: create basic scatter ourselves

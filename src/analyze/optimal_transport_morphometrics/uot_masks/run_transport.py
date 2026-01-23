@@ -236,12 +236,19 @@ def run_uot_pair(
         velocity_field = rescale_velocity_to_um(velocity_field, src_transform)
     # Note: If pair_frame is used, velocity is already in μm from rasterization
 
+    # Extract source and target masses from backend diagnostics
+    m_src = backend_result.diagnostics.get("m_src") if backend_result.diagnostics else None
+    m_tgt = backend_result.diagnostics.get("m_tgt") if backend_result.diagnostics else None
+
     metrics = summarize_metrics(
         backend_result.cost,
         backend_result.coupling,
         mass_created_hw,
         mass_destroyed_hw,
         config.metric,
+        m_src=m_src,
+        m_tgt=m_tgt,
+        pair_frame=problem.pair_frame,  # NEW - for um² calculation
     )
 
     diagnostics = {
@@ -252,15 +259,16 @@ def run_uot_pair(
     return UOTResult(
         cost=backend_result.cost,
         coupling=backend_result.coupling,
-        mass_created_hw=mass_created_hw,
-        mass_destroyed_hw=mass_destroyed_hw,
-        velocity_field_yx_hw2=velocity_field,
+        mass_created_px=mass_created_hw,
+        mass_destroyed_px=mass_destroyed_hw,
+        velocity_px_per_frame_yx=velocity_field,
         support_src_yx=problem.src.coords_yx,
         support_tgt_yx=problem.tgt.coords_yx,
         weights_src=problem.src.weights,
         weights_tgt=problem.tgt.weights,
         transform_meta=transform_meta,
         diagnostics=diagnostics,
+        pair_frame=problem.pair_frame,  # NEW: Enables property conversions
     )
 
 

@@ -7,6 +7,8 @@ All default values are defined here for consistency across modules.
 Users can override these in function calls.
 """
 
+from src.analyze.utils.styling import ColorLookup
+
 # ==============================================================================
 # Bootstrap Parameters
 # ==============================================================================
@@ -122,13 +124,21 @@ GENOTYPE_SUFFIX_COLORS = {
     'wildtype': '#2E7D32',      # Green
     'heterozygous': '#FFA500',  # Orange
     'homozygous': '#D32F2F',    # Red
+    'crispant': '#9467bd',      # Purple
     'unknown': '#808080',       # Gray
 }
 """Standard colors for genotype suffixes. Works with any gene prefix."""
 
 # Standard ordering for genotype suffixes
-GENOTYPE_SUFFIX_ORDER = ['wildtype', 'heterozygous', 'homozygous', 'unknown']
+GENOTYPE_SUFFIX_ORDER = ['crispant', 'homozygous', 'heterozygous', 'wildtype', 'unknown']
 """Default order for displaying genotype suffixes."""
+
+# Pre-configured color lookup object for genotype suffixes
+GENOTYPE_COLORS = ColorLookup(
+    suffix_colors=GENOTYPE_SUFFIX_COLORS,
+    suffix_order=GENOTYPE_SUFFIX_ORDER
+)
+"""ColorLookup object that can be passed directly to color_lookup parameters."""
 
 
 # ==============================================================================

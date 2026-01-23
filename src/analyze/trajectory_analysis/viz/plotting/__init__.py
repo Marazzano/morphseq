@@ -4,7 +4,9 @@ Plotting subpackage for trajectory analysis visualization.
 Contains:
 - core: Main plotting functions (cluster trajectories, membership, heatmaps, scatter)
 - faceted: Faceted trajectory plots with grouping
-- plotting_3d: Interactive 3D scatter plots
+
+NOTE: 3D plotting has been moved to src.analyze.viz.plotting.plotting_3d (generic location).
+The import is re-exported here for backward compatibility.
 """
 
 # Core plotting functions
@@ -49,10 +51,8 @@ from .faceted import (
     compute_linear_fit,
 )
 
-# 3D plotting
-from .plotting_3d import (
-    plot_3d_scatter,
-)
+# 3D plotting - re-exported from generic location for backward compatibility
+from src.analyze.viz.plotting import plot_3d_scatter
 
 __all__ = [
     # Core plotting
@@ -88,6 +88,6 @@ __all__ = [
     'validate_error_type',
     'compute_error_band',
     'compute_linear_fit',
-    # 3D plotting
+    # 3D plotting (re-exported from viz.plotting)
     'plot_3d_scatter',
 ]

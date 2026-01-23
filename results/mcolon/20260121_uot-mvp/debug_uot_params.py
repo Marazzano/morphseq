@@ -27,6 +27,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass
 import json
 import argparse
 
@@ -42,7 +43,7 @@ matplotlib.use("Agg")  # Non-interactive backend
 
 from src.analyze.optimal_transport_morphometrics.uot_masks import run_uot_pair
 from src.analyze.utils.optimal_transport import (
-    UOTConfig, UOTFramePair, UOTFrame, MassMode, POTBackend
+    UOTConfig, UOTFramePair, UOTFrame, UOTResult, MassMode, POTBackend
 )
 import ot
 
@@ -64,7 +65,25 @@ COORD_SCALE = 1.0 / max(CANONICAL_GRID_SHAPE)  # Scale based on max dimension
 EPSILON_GRID = [1e-3, 1e-2, 1e-1, 1.0, 10.0]
 REG_M_GRID = [0.1, 1.0, 10.0, 100.0]
 
+# Quick mode parameter grid (reduced for faster testing)
+QUICK_EPSILON_GRID = [1e-2, 1e-1]
+QUICK_REG_M_GRID = [1.0, 10.0]
+
 OUTPUT_DIR = Path("results/mcolon/20260121_uot-mvp/debug_params")
+
+
+@dataclass
+class VisualizationConfig:
+    """Fixed visualization scales for cross-run comparison."""
+    mass_pct_vmin: float = 0.0
+    mass_pct_vmax: float = 10.0  # 0-10% scale for mass changes
+    velocity_vmin: float = 0.0
+    velocity_vmax: float = 50.0  # μm/frame max
+    quiver_scale_by_efficiency: bool = True
+
+
+# Default visualization config
+VIZ_CONFIG = VisualizationConfig()
 
 
 # ==== TEST CASE DEFINITIONS ====
@@ -210,12 +229,11 @@ def compute_velocity_metrics(velocity_field_yx_hw2: np.ndarray) -> Dict[str, flo
 
 
 def compute_mass_metrics(
-    result,
+    result: 'UOTResult',  # Pass full result instead of individual params
     src_mask: np.ndarray,
     tgt_mask: np.ndarray,
-    um_per_px: float
 ) -> Dict[str, float]:
-    """Compute creation/destruction metrics."""
+    """Compute mass metrics using UOTResult properties."""
     metrics = result.diagnostics.get("metrics", {}) if result.diagnostics else {}
     backend = result.diagnostics.get("backend", {}) if result.diagnostics else {}
 
@@ -225,9 +243,17 @@ def compute_mass_metrics(
     destroyed_mass = float(metrics.get("destroyed_mass", np.nan))
     transported_mass = float(metrics.get("transported_mass", np.nan))
 
-    # Compute surface areas
-    created_area_um2 = float(result.mass_created_hw.sum()) * (um_per_px ** 2)
-    destroyed_area_um2 = float(result.mass_destroyed_hw.sum()) * (um_per_px ** 2)
+    # Use UOTResult properties for μm² areas (handles pair_frame internally)
+    created_area_um2 = float("nan")
+    destroyed_area_um2 = float("nan")
+    if result.mass_created_um2 is not None:
+        created_area_um2 = float(result.mass_created_um2.sum())
+        destroyed_area_um2 = float(result.mass_destroyed_um2.sum())
+
+    # Extract percentage metrics (already computed by pipeline)
+    created_mass_pct = float(metrics.get("created_mass_pct", np.nan))
+    destroyed_mass_pct = float(metrics.get("destroyed_mass_pct", np.nan))
+    proportion_transported = float(metrics.get("proportion_transported", np.nan))
 
     return {
         "m_src": m_src,
@@ -235,8 +261,11 @@ def compute_mass_metrics(
         "transported_mass": transported_mass,
         "created_mass": created_mass,
         "destroyed_mass": destroyed_mass,
-        "created_area_um2": created_area_um2,
-        "destroyed_area_um2": destroyed_area_um2,
+        "created_area_um2": created_area_um2,  # From property, not manual calc
+        "destroyed_area_um2": destroyed_area_um2,  # From property, not manual calc
+        "created_mass_pct": created_mass_pct,
+        "destroyed_mass_pct": destroyed_mass_pct,
+        "proportion_transported": proportion_transported,
     }
 
 
@@ -310,34 +339,52 @@ def plot_cost_and_gibbs(
 
 def plot_flow_field(
     src_mask: np.ndarray,
-    velocity_field_yx_hw2: np.ndarray,
+    result: 'UOTResult',  # Pass full result to access properties
+    proportion_transported: float,
     output_path: Path,
     stride: int = 8,
+    viz_config: VisualizationConfig = None,
 ) -> None:
     """Plot velocity field as quiver plot overlaying source mask.
 
     CRITICAL: Data should already be on canonical grid from preprocessing.
     We just display it as-is with proper aspect ratio and coordinate labels.
     NO stretching or remapping - just display on canonical grid coordinates.
+
+    Uses UOTResult properties for unit conversion - no manual calculations.
+    Arrows are scaled by the proportion transported to reflect actual mass movement.
     """
-    velocity_mag = np.sqrt(velocity_field_yx_hw2[..., 0]**2 + velocity_field_yx_hw2[..., 1]**2)
+    if viz_config is None:
+        viz_config = VIZ_CONFIG
+
+    # Use property for μm/frame (fallback to pixels if pair_frame unavailable)
+    velocity_field = (result.velocity_um_per_frame_yx
+                     if result.velocity_um_per_frame_yx is not None
+                     else result.velocity_px_per_frame_yx)
+
+    velocity_mag = np.sqrt(velocity_field[..., 0]**2 + velocity_field[..., 1]**2)
+
+    # Set label based on which units we're using
+    unit_label = "μm/frame" if result.velocity_um_per_frame_yx is not None else "px/frame"
 
     # Use CANONICAL grid dimensions
     canon_h, canon_w = CANONICAL_GRID_SHAPE
-    h_vel, w_vel = velocity_field_yx_hw2.shape[:2]
+    h_vel, w_vel = velocity_field.shape[:2]
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 4))
 
-    # Velocity magnitude - display on canonical grid coords (no stretching via extent)
-    # extent maps the data coordinates to the axis coordinates
+    # Velocity magnitude - display on canonical grid coords with fixed scale
     im0 = axes[0].imshow(velocity_mag, cmap="viridis", aspect='equal',
-                         extent=[0, w_vel, h_vel, 0], interpolation='nearest')
-    axes[0].set_title("Velocity Magnitude (px)")
+                         extent=[0, w_vel, h_vel, 0], interpolation='nearest',
+                         vmin=viz_config.velocity_vmin, vmax=viz_config.velocity_vmax)
+    axes[0].set_title(
+        f"Velocity Magnitude\nProportion Transported: {proportion_transported*100:.2f}%"
+    )
     axes[0].set_xlabel("x (px)")
     axes[0].set_ylabel("y (px)")
     axes[0].set_xlim(0, canon_w)
     axes[0].set_ylim(canon_h, 0)
-    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04, label=unit_label)
 
     # Quiver plot - display on canonical grid coords
     axes[1].imshow(src_mask, cmap="gray", alpha=0.3, aspect='equal',
@@ -346,23 +393,31 @@ def plot_flow_field(
     # Subsample for quiver
     yy_vel, xx_vel = np.meshgrid(np.arange(0, h_vel, stride), np.arange(0, w_vel, stride), indexing='ij')
 
-    u = velocity_field_yx_hw2[::stride, ::stride, 1]  # x component
-    v = velocity_field_yx_hw2[::stride, ::stride, 0]  # y component
+    u = velocity_field[::stride, ::stride, 1]  # x component
+    v = velocity_field[::stride, ::stride, 0]  # y component
 
     # Only show arrows where velocity is non-zero
     mag_sub = velocity_mag[::stride, ::stride]
     mask_sub = mag_sub > 0
+
+    # Scale quiver arrows by transport efficiency
+    quiver_scale = None
+    if viz_config.quiver_scale_by_efficiency:
+        # When efficiency is low (e.g., 1%), arrows become proportionally smaller
+        # Prevent division by zero
+        base_scale = 100.0  # Base scale factor
+        quiver_scale = base_scale / max(proportion_transported, 0.01)
 
     axes[1].quiver(
         xx_vel[mask_sub], yy_vel[mask_sub],
         u[mask_sub], v[mask_sub],
         mag_sub[mask_sub],
         cmap="hot",
-        scale=None,
+        scale=quiver_scale,
         scale_units='xy',
         angles='xy',
     )
-    axes[1].set_title("Velocity Field (arrows show transport direction)")
+    axes[1].set_title("Velocity Field (arrows scaled by efficiency)")
     axes[1].set_xlabel("x (px)")
     axes[1].set_ylabel("y (px)")
     axes[1].set_xlim(0, canon_w)
@@ -376,15 +431,19 @@ def plot_flow_field(
 def plot_creation_destruction_maps(
     mass_created_hw: np.ndarray,
     mass_destroyed_hw: np.ndarray,
-    created_area_um2: float,
-    destroyed_area_um2: float,
+    created_mass_pct: float,
+    destroyed_mass_pct: float,
     output_path: Path,
+    viz_config: VisualizationConfig = None,
 ) -> None:
-    """Plot creation/destruction heatmaps with annotations.
+    """Plot creation/destruction heatmaps with percentage-based annotations and fixed scales.
 
     CRITICAL: Data should already be on canonical grid.
     Display as-is with canonical grid axis limits (no stretching).
     """
+    if viz_config is None:
+        viz_config = VIZ_CONFIG
+
     # Use CANONICAL grid dimensions for axis limits
     canon_h, canon_w = CANONICAL_GRID_SHAPE
     h, w = mass_created_hw.shape
@@ -392,23 +451,26 @@ def plot_creation_destruction_maps(
     fig, axes = plt.subplots(1, 2, figsize=(14, 4))
 
     # Display data as-is, set axis limits to canonical grid
+    # Use fixed vmin/vmax for consistent cross-run comparison
     im0 = axes[0].imshow(mass_created_hw, cmap="Reds", aspect='equal',
-                         extent=[0, w, h, 0], interpolation='nearest')
-    axes[0].set_title(f"Mass Created\nTotal: {created_area_um2:.2f} μm²")
+                         extent=[0, w, h, 0], interpolation='nearest',
+                         vmin=viz_config.mass_pct_vmin, vmax=viz_config.mass_pct_vmax)
+    axes[0].set_title(f"Mass Created\n{created_mass_pct:.2f}% of target")
     axes[0].set_xlabel("x (px)")
     axes[0].set_ylabel("y (px)")
     axes[0].set_xlim(0, canon_w)
     axes[0].set_ylim(canon_h, 0)
-    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+    plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04, label='%')
 
     im1 = axes[1].imshow(mass_destroyed_hw, cmap="Blues", aspect='equal',
-                         extent=[0, w, h, 0], interpolation='nearest')
-    axes[1].set_title(f"Mass Destroyed\nTotal: {destroyed_area_um2:.2f} μm²")
+                         extent=[0, w, h, 0], interpolation='nearest',
+                         vmin=viz_config.mass_pct_vmin, vmax=viz_config.mass_pct_vmax)
+    axes[1].set_title(f"Mass Destroyed\n{destroyed_mass_pct:.2f}% of source")
     axes[1].set_xlabel("x (px)")
     axes[1].set_ylabel("y (px)")
     axes[1].set_xlim(0, canon_w)
     axes[1].set_ylim(canon_h, 0)
-    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+    plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04, label='%')
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
@@ -455,20 +517,23 @@ def plot_parameter_comparison_grid(
     output_dir: Path,
     df: pd.DataFrame,
     test_name: str,
-    metric_to_show: str = "created_mass",
+    metric_to_show: str = "created_mass_pct",
+    quick_mode: bool = False,
 ) -> None:
     """
     Create a comparison grid showing key results for all parameter combinations.
 
     This allows visual inspection of how different parameters perform.
-    Shows velocity magnitude for each combination in a grid layout.
+    Shows normalized metrics for each combination in a grid layout.
     """
     # Sort by epsilon and marginal_relaxation for consistent ordering
     df_sorted = df.sort_values(['epsilon', 'marginal_relaxation'])
 
-    n_combos = len(df_sorted)
-    n_cols = len(REG_M_GRID)
-    n_rows = len(EPSILON_GRID)
+    # Determine grid dimensions based on mode
+    epsilon_grid = QUICK_EPSILON_GRID if quick_mode else EPSILON_GRID
+    reg_m_grid = QUICK_REG_M_GRID if quick_mode else REG_M_GRID
+    n_cols = len(reg_m_grid)
+    n_rows = len(epsilon_grid)
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 3, n_rows * 3))
     if n_rows == 1 and n_cols == 1:
@@ -484,27 +549,32 @@ def plot_parameter_comparison_grid(
         regm = row['marginal_relaxation']
 
         # Find grid position
-        eps_idx = EPSILON_GRID.index(eps)
-        regm_idx = REG_M_GRID.index(regm)
+        eps_idx = epsilon_grid.index(eps)
+        regm_idx = reg_m_grid.index(regm)
 
         ax = axes[eps_idx, regm_idx]
 
-        # Try to load the velocity magnitude image
-        param_dir = output_dir / f"eps_{eps:.0e}_regm_{regm:.0e}"
-        flow_field_path = param_dir / "flow_field.png"
-
-        # Show metric value as text
+        # Show normalized metric values as text
         metric_val = row.get(metric_to_show, np.nan)
         cost_val = row.get('cost', np.nan)
+        proportion_transported = row.get('proportion_transported', np.nan)
         stable = row.get('numerical_stable', False)
 
         status_icon = "✓" if stable else "✗"
         color = "green" if stable else "red"
 
+        # Format metric display based on type
+        if 'pct' in metric_to_show:
+            metric_display = f"{metric_to_show}={metric_val:.2f}%"
+        elif metric_to_show == 'proportion_transported':
+            metric_display = f"proportion={proportion_transported*100:.2f}%"
+        else:
+            metric_display = f"{metric_to_show}={metric_val:.2e}"
+
         ax.text(
             0.5, 0.5,
             f"ε={eps:.0e}\nreg_m={regm:.0e}\n{status_icon}\n"
-            f"cost={cost_val:.2e}\n{metric_to_show}={metric_val:.2e}",
+            f"cost={cost_val:.2e}\n{metric_display}",
             ha='center', va='center', fontsize=8,
             color=color, weight='bold',
             transform=ax.transAxes
@@ -570,13 +640,18 @@ def run_single_param_combo(
         random_seed=42,
         metric="sqeuclidean",
         coord_scale=COORD_SCALE,
-        use_pair_frame=True,  # NEW: Enable pair frame
+        use_pair_frame=True,  # Enable pair frame
+        # NEW: Tell pipeline masks are already on canonical grid
+        use_canonical_grid=True,
+        canonical_grid_um_per_pixel=UM_PER_PX,
+        canonical_grid_shape_hw=CANONICAL_GRID_SHAPE,
+        canonical_grid_align_mode="none",
     )
 
     # Create frame pair
     pair = UOTFramePair(
-        src=UOTFrame(embryo_mask=src_mask, meta={"test": test_name}),
-        tgt=UOTFrame(embryo_mask=tgt_mask, meta={"test": test_name}),
+        src=UOTFrame(embryo_mask=src_mask, meta={"test": test_name, "um_per_pixel": UM_PER_PX}),
+        tgt=UOTFrame(embryo_mask=tgt_mask, meta={"test": test_name, "um_per_pixel": UM_PER_PX}),
     )
 
     # Run UOT
@@ -613,8 +688,8 @@ def run_single_param_combo(
     cost_diag = diagnose_cost_matrix(cost_matrix, epsilon)
     gibbs_diag = diagnose_gibbs_kernel(cost_matrix, epsilon)
     coupling_diag = diagnose_coupling_sparsity(result.coupling) if result.coupling is not None else {}
-    velocity_diag = compute_velocity_metrics(result.velocity_field_yx_hw2)
-    mass_diag = compute_mass_metrics(result, src_mask, tgt_mask, UM_PER_PX)
+    velocity_diag = compute_velocity_metrics(result.velocity_px_per_frame_yx)
+    mass_diag = compute_mass_metrics(result, src_mask, tgt_mask)
 
     # Numerical stability check
     numerical_stable = (
@@ -623,12 +698,18 @@ def run_single_param_combo(
         and gibbs_diag["K_healthy"]
     )
 
+    # Extract percentage metrics
+    created_mass_pct = mass_diag.get("created_mass_pct", float("nan"))
+    destroyed_mass_pct = mass_diag.get("destroyed_mass_pct", float("nan"))
+    proportion_transported = mass_diag.get("proportion_transported", float("nan"))
+
     # Plot diagnostics
     plot_cost_and_gibbs(cost_matrix, epsilon, cost_diag, gibbs_diag, param_dir / "cost_and_gibbs.png")
-    plot_flow_field(src_mask, result.velocity_field_yx_hw2, param_dir / "flow_field.png", stride=6)
+    plot_flow_field(src_mask, result, proportion_transported,
+                    param_dir / "flow_field.png", stride=6)
     plot_creation_destruction_maps(
-        result.mass_created_hw, result.mass_destroyed_hw,
-        mass_diag["created_area_um2"], mass_diag["destroyed_area_um2"],
+        result.mass_created_px, result.mass_destroyed_px,
+        created_mass_pct, destroyed_mass_pct,
         param_dir / "creation_destruction.png"
     )
 
@@ -658,14 +739,23 @@ def run_test_with_grid(
     test_fn,
     test_params: Dict,
     viable_params: Optional[List[Dict]] = None,
+    quick_mode: bool = False,
+    output_base: Path = None,
 ) -> Tuple[pd.DataFrame, List[Dict]]:
     """Run a test across parameter grid and return results + viable params."""
+
+    if output_base is None:
+        output_base = OUTPUT_DIR
 
     print(f"\n{'='*60}")
     print(f"TEST {test_num}: {test_name}")
     print('='*60)
 
-    output_dir = OUTPUT_DIR / f"test{test_num}_{test_name.lower().replace(' ', '_')}"
+    # Add _quick_results suffix if in quick mode
+    test_dir_name = f"test{test_num}_{test_name.lower().replace(' ', '_')}"
+    if quick_mode:
+        test_dir_name += "_quick_results"
+    output_dir = output_base / test_dir_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate test masks
@@ -676,8 +766,12 @@ def run_test_with_grid(
         print(f"Testing {len(viable_params)} viable parameter combinations from previous test...")
         param_combos = [(p['epsilon'], p['marginal_relaxation']) for p in viable_params]
     else:
-        print(f"Testing full parameter grid ({len(EPSILON_GRID)} × {len(REG_M_GRID)} = {len(EPSILON_GRID) * len(REG_M_GRID)} combinations)...")
-        param_combos = [(eps, regm) for eps in EPSILON_GRID for regm in REG_M_GRID]
+        # Select grid based on quick mode
+        epsilon_grid = QUICK_EPSILON_GRID if quick_mode else EPSILON_GRID
+        reg_m_grid = QUICK_REG_M_GRID if quick_mode else REG_M_GRID
+        mode_label = "quick" if quick_mode else "full"
+        print(f"Testing {mode_label} parameter grid ({len(epsilon_grid)} × {len(reg_m_grid)} = {len(epsilon_grid) * len(reg_m_grid)} combinations)...")
+        param_combos = [(eps, regm) for eps in epsilon_grid for regm in reg_m_grid]
 
     # Run all parameter combinations
     all_metrics = []
@@ -704,8 +798,8 @@ def run_test_with_grid(
         # Pass criteria: minimal creation/destruction/velocity
         df_pass = df[
             (df['cost'] < 1e-6) &
-            (df['created_mass'] < 1e-6) &
-            (df['destroyed_mass'] < 1e-6) &
+            (df['created_mass_pct'] < 0.1) &  # Less than 0.1% creation
+            (df['destroyed_mass_pct'] < 0.1) &  # Less than 0.1% destruction
             (df['mean_velocity_px'] < 1e-6) &
             (df['K_healthy'] == True)
         ]
@@ -713,24 +807,24 @@ def run_test_with_grid(
         # Pass criteria: transport happened, no creation/destruction
         df_pass = df[
             (df['cost'] > 0) &
-            (df['created_mass'] < 1e-3) &
-            (df['destroyed_mass'] < 1e-3) &
+            (df['created_mass_pct'] < 1.0) &  # Less than 1% creation
+            (df['destroyed_mass_pct'] < 1.0) &  # Less than 1% destruction
             (df['mean_velocity_px'] > 0) &
             (df['sparsity'] > 0.8)
         ]
     elif test_num == 3:  # Shape change
         # Pass criteria: creation/destruction at expected locations
         df_pass = df[
-            (df['created_mass'] > 0) &
-            (df['destroyed_mass'] > 0) &
+            (df['created_mass_pct'] > 1.0) &  # At least 1% creation
+            (df['destroyed_mass_pct'] > 1.0) &  # At least 1% destruction
             (df['numerical_stable'] == True)
         ]
     else:  # Test 4: Combined
         # Pass criteria: combined behavior
         df_pass = df[
             (df['cost'] > 0) &
-            (df['created_mass'] > 0) &
-            (df['destroyed_mass'] > 0) &
+            (df['created_mass_pct'] > 1.0) &  # At least 1% creation
+            (df['destroyed_mass_pct'] > 1.0) &  # At least 1% destruction
             (df['numerical_stable'] == True)
         ]
 
@@ -770,8 +864,9 @@ def run_test_with_grid(
 
         # Create parameter comparison grid
         print("\nGenerating parameter comparison grid...")
-        metric_to_show = 'created_mass' if test_num in [1, 3, 4] else 'transported_mass'
-        plot_parameter_comparison_grid(output_dir, df, test_name, metric_to_show)
+        # Use percentage-based metrics for display
+        metric_to_show = 'created_mass_pct' if test_num in [1, 3, 4] else 'proportion_transported'
+        plot_parameter_comparison_grid(output_dir, df, test_name, metric_to_show, quick_mode=quick_mode)
 
     return df, viable_next
 
@@ -804,9 +899,16 @@ def main():
         default=10,
         help='Shift for combined test'
     )
+    parser.add_argument(
+        '--quick',
+        action='store_true',
+        help='Use reduced parameter grid (4 combinations instead of 20) for faster testing'
+    )
     args = parser.parse_args()
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Output directory (same base for both modes)
+    output_base = OUTPUT_DIR
+    output_base.mkdir(parents=True, exist_ok=True)
 
     # Track viable parameters across tests
     viable_params = None
@@ -819,7 +921,9 @@ def main():
             df, viable_params = run_test_with_grid(
                 1, "Identity", make_identity_test,
                 {"shape": IMAGE_SHAPE, "radius": args.radius},
-                viable_params=None  # Full grid for first test
+                viable_params=None,  # Full grid for first test
+                quick_mode=args.quick,
+                output_base=output_base
             )
             all_results['test1'] = df
 
@@ -832,7 +936,9 @@ def main():
             df, viable_params = run_test_with_grid(
                 2, "Non-overlapping Circles", make_nonoverlap_test,
                 {"shape": IMAGE_SHAPE, "radius": args.radius, "separation": args.separation},
-                viable_params=viable_params
+                viable_params=viable_params,
+                quick_mode=args.quick,
+                output_base=output_base
             )
             all_results['test2'] = df
 
@@ -845,7 +951,9 @@ def main():
             df, viable_params = run_test_with_grid(
                 3, "Shape Change", make_shape_change_test,
                 {"shape": IMAGE_SHAPE, "radius": args.radius},
-                viable_params=viable_params
+                viable_params=viable_params,
+                quick_mode=args.quick,
+                output_base=output_base
             )
             all_results['test3'] = df
 
@@ -858,7 +966,9 @@ def main():
             df, viable_params = run_test_with_grid(
                 4, "Combined", make_combined_test,
                 {"shape": IMAGE_SHAPE, "radius": args.radius, "shift": args.shift},
-                viable_params=viable_params
+                viable_params=viable_params,
+                quick_mode=args.quick,
+                output_base=output_base
             )
             all_results['test4'] = df
 
@@ -875,17 +985,17 @@ def main():
             print(f"  ... and {len(viable_params) - 10} more")
 
         # Save recommendations
-        with open(OUTPUT_DIR / "recommended_params.json", 'w') as f:
+        with open(output_base / "recommended_params.json", 'w') as f:
             json.dump(viable_params, f, indent=2)
 
-        print(f"\nRecommendations saved to {OUTPUT_DIR / 'recommended_params.json'}")
+        print(f"\nRecommendations saved to {output_base / 'recommended_params.json'}")
     else:
         print("\nWARNING: No parameter combinations passed all tests!")
 
     print(f"\n{'='*60}")
     print("DIAGNOSTICS COMPLETE")
     print('='*60)
-    print(f"Results saved to: {OUTPUT_DIR}")
+    print(f"Results saved to: {output_base}")
 
 
 if __name__ == "__main__":
