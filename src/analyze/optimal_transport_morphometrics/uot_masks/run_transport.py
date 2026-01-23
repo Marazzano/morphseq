@@ -18,6 +18,7 @@ from src.analyze.utils.optimal_transport import (
     downsample_density,
     build_support,
     compute_transport_maps,
+    compute_cost_maps,
     summarize_metrics,
     POTBackend,
     UOTBackend,
@@ -158,6 +159,9 @@ def run_uot_pair(
         raise ValueError("UOTFramePair must contain embryo masks.")
 
     # Choose preprocessing mode
+    full_mask_src = None
+    full_mask_tgt = None
+
     if config.use_canonical_grid:
         # Canonical grid mode: transform to standardized physical grid
         canonical_config = CanonicalGridConfig(
@@ -173,6 +177,8 @@ def run_uot_pair(
             config,
             canonical_config,
         )
+        full_mask_src = src_canonical
+        full_mask_tgt = tgt_canonical
 
         # Build problem from canonical grids
         problem, transform_meta = build_problem(
@@ -191,6 +197,8 @@ def run_uot_pair(
             px_size_um=7.8  # Default for legacy mode
         )
         transform_meta["canonical_grid"] = False
+        full_mask_src = pair.src.embryo_mask
+        full_mask_tgt = pair.tgt.embryo_mask
 
     # Solve transport problem
     backend_result = backend.solve(problem.src, problem.tgt, config)
@@ -204,6 +212,20 @@ def run_uot_pair(
         problem.work_shape_hw,
         pair_frame=problem.pair_frame,  # NEW
     )
+
+    cost_src_support = backend_result.cost_per_src
+    cost_tgt_support = backend_result.cost_per_tgt
+    cost_src_px = None
+    cost_tgt_px = None
+    if cost_src_support is not None and cost_tgt_support is not None:
+        cost_src_px, cost_tgt_px = compute_cost_maps(
+            cost_src_support,
+            cost_tgt_support,
+            problem.src.coords_yx,
+            problem.tgt.coords_yx,
+            problem.work_shape_hw,
+            pair_frame=problem.pair_frame,
+        )
 
     # P0 CORRECTNESS: If pair-frame used, verify padded regions are truly empty
     if problem.pair_frame is not None:
@@ -249,7 +271,39 @@ def run_uot_pair(
         m_src=m_src,
         m_tgt=m_tgt,
         pair_frame=problem.pair_frame,  # NEW - for um² calculation
+        coord_scale=float(config.coord_scale),
     )
+
+    def _mask_area(mask: np.ndarray) -> float:
+        return float((np.asarray(mask) > 0).sum())
+
+    if full_mask_src is not None and full_mask_tgt is not None:
+        m_src_full = _mask_area(full_mask_src)
+        m_tgt_full = _mask_area(full_mask_tgt)
+
+        if problem.pair_frame is not None:
+            bbox = problem.pair_frame.pair_crop_box_yx
+            m_src_crop = _mask_area(full_mask_src[bbox.y0:bbox.y1, bbox.x0:bbox.x1])
+            m_tgt_crop = _mask_area(full_mask_tgt[bbox.y0:bbox.y1, bbox.x0:bbox.x1])
+        else:
+            m_src_crop = m_src_full
+            m_tgt_crop = m_tgt_full
+
+        mass_delta_crop = m_tgt_crop - m_src_crop
+        mass_delta_full = m_tgt_full - m_src_full
+        mass_ratio_crop = float("nan") if m_src_crop <= 0 else (m_tgt_crop / m_src_crop)
+        mass_ratio_full = float("nan") if m_src_full <= 0 else (m_tgt_full / m_src_full)
+
+        metrics.update({
+            "m_src_crop": m_src_crop,
+            "m_tgt_crop": m_tgt_crop,
+            "m_src_full": m_src_full,
+            "m_tgt_full": m_tgt_full,
+            "mass_delta_crop": mass_delta_crop,
+            "mass_delta_full": mass_delta_full,
+            "mass_ratio_crop": mass_ratio_crop,
+            "mass_ratio_full": mass_ratio_full,
+        })
 
     diagnostics = {
         "metrics": metrics,
@@ -267,6 +321,10 @@ def run_uot_pair(
         weights_src=problem.src.weights,
         weights_tgt=problem.tgt.weights,
         transform_meta=transform_meta,
+        cost_src_support=cost_src_support,
+        cost_tgt_support=cost_tgt_support,
+        cost_src_px=cost_src_px,
+        cost_tgt_px=cost_tgt_px,
         diagnostics=diagnostics,
         pair_frame=problem.pair_frame,  # NEW: Enables property conversions
     )

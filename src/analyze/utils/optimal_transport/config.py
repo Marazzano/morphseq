@@ -146,6 +146,10 @@ class UOTResult:
     weights_tgt: np.ndarray
 
     transform_meta: dict
+    cost_src_support: Optional[np.ndarray] = None  # per src support point
+    cost_tgt_support: Optional[np.ndarray] = None  # per tgt support point
+    cost_src_px: Optional[np.ndarray] = None       # rasterized to canonical/work grid
+    cost_tgt_px: Optional[np.ndarray] = None       # rasterized to canonical/work grid
     diagnostics: Optional[dict] = None
     pair_frame: Optional[PairFrameGeometry] = None  # Provides px_size_um for unit conversion
 

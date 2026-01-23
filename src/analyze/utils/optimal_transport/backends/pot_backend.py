@@ -46,7 +46,10 @@ class POTBackend(UOTBackend):
 
         coupling = np.asarray(coupling, dtype=np.float64)
         coupling_rescaled = coupling * m_src
-        cost_value = float((coupling * cost).sum() * m_src)
+        weighted_cost = coupling * cost
+        cost_value = float(weighted_cost.sum() * m_src)
+        cost_per_src = (weighted_cost.sum(axis=1) * m_src).astype(np.float64)
+        cost_per_tgt = (weighted_cost.sum(axis=0) * m_src).astype(np.float64)
 
         diagnostics: Dict = {
             "m_src": m_src,
@@ -57,4 +60,10 @@ class POTBackend(UOTBackend):
             "log": log,
         }
 
-        return BackendResult(coupling=coupling_rescaled if config.store_coupling else None, cost=cost_value, diagnostics=diagnostics)
+        return BackendResult(
+            coupling=coupling_rescaled if config.store_coupling else None,
+            cost=cost_value,
+            diagnostics=diagnostics,
+            cost_per_src=cost_per_src,
+            cost_per_tgt=cost_per_tgt,
+        )

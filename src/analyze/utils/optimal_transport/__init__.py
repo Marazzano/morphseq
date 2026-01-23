@@ -25,8 +25,8 @@ from src.analyze.utils.optimal_transport.multiscale_sampling import (
     downsample_density,
     build_support,
 )
-from src.analyze.utils.optimal_transport.transport_maps import compute_transport_maps
-from src.analyze.utils.optimal_transport.metrics import summarize_metrics
+from src.analyze.utils.optimal_transport.transport_maps import compute_transport_maps, compute_cost_maps
+from src.analyze.utils.optimal_transport.metrics import summarize_metrics, compute_transport_metrics
 
 __all__ = [
     # Config and data structures
@@ -55,6 +55,8 @@ __all__ = [
     "build_support",
     # Transport maps
     "compute_transport_maps",
+    "compute_cost_maps",
     # Metrics
     "summarize_metrics",
+    "compute_transport_metrics",
 ]

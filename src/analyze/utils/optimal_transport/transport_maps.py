@@ -159,6 +159,40 @@ def rasterize_velocity_to_canonical(
     return canonical
 
 
+def rasterize_scalar_to_canonical(
+    scalar_work: np.ndarray,
+    pair_frame: "PairFrameGeometry",
+) -> np.ndarray:
+    """
+    Rasterize a scalar work-space map to canonical grid without conservation.
+
+    This mirrors velocity rasterization: values are expanded via kron,
+    padding is masked, and the real crop is pasted into canonical.
+    """
+    canon_h, canon_w = pair_frame.canon_shape_hw
+    canonical = np.zeros((canon_h, canon_w), dtype=np.float32)
+
+    s = pair_frame.downsample_factor
+    bbox = pair_frame.pair_crop_box_yx
+
+    crop_h, crop_w = bbox.h, bbox.w
+    pad_h, pad_w = pair_frame.crop_pad_hw
+    padded_h, padded_w = crop_h + pad_h, crop_w + pad_w
+
+    valid = np.ones((padded_h, padded_w), dtype=np.float32)
+    if pad_h > 0:
+        valid[crop_h:, :] = 0.0
+    if pad_w > 0:
+        valid[:, crop_w:] = 0.0
+
+    expanded = np.kron(scalar_work, np.ones((s, s), dtype=np.float32))
+    expanded *= valid
+
+    canonical[bbox.y0:bbox.y0+crop_h, bbox.x0:bbox.x0+crop_w] += expanded[:crop_h, :crop_w]
+
+    return canonical
+
+
 def compute_transport_maps(
     coupling: Coupling,
     support_src_yx: np.ndarray,
@@ -218,3 +252,36 @@ def compute_transport_maps(
         )
 
     return mass_created_hw, mass_destroyed_hw, velocity_field
+
+
+def compute_cost_maps(
+    cost_per_src: np.ndarray,
+    cost_per_tgt: np.ndarray,
+    support_src_yx: np.ndarray,
+    support_tgt_yx: np.ndarray,
+    work_shape_hw: Tuple[int, int],
+    pair_frame: "PairFrameGeometry" = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Rasterize per-support transport cost to work or canonical grids.
+
+    Cost is attributed per support point:
+      - src: sum_j (P_ij * C_ij)
+      - tgt: sum_i (P_ij * C_ij)
+    """
+    cost_src_hw = np.zeros(work_shape_hw, dtype=np.float32)
+    cost_tgt_hw = np.zeros(work_shape_hw, dtype=np.float32)
+
+    src_y = support_src_yx[:, 0].astype(int)
+    src_x = support_src_yx[:, 1].astype(int)
+    tgt_y = support_tgt_yx[:, 0].astype(int)
+    tgt_x = support_tgt_yx[:, 1].astype(int)
+
+    cost_src_hw[src_y, src_x] = cost_per_src.astype(np.float32)
+    cost_tgt_hw[tgt_y, tgt_x] = cost_per_tgt.astype(np.float32)
+
+    if pair_frame is not None:
+        cost_src_hw = rasterize_scalar_to_canonical(cost_src_hw, pair_frame)
+        cost_tgt_hw = rasterize_scalar_to_canonical(cost_tgt_hw, pair_frame)
+
+    return cost_src_hw, cost_tgt_hw
