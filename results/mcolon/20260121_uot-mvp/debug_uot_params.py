@@ -43,6 +43,14 @@ import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend
 
 from src.analyze.optimal_transport_morphometrics.uot_masks import run_uot_pair
+from src.analyze.optimal_transport_morphometrics.uot_masks.frame_mask_io import (
+    load_mask_pair_from_csv,
+    load_mask_from_csv,
+)
+# preprocess_pair_canonical: transforms real embryo masks to canonical grid for plotting
+# (synthetic tests skip this since masks are already on canonical grid)
+from src.analyze.optimal_transport_morphometrics.uot_masks.preprocess import preprocess_pair_canonical
+from src.analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalGridConfig
 from src.analyze.utils.optimal_transport import (
     UOTConfig, UOTFramePair, UOTFrame, UOTResult, MassMode, POTBackend
 )
@@ -54,7 +62,7 @@ import ot
 # NOTE: With pair_frame enabled, these are now properly tracked through the pipeline
 # rather than hard-coded in every function
 CANONICAL_GRID_SHAPE = (256, 576)  # Height x Width in pixels
-CANONICAL_UM_PER_PX = 7.8  # Micrometers per pixel
+CANONICAL_UM_PER_PX = 10.0  # Micrometers per pixel
 # Physical dimensions: 1996.8 μm (2.0 mm) × 4492.8 μm (4.5 mm)
 
 # All test masks should be created on canonical grid
@@ -73,6 +81,15 @@ QUICK_REG_M_GRID = [1.0, 10.0]
 # Use absolute path based on script location
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "debug_params"
+
+# Optional real-embryo defaults (from DEBUG_PARAMS_README / cross-embryo comparison)
+DEFAULT_REAL_DATA_CSV = Path(
+    "results/mcolon/20251229_cep290_phenotype_extraction/final_data/embryo_data_with_labels.csv"
+)
+DEFAULT_EMBRYO_A = "20251113_A05_e01"
+DEFAULT_EMBRYO_B = "20251113_E04_e01"
+DEFAULT_TARGET_STAGE_HPF = 48.0
+DEFAULT_STAGE_TOLERANCE_HPF = 1.0
 
 
 @dataclass
@@ -298,20 +315,43 @@ def plot_input_masks_with_metrics(
     output_path: Path,
     title: str,
 ) -> None:
-    """Plot input masks with annotated metrics."""
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    """Plot input masks with annotated metrics.
+    
+    Uses explicit extent to ensure coordinate consistency with OT outputs.
+    Both masks should be on canonical grid (256×576).
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Use canonical grid dimensions for extent
+    canon_h, canon_w = CANONICAL_GRID_SHAPE
+    h_src, w_src = src_mask.shape
+    h_tgt, w_tgt = tgt_mask.shape
 
-    axes[0].imshow(src_mask, cmap="gray")
+    # Source mask
+    axes[0].imshow(src_mask, cmap="gray", aspect='equal',
+                   extent=[0, w_src, h_src, 0], interpolation='nearest')
     axes[0].set_title(
-        f"Source\nArea: {src_metrics['area_um2']:.1f} μm²\nPerimeter: {src_metrics['perimeter_um']:.1f} μm"
+        f"Source (shape: {src_mask.shape})\n"
+        f"Area: {src_metrics['area_um2']:.1f} μm²\n"
+        f"Perimeter: {src_metrics['perimeter_um']:.1f} μm"
     )
-    axes[0].axis("off")
+    axes[0].set_xlabel("x (px)")
+    axes[0].set_ylabel("y (px)")
+    axes[0].set_xlim(0, canon_w)
+    axes[0].set_ylim(canon_h, 0)
 
-    axes[1].imshow(tgt_mask, cmap="gray")
+    # Target mask  
+    axes[1].imshow(tgt_mask, cmap="gray", aspect='equal',
+                   extent=[0, w_tgt, h_tgt, 0], interpolation='nearest')
     axes[1].set_title(
-        f"Target\nArea: {tgt_metrics['area_um2']:.1f} μm²\nPerimeter: {tgt_metrics['perimeter_um']:.1f} μm"
+        f"Target (shape: {tgt_mask.shape})\n"
+        f"Area: {tgt_metrics['area_um2']:.1f} μm²\n"
+        f"Perimeter: {tgt_metrics['perimeter_um']:.1f} μm"
     )
-    axes[1].axis("off")
+    axes[1].set_xlabel("x (px)")
+    axes[1].set_ylabel("y (px)")
+    axes[1].set_xlim(0, canon_w)
+    axes[1].set_ylim(canon_h, 0)
 
     fig.suptitle(title, fontsize=12, fontweight="bold")
     fig.tight_layout()
@@ -904,6 +944,7 @@ def run_single_param_combo(
     marginal_relaxation: float,
     output_dir: Path,
     test_name: str,
+    pair_override: Optional[UOTFramePair] = None,
 ) -> Dict:
     """Run UOT with a single parameter combination and collect all metrics."""
 
@@ -911,18 +952,11 @@ def run_single_param_combo(
     param_dir = output_dir / f"eps_{epsilon:.0e}_regm_{marginal_relaxation:.0e}"
     param_dir.mkdir(parents=True, exist_ok=True)
 
-    # Compute surface metrics for input masks
-    src_metrics = compute_surface_metrics(src_mask, UM_PER_PX)
-    tgt_metrics = compute_surface_metrics(tgt_mask, UM_PER_PX)
-
-    # Plot input masks
-    plot_input_masks_with_metrics(
-        src_mask, tgt_mask, src_metrics, tgt_metrics,
-        param_dir / "input_masks.png",
-        f"{test_name} | ε={epsilon:.0e}, reg_m={marginal_relaxation:.0e}"
-    )
-
     # Create UOT config
+    canonical_align_mode = "none"
+    if pair_override is not None:
+        # Real embryo masks: enable canonical alignment (yolk-based if available)
+        canonical_align_mode = "yolk"
     config = UOTConfig(
         epsilon=epsilon,
         marginal_relaxation=marginal_relaxation,
@@ -941,13 +975,64 @@ def run_single_param_combo(
         use_canonical_grid=True,
         canonical_grid_um_per_pixel=UM_PER_PX,
         canonical_grid_shape_hw=CANONICAL_GRID_SHAPE,
-        canonical_grid_align_mode="none",
+        canonical_grid_align_mode=canonical_align_mode,
+        canonical_grid_center_mode="joint_centering",
     )
 
     # Create frame pair
-    pair = UOTFramePair(
-        src=UOTFrame(embryo_mask=src_mask, meta={"test": test_name, "um_per_pixel": UM_PER_PX}),
-        tgt=UOTFrame(embryo_mask=tgt_mask, meta={"test": test_name, "um_per_pixel": UM_PER_PX}),
+    if pair_override is not None:
+        pair = pair_override
+    else:
+        pair = UOTFramePair(
+            src=UOTFrame(embryo_mask=src_mask, meta={"test": test_name, "um_per_pixel": UM_PER_PX}),
+            tgt=UOTFrame(embryo_mask=tgt_mask, meta={"test": test_name, "um_per_pixel": UM_PER_PX}),
+        )
+
+    # =========================================================================
+    # COORDINATE ALIGNMENT FOR PLOTTING
+    # =========================================================================
+    # OT outputs (velocity, mass creation/destruction) are always on CANONICAL grid.
+    # For plotting to be consistent, input masks must be on the same grid.
+    #
+    # Two cases:
+    # 1. SYNTHETIC tests: masks are created directly on canonical grid (256×576 @ 7.8 μm/px)
+    #    → Use directly, no transformation needed
+    #
+    # 2. REAL embryo data (pair_override): masks come from CSV at native resolution
+    #    (e.g., 1200×2400 @ ~1.5 μm/px) → Must transform to canonical grid to match OT outputs
+    #
+    # preprocess_pair_canonical() applies:
+    #   1. Scale from native resolution to 7.8 μm/px
+    #   2. Rotate (yolk-based or PCA orientation)
+    #   3. Crop/pad to 256×576 centered on joint centroid
+    # =========================================================================
+    
+    if pair_override is not None:
+        # REAL DATA: transform to canonical grid for plot consistency
+        canonical_config = CanonicalGridConfig(
+            reference_um_per_pixel=config.canonical_grid_um_per_pixel,
+            grid_shape_hw=config.canonical_grid_shape_hw,
+            align_mode=config.canonical_grid_align_mode,
+            downsample_factor=1,
+        )
+        plot_src_mask, plot_tgt_mask, preprocess_meta = preprocess_pair_canonical(
+            pair.src, pair.tgt, config, canonical_config
+        )
+        print(f"    Preprocessed to canonical grid: {plot_src_mask.shape}")
+    else:
+        # SYNTHETIC: already on canonical grid
+        plot_src_mask = src_mask
+        plot_tgt_mask = tgt_mask
+
+    # Compute surface metrics for input masks (in canonical units)
+    src_metrics = compute_surface_metrics(plot_src_mask, UM_PER_PX)
+    tgt_metrics = compute_surface_metrics(plot_tgt_mask, UM_PER_PX)
+
+    # Plot input masks (canonical grid if enabled)
+    plot_input_masks_with_metrics(
+        plot_src_mask, plot_tgt_mask, src_metrics, tgt_metrics,
+        param_dir / "input_masks.png",
+        f"{test_name} | ε={epsilon:.0e}, reg_m={marginal_relaxation:.0e}"
     )
 
     # Run UOT with timing
@@ -1009,10 +1094,10 @@ def run_single_param_combo(
 
     # Plot diagnostics
     plot_cost_and_gibbs(cost_matrix, epsilon, cost_diag, gibbs_diag, param_dir / "cost_and_gibbs.png")
-    plot_transport_cost_field(src_mask, result, param_dir / "transport_cost_field.png")
-    plot_flow_field(src_mask, result, proportion_transported,
+    plot_transport_cost_field(plot_src_mask, result, param_dir / "transport_cost_field.png")
+    plot_flow_field(plot_src_mask, result, proportion_transported,
                     param_dir / "flow_field.png")  # Uses viz_config default stride
-    plot_flow_field_quiver(src_mask, result, param_dir / "flow_field_quiver.png", stride=6)
+    plot_flow_field_quiver(plot_src_mask, result, param_dir / "flow_field_quiver.png", stride=6)
     plot_creation_destruction_maps(
         result.mass_created_px, result.mass_destroyed_px,
         created_mass_pct, destroyed_mass_pct,
@@ -1048,6 +1133,7 @@ def run_test_with_grid(
     viable_params: Optional[List[Dict]] = None,
     quick_mode: bool = False,
     output_base: Path = None,
+    pair_override: Optional[UOTFramePair] = None,
 ) -> Tuple[pd.DataFrame, List[Dict]]:
     """Run a test across parameter grid and return results + viable params."""
 
@@ -1084,7 +1170,9 @@ def run_test_with_grid(
     all_metrics = []
     for eps, regm in param_combos:
         print(f"  Running ε={eps:.0e}, reg_m={regm:.0e}...", end=" ")
-        metrics = run_single_param_combo(src_mask, tgt_mask, eps, regm, output_dir, test_name)
+        metrics = run_single_param_combo(
+            src_mask, tgt_mask, eps, regm, output_dir, test_name, pair_override=pair_override
+        )
         all_metrics.append(metrics)
 
         # Quick feedback
@@ -1101,7 +1189,11 @@ def run_test_with_grid(
     # Apply pass criteria based on test type
     viable_next = []
 
-    if test_num == 1:  # Identity test
+    if test_num == 0:  # Real embryo data
+        df_pass = df[
+            (df['numerical_stable'] == True)
+        ]
+    elif test_num == 1:  # Identity test
         # Pass criteria: minimal creation/destruction/velocity
         df_pass = df[
             (df['cost'] < 1e-6) &
@@ -1192,6 +1284,30 @@ def run_test_with_grid(
     return df, viable_next
 
 
+def find_frame_at_stage(
+    csv_path: Path,
+    embryo_id: str,
+    target_hpf: float,
+    tolerance_hpf: float,
+) -> Tuple[Optional[int], Optional[float]]:
+    """Find frame closest to target developmental stage."""
+    df = pd.read_csv(
+        csv_path,
+        usecols=["embryo_id", "frame_index", "predicted_stage_hpf"],
+    )
+    subset = df[
+        (df["embryo_id"] == embryo_id) &
+        (df["predicted_stage_hpf"] >= target_hpf - tolerance_hpf) &
+        (df["predicted_stage_hpf"] <= target_hpf + tolerance_hpf)
+    ]
+    if subset.empty:
+        return None, None
+    subset = subset.copy()
+    subset["dist"] = (subset["predicted_stage_hpf"] - target_hpf).abs()
+    closest = subset.loc[subset["dist"].idxmin()]
+    return int(closest["frame_index"]), float(closest["predicted_stage_hpf"])
+
+
 # ==== MAIN WORKFLOW ====
 
 def main():
@@ -1225,6 +1341,59 @@ def main():
         action='store_true',
         help='Use reduced parameter grid (4 combinations instead of 20) for faster testing'
     )
+    parser.add_argument(
+        '--cross-embryo',
+        action='store_true',
+        help='Use cross-embryo comparison defaults (A05 vs E04 near 48 hpf)'
+    )
+    parser.add_argument(
+        '--csv',
+        type=Path,
+        default=None,
+        help='CSV path for real embryo masks (mask export CSV)'
+    )
+    parser.add_argument(
+        '--embryo-id',
+        type=str,
+        default=None,
+        help='Embryo ID in CSV (required if --csv is provided)'
+    )
+    parser.add_argument(
+        '--frame-src',
+        type=int,
+        default=None,
+        help='Source frame_index in CSV (required if --csv is provided)'
+    )
+    parser.add_argument(
+        '--frame-tgt',
+        type=int,
+        default=None,
+        help='Target frame_index in CSV (required if --csv is provided)'
+    )
+    parser.add_argument(
+        '--embryo-a',
+        type=str,
+        default=DEFAULT_EMBRYO_A,
+        help=f'Cross-embryo A (default: {DEFAULT_EMBRYO_A})'
+    )
+    parser.add_argument(
+        '--embryo-b',
+        type=str,
+        default=DEFAULT_EMBRYO_B,
+        help=f'Cross-embryo B (default: {DEFAULT_EMBRYO_B})'
+    )
+    parser.add_argument(
+        '--target-hpf',
+        type=float,
+        default=DEFAULT_TARGET_STAGE_HPF,
+        help=f'Target stage (hpf) for cross-embryo selection (default: {DEFAULT_TARGET_STAGE_HPF})'
+    )
+    parser.add_argument(
+        '--stage-tol',
+        type=float,
+        default=DEFAULT_STAGE_TOLERANCE_HPF,
+        help=f'Stage tolerance (hpf) for cross-embryo selection (default: {DEFAULT_STAGE_TOLERANCE_HPF})'
+    )
     args = parser.parse_args()
 
     # Output directory (same base for both modes)
@@ -1235,7 +1404,73 @@ def main():
     viable_params = None
     all_results = {}
 
-    tests_to_run = ['1', '2', '3', '4'] if args.test == 'all' else [args.test]
+    if args.cross_embryo:
+        csv_path = args.csv if args.csv is not None else DEFAULT_REAL_DATA_CSV
+        frame_a, stage_a = find_frame_at_stage(
+            csv_path, args.embryo_a, args.target_hpf, args.stage_tol
+        )
+        frame_b, stage_b = find_frame_at_stage(
+            csv_path, args.embryo_b, args.target_hpf, args.stage_tol
+        )
+        if frame_a is None or frame_b is None:
+            raise ValueError(
+                f"Could not find frames near {args.target_hpf} hpf "
+                f"for {args.embryo_a} or {args.embryo_b} in {csv_path}"
+            )
+        src_frame = load_mask_from_csv(csv_path, args.embryo_a, frame_a)
+        tgt_frame = load_mask_from_csv(csv_path, args.embryo_b, frame_b)
+        pair = UOTFramePair(
+            src=src_frame,
+            tgt=tgt_frame,
+            pair_meta={
+                "comparison_type": "cross_embryo",
+                "embryo_a": args.embryo_a,
+                "embryo_b": args.embryo_b,
+                "frame_a": frame_a,
+                "frame_b": frame_b,
+                "stage_a_hpf": stage_a,
+                "stage_b_hpf": stage_b,
+            },
+        )
+
+        def _make_real_test() -> Tuple[np.ndarray, np.ndarray]:
+            return pair.src.embryo_mask, pair.tgt.embryo_mask
+
+        test_name = (
+            f"Cross Embryo {args.embryo_a} f{frame_a} "
+            f"vs {args.embryo_b} f{frame_b} (~{args.target_hpf:.1f} hpf)"
+        )
+        df, viable_params = run_test_with_grid(
+            0, test_name, _make_real_test,
+            {},
+            viable_params=None,
+            quick_mode=args.quick,
+            output_base=output_base,
+            pair_override=pair,
+        )
+        all_results['cross_embryo'] = df
+        tests_to_run = []
+    elif args.csv is not None:
+        if args.embryo_id is None or args.frame_src is None or args.frame_tgt is None:
+            raise ValueError("When using --csv, you must provide --embryo-id, --frame-src, and --frame-tgt.")
+        pair = load_mask_pair_from_csv(args.csv, args.embryo_id, args.frame_src, args.frame_tgt)
+
+        def _make_real_test() -> Tuple[np.ndarray, np.ndarray]:
+            return pair.src.embryo_mask, pair.tgt.embryo_mask
+
+        test_name = f"Real Embryo {args.embryo_id} f{args.frame_src}_f{args.frame_tgt}"
+        df, viable_params = run_test_with_grid(
+            0, test_name, _make_real_test,
+            {},
+            viable_params=None,
+            quick_mode=args.quick,
+            output_base=output_base,
+            pair_override=pair,
+        )
+        all_results['real'] = df
+        tests_to_run = []
+    else:
+        tests_to_run = ['1', '2', '3', '4'] if args.test == 'all' else [args.test]
 
     for test_id in tests_to_run:
         if test_id == '1':

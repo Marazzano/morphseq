@@ -15,6 +15,8 @@ from .uot_grid import (
     GridTransform,
     compute_grid_transform,
     apply_grid_transform,
+    _rotate_and_scale_mask,
+    CanonicalAligner,
 )
 
 
@@ -153,36 +155,71 @@ def preprocess_pair_canonical(
     src_yolk = src_frame.meta.get("yolk_mask", None)
     tgt_yolk = tgt_frame.meta.get("yolk_mask", None)
 
-    # 4. Compute shared transform based on union of masks
-    # This ensures spatial relationships are preserved
-    union_mask = (src_qc > 0) | (tgt_qc > 0)
-    union_yolk = None
-    if src_yolk is not None or tgt_yolk is not None:
-        yolk_a = src_yolk if src_yolk is not None else np.zeros_like(src_qc)
-        yolk_b = tgt_yolk if tgt_yolk is not None else np.zeros_like(tgt_qc)
-        union_yolk = (yolk_a > 0) | (yolk_b > 0)
-
-    shared_transform = compute_grid_transform(
-        mask=union_mask.astype(np.uint8),
-        source_um_per_pixel=src_um_per_pixel,
-        yolk_mask=union_yolk,
-        config=canonical_config,
+    # 4. Canonical alignment (independent per frame)
+    canonical_config = CanonicalGridConfig(
+        reference_um_per_pixel=canonical_config.reference_um_per_pixel,
+        grid_shape_hw=canonical_config.grid_shape_hw,
+        align_mode=canonical_config.align_mode,
+        downsample_factor=canonical_config.downsample_factor,
+        allow_flip=config.canonical_grid_allow_flip,
+        anchor_mode=config.canonical_grid_anchor_mode,
+        anchor_frac_yx=config.canonical_grid_anchor_frac_yx,
+        clipping_threshold=config.canonical_grid_clipping_threshold,
+        error_on_clip=config.canonical_grid_error_on_clip,
     )
 
-    # 5. Apply shared transform to both masks
-    src_canonical = apply_grid_transform(src_qc, shared_transform)
-    tgt_canonical = apply_grid_transform(tgt_qc, shared_transform)
+    aligner = CanonicalAligner.from_config(canonical_config)
+    use_pca = canonical_config.align_mode != "none"
+    use_yolk = canonical_config.align_mode == "yolk"
 
-    # 6. Build metadata
+    src_canonical, src_yolk_aligned, src_align_meta = aligner.align(
+        src_qc,
+        src_yolk,
+        original_um_per_px=src_um_per_pixel,
+        use_pca=use_pca,
+        use_yolk=use_yolk,
+    )
+    tgt_canonical, tgt_yolk_aligned, tgt_align_meta = aligner.align(
+        tgt_qc,
+        tgt_yolk,
+        original_um_per_px=tgt_um_per_pixel,
+        use_pca=use_pca,
+        use_yolk=use_yolk,
+    )
+
+    src_transform = GridTransform(
+        source_um_per_pixel=src_um_per_pixel,
+        target_um_per_pixel=canonical_config.reference_um_per_pixel,
+        scale_factor=src_um_per_pixel / canonical_config.reference_um_per_pixel,
+        rotation_rad=np.deg2rad(src_align_meta.get("rotation_deg", 0.0)),
+        offset_yx_px=(0, 0),
+        grid_shape_hw=canonical_config.grid_shape_hw,
+        downsample_factor=canonical_config.downsample_factor,
+        effective_um_per_pixel=canonical_config.reference_um_per_pixel * canonical_config.downsample_factor,
+    )
+    tgt_transform = GridTransform(
+        source_um_per_pixel=tgt_um_per_pixel,
+        target_um_per_pixel=canonical_config.reference_um_per_pixel,
+        scale_factor=tgt_um_per_pixel / canonical_config.reference_um_per_pixel,
+        rotation_rad=np.deg2rad(tgt_align_meta.get("rotation_deg", 0.0)),
+        offset_yx_px=(0, 0),
+        grid_shape_hw=canonical_config.grid_shape_hw,
+        downsample_factor=canonical_config.downsample_factor,
+        effective_um_per_pixel=canonical_config.reference_um_per_pixel * canonical_config.downsample_factor,
+    )
+
+    # 5. Build metadata
     meta = {
         "orig_shape_src": tuple(mask_src.shape),
         "orig_shape_tgt": tuple(mask_tgt.shape),
         "qc_stats_src": src_stats,
         "qc_stats_tgt": tgt_stats,
-        "src_transform": shared_transform,  # Same transform for both
-        "tgt_transform": shared_transform,  # Same transform for both
+        "src_transform": src_transform,
+        "tgt_transform": tgt_transform,
         "canonical_shape_hw": canonical_config.grid_shape_hw,
         "canonical_um_per_pixel": canonical_config.reference_um_per_pixel,
+        "canonical_alignment_src": src_align_meta,
+        "canonical_alignment_tgt": tgt_align_meta,
     }
 
     return src_canonical, tgt_canonical, meta

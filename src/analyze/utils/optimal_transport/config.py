@@ -198,9 +198,15 @@ class UOTConfig:
 
     # Canonical grid settings
     use_canonical_grid: bool = False
-    canonical_grid_um_per_pixel: float = 7.8
+    canonical_grid_um_per_pixel: float = 10.0
     canonical_grid_shape_hw: tuple[int, int] = (256, 576)
     canonical_grid_align_mode: str = "yolk"  # "yolk" | "centroid" | "none"
+    canonical_grid_center_mode: str = "align_centroids"  # "align_centroids" | "joint_centering" | "off"
+    canonical_grid_allow_flip: bool = True
+    canonical_grid_anchor_mode: str = "yolk_anchor"  # "yolk_anchor" | "com_center"
+    canonical_grid_anchor_frac_yx: tuple[float, float] = (0.50, 0.50)
+    canonical_grid_clipping_threshold: float = 0.98
+    canonical_grid_error_on_clip: bool = False
 
     # Pair-frame architecture
     use_pair_frame: bool = False  # Enable pair-frame coordinate tracking
