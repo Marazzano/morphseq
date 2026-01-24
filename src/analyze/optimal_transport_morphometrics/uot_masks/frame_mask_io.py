@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import os
 
 from segmentation_sandbox.scripts.utils.mask_utils import decode_mask_rle
 from src.data_pipeline.segmentation.grounded_sam2.mask_export import (
@@ -18,6 +19,10 @@ from src.analyze.utils.optimal_transport import UOTFrame, UOTFramePair
 
 
 DEFAULT_USECOLS = [
+    "experiment_date",
+    "experiment_id",
+    "well",
+    "time_int",
     "embryo_id",
     "frame_index",
     "mask_rle",
@@ -49,6 +54,64 @@ def load_mask_from_rle_counts(rle_counts: str, height_px: int, width_px: int) ->
     return mask.astype(np.uint8)
 
 
+def _extract_time_stub(row: pd.Series) -> Optional[str]:
+    """Extract time stub as 4-digit string from row metadata."""
+    for key in ("time_int", "frame_index"):
+        if key in row and pd.notnull(row[key]):
+            try:
+                return f"{int(row[key]):04d}"
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _load_build02_aux_mask(
+    data_root: Path,
+    row: pd.Series,
+    mask_shape: Tuple[int, int],
+    keyword: str = "yolk",
+) -> Optional[np.ndarray]:
+    """Load Build02 auxiliary mask (e.g., yolk) by row metadata."""
+    import skimage.io as io
+    from skimage.transform import resize
+
+    seg_root = data_root / "segmentation"
+    if not seg_root.exists():
+        return None
+
+    date = str(row.get("experiment_date", ""))
+    well = row.get("well", None)
+    time_stub = _extract_time_stub(row)
+    if not date or well is None or time_stub is None:
+        return None
+
+    stub = f"{well}_t{time_stub}"
+
+    for p in seg_root.iterdir():
+        if p.is_dir() and keyword in p.name:
+            date_dir = p / date
+            if not date_dir.exists():
+                continue
+            candidates = sorted(date_dir.glob(f"*{stub}*"))
+            if not candidates:
+                continue
+            arr_raw = io.imread(candidates[0])
+            if arr_raw.max() >= 255:
+                arr = (arr_raw > 127).astype(np.uint8)
+            else:
+                arr = (arr_raw > 0).astype(np.uint8)
+            if arr.shape != mask_shape:
+                arr = resize(
+                    arr.astype(float),
+                    mask_shape,
+                    order=0,
+                    preserve_range=True,
+                    anti_aliasing=False,
+                ).astype(np.uint8)
+            return arr
+    return None
+
+
 def _compute_um_per_pixel(row: pd.Series) -> float:
     """Compute um_per_pixel from CSV metadata."""
     if "Height (um)" in row and "Height (px)" in row:
@@ -71,6 +134,7 @@ def load_mask_from_csv(
     embryo_id: str,
     frame_index: int,
     usecols: Optional[List[str]] = None,
+    data_root: Optional[Path] = None,
 ) -> UOTFrame:
     if usecols is None:
         usecols = DEFAULT_USECOLS
@@ -84,6 +148,14 @@ def load_mask_from_csv(
     # Add um_per_pixel to metadata
     meta = row.to_dict()
     meta["um_per_pixel"] = _compute_um_per_pixel(row)
+    if data_root is None:
+        env_root = os.environ.get("MORPHSEQ_DATA_ROOT")
+        if env_root:
+            data_root = Path(env_root)
+    if data_root is not None:
+        yolk_mask = _load_build02_aux_mask(data_root, row, mask.shape, keyword="yolk")
+        if yolk_mask is not None:
+            meta["yolk_mask"] = yolk_mask
 
     return UOTFrame(embryo_mask=mask, meta=meta)
 
@@ -94,6 +166,7 @@ def load_mask_pair_from_csv(
     frame_index_src: int,
     frame_index_tgt: int,
     usecols: Optional[List[str]] = None,
+    data_root: Optional[Path] = None,
 ) -> UOTFramePair:
     if usecols is None:
         usecols = DEFAULT_USECOLS
@@ -112,6 +185,11 @@ def load_mask_pair_from_csv(
     tgt_meta = tgt_row.to_dict()
     tgt_meta["um_per_pixel"] = _compute_um_per_pixel(tgt_row)
 
+    if data_root is None:
+        env_root = os.environ.get("MORPHSEQ_DATA_ROOT")
+        if env_root:
+            data_root = Path(env_root)
+
     src = UOTFrame(
         embryo_mask=load_mask_from_rle_counts(
             src_row["mask_rle"], src_row["mask_height_px"], src_row["mask_width_px"]
@@ -124,6 +202,13 @@ def load_mask_pair_from_csv(
         ),
         meta=tgt_meta,
     )
+    if data_root is not None:
+        src_yolk = _load_build02_aux_mask(data_root, src_row, src.embryo_mask.shape, keyword="yolk")
+        if src_yolk is not None:
+            src.meta["yolk_mask"] = src_yolk
+        tgt_yolk = _load_build02_aux_mask(data_root, tgt_row, tgt.embryo_mask.shape, keyword="yolk")
+        if tgt_yolk is not None:
+            tgt.meta["yolk_mask"] = tgt_yolk
     return UOTFramePair(src=src, tgt=tgt, pair_meta={"csv_path": str(csv_path)})
 
 

@@ -2,19 +2,38 @@
 
 **Document Purpose**: Define the precise semantics of data flowing through the Unbalanced Optimal Transport (UOT) pipeline. This prevents silent bugs where similar-looking data means different things.
 
-**Last Updated**: January 22, 2026  
+**Last Updated**: January 24, 2026  
 **Criticality**: ESSENTIAL - Violations of these contracts cause morphological misinterpretation
 
 ---
 
 ## Table of Contents
 
-1. [Core Concept: src_support Sampling](#core-concept-src_support-sampling)
-2. [Mass Metrics Contract](#mass-metrics-contract)
-3. [Velocity Field Contract](#velocity-field-contract)
-4. [Grid Hierarchy Contract](#grid-hierarchy-contract)
-5. [Visualization Contract](#visualization-contract)
-6. [Data Flow Diagram](#data-flow-diagram)
+1. [Overview: Goals and Scope](#overview-goals-and-scope)
+2. [Core Concept: src_support Sampling](#core-concept-src_support-sampling)
+3. [Mass Metrics Contract](#mass-metrics-contract)
+4. [Velocity Field Contract](#velocity-field-contract)
+5. [Canonical Alignment Contract](#canonical-alignment-contract)
+6. [Yolk Mask Contract](#yolk-mask-contract)
+7. [Grid Hierarchy Contract](#grid-hierarchy-contract)
+8. [Visualization Contract](#visualization-contract)
+9. [Directory Overview](#directory-overview)
+10. [Project Status / Next Steps](#project-status--next-steps)
+11. [Data Flow Diagram](#data-flow-diagram)
+
+---
+
+## Overview: Goals and Scope
+
+**Primary goal**: produce biologically meaningful OT maps by standardizing each embryo mask into a **canonical grid** with consistent orientation, scale, and anchoring **before** transport is computed. This ensures transport costs reflect **morphological dynamics**, not camera framing or rigid translation.
+
+**In scope**:
+- Canonical alignment contract (PCA, flip search, yolk anchoring)
+- Sampling/metrics contracts for UOT outputs
+- Visualization contract to avoid fabricated data
+
+**Out of scope (next steps)**:
+- Visualization extraction, dynamics clustering, GPU acceleration (see below)
 
 ---
 
@@ -38,6 +57,7 @@ Canonical Results
 
 **Key Numbers**:
 - Canonical grid: 256 × 576 = 147,456 pixels
+- Canonical target resolution: 10.0 μm/px (configurable via `canonical_grid_um_per_pixel`)
 - Source support points (src_support): ~5000 (via `max_support_points` parameter)
 - Target support points (tgt_support): ~5000 (via `max_support_points` parameter)
 - Coverage: 5000 / 147,456 ≈ 3.4% (but src and tgt have different spatial locations!)
@@ -170,6 +190,64 @@ Use `mean_nonzero_velocity_px` for biological interpretation!
 
 ---
 
+## Canonical Alignment Contract
+
+**Contract**: Every frame is independently canonicalized into a **biological reference frame** before UOT. This is not pairwise alignment; it is alignment to a shared stereotype.
+
+**Coordinate system**: **Image coordinates** (origin top-left, +y down). All alignment logic uses this convention.
+
+### Alignment Steps (CanonicalAligner)
+
+1. **Scale**  
+   `scale = source_um_per_px / target_um_per_px`  
+   Canonical target is **10.0 μm/px** unless overridden by config.
+
+2. **PCA Long-Axis Alignment**  
+   Rotate so major axis matches grid long axis (x for landscape, y for portrait).  
+   PCA rotation is forced when `use_pca=True`.
+
+3. **Flip Search (Chirality)**  
+   Evaluate candidate transforms (0/180 degrees + optional horizontal flip).  
+   Score favors:
+   - **Head/yolk near origin** (minimize x+y)
+   - **Back far from origin** (maximize x+y)
+
+4. **Yolk Anchoring**  
+   If yolk exists and `anchor_mode=yolk_anchor`, translate so yolk COM lands at anchor.  
+   Default anchor = center `(0.5, 0.5)` of grid (configurable).
+
+5. **Clipping Handling**  
+   If mask exceeds grid, **warn by default** (configurable to error).
+
+### Back (Dorsal) Definition
+
+The “back” is computed from a **yolk-centered ring** (donut) to avoid tail bias:
+- Inner radius = `1.2 × yolk_radius`
+- Outer radius = `3.0 × yolk_radius`
+- Fallback to far-quantile if ring is sparse
+
+This focuses alignment on the dorsal region near the yolk rather than distal tail mass.
+
+---
+
+## Yolk Mask Contract
+
+**Source**: Build02 predictions under:
+
+```
+<data_root>/segmentation/yolk_v1_0050_predictions/{experiment_date}/
+```
+
+**Loading**:
+- `load_mask_from_csv(..., data_root=...)` loads embryo mask + yolk mask (if present)
+- If `data_root` not passed, environment variable `MORPHSEQ_DATA_ROOT` is used
+- Yolk mask is attached to `UOTFrame.meta["yolk_mask"]`
+
+**Missing yolk**:
+If yolk is missing or empty, alignment falls back to embryo COM and/or back-quantile.
+
+---
+
 ## Transport Cost Attribution Contract
 
 ### Definition
@@ -213,11 +291,13 @@ and should **not** recompute cost from `P` and `C` inside the plotting layer.
 ```
 ┌─────────────────────────────────────────┐
 │  Canonical Grid                         │
-│  (256 × 576 px, 7.8 μm/px)             │
-│  Physical size: 2.0 mm × 4.5 mm        │
+│  (256 × 576 px, 10.0 μm/px)            │
+│  Physical size: 2.56 mm × 5.76 mm      │
 │  Used for: input/output, visualization │
 └──────────────┬──────────────────────────┘
                │
+               ├─ Canonical alignment (PCA + flip + yolk anchor)
+               │  (independent per frame)
                ├─ Pair crop (bbox)
                │  (variable size, cropped region)
                │
@@ -250,6 +330,9 @@ and should **not** recompute cost from `P` and `C` inside the plotting layer.
 ## Visualization Contract
 
 **Principle**: Never fabricate data. Show what was sampled, clearly labeled.
+
+**Axis convention**: Plotting defaults to **image coordinates** (y down).  
+If a Cartesian view is desired, only the display transforms change (never the data).
 
 ### The Three Panels (Enforced in flow_field.png)
 
@@ -347,11 +430,17 @@ Shows: Arrows only at sampled points (no interpolation between support)
 ```
                         INPUT
                           │
-                  ┌───────┴───────┐
-                  ▼               ▼
-            Source Mask    Target Mask
-            (canonical)    (canonical)
-                  │               │
+                  ┌───────┴────────┐
+                  ▼                ▼
+            Raw Src Mask     Raw Tgt Mask
+            (+ optional yolk) (+ optional yolk)
+                  │                │
+                  ├── Canonical alignment (PCA + flip + yolk anchor)
+                  │   (independent per frame)
+                  ▼                ▼
+            Source Mask     Target Mask
+            (canonical)     (canonical)
+                  │                │
                   ├─ Pair crop box (via pair_frame)
                   │
                   ▼
@@ -410,6 +499,45 @@ Destroyed   Field   projection T)
          ├─ destroyed_mass_pct (support-only metric)
          └─ support_mask (for visualization)
 ```
+
+---
+
+## Directory Overview
+
+**Scope**: UOT morphometrics lives under `src/analyze/optimal_transport_morphometrics/`.
+
+```
+src/analyze/optimal_transport_morphometrics/
+├─ docs/
+│  └─ DATA_CONTRACTS.md          # this file (ground truth semantics)
+└─ uot_masks/
+   ├─ frame_mask_io.py           # load masks/yolk from CSV + data_root
+   ├─ uot_grid.py                # CanonicalAligner (PCA, flip, anchor)
+   ├─ preprocess.py              # canonicalize + crop + rasterize
+   ├─ run_transport.py           # main UOT execution path
+   ├─ run_timeseries.py          # time series driver
+   ├─ viz.py                     # plotting helpers
+   ├─ benchmark_resolution.py    # resolution experiments
+   └─ calibrate_marginal_relaxation.py
+```
+
+**Related**:
+- `src/analyze/utils/optimal_transport/config.py` — canonical grid config (10.0 μm/px default)
+- `results/mcolon/20260121_uot-mvp/` — debug scripts and outputs used for UOT MVP
+
+---
+
+## Project Status / Next Steps
+
+**Current status (Jan 24, 2026)**:
+- Canonical alignment is working with PCA + flip search + yolk anchoring.
+- Yolk masks can be loaded from Build02 predictions (`MORPHSEQ_DATA_ROOT`).
+- Debug overlays (masks + quiver + cost) are in place for rapid inspection.
+
+**Next steps** (planned):
+1. Extract standardized visualizations (batch exports for QA and review).
+2. Cluster dynamics across embryos/timepoints using UOT-derived features.
+3. GPU acceleration for UOT (speedup from current CPU-bound runs).
 
 ---
 

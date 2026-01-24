@@ -30,9 +30,15 @@ DEFAULT_CSV = Path(
 )
 
 
-def save_mask(mask: np.ndarray, path: Path, title: str) -> None:
+def save_mask(mask: np.ndarray, path: Path, title: str, display_mode: str = "image") -> None:
     fig, ax = plt.subplots(1, 1, figsize=(6, 4))
-    ax.imshow(mask, cmap="gray")
+    h, w = mask.shape[:2]
+    if display_mode == "cartesian":
+        ax.imshow(mask, cmap="gray", origin="lower", extent=[0, w, 0, h])
+        ax.set_ylim(0, h)
+    else:
+        ax.imshow(mask, cmap="gray", origin="upper", extent=[0, w, h, 0])
+        ax.set_ylim(h, 0)
     ax.set_title(title)
     ax.set_xlabel("x (px)")
     ax.set_ylabel("y (px)")
@@ -50,8 +56,10 @@ def run_one(
     target_shape_hw: tuple[int, int],
     target_um_per_px: float,
     allow_flip: bool,
+    data_root: Path | None = None,
+    display_mode: str = "image",
 ) -> None:
-    frame = load_mask_from_csv(csv_path, embryo_id, frame_index)
+    frame = load_mask_from_csv(csv_path, embryo_id, frame_index, data_root=data_root)
     mask = frame.embryo_mask
     yolk = frame.meta.get("yolk_mask", None)
     um_per_px = frame.meta.get("um_per_pixel", np.nan)
@@ -73,18 +81,18 @@ def run_one(
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    save_mask(mask, out_dir / "raw_mask.png", f"{embryo_id} f{frame_index} (raw)")
+    save_mask(mask, out_dir / "raw_mask.png", f"{embryo_id} f{frame_index} (raw)", display_mode)
     if yolk is not None:
-        save_mask(yolk, out_dir / "raw_yolk.png", f"{embryo_id} f{frame_index} (raw yolk)")
+        save_mask(yolk, out_dir / "raw_yolk.png", f"{embryo_id} f{frame_index} (raw yolk)", display_mode)
 
     debug = meta.get("debug", {})
     pre_shift = debug.get("aligned_mask_pre_shift", None)
     if pre_shift is not None:
-        save_mask(pre_shift, out_dir / "aligned_pre_shift.png", "Aligned (pre-shift)")
-    save_mask(aligned_mask, out_dir / "aligned_final.png", "Aligned (final)")
+        save_mask(pre_shift, out_dir / "aligned_pre_shift.png", "Aligned (pre-shift)", display_mode)
+    save_mask(aligned_mask, out_dir / "aligned_final.png", "Aligned (final)", display_mode)
 
     if aligned_yolk is not None:
-        save_mask(aligned_yolk, out_dir / "aligned_yolk.png", "Aligned yolk")
+        save_mask(aligned_yolk, out_dir / "aligned_yolk.png", "Aligned yolk", display_mode)
 
     meta_out = meta.copy()
     meta_out.pop("debug", None)
@@ -98,10 +106,12 @@ def main() -> None:
     parser.add_argument("--embryo-id", type=str, required=True)
     parser.add_argument("--frame", type=int, required=True)
     parser.add_argument("--outdir", type=Path, default=Path("results/mcolon/20260121_uot-mvp/debug_alignment"))
+    parser.add_argument("--data-root", type=Path, default=None)
     parser.add_argument("--height", type=int, default=256)
     parser.add_argument("--width", type=int, default=576)
     parser.add_argument("--um-per-px", type=float, default=10.0)
     parser.add_argument("--no-flip", action="store_true")
+    parser.add_argument("--display-mode", choices=["image", "cartesian"], default="image")
     args = parser.parse_args()
 
     run_one(
@@ -112,6 +122,8 @@ def main() -> None:
         (args.height, args.width),
         args.um_per_px,
         allow_flip=not args.no_flip,
+        data_root=args.data_root,
+        display_mode=args.display_mode,
     )
 
 

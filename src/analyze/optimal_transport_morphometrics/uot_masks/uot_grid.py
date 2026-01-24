@@ -81,6 +81,9 @@ class CanonicalAligner:
         back_quantile: float = 0.9,
         head_weight: float = 1.0,
         back_weight: float = 1.0,
+        yolk_ring_inner_k: float = 1.2,
+        yolk_ring_outer_k: float = 3.0,
+        yolk_ring_min_pixels: int = 200,
     ) -> None:
         self.H, self.W = target_shape_hw
         self.target_res = target_um_per_pixel
@@ -92,6 +95,9 @@ class CanonicalAligner:
         self.back_quantile = back_quantile
         self.head_weight = head_weight
         self.back_weight = back_weight
+        self.yolk_ring_inner_k = yolk_ring_inner_k
+        self.yolk_ring_outer_k = yolk_ring_outer_k
+        self.yolk_ring_min_pixels = yolk_ring_min_pixels
 
         self.is_landscape = self.W >= self.H
 
@@ -136,7 +142,32 @@ class CanonicalAligner:
     def _warp(self, mask: np.ndarray, M: np.ndarray) -> np.ndarray:
         return cv2.warpAffine(mask.astype(np.float32), M, (self.W, self.H), flags=cv2.INTER_NEAREST)
 
-    def _compute_back_com(self, mask: np.ndarray, head_yx: tuple[float, float]) -> tuple[float, float]:
+    def _compute_back_com(
+        self,
+        mask: np.ndarray,
+        head_yx: tuple[float, float],
+        yolk_mask: Optional[np.ndarray] = None,
+    ) -> tuple[float, float]:
+        # Prefer a yolk-centered ring to avoid distal tail dominating orientation.
+        if yolk_mask is not None and np.sum(yolk_mask) > 0:
+            cy, cx = self._center_of_mass(yolk_mask)
+            area = float(yolk_mask.sum())
+            radius = np.sqrt(max(area, 1.0) / np.pi)
+            r_in = self.yolk_ring_inner_k * radius
+            r_out = self.yolk_ring_outer_k * radius
+
+            ys, xs = np.nonzero(mask > 0.5)
+            if ys.size > 0:
+                dy = ys - cy
+                dx = xs - cx
+                dist = np.sqrt(dx * dx + dy * dy)
+                ring = (dist >= r_in) & (dist <= r_out)
+                if ring.sum() >= self.yolk_ring_min_pixels:
+                    ring_coords = np.column_stack([ys[ring], xs[ring]])
+                    back_y = float(ring_coords[:, 0].mean())
+                    back_x = float(ring_coords[:, 1].mean())
+                    return back_y, back_x
+
         coords = np.column_stack(np.nonzero(mask > 0.5))
         if coords.size == 0:
             return head_yx
@@ -184,6 +215,8 @@ class CanonicalAligner:
         rotation_needed = angle_deg - target_angle
 
         candidates = []
+        best_head_yx = None
+        best_back_yx = None
         rot_options = [0, 180]
         flip_options = [False, True] if self.allow_flip else [False]
 
@@ -202,7 +235,7 @@ class CanonicalAligner:
 
                 head_mask = yolk_w if (use_yolk and yolk_w is not None and yolk_w.sum() > 0) else mask_w
                 head_yx = self._center_of_mass(head_mask)
-                back_yx = self._compute_back_com(mask_w, head_yx)
+                back_yx = self._compute_back_com(mask_w, head_yx, yolk_mask=yolk_w if use_yolk else None)
 
                 if reference_mask is not None:
                     intersection = np.logical_and(mask_w > 0.5, reference_mask > 0.5).sum()
@@ -213,9 +246,11 @@ class CanonicalAligner:
                     back_score = back_yx[1] + back_yx[0]
                     score = (self.back_weight * back_score) - (self.head_weight * head_cost)
 
-                candidates.append((score, rot_add, do_flip))
+                candidates.append((score, rot_add, do_flip, head_yx, back_yx))
 
-        best_score, best_rot, best_flip = max(candidates, key=lambda x: x[0])
+        best_score, best_rot, best_flip, best_head_yx, best_back_yx = max(
+            candidates, key=lambda x: x[0]
+        )
         final_rotation = rotation_needed + best_rot
 
         M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
@@ -267,6 +302,15 @@ class CanonicalAligner:
         if aligned_yolk is not None:
             aligned_yolk = self._warp(aligned_yolk, M_shift)
 
+        # Final head/back positions (post shift)
+        final_head_mask = aligned_yolk if (use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0) else aligned_mask
+        final_head_yx = self._center_of_mass(final_head_mask)
+        final_back_yx = self._compute_back_com(
+            aligned_mask,
+            final_head_yx,
+            yolk_mask=aligned_yolk if use_yolk else None,
+        )
+
         expected_area = float(mask.sum()) * (scale ** 2)
         final_area = float(aligned_mask.sum())
         retained_ratio = final_area / max(expected_area, 1e-6)
@@ -292,6 +336,14 @@ class CanonicalAligner:
             "anchor_shift_xy": (float(shift_x), float(shift_y)),
             "anchor_shift_clamped": bool(clamped),
             "fit_impossible": bool(fit_impossible),
+            "head_yx_pre_shift": (
+                (float(best_head_yx[0]), float(best_head_yx[1])) if best_head_yx is not None else None
+            ),
+            "back_yx_pre_shift": (
+                (float(best_back_yx[0]), float(best_back_yx[1])) if best_back_yx is not None else None
+            ),
+            "head_yx_final": (float(final_head_yx[0]), float(final_head_yx[1])),
+            "back_yx_final": (float(final_back_yx[0]), float(final_back_yx[1])),
             "retained_ratio": float(retained_ratio),
             "clipped": bool(clipped),
         }

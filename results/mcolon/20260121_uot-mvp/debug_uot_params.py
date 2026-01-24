@@ -31,6 +31,7 @@ from dataclasses import dataclass
 import json
 import argparse
 import time
+import os
 
 # Add morphseq root to path
 morphseq_root = Path(__file__).resolve().parents[3]
@@ -41,6 +42,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend
+from matplotlib.patches import Patch
 
 from src.analyze.optimal_transport_morphometrics.uot_masks import run_uot_pair
 from src.analyze.optimal_transport_morphometrics.uot_masks.frame_mask_io import (
@@ -82,6 +84,32 @@ QUICK_REG_M_GRID = [1.0, 10.0]
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "debug_params"
 
+# Display mode for plots: "image" (y down) or "cartesian" (y up)
+DISPLAY_MODE = os.environ.get("MORPHSEQ_DISPLAY_MODE", "image").lower()
+
+
+def _plot_extent(hw: Tuple[int, int]) -> Tuple[list, str]:
+    """Return extent and origin for current display mode."""
+    h, w = hw
+    if DISPLAY_MODE == "cartesian":
+        return [0, w, 0, h], "lower"
+    return [0, w, h, 0], "upper"
+
+
+def _set_axes_limits(ax, hw: Tuple[int, int]) -> None:
+    h, w = hw
+    ax.set_xlim(0, w)
+    if DISPLAY_MODE == "cartesian":
+        ax.set_ylim(0, h)
+    else:
+        ax.set_ylim(h, 0)
+
+
+def _quiver_transform(xx: np.ndarray, yy: np.ndarray, u: np.ndarray, v: np.ndarray, h: int):
+    if DISPLAY_MODE == "cartesian":
+        return xx, (h - yy), u, -v
+    return xx, yy, u, v
+
 # Optional real-embryo defaults (from DEBUG_PARAMS_README / cross-embryo comparison)
 DEFAULT_REAL_DATA_CSV = Path(
     "results/mcolon/20251229_cep290_phenotype_extraction/final_data/embryo_data_with_labels.csv"
@@ -103,7 +131,7 @@ class VisualizationConfig:
     # NOTE: min_velocity_px is in PIXELS - will be converted to current units internally
     min_velocity_px: float = 1.0  # Absolute noise floor in pixels (sub-pixel = noise)
     min_velocity_pct: float = 0.02  # Relative threshold (2% of max velocity)
-    quiver_base_scale: float = 100.0  # Fixed arrow scale (no efficiency inversion)
+    quiver_base_scale: float = 150.0  # Larger scale -> smaller arrows
     quiver_stride: int = 4  # Subsample stride for arrow density (higher = fewer arrows)
     # Optional IQR-based thresholding (robust to outliers)
     use_iqr_threshold: bool = False
@@ -328,8 +356,9 @@ def plot_input_masks_with_metrics(
     h_tgt, w_tgt = tgt_mask.shape
 
     # Source mask
+    extent, origin = _plot_extent((h_src, w_src))
     axes[0].imshow(src_mask, cmap="gray", aspect='equal',
-                   extent=[0, w_src, h_src, 0], interpolation='nearest')
+                   extent=extent, origin=origin, interpolation='nearest')
     axes[0].set_title(
         f"Source (shape: {src_mask.shape})\n"
         f"Area: {src_metrics['area_um2']:.1f} μm²\n"
@@ -337,12 +366,12 @@ def plot_input_masks_with_metrics(
     )
     axes[0].set_xlabel("x (px)")
     axes[0].set_ylabel("y (px)")
-    axes[0].set_xlim(0, canon_w)
-    axes[0].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[0], (canon_h, canon_w))
 
     # Target mask  
+    extent, origin = _plot_extent((h_tgt, w_tgt))
     axes[1].imshow(tgt_mask, cmap="gray", aspect='equal',
-                   extent=[0, w_tgt, h_tgt, 0], interpolation='nearest')
+                   extent=extent, origin=origin, interpolation='nearest')
     axes[1].set_title(
         f"Target (shape: {tgt_mask.shape})\n"
         f"Area: {tgt_metrics['area_um2']:.1f} μm²\n"
@@ -350,8 +379,7 @@ def plot_input_masks_with_metrics(
     )
     axes[1].set_xlabel("x (px)")
     axes[1].set_ylabel("y (px)")
-    axes[1].set_xlim(0, canon_w)
-    axes[1].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[1], (canon_h, canon_w))
 
     fig.suptitle(title, fontsize=12, fontweight="bold")
     fig.tight_layout()
@@ -510,17 +538,17 @@ def plot_flow_field(
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     # Panel 1: Support mask (shows which pixels are defined)
+    extent, origin = _plot_extent((h_vel, w_vel))
     axes[0].imshow(support_mask, cmap="gray", aspect='equal',
-                   extent=[0, w_vel, h_vel, 0], interpolation='nearest', vmin=0, vmax=1)
+                   extent=extent, origin=origin, interpolation='nearest', vmin=0, vmax=1)
     axes[0].set_title(f"Support Coverage\n{support_pct:.2f}% defined ({support_mask.sum():,} pixels)")
     axes[0].set_xlabel("x (px)")
     axes[0].set_ylabel("y (px)")
-    axes[0].set_xlim(0, canon_w)
-    axes[0].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[0], (canon_h, canon_w))
 
     # Panel 2: Velocity magnitude (NaN outside support)
     im1 = axes[1].imshow(velocity_mag_masked, cmap="viridis", aspect='equal',
-                         extent=[0, w_vel, h_vel, 0], interpolation='nearest',
+                         extent=extent, origin=origin, interpolation='nearest',
                          vmin=viz_config.velocity_vmin, vmax=viz_config.velocity_vmax)
     axes[1].set_title(
         f"Velocity Magnitude (support only)\n"
@@ -529,8 +557,7 @@ def plot_flow_field(
     )
     axes[1].set_xlabel("x (px)")
     axes[1].set_ylabel("y (px)")
-    axes[1].set_xlim(0, canon_w)
-    axes[1].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[1], (canon_h, canon_w))
     plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04, label=unit_label)
 
     # Panel 3: Velocity histogram (support only)
@@ -594,8 +621,9 @@ def plot_flow_field_quiver(
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
 
     # Background: source mask
+    extent, origin = _plot_extent(src_mask.shape)
     ax.imshow(src_mask, cmap="gray", alpha=0.3, aspect='equal',
-              extent=[0, src_mask.shape[1], src_mask.shape[0], 0], interpolation='nearest')
+              extent=extent, origin=origin, interpolation='nearest')
 
     # Subsample for quiver (on support points only)
     yy_vel, xx_vel = np.meshgrid(np.arange(0, h_vel, stride), np.arange(0, w_vel, stride), indexing='ij')
@@ -609,9 +637,10 @@ def plot_flow_field_quiver(
     n_arrows = mask_sub.sum()
 
     if n_arrows > 0:
+        xx_plot, yy_plot, u_plot, v_plot = _quiver_transform(xx_vel, yy_vel, u, v, h_vel)
         ax.quiver(
-            xx_vel[mask_sub], yy_vel[mask_sub],
-            u[mask_sub], v[mask_sub],
+            xx_plot[mask_sub], yy_plot[mask_sub],
+            u_plot[mask_sub], v_plot[mask_sub],
             mag_sub[mask_sub],
             cmap="hot",
             scale=viz_config.quiver_base_scale,
@@ -628,8 +657,142 @@ def plot_flow_field_quiver(
     ax.set_title(title_str)
     ax.set_xlabel("x (px)")
     ax.set_ylabel("y (px)")
-    ax.set_xlim(0, canon_w)
-    ax.set_ylim(canon_h, 0)
+    _set_axes_limits(ax, (canon_h, canon_w))
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def _overlay_masks_rgb(
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    src_color=(1.0, 0.80, 0.80),  # light red
+    tgt_color=(0.80, 0.85, 1.0),  # light blue
+    alpha: float = 0.8,
+) -> np.ndarray:
+    """Create neutral RGB overlay for source/target masks."""
+    h, w = src_mask.shape
+    rgb = np.ones((h, w, 3), dtype=np.float32)
+    src = src_mask.astype(bool)
+    tgt = tgt_mask.astype(bool)
+    for channel in range(3):
+        rgb[..., channel] = np.where(
+            src,
+            rgb[..., channel] * (1 - alpha) + src_color[channel] * alpha,
+            rgb[..., channel],
+        )
+        rgb[..., channel] = np.where(
+            tgt,
+            rgb[..., channel] * (1 - alpha) + tgt_color[channel] * alpha,
+            rgb[..., channel],
+        )
+    return rgb
+
+
+def plot_mask_overlay_only(
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    output_path: Path,
+) -> None:
+    """Plot neutral overlay of source/target masks only."""
+    h, w = src_mask.shape
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    overlay = _overlay_masks_rgb(src_mask, tgt_mask)
+    extent, origin = _plot_extent((h, w))
+    ax.imshow(overlay, extent=extent, origin=origin, interpolation='nearest')
+    _set_axes_limits(ax, (CANONICAL_GRID_SHAPE[0], CANONICAL_GRID_SHAPE[1]))
+    ax.set_xlabel("x (px)")
+    ax.set_ylabel("y (px)")
+    ax.set_title("Source/Target Overlay (Masks Only)")
+    legend_handles = [
+        Patch(facecolor=(1.0, 0.80, 0.80), edgecolor="none", label="Source"),
+        Patch(facecolor=(0.80, 0.85, 1.0), edgecolor="none", label="Target"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower right", fontsize=8, framealpha=0.6)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_overlay_transport_field(
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    result: "UOTResult",
+    output_path: Path,
+    stride: int = 6,
+    viz_config: VisualizationConfig = None,
+) -> None:
+    """Overlay src/tgt masks with cost-colored support and transport arrows."""
+    if viz_config is None:
+        viz_config = VIZ_CONFIG
+
+    velocity_field = (result.velocity_um_per_frame_yx
+                      if result.velocity_um_per_frame_yx is not None
+                      else result.velocity_px_per_frame_yx)
+    velocity_mag = np.sqrt(velocity_field[..., 0] ** 2 + velocity_field[..., 1] ** 2)
+    support_mask = velocity_mag > 0
+
+    cost_field = getattr(result, "cost_src_px", None)
+    if cost_field is None:
+        cost_field = np.zeros_like(src_mask, dtype=np.float32)
+
+    # Mask cost field to support
+    cost_masked = cost_field.copy()
+    cost_masked[~support_mask] = np.nan
+
+    h, w = src_mask.shape
+    canon_h, canon_w = CANONICAL_GRID_SHAPE
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    # Base overlay of src/tgt
+    overlay = _overlay_masks_rgb(src_mask, tgt_mask)
+    extent, origin = _plot_extent((h, w))
+    ax.imshow(overlay, extent=extent, origin=origin, interpolation='nearest')
+
+    # Cost field overlay
+    im = ax.imshow(
+        cost_masked,
+        cmap="Reds",
+        alpha=0.6,
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+    )
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Transport cost (src_support)")
+
+    # Quiver overlay
+    yy, xx = np.meshgrid(np.arange(0, h, stride), np.arange(0, w, stride), indexing='ij')
+    u = velocity_field[::stride, ::stride, 1]
+    v = velocity_field[::stride, ::stride, 0]
+    mag_sub = velocity_mag[::stride, ::stride]
+    support_sub = support_mask[::stride, ::stride]
+    mask_sub = support_sub & (mag_sub > 0)
+
+    if mask_sub.any():
+        xx_plot, yy_plot, u_plot, v_plot = _quiver_transform(xx, yy, u, v, h)
+        ax.quiver(
+            xx_plot[mask_sub], yy_plot[mask_sub],
+            u_plot[mask_sub], v_plot[mask_sub],
+            mag_sub[mask_sub],
+            cmap="viridis",
+            scale=viz_config.quiver_base_scale,
+            scale_units='xy',
+            angles='xy',
+            width=0.002,
+        )
+
+    _set_axes_limits(ax, (canon_h, canon_w))
+    ax.set_xlabel("x (px)")
+    ax.set_ylabel("y (px)")
+    ax.set_title("Source/Target Overlay + Transport Field (Cost Colored)")
+
+    legend_handles = [
+        Patch(facecolor=(1.0, 0.80, 0.80), edgecolor="none", label="Source"),
+        Patch(facecolor=(0.80, 0.85, 1.0), edgecolor="none", label="Target"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower right", fontsize=8, framealpha=0.6)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
@@ -681,15 +844,16 @@ def plot_transport_cost_field(
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     
     # Panel 1: Support mask
+    extent, origin = _plot_extent((canon_h, canon_w))
     axes[0].imshow(support_mask, cmap="gray", aspect='equal',
-                   extent=[0, canon_w, canon_h, 0], interpolation='nearest')
+                   extent=extent, origin=origin, interpolation='nearest')
     axes[0].set_title(f"Transport Cost Support (src_support)\n{support_pct:.2f}% defined")
     axes[0].set_xlabel("x (px)")
     axes[0].set_ylabel("y (px)")
     
     # Panel 2: Cost field (NaN-masked)
     im = axes[1].imshow(cost_field_masked, cmap="hot", aspect='equal',
-                        extent=[0, canon_w, canon_h, 0], interpolation='nearest')
+                        extent=extent, origin=origin, interpolation='nearest')
     axes[1].set_title(
         f"Transport Cost per Source Point (src_support only)\n"
         f"p50/p90/p99: {p50:.1e}/{p90:.1e}/{p99:.1e}"
@@ -763,27 +927,26 @@ def plot_creation_destruction_maps(
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     # Row 1: Support masks
+    extent, origin = _plot_extent((h, w))
     axes[0, 0].imshow(created_mask, cmap="gray", aspect='equal',
-                     extent=[0, w, h, 0], interpolation='nearest', vmin=0, vmax=1)
+                     extent=extent, origin=origin, interpolation='nearest', vmin=0, vmax=1)
     axes[0, 0].set_title(f"Creation Support (tgt_support)\n{100*created_mask.sum()/created_mask.size:.2f}% defined")
     axes[0, 0].set_xlabel("x (px)")
     axes[0, 0].set_ylabel("y (px)")
-    axes[0, 0].set_xlim(0, canon_w)
-    axes[0, 0].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[0, 0], (canon_h, canon_w))
     
     axes[0, 1].imshow(destroyed_mask, cmap="gray", aspect='equal',
-                     extent=[0, w, h, 0], interpolation='nearest', vmin=0, vmax=1)
+                     extent=extent, origin=origin, interpolation='nearest', vmin=0, vmax=1)
     axes[0, 1].set_title(f"Destruction Support (src_support)\n{100*destroyed_mask.sum()/destroyed_mask.size:.2f}% defined")
     axes[0, 1].set_xlabel("x (px)")
     axes[0, 1].set_ylabel("y (px)")
-    axes[0, 1].set_xlim(0, canon_w)
-    axes[0, 1].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[0, 1], (canon_h, canon_w))
 
     # Row 2: Mass heatmaps (NaN outside support)
     # Display data as-is, set axis limits to canonical grid
     # Use fixed vmin/vmax for consistent cross-run comparison
     im0 = axes[1, 0].imshow(created_masked, cmap="Reds", aspect='equal',
-                         extent=[0, w, h, 0], interpolation='nearest',
+                         extent=extent, origin=origin, interpolation='nearest',
                          vmin=viz_config.mass_pct_vmin, vmax=viz_config.mass_pct_vmax)
     axes[1, 0].set_title(
         f"Mass Created (tgt_support only)\n"
@@ -791,12 +954,11 @@ def plot_creation_destruction_maps(
     )
     axes[1, 0].set_xlabel("x (px)")
     axes[1, 0].set_ylabel("y (px)")
-    axes[1, 0].set_xlim(0, canon_w)
-    axes[1, 0].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[1, 0], (canon_h, canon_w))
     plt.colorbar(im0, ax=axes[1, 0], fraction=0.046, pad=0.04, label='%')
 
     im1 = axes[1, 1].imshow(destroyed_masked, cmap="Blues", aspect='equal',
-                         extent=[0, w, h, 0], interpolation='nearest',
+                         extent=extent, origin=origin, interpolation='nearest',
                          vmin=viz_config.mass_pct_vmin, vmax=viz_config.mass_pct_vmax)
     axes[1, 1].set_title(
         f"Mass Destroyed (src_support only)\n"
@@ -804,8 +966,7 @@ def plot_creation_destruction_maps(
     )
     axes[1, 1].set_xlabel("x (px)")
     axes[1, 1].set_ylabel("y (px)")
-    axes[1, 1].set_xlim(0, canon_w)
-    axes[1, 1].set_ylim(canon_h, 0)
+    _set_axes_limits(axes[1, 1], (canon_h, canon_w))
     plt.colorbar(im1, ax=axes[1, 1], fraction=0.046, pad=0.04, label='%')
 
     fig.tight_layout()
@@ -1098,6 +1259,14 @@ def run_single_param_combo(
     plot_flow_field(plot_src_mask, result, proportion_transported,
                     param_dir / "flow_field.png")  # Uses viz_config default stride
     plot_flow_field_quiver(plot_src_mask, result, param_dir / "flow_field_quiver.png", stride=6)
+    plot_mask_overlay_only(plot_src_mask, plot_tgt_mask, param_dir / "overlay_masks.png")
+    plot_overlay_transport_field(
+        plot_src_mask,
+        plot_tgt_mask,
+        result,
+        param_dir / "overlay_transport.png",
+        stride=6,
+    )
     plot_creation_destruction_maps(
         result.mass_created_px, result.mass_destroyed_px,
         created_mass_pct, destroyed_mass_pct,
@@ -1353,6 +1522,12 @@ def main():
         help='CSV path for real embryo masks (mask export CSV)'
     )
     parser.add_argument(
+        '--data-root',
+        type=Path,
+        default=None,
+        help='Data root containing segmentation/yolk_v1_0050_predictions (optional)'
+    )
+    parser.add_argument(
         '--embryo-id',
         type=str,
         default=None,
@@ -1404,8 +1579,12 @@ def main():
     viable_params = None
     all_results = {}
 
-    if args.cross_embryo:
+    def _run_cross_embryo() -> None:
+        nonlocal viable_params
         csv_path = args.csv if args.csv is not None else DEFAULT_REAL_DATA_CSV
+        if not csv_path.exists():
+            print(f"\nWARNING: Cross-embryo CSV not found: {csv_path} (skipping)")
+            return
         frame_a, stage_a = find_frame_at_stage(
             csv_path, args.embryo_a, args.target_hpf, args.stage_tol
         )
@@ -1413,12 +1592,13 @@ def main():
             csv_path, args.embryo_b, args.target_hpf, args.stage_tol
         )
         if frame_a is None or frame_b is None:
-            raise ValueError(
-                f"Could not find frames near {args.target_hpf} hpf "
-                f"for {args.embryo_a} or {args.embryo_b} in {csv_path}"
+            print(
+                f"\nWARNING: Could not find frames near {args.target_hpf} hpf "
+                f"for {args.embryo_a} or {args.embryo_b} in {csv_path} (skipping)"
             )
-        src_frame = load_mask_from_csv(csv_path, args.embryo_a, frame_a)
-        tgt_frame = load_mask_from_csv(csv_path, args.embryo_b, frame_b)
+            return
+        src_frame = load_mask_from_csv(csv_path, args.embryo_a, frame_a, data_root=args.data_root)
+        tgt_frame = load_mask_from_csv(csv_path, args.embryo_b, frame_b, data_root=args.data_root)
         pair = UOTFramePair(
             src=src_frame,
             tgt=tgt_frame,
@@ -1449,11 +1629,20 @@ def main():
             pair_override=pair,
         )
         all_results['cross_embryo'] = df
+
+    if args.cross_embryo:
+        _run_cross_embryo()
         tests_to_run = []
     elif args.csv is not None:
         if args.embryo_id is None or args.frame_src is None or args.frame_tgt is None:
             raise ValueError("When using --csv, you must provide --embryo-id, --frame-src, and --frame-tgt.")
-        pair = load_mask_pair_from_csv(args.csv, args.embryo_id, args.frame_src, args.frame_tgt)
+        pair = load_mask_pair_from_csv(
+            args.csv,
+            args.embryo_id,
+            args.frame_src,
+            args.frame_tgt,
+            data_root=args.data_root,
+        )
 
         def _make_real_test() -> Tuple[np.ndarray, np.ndarray]:
             return pair.src.embryo_mask, pair.tgt.embryo_mask
@@ -1471,6 +1660,10 @@ def main():
         tests_to_run = []
     else:
         tests_to_run = ['1', '2', '3', '4'] if args.test == 'all' else [args.test]
+
+    # If running all synthetic tests, also run cross-embryo comparison by default.
+    if args.test == "all" and not args.cross_embryo and args.csv is None:
+        _run_cross_embryo()
 
     for test_id in tests_to_run:
         if test_id == '1':
