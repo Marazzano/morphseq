@@ -94,7 +94,7 @@ Check `src/analyze/trajectory_analysis/viz/plotting/__init__.py`:
 
 **Functions:**
 - `plot_feature_over_time()` - Single-panel overlay plot
-- `plot_feature_over_time_faceted()` - Multi-panel faceted plot
+- `plot_feature_over_time()` - Multi-panel faceted plot via `row_by` / `col_by`
 
 **Key Features:**
 - Generic: Works with any time series data
@@ -148,7 +148,7 @@ fig = plot_trajectories_faceted(
 |------|-----|--------|
 | Generic time series plot | `plot_feature_over_time()` | viz/plotting |
 | Genotype-aware trajectories | `plot_trajectories_faceted()` | trajectory_analysis |
-| Multi-experiment faceting | `plot_feature_over_time_faceted()` | viz/plotting |
+| Multi-experiment faceting | `plot_feature_over_time()` (row_by/col_by) | viz/plotting |
 | Pair analysis | `plot_pairs_overview()` | trajectory_analysis |
 ```
 

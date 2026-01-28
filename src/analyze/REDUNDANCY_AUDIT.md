@@ -31,7 +31,7 @@ src/analyze/
 │   └── plotting/
 │       ├── time_series.py          # plot_feature_over_time()
 │       └── faceted/
-│           └── time_series.py      # plot_feature_over_time_faceted()
+│           └── time_series.py      # plot_feature_over_time (row_by/col_by)
 │
 └── trajectory_analysis/            # Level 2: Domain-specific
     └── viz/
@@ -64,7 +64,7 @@ src/analyze/
 **Uses:** `utils/timeseries/` for algorithms  
 **Contains:**
 - `time_series.py` - `plot_feature_over_time()`
-- `faceted/time_series.py` - `plot_feature_over_time_faceted()`
+- `faceted/time_series.py` - removed (use `plot_feature_over_time` with `row_by` / `col_by`)
 
 **API:**
 - Parameters: `feature=`, `time_col=`, `id_col=`, `color_by=`

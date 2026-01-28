@@ -3,7 +3,7 @@
 ## Summary
 
 Implement the feature-first naming convention from PLOTTING_REFACTOR_PLAN.md by:
-1. Renaming functions to `plot_feature_over_time` / `plot_feature_over_time_faceted`
+1. Renaming functions to `plot_feature_over_time` (faceting via `row_by` / `col_by`)
 2. Renaming parameter `metric` → `feature`
 3. Aligning single-panel API with faceted API (use `trend_method` instead of `use_dba`)
 4. Adding deprecated wrappers for old names
@@ -13,8 +13,9 @@ Implement the feature-first naming convention from PLOTTING_REFACTOR_PLAN.md by:
 
 ## Current State Analysis
 
-### Faceted version (ALREADY MOSTLY COMPLIANT)
-`viz/plotting/faceted/time_series.py`:
+### Faceted version (REMOVED)
+`viz/plotting/faceted/time_series.py` was removed. Use `plot_feature_over_time`
+with `row_by` / `col_by` (and `feature=[...]` for multi-metric).
 ```python
 def plot_time_series_faceted(
     metric='metric_value',      # → rename to feature
@@ -79,7 +80,7 @@ def plot_time_series_by_group(
 
 **File:** `src/analyze/viz/plotting/faceted/time_series.py`
 
-1. **Rename function**: `plot_time_series_faceted` → `plot_feature_over_time_faceted`
+1. **Remove function**: `plot_time_series_faceted` → use `plot_feature_over_time` with `row_by` / `col_by`
 
 2. **Update parameters**:
    - `metric` → `feature` (keep default `'metric_value'`)
@@ -91,9 +92,9 @@ def plot_time_series_by_group(
 4. **Add deprecated wrapper**:
 ```python
 def plot_time_series_faceted(...) -> plt.Figure:
-    """Deprecated: Use plot_feature_over_time_faceted instead."""
+    """Deprecated: Use plot_feature_over_time with row_by/col_by instead."""
     warnings.warn(...)
-    return plot_feature_over_time_faceted(...)
+    return plot_feature_over_time(...)
 ```
 
 5. **Update `plot_embryos_metric_over_time_faceted`** wrapper to point to new function
@@ -112,7 +113,7 @@ from .time_series import (
     get_membership_category_colors,
 )
 from .faceted.time_series import (
-    plot_feature_over_time_faceted,
+    plot_feature_over_time,
     plot_time_series_faceted,  # deprecated
     plot_embryos_metric_over_time_faceted,  # deprecated
 )
@@ -120,7 +121,7 @@ from .faceted.time_series import (
 __all__ = [
     # Canonical API
     'plot_feature_over_time',
-    'plot_feature_over_time_faceted',
+    'plot_feature_over_time',
     'get_membership_category_colors',
     # Deprecated (backward compat)
     'plot_time_series_by_group',
@@ -196,7 +197,7 @@ After implementation, run:
 
 ```bash
 # 1. Test new API imports
-python -c "from src.analyze.viz.plotting import plot_feature_over_time, plot_feature_over_time_faceted; print('✅ New API imports OK')"
+python -c "from src.analyze.viz.plotting import plot_feature_over_time; print('✅ New API imports OK')"
 
 # 2. Test deprecated imports still work
 python -c "
@@ -234,7 +235,7 @@ Implement feature-first plotting API naming convention
 
 Rename plotting functions to use bioinformatics-standard vocabulary:
 - plot_time_series_by_group → plot_feature_over_time
-- plot_time_series_faceted → plot_feature_over_time_faceted
+- plot_time_series_faceted → plot_feature_over_time (row_by/col_by)
 - Parameter: metric → feature
 - Parameter: show_mean/use_dba → trend_method (string: 'mean', 'dba', 'median')
 
