@@ -8,8 +8,9 @@ These functions use generic time-series algorithms from utils.timeseries
 
 Modules
 =======
-- time_series : Single-panel time series plotting
-- faceted/ : Faceted (multi-panel) time series plotting
+- feature_over_time : Faceted time series plotting (faceting-engine)
+- time_series : Legacy single-panel time series plotting
+- faceted/ : Legacy faceted time series plotting
 - plotting_3d : 3D scatter plots with trajectory lines
 
 Functions
@@ -25,8 +26,8 @@ For domain-specific trajectory visualizations (genotype styling, phenotype color
 see: src.analyze.trajectory_analysis.viz.plotting
 """
 
+from .feature_over_time import plot_feature_over_time
 from .time_series import (
-    plot_feature_over_time,
     plot_time_series_by_group,  # Deprecated
     plot_embryos_metric_over_time,  # Deprecated
     get_membership_category_colors,

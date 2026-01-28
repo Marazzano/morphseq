@@ -914,7 +914,7 @@ def extract_temporal_confusion_profile(
     return pd.DataFrame(records)
 
 
-def run_comparison_test(
+def run_classification_test(
     df: pd.DataFrame,
     groupby: str,
     groups: Union[str, List[str]] = "all",
@@ -999,17 +999,17 @@ def run_comparison_test(
     Examples
     --------
     >>> # Classic One-vs-Rest (each class vs all others)
-    >>> results = run_comparison_test(
+    >>> results = run_classification_test(
     ...     df, groupby='cluster_categories', groups='all', reference='rest'
     ... )
     
     >>> # CE and HTA each compared against WT
-    >>> results = run_comparison_test(
+    >>> results = run_classification_test(
     ...     df, groupby='cluster', groups=['CE', 'HTA'], reference='WT'
     ... )
     
     >>> # CE against WT and against pooled WT+Het
-    >>> results = run_comparison_test(
+    >>> results = run_classification_test(
     ...     df, groupby='cluster', groups='CE', 
     ...     reference=['WT', ('WT', 'Het')]
     ... )
@@ -1032,7 +1032,7 @@ def run_comparison_test(
     import json
     
     if verbose:
-        print(f"=== Flexible Group Comparison Test ===")
+        print(f"=== Flexible Group Classification Test ===")
         print(f"Groupby column: {groupby}")
         print(f"Groups: {groups}")
         print(f"Reference: {reference}")
@@ -1147,6 +1147,6 @@ def run_comparison_test(
 
 __all__ = [
     "run_multiclass_classification_test",
-    "run_comparison_test",  # New API
+    "run_classification_test",
     "extract_temporal_confusion_profile",
 ]

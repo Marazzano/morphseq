@@ -1,14 +1,14 @@
-# Multiclass Comparison API - Usage Examples
+# Multiclass Classification API - Usage Examples
 
 This document shows how to use the new Scanpy-style comparison API with visualization code.
 
 ## Basic Usage
 
 ```python
-from analyze.difference_detection import run_comparison_test
+from analyze.difference_detection import run_classification_test
 
 # Run analysis with flexible API
-results = run_comparison_test(
+results = run_classification_test(
     df,
     groupby='cluster_categories',
     groups=['CE', 'HTA', 'Intermediate'],
@@ -168,10 +168,10 @@ ce_results = results['ovr_classification']['CE']  # CE vs Rest (all others)
 ### New API (Column-based)
 
 ```python
-from analyze.difference_detection import run_comparison_test
+from analyze.difference_detection import run_classification_test
 
 # Automatic group resolution from column
-results = run_comparison_test(
+results = run_classification_test(
     df,
     groupby='cluster',
     groups=['CE', 'HTA'],
@@ -195,7 +195,7 @@ results_old = run_multiclass_classification_test(df, groups=groups_dict)
 ovr_dict = results_old['ovr_classification']
 
 # New code (produces same structure)
-results_new = run_comparison_test(df, groupby='cluster', groups='all', reference='rest')
+results_new = run_classification_test(df, groupby='cluster', groups='all', reference='rest')
 ovr_dict = results_new.to_dict_of_dfs()
 
 # Your existing plotting code works unchanged

@@ -68,7 +68,7 @@ def _build_subplot_ir(
     Private helper. Lives here because it's trajectory-specific compilation.
     """
     # Determine color groups
-    if color_by:
+    if color_by and color_by in df.columns:
         mask = pd.Series(True, index=df.index)
         for k, v in filter_dict.items():
             mask &= (df[k] == v)
@@ -80,7 +80,7 @@ def _build_subplot_ir(
     
     for group_val in groups:
         group_filter = filter_dict.copy()
-        if color_by:
+        if color_by and color_by in df.columns:
             group_filter[color_by] = group_val
         
         trajectories, _, _ = get_trajectories_for_group(
@@ -114,8 +114,8 @@ def _build_subplot_ir(
         all_metrics = np.concatenate([t['metrics'] for t in trajectories])
         
         # Legend: show once per group across all subplots
-        label = str(group_val) if group_val else trend_statistic
-        legend_key = f"{y_col}_{group_val}"
+        label = str(group_val) if group_val is not None else trend_statistic
+        legend_key = f"{y_col}_{group_val}" if group_val is not None else f"{y_col}_agg"
         show_legend = legend_key not in legend_tracker
         if show_legend:
             legend_tracker.add(legend_key)
@@ -161,14 +161,14 @@ def _build_subplot_ir(
 
 def plot_feature_over_time(
     df: pd.DataFrame,
-    feature: str,
+    feature: Union[str, List[str]],
     time_col: str = 'predicted_stage_hpf',
     id_col: str = 'embryo_id',
     color_by: Optional[str] = None,
     color_lookup: Optional[Dict[Any, str]] = None,  # ← USER PROVIDES domain-specific colors
     # Faceting (consistent API)
-    facet_row: Optional[str] = None,
-    facet_col: Optional[str] = None,
+    row_by: Optional[str] = None,
+    col_by: Optional[str] = None,
     layout: Optional[FacetSpec] = None,
     # Display
     show_individual: bool = True,
@@ -187,16 +187,17 @@ def plot_feature_over_time(
     color_palette: Optional[List[str]] = None,  # Generic fallback
 ) -> Any:
     """Plot a feature over time, optionally faceted.
-    
+
     100% DOMAIN-AGNOSTIC: Caller provides color_lookup for domain-specific coloring.
     If color_lookup=None, auto-assigns colors from palette.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
         DataFrame with time-series data
-    feature : str
-        Column name for y-axis metric
+    feature : str or list of str
+        Column name(s) for y-axis metric. When a list is provided, each feature
+        gets its own row in the faceted plot, overriding any `row_by` setting.
     time_col : str, default='predicted_stage_hpf'
         Column name for x-axis (time)
     id_col : str, default='embryo_id'
@@ -206,9 +207,9 @@ def plot_feature_over_time(
     color_lookup : Dict[Any, str], optional
         Pre-built mapping from values in color_by column to hex colors.
         Use this to inject domain-specific coloring (e.g., genotype colors).
-    facet_row : str, optional
-        Column to facet by rows
-    facet_col : str, optional
+    row_by : str, optional
+        Column to facet by rows. Overridden when feature is a list.
+    col_by : str, optional
         Column to facet by columns
     layout : FacetSpec, optional
         Layout specification (row_order, col_order, sharex, sharey, etc.)
@@ -244,54 +245,90 @@ def plot_feature_over_time(
     Figure
         Plotly or matplotlib figure (or dict if backend='both')
     """
+    import warnings
+
     layout = layout or FacetSpec(row_order=None, col_order=None)
     style = style or default_style()
-    
+
+    # Handle multi-feature: when feature is a list, each feature becomes a row
+    if isinstance(feature, list):
+        features = feature
+        if row_by is not None:
+            warnings.warn(
+                f"feature is a list ({features}), overriding row_by='{row_by}' "
+                "with one row per feature.",
+                UserWarning,
+                stacklevel=2,
+            )
+        multi_feature = True
+    else:
+        features = [feature]
+        multi_feature = False
+
     # Build color lookup (generic or user-provided)
     color_lookup = _build_color_lookup(df, color_by, color_lookup, color_palette)
-    
-    # Determine facet values
-    row_vals = (layout.row_order if layout.row_order 
-                else sorted(df[facet_row].dropna().unique()) if facet_row 
+
+    # Determine col facet values
+    col_vals = (layout.col_order if layout.col_order
+                else sorted(df[col_by].dropna().unique()) if col_by
                 else [None])
-    col_vals = (layout.col_order if layout.col_order 
-                else sorted(df[facet_col].dropna().unique()) if facet_col 
-                else [None])
-    
-    # Compile subplots using engine's grid iterator
+
+    # Determine row facet values
+    if multi_feature:
+        row_vals = features  # one row per feature
+        effective_row_by = None  # rows are features, not a column
+    else:
+        row_vals = (layout.row_order if layout.row_order
+                    else sorted(df[row_by].dropna().unique()) if row_by
+                    else [None])
+        effective_row_by = row_by
+
+    # Compile subplots
     legend_tracker: Set[str] = set()
     subplots = []
-    
-    for row_val, col_val, filter_dict, subplot_key in iter_facet_cells(
-        facet_row, facet_col, row_vals, col_vals
-    ):
-        subplot = _build_subplot_ir(
-            df=df,
-            filter_dict=filter_dict,
-            x_col=time_col,
-            y_col=feature,
-            line_by=id_col,
-            color_lookup=color_lookup,
-            color_by=color_by,
-            subplot_key=subplot_key,
-            legend_tracker=legend_tracker,
-            show_individual=show_individual,
-            show_error_band=show_error_band,
-            error_type=error_type,
-            trend_statistic=trend_statistic,
-            trend_smooth_sigma=trend_smooth_sigma,
-            bin_width=bin_width,
-            smooth_method=smooth_method,
-            smooth_params=smooth_params,
-        )
-        subplots.append(subplot)
-    
+
+    for row_val in row_vals:
+        for col_val in col_vals:
+            # Build filter dict for this cell
+            filter_dict = {}
+            if effective_row_by and row_val is not None:
+                filter_dict[effective_row_by] = row_val
+            if col_by and col_val is not None:
+                filter_dict[col_by] = col_val
+
+            # Determine which feature to plot in this cell
+            y_col = row_val if multi_feature else features[0]
+
+            subplot_key = (row_val, col_val)
+
+            subplot = _build_subplot_ir(
+                df=df,
+                filter_dict=filter_dict,
+                x_col=time_col,
+                y_col=y_col,
+                line_by=id_col,
+                color_lookup=color_lookup,
+                color_by=color_by,
+                subplot_key=subplot_key,
+                legend_tracker=legend_tracker,
+                show_individual=show_individual,
+                show_error_band=show_error_band,
+                error_type=error_type,
+                trend_statistic=trend_statistic,
+                trend_smooth_sigma=trend_smooth_sigma,
+                bin_width=bin_width,
+                smooth_method=smooth_method,
+                smooth_params=smooth_params,
+            )
+            subplots.append(subplot)
+
     # Assemble FigureData
+    feature_label = ', '.join(features) if multi_feature else features[0]
     fig_data = FigureData(
-        title=title or f"{feature} over {time_col}",
+        title=title or f"{feature_label} over {time_col}",
         subplots=subplots,
         legend_title=color_by,
     )
-    
+
     # Render via engine
     return render(fig_data, backend=backend, facet=layout, style=style, output_path=output_path)

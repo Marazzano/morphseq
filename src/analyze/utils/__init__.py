@@ -48,6 +48,15 @@ from .splitting import (
     get_split_info,
 )
 
+# PCA utilities
+from .pca import (
+    fit_pca_on_embeddings,
+    transform_embeddings_to_pca,
+    fit_transform_pca,
+    compute_wt_reference_by_time,
+    subtract_wt_reference,
+)
+
 # Note: Plotting utilities are now at src.analyze.viz.plotting
 # To avoid circular imports, they are not imported here.
 # Use: from src.analyze.viz.plotting import plot_feature_over_time
@@ -73,4 +82,10 @@ __all__ = [
     "leave_one_out_by_group",
     "get_group_split_masks",
     "get_split_info",
+    # PCA
+    "fit_pca_on_embeddings",
+    "transform_embeddings_to_pca",
+    "fit_transform_pca",
+    "compute_wt_reference_by_time",
+    "subtract_wt_reference",
 ]
