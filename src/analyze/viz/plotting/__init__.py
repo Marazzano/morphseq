@@ -27,16 +27,8 @@ see: src.analyze.trajectory_analysis.viz.plotting
 """
 
 from .feature_over_time import plot_feature_over_time
-from .time_series import (
-    plot_time_series_by_group,  # Deprecated
-    plot_embryos_metric_over_time,  # Deprecated
-    get_membership_category_colors,
-)
-from .faceted.time_series import (
-    plot_feature_over_time_faceted,
-    plot_time_series_faceted,  # Deprecated
-    plot_embryos_metric_over_time_faceted,  # Deprecated
-)
+from .time_series import get_membership_category_colors
+from .faceted.time_series import plot_feature_over_time_faceted
 from .plotting_3d import plot_3d_scatter
 
 __all__ = [
@@ -45,9 +37,4 @@ __all__ = [
     'plot_feature_over_time_faceted',
     'plot_3d_scatter',
     'get_membership_category_colors',
-    # Backward compat aliases
-    'plot_time_series_by_group',
-    'plot_time_series_faceted',
-    'plot_embryos_metric_over_time',
-    'plot_embryos_metric_over_time_faceted',
 ]

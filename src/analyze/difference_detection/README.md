@@ -233,7 +233,6 @@ difference_detection/
 ├── classification_test.py              # Binary classification tests
 ├── classification_test_multiclass.py   # Multiclass classification tests
 ├── penetrance_threshold.py             # Threshold-based penetrance
-├── compat/                             # Deprecated API wrappers
 └── horizon_plots/                      # Visualization utilities
 ```
 
@@ -252,13 +251,7 @@ from analyze.difference_detection import (
     PermutationResult
 )
 
-# Deprecated compat imports
-from analyze.difference_detection.compat import (
-    add_group_column,
-    compare_groups,
-    compare_groups_multiclass,
-    compute_metric_divergence,
-)
+# Deprecated compat imports removed.
 ```
 
 ## Extensibility: Adding Custom Test Statistics

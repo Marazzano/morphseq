@@ -8,8 +8,8 @@ Domain-agnostic visualization tools for time series data. These plotting functio
 
 ## Modules
 
-### `plotting/time_series.py` - Generic Time Series Plotting
-- `plot_time_series_by_group()`: Plot time series grouped by any categorical variable
+### `plotting/feature_over_time.py` - Generic Time Series Plotting
+- `plot_feature_over_time()`: Plot time series grouped by any categorical variable
 - Supports multiple backends: Plotly (interactive) and Matplotlib (static)
 - Flexible grouping and faceting options
 - Error bands (SD, SE, IQR, MAD)
@@ -38,15 +38,15 @@ Domain-agnostic visualization tools for time series data. These plotting functio
 
 ### Basic Time Series Plot
 ```python
-from src.analyze.viz.plotting import plot_time_series_by_group
+from src.analyze.viz.plotting import plot_feature_over_time
 import pandas as pd
 
 # Simple grouped plot
-fig = plot_time_series_by_group(
+fig = plot_feature_over_time(
     df,
-    x_col='time',
-    y_col='measurement',
-    group_by='condition',
+    feature='measurement',
+    time_col='time',
+    color_by='condition',
     backend='plotly',
     output_path='plot.html'
 )
@@ -55,11 +55,11 @@ fig = plot_time_series_by_group(
 ### Faceted Plot with Error Bands
 ```python
 # Multiple facets with error bands
-fig = plot_time_series_by_group(
+fig = plot_feature_over_time(
     df,
-    x_col='time_hpf',
-    y_col='metric_value',
-    group_by='genotype',
+    feature='metric_value',
+    time_col='time_hpf',
+    color_by='genotype',
     row_by='experiment',
     col_by='treatment',
     show_error_band=True,
@@ -73,11 +73,11 @@ fig = plot_time_series_by_group(
 ### Custom Colors
 ```python
 # Custom color palette
-fig = plot_time_series_by_group(
+fig = plot_feature_over_time(
     df,
-    x_col='time',
-    y_col='value',
-    group_by='category',
+    feature='value',
+    time_col='time',
+    color_by='category',
     color_palette=['#FF5733', '#33FF57', '#3357FF'],
     show_individual=True,
     backend='both',  # Generate both HTML and PNG
@@ -100,7 +100,7 @@ viz/
 ├── __init__.py
 └── plotting/
     ├── __init__.py
-    └── time_series.py  # Generic time series plotting
+    └── feature_over_time.py  # Generic time series plotting
 ```
 
 ## Relationship to Other Modules
@@ -145,7 +145,7 @@ from src.analyze.trajectory_analysis.viz.plotting import plot_time_series
 ### After
 ```python
 # Generic plotting
-from src.analyze.viz.plotting import plot_time_series_by_group
+from src.analyze.viz.plotting import plot_feature_over_time
 
 # Domain-specific (if needed)
 from src.analyze.trajectory_analysis.viz.plotting import plot_trajectories_faceted
