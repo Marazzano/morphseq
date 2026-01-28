@@ -58,7 +58,7 @@ viz
     Visualization (augmentors and convenience functions)
 
 _compat
-    Deprecation shims for old import paths
+    Removed (no shims)
 """
 
 # Core algorithm

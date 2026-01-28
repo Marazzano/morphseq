@@ -43,7 +43,7 @@ src/analyze/spline_fitting/
 ├── dynamics.py           ✓ Journeys + developmental shifts
 ├── viz.py                ✓ Augmentors + convenience functions
 ├── fitter.py             ✓ Placeholder for future class
-├── _compat.py            ✓ Deprecation strategy
+├── _compat.py            ✗ Removed (no shims)
 └── utils/
     └── spline_metrics.py ✓ Comparison metrics
 ```

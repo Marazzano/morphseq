@@ -34,7 +34,7 @@ src/analyze/spline_fitting/
 ├── utils/
 │   ├── __init__.py
 │   └── spline_metrics.py # rmse, rmsd, segment_direction_consistency, dispersion
-└── _compat.py            # Deprecation shims for old import paths
+└── _compat.py            # Removed (no shims)
 ```
 
 **Key design decisions:**
@@ -60,7 +60,7 @@ src/analyze/spline_fitting/
 7. **Create `dynamics.py`** - Move trajectory dynamics functions
 8. **Create `viz.py`** - Both augmentors AND `plot_3d_with_spline()`
 9. **Create `__init__.py`** - Export public API
-10. **Create `_compat.py`** - Deprecation shims for old imports
+10. **Create `_compat.py`** - Removed (no shims)
 11. **Update old files** - Re-export from new location with warnings
 
 ---
