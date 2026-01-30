@@ -13,5 +13,15 @@ see: src.analyze.trajectory_analysis.viz
 """
 
 from . import plotting
+from .hpf_coverage import (
+    experiment_hpf_coverage,
+    longest_interval_where,
+    plot_hpf_overlap_quick,
+)
 
-__all__ = ['plotting']
+__all__ = [
+    'plotting',
+    'experiment_hpf_coverage',
+    'longest_interval_where',
+    'plot_hpf_overlap_quick',
+]

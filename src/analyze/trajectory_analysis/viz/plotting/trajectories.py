@@ -80,7 +80,7 @@ def plot_feature(
     # Delegate to generic plotter
     return plot_feature_over_time(
         df=df,
-        feature=feature,
+        features=feature,
         time_col=time_col,
         id_col=id_col,
         color_by=color_by,
@@ -89,7 +89,3 @@ def plot_feature(
         facet_col=facet_col,
         **kwargs
     )
-
-
-# Backward compatibility alias
-plot_trajectories_faceted = plot_feature

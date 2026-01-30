@@ -1,16 +1,33 @@
 """
 Proportion plotting functions for faceted layouts.
 
-Contains:
-- plot_proportion_grid: DEPRECATED - Old API for proportion plots
-- plot_proportion_faceted: New API consistent with plot_trajectories_faceted
+Primary API:
+    - plot_proportions: Proportion plots (preferred)
+
+Usage
+-----
+Faceted mode (row/col are facet variables; colors are category values):
+    >>> fig = plot_proportions(
+    ...     df,
+    ...     color_by_grouping='phenotype',
+    ...     row_by='genotype_suffix',
+    ...     col_by='pair',
+    ... )
+
+Grid mode (row_by is a list of categorical columns):
+    >>> fig = plot_proportions(
+    ...     df,
+    ...     col_by='cluster',
+    ...     row_by=['genotype', 'pair', 'experiment_id'],
+    ...     count_by='embryo_id',
+    ... )
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from ...styling import get_color_for_genotype
 from ....config import (
@@ -26,10 +43,10 @@ from .shared import (
 
 
 # ==============================================================================
-# Proportion Grid Plot (Categorical Breakdown) - DEPRECATED
+# Proportion Grid Plot (Categorical Breakdown) - Internal Implementation
 # ==============================================================================
 
-def plot_proportion_grid(
+def _plot_proportions_grid_impl(
     df: pd.DataFrame,
     col_by: str,
     row_by: List[str],
@@ -45,10 +62,6 @@ def plot_proportion_grid(
     color_palette: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> plt.Figure:
     """
-    .. deprecated::
-        Use :func:`plot_proportion_faceted` instead. This function will be removed
-        in a future release.
-
     Plot proportion breakdown of categorical variables across groups.
 
     Creates a grid where:
@@ -92,7 +105,7 @@ def plot_proportion_grid(
 
     Example
     -------
-    >>> fig = plot_proportion_grid(
+    >>> fig = plot_proportions(
     ...     df,
     ...     col_by='cluster',
     ...     row_by=['genotype', 'pair', 'experiment_id'],
@@ -101,12 +114,6 @@ def plot_proportion_grid(
     ...     title='Cluster Composition Breakdown',
     ... )
     """
-    import warnings
-    warnings.warn(
-        "plot_proportion_grid is deprecated. Use plot_proportion_faceted instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
     # Determine column values (clusters)
     col_values = sorted(df[col_by].unique())
     if col_order:
@@ -252,10 +259,10 @@ def plot_proportion_grid(
 
 
 # ==============================================================================
-# Proportion Faceted Plot (Consistent API with plot_trajectories_faceted)
+# Proportion Faceted Plot (Consistent API with plot_feature_over_time)
 # ==============================================================================
 
-def plot_proportion_faceted(
+def _plot_proportions_impl(
     df: pd.DataFrame,
     color_by_grouping: str,
     row_by: Optional[str] = None,
@@ -275,7 +282,7 @@ def plot_proportion_faceted(
     """
     Plot proportion breakdown with faceted grid structure.
 
-    API is consistent with plot_trajectories_faceted:
+    API is consistent with plot_feature_over_time:
     - row_by/col_by define facet grid by column VALUES (not variable names)
     - color_by_grouping defines the categorical for bar colors
 
@@ -320,7 +327,7 @@ def plot_proportion_faceted(
 
     Example
     -------
-    >>> fig = plot_proportion_faceted(
+    >>> fig = plot_proportions(
     ...     df,
     ...     color_by_grouping='phenotype',
     ...     row_by='genotype_suffix',
@@ -534,3 +541,77 @@ def plot_proportion_faceted(
         fig.savefig(str(output_path), dpi=150, bbox_inches='tight')
 
     return fig
+
+
+def plot_proportions(
+    df: pd.DataFrame,
+    color_by_grouping: Optional[str] = None,
+    row_by: Optional[Union[str, List[str]]] = None,
+    col_by: Optional[str] = None,
+    count_by: str = 'embryo_id',
+    facet_order: Optional[Dict[str, List]] = None,
+    color_order: Optional[List] = None,
+    color_palette: Optional[Dict] = None,
+    normalize: bool = True,
+    bar_mode: str = 'grouped',
+    height_per_row: int = HEIGHT_PER_ROW,
+    width_per_col: int = WIDTH_PER_COL,
+    output_path: Optional[Path] = None,
+    title: Optional[str] = None,
+    show_counts: bool = True,
+    row_labels: Optional[Dict[str, str]] = None,
+    col_order: Optional[List] = None,
+) -> plt.Figure:
+    """
+    Proportion plotting with two modes:
+
+    1) Faceted mode (default):
+       - row_by/col_by are column names whose VALUES define the grid
+       - color_by_grouping defines bar categories
+
+    2) Grid mode (when row_by is a list of column names):
+       - Each row is a different categorical column
+       - col_by defines grid columns
+       - color_by_grouping must be None
+    """
+    if isinstance(row_by, (list, tuple)):
+        if color_by_grouping is not None:
+            raise ValueError("When row_by is a list, color_by_grouping must be None.")
+        if col_by is None:
+            raise ValueError("col_by is required when row_by is a list.")
+        return _plot_proportions_grid_impl(
+            df=df,
+            col_by=col_by,
+            row_by=list(row_by),
+            count_by=count_by,
+            col_order=col_order,
+            row_labels=row_labels,
+            height_per_row=height_per_row,
+            width_per_col=width_per_col,
+            output_path=output_path,
+            title=title,
+            normalize=normalize,
+            bar_mode=bar_mode,
+            color_palette=color_palette,
+        )
+
+    if color_by_grouping is None:
+        raise ValueError("color_by_grouping is required when row_by is a string or None.")
+
+    return _plot_proportions_impl(
+        df=df,
+        color_by_grouping=color_by_grouping,
+        row_by=row_by,
+        col_by=col_by,
+        count_by=count_by,
+        facet_order=facet_order,
+        color_order=color_order,
+        color_palette=color_palette,
+        normalize=normalize,
+        bar_mode=bar_mode,
+        height_per_row=height_per_row,
+        width_per_col=width_per_col,
+        output_path=output_path,
+        title=title,
+        show_counts=show_counts,
+    )

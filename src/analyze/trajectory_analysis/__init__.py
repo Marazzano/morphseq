@@ -157,7 +157,9 @@ from .viz.styling import (
 )
 
 # Faceted Plotting (Level 1 - Generic)
-from .viz.plotting import plot_trajectories_faceted, plot_multimetric_trajectories
+from .viz.plotting import (
+    plot_cluster_flow,
+)
 
 # Pair Analysis functions removed (extracted to generic utils)
 # Use: from src.analyze.utils.data_processing import get_trajectories_for_group
@@ -258,6 +260,7 @@ __all__ = [
     'plot_cluster_trajectories_df',
     'plot_membership_trajectories_df',
     'plot_membership_vs_k',
+    'plot_cluster_flow',
 
     # Plotting - DEPRECATED (v0.1.x)
     'plot_posterior_heatmap',
@@ -272,10 +275,6 @@ __all__ = [
     'sort_genotypes_by_suffix',
     'build_genotype_style_config',
     'format_genotype_label',
-
-    # Faceted Plotting (Level 1)
-    'plot_trajectories_faceted',
-    'plot_multimetric_trajectories',
 
     # Pair Analysis functions removed (see src.analyze.utils.data_processing)
 

@@ -207,7 +207,7 @@ def create_color_lookup_from_column(
     if isinstance(color_palette, dict):
         return color_palette
 
-    # Handle list-based color_palette (convert to dict like plot_proportion_faceted does)
+    # Handle list-based color_palette (convert to dict like plot_proportions does)
     if isinstance(color_palette, (list, tuple)):
         col_series = df[column]
         # Respect Categorical ordering if present

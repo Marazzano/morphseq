@@ -37,10 +37,9 @@ from .plotting import (
     plot_cluster_trajectories,  # deprecated
     plot_membership_trajectories,  # deprecated
     # Faceted plotting
-    plot_trajectories_faceted,
-    plot_multimetric_trajectories,
-    plot_proportion_grid,
-    plot_proportion_faceted,
+    plot_proportions,
+    # Flow plotting
+    plot_cluster_flow,
     # 3D plotting
     plot_3d_scatter,
 )
@@ -68,10 +67,9 @@ __all__ = [
     'plot_cluster_trajectories',  # deprecated
     'plot_membership_trajectories',  # deprecated
     # Faceted plotting
-    'plot_trajectories_faceted',
-    'plot_multimetric_trajectories',
-    'plot_proportion_grid',
-    'plot_proportion_faceted',
+    'plot_proportions',
+    # Flow plotting
+    'plot_cluster_flow',
     # 3D plotting
     'plot_3d_scatter',
 ]

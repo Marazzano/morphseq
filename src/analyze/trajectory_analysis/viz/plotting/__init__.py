@@ -22,13 +22,13 @@ from .core import (
     plot_membership_trajectories,
 )
 
+# Flow plotting
+from .flow import plot_cluster_flow
+
 # Faceted plotting (now imports from modular faceted/ subdirectory)
 from .faceted import (
     # Main plotting functions
-    plot_trajectories_faceted,
-    plot_multimetric_trajectories,
-    plot_proportion_grid,
-    plot_proportion_faceted,
+    plot_proportions,
     # IR dataclasses (for advanced users)
     TraceData,
     SubplotData,
@@ -64,10 +64,9 @@ __all__ = [
     'plot_cluster_trajectories',  # deprecated
     'plot_membership_trajectories',  # deprecated
     # Faceted plotting (main functions)
-    'plot_trajectories_faceted',
-    'plot_multimetric_trajectories',
-    'plot_proportion_grid',
-    'plot_proportion_faceted',
+    'plot_proportions',
+    # Flow plotting
+    'plot_cluster_flow',
     # Faceted plotting (IR dataclasses)
     'TraceData',
     'SubplotData',

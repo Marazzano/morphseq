@@ -53,9 +53,9 @@ def test_viz_subpackage():
         plot_posterior_heatmap,
         plot_2d_scatter,
         plot_membership_vs_k,
+        plot_cluster_flow,
         # Faceted plotting
-        plot_trajectories_faceted,
-        plot_multimetric_trajectories,
+        plot_proportions,
         # 3D plotting
         plot_3d_scatter,
     )
@@ -65,7 +65,8 @@ def test_viz_subpackage():
     assert callable(plot_dendrogram)
     assert callable(get_color_for_genotype)
     assert callable(plot_cluster_trajectories_df)
-    assert callable(plot_trajectories_faceted)
+    assert callable(plot_proportions)
+    assert callable(plot_cluster_flow)
     assert callable(plot_3d_scatter)
 
     print("✓ viz subpackage imports OK")
@@ -84,18 +85,17 @@ def test_viz_plotting_subpackage():
         plot_posterior_heatmap,
         plot_2d_scatter,
         plot_membership_vs_k,
+        plot_cluster_flow,
         # Faceted
-        plot_trajectories_faceted,
-        plot_multimetric_trajectories,
-        plot_proportion_grid,
-        plot_proportion_faceted,
+        plot_proportions,
         # 3D
         plot_3d_scatter,
     )
 
     # Verify they're callable
     assert callable(plot_cluster_trajectories_df)
-    assert callable(plot_trajectories_faceted)
+    assert callable(plot_proportions)
+    assert callable(plot_cluster_flow)
     assert callable(plot_3d_scatter)
 
     print("✓ viz.plotting subpackage imports OK")
@@ -201,31 +201,6 @@ def test_backward_compat_plotting():
     return True
 
 
-def test_backward_compat_facetted_plotting():
-    """Test backward compatibility for facetted_plotting.py."""
-    print("Testing backward compatibility: facetted_plotting.py...")
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-
-        from analyze.trajectory_analysis.facetted_plotting import (
-            plot_trajectories_faceted,
-            plot_multimetric_trajectories,
-        )
-
-        deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-
-        if len(deprecation_warnings) > 0:
-            print(f"  ⚠ DeprecationWarning raised: {deprecation_warnings[0].message}")
-        else:
-            print("  ⚠ Warning: No DeprecationWarning raised (expected one)")
-
-        assert callable(plot_trajectories_faceted)
-
-    print("✓ facetted_plotting.py backward compatibility OK")
-    return True
-
-
 def test_backward_compat_plotting_3d():
     """Test backward compatibility for plotting_3d.py."""
     print("Testing backward compatibility: plotting_3d.py...")
@@ -261,14 +236,16 @@ def test_main_init_imports():
         extract_genotype_suffix,
         # Plotting
         plot_cluster_trajectories_df,
-        plot_trajectories_faceted,
+        plot_proportions,
+        plot_cluster_flow,
         plot_3d_scatter,
     )
 
     assert callable(generate_dendrograms)
     assert callable(get_color_for_genotype)
     assert callable(plot_cluster_trajectories_df)
-    assert callable(plot_trajectories_faceted)
+    assert callable(plot_proportions)
+    assert callable(plot_cluster_flow)
     assert callable(plot_3d_scatter)
 
     print("✓ Main __init__.py imports OK")
@@ -306,7 +283,6 @@ def main():
         ("backward compat: dendrogram.py", test_backward_compat_dendrogram),
         ("backward compat: genotype_styling.py", test_backward_compat_genotype_styling),
         ("backward compat: plotting.py", test_backward_compat_plotting),
-        ("backward compat: facetted_plotting.py", test_backward_compat_facetted_plotting),
         ("backward compat: plotting_3d.py", test_backward_compat_plotting_3d),
         ("main __init__.py", test_main_init_imports),
         ("pair_analysis", test_pair_analysis_imports),

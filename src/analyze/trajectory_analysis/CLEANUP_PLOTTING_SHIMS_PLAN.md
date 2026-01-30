@@ -5,7 +5,7 @@
 There are **two separate plotting systems** causing confusion:
 
 1. **Generic Plotting** (`src/analyze/viz/plotting/`) - Domain-agnostic, uses `plot_feature_over_time` ✅ Already refactored
-2. **Trajectory Plotting** (`src/analyze/trajectory_analysis/viz/plotting/`) - Trajectory-specific, uses `plot_trajectories_faceted`
+2. **Trajectory Plotting** (`src/analyze/trajectory_analysis/viz/plotting/`) - Trajectory-specific, uses `plot_feature_over_time`
 
 The confusion stems from an **unnecessary shim** file that's already deprecated.
 
@@ -38,7 +38,7 @@ Based on grep search, **only 1 file** imports from the deprecated shim:
 **Current import:**
 ```python
 # Uses the shim indirectly via __init__.py
-from ..facetted_plotting import plot_trajectories_faceted
+from src.analyze.viz.plotting import plot_feature_over_time
 ```
 
 **Action Required:** ✅ **No change needed**
@@ -98,7 +98,7 @@ Check `src/analyze/trajectory_analysis/viz/plotting/__init__.py`:
 
 **Key Features:**
 - Generic: Works with any time series data
-- Uses `feature=` parameter (bioinformatics standard)
+- Uses `features=` parameter (single str or list)
 - No domain-specific logic (no genotypes, pairs, etc.)
 
 **Example:**
@@ -107,7 +107,7 @@ from src.analyze.viz.plotting import plot_feature_over_time
 
 fig = plot_feature_over_time(
     df,
-    feature='metric_value',
+    features='metric_value',
     time_col='hpf',
     id_col='entity_id',
     color_by='group'
@@ -118,8 +118,7 @@ fig = plot_feature_over_time(
 **Use for:** Trajectory-specific visualizations with genotype styling
 
 **Functions:**
-- `plot_trajectories_faceted()` - Faceted trajectory plots
-- `plot_multimetric_trajectories()` - Multi-metric comparison
+- `plot_feature_over_time()` - Single and multi-metric (features can be a list)
 - `plot_pairs_overview()` - Pair-specific analysis
 - `plot_genotypes_by_pair()` - Genotype comparison
 
@@ -130,15 +129,15 @@ fig = plot_feature_over_time(
 
 **Example:**
 ```python
-from src.analyze.trajectory_analysis import plot_trajectories_faceted
+from src.analyze.viz.plotting import plot_feature_over_time
 
-fig = plot_trajectories_faceted(
+fig = plot_feature_over_time(
     df,
-    x_col='predicted_stage_hpf',
-    y_col='baseline_deviation_normalized',
-    line_by='embryo_id',
-    col_by='genotype',
-    color_by_grouping='genotype'
+    features=['baseline_deviation_normalized', 'total_length_um'],
+    time_col='predicted_stage_hpf',
+    id_col='embryo_id',
+    color_by='genotype',
+    facet_col='genotype'
 )
 ```
 
@@ -147,7 +146,7 @@ fig = plot_trajectories_faceted(
 | Need | Use | System |
 |------|-----|--------|
 | Generic time series plot | `plot_feature_over_time()` | viz/plotting |
-| Genotype-aware trajectories | `plot_trajectories_faceted()` | trajectory_analysis |
+| Genotype-aware trajectories | `plot_feature_over_time()` | viz |
 | Multi-experiment faceting | `plot_feature_over_time()` (row_by/col_by) | viz/plotting |
 | Pair analysis | `plot_pairs_overview()` | trajectory_analysis |
 ```
@@ -158,7 +157,7 @@ fig = plot_trajectories_faceted(
 
 ```bash
 # 1. Check no broken imports
-python -c "from src.analyze.trajectory_analysis import plot_trajectories_faceted; print('✅ OK')"
+python -c "from src.analyze.viz.plotting import plot_feature_over_time; print('✅ OK')"
 
 # 2. Check generic plotting still works
 python -c "from src.analyze.viz.plotting import plot_feature_over_time; print('✅ OK')"

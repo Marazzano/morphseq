@@ -33,17 +33,30 @@ def _build_color_lookup(
     Private helper. If color_lookup provided, use it.
     Otherwise, auto-assign from palette.
     """
-    if color_lookup is not None:
-        return color_lookup
-    
     if color_by is None or color_by not in df.columns:
         return {}
     
     unique_vals = list(df[color_by].dropna().unique())
-    return create_color_lookup(unique_vals, palette or STANDARD_PALETTE)
+    palette = palette or STANDARD_PALETTE
+
+    # If a lookup is provided, fill missing/None entries from the palette.
+    if color_lookup is not None:
+        filled = {}
+        palette_idx = 0
+        get_color = color_lookup.get if hasattr(color_lookup, 'get') else None
+        for val in unique_vals:
+            provided = get_color(val) if get_color else None
+            if provided:
+                filled[val] = provided
+            else:
+                filled[val] = palette[palette_idx % len(palette)]
+                palette_idx += 1
+        return filled
+
+    return create_color_lookup(unique_vals, palette)
 
 
-def _build_subplot_ir(
+def _plot_features_over_time_subplot(
     df: pd.DataFrame,
     filter_dict: Dict[str, Any],
     x_col: str,
@@ -63,10 +76,7 @@ def _build_subplot_ir(
     smooth_method: Optional[str] = 'gaussian',
     smooth_params: Optional[Dict] = None,
 ) -> SubplotData:
-    """Build SubplotData (IR) for one facet cell.
-    
-    Private helper. Lives here because it's trajectory-specific compilation.
-    """
+    """Plot Features Over Time Subplot (internal IR builder for one facet cell)."""
     # Determine color groups
     if color_by and color_by in df.columns:
         mask = pd.Series(True, index=df.index)
@@ -161,7 +171,7 @@ def _build_subplot_ir(
 
 def plot_feature_over_time(
     df: pd.DataFrame,
-    feature: str | List[str],  # Can be single feature or list of features
+    features: str | List[str],  # Can be single feature or list of features
     time_col: str = 'predicted_stage_hpf',
     id_col: str = 'embryo_id',
     color_by: Optional[str] = None,
@@ -186,7 +196,7 @@ def plot_feature_over_time(
     style: Optional[StyleSpec] = None,
     color_palette: Optional[List[str]] = None,  # Generic fallback
 ) -> Any:
-    """Plot a feature over time, optionally faceted.
+    """Plot feature(s) over time, optionally faceted.
     
     100% DOMAIN-AGNOSTIC: Caller provides color_lookup for domain-specific coloring.
     If color_lookup=None, auto-assigns colors from palette.
@@ -195,8 +205,8 @@ def plot_feature_over_time(
     ----------
     df : pd.DataFrame
         DataFrame with time-series data
-    feature : str
-        Column name for y-axis metric
+    features : str or List[str]
+        Column name(s) for y-axis metric(s)
     time_col : str, default='predicted_stage_hpf'
         Column name for x-axis (time)
     id_col : str, default='embryo_id'
@@ -247,19 +257,19 @@ def plot_feature_over_time(
     layout = layout or FacetSpec(row_order=None, col_order=None)
     style = style or default_style()
 
-    # Handle multi-feature: if feature is a list, treat each as a row facet (no fake column)
-    if isinstance(feature, list):
-        feature_list = feature
+    # Handle multi-feature: if features is a list, treat each as a row facet (no fake column)
+    if isinstance(features, (list, tuple)):
+        feature_list = list(features)
         facet_row_for_filter = None
     else:
-        feature_list = [feature]
+        feature_list = [features]
         facet_row_for_filter = facet_row
 
     # Build color lookup (generic or user-provided)
     color_lookup = _build_color_lookup(df, color_by, color_lookup, color_palette)
 
     # Determine facet values
-    if isinstance(feature, list):
+    if isinstance(features, (list, tuple)):
         # Multi-feature mode: rows are feature names
         row_vals = feature_list
     else:
@@ -279,12 +289,12 @@ def plot_feature_over_time(
         facet_row_for_filter, facet_col, row_vals, col_vals
     ):
         # In multi-feature mode, row_val is the feature name
-        if isinstance(feature, list):
+        if isinstance(features, (list, tuple)):
             current_feature = row_val
         else:
             current_feature = feature_list[0]
 
-        subplot = _build_subplot_ir(
+        subplot = _plot_features_over_time_subplot(
             df=df,
             filter_dict=filter_dict,
             x_col=time_col,
@@ -306,14 +316,14 @@ def plot_feature_over_time(
         subplots.append(subplot)
 
     # Title
-    if isinstance(feature, list):
-        feature_title = ', '.join(feature)
+    if isinstance(features, (list, tuple)):
+        feature_title = ', '.join(feature_list)
     else:
-        feature_title = feature
+        feature_title = features
 
     # Assemble FigureData with facet labels
     # For multi-feature mode, use feature names as row labels
-    if isinstance(feature, list):
+    if isinstance(features, (list, tuple)):
         row_labels = feature_list
     else:
         row_labels = [str(v) for v in row_vals if v is not None] if facet_row else None

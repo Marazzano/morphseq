@@ -7,13 +7,8 @@ Uses an Intermediate Representation (IR) pattern for backend-agnostic plotting.
 
 Public API:
 -----------
-Trajectory Plots:
-    - plot_trajectories_faceted: Standard faceted plot for single metric
-    - plot_multimetric_trajectories: Multi-metric plot (rows=metrics, cols=groups)
-
 Proportion Plots:
-    - plot_proportion_faceted: Faceted proportion/bar charts
-    - plot_proportion_grid: DEPRECATED - Use plot_proportion_faceted instead
+    - plot_proportions: Proportion/bar charts (preferred)
 
 Shared Components:
     - TraceData, SubplotData, FigureData: IR dataclasses
@@ -21,16 +16,9 @@ Shared Components:
     - validate_error_type: Error type validation helper
 """
 
-# Public trajectory plotting API
-from .trajectories import (
-    plot_trajectories_faceted,
-    plot_multimetric_trajectories,
-)
-
 # Public proportion plotting API
 from .proportions import (
-    plot_proportion_faceted,
-    plot_proportion_grid,  # Deprecated but kept for compatibility
+    plot_proportions,
 )
 
 # Shared utilities (exposed for advanced users)
@@ -60,12 +48,8 @@ from .shared import (
 )
 
 __all__ = [
-    # Trajectory plots
-    'plot_trajectories_faceted',
-    'plot_multimetric_trajectories',
     # Proportion plots
-    'plot_proportion_faceted',
-    'plot_proportion_grid',
+    'plot_proportions',
     # IR dataclasses
     'TraceData',
     'SubplotData',

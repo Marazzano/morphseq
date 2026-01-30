@@ -44,7 +44,7 @@ import pandas as pd
 # Simple grouped plot
 fig = plot_feature_over_time(
     df,
-    feature='measurement',
+    features='measurement',
     time_col='time',
     color_by='condition',
     backend='plotly',
@@ -57,7 +57,7 @@ fig = plot_feature_over_time(
 # Multiple facets with error bands
 fig = plot_feature_over_time(
     df,
-    feature='metric_value',
+    features='metric_value',
     time_col='time_hpf',
     color_by='genotype',
     row_by='experiment',
@@ -75,7 +75,7 @@ fig = plot_feature_over_time(
 # Custom color palette
 fig = plot_feature_over_time(
     df,
-    feature='value',
+    features='value',
     time_col='time',
     color_by='category',
     color_palette=['#FF5733', '#33FF57', '#3357FF'],
@@ -147,8 +147,8 @@ from src.analyze.trajectory_analysis.viz.plotting import plot_time_series
 # Generic plotting
 from src.analyze.viz.plotting import plot_feature_over_time
 
-# Domain-specific (if needed)
-from src.analyze.trajectory_analysis.viz.plotting import plot_trajectories_faceted
+# Domain-specific (multi-metric trajectories)
+from src.analyze.viz.plotting import plot_feature_over_time
 ```
 
 ## Related Modules

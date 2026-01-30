@@ -60,7 +60,8 @@ def identify_outliers(
         - 'iqr': Interquartile Range (Q3 + k×IQR, extreme outlier detection)
         - 'mad': Median Absolute Deviation (robust to outliers)
     threshold : float, optional
-        Manual threshold for median distance (used with 'median_distance' method)
+        Manual threshold for median distance (used with 'median_distance' method).
+        For method='iqr', this is interpreted as the IQR multiplier (default: 2.0).
     percentile : float, default=95
         Percentile cutoff for 'percentile' method
     verbose : bool, default=True
@@ -126,7 +127,7 @@ def identify_outliers(
         # Interquartile Range (IQR) method: Q3 + k×IQR
         q1, q3 = np.percentile(median_distances, [25, 75])
         iqr = q3 - q1
-        iqr_multiplier = threshold if threshold is not None else 4.0  # Default: 4.0× (extreme outliers)
+        iqr_multiplier = threshold if threshold is not None else 2.0  # Default: 2.0× (less conservative)
         thresh = q3 + iqr_multiplier * iqr
         if verbose:
             print(f"  Q1 (25th percentile): {q1:.3f}")

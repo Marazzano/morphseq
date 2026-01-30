@@ -36,9 +36,10 @@ def extract_genotype_suffix(genotype: str) -> str:
     """
     # Known suffixes to match (order matters for longest match)
     suffix_patterns = [
+        ('crispant', ['crispant', 'crisp']),
         ('homozygous', ['homozygous', 'homo']),
         ('heterozygous', ['heterozygous', 'het']),
-        ('wildtype', ['wildtype', 'wt', 'wild_type']),
+        ('wildtype', ['wildtype', 'wt', 'wild_type', 'ab', 'wik', 'wik-ab', 'ab-wik']),
     ]
 
     genotype_lower = genotype.lower()

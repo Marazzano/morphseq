@@ -46,6 +46,7 @@ from .dtw_utils import (
     compute_trajectory_distances,
 )
 
+
 __all__ = [
     # Trajectory utilities (new API)
     'extract_trajectories_df',

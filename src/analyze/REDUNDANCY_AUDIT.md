@@ -91,7 +91,7 @@ src/analyze/
 
 #### `plotting/faceted/`
 - Trajectory-specific faceted plots
-- `plot_trajectories_faceted()` with `y_col=` parameter
+- `plot_feature_over_time()` for single-feature faceting
 - Genotype-aware coloring, pair analysis logic
 
 #### `dendrogram.py`

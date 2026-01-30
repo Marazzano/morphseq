@@ -110,7 +110,7 @@ def add_membership_column(
     Add membership category column to DataFrame based on classification results.
     
     Maps each embryo_id to its membership category (core/uncertain/outlier).
-    This enables using plot_multimetric_trajectories with color_by_grouping='membership'.
+    This enables using plot_feature_over_time with color_by='membership'.
     
     Parameters
     ----------
@@ -130,7 +130,7 @@ def add_membership_column(
     -------
     >>> classification = classify_membership_2d(posteriors['max_p'], ...)
     >>> df = add_membership_column(df, classification)
-    >>> fig = plot_multimetric_trajectories(df, ..., color_by_grouping='membership')
+    >>> fig = plot_feature_over_time(df, features=[...], color_by='membership', facet_col='cluster')
     """
     # Create mapping from embryo_id to category
     embryo_to_cat = dict(zip(classification['embryo_ids'], classification['category']))
@@ -682,6 +682,15 @@ def run_k_selection_with_plots(
     method: str = 'hierarchical',
     x_col: str = 'predicted_stage_hpf',
     metric_labels: Optional[Dict[str, str]] = None,
+    enable_stage1_filtering: bool = True,
+    stage1_method: str = 'iqr',
+    iqr_multiplier: float = 4.0,
+    k_neighbors: int = 5,
+    filtering_hist_bins: int = 30,
+    generate_cluster_flow: bool = True,
+    cluster_flow_k_range: Optional[List[int]] = None,
+    cluster_flow_title: str = "Cluster Flow Across k Values",
+    cluster_flow_filename: str = "cluster_flow_sankey.html",
     verbose: bool = True
 ) -> Dict[str, Any]:
     """
@@ -693,6 +702,7 @@ def run_k_selection_with_plots(
     3. Summary metrics CSV
     4. Cluster assignments CSV (embryo_id + clustering_k_N columns)
     5. Full results pickle
+    6. Optional Stage 1 IQR filtering histogram and outlier list
 
     Parameters
     ----------
@@ -716,6 +726,24 @@ def run_k_selection_with_plots(
         Column name for x-axis (default: 'predicted_stage_hpf')
     metric_labels : Dict[str, str], optional
         Pretty labels for metrics in plots
+    enable_stage1_filtering : bool, default=True
+        If True, apply Stage 1 IQR filtering before k selection
+    stage1_method : str, default='iqr'
+        Stage 1 filtering method: 'iqr' (median distance) or 'knn' (k-NN IQR)
+    iqr_multiplier : float, default=4.0
+        IQR multiplier used for filtering threshold
+    k_neighbors : int, default=5
+        Number of neighbors for k-NN IQR filtering (stage1_method='knn')
+    filtering_hist_bins : int, default=30
+        Number of bins for the Stage 1 filtering histogram
+    generate_cluster_flow : bool, default=True
+        If True, generate a Sankey diagram showing cluster flow across k
+    cluster_flow_k_range : List[int], optional
+        K values to include in the flow diagram (default: all)
+    cluster_flow_title : str, default="Cluster Flow Across k Values"
+        Title for the flow diagram
+    cluster_flow_filename : str, default="cluster_flow_sankey.html"
+        Output filename for the flow diagram (saved in output_dir)
     verbose : bool
         Print progress
 
@@ -736,8 +764,13 @@ def run_k_selection_with_plots(
     - k_selection_summary.csv : Metrics table
     - cluster_assignments.csv : embryo_id + clustering_k_N columns
     - k_results.pkl : Full results object (pickle)
+    - stage1_{method}_iqr_histogram.png : Stage 1 filtering histogram (if enabled)
+    - stage1_{method}_outliers.csv : Stage 1 outlier list (if enabled)
+    - cluster_flow_sankey.html : Cluster flow Sankey diagram (if enabled)
     """
-    from ..facetted_plotting import plot_multimetric_trajectories
+    from ..viz.plotting import plot_cluster_flow
+    from src.analyze.viz.plotting import plot_feature_over_time
+    from ..qc import identify_outliers, identify_embryo_outliers_iqr, filter_data_and_ids
     import pickle
 
     # Default plotting metrics
@@ -765,19 +798,123 @@ def run_k_selection_with_plots(
         print(f"Clustering method: {method}")
         print(f"Plotting metrics: {plotting_metrics}")
         print(f"K range: {k_range}")
+        if enable_stage1_filtering:
+            extra = f"{stage1_method}, iqr_multiplier={iqr_multiplier}"
+            if stage1_method == 'knn':
+                extra += f", k_neighbors={k_neighbors}"
+            print(f"Stage 1 filtering: Enabled ({extra})")
+        else:
+            print("Stage 1 filtering: Disabled")
         print("="*70)
+
+    # =========================================================================
+    # STEP 0: Optional Stage 1 IQR filtering (before k selection)
+    # =========================================================================
+    stage1_results = None
+    D_filtered = D
+    embryo_ids_filtered = embryo_ids
+
+    if enable_stage1_filtering:
+        if verbose:
+            print("\n" + "="*70)
+            method_name = "IQR Distance Filtering" if stage1_method == 'iqr' else "k-NN IQR Filtering"
+            print(f"STAGE 1: {method_name}")
+            print("="*70)
+
+        if stage1_method == 'iqr':
+            outlier_ids, inlier_ids, stage1_info = identify_outliers(
+                D,
+                embryo_ids,
+                method='iqr',
+                threshold=iqr_multiplier,
+                verbose=verbose
+            )
+            q1, q3 = np.percentile(stage1_info['median_distances'], [25, 75])
+            iqr = q3 - q1
+            stage1_results = {
+                'method': 'iqr',
+                'outlier_indices': stage1_info['outlier_indices'],
+                'outlier_ids': outlier_ids,
+                'kept_indices': stage1_info['inlier_indices'],
+                'kept_ids': inlier_ids,
+                'median_distances': stage1_info['median_distances'],
+                'threshold': stage1_info['threshold'],
+                'q1': q1,
+                'q3': q3,
+                'iqr': iqr,
+            }
+            distances = stage1_info['median_distances']
+            threshold = stage1_info['threshold']
+            x_label_hist = "Median distance to all embryos"
+        elif stage1_method == 'knn':
+            stage1_results = identify_embryo_outliers_iqr(
+                D,
+                embryo_ids,
+                iqr_multiplier=iqr_multiplier,
+                k_neighbors=k_neighbors,
+                verbose=verbose
+            )
+            stage1_results['method'] = 'knn'
+            distances = stage1_results['knn_distances']
+            threshold = stage1_results['threshold']
+            effective_k = min(k_neighbors, len(embryo_ids) - 1)
+            x_label_hist = f"Mean k-NN distance (k={effective_k})"
+        else:
+            raise ValueError("stage1_method must be 'iqr' or 'knn'")
+
+        D_filtered, embryo_ids_filtered = filter_data_and_ids(
+            D, embryo_ids, stage1_results['kept_indices']
+        )
+
+        # Histogram plot of filtering threshold
+        fig, ax = plt.subplots(figsize=(7.5, 4.5))
+        ax.hist(distances, bins=filtering_hist_bins, color='#4C78A8', alpha=0.8, edgecolor='white')
+        ax.axvline(threshold, color='#D62728', linestyle='--', linewidth=2,
+                   label=f"Threshold = {threshold:.2f}")
+        ax.set_xlabel(x_label_hist)
+        ax.set_ylabel("Embryo count")
+        if stage1_method == 'iqr':
+            title_text = f"Stage 1 IQR Filtering (multiplier={iqr_multiplier})"
+        else:
+            title_text = f"Stage 1 k-NN IQR Filtering (k={effective_k}, multiplier={iqr_multiplier})"
+        ax.set_title(title_text)
+        ax.legend(frameon=False)
+        fig.tight_layout()
+
+        hist_path = output_dir / f"stage1_{stage1_method}_iqr_histogram.png"
+        fig.savefig(hist_path, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+
+        outliers_csv = output_dir / f"stage1_{stage1_method}_outliers.csv"
+        outlier_distances = distances[stage1_results['outlier_indices']] if len(stage1_results['outlier_indices']) > 0 else []
+        outliers_df = pd.DataFrame({
+            'embryo_id': stage1_results['outlier_ids'],
+            'distance': outlier_distances,
+        })
+        outliers_df.to_csv(outliers_csv, index=False)
+
+        stage1_results['histogram_path'] = str(hist_path)
+        stage1_results['outliers_csv'] = str(outliers_csv)
+
+        if verbose:
+            print(f"\n✓ Stage 1 filtering complete.")
+            print(f"  Kept embryos: {len(embryo_ids_filtered)} / {len(embryo_ids)}")
+            print(f"  Histogram: {hist_path}")
+            print(f"  Outliers CSV: {outliers_csv}")
 
     # =========================================================================
     # STEP 1: Evaluate all k values
     # =========================================================================
     k_results = evaluate_k_range(
-        D=D,
-        embryo_ids=embryo_ids,
+        D=D_filtered,
+        embryo_ids=embryo_ids_filtered,
         k_range=k_range,
         n_bootstrap=n_bootstrap,
         method=method,
         verbose=verbose
     )
+    if stage1_results is not None:
+        k_results['stage1_filtering'] = stage1_results
 
     # =========================================================================
     # STEP 2: Generate trajectory plots for each k
@@ -797,22 +934,22 @@ def run_k_selection_with_plots(
 
         # Use Phase 1 cluster assignments (method-agnostic, no dendrogram needed)
         cluster_labels = clustering_info['assignments']['cluster_labels']
-        cluster_map = dict(zip(embryo_ids, cluster_labels))
+        cluster_map = dict(zip(embryo_ids_filtered, cluster_labels))
 
         # Prepare DataFrame for this k
-        df_k = df[df['embryo_id'].isin(embryo_ids)].copy()
+        df_k = df[df['embryo_id'].isin(embryo_ids_filtered)].copy()
         df_k['cluster'] = df_k['embryo_id'].map(cluster_map)
         df_k = add_membership_column(df_k, classification, column_name='membership')
 
         # Generate trajectory plot
         try:
-            fig = plot_multimetric_trajectories(
+            fig = plot_feature_over_time(
                 df_k,
-                metrics=plotting_metrics,
-                col_by='cluster',
-                color_by_grouping='membership',
-                x_col=x_col,
-                metric_labels=metric_labels,
+                features=plotting_metrics,
+                time_col=x_col,
+                id_col='embryo_id',
+                color_by='membership',
+                facet_col='cluster',
                 title=f'k={k}: Membership Quality by Cluster',
                 backend='matplotlib',
                 bin_width=2.0,
@@ -884,6 +1021,25 @@ def run_k_selection_with_plots(
         print(f"  ✓ Saved: {pkl_path}")
 
     # =========================================================================
+    # STEP 7: Optional cluster flow diagram (Sankey)
+    # =========================================================================
+    flow_path = None
+    if generate_cluster_flow:
+        try:
+            flow_path = output_dir / cluster_flow_filename
+            plot_cluster_flow(
+                k_results,
+                k_range=cluster_flow_k_range,
+                title=cluster_flow_title,
+                output_path=flow_path,
+            )
+            k_results['cluster_flow_path'] = str(flow_path)
+        except Exception as e:
+            flow_path = None
+            if verbose:
+                print(f"  ⚠ Cluster flow plot failed: {e}")
+
+    # =========================================================================
     # SUMMARY
     # =========================================================================
     if verbose:
@@ -897,6 +1053,13 @@ def run_k_selection_with_plots(
         print(f"  - Metrics table: k_selection_summary.csv")
         print(f"  - Cluster assignments: cluster_assignments.csv")
         print(f"  - Full results: k_results.pkl")
+        if stage1_results is not None:
+            hist_name = Path(stage1_results['histogram_path']).name
+            outliers_name = Path(stage1_results['outliers_csv']).name
+            print(f"  - Stage 1 histogram: {hist_name}")
+            print(f"  - Stage 1 outliers: {outliers_name}")
+        if flow_path is not None:
+            print(f"  - Cluster flow: {Path(flow_path).name}")
         print(f"\nTo load cluster assignments:")
         print(f"  >>> df_clusters = pd.read_csv('{assignments_csv_path}')")
         print("="*70)

@@ -28,7 +28,7 @@ class ColorLookup:
     ...     suffix_colors={'wildtype': '#2ca02c', 'homozygous': '#d62728'},
     ...     suffix_order=['wildtype', 'homozygous']
     ... )
-    >>> plot_feature_over_time(df, color_lookup=GENOTYPE_COLORS)
+    >>> plot_feature_over_time(df, features='metric_value', color_lookup=GENOTYPE_COLORS)
     """
     
     def __init__(
