@@ -73,6 +73,14 @@ def compute_trend_line(
     if len(times) == 0 or len(values) == 0:
         return [], []
 
+    # Remove NaNs (keeps trend robust to sparse/invalid points)
+    mask = ~(np.isnan(times) | np.isnan(values))
+    times = times[mask]
+    values = values[mask]
+
+    if len(times) == 0 or len(values) == 0:
+        return [], []
+
     # Create time bins
     time_bins = np.arange(
         np.floor(times.min()),

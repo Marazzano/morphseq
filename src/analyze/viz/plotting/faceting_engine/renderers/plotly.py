@@ -48,6 +48,9 @@ def render_plotly(
     
     _add_facet_labels(fig, data, n_rows, n_cols)
     
+    extra_left = 35 if data.row_labels and n_rows > 1 else 0
+    extra_top = 35 if data.col_labels and n_cols > 1 else 0
+    
     legend_config = dict(x=1.02, y=1)
     if data.legend_title:
         legend_config['title'] = dict(text=data.legend_title)
@@ -59,8 +62,8 @@ def render_plotly(
         hovermode='closest',
         template='plotly_white',
         legend=legend_config,
-        margin=dict(l=style.margin_left, r=style.margin_right,
-                    t=style.margin_top, b=style.margin_bottom),
+        margin=dict(l=style.margin_left + extra_left, r=style.margin_right,
+                    t=style.margin_top + extra_top, b=style.margin_bottom),
     )
     
     return fig
@@ -74,7 +77,8 @@ def _add_line_trace(fig, trace: TraceData, row: int, col: int):
     if trace.hover_meta:
         header = trace.hover_meta.get('header', '')
         detail = trace.hover_meta.get('detail', '')
-        hovertemplate = f'<b>{header}</b><br><b>Time:</b> %{{x:.2f}}<br>{detail}<extra></extra>'
+        # Don't use f-string for the whole template - detail already contains Plotly template syntax
+        hovertemplate = '<b>' + header + '</b><br><b>Time:</b> %{x:.2f}<br>' + detail + '<extra></extra>'
     
     fig.add_trace(
         go.Scatter(
@@ -124,7 +128,7 @@ def _add_facet_labels(fig, data: FigureData, n_rows: int, n_cols: int):
             fig.add_annotation(
                 text=f"<b>{label}</b>",
                 xref="paper", yref="paper",
-                x=-0.06, y=y_pos,
+                x=-0.08, y=y_pos,
                 showarrow=False, xanchor="center", yanchor="middle",
                 textangle=-90, font=dict(size=13),
             )
@@ -135,7 +139,7 @@ def _add_facet_labels(fig, data: FigureData, n_rows: int, n_cols: int):
             fig.add_annotation(
                 text=f"<b>{label}</b>",
                 xref="paper", yref="paper",
-                x=x_pos, y=1.02,
+                x=x_pos, y=1.04,
                 showarrow=False, xanchor="center", yanchor="bottom",
                 font=dict(size=13),
             )

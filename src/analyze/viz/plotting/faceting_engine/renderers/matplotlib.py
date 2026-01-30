@@ -87,8 +87,18 @@ def render_matplotlib(
             y_pos = 1 - (idx + 0.5) / n_rows
             fig.text(0.02, y_pos, label, rotation=90, va='center', ha='right',
                      fontsize=12, fontweight='bold', transform=fig.transFigure)
+
     
     fig.suptitle(data.title, fontsize=14, fontweight='bold')
     plt.tight_layout(rect=[0.03, 0, 0.82 if legend_entries else 1, 0.96])
+
+    if data.col_labels and n_cols > 1:
+        for idx, label in enumerate(data.col_labels):
+            ax = axes[0, idx]
+            pos = ax.get_position()
+            x_pos = (pos.x0 + pos.x1) / 2
+            y_pos = pos.y1 + 0.01
+            fig.text(x_pos, y_pos, label, va='bottom', ha='center',
+                     fontsize=12, fontweight='bold', transform=fig.transFigure)
     
     return fig

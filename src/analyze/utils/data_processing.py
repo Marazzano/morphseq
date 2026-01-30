@@ -97,6 +97,7 @@ def get_trajectories_for_group(
 
     for embryo_id in embryo_ids:
         embryo_data = filtered[filtered[embryo_id_col] == embryo_id].sort_values(time_col)
+        embryo_data = embryo_data[[time_col, metric_col]].dropna()
         if len(embryo_data) > 1:
             times = embryo_data[time_col].values
             metrics = embryo_data[metric_col].values
