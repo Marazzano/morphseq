@@ -16,10 +16,8 @@ Shared Components:
     - validate_error_type: Error type validation helper
 """
 
-# Public proportion plotting API
-from .proportions import (
-    plot_proportions,
-)
+# Public proportion plotting API (generic implementation)
+from src.analyze.viz.plotting.proportions import plot_proportions
 
 # Shared utilities (exposed for advanced users)
 from .shared import (

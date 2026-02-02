@@ -31,6 +31,8 @@ from ....config import (
     INDIVIDUAL_TRACE_ALPHA,
     INDIVIDUAL_TRACE_LINEWIDTH,
     MEAN_TRACE_LINEWIDTH,
+)
+from src.analyze.viz.styling import (
     GENOTYPE_SUFFIX_COLORS,
     GENOTYPE_SUFFIX_ORDER,
     PHENOTYPE_COLORS,

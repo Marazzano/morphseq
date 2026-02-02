@@ -25,6 +25,7 @@ see: src.analyze.trajectory_analysis.viz.plotting
 """
 
 from .feature_over_time import plot_feature_over_time
+from .proportions import plot_proportions
 from .time_series import get_membership_category_colors
 from .plotting_3d import plot_3d_scatter
 
@@ -33,4 +34,5 @@ __all__ = [
     'plot_feature_over_time',
     'plot_3d_scatter',
     'get_membership_category_colors',
+    'plot_proportions',
 ]
