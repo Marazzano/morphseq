@@ -219,4 +219,5 @@ This diagnostic framework establishes baseline parameters before moving to real 
 - Plan document: UOT Parameter Debugging and Sensitization Plan
 - Canonical grid: `canonical_grid_implementation.md`
 - UOT implementation: `src/analyze/utils/optimal_transport/`
+- **🔗 DATA CONTRACTS** (MUST READ): `src/analyze/optimal_transport_morphometrics/docs/DATA_CONTRACTS.md`
 - POT documentation: https://pythonot.github.io/

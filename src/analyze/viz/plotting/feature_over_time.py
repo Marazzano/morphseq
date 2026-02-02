@@ -171,7 +171,7 @@ def _plot_features_over_time_subplot(
 
 def plot_feature_over_time(
     df: pd.DataFrame,
-    features: str | List[str],  # Can be single feature or list of features
+    features: Union[str, List[str]],  # Can be single feature or list of features
     time_col: str = 'predicted_stage_hpf',
     id_col: str = 'embryo_id',
     color_by: Optional[str] = None,

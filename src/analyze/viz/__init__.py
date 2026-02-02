@@ -12,7 +12,7 @@ For domain-specific trajectory visualizations (genotype styling, phenotype color
 see: src.analyze.trajectory_analysis.viz
 """
 
-from . import plotting
+import importlib
 from .hpf_coverage import (
     experiment_hpf_coverage,
     longest_interval_where,
@@ -25,3 +25,17 @@ __all__ = [
     'longest_interval_where',
     'plot_hpf_overlap_quick',
 ]
+
+
+def __getattr__(name: str):
+    if name == "plotting":
+        try:
+            module = importlib.import_module(f"{__name__}.plotting")
+        except Exception as exc:
+            raise ImportError(
+                "Optional plotting utilities require extra dependencies (e.g., seaborn). "
+                "Install the viz extras or import specific modules that avoid seaborn."
+            ) from exc
+        globals()[name] = module
+        return module
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

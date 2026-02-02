@@ -78,8 +78,8 @@ ADAPTIVE_PERCENTILE = 0.75
 ENABLE_IQR_FILTERING = True
 """Enable two-stage IQR filtering in consensus pipeline"""
 
-IQR_MULTIPLIER = 4.0
-"""IQR multiplier for outlier detection (4.0 is conservative, matches existing outlier detection)"""
+IQR_MULTIPLIER = 2
+"""IQR multiplier for outlier detection (2x IQR; less conservative than prior 4x default)"""
 
 KNN_K = 5
 """Number of nearest neighbors for k-NN distance calculation in Stage 1 filtering"""

@@ -112,7 +112,7 @@ def run_consensus_pipeline(
         Stage 1 filtering method: 'iqr' (distance-based) or 'knn' (k-nearest neighbors)
         'iqr' removes global outliers based on mean distance to all embryos
         'knn' uses local neighborhood distances (legacy, can keep problematic clusters)
-    iqr_multiplier : float, default=4.0
+    iqr_multiplier : float, default=2
         IQR multiplier for outlier thresholds (both stages, both methods)
     k_neighbors : int, default=5
         Number of nearest neighbors for Stage 1 k-NN filtering (only used if stage1_method='knn')

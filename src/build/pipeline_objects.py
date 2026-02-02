@@ -89,7 +89,6 @@ from src.run_morphseq_pipeline.paths import (
     get_build06_output,
 )
 from src.build.build03A_process_images import segment_wells, compile_embryo_stats, extract_embryo_snips
-from src.build.build02B_segment_bf_main import apply_unet
 
 # Dependency simplification notes (comments only; no behavior change):
 # - glob2: used only to match files; replace with `Path.glob()` to drop glob2.
@@ -99,6 +98,8 @@ from src.build.build02B_segment_bf_main import apply_unet
 
 log = logging.getLogger(__name__)
 logging.basicConfig(format="%(levelname)s | %(message)s", level=logging.INFO)
+
+FF_COMPLETE_MARKER = ".ff_complete"
 
 
 
@@ -310,6 +311,51 @@ class Experiment:
             return p if p.exists() else None
         except Exception:
             return None
+
+    def _ff_complete_marker(self) -> Optional[Path]:
+        if not self.ff_path:
+            return None
+        return self.ff_path / FF_COMPLETE_MARKER
+
+    def _count_ff_images(self) -> int:
+        if not self.ff_path:
+            return 0
+        patterns = ("*_stitch.jpg", "*_stitch.png")
+        total = 0
+        for pat in patterns:
+            total += sum(1 for _ in self.ff_path.glob(pat))
+        return total
+
+    def _expected_ff_count_from_meta(self) -> Optional[int]:
+        meta_csv = self.meta_path_built
+        if not meta_csv or not meta_csv.exists():
+            return None
+        try:
+            with meta_csv.open("r", encoding="utf-8", errors="ignore") as handle:
+                # subtract header row if present
+                count = sum(1 for _ in handle) - 1
+            return max(count, 0)
+        except Exception as exc:
+            log.warning("Could not read metadata CSV for %s: %s", self.date, exc)
+            return None
+
+    def _ff_complete(self) -> bool:
+        if not self.ff_path or not self.ff_path.exists():
+            return False
+        marker = self._ff_complete_marker()
+        if marker and marker.exists():
+            return True
+        # For YX1, require full image count to avoid marking partial runs as complete.
+        if self.microscope == "YX1":
+            expected = self._expected_ff_count_from_meta()
+            if expected is None or expected == 0:
+                return False
+            actual = self._count_ff_images()
+            if actual >= expected:
+                return True
+            log.warning("YX1 FF incomplete for %s: have %d/%d images", self.date, actual, expected)
+            return False
+        return has_output(self.ff_path, PATTERNS["ff"])
 
     @property
     def stitch_ff_path(self) -> Optional[Path]:
@@ -925,7 +971,10 @@ class Experiment:
             }.items():
             
             if step not in ["meta", "meta_built", "meta_embryo"]:
-                present  = has_output(path, PATTERNS[step])
+                if step == "ff":
+                    present = self._ff_complete()
+                else:
+                    present = has_output(path, PATTERNS[step])
             else:
                 present = path is not None
 
@@ -1007,6 +1056,8 @@ class Experiment:
 
     @record("segment")
     def segment_images(self, force_update: bool=False):
+        # Import here to avoid pulling heavy Build02 deps unless needed.
+        from src.build.build02B_segment_bf_main import apply_unet
         # We need to pull the current models
         model_name_vec = ["mask_v0_0100", "via_v1_0100", "yolk_v1_0050", "focus_v0_0100", "bubble_v0_0100"]
         # apply unet for each model

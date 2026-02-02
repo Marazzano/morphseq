@@ -10,32 +10,29 @@
 # - Safe and predictable
 ################################################################################
 
-# Deny everything by default
-/*
+# Deny everything by default (recursive)
+**/*
 !*/
-!**/
 
 # ============================================================================
 # SOURCE CODE & NOTEBOOKS (ALLOW)
 # ============================================================================
-!*.py           # Python scripts
-!**/*.py        # Python scripts in subdirectories
-!*.ipynb        # Jupyter notebooks
-!*.md           # Markdown documentation
-!*.txt          # Text files
-!*.yml          # YAML config
-!*.yaml
-!*.json         # JSON config/data
-!*.sh           # Shell scripts
+!**/*.py        # Python scripts
+!**/*.ipynb     # Jupyter notebooks
+!**/*.md        # Markdown documentation
+!**/*.txt       # Text files
+!**/*.yml       # YAML config
+!**/*.yaml
+!**/*.json      # JSON config/data
+!**/*.sh        # Shell scripts
 
 # ============================================================================
 # DOCUMENTATION & CONFIG (ALLOW)
 # ============================================================================
-!.gitignore     # This file
-!**/.gitignore  # Nested .gitignore files
-!README*        # README files
-!LICENSE
-!MANIFEST.in
+!**/.gitignore  # .gitignore files
+!**/README*     # README files
+!**/LICENSE
+!**/MANIFEST.in
 
 # ============================================================================
 # KEY RESULTS (ALLOW - tracking important outputs)

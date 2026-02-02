@@ -832,6 +832,14 @@ def build_ff_from_yx1(
     out_meta.mkdir(parents=True, exist_ok=True)
     meta_df.to_csv(out_meta / f"{exp_name}_metadata.csv", index=False)
 
+    if not metadata_only:
+        marker = write_root / "stitched_FF_images" / exp_name / ".ff_complete"
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(f"rows={len(meta_df)}\n")
+        except Exception as exc:
+            log.warning("Could not write FF completion marker for %s: %s", exp_name, exc)
+
     nd.close()
 
     print('Done.')

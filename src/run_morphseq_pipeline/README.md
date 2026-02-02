@@ -225,6 +225,12 @@ ls src/analyze/gen_embeddings/
 - **SAM2 not found**: Ensure `segmentation_sandbox/` exists in repo root
 - **Auto-discovery fails**: Manually provide `--sam2-csv` path to Build03
 - **Format errors**: Check snip_id uses `_t####` format (should be automatic)
+- **GroundingDINO `_C` import errors** (e.g., `NameError: _C`, `undefined symbol`, `libc10.so not found`):
+  - Ensure CUDA toolkit matches the PyTorch build (cu118 → `cuda/11.8.0`)
+  - Set `CUDA_HOME` and include both CUDA and torch libs in `LD_LIBRARY_PATH`
+  - Rebuild the extension:
+    - `cd segmentation_sandbox/models/GroundingDINO`
+    - `python setup.py build_ext --inplace`
 
 ### Build02/Build03 Issues  
 - **Missing models**: Check Build02 model availability in conda environment

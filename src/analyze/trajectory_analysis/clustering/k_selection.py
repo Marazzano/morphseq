@@ -684,7 +684,7 @@ def run_k_selection_with_plots(
     metric_labels: Optional[Dict[str, str]] = None,
     enable_stage1_filtering: bool = True,
     stage1_method: str = 'iqr',
-    iqr_multiplier: float = 4.0,
+    iqr_multiplier: float = 2,
     k_neighbors: int = 5,
     filtering_hist_bins: int = 30,
     generate_cluster_flow: bool = True,
@@ -730,7 +730,7 @@ def run_k_selection_with_plots(
         If True, apply Stage 1 IQR filtering before k selection
     stage1_method : str, default='iqr'
         Stage 1 filtering method: 'iqr' (median distance) or 'knn' (k-NN IQR)
-    iqr_multiplier : float, default=4.0
+    iqr_multiplier : float, default=2
         IQR multiplier used for filtering threshold
     k_neighbors : int, default=5
         Number of neighbors for k-NN IQR filtering (stage1_method='knn')

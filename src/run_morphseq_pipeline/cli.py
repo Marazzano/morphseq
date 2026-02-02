@@ -60,7 +60,6 @@ from .steps.run_build04 import run_build04
 from .steps.run_build05 import run_build05
 from .steps.run_build01 import run_build01
 from .steps.run_build_combine_metadata import run_combine_metadata
-from .steps.run_build02 import run_build02
 from .steps.run_sam2 import run_sam2, run_sam2_batch
 from .validation import run_validation
 from .steps.run_embed import run_embed
@@ -315,6 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         run_combine_metadata(root=resolve_root(args))
 
     elif args.cmd == "build02":
+        from .steps.run_build02 import run_build02
         run_build02(root=resolve_root(args), mode=args.mode, model_name=args.model_name,
                     n_classes=args.n_classes, num_workers=args.num_workers, overwrite=args.overwrite)
 
@@ -409,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
             print("\n" + "="*60)
             print("🎭 STEP 2: Build02 - Complete QC mask suite (5 UNets)")
             print("="*60)
+            from .steps.run_build02 import run_build02
             run_build02(
                 root=root, 
                 mode="legacy",  # Run all 5 models

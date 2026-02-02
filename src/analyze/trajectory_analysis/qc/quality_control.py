@@ -259,7 +259,7 @@ def identify_embryo_outliers_iqr(
     D: np.ndarray,
     embryo_ids: List[str],
     *,
-    iqr_multiplier: float = 4.0,
+    iqr_multiplier: float = 2,
     k_neighbors: int = 5,
     verbose: bool = True
 ) -> Dict[str, Any]:
@@ -282,8 +282,8 @@ def identify_embryo_outliers_iqr(
         Distance matrix (n_embryos × n_embryos), symmetric with zero diagonal
     embryo_ids : List[str]
         Embryo identifiers (same order as D rows/columns)
-    iqr_multiplier : float, default=4.0
-        IQR multiplier for outlier threshold (4.0 is conservative)
+    iqr_multiplier : float, default=2
+        IQR multiplier for outlier threshold (2x IQR is less conservative than the prior 4x default)
         Higher values = fewer outliers removed
     k_neighbors : int, default=5
         Number of nearest neighbors to consider
@@ -308,7 +308,7 @@ def identify_embryo_outliers_iqr(
     Examples
     --------
     >>> # Detect outliers before clustering
-    >>> results = identify_embryo_outliers_iqr(D, embryo_ids, iqr_multiplier=4.0)
+    >>> results = identify_embryo_outliers_iqr(D, embryo_ids, iqr_multiplier=2.0)
     >>> print(f"Removed {len(results['outlier_ids'])} outliers")
     >>>
     >>> # Filter distance matrix and IDs
@@ -322,7 +322,7 @@ def identify_embryo_outliers_iqr(
       k-NN distances because mutants are near each other
     - Global mean would incorrectly flag mutants as outliers
     - Default k=5 neighbors balances robustness vs sensitivity
-    - Default multiplier=4.0 is conservative (matches existing outlier detection)
+    - Default multiplier=2x IQR is less conservative than the prior 4x default
     """
     n = len(D)
     k = min(k_neighbors, n - 1)  # Cap k at n-1 for small datasets
@@ -457,7 +457,7 @@ def identify_cluster_outliers_combined(
     posterior_results: Dict[str, Any],
     embryo_ids: List[str],
     *,
-    iqr_multiplier: float = 4.0,
+    iqr_multiplier: float = 2,
     posterior_threshold: float = 0.5,
     verbose: bool = True
 ) -> Dict[str, Any]:
@@ -486,7 +486,7 @@ def identify_cluster_outliers_combined(
         Must contain 'max_p' key with posterior probabilities
     embryo_ids : List[str]
         Embryo identifiers (length n)
-    iqr_multiplier : float, default=4.0
+    iqr_multiplier : float, default=2
         IQR multiplier for within-cluster outlier threshold
     posterior_threshold : float, default=0.5
         Minimum max_p to keep (embryos below this are removed)
@@ -512,7 +512,7 @@ def identify_cluster_outliers_combined(
     ...     posteriors['modal_cluster'],
     ...     posteriors,
     ...     embryo_ids_filtered,
-    ...     iqr_multiplier=4.0,
+    ...     iqr_multiplier=2.0,
     ...     posterior_threshold=0.5
     ... )
     >>>

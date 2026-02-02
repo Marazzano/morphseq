@@ -33,9 +33,10 @@ REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
 DATA_ROOT="${REPO_ROOT}/morphseq_playground"
 MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
+PYTHON_EXEC="${PYTHON_EXEC:-/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/${ENV_NAME}/bin/python}"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20251017_part1,20251017_part2,20251020,20251104,20251113" #20251104,20250529_24hpf_ctrl_atf6
+DEFAULT_EXPERIMENTS="20260124" #20251104,20250529_24hpf_ctrl_atf6
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -48,17 +49,17 @@ DEFAULT_EXPERIMENTS="20251017_part1,20251017_part2,20251020,20251104,20251113" #
 
 # Pipeline stage toggles (1=run, 0=skip)
 : "${RUN_METADATA_REBUILD:=0}"
-: "${RUN_SAM2:=1}"
-: "${RUN_BUILD03:=1}"
+: "${RUN_SAM2:=0}"
+: "${RUN_BUILD03:=0}"
 : "${BUILD03_SKIP_GEOMETRY_QC:=0}"  # 0=compute full geometry QC (default), 1=fast mode (skip QC, mark all embryos usable)
-: "${RUN_BUILD04:=1}"
+: "${RUN_BUILD04:=0}"
 : "${RUN_BUILD06:=1}"
-: "${RUN_SNIP_EXPORT:=1}"
+: "${RUN_SNIP_EXPORT:=0}"
 
 # Snip export knobs (outscale fixed at 7.8 to match embedding expectations)
 : "${SNIP_WORKERS:=1}"
 : "${SNIP_DL_RAD_UM:=50}"
-: "${SNIP_OVERWRITE:=1}"
+: "${SNIP_OVERWRITE:=0}"
 # ----------------------------------------------------------------------------
 
 if [[ "${SNIP_OVERWRITE}" == "1" ]]; then
@@ -75,6 +76,11 @@ echo "[sam2-onwards] Run flags - metadata:${RUN_METADATA_REBUILD} sam2:${RUN_SAM
 echo "[sam2-onwards] Build03 flags - skip_geometry_qc:${BUILD03_SKIP_GEOMETRY_QC}"
 echo "[sam2-onwards] SAM2 params - workers:${SAM2_WORKERS} conf:${SAM2_CONFIDENCE} iou:${SAM2_IOU}"
 echo "[sam2-onwards] Snip params - workers:${SNIP_WORKERS} dl_rad:${SNIP_DL_RAD_UM} overwrite:${SNIP_OVERWRITE}"
+if [[ ! -x "${PYTHON_EXEC}" ]]; then
+  echo "[sam2-onwards] WARNING: PYTHON_EXEC not found/executable: ${PYTHON_EXEC}" >&2
+  echo "[sam2-onwards] WARNING: Falling back to 'python' on PATH" >&2
+  PYTHON_EXEC="python"
+fi
 
 # Support SGE array jobs: select one experiment per task using SGE_TASK_ID
 if [[ -n "${SGE_TASK_ID:-}" ]]; then
@@ -111,6 +117,13 @@ IFS=',' read -r -a SELECTED_EXPERIMENTS <<< "${EXPERIMENT}"
 mkdir -p logs
 
 # Activate conda environment (robust to libmamba issues)
+FALLBACK_CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+if ! command -v conda >/dev/null 2>&1; then
+  if [[ -f "${FALLBACK_CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
+    # shellcheck disable=SC1090
+    source "${FALLBACK_CONDA_BASE}/etc/profile.d/conda.sh"
+  fi
+fi
 if command -v conda >/dev/null 2>&1; then
   CONDA_BASE="$(conda info --base 2>/dev/null || true)"
   if [[ -n "${CONDA_BASE}" && -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
@@ -123,6 +136,61 @@ else
   echo "[sam2-onwards] WARNING: conda not found in PATH; proceeding without activation"
 fi
 
+# Prefer CUDA 11.8 toolkit to match PyTorch cu118 builds
+CUDA_MODULE="cuda/11.8.0"
+CUDA_BASE="/net/gs/vol3/software/modules-sw/cuda/11.8.0/Linux/Ubuntu22.04/x86_64"
+if type module >/dev/null 2>&1; then
+  module unload cuda >/dev/null 2>&1 || true
+  module load "${CUDA_MODULE}" >/dev/null 2>&1 || true
+fi
+if [[ -d "${CUDA_BASE}" ]]; then
+  export CUDA_HOME="${CUDA_BASE}"
+  export PATH="${CUDA_HOME}/bin:${PATH}"
+  export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+  export LIBRARY_PATH="${CUDA_HOME}/lib64:${LIBRARY_PATH:-}"
+  export CPATH="${CUDA_HOME}/include:${CPATH:-}"
+fi
+# Ensure Torch shared libs are on the runtime path (libc10, libtorch_*)
+TORCH_LIB="$("${PYTHON_EXEC}" - <<'PY' 2>/dev/null || true
+import torch, os
+print(os.path.join(os.path.dirname(torch.__file__), 'lib'))
+PY
+)"
+if [[ -n "${TORCH_LIB}" ]]; then
+  export LD_LIBRARY_PATH="${TORCH_LIB}:${LD_LIBRARY_PATH:-}"
+fi
+
+# Environment diagnostics (helpful for GroundingDINO/CUDA issues)
+echo "[sam2-onwards] CONDA_DEFAULT_ENV=${CONDA_DEFAULT_ENV:-none}"
+echo "[sam2-onwards] python exec: ${PYTHON_EXEC}"
+if command -v conda >/dev/null 2>&1; then
+  echo "[sam2-onwards] conda: $(conda --version 2>/dev/null || echo 'unknown')"
+fi
+"${PYTHON_EXEC}" - <<'PY'
+import sys
+try:
+    import torch
+    print("[sam2-onwards] python:", sys.executable)
+    print("[sam2-onwards] torch:", torch.__version__, "cuda:", torch.version.cuda, "available:", torch.cuda.is_available())
+except Exception as e:
+    print("[sam2-onwards] torch import failed:", e)
+try:
+    import groundingdino
+    print("[sam2-onwards] groundingdino:", groundingdino.__file__)
+    try:
+        from groundingdino import _C  # noqa: F401
+        print("[sam2-onwards] groundingdino._C: OK")
+    except Exception as e:
+        print("[sam2-onwards] groundingdino._C import failed:", e)
+except Exception as e:
+    print("[sam2-onwards] groundingdino import failed:", e)
+PY
+if compgen -G "/net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/models/GroundingDINO/groundingdino/_C*.so" > /dev/null; then
+  ls -l /net/trapnell/vol1/home/mdcolon/proj/morphseq/segmentation_sandbox/models/GroundingDINO/groundingdino/_C*.so
+else
+  echo "[sam2-onwards] groundingdino _C*.so not found in repo checkout"
+fi
+
 # Ensure Python can import the repo
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 
@@ -133,7 +201,7 @@ echo "🚀 Starting SAM2 onwards pipeline for ${EXPERIMENT}..."
 if [[ "${RUN_METADATA_REBUILD}" == "1" ]]; then
   for exp_name in "${SELECTED_EXPERIMENTS[@]}"; do
     echo "🔄 Pre-step: Build01 metadata-only for ${exp_name}"
-    python -m src.run_morphseq_pipeline.cli build01 \
+    "${PYTHON_EXEC}" -m src.run_morphseq_pipeline.cli build01 \
       --data-root "${DATA_ROOT}" \
       --exp "${exp_name}" \
       --microscope "${METADATA_MICROSCOPE}" \
@@ -145,7 +213,7 @@ fi
 
 if [[ "${RUN_SAM2}" == "1" ]]; then
   echo "🔄 Step 1: Running SAM2 for ${EXPERIMENT}..."
-  python -m src.run_morphseq_pipeline.cli pipeline \
+  "${PYTHON_EXEC}" -m src.run_morphseq_pipeline.cli pipeline \
     --data-root "${DATA_ROOT}" \
     --experiments "${EXPERIMENT}" \
     --action sam2 \
@@ -159,7 +227,7 @@ if [[ "${RUN_BUILD03}" == "1" ]]; then
   echo "🔄 Step 2: Running Build03 for ${EXPERIMENT}..."
   # Export flag for Python to read
   export BUILD03_SKIP_GEOMETRY_QC
-  python -m src.run_morphseq_pipeline.cli pipeline \
+  "${PYTHON_EXEC}" -m src.run_morphseq_pipeline.cli pipeline \
     --data-root "${DATA_ROOT}" \
     --experiments "${EXPERIMENT}" \
     --action build03 \
@@ -170,7 +238,7 @@ fi
 if [[ "${RUN_SNIP_EXPORT}" == "1" ]]; then
   echo "🖼️  Step 2b: Exporting BF snips for ${EXPERIMENT}..."
   for exp_name in "${SELECTED_EXPERIMENTS[@]}"; do
-    python - <<PY
+    "${PYTHON_EXEC}" - <<PY
 from pathlib import Path
 import pandas as pd
 from src.build.build03A_process_images import extract_embryo_snips
@@ -204,7 +272,7 @@ fi
 
 if [[ "${RUN_BUILD04}" == "1" ]]; then
   echo "🔄 Step 3: Running Build04 for ${EXPERIMENT}..."
-  python -m src.run_morphseq_pipeline.cli pipeline \
+  "${PYTHON_EXEC}" -m src.run_morphseq_pipeline.cli pipeline \
     --data-root "${DATA_ROOT}" \
     --experiments "${EXPERIMENT}" \
     --action build04 \
@@ -214,7 +282,7 @@ fi
 
 if [[ "${RUN_BUILD06}" == "1" ]]; then
   echo "🔄 Step 4: Running Build06 for ${EXPERIMENT}..."
-  python -m src.run_morphseq_pipeline.cli pipeline \
+  "${PYTHON_EXEC}" -m src.run_morphseq_pipeline.cli pipeline \
     --data-root "${DATA_ROOT}" \
     --experiments "${EXPERIMENT}" \
     --action build06 \
@@ -239,9 +307,9 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 #   /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 # qsub -t 1 -tc 1 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
-# qsub -t 1-5 -tc 3 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
+# qsub /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
-# qsub -t 1-11 -tc 7 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
+# qsub -t 1-13 -tc 1 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
 
   # # SAM2 regeneration (11 experiments)

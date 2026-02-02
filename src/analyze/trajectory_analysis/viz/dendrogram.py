@@ -155,7 +155,7 @@ def generate_dendrograms(
     # Choose distance matrix for linkage
     if coassociation_matrix is not None:
         # Use consensus distances: D = 1 - M
-        from .clustering.bootstrap_clustering import coassociation_to_distance
+        from ..clustering.bootstrap_clustering import coassociation_to_distance
         D_for_linkage = coassociation_to_distance(coassociation_matrix)
     else:
         # Use provided distance matrix
