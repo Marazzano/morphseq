@@ -19,7 +19,6 @@ Multivariate DTW (MD-DTW):
 """
 
 import numpy as np
-from scipy.spatial.distance import cdist
 from typing import List, Optional
 
 
@@ -209,6 +208,47 @@ def compute_dtw_distance_matrix(
 # ============================================================================
 
 
+def _nan_aware_cost_matrix(ts_a: np.ndarray, ts_b: np.ndarray) -> np.ndarray:
+    """Compute NaN-aware Euclidean cost matrix between two multivariate series.
+
+    For each (i, j), distance is computed using only feature dimensions where
+    both ts_a[i] and ts_b[j] are finite. If there is no overlap, cost is inf.
+    Distances are scaled by total_features / valid_features to keep scale
+    comparable across pairs with different valid counts.
+    """
+    A = np.asarray(ts_a, dtype=float)
+    B = np.asarray(ts_b, dtype=float)
+
+    if A.ndim != 2 or B.ndim != 2:
+        raise ValueError("ts_a and ts_b must be 2D arrays (timepoints x features)")
+    if A.shape[1] != B.shape[1]:
+        raise ValueError(f"Feature mismatch: {A.shape[1]} vs {B.shape[1]}")
+
+    n, n_features = A.shape
+    m = B.shape[0]
+
+    sse = np.zeros((n, m), dtype=float)
+    valid_counts = np.zeros((n, m), dtype=np.int32)
+
+    for k in range(n_features):
+        a = A[:, k][:, None]
+        b = B[:, k][None, :]
+        valid = np.isfinite(a) & np.isfinite(b)
+        if not valid.any():
+            continue
+        diff = a - b
+        sse += np.where(valid, diff * diff, 0.0)
+        valid_counts += valid
+
+    cost = np.full((n, m), np.inf, dtype=float)
+    has_overlap = valid_counts > 0
+    if np.any(has_overlap):
+        scaling = n_features / valid_counts[has_overlap]
+        cost[has_overlap] = np.sqrt(sse[has_overlap] * scaling)
+
+    return cost
+
+
 def _dtw_multivariate_pair(
     ts_a: np.ndarray,
     ts_b: np.ndarray,
@@ -217,7 +257,7 @@ def _dtw_multivariate_pair(
     """
     Compute DTW distance between two multivariate time series.
 
-    Uses Euclidean distance in feature space as the local distance metric.
+    Uses NaN-aware Euclidean distance in feature space as the local distance metric.
     Implements dynamic programming with optional Sakoe-Chiba band constraint.
 
     Parameters
@@ -238,13 +278,12 @@ def _dtw_multivariate_pair(
     -----
     - The "multivariate" part is handled by computing Euclidean distance
       between feature vectors at each timepoint pair
+    - NaNs are ignored per-feature; if no feature overlaps at a pair, cost=inf
     - ts_a[i] and ts_b[j] are vectors in feature space
     - Distance is computed as sqrt(sum((ts_a[i] - ts_b[j])^2))
     """
-    # Step 1: Compute local cost matrix
-    # dist_matrix[i, j] = Euclidean distance between ts_a[i] and ts_b[j]
-    # This naturally handles multivariate data
-    dist_matrix = cdist(ts_a, ts_b, metric='euclidean')
+    # Step 1: Compute local cost matrix (NaN-aware)
+    dist_matrix = _nan_aware_cost_matrix(ts_a, ts_b)
 
     n, m = dist_matrix.shape
 
@@ -333,6 +372,7 @@ def compute_md_dtw_distance_matrix(
     - Time complexity: O(N^2 * T^2 / n_jobs) where N=samples, T=timepoints
     - Output is symmetric by construction: D[i,j] == D[j,i]
     - Diagonal is zero: D[i,i] == 0
+    - NaNs in input are handled by ignoring missing features per timepoint pair
     """
     from joblib import Parallel, delayed, cpu_count
 

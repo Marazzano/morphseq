@@ -13,7 +13,6 @@ Functions
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 from typing import List, Tuple, Optional
 
 from src.analyze.utils.timeseries.dtw import compute_md_dtw_distance_matrix
@@ -73,8 +72,9 @@ def prepare_multivariate_array(
     Notes
     -----
     - All embryos are interpolated to the same common time grid
-    - Missing values (NaN) are handled by linear interpolation
-    - Z-score normalization ensures equal weight for all metrics in DTW
+    - Missing values (NaN) are handled by linear interpolation for interior gaps
+    - Edge NaNs are preserved for DTW to handle with NaN-aware costs
+    - Z-score normalization ignores NaNs (per-metric)
     """
     from ..utilities.trajectory_utils import interpolate_to_common_grid_multi_df
     from ..config import GRID_STEP
@@ -139,10 +139,9 @@ def prepare_multivariate_array(
             continue
 
         for j, metric in enumerate(metrics):
-            # Reindex onto full grid and fill missing values
+            # Reindex onto full grid and fill interior gaps only; keep edge NaNs.
             ser = emb_df[metric].reindex(time_grid)
-            # Fill interior gaps only; keep out-of-range edges as NaN then set to 0.
-            ser = ser.interpolate(limit_area='inside').fillna(0)
+            ser = ser.interpolate(limit_area='inside')
             X[i, :, j] = ser.values
 
     # Step 5: Handle remaining NaNs (e.g., at edges due to interpolation bounds)
@@ -154,34 +153,30 @@ def prepare_multivariate_array(
                 nans = np.isnan(series)
 
                 if nans.all():
-                    # All NaNs - set to 0
-                    X[i, :, j] = 0
-                else:
-                    # Use pandas to fill NaNs with interpolation
-                    filled = pd.Series(series).interpolate(limit_area='inside').fillna(0)
-                    X[i, :, j] = filled.values
+                    # All NaNs - leave as NaN
+                    continue
+                # Fill interior NaNs only; preserve edge NaNs
+                filled = pd.Series(series).interpolate(limit_area='inside')
+                X[i, :, j] = filled.values
 
     if verbose:
         print(f"  Array shape: {X.shape}")
         print(f"  Before normalization:")
         for j, metric in enumerate(metrics):
-            print(f"    {metric}: mean={X[:, :, j].mean():.3f}, std={X[:, :, j].std():.3f}")
+            print(f"    {metric}: mean={np.nanmean(X[:, :, j]):.3f}, std={np.nanstd(X[:, :, j]):.3f}")
 
     # Step 6: Global Z-score normalization (if enabled)
     if normalize:
-        original_shape = X.shape
-        X_reshaped = X.reshape(-1, n_metrics)
-
-        # Z-score each metric globally
-        scaler = StandardScaler()
-        X_normalized = scaler.fit_transform(X_reshaped)
-
-        X = X_normalized.reshape(original_shape)
+        means = np.nanmean(X, axis=(0, 1))
+        stds = np.nanstd(X, axis=(0, 1))
+        stds = np.where(stds == 0, 1.0, stds)
+        for j in range(n_metrics):
+            X[:, :, j] = (X[:, :, j] - means[j]) / stds[j]
 
         if verbose:
             print(f"  After normalization:")
             for j, metric in enumerate(metrics):
-                print(f"    {metric}: mean={X[:, :, j].mean():.6f}, std={X[:, :, j].std():.6f}")
+                print(f"    {metric}: mean={np.nanmean(X[:, :, j]):.6f}, std={np.nanstd(X[:, :, j]):.6f}")
 
     if verbose:
         print(f"  Multivariate array prepared successfully")
