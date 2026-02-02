@@ -4,7 +4,7 @@ Visualization subpackage for trajectory analysis.
 Contains:
 - dendrogram: Hierarchical clustering visualization
 - styling: Genotype color and style utilities
-- plotting: Plotting functions (core, faceted, 3D)
+- plotting: Plotting functions (core + proportions + 3D)
 """
 
 # Dendrogram functions

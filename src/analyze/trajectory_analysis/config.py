@@ -11,8 +11,6 @@ from src.analyze.viz.styling import (
     GENOTYPE_SUFFIX_COLORS,
     GENOTYPE_SUFFIX_ORDER,
     GENOTYPE_COLORS,
-    PHENOTYPE_COLORS,
-    PHENOTYPE_ORDER,
 )
 
 # ==============================================================================

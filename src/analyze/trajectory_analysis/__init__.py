@@ -156,7 +156,7 @@ from .viz.styling import (
     format_genotype_label
 )
 
-# Faceted Plotting (Level 1 - Generic)
+# Proportion plotting (generic)
 from .viz.plotting import (
     plot_cluster_flow,
 )
