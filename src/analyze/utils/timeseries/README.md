@@ -9,9 +9,11 @@ Domain-agnostic utilities for time series analysis. These functions have **no de
 ## Modules
 
 ### `dtw.py` - Dynamic Time Warping
-- `compute_dtw_distance()`: Compute DTW distance between two time series
-- Uses FastDTW for efficient approximate DTW computation
-- Returns normalized distance metric
+- `compute_dtw_distance()`: Compute DTW distance between two 1D time series
+- `compute_dtw_distance_matrix()`: Pairwise DTW distances for multiple 1D series
+- `compute_md_dtw_distance_matrix()`: Multivariate DTW (MD-DTW) for multi-feature time series
+- Uses Sakoe-Chiba band constraint for efficiency
+- **NaN-aware**: Multivariate DTW handles missing features via scaled distance computation (see below)
 
 ### `dba.py` - DTW Barycentric Averaging
 - `dba()`: Compute DTW Barycentric Average of multiple time series
@@ -63,6 +65,17 @@ new_times = np.linspace(0, 4, 100)
 
 interpolated = interpolate_trajectory(times, values, new_times, method='cubic')
 ```
+
+## NaN Handling in Multivariate DTW
+
+The multivariate DTW functions (`_nan_aware_cost_matrix`, `_dtw_multivariate_pair`, `compute_md_dtw_distance_matrix`) handle missing data gracefully:
+
+- **Partial feature NaNs**: When some features are NaN at a timepoint pair, distance is computed using valid features and scaled by `sqrt(n_features / valid_counts)`. This assumes equal variance across features.
+- **Full timepoint NaNs**: When all features are NaN at a timepoint, that cell has `inf` cost. If this occurs at the start or end of a series, the DTW path is blocked and the distance is `inf`.
+
+**Best practice**: Trim time series to remove leading/trailing all-NaN timepoints before computing DTW distances. The NaN-aware scaling is designed for *partial* missing data (e.g., one feature missing at some timepoints), not for entirely missing observations.
+
+Unit tests for NaN handling are in `src/analyze/_tests/test_dtw.py`.
 
 ## Design Principles
 
