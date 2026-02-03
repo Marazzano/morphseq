@@ -249,6 +249,18 @@ def _nan_aware_cost_matrix(ts_a: np.ndarray, ts_b: np.ndarray) -> np.ndarray:
     return cost
 
 
+def _trim_nan_edges(ts: np.ndarray) -> np.ndarray:
+    """Trim leading/trailing timepoints with all-NaN features."""
+    if ts.ndim != 2:
+        raise ValueError("ts must be 2D (timepoints x features)")
+    valid = np.isfinite(ts).any(axis=1)
+    if not valid.any():
+        return ts[:0]
+    start = int(np.argmax(valid))
+    end = len(valid) - int(np.argmax(valid[::-1]))
+    return ts[start:end]
+
+
 def _dtw_multivariate_pair(
     ts_a: np.ndarray,
     ts_b: np.ndarray,
@@ -282,6 +294,11 @@ def _dtw_multivariate_pair(
     - ts_a[i] and ts_b[j] are vectors in feature space
     - Distance is computed as sqrt(sum((ts_a[i] - ts_b[j])^2))
     """
+    ts_a = _trim_nan_edges(ts_a)
+    ts_b = _trim_nan_edges(ts_b)
+    if ts_a.size == 0 or ts_b.size == 0:
+        return np.inf
+
     # Step 1: Compute local cost matrix (NaN-aware)
     dist_matrix = _nan_aware_cost_matrix(ts_a, ts_b)
 
