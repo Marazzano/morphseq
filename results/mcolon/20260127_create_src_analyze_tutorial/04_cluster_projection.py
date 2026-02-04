@@ -176,6 +176,7 @@ for exp_id in SOURCE_EXPERIMENTS:
         sakoe_chiba_radius=SAKOE_CHIBA_RADIUS,
         n_bootstrap=100,
         frac=0.8,
+        bootstrap_on="reference",
         method='nearest_neighbor',
         classification='2d',
         normalize=True,
@@ -238,6 +239,7 @@ combined_results = run_bootstrap_projection_with_plots(
     sakoe_chiba_radius=SAKOE_CHIBA_RADIUS,
     n_bootstrap=100,
     frac=0.8,
+    bootstrap_on="reference",
     method='nearest_neighbor',
     classification='2d',
     normalize=True,
@@ -408,10 +410,76 @@ print("="*80)
 print(f"Combined projections: {len(df_all_proj)} embryos across {len(SOURCE_EXPERIMENTS)} experiments")
 
 # ============================================================================
-# Step 6: Proportion Analysis - Compare Experiments
+# Step 6: Distance Diagnostics - Cluster Fit Checks
 # ============================================================================
 print("\n" + "="*80)
-print("STEP 6: PROPORTION ANALYSIS")
+print("STEP 6: DISTANCE DIAGNOSTICS")
+print("="*80)
+
+def _label_key(label: str) -> str:
+    label_str = str(label).strip().lower()
+    cleaned = []
+    prev_underscore = False
+    for ch in label_str:
+        if ch.isalnum():
+            cleaned.append(ch)
+            prev_underscore = False
+        else:
+            if not prev_underscore:
+                cleaned.append('_')
+                prev_underscore = True
+    key = ''.join(cleaned).strip('_')
+    return key or "label"
+
+for exp_id in SOURCE_EXPERIMENTS:
+    print(f"\n--- {exp_id} ---")
+    df_exp = projections[exp_id].copy()
+
+    # Check if distance columns exist
+    label_set = sorted(df_exp['cluster_label'].dropna().unique())
+    label_keys = {label: _label_key(label) for label in label_set}
+    dist_cols = [f"dist_to_{label_keys[label]}" for label in label_set if f"dist_to_{label_keys[label]}" in df_exp.columns]
+
+    if len(dist_cols) == 0:
+        print("  No per-cluster distance columns found. Skipping diagnostics.")
+        continue
+
+    # Distance margin summary
+    print(f"  Distance margin stats (second-best - best):")
+    print(f"    Mean: {df_exp['distance_margin'].mean():.3f}")
+    print(f"    Median: {df_exp['distance_margin'].median():.3f}")
+    print(f"    Min: {df_exp['distance_margin'].min():.3f}")
+
+    # Intermediate vs Low_to_High check if those labels exist
+    if 'Intermediate' in label_keys and 'Low_to_High' in label_keys:
+        d_inter = f"dist_to_{label_keys['Intermediate']}"
+        d_l2h = f"dist_to_{label_keys['Low_to_High']}"
+        if d_inter in df_exp.columns and d_l2h in df_exp.columns:
+            df_inter = df_exp[df_exp['cluster_label'] == 'Intermediate'].copy()
+            if len(df_inter) > 0:
+                df_inter['margin_l2h_minus_inter'] = df_inter[d_l2h] - df_inter[d_inter]
+                print(f"  Intermediate assignments: {len(df_inter)}")
+                print(f"    Mean (Low_to_High - Intermediate) distance margin: {df_inter['margin_l2h_minus_inter'].mean():.3f}")
+                print(f"    Median margin: {df_inter['margin_l2h_minus_inter'].median():.3f}")
+                # Save table for review
+                diag_path = RESULTS_DIR / f"{exp_id}_intermediate_margin_check.csv"
+                df_inter.sort_values('margin_l2h_minus_inter').to_csv(diag_path, index=False)
+                print(f"    Saved: {diag_path}")
+            else:
+                print("  No Intermediate assignments found.")
+        else:
+            print("  Missing distance columns for Intermediate/Low_to_High comparison.")
+
+    # Save overall distance diagnostic table
+    diag_all_path = RESULTS_DIR / f"{exp_id}_distance_diagnostics.csv"
+    df_exp.to_csv(diag_all_path, index=False)
+    print(f"  Saved: {diag_all_path}")
+
+# ============================================================================
+# Step 7: Proportion Analysis - Compare Experiments
+# ============================================================================
+print("\n" + "="*80)
+print("STEP 7: PROPORTION ANALYSIS")
 print("="*80)
 
 # Compare cluster frequencies between experiments
@@ -463,7 +531,7 @@ for genotype in sorted(df_all_proj['genotype'].unique()):
 # Step 7: Visualize Trajectories - Faceted by Cluster Category and Experiment
 # ============================================================================
 print("\n" + "="*80)
-print("STEP 7: TRAJECTORY VISUALIZATION")
+print("STEP 8: TRAJECTORY VISUALIZATION")
 print("="*80)
 
 # Merge projection results back with trajectory data
@@ -507,7 +575,7 @@ plt.close(fig1)
 # Step 8: Proportion Plots - Batch Effect Visualization
 # ============================================================================
 print("\n" + "="*80)
-print("STEP 8: PROPORTION PLOTS")
+print("STEP 9: PROPORTION PLOTS")
 print("="*80)
 
 # Use the new plot_proportions function for faceted visualization
@@ -537,7 +605,7 @@ plt.close(fig2)
 # Step 9: Batch Effect Analysis - Distance Distribution Check
 # ============================================================================
 print("\n" + "="*80)
-print("STEP 9: BATCH EFFECT ANALYSIS")
+print("STEP 10: BATCH EFFECT ANALYSIS")
 print("="*80)
 
 print("\nDistance distribution analysis:")
@@ -578,7 +646,7 @@ plt.close(fig3)
 # ============================================================================
 
 print("\n" + "="*80)
-print("SECTION 10: Bootstrap Uncertainty Quantification")
+print("SECTION 11: Bootstrap Uncertainty Quantification")
 print("="*80)
 
 # Bootstrap parameters (already used in the wrapper)

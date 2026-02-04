@@ -862,6 +862,23 @@ def _make_label_codes(labels: pd.Series) -> Tuple[Dict[Any, int], Dict[int, Any]
     return label_to_code, code_to_label, unique_labels
 
 
+def _label_to_key(label: Any) -> str:
+    """Convert label to a safe column suffix."""
+    label_str = str(label).strip().lower()
+    cleaned = []
+    prev_underscore = False
+    for ch in label_str:
+        if ch.isalnum():
+            cleaned.append(ch)
+            prev_underscore = False
+        else:
+            if not prev_underscore:
+                cleaned.append('_')
+                prev_underscore = True
+    key = ''.join(cleaned).strip('_')
+    return key or "label"
+
+
 def bootstrap_projection_assignments_from_distance(
     D_cross: np.ndarray,
     source_ids: List[str],
@@ -873,18 +890,26 @@ def bootstrap_projection_assignments_from_distance(
     k: int = 5,
     n_bootstrap: int = N_BOOTSTRAP,
     frac: float = BOOTSTRAP_FRAC,
+    bootstrap_on: str = "reference",
     random_state: int = RANDOM_SEED,
     verbose: bool = False
 ) -> Dict[str, Any]:
     """
     Bootstrap projection using a precomputed cross-DTW distance matrix.
+
+    bootstrap_on:
+      - "reference": subsample reference embryos (columns of D_cross)
+      - "source": subsample source embryos (rows of D_cross)
     """
     from ..projection import project_onto_reference_clusters_from_distance
 
     np.random.seed(random_state)
     n_samples = len(source_ids)
+    n_ref = len(ref_ids)
     n_clusters = len(set(reference_cluster_map.values()))
-    n_to_sample = max(int(np.ceil(frac * n_samples)), 1)
+    if bootstrap_on not in {"reference", "source"}:
+        raise ValueError("bootstrap_on must be 'reference' or 'source'")
+    n_to_sample = max(int(np.ceil(frac * (n_ref if bootstrap_on == "reference" else n_samples))), 1)
 
     # Full projection (reference labels)
     full_assignments = project_onto_reference_clusters_from_distance(
@@ -909,36 +934,83 @@ def bootstrap_projection_assignments_from_distance(
         if verbose and (iter_idx + 1) % 10 == 0:
             print(f"  Progress: {iter_idx + 1}/{n_bootstrap}")
 
-        sampled_indices = np.random.choice(n_samples, size=n_to_sample, replace=False)
-        sampled_indices = np.sort(sampled_indices)
-        sampled_ids = [source_ids[i] for i in sampled_indices]
+        if bootstrap_on == "source":
+            sampled_indices = np.random.choice(n_samples, size=n_to_sample, replace=False)
+            sampled_indices = np.sort(sampled_indices)
+            sampled_ids = [source_ids[i] for i in sampled_indices]
 
-        D_subset = D_cross[sampled_indices, :]
+            D_subset = D_cross[sampled_indices, :]
 
-        try:
-            subset_assignments = project_onto_reference_clusters_from_distance(
-                D_cross=D_subset,
-                source_ids=sampled_ids,
-                ref_ids=ref_ids,
-                reference_cluster_map=reference_cluster_map,
-                reference_category_map=reference_category_map,
-                method=method,
-                k=k,
-                verbose=False
-            )
+            try:
+                subset_assignments = project_onto_reference_clusters_from_distance(
+                    D_cross=D_subset,
+                    source_ids=sampled_ids,
+                    ref_ids=ref_ids,
+                    reference_cluster_map=reference_cluster_map,
+                    reference_category_map=reference_category_map,
+                    method=method,
+                    k=k,
+                    verbose=False
+                )
 
-            labels_full = np.full(n_samples, -1, dtype=int)
-            for embryo_id, cluster in zip(subset_assignments['embryo_id'], subset_assignments['cluster']):
-                labels_full[id_to_idx[embryo_id]] = int(cluster)
+                labels_full = np.full(n_samples, -1, dtype=int)
+                for embryo_id, cluster in zip(subset_assignments['embryo_id'], subset_assignments['cluster']):
+                    labels_full[id_to_idx[embryo_id]] = int(cluster)
 
-            bootstrap_results.append({
-                'labels': labels_full,
-                'indices': sampled_indices
-            })
-        except Exception as e:
-            if verbose:
-                print(f"    Warning: Bootstrap iteration {iter_idx} failed: {e}")
-            continue
+                bootstrap_results.append({
+                    'labels': labels_full,
+                    'indices': sampled_indices
+                })
+            except Exception as e:
+                if verbose:
+                    print(f"    Warning: Bootstrap iteration {iter_idx} failed: {e}")
+                continue
+        else:
+            sampled_ref_indices = np.random.choice(n_ref, size=n_to_sample, replace=False)
+            sampled_ref_indices = np.sort(sampled_ref_indices)
+            sampled_ref_ids = [ref_ids[i] for i in sampled_ref_indices]
+
+            # Subset reference maps to sampled refs only
+            ref_cluster_sub = {
+                rid: reference_cluster_map[rid]
+                for rid in sampled_ref_ids
+                if rid in reference_cluster_map
+            }
+            if len(ref_cluster_sub) == 0:
+                continue
+
+            ref_category_sub = None
+            if reference_category_map is not None:
+                ref_category_sub = {
+                    rid: reference_category_map[rid]
+                    for rid in sampled_ref_ids
+                    if rid in reference_category_map
+                }
+
+            D_subset = D_cross[:, sampled_ref_indices]
+
+            try:
+                subset_assignments = project_onto_reference_clusters_from_distance(
+                    D_cross=D_subset,
+                    source_ids=source_ids,
+                    ref_ids=sampled_ref_ids,
+                    reference_cluster_map=ref_cluster_sub,
+                    reference_category_map=ref_category_sub,
+                    method=method,
+                    k=k,
+                    verbose=False
+                )
+
+                labels_full = subset_assignments['cluster'].astype(int).values
+
+                bootstrap_results.append({
+                    'labels': labels_full,
+                    'indices': np.arange(n_samples)
+                })
+            except Exception as e:
+                if verbose:
+                    print(f"    Warning: Bootstrap iteration {iter_idx} failed: {e}")
+                continue
 
     if verbose:
         print(f"\nCompleted {len(bootstrap_results)} successful bootstrap iterations")
@@ -968,6 +1040,7 @@ def run_bootstrap_projection_with_plots(
     sakoe_chiba_radius: int = 20,
     n_bootstrap: int = N_BOOTSTRAP,
     frac: float = BOOTSTRAP_FRAC,
+    bootstrap_on: str = "reference",
     method: str = "nearest_neighbor",
     k: int = 5,
     classification: str = "2d",
@@ -1078,6 +1151,25 @@ def run_bootstrap_projection_with_plots(
         verbose=verbose
     )
 
+    # Precompute min distances to each cluster (for diagnostics)
+    cluster_to_ref_indices = {}
+    for j, ref_id in enumerate(arrays.ref_ids):
+        if ref_id in reference_cluster_map:
+            cluster_id = reference_cluster_map[ref_id]
+            cluster_to_ref_indices.setdefault(cluster_id, []).append(j)
+
+    cluster_codes_sorted = sorted(cluster_to_ref_indices.keys())
+    cluster_label_keys = {
+        code: _label_to_key(code_to_label.get(code, code))
+        for code in cluster_codes_sorted
+    }
+
+    cluster_min_distances = {}
+    for code, idxs in cluster_to_ref_indices.items():
+        if len(idxs) == 0:
+            continue
+        cluster_min_distances[code] = np.nanmin(D_cross[:, idxs], axis=1)
+
     # Full projection (baseline assignments)
     full_assignments = project_onto_reference_clusters_from_distance(
         D_cross=D_cross,
@@ -1104,6 +1196,7 @@ def run_bootstrap_projection_with_plots(
         k=k,
         n_bootstrap=n_bootstrap,
         frac=frac,
+        bootstrap_on=bootstrap_on,
         verbose=verbose
     )
 
@@ -1148,6 +1241,27 @@ def run_bootstrap_projection_with_plots(
         'nearest_distance': D_cross.min(axis=1),
     })
 
+    # Add per-cluster min distances and margin diagnostics
+    dist_matrix = []
+    for code in cluster_codes_sorted:
+        dist_matrix.append(cluster_min_distances[code])
+        key = cluster_label_keys[code]
+        assignments_df[f'dist_to_{key}'] = cluster_min_distances[code]
+    if dist_matrix:
+        dist_matrix = np.vstack(dist_matrix).T  # shape (n_source, n_clusters)
+        order = np.argsort(dist_matrix, axis=1)
+        best_idx = order[:, 0]
+        second_idx = order[:, 1] if dist_matrix.shape[1] > 1 else order[:, 0]
+        best_dist = dist_matrix[np.arange(dist_matrix.shape[0]), best_idx]
+        second_dist = dist_matrix[np.arange(dist_matrix.shape[0]), second_idx]
+        best_cluster_code = [cluster_codes_sorted[i] for i in best_idx]
+        second_cluster_code = [cluster_codes_sorted[i] for i in second_idx]
+        best_label = [code_to_label.get(int(c), c) for c in best_cluster_code]
+        second_label = [code_to_label.get(int(c), c) for c in second_cluster_code]
+        assignments_df['best_cluster_by_distance'] = best_label
+        assignments_df['second_best_cluster_by_distance'] = second_label
+        assignments_df['distance_margin'] = second_dist - best_dist
+
     if 'nearest_distance' in full_assignments.columns:
         assignments_df['nearest_distance'] = full_assignments['nearest_distance'].values
 
@@ -1187,6 +1301,7 @@ def run_bootstrap_projection_with_plots(
     summary_df['run_name'] = run_name
     summary_df['n_bootstrap'] = n_bootstrap
     summary_df['frac'] = frac
+    summary_df['bootstrap_on'] = bootstrap_on
     summary_df['sakoe_chiba_radius'] = sakoe_chiba_radius
 
     # Step 8: Plots
@@ -1314,6 +1429,10 @@ def run_bootstrap_projection_with_plots(
                 'classification': classification_result,
                 'cluster_label_order': label_order,
                 'cluster_label_map': code_to_label,
+                'cluster_label_key_map': {
+                    code_to_label.get(code, code): cluster_label_keys[code]
+                    for code in cluster_codes_sorted
+                },
                 'plot_paths': plot_paths,
                 'params': {
                     'run_name': run_name,
@@ -1334,5 +1453,9 @@ def run_bootstrap_projection_with_plots(
         'classification': classification_result,
         'cluster_label_order': label_order,
         'cluster_label_map': code_to_label,
+        'cluster_label_key_map': {
+            code_to_label.get(code, code): cluster_label_keys[code]
+            for code in cluster_codes_sorted
+        },
         'plot_paths': plot_paths,
     }
