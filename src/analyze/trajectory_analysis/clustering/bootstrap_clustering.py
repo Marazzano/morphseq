@@ -6,10 +6,16 @@ Bootstrap resampling methods for consensus clustering with quality assessment.
 Functions
 ---------
 - run_bootstrap_hierarchical: Bootstrap hierarchical clustering with consensus labels
+- run_bootstrap_kmedoids: Bootstrap k-medoids clustering
+- run_bootstrap_projection: Bootstrap projection for uncertainty quantification
 - compute_consensus_labels: Compute consensus cluster labels from bootstrap iterations
 """
 
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import pickle
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
@@ -598,3 +604,735 @@ def coassociation_to_distance(M: np.ndarray) -> np.ndarray:
     D = 1.0 - M
     np.fill_diagonal(D, 0.0)
     return D
+
+
+def run_bootstrap_projection(
+    source_df: pd.DataFrame,
+    reference_df: pd.DataFrame,
+    reference_cluster_map: Dict[str, int],
+    reference_category_map: Optional[Dict[str, str]] = None,
+    metrics: List[str] = None,
+    time_col: str = 'predicted_stage_hpf',
+    embryo_id_col: str = 'embryo_id',
+    sakoe_chiba_radius: int = 20,
+    normalize: bool = True,
+    n_bootstrap: int = N_BOOTSTRAP,
+    frac: float = BOOTSTRAP_FRAC,
+    random_state: int = RANDOM_SEED,
+    verbose: bool = False
+) -> Dict[str, Any]:
+    """
+    Bootstrap resampling for cluster projection uncertainty quantification.
+
+    Follows the same pattern as run_bootstrap_hierarchical() but for projection
+    instead of clustering. Subsamples source embryos and projects onto reference.
+
+    Parameters
+    ----------
+    source_df : pd.DataFrame
+        Source trajectories to project
+    reference_df : pd.DataFrame
+        Reference trajectories with known clusters
+    reference_cluster_map : Dict[str, int]
+        embryo_id -> cluster assignments for reference
+    reference_category_map : Optional[Dict[str, str]]
+        embryo_id -> category name mapping (not used in bootstrap, but passed through)
+    metrics : List[str]
+        Trajectory metrics to use
+    time_col : str, default='predicted_stage_hpf'
+        Time column name
+    embryo_id_col : str, default='embryo_id'
+        Embryo ID column name
+    sakoe_chiba_radius : int, default=20
+        DTW warping constraint
+    normalize : bool, default=True
+        Whether to Z-score normalize
+    n_bootstrap : int, default=100
+        Number of bootstrap iterations
+    frac : float, default=0.8
+        Fraction of source embryos to subsample per iteration
+    random_state : int, default=42
+        Random seed for reproducibility
+    verbose : bool, default=False
+        Print progress
+
+    Returns
+    -------
+    bootstrap_results_dict : dict
+        - 'embryo_ids': list of str (all source embryo IDs)
+        - 'reference_labels': np.ndarray, original projection cluster labels
+        - 'bootstrap_results': list of dicts
+            - 'labels': np.ndarray (-1 for unsampled embryos)
+            - 'indices': np.ndarray of sampled embryo indices
+        - 'n_clusters': int (from reference)
+        - 'n_samples': int (number of source embryos)
+
+    Examples
+    --------
+    >>> bootstrap_results = run_bootstrap_projection(
+    ...     source_df=df_20260122,
+    ...     reference_df=df_cep290,
+    ...     reference_cluster_map=cluster_map,
+    ...     metrics=['baseline_deviation_normalized'],
+    ...     n_bootstrap=100
+    ... )
+    >>> # Analyze with existing posterior infrastructure
+    >>> from .cluster_posteriors import analyze_bootstrap_results
+    >>> posteriors = analyze_bootstrap_results(bootstrap_results)
+    >>> print(posteriors['max_p'])  # Confidence per embryo
+    """
+    from ..projection import project_onto_reference_clusters
+
+    if metrics is None:
+        metrics = ['baseline_deviation_normalized']
+
+    np.random.seed(random_state)
+
+    # Get baseline projection (reference labels)
+    if verbose:
+        print("Computing reference projection (full dataset)...")
+
+    full_projection, _ = project_onto_reference_clusters(
+        source_df=source_df,
+        reference_df=reference_df,
+        reference_cluster_map=reference_cluster_map,
+        reference_category_map=reference_category_map,
+        metrics=metrics,
+        time_col=time_col,
+        embryo_id_col=embryo_id_col,
+        sakoe_chiba_radius=sakoe_chiba_radius,
+        normalize=normalize,
+        verbose=False
+    )
+
+    # Extract embryo IDs and labels
+    source_embryo_ids = full_projection[embryo_id_col].tolist()
+    reference_labels = full_projection['cluster'].values
+    n_clusters = len(set(reference_cluster_map.values()))
+    n_samples = len(source_embryo_ids)
+    n_to_sample = max(int(np.ceil(frac * n_samples)), 1)
+
+    if verbose:
+        print(f"\nBootstrap projection setup:")
+        print(f"  Source embryos: {n_samples}")
+        print(f"  Reference clusters: {n_clusters}")
+        print(f"  Bootstrap iterations: {n_bootstrap}")
+        print(f"  Subsample size: {n_to_sample} ({frac*100:.0f}%)")
+
+    # Bootstrap iterations
+    bootstrap_results = []
+
+    if verbose:
+        print(f"\nRunning bootstrap iterations...")
+
+    for iter_idx in range(n_bootstrap):
+        if verbose and (iter_idx + 1) % 10 == 0:
+            print(f"  Progress: {iter_idx + 1}/{n_bootstrap}")
+
+        # Subsample embryo indices (NO replacement, like bootstrap_clustering)
+        sampled_indices = np.random.choice(n_samples, size=n_to_sample, replace=False)
+        sampled_indices = np.sort(sampled_indices)
+        sampled_embryo_ids = [source_embryo_ids[i] for i in sampled_indices]
+
+        # Extract subsampled source data
+        source_subset = source_df[source_df[embryo_id_col].isin(sampled_embryo_ids)].copy()
+
+        # Project subsample onto reference
+        try:
+            projection_subset, _ = project_onto_reference_clusters(
+                source_df=source_subset,
+                reference_df=reference_df,
+                reference_cluster_map=reference_cluster_map,
+                reference_category_map=reference_category_map,
+                metrics=metrics,
+                time_col=time_col,
+                embryo_id_col=embryo_id_col,
+                sakoe_chiba_radius=sakoe_chiba_radius,
+                normalize=normalize,
+                verbose=False
+            )
+
+            # Create full-size label array with -1 for unsampled
+            labels_full = np.full(n_samples, -1, dtype=int)
+            for embryo_id, cluster in zip(projection_subset[embryo_id_col], projection_subset['cluster']):
+                idx = source_embryo_ids.index(embryo_id)
+                labels_full[idx] = int(cluster)
+
+            bootstrap_results.append({
+                'labels': labels_full,
+                'indices': sampled_indices
+            })
+        except Exception as e:
+            if verbose:
+                print(f"    Warning: Bootstrap iteration {iter_idx} failed: {e}")
+            continue
+
+    if verbose:
+        print(f"\nCompleted {len(bootstrap_results)} successful bootstrap iterations")
+
+    return {
+        'embryo_ids': source_embryo_ids,
+        'reference_labels': reference_labels,
+        'bootstrap_results': bootstrap_results,
+        'n_clusters': n_clusters,
+        'n_samples': n_samples
+    }
+
+
+def _detect_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    matches = [c for c in df.columns if c.lower() in candidates]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"Ambiguous columns found: {matches}. Please specify explicitly.")
+    return None
+
+
+def _resolve_time_col(df: pd.DataFrame, time_col: Optional[str]) -> str:
+    if time_col is not None:
+        return time_col
+    for candidate in ['predicted_stage_hpf', 'time', 'hpf']:
+        if candidate in df.columns:
+            return candidate
+    raise ValueError("No time column found. Please set time_col.")
+
+
+def _resolve_cluster_columns(
+    reference_df: pd.DataFrame,
+    labels_df: Optional[pd.DataFrame],
+    id_col: str,
+    cluster_col: Optional[str],
+    category_col: Optional[str],
+) -> Tuple[pd.DataFrame, str, Optional[str]]:
+    ref = reference_df.copy()
+    cat_candidates = ['cluster_category', 'cluster_categories', 'category', 'categories']
+
+    # If cluster_col not provided, try reference_df first
+    if cluster_col is None:
+        cluster_col = _detect_column(ref, ['cluster', 'clusters', 'label', 'labels'])
+
+    # If still missing, try labels_df
+    if cluster_col is None and labels_df is not None:
+        cluster_col = _detect_column(labels_df, ['cluster', 'clusters', 'label', 'labels'])
+
+    if cluster_col is None:
+        raise ValueError("No cluster column found. Provide labels_df or cluster_col.")
+
+    # Resolve category column if not provided (prefer reference_df)
+    if category_col is None:
+        category_col = _detect_column(ref, cat_candidates)
+        if category_col is None and labels_df is not None:
+            category_col = _detect_column(labels_df, cat_candidates)
+
+    # Merge labels_df if needed for missing columns
+    if labels_df is not None:
+        label_cols = [id_col]
+        merge_needed = False
+        if cluster_col not in ref.columns and cluster_col in labels_df.columns:
+            label_cols.append(cluster_col)
+            merge_needed = True
+        if category_col and category_col not in ref.columns and category_col in labels_df.columns:
+            label_cols.append(category_col)
+            merge_needed = True
+        if merge_needed:
+            labels_unique = labels_df[label_cols].drop_duplicates(subset=[id_col])
+            ref = ref.merge(labels_unique, on=id_col, how='left')
+
+    if cluster_col not in ref.columns:
+        raise ValueError("Cluster column not found in reference_df after merge.")
+
+    return ref, cluster_col, category_col
+
+
+def _make_label_codes(labels: pd.Series) -> Tuple[Dict[Any, int], Dict[int, Any], List[Any]]:
+    """Map arbitrary cluster labels to contiguous integer codes."""
+    unique_labels = list(pd.unique(labels.dropna()))
+    # If labels are numeric-like, sort by numeric value for stability
+    numeric_labels = []
+    for label in unique_labels:
+        try:
+            numeric_labels.append(float(label))
+        except (TypeError, ValueError):
+            numeric_labels = None
+            break
+    if numeric_labels is not None:
+        unique_labels = [x for _, x in sorted(zip(numeric_labels, unique_labels), key=lambda t: t[0])]
+    label_to_code = {label: idx for idx, label in enumerate(unique_labels)}
+    code_to_label = {idx: label for label, idx in label_to_code.items()}
+    return label_to_code, code_to_label, unique_labels
+
+
+def bootstrap_projection_assignments_from_distance(
+    D_cross: np.ndarray,
+    source_ids: List[str],
+    ref_ids: List[str],
+    reference_cluster_map: Dict[str, int],
+    *,
+    reference_category_map: Optional[Dict[str, str]] = None,
+    method: str = 'nearest_neighbor',
+    k: int = 5,
+    n_bootstrap: int = N_BOOTSTRAP,
+    frac: float = BOOTSTRAP_FRAC,
+    random_state: int = RANDOM_SEED,
+    verbose: bool = False
+) -> Dict[str, Any]:
+    """
+    Bootstrap projection using a precomputed cross-DTW distance matrix.
+    """
+    from ..projection import project_onto_reference_clusters_from_distance
+
+    np.random.seed(random_state)
+    n_samples = len(source_ids)
+    n_clusters = len(set(reference_cluster_map.values()))
+    n_to_sample = max(int(np.ceil(frac * n_samples)), 1)
+
+    # Full projection (reference labels)
+    full_assignments = project_onto_reference_clusters_from_distance(
+        D_cross=D_cross,
+        source_ids=source_ids,
+        ref_ids=ref_ids,
+        reference_cluster_map=reference_cluster_map,
+        reference_category_map=reference_category_map,
+        method=method,
+        k=k,
+        verbose=False
+    )
+    reference_labels = full_assignments['cluster'].values
+
+    id_to_idx = {embryo_id: i for i, embryo_id in enumerate(source_ids)}
+    bootstrap_results = []
+
+    if verbose:
+        print(f"\nRunning bootstrap iterations...")
+
+    for iter_idx in range(n_bootstrap):
+        if verbose and (iter_idx + 1) % 10 == 0:
+            print(f"  Progress: {iter_idx + 1}/{n_bootstrap}")
+
+        sampled_indices = np.random.choice(n_samples, size=n_to_sample, replace=False)
+        sampled_indices = np.sort(sampled_indices)
+        sampled_ids = [source_ids[i] for i in sampled_indices]
+
+        D_subset = D_cross[sampled_indices, :]
+
+        try:
+            subset_assignments = project_onto_reference_clusters_from_distance(
+                D_cross=D_subset,
+                source_ids=sampled_ids,
+                ref_ids=ref_ids,
+                reference_cluster_map=reference_cluster_map,
+                reference_category_map=reference_category_map,
+                method=method,
+                k=k,
+                verbose=False
+            )
+
+            labels_full = np.full(n_samples, -1, dtype=int)
+            for embryo_id, cluster in zip(subset_assignments['embryo_id'], subset_assignments['cluster']):
+                labels_full[id_to_idx[embryo_id]] = int(cluster)
+
+            bootstrap_results.append({
+                'labels': labels_full,
+                'indices': sampled_indices
+            })
+        except Exception as e:
+            if verbose:
+                print(f"    Warning: Bootstrap iteration {iter_idx} failed: {e}")
+            continue
+
+    if verbose:
+        print(f"\nCompleted {len(bootstrap_results)} successful bootstrap iterations")
+
+    return {
+        'embryo_ids': source_ids,
+        'reference_labels': reference_labels,
+        'bootstrap_results': bootstrap_results,
+        'n_clusters': n_clusters,
+        'n_samples': n_samples
+    }
+
+
+def run_bootstrap_projection_with_plots(
+    source_df: pd.DataFrame,
+    reference_df: pd.DataFrame,
+    output_dir: Path,
+    run_name: str,
+    labels_df: Optional[pd.DataFrame] = None,
+    *,
+    id_col: str = "embryo_id",
+    time_col: Optional[str] = "predicted_stage_hpf",
+    cluster_col: Optional[str] = None,
+    category_col: Optional[str] = None,
+    metrics: Optional[List[str]] = None,
+    plotting_metrics: Optional[List[str]] = None,
+    sakoe_chiba_radius: int = 20,
+    n_bootstrap: int = N_BOOTSTRAP,
+    frac: float = BOOTSTRAP_FRAC,
+    method: str = "nearest_neighbor",
+    k: int = 5,
+    classification: str = "2d",
+    normalize: bool = True,
+    verbose: bool = True,
+    save_outputs: bool = True,
+) -> Dict[str, Any]:
+    """
+    High-level wrapper for bootstrapped projection with plots.
+
+    Computes cross-DTW once, bootstraps assignments using matrix slicing,
+    classifies membership, and saves plots/CSVs in an orderly format.
+    """
+    from ..projection import (
+        prepare_projection_arrays,
+        compute_cross_dtw_distance_matrix,
+        project_onto_reference_clusters_from_distance,
+    )
+    from .cluster_posteriors import analyze_bootstrap_results
+    from .cluster_classification import (
+        classify_membership_2d,
+        classify_membership_adaptive,
+        get_classification_summary,
+    )
+    from analyze.viz.plotting import plot_feature_over_time
+    from analyze.viz.plotting import plot_proportions
+
+    output_dir = Path(output_dir)
+    if save_outputs:
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    time_col = _resolve_time_col(source_df, time_col)
+    ref_labeled, cluster_col, category_col = _resolve_cluster_columns(
+        reference_df=reference_df,
+        labels_df=labels_df,
+        id_col=id_col,
+        cluster_col=cluster_col,
+        category_col=category_col,
+    )
+
+    if id_col not in source_df.columns:
+        raise ValueError(f"Source DataFrame missing id_col: '{id_col}'")
+    if id_col not in ref_labeled.columns:
+        raise ValueError(f"Reference DataFrame missing id_col: '{id_col}'")
+    if time_col not in source_df.columns:
+        raise ValueError(f"Source DataFrame missing time_col: '{time_col}'")
+    if time_col not in ref_labeled.columns:
+        raise ValueError(f"Reference DataFrame missing time_col: '{time_col}'")
+
+    if metrics is None:
+        for candidate in ['baseline_deviation_normalized', 'total_length_um']:
+            if candidate in source_df.columns:
+                metrics = [candidate]
+                break
+        if metrics is None:
+            raise ValueError("No default metric found. Please provide metrics.")
+    if plotting_metrics is None:
+        plotting_metrics = metrics
+
+    if verbose:
+        print("="*80)
+        print("BOOTSTRAP PROJECTION WITH PLOTS")
+        print("="*80)
+        print(f"Run name: {run_name}")
+        print(f"ID column: {id_col}")
+        print(f"Time column: {time_col}")
+        print(f"Cluster column: {cluster_col}")
+        if category_col:
+            print(f"Category column: {category_col}")
+        print(f"Metrics: {metrics}")
+        print(f"Bootstrap: n={n_bootstrap}, frac={frac}")
+        print(f"Method: {method}")
+
+    # Build cluster/category maps (encode labels to contiguous integer codes)
+    ref_unique = ref_labeled[[id_col, cluster_col]].drop_duplicates(subset=[id_col])
+    ref_unique = ref_unique[ref_unique[cluster_col].notna()]
+    label_to_code, code_to_label, label_order = _make_label_codes(ref_unique[cluster_col])
+    reference_cluster_map = {
+        row[id_col]: label_to_code[row[cluster_col]]
+        for _, row in ref_unique.iterrows()
+    }
+
+    reference_category_map = None
+    if category_col and category_col in ref_labeled.columns:
+        ref_cat = ref_labeled[[id_col, category_col]].drop_duplicates(subset=[id_col])
+        reference_category_map = dict(zip(ref_cat[id_col], ref_cat[category_col]))
+
+    # Step 1-3: Prepare arrays (no DTW yet)
+    arrays = prepare_projection_arrays(
+        source_df=source_df,
+        reference_df=ref_labeled,
+        reference_cluster_map=reference_cluster_map,
+        metrics=metrics,
+        time_col=time_col,
+        embryo_id_col=id_col,
+        normalize=normalize,
+        verbose=verbose
+    )
+
+    # Step 4: Compute cross-DTW once
+    if verbose:
+        print(f"\nComputing cross-DTW once...")
+    D_cross = compute_cross_dtw_distance_matrix(
+        arrays.X_source,
+        arrays.X_ref,
+        sakoe_chiba_radius=sakoe_chiba_radius,
+        n_jobs=-1,
+        verbose=verbose
+    )
+
+    # Full projection (baseline assignments)
+    full_assignments = project_onto_reference_clusters_from_distance(
+        D_cross=D_cross,
+        source_ids=arrays.source_ids,
+        ref_ids=arrays.ref_ids,
+        reference_cluster_map=reference_cluster_map,
+        reference_category_map=reference_category_map,
+        method=method,
+        k=k,
+        verbose=verbose
+    )
+    full_assignments = full_assignments.rename(columns={'embryo_id': id_col})
+    cluster_labels_full = full_assignments['cluster'].values
+    cluster_label_strings = [code_to_label.get(int(c), c) for c in cluster_labels_full]
+
+    # Step 5: Bootstrap using D_cross
+    bootstrap_results = bootstrap_projection_assignments_from_distance(
+        D_cross=D_cross,
+        source_ids=arrays.source_ids,
+        ref_ids=arrays.ref_ids,
+        reference_cluster_map=reference_cluster_map,
+        reference_category_map=reference_category_map,
+        method=method,
+        k=k,
+        n_bootstrap=n_bootstrap,
+        frac=frac,
+        verbose=verbose
+    )
+
+    # Step 6: Posterior analysis + classification
+    posteriors = analyze_bootstrap_results(bootstrap_results)
+    if classification == "adaptive":
+        classification_result = classify_membership_adaptive(
+            posteriors['max_p'],
+            posteriors['log_odds_gap'],
+            posteriors['modal_cluster'],
+        )
+    else:
+        classification_result = classify_membership_2d(
+            posteriors['max_p'],
+            posteriors['log_odds_gap'],
+            posteriors['modal_cluster'],
+            embryo_ids=arrays.source_ids
+        )
+
+    # Ensure embryo_ids and baseline cluster labels are present
+    classification_result['embryo_ids'] = arrays.source_ids
+    classification_result['cluster'] = cluster_labels_full.copy()
+
+    # Add "unclassified" for never-sampled embryos
+    categories = classification_result['category'].copy()
+    sample_counts = posteriors['sample_counts']
+    categories[sample_counts == 0] = 'unclassified'
+    classification_result['category'] = categories
+
+    # Step 7: Assemble assignments DataFrame
+    assignments_df = pd.DataFrame({
+        id_col: arrays.source_ids,
+        'cluster': cluster_labels_full,
+        'cluster_label': cluster_label_strings,
+        'membership': categories,
+        'max_p': posteriors['max_p'],
+        'entropy': posteriors['entropy'],
+        'log_odds_gap': posteriors['log_odds_gap'],
+        'modal_cluster': posteriors['modal_cluster'],
+        'second_best_cluster': posteriors['second_best_cluster'],
+        'sample_counts': sample_counts,
+        'nearest_distance': D_cross.min(axis=1),
+    })
+
+    if 'nearest_distance' in full_assignments.columns:
+        assignments_df['nearest_distance'] = full_assignments['nearest_distance'].values
+
+    # Include category map if available
+    if reference_category_map is not None and 'cluster_category' in full_assignments.columns:
+        assignments_df['cluster_category'] = full_assignments['cluster_category'].values
+
+    # Summary table
+    summary = get_classification_summary({
+        'category': categories,
+        'cluster': cluster_labels_full
+    })
+    summary_rows = []
+    for cluster_id, stats in summary['per_cluster'].items():
+        mask = cluster_labels_full == cluster_id
+        label = code_to_label.get(int(cluster_id), cluster_id)
+        n_total = int(np.sum(mask))
+        n_unclassified = int(np.sum(categories[mask] == 'unclassified'))
+        summary_rows.append({
+            'cluster': cluster_id,
+            'cluster_label': label,
+            'n_total': n_total,
+            'n_core': stats['n_core'],
+            'n_uncertain': stats['n_uncertain'],
+            'n_outlier': stats['n_outlier'],
+            'n_unclassified': n_unclassified,
+            'core_fraction': stats['n_core'] / n_total if n_total > 0 else 0.0,
+            'uncertain_fraction': stats['n_uncertain'] / n_total if n_total > 0 else 0.0,
+            'outlier_fraction': stats['n_outlier'] / n_total if n_total > 0 else 0.0,
+            'unclassified_fraction': n_unclassified / n_total if n_total > 0 else 0.0,
+            'mean_max_p': float(np.mean(posteriors['max_p'][mask])) if n_total > 0 else np.nan,
+            'mean_entropy': float(np.mean(posteriors['entropy'][mask])) if n_total > 0 else np.nan,
+            'mean_log_odds_gap': float(np.mean(posteriors['log_odds_gap'][mask])) if n_total > 0 else np.nan,
+        })
+
+    summary_df = pd.DataFrame(summary_rows)
+    summary_df['run_name'] = run_name
+    summary_df['n_bootstrap'] = n_bootstrap
+    summary_df['frac'] = frac
+    summary_df['sakoe_chiba_radius'] = sakoe_chiba_radius
+
+    # Step 8: Plots
+    plot_paths = {}
+    prefix = f"{run_name}_" if run_name else ""
+
+    if save_outputs:
+        # Plot A: trajectories (reference vs source, colored by membership)
+        df_source_plot = source_df[source_df[id_col].isin(arrays.source_ids)].copy()
+        df_source_plot['cluster'] = df_source_plot[id_col].map(
+            dict(zip(arrays.source_ids, cluster_labels_full))
+        )
+        df_source_plot['cluster_label'] = df_source_plot[id_col].map(
+            dict(zip(arrays.source_ids, cluster_label_strings))
+        )
+        df_source_plot['membership'] = df_source_plot[id_col].map(
+            dict(zip(arrays.source_ids, categories))
+        )
+        df_source_plot['dataset'] = 'source'
+
+        df_ref_plot = ref_labeled[ref_labeled[id_col].isin(arrays.ref_ids)].copy()
+        df_ref_plot['cluster'] = df_ref_plot[id_col].map(reference_cluster_map)
+        df_ref_plot['cluster_label'] = df_ref_plot[id_col].map(
+            {k: code_to_label.get(v, v) for k, v in reference_cluster_map.items()}
+        )
+        df_ref_plot['membership'] = 'reference'
+        df_ref_plot['dataset'] = 'reference'
+
+        df_plot = pd.concat([df_ref_plot, df_source_plot], ignore_index=True)
+
+        fig = plot_feature_over_time(
+            df_plot,
+            features=plotting_metrics,
+            time_col=time_col,
+            id_col=id_col,
+            color_by='membership',
+            facet_row='dataset',
+            facet_col='cluster_label',
+            backend='matplotlib',
+            bin_width=2.0,
+            title=f"{run_name}: Membership by Cluster (Reference vs Source)"
+        )
+        traj_path = output_dir / f"{prefix}projection_membership_trajectories.png"
+        plt.savefig(traj_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        plot_paths['membership_trajectories'] = str(traj_path)
+
+        # Plot A2: trajectories faceted by membership (rows) and cluster (cols)
+        fig_mem = plot_feature_over_time(
+            df_source_plot,
+            features=plotting_metrics,
+            time_col=time_col,
+            id_col=id_col,
+            color_by='membership',
+            facet_row='membership',
+            facet_col='cluster_label',
+            backend='matplotlib',
+            bin_width=2.0,
+            title=f"{run_name}: Trajectories by Membership and Cluster"
+        )
+        mem_path = output_dir / f"{prefix}projection_membership_by_cluster.png"
+        plt.savefig(mem_path, dpi=150, bbox_inches='tight')
+        plt.close(fig_mem)
+        plot_paths['membership_by_cluster'] = str(mem_path)
+
+        # Plot B: proportions (source only)
+        df_prop = df_source_plot.copy()
+        prop_path = output_dir / f"{prefix}projection_cluster_proportions.png"
+        fig_prop = plot_proportions(
+            df=df_prop,
+            color_by_grouping='membership',
+            col_by='cluster_label',
+            count_by=id_col,
+            normalize=True,
+            bar_mode='grouped',
+            output_path=prop_path,
+            title=f"{run_name}: Membership Proportions by Cluster"
+        )
+        plt.close(fig_prop)
+        plot_paths['membership_proportions'] = str(prop_path)
+
+        # Plot C: confidence scatter
+        color_map = {
+            'core': '#2ca02c',
+            'uncertain': '#ff7f0e',
+            'outlier': '#d62728',
+            'unclassified': '#7f7f7f',
+        }
+        fig_scatter, ax = plt.subplots(figsize=(6, 4.5))
+        for label in ['core', 'uncertain', 'outlier', 'unclassified']:
+            mask = categories == label
+            if np.any(mask):
+                ax.scatter(
+                    posteriors['max_p'][mask],
+                    posteriors['log_odds_gap'][mask],
+                    s=18,
+                    alpha=0.7,
+                    label=label,
+                    color=color_map.get(label, '#333333')
+                )
+        ax.set_xlabel('max_p')
+        ax.set_ylabel('log_odds_gap')
+        ax.set_title(f"{run_name}: Confidence Scatter")
+        ax.legend(frameon=False, fontsize=8)
+        scatter_path = output_dir / f"{prefix}projection_confidence_scatter.png"
+        fig_scatter.tight_layout()
+        fig_scatter.savefig(scatter_path, dpi=150, bbox_inches='tight')
+        plt.close(fig_scatter)
+        plot_paths['confidence_scatter'] = str(scatter_path)
+
+        # Save CSVs + pickle
+        assignments_csv = output_dir / f"{prefix}projection_assignments.csv"
+        assignments_df.to_csv(assignments_csv, index=False)
+
+        summary_csv = output_dir / f"{prefix}projection_summary.csv"
+        summary_df.to_csv(summary_csv, index=False)
+
+        pkl_path = output_dir / f"{prefix}projection_results.pkl"
+        with open(pkl_path, 'wb') as f:
+            pickle.dump({
+                'assignments_df': assignments_df,
+                'summary_df': summary_df,
+                'bootstrap_results': bootstrap_results,
+                'posteriors': posteriors,
+                'classification': classification_result,
+                'cluster_label_order': label_order,
+                'cluster_label_map': code_to_label,
+                'plot_paths': plot_paths,
+                'params': {
+                    'run_name': run_name,
+                    'n_bootstrap': n_bootstrap,
+                    'frac': frac,
+                    'sakoe_chiba_radius': sakoe_chiba_radius,
+                    'method': method,
+                    'k': k,
+                    'metrics': metrics,
+                },
+            }, f)
+
+    return {
+        'assignments_df': assignments_df,
+        'summary_df': summary_df,
+        'bootstrap_results': bootstrap_results,
+        'posteriors': posteriors,
+        'classification': classification_result,
+        'cluster_label_order': label_order,
+        'cluster_label_map': code_to_label,
+        'plot_paths': plot_paths,
+    }

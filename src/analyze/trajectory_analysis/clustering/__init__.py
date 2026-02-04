@@ -17,6 +17,9 @@ Modules
 from .bootstrap_clustering import (
     run_bootstrap_hierarchical,
     run_bootstrap_kmedoids,
+    run_bootstrap_projection,
+    run_bootstrap_projection_with_plots,
+    bootstrap_projection_assignments_from_distance,
     compute_consensus_labels,
     get_cluster_assignments,
     compute_coassociation_matrix,
@@ -65,6 +68,9 @@ __all__ = [
     # Bootstrap Clustering
     'run_bootstrap_hierarchical',
     'run_bootstrap_kmedoids',
+    'run_bootstrap_projection',
+    'run_bootstrap_projection_with_plots',
+    'bootstrap_projection_assignments_from_distance',
     'compute_consensus_labels',
     'get_cluster_assignments',
     'compute_coassociation_matrix',

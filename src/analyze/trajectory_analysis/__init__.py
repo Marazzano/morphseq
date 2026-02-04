@@ -106,10 +106,22 @@ from .utilities import (
     test_anticorrelation,
 )
 
+# Projection
+from .projection import (
+    project_onto_reference_clusters,
+    prepare_projection_arrays,
+    project_onto_reference_clusters_from_distance,
+    compute_cross_dtw_distance_matrix,
+    assign_clusters_nearest_neighbor,
+    assign_clusters_knn_posterior,
+)
+
 # Bootstrap Clustering (now in clustering subpackage)
 from .clustering import (
     run_bootstrap_hierarchical,
     run_bootstrap_kmedoids,
+    run_bootstrap_projection,
+    run_bootstrap_projection_with_plots,
     compute_consensus_labels,
     get_cluster_assignments,
     compute_coassociation_matrix,
@@ -156,7 +168,7 @@ from .viz.styling import (
     format_genotype_label
 )
 
-# Proportion plotting (generic)
+# Faceted Plotting (Level 1 - Generic)
 from .viz.plotting import (
     plot_cluster_flow,
 )
@@ -220,6 +232,12 @@ __all__ = [
     'compute_trajectory_distances',
     'compute_dtw_distance_from_df',
     'dba',
+    'project_onto_reference_clusters',
+    'prepare_projection_arrays',
+    'project_onto_reference_clusters_from_distance',
+    'compute_cross_dtw_distance_matrix',
+    'assign_clusters_nearest_neighbor',
+    'assign_clusters_knn_posterior',
 
     # Trajectory Processing - NEW API (v0.2.0+)
     'extract_trajectories_df',
@@ -240,6 +258,8 @@ __all__ = [
     # Bootstrap clustering
     'run_bootstrap_hierarchical',
     'run_bootstrap_kmedoids',
+    'run_bootstrap_projection',
+    'run_bootstrap_projection_with_plots',
     'compute_consensus_labels',
     'get_cluster_assignments',
     'compute_coassociation_matrix',
