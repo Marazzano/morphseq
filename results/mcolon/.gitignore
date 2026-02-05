@@ -4,54 +4,67 @@
 # This .gitignore applies ONLY to results/mcolon/
 # Does NOT impact nlmaers or other users' results.
 #
-# Strategy: WHITELIST approach
-# - Deny everything by default (prevents .npy, .pkl, checkpoints, etc.)
-# - Explicitly allow source files and documentation
-# - Safe and predictable
+# Strategy: BLACKLIST approach
+# - Allow source code and documentation by default
+# - Explicitly deny large/binary files
+# - Safer for tracking Python scripts and notebooks
 ################################################################################
 
-# Deny everything by default (recursive)
-**/*
-!*/
+# ============================================================================
+# LARGE/BINARY FILES (IGNORE)
+# ============================================================================
+# NumPy arrays
+**/*.npy
+
+# Pickled objects
+**/*.pkl
+**/*.pickle
+
+# PyTorch models and checkpoints
+**/*.pt
+**/*.pth
+**/*.ckpt
+
+# HDF5 files
+**/*.h5
+**/*.hdf5
+
+# Images and media (typically outputs, not source)
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.bmp
+**/*.tiff
+**/*.svg
+**/*.pdf
+**/*.mp4
+**/*.avi
+**/*.mov
+
+# HTML outputs (plotly, jupyter exports)
+**/*.html
+
+# Logs
+**/*.log
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+
+# Jupyter checkpoints
+**/.ipynb_checkpoints/
+
+# Large data directories (add specific ones as needed)
+**/output/figures/
+**/output/results/*.npy
+**/output/results/*.pkl
 
 # ============================================================================
-# SOURCE CODE & NOTEBOOKS (ALLOW)
+# EXCEPTIONS (ALLOW despite patterns above)
 # ============================================================================
-!**/*.py        # Python scripts
-!**/*.ipynb     # Jupyter notebooks
-!**/*.md        # Markdown documentation
-!**/*.txt       # Text files
-!**/*.yml       # YAML config
-!**/*.yaml
-!**/*.json      # JSON config/data
-!**/*.sh        # Shell scripts
-
-# ============================================================================
-# DOCUMENTATION & CONFIG (ALLOW)
-# ============================================================================
-!**/.gitignore  # .gitignore files
-!**/README*     # README files
-!**/LICENSE
-!**/MANIFEST.in
-
-# ============================================================================
-# KEY RESULTS (ALLOW - tracking important outputs)
-# ============================================================================
-# Allow ALL files in key_results/ directories at any depth
-!**/key_results/
+# Allow files in key_results/ directories
 !**/key_results/**
-
-# ============================================================================
-# AUTOMATICALLY IGNORED (PREVENT ACCIDENTAL COMMITS)
-# ============================================================================
-# Binary/large files:
-# - .npy (NumPy arrays)
-# - .pkl, .pickle (pickled objects)
-# - .pt, .pth (PyTorch models)
-# - .h5 (HDF5)
-# - *.ckpt (Checkpoints)
-# - *.log (Logs)
-# - *.pdb (Debugger)
-# - *.png, *.jpg, *.jpeg, *.pdf, *.html, *.mp4
-#
-# These are implicitly ignored by the whitelist above.
