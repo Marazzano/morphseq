@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Tuple, Dict
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from scipy import ndimage
 
 try:
@@ -13,7 +17,683 @@ try:
 except Exception:  # pragma: no cover
     sp = None
 
-from analyze.utils.optimal_transport import Coupling
+from analyze.utils.optimal_transport import Coupling, UOTResult
+
+
+# ==============================================================================
+# Phase 2: Proven Plotting Functions (Migrated from debug_uot_params.py)
+# ==============================================================================
+# These functions enforce the UOT Plotting Contract:
+# - NaN masking for non-support regions
+# - Explicit support masks
+# - Statistics on support points only
+# - No fabrication via smoothing
+
+
+@dataclass
+class UOTVizConfig:
+    """Visualization configuration for cross-run comparison.
+
+    Fixed scales ensure consistent interpretation across parameter sweeps.
+    """
+    mass_pct_vmin: float = 0.0
+    mass_pct_vmax: float = 10.0
+    velocity_vmin: float = 0.0
+    velocity_vmax: float = 50.0  # μm/frame
+    min_velocity_px: float = 1.0
+    min_velocity_pct: float = 0.02
+    quiver_base_scale: float = 150.0
+    quiver_stride: int = 4
+
+
+DEFAULT_UOT_VIZ_CONFIG = UOTVizConfig()
+
+
+# Display mode helpers (for image vs cartesian coordinate systems)
+def _get_display_mode() -> str:
+    """Get display mode from MORPHSEQ_DISPLAY_MODE env var (default: image)."""
+    return os.environ.get("MORPHSEQ_DISPLAY_MODE", "image").lower()
+
+
+def _plot_extent(hw: Tuple[int, int]) -> Tuple[list, str]:
+    """Return extent and origin for current display mode."""
+    h, w = hw
+    display_mode = _get_display_mode()
+    if display_mode == "cartesian":
+        return [0, w, 0, h], "lower"
+    return [0, w, h, 0], "upper"
+
+
+def _set_axes_limits(ax, hw: Tuple[int, int]) -> None:
+    """Set axis limits respecting display mode."""
+    h, w = hw
+    display_mode = _get_display_mode()
+    ax.set_xlim(0, w)
+    if display_mode == "cartesian":
+        ax.set_ylim(0, h)
+    else:
+        ax.set_ylim(h, 0)
+
+
+def _quiver_transform(
+    xx: np.ndarray, yy: np.ndarray, u: np.ndarray, v: np.ndarray, h: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Transform quiver coordinates for display mode."""
+    display_mode = _get_display_mode()
+    if display_mode == "cartesian":
+        return xx, (h - yy), u, -v
+    return xx, yy, u, v
+
+
+def _overlay_masks_rgb(
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    src_color: Tuple[float, float, float] = (1.0, 0.80, 0.80),  # light red
+    tgt_color: Tuple[float, float, float] = (0.80, 0.85, 1.0),  # light blue
+    alpha: float = 0.8,
+) -> np.ndarray:
+    """Create RGB overlay of source/target masks."""
+    h, w = src_mask.shape
+    rgb = np.ones((h, w, 3), dtype=np.float32)
+    src = src_mask.astype(bool)
+    tgt = tgt_mask.astype(bool)
+    for channel in range(3):
+        rgb[..., channel] = np.where(
+            src,
+            rgb[..., channel] * (1 - alpha) + src_color[channel] * alpha,
+            rgb[..., channel],
+        )
+        rgb[..., channel] = np.where(
+            tgt,
+            rgb[..., channel] * (1 - alpha) + tgt_color[channel] * alpha,
+            rgb[..., channel],
+        )
+    return rgb
+
+
+def plot_uot_quiver(
+    src_mask: np.ndarray,
+    result: UOTResult,
+    output_path: Path,
+    stride: int = 6,
+    canonical_shape: Optional[Tuple[int, int]] = None,
+    viz_config: Optional[UOTVizConfig] = None,
+) -> None:
+    """Plot velocity field as quiver (arrows) on support points only.
+
+    Migrated from debug_uot_params.py::plot_flow_field_quiver()
+
+    PLOTTING CONTRACT ENFORCED:
+    - Shows only support points (no fabrication)
+    - Overlays on source mask for context
+    - Uses fixed stride for arrow density
+
+    Args:
+        src_mask: Source mask for background context
+        result: UOTResult containing velocity field
+        output_path: Where to save the plot
+        stride: Subsample stride for arrow density (higher = fewer arrows)
+        canonical_shape: Optional (H, W) for axis limits (defaults to src_mask.shape)
+        viz_config: Visualization configuration (defaults to DEFAULT_UOT_VIZ_CONFIG)
+    """
+    if viz_config is None:
+        viz_config = DEFAULT_UOT_VIZ_CONFIG
+
+    if canonical_shape is None:
+        canonical_shape = src_mask.shape
+
+    # Use property for μm/frame (fallback to pixels if pair_frame unavailable)
+    velocity_field = (
+        result.velocity_um_per_frame_yx
+        if result.velocity_um_per_frame_yx is not None
+        else result.velocity_px_per_frame_yx
+    )
+
+    velocity_mag = np.sqrt(velocity_field[..., 0] ** 2 + velocity_field[..., 1] ** 2)
+    unit_label = "μm/frame" if result.velocity_um_per_frame_yx is not None else "px/frame"
+
+    # Support mask
+    support_mask = velocity_mag > 0
+    support_pct = 100.0 * support_mask.sum() / support_mask.size
+
+    canon_h, canon_w = canonical_shape
+    h_vel, w_vel = velocity_field.shape[:2]
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    # Background: source mask
+    extent, origin = _plot_extent(src_mask.shape)
+    ax.imshow(
+        src_mask,
+        cmap="gray",
+        alpha=0.3,
+        aspect="equal",
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+    )
+
+    # Subsample for quiver (on support points only)
+    yy_vel, xx_vel = np.meshgrid(
+        np.arange(0, h_vel, stride), np.arange(0, w_vel, stride), indexing="ij"
+    )
+    u = velocity_field[::stride, ::stride, 1]  # x component
+    v = velocity_field[::stride, ::stride, 0]  # y component
+    mag_sub = velocity_mag[::stride, ::stride]
+    support_sub = support_mask[::stride, ::stride]
+
+    # Only show arrows on support points
+    mask_sub = support_sub & (mag_sub > 0)
+    n_arrows = mask_sub.sum()
+
+    if n_arrows > 0:
+        xx_plot, yy_plot, u_plot, v_plot = _quiver_transform(
+            xx_vel, yy_vel, u, v, h_vel
+        )
+        ax.quiver(
+            xx_plot[mask_sub],
+            yy_plot[mask_sub],
+            u_plot[mask_sub],
+            v_plot[mask_sub],
+            mag_sub[mask_sub],
+            cmap="hot",
+            scale=viz_config.quiver_base_scale,
+            scale_units="xy",
+            angles="xy",
+        )
+        title_str = f"Velocity Field (Quiver, stride={stride})\nSupport: {support_pct:.2f}%, Arrows: {n_arrows}"
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No significant flow\n(Identity or near-identity case)",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=12,
+            color="gray",
+            style="italic",
+        )
+        title_str = (
+            f"Velocity Field (Quiver, stride={stride})\nNo arrows (identity case)"
+        )
+
+    ax.set_title(title_str)
+    ax.set_xlabel("x (px)")
+    ax.set_ylabel("y (px)")
+    _set_axes_limits(ax, (canon_h, canon_w))
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_uot_cost_field(
+    result: UOTResult,
+    output_path: Path,
+    canonical_shape: Optional[Tuple[int, int]] = None,
+    viz_config: Optional[UOTVizConfig] = None,
+) -> None:
+    """Plot transport cost field analysis (3-panel).
+
+    Migrated from debug_uot_params.py::plot_transport_cost_field()
+
+    Shows how expensive it is to transport mass from each src_support location.
+    Cost per source point = sum over targets of (coupling[i,j] * cost_matrix[i,j])
+
+    PLOTTING CONTRACT ENFORCED:
+    - Only shows src_support points (NaN elsewhere)
+    - Statistics on support only
+
+    Args:
+        result: UOTResult containing cost field
+        output_path: Where to save the plot
+        canonical_shape: Optional (H, W) for axis limits (inferred from cost field if None)
+        viz_config: Visualization configuration (currently unused, for future consistency)
+    """
+    cost_field_canonical = getattr(result, "cost_src_px", None)
+    if cost_field_canonical is None:
+        print("Warning: No cost_src_px on result; cost field plot skipped")
+        return
+
+    if canonical_shape is None:
+        canonical_shape = cost_field_canonical.shape
+
+    canon_h, canon_w = canonical_shape
+    if cost_field_canonical.shape != (canon_h, canon_w):
+        print(
+            f"Warning: Cost field has shape {cost_field_canonical.shape}, expected {canonical_shape}"
+        )
+        return
+
+    # Apply NaN masking (plotting contract)
+    support_mask = cost_field_canonical > 0
+    cost_field_masked = cost_field_canonical.copy()
+    cost_field_masked[~support_mask] = np.nan
+
+    support_pct = 100.0 * support_mask.sum() / support_mask.size
+
+    # Statistics on support only
+    if support_mask.any():
+        support_costs = cost_field_canonical[support_mask]
+        p50 = np.percentile(support_costs, 50)
+        p90 = np.percentile(support_costs, 90)
+        p99 = np.percentile(support_costs, 99)
+        cost_max = support_costs.max()
+    else:
+        p50 = p90 = p99 = cost_max = 0.0
+
+    # Create 3-panel plot
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # Panel 1: Support mask
+    extent, origin = _plot_extent((canon_h, canon_w))
+    axes[0].imshow(
+        support_mask,
+        cmap="gray",
+        aspect="equal",
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+    )
+    axes[0].set_title(
+        f"Transport Cost Support (src_support)\n{support_pct:.2f}% defined"
+    )
+    axes[0].set_xlabel("x (px)")
+    axes[0].set_ylabel("y (px)")
+
+    # Panel 2: Cost field (NaN-masked)
+    im = axes[1].imshow(
+        cost_field_masked,
+        cmap="hot",
+        aspect="equal",
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+    )
+    axes[1].set_title(
+        f"Transport Cost per Source Point (src_support only)\n"
+        f"p50/p90/p99: {p50:.1e}/{p90:.1e}/{p99:.1e}"
+    )
+    axes[1].set_xlabel("x (px)")
+    axes[1].set_ylabel("y (px)")
+    plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04, label="Cost (squared μm)")
+
+    # Panel 3: Cost histogram
+    if support_mask.any():
+        axes[2].hist(
+            support_costs, bins=50, color="red", alpha=0.7, edgecolor="black"
+        )
+        axes[2].set_xlabel("Transport Cost (squared μm)")
+        axes[2].set_ylabel("Count")
+        axes[2].set_title(
+            f"Cost Distribution (src_support only)\nmax: {cost_max:.1e}"
+        )
+        axes[2].grid(True, alpha=0.3)
+    else:
+        axes[2].text(
+            0.5,
+            0.5,
+            "No support points",
+            transform=axes[2].transAxes,
+            ha="center",
+            va="center",
+            fontsize=12,
+            style="italic",
+        )
+        axes[2].set_xlabel("Transport Cost (squared μm)")
+        axes[2].set_ylabel("Count")
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_uot_creation_destruction(
+    mass_created_hw: np.ndarray,
+    mass_destroyed_hw: np.ndarray,
+    created_mass_pct: float,
+    destroyed_mass_pct: float,
+    output_path: Path,
+    canonical_shape: Optional[Tuple[int, int]] = None,
+    viz_config: Optional[UOTVizConfig] = None,
+) -> None:
+    """Plot creation/destruction analysis (4-panel with contract enforcement).
+
+    Migrated from debug_uot_params.py::plot_creation_destruction_maps()
+    Replaces older plot_creation_destruction() with full contract compliance.
+
+    PLOTTING CONTRACT ENFORCED:
+    - Uses NaN for non-support regions
+    - Shows support mask explicitly
+    - Displays statistics on support only
+
+    CRITICAL: Data should already be on canonical grid.
+    Display as-is with canonical grid axis limits (no stretching).
+
+    Args:
+        mass_created_hw: (H, W) mass creation map (percentage)
+        mass_destroyed_hw: (H, W) mass destruction map (percentage)
+        created_mass_pct: Total created mass percentage
+        destroyed_mass_pct: Total destroyed mass percentage
+        output_path: Where to save the plot
+        canonical_shape: Optional (H, W) for axis limits (defaults to mass array shape)
+        viz_config: Visualization configuration (for fixed vmin/vmax scales)
+    """
+    if viz_config is None:
+        viz_config = DEFAULT_UOT_VIZ_CONFIG
+
+    if canonical_shape is None:
+        canonical_shape = mass_created_hw.shape
+
+    # Create support masks (non-zero mass)
+    created_mask = mass_created_hw > 0
+    destroyed_mask = mass_destroyed_hw > 0
+
+    # PLOTTING CONTRACT: Replace zeros with NaN outside support
+    created_masked = mass_created_hw.copy()
+    destroyed_masked = mass_destroyed_hw.copy()
+    created_masked[~created_mask] = np.nan
+    destroyed_masked[~destroyed_mask] = np.nan
+
+    # Statistics on support only
+    if created_mask.any():
+        created_vals = mass_created_hw[created_mask]
+        created_p50 = np.percentile(created_vals, 50)
+        created_p90 = np.percentile(created_vals, 90)
+    else:
+        created_p50 = created_p90 = 0.0
+
+    if destroyed_mask.any():
+        destroyed_vals = mass_destroyed_hw[destroyed_mask]
+        destroyed_p50 = np.percentile(destroyed_vals, 50)
+        destroyed_p90 = np.percentile(destroyed_vals, 90)
+    else:
+        destroyed_p50 = destroyed_p90 = 0.0
+
+    # Use canonical grid dimensions for axis limits
+    canon_h, canon_w = canonical_shape
+    h, w = mass_created_hw.shape
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Row 1: Support masks
+    extent, origin = _plot_extent((h, w))
+    axes[0, 0].imshow(
+        created_mask,
+        cmap="gray",
+        aspect="equal",
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    axes[0, 0].set_title(
+        f"Creation Support (tgt_support)\n{100*created_mask.sum()/created_mask.size:.2f}% defined"
+    )
+    axes[0, 0].set_xlabel("x (px)")
+    axes[0, 0].set_ylabel("y (px)")
+    _set_axes_limits(axes[0, 0], (canon_h, canon_w))
+
+    axes[0, 1].imshow(
+        destroyed_mask,
+        cmap="gray",
+        aspect="equal",
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+        vmin=0,
+        vmax=1,
+    )
+    axes[0, 1].set_title(
+        f"Destruction Support (src_support)\n{100*destroyed_mask.sum()/destroyed_mask.size:.2f}% defined"
+    )
+    axes[0, 1].set_xlabel("x (px)")
+    axes[0, 1].set_ylabel("y (px)")
+    _set_axes_limits(axes[0, 1], (canon_h, canon_w))
+
+    # Row 2: Mass heatmaps (NaN outside support)
+    # Use fixed vmin/vmax for consistent cross-run comparison
+    im0 = axes[1, 0].imshow(
+        created_masked,
+        cmap="Reds",
+        aspect="equal",
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+        vmin=viz_config.mass_pct_vmin,
+        vmax=viz_config.mass_pct_vmax,
+    )
+    axes[1, 0].set_title(
+        f"Mass Created (tgt_support only)\n"
+        f"{created_mass_pct:.2f}% of total target (from tgt_support sampling ONLY!) | p50/p90: {created_p50:.2f}/{created_p90:.2f}%"
+    )
+    axes[1, 0].set_xlabel("x (px)")
+    axes[1, 0].set_ylabel("y (px)")
+    _set_axes_limits(axes[1, 0], (canon_h, canon_w))
+    plt.colorbar(im0, ax=axes[1, 0], fraction=0.046, pad=0.04, label="%")
+
+    im1 = axes[1, 1].imshow(
+        destroyed_masked,
+        cmap="Blues",
+        aspect="equal",
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+        vmin=viz_config.mass_pct_vmin,
+        vmax=viz_config.mass_pct_vmax,
+    )
+    axes[1, 1].set_title(
+        f"Mass Destroyed (src_support only)\n"
+        f"{destroyed_mass_pct:.2f}% of total source (from src_support sampling ONLY!) | p50/p90: {destroyed_p50:.2f}/{destroyed_p90:.2f}%"
+    )
+    axes[1, 1].set_xlabel("x (px)")
+    axes[1, 1].set_ylabel("y (px)")
+    _set_axes_limits(axes[1, 1], (canon_h, canon_w))
+    plt.colorbar(im1, ax=axes[1, 1], fraction=0.046, pad=0.04, label="%")
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_uot_overlay_with_transport(
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    result: UOTResult,
+    output_path: Path,
+    stride: int = 6,
+    canonical_shape: Optional[Tuple[int, int]] = None,
+    viz_config: Optional[UOTVizConfig] = None,
+) -> None:
+    """Plot multi-layer visualization: mask overlay + cost field + quiver.
+
+    Migrated from debug_uot_params.py::plot_overlay_transport_field()
+
+    Overlays src/tgt masks with cost-colored support and transport arrows.
+
+    Args:
+        src_mask: Source mask
+        tgt_mask: Target mask
+        result: UOTResult containing transport data
+        output_path: Where to save the plot
+        stride: Subsample stride for arrow density
+        canonical_shape: Optional (H, W) for axis limits (defaults to src_mask.shape)
+        viz_config: Visualization configuration
+    """
+    if viz_config is None:
+        viz_config = DEFAULT_UOT_VIZ_CONFIG
+
+    if canonical_shape is None:
+        canonical_shape = src_mask.shape
+
+    velocity_field = (
+        result.velocity_um_per_frame_yx
+        if result.velocity_um_per_frame_yx is not None
+        else result.velocity_px_per_frame_yx
+    )
+    velocity_mag = np.sqrt(velocity_field[..., 0] ** 2 + velocity_field[..., 1] ** 2)
+    support_mask = velocity_mag > 0
+
+    cost_field = getattr(result, "cost_src_px", None)
+    if cost_field is None:
+        cost_field = np.zeros_like(src_mask, dtype=np.float32)
+
+    # Mask cost field to support
+    cost_masked = cost_field.copy()
+    cost_masked[~support_mask] = np.nan
+
+    h, w = src_mask.shape
+    canon_h, canon_w = canonical_shape
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    # Base overlay of src/tgt
+    overlay = _overlay_masks_rgb(src_mask, tgt_mask)
+    extent, origin = _plot_extent((h, w))
+    ax.imshow(overlay, extent=extent, origin=origin, interpolation="nearest")
+
+    # Cost field overlay
+    im = ax.imshow(
+        cost_masked,
+        cmap="Reds",
+        alpha=0.6,
+        extent=extent,
+        origin=origin,
+        interpolation="nearest",
+    )
+    plt.colorbar(
+        im, ax=ax, fraction=0.046, pad=0.04, label="Transport cost (src_support)"
+    )
+
+    # Quiver overlay
+    yy, xx = np.meshgrid(
+        np.arange(0, h, stride), np.arange(0, w, stride), indexing="ij"
+    )
+    u = velocity_field[::stride, ::stride, 1]
+    v = velocity_field[::stride, ::stride, 0]
+    mag_sub = velocity_mag[::stride, ::stride]
+    support_sub = support_mask[::stride, ::stride]
+    mask_sub = support_sub & (mag_sub > 0)
+
+    if mask_sub.any():
+        xx_plot, yy_plot, u_plot, v_plot = _quiver_transform(xx, yy, u, v, h)
+        ax.quiver(
+            xx_plot[mask_sub],
+            yy_plot[mask_sub],
+            u_plot[mask_sub],
+            v_plot[mask_sub],
+            mag_sub[mask_sub],
+            cmap="viridis",
+            scale=viz_config.quiver_base_scale,
+            scale_units="xy",
+            angles="xy",
+            width=0.002,
+        )
+
+    _set_axes_limits(ax, (canon_h, canon_w))
+    ax.set_xlabel("x (px)")
+    ax.set_ylabel("y (px)")
+    ax.set_title("Source/Target Overlay + Transport Field (Cost Colored)")
+
+    legend_handles = [
+        Patch(facecolor=(1.0, 0.80, 0.80), edgecolor="none", label="Source"),
+        Patch(facecolor=(0.80, 0.85, 1.0), edgecolor="none", label="Target"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower right", fontsize=8, framealpha=0.6)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_uot_diagnostic_suite(
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    result: UOTResult,
+    output_dir: Path,
+    prefix: str = "",
+    canonical_shape: Optional[Tuple[int, int]] = None,
+    viz_config: Optional[UOTVizConfig] = None,
+) -> Dict[str, Path]:
+    """Generate full diagnostic suite for UOT result.
+
+    Creates 4 plots:
+    - {prefix}quiver.png
+    - {prefix}cost_field.png
+    - {prefix}creation_destruction.png
+    - {prefix}overlay_transport.png
+
+    Args:
+        src_mask: Source mask
+        tgt_mask: Target mask
+        result: UOTResult containing transport data
+        output_dir: Directory to save plots
+        prefix: Optional prefix for output filenames
+        canonical_shape: Optional (H, W) for axis limits
+        viz_config: Visualization configuration
+
+    Returns:
+        Dict mapping plot type to output path
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    outputs = {}
+
+    outputs["quiver"] = output_dir / f"{prefix}quiver.png"
+    plot_uot_quiver(
+        src_mask,
+        result,
+        outputs["quiver"],
+        canonical_shape=canonical_shape,
+        viz_config=viz_config,
+    )
+
+    outputs["cost_field"] = output_dir / f"{prefix}cost_field.png"
+    plot_uot_cost_field(
+        result, outputs["cost_field"], canonical_shape=canonical_shape, viz_config=viz_config
+    )
+
+    # Extract mass fields from result
+    mass_created = (
+        result.pair_frame.creation_map if result.pair_frame else result.mass_created_px
+    )
+    mass_destroyed = (
+        result.pair_frame.destruction_map
+        if result.pair_frame
+        else result.mass_destroyed_px
+    )
+    created_pct = result.diagnostics.get("metrics", {}).get("created_mass_pct", 0.0)
+    destroyed_pct = result.diagnostics.get("metrics", {}).get("destroyed_mass_pct", 0.0)
+
+    outputs["creation_destruction"] = output_dir / f"{prefix}creation_destruction.png"
+    plot_uot_creation_destruction(
+        mass_created,
+        mass_destroyed,
+        created_pct,
+        destroyed_pct,
+        outputs["creation_destruction"],
+        canonical_shape=canonical_shape,
+        viz_config=viz_config,
+    )
+
+    outputs["overlay_transport"] = output_dir / f"{prefix}overlay_transport.png"
+    plot_uot_overlay_with_transport(
+        src_mask,
+        tgt_mask,
+        result,
+        outputs["overlay_transport"],
+        canonical_shape=canonical_shape,
+        viz_config=viz_config,
+    )
+
+    return outputs
+
+
+# ==============================================================================
+# Legacy Functions (Phase 1)
+# ==============================================================================
 
 
 def plot_creation_destruction(
@@ -21,6 +701,11 @@ def plot_creation_destruction(
     mass_destroyed_hw: np.ndarray,
     output_path: Optional[str] = None,
 ) -> plt.Figure:
+    """DEPRECATED: Use plot_uot_creation_destruction() instead.
+
+    This function does not enforce the UOT plotting contract (NaN masking,
+    support-only statistics). The new function provides full contract compliance.
+    """
     mass_created_hw = np.maximum(mass_created_hw, 0.0)
     mass_destroyed_hw = np.maximum(mass_destroyed_hw, 0.0)
     vmax_created = float(mass_created_hw.max()) if mass_created_hw.size else 0.0

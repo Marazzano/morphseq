@@ -6,28 +6,6 @@ pipeline orchestration for morphological dynamics analysis using optimal transpo
 Reusable optimal transport utilities are in src.analyze.utils.optimal_transport.
 """
 
-from src.analyze.utils.optimal_transport import (
-    UOTConfig,
-    UOTFrame,
-    UOTFramePair,
-    UOTSupport,
-    UOTProblem,
-    UOTResult,
-    SamplingMode,
-    MassMode,
-    POTBackend,
-)
-
-from .frame_mask_io import (
-    load_mask_from_csv,
-    load_mask_pair_from_csv,
-    load_mask_series_from_csv,
-    load_mask_from_png,
-)
-from .preprocess import preprocess_pair
-from .run_transport import run_uot_pair, build_problem
-from .run_timeseries import run_timeseries_from_csv
-
 __all__ = [
     # Re-exported from utils for convenience
     "UOTConfig",
@@ -50,4 +28,69 @@ __all__ = [
     "run_uot_pair",
     "build_problem",
     "run_timeseries_from_csv",
+    # Phase 2: Contract-compliant visualization
+    "plot_uot_quiver",
+    "plot_uot_cost_field",
+    "plot_uot_creation_destruction",
+    "plot_uot_overlay_with_transport",
+    "plot_uot_diagnostic_suite",
+    "UOTVizConfig",
+    "DEFAULT_UOT_VIZ_CONFIG",
 ]
+
+
+def __getattr__(name: str):
+    if name in {
+        "UOTConfig",
+        "UOTFrame",
+        "UOTFramePair",
+        "UOTSupport",
+        "UOTProblem",
+        "UOTResult",
+        "SamplingMode",
+        "MassMode",
+        "POTBackend",
+    }:
+        import analyze.utils.optimal_transport as _ot
+
+        return getattr(_ot, name)
+
+    if name in {
+        "load_mask_from_csv",
+        "load_mask_pair_from_csv",
+        "load_mask_series_from_csv",
+        "load_mask_from_png",
+    }:
+        from . import frame_mask_io as _io
+
+        return getattr(_io, name)
+
+    if name == "preprocess_pair":
+        from . import preprocess as _pre
+
+        return _pre.preprocess_pair
+
+    if name in {"run_uot_pair", "build_problem"}:
+        from . import run_transport as _rt
+
+        return getattr(_rt, name)
+
+    if name == "run_timeseries_from_csv":
+        from . import run_timeseries as _ts
+
+        return _ts.run_timeseries_from_csv
+
+    if name in {
+        "plot_uot_quiver",
+        "plot_uot_cost_field",
+        "plot_uot_creation_destruction",
+        "plot_uot_overlay_with_transport",
+        "plot_uot_diagnostic_suite",
+        "UOTVizConfig",
+        "DEFAULT_UOT_VIZ_CONFIG",
+    }:
+        from . import viz as _viz
+
+        return getattr(_viz, name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
