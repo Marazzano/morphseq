@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.analyze.utils.optimal_transport import UOTConfig, UOTFramePair
+from analyze.utils.optimal_transport import UOTConfig, UOTFramePair, UOTBackend, POTBackend
 from .frame_mask_io import load_mask_series_from_csv
 from .run_transport import run_uot_pair
 
@@ -18,18 +18,22 @@ def run_timeseries_from_csv(
     embryo_id: str,
     frame_indices: Optional[List[int]] = None,
     config: Optional[UOTConfig] = None,
+    backend: Optional[UOTBackend] = None,
+    data_root: Optional[Path] = None,
 ) -> List[Tuple[int, int, dict]]:
     if config is None:
         config = UOTConfig()
+    if backend is None:
+        backend = POTBackend()
 
-    frames = load_mask_series_from_csv(csv_path, embryo_id, frame_indices=frame_indices)
+    frames = load_mask_series_from_csv(csv_path, embryo_id, frame_indices=frame_indices, data_root=data_root)
     results: List[Tuple[int, int, dict]] = []
 
     for i in range(len(frames) - 1):
         src = frames[i]
         tgt = frames[i + 1]
         pair = UOTFramePair(src=src, tgt=tgt)
-        res = run_uot_pair(pair, config=config)
+        res = run_uot_pair(pair, config=config, backend=backend)
         frame_src = int(src.meta.get("frame_index", i))
         frame_tgt = int(tgt.meta.get("frame_index", i + 1))
         metrics = res.diagnostics.get("metrics", {})

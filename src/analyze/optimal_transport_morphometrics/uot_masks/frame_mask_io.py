@@ -10,12 +10,12 @@ import pandas as pd
 import os
 
 from segmentation_sandbox.scripts.utils.mask_utils import decode_mask_rle
-from src.data_pipeline.segmentation.grounded_sam2.mask_export import (
+from data_pipeline.segmentation.grounded_sam2.mask_export import (
     load_labeled_mask,
     extract_individual_masks,
 )
 
-from src.analyze.utils.optimal_transport import UOTFrame, UOTFramePair
+from analyze.utils.optimal_transport import UOTFrame, UOTFramePair
 
 
 DEFAULT_USECOLS = [
@@ -217,6 +217,7 @@ def load_mask_series_from_csv(
     embryo_id: str,
     frame_indices: Optional[Iterable[int]] = None,
     usecols: Optional[List[str]] = None,
+    data_root: Optional[Path] = None,
 ) -> List[UOTFrame]:
     if usecols is None:
         usecols = DEFAULT_USECOLS
@@ -228,11 +229,21 @@ def load_mask_series_from_csv(
     subset = subset.sort_values("frame_index")
     if subset.empty:
         raise ValueError(f"No masks found for embryo_id={embryo_id}")
+
+    if data_root is None:
+        env_root = os.environ.get("MORPHSEQ_DATA_ROOT")
+        if env_root:
+            data_root = Path(env_root)
+
     frames: List[UOTFrame] = []
     for _, row in subset.iterrows():
         mask = load_mask_from_rle_counts(row["mask_rle"], row["mask_height_px"], row["mask_width_px"])
         meta = row.to_dict()
         meta["um_per_pixel"] = _compute_um_per_pixel(row)
+        if data_root is not None:
+            yolk_mask = _load_build02_aux_mask(data_root, row, mask.shape, keyword="yolk")
+            if yolk_mask is not None:
+                meta["yolk_mask"] = yolk_mask
         frames.append(UOTFrame(embryo_mask=mask, meta=meta))
     return frames
 

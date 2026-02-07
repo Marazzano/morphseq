@@ -13,7 +13,7 @@ try:
 except Exception:  # pragma: no cover
     sp = None
 
-from src.analyze.utils.optimal_transport import Coupling
+from analyze.utils.optimal_transport import Coupling
 
 
 def plot_creation_destruction(
@@ -248,3 +248,169 @@ def plot_transport_spectrum(
     if output_path:
         fig.savefig(output_path, dpi=200)
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: NaN contract enforcement + summary plots
+# ---------------------------------------------------------------------------
+
+def apply_nan_mask(field: np.ndarray, support_mask: np.ndarray) -> np.ndarray:
+    """Apply NaN masking: non-support pixels become NaN.
+
+    Prevents confusion between "no data" and "zero motion/mass".
+
+    Args:
+        field: (H, W) or (H, W, C) array
+        support_mask: (H, W) boolean-like array, True = valid
+
+    Returns:
+        Copy of field with NaN outside support.
+    """
+    mask_bool = np.asarray(support_mask).astype(bool)
+    out = np.array(field, dtype=np.float64)
+    if out.ndim == 2:
+        out[~mask_bool] = np.nan
+    elif out.ndim == 3:
+        out[~mask_bool, :] = np.nan
+    else:
+        raise ValueError(f"field must be 2D or 3D, got {out.ndim}D")
+    return out
+
+
+def _build_support_mask_from_result(result) -> np.ndarray:
+    """Build a combined support mask from a UOTResult."""
+    shape = result.mass_created_px.shape[:2]
+    mask = np.zeros(shape, dtype=bool)
+    mask |= (result.mass_created_px > 0)
+    mask |= (result.mass_destroyed_px > 0)
+    vel_mag = np.linalg.norm(result.velocity_px_per_frame_yx, axis=-1)
+    mask |= (vel_mag > 0)
+    return mask
+
+
+def plot_uot_summary(
+    result,
+    output_path: Optional[str] = None,
+    title: str = "",
+) -> plt.Figure:
+    """4-panel UOT summary with NaN masking and numeric annotations.
+
+    Panel 1: Support mask
+    Panel 2: Velocity quiver on support
+    Panel 3: Mass creation heatmap (NaN masked)
+    Panel 4: Mass destruction heatmap (NaN masked)
+    """
+    support_mask = _build_support_mask_from_result(result)
+
+    created = apply_nan_mask(result.mass_created_px, support_mask)
+    destroyed = apply_nan_mask(result.mass_destroyed_px, support_mask)
+    velocity = result.velocity_px_per_frame_yx
+    vel_mag = np.linalg.norm(velocity, axis=-1)
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+    if title:
+        fig.suptitle(title, fontsize=14)
+
+    # Panel 1: Support mask
+    ax = axes[0, 0]
+    ax.imshow(support_mask.astype(float), cmap="gray", vmin=0, vmax=1)
+    n_support = int(support_mask.sum())
+    ax.set_title(f"Support mask ({n_support} px)")
+    ax.axis("off")
+
+    # Panel 2: Velocity quiver
+    ax = axes[0, 1]
+    ax.imshow(support_mask.astype(float), cmap="gray", vmin=0, vmax=1, alpha=0.3)
+    h, w = support_mask.shape
+    stride = max(1, min(h, w) // 20)
+    yy, xx = np.mgrid[0:h:stride, 0:w:stride]
+    vy = velocity[0:h:stride, 0:w:stride, 0]
+    vx = velocity[0:h:stride, 0:w:stride, 1]
+    ax.quiver(xx, yy, vx, vy, color="cyan", angles="xy", scale_units="xy", scale=1.0)
+    max_vel = float(np.nanmax(vel_mag)) if vel_mag.size else 0.0
+    mean_vel = float(np.nanmean(vel_mag[support_mask])) if support_mask.any() else 0.0
+    ax.set_title(f"Velocity (max={max_vel:.2f}, mean={mean_vel:.2f} px/fr)")
+    ax.axis("off")
+
+    # Panel 3: Mass created
+    ax = axes[1, 0]
+    vmax_c = float(np.nanmax(created)) if np.any(np.isfinite(created)) else 1e-12
+    vmax_c = max(vmax_c, 1e-12)
+    im = ax.imshow(created, cmap="magma", vmin=0, vmax=vmax_c)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    total_created = float(np.nansum(created))
+    ax.set_title(f"Mass created (total={total_created:.4f})")
+    ax.axis("off")
+
+    # Panel 4: Mass destroyed
+    ax = axes[1, 1]
+    vmax_d = float(np.nanmax(destroyed)) if np.any(np.isfinite(destroyed)) else 1e-12
+    vmax_d = max(vmax_d, 1e-12)
+    im = ax.imshow(destroyed, cmap="magma", vmin=0, vmax=vmax_d)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    total_destroyed = float(np.nansum(destroyed))
+    ax.set_title(f"Mass destroyed (total={total_destroyed:.4f})")
+    ax.axis("off")
+
+    if output_path:
+        fig.savefig(output_path, dpi=200)
+    return fig
+
+
+def plot_velocity_histogram(
+    result,
+    output_path: Optional[str] = None,
+) -> plt.Figure:
+    """Histogram of velocity magnitudes on support pixels."""
+    support_mask = _build_support_mask_from_result(result)
+    vel_mag = np.linalg.norm(result.velocity_px_per_frame_yx, axis=-1)
+    valid_mags = vel_mag[support_mask]
+
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4), constrained_layout=True)
+    if valid_mags.size == 0:
+        ax.text(0.5, 0.5, "No velocity data", ha="center", va="center")
+    else:
+        ax.hist(valid_mags, bins=30, color="steelblue", alpha=0.8, edgecolor="black", linewidth=0.5)
+        ax.axvline(float(np.mean(valid_mags)), color="red", linestyle="--", label=f"mean={np.mean(valid_mags):.2f}")
+        ax.legend()
+    ax.set_title("Velocity magnitude distribution")
+    ax.set_xlabel("Velocity (px/frame)")
+    ax.set_ylabel("Count")
+
+    if output_path:
+        fig.savefig(output_path, dpi=200)
+    return fig
+
+
+def write_diagnostics_json(result, output_path: str):
+    """Write UOT result diagnostics to JSON."""
+    import json
+
+    diagnostics = result.diagnostics or {}
+    metrics = diagnostics.get("metrics", {})
+
+    out = {}
+    for k, v in metrics.items():
+        if isinstance(v, (int, float, str, bool, type(None))):
+            out[k] = v
+        else:
+            out[k] = str(v)
+
+    out["cost"] = float(result.cost)
+
+    support_mask = _build_support_mask_from_result(result)
+    out["n_support_pixels"] = int(support_mask.sum())
+    out["total_mass_created"] = float(result.mass_created_px.sum())
+    out["total_mass_destroyed"] = float(result.mass_destroyed_px.sum())
+
+    vel_mag = np.linalg.norm(result.velocity_px_per_frame_yx, axis=-1)
+    valid_mags = vel_mag[support_mask]
+    if valid_mags.size > 0:
+        out["mean_velocity_px_per_frame"] = float(np.mean(valid_mags))
+        out["max_velocity_px_per_frame"] = float(np.max(valid_mags))
+    else:
+        out["mean_velocity_px_per_frame"] = 0.0
+        out["max_velocity_px_per_frame"] = 0.0
+
+    with open(output_path, "w") as f:
+        json.dump(out, f, indent=2)

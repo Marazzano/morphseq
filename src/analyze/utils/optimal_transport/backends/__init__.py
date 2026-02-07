@@ -1,6 +1,11 @@
 """UOT solver backends."""
 
-from src.analyze.utils.optimal_transport.backends.base import UOTBackend, BackendResult
-from src.analyze.utils.optimal_transport.backends.pot_backend import POTBackend
+from analyze.utils.optimal_transport.backends.base import UOTBackend, BackendResult
+from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
 
-__all__ = ["UOTBackend", "BackendResult", "POTBackend"]
+try:
+    from analyze.utils.optimal_transport.backends.ott_backend import OTTBackend
+except ImportError:
+    OTTBackend = None
+
+__all__ = ["UOTBackend", "BackendResult", "POTBackend", "OTTBackend"]
