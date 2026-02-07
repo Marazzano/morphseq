@@ -32,5 +32,32 @@ Uses loop, not vmap. Safer memory profile, avoids recompilation storms from shap
 ## IMPORTANT: Concordance tests are NOT on canonical grid
 - Tests use raw-coordinate synthetic circles (coords ~40-60), NOT canonical grid masks
 - Production pipeline uses canonical grid (256x576 @ 10 um/px) with coord_scale=1/576
-- Need a separate spike test to validate OTT at production epsilon=1e-5 on canonical grid
-- The optimal epsilon range for OTT/GPU may differ from POT/CPU due to float32 vs float64
+
+## Canonical Grid Spike Results (real embryos A05 vs E04 @ ~48 hpf)
+Ran `canonical_grid_epsilon_spike.py` with reg_m=10.0, coord_scale=1/576 on canonical grid.
+
+| Epsilon | POT Cost | OTT Cost | % Diff | OTT Converged |
+|---------|----------|----------|--------|---------------|
+| 1e-6 | ~0 | 18.27 | massive | False |
+| 1e-5 | 0.00005 | 34.08 | massive | False |
+| **1e-4** | **37.09** | **37.17** | **0.21%** | False |
+| **1e-3** | **46.01** | **46.01** | **0.01%** | False |
+| 1e-2 | 98.78 | 99.59 | 0.82% | False |
+| 1e-1 | 300.32 | 326.85 | 8.84% | True |
+
+### Interpretation
+- **OTT sweet spot: eps=1e-4 to 1e-3** on canonical grid (<1% cost concordance with POT)
+- At POT production epsilon (1e-5), OTT diverges completely. Likely cause: float32 Gibbs kernel
+  exp(-C/eps) underflows when eps is too small relative to scaled squared-Euclidean costs.
+  POT (float64) handles this; OTT (float32, ~7 decimal digits) cannot.
+- OTT `converged=False` flag appears overly strict — costs agree well at eps=1e-4 to 1e-3
+  despite the flag. May need to increase `max_iterations` or relax `threshold`.
+- **Recommendation:** Use eps=1e-4 for OTT/GPU production on canonical grid. This gives
+  excellent concordance (0.21%) while being biologically meaningful. POT continues at eps=1e-5.
+- **Timing:** OTT consistently ~3s; POT varies 2-27s. OTT speedup most significant at small epsilon.
+
+### Next steps
+- Investigate whether increasing OTT `max_iterations` (currently 2000) or switching to
+  float64 can push concordance to eps=1e-5
+- Run velocity/coupling concordance at eps=1e-4 (not just cost)
+- Test on GPU (current spike was CPU-only)
