@@ -45,19 +45,59 @@ Ran `canonical_grid_epsilon_spike.py` with reg_m=10.0, coord_scale=1/576 on cano
 | 1e-2 | 98.78 | 99.59 | 0.82% | False |
 | 1e-1 | 300.32 | 326.85 | 8.84% | True |
 
-### Interpretation
-- **OTT sweet spot: eps=1e-4 to 1e-3** on canonical grid (<1% cost concordance with POT)
-- At POT production epsilon (1e-5), OTT diverges completely. Likely cause: float32 Gibbs kernel
-  exp(-C/eps) underflows when eps is too small relative to scaled squared-Euclidean costs.
-  POT (float64) handles this; OTT (float32, ~7 decimal digits) cannot.
-- OTT `converged=False` flag appears overly strict — costs agree well at eps=1e-4 to 1e-3
-  despite the flag. May need to increase `max_iterations` or relax `threshold`.
-- **Recommendation:** Use eps=1e-4 for OTT/GPU production on canonical grid. This gives
-  excellent concordance (0.21%) while being biologically meaningful. POT continues at eps=1e-5.
-- **Timing:** OTT consistently ~3s; POT varies 2-27s. OTT speedup most significant at small epsilon.
+### Interpretation (CORRECTED after field visualization)
+
+**Initial interpretation was WRONG.** Visual field comparison revealed:
+
+- At eps=1e-5 on canonical grid, **POT is the one failing, not OTT.**
+  - POT: cost=0.00005, 99.96% creation+destruction, bimodal velocity (p90=20457 μm/fr) — Gibbs kernel underflow, no real transport happening
+  - OTT: cost=34.08, 0.59% creation, 0.02% destruction, smooth unimodal velocity (p50=2762, p90=4700 μm/fr) — healthy transport, matches eps=1e-4 results
+  - The "massive divergence" was POT giving a pathological near-zero cost, not OTT being wrong
+
+- **OTT handles low epsilon BETTER than POT** on canonical grid (float32 Sinkhorn appears more numerically stable than POT's float64 at this scale)
+
+- At eps=1e-4: **excellent concordance** between backends
+  - Cost: 0.21% diff (37.09 vs 37.17)
+  - Velocity: POT p50=2897.2, OTT p50=2901.5 μm/fr (near-identical)
+  - Transport cost per pixel: same spatial pattern, same percentiles
+  - Creation: both 0.00%; Destruction: POT 0.18%, OTT 0.03%
+
+- **Recommendation:** Use eps=1e-4 for both backends on canonical grid. POT at eps=1e-5 is
+  numerically broken in this regime (Gibbs kernel underflow). OTT works at both but eps=1e-4
+  gives clean concordance for validation.
+
+- **Timing:** OTT consistently ~3-9s; POT 2-24s depending on epsilon.
+
+### Yolk alignment issue (separate from backend concordance)
+- Canonical grid preprocessing silently falls back from yolk to centroid alignment when
+  yolk masks are missing from UOTFrame.meta — this MUST be fixed (should error, not silently degrade)
+- Both backends receive the same preprocessed masks, so concordance comparison is still valid
+- Proper yolk alignment requires `data_root` to be passed through to `load_mask_from_csv()`
+- See `debug_yolk_alignment_pair.py` for working example with yolk data
 
 ### Next steps
-- Investigate whether increasing OTT `max_iterations` (currently 2000) or switching to
-  float64 can push concordance to eps=1e-5
-- Run velocity/coupling concordance at eps=1e-4 (not just cost)
+- Fix silent yolk fallback — raise error when yolk alignment requested but yolk missing
 - Test on GPU (current spike was CPU-only)
+- Validate velocity/coupling concordance more rigorously at eps=1e-4
+
+## Control Concordance Module (2026-02-08)
+
+Added:
+- `spike_test_results/01_run_control_concordance.py`
+- `spike_test_results/control_concordance_results.csv`
+- `spike_test_results/control_concordance_summary.csv`
+
+Run setup:
+- Canonical grid with yolk alignment
+- Pair 1 (cross-embryo control): `20251113_A05_e01 f0014 -> 20251113_E04_e01 f0014`
+- Pair 2 (identity control): `20251113_A05_e01 f0014 -> same frame`
+- Epsilon grid: `1e-4`, `1e-5`
+- `reg_m=10`, `max_support_points=5000`
+
+Observed:
+- Cross-embryo at `eps=1e-4`: POT and OTT agree tightly on cost (`41.51` vs `41.58`; ~`0.19%` diff)
+- Cross-embryo at `eps=1e-5`: POT collapses (near-zero cost + ~100% created/destroyed mass), OTT remains stable
+- Identity control: POT and OTT both near-zero transport with close costs at both eps values
+
+Decision reinforced:
+- Use `eps=1e-4` for production concordance checks and batch export validation.
