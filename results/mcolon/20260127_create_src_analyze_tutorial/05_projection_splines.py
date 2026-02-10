@@ -1,19 +1,19 @@
 """
-Tutorial 05: Spline Fits for Projection-Derived Groups
+Tutorial 05: 3D PCA on VAE Embeddings + Splines per Cluster
 
-Fits splines for cluster groups derived from the combined projection
-and saves the spline coordinates for downstream comparison.
-
-Inputs:
-- Combined projection assignments from Tutorial 04
-- Source trajectories from 20260122 + 20260124
+Steps:
+1. Load latent embeddings from build06_output, filter use_embryo_flag
+2. Merge cluster labels from Tutorial 04 projection
+3. PCA(n_components=3) on z_mu_b_20..z_mu_b_99 (80 dims -> 3 PCs)
+4. Fit one LPC spline per cluster via spline_fit_wrapper
+5. Single combined 3D HTML plot with per-cluster splines
 """
 
 import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
 
 project_root = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(project_root / "src"))
@@ -24,119 +24,111 @@ RESULTS_DIR = OUTPUT_DIR / "results"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-PROJECTION_DIR = OUTPUT_DIR / "figures" / "04" / "projection_results"
-PROJECTION_CSV = PROJECTION_DIR / "combined_projection_bootstrap.csv"
-
-SOURCE_EXPERIMENTS = ["20260122", "20260124"]
-meta_dir = project_root / "morphseq_playground" / "metadata" / "build04_output"
+data_dir = project_root / "morphseq_playground" / "metadata" / "build06_output"
 
 print("=" * 80)
-print("TUTORIAL 05: SPLINES FOR PROJECTION GROUPS")
+print("TUTORIAL 05: 3D PCA ON VAE EMBEDDINGS + SPLINES")
 print("=" * 80)
 
-if not PROJECTION_CSV.exists():
-    raise FileNotFoundError(f"Missing projection file: {PROJECTION_CSV}")
-
-print(f"Loading projection assignments: {PROJECTION_CSV}")
+# ============================================================================
+# 1. Load latent data from build06, filter, merge cluster labels
+# ============================================================================
+PROJECTION_CSV = OUTPUT_DIR / "figures/04/projection_results/combined_projection_bootstrap.csv"
 proj = pd.read_csv(PROJECTION_CSV, low_memory=False)
 
-print("Loading source trajectories...")
 source_dfs = []
-for exp_id in SOURCE_EXPERIMENTS:
-    df_exp = pd.read_csv(meta_dir / f"qc_staged_{exp_id}.csv", low_memory=False)
+for exp_id in ["20260122", "20260124"]:
+    fpath = data_dir / f"df03_final_output_with_latents_{exp_id}.csv"
+    df_exp = pd.read_csv(fpath, low_memory=False)
     df_exp = df_exp[df_exp["use_embryo_flag"]].copy()
     df_exp["experiment_id"] = exp_id
     source_dfs.append(df_exp)
 
 df = pd.concat(source_dfs, ignore_index=True)
 
-# Merge cluster labels
-proj_cols = ["embryo_id", "cluster_label", "membership"]
-proj = proj[proj_cols].drop_duplicates(subset="embryo_id")
+proj = proj[["embryo_id", "cluster_label", "membership"]].drop_duplicates(subset="embryo_id")
 df = df.merge(proj, on="embryo_id", how="inner")
 df = df[df["cluster_label"].notna()].copy()
 
-print(f"Trajectories with labels: {df['embryo_id'].nunique()} embryos")
-print(f"Cluster labels: {sorted(df['cluster_label'].unique())}")
+print(f"Loaded {df['embryo_id'].nunique()} embryos, {len(df)} timepoints")
+print(f"Clusters: {sorted(df['cluster_label'].unique())}")
 
-# Choose coordinates for spline fitting
-candidate_coords = ["baseline_deviation_normalized", "total_length_um"]
-coords = [c for c in candidate_coords if c in df.columns]
-if len(coords) < 2:
-    raise ValueError(
-        f"Need at least 2 coordinate columns for spline fitting. "
-        f"Found: {coords}"
-    )
+# ============================================================================
+# 2. PCA(n_components=3) on z_mu_b columns (80 dims)
+# ============================================================================
+z_cols = [f"z_mu_b_{i}" for i in range(20, 100)]
+missing = [c for c in z_cols if c not in df.columns]
+if missing:
+    raise ValueError(f"Missing z_mu_b columns: {missing[:5]}... ({len(missing)} total)")
 
-print(f"Using coordinates: {coords}")
+print(f"\nRunning PCA on {len(z_cols)} z_mu_b columns...")
 
-from analyze.spline_fitting import spline_fit_wrapper
+pca = PCA(n_components=3)
+X_pca = pca.fit_transform(df[z_cols].values)
 
-print("\nFitting splines by cluster_label...")
+df["PC1"] = X_pca[:, 0]
+df["PC2"] = X_pca[:, 1]
+df["PC3"] = X_pca[:, 2]
+
+evr = pca.explained_variance_ratio_
+print(f"PCA explained variance: PC1={evr[0]*100:.1f}%, PC2={evr[1]*100:.1f}%, PC3={evr[2]*100:.1f}%")
+
+pca_cols = ["PC1", "PC2", "PC3"]
+stage_col = "predicted_stage_hpf"
+
+# ============================================================================
+# 3. Fit one spline per cluster via spline_fit_wrapper
+# ============================================================================
+from analyze.spline_fitting.bootstrap import spline_fit_wrapper
+
+print("\nFitting splines per cluster...")
+
 spline_df = spline_fit_wrapper(
     df,
+    pca_cols=pca_cols,
     group_by="cluster_label",
-    pca_cols=coords,
-    stage_col="predicted_stage_hpf",
-    n_bootstrap=50,
-    bootstrap_size=2500,
+    stage_col=stage_col,
+    n_bootstrap=1,
     n_spline_points=200,
-    time_window=2,
 )
 
-print(f"Fitted splines for {spline_df['cluster_label'].nunique()} clusters")
+print(f"\nSpline result: {len(spline_df)} rows, "
+      f"{spline_df['cluster_label'].nunique()} clusters")
 
-csv_path = RESULTS_DIR / "05_projection_splines_by_cluster.csv"
-pkl_path = RESULTS_DIR / "05_projection_splines_by_cluster.pkl"
+# Save spline CSV
+csv_path = RESULTS_DIR / "05_pca_splines_by_cluster.csv"
 spline_df.to_csv(csv_path, index=False)
-print(f"Saved spline table: {csv_path}")
+print(f"Saved: {csv_path}")
 
-import pickle
-with open(pkl_path, "wb") as f:
-    pickle.dump(spline_df, f)
-print(f"Saved spline pickle: {pkl_path}")
+# ============================================================================
+# 4. Combined 3D HTML plot with per-cluster splines
+# ============================================================================
+print("\n" + "=" * 80)
+print("CREATING 3D VISUALIZATION")
+print("=" * 80)
 
-# Quick 2D visualization per cluster
-clusters = sorted(df["cluster_label"].unique())
-n_cols = 2
-n_rows = int(np.ceil(len(clusters) / n_cols))
-fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 4 * n_rows), squeeze=False)
+from analyze.spline_fitting.viz import plot_3d_with_spline
 
-for idx, cluster in enumerate(clusters):
-    r, c = divmod(idx, n_cols)
-    ax = axes[r][c]
-    df_c = df[df["cluster_label"] == cluster]
-    spline_c = spline_df[spline_df["cluster_label"] == cluster]
+cluster_colors = {
+    "Not Penetrant": "#2ca02c",
+    "Low_to_High": "#1f77b4",
+    "High_to_Low": "#ff7f0e",
+    "Intermediate": "#d62728",
+}
 
-    ax.scatter(
-        df_c[coords[0]],
-        df_c[coords[1]],
-        s=6,
-        alpha=0.2,
-        label="points"
-    )
-    if not spline_c.empty:
-        ax.plot(
-            spline_c[coords[0]],
-            spline_c[coords[1]],
-            color="red",
-            linewidth=2,
-            label="spline"
-        )
-    ax.set_title(cluster)
-    ax.set_xlabel(coords[0])
-    ax.set_ylabel(coords[1])
+fig = plot_3d_with_spline(
+    df,
+    coords=pca_cols,
+    spline=spline_df,
+    spline_group_by="cluster_label",
+    color_by="cluster_label",
+    color_palette=cluster_colors,
+    spline_width=6,
+    title="Embedding PCA Splines by Cluster",
+)
 
-for idx in range(len(clusters), n_rows * n_cols):
-    r, c = divmod(idx, n_cols)
-    axes[r][c].axis("off")
-
-fig.suptitle("Spline Fits per Cluster (Projection Labels)", fontsize=14, fontweight="bold")
-fig.tight_layout(rect=[0, 0, 1, 0.96])
-
-fig_path = FIGURES_DIR / "05_projection_splines_by_cluster.png"
-fig.savefig(fig_path, dpi=150, bbox_inches="tight")
-print(f"Saved spline plot: {fig_path}")
-plt.close(fig)
+html_path = FIGURES_DIR / "05_embedding_pca_splines.html"
+fig.write_html(str(html_path))
+print(f"Saved: {html_path}")
 
 print("\n✓ Tutorial 05 complete.")
