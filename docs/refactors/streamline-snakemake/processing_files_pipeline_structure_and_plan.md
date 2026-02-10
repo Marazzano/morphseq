@@ -4,6 +4,28 @@
 **Audience:** Scientists and developers implementing the new pipeline
 **Last Updated:** 2026-02-10
 
+## 2026-02-10 - Addendum, highlighting what we need to change in the original doc
+This addendum is intentionally narrow. The original document remains in force except for the ingest-side clarifications below.
+
+Scope of change:
+- Keep downstream phase logic unchanged (segmentation onward is not being rewritten here).
+- Keep microscope-specific ingest behavior separate through extraction and mapping.
+- Keep image materialization scope-specific, with a shared pre-segmentation handoff.
+
+Ingest updates to apply:
+1. Use scope-first ingest organization conceptually:
+   - `metadata_ingest/scope/yx1/...`
+   - `metadata_ingest/scope/keyence/...`
+   - shared utilities remain shared (for example alignment helpers).
+2. Keep `materialize_stitched_images_*` as the pipeline stage label.
+3. Use reporter pattern in builders for `stitched_image_index.csv` (no filename crawler parsing).
+4. Treat `frame_manifest.csv` as the canonical frame metadata contract consumed by segmentation.
+5. Canonical naming in frame-level contracts:
+   - `channel_id` (normalized)
+   - `channel_raw_name` (provenance label)
+   - `temperature_c`
+   - `micrometers_per_pixel` (required)
+
 ## TL;DR
 The pipeline now uses two CSV handoff contracts instead of `experiment_image_manifest.json`:
 

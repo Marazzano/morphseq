@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-02-10 - Addendum, highlighting what we need to change in the original doc
+- Keep all downstream (segmentation, snip processing, features, QC, embeddings, analysis-ready) logic as-is.
+- Limit conceptual updates to ingest and pre-segmentation handoff only.
+- Treat ingest as scope-first (YX1 and Keyence stay separate through extraction and mapping).
+- Keep `materialize_stitched_images_*` as the stage name; scope builders implement the behavior.
+- Keep frame-level handoff on `stitched_image_index.csv` + `frame_manifest.csv`.
+- Use `channel_id`, preserve `channel_raw_name`, use `temperature_c`, and require `micrometers_per_pixel` in frame-level metadata.
+
+---
+
 ## Quick TL;DR (For Scientists)
 If you only remember one thing:
 

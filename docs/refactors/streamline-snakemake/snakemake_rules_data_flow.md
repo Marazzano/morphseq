@@ -4,6 +4,23 @@
 **Audience:** Scientists and developers wiring/maintaining the pipeline
 **Last Updated:** 2026-02-10
 
+## 2026-02-10 - Addendum, highlighting what we need to change in the original doc
+This addendum only updates ingest/handoff interpretation. Existing downstream rule logic remains unchanged.
+
+Rule-level clarifications:
+1. Keep phase names and ordering intact.
+2. Keep ingest scope-first through extraction and mapping (YX1 and Keyence remain separate there).
+3. Keep `materialize_stitched_images_yx1` / `materialize_stitched_images_keyence` as stage names.
+4. Ensure builders emit `stitched_image_index.csv` rows during processing (reporter pattern).
+5. Keep the canonical pre-segmentation handoff as:
+   - `stitched_image_index.csv`
+   - `frame_manifest.csv`
+6. For frame-level contracts, standardize on:
+   - `channel_id`
+   - `channel_raw_name`
+   - `temperature_c`
+   - required `micrometers_per_pixel`
+
 ## TL;DR
 Use this sequence for pre-segmentation data flow:
 
