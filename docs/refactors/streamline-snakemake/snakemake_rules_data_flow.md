@@ -11,10 +11,12 @@ Use this sequence for pre-segmentation data flow:
 2. Scope metadata ingest (YX1/Keyence)
 3. Scope-specific series mapping
 4. Apply mapping
-5. Scope-specific stitched image materialization
-6. Reporter output: `stitched_image_index.csv`
-7. Validate stitched index
-8. Build and validate `frame_manifest.csv`
+5. Scope-specific stitched image materialization + emit `stitched_image_index.csv`
+6. Validate stitched index
+7. Build `frame_manifest.csv` from:
+   - `scope_metadata_mapped.csv`
+   - `stitched_image_index.csv`
+   - `plate_metadata.csv`
 
 Downstream segmentation consumes `frame_manifest.csv`.
 
@@ -35,7 +37,6 @@ PHASE 2: IMAGES + FRAME CONTRACT
   materialize_stitched_images_yx1 | materialize_stitched_images_keyence
   validate_stitched_image_index
   build_frame_manifest
-  validate_frame_manifest
 
 PHASE 3+
   segmentation_and_downstream (consumes frame_manifest.csv)

@@ -139,6 +139,31 @@ Note:
 
 ---
 
+## Agreed Implementation Touch List (No Directory Churn)
+
+This is the current agreed migration set for code changes.
+
+### Modify Existing Files
+1. `src/data_pipeline/metadata_ingest/scope/yx1_scope_metadata.py`
+2. `src/data_pipeline/metadata_ingest/scope/keyence_scope_metadata.py`
+3. `src/data_pipeline/metadata_ingest/mapping/series_well_mapper_keyence.py`
+4. `src/data_pipeline/image_building/yx1/stitched_ff_builder.py`
+5. `src/data_pipeline/pipeline_orchestrator/config.yaml`
+
+### Add New Files
+1. `src/data_pipeline/schemas/stitched_image_index.py`
+2. `src/data_pipeline/schemas/frame_manifest.py`
+3. `src/data_pipeline/image_building/handoff/io.py`
+4. `src/data_pipeline/image_building/handoff/validate_stitched_index.py`
+5. `src/data_pipeline/metadata_ingest/frame_manifest/build_frame_manifest.py`
+
+### Remove Legacy Files
+1. `src/data_pipeline/metadata_ingest/manifests/generate_image_manifest.py`
+2. `src/data_pipeline/schemas/image_manifest.py`
+3. `src/data_pipeline/metadata_ingest/manifests/__init__.py` (optional)
+
+---
+
 ## Canonical Contracts
 
 ### `stitched_image_index.csv`
@@ -205,15 +230,14 @@ Frame semantics:
 2. Extract scope metadata -> `scope_metadata_raw.csv`
 3. Scope-specific mapping -> `series_well_mapping.csv`
 4. Apply mapping -> `scope_metadata_mapped.csv`
-5. Scope-specific stitched image materialization -> `stitched_ff_images/`
-6. Reporter output -> `stitched_image_index.csv`
-7. Validate stitched index
-8. Build frame manifest from:
+5. Scope-specific stitched image materialization + emit `stitched_image_index.csv`
+6. Validate stitched index
+7. Build `frame_manifest.csv` by joining:
    - `scope_metadata_mapped.csv`
    - `stitched_image_index.csv`
    - `plate_metadata.csv`
-9. Validate `frame_manifest.csv`
-10. Segmentation consumes `frame_manifest.csv`
+
+Then segmentation consumes `frame_manifest.csv`.
 
 ---
 
