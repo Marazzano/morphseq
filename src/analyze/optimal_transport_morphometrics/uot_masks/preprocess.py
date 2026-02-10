@@ -9,7 +9,7 @@ from scipy import ndimage
 
 from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 
-from src.analyze.utils.optimal_transport import UOTConfig, pad_to_divisible, UOTFrame
+from analyze.utils.optimal_transport import UOTConfig, pad_to_divisible, UOTFrame
 from .uot_grid import (
     CanonicalGridConfig,
     GridTransform,

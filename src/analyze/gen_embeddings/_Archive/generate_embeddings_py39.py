@@ -44,9 +44,9 @@ def main():
         sys.path.insert(0, str(repo_root))
         
         # Now import the specific modules we need (without the problematic imports)
-        from src.vae.models.auto_model import AutoModel
-        from src.data.dataset_configs import EvalDataConfig
-        from src.data.data_transforms import basic_transform
+        from vae.models.auto_model import AutoModel
+        from data.dataset_configs import EvalDataConfig
+        from data.data_transforms import basic_transform
         
         print("✅ Successfully imported dependencies in Python 3.9")
         

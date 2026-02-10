@@ -7,11 +7,7 @@ All default values are defined here for consistency across modules.
 Users can override these in function calls.
 """
 
-from src.analyze.viz.styling import (
-    GENOTYPE_SUFFIX_COLORS,
-    GENOTYPE_SUFFIX_ORDER,
-    GENOTYPE_COLORS,
-)
+from analyze.viz.styling import ColorLookup
 
 # ==============================================================================
 # Bootstrap Parameters
@@ -117,6 +113,50 @@ MEMBERSHIP_COLORS = {
 # These are examples - actual paths should be provided by users
 DEFAULT_CURV_DIR = '/net/trapnell/vol1/home/nlammers/projects/data/morphseq/built_image_data/Keyence'
 DEFAULT_META_DIR = '/net/trapnell/vol1/home/nlammers/projects/data/morphseq/metadata/built_metadata_files'
+
+
+# ==============================================================================
+# Genotype Styling (from plot_config.py)
+# ==============================================================================
+
+# Color mapping based on genotype suffix (independent of gene prefix)
+GENOTYPE_SUFFIX_COLORS = {
+    'wildtype': '#2E7D32',      # Green
+    'heterozygous': '#FFA500',  # Orange
+    'homozygous': '#D32F2F',    # Red
+    'crispant': '#9467bd',      # Purple
+    'unknown': '#808080',       # Gray
+}
+"""Standard colors for genotype suffixes. Works with any gene prefix."""
+
+# Standard ordering for genotype suffixes
+GENOTYPE_SUFFIX_ORDER = ['crispant', 'homozygous', 'heterozygous', 'wildtype', 'unknown']
+"""Default order for displaying genotype suffixes."""
+
+# Pre-configured color lookup object for genotype suffixes
+GENOTYPE_COLORS = ColorLookup(
+    suffix_colors=GENOTYPE_SUFFIX_COLORS,
+    suffix_order=GENOTYPE_SUFFIX_ORDER
+)
+"""ColorLookup object that can be passed directly to color_lookup parameters."""
+
+
+# ==============================================================================
+# Phenotype Styling (from plot_config.py)
+# ==============================================================================
+
+# Color mapping for phenotype categories (muted/earthy tones - distinct from genotype)
+PHENOTYPE_COLORS = {
+    'CE': '#5B7C99',           # Slate blue
+    'HTA': '#7FA87F',          # Sage green
+    'BA_rescue': '#C4956A',    # Terracotta/tan
+    'non_penetrant': '#9E9E9E', # Warm gray
+}
+"""Colors for phenotype categories. Muted/earthy tones, distinct from genotype suffix colors."""
+
+# Standard ordering for phenotypes
+PHENOTYPE_ORDER = ['CE', 'HTA', 'BA_rescue', 'non_penetrant']
+"""Default order for displaying phenotypes."""
 
 
 # ==============================================================================

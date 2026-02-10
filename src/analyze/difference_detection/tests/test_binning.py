@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from src.analyze.utils import binning
+from analyze.utils import binning
 
 
 class BinningTests(unittest.TestCase):

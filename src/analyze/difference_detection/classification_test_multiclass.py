@@ -42,6 +42,30 @@ except Exception:
     delayed = None
 
 
+def _make_logistic_classifier(n_classes: int, random_state: int) -> LogisticRegression:
+    """Create a stable classifier across binary/multiclass settings.
+
+    Binary comparisons use ``liblinear`` to avoid OpenMP SHM failures seen with
+    ``lbfgs`` in restricted environments. True multiclass keeps multinomial
+    ``lbfgs`` behavior.
+    """
+    if n_classes <= 2:
+        return LogisticRegression(
+            max_iter=1000,
+            solver='liblinear',
+            multi_class='ovr',
+            class_weight='balanced',
+            random_state=random_state,
+        )
+    return LogisticRegression(
+        max_iter=1000,
+        solver='lbfgs',
+        multi_class='multinomial',
+        class_weight='balanced',
+        random_state=random_state,
+    )
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -562,13 +586,9 @@ def _run_multiclass_classification(
             n_skipped_bins += 1
             continue
 
-        # Set up classifier (multinomial for multiclass)
-        clf = LogisticRegression(
-            max_iter=1000,
-            solver='lbfgs',
-            multi_class='multinomial',
-            class_weight='balanced',
-            random_state=random_state
+        clf = _make_logistic_classifier(
+            n_classes=len(class_labels),
+            random_state=random_state,
         )
 
         # Cross-validated predictions
@@ -756,13 +776,9 @@ def _permutation_test_ovr(
             y_perm = local_rng.permutation(y)
 
         try:
-            # Set up classifier
-            clf = LogisticRegression(
-                max_iter=1000,
-                solver='lbfgs',
-                multi_class='multinomial',
-                class_weight='balanced',
-                random_state=random_state
+            clf = _make_logistic_classifier(
+                n_classes=n_classes,
+                random_state=random_state,
             )
 
             cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)

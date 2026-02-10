@@ -11,11 +11,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-# Standard qualitative color palette
-STANDARD_PALETTE = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-]
+from analyze.viz.styling import STANDARD_PALETTE, resolve_color_lookup
 
 
 # ==============================================================================
@@ -47,9 +43,6 @@ def _build_color_lookup(
     dict
         Mapping from column values to hex colors
     """
-    if color_palette is not None:
-        return color_palette
-
     # Get unique values
     unique_vals = df[color_by].dropna().unique()
 
@@ -62,8 +55,13 @@ def _build_color_lookup(
     else:
         ordered_vals = sorted(unique_vals)
 
-    return {v: STANDARD_PALETTE[i % len(STANDARD_PALETTE)]
-            for i, v in enumerate(ordered_vals)}
+    return resolve_color_lookup(
+        ordered_vals,
+        color_lookup=color_palette,
+        palette=STANDARD_PALETTE,
+        enforce_distinct=True,
+        warn_on_collision=True,
+    )
 
 
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
@@ -87,16 +85,18 @@ def plot_3d_scatter(
     color_palette: Optional[Dict[str, str]] = None,
     color_order: Optional[List[str]] = None,
     color_continuous: bool = False,
+    group_by: Optional[str] = None,
     colorscale: str = 'Viridis',
     colorbar_title: Optional[str] = None,
     # Filtering
     line_by: str = 'id',
     min_points_per_line: int = 20,
-    filter_groups: Optional[List[str]] = None,
+    filter_groups: Optional[List[Any]] = None,
+    filter_by_col: Optional[str] = None,
     downsample_frac: Optional[Dict[str, float]] = None,
     # Trajectory lines (optional)
     show_lines: bool = False,
-    x_col: Optional[str] = None,
+    x_col: Optional[str] = 'predicted_stage_hpf',
     line_opacity: float = 0.3,
     line_width: float = 1.5,
     # Mean trajectory (optional)
@@ -131,6 +131,10 @@ def plot_3d_scatter(
     color_continuous : bool, default=False
         If True, color by continuous numeric values instead of categorical groups.
         Uses colorscale for mapping values to colors.
+    group_by : str, optional
+        Optional column to split points into legend-clickable traces while keeping
+        continuous coloring from color_by. Useful for toggling groups (e.g., experiment_id)
+        on/off in Plotly when color_continuous=True.
     colorscale : str, default='Viridis'
         Plotly colorscale name for continuous coloring. Only used if color_continuous=True.
         Options: 'Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Jet', etc.
@@ -141,13 +145,18 @@ def plot_3d_scatter(
     min_points_per_line : int, default=20
         Minimum points required per line_by group to be included
     filter_groups : list, optional
-        Only include these values from color_by column
+        Only include these values from filter_by_col
+        (or color_by if filter_by_col is None)
+    filter_by_col : str, optional
+        Column used with filter_groups for subset selection
+        (e.g., 'experiment_id')
     downsample_frac : dict, optional
         Fraction of points to keep per color_by value, e.g., {'wt': 0.1}
     show_lines : bool, default=False
         Connect points per line_by group over time
-    x_col : str, optional
-        Time column for sorting trajectories. Required if show_lines=True
+    x_col : str, default='predicted_stage_hpf'
+        Time column for hover display and trajectory sorting.
+        Pass None to disable time in hover and require explicit x_col for line/mean trajectories.
     line_opacity : float, default=0.3
         Opacity for trajectory lines
     line_width : float, default=1.5
@@ -161,7 +170,8 @@ def plot_3d_scatter(
     point_size : int, default=4
         Size of scatter points
     hover_cols : list, optional
-        Additional columns to show in hover tooltip
+        Additional columns to show in hover tooltip.
+        `embryo_id` is always shown by default when present.
     title : str, default="3D Scatter Plot"
         Plot title
     output_path : Path, optional
@@ -204,6 +214,23 @@ def plot_3d_scatter(
         ...     colorscale='Viridis',
         ...     colorbar_title='Time (hpf)'
         ... )
+
+    Continuous color with experiment filtering:
+        >>> fig = plot_3d_scatter(
+        ...     df, ['PCA_1', 'PCA_2', 'PCA_3'],
+        ...     color_by='predicted_stage_hpf',
+        ...     color_continuous=True,
+        ...     filter_by_col='experiment_id',
+        ...     filter_groups=['20260122']
+        ... )
+
+    Continuous color with legend-clickable groups:
+        >>> fig = plot_3d_scatter(
+        ...     df, ['PCA_1', 'PCA_2', 'PCA_3'],
+        ...     color_by='predicted_stage_hpf',
+        ...     color_continuous=True,
+        ...     group_by='experiment_id'
+        ... )
     """
     # Validate inputs
     if len(coords) != 3:
@@ -218,18 +245,29 @@ def plot_3d_scatter(
     if color_by not in df.columns:
         raise ValueError(f"color_by column '{color_by}' not found in DataFrame")
 
-    if show_lines and x_col is None:
-        raise ValueError("x_col (time column) is required when show_lines=True")
+    if group_by is not None and group_by not in df.columns:
+        raise ValueError(f"group_by column '{group_by}' not found in DataFrame")
 
-    if show_mean and x_col is None:
-        raise ValueError("x_col (time column) is required when show_mean=True")
+    if filter_by_col is not None and filter_by_col not in df.columns:
+        raise ValueError(f"filter_by_col column '{filter_by_col}' not found in DataFrame")
+
+    if show_lines and (x_col is None or x_col not in df.columns):
+        raise ValueError(
+            f"x_col '{x_col}' must exist in DataFrame when show_lines=True"
+        )
+
+    if show_mean and (x_col is None or x_col not in df.columns):
+        raise ValueError(
+            f"x_col '{x_col}' must exist in DataFrame when show_mean=True"
+        )
 
     # Make a copy to avoid modifying original
     df_plot = df.copy()
 
-    # Filter by groups of interest
+    # Filter using the requested column (defaults to color_by for backward compatibility).
+    filter_col = filter_by_col if filter_by_col is not None else color_by
     if filter_groups is not None:
-        df_plot = df_plot[df_plot[color_by].isin(filter_groups)].copy()
+        df_plot = df_plot[df_plot[filter_col].isin(filter_groups)].copy()
 
     # Filter by minimum points per line
     if line_by in df_plot.columns:
@@ -257,18 +295,34 @@ def plot_3d_scatter(
         else:
             groups = sorted(df_plot[color_by].unique())
     else:
-        # For continuous coloring, we don't use groups
+        # For continuous coloring, optionally split into legend-clickable groups.
         color_lookup = None
-        groups = [None]  # Single "group" containing all data
+        if group_by is not None:
+            groups = sorted(df_plot[group_by].dropna().unique())
+        else:
+            groups = [None]  # Single "group" containing all data
+
+    continuous_min = None
+    continuous_max = None
+    if color_continuous:
+        continuous_min = df_plot[color_by].min()
+        continuous_max = df_plot[color_by].max()
+        if pd.isna(continuous_min) or pd.isna(continuous_max) or continuous_min == continuous_max:
+            continuous_min = None
+            continuous_max = None
 
     # Create figure
     fig = go.Figure()
 
     # Process each group
-    for group in groups:
+    for group_idx, group in enumerate(groups):
         if color_continuous:
-            # For continuous coloring, use all data
-            group_df = df_plot.copy()
+            if group_by is not None:
+                # Continuous coloring + legend groups.
+                group_df = df_plot[df_plot[group_by] == group].copy()
+            else:
+                # Continuous coloring without grouping.
+                group_df = df_plot.copy()
         else:
             # For categorical coloring, filter by group
             group_df = df_plot[df_plot[color_by] == group].copy()
@@ -299,11 +353,16 @@ def plot_3d_scatter(
             if color_continuous:
                 # Show the continuous value
                 text_parts = [f"<b>{color_by}:</b> {row[color_by]:.2f}"]
+                if group_by is not None and group_by in group_df.columns and group_by != color_by:
+                    text_parts.append(f"<b>{group_by}:</b> {row[group_by]}")
             else:
                 # Show the categorical group
                 text_parts = [f"<b>{color_by}:</b> {group}"]
 
-            if line_by in group_df.columns:
+            # Always show embryo_id when available.
+            if 'embryo_id' in group_df.columns:
+                text_parts.append(f"<b>embryo_id:</b> {row['embryo_id']}")
+            elif line_by in group_df.columns:
                 text_parts.append(f"<b>{line_by}:</b> {row[line_by]}")
             if x_col and x_col in group_df.columns:
                 text_parts.append(f"<b>{x_col}:</b> {row[x_col]:.2f}")
@@ -325,13 +384,19 @@ def plot_3d_scatter(
                 color=color_values,
                 colorscale=colorscale,
                 opacity=point_opacity,
+                cmin=continuous_min,
+                cmax=continuous_max,
                 colorbar=dict(
                     title=colorbar_title if colorbar_title else color_by
                 ),
-                showscale=True,
+                showscale=(group_idx == 0),
             )
-            trace_name = f"Points (n={n_lines})"
-            legend_group = "continuous"
+            if group_by is not None:
+                trace_name = f"{group} (n={n_lines})"
+                legend_group = str(group)
+            else:
+                trace_name = f"Points (n={n_lines})"
+                legend_group = "continuous"
         else:
             marker_dict = dict(
                 size=point_size,

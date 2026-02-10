@@ -3,7 +3,7 @@
 This subpackage contains distance computation algorithms for trajectory analysis,
 including Dynamic Time Warping (DTW) and DTW Barycenter Averaging (DBA).
 
-Generic DTW/DBA algorithms are imported from src.analyze.utils.timeseries.
+Generic DTW/DBA algorithms are imported from analyze.utils.timeseries.
 Domain-specific functions are in the utilities subpackage.
 
 Functions
@@ -22,14 +22,29 @@ DBA (from utils.timeseries):
 """
 
 # Generic DTW functions from canonical location
-from src.analyze.utils.timeseries.dtw import (
-    compute_dtw_distance,
-    compute_dtw_distance_matrix,
-    compute_md_dtw_distance_matrix,
-)
-
-# DBA from canonical location
-from src.analyze.utils.timeseries.dba import dba
+try:
+    from analyze.utils.timeseries.dtw import (
+        compute_dtw_distance,
+        compute_dtw_distance_matrix,
+        compute_md_dtw_distance_matrix,
+    )
+    from analyze.utils.timeseries.dba import dba
+except ModuleNotFoundError as exc:
+    # Fallback for legacy path setups where `src/analyze` is on sys.path
+    if exc.name not in {
+        "analyze",
+        "analyze.utils",
+        "analyze.utils.timeseries",
+        "analyze.utils.timeseries.dtw",
+        "analyze.utils.timeseries.dba",
+    }:
+        raise
+    from utils.timeseries.dtw import (
+        compute_dtw_distance,
+        compute_dtw_distance_matrix,
+        compute_md_dtw_distance_matrix,
+    )
+    from utils.timeseries.dba import dba
 
 # Domain-specific functions from utilities
 from ..utilities.dtw_utils import (

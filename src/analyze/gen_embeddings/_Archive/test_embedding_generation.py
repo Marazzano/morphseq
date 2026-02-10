@@ -63,7 +63,7 @@ from pathlib import Path
 repo_root = Path("{Path(__file__).parent}")
 sys.path.insert(0, str(repo_root))
 
-from src.analyze.analysis_utils import calculate_morph_embeddings
+from analyze.analysis_utils import calculate_morph_embeddings
 
 print("Python version:", sys.version_info)
 print("Calling calculate_morph_embeddings from Python 3.9...")

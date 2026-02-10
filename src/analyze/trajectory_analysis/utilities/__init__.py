@@ -26,8 +26,8 @@ from .trajectory_utils import (
     pad_trajectories_for_plotting,
 )
 
-# PCA utilities (canonical in src.analyze.utils.pca)
-from src.analyze.utils.pca import (
+# PCA utilities (canonical in analyze.utils.pca)
+from analyze.utils.pca import (
     fit_pca_on_embeddings,
     transform_embeddings_to_pca,
     compute_wt_reference_by_time,

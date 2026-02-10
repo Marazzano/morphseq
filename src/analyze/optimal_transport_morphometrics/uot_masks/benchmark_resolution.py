@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from src.analyze.utils.optimal_transport import UOTConfig
+from analyze.utils.optimal_transport import UOTConfig
 from .frame_mask_io import load_mask_pair_from_csv
 from .run_transport import run_uot_pair
 
@@ -21,8 +21,9 @@ def benchmark_downsample(
     frame_index_tgt: int,
     downsample_factors: Iterable[int],
     base_config: UOTConfig,
+    data_root: Path | None = None,
 ) -> pd.DataFrame:
-    pair = load_mask_pair_from_csv(csv_path, embryo_id, frame_index_src, frame_index_tgt)
+    pair = load_mask_pair_from_csv(csv_path, embryo_id, frame_index_src, frame_index_tgt, data_root=data_root)
 
     results = []
     for factor in downsample_factors:

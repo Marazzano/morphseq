@@ -2,7 +2,7 @@
 Faceting Engine - Generic faceted plotting infrastructure.
 
 Usage:
-    from src.analyze.viz.plotting.faceting_engine import (
+    from analyze.viz.plotting.faceting_engine import (
         FigureData, SubplotData, TraceData, TraceStyle,
         FacetSpec, StyleSpec, render,
     )
@@ -13,7 +13,6 @@ from typing import Optional, Union, Any
 
 from .ir import TraceData, TraceStyle, SubplotData, FigureData, FacetSpec
 from .style.defaults import StyleSpec, default_style, paper_style
-from .style.colors import STANDARD_PALETTE, normalize_color, to_rgba_string, create_color_lookup
 from .stats import validate_error_type, compute_error_band, compute_linear_fit
 from .utils import iter_facet_cells, calculate_grid_map, compute_figure_size
 
@@ -58,7 +57,6 @@ __all__ = [
     'TraceData', 'TraceStyle', 'SubplotData', 'FigureData',
     'FacetSpec',
     'StyleSpec', 'default_style', 'paper_style',
-    'STANDARD_PALETTE', 'normalize_color', 'to_rgba_string', 'create_color_lookup',
     'validate_error_type', 'compute_error_band', 'compute_linear_fit',
     'iter_facet_cells', 'calculate_grid_map', 'compute_figure_size',
     'render',

@@ -8,7 +8,7 @@ from typing import Optional, Dict
 import numpy as np
 from abc import ABC, abstractmethod
 
-from src.analyze.utils.optimal_transport.config import Coupling, UOTSupport, UOTConfig
+from analyze.utils.optimal_transport.config import Coupling, UOTSupport, UOTConfig
 
 
 @dataclass

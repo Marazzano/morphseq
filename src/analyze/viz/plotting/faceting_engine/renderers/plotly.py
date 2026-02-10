@@ -8,7 +8,7 @@ from typing import Dict, Any
 
 from ..ir import FigureData, TraceData, FacetSpec
 from ..style.defaults import StyleSpec
-from ..style.colors import to_rgba_string
+from analyze.viz.styling.color_utils import to_rgba_string
 from ..utils import calculate_grid_map, compute_figure_size
 
 

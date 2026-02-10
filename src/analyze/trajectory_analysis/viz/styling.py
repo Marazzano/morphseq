@@ -9,7 +9,9 @@ This enables consistent styling across all genes without hardcoding.
 """
 
 from typing import Dict, List, Optional
-from src.analyze.viz.styling import GENOTYPE_SUFFIX_COLORS, GENOTYPE_SUFFIX_ORDER
+
+from analyze.trajectory_analysis.config import MEMBERSHIP_COLORS
+from analyze.viz.styling import GENOTYPE_SUFFIX_COLORS, GENOTYPE_SUFFIX_ORDER
 
 
 def extract_genotype_suffix(genotype: str) -> str:
@@ -124,6 +126,18 @@ def get_color_for_genotype(
 
     suffix = extract_genotype_suffix(genotype)
     return suffix_colors.get(suffix, '#808080')  # Gray fallback for unknown
+
+
+def get_membership_category_colors(categories: List[str]) -> Dict[str, str]:
+    """Get standardized colors for membership categories.
+
+    Args:
+        categories: List of membership category names.
+
+    Returns:
+        Mapping of category to hex color.
+    """
+    return {cat: MEMBERSHIP_COLORS.get(cat, '#95a5a6') for cat in categories}
 
 
 def sort_genotypes_by_suffix(

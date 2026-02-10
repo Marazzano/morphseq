@@ -7,8 +7,8 @@ from typing import Dict
 import numpy as np
 import ot
 
-from src.analyze.utils.optimal_transport.backends.base import UOTBackend, BackendResult
-from src.analyze.utils.optimal_transport.config import UOTSupport, UOTConfig
+from analyze.utils.optimal_transport.backends.base import UOTBackend, BackendResult
+from analyze.utils.optimal_transport.config import UOTSupport, UOTConfig
 
 
 class POTBackend(UOTBackend):

@@ -56,13 +56,14 @@ def build_subprocess_command(
 import sys
 from pathlib import Path
 
-# Add repo to path
+# Add src/ to path
 repo_root = Path("{repo_root}")
-sys.path.insert(0, str(repo_root))
+src_root = repo_root / "src"
+sys.path.insert(0, str(src_root))
 
 print("Python version:", sys.version_info)
 
-from src.analyze.analysis_utils import calculate_morph_embeddings
+from analyze.analysis_utils import calculate_morph_embeddings
 
 print("Calling calculate_morph_embeddings...")
 

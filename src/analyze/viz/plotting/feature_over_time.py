@@ -11,14 +11,15 @@ from pathlib import Path
 from typing import Optional, List, Any, Union, Dict, Set, Tuple
 
 # Generic imports ONLY
-from src.analyze.utils.data_processing import get_trajectories_for_group, get_global_axis_ranges
-from src.analyze.utils.stats import compute_trend_line
+from analyze.utils.data_processing import get_trajectories_for_group, get_global_axis_ranges
+from analyze.utils.stats import compute_trend_line
+from analyze.viz.styling import STANDARD_PALETTE, resolve_color_lookup
 
 # Engine imports
 from .faceting_engine import (
     FigureData, SubplotData, TraceData, TraceStyle,
     FacetSpec, StyleSpec, render, default_style,
-    iter_facet_cells, create_color_lookup, compute_error_band, STANDARD_PALETTE,
+    iter_facet_cells, compute_error_band,
 )
 
 
@@ -37,23 +38,13 @@ def _build_color_lookup(
         return {}
     
     unique_vals = list(df[color_by].dropna().unique())
-    palette = palette or STANDARD_PALETTE
-
-    # If a lookup is provided, fill missing/None entries from the palette.
-    if color_lookup is not None:
-        filled = {}
-        palette_idx = 0
-        get_color = color_lookup.get if hasattr(color_lookup, 'get') else None
-        for val in unique_vals:
-            provided = get_color(val) if get_color else None
-            if provided:
-                filled[val] = provided
-            else:
-                filled[val] = palette[palette_idx % len(palette)]
-                palette_idx += 1
-        return filled
-
-    return create_color_lookup(unique_vals, palette)
+    return resolve_color_lookup(
+        unique_vals,
+        color_lookup=color_lookup,
+        palette=palette or STANDARD_PALETTE,
+        enforce_distinct=True,
+        warn_on_collision=True,
+    )
 
 
 def _plot_features_over_time_subplot(
@@ -171,7 +162,7 @@ def _plot_features_over_time_subplot(
 
 def plot_feature_over_time(
     df: pd.DataFrame,
-    features: Union[str, List[str]],  # Can be single feature or list of features
+    features: Optional[Union[str, List[str]]] = None,  # Can be single feature or list of features
     time_col: str = 'predicted_stage_hpf',
     id_col: str = 'embryo_id',
     color_by: Optional[str] = None,
@@ -195,6 +186,7 @@ def plot_feature_over_time(
     title: Optional[str] = None,
     style: Optional[StyleSpec] = None,
     color_palette: Optional[List[str]] = None,  # Generic fallback
+    feature: Optional[Union[str, List[str]]] = None,  # Backward-compatible alias for features
 ) -> Any:
     """Plot feature(s) over time, optionally faceted.
     
@@ -207,6 +199,8 @@ def plot_feature_over_time(
         DataFrame with time-series data
     features : str or List[str]
         Column name(s) for y-axis metric(s)
+    feature : str or List[str], optional
+        Alias for `features` (backward-compatible keyword)
     time_col : str, default='predicted_stage_hpf'
         Column name for x-axis (time)
     id_col : str, default='embryo_id'
@@ -254,6 +248,13 @@ def plot_feature_over_time(
     Figure
         Plotly or matplotlib figure (or dict if backend='both')
     """
+    if feature is not None:
+        if features is not None and features != feature:
+            raise ValueError("Provide only one of `features` or `feature` (alias).")
+        features = feature
+    if features is None:
+        raise ValueError("Missing required argument: `features` (alias: `feature`).")
+
     layout = layout or FacetSpec(row_order=None, col_order=None)
     style = style or default_style()
 

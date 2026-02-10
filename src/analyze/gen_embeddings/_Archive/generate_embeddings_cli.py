@@ -78,7 +78,7 @@ sys.path.insert(0, str(repo_root))
 
 print("Python version:", sys.version_info)
 
-from src.analyze.analysis_utils import calculate_morph_embeddings
+from analyze.analysis_utils import calculate_morph_embeddings
 
 print("Calling calculate_morph_embeddings...")
 

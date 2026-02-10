@@ -8,7 +8,7 @@ from typing import Iterable, List
 import numpy as np
 import pandas as pd
 
-from src.analyze.utils.optimal_transport import UOTConfig, UOTFrame, UOTFramePair
+from analyze.utils.optimal_transport import UOTConfig, UOTFrame, UOTFramePair
 from .frame_mask_io import load_mask_from_csv
 from .run_transport import run_uot_pair
 
@@ -19,8 +19,9 @@ def calibrate_on_identity(
     frame_index: int,
     reg_m_values: Iterable[float],
     base_config: UOTConfig,
+    data_root: Path | None = None,
 ) -> pd.DataFrame:
-    frame = load_mask_from_csv(csv_path, embryo_id, frame_index)
+    frame = load_mask_from_csv(csv_path, embryo_id, frame_index, data_root=data_root)
     results = []
     for reg_m in reg_m_values:
         cfg = UOTConfig(**{**base_config.__dict__, "marginal_relaxation": float(reg_m)})

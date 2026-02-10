@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Tuple, Optional
 
-from src.analyze.utils.timeseries.dtw import compute_md_dtw_distance_matrix
+from analyze.utils.timeseries.dtw import compute_md_dtw_distance_matrix
 
 
 def prepare_multivariate_array(

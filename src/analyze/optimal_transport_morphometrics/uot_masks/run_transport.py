@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from src.analyze.utils.optimal_transport import (
+from analyze.utils.optimal_transport import (
     UOTConfig,
     UOTFramePair,
     UOTProblem,
@@ -20,12 +20,10 @@ from src.analyze.utils.optimal_transport import (
     compute_transport_maps,
     compute_cost_maps,
     summarize_metrics,
-    POTBackend,
-    UOTBackend,
 )
-from src.analyze.utils.optimal_transport.pair_frame import create_pair_frame_geometry
+from analyze.utils.optimal_transport.backends.base import UOTBackend
+from analyze.utils.optimal_transport.pair_frame import create_pair_frame_geometry
 from .preprocess import preprocess_pair, preprocess_pair_canonical
-from .frame_mask_io import load_mask_pair_from_csv
 from .uot_grid import CanonicalGridConfig, rescale_velocity_to_um, rescale_distance_to_um
 
 
@@ -153,6 +151,8 @@ def run_uot_pair(
     if config is None:
         config = UOTConfig()
     if backend is None:
+        from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
+
         backend = POTBackend()
 
     if pair.src.embryo_mask is None or pair.tgt.embryo_mask is None:
@@ -337,8 +337,11 @@ def run_from_csv(
     frame_index_tgt: int,
     config: Optional[UOTConfig] = None,
     backend: Optional[UOTBackend] = None,
+    data_root: Optional[Path] = None,
 ) -> UOTResult:
-    pair = load_mask_pair_from_csv(csv_path, embryo_id, frame_index_src, frame_index_tgt)
+    from .frame_mask_io import load_mask_pair_from_csv
+
+    pair = load_mask_pair_from_csv(csv_path, embryo_id, frame_index_src, frame_index_tgt, data_root=data_root)
     return run_uot_pair(pair, config=config, backend=backend)
 
 
@@ -352,10 +355,11 @@ if __name__ == "__main__":
     parser.add_argument("--frame-tgt", type=int, required=True)
     parser.add_argument("--downsample", type=int, default=4)
     parser.add_argument("--mass-mode", type=str, default="uniform")
+    parser.add_argument("--data-root", type=Path, default=None)
     args = parser.parse_args()
 
     cfg = UOTConfig(downsample_factor=args.downsample, mass_mode=args.mass_mode)
-    result = run_from_csv(args.csv, args.embryo_id, args.frame_src, args.frame_tgt, config=cfg)
+    result = run_from_csv(args.csv, args.embryo_id, args.frame_src, args.frame_tgt, config=cfg, data_root=args.data_root)
     metrics = result.diagnostics.get("metrics", {})
     print("UOT cost:", result.cost)
     print("Metrics:")

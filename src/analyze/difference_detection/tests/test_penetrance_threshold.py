@@ -12,7 +12,7 @@ except Exception:
 
 
 if MPL_AVAILABLE:
-    from src.analyze.difference_detection import penetrance_threshold as pt
+    from analyze.difference_detection import penetrance_threshold as pt
 
 
 @unittest.skipIf(not MPL_AVAILABLE, "matplotlib not available")

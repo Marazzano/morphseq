@@ -25,10 +25,10 @@ from .core import (
 # Flow plotting
 from .flow import plot_cluster_flow
 
-from src.analyze.viz.plotting.proportions import plot_proportions
+from analyze.viz.plotting.proportions import plot_proportions
 
 # 3D plotting - re-exported from generic location for backward compatibility
-from src.analyze.viz.plotting import plot_3d_scatter
+from analyze.viz.plotting import plot_3d_scatter
 
 __all__ = [
     # Core plotting

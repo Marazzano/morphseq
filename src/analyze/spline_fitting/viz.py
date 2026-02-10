@@ -175,6 +175,8 @@ def plot_3d_with_spline(
     spline_width=4,
     show_uncertainty=False,
     title=None,
+    spline_group_by=None,
+    color_palette=None,
     **scatter_kwargs
 ):
     """Create 3D scatter plot with optional spline overlay (convenience function).
@@ -191,16 +193,24 @@ def plot_3d_with_spline(
         Column names for x, y, z coordinates.
     spline : ndarray or pd.DataFrame, optional
         Spline coordinates to overlay. If None, only shows scatter.
+        When ``spline_group_by`` is set, must be a DataFrame containing
+        that grouping column plus the ``coords`` columns.
     color_by : str, optional
         Column to color scatter points by.
     spline_color : str, default='red'
-        Spline line color.
+        Spline line color (used when ``spline_group_by`` is None).
     spline_width : int, default=4
         Spline line width.
     show_uncertainty : bool, default=False
         If True and spline has SE columns, shows uncertainty tube.
     title : str, optional
         Plot title.
+    spline_group_by : str, optional
+        Column in ``spline`` DataFrame to group by.  Draws one spline per
+        group with colors matching the scatter's ``color_by`` palette.
+    color_palette : dict, optional
+        Mapping of group values to color strings.  Passed through to
+        ``plot_3d_scatter`` *and* used for per-group spline colours.
     **scatter_kwargs
         Additional arguments passed to plotly scatter creation.
 
@@ -226,10 +236,15 @@ def plot_3d_with_spline(
         >>> fig = plot_3d_scatter(df, coords=coords, color_by=color_by)
         >>> add_spline_to_fig(fig, spline, color='blue')
     """
+    # Build scatter kwargs, passing color_palette if supported
+    scatter_kw = dict(scatter_kwargs)
+    if color_palette is not None:
+        scatter_kw['color_palette'] = color_palette
+
     # Try to import the plotting module
     try:
-        from src.analyze.viz.plotting import plot_3d_scatter
-        fig = plot_3d_scatter(df, coords=coords, color_by=color_by, **scatter_kwargs)
+        from analyze.viz.plotting import plot_3d_scatter
+        fig = plot_3d_scatter(df, coords=coords, color_by=color_by, **scatter_kw)
     except ImportError:
         # Fallback: create basic scatter ourselves
         import plotly.express as px
@@ -237,11 +252,21 @@ def plot_3d_with_spline(
             df, x=coords[0], y=coords[1], z=coords[2],
             color=color_by,
             title=title,
-            **scatter_kwargs
         )
 
-    # Add spline if provided
-    if spline is not None:
+    # Add spline(s)
+    if spline is not None and spline_group_by is not None:
+        # Per-group splines with matched colours
+        from analyze.viz.plotting.plotting_3d import _build_color_lookup
+        color_map = _build_color_lookup(df, color_by, color_palette=color_palette)
+        for group_val, group_df in spline.groupby(spline_group_by):
+            color = color_map.get(group_val, 'red')
+            add_spline_to_fig(
+                fig, group_df[coords].values,
+                color=color, width=spline_width,
+                name=f"{group_val} spline",
+            )
+    elif spline is not None:
         add_spline_to_fig(fig, spline, color=spline_color, width=spline_width)
 
         # Add uncertainty if requested and available
@@ -249,7 +274,6 @@ def plot_3d_with_spline(
             try:
                 add_uncertainty_tube(fig, spline, coord_cols=coords, color=spline_color)
             except (ValueError, KeyError):
-                # SE columns not available, skip uncertainty
                 pass
 
     if title:

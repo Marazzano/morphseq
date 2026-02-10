@@ -48,7 +48,7 @@ from .classification_test import (
 )
 from .classification_test_multiclass import (
     run_multiclass_classification_test,
-    run_comparison_test,  # New Scanpy-style API
+    run_classification_test,
     extract_temporal_confusion_profile,
 )
 
@@ -56,6 +56,14 @@ from .classification_test_multiclass import (
 from .results import (
     MulticlassOVRResults,
     ComparisonSpec,
+)
+
+# Classification test visualization
+from .classification_test_viz import (
+    plot_auroc_with_null,
+    plot_multiple_aurocs,
+    plot_multiclass_ovr_aurocs,
+    plot_feature_comparison_grid,
 )
 
 # Expose key functions at package level for convenience (if modules exist)
@@ -178,4 +186,9 @@ __all__ = [
     # Result containers
     'MulticlassOVRResults',
     'ComparisonSpec',
+    # Classification test visualization
+    'plot_auroc_with_null',
+    'plot_multiple_aurocs',
+    'plot_multiclass_ovr_aurocs',
+    'plot_feature_comparison_grid',
 ]

@@ -11,7 +11,7 @@ try:
 except Exception:  # pragma: no cover
     sp = None
 
-from src.analyze.utils.optimal_transport.config import Coupling
+from analyze.utils.optimal_transport.config import Coupling
 
 # Type checking imports to avoid circular dependencies
 if TYPE_CHECKING:

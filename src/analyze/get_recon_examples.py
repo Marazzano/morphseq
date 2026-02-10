@@ -8,12 +8,12 @@ import numpy as np
 from tqdm import tqdm
 import os
 from omegaconf import OmegaConf
-from src.vae.models.auto_model import AutoModel
+from vae.models.auto_model import AutoModel
 from typing import Union
 import pickle
-from src.lightning.pl_wrappers import LitModel
+from lightning.pl_wrappers import LitModel
 from torch.utils.data import DataLoader
-from src.data.dataset_configs import BaseDataConfig, EvalDataConfig
+from data.dataset_configs import BaseDataConfig, EvalDataConfig
 import shutil
 
 torch.set_float32_matmul_precision("medium")   # good default
@@ -53,7 +53,7 @@ def recon_wrapper(
     if model_class == "legacy":
         cfg_path_list = [hydra_run_path]  # direct path to legacy model folder
     else:
-        from src.analyze.assess_hydra_results import get_hydra_runs, initialize_model_to_asses, parse_hydra_paths
+        from analyze.assess_hydra_results import get_hydra_runs, initialize_model_to_asses, parse_hydra_paths
         _, cfg_path_list = get_hydra_runs(hydra_run_path, run_type)
 
     for cfg in tqdm(cfg_path_list, "Processing training runs..."):

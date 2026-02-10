@@ -8,7 +8,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from analyze.utils.optimal_transport import UOTConfig, UOTFramePair, UOTBackend, POTBackend
+from analyze.utils.optimal_transport import UOTConfig, UOTFramePair
+from analyze.utils.optimal_transport.backends.base import UOTBackend
 from .frame_mask_io import load_mask_series_from_csv
 from .run_transport import run_uot_pair
 
@@ -24,6 +25,8 @@ def run_timeseries_from_csv(
     if config is None:
         config = UOTConfig()
     if backend is None:
+        from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
+
         backend = POTBackend()
 
     frames = load_mask_series_from_csv(csv_path, embryo_id, frame_indices=frame_indices, data_root=data_root)

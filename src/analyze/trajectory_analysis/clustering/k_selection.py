@@ -769,7 +769,7 @@ def run_k_selection_with_plots(
     - cluster_flow_sankey.html : Cluster flow Sankey diagram (if enabled)
     """
     from ..viz.plotting import plot_cluster_flow
-    from src.analyze.viz.plotting import plot_feature_over_time
+    from analyze.viz.plotting import plot_feature_over_time
     from ..qc import identify_outliers, identify_embryo_outliers_iqr, filter_data_and_ids
     import pickle
 

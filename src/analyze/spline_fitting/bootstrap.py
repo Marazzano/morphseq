@@ -235,11 +235,17 @@ def _fit_single_spline(
             f"Stage range: [{min_time}, {max_time}], time_window: {time_window}"
         )
 
-    # Bootstrap iterations
-    spline_boot_array = np.zeros((n_spline_points, len(pca_cols), n_bootstrap))
+    # Bootstrap iterations — collect only successful fits
+    successful_splines = []
     rng = np.random.RandomState(42)
+    max_attempts = n_bootstrap * 3  # allow retries for failed LPC fits
+    attempts = 0
 
-    for n in tqdm(range(n_bootstrap), desc="Bootstrap iterations", leave=False):
+    pbar = tqdm(total=n_bootstrap, desc="Bootstrap iterations", leave=False)
+
+    while len(successful_splines) < n_bootstrap and attempts < max_attempts:
+        attempts += 1
+
         # Sample data
         subset_indices = rng.choice(len(coord_array), size=bootstrap_size, replace=True, p=obs_weights)
         coord_subset = coord_array[subset_indices, :]
@@ -259,18 +265,54 @@ def _fit_single_spline(
             angle_penalty_exp=angle_penalty_exp
         )
 
-        lpc.fit(
-            coord_subset,
-            start_points=start_point[None, :],
-            end_point=stop_point[None, :],
-            num_points=n_spline_points
+        try:
+            lpc.fit(
+                coord_subset,
+                start_points=start_point[None, :],
+                end_point=stop_point[None, :],
+                num_points=n_spline_points
+            )
+        except Exception:
+            continue
+
+        # Validate: LPC sometimes returns None for cubic_splines
+        if (not hasattr(lpc, 'cubic_splines')
+                or lpc.cubic_splines is None
+                or len(lpc.cubic_splines) == 0
+                or lpc.cubic_splines[0] is None):
+            continue
+
+        spline = lpc.cubic_splines[0]
+        if np.isnan(spline).any():
+            continue
+
+        successful_splines.append(spline)
+        pbar.update(1)
+
+    pbar.close()
+
+    n_failed = attempts - len(successful_splines)
+    if n_failed > 0:
+        import warnings
+        warnings.warn(
+            f"LPC fitting: {n_failed}/{attempts} bootstrap iterations failed "
+            f"and were retried ({len(successful_splines)} successful)"
         )
 
-        spline_boot_array[:, :, n] = lpc.cubic_splines[0]
+    if len(successful_splines) == 0:
+        # Return NaN DataFrame so caller can detect failure
+        se_cols = [col + "_se" for col in pca_cols]
+        spline_df = pd.DataFrame(
+            np.nan, index=range(n_spline_points), columns=pca_cols
+        )
+        spline_df[se_cols] = np.nan
+        spline_df['spline_point_index'] = range(n_spline_points)
+        return spline_df
 
-    # Compute mean and standard error
-    mean_spline = np.mean(spline_boot_array, axis=2)
-    se_spline = np.std(spline_boot_array, axis=2)
+    # Stack successful fits and compute mean / SE
+    spline_boot_array = np.array(successful_splines)  # (n_success, n_points, n_coords)
+    mean_spline = np.mean(spline_boot_array, axis=0)
+    se_spline = np.std(spline_boot_array, axis=0)
 
     # Build output DataFrame
     se_cols = [col + "_se" for col in pca_cols]

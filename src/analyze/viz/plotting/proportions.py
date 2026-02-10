@@ -22,36 +22,14 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from src.analyze.viz.plotting.faceting_engine.style.colors import STANDARD_PALETTE
+from analyze.viz.styling import (
+    STANDARD_PALETTE,
+    normalize_color,
+    resolve_color_lookup,
+)
 
 DEFAULT_HEIGHT_PER_ROW = 350
 DEFAULT_WIDTH_PER_COL = 400
-
-
-def _normalize_color(color) -> str:
-    """Convert any color format to hex string for matplotlib compatibility."""
-    import matplotlib.colors as mcolors
-
-    if isinstance(color, str):
-        if color.startswith('#') or color.startswith('rgb'):
-            return color
-        try:
-            return mcolors.to_hex(color)
-        except ValueError:
-            return color
-
-    if isinstance(color, (tuple, list)):
-        try:
-            return mcolors.to_hex(color)
-        except ValueError:
-            if len(color) == 4:
-                r, g, b, a = color
-                return f'rgba({int(r*255)},{int(g*255)},{int(b*255)},{a})'
-            if len(color) == 3:
-                r, g, b = color
-                return f'rgb({int(r*255)},{int(g*255)},{int(b*255)})'
-
-    return str(color)
 
 
 def _ordered_unique(values: pd.Series) -> List:
@@ -62,10 +40,13 @@ def _ordered_unique(values: pd.Series) -> List:
 
 
 def _make_color_lookup(values: pd.Series, palette: Optional[List[str]] = None) -> Dict:
-    palette = palette or STANDARD_PALETTE
-    palette = [_normalize_color(c) for c in palette]
     unique_vals = _ordered_unique(values)
-    return {v: palette[i % len(palette)] for i, v in enumerate(unique_vals)}
+    return resolve_color_lookup(
+        unique_vals,
+        palette=palette or STANDARD_PALETTE,
+        enforce_distinct=True,
+        warn_on_collision=False,
+    )
 
 
 # ==============================================================================
@@ -121,10 +102,20 @@ def _plot_proportions_impl(
     if color_palette is None:
         color_palette = _make_color_lookup(df[color_by_grouping])
     elif isinstance(color_palette, (list, tuple)):
-        # Convert list to dict using color_values order
-        normalized_palette = [_normalize_color(c) for c in color_palette]
-        color_palette = {v: normalized_palette[i % len(normalized_palette)]
-                        for i, v in enumerate(color_values)}
+        color_palette = resolve_color_lookup(
+            color_values,
+            palette=[normalize_color(c) for c in color_palette],
+            enforce_distinct=True,
+            warn_on_collision=False,
+        )
+    else:
+        color_palette = resolve_color_lookup(
+            color_values,
+            color_lookup=color_palette,
+            palette=STANDARD_PALETTE,
+            enforce_distinct=True,
+            warn_on_collision=True,
+        )
     if color_order:
         color_values = [v for v in color_order if v in color_values]
 

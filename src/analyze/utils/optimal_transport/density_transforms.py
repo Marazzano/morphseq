@@ -7,7 +7,7 @@ from typing import Optional
 import numpy as np
 from scipy import ndimage
 
-from src.analyze.utils.optimal_transport.config import MassMode
+from analyze.utils.optimal_transport.config import MassMode
 
 
 def mask_to_density_uniform(mask: np.ndarray) -> np.ndarray:

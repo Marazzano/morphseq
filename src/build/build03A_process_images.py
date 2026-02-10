@@ -499,12 +499,20 @@ def export_embryo_snips(r: int,
     row_for_mask["region_label"] = 1
     im_mask_ft, im_yolk = process_masks(im_mask, im_yolk, row_for_mask)
 
+    ff_transposed = False
     if im_ff.shape[0] < im_ff.shape[1]:
-        im_ff = im_ff.transpose(1,0)
+        # Keep FF image and masks in the same orientation before cropping.
+        # 20260122 data are landscape; transposing only the FF image causes mask/image misalignment.
+        im_ff = im_ff.transpose(1, 0)
+        ff_transposed = True
 
     if im_ff.dtype != "uint8":
         im_ff_scaled = skimage.exposure.rescale_intensity(im_ff, in_range='image', out_range=(0, 255))
         im_ff = im_ff_scaled.astype(np.uint8)
+
+    if ff_transposed:
+        im_mask_ft = im_mask_ft.transpose(1, 0)
+        im_yolk = im_yolk.transpose(1, 0)
 
     im_ff_rs = rescale(im_ff, (px_dim_raw / outscale, px_dim_raw / outscale), order=1, preserve_range=True)
     mask_emb_rs = resize(im_mask_ft.astype(float), im_ff_rs.shape, order=1)

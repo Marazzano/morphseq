@@ -9,7 +9,6 @@ These functions use generic time-series algorithms from utils.timeseries
 Modules
 =======
 - feature_over_time : Faceted time series plotting (faceting-engine)
-- time_series : Legacy single-panel time series plotting
 - plotting_3d : 3D scatter plots with trajectory lines
 
 Functions
@@ -26,13 +25,11 @@ see: src.analyze.trajectory_analysis.viz.plotting
 
 from .feature_over_time import plot_feature_over_time
 from .proportions import plot_proportions
-from .time_series import get_membership_category_colors
 from .plotting_3d import plot_3d_scatter
 
 __all__ = [
     # Generic API
     'plot_feature_over_time',
     'plot_3d_scatter',
-    'get_membership_category_colors',
     'plot_proportions',
 ]

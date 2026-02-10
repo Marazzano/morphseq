@@ -21,7 +21,7 @@ import warnings
 from scipy import ndimage
 from skimage.measure import regionprops
 
-from src.data_pipeline.snip_processing.rotation import (
+from data_pipeline.snip_processing.rotation import (
     get_embryo_rotation_angle,
     rotate_image,
 )
@@ -203,6 +203,13 @@ class CanonicalAligner:
                 np.zeros((self.H, self.W), dtype=np.uint8),
                 None,
                 {"error": "empty_mask"},
+            )
+
+        if use_yolk and (yolk is None or yolk.sum() == 0):
+            raise ValueError(
+                "use_yolk=True but yolk mask is None or empty. "
+                "Ensure yolk masks are loaded (pass data_root to load_mask_from_csv). "
+                "Set align_mode='centroid' if yolk alignment is not needed."
             )
 
         scale = original_um_per_px / self.target_res

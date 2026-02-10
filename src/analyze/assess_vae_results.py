@@ -2,7 +2,7 @@
 import torch
 from PIL.ImImagePlugin import split
 from torch.utils.data.sampler import SubsetRandomSampler
-from src.run.run_utils import initialize_model, parse_model_paths
+from run.run_utils import initialize_model, parse_model_paths
 from torchvision.utils import save_image
 from pytorch_lightning import Trainer
 import umap.umap_ as umap
@@ -12,9 +12,9 @@ import pandas as pd
 import os
 from omegaconf import OmegaConf
 import pickle
-from src.lightning.pl_wrappers import LitModel
+from lightning.pl_wrappers import LitModel
 from torch.utils.data import DataLoader
-from src.data.dataset_configs import BaseDataConfig
+from data.dataset_configs import BaseDataConfig
 from pathlib import Path
 from typing import Dict, List, Tuple
 torch.set_float32_matmul_precision("medium")   # good default

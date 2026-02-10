@@ -5,7 +5,7 @@ These functions ensure no data leakage by keeping all samples from a group
 (e.g., embryo) together in either train or test set, never split across both.
 
 Usage:
-    from src.analyze.utils.splitting import (
+    from analyze.utils.splitting import (
         train_test_split_by_group,
         leave_one_out_by_group,
         get_group_split_masks,

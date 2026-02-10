@@ -3,13 +3,14 @@ from pathlib import Path
 
 # Path to the project *root* (the directory that contains the `src/` folder)
 REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = REPO_ROOT / "src"
 
-# Put that directory at the *front* of sys.path so Python looks there first
-sys.path.insert(0, str(REPO_ROOT))
+# Put `src/` at the *front* of sys.path so Python finds top-level packages
+sys.path.insert(0, str(SRC_ROOT))
 
 # from src.functions.dataset_utils import *
 import torch
-from src.vae.models.auto_model import AutoModel
+from vae.models.auto_model import AutoModel
 from PIL.ImImagePlugin import split
 from torch.utils.data.sampler import SubsetRandomSampler
 # from src.run.run_utils import initialize_model, parse_model_paths
@@ -22,12 +23,12 @@ import os
 from omegaconf import OmegaConf
 import pickle
 from typing import List, Literal, Optional, Any, Union
-from src.lightning.pl_wrappers import LitModel
+from lightning.pl_wrappers import LitModel
 from torch.utils.data import DataLoader
-from src.data.data_transforms import basic_transform
-from src.data.dataset_configs import EvalDataConfig
+from data.data_transforms import basic_transform
+from data.dataset_configs import EvalDataConfig
 # from src.analyze.assess_hydra_results import initialize_model_to_asses, parse_hydra_paths
-from src.models.factories import build_from_config
+from models.factories import build_from_config
 import pytorch_lightning as pl
 import io
 import pandas as pd
