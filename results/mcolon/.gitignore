@@ -29,6 +29,9 @@
 **/*.h5
 **/*.hdf5
 
+# NetCDF files (ArviZ/PyMC model cache)
+**/*.nc
+
 # Images and media (typically outputs, not source)
 **/*.png
 **/*.jpg
