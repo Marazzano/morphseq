@@ -66,9 +66,9 @@ src/_Archive/vae/trainers/base_trainer/__pycache__/
 visualization/__pycache__/*
 
 
-src/seq/.RData
-src/seq/.RHistory
-src/seq/.RDataTemp
+dev/seq/.RData
+dev/seq/.RHistory
+dev/seq/.RDataTemp
 
 train/20231204/beta_temp_sweep.py
 .Rproj.user
@@ -81,7 +81,7 @@ src/build/__pychache__/
 
 # Ignore __pycache__ directories (recursively)
 **/__pycache__/
-**/data/
+src/core/data/
 .aider*
 
 # Ignore large test data files (but keep structure and documentation)

@@ -1,4 +1,4 @@
-from src.vae import train_vae
+from src.legacy.vae import train_vae
 import multiprocessing
 
 #######################

@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from pythae.data.datasets import BaseDataset
-from src.vae import ModelOutput
+from src.legacy.vae import ModelOutput
 from ..base import BaseNF
 from .pixelcnn_config import PixelCNNConfig
 from .utils import MaskedConv2d

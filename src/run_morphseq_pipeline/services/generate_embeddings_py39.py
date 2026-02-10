@@ -52,9 +52,9 @@ def main():
         sys.path.insert(0, ".")
         
         # Now import the specific modules we need (without the problematic imports)
-        from src.vae.models.auto_model import AutoModel
-        from src.data.dataset_configs import EvalDataConfig
-        from src.data.data_transforms import basic_transform
+        from src.legacy.vae import AutoModel
+        from src.core.data.dataset_configs import EvalDataConfig
+        from src.core.data.data_transforms import basic_transform
         from src.analyze.analysis_utils import extract_embeddings_legacy
         
         if verbose:

@@ -1,6 +1,6 @@
 from pydantic.dataclasses import dataclass
 from typing_extensions import Literal
-from src.vae import make_seq_key, make_train_test_split
+from src.legacy.vae import make_seq_key, make_train_test_split
 from ..base.base_config import BaseAEConfig
 import pandas as pd
 

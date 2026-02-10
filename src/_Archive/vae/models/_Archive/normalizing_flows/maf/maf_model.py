@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from src.vae import ModelOutput
+from src.legacy.vae import ModelOutput
 from ..base import BaseNF
 from ..layers import BatchNorm
 from ..made import MADE, MADEConfig

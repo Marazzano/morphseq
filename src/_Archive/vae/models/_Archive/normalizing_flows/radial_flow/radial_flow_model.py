@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from src.vae import ModelOutput
+from src.legacy.vae import ModelOutput
 from ..base import BaseNF
 from .radial_flow_config import RadialFlowConfig
 

@@ -1,4 +1,4 @@
-from src.run.training import train_vae
+from src.core.run import train_vae
 from src.analyze.assess_vae_results import assess_vae_results
 
 if __name__ == "__main__":

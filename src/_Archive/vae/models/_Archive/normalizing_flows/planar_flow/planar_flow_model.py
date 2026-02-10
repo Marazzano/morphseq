@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.vae import ModelOutput
+from src.legacy.vae import ModelOutput
 from ..base import BaseNF
 from .planar_flow_config import PlanarFlowConfig
 

@@ -3,7 +3,7 @@ from src.functions.dataset_utils import *
 import os
 import skimage.io as io
 from skimage.transform import rescale
-from src.vae import AutoModel
+from src.legacy.vae import AutoModel
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn.functional as F
@@ -15,7 +15,7 @@ from tqdm import tqdm
 from src.functions.utilities import path_leaf
 from torch.utils.data import DataLoader
 from typing import Any, Dict
-from src.vae import calculate_UMAPs
+from src.legacy.vae import calculate_UMAPs
 
 
 def set_inputs_to_device(device, inputs: Dict[str, Any]):

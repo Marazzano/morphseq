@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 import torch
 
 
@@ -173,7 +173,7 @@ def load_legacy_model_safe(
     # If already Python 3.9, load directly
     if current_python == "3.9":
         logger.info("Already running Python 3.9, loading model directly")
-        from src.vae.models.auto_model import AutoModel
+        from src.legacy.vae import AutoModel
         lit_model = AutoModel.load_from_folder(str(model_path))
         lit_model.to(device).eval()
         return lit_model
@@ -244,7 +244,7 @@ def load_legacy_model_safe(
             
             # Try to load model directly first (will likely fail)
             try:
-                from src.vae.models.auto_model import AutoModel
+                from src.legacy.vae import AutoModel
                 lit_model = AutoModel.load_from_folder(str(model_path))
                 lit_model.load_state_dict(model_data['model_state_dict'])
                 lit_model.to(device).eval()

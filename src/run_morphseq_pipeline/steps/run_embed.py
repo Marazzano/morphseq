@@ -3,7 +3,7 @@ from typing import Union, Optional
 
 from pathlib import Path
 
-from src.vae.auxiliary_scripts.embed_training_snips import embed_snips
+from src.legacy.vae.auxiliary_scripts.embed_training_snips import embed_snips
 
 
 def run_embed(

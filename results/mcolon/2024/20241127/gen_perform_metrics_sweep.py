@@ -1,10 +1,9 @@
 import pandas as pd
 import os
-import numpy as np
-import seaborn as sns 
+import seaborn as sns
 
 os.chdir("/net/trapnell/vol1/home/mdcolon/proj/morphseq")
-from src.vae.auxiliary_scripts.assess_vae_results import assess_vae_results
+from src.legacy.vae import assess_vae_results
 
 from src.functions.embryo_df_performance_metrics import (split_train_test, 
                                                         logistic_regression_multiclass, 

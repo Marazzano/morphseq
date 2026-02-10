@@ -351,8 +351,10 @@ python -m src.run_morphseq_pipeline.cli build05 \
 - **Use Case**: Direct embedding generation from images using existing models
 - **Process**: Load pre-trained VAE → process images → extract embeddings
 - **Code Pattern**:
+
 ```python
-from src.vae.models.auto_model import AutoModel
+from src.legacy.vae import AutoModel
+
 model = AutoModel.load_from_folder("path/to/final_model")
 embeddings = model.encoder(x).embedding
 ```

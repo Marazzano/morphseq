@@ -4,10 +4,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from pythae.data.datasets import BaseDataset
-from src.vae import BaseAE
-from src.vae import ModelOutput
-from src.vae import BaseDecoder, BaseEncoder
-from src.vae.models.nn.default_architectures import Encoder_VAE_MLP
+from src.legacy.vae import BaseAE
+from src.legacy.vae import ModelOutput
+from src.legacy.vae import BaseDecoder, BaseEncoder
+from src.legacy.vae.models.nn.default_architectures import Encoder_VAE_MLP
 from .metric_vae_config import MetricVAEConfig
 
 

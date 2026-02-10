@@ -7,7 +7,6 @@ Keeps existing assessment scripts intact while providing canonical pipeline outp
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional, Dict, List, Union
 import pandas as pd
@@ -406,9 +405,9 @@ def generate_latents_with_repo_images(
         import numpy as np
         from torch.utils.data import DataLoader
         from src.analyze.analysis_utils import extract_embeddings_legacy
-        from src.vae.models.auto_model import AutoModel
-        from src.data.data_transforms import basic_transform
-        from src.data.dataset_configs import EvalDataConfig
+        from src.legacy.vae import AutoModel
+        from src.core.data.data_transforms import basic_transform
+        from src.core.data.dataset_configs import EvalDataConfig
     except Exception as e:
         logger.error(f"Failed to import dependencies for latent generation: {e}")
         raise
@@ -433,7 +432,7 @@ def generate_latents_with_repo_images(
     except Exception as e:
         logger.warning(f"Safe model loading failed: {e}")
         logger.info("Attempting direct model loading (may fail on Python != 3.9)")
-        from src.vae.models.auto_model import AutoModel
+        from src.legacy.vae import AutoModel
         lit_model = AutoModel.load_from_folder(str(model_dir))
         logger.info(
             "Direct legacy model load metadata: "
