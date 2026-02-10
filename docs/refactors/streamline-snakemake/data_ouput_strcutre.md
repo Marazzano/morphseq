@@ -4,6 +4,25 @@
 **Audience:** Scientists and developers
 **Last Updated:** 2026-02-10
 
+## 2026-02-10 - Addendum, highlighting what we need to change in the original doc
+This addendum is additive only. The original output structure remains valid.
+
+Scope of update:
+- Keep downstream output logic unchanged.
+- Clarify ingest/pre-segmentation handoff expectations only.
+
+Clarifications:
+1. Treat ingest as scope-first through metadata extraction and series mapping.
+2. Keep stitched image materialization scope-specific.
+3. Keep pre-segmentation canonical contracts as:
+   - `stitched_image_index.csv`
+   - `frame_manifest.csv` (canonical frame metadata table)
+4. Canonical frame-level naming remains:
+   - `channel_id`
+   - `channel_raw_name`
+   - `temperature_c`
+   - required `micrometers_per_pixel`
+
 ## TL;DR
 Pre-segmentation now has two key CSV contracts:
 
