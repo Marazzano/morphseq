@@ -10,7 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 
-def experiment_hpf_coverage(
+def plot_experiment_time_coverage(
     df: pd.DataFrame,
     experiment_col: str = "experiment_id",
     hpf_col: str = "predicted_stage_hpf",
@@ -156,3 +156,7 @@ def plot_hpf_overlap_quick(
             plt.close()
 
     return hpf_start, hpf_end
+
+
+# Backward-compatible alias
+experiment_hpf_coverage = plot_experiment_time_coverage

@@ -14,6 +14,7 @@ see: src.analyze.trajectory_analysis.viz
 
 import importlib
 from .hpf_coverage import (
+    plot_experiment_time_coverage,
     experiment_hpf_coverage,
     longest_interval_where,
     plot_hpf_overlap_quick,
@@ -21,6 +22,7 @@ from .hpf_coverage import (
 
 __all__ = [
     'plotting',
+    'plot_experiment_time_coverage',
     'experiment_hpf_coverage',
     'longest_interval_where',
     'plot_hpf_overlap_quick',
