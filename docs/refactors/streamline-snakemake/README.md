@@ -1,127 +1,72 @@
 # Streamline-Snakemake Refactor Documentation
 
 **Organization Date:** 2025-11-06
-**Status:** Clean, organized, ready for implementation
+**Status:** Current docs now reflect `stitched_image_index.csv` + `frame_manifest.csv` architecture
 
 ---
 
-## 📋 Core Documentation (CURRENT - READ THESE)
+## Quick TL;DR (For Scientists)
+If you only remember one thing:
 
-### **1. processing_files_pipeline_structure_and_plan.md** (44 KB)
-**THE BIBLE** - Complete architectural specification for the refactored pipeline
-- Detailed directory structure
-- Module descriptions for all 8 phases
-- Key design decisions
-- ID conventions and naming standards
-
-### **2. snakemake_rules_data_flow.md** (36 KB)
-**IMPLEMENTATION SPEC** - Detailed Snakemake rules definitions
-- Rule-by-rule breakdown for Phases 1-8
-- Input/output specifications for each rule
-- Module mappings to code locations
-- Data flow diagrams
-
-### **3. data_ouput_strcutre.md** (9.1 KB)
-**OUTPUT SPEC** - Complete data pipeline output directory structure
-- All consolidated output locations
-- ID hierarchy and naming conventions
-- Schema validation markers
-- Cross-references to other docs
-
-### **4. DATA_INGESTION_AND_TESTING_STRATEGY.md** (20 KB)
-**CURRENT & CRITICAL** - Created 2025-11-06
-- Answers all 5 implementation questions
-- Symlink-based data management strategy
-- Replacement for poorly-named `morphseq_playground`
-- Test data extraction instructions
-- Snakefile creation checklist
+1. `stitched_image_index.csv` tells you what stitched images were materialized.
+2. `frame_manifest.csv` is the canonical frame table that segmentation should trust.
+3. `embryo_id` starts at segmentation, not during metadata ingest.
 
 ---
 
-## 📁 Subdirectories
+## Core Documentation (Current)
 
-### **logs/**
-- Implementation progress logs (by date)
-- Code review reports
-- Testing records
-- Status updates
+### 1. `processing_files_pipeline_structure_and_plan.md`
+**Architecture spec**
+- Why this design changed
+- Full module structure
+- Contract definitions and validation checks
+- Scientist-friendly debugging flow
 
-### **_Archive/**
-- Outdated planning documents (kept for historical reference)
-- Previous versions of specs
-- Deprecated reviews
-- Early draft reviews
-- **Do not use for current work**
+### 2. `snakemake_rules_data_flow.md`
+**Rule-by-rule implementation spec**
+- Exact stage flow through `frame_manifest.csv`
+- Rule purposes and I/O expectations
+- Naming conventions (`channel_id`, `channel_raw_name`, `temperature_c`)
 
-### **supplementary_files_(maybenot_uptodate)/**
-- Detailed QC file organization analysis
-- Snip ID and tracking table design
-- Analysis table design
-- Status: **May not reflect final implementation**
+### 3. `data_ouput_strcutre.md`
+**Output file and directory spec**
+- Canonical output tree
+- Contract files and required columns
+- Practical checklist for experiment validation
 
----
-
-## 🚀 Getting Started
-
-### For Implementation
-1. Read **processing_files_pipeline_structure_and_plan.md** (understand architecture)
-2. Read **DATA_INGESTION_AND_TESTING_STRATEGY.md** (understand data setup)
-3. Read **snakemake_rules_data_flow.md** (understand rules)
-
-### For Testing
-1. Follow **DATA_INGESTION_AND_TESTING_STRATEGY.md**
-2. Create `data_pipeline_output/` with symlinks
-3. Extract test data (10 frames per well)
-4. Create Snakefile using rule patterns from **snakemake_rules_data_flow.md**
-5. Run phases incrementally (1-2, 3-5, 6-8)
-
-### For Code Review
-1. Reference **processing_files_pipeline_structure_and_plan.md** for design intent
-2. Use **snakemake_rules_data_flow.md** for rule validation
-3. Check implementation against **data_ouput_strcutre.md** for schema compliance
+### 4. `DATA_INGESTION_AND_TESTING_STRATEGY.md`
+**Data setup and testing guidance**
+- Symlink strategy
+- Test dataset guidance
+- Stepwise validation approach
 
 ---
 
-## 📊 Document Matrix
+## Recommended Reading Order
 
-| Document | Purpose | Last Updated | Status |
-|----------|---------|--------------|--------|
-| processing_files_pipeline_structure_and_plan.md | Architecture spec | 2025-11-05 | ✅ Current |
-| snakemake_rules_data_flow.md | Rules specification | 2025-11-05 | ✅ Current |
-| data_ouput_strcutre.md | Output directory structure | 2025-11-05 | ✅ Current |
-| DATA_INGESTION_AND_TESTING_STRATEGY.md | Data setup & testing | 2025-11-06 | ✅ Current |
+1. `processing_files_pipeline_structure_and_plan.md`
+2. `snakemake_rules_data_flow.md`
+3. `data_ouput_strcutre.md`
+4. `DATA_INGESTION_AND_TESTING_STRATEGY.md`
 
 ---
 
-## 🗂️ Cleanup Summary
+## Current Pre-Segmentation Flow
 
-**Date:** 2025-11-06
-**Action:** Archived outdated planning/execution documents to `_Archive/`
-
-**Moved to Archive:**
-- `codex_review(2025-10-13).md` - Superseded by code review in commit 0dd2857
-- `data_validation_plan.md` - Schema logic now in `src/data_pipeline/schemas/`
-- `snakemake_rules_data_flow.md.bak` - Backup file no longer needed
-- `IMPLEMENTATION_PLAN.md` - Historical execution log (work completed)
-- `PARALLEL_EXECUTION_PLAN.md` - Historical execution strategy (work completed)
-- `AGREED_CODE_CHANGES.md` - Decisions already implemented in code
-
-**Kept in Main:**
-- 4 core implementation documents (see above)
-- `supplementary_files_(maybenot_uptodate)/` - Detailed design docs (reference only)
-- `logs/` - Implementation progress tracking
+1. Normalize plate metadata.
+2. Extract scope metadata.
+3. Run scope-specific series mapping.
+4. Apply mapping to produce `scope_metadata_mapped.csv`.
+5. Materialize stitched images (scope-specific).
+6. Emit and validate `stitched_image_index.csv`.
+7. Build and validate `frame_manifest.csv`.
+8. Start segmentation using `frame_manifest.csv`.
 
 ---
 
-## ✅ Next Steps
+## Notes on Legacy Documents
 
-1. **Create Snakefile** using patterns from `snakemake_rules_data_flow.md`
-2. **Set up data_pipeline_output/** following `DATA_INGESTION_AND_TESTING_STRATEGY.md`
-3. **Extract test data** (YX1: 20240418, Keyence: 20240509_24hpf)
-4. **Validate Phase 1-2** outputs
-5. **Run full pipeline** on test data
-6. **Archive morphseq_playground** once new pipeline validated
-
----
-
-**For questions:** Reference the core documentation matrix above. Each document has a clear purpose and intended audience.
+- `logs/` and `_Archive/` retain historical planning and review context.
+- Historical references to `experiment_image_manifest.json` are deprecated.
+- Use the three core docs above for current implementation decisions.
