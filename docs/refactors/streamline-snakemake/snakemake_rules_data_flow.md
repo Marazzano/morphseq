@@ -72,8 +72,8 @@ PHASE 3+
 - `data_pipeline_output/experiment_metadata/{experiment}/scope_metadata_raw.csv` `[VALIDATED]`
 
 **Modules**
-- `metadata_ingest/scope/yx1_scope_metadata.py`
-- `metadata_ingest/scope/keyence_scope_metadata.py`
+- `metadata_ingest/scope/yx1/extract_scope_metadata.py`
+- `metadata_ingest/scope/keyence/extract_scope_metadata.py`
 
 **Purpose**
 - Extract microscope timing, calibration, dimensions, and raw channel provenance.
@@ -93,8 +93,8 @@ PHASE 3+
 - `data_pipeline_output/experiment_metadata/{experiment}/series_well_mapping_provenance.json`
 
 **Modules**
-- `metadata_ingest/mapping/series_well_mapper_yx1.py`
-- `metadata_ingest/mapping/series_well_mapper_keyence.py`
+- `metadata_ingest/scope/yx1/map_series_to_wells.py`
+- `metadata_ingest/scope/keyence/map_series_to_wells.py`
 
 **Purpose**
 - Resolve microscope series/position IDs into plate well IDs.
@@ -113,6 +113,9 @@ PHASE 3+
 
 **Purpose**
 - Produce final well-linked scope metadata used by all later joins.
+- Modules:
+  - `metadata_ingest/scope/yx1/apply_series_mapping.py`
+  - `metadata_ingest/scope/keyence/apply_series_mapping.py`
 
 ---
 
@@ -129,8 +132,8 @@ PHASE 3+
 - `data_pipeline_output/experiment_metadata/{experiment}/stitched_image_index.csv` `[VALIDATED]`
 
 **Modules**
-- `image_building/yx1/stitched_ff_builder.py`
-- `image_building/keyence/stitched_ff_builder.py`
+- `image_building/scope/yx1/stitched_ff_builder.py`
+- `image_building/scope/keyence/stitched_ff_builder.py`
 - shared writer: `image_building/handoff/io.py`
 
 **Purpose**

@@ -96,22 +96,27 @@ src/data_pipeline/
 ├── metadata_ingest/
 │   ├── plate/
 │   │   └── plate_processing.py
-│   ├── scope/
-│   │   ├── keyence_scope_metadata.py
-│   │   └── yx1_scope_metadata.py
-│   ├── mapping/
-│   │   ├── series_well_mapper_keyence.py
-│   │   ├── series_well_mapper_yx1.py
-│   │   └── align_scope_plate.py
-│   └── frame_manifest/                  # NEW
+│   ├── scope/                           # Scope-first ingest pipelines
+│   │   ├── yx1/
+│   │   │   ├── extract_scope_metadata.py
+│   │   │   ├── map_series_to_wells.py
+│   │   │   └── apply_series_mapping.py
+│   │   ├── keyence/
+│   │   │   ├── extract_scope_metadata.py
+│   │   │   ├── map_series_to_wells.py
+│   │   │   └── apply_series_mapping.py
+│   │   └── shared/
+│   │       └── align_scope_plate.py
+│   └── frame_manifest/                  # Shared handoff into segmentation
 │       ├── build_frame_manifest.py
 │       └── validate_frame_manifest.py
 │
 ├── image_building/
-│   ├── keyence/
-│   │   └── stitched_ff_builder.py       # Updated: reporter pattern
-│   ├── yx1/
-│   │   └── stitched_ff_builder.py       # Updated: reporter pattern
+│   ├── scope/                           # Scope-first image pipelines
+│   │   ├── yx1/
+│   │   │   └── stitched_ff_builder.py   # Updated: reporter pattern
+│   │   └── keyence/
+│   │       └── stitched_ff_builder.py   # Updated: reporter pattern
 │   └── handoff/                         # NEW
 │       ├── io.py
 │       └── validate_stitched_index.py
@@ -134,21 +139,25 @@ src/data_pipeline/
 ```
 
 Note:
-- We intentionally keep the existing flat `scope/` and `mapping/` modules for now to reduce churn.
-- Functional scope separation already exists in `_yx1` and `_keyence` module names.
+- This layout intentionally emphasizes separate scope pipelines (YX1 and Keyence).
+- Shared logic is limited to handoff/validation steps.
 
 ---
 
-## Agreed Implementation Touch List (No Directory Churn)
+## Agreed Implementation Touch List (Scope-First)
 
 This is the current agreed migration set for code changes.
 
 ### Modify Existing Files
-1. `src/data_pipeline/metadata_ingest/scope/yx1_scope_metadata.py`
-2. `src/data_pipeline/metadata_ingest/scope/keyence_scope_metadata.py`
-3. `src/data_pipeline/metadata_ingest/mapping/series_well_mapper_keyence.py`
-4. `src/data_pipeline/image_building/yx1/stitched_ff_builder.py`
-5. `src/data_pipeline/pipeline_orchestrator/config.yaml`
+1. `src/data_pipeline/metadata_ingest/scope/yx1/extract_scope_metadata.py`
+2. `src/data_pipeline/metadata_ingest/scope/keyence/extract_scope_metadata.py`
+3. `src/data_pipeline/metadata_ingest/scope/yx1/map_series_to_wells.py`
+4. `src/data_pipeline/metadata_ingest/scope/keyence/map_series_to_wells.py`
+5. `src/data_pipeline/metadata_ingest/scope/yx1/apply_series_mapping.py`
+6. `src/data_pipeline/metadata_ingest/scope/keyence/apply_series_mapping.py`
+7. `src/data_pipeline/image_building/scope/yx1/stitched_ff_builder.py`
+8. `src/data_pipeline/image_building/scope/keyence/stitched_ff_builder.py`
+9. `src/data_pipeline/pipeline_orchestrator/config.yaml`
 
 ### Add New Files
 1. `src/data_pipeline/schemas/stitched_image_index.py`
