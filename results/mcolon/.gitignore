@@ -45,6 +45,13 @@
 # HTML outputs (plotly, jupyter exports)
 **/*.html
 
+# Tabular and metadata artifacts (generated analysis outputs)
+**/*.csv
+**/*.json
+
+# Avoid accidental package scaffolding from experiment scratch dirs
+**/__init__.py
+
 # Logs
 **/*.log
 
