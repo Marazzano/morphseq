@@ -133,11 +133,11 @@ def plot_auroc_with_null(
 # ---------------------------------------------------------------------------
 
 
-def _format_auroc_axis(ax: plt.Axes, title: str, ylim: Tuple[float, float]) -> None:
+def _format_auroc_axis(ax: plt.Axes, title: str, ylim: Tuple[float, float], sig_threshold: float=0.01) -> None:
     ax.axhline(y=0.5, color="gray", linestyle=":", alpha=0.5, label="Chance (0.5)")
     ax.scatter(
         [], [], s=200, facecolors="none", edgecolors="black",
-        linewidths=2.5, label="p ≤ 0.01",
+        linewidths=2.5, label=f"p ≤ {sig_threshold}",
     )
     ax.set_xlabel("Hours Post Fertilization (hpf)", fontsize=12)
     ax.set_ylabel("AUROC", fontsize=12)
@@ -159,6 +159,7 @@ def plot_multiple_aurocs(
     time_col: str = "time_bin_center",
     save_path: Optional[Union[str, Path]] = None,
     ax: Optional[plt.Axes] = None,
+    sig_threshold: float = 0.01,
 ) -> plt.Figure:
     """Overlay multiple AUROC curves on one axis.
 
@@ -203,9 +204,10 @@ def plot_multiple_aurocs(
             label=label,
             style=styles_dict.get(label, "-"),
             time_col=time_col,
+            sig_threshold=sig_threshold,
         )
 
-    _format_auroc_axis(ax, title, ylim)
+    _format_auroc_axis(ax, title, ylim, sig_threshold)
     fig.tight_layout()
 
     if save_path:
@@ -229,6 +231,7 @@ def plot_multiclass_ovr_aurocs(
     time_col: str = "time_bin_center",
     save_path: Optional[Union[str, Path]] = None,
     ax: Optional[plt.Axes] = None,
+    sig_threshold: float = 0.01,
 ) -> plt.Figure:
     """Plot One-vs-Rest AUROC curves.
 
@@ -258,6 +261,7 @@ def plot_multiclass_ovr_aurocs(
         time_col=time_col,
         save_path=save_path,
         ax=ax,
+        sig_threshold=sig_threshold,
     )
 
 
@@ -274,6 +278,7 @@ def plot_feature_comparison_grid(
     ylim: Tuple[float, float] = (0.3, 1.05),
     figsize_per_panel: Tuple[float, float] = (6, 5),
     save_path: Optional[Union[str, Path]] = None,
+    sig_threshold: float = 0.01,
 ) -> plt.Figure:
     """Side-by-side panels comparing feature types for the same comparisons.
 
@@ -309,6 +314,7 @@ def plot_feature_comparison_grid(
             title=panel_title,
             ax=ax,
             ylim=ylim,
+            sig_threshold=sig_threshold,
         )
 
     if title:
