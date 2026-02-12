@@ -4,6 +4,24 @@
 **Status:** Answering critical questions from implementation log
 **Approach:** Symlink-based data management (replacing poorly-named `morphseq_playground`)
 
+## 2026-02-10 - Addendum, highlighting what we need to change in the original doc
+This addendum updates ingest interpretation while preserving the existing testing strategy.
+
+What stays the same:
+- Symlink-based data setup strategy.
+- Incremental validation by pipeline phase.
+- Downstream phase testing expectations (segmentation onward).
+
+What to update:
+1. Run ingest as scope-first (YX1 and Keyence remain separate through extraction/mapping).
+2. Keep materialization scope-specific and emit `stitched_image_index.csv` during building (reporter pattern).
+3. Validate and use `frame_manifest.csv` as the canonical pre-segmentation frame metadata table.
+4. Use canonical frame-level naming in checks:
+   - `channel_id`
+   - `channel_raw_name`
+   - `temperature_c`
+   - required `micrometers_per_pixel`
+
 ---
 
 ## Executive Summary
