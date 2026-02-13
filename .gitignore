@@ -47,7 +47,7 @@ functions/.ipynb_checkpoints/
 src/functions/.ipynb_checkpoints/
 jupyter/.ipynb_checkpoints/
 src/functions/__pychache__/
-visualization/__pychache__/
+_Archive/visualization/__pychache__/
 .idea/
 src/__pycache__/
 src/functions/__pycache__/
@@ -63,7 +63,7 @@ src/_Archive/vae/trainers/__pycache__/
 src/_Archive/vae/auxiliary_scripts/__pycache__/
 src/_Archive/vae/trainers/base_trainer/__pycache__/
 
-visualization/__pycache__/*
+_Archive/visualization/__pycache__/*
 
 
 dev/seq/.RData
