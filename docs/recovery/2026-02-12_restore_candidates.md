@@ -10,6 +10,22 @@ Scope: tracked, script-like files that exist in `morphseq_CORRUPT_OLD` but are m
 - `docs/` missing: 9
 - `results/` script/notebook/doc-style missing: 28
 
+## Critical Non-Tracked Asset
+
+The restore candidate lists above are git-tracked files only. They do not include
+the local `morphseq_playground/` data directory, which pipeline scripts expect.
+
+To restore the playground (including its internal symlink layout) from
+`morphseq_CORRUPT_OLD`, run:
+
+```bash
+docs/recovery/restore_morphseq_playground.sh
+```
+
+Optional:
+- `--copy` to copy contents instead of creating a top-level symlink
+- `--force` to replace an existing target
+
 ## Prioritized Restore Tiers
 
 1. Tier 1 (core pipeline/runtime code): 47 files
