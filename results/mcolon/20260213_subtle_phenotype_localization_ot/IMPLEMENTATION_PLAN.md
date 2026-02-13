@@ -1,9 +1,23 @@
 # Implementation Plan: Subtle-Phenotype Localization via WT-Referenced OT
 
-**Reference Document**: See `PLAN.md` in this directory for the full specification.
+**Reference Documents**:
+- `PLAN.md` - Full specification
+- **`PLOTTING_CONVENTION.md`** - ⭐ **CRITICAL: READ FIRST** - Defines WT reference grid as coordinate system for ALL visualizations
 
 **Date**: 2026-02-13
 **Status**: Ready to implement
+
+---
+
+## ⚠️ CRITICAL CONVENTION ⚠️
+
+**ALL features are plotted on the WT reference grid**, regardless of OT direction.
+
+- **OT direction**: WT → mutant (source=WT, target=mutant)
+- **Visualization grid**: WT reference (template space)
+- **Rationale**: Standardizes spatial reference frame despite variable mutant morphology
+
+See `PLOTTING_CONVENTION.md` for complete details. **Read this before implementing any visualization code.**
 
 ---
 
