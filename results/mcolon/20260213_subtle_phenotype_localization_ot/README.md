@@ -2,7 +2,7 @@
 
 **Project Start Date**: 2026-02-13
 **Pilot Dataset**: cep290 (simple curvature phenotype)
-**HPF Bin**: 48 hpf (47-49 hpf window for initial implementation)
+**HPF Bin**: 48 hpf (`tolerance_hpf=1.25` for initial implementation)
 
 ---
 
@@ -10,19 +10,28 @@
 
 This project builds a time-consistent, interpretable spatial localization pipeline for subtle phenotypes using:
 - **Unbalanced optimal transport** (UOT) to map mutant masks onto WT reference
+- **WT reference** as spatial coordinate system (template space)
+- **WT controls + mutants** mapped to reference for statistical comparison
 - **Rostral-caudal (S) coordinates** for embryo-intrinsic spatial localization
 - **AUROC-by-region analysis** to identify discriminative spatial regions
+- **Embryo-level label permutation** for significance testing with FDR correction
 - **Automated ROI discovery** via patch search on S axis
 
 **Goal**: Answer "where along the embryo does the phenotype manifest?" with stable, interpretable spatial signals.
+
+**Key distinction**: 
+- **Reference WT (n=1)**: Defines coordinate system (template space), NOT used in statistics
+- **WT controls (n≥10)**: Mapped to reference, compared to mutants in statistical tests
+- **Mutants (n≥20)**: Mapped to reference, compared to WT controls
 
 ---
 
 ## Key Documents
 
-- **`PLAN.md`**: Full specification document (DO NOT MODIFY)
+- **`PLAN.md`**: Full specification document
 - **`IMPLEMENTATION_PLAN.md`**: Detailed implementation roadmap with scripts, functions, and dependencies
 - **`config.yaml`**: Configuration parameters for the analysis
+- **`data/cohort_contract_48hpf.json`**: Locked cohort contract (selection params + exact embryo/frame assignments)
 
 ---
 
@@ -30,10 +39,15 @@ This project builds a time-consistent, interpretable spatial localization pipeli
 
 ### From Existing OT Work
 
-1. **Reference Embryo Selection** (Stream D):
-   - Pre-existing cohort selection pipeline
-   - 3 reference WT embryos for 24-48 hpf range
+1. **Reference Embryo Selection** (Stream D - MIGRATED):
+   - **Migrated location** (as of 2026-02-13): `results/mcolon/20260213_stream_d_reference_embryo/`
+   - **Cohort selection script**: `pipeline/01_build_cohort_manifest.py`
+   - **Pre-selected embryos**: `output/cohort_selection/cohort_selected_embryos.csv`
+   - 1 reference WT embryo for pilot anchoring
+   - 10 heldout WT controls for statistical comparison
+   - 20 mutants (cep290_homozygous)
    - Selection criteria: maximize coverage, minimize curvature
+   - **NOTE**: If files moved again, search for `cohort_selected_embryos.csv` in `results/mcolon/2026*`
 
 2. **UOT Grid Configuration**:
    - Canonical grid: 256×576 pixels at 10 μm/pixel
@@ -82,7 +96,7 @@ This project builds a time-consistent, interpretable spatial localization pipeli
 
 ### Section 0: Data Preparation ✨ NEXT
 - Select reference WT embryo
-- Load masks for 26-28 hpf bin (WT + cep290)
+- Load masks for 48 hpf bin (WT + cep290; tolerance 1.25)
 - **Script**: `scripts/00_select_reference_and_load_data.py`
 
 ### Section 1: OT Mapping + Outlier Filtering
@@ -104,12 +118,15 @@ This project builds a time-consistent, interpretable spatial localization pipeli
 
 ### Section 4: AUROC-by-Region Analysis
 - Compute AUROC per S bin (univariate + 2D directional)
-- Bootstrap confidence intervals
-- Heat kernel smoothed AUROC profiles
+- **Embryo-level label permutation** for p-values (shuffle WT control vs mutant labels)
+- **FDR correction** across S bins (Benjamini-Hochberg)
+- Bootstrap confidence intervals (resample embryos)
+- Gaussian kernel smoothed AUROC profiles (visualization only)
 - **Script**: `scripts/04_compute_auroc_by_s_bin.py`
 
 ### Section 5: Automated ROI Discovery (1D Patch Search)
 - Search over contiguous S intervals
+- **Permutation test** for interval significance
 - Patch ablation for importance
 - Bootstrap stability testing
 - **Script**: `scripts/05_patch_search_on_s.py`
@@ -123,7 +140,7 @@ This project builds a time-consistent, interpretable spatial localization pipeli
 
 ## Key Design Decisions
 
-1. **Single HPF bin (48 hpf, i.e., 47-49 hpf)** for pilot → extends to multiple bins trivially
+1. **Single HPF bin (48 hpf, tolerance 1.25)** for pilot → extends to multiple bins trivially
 2. **Single WT reference embryo** from Stream D cohort at 48 hpf
 3. **Fixed OT parameters** (epsilon, marginal_relaxation) → already tuned
 4. **K=10 S bins initially** → validate, then try K=20
@@ -138,7 +155,7 @@ This project builds a time-consistent, interpretable spatial localization pipeli
 ### Section 1
 - ✅ Outlier removal stabilizes cost distributions
 - ✅ Mean vector fields show coherent structure
-- ✅ Heat kernel smoothing highlights spatial patterns
+- ✅ Gaussian kernel smoothing highlights spatial patterns
 
 ### Section 2
 - ✅ S profiles are smooth and sensible
@@ -147,13 +164,50 @@ This project builds a time-consistent, interpretable spatial localization pipeli
 
 ### Section 4
 - ✅ AUROC localizes to interpretable S regions
+- ✅ **Significant bins pass FDR correction** (p < 0.05)
 - ✅ Smoothed AUROC profiles show clear peaks
 - ✅ Stable under bootstrap resampling
 
 ### Section 5
 - ✅ Selected interval aligns with known phenotype
-- ✅ Stable across bootstrap resamples
+- ✅ **Interval is statistically significant** (permutation p < 0.05)
+- ✅ Stable across bootstrap resamples (Jaccard > 0.7)
 - ✅ Ablation confirms interval importance
+
+---
+
+## Statistical Testing Protocol
+
+### Null Distributions: Embryo-Level Label Permutation
+
+**Setup:**
+- WT controls (n≥10) + mutants (n≥20) all mapped to reference
+- Each embryo has features per S bin (e.g., c̄_k, |d̄|_k)
+
+**Null hypothesis (per S bin k):**
+- WT controls and mutants have the same feature distribution
+
+**Null distribution:**
+1. Shuffle genotype labels **at embryo level** (not snip/frame level)
+2. Each embryo keeps its features, but "WT" vs "mutant" labels are randomly reassigned
+3. Recompute AUROC with shuffled labels
+4. Repeat 999 times → null distribution
+
+**P-value:**
+- `(1 + count(null_AUROC >= observed_AUROC)) / (n_permutations + 1)`
+
+**Multiple testing correction:**
+- Apply FDR (Benjamini-Hochberg) across S bins
+
+**Pattern from UOT MVP:**
+- See `results/mcolon/20260213_stream_d_reference_embryo/pipeline/06_difference_classification_clustering.py`
+- Function: `_embryo_label_shuffle_pvalue()`
+- Shuffles labels at embryo level, uses GroupKFold CV
+
+**Bootstrap for confidence intervals:**
+- Resample embryos with replacement (not snips)
+- Recompute AUROC on each bootstrap sample
+- Report 95% CI via percentile method
 
 ---
 
@@ -186,10 +240,14 @@ This project builds a time-consistent, interpretable spatial localization pipeli
 ## Notes
 
 - All statistical tests on **unsmoothed** features
-- Heat kernel smoothing is **visualization only**
+- Gaussian kernel smoothing is **visualization only**
 - CV always by `embryo_id` (GroupKFold)
-- Bootstrap resampling by `embryo_id` (not snip)
+- **Permutation tests**: Shuffle genotype labels at embryo level (not snip)
+- **Bootstrap resampling**: Resample embryos with replacement (not snips)
+- **FDR correction**: Apply Benjamini-Hochberg across S bins (multiple testing)
 - Reference embryo and OT params **fixed** for pilot
+- **WT controls required**: Without them, no null distribution for discriminability
+- Optional 4 hpf robustness window (`[46, 50]`) is allowed only with per-embryo feature collapse (median across frames) before WT-vs-mutant stats
 
 ---
 

@@ -21,7 +21,7 @@
 
 **Location**:
 ```
-src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/02_run_batch_ot_export.py
+results/mcolon/20260213_stream_d_reference_embryo/pipeline/02_run_batch_ot_export.py
 ```
 
 **Validated Performance** (Stream D Reference Embryo):
@@ -180,7 +180,7 @@ Despite sequential processing, the implementation **does** leverage JAX/OTT stre
 
 ## Recommendation for Pilot Study
 
-**Use the current sequential implementation** (`02_run_batch_ot_export.py`):
+**Use the current sequential implementation** (`results/mcolon/20260213_stream_d_reference_embryo/pipeline/02_run_batch_ot_export.py`):
 
 ### Why
 
@@ -218,7 +218,7 @@ cd /home/user/morphseq
 # (See BATCH_PROCESSING_GUIDE.md for format)
 
 # Run batch export
-python src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/02_run_batch_ot_export.py \
+python results/mcolon/20260213_stream_d_reference_embryo/pipeline/02_run_batch_ot_export.py \
   --csv results/mcolon/20251229_cep290_phenotype_extraction/final_data/embryo_data_with_labels.csv \
   --transitions results/mcolon/20260213_subtle_phenotype_localization_ot/pilot_manifest.csv \
   --output-root results/mcolon/20260213_subtle_phenotype_localization_ot/ot_exports \

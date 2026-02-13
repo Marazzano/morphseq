@@ -33,22 +33,88 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 
 ---
 
+## Critical Data Requirements
+
+### WT Controls vs WT Reference
+
+**You need BOTH:**
+
+1. **WT reference embryo (n=1)**:
+   - Single WT mask serving as the OT target/template
+   - Defines the spatial coordinate system (S bins, canonical grid)
+   - **NOT part of the statistical comparison**
+
+2. **WT control embryos (n≥10)**:
+   - Additional WT embryos mapped to the reference
+   - Provide the WT distribution for comparison against mutants
+   - **Required for permutation testing**
+
+3. **Mutant embryos (n≥20)**:
+   - cep290 mutants mapped to reference
+   - Compared against WT controls
+
+**Why WT controls are mandatory:**
+- Permutation tests require shuffling genotype labels across embryos
+- Without WT controls, there is no "WT distribution" to compare against
+- The reference embryo alone cannot provide a distribution
+
+**Example from UOT MVP:** Stream D uses:
+- `reference_wt` (n=3): Template embryos (excluded from binary tests)
+- `heldout_wt` (n=10+): WT controls for permutation testing
+- `mutant` (n=20+): Test embryos
+
+See: `results/mcolon/20260213_stream_d_reference_embryo/pipeline/06_difference_classification_clustering.py` line 149:
+```python
+# Primary binary cohort: mutants vs heldout WT (exclude reference WT from this binary test).
+binary_df = emb[emb["set_type"].isin(["mutant", "heldout_wt"])].copy()
+```
+
+---
+
 ## Key Infrastructure Already Available
 
-### 1. Reference Embryo Selection (DONE)
+### 1. Reference Embryo Selection (DONE - MIGRATED)
 
-**Location**: `/home/user/morphseq/src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/01_build_cohort_manifest.py`
+**Current Location** (as of 2026-02-13):
+```
+results/mcolon/20260213_stream_d_reference_embryo/
+├── pipeline/
+│   └── 01_build_cohort_manifest.py  ← Cohort selection script
+└── output/
+    └── cohort_selection/
+        ├── cohort_selected_embryos.csv  ← Reference + heldout WT + mutants
+        ├── cohort_bin_frame_manifest.csv  ← Per-bin frame assignments
+        ├── cohort_qc_table.csv  ← All candidates with QC metrics
+        └── cohort_qc_scatter.png  ← Selection visualization
+```
+
+**NOTE**: If files are not found at the above location, search for `01_build_cohort_manifest.py` in `results/mcolon/2026*` directories.
 
 **Already Selected**:
-- **3 reference WT embryos** selected for 24-48 hpf range
-- **Selection criteria**: Maximize 24-48 hpf bin coverage, minimize curvature
-- **HPF bins used**: 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48 hpf (2-hour steps)
-- **Output**: `cohort_manifest.csv` with columns: `embryo_id`, `cohort_role`, `genotype`, `coverage_frac`, `curvature_median`
+- **3 reference WT embryos** (`set_type=reference_wt`): Ranked by coverage, then curvature
+- **3 heldout WT embryos** (`set_type=heldout_wt`): WT controls for statistical comparison  
+- **20 mutant embryos** (`set_type=mutant`): cep290 homozygous mutants
+- **Selection criteria**: 
+  1. Maximize 24-48 hpf bin coverage (2-hour bins)
+  2. Among tied coverage, minimize curvature (straighter embryos)
+- **HPF bins covered**: 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48 hpf (13 bins total)
+
+**Selection Logic** (from `01_build_cohort_manifest.py`):
+```python
+# 1. Build QC table for all embryos in window
+# 2. Sort by: (n_bins_covered DESC, curvature_median ASC, n_frames DESC, embryo_id ASC)
+# 3. Pick top embryos:
+#    - reference_wt: n_ref_wt (default 3) - best coverage, lowest curvature
+#    - heldout_wt: next n_holdout_wt (default 3) - used in statistical tests
+#    - mutant: n_mutants (default 20) - cep290_homozygous
+```
 
 **For this pilot**:
-- We will use **48 hpf** as our reference timepoint (single 2 hpf window: 47-49 hpf)
-- The reference WT embryo will be selected from the `reference_wt` cohort at 48 hpf
-- We already have tuned OT parameters: `epsilon=1e-4`, `marginal_relaxation=10.0`
+- Use **48 hpf** as reference timepoint (single 2 hpf window, matching tolerance `±1.25 hpf`)
+- Select **ONE** reference WT embryo from `reference_wt` cohort at 48 hpf (highest rank)
+- Select **≥10** heldout WT controls from `heldout_wt` cohort at 48 hpf  
+- Select **≥20** mutants from `mutant` cohort at 48 hpf
+- OT parameters already tuned: `epsilon=1e-4`, `marginal_relaxation=10.0`
 
 ### 2. UOT Grid Configuration (DONE)
 
@@ -105,7 +171,7 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 
 ### 6. Batch OT Export for AUROC Scaling (PRODUCTION READY)
 
-**Location**: `/home/user/morphseq/src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/02_run_batch_ot_export.py`
+**Location**: `results/mcolon/20260213_stream_d_reference_embryo/pipeline/02_run_batch_ot_export.py`
 
 **Status**: Validated on 313 transitions (0 failures, ~1.76s/pair on GPU)
 
@@ -134,23 +200,92 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 **Script**: `00_select_reference_and_load_data.py`
 
 **Purpose**:
-- Load cohort manifest (from Stream D or regenerate if needed)
-- Select **one HPF bin** for pilot (e.g., 48 hpf)
-- Select **one WT reference embryo** from `reference_wt` cohort
-- Load masks for WT reference + WT controls + cep290 mutants in that bin
-- Output: `reference_embryo_manifest.json` with embryo_id, snip_id, HPF bin, genotype
+- Load pre-existing cohort manifest from Stream D migration
+- Extract embryos for target HPF bin (48 hpf)
+- Select **one WT reference embryo** from `reference_wt` cohort (rank 1)
+- Select **WT controls** from `heldout_wt` cohort (all available at 48 hpf)
+- Select **mutants** from `mutant` cohort (all available at 48 hpf)
+- Load masks for selected embryos
+- **Critical**: Must load WT controls (n≥10) in addition to reference for permutation testing
+- Output: Manifest with embryo_id, frame_index, genotype, role (reference/control/mutant)
 
 **Inputs**:
-- Cohort manifest CSV (if available) OR re-run `01_build_cohort_manifest.py`
-- Mask zarr store paths from MorphSeq database
+- **Cohort manifest** (pre-existing): 
+  - Location: `results/mcolon/20260213_stream_d_reference_embryo/output/cohort_selection/cohort_selected_embryos.csv`
+  - If not found: Search for `cohort_selected_embryos.csv` in `results/mcolon/2026*` directories
+  - Fallback: Re-run `results/mcolon/20260213_stream_d_reference_embryo/pipeline/01_build_cohort_manifest.py`
+- **Bin-frame manifest**:
+  - Location: `results/mcolon/20260213_stream_d_reference_embryo/output/cohort_selection/cohort_bin_frame_manifest.csv`
+  - Maps embryo_id → frame_index for each 2h bin
+- **Source data CSV**: `results/mcolon/20251229_cep290_phenotype_extraction/final_data/embryo_data_with_labels.csv`
+  - Contains mask RLE, predicted_stage_hpf, curvature, etc.
 
-**Outputs**:
-- `reference_embryo_manifest.json`
-- `embryo_mask_paths.csv` (columns: embryo_id, snip_id, genotype, hpf_bin, mask_path)
+**Outputs** (written to `data/`):
+- `selected_embryos_48hpf.csv` (columns: embryo_id, frame_index, genotype, role, set_type, matched_stage_hpf)
+  - role: 'reference' | 'control' | 'mutant'
+  - set_type: 'reference_wt' | 'heldout_wt' | 'mutant'
+- `reference_embryo_info.json` (single reference embryo metadata)
+- `embryo_summary.txt` (counts by role)
+- `cohort_contract_48hpf.json` (locked contract with selection params + exact embryo_id/frame_index lists)
+
+**Key Functions to Write**:
+- `load_cohort_manifest(manifest_path) -> pd.DataFrame`
+  - Load pre-selected cohort from Stream D
+  - Handle file-not-found gracefully with search logic
+- `load_bin_frame_manifest(manifest_path) -> pd.DataFrame`  
+  - Load frame assignments per embryo per bin
+- `extract_embryos_for_bin(bin_manifest, cohort_df, target_hpf, tolerance=1.25) -> pd.DataFrame`
+  - Filter to target HPF bin (e.g., 48 hpf ± 1.25)
+  - Join with cohort metadata
+  - Return: embryo_id, frame_index, genotype, set_type, matched_stage_hpf
+- `assign_roles(selected_df) -> pd.DataFrame`
+  - Map set_type to role:
+    - reference_wt → 'reference' (take rank 1 only for pilot)
+    - heldout_wt → 'control'
+    - mutant → 'mutant'
+- `summarize_selection(selected_df) -> dict`
+  - Count by role, report stage range, coverage
+
+**Example workflow**:
+```python
+# Load pre-existing manifests
+cohort_path = Path("results/mcolon/20260213_stream_d_reference_embryo/output/cohort_selection/cohort_selected_embryos.csv")
+bin_path = cohort_path.parent / "cohort_bin_frame_manifest.csv"
+
+if not cohort_path.exists():
+    # Search for migrated location
+    cohort_path = search_for_file("cohort_selected_embryos.csv", base_dir="results/mcolon/2026*")
+    
+cohort_df = pd.read_csv(cohort_path)
+bin_manifest = pd.read_csv(bin_path)
+
+# Extract 48 hpf embryos
+selected = extract_embryos_for_bin(bin_manifest, cohort_df, target_hpf=48.0, tolerance=1.25)
+
+# Filter by set_type and assign roles
+reference = selected[selected['set_type'] == 'reference_wt'].iloc[:1]  # Take rank 1 only
+controls = selected[selected['set_type'] == 'heldout_wt']
+mutants = selected[selected['set_type'] == 'mutant']
+
+assert len(controls) >= 10, f"Need ≥10 WT controls, got {len(controls)}"
+assert len(mutants) >= 20, f"Need ≥20 mutants, got {len(mutants)}"
+
+reference['role'] = 'reference'
+controls['role'] = 'control'
+mutants['role'] = 'mutant'
+
+final = pd.concat([reference, controls, mutants], ignore_index=True)
+final.to_csv(output_root / "data" / "selected_embryos_48hpf.csv", index=False)
+```
+
+**Optional robustness window (`46-50 hpf`)**:
+- If using an expanded 4 hpf window, collapse to one row per embryo before any statistical testing.
+- Collapse rule: per-embryo median of each feature across included frames.
+- Do not treat multiple frames from one embryo as independent samples.
 
 **Dependencies**:
-- `src/analyze/optimal_transport_morphometrics/uot_masks/frame_mask_io.py`
-- MorphSeq database utilities
+- `pandas` (for CSV loading and filtering)
+- Existing cohort manifests from Stream D migration
 
 ---
 
@@ -309,6 +444,10 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 - For each S bin k independently, compute AUROC for each feature
 - Scalar features (c̄_k, |d̄|_k, div̄_k, Δm̄_k): univariate AUROC via Mann-Whitney U
 - Directional feature (d̄∥_k, d̄⊥_k): 2D logistic regression AUROC with CV-by-embryo
+- **Embryo-level label permutation test** for significance (following UOT MVP pattern)
+- **FDR correction** (Benjamini-Hochberg) across S bins for multiple testing
+- Bootstrap confidence intervals (embryo-level resampling)
+- Gaussian kernel smoothed AUROC profiles (visualization only)
 - Bootstrap resample to compute confidence intervals on AUROC
 - Generate Section 4 plots (AUROC along S, smoothed AUROC)
 
@@ -316,12 +455,15 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 - `feature_table.csv`
 
 **Outputs**:
-- `auroc_by_s_bin.csv` (columns: s_bin, feature_name, auroc, auroc_lower_ci, auroc_upper_ci, n_wt, n_mutant)
+- `auroc_by_s_bin.csv` (columns: s_bin, feature_name, auroc, pvalue_raw, pvalue_fdr, significant_fdr, auroc_ci_low, auroc_ci_high, n_wt, n_mutant)
+- `permutation_nulls/` directory:
+  - `null_dist_s{k:02d}_{feature}.npy` (null distributions per bin/feature)
 - Figures:
-  - `fig_4_auroc_along_s_cost.png` (AUROC profile for cost features)
+  - `fig_4_auroc_along_s_cost.png` (AUROC profile for cost features, mark significant bins)
   - `fig_4_auroc_along_s_displacement.png` (AUROC for displacement features)
   - `fig_4_auroc_along_s_divergence_mass.png` (AUROC for divergence/mass delta)
   - `fig_4_auroc_along_s_smoothed.png` (Gaussian kernel smoothed AUROC profiles)
+  - `fig_4_permutation_null_s{k:02d}_{feature}.png` (histograms of null distributions)
 
 **Key Functions to Write**:
 - `compute_auroc_univariate(y_true, y_score) -> float`
@@ -330,10 +472,20 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 - `compute_auroc_2d_directional(df, s_bin, features=['d_parallel_bar', 'd_perp_bar']) -> float`
   - Fit logistic regression with CV-by-embryo (GroupKFold)
   - Return cross-validated AUROC
-- `bootstrap_auroc(df, s_bin, feature, n_bootstrap=1000) -> (auroc_mean, auroc_lower, auroc_upper)`
-  - Resample embryos (stratified by genotype)
+- `embryo_label_shuffle_auroc_per_bin(df, feature_cols_per_bin, n_permutations=999) -> results_dict`
+  - **Pattern from UOT MVP** (`06_difference_classification_clustering.py::_embryo_label_shuffle_pvalue`)
+  - For each S bin k:
+    - Shuffle genotype labels at embryo level (not snip level)
+    - Recompute AUROC with shuffled labels
+    - Build null distribution
+    - Compute p-value: (1 + sum(null >= observed)) / (n_perm + 1)
+  - Return dict with observed_auroc, pvalue, null_distribution per bin
+- `apply_fdr_correction(pvalues, alpha=0.05) -> (reject, pvals_corrected)`
+  - Use `statsmodels.stats.multitest.multipletests` with method='fdr_bh'
+- `bootstrap_auroc_ci(df, s_bin, feature, embryo_id_col, n_bootstrap=1000) -> (ci_low, ci_high)`
+  - Resample embryos with replacement (not snips)
   - Recompute AUROC on each resample
-  - Return mean and 95% CI
+  - Return 95% CI via percentile method
 - `plot_auroc_along_s(auroc_df, feature_subset, title, outpath)`
   - Line plot with error bars (CI)
   - One curve per feature
@@ -354,21 +506,25 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 **Purpose**:
 - Search over contiguous S intervals I = [a, b]
 - For each interval, train classifier using only features from bins in I
-- Score by cross-validated AUROC (CV-by-embryo)
+- Score by cross-validated AUROC (GroupKFold by embryo_id)
 - Select interval(s) maximizing AUROC (with optional length penalty)
+- **Embryo-level label permutation test** for selected interval significance
+- Bootstrap stability analysis (interval overlap via Jaccard similarity)
 - Perform patch ablation: remove features in interval I, measure AUROC drop
-- Generate Section 5 plots (AUROC vs interval length, selected intervals)
+- Generate Section 5 plots (AUROC vs interval length, selected intervals, null distribution)
 
 **Inputs**:
 - `feature_table.csv`
 
 **Outputs**:
 - `patch_search_results.csv` (columns: interval_start, interval_end, interval_length, auroc, auroc_std)
-- `best_intervals.json` (selected intervals with AUROC and stability metrics)
+- `best_intervals.json` (selected intervals with AUROC, p-value, Jaccard stability)
+- `best_interval_permutation_null.npy` (null distribution from label shuffling)
 - Figures:
   - `fig_5_auroc_vs_interval_length.png` (tradeoff curve)
   - `fig_5_selected_intervals_on_s.png` (highlight selected intervals on S axis)
   - `fig_5_patch_ablation_importance.png` (AUROC drop per interval)
+  - `fig_5_permutation_null_best_interval.png` (histogram of null distribution vs observed)
 
 **Key Functions to Write**:
 - `search_contiguous_intervals(df, min_length=2, max_length=10) -> results_df`
@@ -376,6 +532,19 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
   - For each interval, select features in S bins [a, b]
   - Train logistic regression with GroupKFold CV-by-embryo
   - Return AUROC and std
+- `best_interval_permutation_test(df, best_interval, feature_cols, n_permutations=999) -> pvalue_dict`
+  - **Pattern from UOT MVP** (embryo-level label shuffling)
+  - For each permutation:
+    - Shuffle genotype labels at embryo level
+    - Re-run patch search to find best interval on shuffled data
+    - Record AUROC of best interval in null
+  - P-value: fraction of null AUROCs >= observed best-interval AUROC
+  - Returns: observed_auroc, pvalue, null_distribution
+- `bootstrap_interval_stability(df, min_length, max_length, n_bootstrap=100) -> jaccard_scores`
+  - Resample embryos with replacement
+  - Re-run interval search on each bootstrap sample
+  - Measure Jaccard overlap between selected intervals across resamples
+  - Return mean and std of Jaccard similarity
 - `ablate_interval(df, interval, full_auroc) -> auroc_drop`
   - Train classifier on ALL S bins
   - Train classifier with interval features removed/zeroed
@@ -461,11 +630,148 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 - `gaussian_kernel_smooth_2d(field, sigma=2.0) -> field_smoothed`
 - `gaussian_kernel_smooth_1d(profile, sigma=1.0) -> profile_smoothed`
 
-### `utils/bootstrap_auroc.py`
+### `utils/statistical_testing.py`
 
-**Functions**:
-- `bootstrap_resample_embryos(df, n_bootstrap=1000, stratify_col='genotype') -> List[pd.DataFrame]`
-- `compute_auroc_with_ci(y_true, y_score, n_bootstrap=1000) -> (auroc, ci_lower, ci_upper)`
+**Functions** (using `src/analyze/utils/resampling` framework):
+
+```python
+from analyze.utils.resampling import resample
+from sklearn.metrics import roc_auc_score
+from statsmodels.stats.multitest import multipletests
+import numpy as np
+
+def auroc_permutation_test_per_bin(
+    features_per_bin: np.ndarray,  # shape: (n_embryos, n_bins)
+    labels: np.ndarray,            # shape: (n_embryos,), 0=WT, 1=mutant
+    n_iters: int = 999,
+    seed: int = 42,
+    apply_fdr: bool = True,
+    alpha: float = 0.05
+) -> dict:
+    """Test AUROC > 0.5 for each S bin via embryo-level label permutation.
+    
+    Returns dict with keys:
+        - auroc_observed: (n_bins,) array
+        - pvalues_raw: (n_bins,) array
+        - pvalues_fdr: (n_bins,) array (if apply_fdr=True)
+        - reject_fdr: (n_bins,) bool array (if apply_fdr=True)
+    """
+    n_bins = features_per_bin.shape[1]
+    auroc_obs = np.zeros(n_bins)
+    pvals = np.zeros(n_bins)
+    
+    for k in range(n_bins):
+        features_k = features_per_bin[:, k]
+        
+        # Observed AUROC
+        auroc_obs[k] = roc_auc_score(labels, features_k)
+        
+        # Permutation test
+        spec = resample.permute_labels()
+        stat = resample.statistic(
+            f"auroc_bin_{k}",
+            lambda data, rng: roc_auc_score(data["labels"], data["features_k"])
+        )
+        out = resample.run(
+            data={"features_k": features_k, "labels": labels},
+            spec=spec,
+            stat=stat,
+            n_iters=n_iters,
+            seed=seed + k,  # Different seed per bin
+            alternative="two-sided"
+        )
+        summary = resample.aggregate(out)
+        pvals[k] = summary.pvalue
+    
+    result = {
+        "auroc_observed": auroc_obs,
+        "pvalues_raw": pvals,
+    }
+    
+    if apply_fdr:
+        reject, pvals_fdr, _, _ = multipletests(pvals, alpha=alpha, method='fdr_bh')
+        result["pvalues_fdr"] = pvals_fdr
+        result["reject_fdr"] = reject
+    
+    return result
+
+
+def auroc_bootstrap_ci(
+    features: np.ndarray,
+    labels: np.ndarray,
+    embryo_ids: np.ndarray,
+    n_iters: int = 1000,
+    seed: int = 42,
+    alpha: float = 0.05
+) -> dict:
+    """Bootstrap CI for AUROC by resampling embryos.
+    
+    Returns dict with keys:
+        - auroc_observed
+        - ci_low
+        - ci_high
+        - ci_method
+    """
+    spec = resample.bootstrap(unit="embryo_id")
+    stat = resample.statistic(
+        "auroc",
+        lambda data, rng: roc_auc_score(
+            data["labels"][data["indices"]],
+            data["features"][data["indices"]]
+        )
+    )
+    out = resample.run(
+        data={
+            "features": features,
+            "labels": labels,
+            "embryo_id": embryo_ids,
+            "n": len(labels)
+        },
+        spec=spec,
+        stat=stat,
+        n_iters=n_iters,
+        seed=seed
+    )
+    summary = resample.aggregate(out, alpha=alpha)
+    
+    return {
+        "auroc_observed": summary.observed,
+        "ci_low": summary.ci_low,
+        "ci_high": summary.ci_high,
+        "ci_method": summary.ci_method,
+    }
+```
+
+**Example usage pattern from UOT MVP** (`06_difference_classification_clustering.py`):
+
+```python
+# Binary comparison: mutants vs WT controls (exclude reference WT)
+binary_df = df[df["set_type"].isin(["mutant", "heldout_wt"])].copy()
+
+# Embryo-level label shuffling for permutation test
+def _embryo_label_shuffle_pvalue(df, feature_cols, n_perm, random_state):
+    rng = np.random.default_rng(random_state)
+    embryo_map = df.groupby("embryo_id")["set_type"].agg(lambda s: s.mode().iloc[0]).to_dict()
+    embryo_ids = np.array(sorted(embryo_map.keys()))
+    labels = np.array([embryo_map[e] for e in embryo_ids], dtype=object)
+    
+    observed = _grouped_logreg_cv(df, feature_cols, label_col="set_type", group_col="embryo_id")["auroc"]
+    null = []
+    for _ in range(n_perm):
+        perm = labels.copy()
+        rng.shuffle(perm)  # Shuffle embryo-level labels
+        perm_map = {e: p for e, p in zip(embryo_ids, perm)}
+        dperm = df.copy()
+        dperm["set_type"] = dperm["embryo_id"].map(perm_map)
+        try:
+            auc = _grouped_logreg_cv(dperm, feature_cols, label_col="set_type", group_col="embryo_id")["auroc"]
+            null.append(float(auc))
+        except Exception:
+            continue
+    null_arr = np.asarray(null, dtype=np.float64)
+    pval = float((1.0 + np.sum(null_arr >= observed)) / (len(null_arr) + 1.0))
+    return {"observed_auroc": float(observed), "pvalue": pval, "null_distribution": null_arr}
+```
 
 ---
 
@@ -543,9 +849,10 @@ hpf_bin_start: 47.0
 hpf_bin_end: 49.0  # Use 48 hpf as reference timepoint
 genotype_wt: "cep290_wildtype"
 genotype_mutant: "cep290_homozygous"
-n_reference_wt: 1  # Use single WT reference for pilot
-n_test_wt: 10  # Additional WT for testing
-n_mutants: 20  # Scale up as needed for AUROC
+n_reference_wt: 1  # WT reference (OT target/template, defines coordinate system)
+n_control_wt: 10  # WT controls (mapped to reference, used in statistical tests)
+n_mutants: 20  # Mutants (mapped to reference, compared to WT controls)
+# NOTE: Reference WT is NOT included in statistical comparisons
 
 # OT parameters (already tuned)
 ot_epsilon: 1.0e-4
@@ -563,7 +870,7 @@ outlier_iqr_multiplier: 1.5
 n_s_bins: 10  # Start with 10, try 20 for higher resolution
 s_orientation: "head_to_tail"  # S=0 head, S=1 tail
 
-# Heat kernel smoothing (visualization only)
+# Gaussian kernel smoothing (visualization only)
 gaussian_kernel_sigma_2d: 2.0  # For 2D cost density maps
 gaussian_kernel_sigma_1d: 1.0  # For 1D along-S profiles
 
@@ -673,7 +980,7 @@ save_diagnostic_plots: true
 ### Section 1 (OT Mapping)
 - ✅ Outlier removal reduces cost variance
 - ✅ Mean vector fields show coherent structure (not alignment failures)
-- ✅ Heat kernel–smoothed maps highlight spatial patterns
+- ✅ Gaussian-kernel-smoothed maps highlight spatial patterns
 
 ### Section 2 (S Profiles)
 - ✅ Along-S profiles are smooth and sensible
@@ -682,7 +989,7 @@ save_diagnostic_plots: true
 
 ### Section 4 (AUROC)
 - ✅ AUROC localizes to interpretable S regions
-- ✅ Heat kernel–smoothed AUROC shows clear peaks
+- ✅ Gaussian-kernel-smoothed AUROC shows clear peaks
 - ✅ Patterns stable under bootstrap resampling
 
 ### Section 5 (Patch Search)
@@ -780,7 +1087,7 @@ results/mcolon/20260213_subtle_phenotype_localization_ot/
 ## Notes
 
 - All AUROC and statistical tests computed on **unsmoothed** per-bin features
-- Heat kernel smoothing is **visualization only** (applied to heatmaps, 1D profiles, AUROC profiles)
+- Gaussian kernel smoothing is **visualization only** (applied to heatmaps, 1D profiles, AUROC profiles)
 - Bootstrap resampling always by `embryo_id` (never by snip)
 - Cross-validation always uses `GroupKFold` by `embryo_id`
 - Reference embryo and OT parameters are **fixed** for pilot (no re-tuning)

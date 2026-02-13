@@ -16,16 +16,24 @@
 ## Data + scope
 
 - **Dataset:** cep290 mutants + WT controls.
+  - **WT reference (n=1):** OT target/template for alignment (defines coordinate system)
+  - **WT controls (n≥10):** Mapped to reference, used for statistical comparison vs mutants
+  - **Mutants (n≥20):** Mapped to reference, compared to WT controls
 - **Representation for pilot:** binary masks (no raw intensity images yet).
 - **First implementation:** one 2 hpf time window only. Once the pipeline works end-to-end within a single window, extending to multiple windows is straightforward — but that is not needed for the first implementation.
+- **Temporal window policy (locked for pilot):**
+  - Primary: single 2 hpf bin centered at 48 hpf, using `tolerance_hpf=1.25` for frame matching.
+  - Optional robustness run: 4 hpf window `[46, 50]`.
+  - If 4 hpf window is used, collapse to one row per embryo before stats by taking the per-embryo median of each feature across included frames (to avoid pseudo-replication).
 - **Reference:** pre-selected WT reference mask (already chosen).
 - **OT method:** unbalanced OT with parameters already tuned — treat as fixed for this pilot.
 - **Sample size:** can always scale up cep290 embryos for a given time window, especially once AUROC analysis begins. Plan to scale up as needed.
+- **Key distinction:** WT reference provides the spatial coordinate system (template space) but is NOT used in statistical comparisons. Statistical tests compare WT controls vs mutants after both are mapped to the reference.
 
 ## Smoothing policy (applies to all sections)
 
-- **All AUROCs and statistical tests are computed on unsmoothed per-bin features; heat kernel smoothing is for visualization only.**
-- Heat kernel smoothing is applied in three contexts:
+- **All AUROCs and statistical tests are computed on unsmoothed per-bin features; Gaussian kernel smoothing is for visualization only.**
+- Gaussian kernel smoothing is applied in three contexts:
   - 2D cost density maps in template space (Section 1)
   - 1D along-S profiles (Section 2)
   - 1D AUROC-along-S profiles (Section 4)
@@ -35,7 +43,14 @@
 
 ### 1.1 Reference mask (pre-selected)
 
-- A well-chosen WT reference mask is already available — no selection step needed.
+- A well-chosen WT reference mask is already available from Stream D cohort selection.
+- **Source location** (as of 2026-02-13): `results/mcolon/20260213_stream_d_reference_embryo/output/cohort_selection/`
+  - Cohort manifest: `cohort_selected_embryos.csv` (set_type='reference_wt', rank=1)
+  - Bin-frame mapping: `cohort_bin_frame_manifest.csv`
+  - Selection script: `pipeline/01_build_cohort_manifest.py`
+- **Locked contract for this pilot:** `results/mcolon/20260213_subtle_phenotype_localization_ot/data/cohort_contract_48hpf.json`
+- **Selection criteria**: Maximizes 24-48 hpf bin coverage, minimizes curvature (straighter embryos preferred).
+- **Note**: If location changed due to migration, search for `cohort_selected_embryos.csv` in `results/mcolon/2026*` directories.
 - Store/reference its canonical grid coordinates.
 
 ### 1.2 Project masks onto reference (OT mapping)
@@ -73,8 +88,8 @@
 - **Figure A:** average cost density heatmap in template space
   - Compute mean(c(x)) for WT and mutants separately (post-filtering)
   - Show mutant-minus-WT difference heatmap
-- **Figure A':** heat kernel–smoothed versions of the above
-  - Apply heat kernel (diffusion smoothing) to cost density maps before averaging or to the difference map
+- **Figure A':** Gaussian-kernel-smoothed versions of the above
+  - Apply Gaussian kernel (diffusion smoothing) to cost density maps before averaging or to the difference map
   - These provide noise-robust, visually striking representations of where cost concentrates
   - Explore a few kernel bandwidths (σ) to find a good balance of smoothness vs detail
 - **Figure B:** average displacement vector field in template space
@@ -86,7 +101,7 @@
 
 - Costs look stable after outlier removal.
 - Mean vector fields are not dominated by obvious alignment failures.
-- Heat kernel–smoothed maps highlight coherent spatial structure (not just noise).
+- Gaussian-kernel-smoothed maps highlight coherent spatial structure (not just noise).
 
 -----
 
@@ -126,7 +141,7 @@ For each embryo, per bin region k:
 ### Deliverables (Section 2)
 
 - **Plot 1:** mean cost along S (WT vs mutant; with confidence bands)
-- **Plot 1':** heat kernel–smoothed cost along S (smoothing over the S axis to reduce bin noise)
+- **Plot 1':** Gaussian-kernel-smoothed cost along S (smoothing over the S axis to reduce bin noise)
 - **Plot 2:** mean |displacement| along S (WT vs mutant)
 - **Plot 3:** mean axial vs perpendicular displacement along S (WT vs mutant)
 - **Plot 4:** mean divergence and mass delta along S
@@ -135,7 +150,7 @@ For each embryo, per bin region k:
 
 - Along-S profiles show sensible, smooth structure.
 - Profiles are robust to K (10 vs 20) and to minor bin shifts.
-- Heat kernel smoothing produces clean, interpretable curves.
+- Gaussian kernel smoothing produces clean, interpretable curves.
 - Curvature phenotype yields expected head/tail emphasis (qualitative sanity check).
 
 -----
@@ -190,16 +205,29 @@ For each embryo, per bin region k:
 - **Key point:** each S bin is evaluated independently. The question is "how discriminative is position k alone?" — not a joint model across S bins.
 - This yields an AUROC(S_bin) vector per feature (single timepoint for now; extends to AUROC(stage_bin, S_bin) matrix when multiple timepoints are added).
 
-### 4.3 Future: layered noise-injection ablation
+### 4.1b Statistical significance: embryo-level label permutation
+
+- **Null hypothesis:** For S bin k, WT controls and mutants have the same feature distribution (AUROC = 0.5).
+- **Null distribution:** Shuffle genotype labels at the embryo level (not frame/snip level):
+  - Collect all embryos: N WT controls + M mutants
+  - Each embryo retains its features (c̄_k, |d̄|_k, etc.) but genotype labels are randomly reassigned
+  - Recompute AUROC for the shuffled labels
+  - Repeat for n_permutations (e.g., 999)
+- **P-value:** Fraction of permuted AUROCs ≥ observed AUROC
+- **Multiple testing correction:** Apply FDR correction (Benjamini-Hochberg) across S bins
+- **Pattern from UOT MVP:** Use embryo-level label shuffling as in `results/mcolon/20260213_stream_d_reference_embryo/pipeline/06_difference_classification_clustering.py::_embryo_label_shuffle_pvalue()`
+
+### 4.2 Future: layered noise-injection ablation (DEFERRED)
+
+**Status:** Defer until Sections 1-5 validated. Permutation tests are sufficient for initial discriminability.
 
 - Once AUROC profiles are established, importance of each feature layer can be tested by **adding varying amounts of noise** to specific features and measuring prediction degradation.
-- Noise injection tests feature reliance given a trained model; **label-permutation remains the primary null for discriminability** (where applicable). These answer different questions — noise injection measures "how much does this feature matter to the model," while label permutation measures "is there any real signal at all."
-- At the feature level, label permutation is still feasible (shuffle genotype labels, recompute AUROC) even though shuffling the underlying OT distributions themselves is not meaningful.
+- Noise injection tests feature reliance given a trained model; **label-permutation remains the primary null for discriminability**. These answer different questions — noise injection measures "how much does this feature matter to the model," while label permutation measures "is there any real signal at all."
 - Natural ordering for ablation layers: cost → mass delta → direction. This reveals whether directionality adds information beyond scalar cost/mass signals.
 - Varying noise magnitude traces out a degradation curve per feature, giving a continuous measure of importance rather than a binary in/out test.
 - **Guardrails:** all noise-injection results must be validated with bootstrap stability and cross-embryo/batch replication before interpreting.
 
-### 4.2 Plotting deliverables
+### 4.3 Plotting deliverables
 
 - **Bar/line plot:** AUROC along S (one curve per feature), single timepoint
   - Separate panels or overlaid for:
@@ -207,14 +235,16 @@ For each embryo, per bin region k:
     - vector magnitude (|d̄|_k)
     - axial displacement (d̄∥_k)
     - divergence / mass delta
-- **Heat kernel–smoothed AUROC along S:** smooth the AUROC(S) profile to highlight broad regions of discriminability rather than noisy per-bin values
-- *(Future, multi-timepoint):* **Heatmap:** AUROC over time (stage bins) × position (S bins), with heat kernel smoothing applied in both dimensions
+  - **Add significance markers** (stars/shading) for bins passing FDR-corrected p < 0.05
+- **Gaussian-kernel-smoothed AUROC along S:** smooth the AUROC(S) profile to highlight broad regions of discriminability rather than noisy per-bin values (visualization only, stats on unsmoothed)
+- *(Future, multi-timepoint):* **Heatmap:** AUROC over time (stage bins) × position (S bins), with Gaussian kernel smoothing applied in both dimensions
 
 ### Success criteria
 
 - AUROC localizes to interpretable positions along S.
-- Heat kernel–smoothed profiles show clear peaks rather than flat/noisy signal.
+- Gaussian-kernel-smoothed profiles show clear peaks rather than flat/noisy signal.
 - Patterns are consistent under resampling/bootstrap.
+- **Significant bins (FDR < 0.05) align with known phenotype** (e.g., tail for cep290 curvature).
 - Scale up sample size if per-bin AUROCs are too noisy to interpret.
 
 -----
@@ -228,10 +258,11 @@ For each embryo, per bin region k:
 ### 5.1 Patch search on S (parameterized ROI)
 
 - **Scope:** pooled across all embryos within the single 2 hpf time window. *(When extended to multiple windows, patch search can be run per-window to see if the best interval shifts over developmental time.)*
+- If optional 4 hpf window `[46, 50]` is used, collapse to one row per embryo by per-embryo median feature aggregation before running patch search and permutation tests.
 - Define a contiguous interval I = [a, b] over S bins.
 - For each candidate interval:
   - Use only features inside I (e.g., c̄_k for k in I) to classify mutants vs WT.
-  - Score by cross-validated AUROC.
+  - Score by cross-validated AUROC (GroupKFold by embryo_id).
 - Select interval(s) maximizing AUROC (with penalty on interval length if desired).
 
 ### 5.2 Patch ablation sanity check
@@ -241,16 +272,30 @@ For each embryo, per bin region k:
   - Remove/zero features in I and measure performance drop.
 - Interval with biggest drop indicates most "important" S region.
 
+### 5.3 Statistical significance for selected interval
+
+- **Null hypothesis:** Selected interval's AUROC is no better than random intervals.
+- **Null distribution:** Embryo-level label permutation:
+  - Shuffle genotype labels across all embryos
+  - Re-run patch search to find best interval on shuffled data
+  - Record AUROC of best interval in null
+  - Repeat for n_permutations
+- **P-value:** Fraction of null best-interval AUROCs ≥ observed best-interval AUROC
+- **Bootstrap stability:** Resample embryos (with replacement), re-run patch search, measure interval overlap (Jaccard similarity)
+
 ### Deliverables (Section 5)
 
 - **Plot:** best AUROC vs interval length (tradeoff curve)
 - **Plot:** selected interval(s) highlighted on S axis
-- **Report:** stability of selected interval under bootstrap
+- **Plot:** permutation null histogram for best interval AUROC
+- **Report:** p-value for selected interval
+- **Report:** stability of selected interval under bootstrap (mean Jaccard overlap)
 
 ### Success criteria
 
 - Selected interval aligns with known curvature phenotype (qualitative).
-- Result stable across resamples.
+- Selected interval is statistically significant (p < 0.05).
+- Result stable across bootstrap resamples (Jaccard > 0.7).
 - *(When extended to multiple timepoints: stable across stage bins.)*
 
 -----
@@ -300,9 +345,10 @@ Where:
 
 - Always split CV by embryo_id (avoid leakage across snips).
 - When extending to multiple timepoints: track stage bins explicitly and never mix bins silently.
+- If multiple frames per embryo are included in a wider stage window (e.g., 4 hpf), collapse to one row per embryo per feature (median) before WT-vs-mutant testing.
 - **Scaling strategy:** start with available embryos; if AUROC profiles are noisy, collect more cep290 embryos in the target time window before drawing conclusions.
 - Maintain a per-run manifest:
-  - reference mask used, K bins, OT parameters, filtering thresholds, heat kernel bandwidth(s)
+  - reference mask used, K bins, OT parameters, filtering thresholds, Gaussian kernel bandwidth(s)
 - For later extension to raw images:
   - intensity normalization inside embryo mask (robust scaling + stage-wise histogram matching)
   - but defer until mask-only pipeline is validated
@@ -313,9 +359,9 @@ Where:
 
 1. Load pre-selected WT reference mask + implement unbalanced OT mapping export (c(x), d(x), Δm(x), C) — **single timepoint only**.
 1. Add IQR-based outlier filtering on total cost C with logging.
-1. Generate Section 1 figures: cost heatmaps, heat kernel–smoothed heatmaps, mean vector fields.
+1. Generate Section 1 figures: cost heatmaps, Gaussian-kernel-smoothed heatmaps, mean vector fields.
 1. Implement spline-based S assignment in template space (head=0, tail=1) and S binning (K=10 first).
-1. Compute along-S profiles for cost and displacement magnitude; generate plots + heat kernel–smoothed versions.
+1. Compute along-S profiles for cost and displacement magnitude; generate plots + Gaussian-kernel-smoothed versions.
 1. Build AUROC(S) profile for cost (univariate per S bin); then add displacement features. Scale up embryo count if needed.
 1. Implement 1D contiguous-interval patch search + ablation on S.
 1. Extend to multiple timepoints (stage bins) and produce AUROC(stage, S) heatmaps.
@@ -327,7 +373,7 @@ Where:
 
 A stable pipeline that:
 
-1. Maps cep290/WT masks to WT reference within a single 2 hpf window (trivially extensible to multiple windows)
+1. Maps cep290/WT masks to WT reference within a single 2 hpf window (or optional 4 hpf robustness window with per-embryo feature collapse)
 1. Filters alignment failures robustly
 1. Produces interpretable spatial summaries (cost + vectors)
 1. Yields AUROC-by-S plots that localize the phenotype

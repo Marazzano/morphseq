@@ -10,7 +10,7 @@
 For processing multiple mutant→WT comparisons at scale, use the **proven batch export implementation** from Stream D:
 
 ```
-src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/02_run_batch_ot_export.py
+results/mcolon/20260213_stream_d_reference_embryo/pipeline/02_run_batch_ot_export.py
 ```
 
 **Already validated**:
@@ -71,7 +71,7 @@ wt_identity,20251113_A05_e01,20251113_A05_e01,14,14,cep290_wildtype,control,48,4
 ```bash
 cd /home/user/morphseq
 
-python src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/02_run_batch_ot_export.py \
+python results/mcolon/20260213_stream_d_reference_embryo/pipeline/02_run_batch_ot_export.py \
   --csv results/mcolon/20251229_cep290_phenotype_extraction/final_data/embryo_data_with_labels.csv \
   --transitions results/mcolon/20260213_subtle_phenotype_localization_ot/pilot_manifest.csv \
   --output-root results/mcolon/20260213_subtle_phenotype_localization_ot/ot_exports \
@@ -286,7 +286,7 @@ python 02_run_batch_ot_export.py \
 ## Support
 
 **Example workflows**:
-- Stream D reference embryo: `src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/`
+- Stream D reference embryo: `results/mcolon/20260213_stream_d_reference_embryo/`
 - Canonical grid spike: `src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_a_ott_backend/spike_test_results/`
 
 **Documentation**:
