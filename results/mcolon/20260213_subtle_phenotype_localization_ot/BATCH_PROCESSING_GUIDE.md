@@ -241,6 +241,8 @@ python 02_run_batch_ot_export.py \
 
 ## Future: vmap-Based Batching
 
+**See**: `BATCH_PROCESSING_DESIGN.md` for complete design proposal with three implementation options.
+
 **When vmap would help**:
 - Identical tensor shapes (requires shape bucketing or padding)
 - Many pairs processed in tight loop (amortize compile cost)
@@ -253,6 +255,12 @@ python 02_run_batch_ot_export.py \
 4. JIT-compile vmapped solver
 
 **Expected speedup**: ~2-3× over current sequential OTT (not 10×, since per-solve is already fast)
+
+**Recommended approach**: Option 1 (Explicit Batch Backend)
+- New `OTTBatchBackend` class with vmap-based `solve_batch`
+- CLI flag: `--use-batch` to opt-in
+- Shape validation fails fast if shapes don't match
+- Backward compatible (existing scripts unchanged)
 
 **Why not now**:
 - Variable embryo shapes make bucketing complex
@@ -283,7 +291,9 @@ python 02_run_batch_ot_export.py \
 
 **Documentation**:
 - Batch export source: `02_run_batch_ot_export.py` (self-documenting CLI)
+- Design proposal: `BATCH_PROCESSING_DESIGN.md` (future vmap implementation options)
+- Status report: `BATCH_PROCESSING_STATUS.md` (investigation findings)
 - UOT skill: `~/.claude/skills/unbalanced-optimal-transport/SKILL.md`
-- Plotting convention: `results/mcolon/20260213_subtle_phenotype_localization_ot/PLOTTING_CONVENTION.md`
+- Plotting convention: `PLOTTING_CONVENTION.md`
 
 **Questions?** Read the DECISIONS.md files in Stream A (OTT backend) and Stream D (reference embryo).
