@@ -3,6 +3,7 @@
 **Reference Documents**:
 - `PLAN.md` - Full specification
 - **`PLOTTING_CONVENTION.md`** - ⭐ **CRITICAL: READ FIRST** - Defines WT reference grid as coordinate system for ALL visualizations
+- **`BATCH_PROCESSING_GUIDE.md`** - Production-ready batch OT export for scaling to AUROC analysis
 
 **Date**: 2026-02-13
 **Status**: Ready to implement
@@ -101,6 +102,28 @@ This implementation plan translates the `PLAN.md` specification into concrete sc
 **Key advantage**: This is the same method used in the data pipeline for curvature calculation, ensuring consistency.
 
 **Note**: For template-space centerline, we run `extract_centerline()` on the WT reference mask once, then assign each pixel an S value based on nearest point on the extracted spline.
+
+### 6. Batch OT Export for AUROC Scaling (PRODUCTION READY)
+
+**Location**: `/home/user/morphseq/src/analyze/optimal_transport_morphometrics/docs/phase2_implemnetation_tracking/stream_d_reference_embryo/02_run_batch_ot_export.py`
+
+**Status**: Validated on 313 transitions (0 failures, ~1.76s/pair on GPU)
+
+**What it does**:
+- Sequential processing of many WT→mutant OT problems with smart frame caching
+- Uses OTT backend by default (GPU-enabled, ~2-5× faster than POT)
+- Resume-safe via (run_id, pair_id) keys
+- Exports to structured parquet files + raw field artifacts
+
+**Why sequential, not vmap**:
+- **Variable embryo shapes** → Different bbox sizes after cropping
+- **Shape bucketing not implemented** → vmap requires identical tensor shapes
+- **Recompilation avoided** → Sequential prevents JAX recompiling for each unique shape
+- **Frame caching** → Huge I/O savings (load each frame once, reuse across pairs)
+
+**Key insight**: JAX speedup comes from JIT compilation + GPU execution **per solve**. Sequential processing with cached frames is optimal for variable-shape OT problems.
+
+**See**: `BATCH_PROCESSING_GUIDE.md` for complete usage guide, parameters, and pilot study checklist.
 
 ---
 
