@@ -91,20 +91,63 @@ This ensures visual fairness—positive and negative deviations are equally visi
 
 ---
 
+## ⭐ CRITICAL: Real Physical Units (Micrometers)
+
+**Key advantage**: Because OT analysis is on the canonical grid with **10 μm/pixel**, all metrics are in **real physical units**, not arbitrary pixel values.
+
+### What this means:
+- **Cost density c(x)**: Units of **μm²** (squared transport distance)
+- **Displacement d(x)**: Units of **μm/frame** (physical distance moved)
+- **Mass delta Δm(x)**: Units of **μm²** (area created/destroyed)
+- **Contour levels**: Can be defined in **μm²** (e.g., "cost > 50 μm²")
+- **Gaussian sigma**: Can be specified in **μm** (e.g., σ=20 μm)
+
+### Why this matters:
+1. **Interpretability**: Thresholds have physical meaning ("20 μm transport distance")
+2. **Comparability**: Results are comparable across experiments/datasets
+3. **Biological relevance**: Can relate to known anatomical scales (e.g., "cell diameter ~10 μm")
+4. **Publication ready**: Units make sense to readers without conversion
+
+### Practical impact:
+```python
+# Cost density in μm² (physical units)
+cost_density = compute_cost(mutant_mask, reference_mask)  # returns μm² values
+
+# Contour levels in μm²
+levels = [10, 25, 50, 100, 200]  # μm² thresholds (interpretable!)
+
+# Gaussian sigma in μm
+sigma_um = 20.0  # 20 microns smoothing (anatomically meaningful)
+sigma_pixels = sigma_um / um_per_pixel  # Convert to pixels for scipy
+```
+
+---
+
 ## Choosing Sigma (Gaussian Kernel Width)
 
 **Goal**: Sigma should be tied to an anatomical scale, not "whatever looks nice per figure."
 
 ### Recommended approach:
-- **If canonical grid uses pixels**: sigma=2.0-3.0 pixels is typical
-- **If canonical grid uses microns**: sigma=20.0-30.0 μm matches ~2-3 pixel equivalent at 10 μm/px
+- **Work in microns**: sigma=20.0-30.0 μm is typical (matches 2-3 pixels at 10 μm/px)
+- **Convert to pixels for scipy**: `sigma_px = sigma_um / um_per_pixel`
 - **Keep sigma FIXED across all conditions** (WT, mutant, timepoints) for fair comparisons
 
 ### Empirical tuning:
-1. Start with sigma=2.0 pixels
-2. If contours look too noisy: increase to 3.0-4.0
-3. If contours over-smooth (lose fine structure): decrease to 1.5-2.0
-4. Once chosen, **document in config.yaml** and use consistently
+1. Start with sigma=20 μm (2 pixels at 10 μm/px)
+2. If contours look too noisy: increase to 30-40 μm
+3. If contours over-smooth (lose fine structure): decrease to 15-20 μm
+4. Once chosen, **document in config.yaml** in μm units and use consistently
+
+### Example (real units):
+```yaml
+# config.yaml
+gaussian_kernel_sigma_2d: 20.0  # μm (not pixels!)
+um_per_pixel: 10.0  # Canonical grid resolution
+
+# In code:
+sigma_px = config['gaussian_kernel_sigma_2d'] / config['um_per_pixel']
+smooth_field = gaussian_filter(field, sigma=sigma_px)
+```
 
 ---
 

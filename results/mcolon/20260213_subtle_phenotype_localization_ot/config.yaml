@@ -27,8 +27,10 @@ n_s_bins: 10  # Start with 10, try 20 for higher resolution
 s_orientation: "head_to_tail"  # S=0 head, S=1 tail
 
 # Gaussian kernel smoothing (visualization only, also provides density measure)
-gaussian_kernel_sigma_2d: 2.0  # For 2D cost density maps
-gaussian_kernel_sigma_1d: 1.0  # For 1D along-S profiles
+# IMPORTANT: Specify in MICROMETERS (μm), not pixels, for anatomical interpretability
+gaussian_kernel_sigma_2d: 20.0  # μm (for 2D cost density maps; ~2 pixels at 10 μm/px)
+gaussian_kernel_sigma_1d: 10.0  # μm (for 1D along-S profiles)
+um_per_pixel: 10.0  # Canonical grid resolution (μm/pixel)
 
 # AUROC computation
 auroc_n_bootstrap: 1000  # Bootstrap iterations for CI

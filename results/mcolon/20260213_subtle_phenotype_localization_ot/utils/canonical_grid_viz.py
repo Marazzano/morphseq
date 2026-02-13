@@ -1,25 +1,46 @@
 """
-Canonical Grid Visualization Utilities
+Canonical Grid Visualization Utilities for Phenotype Localization
 
-Clean, publication-ready overlays for OT analysis on canonical grid.
-Uses filled contours + optional lines + vectors + S-bin boundaries.
+BUILDS ON TOP of proven viz.py functions from uot_masks module.
+Adds phenotype-localization-specific features:
+- S-bin isolines (rostral→caudal "latitude lines")
+- Contour-based overlays with real μm² units
+- Individual embryo visualization (not WT vs mutant comparisons)
 
-Key principles:
-- Everything lives on the same canonical grid (H×W)
-- Mask to embryo region (NaN outside)
-- Boundary-safe Gaussian smoothing
-- Quantile-based contour levels for cross-condition comparisons
-- Aggressive vector subsampling
-- S-bin isolines like "latitude lines"
+Leverages existing:
+- plot_uot_quiver() - Vector fields
+- plot_uot_cost_field() - Cost heatmaps
+- plot_uot_creation_destruction() - Mass delta maps
+- UOTVizConfig - Consistent visualization parameters
 
 Author: Generated for subtle-phenotype localization pilot
 Date: 2026-02-13
 """
 
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Optional, Tuple, List
+
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
-from typing import Optional, Tuple, List
+
+# Add morphseq root to path
+morphseq_root = Path(__file__).resolve().parents[4]
+if str(morphseq_root) not in sys.path:
+    sys.path.insert(0, str(morphseq_root))
+
+# Import proven OT visualization functions
+from src.analyze.optimal_transport_morphometrics.uot_masks import (
+    plot_uot_quiver,
+    plot_uot_cost_field,
+    plot_uot_creation_destruction,
+    UOTVizConfig,
+    DEFAULT_UOT_VIZ_CONFIG,
+)
+from src.analyze.utils.optimal_transport import UOTResult
 
 
 def smooth_inside_mask(field: np.ndarray, mask: np.ndarray, sigma: float) -> np.ndarray:
