@@ -1,0 +1,48 @@
+# Subtle-Phenotype Localization Config
+# 2026-02-13
+
+# Data selection
+hpf_bin_start: 47.0
+hpf_bin_end: 49.0  # Use 48 hpf as reference timepoint
+genotype_wt: "cep290_wildtype"
+genotype_mutant: "cep290_homozygous"
+n_reference_wt: 1  # Use single WT reference for pilot
+n_test_wt: 10  # Additional WT for testing
+n_mutants: 20  # Scale up as needed for AUROC
+
+# OT parameters (already tuned)
+ot_epsilon: 1.0e-4
+ot_marginal_relaxation: 10.0
+ot_downsample_factor: 1
+ot_canonical_grid_um_per_pixel: 10.0
+ot_canonical_grid_shape_hw: [256, 576]
+ot_align_mode: "yolk"
+
+# Outlier filtering
+outlier_method: "iqr"
+outlier_iqr_multiplier: 1.5
+
+# S binning
+n_s_bins: 10  # Start with 10, try 20 for higher resolution
+s_orientation: "head_to_tail"  # S=0 head, S=1 tail
+
+# Gaussian kernel smoothing (visualization only, also provides density measure)
+gaussian_kernel_sigma_2d: 2.0  # For 2D cost density maps
+gaussian_kernel_sigma_1d: 1.0  # For 1D along-S profiles
+
+# AUROC computation
+auroc_n_bootstrap: 1000  # Bootstrap iterations for CI
+auroc_cv_folds: 5  # GroupKFold folds for CV-by-embryo
+auroc_stratify: true  # Stratify resampling by genotype
+
+# Patch search
+patch_min_length: 2  # Minimum S bins per interval
+patch_max_length: 10  # Maximum S bins per interval
+patch_length_penalty: 0.01  # Optional penalty on interval length
+
+# Random seed
+random_seed: 42
+
+# Output
+save_intermediate_maps: true  # Save c(x), d(x), etc. as .npy files
+save_diagnostic_plots: true
