@@ -95,6 +95,13 @@ class FeatureLoader:
         """Load the reference mask (512x512)."""
         return np.array(self.store["mask_ref"])
 
+    def get_channel_names(self) -> Tuple[str, ...]:
+        """Return channel names from the manifest channel_schema in order."""
+        schema = self.manifest.get("channel_schema", [])
+        if not schema:
+            return tuple(f"channel_{i}" for i in range(self.n_channels))
+        return tuple(str(channel["name"]) for channel in schema)
+
     def iter_batches(
         self,
         batch_size: int = 16,

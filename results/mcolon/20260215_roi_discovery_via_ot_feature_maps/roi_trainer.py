@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -45,11 +45,29 @@ class TrainResult:
     w_low: np.ndarray           # (learn_res, learn_res, C)
     w_full: np.ndarray          # (512, 512, C)
     b: float
+    channel_names: Tuple[str, ...]
     objective_log: List[Dict]   # per-step objective breakdown
     converged: bool
     n_steps: int
     runtime_sec: float
     config: Dict
+
+
+def compute_logits(
+    X: np.ndarray,
+    w_full: np.ndarray,
+    b: float,
+) -> np.ndarray:
+    """Compute linear logits z = <X, w_full> + b for batched feature maps."""
+    if X.ndim != 4:
+        raise ValueError(f"X must be 4D (N,H,W,C), got shape {X.shape}")
+    if w_full.ndim != 3:
+        raise ValueError(f"w_full must be 3D (H,W,C), got shape {w_full.shape}")
+    if X.shape[1:] != w_full.shape:
+        raise ValueError(
+            f"Shape mismatch: X has spatial/channels {X.shape[1:]}, w_full has {w_full.shape}"
+        )
+    return np.sum(X * w_full[None, :, :, :], axis=(1, 2, 3)) + float(b)
 
 
 def _check_jax():
@@ -144,6 +162,7 @@ def train(
     lam: float,
     mu: float,
     config: Optional[TrainerConfig] = None,
+    channel_names: Optional[Sequence[str]] = None,
 ) -> TrainResult:
     """
     Train weight-map logistic regression with L1 + TV regularization.
@@ -277,10 +296,15 @@ def train(
     )
     b_np = float(params["b"])
 
+    resolved_channel_names = tuple(channel_names) if channel_names is not None else tuple(
+        f"channel_{i}" for i in range(C)
+    )
+
     return TrainResult(
         w_low=w_low_np,
         w_full=w_full_np,
         b=b_np,
+        channel_names=resolved_channel_names,
         objective_log=objective_log,
         converged=converged,
         n_steps=step + 1,
@@ -293,6 +317,7 @@ def train(
             "learning_rate": config.learning_rate,
             "max_steps": config.max_steps,
             "class_weights": class_weights,
+            "channel_names": resolved_channel_names,
         },
     )
 
@@ -362,5 +387,6 @@ def extract_roi(
 __all__ = [
     "train",
     "extract_roi",
+    "compute_logits",
     "TrainResult",
 ]
