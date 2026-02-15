@@ -144,6 +144,7 @@ def train(
     lam: float,
     mu: float,
     config: Optional[TrainerConfig] = None,
+    channel_names: Optional[Tuple[str, ...]] = None,
 ) -> TrainResult:
     """
     Train weight-map logistic regression with L1 + TV regularization.
@@ -165,6 +166,8 @@ def train(
         TV penalty strength.
     config : TrainerConfig, optional
         Training hyperparameters.
+    channel_names : tuple of str, optional
+        Names of the feature channels.
 
     Returns
     -------
@@ -293,8 +296,29 @@ def train(
             "learning_rate": config.learning_rate,
             "max_steps": config.max_steps,
             "class_weights": class_weights,
+            "channel_names": channel_names,
         },
     )
+
+
+def compute_logits(X: np.ndarray, w_full: np.ndarray, b: float) -> np.ndarray:
+    """
+    Compute logits from feature maps and trained weight map.
+    
+    Parameters
+    ----------
+    X : ndarray, shape (N, H, W, C)
+        Feature maps.
+    w_full : ndarray, shape (H, W, C)
+        Full-resolution weight map.
+    b : float
+        Bias term.
+    
+    Returns
+    -------
+    logits : ndarray, shape (N,)
+    """
+    return np.sum(X * w_full[None, :, :, :], axis=(1, 2, 3)) + b
 
 
 def extract_roi(
@@ -361,6 +385,7 @@ def extract_roi(
 
 __all__ = [
     "train",
+    "compute_logits",
     "extract_roi",
     "TrainResult",
 ]

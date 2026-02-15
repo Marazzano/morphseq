@@ -20,7 +20,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from roi_config import SelectionRule, SweepConfig, TrainerConfig
-from roi_trainer import TrainResult, extract_roi, train
+from roi_trainer import TrainResult, compute_logits, extract_roi, train
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ def run_sweep(
 
             # Predict on validation
             w_full = result.w_full
-            logits_val = np.sum(X_val * w_full[None, :, :, :], axis=(1, 2, 3)) + result.b
+            logits_val = compute_logits(X_val, w_full, result.b)
 
             # AUROC
             try:
