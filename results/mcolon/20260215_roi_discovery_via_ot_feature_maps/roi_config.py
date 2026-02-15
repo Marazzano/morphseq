@@ -141,33 +141,29 @@ class NullConfig:
     random_seed: int = 42
 
 
-# NOTE: ROIRunConfig is commented out for now — the API (roi_api.fit)
-# takes flat kwargs instead. Uncomment and wire in if a single config
-# object becomes useful once the pipeline matures.
-#
-# @dataclass
-# class ROIRunConfig:
-#     """Top-level run configuration combining all sub-configs."""
-#     genotype: str = "cep290"
-#     reference: str = "WT"
-#     features: FeatureSet = FeatureSet.COST
-#     roi_size: ROISizePreset = ROISizePreset.MEDIUM
-#     smoothness: SmoothnessPreset = SmoothnessPreset.MEDIUM
-#
-#     dataset: FeatureDatasetConfig = field(default_factory=FeatureDatasetConfig)
-#     trainer: TrainerConfig = field(default_factory=TrainerConfig)
-#     sweep: SweepConfig = field(default_factory=SweepConfig)
-#     nulls: NullConfig = field(default_factory=NullConfig)
-#
-#     out_dir: Optional[str] = None
-#
-#     def resolve_lambda_values(self) -> List[float]:
-#         """Get λ values from preset or sweep config."""
-#         return list(LAMBDA_PRESETS.get(self.roi_size, self.sweep.lambda_values))
-#
-#     def resolve_mu_values(self) -> List[float]:
-#         """Get μ values from preset or sweep config."""
-#         return list(MU_PRESETS.get(self.smoothness, self.sweep.mu_values))
+@dataclass
+class ROIRunConfig:
+    """Top-level run configuration combining all sub-configs."""
+    genotype: str = "cep290"
+    reference: str = "WT"
+    features: FeatureSet = FeatureSet.COST
+    roi_size: ROISizePreset = ROISizePreset.MEDIUM
+    smoothness: SmoothnessPreset = SmoothnessPreset.MEDIUM
+
+    dataset: FeatureDatasetConfig = field(default_factory=FeatureDatasetConfig)
+    trainer: TrainerConfig = field(default_factory=TrainerConfig)
+    sweep: SweepConfig = field(default_factory=SweepConfig)
+    nulls: NullConfig = field(default_factory=NullConfig)
+
+    out_dir: Optional[str] = None
+
+    def resolve_lambda_values(self) -> List[float]:
+        """Get λ values from preset or sweep config."""
+        return list(LAMBDA_PRESETS.get(self.roi_size, self.sweep.lambda_values))
+
+    def resolve_mu_values(self) -> List[float]:
+        """Get μ values from preset or sweep config."""
+        return list(MU_PRESETS.get(self.smoothness, self.sweep.mu_values))
 
 
 __all__ = [
@@ -182,7 +178,7 @@ __all__ = [
     "TrainerConfig",
     "SweepConfig",
     "NullConfig",
-    # "ROIRunConfig",  # commented out — see note above
+    "ROIRunConfig",
     "LAMBDA_PRESETS",
     "MU_PRESETS",
 ]
