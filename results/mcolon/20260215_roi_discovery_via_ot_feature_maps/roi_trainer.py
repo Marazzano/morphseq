@@ -181,7 +181,9 @@ def train(
         f"λ={lam:.2e}, μ={mu:.2e}"
     )
 
-    # Downsample mask to learn_res for L1/TV computation
+    # Downsample mask to learn_res for L1/TV computation.
+    # order=0 (nearest-neighbor) preserves binary mask semantics —
+    # bilinear would create fractional values at mask edges.
     from scipy.ndimage import zoom
     mask_low_np = zoom(
         mask_ref.astype(np.float32),

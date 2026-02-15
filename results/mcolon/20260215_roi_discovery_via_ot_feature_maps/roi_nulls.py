@@ -223,6 +223,15 @@ def run_bootstrap_stability(
     bfracs = []
 
     unique_groups = np.unique(groups)
+
+    # Validate: all samples from each embryo must share the same label
+    for g in unique_groups:
+        labels_for_g = np.unique(y[groups == g])
+        assert len(labels_for_g) == 1, (
+            f"Embryo '{g}' has mixed labels {labels_for_g}. "
+            f"All samples from one embryo must share the same class label."
+        )
+
     class_0_groups = unique_groups[[y[groups == g][0] == 0 for g in unique_groups]]
     class_1_groups = unique_groups[[y[groups == g][0] == 1 for g in unique_groups]]
 

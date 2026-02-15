@@ -26,7 +26,6 @@ from roi_config import (
     FeatureSet,
     NullConfig,
     NullMode,
-    ROIRunConfig,
     ROISizePreset,
     SmoothnessPreset,
     SweepConfig,

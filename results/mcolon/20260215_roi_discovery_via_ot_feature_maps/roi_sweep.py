@@ -208,6 +208,11 @@ def _select_pareto_knee(
 
     Uses a simple score: score = AUROC - beta * area_fraction
     Higher score = better trade-off.
+
+    beta controls the AUROC-vs-simplicity trade-off:
+        beta=1.0 — equal weight to AUROC and complexity
+        beta>1.0 — prefer simpler (smaller) ROIs
+        beta<1.0 — prefer higher AUROC even if ROI is larger
     """
     df = df.copy()
     df["pareto_score"] = df["auroc_mean"] - beta * df["area_fraction_mean"]
