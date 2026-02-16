@@ -143,12 +143,7 @@ class NullConfig:
 
 @dataclass
 class ROIRunConfig:
-    """
-    Top-level run configuration combining all sub-configs.
-    
-    This dataclass is mutable (not frozen) to allow runtime modification
-    of fields like out_dir and other configuration parameters.
-    """
+    """Top-level run configuration combining all sub-configs."""
     genotype: str = "cep290"
     reference: str = "WT"
     features: FeatureSet = FeatureSet.COST

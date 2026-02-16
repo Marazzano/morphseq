@@ -82,6 +82,7 @@ def run_permutation_null(
     sweep_config: Optional[SweepConfig] = None,
     trainer_config: Optional[TrainerConfig] = None,
     random_seed: int = 42,
+    channel_names: Optional[Tuple[str, ...]] = None,
 ) -> PermutationNullResult:
     """
     NULL 1: Selection-aware label permutation test.
@@ -139,6 +140,7 @@ def run_permutation_null(
                 mu_values=mu_values,
                 sweep_config=sweep_config,
                 trainer_config=trainer_config,
+                channel_names=channel_names,
             )
             null_aurocs.append(sweep_result.selected_auroc)
         except Exception as e:
@@ -183,6 +185,7 @@ def run_bootstrap_stability(
     roi_quantile: float = 0.9,
     trainer_config: Optional[TrainerConfig] = None,
     random_seed: int = 42,
+    channel_names: Optional[Tuple[str, ...]] = None,
 ) -> BootstrapStabilityResult:
     """
     NULL 3: Bootstrap stability at FIXED (λ,μ).
@@ -213,7 +216,7 @@ def run_bootstrap_stability(
     weights = compute_class_weight("balanced", classes=classes, y=y)
     cw = {int(c): float(w) for c, w in zip(classes, weights)}
 
-    ref_result = train(X, y, mask_ref, class_weights=cw, lam=lam, mu=mu, config=trainer_config)
+    ref_result = train(X, y, mask_ref, class_weights=cw, lam=lam, mu=mu, config=trainer_config, channel_names=channel_names)
     ref_roi, _ = extract_roi(ref_result.w_full, mask_ref, quantile=roi_quantile)
 
     # Bootstrap
@@ -266,6 +269,7 @@ def run_bootstrap_stability(
                 class_weights=boot_cw,
                 lam=lam, mu=mu,
                 config=trainer_config,
+                channel_names=channel_names,
             )
             boot_roi, boot_stats = extract_roi(
                 boot_result.w_full, mask_ref, quantile=roi_quantile,
@@ -325,6 +329,7 @@ def run_nulls(
     null_config: Optional[NullConfig] = None,
     sweep_config: Optional[SweepConfig] = None,
     trainer_config: Optional[TrainerConfig] = None,
+    channel_names: Optional[Tuple[str, ...]] = None,
 ) -> NullsResult:
     """Run NULL 1 + NULL 3 based on null_config.null_mode."""
     from roi_config import NullMode
@@ -351,6 +356,7 @@ def run_nulls(
             sweep_config=sweep_config,
             trainer_config=trainer_config,
             random_seed=null_config.random_seed,
+            channel_names=channel_names,
         )
 
     if do_bootstrap:
@@ -363,6 +369,7 @@ def run_nulls(
             roi_quantile=null_config.boot_roi_quantile,
             trainer_config=trainer_config,
             random_seed=null_config.random_seed + 1000,
+            channel_names=channel_names,
         )
 
     return NullsResult(
