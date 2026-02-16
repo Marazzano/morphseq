@@ -24,6 +24,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
+from outlier_detection import OutlierDetectionConfig, detect_outliers
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,21 +44,31 @@ def compute_iqr_outliers(
     q1 = float(np.percentile(total_cost_C, 25))
     q3 = float(np.percentile(total_cost_C, 75))
     iqr = q3 - q1
-    lower = q1 - multiplier * iqr
-    upper = q3 + multiplier * iqr
-    outlier_flag = (total_cost_C < lower) | (total_cost_C > upper)
+
+    result = detect_outliers(
+        total_cost_C,
+        OutlierDetectionConfig(method="iqr", iqr_multiplier=multiplier),
+    )
+    outlier_flag = result.outlier_flag
 
     stats = {
-        "q1": q1, "q3": q3, "iqr": iqr,
-        "lower_bound": lower, "upper_bound": upper,
-        "n_total": len(total_cost_C),
-        "n_outliers": int(outlier_flag.sum()),
-        "n_retained": int((~outlier_flag).sum()),
+        "q1": q1,
+        "q3": q3,
+        "iqr": iqr,
+        "lower_bound": float(result.lower_bound),
+        "upper_bound": float(result.upper_bound),
+        "n_total": int(result.n_total),
+        "n_outliers": int(result.n_outliers),
+        "n_retained": int(result.n_total - result.n_outliers),
         "multiplier": multiplier,
+        "method": "iqr",
     }
     logger.info(
-        f"IQR QC: {stats['n_outliers']}/{stats['n_total']} flagged "
-        f"(bounds=[{lower:.4f}, {upper:.4f}])"
+        "IQR QC: %d/%d flagged (bounds=[%.4f, %.4f])",
+        stats["n_outliers"],
+        stats["n_total"],
+        stats["lower_bound"],
+        stats["upper_bound"],
     )
     return outlier_flag, stats
 
