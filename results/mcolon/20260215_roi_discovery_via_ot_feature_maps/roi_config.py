@@ -20,6 +20,12 @@ class FeatureSet(str, Enum):
     ALL_OT = "all_ot"
 
 
+class Phase0FeatureSet(str, Enum):
+    """Phase 0 channel sets (1D S-bin analysis, not 2D weight maps)."""
+    V0_COST = "v0_cost"          # C=1: cost_density only
+    V1_DYNAMICS = "v1_dynamics"  # C=5: cost + disp_u + disp_v + disp_mag + delta_mass
+
+
 class ROISizePreset(str, Enum):
     """Maps to λ (L1 penalty) grid presets."""
     SMALL = "small"
@@ -84,7 +90,30 @@ class ChannelSchema:
     units: str
 
 
-# Standard channel schemas for OT-derived features
+# Phase 0 channel schemas
+PHASE0_CHANNEL_SCHEMAS = {
+    Phase0FeatureSet.V0_COST: [
+        ChannelSchema("cost_density", "Per-pixel OT transport cost (ref→target)", "cost_units"),
+    ],
+    Phase0FeatureSet.V1_DYNAMICS: [
+        ChannelSchema("cost_density", "Per-pixel OT transport cost (ref→target)", "cost_units"),
+        ChannelSchema("disp_u", "Displacement field x-component (ref→target)", "um"),
+        ChannelSchema("disp_v", "Displacement field y-component (ref→target)", "um"),
+        ChannelSchema("disp_mag", "Displacement magnitude sqrt(u^2+v^2)", "um"),
+        ChannelSchema("delta_mass", "Unbalanced OT mass difference (created-destroyed)", "mass_units"),
+    ],
+}
+
+# Phase 0 S-bin feature columns by channel set
+PHASE0_SBIN_FEATURES = {
+    Phase0FeatureSet.V0_COST: ["cost_mean"],
+    Phase0FeatureSet.V1_DYNAMICS: [
+        "cost_mean", "disp_mag_mean", "disp_par_mean", "disp_perp_mean",
+    ],
+}
+
+
+# Standard channel schemas for OT-derived features (Phase 1 2D ROI)
 CHANNEL_SCHEMAS = {
     FeatureSet.COST: [
         ChannelSchema("total_cost", "Per-pixel OT transport cost", "cost_units"),
@@ -166,8 +195,83 @@ class ROIRunConfig:
         return list(MU_PRESETS.get(self.smoothness, self.sweep.mu_values))
 
 
+# ---------------------------------------------------------------------------
+# Phase 0 configuration
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Phase0SCoordinateConfig:
+    """Configuration for S coordinate computation."""
+    centerline_method: str = "geodesic"   # 'geodesic' or 'pca'
+    orient_head_to_tail: bool = True      # S=0 head, S=1 tail
+    bspline_smoothing: float = 5.0
+    random_seed: int = 42
+
+
+@dataclass(frozen=True)
+class Phase0SBinConfig:
+    """Configuration for S-bin discretization."""
+    K: int = 10                           # number of bins (also run K=20 as robustness check)
+    K_robustness: int = 20                # secondary K for robustness
+
+
+@dataclass(frozen=True)
+class Phase0ClassificationConfig:
+    """Configuration for Phase 0 AUROC + logistic classification."""
+    n_cv_folds: int = 5
+    group_key: str = "embryo_id"
+    random_seed: int = 42
+
+
+class Phase0IntervalSelectionRule(str, Enum):
+    """Selection rule for best S-interval."""
+    PARSIMONY = "parsimony"  # smallest interval within ε of best AUROC
+    PENALIZED = "penalized"  # maximize AUROC - gamma*(len/K)
+
+
+@dataclass(frozen=True)
+class Phase0IntervalConfig:
+    """Configuration for 1D interval search on S."""
+    selection_rule: Phase0IntervalSelectionRule = Phase0IntervalSelectionRule.PARSIMONY
+    epsilon_auroc: float = 0.02       # for PARSIMONY: tolerance from best
+    gamma_penalty: float = 0.01       # for PENALIZED: length penalty weight
+    min_interval_bins: int = 1
+    max_interval_bins: Optional[int] = None  # None = K
+
+
+@dataclass(frozen=True)
+class Phase0NullConfig:
+    """Configuration for Phase 0 null + stability tests."""
+    n_permute: int = 200
+    n_boot: int = 200
+    random_seed: int = 42
+
+
+@dataclass
+class Phase0RunConfig:
+    """Top-level Phase 0 run configuration."""
+    genotype: str = "cep290"
+    reference: str = "WT"
+    stage_window: Tuple[float, float] = (0.0, 2.0)  # one 2 hpf bin
+
+    feature_set: Phase0FeatureSet = Phase0FeatureSet.V0_COST
+    dataset: FeatureDatasetConfig = field(default_factory=FeatureDatasetConfig)
+    s_coord: Phase0SCoordinateConfig = field(default_factory=Phase0SCoordinateConfig)
+    s_bins: Phase0SBinConfig = field(default_factory=Phase0SBinConfig)
+    classification: Phase0ClassificationConfig = field(default_factory=Phase0ClassificationConfig)
+    interval: Phase0IntervalConfig = field(default_factory=Phase0IntervalConfig)
+    nulls: Phase0NullConfig = field(default_factory=Phase0NullConfig)
+
+    out_dir: Optional[str] = None
+
+    # Visualization smoothing (display only, not for stats)
+    viz_sigma_grid: Tuple[float, ...] = (1.0, 2.0, 4.0)
+    quiver_stride: int = 8
+
+
 __all__ = [
     "FeatureSet",
+    "Phase0FeatureSet",
     "ROISizePreset",
     "SmoothnessPreset",
     "NullMode",
@@ -175,10 +279,19 @@ __all__ = [
     "FeatureDatasetConfig",
     "ChannelSchema",
     "CHANNEL_SCHEMAS",
+    "PHASE0_CHANNEL_SCHEMAS",
+    "PHASE0_SBIN_FEATURES",
     "TrainerConfig",
     "SweepConfig",
     "NullConfig",
     "ROIRunConfig",
     "LAMBDA_PRESETS",
     "MU_PRESETS",
+    "Phase0SCoordinateConfig",
+    "Phase0SBinConfig",
+    "Phase0ClassificationConfig",
+    "Phase0IntervalSelectionRule",
+    "Phase0IntervalConfig",
+    "Phase0NullConfig",
+    "Phase0RunConfig",
 ]

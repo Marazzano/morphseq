@@ -36,9 +36,11 @@ except ImportError:
 
 from roi_config import (
     CHANNEL_SCHEMAS,
+    PHASE0_CHANNEL_SCHEMAS,
     ChannelSchema,
     FeatureDatasetConfig,
     FeatureSet,
+    Phase0FeatureSet,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,39 @@ def _build_manifest(
         },
         "provenance": provenance or {},
     }
+
+
+def _build_phase0_manifest(
+    config: FeatureDatasetConfig,
+    feature_set: Phase0FeatureSet,
+    channel_schemas: List[ChannelSchema],
+    n_samples: int,
+    n_channels: int,
+    class_counts: Dict[int, int],
+    stage_window: tuple,
+    ot_params_hash: str = "",
+    reference_mask_id: str = "",
+    provenance: Optional[Dict] = None,
+) -> Dict:
+    """Build manifest.json for Phase 0 FeatureDataset (adds Phase 0-specific fields)."""
+    manifest = _build_manifest(
+        config=config,
+        feature_set=FeatureSet.COST,  # base schema check
+        channel_schemas=channel_schemas,
+        n_samples=n_samples,
+        n_channels=n_channels,
+        class_counts=class_counts,
+        provenance=provenance,
+    )
+    # Override / add Phase 0-specific fields
+    manifest["phase"] = 0
+    manifest["feature_set"] = feature_set.value
+    manifest["stage_window"] = list(stage_window)
+    manifest["OT_params_hash"] = ot_params_hash
+    manifest["reference_mask_id"] = reference_mask_id
+    manifest["smoothing_policy"] = "visualization-only; stats computed on unsmoothed features"
+    manifest["S_orientation"] = "S=0 head, S=1 tail"
+    return manifest
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +409,150 @@ class FeatureDatasetBuilder:
         return self.out_dir
 
 
+class Phase0FeatureDatasetBuilder:
+    """
+    Build a Phase 0 FeatureDataset with optional S_map_ref and basis arrays.
+
+    Phase 0 adds:
+    - stage_window constraint (single 2 hpf bin)
+    - S_map_ref in optional/ group
+    - tangent_ref, normal_ref in optional/ group
+    - Phase 0-specific manifest fields
+    """
+
+    def __init__(
+        self,
+        out_dir: str | Path,
+        feature_set: Phase0FeatureSet = Phase0FeatureSet.V0_COST,
+        config: Optional[FeatureDatasetConfig] = None,
+        stage_window: tuple = (0.0, 2.0),
+        reference_mask_id: str = "",
+        ot_params_hash: str = "",
+    ):
+        self.out_dir = Path(out_dir)
+        self.feature_set = feature_set
+        self.config = config or FeatureDatasetConfig()
+        self.stage_window = stage_window
+        self.reference_mask_id = reference_mask_id
+        self.ot_params_hash = ot_params_hash
+        self.channel_schemas = PHASE0_CHANNEL_SCHEMAS[feature_set]
+
+    def build(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        mask_ref: np.ndarray,
+        metadata_df: pd.DataFrame,
+        total_cost_C: np.ndarray,
+        S_map_ref: Optional[np.ndarray] = None,
+        tangent_ref: Optional[np.ndarray] = None,
+        normal_ref: Optional[np.ndarray] = None,
+        provenance: Optional[Dict] = None,
+    ) -> Path:
+        """
+        Build and write Phase 0 FeatureDataset to disk.
+
+        Parameters
+        ----------
+        X : ndarray, shape (N, 512, 512, C)
+        y : ndarray, shape (N,)
+        mask_ref : ndarray, shape (512, 512)
+        metadata_df : DataFrame with embryo_id, snip_id, label_int, etc.
+        total_cost_C : ndarray, shape (N,)
+        S_map_ref : ndarray, shape (512, 512), optional, S in [0,1]
+        tangent_ref : ndarray, shape (512, 512, 2), optional
+        normal_ref : ndarray, shape (512, 512, 2), optional
+        provenance : dict, optional
+        """
+        if zarr is None:
+            raise ImportError("zarr required")
+
+        N, H, W, C = X.shape
+        grid = self.config.canonical_grid_hw
+        assert (H, W) == grid
+        assert y.shape == (N,)
+        assert mask_ref.shape == grid
+        assert total_cost_C.shape == (N,)
+        assert len(metadata_df) == N
+        assert C == len(self.channel_schemas), (
+            f"X has {C} channels, schema expects {len(self.channel_schemas)}"
+        )
+
+        # QC: IQR outlier detection
+        q1 = np.percentile(total_cost_C, 25)
+        q3 = np.percentile(total_cost_C, 75)
+        iqr = q3 - q1
+        lower = q1 - self.config.iqr_multiplier * iqr
+        upper = q3 + self.config.iqr_multiplier * iqr
+        outlier_flag = (total_cost_C < lower) | (total_cost_C > upper)
+        n_outliers = int(outlier_flag.sum())
+        logger.info(
+            f"QC: {n_outliers}/{N} outliers (IQR={iqr:.4f}, bounds=[{lower:.4f}, {upper:.4f}])"
+        )
+
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write Zarr
+        zarr_path = self.out_dir / "features.zarr"
+        store = zarr.open(str(zarr_path), mode="w")
+
+        chunk_n = self.config.chunk_size_n
+        store.create_dataset("X", data=X.astype(np.float32),
+                             chunks=(chunk_n, H, W, C), dtype=np.float32)
+        store.create_dataset("y", data=y.astype(np.int32), dtype=np.int32)
+        store.create_dataset("mask_ref", data=mask_ref.astype(np.uint8), dtype=np.uint8)
+
+        qc_group = store.create_group("qc")
+        qc_group.create_dataset("total_cost_C", data=total_cost_C.astype(np.float32))
+        qc_group.create_dataset("outlier_flag", data=outlier_flag, dtype=bool)
+
+        # Optional arrays (Phase 0 specific)
+        opt_group = store.create_group("optional")
+        if S_map_ref is not None:
+            assert S_map_ref.shape == grid
+            opt_group.create_dataset("S_map_ref", data=S_map_ref.astype(np.float32))
+        if tangent_ref is not None:
+            assert tangent_ref.shape == (*grid, 2)
+            opt_group.create_dataset("tangent_ref", data=tangent_ref.astype(np.float32))
+        if normal_ref is not None:
+            assert normal_ref.shape == (*grid, 2)
+            opt_group.create_dataset("normal_ref", data=normal_ref.astype(np.float32))
+
+        # Write metadata
+        metadata_df = metadata_df.copy()
+        metadata_df["sample_index"] = np.arange(N)
+        metadata_df["total_cost_C"] = total_cost_C
+        metadata_df["qc_outlier_flag"] = outlier_flag
+        metadata_df.to_parquet(self.out_dir / "metadata.parquet", index=False)
+
+        # Class counts
+        unique, counts = np.unique(y, return_counts=True)
+        class_counts = {int(u): int(c) for u, c in zip(unique, counts)}
+
+        # Write manifest
+        manifest = _build_phase0_manifest(
+            config=self.config,
+            feature_set=self.feature_set,
+            channel_schemas=self.channel_schemas,
+            n_samples=N,
+            n_channels=C,
+            class_counts=class_counts,
+            stage_window=self.stage_window,
+            ot_params_hash=self.ot_params_hash,
+            reference_mask_id=self.reference_mask_id,
+            provenance=provenance,
+        )
+        with open(self.out_dir / "manifest.json", "w") as f:
+            json.dump(manifest, f, indent=2)
+
+        validate_feature_dataset(self.out_dir)
+        logger.info(f"Phase 0 FeatureDataset built: {self.out_dir} ({N} samples, {C} ch)")
+        return self.out_dir
+
+
 __all__ = [
     "FeatureDatasetBuilder",
+    "Phase0FeatureDatasetBuilder",
     "validate_feature_dataset",
     "DatasetValidationError",
     "SCHEMA_VERSION",
