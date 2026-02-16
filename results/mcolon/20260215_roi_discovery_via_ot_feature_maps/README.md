@@ -18,11 +18,19 @@ trained at low resolution (128x128) and upsampled to canonical 512x512.
 20260215_roi_discovery_via_ot_feature_maps/
 ├── PLAN.md                          # Full implementation plan
 ├── README.md                        # This file
+├── PHASE2_ADDENDUM_PLAN.md          # Phase 2.0 occlusion validation addendum
+├── PHASE2_5_PLAN.md                 # Phase 2.5 learned-mask plan
 ├── roi_config.py                    # Configuration dataclasses
 ├── roi_feature_dataset.py           # FeatureDataset builder + validator
 ├── roi_loader.py                    # Streaming loader with grouped CV splits
 ├── roi_tv.py                        # Total Variation with mask-aware boundaries
 ├── roi_trainer.py                   # JAX trainer (logistic + L1 + TV)
+├── roi_resampling.py                # Group-aware bootstrap/OOB helpers
+├── roi_perturbation.py              # Phase 2 perturbation + fold-safe baseline
+├── roi_occlusion.py                 # Phase 2 OOB occlusion evaluation
+├── roi_mask_param.py                # Phase 2.5 mask parameterization utilities
+├── roi_mask_objective.py            # Phase 2.5 perturbation objectives
+├── roi_mask_trainer.py              # Phase 2.5 fixed-model mask trainer
 ├── roi_sweep.py                     # λ/μ sweep + deterministic selection
 ├── roi_nulls.py                     # Permutation null + bootstrap stability
 ├── roi_viz.py                       # Visualization (weight maps, ROI overlays, null plots)

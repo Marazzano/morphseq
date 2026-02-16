@@ -59,6 +59,7 @@ def run_sweep(
     mu_values: List[float],
     sweep_config: Optional[SweepConfig] = None,
     trainer_config: Optional[TrainerConfig] = None,
+    channel_names: Optional[Tuple[str, ...]] = None,
 ) -> SweepResult:
     """
     Run λ×μ sweep with cross-validation.
@@ -117,6 +118,7 @@ def run_sweep(
                 class_weights=cw,
                 lam=lam, mu=mu,
                 config=trainer_config,
+                channel_names=channel_names,
             )
 
             # Predict on validation

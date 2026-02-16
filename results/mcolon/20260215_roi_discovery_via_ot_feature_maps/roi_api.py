@@ -30,6 +30,7 @@ from roi_config import (
     SmoothnessPreset,
     SweepConfig,
     TrainerConfig,
+    ROIRunConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def fit(
     n_boot: int = 200,
     out_dir: Optional[str] = None,
     random_seed: int = 42,
+    run_config: Optional[ROIRunConfig] = None,
 ) -> Dict:
     """
     Run ROI discovery pipeline end-to-end.
@@ -89,6 +91,18 @@ def fit(
     from roi_nulls import run_nulls, save_nulls_result
 
     # Resolve config
+    if run_config is not None:
+        genotype = run_config.genotype
+        features = run_config.features.value
+        roi_size = run_config.roi_size.value
+        smoothness = run_config.smoothness.value
+        learn_res = run_config.trainer.learn_res
+        null = run_config.nulls.null_mode.value
+        n_permute = run_config.nulls.n_permute
+        n_boot = run_config.nulls.n_boot
+        random_seed = run_config.trainer.random_seed
+        out_dir = out_dir or run_config.out_dir
+
     roi_size_enum = ROISizePreset(roi_size)
     smoothness_enum = SmoothnessPreset(smoothness)
     null_mode = NullMode(null)
@@ -132,6 +146,7 @@ def fit(
     loader = FeatureLoader(dataset_dir)
     X, y, groups = loader.load_full()
     mask_ref = loader.load_mask_ref()
+    channel_names = loader.get_channel_names()
 
     logger.info(f"  Loaded: {X.shape[0]} samples, {X.shape[-1]} channels")
 
@@ -143,6 +158,7 @@ def fit(
         mu_values=mu_values,
         sweep_config=sweep_config,
         trainer_config=trainer_config,
+        channel_names=channel_names,
     )
     save_sweep_result(sweep_result, out_path / "sweep")
 
@@ -161,6 +177,7 @@ def fit(
             null_config=null_config,
             sweep_config=sweep_config,
             trainer_config=trainer_config,
+            channel_names=channel_names,
         )
         save_nulls_result(nulls_result, out_path / "nulls")
 
