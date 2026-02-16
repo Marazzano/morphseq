@@ -1,4 +1,4 @@
-# ROI Discovery Test Plan — Phases 1 through 2.5
+# ROI Discovery Test Plan — Phases 0 through 2.5
 
 **Date:** 2026-02-16
 **Status:** Draft — execute sequentially; each task has its own test file.
@@ -15,6 +15,19 @@ in the bottom rows of the grid to simulate this. Sanity checks verify that
 discovered ROIs concentrate there, not at the head/top.
 
 ---
+
+## Phase 0: S-bin Localization + QC Foundation
+
+| # | Task | Test File | What it checks |
+|---|------|-----------|----------------|
+| 0.1 | OT map generation | `test_p0_01_ot_maps.py` | WT-reference map generation count, provenance metadata, failure handling |
+| 0.2 | Outlier detection + QC | `test_p0_02_outlier_qc.py` | IQR thresholds, dropped sample table, QC artifact outputs |
+| 0.3 | S coordinate map | `test_p0_03_s_coordinate.py` | S coverage, orientation, tangent/normal validity |
+| 0.4 | S-bin feature aggregation | `test_p0_04_sbin_features.py` | Bin completeness, V0/V1 schema, occupancy diagnostics |
+| 0.5 | Bin-wise localization | `test_p0_05_bin_localization.py` | Grouped-CV AUROC profile + CI |
+| 0.6 | Interval selection | `test_p0_06_interval_search.py` | Deterministic interval search + sanity checks |
+| 0.7 | Nulls + stability | `test_p0_07_nulls_stability.py` | Selection-aware permutations + bootstrap endpoint variability |
+| 0.8 | Phase 0 handoff | `test_p0_08_handoff_summary.py` | Run artifacts complete for Phase 1 go/no-go review |
 
 ## Phase 1: Core Pipeline
 
@@ -51,34 +64,6 @@ discovered ROIs concentrate there, not at the head/top.
 
 ---
 
-## Execution checklist
-
-```
-Phase 1:
-  [ ] 1.1  Config
-  [ ] 1.2  FeatureDataset
-  [ ] 1.3  Loader
-  [ ] 1.4  TV
-  [ ] 1.5  Trainer
-  [ ] 1.6  ROI extraction
-  [ ] 1.7  Sweep
-  [ ] 1.8  Permutation null
-  [ ] 1.9  Bootstrap stability
-  [ ] 1.10 API integration
-
-Phase 2.0:
-  [ ] 2.1  Perturbation + baseline
-  [ ] 2.2  Occlusion evaluation
-  [ ] 2.3  Bootstrap occlusion
-  [ ] 2.4  Resampling helpers
-  [ ] 2.5  Integration fixes
-
-Phase 2.5:
-  [ ] 2.5.1  Mask parameterization
-  [ ] 2.5.2  Mask objective
-  [ ] 2.5.3  Mask trainer
-```
-
 ## Running
 
 ```bash
@@ -94,3 +79,18 @@ pytest tests/test_p1_*.py -v
 # Run a single task:
 pytest tests/test_p1_04_tv.py -v
 ```
+
+---
+
+## Execution files (new)
+
+For day-to-day execution, use the structured task files in:
+
+- `tests/execution/TASK_LIST.md` (quick run checklist)
+- `tests/execution/phase0/*.md`
+- `tests/execution/phase1/*.md`
+- `tests/execution/phase2_0/*.md`
+- `tests/execution/phase2_5/*.md`
+
+Each task file includes explicit checks, minimal pseudo-logic, and expected artifacts,
+with a dedicated tail-localization inspection step for cep290-relevant ROI outputs.
