@@ -216,6 +216,11 @@ def plot_qc_mean_maps(
     y_valid = y[valid]
     cost_ch = X_valid[:, :, :, 0]  # channel 0 = cost_density
 
+    # Get proper extent for canonical grid display
+    h, w = mask_ref.shape
+    extent = [0, w, h, 0]  # [left, right, bottom, top] for upper origin
+    origin = "upper"
+
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     for label_int, label_str in label_names.items():
@@ -226,9 +231,17 @@ def plot_qc_mean_maps(
         mean_map = np.where(mask_ref.astype(bool), mean_map, np.nan)
 
         ax_idx = label_int  # 0=WT, 1=mutant
-        im = axes[ax_idx].imshow(mean_map, cmap="hot", interpolation="bilinear")
+        im = axes[ax_idx].imshow(
+            mean_map,
+            cmap="hot",
+            aspect="equal",
+            extent=extent,
+            origin=origin,
+            interpolation="nearest",
+        )
         axes[ax_idx].set_title(f"Mean Cost: {label_str} (n={mask_class.sum()})")
-        axes[ax_idx].axis("off")
+        axes[ax_idx].set_xlabel("x (px)")
+        axes[ax_idx].set_ylabel("y (px)")
         plt.colorbar(im, ax=axes[ax_idx], fraction=0.046, pad=0.04)
 
     # Difference
@@ -238,10 +251,19 @@ def plot_qc_mean_maps(
         diff = np.mean(cost_ch[mut_mask], axis=0) - np.mean(cost_ch[wt_mask], axis=0)
         diff = np.where(mask_ref.astype(bool), diff, np.nan)
         vabs = np.nanmax(np.abs(diff)) if np.any(np.isfinite(diff)) else 1.0
-        im = axes[2].imshow(diff, cmap="RdBu_r", vmin=-vabs, vmax=vabs,
-                            interpolation="bilinear")
+        im = axes[2].imshow(
+            diff,
+            cmap="RdBu_r",
+            vmin=-vabs,
+            vmax=vabs,
+            aspect="equal",
+            extent=extent,
+            origin=origin,
+            interpolation="nearest",
+        )
         axes[2].set_title(f"Difference ({label_names[1]} − {label_names[0]})")
-        axes[2].axis("off")
+        axes[2].set_xlabel("x (px)")
+        axes[2].set_ylabel("y (px)")
         plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04, label="Δ cost")
 
     fig.suptitle("QC Gate: Post-Filter Mean Cost Maps", fontsize=12, fontweight="bold")
