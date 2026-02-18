@@ -106,6 +106,12 @@ def preprocess_pair_canonical(
     """
     Preprocess mask pair using canonical grid transformation.
 
+    # TODO: Rename to source_target_joint_canonical_alignment() to better
+    # reflect what this does: independently align src and tgt to canonical
+    # grid, then jointly crop/pad into a shared bounding box for OT. The
+    # current name is generic and doesn't convey the two-stage nature
+    # (independent alignment → joint centering).
+
     IMPORTANT: For mask pairs, we need to preserve spatial relationships.
     This function assumes both masks are from the same embryo at the same
     resolution, so they share a common transform.

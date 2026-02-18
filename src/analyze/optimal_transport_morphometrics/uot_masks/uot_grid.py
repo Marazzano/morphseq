@@ -12,6 +12,7 @@ This enables:
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -78,12 +79,9 @@ class CanonicalAligner:
         anchor_frac_yx: tuple[float, float] = (0.50, 0.50),
         clipping_threshold: float = 0.98,
         error_on_clip: bool = True,
-        back_quantile: float = 0.9,
-        head_weight: float = 1.0,
+        yolk_weight: float = 1.0,
         back_weight: float = 1.0,
-        yolk_ring_inner_k: float = 1.2,
-        yolk_ring_outer_k: float = 3.0,
-        yolk_ring_min_pixels: int = 200,
+        back_sample_radius_k: float = 1.5,
     ) -> None:
         self.H, self.W = target_shape_hw
         self.target_res = target_um_per_pixel
@@ -92,16 +90,10 @@ class CanonicalAligner:
         self.anchor_frac_yx = anchor_frac_yx
         self.clipping_threshold = clipping_threshold
         self.error_on_clip = error_on_clip
-        self.back_quantile = back_quantile
-        self.head_weight = head_weight
+        self.yolk_weight = yolk_weight
         self.back_weight = back_weight
-        self.yolk_ring_inner_k = yolk_ring_inner_k
-        self.yolk_ring_outer_k = yolk_ring_outer_k
-        self.yolk_ring_min_pixels = yolk_ring_min_pixels
-        
-        # Minimum head-back separation (fraction of mask diameter)
-        # Ensures we don't accept head/back that are too close (bad orientation)
-        self.min_head_back_separation_ratio = 0.15  # 15% of mask diameter
+        self.back_sample_radius_k = back_sample_radius_k
+        self._last_back_debug: Optional[dict] = None
 
         self.is_landscape = self.W >= self.H
 
@@ -146,156 +138,141 @@ class CanonicalAligner:
     def _warp(self, mask: np.ndarray, M: np.ndarray) -> np.ndarray:
         return cv2.warpAffine(mask.astype(np.float32), M, (self.W, self.H), flags=cv2.INTER_NEAREST)
 
-    def _compute_back_com(
-        self,
-        mask: np.ndarray,
-        head_yx: tuple[float, float],
-        yolk_mask: Optional[np.ndarray] = None,
-    ) -> tuple[float, float]:
-        """
-        Compute back center of mass - wrapper for robust direction-based method.
-        
-        Delegates to _compute_back_direction_robust which uses progressive expansion
-        and median direction across multiple samples for robustness.
-        """
-        return self._compute_back_direction_robust(mask, head_yx, yolk_mask)
-
     def _bbox(self, mask: np.ndarray) -> Optional[tuple[int, int, int, int]]:
         ys, xs = np.where(mask > 0.5)
         if ys.size == 0:
             return None
         return int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
-    
-    def _compute_back_direction_robust(
+
+    def _project_point_to_mask_in_disk(
         self,
         mask: np.ndarray,
-        head_yx: tuple[float, float],
+        yx: tuple[float, float],
+        disk_center_yx: tuple[float, float],
+        disk_radius: float,
+    ) -> tuple[float, float]:
+        """Project a point to the nearest mask pixel within the sampling disk.
+
+        If the centroid lands off-mask, project to the nearest mask pixel
+        *within the sampling disk*, not globally. This prevents projecting
+        to a distant part of the embryo.
+        """
+        y, x = float(yx[0]), float(yx[1])
+        iy = int(np.clip(round(y), 0, mask.shape[0] - 1))
+        ix = int(np.clip(round(x), 0, mask.shape[1] - 1))
+        if mask[iy, ix] > 0.5:
+            return float(iy), float(ix)
+
+        ys, xs = np.where(mask > 0.5)
+        if ys.size == 0:
+            return y, x
+
+        # Restrict to pixels within the sampling disk
+        dy_disk = ys.astype(np.float64) - disk_center_yx[0]
+        dx_disk = xs.astype(np.float64) - disk_center_yx[1]
+        in_disk = (dy_disk**2 + dx_disk**2) <= disk_radius**2
+        if not in_disk.any():
+            # No mask pixels in disk — fall back to nearest mask pixel globally
+            d2 = (ys.astype(np.float64) - y) ** 2 + (xs.astype(np.float64) - x) ** 2
+            idx = int(np.argmin(d2))
+            return float(ys[idx]), float(xs[idx])
+
+        ys_disk = ys[in_disk]
+        xs_disk = xs[in_disk]
+        d2 = (ys_disk.astype(np.float64) - y) ** 2 + (xs_disk.astype(np.float64) - x) ** 2
+        idx = int(np.argmin(d2))
+        return float(ys_disk[idx]), float(xs_disk[idx])
+
+    def _compute_back_direction(
+        self,
+        mask: np.ndarray,
         yolk_mask: Optional[np.ndarray] = None,
     ) -> tuple[float, float]:
         """
-        Compute robust back direction using progressive expansion and median direction.
-        
-        Strategy:
-        1. Try multiple yolk ring expansions (or quantile levels)
-        2. For each valid expansion, compute direction vector from head to back
-        3. Take median direction across all valid samples
-        4. Return back position based on consensus direction
-        
-        This is robust to outliers and handles edge cases better than single-point methods.
+        Compute back direction point using yolk-surrounding centroid.
+
+        Geometry: sample all embryo-mask pixels within back_sample_radius_k × r_yolk
+        of the yolk COM and compute their centroid. This centroid IS the back point.
+
+        No fallback cascade — if yolk is available, use yolk-surrounding centroid.
+        If yolk is None/empty, warn and return mask COM as a degenerate fallback.
         """
-        coords = np.column_stack(np.nonzero(mask > 0.5))
-        if coords.size == 0:
-            return head_yx
-        
-        # Estimate mask diameter for validation
-        mask_bbox_h = coords[:, 0].max() - coords[:, 0].min()
-        mask_bbox_w = coords[:, 1].max() - coords[:, 1].min()
-        mask_diameter = np.sqrt(mask_bbox_h**2 + mask_bbox_w**2)
-        min_distance = mask_diameter * self.min_head_back_separation_ratio
-        
-        # Collect candidate back positions from multiple expansion levels
-        candidate_backs = []
-        
-        # Method 1: Yolk ring with multiple radii
-        if yolk_mask is not None and np.sum(yolk_mask) > 0:
-            cy, cx = self._center_of_mass(yolk_mask)
-            area = float(yolk_mask.sum())
-            radius = np.sqrt(max(area, 1.0) / np.pi)
-            r_in = self.yolk_ring_inner_k * radius
-            
-            ys, xs = np.nonzero(mask > 0.5)
-            if ys.size > 0:
-                dy = ys - cy
-                dx = xs - cx
-                dist = np.sqrt(dx * dx + dy * dy)
-                
-                # Try multiple outer radii: 3.0×, 4.0×, 5.0×, 6.0×, 8.0×, 10.0×
-                for outer_k in [3.0, 4.0, 5.0, 6.0, 8.0, 10.0]:
-                    r_out = outer_k * radius
-                    ring = (dist >= r_in) & (dist <= r_out)
-                    
-                    if ring.sum() >= self.yolk_ring_min_pixels:
-                        ring_coords = np.column_stack([ys[ring], xs[ring]])
-                        back_y = float(ring_coords[:, 0].mean())
-                        back_x = float(ring_coords[:, 1].mean())
-                        
-                        # Validate separation
-                        hb_dist = np.sqrt((back_y - head_yx[0])**2 + (back_x - head_yx[1])**2)
-                        if hb_dist >= min_distance:
-                            candidate_backs.append((back_y, back_x))
-        
-        # Method 2: Distance quantiles (multiple quantile levels)
-        dy = coords[:, 0] - head_yx[0]
-        dx = coords[:, 1] - head_yx[1]
-        dist = np.sqrt(dx * dx + dy * dy)
-        
-        # Try multiple quantiles: 0.95, 0.90, 0.85, 0.80, 0.75
-        for quantile in [0.95, 0.90, 0.85, 0.80, 0.75]:
-            threshold = np.quantile(dist, quantile)
-            far = coords[dist >= threshold]
-            
-            if far.size > 0:
-                back_y = float(far[:, 0].mean())
-                back_x = float(far[:, 1].mean())
-                
-                # Validate separation
-                hb_dist = np.sqrt((back_y - head_yx[0])**2 + (back_x - head_yx[1])**2)
-                if hb_dist >= min_distance:
-                    candidate_backs.append((back_y, back_x))
-        
-        # If we have multiple candidates, compute median direction
-        if len(candidate_backs) >= 2:
-            # Compute direction vectors from head to each candidate back
-            directions = []
-            for back_y, back_x in candidate_backs:
-                dy = back_y - head_yx[0]
-                dx = back_x - head_yx[1]
-                directions.append((dy, dx))
-            
-            # Use circular/vector median: median of y and x components separately
-            # This is robust to outliers
-            directions = np.array(directions)
-            median_dy = float(np.median(directions[:, 0]))
-            median_dx = float(np.median(directions[:, 1]))
-            
-            # Normalize to median distance
-            distances = np.sqrt(directions[:, 0]**2 + directions[:, 1]**2)
-            median_distance = float(np.median(distances))
-            
-            # Renormalize median direction to median distance
-            direction_mag = np.sqrt(median_dy**2 + median_dx**2)
-            if direction_mag > 0:
-                median_dy = median_dy / direction_mag * median_distance
-                median_dx = median_dx / direction_mag * median_distance
-            
-            back_y = head_yx[0] + median_dy
-            back_x = head_yx[1] + median_dx
-            
-            return back_y, back_x
-        
-        # If we have exactly one candidate, use it
-        elif len(candidate_backs) == 1:
-            return candidate_backs[0]
-        
-        # Last resort: use farthest point from head
-        farthest_idx = np.argmax(dist)
-        back_y = float(coords[farthest_idx, 0])
-        back_x = float(coords[farthest_idx, 1])
-        
-        # Final validation
-        hb_dist = np.sqrt((back_y - head_yx[0])**2 + (back_x - head_yx[1])**2)
-        if hb_dist < min_distance:
-            raise RuntimeError(
-                f"Failed to find valid head-back separation. "
-                f"Head: ({head_yx[0]:.1f}, {head_yx[1]:.1f}), "
-                f"Back: ({back_y:.1f}, {back_x:.1f}), "
-                f"Distance: {hb_dist:.1f} px (min required: {min_distance:.1f} px, "
-                f"mask diameter: {mask_diameter:.1f} px). "
-                f"Candidates found: {len(candidate_backs)}. "
-                f"This likely indicates a highly curved/compact embryo or bad mask."
+        back_debug = {}
+
+        if yolk_mask is None or np.sum(yolk_mask) == 0:
+            warnings.warn(
+                "No yolk mask available for back-direction computation. "
+                "Returning mask COM as degenerate back point.",
+                RuntimeWarning, stacklevel=2,
             )
-        
-        return back_y, back_x
+            fallback = self._center_of_mass(mask)
+            back_debug["selected"] = "no_yolk_fallback"
+            back_debug["back_yx"] = (float(fallback[0]), float(fallback[1]))
+            self._last_back_debug = back_debug
+            return fallback
+
+        # Yolk COM — origin for everything
+        yolk_com_y, yolk_com_x = self._center_of_mass(yolk_mask)
+        yolk_area = float(yolk_mask.sum())
+        r_yolk = np.sqrt(max(yolk_area, 1.0) / np.pi)
+        r_sample = self.back_sample_radius_k * r_yolk
+
+        back_debug["yolk_com_yx"] = (float(yolk_com_y), float(yolk_com_x))
+        back_debug["r_yolk"] = float(r_yolk)
+        back_debug["r_sample"] = float(r_sample)
+        back_debug["back_sample_radius_k"] = float(self.back_sample_radius_k)
+
+        # Find all embryo-mask pixels within the sampling disk
+        ys, xs = np.nonzero(mask > 0.5)
+        if ys.size == 0:
+            back_debug["selected"] = "empty_mask"
+            self._last_back_debug = back_debug
+            return (yolk_com_y, yolk_com_x)
+
+        dy = ys.astype(np.float64) - yolk_com_y
+        dx = xs.astype(np.float64) - yolk_com_x
+        dist_from_yolk = np.sqrt(dy**2 + dx**2)
+        in_disk = dist_from_yolk <= r_sample
+
+        n_pixels_in_disk = int(in_disk.sum())
+        back_debug["n_pixels_in_disk"] = n_pixels_in_disk
+
+        if n_pixels_in_disk == 0:
+            warnings.warn(
+                f"No embryo-mask pixels within sampling disk "
+                f"(r_sample={r_sample:.1f}px around yolk COM). "
+                f"Using yolk COM as back point.",
+                RuntimeWarning, stacklevel=2,
+            )
+            back_debug["selected"] = "empty_disk"
+            back_debug["back_yx"] = (float(yolk_com_y), float(yolk_com_x))
+            self._last_back_debug = back_debug
+            return (yolk_com_y, yolk_com_x)
+
+        if n_pixels_in_disk < 50:
+            warnings.warn(
+                f"Only {n_pixels_in_disk} embryo-mask pixels in sampling disk "
+                f"(r_sample={r_sample:.1f}px). Result may be noisy.",
+                RuntimeWarning, stacklevel=2,
+            )
+
+        # Centroid of embryo pixels in the disk = back point
+        back_centroid_y = float(ys[in_disk].mean())
+        back_centroid_x = float(xs[in_disk].mean())
+
+        back_debug["raw_back_centroid_yx"] = (back_centroid_y, back_centroid_x)
+
+        # If centroid is off-mask, project to nearest mask pixel within disk
+        back_y, back_x = self._project_point_to_mask_in_disk(
+            mask, (back_centroid_y, back_centroid_x),
+            disk_center_yx=(yolk_com_y, yolk_com_x),
+            disk_radius=r_sample,
+        )
+
+        back_debug["selected"] = "yolk_surrounding_centroid"
+        back_debug["back_yx"] = (float(back_y), float(back_x))
+        self._last_back_debug = back_debug
+        return (back_y, back_x)
 
     def align(
         self,
@@ -331,7 +308,7 @@ class CanonicalAligner:
         rotation_needed = angle_deg - target_angle
 
         candidates = []
-        best_head_yx = None
+        best_yolk_yx = None
         best_back_yx = None
         rot_options = [0, 180]
         flip_options = [False, True] if self.allow_flip else [False]
@@ -349,22 +326,30 @@ class CanonicalAligner:
                     if yolk_w is not None:
                         yolk_w = cv2.flip(yolk_w, 1)
 
-                head_mask = yolk_w if (use_yolk and yolk_w is not None and yolk_w.sum() > 0) else mask_w
-                head_yx = self._center_of_mass(head_mask)
-                back_yx = self._compute_back_com(mask_w, head_yx, yolk_mask=yolk_w if use_yolk else None)
+                # Yolk COM = anchor point (we want it top-left)
+                yolk_feature_mask = yolk_w if (use_yolk and yolk_w is not None and yolk_w.sum() > 0) else mask_w
+                yolk_yx = self._center_of_mass(yolk_feature_mask)
+
+                # Back direction = centroid of embryo tissue surrounding yolk
+                back_yx = self._compute_back_direction(
+                    mask_w,
+                    yolk_mask=yolk_w if use_yolk else None,
+                )
 
                 if reference_mask is not None:
                     intersection = np.logical_and(mask_w > 0.5, reference_mask > 0.5).sum()
                     union = np.logical_or(mask_w > 0.5, reference_mask > 0.5).sum()
                     score = intersection / (union + 1e-6)
                 else:
-                    head_cost = head_yx[1] + head_yx[0]
+                    # Scoring: yolk near top-left (low y+x) = low cost;
+                    # back near bottom-right (high y+x) = high score.
+                    yolk_cost = yolk_yx[1] + yolk_yx[0]
                     back_score = back_yx[1] + back_yx[0]
-                    score = (self.back_weight * back_score) - (self.head_weight * head_cost)
+                    score = (self.back_weight * back_score) - (self.yolk_weight * yolk_cost)
 
-                candidates.append((score, rot_add, do_flip, head_yx, back_yx))
+                candidates.append((score, rot_add, do_flip, yolk_yx, back_yx))
 
-        best_score, best_rot, best_flip, best_head_yx, best_back_yx = max(
+        best_score, best_rot, best_flip, best_yolk_yx, best_back_yx = max(
             candidates, key=lambda x: x[0]
         )
         final_rotation = rotation_needed + best_rot
@@ -418,12 +403,11 @@ class CanonicalAligner:
         if aligned_yolk is not None:
             aligned_yolk = self._warp(aligned_yolk, M_shift)
 
-        # Final head/back positions (post shift)
-        final_head_mask = aligned_yolk if (use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0) else aligned_mask
-        final_head_yx = self._center_of_mass(final_head_mask)
-        final_back_yx = self._compute_back_com(
+        # Final yolk/back positions (post shift)
+        final_yolk_mask = aligned_yolk if (use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0) else aligned_mask
+        final_yolk_yx = self._center_of_mass(final_yolk_mask)
+        final_back_yx = self._compute_back_direction(
             aligned_mask,
-            final_head_yx,
             yolk_mask=aligned_yolk if use_yolk else None,
         )
 
@@ -452,18 +436,18 @@ class CanonicalAligner:
             "anchor_shift_xy": (float(shift_x), float(shift_y)),
             "anchor_shift_clamped": bool(clamped),
             "fit_impossible": bool(fit_impossible),
-            "head_yx_pre_shift": (
-                (float(best_head_yx[0]), float(best_head_yx[1])) if best_head_yx is not None else None
+            "yolk_yx_pre_shift": (
+                (float(best_yolk_yx[0]), float(best_yolk_yx[1])) if best_yolk_yx is not None else None
             ),
             "back_yx_pre_shift": (
                 (float(best_back_yx[0]), float(best_back_yx[1])) if best_back_yx is not None else None
             ),
-            "head_yx_final": (float(final_head_yx[0]), float(final_head_yx[1])),
+            "yolk_yx_final": (float(final_yolk_yx[0]), float(final_yolk_yx[1])),
             "back_yx_final": (float(final_back_yx[0]), float(final_back_yx[1])),
             "retained_ratio": float(retained_ratio),
             "clipped": bool(clipped),
         }
-        
+
         # CRITICAL VALIDATION: Never return empty masks
         final_mask = (aligned_mask > 0.5).astype(np.uint8)
         if final_mask.sum() == 0:
@@ -479,22 +463,21 @@ class CanonicalAligner:
                 f"This indicates a bug in the alignment transform."
             )
             raise RuntimeError(error_msg)
-        
+
         # CRITICAL VALIDATION: Mask should not touch grid edges
-        # This indicates misalignment, incorrect orientation, or embryo too large
         h, w = final_mask.shape
         touches_top = final_mask[0, :].any()
         touches_bottom = final_mask[-1, :].any()
         touches_left = final_mask[:, 0].any()
         touches_right = final_mask[:, -1].any()
-        
+
         if touches_top or touches_bottom or touches_left or touches_right:
             edges = []
             if touches_top: edges.append("top")
             if touches_bottom: edges.append("bottom")
             if touches_left: edges.append("left")
             if touches_right: edges.append("right")
-            
+
             error_msg = (
                 f"CanonicalAligner produced mask touching grid edges: {', '.join(edges)}. "
                 f"Aligned mask: {final_mask.sum()} pixels on {h}×{w} grid, "
@@ -512,6 +495,7 @@ class CanonicalAligner:
             meta["debug"] = {
                 "aligned_mask_pre_shift": aligned_mask_pre_shift,
                 "aligned_yolk_pre_shift": aligned_yolk_pre_shift,
+                "back_direction": copy.deepcopy(self._last_back_debug),
             }
 
         return final_mask, (

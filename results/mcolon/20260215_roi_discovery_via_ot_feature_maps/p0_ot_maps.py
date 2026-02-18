@@ -38,8 +38,11 @@ class OTMapResult:
     cost_density: np.ndarray       # (H, W) float32 — canonical grid shape
     displacement_yx: np.ndarray    # (H, W, 2) float32 — (v, u) convention
     delta_mass: np.ndarray         # (H, W) float32 — created - destroyed
+    aligned_ref_mask: Optional[np.ndarray]    # (H, W) uint8 — exact OT-aligned source mask
+    aligned_target_mask: Optional[np.ndarray] # (H, W) uint8 — exact OT-aligned target mask
     total_cost_C: float
     diagnostics: Dict
+    alignment_debug: Optional[Dict] = None
 
 
 def _compute_ot_params_hash(config_dict: dict) -> str:
@@ -56,6 +59,8 @@ def run_single_ot(
     raw_um_per_px_tgt: float,
     yolk_ref: Optional[np.ndarray] = None,
     yolk_tgt: Optional[np.ndarray] = None,
+    source_id: Optional[str] = None,
+    target_id: Optional[str] = None,
     uot_config=None,
     backend=None,
 ) -> OTMapResult:
@@ -84,6 +89,19 @@ def run_single_ot(
     from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
     from analyze.optimal_transport_morphometrics.uot_masks.run_transport import run_uot_pair
 
+    # Fail fast on mask/yolk shape mismatches. Passing a canonicalized embryo mask
+    # with a raw-resolution yolk mask silently breaks canonical alignment.
+    if yolk_ref is not None and yolk_ref.shape != mask_ref.shape:
+        raise ValueError(
+            f"Reference yolk shape {yolk_ref.shape} does not match reference mask shape {mask_ref.shape}. "
+            "Both must be in the same coordinate system (raw input expected)."
+        )
+    if yolk_tgt is not None and yolk_tgt.shape != mask_target.shape:
+        raise ValueError(
+            f"Target yolk shape {yolk_tgt.shape} does not match target mask shape {mask_target.shape}. "
+            "Both must be in the same coordinate system (raw input expected)."
+        )
+
     if uot_config is None:
         # Use validated config from Stream D but with POT backend
         # Parameters: epsilon=1e-4, reg_m=10, max_support_points=3000
@@ -110,6 +128,27 @@ def run_single_ot(
             random_seed=42,
             metric="sqeuclidean",
             coord_scale=1.0 / max((256, 576)),
+        )
+
+    # Heuristic warning for accidental double-canonicalization:
+    # if input already looks canonical but raw_um_per_px indicates otherwise,
+    # preprocess_pair_canonical will rescale it again.
+    if (
+        getattr(uot_config, "use_canonical_grid", False)
+        and tuple(mask_ref.shape) == tuple(getattr(uot_config, "canonical_grid_shape_hw", (256, 576)))
+        and not np.isclose(
+            float(raw_um_per_px_ref),
+            float(getattr(uot_config, "canonical_grid_um_per_pixel", 10.0)),
+            atol=1e-6,
+        )
+    ):
+        logger.warning(
+            "Reference mask shape already matches canonical grid %s but raw_um_per_px_ref=%.6f "
+            "(canonical is %.6f). This often indicates a pre-canonicalized reference passed into "
+            "run_single_ot, which can shrink maps due to double canonicalization.",
+            mask_ref.shape,
+            raw_um_per_px_ref,
+            float(getattr(uot_config, "canonical_grid_um_per_pixel", 10.0)),
         )
     
     if backend is None:
@@ -164,13 +203,122 @@ def run_single_ot(
             f"downsample_divisor={getattr(cfg, 'downsample_divisor', None)}."
         )
 
+    preprocess_meta = {}
+    if isinstance(result.transform_meta, dict):
+        preprocess_meta = result.transform_meta.get("preprocess", {}) or {}
+    src_align = preprocess_meta.get("canonical_alignment_src", {}) or {}
+    tgt_align = preprocess_meta.get("canonical_alignment_tgt", {}) or {}
+    metrics = {}
+    if isinstance(result.diagnostics, dict):
+        metrics = result.diagnostics.get("metrics", {}) or {}
+
+    src_mask_aligned = (
+        np.asarray(result.aligned_src_mask_px, dtype=np.uint8)
+        if getattr(result, "aligned_src_mask_px", None) is not None
+        else None
+    )
+    tgt_mask_aligned = (
+        np.asarray(result.aligned_tgt_mask_px, dtype=np.uint8)
+        if getattr(result, "aligned_tgt_mask_px", None) is not None
+        else None
+    )
+    overlap_iou = np.nan
+    if src_mask_aligned is not None and tgt_mask_aligned is not None:
+        src_bool = src_mask_aligned > 0
+        tgt_bool = tgt_mask_aligned > 0
+        union = float(np.logical_or(src_bool, tgt_bool).sum())
+        inter = float(np.logical_and(src_bool, tgt_bool).sum())
+        overlap_iou = inter / union if union > 0 else np.nan
+
+    bbox_y0y1x0x1 = preprocess_meta.get("bbox_y0y1x0x1")
+    pad_hw = preprocess_meta.get("pad_hw")
+    bbox_y0 = bbox_y0y1x0x1[0] if bbox_y0y1x0x1 is not None else np.nan
+    bbox_y1 = bbox_y0y1x0x1[1] if bbox_y0y1x0x1 is not None else np.nan
+    bbox_x0 = bbox_y0y1x0x1[2] if bbox_y0y1x0x1 is not None else np.nan
+    bbox_x1 = bbox_y0y1x0x1[3] if bbox_y0y1x0x1 is not None else np.nan
+    pad_h = pad_hw[0] if pad_hw is not None else np.nan
+    pad_w = pad_hw[1] if pad_hw is not None else np.nan
+
+    alignment_debug = {
+        "sample_id": sample_id,
+        "source_id": source_id,
+        "target_id": target_id,
+        "src_rotation_deg": src_align.get("rotation_deg"),
+        "src_flip": src_align.get("flip"),
+        "src_retained_ratio": src_align.get("retained_ratio"),
+        "src_anchor_shift_x": (
+            src_align.get("anchor_shift_xy", (np.nan, np.nan))[0]
+            if src_align.get("anchor_shift_xy") is not None else np.nan
+        ),
+        "src_anchor_shift_y": (
+            src_align.get("anchor_shift_xy", (np.nan, np.nan))[1]
+            if src_align.get("anchor_shift_xy") is not None else np.nan
+        ),
+        "src_yolk_y_final": (
+            src_align.get("yolk_yx_final", (np.nan, np.nan))[0]
+            if src_align.get("yolk_yx_final") is not None else np.nan
+        ),
+        "src_yolk_x_final": (
+            src_align.get("yolk_yx_final", (np.nan, np.nan))[1]
+            if src_align.get("yolk_yx_final") is not None else np.nan
+        ),
+        "src_back_y_final": (
+            src_align.get("back_yx_final", (np.nan, np.nan))[0]
+            if src_align.get("back_yx_final") is not None else np.nan
+        ),
+        "src_back_x_final": (
+            src_align.get("back_yx_final", (np.nan, np.nan))[1]
+            if src_align.get("back_yx_final") is not None else np.nan
+        ),
+        "tgt_rotation_deg": tgt_align.get("rotation_deg"),
+        "tgt_flip": tgt_align.get("flip"),
+        "tgt_retained_ratio": tgt_align.get("retained_ratio"),
+        "tgt_anchor_shift_x": (
+            tgt_align.get("anchor_shift_xy", (np.nan, np.nan))[0]
+            if tgt_align.get("anchor_shift_xy") is not None else np.nan
+        ),
+        "tgt_anchor_shift_y": (
+            tgt_align.get("anchor_shift_xy", (np.nan, np.nan))[1]
+            if tgt_align.get("anchor_shift_xy") is not None else np.nan
+        ),
+        "tgt_yolk_y_final": (
+            tgt_align.get("yolk_yx_final", (np.nan, np.nan))[0]
+            if tgt_align.get("yolk_yx_final") is not None else np.nan
+        ),
+        "tgt_yolk_x_final": (
+            tgt_align.get("yolk_yx_final", (np.nan, np.nan))[1]
+            if tgt_align.get("yolk_yx_final") is not None else np.nan
+        ),
+        "tgt_back_y_final": (
+            tgt_align.get("back_yx_final", (np.nan, np.nan))[0]
+            if tgt_align.get("back_yx_final") is not None else np.nan
+        ),
+        "tgt_back_x_final": (
+            tgt_align.get("back_yx_final", (np.nan, np.nan))[1]
+            if tgt_align.get("back_yx_final") is not None else np.nan
+        ),
+        "pair_bbox_y0": bbox_y0,
+        "pair_bbox_y1": bbox_y1,
+        "pair_bbox_x0": bbox_x0,
+        "pair_bbox_x1": bbox_x1,
+        "pair_pad_h": pad_h,
+        "pair_pad_w": pad_w,
+        "total_cost_C": float(result.cost),
+        "mass_delta_crop": metrics.get("mass_delta_crop"),
+        "mass_ratio_crop": metrics.get("mass_ratio_crop"),
+        "overlap_iou_src_tgt": overlap_iou,
+    }
+
     return OTMapResult(
         sample_id=sample_id,
         cost_density=cost_density.astype(np.float32),
         displacement_yx=displacement_yx.astype(np.float32),
         delta_mass=delta_mass.astype(np.float32),
+        aligned_ref_mask=src_mask_aligned,
+        aligned_target_mask=tgt_mask_aligned,
         total_cost_C=float(result.cost),
         diagnostics=result.diagnostics or {},
+        alignment_debug=alignment_debug,
     )
 
 
@@ -185,7 +333,13 @@ def generate_ot_maps(
     feature_set: Phase0FeatureSet = Phase0FeatureSet.V0_COST,
     uot_config=None,
     backend=None,
-) -> Tuple[np.ndarray, np.ndarray]:
+    source_id: Optional[str] = None,
+    target_ids: Optional[List[str]] = None,
+    return_aligned_masks: bool = False,
+    collect_debug: bool = True,
+    strict_debug_ids: bool = False,
+    return_debug_df: bool = False,
+):
     """
     Run OT for all targets against fixed reference, return feature array X and total_cost_C.
 
@@ -202,14 +356,33 @@ def generate_ot_maps(
 
     Returns
     -------
-    X : (N, 256, 576, C) float32 — feature maps per sample on canonical grid
-    total_cost_C : (N,) float32 — total OT cost per sample
+    If return_aligned_masks=False:
+        X : (N, 256, 576, C) float32 — feature maps per sample on canonical grid
+        total_cost_C : (N,) float32 — total OT cost per sample
+    If return_aligned_masks=True:
+        X, total_cost_C, aligned_ref_mask, aligned_target_masks
+        aligned_ref_mask : (256, 576) uint8
+        aligned_target_masks : (N, 256, 576) uint8
+    If return_debug_df=True:
+        returns an additional DataFrame with per-sample alignment diagnostics.
     """
     N = len(target_masks)
     assert len(sample_ids) == N
     assert len(raw_um_per_px_targets) == N
     if yolk_targets is not None:
         assert len(yolk_targets) == N
+    if target_ids is not None:
+        assert len(target_ids) == N
+
+    if collect_debug and (source_id is None or target_ids is None):
+        msg = (
+            "Alignment debug capture is enabled, but source_id/target_ids were not fully provided. "
+            "Debug rows will miss explicit source/target IDs. Pass source_id + target_ids "
+            "(for example embryo_id|frame_index) to make downstream debugging traceable."
+        )
+        if strict_debug_ids:
+            raise ValueError(msg)
+        logger.warning(msg)
     
     # Canonical grid shape
     H, W = 256, 576
@@ -218,6 +391,9 @@ def generate_ot_maps(
 
     X = np.zeros((N, H, W, C), dtype=np.float32)
     total_cost_C = np.zeros(N, dtype=np.float32)
+    aligned_ref_mask = None
+    aligned_target_masks = np.zeros((N, H, W), dtype=np.uint8) if return_aligned_masks else None
+    debug_rows = []
 
     for i, (mask_tgt, sid) in enumerate(zip(target_masks, sample_ids)):
         logger.info(f"OT map {i+1}/{N}: {sid}")
@@ -228,10 +404,41 @@ def generate_ot_maps(
             raw_um_per_px_tgt=raw_um_per_px_targets[i],
             yolk_ref=yolk_ref,
             yolk_tgt=yolk_targets[i] if yolk_targets is not None else None,
+            source_id=source_id,
+            target_id=target_ids[i] if target_ids is not None else None,
             uot_config=uot_config, backend=backend,
         )
 
         total_cost_C[i] = ot_result.total_cost_C
+
+        if return_aligned_masks:
+            if ot_result.aligned_ref_mask is None or ot_result.aligned_target_mask is None:
+                raise ValueError(
+                    "run_single_ot did not return aligned masks. "
+                    "Expected aligned_ref_mask and aligned_target_mask for QC overlays."
+                )
+            if ot_result.aligned_ref_mask.shape != (H, W):
+                raise ValueError(
+                    f"aligned_ref_mask shape mismatch: {ot_result.aligned_ref_mask.shape} vs {(H, W)}"
+                )
+            if ot_result.aligned_target_mask.shape != (H, W):
+                raise ValueError(
+                    f"aligned_target_mask shape mismatch: {ot_result.aligned_target_mask.shape} vs {(H, W)}"
+                )
+
+            if aligned_ref_mask is None:
+                aligned_ref_mask = ot_result.aligned_ref_mask.astype(np.uint8)
+            else:
+                if not np.array_equal(aligned_ref_mask, ot_result.aligned_ref_mask):
+                    logger.warning(
+                        "Aligned reference mask changed across samples for the same reference. "
+                        "Using first sample's aligned reference mask."
+                    )
+
+            aligned_target_masks[i] = ot_result.aligned_target_mask.astype(np.uint8)
+
+        if collect_debug and ot_result.alignment_debug is not None:
+            debug_rows.append(ot_result.alignment_debug)
 
         if feature_set == Phase0FeatureSet.V0_COST:
             X[i, :, :, 0] = ot_result.cost_density
@@ -246,6 +453,18 @@ def generate_ot_maps(
             X[i, :, :, 4] = ot_result.delta_mass
 
     logger.info(f"Generated OT maps: X shape={X.shape}, mean cost={total_cost_C.mean():.4f}")
+    debug_df = pd.DataFrame(debug_rows) if return_debug_df else None
+
+    if return_aligned_masks and return_debug_df:
+        if aligned_ref_mask is None:
+            raise ValueError("Aligned reference mask was never populated.")
+        return X, total_cost_C, aligned_ref_mask, aligned_target_masks, debug_df
+    if return_aligned_masks:
+        if aligned_ref_mask is None:
+            raise ValueError("Aligned reference mask was never populated.")
+        return X, total_cost_C, aligned_ref_mask, aligned_target_masks
+    if return_debug_df:
+        return X, total_cost_C, debug_df
     return X, total_cost_C
 
 
