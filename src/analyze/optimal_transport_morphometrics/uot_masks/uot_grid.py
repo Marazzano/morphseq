@@ -82,6 +82,8 @@ class CanonicalAligner:
         yolk_weight: float = 1.0,
         back_weight: float = 1.0,
         back_sample_radius_k: float = 1.5,
+        yolk_pivot_angle_range_deg: float = 45.0,
+        yolk_pivot_angle_step_deg: float = 1.0,
     ) -> None:
         self.H, self.W = target_shape_hw
         self.target_res = target_um_per_pixel
@@ -93,6 +95,8 @@ class CanonicalAligner:
         self.yolk_weight = yolk_weight
         self.back_weight = back_weight
         self.back_sample_radius_k = back_sample_radius_k
+        self.yolk_pivot_angle_range_deg = yolk_pivot_angle_range_deg
+        self.yolk_pivot_angle_step_deg = yolk_pivot_angle_step_deg
         self._last_back_debug: Optional[dict] = None
 
         self.is_landscape = self.W >= self.H
@@ -274,6 +278,84 @@ class CanonicalAligner:
         self._last_back_debug = back_debug
         return (back_y, back_x)
 
+    def _yolk_pivot_rotate(
+        self,
+        mask: np.ndarray,
+        yolk_mask: Optional[np.ndarray],
+        reference_mask: np.ndarray,
+        angle_range_deg: float,
+        angle_step_deg: float,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], float]:
+        """
+        Fine rotation sweep around the yolk COM to maximize IoU with reference_mask.
+
+        The yolk COM is used as the pivot point so the yolk stays fixed during the sweep.
+        Only the target mask is rotated; the reference stays fixed.
+
+        Args:
+            mask: Target binary mask on canonical grid.
+            yolk_mask: Target yolk mask on canonical grid (may be None).
+            reference_mask: Reference binary mask on canonical grid (fixed).
+            angle_range_deg: Sweep ±angle_range_deg around 0.
+            angle_step_deg: Step size in degrees.
+
+        Returns:
+            (best_mask, best_yolk_mask, best_angle_deg)
+        """
+        # Determine pivot point: yolk COM if yolk available, else mask COM
+        if yolk_mask is not None and yolk_mask.sum() > 0:
+            pivot_cy, pivot_cx = self._center_of_mass(yolk_mask)
+        else:
+            pivot_cy, pivot_cx = self._center_of_mass(mask)
+
+        ref_bool = reference_mask > 0.5
+
+        best_angle = 0.0
+        best_iou = -1.0
+        best_mask = mask
+        best_yolk = yolk_mask
+
+        angles = np.arange(
+            -angle_range_deg,
+            angle_range_deg + angle_step_deg,
+            angle_step_deg,
+        )
+        for angle_deg in angles:
+            theta = np.radians(float(angle_deg))
+            cos_t = np.cos(theta)
+            sin_t = np.sin(theta)
+            # Pivot-point rotation matrix (OpenCV convention: (cx, cy) = (x, y))
+            M = np.float32([
+                [cos_t, -sin_t, pivot_cx * (1 - cos_t) + pivot_cy * sin_t],
+                [sin_t,  cos_t, pivot_cy * (1 - cos_t) - pivot_cx * sin_t],
+            ])
+            rotated = self._warp(mask, M)
+            rot_bool = rotated > 0.5
+            intersection = float(np.logical_and(rot_bool, ref_bool).sum())
+            union = float(np.logical_or(rot_bool, ref_bool).sum())
+            iou = intersection / (union + 1e-6)
+            if iou > best_iou:
+                best_iou = iou
+                best_angle = float(angle_deg)
+                best_mask = rotated
+                if yolk_mask is not None:
+                    best_yolk = self._warp(yolk_mask, M)
+                else:
+                    best_yolk = None
+
+        # Report if the optimum landed at the sweep boundary — indicates the coarse
+        # alignment step failed and the true optimum may lie outside the search range.
+        # TODO: If best_angle is at the boundary, consider re-running the coarse step
+        # with a wider candidate set or flagging the embryo for manual review.
+        if abs(best_angle) >= angle_range_deg - angle_step_deg / 2:
+            warnings.warn(
+                f"Yolk-pivot sweep hit boundary at best_angle={best_angle:+.1f}° "
+                f"(range=±{angle_range_deg}°). Coarse alignment may have failed.",
+                RuntimeWarning, stacklevel=3,
+            )
+
+        return best_mask, best_yolk, best_angle
+
     def align(
         self,
         mask: np.ndarray,
@@ -403,6 +485,19 @@ class CanonicalAligner:
         if aligned_yolk is not None:
             aligned_yolk = self._warp(aligned_yolk, M_shift)
 
+        # Yolk-pivot fine rotation (only when reference is available)
+        yolk_pivot_angle_deg = 0.0
+        yolk_pivot_hit_boundary = False
+        if reference_mask is not None and use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0:
+            aligned_mask, aligned_yolk, yolk_pivot_angle_deg = self._yolk_pivot_rotate(
+                aligned_mask, aligned_yolk, reference_mask,
+                self.yolk_pivot_angle_range_deg,
+                self.yolk_pivot_angle_step_deg,
+            )
+            yolk_pivot_hit_boundary = (
+                abs(yolk_pivot_angle_deg) >= self.yolk_pivot_angle_range_deg - self.yolk_pivot_angle_step_deg / 2
+            )
+
         # Final yolk/back positions (post shift)
         final_yolk_mask = aligned_yolk if (use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0) else aligned_mask
         final_yolk_yx = self._center_of_mass(final_yolk_mask)
@@ -446,6 +541,8 @@ class CanonicalAligner:
             "back_yx_final": (float(final_back_yx[0]), float(final_back_yx[1])),
             "retained_ratio": float(retained_ratio),
             "clipped": bool(clipped),
+            "yolk_pivot_angle_deg": float(yolk_pivot_angle_deg),
+            "yolk_pivot_hit_boundary": bool(yolk_pivot_hit_boundary),
         }
 
         # CRITICAL VALIDATION: Never return empty masks

@@ -191,6 +191,7 @@ def preprocess_pair_canonical(
         original_um_per_px=tgt_um_per_pixel,
         use_pca=use_pca,
         use_yolk=use_yolk,
+        reference_mask=src_canonical,
     )
 
     src_transform = GridTransform(
