@@ -14,7 +14,7 @@ sys.path.insert(0, str(MORPHSEQ_ROOT / "src"))
 import pandas as pd
 import numpy as np
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
+from analyze.utils.coord.grids.canonical import CanonicalAligner, CanonicalGridConfig
 
 def main():
     print("=== Debugging Mask Loading and Alignment ===")

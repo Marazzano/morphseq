@@ -15,7 +15,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
+from analyze.utils.coord.grids.canonical import CanonicalAligner, CanonicalGridConfig
 
 def main():
     print("Creating full vs cropped comparison...")

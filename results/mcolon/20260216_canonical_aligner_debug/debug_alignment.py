@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
+from analyze.utils.coord.grids.canonical import CanonicalAligner, CanonicalGridConfig
 
 # Load data
 data_csv = MORPHSEQ_ROOT / "results/mcolon/20251229_cep290_phenotype_extraction/final_data/embryo_data_with_labels.csv"

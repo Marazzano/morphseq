@@ -35,7 +35,7 @@ import pandas as pd
 from scipy.ndimage import binary_erosion
 
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
+from analyze.utils.coord.grids.canonical import CanonicalAligner, CanonicalGridConfig
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

@@ -86,11 +86,12 @@ def run_single_ot(
     -------
     OTMapResult with maps on canonical grid (256, 576)
     """
-    from analyze.utils.optimal_transport import UOTConfig, MassMode
-    from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
-    from analyze.optimal_transport_morphometrics.uot_masks.run_transport import run_uot_on_canonical_pair
-    from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
-    from analyze.optimal_transport_morphometrics.uot_masks.preprocess import qc_mask
+    from analyze.utils.optimal_transport import (
+        UOTConfig, MassMode,
+        WorkingGridConfig, prepare_working_grid_pair,
+        run_uot_on_working_grid, lift_work_result_to_canonical,
+    )
+    from analyze.utils.coord.grids.canonical import CanonicalGridConfig, to_canonical_grid_mask
 
     # ------------------------------------------------------------------
     # Geometry stage: canonicalize ref and target independently
@@ -103,7 +104,6 @@ def run_single_ot(
         grid_shape_hw=CANONICAL_GRID_HW,
         align_mode="yolk",
     )
-    aligner = CanonicalAligner.from_config(canonical_cfg)
 
     # Fail fast on mask/yolk shape mismatches. Canonicalization expects
     # embryo and yolk masks to be in the same raw coordinate system.
@@ -116,67 +116,62 @@ def run_single_ot(
             f"Target yolk shape {yolk_tgt.shape} does not match target mask shape {mask_target.shape}."
         )
 
-    ref_qc, _ = qc_mask(mask_ref.astype(bool))
-    tgt_qc, _ = qc_mask(mask_target.astype(bool))
+    # Minimal QC for now: binaryize. (If you want morphology QC, add it explicitly upstream.)
+    ref_bin = (np.asarray(mask_ref) > 0).astype(np.uint8)
+    tgt_bin = (np.asarray(mask_target) > 0).astype(np.uint8)
 
-    src_canonical, _, src_align_meta = aligner.align(
-        ref_qc,
-        yolk_ref.astype(bool) if yolk_ref is not None else None,
-        original_um_per_px=raw_um_per_px_ref,
-        use_pca=True,
-        use_yolk=(yolk_ref is not None),
+    src_canon_result = to_canonical_grid_mask(
+        ref_bin,
+        um_per_px=float(raw_um_per_px_ref),
+        yolk_mask=(yolk_ref.astype(np.uint8) if yolk_ref is not None else None),
+        cfg=canonical_cfg,
     )
-    tgt_canonical, _, tgt_align_meta = aligner.align(
-        tgt_qc,
-        yolk_tgt.astype(bool) if yolk_tgt is not None else None,
-        original_um_per_px=raw_um_per_px_tgt,
-        use_pca=True,
-        use_yolk=(yolk_tgt is not None),
+    tgt_canon_result = to_canonical_grid_mask(
+        tgt_bin,
+        um_per_px=float(raw_um_per_px_tgt),
+        yolk_mask=(yolk_tgt.astype(np.uint8) if yolk_tgt is not None else None),
+        cfg=canonical_cfg,
     )
 
     # ------------------------------------------------------------------
     # Solver stage: UOT is a pure consumer of canonical masks
     # ------------------------------------------------------------------
+    working_cfg = WorkingGridConfig(
+        downsample_factor=1,
+        padding_px=16,
+        mass_mode=MassMode.UNIFORM,
+    )
+
     if uot_config is None:
         uot_config = UOTConfig(
             epsilon=1e-4,
             marginal_relaxation=10.0,
             max_support_points=3000,
-            use_canonical_grid=False,  # geometry already done upstream
-            output_grid="canonical",   # return maps on full canonical canvas
-            downsample_factor=1,
-            downsample_divisor=1,
-            padding_px=16,
-            mass_mode=MassMode.UNIFORM,
-            align_mode="none",
             store_coupling=True,
             random_seed=42,
             metric="sqeuclidean",
             coord_scale=1.0 / max(CANONICAL_GRID_HW),
         )
 
-    if getattr(uot_config, "use_canonical_grid", False):
-        raise ValueError("run_single_ot expects solver-only UOTConfig: set use_canonical_grid=False.")
-    if getattr(uot_config, "output_grid", None) != "canonical":
-        raise ValueError(
-            f"run_single_ot expects output_grid='canonical' (got {getattr(uot_config, 'output_grid', None)!r})."
-        )
-
     if backend is None:
-        backend = POTBackend()
+        # Prefer OTT (JAX) by default; POT may pull in torch.
+        try:
+            from analyze.utils.optimal_transport.backends.ott_backend import OTTBackend
 
-    result = run_uot_on_canonical_pair(
-        src_canonical.astype(np.uint8),
-        tgt_canonical.astype(np.uint8),
-        px_size_um=CANONICAL_UM_PER_PX,
-        config=uot_config,
-        backend=backend,
-    )
+            backend = OTTBackend()
+        except Exception:
+            from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
+
+            backend = POTBackend()
+
+    pair_work = prepare_working_grid_pair(src_canon_result, tgt_canon_result, working_cfg)
+    result_work = run_uot_on_working_grid(pair_work, config=uot_config, backend=backend)
+    result = lift_work_result_to_canonical(result_work, pair_work)
 
     # Extract maps (canonical-shaped)
-    cost_density = result.cost_src_px if result.cost_src_px is not None else np.zeros(CANONICAL_GRID_HW, dtype=np.float32)
-    displacement_yx = result.velocity_px_per_frame_yx  # (H, W, 2)
-    delta_mass = result.mass_created_px - result.mass_destroyed_px
+    cost_density = result.cost_src_canon if result.cost_src_canon is not None else np.zeros(CANONICAL_GRID_HW, dtype=np.float32)
+    displacement_yx = result.velocity_canon_px_per_step_yx  # (H, W, 2)
+    delta_mass = result.mass_created_canon - result.mass_destroyed_canon
 
     # Verify canonical shape
     expected_hw = CANONICAL_GRID_HW
@@ -192,35 +187,28 @@ def run_single_ot(
             f"OT output shapes are not canonical (expected {expected_hw}): {', '.join(bad_shapes)}."
         )
 
-    src_align = src_align_meta or {}
-    tgt_align = tgt_align_meta or {}
+    src_align = (src_canon_result.meta or {}).get("align_meta", {}) or {}
+    tgt_align = (tgt_canon_result.meta or {}).get("align_meta", {}) or {}
     metrics = {}
     if isinstance(result.diagnostics, dict):
         metrics = result.diagnostics.get("metrics", {}) or {}
 
-    src_mask_aligned = src_canonical.astype(np.uint8)
-    tgt_mask_aligned = tgt_canonical.astype(np.uint8)
+    src_mask_aligned = src_canon_result.mask.astype(np.uint8)
+    tgt_mask_aligned = tgt_canon_result.mask.astype(np.uint8)
     overlap_iou = np.nan
-    if src_mask_aligned is not None and tgt_mask_aligned is not None:
-        src_bool = src_mask_aligned > 0
-        tgt_bool = tgt_mask_aligned > 0
-        union = float(np.logical_or(src_bool, tgt_bool).sum())
-        inter = float(np.logical_and(src_bool, tgt_bool).sum())
-        overlap_iou = inter / union if union > 0 else np.nan
+    src_bool = src_mask_aligned > 0
+    tgt_bool = tgt_mask_aligned > 0
+    union = float(np.logical_or(src_bool, tgt_bool).sum())
+    inter = float(np.logical_and(src_bool, tgt_bool).sum())
+    overlap_iou = inter / union if union > 0 else np.nan
 
-    # Pair bbox/pad are only populated when pair-frame geometry is used.
-    # In the solver-only path (geometry done upstream) these are not applicable.
-    solver_preprocess = {}
-    if isinstance(result.transform_meta, dict):
-        solver_preprocess = result.transform_meta.get("preprocess", {}) or {}
-    bbox_y0y1x0x1 = solver_preprocess.get("bbox_y0y1x0x1")
-    pad_hw = solver_preprocess.get("pad_hw")
-    bbox_y0 = bbox_y0y1x0x1[0] if bbox_y0y1x0x1 is not None else np.nan
-    bbox_y1 = bbox_y0y1x0x1[1] if bbox_y0y1x0x1 is not None else np.nan
-    bbox_x0 = bbox_y0y1x0x1[2] if bbox_y0y1x0x1 is not None else np.nan
-    bbox_x1 = bbox_y0y1x0x1[3] if bbox_y0y1x0x1 is not None else np.nan
-    pad_h = pad_hw[0] if pad_hw is not None else np.nan
-    pad_w = pad_hw[1] if pad_hw is not None else np.nan
+    # Bbox/pad info from the working-grid pair meta
+    wg_meta = pair_work.meta if pair_work.meta else {}
+    wg_block = wg_meta.get("work_grid", {}) if isinstance(wg_meta, dict) else {}
+    bbox_y0y1x0x1 = wg_block.get("bbox_y0y1x0x1", (np.nan, np.nan, np.nan, np.nan))
+    pad_hw = wg_block.get("crop_pad_hw", (np.nan, np.nan))
+    bbox_y0, bbox_y1, bbox_x0, bbox_x1 = bbox_y0y1x0x1
+    pad_h, pad_w = pad_hw
 
     alignment_debug = {
         "sample_id": sample_id,

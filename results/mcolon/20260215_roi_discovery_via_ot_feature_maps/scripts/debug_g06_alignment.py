@@ -11,7 +11,7 @@ MORPHSEQ_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(MORPHSEQ_ROOT))
 sys.path.insert(0, str(MORPHSEQ_ROOT / "src"))
 
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner
+from analyze.utils.coord.grids.canonical import CanonicalAligner
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
 
 # Load data

@@ -20,7 +20,7 @@ from typing import List, Tuple, Dict
 import traceback
 
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
+from analyze.utils.coord.grids.canonical import CanonicalAligner, CanonicalGridConfig
 
 OUTPUT_DIR = Path(__file__).parent / "debug_results"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

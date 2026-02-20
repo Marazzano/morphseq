@@ -35,7 +35,7 @@ sys.path.insert(0, str(MORPHSEQ_ROOT / "results/mcolon/20260215_roi_discovery_vi
 
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
 from analyze.optimal_transport_morphometrics.uot_masks.preprocess import preprocess_pair_canonical
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
+from analyze.utils.coord.grids.canonical import CanonicalAligner, CanonicalGridConfig
 from analyze.utils.optimal_transport import UOTConfig, UOTFrame
 
 
