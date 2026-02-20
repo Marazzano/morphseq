@@ -82,7 +82,7 @@ class CanonicalAligner:
         yolk_weight: float = 1.0,
         back_weight: float = 1.0,
         back_sample_radius_k: float = 1.5,
-        yolk_pivot_angle_range_deg: float = 45.0,
+        yolk_pivot_angle_range_deg: float = 180.0,
         yolk_pivot_angle_step_deg: float = 1.0,
     ) -> None:
         self.H, self.W = target_shape_hw
@@ -356,42 +356,26 @@ class CanonicalAligner:
 
         return best_mask, best_yolk, best_angle
 
-    def align(
+    # ------------------------------------------------------------------
+    # Stage 1 helpers
+    # ------------------------------------------------------------------
+
+    def _coarse_candidate_select(
         self,
         mask: np.ndarray,
         yolk: Optional[np.ndarray],
-        original_um_per_px: float,
-        use_pca: bool = True,
-        use_yolk: bool = True,
-        reference_mask: Optional[np.ndarray] = None,
-        return_debug: bool = False,
-    ) -> tuple[np.ndarray, Optional[np.ndarray], dict]:
-        if mask is None or mask.sum() == 0:
-            return (
-                np.zeros((self.H, self.W), dtype=np.uint8),
-                None,
-                {"error": "empty_mask"},
-            )
+        rotation_needed: float,
+        scale: float,
+        cx: float,
+        cy: float,
+        use_yolk: bool,
+    ) -> tuple[float, float, bool, tuple, tuple]:
+        """Evaluate 0°/180° × flip candidates and return best rotation + flip.
 
-        if use_yolk and (yolk is None or yolk.sum() == 0):
-            raise ValueError(
-                "use_yolk=True but yolk mask is None or empty. "
-                "Ensure yolk masks are loaded (pass data_root to load_mask_from_csv). "
-                "Set align_mode='centroid' if yolk alignment is not needed."
-            )
-
-        scale = original_um_per_px / self.target_res
-
-        angle_deg, centroid_xy, pca_used = self._pca_angle_deg(mask) if use_pca else (0.0, (0.0, 0.0), False)
-        cx, cy = centroid_xy
-        # Note: OpenCV positive angles rotate clockwise in image coordinates (+y down).
-        # To align the PCA axis to the target axis, we invert the usual sign.
-        target_angle = 0.0 if self.is_landscape else 90.0
-        rotation_needed = angle_deg - target_angle
-
+        Returns (best_rot_add, final_rotation, best_flip, best_yolk_yx, best_back_yx).
+        Scoring is purely geometric (no reference mask).
+        """
         candidates = []
-        best_yolk_yx = None
-        best_back_yx = None
         rot_options = [0, 180]
         flip_options = [False, True] if self.allow_flip else [False]
 
@@ -402,32 +386,25 @@ class CanonicalAligner:
                 M[1, 2] += (self.H / 2) - cy
 
                 mask_w = self._warp(mask, M)
-                yolk_w = self._warp(yolk, M) if (yolk is not None) else None
+                yolk_w = self._warp(yolk, M) if yolk is not None else None
                 if do_flip:
                     mask_w = cv2.flip(mask_w, 1)
                     if yolk_w is not None:
                         yolk_w = cv2.flip(yolk_w, 1)
 
-                # Yolk COM = anchor point (we want it top-left)
-                yolk_feature_mask = yolk_w if (use_yolk and yolk_w is not None and yolk_w.sum() > 0) else mask_w
+                yolk_feature_mask = (
+                    yolk_w
+                    if (use_yolk and yolk_w is not None and yolk_w.sum() > 0)
+                    else mask_w
+                )
                 yolk_yx = self._center_of_mass(yolk_feature_mask)
-
-                # Back direction = centroid of embryo tissue surrounding yolk
                 back_yx = self._compute_back_direction(
-                    mask_w,
-                    yolk_mask=yolk_w if use_yolk else None,
+                    mask_w, yolk_mask=yolk_w if use_yolk else None
                 )
 
-                if reference_mask is not None:
-                    intersection = np.logical_and(mask_w > 0.5, reference_mask > 0.5).sum()
-                    union = np.logical_or(mask_w > 0.5, reference_mask > 0.5).sum()
-                    score = intersection / (union + 1e-6)
-                else:
-                    # Scoring: yolk near top-left (low y+x) = low cost;
-                    # back near bottom-right (high y+x) = high score.
-                    yolk_cost = yolk_yx[1] + yolk_yx[0]
-                    back_score = back_yx[1] + back_yx[0]
-                    score = (self.back_weight * back_score) - (self.yolk_weight * yolk_cost)
+                yolk_cost = yolk_yx[1] + yolk_yx[0]
+                back_score = back_yx[1] + back_yx[0]
+                score = (self.back_weight * back_score) - (self.yolk_weight * yolk_cost)
 
                 candidates.append((score, rot_add, do_flip, yolk_yx, back_yx))
 
@@ -435,22 +412,18 @@ class CanonicalAligner:
             candidates, key=lambda x: x[0]
         )
         final_rotation = rotation_needed + best_rot
+        return final_rotation, best_flip, best_yolk_yx, best_back_yx
 
-        M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
-        M_final[0, 2] += (self.W / 2) - cx
-        M_final[1, 2] += (self.H / 2) - cy
+    def _apply_anchor_shift(
+        self,
+        aligned_mask: np.ndarray,
+        aligned_yolk: Optional[np.ndarray],
+        use_yolk: bool,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], float, float, bool, bool]:
+        """Shift so that the feature COM lands at self.anchor_point_xy.
 
-        aligned_mask = self._warp(mask, M_final)
-        aligned_yolk = self._warp(yolk, M_final) if yolk is not None else None
-        if best_flip:
-            aligned_mask = cv2.flip(aligned_mask, 1)
-            if aligned_yolk is not None:
-                aligned_yolk = cv2.flip(aligned_yolk, 1)
-
-        aligned_mask_pre_shift = aligned_mask.copy()
-        aligned_yolk_pre_shift = aligned_yolk.copy() if aligned_yolk is not None else None
-        aligned_angle_deg, _, _ = self._pca_angle_deg(aligned_mask_pre_shift)
-
+        Returns (shifted_mask, shifted_yolk, shift_x, shift_y, clamped, fit_impossible).
+        """
         if self.anchor_mode == "yolk_anchor" and use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0:
             feat_mask = aligned_yolk
         else:
@@ -480,30 +453,124 @@ class CanonicalAligner:
             else:
                 fit_impossible = True
             clamped = (shift_x != desired_shift_x) or (shift_y != desired_shift_y)
+
         M_shift = np.float32([[1, 0, shift_x], [0, 1, shift_y]])
-        aligned_mask = self._warp(aligned_mask, M_shift)
-        if aligned_yolk is not None:
-            aligned_yolk = self._warp(aligned_yolk, M_shift)
+        shifted_mask = self._warp(aligned_mask, M_shift)
+        shifted_yolk = self._warp(aligned_yolk, M_shift) if aligned_yolk is not None else None
+        return shifted_mask, shifted_yolk, shift_x, shift_y, clamped, fit_impossible
 
-        # Yolk-pivot fine rotation (only when reference is available)
-        yolk_pivot_angle_deg = 0.0
-        yolk_pivot_hit_boundary = False
-        if reference_mask is not None and use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0:
-            aligned_mask, aligned_yolk, yolk_pivot_angle_deg = self._yolk_pivot_rotate(
-                aligned_mask, aligned_yolk, reference_mask,
-                self.yolk_pivot_angle_range_deg,
-                self.yolk_pivot_angle_step_deg,
+    def _validate_output_mask(
+        self,
+        final_mask: np.ndarray,
+        original_mask: np.ndarray,
+        scale: float,
+        final_rotation: float,
+        best_flip: bool,
+        shift_x: float,
+        shift_y: float,
+        fit_impossible: bool,
+        retained_ratio: float,
+    ) -> None:
+        """Raise RuntimeError if mask is empty or touches grid edges."""
+        if final_mask.sum() == 0:
+            raise RuntimeError(
+                f"CanonicalAligner produced EMPTY mask (0 pixels). "
+                f"Input mask: {original_mask.sum()} pixels, "
+                f"retained_ratio={retained_ratio:.4f}, scale={scale:.3f}, "
+                f"rotation={final_rotation:.1f}°, flip={best_flip}, "
+                f"shift=({shift_x:.1f}, {shift_y:.1f}), fit_impossible={fit_impossible}. "
+                f"This indicates a bug in the alignment transform."
             )
-            yolk_pivot_hit_boundary = (
-                abs(yolk_pivot_angle_deg) >= self.yolk_pivot_angle_range_deg - self.yolk_pivot_angle_step_deg / 2
+        h, w = final_mask.shape
+        touches_top = final_mask[0, :].any()
+        touches_bottom = final_mask[-1, :].any()
+        touches_left = final_mask[:, 0].any()
+        touches_right = final_mask[:, -1].any()
+        if touches_top or touches_bottom or touches_left or touches_right:
+            edges = []
+            if touches_top: edges.append("top")
+            if touches_bottom: edges.append("bottom")
+            if touches_left: edges.append("left")
+            if touches_right: edges.append("right")
+            raise RuntimeError(
+                f"CanonicalAligner produced mask touching grid edges: {', '.join(edges)}. "
+                f"Aligned mask: {final_mask.sum()} pixels on {h}×{w} grid, "
+                f"retained_ratio={retained_ratio:.4f}, scale={scale:.3f}, "
+                f"rotation={final_rotation:.1f}°, flip={best_flip}, "
+                f"shift=({shift_x:.1f}, {shift_y:.1f}), fit_impossible={fit_impossible}. "
+                f"This likely indicates incorrect orientation detection or embryo too large for canonical grid."
             )
 
-        # Final yolk/back positions (post shift)
-        final_yolk_mask = aligned_yolk if (use_yolk and aligned_yolk is not None and aligned_yolk.sum() > 0) else aligned_mask
-        final_yolk_yx = self._center_of_mass(final_yolk_mask)
-        final_back_yx = self._compute_back_direction(
-            aligned_mask,
-            yolk_mask=aligned_yolk if use_yolk else None,
+    # ------------------------------------------------------------------
+    # Stage 1 public API
+    # ------------------------------------------------------------------
+
+    def generic_canonical_alignment(
+        self,
+        mask: np.ndarray,
+        original_um_per_px: float,
+        use_pca: bool = True,
+        return_debug: bool = False,
+    ) -> tuple[np.ndarray, dict]:
+        """Stage 1: Single-embryo canonical alignment WITHOUT yolk.
+
+        PCA rotation + scale + 0°/180°/flip (geometric heuristic).
+        Anchor shift: mask COM → anchor_point_xy.
+        No yolk; pivot = mask COM.
+
+        Args:
+            mask: Binary mask in source resolution.
+            original_um_per_px: Source resolution in µm/pixel.
+            use_pca: Whether to apply PCA-based rotation.
+            return_debug: Whether to include debug arrays in meta.
+
+        Returns:
+            (canonical_mask, meta)
+        """
+        if mask is None or mask.sum() == 0:
+            return np.zeros((self.H, self.W), dtype=np.uint8), {"error": "empty_mask"}
+
+        scale = original_um_per_px / self.target_res
+        angle_deg, centroid_xy, pca_used = (
+            self._pca_angle_deg(mask) if use_pca else (0.0, (0.0, 0.0), False)
+        )
+        cx, cy = centroid_xy
+        target_angle = 0.0 if self.is_landscape else 90.0
+        rotation_needed = angle_deg - target_angle
+
+        # Evaluate candidates geometrically (no yolk)
+        candidates = []
+        rot_options = [0, 180]
+        flip_options = [False, True] if self.allow_flip else [False]
+        for rot_add in rot_options:
+            for do_flip in flip_options:
+                M = cv2.getRotationMatrix2D((cx, cy), rotation_needed + rot_add, scale)
+                M[0, 2] += (self.W / 2) - cx
+                M[1, 2] += (self.H / 2) - cy
+                mask_w = self._warp(mask, M)
+                if do_flip:
+                    mask_w = cv2.flip(mask_w, 1)
+                mask_com_yx = self._center_of_mass(mask_w)
+                # Prefer COM in upper-left
+                score = -(mask_com_yx[0] + mask_com_yx[1])
+                candidates.append((score, rot_add, do_flip, mask_com_yx))
+
+        best_score, best_rot, best_flip, best_com_yx = max(candidates, key=lambda x: x[0])
+        final_rotation = rotation_needed + best_rot
+
+        M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
+        M_final[0, 2] += (self.W / 2) - cx
+        M_final[1, 2] += (self.H / 2) - cy
+        aligned_mask = self._warp(mask, M_final)
+        if best_flip:
+            aligned_mask = cv2.flip(aligned_mask, 1)
+
+        aligned_mask_pre_shift = aligned_mask.copy()
+        aligned_angle_deg, _, _ = self._pca_angle_deg(aligned_mask_pre_shift)
+
+        # Anchor shift: mask COM → anchor_point_xy
+        aligned_mask, _, shift_x, shift_y, clamped, fit_impossible = self._apply_anchor_shift(
+            aligned_mask, None, use_yolk=False
         )
 
         expected_area = float(mask.sum()) * (scale ** 2)
@@ -512,12 +579,138 @@ class CanonicalAligner:
         clipped = retained_ratio < self.clipping_threshold
         if clipped:
             message = (
-                f"Canonical alignment clipped mask: retained_ratio={retained_ratio:.4f} "
+                f"generic_canonical_alignment clipped mask: retained_ratio={retained_ratio:.4f} "
                 f"(threshold={self.clipping_threshold:.4f})"
             )
             if self.error_on_clip:
                 raise ValueError(message)
             warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+        final_mask = (aligned_mask > 0.5).astype(np.uint8)
+        self._validate_output_mask(
+            final_mask, mask, scale, final_rotation, best_flip, shift_x, shift_y, fit_impossible, retained_ratio
+        )
+
+        meta = {
+            "pca_angle_deg": float(angle_deg),
+            "rotation_needed_deg": float(rotation_needed),
+            "rotation_deg": float(final_rotation),
+            "flip": bool(best_flip),
+            "scale": float(scale),
+            "pca_used": bool(pca_used),
+            "aligned_pca_angle_deg": float(aligned_angle_deg),
+            "anchor_xy": (float(self.anchor_point_xy[0]), float(self.anchor_point_xy[1])),
+            "anchor_shift_xy": (float(shift_x), float(shift_y)),
+            "anchor_shift_clamped": bool(clamped),
+            "fit_impossible": bool(fit_impossible),
+            "retained_ratio": float(retained_ratio),
+            "clipped": bool(clipped),
+            "yolk_used": False,
+        }
+        if return_debug:
+            meta["debug"] = {"aligned_mask_pre_shift": aligned_mask_pre_shift}
+        return final_mask, meta
+
+    def embryo_canonical_alignment(
+        self,
+        mask: np.ndarray,
+        original_um_per_px: float,
+        yolk: Optional[np.ndarray] = None,
+        use_pca: bool = True,
+        return_debug: bool = False,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], dict]:
+        """Stage 1: Single-embryo canonical alignment WITH optional yolk.
+
+        If yolk is missing or empty: warns loudly and delegates to
+        generic_canonical_alignment() (canonical_yolk = None).
+        If yolk is present: uses yolk-based anchor + yolk COM pivot.
+
+        Meta includes "yolk_com_yx" (post-alignment canonical coords) when yolk exists.
+
+        Args:
+            mask: Binary mask in source resolution.
+            original_um_per_px: Source resolution in µm/pixel.
+            yolk: Optional binary yolk mask in source resolution.
+            use_pca: Whether to apply PCA-based rotation.
+            return_debug: Whether to include debug arrays in meta.
+
+        Returns:
+            (canonical_mask, canonical_yolk, meta)
+            canonical_yolk is None when yolk is not available.
+        """
+        if mask is None or mask.sum() == 0:
+            return (
+                np.zeros((self.H, self.W), dtype=np.uint8),
+                None,
+                {"error": "empty_mask"},
+            )
+
+        if yolk is None or (hasattr(yolk, 'sum') and yolk.sum() == 0):
+            warnings.warn(
+                "embryo_canonical_alignment: yolk mask is None or empty. "
+                "Falling back to generic_canonical_alignment() (no yolk-based anchoring). "
+                "Provide a valid yolk mask for best results.",
+                RuntimeWarning, stacklevel=2,
+            )
+            canonical_mask, meta = self.generic_canonical_alignment(
+                mask, original_um_per_px, use_pca=use_pca, return_debug=return_debug
+            )
+            meta["yolk_used"] = False
+            meta["yolk_com_yx"] = None
+            return canonical_mask, None, meta
+
+        # --- Yolk path: same logic as original align() but with stable internals ---
+        scale = original_um_per_px / self.target_res
+        angle_deg, centroid_xy, pca_used = (
+            self._pca_angle_deg(mask) if use_pca else (0.0, (0.0, 0.0), False)
+        )
+        cx, cy = centroid_xy
+        target_angle = 0.0 if self.is_landscape else 90.0
+        rotation_needed = angle_deg - target_angle
+
+        final_rotation, best_flip, best_yolk_yx, best_back_yx = self._coarse_candidate_select(
+            mask, yolk, rotation_needed, scale, cx, cy, use_yolk=True
+        )
+
+        M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
+        M_final[0, 2] += (self.W / 2) - cx
+        M_final[1, 2] += (self.H / 2) - cy
+        aligned_mask = self._warp(mask, M_final)
+        aligned_yolk = self._warp(yolk, M_final)
+        if best_flip:
+            aligned_mask = cv2.flip(aligned_mask, 1)
+            aligned_yolk = cv2.flip(aligned_yolk, 1)
+
+        aligned_mask_pre_shift = aligned_mask.copy()
+        aligned_yolk_pre_shift = aligned_yolk.copy() if aligned_yolk is not None else None
+        aligned_angle_deg, _, _ = self._pca_angle_deg(aligned_mask_pre_shift)
+
+        aligned_mask, aligned_yolk, shift_x, shift_y, clamped, fit_impossible = \
+            self._apply_anchor_shift(aligned_mask, aligned_yolk, use_yolk=True)
+
+        expected_area = float(mask.sum()) * (scale ** 2)
+        final_area = float(aligned_mask.sum())
+        retained_ratio = final_area / max(expected_area, 1e-6)
+        clipped = retained_ratio < self.clipping_threshold
+        if clipped:
+            message = (
+                f"embryo_canonical_alignment clipped mask: retained_ratio={retained_ratio:.4f} "
+                f"(threshold={self.clipping_threshold:.4f})"
+            )
+            if self.error_on_clip:
+                raise ValueError(message)
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+
+        final_mask = (aligned_mask > 0.5).astype(np.uint8)
+        self._validate_output_mask(
+            final_mask, mask, scale, final_rotation, best_flip, shift_x, shift_y, fit_impossible, retained_ratio
+        )
+        final_yolk_mask = (aligned_yolk > 0.5).astype(np.uint8) if aligned_yolk is not None else None
+
+        # Final positions
+        yolk_feature_mask = aligned_yolk if (aligned_yolk is not None and aligned_yolk.sum() > 0) else aligned_mask
+        final_yolk_yx = self._center_of_mass(yolk_feature_mask)
+        final_back_yx = self._compute_back_direction(aligned_mask, yolk_mask=aligned_yolk)
 
         meta = {
             "pca_angle_deg": float(angle_deg),
@@ -541,63 +734,286 @@ class CanonicalAligner:
             "back_yx_final": (float(final_back_yx[0]), float(final_back_yx[1])),
             "retained_ratio": float(retained_ratio),
             "clipped": bool(clipped),
-            "yolk_pivot_angle_deg": float(yolk_pivot_angle_deg),
-            "yolk_pivot_hit_boundary": bool(yolk_pivot_hit_boundary),
+            "yolk_used": True,
+            # REQUIRED: yolk COM in canonical coords (for Stage 2 use)
+            "yolk_com_yx": (float(final_yolk_yx[0]), float(final_yolk_yx[1])),
         }
-
-        # CRITICAL VALIDATION: Never return empty masks
-        final_mask = (aligned_mask > 0.5).astype(np.uint8)
-        if final_mask.sum() == 0:
-            error_msg = (
-                f"CanonicalAligner produced EMPTY mask (0 pixels). "
-                f"Input mask: {mask.sum()} pixels, "
-                f"retained_ratio={retained_ratio:.4f}, "
-                f"scale={scale:.3f}, "
-                f"rotation={final_rotation:.1f}°, "
-                f"flip={best_flip}, "
-                f"shift=({shift_x:.1f}, {shift_y:.1f}), "
-                f"fit_impossible={fit_impossible}. "
-                f"This indicates a bug in the alignment transform."
-            )
-            raise RuntimeError(error_msg)
-
-        # CRITICAL VALIDATION: Mask should not touch grid edges
-        h, w = final_mask.shape
-        touches_top = final_mask[0, :].any()
-        touches_bottom = final_mask[-1, :].any()
-        touches_left = final_mask[:, 0].any()
-        touches_right = final_mask[:, -1].any()
-
-        if touches_top or touches_bottom or touches_left or touches_right:
-            edges = []
-            if touches_top: edges.append("top")
-            if touches_bottom: edges.append("bottom")
-            if touches_left: edges.append("left")
-            if touches_right: edges.append("right")
-
-            error_msg = (
-                f"CanonicalAligner produced mask touching grid edges: {', '.join(edges)}. "
-                f"Aligned mask: {final_mask.sum()} pixels on {h}×{w} grid, "
-                f"retained_ratio={retained_ratio:.4f}, "
-                f"scale={scale:.3f}, "
-                f"rotation={final_rotation:.1f}°, "
-                f"flip={best_flip}, "
-                f"shift=({shift_x:.1f}, {shift_y:.1f}), "
-                f"fit_impossible={fit_impossible}. "
-                f"This likely indicates incorrect orientation detection or embryo too large for canonical grid."
-            )
-            raise RuntimeError(error_msg)
-
         if return_debug:
             meta["debug"] = {
                 "aligned_mask_pre_shift": aligned_mask_pre_shift,
                 "aligned_yolk_pre_shift": aligned_yolk_pre_shift,
                 "back_direction": copy.deepcopy(self._last_back_debug),
             }
+        return final_mask, final_yolk_mask, meta
 
-        return final_mask, (
-            (aligned_yolk > 0.5).astype(np.uint8) if aligned_yolk is not None else None
-        ), meta
+    def align(
+        self,
+        mask: np.ndarray,
+        yolk: Optional[np.ndarray],
+        original_um_per_px: float,
+        use_pca: bool = True,
+        use_yolk: bool = True,
+        reference_mask: Optional[np.ndarray] = None,
+        return_debug: bool = False,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], dict]:
+        """Deprecated. Use embryo_canonical_alignment() instead.
+
+        Stage 1 canonical alignment (single-embryo, no reference).
+        The ``reference_mask`` parameter is a no-op and will be ignored with a warning.
+        """
+        warnings.warn(
+            "CanonicalAligner.align() is deprecated. "
+            "Use embryo_canonical_alignment() for Stage 1 alignment instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        if reference_mask is not None:
+            warnings.warn(
+                "align() reference_mask parameter is a no-op and has been removed. "
+                "For Stage 2 src→tgt registration use embryo_src_tgt_register().",
+                DeprecationWarning, stacklevel=2,
+            )
+        if not use_yolk:
+            canonical_mask, meta = self.generic_canonical_alignment(
+                mask, original_um_per_px, use_pca=use_pca, return_debug=return_debug
+            )
+            return canonical_mask, None, meta
+        return self.embryo_canonical_alignment(
+            mask, original_um_per_px, yolk=yolk, use_pca=use_pca, return_debug=return_debug
+        )
+
+# ---------------------------------------------------------------------------
+# Stage 2: Src → Tgt Registration (module-level functions)
+# ---------------------------------------------------------------------------
+
+def _apply_pivot_rotation(mask: np.ndarray, pivot_yx: tuple, angle_deg: float) -> np.ndarray:
+    """Rotate mask about pivot_yx by angle_deg (OpenCV convention, clockwise positive)."""
+    cy, cx = float(pivot_yx[0]), float(pivot_yx[1])
+    h, w = mask.shape[:2]
+    theta = np.radians(float(angle_deg))
+    cos_t, sin_t = np.cos(theta), np.sin(theta)
+    M = np.float32([
+        [cos_t, -sin_t, cx * (1 - cos_t) + cy * sin_t],
+        [sin_t,  cos_t, cy * (1 - cos_t) - cx * sin_t],
+    ])
+    return cv2.warpAffine(mask.astype(np.float32), M, (w, h), flags=cv2.INTER_NEAREST)
+
+
+def _apply_translation(mask: np.ndarray, dyx: tuple) -> np.ndarray:
+    """Translate mask by (dy, dx)."""
+    dy, dx = float(dyx[0]), float(dyx[1])
+    h, w = mask.shape[:2]
+    M = np.float32([[1, 0, dx], [0, 1, dy]])
+    return cv2.warpAffine(mask.astype(np.float32), M, (w, h), flags=cv2.INTER_NEAREST)
+
+
+def _mask_com(mask: np.ndarray) -> tuple:
+    """Return (cy, cx) center of mass of a binary mask."""
+    ys, xs = np.nonzero(mask > 0.5)
+    if ys.size == 0:
+        h, w = mask.shape[:2]
+        return (h / 2.0, w / 2.0)
+    return (float(ys.mean()), float(xs.mean()))
+
+
+def _iou(a: np.ndarray, b: np.ndarray) -> float:
+    ab = a > 0.5
+    bb = b > 0.5
+    intersection = float(np.logical_and(ab, bb).sum())
+    union = float(np.logical_or(ab, bb).sum())
+    return intersection / (union + 1e-6)
+
+
+def generic_src_tgt_register(
+    src_mask: np.ndarray,
+    tgt_mask: np.ndarray,
+    *,
+    tgt_pivot_yx: Optional[Tuple[float, float]] = None,
+    src_pivot_yx: Optional[Tuple[float, float]] = None,
+    mode: str = "rotate_only",
+    angle_step_deg: float = 1.0,
+    min_iou_absolute: float = 0.25,
+    min_iou_improvement: float = 0.02,
+) -> tuple:
+    """Stage 2: Src → Tgt registration. Pure geometry engine.
+
+    Sweeps tgt_mask rotation over [-180°, 180°] about tgt_pivot_yx to maximise
+    IoU with src_mask.  Optionally translates so tgt_pivot aligns to src_pivot.
+
+    Gating: applies rotation only when
+        best_iou >= min_iou_absolute  AND  best_iou >= iou_at_0deg + min_iou_improvement
+
+    Args:
+        src_mask: Source (fixed) binary mask on canonical grid.
+        tgt_mask: Target binary mask on canonical grid to be registered.
+        tgt_pivot_yx: Pivot for rotation; defaults to COM(tgt_mask).
+        src_pivot_yx: Pivot for translation (rotate_then_pivot_translate mode);
+            defaults to COM(src_mask).
+        mode: "rotate_only" | "rotate_then_pivot_translate".
+        angle_step_deg: Step size in degrees (default 1.0 → 361 evaluations).
+        min_iou_absolute: Minimum absolute IoU for the sweep winner to be applied.
+        min_iou_improvement: Minimum IoU improvement over 0° for the sweep winner to be applied.
+
+    Returns:
+        (refined_tgt_mask, meta)  where meta follows the documented schema.
+
+    # TODO: Add unimodality / peak-sharpness check — skip pivot on flat/multi-modal IoU curves
+    # (degenerate early-stage embryos with no clear A-P axis).
+    """
+    if mode not in ("rotate_only", "rotate_then_pivot_translate"):
+        raise ValueError(f"Unknown mode={mode!r}. Expected 'rotate_only' or 'rotate_then_pivot_translate'.")
+
+    # Resolve pivots
+    if tgt_pivot_yx is None:
+        tgt_pivot_yx = _mask_com(tgt_mask)
+        tgt_pivot_source = "tgt_mask_com"
+    else:
+        tgt_pivot_yx = (float(tgt_pivot_yx[0]), float(tgt_pivot_yx[1]))
+        tgt_pivot_source = "provided"
+
+    if src_pivot_yx is None:
+        src_pivot_yx = _mask_com(src_mask)
+        src_pivot_source = "src_mask_com"
+    else:
+        src_pivot_yx = (float(src_pivot_yx[0]), float(src_pivot_yx[1]))
+        src_pivot_source = "provided"
+
+    iou_before = _iou(tgt_mask, src_mask)
+
+    # Sweep ±180°
+    angles = np.arange(-180.0, 180.0 + angle_step_deg, angle_step_deg)
+    best_angle = 0.0
+    best_iou = -1.0
+    iou_at_0 = iou_before  # will be overwritten from sweep
+
+    for angle_deg_f in angles:
+        rotated = _apply_pivot_rotation(tgt_mask, tgt_pivot_yx, float(angle_deg_f))
+        iou_val = _iou(rotated, src_mask)
+        if abs(float(angle_deg_f)) < 0.5:
+            iou_at_0 = iou_val
+        if iou_val > best_iou:
+            best_iou = iou_val
+            best_angle = float(angle_deg_f)
+
+    hit_boundary = abs(best_angle) >= 179.5
+
+    # Gating
+    apply = (best_iou >= min_iou_absolute) and (best_iou >= iou_at_0 + min_iou_improvement)
+
+    if apply:
+        refined = _apply_pivot_rotation(tgt_mask, tgt_pivot_yx, best_angle)
+        angle_out = best_angle
+    else:
+        refined = tgt_mask
+        angle_out = 0.0
+
+    iou_after = _iou(refined, src_mask)
+
+    meta: dict = {
+        "applied": bool(apply),
+        "mode": mode,
+        "best_angle_deg": float(best_angle),
+        "best_iou": float(best_iou),
+        "hit_boundary": bool(hit_boundary),
+        "angle_deg": float(angle_out),
+        "iou_before": float(iou_before),
+        "iou_after": float(iou_after),
+        "tgt_pivot_yx": (float(tgt_pivot_yx[0]), float(tgt_pivot_yx[1])),
+        "tgt_pivot_source": tgt_pivot_source,
+        "src_pivot_yx": (float(src_pivot_yx[0]), float(src_pivot_yx[1])),
+        "src_pivot_source": src_pivot_source,
+    }
+
+    if mode == "rotate_then_pivot_translate":
+        if apply:
+            # After rotation about tgt_pivot, the tgt_pivot itself doesn't move.
+            # Translate so tgt_pivot → src_pivot.
+            dy = src_pivot_yx[0] - tgt_pivot_yx[0]
+            dx = src_pivot_yx[1] - tgt_pivot_yx[1]
+            dyx = (dy, dx)
+            refined = _apply_translation(refined, dyx)
+            iou_after = _iou(refined, src_mask)
+            meta["iou_after"] = float(iou_after)
+        else:
+            dyx = (0.0, 0.0)
+        meta["translate_dyx"] = (float(dyx[0]), float(dyx[1]))
+
+    return (refined > 0.5).astype(np.uint8), meta
+
+
+def embryo_src_tgt_register(
+    src_canonical: np.ndarray,
+    tgt_canonical: np.ndarray,
+    *,
+    src_yolk_com_yx: Optional[Tuple[float, float]] = None,
+    tgt_yolk_com_yx: Optional[Tuple[float, float]] = None,
+    mode: str = "rotate_only",
+    angle_step_deg: float = 1.0,
+    min_iou_absolute: float = 0.25,
+    min_iou_improvement: float = 0.02,
+) -> tuple:
+    """Stage 2: Embryo-aware src→tgt registration (thin biological dispatch wrapper).
+
+    Uses yolk COMs as pivots where available; falls back to mask COMs with warnings.
+    Translation mode is silently downgraded to rotate_only when both yolk COMs are absent.
+
+    Args:
+        src_canonical: Source canonical mask (fixed).
+        tgt_canonical: Target canonical mask to be registered.
+        src_yolk_com_yx: Yolk COM (y, x) of the source embryo in canonical coords.
+        tgt_yolk_com_yx: Yolk COM (y, x) of the target embryo in canonical coords.
+        mode: "rotate_only" | "rotate_then_pivot_translate".
+        angle_step_deg: Rotation sweep step size in degrees.
+        min_iou_absolute: Gating threshold — minimum absolute IoU.
+        min_iou_improvement: Gating threshold — minimum improvement over 0°.
+
+    Returns:
+        (refined_tgt_canonical, meta)  meta follows the generic_src_tgt_register schema with
+        relabeled pivot source fields.
+    """
+    # Resolve tgt pivot
+    if tgt_yolk_com_yx is not None:
+        tgt_pivot_yx = (float(tgt_yolk_com_yx[0]), float(tgt_yolk_com_yx[1]))
+        tgt_pivot_source_label = "tgt_yolk_com"
+    else:
+        warnings.warn(
+            "embryo_src_tgt_register: tgt_yolk_com_yx not provided. "
+            "Falling back to tgt_mask COM as pivot. "
+            "Supply tgt_yolk_com_yx from Stage 1 meta for best results.",
+            RuntimeWarning, stacklevel=2,
+        )
+        tgt_pivot_yx = None  # generic_src_tgt_register will resolve
+        tgt_pivot_source_label = "tgt_mask_com"
+
+    # Resolve src pivot and mode
+    if src_yolk_com_yx is not None:
+        src_pivot_yx = (float(src_yolk_com_yx[0]), float(src_yolk_com_yx[1]))
+        src_pivot_source_label = "src_yolk_com"
+        effective_mode = mode
+    else:
+        src_pivot_yx = None  # generic_src_tgt_register will resolve
+        src_pivot_source_label = "src_mask_com"
+        if mode == "rotate_then_pivot_translate":
+            # Silently downgrade — translation without both yolks is unreliable
+            effective_mode = "rotate_only"
+        else:
+            effective_mode = mode
+
+    refined, meta = generic_src_tgt_register(
+        src_canonical, tgt_canonical,
+        tgt_pivot_yx=tgt_pivot_yx,
+        src_pivot_yx=src_pivot_yx,
+        mode=effective_mode,
+        angle_step_deg=angle_step_deg,
+        min_iou_absolute=min_iou_absolute,
+        min_iou_improvement=min_iou_improvement,
+    )
+
+    # Relabel pivot sources with biological names
+    meta["tgt_pivot_source"] = tgt_pivot_source_label
+    meta["src_pivot_source"] = src_pivot_source_label
+
+    return refined, meta
+
 
 def compute_grid_transform(
     mask: np.ndarray,
