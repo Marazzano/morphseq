@@ -1,4 +1,11 @@
-"""Preprocessing pipeline for UOT mask transport."""
+"""Preprocessing helpers for UOT mask transport.
+
+Guardrails:
+- `preprocess_pair` is WORK-GRID pair prep only: NO canonicalization, NO registration,
+  NO rotation/scale.
+- Canonicalization/registration algorithms live under `analyze.coord` (geometry module).
+  This module may call them for canonical-grid UOT prep, but must not implement them.
+"""
 
 from __future__ import annotations
 
@@ -10,14 +17,7 @@ from scipy import ndimage
 from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 
 from analyze.utils.optimal_transport import UOTConfig, pad_to_divisible, UOTFrame
-from .uot_grid import (
-    CanonicalGridConfig,
-    GridTransform,
-    compute_grid_transform,
-    apply_grid_transform,
-    _rotate_and_scale_mask,
-    CanonicalAligner,
-)
+from .uot_grid import CanonicalAligner, CanonicalGridConfig, GridTransform
 
 
 def qc_mask(mask: np.ndarray, verbose: bool = False) -> Tuple[np.ndarray, dict]:
@@ -92,6 +92,11 @@ def preprocess_pair(
         "align_shift_yx": align_shift,
         "qc_stats_src": src_stats,
         "qc_stats_tgt": tgt_stats,
+        "coord_frame_id": "work_grid",
+        "coord_frame_version": 1,
+        "coord_convention": "yx",
+        "inputs_coord_frame_id": {"src": "unknown", "tgt": "unknown"},
+        "inputs_coord_frame_version": {"src": None, "tgt": None},
     }
     return src_pad, tgt_pad, meta
 
@@ -191,7 +196,6 @@ def preprocess_pair_canonical(
         original_um_per_px=tgt_um_per_pixel,
         use_pca=use_pca,
         use_yolk=use_yolk,
-        reference_mask=src_canonical,
     )
 
     src_transform = GridTransform(
@@ -227,6 +231,17 @@ def preprocess_pair_canonical(
         "canonical_um_per_pixel": canonical_config.reference_um_per_pixel,
         "canonical_alignment_src": src_align_meta,
         "canonical_alignment_tgt": tgt_align_meta,
+        "coord_frame_id": "canonical_grid",
+        "coord_frame_version": 1,
+        "coord_convention": "yx",
+        "inputs_coord_frame_id": {
+            "src": (src_frame.meta or {}).get("coord_frame_id", "unknown"),
+            "tgt": (tgt_frame.meta or {}).get("coord_frame_id", "unknown"),
+        },
+        "inputs_coord_frame_version": {
+            "src": (src_frame.meta or {}).get("coord_frame_version"),
+            "tgt": (tgt_frame.meta or {}).get("coord_frame_version"),
+        },
     }
 
     return src_canonical, tgt_canonical, meta
