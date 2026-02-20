@@ -338,9 +338,8 @@ def main():
     logger.info(f"Reference: {ref_metadata['embryo_id']} @ {ref_metadata['predicted_stage_hpf']:.2f} hpf")
     logger.info(f"Raw shape: {mask_ref_raw.shape}, {um_per_px_ref:.3f} µm/px")
     
-    # Transform reference to canonical grid
-    mask_ref_canonical = transform_reference_to_canonical(mask_ref_raw, yolk_ref_raw, um_per_px_ref)
-    logger.info(f"Canonical shape: {mask_ref_canonical.shape}")
+    # NOTE: Do not pre-canonicalize the reference here. Phase 0 derives the canonical
+    # reference template from the OT pipeline outputs to avoid double-canonicalization.
     
     # 2. Sample target embryos
     logger.info("\n[2/5] Sampling target embryos...")
@@ -380,7 +379,7 @@ def main():
     
     try:
         results = run_phase0(
-            mask_ref=mask_ref_canonical,
+            mask_ref=mask_ref_raw,
             target_masks=target_masks_raw,
             y=y,
             metadata_df=metadata,

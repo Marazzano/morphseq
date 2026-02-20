@@ -338,6 +338,144 @@ def run_uot_pair(
     )
 
 
+def run_uot_on_canonical_pair(
+    mask_src: np.ndarray,
+    mask_tgt: np.ndarray,
+    px_size_um: float,
+    config: Optional[UOTConfig] = None,
+    backend: Optional[UOTBackend] = None,
+) -> UOTResult:
+    """
+    Solver-only UOT entrypoint.  Both masks must already be on the same
+    canonical grid — no canonicalization or registration happens here.
+
+    Parameters
+    ----------
+    mask_src : (H, W) bool/uint8 — source mask on canonical grid
+    mask_tgt : (H, W) bool/uint8 — target mask, same shape as mask_src
+    px_size_um : float — physical pixel size of the canonical grid (µm/px)
+    config : UOTConfig, optional.  use_canonical_grid must be False (or absent).
+    backend : UOTBackend, optional.
+
+    Returns
+    -------
+    UOTResult with maps in the canonical grid coordinate frame.
+    """
+    if mask_src.shape != mask_tgt.shape:
+        raise ValueError(
+            f"Canonical masks must have the same shape; got src={mask_src.shape} tgt={mask_tgt.shape}."
+        )
+
+    if config is None:
+        config = UOTConfig()
+
+    if getattr(config, "use_canonical_grid", False):
+        raise ValueError(
+            "run_uot_on_canonical_pair is a solver-only entrypoint: inputs are already canonical. "
+            "Set use_canonical_grid=False (or omit it) in the config."
+        )
+
+    if backend is None:
+        from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
+        backend = POTBackend()
+
+    problem, transform_meta = build_problem(mask_src, mask_tgt, config, px_size_um=px_size_um)
+    transform_meta["canonical_grid"] = True
+
+    backend_result = backend.solve(problem.src, problem.tgt, config)
+
+    pair_frame_for_output = problem.pair_frame if config.output_grid == "canonical" else None
+
+    mass_created_hw, mass_destroyed_hw, velocity_field = compute_transport_maps(
+        backend_result.coupling,
+        problem.src.coords_yx,
+        problem.tgt.coords_yx,
+        problem.src.weights,
+        problem.tgt.weights,
+        problem.work_shape_hw,
+        pair_frame=pair_frame_for_output,
+    )
+
+    cost_src_support = backend_result.cost_per_src
+    cost_tgt_support = backend_result.cost_per_tgt
+    cost_src_px = None
+    cost_tgt_px = None
+    if cost_src_support is not None and cost_tgt_support is not None:
+        cost_src_px, cost_tgt_px = compute_cost_maps(
+            cost_src_support,
+            cost_tgt_support,
+            problem.src.coords_yx,
+            problem.tgt.coords_yx,
+            problem.work_shape_hw,
+            pair_frame=pair_frame_for_output,
+        )
+
+    m_src = backend_result.diagnostics.get("m_src") if backend_result.diagnostics else None
+    m_tgt = backend_result.diagnostics.get("m_tgt") if backend_result.diagnostics else None
+
+    metrics = summarize_metrics(
+        backend_result.cost,
+        backend_result.coupling,
+        mass_created_hw,
+        mass_destroyed_hw,
+        config.metric,
+        m_src=m_src,
+        m_tgt=m_tgt,
+        pair_frame=problem.pair_frame,
+        coord_scale=float(config.coord_scale),
+    )
+
+    def _mask_area(mask: np.ndarray) -> float:
+        return float((np.asarray(mask) > 0).sum())
+
+    m_src_full = _mask_area(mask_src)
+    m_tgt_full = _mask_area(mask_tgt)
+    if problem.pair_frame is not None:
+        bbox = problem.pair_frame.pair_crop_box_yx
+        m_src_crop = _mask_area(mask_src[bbox.y0:bbox.y1, bbox.x0:bbox.x1])
+        m_tgt_crop = _mask_area(mask_tgt[bbox.y0:bbox.y1, bbox.x0:bbox.x1])
+    else:
+        m_src_crop = m_src_full
+        m_tgt_crop = m_tgt_full
+
+    metrics.update({
+        "m_src_crop": m_src_crop,
+        "m_tgt_crop": m_tgt_crop,
+        "m_src_full": m_src_full,
+        "m_tgt_full": m_tgt_full,
+        "mass_delta_crop": m_tgt_crop - m_src_crop,
+        "mass_delta_full": m_tgt_full - m_src_full,
+        "mass_ratio_crop": float("nan") if m_src_crop <= 0 else m_tgt_crop / m_src_crop,
+        "mass_ratio_full": float("nan") if m_src_full <= 0 else m_tgt_full / m_src_full,
+    })
+
+    diagnostics = {
+        "metrics": metrics,
+        "backend": backend_result.diagnostics,
+    }
+
+    return UOTResult(
+        cost=backend_result.cost,
+        coupling=backend_result.coupling,
+        mass_created_px=mass_created_hw,
+        mass_destroyed_px=mass_destroyed_hw,
+        velocity_px_per_frame_yx=velocity_field,
+        support_src_yx=problem.src.coords_yx,
+        support_tgt_yx=problem.tgt.coords_yx,
+        weights_src=problem.src.weights,
+        weights_tgt=problem.tgt.weights,
+        transform_meta=transform_meta,
+        cost_src_support=cost_src_support,
+        cost_tgt_support=cost_tgt_support,
+        cost_src_px=cost_src_px,
+        cost_tgt_px=cost_tgt_px,
+        aligned_src_mask_px=mask_src.astype(np.uint8),
+        aligned_tgt_mask_px=mask_tgt.astype(np.uint8),
+        diagnostics=diagnostics,
+        pair_frame=problem.pair_frame,
+    )
+
+
 def run_from_csv(
     csv_path: Path,
     embryo_id: str,

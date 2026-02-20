@@ -154,13 +154,8 @@ def preprocess_pair_canonical(
             "Ensure load_mask_from_csv was used or add um_per_pixel to meta dict."
         )
 
-    # Verify both masks are at same resolution (for same embryo)
-    if abs(src_um_per_pixel - tgt_um_per_pixel) > 0.01:
-        raise ValueError(
-            f"Source and target have different resolutions: "
-            f"{src_um_per_pixel:.3f} vs {tgt_um_per_pixel:.3f} um/px. "
-            "Canonical grid preprocessing requires same-embryo mask pairs."
-        )
+    # NOTE: src/tgt may have different physical resolutions (e.g., cross-embryo comparisons).
+    # Stage-1 canonicalization handles each mask independently using its own um_per_pixel.
 
     # 3. Load yolk masks if available (optional for now)
     src_yolk = src_frame.meta.get("yolk_mask", None)

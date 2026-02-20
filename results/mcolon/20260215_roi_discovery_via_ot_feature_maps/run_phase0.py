@@ -55,7 +55,7 @@ def run_phase0(
 
     Parameters
     ----------
-    mask_ref : (256, 576) uint8 — fixed WT reference mask on canonical grid
+    mask_ref : (H_ref, W_ref) uint8 — fixed WT reference mask at raw resolution
     target_masks : list of (H_i, W_i) uint8 — raw resolution masks (OT aligns to canonical)
     y : (N,) int — labels (0=WT, 1=cep290)
     metadata_df : DataFrame with sample_id, embryo_id, snip_id columns
@@ -105,7 +105,7 @@ def run_phase0(
     elif "target_id" in metadata_df.columns:
         target_ids = metadata_df["target_id"].astype(str).tolist()
 
-    X, total_cost_C, alignment_debug_df = generate_ot_maps(
+    X, total_cost_C, aligned_ref_mask, aligned_target_masks, alignment_debug_df = generate_ot_maps(
         mask_ref, target_masks, sample_ids,
         raw_um_per_px_ref=raw_um_per_px_ref,
         raw_um_per_px_targets=raw_um_per_px_targets,
@@ -114,12 +114,19 @@ def run_phase0(
         feature_set=config.feature_set,
         source_id=source_id,
         target_ids=target_ids,
+        return_aligned_masks=True,
         collect_debug=True,
         return_debug_df=True,
         uot_config=uot_config, backend=backend,
     )
     results["X_shape"] = X.shape
     results["total_cost_mean"] = float(total_cost_C.mean())
+    results["mask_ref_canonical_shape"] = tuple(aligned_ref_mask.shape) if aligned_ref_mask is not None else None
+
+    if aligned_ref_mask is None:
+        raise ValueError("generate_ot_maps did not return aligned_ref_mask (canonical reference template).")
+    mask_ref_canonical = aligned_ref_mask.astype(np.uint8)
+    results["mask_ref_canonical"] = mask_ref_canonical
 
     # =====================================================================
     # Step 2: QC + Filtering (GATE)
@@ -131,7 +138,7 @@ def run_phase0(
     from p0_qc import run_qc_suite
     qc_dir = out_dir / "qc"
     outlier_flag, qc_stats = run_qc_suite(
-        X, y, total_cost_C, mask_ref, metadata_df, sample_ids,
+        X, y, total_cost_C, mask_ref_canonical, metadata_df, sample_ids,
         out_dir=qc_dir,
         iqr_multiplier=config.dataset.iqr_multiplier,
     )
@@ -149,14 +156,14 @@ def run_phase0(
     viz_dir = out_dir / "viz"
 
     plot_cost_density_suite(
-        X, y, mask_ref, outlier_flag,
+        X, y, mask_ref_canonical, outlier_flag,
         sigma_grid=config.viz_sigma_grid,
         save_dir=viz_dir,
     )
 
     if config.feature_set == Phase0FeatureSet.V1_DYNAMICS:
         plot_displacement_suite(
-            X, y, mask_ref, outlier_flag,
+            X, y, mask_ref_canonical, outlier_flag,
             stride=config.quiver_stride,
             save_dir=viz_dir,
         )
@@ -172,11 +179,11 @@ def run_phase0(
     from p0_viz import plot_s_map
 
     S_map_ref, tangent_ref, normal_ref, s_info = build_s_coordinate(
-        mask_ref, config=config.s_coord,
+        mask_ref_canonical, config=config.s_coord,
     )
     results["s_coordinate_info"] = s_info
 
-    plot_s_map(S_map_ref, mask_ref, save_path=viz_dir / "s_map_ref.png")
+    plot_s_map(S_map_ref, mask_ref_canonical, save_path=viz_dir / "s_map_ref.png")
 
     # =====================================================================
     # Step 5: Build FeatureDataset + S-bin features
@@ -195,8 +202,9 @@ def run_phase0(
         reference_mask_id=source_id or "",
     )
     builder.build(
-        X=X, y=y, mask_ref=mask_ref, metadata_df=metadata_df,
+        X=X, y=y, mask_ref=mask_ref_canonical, metadata_df=metadata_df,
         total_cost_C=total_cost_C,
+        target_masks_canonical=aligned_target_masks,
         alignment_debug_df=alignment_debug_df,
         S_map_ref=S_map_ref, tangent_ref=tangent_ref, normal_ref=normal_ref,
     )
