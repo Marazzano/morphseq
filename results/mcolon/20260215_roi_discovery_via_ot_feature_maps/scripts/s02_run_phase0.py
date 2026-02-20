@@ -46,7 +46,6 @@ import pandas as pd
 
 # Import UOT infrastructure
 from analyze.optimal_transport_morphometrics.uot_masks import frame_mask_io as fmio
-from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
 
 # Import Phase 0 pipeline
 from run_phase0 import run_phase0
@@ -265,31 +264,6 @@ def sample_embryos_in_window(
     logger.info(f"Loaded {len(raw_masks)} embryos with yolk: {n_wt} WT + {n_mut} mutant")
     
     return metadata, raw_masks, yolk_masks, um_per_pixel
-
-
-def transform_reference_to_canonical(
-    mask: np.ndarray,
-    yolk: np.ndarray,
-    um_per_pixel: float,
-) -> np.ndarray:
-    """Transform reference mask to canonical grid (256×576 at 10 µm/px)."""
-    config = CanonicalGridConfig(
-        reference_um_per_pixel=10.0,
-        grid_shape_hw=(256, 576),
-    )
-    aligner = CanonicalAligner.from_config(config)
-    
-    if yolk is None or yolk.sum() == 0:
-        raise ValueError("Reference yolk mask is missing or empty")
-    
-    canonical_mask, _, _ = aligner.align(
-        mask=mask.astype(bool),
-        yolk=yolk.astype(bool),
-        original_um_per_px=um_per_pixel,
-        use_yolk=True,
-    )
-
-    return canonical_mask.astype(np.uint8)
 
 
 def main():
