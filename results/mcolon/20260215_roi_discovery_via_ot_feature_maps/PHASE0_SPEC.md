@@ -6,12 +6,43 @@ Secondary goal: show directionality (displacement dynamics) can improve AUROC be
 
 ## Core principles (locked)
 
-- One fixed source: pre-selected WT reference mask (template on 512×512 canonical grid).
+- One fixed source: pre-selected WT reference mask (template on canonical grid).
 - Many targets: WT and cep290 embryos from ONE 2 hpf window (single window only for Phase 0).
 - Stability first: filtering + visual QC must pass before interpreting any classifier.
 - Statistics use UNSMOOTHED features. Smoothing is visualization-only.
 - CV and resampling are embryo-level (group by embryo_id).
 - Class imbalance handled using existing MorphSeq "balance method" used by prior classifiers (do not re-invent).
+
+## Data Requirements (Phase 0 Implementation)
+
+**Canonical grid:**
+- Shape: 256×576 (H×W) at 10.0 µm/px
+- Matches `CanonicalGridConfig` from [uot_grid.py](../../src/analyze/optimal_transport_morphometrics/uot_masks/uot_grid.py)
+- UOT pipeline handles alignment automatically via `use_canonical_grid=True`
+
+**Stage window:**
+- 47–49 hpf developmental window
+- One frame per embryo (frame closest to 48.0 hpf selected)
+
+**Sample composition:**
+- 10 WT (`genotype == "cep290_wildtype"`)
+- 10 mutant (`genotype == "cep290_homozygous"`)
+- Excludes `cep290_unknown` and heterozygous
+
+**Reference mask selection:**
+- Single WT mask from 47–49 hpf window
+- Selected by highest mean IoU among WT cohort (most "typical")
+- Visualized and approved via `scripts/s01_select_reference_mask.py`
+
+**Data source:**
+- CSV: `results/mcolon/20251229_cep290_phenotype_extraction/final_data/embryo_data_with_labels.csv`
+- Masks: RLE-encoded at raw resolution (2189×1152 typical, varying µm/px)
+- Metadata: `embryo_id`, `frame_index`, `genotype`, `predicted_stage_hpf`, physical dimensions
+
+**Yolk masks (required):**
+- Canonical alignment uses yolk-based orientation (`use_yolk=True`).
+- Yolk masks are loaded from Build02 segmentation outputs via `data_root`.
+- Reference implementation: [results/mcolon/20260213_stream_d_reference_embryo](results/mcolon/20260213_stream_d_reference_embryo)
 
 ## 0) ARTIFACTS + DATA CONTRACT (before any modeling)
 
@@ -27,16 +58,16 @@ Files:
 manifest.json
 metadata.parquet
 features.zarr/
-  X/             (N, 512, 512, C) float32   # per-sample OT-derived feature maps
+  X/             (N, 256, 576, C) float32   # per-sample OT-derived feature maps on canonical grid
   y/             (N,) int {0,1}
-  mask_ref/      (512,512) bool/uint8
+  mask_ref/      (256, 576) bool/uint8
   qc/
     total_cost_C/    (N,) float32
     outlier_flag/    (N,) bool
   optional/
-    S_map_ref/       (512,512) float32 in [0,1]   # rostral→caudal coordinate map in template space
-    tangent_ref/     (512,512,2) float32 (optional) # local unit tangent e_parallel at each pixel
-    normal_ref/      (512,512,2) float32 (optional) # local unit normal e_perp at each pixel
+    S_map_ref/       (256, 576) float32 in [0,1]   # rostral→caudal coordinate map in template space
+    tangent_ref/     (256, 576, 2) float32 (optional) # local unit tangent e_parallel at each pixel
+    normal_ref/      (256, 576, 2) float32 (optional) # local unit normal e_perp at each pixel
 ```
 
 ### manifest.json must declare (hard validation)

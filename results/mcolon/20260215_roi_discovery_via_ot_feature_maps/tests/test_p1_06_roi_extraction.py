@@ -20,14 +20,19 @@ from roi_trainer import extract_roi, train
 
 @pytest.fixture
 def trained_result(planted_data, class_weights, tiny_trainer_config):
-    """A trained model on the planted data."""
+    """A trained model on the planted data with moderate regularization.
+
+    Uses moderate L1+TV so that the TV penalty suppresses the large but
+    canceling weight patterns that appear with near-zero regularization.
+    This ensures magnitude-based ROI extraction localizes correctly.
+    """
     return train(
         X=planted_data["X"],
         y=planted_data["y"],
         mask_ref=planted_data["mask_ref"],
         class_weights=class_weights,
-        lam=1e-3,
-        mu=1e-3,
+        lam=5e-3,
+        mu=5e-3,
         config=tiny_trainer_config,
         channel_names=planted_data["channel_names"],
     )

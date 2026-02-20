@@ -41,31 +41,51 @@ def run_phase0(
     y: np.ndarray,
     metadata_df: pd.DataFrame,
     config: Phase0RunConfig = Phase0RunConfig(),
+    raw_um_per_px_ref: float = 7.8,
+    raw_um_per_px_targets: np.ndarray = None,
+    yolk_ref: Optional[np.ndarray] = None,
+    yolk_targets: Optional[List[np.ndarray]] = None,
+    source_id: Optional[str] = None,
     uot_config=None,
     backend=None,
+    out_dir=None,
 ) -> Dict:
     """
     Run the full Phase 0 pipeline.
 
     Parameters
     ----------
-    mask_ref : (512, 512) uint8 — fixed WT reference mask
-    target_masks : list of (512, 512) uint8 — all WT + cep290 target masks
+    mask_ref : (256, 576) uint8 — fixed WT reference mask on canonical grid
+    target_masks : list of (H_i, W_i) uint8 — raw resolution masks (OT aligns to canonical)
     y : (N,) int — labels (0=WT, 1=cep290)
     metadata_df : DataFrame with sample_id, embryo_id, snip_id columns
     config : Phase0RunConfig
+    raw_um_per_px_ref : float — physical resolution of reference mask
+    raw_um_per_px_targets : (N,) array — physical resolution per target mask
+    yolk_ref : (H_ref, W_ref) uint8, optional — reference yolk mask
+    yolk_targets : list of (H_i, W_i) uint8, optional — yolk masks per target
+    source_id : str, optional — stable source identifier (e.g., embryo_id|frame_index)
     uot_config : UOTConfig, optional
     backend : UOTBackend, optional
+    out_dir : Path, optional — override config.out_dir
 
     Returns
     -------
     dict with all intermediate results and gate statuses.
     """
-    out_dir = Path(config.out_dir or f"results/phase0_{config.genotype}")
+    if out_dir is None:
+        out_dir = Path(config.out_dir or f"results/phase0_{config.genotype}")
+    else:
+        out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     results = {"config": config, "out_dir": str(out_dir), "gates": {}}
     N = len(target_masks)
+    
+    # Default um_per_px if not provided
+    if raw_um_per_px_targets is None:
+        raw_um_per_px_targets = np.full(N, 7.8, dtype=np.float32)
+    
     sample_ids = metadata_df.get("sample_id", pd.Series([f"s_{i}" for i in range(N)])).tolist()
 
     # =====================================================================
@@ -76,9 +96,26 @@ def run_phase0(
     logger.info("=" * 60)
 
     from p0_ot_maps import generate_ot_maps
-    X, total_cost_C = generate_ot_maps(
+    target_ids = None
+    if {"embryo_id", "frame_index"}.issubset(metadata_df.columns):
+        target_ids = metadata_df.apply(
+            lambda row: f"{row['embryo_id']}|frame_{int(row['frame_index'])}",
+            axis=1,
+        ).tolist()
+    elif "target_id" in metadata_df.columns:
+        target_ids = metadata_df["target_id"].astype(str).tolist()
+
+    X, total_cost_C, alignment_debug_df = generate_ot_maps(
         mask_ref, target_masks, sample_ids,
+        raw_um_per_px_ref=raw_um_per_px_ref,
+        raw_um_per_px_targets=raw_um_per_px_targets,
+        yolk_ref=yolk_ref,
+        yolk_targets=yolk_targets,
         feature_set=config.feature_set,
+        source_id=source_id,
+        target_ids=target_ids,
+        collect_debug=True,
+        return_debug_df=True,
         uot_config=uot_config, backend=backend,
     )
     results["X_shape"] = X.shape
@@ -155,10 +192,12 @@ def run_phase0(
         feature_set=config.feature_set,
         config=config.dataset,
         stage_window=config.stage_window,
+        reference_mask_id=source_id or "",
     )
     builder.build(
         X=X, y=y, mask_ref=mask_ref, metadata_df=metadata_df,
         total_cost_C=total_cost_C,
+        alignment_debug_df=alignment_debug_df,
         S_map_ref=S_map_ref, tangent_ref=tangent_ref, normal_ref=normal_ref,
     )
 

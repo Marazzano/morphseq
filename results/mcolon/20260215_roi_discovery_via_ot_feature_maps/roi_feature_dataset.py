@@ -275,16 +275,16 @@ class FeatureDatasetBuilder:
 
     def __init__(
         self,
-        ot_results_dir: str | Path,
-        out_dir: str | Path,
+        ot_results_dir: str | Path | None = None,
+        out_dir: str | Path | None = None,
         feature_set: FeatureSet = FeatureSet.COST,
         config: Optional[FeatureDatasetConfig] = None,
         genotype_col: str = "genotype",
         reference_genotype: str = "WT",
         target_genotype: str = "cep290",
     ):
-        self.ot_results_dir = Path(ot_results_dir)
-        self.out_dir = Path(out_dir)
+        self.ot_results_dir = Path(ot_results_dir) if ot_results_dir is not None else None
+        self.out_dir = Path(out_dir) if out_dir is not None else None
         self.feature_set = feature_set
         self.config = config or FeatureDatasetConfig()
         self.genotype_col = genotype_col
@@ -297,9 +297,11 @@ class FeatureDatasetBuilder:
         X: np.ndarray,
         y: np.ndarray,
         mask_ref: np.ndarray,
-        metadata_df: pd.DataFrame,
-        total_cost_C: np.ndarray,
+        metadata_df: pd.DataFrame = None,
+        total_cost_C: np.ndarray = None,
         provenance: Optional[Dict] = None,
+        out_dir: str | Path | None = None,
+        metadata: pd.DataFrame = None,
     ) -> Path:
         """
         Build and write the FeatureDataset to disk.
@@ -325,6 +327,18 @@ class FeatureDatasetBuilder:
         """
         if zarr is None:
             raise ImportError("zarr is required to build FeatureDataset. pip install zarr")
+
+        # Allow out_dir override from build() call
+        if out_dir is not None:
+            self.out_dir = Path(out_dir)
+        if self.out_dir is None:
+            raise ValueError("out_dir must be provided either in __init__ or build()")
+
+        # Allow 'metadata' as alias for 'metadata_df'
+        if metadata_df is None and metadata is not None:
+            metadata_df = metadata
+        if metadata_df is None:
+            raise ValueError("metadata_df (or metadata=) is required")
 
         N, H, W, C = X.shape
         grid = self.config.canonical_grid_hw
@@ -444,6 +458,8 @@ class Phase0FeatureDatasetBuilder:
         mask_ref: np.ndarray,
         metadata_df: pd.DataFrame,
         total_cost_C: np.ndarray,
+        target_masks_canonical: Optional[np.ndarray] = None,
+        alignment_debug_df: Optional[pd.DataFrame] = None,
         S_map_ref: Optional[np.ndarray] = None,
         tangent_ref: Optional[np.ndarray] = None,
         normal_ref: Optional[np.ndarray] = None,
@@ -459,6 +475,11 @@ class Phase0FeatureDatasetBuilder:
         mask_ref : ndarray, shape (512, 512)
         metadata_df : DataFrame with embryo_id, snip_id, label_int, etc.
         total_cost_C : ndarray, shape (N,)
+        target_masks_canonical : ndarray, shape (N, 512, 512), optional
+            OT-aligned target masks on canonical grid (exact masks used by OT preprocessing).
+        alignment_debug_df : DataFrame, optional
+            Per-sample alignment diagnostics with columns including:
+            sample_id, source_id, target_id, rotation/flip/retained ratio fields.
         S_map_ref : ndarray, shape (512, 512), optional, S in [0,1]
         tangent_ref : ndarray, shape (512, 512, 2), optional
         normal_ref : ndarray, shape (512, 512, 2), optional
@@ -473,6 +494,8 @@ class Phase0FeatureDatasetBuilder:
         assert y.shape == (N,)
         assert mask_ref.shape == grid
         assert total_cost_C.shape == (N,)
+        if target_masks_canonical is not None:
+            assert target_masks_canonical.shape == (N, *grid)
         assert len(metadata_df) == N
         assert C == len(self.channel_schemas), (
             f"X has {C} channels, schema expects {len(self.channel_schemas)}"
@@ -508,6 +531,13 @@ class Phase0FeatureDatasetBuilder:
 
         # Optional arrays (Phase 0 specific)
         opt_group = store.create_group("optional")
+        if target_masks_canonical is not None:
+            opt_group.create_dataset(
+                "target_masks_canonical",
+                data=target_masks_canonical.astype(np.uint8),
+                chunks=(chunk_n, H, W),
+                dtype=np.uint8,
+            )
         if S_map_ref is not None:
             assert S_map_ref.shape == grid
             opt_group.create_dataset("S_map_ref", data=S_map_ref.astype(np.float32))
@@ -523,6 +553,43 @@ class Phase0FeatureDatasetBuilder:
         metadata_df["sample_index"] = np.arange(N)
         metadata_df["total_cost_C"] = total_cost_C
         metadata_df["qc_outlier_flag"] = outlier_flag
+
+        if alignment_debug_df is not None:
+            align_df = alignment_debug_df.copy()
+            if "sample_id" not in align_df.columns:
+                raise ValueError("alignment_debug_df must include 'sample_id'")
+            if "sample_id" not in metadata_df.columns:
+                raise ValueError("metadata_df must include 'sample_id' when alignment_debug_df is provided")
+
+            sample_to_index = {sid: i for i, sid in enumerate(metadata_df["sample_id"].astype(str).tolist())}
+            align_df["sample_id"] = align_df["sample_id"].astype(str)
+            align_df["sample_index"] = align_df["sample_id"].map(sample_to_index)
+
+            missing_samples = align_df["sample_index"].isna()
+            if missing_samples.any():
+                missing_ids = align_df.loc[missing_samples, "sample_id"].tolist()
+                raise ValueError(
+                    "alignment_debug_df has sample_id values not present in metadata_df: "
+                    f"{missing_ids[:5]}"
+                )
+
+            align_df["sample_index"] = align_df["sample_index"].astype(np.int32)
+            align_df = align_df.sort_values("sample_index").reset_index(drop=True)
+            align_df.to_parquet(self.out_dir / "alignment_debug.parquet", index=False)
+
+            if "source_id" in align_df.columns and "source_id" not in metadata_df.columns:
+                metadata_df = metadata_df.merge(
+                    align_df[["sample_id", "source_id"]],
+                    on="sample_id",
+                    how="left",
+                )
+            if "target_id" in align_df.columns and "target_id" not in metadata_df.columns:
+                metadata_df = metadata_df.merge(
+                    align_df[["sample_id", "target_id"]],
+                    on="sample_id",
+                    how="left",
+                )
+
         metadata_df.to_parquet(self.out_dir / "metadata.parquet", index=False)
 
         # Class counts
@@ -542,6 +609,12 @@ class Phase0FeatureDatasetBuilder:
             reference_mask_id=self.reference_mask_id,
             provenance=provenance,
         )
+        manifest["debug_outputs"] = {
+            "alignment_debug_parquet": bool(alignment_debug_df is not None),
+            "source_target_ids_in_metadata": bool(
+                ("source_id" in metadata_df.columns) and ("target_id" in metadata_df.columns)
+            ),
+        }
         with open(self.out_dir / "manifest.json", "w") as f:
             json.dump(manifest, f, indent=2)
 

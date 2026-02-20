@@ -150,6 +150,8 @@ class UOTResult:
     cost_tgt_support: Optional[np.ndarray] = None  # per tgt support point
     cost_src_px: Optional[np.ndarray] = None       # rasterized to canonical/work grid
     cost_tgt_px: Optional[np.ndarray] = None       # rasterized to canonical/work grid
+    aligned_src_mask_px: Optional[np.ndarray] = None  # solver-space source mask on output grid
+    aligned_tgt_mask_px: Optional[np.ndarray] = None  # solver-space target mask on output grid
     diagnostics: Optional[dict] = None
     pair_frame: Optional[PairFrameGeometry] = None  # Provides px_size_um for unit conversion
 
@@ -198,6 +200,7 @@ class UOTConfig:
 
     # Canonical grid settings
     use_canonical_grid: bool = False
+    output_grid: str = "work"  # "work" | "canonical"
     canonical_grid_um_per_pixel: float = 10.0
     canonical_grid_shape_hw: tuple[int, int] = (256, 576)
     canonical_grid_align_mode: str = "yolk"  # "yolk" | "centroid" | "none"
@@ -209,4 +212,5 @@ class UOTConfig:
     canonical_grid_error_on_clip: bool = False
 
     # Pair-frame architecture
-    use_pair_frame: bool = False  # Enable pair-frame coordinate tracking
+    use_pair_frame_geometry: bool = False  # Internal geometry for pair cropping
+    use_pair_frame: Optional[bool] = None  # DEPRECATED: use output_grid/use_pair_frame_geometry

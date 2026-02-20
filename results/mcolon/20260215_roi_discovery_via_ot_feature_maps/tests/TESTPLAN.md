@@ -82,6 +82,68 @@ pytest tests/test_p1_04_tv.py -v
 
 ---
 
+## CRITICAL TESTING PRINCIPLE: Magnitude vs. Signed Discriminative Power
+
+### The Problem
+
+Logistic regression weights can have **high magnitude but low discriminative power** when
+opposing positive and negative weights cancel out. This happens with weak regularization.
+
+### Example (Empirical Data from test_p1_05_trainer)
+
+**Ground truth** (actual logit contributions):
+- Tail discrimination: 63.7 (signal planted here)
+- Head discrimination: 1.4 (just noise)
+- **True winner**: TAIL (46× stronger)
+
+**Wrong metric** (`mean(|w|)` — average magnitude):
+- Tail: 0.041
+- Head: 0.206 (5× higher!)
+- **Predicted winner**: HEAD ❌
+
+**Correct metric** (`|mean(w)|` — absolute net effect):
+- Tail: 0.041
+- Head: 0.020
+- **Predicted winner**: TAIL ✓
+
+### Why This Happens
+
+The logit computation is:
+```python
+logit = sum(X_pixel * w_pixel) + bias
+```
+
+So **net signed weight** (mean) determines contribution, not **average size** (magnitude).
+
+**Head weights** (oscillating, high magnitude, low net):
+```
+[+0.8, -0.7, +0.9, -0.8, ...] → mean(|w|) = 0.8, mean(w) = 0.02
+```
+
+**Tail weights** (consistent, moderate magnitude, high net):
+```
+[+0.3, +0.3, +0.3, +0.3, ...] → mean(|w|) = 0.3, mean(w) = 0.30
+```
+
+### Testing Standard
+
+For all weight-based localization tests:
+- ✅ Use `abs(mean(weights))` to measure discriminative focus
+- ❌ Do NOT use `mean(abs(weights))` — measures activity, not discrimination
+
+### Implications for ROI Visualization
+
+`extract_roi()` uses magnitude thresholding, which is useful for showing "where the model
+is active" but can include canceling weights. For biological interpretation:
+
+1. **Magnitude map** (`sqrt(sum(w**2))`) — shows model activity
+2. **Signed weight map** (raw `w`) — shows direction of effect
+3. **Strong TV regularization** forces smooth, same-sign weights → magnitude ≈ signed effect
+
+See `test_p1_05_trainer.py` and `test_p1_06_roi_extraction.py` for implementation.
+
+---
+
 ## Execution files (new)
 
 For day-to-day execution, use the structured task files in:

@@ -72,7 +72,7 @@ def planted_data(mask_ref, tail_roi_mask):
     groups = np.arange(N_TOTAL)  # each sample is its own embryo
 
     # Plant signal in tail for mutants only
-    signal_strength = 2.0
+    signal_strength = 10.0
     for i in range(N_WT, N_TOTAL):
         X[i][tail_roi_mask, :] += signal_strength
 
@@ -102,8 +102,8 @@ def tiny_trainer_config():
     return TrainerConfig(
         learn_res=16,
         output_res=GRID_H,
-        learning_rate=1e-2,
-        max_steps=100,
+        learning_rate=5e-2,
+        max_steps=1000,
         convergence_tol=1e-8,
         log_every=10,
         random_seed=42,

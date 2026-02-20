@@ -330,6 +330,15 @@ def extract_roi(
     """
     Extract ROI from trained weight map via quantile thresholding.
 
+    Uses magnitude-based thresholding to identify "active" regions where
+    the model places large weights. This shows WHERE the model focuses,
+    but not necessarily WHERE discrimination happens (which requires
+    considering sign cancellation — see test_p1_05_trainer.py).
+
+    For interpretable ROIs, use moderate-to-strong TV regularization
+    (mu >= 1e-3) to suppress oscillating weights. This forces the model
+    to learn smooth, same-sign patterns where magnitude ≈ discriminative power.
+
     Parameters
     ----------
     w_full : ndarray, shape (H, W, C)
@@ -345,6 +354,11 @@ def extract_roi(
         Binary ROI mask.
     roi_stats : dict
         area_fraction, n_components, boundary_fraction
+
+    See Also
+    --------
+    tests/test_p1_05_trainer.py : Magnitude vs signed weight distinction
+    tests/TESTPLAN.md : Testing principle for discriminative power
     """
     from scipy.ndimage import label as ndimage_label
     from roi_tv import compute_boundary_fraction

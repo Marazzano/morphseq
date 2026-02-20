@@ -74,11 +74,11 @@ MU_PRESETS = {
 @dataclass(frozen=True)
 class FeatureDatasetConfig:
     """Configuration for the on-disk FeatureDataset contract."""
-    canonical_grid_hw: Tuple[int, int] = (512, 512)
+    canonical_grid_hw: Tuple[int, int] = (256, 576)
     chunk_size_n: int = 8
     compression: str = "zstd"
     compression_level: int = 3
-    iqr_multiplier: float = 1.5       # for QC outlier filter on total_cost_C
+    iqr_multiplier: float = 2.0       # for QC outlier filter on total_cost_C
     group_key: str = "embryo_id"      # MANDATORY: prevents leakage in CV splits
 
 

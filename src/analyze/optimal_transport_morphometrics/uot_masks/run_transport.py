@@ -35,9 +35,16 @@ def build_problem(
 ) -> Tuple[UOTProblem, dict]:
     """Build UOT problem with optional pair-frame geometry."""
 
-    # NEW: Create pair frame if enabled
+    output_grid = getattr(config, "output_grid", "work")
+    use_pair_frame_geometry = (
+        config.use_pair_frame_geometry
+        or bool(getattr(config, "use_pair_frame", False))
+        or (output_grid == "canonical")
+    )
+
+    # Create pair frame geometry when needed
     pair_frame = None
-    if config.use_pair_frame:
+    if use_pair_frame_geometry:
         # P0 CORRECTNESS: Ensure inputs are actually canonical-space masks
         assert mask_src.shape == mask_tgt.shape, \
             f"Mask shapes must match for pair-frame: {mask_src.shape} vs {mask_tgt.shape}"
@@ -119,6 +126,7 @@ def build_problem(
         "downsample_factor": config.downsample_factor,
         "support_src": src_meta,
         "support_tgt": tgt_meta,
+        "output_grid": output_grid,
     }
 
     problem = UOTProblem(
@@ -203,6 +211,8 @@ def run_uot_pair(
     # Solve transport problem
     backend_result = backend.solve(problem.src, problem.tgt, config)
 
+    pair_frame_for_output = problem.pair_frame if getattr(config, "output_grid", "work") == "canonical" else None
+
     mass_created_hw, mass_destroyed_hw, velocity_field = compute_transport_maps(
         backend_result.coupling,
         problem.src.coords_yx,
@@ -210,7 +220,7 @@ def run_uot_pair(
         problem.src.weights,
         problem.tgt.weights,
         problem.work_shape_hw,
-        pair_frame=problem.pair_frame,  # NEW
+        pair_frame=pair_frame_for_output,
     )
 
     cost_src_support = backend_result.cost_per_src
@@ -224,7 +234,7 @@ def run_uot_pair(
             problem.src.coords_yx,
             problem.tgt.coords_yx,
             problem.work_shape_hw,
-            pair_frame=problem.pair_frame,
+            pair_frame=pair_frame_for_output,
         )
 
     # P0 CORRECTNESS: If pair-frame used, verify padded regions are truly empty
@@ -325,6 +335,8 @@ def run_uot_pair(
         cost_tgt_support=cost_tgt_support,
         cost_src_px=cost_src_px,
         cost_tgt_px=cost_tgt_px,
+        aligned_src_mask_px=full_mask_src.astype(np.uint8) if full_mask_src is not None else None,
+        aligned_tgt_mask_px=full_mask_tgt.astype(np.uint8) if full_mask_tgt is not None else None,
         diagnostics=diagnostics,
         pair_frame=problem.pair_frame,  # NEW: Enables property conversions
     )

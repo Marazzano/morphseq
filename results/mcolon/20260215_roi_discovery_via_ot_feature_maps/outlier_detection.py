@@ -21,7 +21,7 @@ class OutlierDetectionConfig:
     """Configuration for outlier detection."""
 
     method: str = "iqr"
-    iqr_multiplier: float = 1.5
+    iqr_multiplier: float = 2.0
     zscore_threshold: float = 3.0
     mad_threshold: float = 3.5
 
@@ -60,7 +60,7 @@ def _validate_input(values: np.ndarray) -> np.ndarray:
     return arr
 
 
-def detect_outliers_iqr(values: np.ndarray, multiplier: float = 1.5) -> OutlierDetectionResult:
+def detect_outliers_iqr(values: np.ndarray, multiplier: float = 2.0) -> OutlierDetectionResult:
     """IQR outlier detection with Tukey fences."""
     arr = _validate_input(values)
     q1 = float(np.percentile(arr, 25))

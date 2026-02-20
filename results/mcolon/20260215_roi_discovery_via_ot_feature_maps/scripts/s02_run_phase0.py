@@ -360,6 +360,12 @@ def main():
     logger.info("\n[3/5] Building label array...")
     y = (metadata["genotype"] == "cep290_homozygous").astype(np.int32).values
     logger.info(f"Labels: {(y==0).sum()} WT (0), {(y==1).sum()} mutant (1)")
+    metadata = metadata.copy()
+    metadata["target_id"] = metadata.apply(
+        lambda row: f"{row['embryo_id']}|frame_{int(row['frame_index'])}",
+        axis=1,
+    )
+    metadata["source_id"] = f"{args.reference_embryo_id}|frame_{int(args.reference_frame_index)}"
     
     if args.dry_run:
         logger.info("\n[DRY RUN] Data loaded successfully. Exiting.")
@@ -383,6 +389,7 @@ def main():
             raw_um_per_px_targets=um_per_px_targets,
             yolk_ref=yolk_ref_raw,
             yolk_targets=yolk_masks_raw,
+            source_id=f"{args.reference_embryo_id}|frame_{int(args.reference_frame_index)}",
             out_dir=args.output_dir,
         )
         

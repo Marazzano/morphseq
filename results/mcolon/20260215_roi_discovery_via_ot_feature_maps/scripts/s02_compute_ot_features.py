@@ -253,6 +253,9 @@ def main():
         DATA_CSV, args.data_root,
         args.reference_embryo_id, args.reference_frame_index,
     )
+    # Keep two representations:
+    # 1) raw reference mask for OT (run_single_ot canonicalizes internally)
+    # 2) canonical reference mask for QC overlays + dataset mask_ref contract
     mask_ref_canonical = transform_reference_to_canonical(mask_ref_raw, yolk_ref_raw, um_per_px_ref)
     logger.info(f"Reference: {ref_metadata['embryo_id']} @ {ref_metadata['predicted_stage_hpf']:.2f} hpf")
     
@@ -277,8 +280,18 @@ def main():
     config = Phase0RunConfig()
     sample_ids = metadata["sample_id"].tolist()
     
-    X, total_cost_C = generate_ot_maps(
-        mask_ref_canonical,
+    source_id = f"{args.reference_embryo_id}|frame_{int(args.reference_frame_index)}"
+    metadata = metadata.copy()
+    metadata["target_id"] = metadata.apply(
+        lambda row: f"{row['embryo_id']}|frame_{int(row['frame_index'])}",
+        axis=1,
+    )
+    metadata["source_id"] = source_id
+    metadata["source_embryo_id"] = str(args.reference_embryo_id)
+    metadata["source_frame_index"] = int(args.reference_frame_index)
+
+    X, total_cost_C, mask_ref_aligned_ot, target_masks_canonical, alignment_debug_df = generate_ot_maps(
+        mask_ref_raw,
         target_masks_raw,
         sample_ids,
         raw_um_per_px_ref=um_per_px_ref,
@@ -286,10 +299,19 @@ def main():
         yolk_ref=yolk_ref_raw,
         yolk_targets=yolk_masks_raw,
         feature_set=config.feature_set,
+        source_id=source_id,
+        target_ids=metadata["target_id"].tolist(),
+        return_aligned_masks=True,
+        collect_debug=True,
+        strict_debug_ids=True,
+        return_debug_df=True,
     )
     
     logger.info(f"Generated OT feature maps: X.shape = {X.shape}")
     logger.info(f"Mean transport cost: {total_cost_C.mean():.3f}")
+
+    # Use the exact aligned source mask from OT (not an independently reconstructed transform).
+    mask_ref_for_outputs = mask_ref_aligned_ot.astype(np.uint8)
     
     # QC and filtering
     logger.info("\n[4/4] Running QC suite...")
@@ -297,9 +319,11 @@ def main():
     qc_dir.mkdir(parents=True, exist_ok=True)
     
     outlier_flag, qc_stats = run_qc_suite(
-        X, y, total_cost_C, mask_ref_canonical, metadata,
+        X, y, total_cost_C, mask_ref_for_outputs, metadata,
         sample_ids, out_dir=qc_dir,
         iqr_multiplier=config.dataset.iqr_multiplier,
+        target_masks_canonical=target_masks_canonical,
+        alignment_debug_df=alignment_debug_df,
     )
     
     n_outliers = outlier_flag.sum()
@@ -315,15 +339,18 @@ def main():
         feature_set=config.feature_set,
         config=config.dataset,
         stage_window=f"{stage_lo}-{stage_hi}",
+        reference_mask_id=source_id,
     )
     
     # Build without S-coordinate (we'll do that in next script)
     builder.build(
         X=X,
         y=y,
-        mask_ref=mask_ref_canonical,
+        mask_ref=mask_ref_for_outputs,
         metadata_df=metadata,
         total_cost_C=total_cost_C,
+        target_masks_canonical=target_masks_canonical,
+        alignment_debug_df=alignment_debug_df,
     )
     
     logger.info("\n" + "=" * 70)
