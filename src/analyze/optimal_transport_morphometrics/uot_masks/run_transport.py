@@ -35,12 +35,8 @@ def build_problem(
 ) -> Tuple[UOTProblem, dict]:
     """Build UOT problem with optional pair-frame geometry."""
 
-    output_grid = getattr(config, "output_grid", "work")
-    use_pair_frame_geometry = (
-        config.use_pair_frame_geometry
-        or bool(getattr(config, "use_pair_frame", False))
-        or (output_grid == "canonical")
-    )
+    output_grid = config.output_grid
+    use_pair_frame_geometry = config.pair_frame_geometry_enabled()
 
     # Create pair frame geometry when needed
     pair_frame = None
@@ -211,7 +207,7 @@ def run_uot_pair(
     # Solve transport problem
     backend_result = backend.solve(problem.src, problem.tgt, config)
 
-    pair_frame_for_output = problem.pair_frame if getattr(config, "output_grid", "work") == "canonical" else None
+    pair_frame_for_output = problem.pair_frame if config.output_grid == "canonical" else None
 
     mass_created_hw, mass_destroyed_hw, velocity_field = compute_transport_maps(
         backend_result.coupling,
@@ -263,7 +259,7 @@ def run_uot_pair(
                 f"Mass destroyed in padded X band: max={pad_band_x_destroyed.max()}"
 
     # If using canonical grid without pair frame, apply legacy rescaling
-    if config.use_canonical_grid and not config.use_pair_frame:
+    if config.use_canonical_grid and problem.pair_frame is None:
         src_transform = preprocess_meta["src_transform"]
         velocity_field = rescale_velocity_to_um(velocity_field, src_transform)
     # Note: If pair_frame is used, velocity is already in μm from rasterization

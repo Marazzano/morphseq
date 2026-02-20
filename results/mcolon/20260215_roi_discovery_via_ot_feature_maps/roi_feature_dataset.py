@@ -33,6 +33,10 @@ try:
     import zarr
 except ImportError:
     zarr = None
+try:
+    from numcodecs import Blosc
+except Exception:
+    Blosc = None
 
 from roi_config import (
     CHANNEL_SCHEMAS,
@@ -374,24 +378,34 @@ class FeatureDatasetBuilder:
         store = zarr.open(str(zarr_path), mode="w")
 
         chunk_n = self.config.chunk_size_n
-        compressor = zarr.storage.default_compressor
+        compressor = None
+        if self.config.compression:
+            if Blosc is None:
+                raise ImportError("numcodecs is required for zarr compression")
+            if self.config.compression.lower() != "zstd":
+                raise ValueError(f"Unsupported compression {self.config.compression!r}; expected 'zstd'")
+            compressor = Blosc(cname="zstd", clevel=int(self.config.compression_level), shuffle=Blosc.BITSHUFFLE)
 
         store.create_dataset(
             "X", data=X.astype(np.float32),
             chunks=(chunk_n, H, W, C),
             dtype=np.float32,
+            compressor=compressor,
         )
-        store.create_dataset("y", data=y.astype(np.int32), dtype=np.int32)
+        store.create_dataset("y", data=y.astype(np.int32), dtype=np.int32, compressor=compressor)
         store.create_dataset(
             "mask_ref", data=mask_ref.astype(np.uint8), dtype=np.uint8,
+            compressor=compressor,
         )
 
         qc_group = store.create_group("qc")
         qc_group.create_dataset(
             "total_cost_C", data=total_cost_C.astype(np.float32), dtype=np.float32,
+            compressor=compressor,
         )
         qc_group.create_dataset(
             "outlier_flag", data=outlier_flag, dtype=bool,
+            compressor=compressor,
         )
 
         # Write metadata Parquet
@@ -520,14 +534,21 @@ class Phase0FeatureDatasetBuilder:
         store = zarr.open(str(zarr_path), mode="w")
 
         chunk_n = self.config.chunk_size_n
+        compressor = None
+        if self.config.compression:
+            if Blosc is None:
+                raise ImportError("numcodecs is required for zarr compression")
+            if self.config.compression.lower() != "zstd":
+                raise ValueError(f"Unsupported compression {self.config.compression!r}; expected 'zstd'")
+            compressor = Blosc(cname="zstd", clevel=int(self.config.compression_level), shuffle=Blosc.BITSHUFFLE)
         store.create_dataset("X", data=X.astype(np.float32),
-                             chunks=(chunk_n, H, W, C), dtype=np.float32)
-        store.create_dataset("y", data=y.astype(np.int32), dtype=np.int32)
-        store.create_dataset("mask_ref", data=mask_ref.astype(np.uint8), dtype=np.uint8)
+                             chunks=(chunk_n, H, W, C), dtype=np.float32, compressor=compressor)
+        store.create_dataset("y", data=y.astype(np.int32), dtype=np.int32, compressor=compressor)
+        store.create_dataset("mask_ref", data=mask_ref.astype(np.uint8), dtype=np.uint8, compressor=compressor)
 
         qc_group = store.create_group("qc")
-        qc_group.create_dataset("total_cost_C", data=total_cost_C.astype(np.float32))
-        qc_group.create_dataset("outlier_flag", data=outlier_flag, dtype=bool)
+        qc_group.create_dataset("total_cost_C", data=total_cost_C.astype(np.float32), compressor=compressor)
+        qc_group.create_dataset("outlier_flag", data=outlier_flag, dtype=bool, compressor=compressor)
 
         # Optional arrays (Phase 0 specific)
         opt_group = store.create_group("optional")
@@ -537,16 +558,17 @@ class Phase0FeatureDatasetBuilder:
                 data=target_masks_canonical.astype(np.uint8),
                 chunks=(chunk_n, H, W),
                 dtype=np.uint8,
+                compressor=compressor,
             )
         if S_map_ref is not None:
             assert S_map_ref.shape == grid
-            opt_group.create_dataset("S_map_ref", data=S_map_ref.astype(np.float32))
+            opt_group.create_dataset("S_map_ref", data=S_map_ref.astype(np.float32), compressor=compressor)
         if tangent_ref is not None:
             assert tangent_ref.shape == (*grid, 2)
-            opt_group.create_dataset("tangent_ref", data=tangent_ref.astype(np.float32))
+            opt_group.create_dataset("tangent_ref", data=tangent_ref.astype(np.float32), compressor=compressor)
         if normal_ref is not None:
             assert normal_ref.shape == (*grid, 2)
-            opt_group.create_dataset("normal_ref", data=normal_ref.astype(np.float32))
+            opt_group.create_dataset("normal_ref", data=normal_ref.astype(np.float32), compressor=compressor)
 
         # Write metadata
         metadata_df = metadata_df.copy()

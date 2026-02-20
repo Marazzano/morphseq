@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union
+import warnings
 
 import numpy as np
 
@@ -214,3 +215,21 @@ class UOTConfig:
     # Pair-frame architecture
     use_pair_frame_geometry: bool = False  # Internal geometry for pair cropping
     use_pair_frame: Optional[bool] = None  # DEPRECATED: use output_grid/use_pair_frame_geometry
+
+    def __post_init__(self) -> None:
+        valid_output_grids = {"work", "canonical"}
+        if self.output_grid not in valid_output_grids:
+            raise ValueError(
+                f"UOTConfig.output_grid must be one of {sorted(valid_output_grids)}; got {self.output_grid!r}"
+            )
+
+        if self.use_pair_frame is not None:
+            warnings.warn(
+                "UOTConfig.use_pair_frame is deprecated; use output_grid and/or use_pair_frame_geometry instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+    def pair_frame_geometry_enabled(self) -> bool:
+        """Single source of truth for whether PairFrameGeometry is constructed."""
+        return bool(self.use_pair_frame_geometry) or bool(self.use_pair_frame) or (self.output_grid == "canonical")

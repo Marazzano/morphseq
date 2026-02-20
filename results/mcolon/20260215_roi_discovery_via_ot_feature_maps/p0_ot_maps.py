@@ -254,13 +254,13 @@ def run_single_ot(
             src_align.get("anchor_shift_xy", (np.nan, np.nan))[1]
             if src_align.get("anchor_shift_xy") is not None else np.nan
         ),
-        "src_yolk_y_final": (
-            src_align.get("yolk_yx_final", (np.nan, np.nan))[0]
-            if src_align.get("yolk_yx_final") is not None else np.nan
+        "src_head_y_final": (
+            src_align.get("head_yx_final", (np.nan, np.nan))[0]
+            if src_align.get("head_yx_final") is not None else np.nan
         ),
-        "src_yolk_x_final": (
-            src_align.get("yolk_yx_final", (np.nan, np.nan))[1]
-            if src_align.get("yolk_yx_final") is not None else np.nan
+        "src_head_x_final": (
+            src_align.get("head_yx_final", (np.nan, np.nan))[1]
+            if src_align.get("head_yx_final") is not None else np.nan
         ),
         "src_back_y_final": (
             src_align.get("back_yx_final", (np.nan, np.nan))[0]
@@ -281,13 +281,13 @@ def run_single_ot(
             tgt_align.get("anchor_shift_xy", (np.nan, np.nan))[1]
             if tgt_align.get("anchor_shift_xy") is not None else np.nan
         ),
-        "tgt_yolk_y_final": (
-            tgt_align.get("yolk_yx_final", (np.nan, np.nan))[0]
-            if tgt_align.get("yolk_yx_final") is not None else np.nan
+        "tgt_head_y_final": (
+            tgt_align.get("head_yx_final", (np.nan, np.nan))[0]
+            if tgt_align.get("head_yx_final") is not None else np.nan
         ),
-        "tgt_yolk_x_final": (
-            tgt_align.get("yolk_yx_final", (np.nan, np.nan))[1]
-            if tgt_align.get("yolk_yx_final") is not None else np.nan
+        "tgt_head_x_final": (
+            tgt_align.get("head_yx_final", (np.nan, np.nan))[1]
+            if tgt_align.get("head_yx_final") is not None else np.nan
         ),
         "tgt_back_y_final": (
             tgt_align.get("back_yx_final", (np.nan, np.nan))[0]

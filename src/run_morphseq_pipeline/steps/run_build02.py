@@ -62,7 +62,7 @@ def run_build02(
     
     print("🚀 Running Build02 complete QC segmentation suite (5 UNet models):")
     
-    failed_models = []
+    failed_jobs = []
     
     for model_name, n_classes in models:
         target_exps = exp_list if exp_list is not None else [None]
@@ -81,21 +81,21 @@ def run_build02(
                 print(f"✅ {tag} completed successfully")
             except Exception as e:
                 print(f"❌ {tag} failed: {e}")
-                failed_models.append((tag, str(e)))
+                failed_jobs.append((tag, str(e)))
                 continue
     
     # Summary
     total_jobs = len(models) * (len(exp_list) if exp_list is not None else 1)
-    successful_models = total_jobs - len(failed_models)
-    print(f"\n📊 Build02 Results: {successful_models}/{total_jobs} jobs completed")
+    successful_jobs = total_jobs - len(failed_jobs)
+    print(f"\n📊 Build02 Results: {successful_jobs}/{total_jobs} jobs completed")
     
-    if failed_models:
+    if failed_jobs:
         print("❌ Failed models:")
-        for model_name, error in failed_models:
+        for model_name, error in failed_jobs:
             print(f"  - {model_name}: {error}")
         
         # Decide whether to fail completely or continue  
-        if successful_models == 0:
+        if successful_jobs == 0:
             raise RuntimeError("All Build02 models failed")
         else:
             print("⚠️  Continuing with partial success - some QC functionality may be degraded")

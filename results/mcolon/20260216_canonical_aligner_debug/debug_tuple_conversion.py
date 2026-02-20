@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
-MORPHSEQ_ROOT = Path.cwd().parents[2]
+MORPHSEQ_ROOT = Path(__file__).resolve().parents[3]
+assert (MORPHSEQ_ROOT / "src").is_dir(), f"Expected repo root at {MORPHSEQ_ROOT}"
 sys.path.insert(0, str(MORPHSEQ_ROOT))
 
 import pandas as pd
