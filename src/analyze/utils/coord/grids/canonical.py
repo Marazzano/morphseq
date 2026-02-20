@@ -65,7 +65,7 @@ class CanonicalAligner:
         error_on_clip: bool = False,
         yolk_weight: float = 1.0,
         back_weight: float = 1.0,
-        back_sample_radius_k: float = 1.5,
+        back_sample_radius_k: float = 1.75,
         yolk_pivot_angle_range_deg: float = 180.0,
         yolk_pivot_angle_step_deg: float = 1.0,
     ) -> None:
@@ -276,9 +276,17 @@ class CanonicalAligner:
                 yolk_yx = self._center_of_mass(yolk_feature_mask)
                 back_yx = self._compute_back_direction(mask_w, yolk_mask=yolk_w if use_yolk else None)
 
-                yolk_cost = yolk_yx[1] + yolk_yx[0]
-                back_score = back_yx[1] + back_yx[0]
-                score = (self.back_weight * back_score) - (self.yolk_weight * yolk_cost)
+                if use_yolk and yolk_w is not None and yolk_w.sum() > 0:
+                    # For landscape grids the AP axis is horizontal: score purely on
+                    # yolk x-position (wants yolk on the LEFT = small x).  The
+                    # diagonal x+y metric is unreliable when the yolk COM and back
+                    # centroid coincide (within 1-2 px), causing wrong flips.
+                    score = -yolk_yx[1]
+                else:
+                    # Fallback (no yolk): original diagonal scoring
+                    yolk_cost = yolk_yx[1] + yolk_yx[0]
+                    back_score = back_yx[1] + back_yx[0]
+                    score = (self.back_weight * back_score) - (self.yolk_weight * yolk_cost)
                 candidates.append((score, rot_add, do_flip, yolk_yx, back_yx))
 
         _best_score, best_rot, best_flip, best_yolk_yx, best_back_yx = max(candidates, key=lambda x: x[0])

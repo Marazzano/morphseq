@@ -2,34 +2,36 @@ from __future__ import annotations
 
 import numpy as np
 
-from analyze.utils.optimal_transport import UOTConfig
-from analyze.optimal_transport_morphometrics.uot_masks.preprocess import preprocess_pair
+from analyze.utils.coord.transforms import TransformChain
+from analyze.utils.coord.types import CanonicalGrid, CanonicalMaskResult
+from analyze.utils.optimal_transport.working_grid import WorkingGridConfig, prepare_working_grid_pair
 
 
-def test_preprocess_pair_sets_work_grid_coord_frame():
-    cfg = UOTConfig()
-    cfg.align_mode = "none"
-    cfg.padding_px = 2
-    cfg.downsample_divisor = 0
-
-    src = np.zeros((20, 30), dtype=np.uint8)
-    tgt = np.zeros((20, 30), dtype=np.uint8)
-    src[5:10, 5:10] = 1
-    tgt[6:11, 7:12] = 1
-
-    _src2, _tgt2, meta = preprocess_pair(src, tgt, cfg)
-    assert meta["coord_frame_id"] == "work_grid"
-    assert meta["coord_frame_version"] == 1
-    assert meta["coord_convention"] == "yx"
-    assert meta["inputs_coord_frame_id"] == {"src": "unknown", "tgt": "unknown"}
-    assert meta["inputs_coord_frame_version"] == {"src": None, "tgt": None}
-
-
-def test_uot_grid_shim_still_imports():
-    from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import (  # noqa: F401
-        CanonicalAligner,
-        CanonicalGridConfig,
+def test_working_grid_requires_canonical_label():
+    grid = CanonicalGrid(
+        um_per_px=10.0,
+        shape_yx=(32, 32),
+        anchor_mode="yolk_anchor",
+        anchor_yx=(0.5, 0.5),
     )
+    src = CanonicalMaskResult(
+        mask=np.ones((32, 32), dtype=np.uint8),
+        grid=grid,
+        transform_chain=TransformChain.identity(shape_yx=(32, 32), interp="nearest"),
+        meta={"coord_frame_id": "unknown", "coord_frame_version": 1, "coord_convention": "yx"},
+    )
+    tgt = CanonicalMaskResult(
+        mask=np.ones((32, 32), dtype=np.uint8),
+        grid=grid,
+        transform_chain=TransformChain.identity(shape_yx=(32, 32), interp="nearest"),
+        meta={"coord_frame_id": "canonical_grid", "coord_frame_version": 1, "coord_convention": "yx"},
+    )
+    try:
+        prepare_working_grid_pair(src, tgt, WorkingGridConfig(downsample_factor=2, padding_px=0))
+    except ValueError as e:
+        assert "canonical-grid mask" in str(e)
+    else:
+        raise AssertionError("Expected ValueError for non-canonical input")
 
 
 def test_register_to_fixed_identity_on_empty_masks():

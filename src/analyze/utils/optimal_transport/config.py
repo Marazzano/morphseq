@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union
-import warnings
 
 import numpy as np
 
@@ -132,56 +131,7 @@ class UOTProblem:
 
 
 @dataclass
-class UOTResult:
-    cost: float
-    coupling: Optional[Coupling]
-
-    # Primary data: canonical pixel units
-    mass_created_px: np.ndarray         # (Hc, Wc), mass per canonical pixel
-    mass_destroyed_px: np.ndarray       # (Hc, Wc), mass per canonical pixel
-    velocity_px_per_frame_yx: np.ndarray   # (Hc, Wc, 2), canonical pixels/frame
-
-    support_src_yx: np.ndarray
-    support_tgt_yx: np.ndarray
-    weights_src: np.ndarray
-    weights_tgt: np.ndarray
-
-    transform_meta: dict
-    cost_src_support: Optional[np.ndarray] = None  # per src support point
-    cost_tgt_support: Optional[np.ndarray] = None  # per tgt support point
-    cost_src_px: Optional[np.ndarray] = None       # rasterized to canonical/work grid
-    cost_tgt_px: Optional[np.ndarray] = None       # rasterized to canonical/work grid
-    aligned_src_mask_px: Optional[np.ndarray] = None  # solver-space source mask on output grid
-    aligned_tgt_mask_px: Optional[np.ndarray] = None  # solver-space target mask on output grid
-    diagnostics: Optional[dict] = None
-    pair_frame: Optional[PairFrameGeometry] = None  # Provides px_size_um for unit conversion
-
-    # Helper properties for μm units (no storage, computed on-the-fly)
-    @property
-    def mass_created_um2(self) -> Optional[np.ndarray]:
-        """Mass created in μm² (area covered)."""
-        if self.pair_frame is None:
-            return None
-        return self.mass_created_px * self.pair_frame.px_area_um2
-
-    @property
-    def mass_destroyed_um2(self) -> Optional[np.ndarray]:
-        """Mass destroyed in μm² (area covered)."""
-        if self.pair_frame is None:
-            return None
-        return self.mass_destroyed_px * self.pair_frame.px_area_um2
-
-    @property
-    def velocity_um_per_frame_yx(self) -> Optional[np.ndarray]:
-        """Velocity in μm/frame."""
-        if self.pair_frame is None:
-            return None
-        return self.velocity_px_per_frame_yx * self.pair_frame.px_size_um
-
-
-@dataclass
 class UOTConfig:
-    downsample_factor: int = 4
     max_support_points: int = 5000
     sampling_mode: SamplingMode = SamplingMode.AUTO
     sampling_strategy: str = "stratified_boundary_interior"
@@ -191,45 +141,9 @@ class UOTConfig:
     metric: str = "sqeuclidean"
     coord_scale: float = 1.0
 
-    mass_mode: MassMode = MassMode.UNIFORM
-    align_mode: str = "centroid"
-
     store_coupling: bool = True
     random_seed: int = 0
-    padding_px: int = 8
-    downsample_divisor: int = 16
-
-    # Canonical grid settings
-    use_canonical_grid: bool = False
-    output_grid: str = "work"  # "work" | "canonical"
-    canonical_grid_um_per_pixel: float = 10.0
-    canonical_grid_shape_hw: tuple[int, int] = (256, 576)
-    canonical_grid_align_mode: str = "yolk"  # "yolk" | "centroid" | "none"
-    canonical_grid_center_mode: str = "align_centroids"  # "align_centroids" | "joint_centering" | "off"
-    canonical_grid_allow_flip: bool = True
-    canonical_grid_anchor_mode: str = "yolk_anchor"  # "yolk_anchor" | "com_center"
-    canonical_grid_anchor_frac_yx: tuple[float, float] = (0.50, 0.50)
-    canonical_grid_clipping_threshold: float = 0.98
-    canonical_grid_error_on_clip: bool = False
-
-    # Pair-frame architecture
-    use_pair_frame_geometry: bool = False  # Internal geometry for pair cropping
-    use_pair_frame: Optional[bool] = None  # DEPRECATED: use output_grid/use_pair_frame_geometry
 
     def __post_init__(self) -> None:
-        valid_output_grids = {"work", "canonical"}
-        if self.output_grid not in valid_output_grids:
-            raise ValueError(
-                f"UOTConfig.output_grid must be one of {sorted(valid_output_grids)}; got {self.output_grid!r}"
-            )
-
-        if self.use_pair_frame is not None:
-            warnings.warn(
-                "UOTConfig.use_pair_frame is deprecated; use output_grid and/or use_pair_frame_geometry instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-    def pair_frame_geometry_enabled(self) -> bool:
-        """Single source of truth for whether PairFrameGeometry is constructed."""
-        return bool(self.use_pair_frame_geometry) or bool(self.use_pair_frame) or (self.output_grid == "canonical")
+        if self.max_support_points < 1:
+            raise ValueError(f"max_support_points must be >= 1; got {self.max_support_points}")
