@@ -67,7 +67,7 @@ def run_single_ot(
     """
     Run unbalanced OT: ref → target, return canonical-grid maps.
 
-    Geometry stage (canonicalization via analyze.coord) runs here, upstream of
+    Geometry stage (canonicalization via analyze.utils.coord) runs here, upstream of
     the solver. UOT receives pre-canonical masks and acts as a pure solver.
 
     Parameters

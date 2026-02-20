@@ -33,7 +33,7 @@ def test_uot_grid_shim_still_imports():
 
 
 def test_register_to_fixed_identity_on_empty_masks():
-    from analyze.coord.register import register_to_fixed
+    from analyze.utils.coord.register import register_to_fixed
 
     moving = np.zeros((32, 32), dtype=np.uint8)
     fixed = np.zeros((32, 32), dtype=np.uint8)
@@ -41,4 +41,3 @@ def test_register_to_fixed_identity_on_empty_masks():
     assert reg.applied is False
     assert len(reg.transform.transforms) >= 1
     assert reg.moving_in_fixed is None
-

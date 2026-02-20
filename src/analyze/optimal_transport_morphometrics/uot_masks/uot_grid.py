@@ -1,9 +1,9 @@
 """Legacy import surface for canonical grid utilities.
 
 This module is kept for backward compatibility with older notebooks/scripts.
-New code should import from `analyze.coord`:
-- `analyze.coord.grids.canonical` for canonicalization
-- `analyze.coord.register` for explicit registration
+New code should import from `analyze.utils.coord`:
+- `analyze.utils.coord.grids.canonical` for canonicalization
+- `analyze.utils.coord.register` for explicit registration
 
 IMPORTANT: Canonicalization/registration are geometry concerns, not UOT concerns.
 UOT should only ingest their outputs.
@@ -16,14 +16,14 @@ import warnings
 
 import numpy as np
 
-from analyze.coord.grids.canonical import (  # noqa: F401
+from analyze.utils.coord.grids.canonical import (  # noqa: F401
     CanonicalAligner,
     CanonicalGridConfig,
     to_canonical_grid_frame,
     to_canonical_grid_image,
     to_canonical_grid_mask,
 )
-from analyze.coord.register import (  # noqa: F401
+from analyze.utils.coord.register import (  # noqa: F401
     RegisterConfig,
     register_to_fixed,
     _apply_pivot_rotation,
@@ -35,7 +35,7 @@ from analyze.coord.register import (  # noqa: F401
 
 def _warn_legacy(name: str) -> None:
     warnings.warn(
-        f"Importing {name} from uot_masks.uot_grid is deprecated. Use analyze.coord instead.",
+        f"Importing {name} from uot_masks.uot_grid is deprecated. Use analyze.utils.coord instead.",
         DeprecationWarning,
         stacklevel=3,
     )
@@ -146,4 +146,3 @@ def rescale_velocity_to_um(velocity_yx_hw2: np.ndarray, transform: GridTransform
 
 def rescale_distance_to_um(distance: float, transform: GridTransform) -> float:
     return float(distance) * float(transform.effective_um_per_pixel)
-

@@ -605,7 +605,7 @@ class CanonicalAligner:
         )
         if reference_mask is not None:
             raise ValueError(
-                "align(reference_mask=...) is not supported. Use analyze.coord.register.register_to_fixed(...) explicitly."
+                "align(reference_mask=...) is not supported. Use analyze.utils.coord.register.register_to_fixed(...) explicitly."
             )
         if not use_yolk:
             canonical_mask, meta, _chain = self.generic_canonical_alignment(mask, original_um_per_px, use_pca=use_pca, return_debug=return_debug)

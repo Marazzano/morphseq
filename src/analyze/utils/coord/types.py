@@ -1,4 +1,4 @@
-"""Public datatypes for `analyze.coord`.
+"""Public datatypes for `analyze.utils.coord`.
 
 This module is public surface only. No algorithms should live here.
 """
@@ -68,4 +68,3 @@ class RegisterResult:
     applied: bool
     meta: dict
     moving_in_fixed: Optional[np.ndarray] = None
-

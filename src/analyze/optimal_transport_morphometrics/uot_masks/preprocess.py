@@ -3,7 +3,7 @@
 Guardrails:
 - `preprocess_pair` is WORK-GRID pair prep only: NO canonicalization, NO registration,
   NO rotation/scale.
-- Canonicalization/registration algorithms live under `analyze.coord` (geometry module).
+- Canonicalization/registration algorithms live under `analyze.utils.coord` (geometry module).
   This module may call them for canonical-grid UOT prep, but must not implement them.
 """
 

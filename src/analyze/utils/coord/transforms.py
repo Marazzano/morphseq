@@ -1,4 +1,4 @@
-"""Transformation primitives for `analyze.coord`.
+"""Transformation primitives for `analyze.utils.coord`.
 
 `GridTransform` uses OpenCV's affine convention on (x, y) coordinates.
 Coordinate *values* in meta are in yx convention unless stated otherwise.
@@ -84,4 +84,3 @@ def _apply_affine(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.nda
         return cv2.flip(arr, 1)
     flags = cv2.INTER_NEAREST if (is_mask or t.interp == "nearest") else cv2.INTER_LINEAR
     return cv2.warpAffine(arr.astype(np.float32), t.affine_2x3.astype(np.float32), (w_out, h_out), flags=flags)
-

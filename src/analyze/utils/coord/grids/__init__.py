@@ -1,2 +1,1 @@
-"""Grid definitions for `analyze.coord`."""
-
+"""Grid definitions for `analyze.utils.coord`."""
