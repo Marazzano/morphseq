@@ -67,9 +67,8 @@ def run_single_ot(
     """
     Run unbalanced OT: ref → target, return canonical-grid maps.
 
-    Masks are provided in raw resolution; the UOT pipeline automatically
-    aligns them to canonical grid (256×576 at 10 µm/px) when
-    use_canonical_grid=True.
+    Geometry stage (canonicalization via analyze.coord) runs here, upstream of
+    the solver. UOT receives pre-canonical masks and acts as a pure solver.
 
     Parameters
     ----------
@@ -78,110 +77,109 @@ def run_single_ot(
     sample_id : str
     raw_um_per_px_ref : float — physical resolution of reference mask
     raw_um_per_px_tgt : float — physical resolution of target mask
-    uot_config : UOTConfig, optional
+    yolk_ref : (H_ref, W_ref) uint8, optional — reference yolk at raw resolution
+    yolk_tgt : (H_tgt, W_tgt) uint8, optional — target yolk at raw resolution
+    uot_config : UOTConfig, optional — must have use_canonical_grid=False
     backend : UOTBackend, optional
 
     Returns
     -------
     OTMapResult with maps on canonical grid (256, 576)
     """
-    from analyze.utils.optimal_transport import UOTConfig, UOTFramePair, UOTFrame, MassMode
+    from analyze.utils.optimal_transport import UOTConfig, MassMode
     from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
-    from analyze.optimal_transport_morphometrics.uot_masks.run_transport import run_uot_pair
+    from analyze.optimal_transport_morphometrics.uot_masks.run_transport import run_uot_on_canonical_pair
+    from analyze.optimal_transport_morphometrics.uot_masks.uot_grid import CanonicalAligner, CanonicalGridConfig
+    from analyze.optimal_transport_morphometrics.uot_masks.preprocess import qc_mask
 
-    # Fail fast on mask/yolk shape mismatches. Passing a canonicalized embryo mask
-    # with a raw-resolution yolk mask silently breaks canonical alignment.
+    # ------------------------------------------------------------------
+    # Geometry stage: canonicalize ref and target independently
+    # ------------------------------------------------------------------
+    CANONICAL_GRID_HW = (256, 576)
+    CANONICAL_UM_PER_PX = 10.0
+
+    canonical_cfg = CanonicalGridConfig(
+        reference_um_per_pixel=CANONICAL_UM_PER_PX,
+        grid_shape_hw=CANONICAL_GRID_HW,
+        align_mode="yolk",
+    )
+    aligner = CanonicalAligner.from_config(canonical_cfg)
+
+    # Fail fast on mask/yolk shape mismatches. Canonicalization expects
+    # embryo and yolk masks to be in the same raw coordinate system.
     if yolk_ref is not None and yolk_ref.shape != mask_ref.shape:
         raise ValueError(
-            f"Reference yolk shape {yolk_ref.shape} does not match reference mask shape {mask_ref.shape}. "
-            "Both must be in the same coordinate system (raw input expected)."
+            f"Reference yolk shape {yolk_ref.shape} does not match reference mask shape {mask_ref.shape}."
         )
     if yolk_tgt is not None and yolk_tgt.shape != mask_target.shape:
         raise ValueError(
-            f"Target yolk shape {yolk_tgt.shape} does not match target mask shape {mask_target.shape}. "
-            "Both must be in the same coordinate system (raw input expected)."
+            f"Target yolk shape {yolk_tgt.shape} does not match target mask shape {mask_target.shape}."
         )
 
+    ref_qc, _ = qc_mask(mask_ref.astype(bool))
+    tgt_qc, _ = qc_mask(mask_target.astype(bool))
+
+    src_canonical, _, src_align_meta = aligner.align(
+        ref_qc,
+        yolk_ref.astype(bool) if yolk_ref is not None else None,
+        original_um_per_px=raw_um_per_px_ref,
+        use_pca=True,
+        use_yolk=(yolk_ref is not None),
+    )
+    tgt_canonical, _, tgt_align_meta = aligner.align(
+        tgt_qc,
+        yolk_tgt.astype(bool) if yolk_tgt is not None else None,
+        original_um_per_px=raw_um_per_px_tgt,
+        use_pca=True,
+        use_yolk=(yolk_tgt is not None),
+    )
+
+    # ------------------------------------------------------------------
+    # Solver stage: UOT is a pure consumer of canonical masks
+    # ------------------------------------------------------------------
     if uot_config is None:
-        # Use validated config from Stream D but with POT backend
-        # Parameters: epsilon=1e-4, reg_m=10, max_support_points=3000
         uot_config = UOTConfig(
-            # Relaxation parameters (validated in Stream D)
             epsilon=1e-4,
             marginal_relaxation=10.0,
             max_support_points=3000,
-            # Canonical grid configuration
-            use_canonical_grid=True,
-            output_grid="canonical",
-            canonical_grid_shape_hw=(256, 576),
-            canonical_grid_um_per_pixel=10.0,
-            canonical_grid_align_mode="yolk",
-            canonical_grid_center_mode="joint_centering",
-            # No downsampling - compute on full canonical grid
+            use_canonical_grid=False,  # geometry already done upstream
+            output_grid="canonical",   # return maps on full canonical canvas
             downsample_factor=1,
             downsample_divisor=1,
-            # Other settings
             padding_px=16,
             mass_mode=MassMode.UNIFORM,
-            align_mode="none",  # Canonical alignment handles it
+            align_mode="none",
             store_coupling=True,
             random_seed=42,
             metric="sqeuclidean",
-            coord_scale=1.0 / max((256, 576)),
+            coord_scale=1.0 / max(CANONICAL_GRID_HW),
         )
 
-    # Heuristic warning for accidental double-canonicalization:
-    # if input already looks canonical but raw_um_per_px indicates otherwise,
-    # preprocess_pair_canonical will rescale it again.
-    if (
-        getattr(uot_config, "use_canonical_grid", False)
-        and tuple(mask_ref.shape) == tuple(getattr(uot_config, "canonical_grid_shape_hw", (256, 576)))
-        and not np.isclose(
-            float(raw_um_per_px_ref),
-            float(getattr(uot_config, "canonical_grid_um_per_pixel", 10.0)),
-            atol=1e-6,
+    if getattr(uot_config, "use_canonical_grid", False):
+        raise ValueError("run_single_ot expects solver-only UOTConfig: set use_canonical_grid=False.")
+    if getattr(uot_config, "output_grid", None) != "canonical":
+        raise ValueError(
+            f"run_single_ot expects output_grid='canonical' (got {getattr(uot_config, 'output_grid', None)!r})."
         )
-    ):
-        logger.warning(
-            "Reference mask shape already matches canonical grid %s but raw_um_per_px_ref=%.6f "
-            "(canonical is %.6f). This often indicates a pre-canonicalized reference passed into "
-            "run_single_ot, which can shrink maps due to double canonicalization.",
-            mask_ref.shape,
-            raw_um_per_px_ref,
-            float(getattr(uot_config, "canonical_grid_um_per_pixel", 10.0)),
-        )
-    
+
     if backend is None:
-        backend = POTBackend()  # Using POT instead of OTT
+        backend = POTBackend()
 
-    # Create frames with metadata for physical units
-    meta_ref = {"um_per_pixel": raw_um_per_px_ref}
-    if yolk_ref is not None:
-        meta_ref["yolk_mask"] = yolk_ref
-    meta_tgt = {"um_per_pixel": raw_um_per_px_tgt}
-    if yolk_tgt is not None:
-        meta_tgt["yolk_mask"] = yolk_tgt
-
-    pair = UOTFramePair(
-        src=UOTFrame(
-            embryo_mask=mask_ref,
-            meta=meta_ref,
-        ),
-        tgt=UOTFrame(
-            embryo_mask=mask_target,
-            meta=meta_tgt,
-        ),
+    result = run_uot_on_canonical_pair(
+        src_canonical.astype(np.uint8),
+        tgt_canonical.astype(np.uint8),
+        px_size_um=CANONICAL_UM_PER_PX,
+        config=uot_config,
+        backend=backend,
     )
 
-    result = run_uot_pair(pair, config=uot_config, backend=backend)
-
-    # Extract maps (should be canonical-shaped)
-    cost_density = result.cost_src_px if result.cost_src_px is not None else np.zeros((256, 576), dtype=np.float32)
+    # Extract maps (canonical-shaped)
+    cost_density = result.cost_src_px if result.cost_src_px is not None else np.zeros(CANONICAL_GRID_HW, dtype=np.float32)
     displacement_yx = result.velocity_px_per_frame_yx  # (H, W, 2)
     delta_mass = result.mass_created_px - result.mass_destroyed_px
 
-    # Verify canonical shape with a clear error message
-    expected_hw = (256, 576)
+    # Verify canonical shape
+    expected_hw = CANONICAL_GRID_HW
     bad_shapes = []
     if cost_density.shape != expected_hw:
         bad_shapes.append(f"cost_density={cost_density.shape}")
@@ -190,38 +188,18 @@ def run_single_ot(
     if delta_mass.shape != expected_hw:
         bad_shapes.append(f"delta_mass={delta_mass.shape}")
     if bad_shapes:
-        cfg = uot_config or {}
         raise ValueError(
-            "OT output shapes are not canonical. This usually happens when OT is returning work-grid "
-            "maps (e.g., downsampled) instead of full canonical grid. "
-            f"Expected={expected_hw}, got: {', '.join(bad_shapes)}. "
-            f"Config: use_canonical_grid={getattr(cfg, 'use_canonical_grid', None)}, "
-            f"output_grid={getattr(cfg, 'output_grid', None)}, "
-            f"use_pair_frame_geometry={getattr(cfg, 'use_pair_frame_geometry', None)}, "
-            f"use_pair_frame(deprecated)={getattr(cfg, 'use_pair_frame', None)}, "
-            f"downsample_factor={getattr(cfg, 'downsample_factor', None)}, "
-            f"downsample_divisor={getattr(cfg, 'downsample_divisor', None)}."
+            f"OT output shapes are not canonical (expected {expected_hw}): {', '.join(bad_shapes)}."
         )
 
-    preprocess_meta = {}
-    if isinstance(result.transform_meta, dict):
-        preprocess_meta = result.transform_meta.get("preprocess", {}) or {}
-    src_align = preprocess_meta.get("canonical_alignment_src", {}) or {}
-    tgt_align = preprocess_meta.get("canonical_alignment_tgt", {}) or {}
+    src_align = src_align_meta or {}
+    tgt_align = tgt_align_meta or {}
     metrics = {}
     if isinstance(result.diagnostics, dict):
         metrics = result.diagnostics.get("metrics", {}) or {}
 
-    src_mask_aligned = (
-        np.asarray(result.aligned_src_mask_px, dtype=np.uint8)
-        if getattr(result, "aligned_src_mask_px", None) is not None
-        else None
-    )
-    tgt_mask_aligned = (
-        np.asarray(result.aligned_tgt_mask_px, dtype=np.uint8)
-        if getattr(result, "aligned_tgt_mask_px", None) is not None
-        else None
-    )
+    src_mask_aligned = src_canonical.astype(np.uint8)
+    tgt_mask_aligned = tgt_canonical.astype(np.uint8)
     overlap_iou = np.nan
     if src_mask_aligned is not None and tgt_mask_aligned is not None:
         src_bool = src_mask_aligned > 0
@@ -230,8 +208,13 @@ def run_single_ot(
         inter = float(np.logical_and(src_bool, tgt_bool).sum())
         overlap_iou = inter / union if union > 0 else np.nan
 
-    bbox_y0y1x0x1 = preprocess_meta.get("bbox_y0y1x0x1")
-    pad_hw = preprocess_meta.get("pad_hw")
+    # Pair bbox/pad are only populated when pair-frame geometry is used.
+    # In the solver-only path (geometry done upstream) these are not applicable.
+    solver_preprocess = {}
+    if isinstance(result.transform_meta, dict):
+        solver_preprocess = result.transform_meta.get("preprocess", {}) or {}
+    bbox_y0y1x0x1 = solver_preprocess.get("bbox_y0y1x0x1")
+    pad_hw = solver_preprocess.get("pad_hw")
     bbox_y0 = bbox_y0y1x0x1[0] if bbox_y0y1x0x1 is not None else np.nan
     bbox_y1 = bbox_y0y1x0x1[1] if bbox_y0y1x0x1 is not None else np.nan
     bbox_x0 = bbox_y0y1x0x1[2] if bbox_y0y1x0x1 is not None else np.nan
