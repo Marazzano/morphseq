@@ -47,6 +47,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 # Embryos to debug: (embryo_id, frame_index, label)
 TARGETS = [
     ("20251106_E09_e01", 20,  "sample_012 (O13 / cep290_homozygous)"),
+    ("20251113_A05_e01", 95,  "reference (WT)"),
     ("20251113_C04_e01", 14,  "sample_013 (cep290_homozygous)"),
     ("20251205_F06_e01", 71,  "sample_019 (O19 / cep290_homozygous)"),
 ]
@@ -182,12 +183,11 @@ def main():
         else:
             print(f"  yolk pixels: {raw_yolk.sum()}, um/px: {um_per_px:.4f}")
 
-        aligned_mask, aligned_yolk, meta = aligner.align(
-            mask=raw_mask.astype(bool),
+        aligned_mask, aligned_yolk, meta, _chain = aligner.embryo_canonical_alignment(
+            raw_mask.astype(bool),
+            um_per_px,
             yolk=raw_yolk.astype(bool) if raw_yolk is not None else None,
-            original_um_per_px=um_per_px,
             use_pca=True,
-            use_yolk=True,
             return_debug=True,
         )
 

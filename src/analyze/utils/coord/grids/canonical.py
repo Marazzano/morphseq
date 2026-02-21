@@ -251,8 +251,27 @@ class CanonicalAligner:
         *,
         use_yolk: bool,
     ) -> tuple[float, bool, tuple[float, float], tuple[float, float]]:
-        """Return (final_rotation_deg, flip, yolk_yx, back_yx)."""
-        candidates = []
+        """Return (final_rotation_deg, flip, yolk_yx, back_yx).
+
+        Two-step orientation selection (landscape + yolk present):
+
+        Step 1 — AP axis (yolk left/right):
+            Among all 4 candidates (rot_add ∈ {0,180} × flip ∈ {F,T}), pick the
+            one with the smallest yolk_yx[1] (yolk as far left as possible).
+            This fixes the head→tail direction on the horizontal axis.
+
+        Step 2 — DV axis (back up/down):
+            Compute the back-direction vector: back_vec_y = back_yx[0] - yolk_yx[0].
+            back_vec_y < 0 means back is ABOVE yolk → dorsal-up (correct).
+            back_vec_y > 0 means back is BELOW yolk → needs a vertical flip.
+            A vertical flip = rot+180 composed with an L-R flip, so the partner
+            candidate is (rot_add ± 180, not flip).  We look it up from the
+            already-computed candidate table — no extra warp needed.
+
+        Fallback (no yolk): original diagonal scoring unchanged.
+        """
+        # Build candidate table keyed by (rot_add, do_flip)
+        candidate_table: dict[tuple[int, bool], tuple[np.ndarray, Optional[np.ndarray], tuple[float, float], tuple[float, float]]] = {}
         rot_options = [0, 180]
         flip_options = [False, True] if self.allow_flip else [False]
 
@@ -275,21 +294,42 @@ class CanonicalAligner:
                 )
                 yolk_yx = self._center_of_mass(yolk_feature_mask)
                 back_yx = self._compute_back_direction(mask_w, yolk_mask=yolk_w if use_yolk else None)
+                candidate_table[(rot_add, do_flip)] = (mask_w, yolk_w, yolk_yx, back_yx)
 
-                if use_yolk and yolk_w is not None and yolk_w.sum() > 0:
-                    # For landscape grids the AP axis is horizontal: score purely on
-                    # yolk x-position (wants yolk on the LEFT = small x).  The
-                    # diagonal x+y metric is unreliable when the yolk COM and back
-                    # centroid coincide (within 1-2 px), causing wrong flips.
-                    score = -yolk_yx[1]
-                else:
-                    # Fallback (no yolk): original diagonal scoring
-                    yolk_cost = yolk_yx[1] + yolk_yx[0]
-                    back_score = back_yx[1] + back_yx[0]
-                    score = (self.back_weight * back_score) - (self.yolk_weight * yolk_cost)
-                candidates.append((score, rot_add, do_flip, yolk_yx, back_yx))
+        has_yolk = use_yolk and yolk is not None and any(
+            yolk_w is not None and yolk_w.sum() > 0
+            for (_, yolk_w, _, _) in candidate_table.values()
+        )
 
-        _best_score, best_rot, best_flip, best_yolk_yx, best_back_yx = max(candidates, key=lambda x: x[0])
+        if has_yolk:
+            # --- Step 1: pick candidate with yolk farthest LEFT (smallest yolk_x) ---
+            best_key = min(candidate_table.keys(), key=lambda k: candidate_table[k][2][1])
+            _, _, best_yolk_yx, best_back_yx = candidate_table[best_key]
+            best_rot, best_flip = best_key
+
+            # --- Step 2: enforce back ABOVE yolk (back_vec_y < 0) ---
+            # back_vec_y = back_yx[0] - yolk_yx[0]; > 0 means back is below yolk
+            back_vec_y = best_back_yx[0] - best_yolk_yx[0]
+            if back_vec_y > 0:
+                # Vertical flip = rot+180 + toggle L-R flip.  Look up the partner.
+                partner_key = ((best_rot + 180) % 360, not best_flip)
+                if partner_key in candidate_table:
+                    _, _, best_yolk_yx, best_back_yx = candidate_table[partner_key]
+                    best_rot, best_flip = partner_key
+        else:
+            # Fallback (no yolk): original diagonal scoring
+            best_score = None
+            best_rot, best_flip = 0, False
+            best_yolk_yx, best_back_yx = (0.0, 0.0), (0.0, 0.0)
+            for (rot_add, do_flip), (_, _, yolk_yx, back_yx) in candidate_table.items():
+                yolk_cost = yolk_yx[1] + yolk_yx[0]
+                back_score = back_yx[1] + back_yx[0]
+                score = (self.back_weight * back_score) - (self.yolk_weight * yolk_cost)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_rot, best_flip = rot_add, do_flip
+                    best_yolk_yx, best_back_yx = yolk_yx, back_yx
+
         final_rotation = rotation_needed + best_rot
         return float(final_rotation), bool(best_flip), (float(best_yolk_yx[0]), float(best_yolk_yx[1])), (float(best_back_yx[0]), float(best_back_yx[1]))
 
