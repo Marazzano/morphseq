@@ -15,7 +15,8 @@ embryo_predictions). Stage 2 must be a PURE CONSUMER of saved artifacts.
 
   Stage 2 MAY:
     - read embryo_predictions_augmented.parquet and null summaries
-    - permute pred_class or is_wrong within time_bin (cheap numpy shuffle)
+    - permute pred_class within time_bin (canonical null; derive is_wrong_perm)
+    - optionally permute derived is_wrong for diagnostics (not canonical null)
     - run Bernoulli and multinomial simulation nulls
     - write tables and plots
 
@@ -167,7 +168,7 @@ File: classification/classification_test_multiclass.py
       null_metadata.json            (required by Stage 2 for reproducibility):
         {
           "class_labels":       ["CE", "MUT", "WT"],  # canonical order, all classes
-          "time_bin_definition": "description or edges used to assign time_bin",
+          "time_bin_definition": [0, 5, 10, ...],  # explicit bin edges (required, not prose)
           "seed":               42,
           "n_permutations":     1000,
           "git_commit":         "abc1234",
@@ -631,16 +632,18 @@ test_misclassification_metrics.py
   - top_confused_as + top_confused_frac:
       wrong preds=[X,X,Y] → top_confused_as=X, top_confused_frac=2/3
   - mean_margin sign: must be negative when model is confidently wrong
-  - assert raises or warns when embryo has multiple true_class values
+  - multiple true_class per embryo: HARD ERROR by default
+      (allow_mode_true_class=True warns + takes mode; default is False)
   - expected_wrong_rate wired from baseline_ct table, not global mean
 
 test_misclassification_null.py
   - Wrong-rate null uniformity:
       Build synthetic dataset where is_wrong is drawn from the same null.
       KS test: p-values should not be significantly non-uniform.
-  - Wrong-rate null: permuting PRED (is_wrong) not TRUE labels.
-      Verify that when all embryos have identical feature profiles,
-      the null gives wrong_rate ≈ baseline (not inflated by label swap).
+  - Wrong-rate null: permute pred_class within time_bin; derive is_wrong_perm;
+      never permute true_class. Verify that when all embryos have identical
+      feature profiles, the null gives wrong_rate ≈ baseline (not inflated
+      by label swap).
   - Streak null monotonicity:
       Embryo with streak of 5 should have lower pval_streak than another
       with the same wrong_rate but errors scattered across bins.
