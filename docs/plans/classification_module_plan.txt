@@ -173,9 +173,13 @@ File: classification/classification_test_multiclass.py
           "class_labels":       ["CE", "MUT", "WT"],  # canonical order, all classes
           "time_bin_definition": [0, 5, 10, ...],  # explicit bin edges (required, not prose)
           "time_bin_center_formula": "midpoint",   # how time_bin_center was computed
-          "time_bin_edges_sha256":   "abc...",     # sha256(str(edges)) for machine verification
-          # Stage 2 validation guard: assert that all time_bin values in parquet
-          # fall within [edges[0], edges[-1]] and are monotonically ordered.
+          "time_bin_edges_sha256":   "abc...",
+          # Serialization (deterministic):
+          #   sha256(json.dumps(edges, separators=(",",":"), ensure_ascii=False).encode())
+          # Stage 2 validation guard:
+          #   - all time_bin values fall within [edges[0], edges[-1]]
+          #   - time_bin values are strictly increasing WITHIN each embryo
+          #     (not across the whole parquet; embryos may have missing bins)
           "seed":               42,
           "n_permutations":     1000,
           "git_commit":         "abc1234",
@@ -408,13 +412,15 @@ def null_test_wrong_rate(
     # the same null without re-running permutations.
     exceed      = np.zeros(n_embryos, dtype=np.int64)
     null_sum    = np.zeros(n_embryos, dtype=np.float64)
-    null_sum_sq = np.zeros(n_embryos, dtype=np.float64)   # for Welford variance
+    null_sum_sq = np.zeros(n_embryos, dtype=np.float64)   # 2nd-moment variance (not Welford)
 
     # pred_perm is a pre-allocated buffer reused each iteration (avoids realloc)
     pred_perm = pred_class_codes.copy()
     for b in range(n_iters):
         np.copyto(pred_perm, pred_class_codes)            # reset buffer in-place
-        for start, stop in bin_slices.values():
+        # assert pred_perm.dtype == pred_class_codes.dtype  # guard against silent cast
+        for tb in sorted(bin_slices):                     # explicit sort; dict order is 3.7+ stable but be explicit
+            start, stop = bin_slices[tb]
             pred_perm[start:stop] = rng.permutation(pred_perm[start:stop])
         is_wrong_perm = (pred_perm != true_class_codes).astype(np.int8)
         wrong_count = np.bincount(embryo_idx_arr, weights=is_wrong_perm,
@@ -524,7 +530,14 @@ def null_test_top_confused_frac(
 
 --- BH FDR (applied per test) ---
 
-from scipy.stats import false_discovery_control  # or statsmodels
+# BH FDR — prefer scipy.stats.false_discovery_control (SciPy >= 1.11)
+# Fallback for older envs: statsmodels.stats.multitest.fdrcorrection
+# Choose at import time:
+#   try:
+#       from scipy.stats import false_discovery_control as bh_fdr
+#   except ImportError:
+#       from statsmodels.stats.multitest import fdrcorrection
+#       def bh_fdr(pvals, *, alpha=0.05, method="bh"): return fdrcorrection(pvals, alpha=alpha)[1]
 
 Per test, over all embryos:
   qval_wrong_rate        = bh(pval_wrong_rate)
