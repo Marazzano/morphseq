@@ -193,7 +193,8 @@ File: classification/classification_test_multiclass.py
           "timestamp":          "2026-02-21T...",
           "resampling_spec":    "description of resampling setup"
           # optional model/config identifiers:
-          "model_config_id":    "..."
+          "model_config_id":    "...",
+          "schema_version":     "classification_v1"   # bump on any breaking output change
         }
 
 
@@ -210,6 +211,20 @@ Columns required in embryo_predictions (Stage 2 trusts these, never rewrites the
   true_class (str), pred_class (str),
   pred_proba_{CE} ... pred_proba_{WT} (float per class),
   p_true (float), p_pred (float)
+
+STAGE 2 INPUT VALIDATION (run once at pipeline entry, fail loudly):
+  REQUIRED_COLS = {
+      "embryo_id":       object,    # str
+      "time_bin":        np.int64,  # or int32 — check np.issubdtype(actual, np.integer)
+      "time_bin_center": np.float64,
+      "true_class":      object,
+      "pred_class":      object,
+      "p_true":          np.float64,
+      "p_pred":          np.float64,
+  }
+  Also assert all pred_proba_{c} columns exist for c in class_labels (from Stage 1 metadata).
+  Any missing column or wrong dtype raises ValueError with the column name + actual dtype.
+  This is the single place to catch Stage 1 evolution silently breaking Stage 2.
 
 Optional convenience columns (Stage 2 recomputes if absent; do NOT rely on them):
   is_correct (bool)       — derived as (pred_class == true_class)
@@ -636,7 +651,16 @@ def flag_consistently_misclassified(
   z-scores can be insensitive.
 
   Returns per_embryo_metrics with columns:
-    is_flagged (bool), flag_reasons (list of strings, e.g. ["A","C"]),
+    is_flagged (bool)
+    flag_reason_codes  (list[str], e.g. ["A","C"])   — compact, machine-friendly
+    flag_reason_labels (list[str], e.g. ["qval_wrong_rate<0.05", "wrong_rate_z>2.0"])
+                                                      — human-readable, 1:1 with codes
+    Code → label mapping (locked):
+      "A" → "qval_wrong_rate<{q_val_threshold}"
+      "B" → "qval_streak<{q_val_threshold}"
+      "C" → "wrong_rate_z>{wrong_rate_z_threshold}"
+      "D" → "wrong_rate_delta>{wrong_rate_delta_threshold}"
+      "E" → "top_confused_frac>{top_confused_frac_threshold}&qval_top_confused<{q_val_threshold}"
     too_few_windows (bool), too_few_wrong_for_confusion_test (bool)
   flagged_embryos = per_embryo_metrics[per_embryo_metrics.is_flagged]
 
@@ -775,7 +799,8 @@ Stage 2 outputs:
         "top_confused_frac_threshold": 0.80,
         "loo_min_class_size":      10,
         "git_commit":              "abc1234",
-        "timestamp":               "2026-02-21T..."
+        "timestamp":               "2026-02-21T...",
+        "schema_version":          "misclassification_v1"   # bump on any breaking output change
       }
 
 
