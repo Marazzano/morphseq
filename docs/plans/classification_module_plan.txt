@@ -172,6 +172,10 @@ File: classification/classification_test_multiclass.py
         {
           "class_labels":       ["CE", "MUT", "WT"],  # canonical order, all classes
           "time_bin_definition": [0, 5, 10, ...],  # explicit bin edges (required, not prose)
+          "time_bin_center_formula": "midpoint",   # how time_bin_center was computed
+          "time_bin_edges_sha256":   "abc...",     # sha256(str(edges)) for machine verification
+          # Stage 2 validation guard: assert that all time_bin values in parquet
+          # fall within [edges[0], edges[-1]] and are monotonically ordered.
           "seed":               42,
           "n_permutations":     1000,
           "git_commit":         "abc1234",
@@ -211,17 +215,20 @@ def compute_per_embryo_metrics(
     time_bin_col: str = "time_bin",
     pred_col: str = "pred_class",
     true_col: str = "true_class",
-    is_wrong_col: str = "is_wrong",
     p_true_col: str = "p_true",
     p_pred_col: str = "p_pred",
+    allow_mode_true_class: bool = False,   # False = HARD ERROR on multi-class embryos
 ) -> pd.DataFrame:
+  # is_wrong_col is NOT a parameter; is_wrong is derived inside this function
+  # as (pred_class != true_class) — never read from input to avoid stale values.
 
   Pre-compute helpers (stored on df, available for flagging):
     baseline_wrong_rate per (true_class, time_bin)  [stored in a lookup dict]
     baseline_wrong_rate per (true_class) overall
 
   Guarantees:
-    - assert each embryo has exactly 1 unique true_class (or warn + take mode)
+    - if embryo has >1 unique true_class and allow_mode_true_class=False: HARD ERROR
+    - if embryo has >1 unique true_class and allow_mode_true_class=True: warn + take mode
     - sort by (embryo_id, time_bin) before any streak/flip computation
     - add embryo_idx: pd.Categorical(embryo_id).codes  (for vectorized perm null)
 
@@ -275,6 +282,10 @@ class LiteRun:
     metadata:  dict = None   # caller-supplied context (e.g. class_labels, thresholds)
 
 LiteRun.summary REQUIRED KEYS (consistent across all three Stage 2 nulls):
+  stat_name      str                e.g. "wrong_rate", "longest_wrong_streak",
+                                    "top_confused_frac" — makes downstream
+                                    tables/plots generic without guessing which
+                                    stat produced obs_stat
   exceed_count   np.ndarray[int]    shape (n_embryos,)  raw exceedance counts
   null_mean      np.ndarray[float]  shape (n_embryos,)
   null_std       np.ndarray[float]  shape (n_embryos,)
@@ -288,19 +299,25 @@ def run_lite(
     n_iters:         int,
     seed:            int,
     spec:            dict,
-    kernel:          Callable[[np.random.Generator], dict | tuple],
+    kernel:          Callable[[np.random.Generator, int], dict | tuple],
     collect_samples: bool = False,
     metadata:        dict | None = None,
 ) -> LiteRun:
     """
     Standardized wrapper for lightweight NumPy resampling tests.
-    `kernel(rng)` is responsible for ALL iterations (vectorized or loop)
-    and returns either a summary dict or (summary, samples).
+
+    `kernel(rng, n_iters)` is responsible for ALL iterations (vectorized or
+    loop) and returns either a summary dict or (summary, samples).
+    run_lite owns RNG creation; kernel receives the rng and MUST:
+      - call only rng.* methods (never np.random.* or its own SeedSequence)
+      - not spawn child RNGs internally
+    n_iters is passed explicitly so a single-iteration kernel is impossible
+    by accident (the caller must decide the iteration count up-front).
     run_lite provides: SeedSequence setup, LiteRun construction, provenance.
     """
     ss  = np.random.SeedSequence(seed)
     rng = np.random.default_rng(ss)
-    out = kernel(rng)
+    out = kernel(rng, n_iters)
     if isinstance(out, tuple):
         summary, samples = out
     else:
@@ -330,8 +347,10 @@ Stage 2 spec strings (stable, used verbatim in metadata.json):
 All three null tests run under run_lite() from lightweight_numpy_resampling.
 Kernels are pure NumPy and vectorize internally over n_iters. Rationale:
 - Seed/provenance format is consistent with Stage 1 without engine coupling.
-- No ad-hoc np.random calls; all random state flows through run_lite → kernel(rng).
-- LiteRun.summary provides uniform output keys (exceed_count, null_mean,
+- Kernels call only rng.* (rng provided by run_lite); no np.random.* or
+  internal SeedSequence/spawn. n_iters is passed explicitly by run_lite so
+  a single-iteration kernel is impossible by accident.
+- LiteRun.summary provides uniform keys (stat_name, exceed_count, null_mean,
   null_std, obs_stat, pval, z_score) regardless of which null was run.
 - Engine migration later = swap run_lite internals only, not null code.
 
@@ -382,35 +401,37 @@ def null_test_wrong_rate(
         bin_slices[tb] = (pos, pos + n)
         pos += n
 
-  Permutation loop:
-    # Permute pred_class codes within each time_bin; derive is_wrong from comparison.
+  Kernel (passed to run_lite as kernel(rng, n_iters)):
+    # rng comes from run_lite; NO internal SeedSequence or np.random.* calls.
     # Preserves the full distribution of predicted classes per bin (not just the
     # wrong/right binary), so future tests (e.g. "confused into class X?") use
     # the same null without re-running permutations.
-    ss = np.random.SeedSequence(random_state)
-    iter_seeds = ss.spawn(n_permutations)
-    exceed     = np.zeros(n_embryos, dtype=np.int64)
-    null_sum   = np.zeros(n_embryos, dtype=np.float64)
+    exceed      = np.zeros(n_embryos, dtype=np.int64)
+    null_sum    = np.zeros(n_embryos, dtype=np.float64)
     null_sum_sq = np.zeros(n_embryos, dtype=np.float64)   # for Welford variance
 
-    for b in range(n_permutations):
-        rng = np.random.default_rng(iter_seeds[b])
-        pred_perm = pred_class_codes.copy()
+    # pred_perm is a pre-allocated buffer reused each iteration (avoids realloc)
+    pred_perm = pred_class_codes.copy()
+    for b in range(n_iters):
+        np.copyto(pred_perm, pred_class_codes)            # reset buffer in-place
         for start, stop in bin_slices.values():
             pred_perm[start:stop] = rng.permutation(pred_perm[start:stop])
         is_wrong_perm = (pred_perm != true_class_codes).astype(np.int8)
         wrong_count = np.bincount(embryo_idx_arr, weights=is_wrong_perm,
                                   minlength=n_embryos)
         wr_perm = wrong_count / n_windows_arr
-        exceed     += (wr_perm >= obs_wrong_rate)
-        null_sum   += wr_perm
+        exceed      += (wr_perm >= obs_wrong_rate)
+        null_sum    += wr_perm
         null_sum_sq += wr_perm ** 2
 
-    null_mean = null_sum / n_permutations
-    null_var  = null_sum_sq / n_permutations - null_mean ** 2
+    null_mean = null_sum / n_iters
+    null_var  = null_sum_sq / n_iters - null_mean ** 2
     null_std  = np.sqrt(np.maximum(null_var, 0))
-    pval      = (exceed + 1) / (n_permutations + 1)
+    pval      = (exceed + 1) / (n_iters + 1)
     z_score   = (obs_wrong_rate - null_mean) / (null_std + 1e-9)
+    return {"stat_name": "wrong_rate", "exceed_count": exceed,
+            "null_mean": null_mean, "null_std": null_std,
+            "obs_stat": obs_wrong_rate, "pval": pval, "z_score": z_score}
 
   Returns per_embryo_metrics with added columns:
     wrong_rate_null_mean, wrong_rate_null_std, wrong_rate_z,
@@ -677,7 +698,15 @@ Stage 2 outputs:
         embryo_{id}.png            (top_n flagged only)
     metadata.json                  (Stage 2 provenance + all config):
       {
-        "wrong_rate_null":         "pred_class permuted within time_bin",
+        "null_specs": {            # verbatim LiteRun.spec from each null test
+          "wrong_rate":     {"type": "permute_labels", "within": "time_bin",
+                             "label": "pred_class", "derived": "is_wrong_perm"},
+          "streak":         {"type": "simulate", "dist": "bernoulli",
+                             "p": "baseline_wrong_rate(true_class,time_bin)",
+                             "gaps": "observed_only"},
+          "top_confused":   {"type": "simulate", "dist": "multinomial",
+                             "probs": "pooled_q_C_excluding_self"}
+        },
         "n_permutations":          1000,
         "n_sim":                   10000,
         "random_state":            42,
