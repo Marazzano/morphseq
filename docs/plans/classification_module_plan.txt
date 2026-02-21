@@ -164,8 +164,18 @@ File: classification/classification_test_multiclass.py
     null/
       auroc_null_summary.parquet    (class, time_bin, exceed_count, mean, std, n)
       auroc_null_full.npz           (only when null_save_mode="full")
-      null_metadata.json            (seed, n_permutations, git_commit, timestamp,
-                                     resampling_spec description)
+      null_metadata.json            (required by Stage 2 for reproducibility):
+        {
+          "class_labels":       ["CE", "MUT", "WT"],  # canonical order, all classes
+          "time_bin_definition": "description or edges used to assign time_bin",
+          "seed":               42,
+          "n_permutations":     1000,
+          "git_commit":         "abc1234",
+          "timestamp":          "2026-02-21T...",
+          "resampling_spec":    "description of resampling setup"
+          # optional model/config identifiers:
+          "model_config_id":    "..."
+        }
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -176,12 +186,15 @@ Input contract:
   embryo_predictions_augmented.parquet  — from Stage 1
   null/auroc_null_summary.parquet       — from Stage 1 (optional, if needed)
 
-Columns guaranteed in embryo_predictions:
+Columns required in embryo_predictions (Stage 2 trusts these, never rewrites them):
   embryo_id (str), time_bin (int), time_bin_center (float),
   true_class (str), pred_class (str),
-  is_correct (bool), is_wrong (int 0/1),
   pred_proba_{CE} ... pred_proba_{WT} (float per class),
   p_true (float), p_pred (float)
+
+Optional convenience columns (Stage 2 recomputes if absent; do NOT rely on them):
+  is_correct (bool)       — derived as (pred_class == true_class)
+  is_wrong (int 0/1)      — derived as int(pred_class != true_class)
 
 
 ─────────────────────────────────────────────────────────────────────────────
@@ -250,11 +263,14 @@ All three null tests use pure numpy (not the resampling engine). Rationale:
 --- NULL TEST 1: WRONG-RATE (global permutation, vectorized) ---
 
 def null_test_wrong_rate(
-    embryo_predictions: pd.DataFrame,   # must have is_wrong, time_bin, embryo_idx
+    embryo_predictions: pd.DataFrame,   # must have pred_class, true_class, time_bin, embryo_idx
     per_embryo_metrics: pd.DataFrame,   # has wrong_rate, n_windows, embryo_idx
+    class_labels: list[str],            # canonical class vocab from Stage 1 metadata
     n_permutations: int = 1_000,
     random_state: int = 42,
 ) -> pd.DataFrame:
+  # is_wrong is NEVER read from embryo_predictions; it is derived each
+  # permutation as (pred_class_perm != true_class) after shuffling pred_class.
 
   Null: permute pred_class within each time_bin (NOT is_wrong directly).
   True_class is kept FIXED. is_wrong_perm is derived as (pred_class_perm != true_class).
@@ -266,11 +282,18 @@ def null_test_wrong_rate(
   Pre-sort + pre-index once:
     # Sort embryo_predictions by time_bin (group structure for fast shuffle)
     df_sorted = embryo_predictions.sort_values("time_bin")
-    # Encode pred_class as integer codes for fast shuffling and comparison
-    pred_class_codes = pd.Categorical(df_sorted["pred_class"]).codes.astype(np.int16)
+    # ENCODING: use canonical class_labels from Stage 1 metadata for BOTH columns.
+    # This prevents the landmine where a true_class label that never appears in
+    # pred_class gets code -1, silently corrupting (pred_perm != true_class_codes).
+    # Fallback when class_labels unavailable: use sorted union and log a warning.
+    #   fallback: class_labels = sorted(set(df["pred_class"]) | set(df["true_class"]))
+    pred_class_codes = pd.Categorical(df_sorted["pred_class"],
+                                      categories=class_labels).codes.astype(np.int16)
     true_class_codes = pd.Categorical(df_sorted["true_class"],
-                                      categories=pd.Categorical(df_sorted["pred_class"]).categories
-                                     ).codes.astype(np.int16)
+                                      categories=class_labels).codes.astype(np.int16)
+    # Sanity guard: -1 means an unknown label that isn't in class_labels
+    assert (pred_class_codes >= 0).all(), "pred_class contains labels not in class_labels"
+    assert (true_class_codes >= 0).all(), "true_class contains labels not in class_labels"
     embryo_idx_arr = df_sorted["embryo_idx"].values
     n_windows_arr  = per_embryo_metrics["n_windows"].values   # indexed by embryo_idx
     obs_wrong_rate = per_embryo_metrics["wrong_rate"].values
@@ -333,6 +356,13 @@ def null_test_streak(
   Do NOT use a constant e_hat. This prevents harder mid-stage bins from
   masquerading as embryo-specific streakiness.
 
+  GAPS POLICY (locked): if an embryo is absent from intermediate time bins,
+  treat only its OBSERVED bins as the sequence. NO gap imputation, no zero-
+  filling. The observed windows are the only ones that go into the Bernoulli
+  simulation for that embryo (T = number of observed windows, not total bins).
+  Rationale: imputed zeros inflate correct streaks; imputed means conflate
+  the null with a different embryo-class baseline.
+
   Clip: p_t = np.clip(p_t, p_clip[0], p_clip[1])
 
   Per embryo e with true_class C and T windows at bins [t1..tT]:
@@ -372,16 +402,21 @@ def null_test_top_confused_frac(
 
   Per true_class C:
     Compute pooled confusion probabilities q_C(k) for k != C.
-    Use leave-one-out exclusion of embryo e when computing q_C used for that
-    embryo, if class has enough embryos (>= loo_min_class_size). Otherwise
-    fall back to inclusive pooling to avoid instability with small classes.
-    q_C(k) = count(pred_class=k among all wrong bins with true_class=C [excluding e])
+    POOLING UNIT IS OBSERVATIONS (rows), not per-embryo counts.
+      q_C(k) ∝ count(rows where true_class=C AND pred_class=k AND is_wrong)
+    This means an embryo with 10 wrong windows contributes 10× more than one
+    with 1 wrong window, which correctly reflects the available evidence.
+    Use leave-one-out exclusion of embryo e when computing q_C for that embryo
+    if the class has enough embryos (>= loo_min_class_size). Otherwise fall back
+    to inclusive pooling to avoid instability with small classes.
+    q_C(k) = count(pred_class=k among wrong rows with true_class=C [excl. e])
     Normalize q_C to sum to 1.
 
   For each embryo e with true_class=C and n_wrong[e]:
     If n_wrong[e] < require_n_wrong_min:
         pval_top_confused_frac[e] = 1.0
-        flag reason: "too_few_wrong_for_confusion_test"
+        top_confused_test_skipped[e] = True   # recorded as a column, not a flag
+        # do NOT emit this as a flag_reason; record separately for audit
     Else:
         counts_null = rng.multinomial(n_wrong[e], q_C, size=n_sim) # (n_sim, n_classes)
         top_frac_null = counts_null.max(axis=1) / n_wrong[e]        # (n_sim,)
@@ -428,15 +463,20 @@ def flag_consistently_misclassified(
     require_n_wrong_min: int = 3,
 ) -> pd.DataFrame:
 
+  Pre-compute guard columns (always written, never used as flags themselves):
+    too_few_windows                   (bool) = n_windows < require_n_windows_min
+    too_few_wrong_for_confusion_test  (bool) = n_wrong < require_n_wrong_min
+
   Flag embryos meeting ANY of:
     (A) qval_wrong_rate < q_val_threshold
     (B) qval_streak < q_val_threshold
     (C) wrong_rate_z > wrong_rate_z_threshold
-        AND n_windows >= require_n_windows_min
+        AND NOT too_few_windows
     (D) wrong_rate - expected_wrong_rate > wrong_rate_delta_threshold
+        AND NOT too_few_windows
     (E) top_confused_frac > top_confused_frac_threshold
         AND qval_top_confused_frac < q_val_threshold
-        AND n_wrong >= require_n_wrong_min
+        AND NOT too_few_wrong_for_confusion_test
         AND NOT top_confused_test_skipped
 
   z-score threshold (C) is class-adaptive: relative to each embryo's own
@@ -444,7 +484,10 @@ def flag_consistently_misclassified(
   Delta threshold (D) adds an absolute floor for high-baseline classes where
   z-scores can be insensitive.
 
-  Returns flagged subset with column 'flag_reasons' (list of strings ["A","C"]).
+  Returns per_embryo_metrics with columns:
+    is_flagged (bool), flag_reasons (list of strings, e.g. ["A","C"]),
+    too_few_windows (bool), too_few_wrong_for_confusion_test (bool)
+  flagged_embryos = per_embryo_metrics[per_embryo_metrics.is_flagged]
 
 def compute_confusion_enrichment(
     embryo_predictions: pd.DataFrame,
@@ -557,7 +600,24 @@ Stage 2 outputs:
       confusion_profile_by_class.png
       embryo_deep_dives/
         embryo_{id}.png            (top_n flagged only)
-    metadata.json                  (thresholds, n_perm, n_sim, git_commit, seed)
+    metadata.json                  (Stage 2 provenance + all config):
+      {
+        "wrong_rate_null":         "pred_class permuted within time_bin",
+        "n_permutations":          1000,
+        "n_sim":                   10000,
+        "random_state":            42,
+        "class_labels_source":     "metadata" | "inferred_union",
+        "class_labels":            ["CE", "MUT", "WT"],
+        "require_n_windows_min":   3,
+        "require_n_wrong_min":     3,
+        "q_val_threshold":         0.05,
+        "wrong_rate_z_threshold":  2.0,
+        "wrong_rate_delta_threshold": 0.20,
+        "top_confused_frac_threshold": 0.80,
+        "loo_min_class_size":      10,
+        "git_commit":              "abc1234",
+        "timestamp":               "2026-02-21T..."
+      }
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -615,7 +675,8 @@ Step | Action                                            | Files
      | Write tests/test_misclassification_metrics.py     | new file
 -----|---------------------------------------------------|---------------------------
   5  | Write misclassification_null.py                   | new file
-     | wrong_rate: pure numpy, permute is_wrong in bins  |
+     | wrong_rate: pure numpy, permute pred_class within |
+     |   time_bin; derive is_wrong_perm each iteration   |
      | streak: vectorized Bernoulli, varying p(t), clip  |
      | top_confused: multinomial + LOO q_C               |
      | BH FDR per test                                   |
