@@ -155,14 +155,25 @@ File: classification/classification_test_multiclass.py
     pred_record['p_true'] = pred_record.get(f'pred_proba_{true_label}', np.nan)
     # p_pred is derived from pred_label, not re-argmax'd over all probs.
     # This makes (pred_class, p_pred) a single atom: they always refer to
-    # the same class and cannot desync due to ties, NaN columns, or missing
-    # prob keys. Clip into [0,1] immediately to catch "not-a-probability"
-    # regressions from upstream model code.
+    # the same class and cannot desync due to ties, NaN columns, or missing prob keys.
     pred_label = int_to_label[pred_idx]                # same source as pred_class
-    raw_p = pred_record.get(f'pred_proba_{pred_label}', np.nan)
-    pred_record['p_pred'] = float(np.clip(raw_p, 0.0, 1.0)) if not np.isnan(raw_p) else np.nan
-    # Also clip p_true for consistency:
-    raw_pt = pred_record['p_true']
+    raw_p  = pred_record.get(f'pred_proba_{pred_label}', np.nan)
+    raw_pt = pred_record.get(f'pred_proba_{true_label}', np.nan)
+
+    # ASSERT-THEN-CLIP: assert within tolerance first so calibration drift /
+    # logit blowup raises loudly rather than being silently laundered.
+    # Then clip defensively to keep downstream ops numerically stable.
+    _TOL = 1e-6
+    for _name, _val, _eid, _tb in [
+        ("p_pred", raw_p,  embryo_id, time_bin),
+        ("p_true", raw_pt, embryo_id, time_bin),
+    ]:
+        if not np.isnan(_val) and not (-_TOL <= _val <= 1 + _TOL):
+            raise ValueError(
+                f"{_name}={_val:.6f} out of [0,1] tolerance for "
+                f"embryo_id={_eid}, time_bin={_tb}, pred_label={pred_label}"
+            )
+    pred_record['p_pred'] = float(np.clip(raw_p,  0.0, 1.0)) if not np.isnan(raw_p)  else np.nan
     pred_record['p_true'] = float(np.clip(raw_pt, 0.0, 1.0)) if not np.isnan(raw_pt) else np.nan
 
   Using pred_proba_{class} column names avoids any label encoder index
@@ -213,17 +224,34 @@ Columns required in embryo_predictions (Stage 2 trusts these, never rewrites the
   p_true (float), p_pred (float)
 
 STAGE 2 INPUT VALIDATION (run once at pipeline entry, fail loudly):
-  REQUIRED_COLS = {
-      "embryo_id":       object,    # str
-      "time_bin":        np.int64,  # or int32 — check np.issubdtype(actual, np.integer)
-      "time_bin_center": np.float64,
-      "true_class":      object,
-      "pred_class":      object,
-      "p_true":          np.float64,
-      "p_pred":          np.float64,
-  }
-  Also assert all pred_proba_{c} columns exist for c in class_labels (from Stage 1 metadata).
-  Any missing column or wrong dtype raises ValueError with the column name + actual dtype.
+  Use dtype family checks, NOT exact dtype equality (pandas may give int32, Int64
+  nullable, float32, etc.):
+    "embryo_id":       pd.api.types.is_object_dtype or is_string_dtype
+    "time_bin":        pd.api.types.is_integer_dtype  (catches int32/int64/Int64)
+    "time_bin_center": pd.api.types.is_float_dtype    (catches float32/float64)
+    "true_class":      pd.api.types.is_object_dtype or is_string_dtype
+    "pred_class":      pd.api.types.is_object_dtype or is_string_dtype
+    "p_true":          pd.api.types.is_float_dtype
+    "p_pred":          pd.api.types.is_float_dtype
+  All pred_proba_{c} columns for c in class_labels: pd.api.types.is_float_dtype
+  Any missing column or dtype family mismatch raises ValueError with column name + actual dtype.
+
+  NO-NA GUARD on critical columns (bad rows corrupt all downstream logic):
+    assert df[["embryo_id", "time_bin", "true_class", "pred_class"]].notna().all(axis=None), \
+        "NaN found in critical identifier columns"
+
+  PER-EMBRYO TIME ORDERING GUARD (correctness lever for streaks + localization):
+    After sorting by (embryo_id, time_bin), for each embryo verify time_bin is
+    strictly increasing (no duplicates, gaps allowed):
+      for eid, grp in df.groupby("embryo_id"):
+          bins = grp["time_bin"].values
+          if not (np.diff(bins) > 0).all():
+              raise ValueError(f"embryo {eid}: time_bin not strictly increasing "
+                               f"(duplicates or unsorted): {bins}")
+    This is distinct from the Stage 1 metadata guard (which checks within-embryo
+    ordering in the parquet schema). Stage 2 re-checks after load so no silent
+    drift can reach streak/localization kernels.
+
   This is the single place to catch Stage 1 evolution silently breaking Stage 2.
 
 Optional convenience columns (Stage 2 recomputes if absent; do NOT rely on them):
@@ -460,7 +488,11 @@ def null_test_wrong_rate(
             start, stop = bin_slices[tb]
             pred_perm[start:stop] = rng.permutation(pred_perm[start:stop])
         is_wrong_perm = (pred_perm != true_class_codes).astype(np.int8)
-        wrong_count = np.bincount(embryo_idx_arr, weights=is_wrong_perm,
+        # Cast weights to int32 before bincount: np.bincount promotes int8 weights
+        # to float64 internally anyway, but explicit cast keeps "counts are counts"
+        # semantics visible and avoids any platform-specific dtype surprises.
+        wrong_count = np.bincount(embryo_idx_arr,
+                                  weights=is_wrong_perm.astype(np.int32),
                                   minlength=n_embryos)
         wr_perm = wrong_count / n_windows_arr
         exceed      += (wr_perm >= obs_wrong_rate)
@@ -531,6 +563,17 @@ def null_test_streak(
     # Compute run lengths and take max
     # (pure numpy, no loop over n_sim)
 
+  IMPLEMENTATION NOTE ON LOOPS:
+    null_test_streak DOES loop over embryos (outer loop). This is correct and
+    intentional: each embryo has a different T (observed windows) and a different
+    p_vec, so a fully-vectorized outer loop would require ragged-array gymnastics.
+    Vectorization is applied on the expensive axis (n_sim), NOT on n_embryos.
+    "Implementation loops over embryos; inner simulation is vectorized over n_sim."
+    Do NOT attempt to eliminate the embryo loop — the per-embryo T variation makes
+    it the right design boundary.
+    Optional bucketing by T: if many embryos share the same T, sim_matrix can be
+    batched across those embryos for a constant-factor speedup. Not required initially.
+
   Returns per_embryo_metrics with added columns:
     streak_null_mean, streak_null_std, pval_streak
 
@@ -556,6 +599,27 @@ def null_test_top_confused_frac(
     to inclusive pooling to avoid instability with small classes.
     q_C(k) = count(pred_class=k among wrong rows with true_class=C [excl. e])
     Normalize q_C to sum to 1.
+
+    SUPPORT ORDERING (locked + deterministic):
+      q_C support = [k for k in class_labels if k != C]
+      (class_labels is the canonical sorted list from Stage 1 metadata)
+      multinomial column order follows this list exactly.
+      Store this ordering in metadata alongside q_C so the audit trail is
+      replayable without the config file:
+        "q_C_per_class": {
+          "CE":  {"support": ["MUT","WT"], "probs": [0.7, 0.3]},
+          "MUT": {"support": ["CE","WT"],  "probs": [...]},
+          ...
+        }
+
+    SKIP REASON ENUM (exhaustive, use these exact strings):
+      "n_wrong<require_n_wrong_min"          — embryo has too few wrong windows
+      "no_pooled_wrong_rows_for_class"       — class C has zero wrong rows globally
+      "class_too_small_for_loo"              — LOO skipped; used inclusive pooling instead
+                                               (set when loo_min_class_size not met; test
+                                               still runs, this is a provenance note not a skip)
+    Note: "class_too_small_for_loo" sets a separate column top_confused_used_loo (bool),
+    not top_confused_test_skipped, since the test still runs.
 
     EDGE CASE: if no pooled wrong rows exist for class C (model perfect for C):
       - q_C is all zeros and cannot be normalized to a probability distribution.
@@ -655,12 +719,14 @@ def flag_consistently_misclassified(
     flag_reason_codes  (list[str], e.g. ["A","C"])   — compact, machine-friendly
     flag_reason_labels (list[str], e.g. ["qval_wrong_rate<0.05", "wrong_rate_z>2.0"])
                                                       — human-readable, 1:1 with codes
-    Code → label mapping (locked):
-      "A" → "qval_wrong_rate<{q_val_threshold}"
-      "B" → "qval_streak<{q_val_threshold}"
-      "C" → "wrong_rate_z>{wrong_rate_z_threshold}"
-      "D" → "wrong_rate_delta>{wrong_rate_delta_threshold}"
-      "E" → "top_confused_frac>{top_confused_frac_threshold}&qval_top_confused<{q_val_threshold}"
+    Code → label mapping (rendered at call time with actual threshold values):
+      "A" → f"qval_wrong_rate<{q_val_threshold}"
+      "B" → f"qval_streak<{q_val_threshold}"
+      "C" → f"wrong_rate_z>{wrong_rate_z_threshold}"
+      "D" → f"wrong_rate_delta>{wrong_rate_delta_threshold}"
+      "E" → f"top_confused_frac>{top_confused_frac_threshold}&qval_top_confused<{q_val_threshold}"
+    Stored strings are FULLY RENDERED (e.g. "qval_wrong_rate<0.05"), never
+    template placeholders. CSV readers need no config file open in another tab.
     too_few_windows (bool), too_few_wrong_for_confusion_test (bool)
   flagged_embryos = per_embryo_metrics[per_embryo_metrics.is_flagged]
 
