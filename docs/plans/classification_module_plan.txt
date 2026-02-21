@@ -15,9 +15,11 @@ embryo_predictions). Stage 2 must be a PURE CONSUMER of saved artifacts.
 
   Stage 2 MAY:
     - read embryo_predictions_augmented.parquet and null summaries
-    - permute pred_class within time_bin (canonical null; derive is_wrong_perm)
-    - optionally permute derived is_wrong for diagnostics (not canonical null)
-    - run Bernoulli and multinomial simulation nulls
+    - permute pred_class within time_bin via the lightweight resampling wrapper
+      (canonical null; derive is_wrong_perm each iteration)
+    - optionally permute derived is_wrong for diagnostics via the wrapper
+      (not canonical; explicit spec tag distinguishes it from the canonical null)
+    - run Bernoulli/Multinomial simulations via the lightweight resampling wrapper
     - write tables and plots
 
   Stage 2 MUST NOT:
@@ -26,6 +28,7 @@ embryo_predictions). Stage 2 must be a PURE CONSUMER of saved artifacts.
     - call cross-val routines
     - call the expensive AUROC permutation test
     - alter embryo_predictions rows beyond adding derived columns
+    - call np.random.* directly; all random state goes through the wrapper
 
 Two kinds of null, different cost:
 
@@ -252,14 +255,85 @@ def compute_per_embryo_metrics(
 
 
 ─────────────────────────────────────────────────────────────────────────────
+3b-0) src/analyze/utils/resampling/lightweight_numpy_resampling.py  (new)
+─────────────────────────────────────────────────────────────────────────────
+
+"Audit spine + fast muscles": Stage 2 kernels are fully vectorized NumPy
+(fast), but seed/provenance/spec bookkeeping are centralized here so:
+  - seed format matches Stage 1 (np.random.SeedSequence)
+  - run metadata is structured and consistent across all three nulls
+  - future engine upgrades don't require editing Stage 2 null code
+
+@dataclass
+class LiteRun:
+    test_name: str
+    n_iters:   int
+    seed:      int
+    spec:      dict          # human-readable description of what was permuted/simulated
+    summary:   dict          # REQUIRED keys listed below
+    samples:   Any = None    # optional; usually None (too large to keep)
+    metadata:  dict = None   # caller-supplied context (e.g. class_labels, thresholds)
+
+LiteRun.summary REQUIRED KEYS (consistent across all three Stage 2 nulls):
+  exceed_count   np.ndarray[int]    shape (n_embryos,)  raw exceedance counts
+  null_mean      np.ndarray[float]  shape (n_embryos,)
+  null_std       np.ndarray[float]  shape (n_embryos,)
+  obs_stat       np.ndarray[float]  shape (n_embryos,)  observed statistic
+  pval           np.ndarray[float]  shape (n_embryos,)  (exceed+1)/(n_iters+1)
+  z_score        np.ndarray[float]  shape (n_embryos,)  (obs-mean)/(std+1e-9)
+
+def run_lite(
+    *,
+    test_name:       str,
+    n_iters:         int,
+    seed:            int,
+    spec:            dict,
+    kernel:          Callable[[np.random.Generator], dict | tuple],
+    collect_samples: bool = False,
+    metadata:        dict | None = None,
+) -> LiteRun:
+    """
+    Standardized wrapper for lightweight NumPy resampling tests.
+    `kernel(rng)` is responsible for ALL iterations (vectorized or loop)
+    and returns either a summary dict or (summary, samples).
+    run_lite provides: SeedSequence setup, LiteRun construction, provenance.
+    """
+    ss  = np.random.SeedSequence(seed)
+    rng = np.random.default_rng(ss)
+    out = kernel(rng)
+    if isinstance(out, tuple):
+        summary, samples = out
+    else:
+        summary, samples = out, None
+    if collect_samples and samples is None:
+        raise ValueError("collect_samples=True requires kernel to return (summary, samples)")
+    return LiteRun(
+        test_name=test_name, n_iters=n_iters, seed=seed, spec=spec,
+        summary=summary, samples=samples if collect_samples else None,
+        metadata=metadata or {},
+    )
+
+Stage 2 spec strings (stable, used verbatim in metadata.json):
+  wrong_rate null:    {"type": "permute_labels",  "within": "time_bin",
+                       "label": "pred_class",     "derived": "is_wrong_perm"}
+  streak null:        {"type": "simulate",         "dist": "bernoulli",
+                       "p": "baseline_wrong_rate(true_class,time_bin)",
+                       "gaps": "observed_only"}
+  top_confused null:  {"type": "simulate",         "dist": "multinomial",
+                       "probs": "pooled_q_C_excluding_self"}
+
+
+─────────────────────────────────────────────────────────────────────────────
 3b) misclassification_null.py
 ─────────────────────────────────────────────────────────────────────────────
 
-All three null tests use pure numpy (not the resampling engine). Rationale:
-- The engine does not currently support vector-valued statistics.
-- Pure numpy is transparent, fast, and easy to audit.
-- SeedSequence is used directly for reproducibility.
-- Can be wrapped into the engine later if vector stats are added.
+All three null tests run under run_lite() from lightweight_numpy_resampling.
+Kernels are pure NumPy and vectorize internally over n_iters. Rationale:
+- Seed/provenance format is consistent with Stage 1 without engine coupling.
+- No ad-hoc np.random calls; all random state flows through run_lite → kernel(rng).
+- LiteRun.summary provides uniform output keys (exceed_count, null_mean,
+  null_std, obs_stat, pval, z_score) regardless of which null was run.
+- Engine migration later = swap run_lite internals only, not null code.
 
 --- NULL TEST 1: WRONG-RATE (global permutation, vectorized) ---
 
@@ -636,6 +710,13 @@ test_misclassification_metrics.py
       (allow_mode_true_class=True warns + takes mode; default is False)
   - expected_wrong_rate wired from baseline_ct table, not global mean
 
+test_lightweight_numpy_resampling.py
+  - run_lite reproduces identical summary given same seed
+  - run_lite raises ValueError when collect_samples=True but kernel returns no samples
+  - LiteRun.summary always has all required keys (exceed_count, null_mean, null_std,
+    obs_stat, pval, z_score) — assert via helper that all three null kernels satisfy this
+  - spec dict is round-trippable to/from JSON (no non-serialisable values)
+
 test_misclassification_null.py
   - Wrong-rate null uniformity:
       Build synthetic dataset where is_wrong is drawn from the same null.
@@ -677,24 +758,29 @@ Step | Action                                            | Files
      | Returns (per_embryo_df, baseline_ct_df, baseline_c_df)
      | Write tests/test_misclassification_metrics.py     | new file
 -----|---------------------------------------------------|---------------------------
-  5  | Write misclassification_null.py                   | new file
-     | wrong_rate: pure numpy, permute pred_class within |
+  5  | Write lightweight_numpy_resampling.py             | new file
+     | LiteRun dataclass + run_lite() wrapper            | utils/resampling/
+     | Centralized SeedSequence, spec tagging, summary   |
+-----|---------------------------------------------------|---------------------------
+  6  | Write misclassification_null.py                   | new file
+     | All three nulls use run_lite(kernel=...)          |
+     | wrong_rate kernel: permute pred_class within      |
      |   time_bin; derive is_wrong_perm each iteration   |
-     | streak: vectorized Bernoulli, varying p(t), clip  |
-     | top_confused: multinomial + LOO q_C               |
-     | BH FDR per test                                   |
+     | streak kernel: vectorized Bernoulli, varying p(t) |
+     | top_confused kernel: multinomial + LOO q_C        |
+     | BH FDR applied to LiteRun.summary["pval"] per test|
      | Write tests/test_misclassification_null.py        | new file
 -----|---------------------------------------------------|---------------------------
-  6  | Write misclassification_flagging.py               | new file
+  7  | Write misclassification_flagging.py               | new file
 -----|---------------------------------------------------|---------------------------
-  7  | Write misclassification_viz.py                    | new file
+  8  | Write misclassification_viz.py                    | new file
 -----|---------------------------------------------------|---------------------------
-  8  | Write misclassification_pipeline.py               | new file
+  9  | Write misclassification_pipeline.py               | new file
 -----|---------------------------------------------------|---------------------------
-  9  | Migrate _permutation_test_ovr() to resampling     | classification_test_multiclass.py
+ 10  | Migrate _permutation_test_ovr() to resampling     | classification_test_multiclass.py
      | framework (separate commit — orthogonal change)   | permutation_utils.py
 -----|---------------------------------------------------|---------------------------
- 10  | Commit + push                                     | git
+ 11  | Commit + push                                     | git
 
 ================================================================================
 END OF PLAN
