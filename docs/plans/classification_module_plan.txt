@@ -35,12 +35,14 @@ Two kinds of null, different cost:
     (class, time_bin). Full null_aurocs array only if null_save_mode="full".
 
   Wrong-rate null (cheap — no retraining, happens in Stage 2)
-    Permute pred_class (or is_wrong) within time_bin on the stored
-    embryo_predictions table. Keep true_class FIXED.
-    Rationale: shuffling true_class can manufacture wrongness patterns
-    impossible given how the model was trained. Shuffling what the model
-    predicted tests embryo-specific excess error given the global prediction
-    profile at each time point.
+    Permute pred_class within time_bin on the stored embryo_predictions table.
+    Keep true_class FIXED. Recompute is_wrong_perm = (pred_class_perm != true_class).
+    Rationale: shuffling true_class manufactures wrongness patterns impossible
+    given how the model was trained. Shuffling pred_class asks "given the
+    model's actual prediction tendencies at this time bin (e.g. it overcalls WT),
+    is embryo E getting an unusually bad draw?" Critically, preserving the full
+    pred_class distribution (not just the binary is_wrong) means the same null
+    draws can power future confusion-pattern tests without any recomputation.
     O(N_rows × n_perm), fully vectorized with pure numpy.
 
   Streak null (cheap — Bernoulli simulation, Stage 2)
@@ -254,38 +256,51 @@ def null_test_wrong_rate(
     random_state: int = 42,
 ) -> pd.DataFrame:
 
-  Null: permute pred_class (or equivalently is_wrong) within each time_bin.
-  True_class is kept FIXED. This tests embryo-specific excess error against
-  the global prediction profile at each time point.
+  Null: permute pred_class within each time_bin (NOT is_wrong directly).
+  True_class is kept FIXED. is_wrong_perm is derived as (pred_class_perm != true_class).
+  This preserves the full predicted-class distribution per bin (not just the
+  wrong/right marginal), enabling future confusion-pattern tests on the same draws.
+  Tests: "given the model's prediction tendencies at each time bin, is embryo E
+  getting an unusually bad draw across its windows?"
 
   Pre-sort + pre-index once:
     # Sort embryo_predictions by time_bin (group structure for fast shuffle)
     df_sorted = embryo_predictions.sort_values("time_bin")
-    is_wrong_arr   = df_sorted["is_wrong"].values.astype(np.int8)
+    # Encode pred_class as integer codes for fast shuffling and comparison
+    pred_class_codes = pd.Categorical(df_sorted["pred_class"]).codes.astype(np.int16)
+    true_class_codes = pd.Categorical(df_sorted["true_class"],
+                                      categories=pd.Categorical(df_sorted["pred_class"]).categories
+                                     ).codes.astype(np.int16)
     embryo_idx_arr = df_sorted["embryo_idx"].values
     n_windows_arr  = per_embryo_metrics["n_windows"].values   # indexed by embryo_idx
     obs_wrong_rate = per_embryo_metrics["wrong_rate"].values
     n_embryos      = len(per_embryo_metrics)
 
-    # Pre-compute slice boundaries for each time_bin (shuffle in-place per bin)
-    time_bin_arr  = df_sorted["time_bin"].values
-    bin_slices    = {}   # {time_bin: (start, stop)} index ranges in sorted array
-    for tb, grp in df_sorted.groupby("time_bin"):
-        idx = grp.index  # positions in df_sorted
-        bin_slices[tb] = (idx[0], idx[-1] + 1)
+    # Pre-compute contiguous slice boundaries per time_bin (shuffle in-place)
+    bin_slices = {}   # {time_bin: (start, stop)} index ranges in sorted array
+    pos = 0
+    for tb, grp in df_sorted.groupby("time_bin", sort=True):
+        n = len(grp)
+        bin_slices[tb] = (pos, pos + n)
+        pos += n
 
   Permutation loop:
+    # Permute pred_class codes within each time_bin; derive is_wrong from comparison.
+    # Preserves the full distribution of predicted classes per bin (not just the
+    # wrong/right binary), so future tests (e.g. "confused into class X?") use
+    # the same null without re-running permutations.
     ss = np.random.SeedSequence(random_state)
     iter_seeds = ss.spawn(n_permutations)
-    exceed = np.zeros(n_embryos, dtype=np.int64)
-    null_sum = np.zeros(n_embryos, dtype=np.float64)
-    null_sum_sq = np.zeros(n_embryos, dtype=np.float64)   # Welford
+    exceed     = np.zeros(n_embryos, dtype=np.int64)
+    null_sum   = np.zeros(n_embryos, dtype=np.float64)
+    null_sum_sq = np.zeros(n_embryos, dtype=np.float64)   # for Welford variance
 
     for b in range(n_permutations):
         rng = np.random.default_rng(iter_seeds[b])
-        is_wrong_perm = is_wrong_arr.copy()
+        pred_perm = pred_class_codes.copy()
         for start, stop in bin_slices.values():
-            is_wrong_perm[start:stop] = rng.permutation(is_wrong_perm[start:stop])
+            pred_perm[start:stop] = rng.permutation(pred_perm[start:stop])
+        is_wrong_perm = (pred_perm != true_class_codes).astype(np.int8)
         wrong_count = np.bincount(embryo_idx_arr, weights=is_wrong_perm,
                                   minlength=n_embryos)
         wr_perm = wrong_count / n_windows_arr
