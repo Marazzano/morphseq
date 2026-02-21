@@ -141,6 +141,8 @@ def run_phase0(
         X, y, total_cost_C, mask_ref_canonical, metadata_df, sample_ids,
         out_dir=qc_dir,
         iqr_multiplier=config.dataset.iqr_multiplier,
+        target_masks_canonical=aligned_target_masks,
+        alignment_debug_df=alignment_debug_df,
     )
     results["qc_stats"] = qc_stats
     results["gates"]["qc_passed"] = True  # User must visually confirm

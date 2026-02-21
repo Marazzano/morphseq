@@ -161,6 +161,11 @@ def plot_qc2_worst_samples(
 
     ref_mask_bool = mask_ref.astype(bool)
 
+    # Shared color scale across all panels
+    all_costs = [X[order[rank], :, :, 0][ref_mask_bool] for rank in range(min(top_n, len(order)))]
+    vmax_shared = float(np.nanmax(np.concatenate(all_costs))) if all_costs else 1.0
+    vmin_shared = 0.0
+
     for idx, rank in enumerate(range(top_n)):
         if rank >= len(order):
             break
@@ -182,20 +187,22 @@ def plot_qc2_worst_samples(
                 vmax=1.0,
                 alpha=0.35,
                 interpolation="nearest",
+                origin="upper",
             )
             # Show mismatch regions explicitly:
             # target-only pixels (blue), reference-only pixels (purple).
             target_only = np.where(target_mask & (~ref_mask_bool), 1.0, np.nan)
             ref_only = np.where(ref_mask_bool & (~target_mask), 1.0, np.nan)
-            ax.imshow(target_only, cmap="Blues", vmin=0.0, vmax=1.0, alpha=0.45, interpolation="nearest")
-            ax.imshow(ref_only, cmap="Purples", vmin=0.0, vmax=1.0, alpha=0.35, interpolation="nearest")
+            ax.imshow(target_only, cmap="Blues", vmin=0.0, vmax=1.0, alpha=0.45, interpolation="nearest", origin="upper")
+            ax.imshow(ref_only, cmap="Purples", vmin=0.0, vmax=1.0, alpha=0.35, interpolation="nearest", origin="upper")
 
-        im = ax.imshow(display, cmap="hot", alpha=0.90, interpolation="nearest")
+        im = ax.imshow(display, cmap="hot", alpha=0.90, interpolation="nearest",
+                       vmin=vmin_shared, vmax=vmax_shared, origin="upper")
 
         # Draw explicit contours so target/reference boundaries are always visible.
-        ax.contour(mask_ref.astype(float), levels=[0.5], colors=["white"], linewidths=0.5, alpha=0.8)
+        ax.contour(mask_ref.astype(float), levels=[0.5], colors=["white"], linewidths=0.5, alpha=0.8, origin="upper")
         if target_masks_canonical is not None:
-            ax.contour(target_mask.astype(float), levels=[0.5], colors=["#9ecae1"], linewidths=0.9, alpha=0.95)
+            ax.contour(target_mask.astype(float), levels=[0.5], colors=["#9ecae1"], linewidths=0.9, alpha=0.95, origin="upper")
 
         if metadata_df is not None and "genotype" in metadata_df.columns:
             genotype = str(metadata_df.iloc[i]["genotype"])
@@ -273,7 +280,8 @@ def plot_qc_mean_maps(
     y_valid = y[valid]
     cost_ch = X_valid[:, :, :, 0]  # channel 0 = cost_density
 
-    # Get proper extent for canonical grid display
+    # Use an explicit image-style coordinate system: x increases to the right,
+    # y increases downward, row 0 at the top.
     h, w = mask_ref.shape
     extent = [0, w, h, 0]  # [left, right, bottom, top] for upper origin
     origin = "upper"
@@ -470,14 +478,14 @@ def plot_qc4_outlier_diagnostics(
 
         # Panel 1: ref/target overlay and mismatch
         ax = axes[0]
-        ax.imshow(np.where(ref_mask_bool, 1.0, np.nan), cmap="gray", alpha=0.35, interpolation="nearest")
-        ax.imshow(np.where(target_mask, 1.0, np.nan), cmap="Blues", alpha=0.35, interpolation="nearest")
+        ax.imshow(np.where(ref_mask_bool, 1.0, np.nan), cmap="gray", alpha=0.35, interpolation="nearest", origin="upper")
+        ax.imshow(np.where(target_mask, 1.0, np.nan), cmap="Blues", alpha=0.35, interpolation="nearest", origin="upper")
         target_only = np.where(target_mask & (~ref_mask_bool), 1.0, np.nan)
         ref_only = np.where(ref_mask_bool & (~target_mask), 1.0, np.nan)
-        ax.imshow(target_only, cmap="Blues", alpha=0.6, interpolation="nearest")
-        ax.imshow(ref_only, cmap="Purples", alpha=0.45, interpolation="nearest")
-        ax.contour(ref_mask_bool.astype(float), levels=[0.5], colors=["white"], linewidths=0.8, alpha=0.9)
-        ax.contour(target_mask.astype(float), levels=[0.5], colors=["#9ecae1"], linewidths=0.9, alpha=0.95)
+        ax.imshow(target_only, cmap="Blues", alpha=0.6, interpolation="nearest", origin="upper")
+        ax.imshow(ref_only, cmap="Purples", alpha=0.45, interpolation="nearest", origin="upper")
+        ax.contour(ref_mask_bool.astype(float), levels=[0.5], colors=["white"], linewidths=0.8, alpha=0.9, origin="upper")
+        ax.contour(target_mask.astype(float), levels=[0.5], colors=["#9ecae1"], linewidths=0.9, alpha=0.95, origin="upper")
         ax.set_title("Ref vs Target Mask Overlay")
         ax.axis("off")
 
@@ -485,9 +493,9 @@ def plot_qc4_outlier_diagnostics(
         ax = axes[1]
         cost_map = X[i, :, :, 0]
         cost_display = np.where(ref_mask_bool, cost_map, np.nan)
-        im = ax.imshow(cost_display, cmap="hot", interpolation="nearest")
-        ax.contour(ref_mask_bool.astype(float), levels=[0.5], colors=["white"], linewidths=0.8, alpha=0.9)
-        ax.contour(target_mask.astype(float), levels=[0.5], colors=["#9ecae1"], linewidths=0.9, alpha=0.95)
+        im = ax.imshow(cost_display, cmap="hot", interpolation="nearest", origin="upper")
+        ax.contour(ref_mask_bool.astype(float), levels=[0.5], colors=["white"], linewidths=0.8, alpha=0.9, origin="upper")
+        ax.contour(target_mask.astype(float), levels=[0.5], colors=["#9ecae1"], linewidths=0.9, alpha=0.95, origin="upper")
         ax.set_title("Cost Density on Canonical Grid")
         ax.axis("off")
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="cost")

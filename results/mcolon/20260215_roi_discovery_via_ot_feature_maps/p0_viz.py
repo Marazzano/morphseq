@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 def _embryo_outline(mask_ref: np.ndarray, ax: plt.Axes, color: str = "white", lw: float = 1.0):
     """Draw embryo outline (mask_ref boundary) on axes."""
     ax.contour(mask_ref.astype(float), levels=[0.5], colors=[color],
-               linewidths=lw, linestyles="-")
+               linewidths=lw, linestyles="-", origin="upper")
 
 
 def _apply_mask_nan(field: np.ndarray, mask_ref: np.ndarray) -> np.ndarray:
@@ -101,7 +101,7 @@ def plot_cost_density_suite(
     for idx, (label_str, mean_map) in enumerate(means.items()):
         ax = axes[idx]
         display = _apply_mask_nan(mean_map, mask_ref)
-        im = ax.imshow(display, cmap="hot", vmin=0, vmax=vmax_raw, interpolation="bilinear")
+        im = ax.imshow(display, cmap="hot", vmin=0, vmax=vmax_raw, interpolation="bilinear", origin="upper")
         _embryo_outline(mask_ref, ax)
         ax.set_title(f"Fig A{idx+1}: Mean Cost — {label_str}")
         ax.axis("off")
@@ -110,7 +110,7 @@ def plot_cost_density_suite(
     # A3: difference
     diff_display = _apply_mask_nan(diff, mask_ref)
     vabs = np.nanmax(np.abs(diff_display)) if np.any(np.isfinite(diff_display)) else 1.0
-    im = axes[2].imshow(diff_display, cmap="RdBu_r", vmin=-vabs, vmax=vabs, interpolation="bilinear")
+    im = axes[2].imshow(diff_display, cmap="RdBu_r", vmin=-vabs, vmax=vabs, interpolation="bilinear", origin="upper")
     _embryo_outline(mask_ref, axes[2], color="black")
     axes[2].set_title(f"Fig A3: Difference ({label_names[1]} − {label_names[0]})")
     axes[2].axis("off")
@@ -252,7 +252,7 @@ def plot_displacement_suite(
         ax = axes_m[idx]
         mag = np.sqrt(u_map**2 + v_map**2)
         display = _apply_mask_nan(mag, mask_ref)
-        im = ax.imshow(display, cmap="viridis", interpolation="bilinear")
+        im = ax.imshow(display, cmap="viridis", interpolation="bilinear", origin="upper")
         _embryo_outline(mask_ref, ax)
         ax.set_title(f"|d| — {label}")
         ax.axis("off")
@@ -470,7 +470,7 @@ def plot_s_map(
     """Plot the S coordinate map on the reference mask."""
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
     display = _apply_mask_nan(S_map_ref, mask_ref)
-    im = ax.imshow(display, cmap="viridis", vmin=0, vmax=1, interpolation="bilinear")
+    im = ax.imshow(display, cmap="viridis", vmin=0, vmax=1, interpolation="bilinear", origin="upper")
     _embryo_outline(mask_ref, ax, color="white")
     plt.colorbar(im, ax=ax, label="S (0=head, 1=tail)")
     ax.set_title("S Coordinate Map (Rostral → Caudal)")
