@@ -153,10 +153,17 @@ File: classification/classification_test_multiclass.py
     pred_record['is_correct'] = is_correct
     pred_record['is_wrong']   = int(not is_correct)   # from is_correct, not pred_idx
     pred_record['p_true'] = pred_record.get(f'pred_proba_{true_label}', np.nan)
-    pred_record['p_pred'] = max(
-        (pred_record.get(f'pred_proba_{c}', 0.0) for c in class_labels),
-        default=np.nan
-    )
+    # p_pred is derived from pred_label, not re-argmax'd over all probs.
+    # This makes (pred_class, p_pred) a single atom: they always refer to
+    # the same class and cannot desync due to ties, NaN columns, or missing
+    # prob keys. Clip into [0,1] immediately to catch "not-a-probability"
+    # regressions from upstream model code.
+    pred_label = int_to_label[pred_idx]                # same source as pred_class
+    raw_p = pred_record.get(f'pred_proba_{pred_label}', np.nan)
+    pred_record['p_pred'] = float(np.clip(raw_p, 0.0, 1.0)) if not np.isnan(raw_p) else np.nan
+    # Also clip p_true for consistency:
+    raw_pt = pred_record['p_true']
+    pred_record['p_true'] = float(np.clip(raw_pt, 0.0, 1.0)) if not np.isnan(raw_pt) else np.nan
 
   Using pred_proba_{class} column names avoids any label encoder index
   alignment risk entirely.
@@ -229,6 +236,15 @@ def compute_per_embryo_metrics(
   Pre-compute helpers (stored on df, available for flagging):
     baseline_wrong_rate per (true_class, time_bin)  [stored in a lookup dict]
     baseline_wrong_rate per (true_class) overall
+
+  WEIGHTING CONTRACT (locked): baseline_wrong_rate is ROW-weighted.
+    baseline(C, t) = mean(is_wrong) over ALL rows with true_class=C and time_bin=t
+                   = n_wrong_rows(C,t) / n_total_rows(C,t)
+  Each observation window (row) counts equally — NOT per-embryo averaging.
+  This is consistent with the multinomial pooling unit in null_test_top_confused
+  and with how is_wrong_perm is computed in null_test_wrong_rate.
+  Do NOT switch to per-embryo weighting: that would misalign the null and the
+  observed statistic for embryos with different numbers of windows.
 
   Guarantees:
     - if embryo has >1 unique true_class and allow_mode_true_class=False: HARD ERROR
@@ -393,7 +409,13 @@ def null_test_wrong_rate(
     assert (pred_class_codes >= 0).all(), "pred_class contains labels not in class_labels"
     assert (true_class_codes >= 0).all(), "true_class contains labels not in class_labels"
     embryo_idx_arr = df_sorted["embryo_idx"].values
-    n_windows_arr  = per_embryo_metrics["n_windows"].values   # indexed by embryo_idx
+    # SAFETY GUARD: n_windows_arr must be aligned with embryo_idx codes [0, n_embryos).
+    # per_embryo_metrics MUST be sorted by embryo_idx and contain ALL indices 0..n_embryos-1.
+    assert per_embryo_metrics["embryo_idx"].is_monotonic_increasing, \
+        "per_embryo_metrics must be sorted by embryo_idx"
+    assert (per_embryo_metrics["embryo_idx"].to_numpy() == np.arange(len(per_embryo_metrics))).all(), \
+        "per_embryo_metrics must have all embryo_idx codes 0..n_embryos-1 with no gaps"
+    n_windows_arr  = per_embryo_metrics["n_windows"].values   # now safe: indexed by embryo_idx
     obs_wrong_rate = per_embryo_metrics["wrong_rate"].values
     n_embryos      = len(per_embryo_metrics)
 
@@ -471,8 +493,14 @@ def null_test_streak(
     p_vec = array of shape (T,) with p_j = baseline(C, t_j), clipped
     sim_matrix = rng.random((n_sim, T)) < p_vec     # (n_sim, T) bool
     streak_null = _vectorized_longest_run(sim_matrix) # (n_sim,) int
+    # RIGHT-TAIL TEST: exceed counts how many simulated streaks >= observed streak.
+    # High p-value → observed streak is typical for this class+embryo baseline.
+    # Low p-value → observed streak is unusually long (suspect misclassification).
     exceed = (streak_null >= obs_longest_wrong_streak[e]).sum()
     pval_streak[e] = (exceed + 1) / (n_sim + 1)
+    # z_score = (obs - mean(null)) / std(null) is recorded but is DIAGNOSTIC ONLY.
+    # Longest-run distribution is discrete + skewed, so z-score is not well-calibrated.
+    # Use pval for statistical decisions, z_score only for retrospective sanity checks.
 
   _vectorized_longest_run(matrix: np.ndarray) -> np.ndarray:
     # matrix shape: (n_sim, T)
@@ -514,6 +542,15 @@ def null_test_top_confused_frac(
     q_C(k) = count(pred_class=k among wrong rows with true_class=C [excl. e])
     Normalize q_C to sum to 1.
 
+    EDGE CASE: if no pooled wrong rows exist for class C (model perfect for C):
+      - q_C is all zeros and cannot be normalized to a probability distribution.
+      - In this case: for all embryos e with true_class=C:
+          pval_top_confused_frac[e] = 1.0  (no confusion pattern to test)
+          top_confused_test_skipped[e] = True
+          top_confused_skip_reason[e] = "no_pooled_wrong_rows_for_class"
+      - AUDIT TRAIL: store q_C (and optionally q_C_excluding_self per embryo) in
+        metadata dict for post-hoc inspection of which classes had zero confusion.
+
   For each embryo e with true_class=C and n_wrong[e]:
     If n_wrong[e] < require_n_wrong_min:
         pval_top_confused_frac[e] = 1.0
@@ -526,7 +563,12 @@ def null_test_top_confused_frac(
         pval_top_confused_frac[e] = (exceed + 1) / (n_sim + 1)
 
   Returns per_embryo_metrics with added columns:
-    top_confused_null_mean, pval_top_confused_frac, top_confused_test_skipped
+    top_confused_null_mean, pval_top_confused_frac, top_confused_test_skipped,
+    top_confused_skip_reason (str, e.g. "n_wrong<3" or "no_pooled_wrong_rows_for_class")
+
+  Also store in metadata for audit:
+    "q_C_per_class": {"CE": {...}, "MUT": {...}, "WT": {...}}  # q_C distributions used
+    "q_C_excluding_self_per_embryo": {embryo_id: {"k": prob, ...}, ...}  # optional, for deep audit
 
 --- BH FDR (applied per test) ---
 
