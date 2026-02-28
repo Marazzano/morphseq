@@ -6,18 +6,14 @@ arrays — ready for future OTT-JAX vmap without restructuring.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
 
 from analyze.utils.optimal_transport.backends.base import UOTBackend
 from analyze.utils.optimal_transport.config import UOTConfig
-from analyze.utils.optimal_transport.multiscale_sampling import build_support
 from analyze.utils.optimal_transport.results import UOTResultWork
 from analyze.utils.optimal_transport.work_grid_batch import (
     PairPack,
     StarPack,
-    CropPolicy,
 )
 
 
@@ -26,6 +22,10 @@ def _solve_one_pair(
     tgt_density: np.ndarray,
     uot_cfg: UOTConfig,
     backend: UOTBackend,
+    *,
+    canonical_um_per_px: float,
+    work_um_per_px: float,
+    downsample_factor: int,
 ) -> UOTResultWork:
     """Solve UOT for a single (src, tgt) density pair on the work grid."""
     from analyze.utils.optimal_transport.solve import run_uot_on_working_grid
@@ -34,22 +34,21 @@ def _solve_one_pair(
     from analyze.utils.coord.types import BoxYX
 
     h, w = src_density.shape
-    # Minimal WorkingGridPair wrapper for the solver
     pair = WorkingGridPair(
         coord_frame_id="canonical_grid",
         coord_frame_version=1,
-        canonical_um_per_px=1.0,
-        work_um_per_px=1.0,
+        canonical_um_per_px=canonical_um_per_px,
+        work_um_per_px=work_um_per_px,
         pair_frame=PairFrameGeometry(
-            canon_shape_hw=(h, w),
-            pair_crop_box_yx=BoxYX(0, h, 0, w),
+            canon_shape_hw=(h * downsample_factor, w * downsample_factor),
+            pair_crop_box_yx=BoxYX(0, h * downsample_factor, 0, w * downsample_factor),
             crop_pad_hw=(0, 0),
-            downsample_factor=1,
+            downsample_factor=downsample_factor,
             work_shape_hw=(h, w),
-            px_size_um=1.0,
+            px_size_um=canonical_um_per_px,
         ),
-        src_canon_mask=np.zeros((h, w), dtype=np.uint8),
-        tgt_canon_mask=np.zeros((h, w), dtype=np.uint8),
+        src_canon_mask=np.zeros((h * downsample_factor, w * downsample_factor), dtype=np.uint8),
+        tgt_canon_mask=np.zeros((h * downsample_factor, w * downsample_factor), dtype=np.uint8),
         src_work_density=src_density,
         tgt_work_density=tgt_density,
         meta={},
@@ -79,7 +78,12 @@ def solve_pairs(
             src_d = np.ascontiguousarray(src_d[sl])
             tgt_d = np.ascontiguousarray(tgt_d[sl])
 
-        result = _solve_one_pair(src_d, tgt_d, uot_cfg, backend)
+        result = _solve_one_pair(
+            src_d, tgt_d, uot_cfg, backend,
+            canonical_um_per_px=batch.canonical_um_per_px,
+            work_um_per_px=batch.work_um_per_px,
+            downsample_factor=batch.downsample_factor,
+        )
         results.append(result)
 
     return results
@@ -119,7 +123,12 @@ def solve_star(
                     ref_d_cropped = ref_d
                     src_d_cropped = src_d
 
-                result = _solve_one_pair(ref_d_cropped, src_d_cropped, uot_cfg, backend)
+                result = _solve_one_pair(
+                    ref_d_cropped, src_d_cropped, uot_cfg, backend,
+                    canonical_um_per_px=batch.canonical_um_per_px,
+                    work_um_per_px=batch.work_um_per_px,
+                    downsample_factor=batch.downsample_factor,
+                )
 
                 ref_id = star_pack.ref_ids[ri]
                 src_id = star_pack.src_ids[chunk_start + ci]

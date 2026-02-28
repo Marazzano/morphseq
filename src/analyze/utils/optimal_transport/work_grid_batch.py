@@ -5,7 +5,7 @@ work_full_density as a full-canvas downsample — one per mask, determined
 only by (canonical_shape, ds). No batch-dependent geometry.
 
 Workflow:
-    batch = prepare_work_grid_batch(canonical_masks, ds=4)
+    batch = prepare_work_grid_batch(canonical_masks, downsample_factor=4)
     pair_pack = pack_pairs(batch, [("ref", "tgt_0"), ("ref", "tgt_1")])
     results = solve_pairs(pair_pack, uot_cfg, backend)
 
@@ -59,6 +59,13 @@ class WorkGridBatch:
     support_bboxes_work: list[BoxYX]  # per-mask tight bbox in work coords
     support_bbox_threshold: float  # threshold used (e.g. 0.0 or 1e-12)
     meta: dict  # work_grid_id, hashes
+    # O(1) lookup dict built in __post_init__; not a constructor argument.
+    _id_to_idx: dict = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "_id_to_idx", {mid: i for i, mid in enumerate(self.mask_ids)}
+        )
 
     @property
     def n_masks(self) -> int:
@@ -67,15 +74,15 @@ class WorkGridBatch:
     def index_of(self, mask_id: str) -> int:
         """Return the integer index of *mask_id*.  Raises KeyError if absent."""
         try:
-            return self.mask_ids.index(mask_id)
-        except ValueError:
+            return self._id_to_idx[mask_id]
+        except KeyError:
             raise KeyError(
                 f"mask_id {mask_id!r} not in WorkGridBatch "
                 f"(available: {self.mask_ids})"
             )
 
     def __contains__(self, mask_id: str) -> bool:
-        return mask_id in self.mask_ids
+        return mask_id in self._id_to_idx
 
 
 # ---------------------------------------------------------------------------
