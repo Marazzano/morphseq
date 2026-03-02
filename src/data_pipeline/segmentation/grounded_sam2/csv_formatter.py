@@ -63,9 +63,80 @@ import pandas as pd
 
 # Import centralized schema
 from ...schemas.segmentation import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+from ...io.frame_snapshot_hash import compute_frame_snapshot_hash, SNAPSHOT_COLUMNS_ORDER
 
 # Use centralized schema (more authoritative than local copy)
 REQUIRED_CSV_COLUMNS = REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+
+
+def mint_segmentation_tracking_snapshot(
+    df: pd.DataFrame,
+    *,
+    frame_snapshot_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Mint a self-contained segmentation_tracking snapshot suitable for downstream stages.
+
+    This stamps physical inventory fields (scale/channel/dims) into the snip-level table so downstream
+    stages (snip processing) do not need to join frame manifests.
+
+    Args:
+        df: V1 segmentation_tracking DataFrame.
+        frame_snapshot_df: One row per image_id with at least:
+            image_id, source_image_path, channel_id, micrometers_per_pixel, image_width_px, image_height_px
+    """
+    if df.empty:
+        return df
+
+    required_snapshot = [
+        "image_id",
+        "channel_id",
+        "micrometers_per_pixel",
+        "image_width_px",
+        "image_height_px",
+    ]
+    missing = [c for c in required_snapshot if c not in frame_snapshot_df.columns]
+    if missing:
+        raise ValueError(f"frame_snapshot_df missing required columns: {missing}")
+
+    # Avoid column collision: segmentation_tracking already carries source_image_path.
+    snap = frame_snapshot_df.loc[:, required_snapshot].copy()
+    snap = snap.rename(columns={"micrometers_per_pixel": "source_micrometers_per_pixel"})
+
+    out = df.merge(snap, on="image_id", how="left", validate="many_to_one")
+    if out["channel_id"].isna().any():
+        raise ValueError("channel_id missing after joining frame_snapshot_df")
+    if out["source_micrometers_per_pixel"].isna().any():
+        raise ValueError("source_micrometers_per_pixel missing after joining frame_snapshot_df")
+    if out["image_width_px"].isna().any() or out["image_height_px"].isna().any():
+        raise ValueError("image_width_px/image_height_px missing after joining frame_snapshot_df")
+
+    # Canonicalize mask columns and identity.
+    out["schema_version"] = 2
+    out["instance_id"] = out["embryo_id"].astype(str)
+    out["embryo_mask_rle"] = out["mask_rle"]
+    out["embryo_mask_path"] = out["exported_mask_path"]
+
+    # Canonical snip_id format: embryo_id_{channel_id}_f{frame_index:04d}
+    fi = pd.to_numeric(out["frame_index"], errors="raise").astype(int)
+    out["snip_id"] = (
+        out["embryo_id"].astype(str)
+        + "_"
+        + out["channel_id"].astype(str)
+        + "_f"
+        + fi.map(lambda x: f"{x:04d}")
+    )
+
+    # Compute per-(well_id, channel_id) hash based on unique frames.
+    out["frame_snapshot_hash"] = ""
+    for (well_id, channel_id), g in out.groupby(["well_id", "channel_id"], sort=False):
+        frames = g.drop_duplicates("image_id").copy()
+        # Ensure the hash uses the segmentation-tracking source_image_path (single canonical column).
+        frames = frames.loc[:, SNAPSHOT_COLUMNS_ORDER].copy()
+        h = compute_frame_snapshot_hash(frames)
+        out.loc[g.index, "frame_snapshot_hash"] = h
+
+    return out
 
 
 def extract_well_index(well_id: str) -> int:
