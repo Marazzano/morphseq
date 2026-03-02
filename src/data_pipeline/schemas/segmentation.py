@@ -37,3 +37,29 @@ REQUIRED_COLUMNS_SEGMENTATION_TRACKING = [
     'source_image_path',    # Path to original stitched FF image
     'exported_mask_path',   # Path to exported PNG mask
 ]
+
+
+# V2 schema: self-contained snapshot so downstream stages never need to join frame manifests.
+REQUIRED_COLUMNS_SEGMENTATION_TRACKING_V2 = [
+    "schema_version",
+
+    # Core IDs (same as V1)
+    *REQUIRED_COLUMNS_SEGMENTATION_TRACKING[:9],
+
+    # Additional identity
+    "instance_id",
+
+    # Frame physical snapshot
+    "channel_id",
+    "source_micrometers_per_pixel",
+    "image_width_px",
+    "image_height_px",
+    "frame_snapshot_hash",
+
+    # Canonical mask naming
+    "embryo_mask_rle",
+    "embryo_mask_path",
+
+    # Rest of V1 fields
+    *REQUIRED_COLUMNS_SEGMENTATION_TRACKING[9:],
+]
