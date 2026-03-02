@@ -372,13 +372,12 @@ class BaseAE(nn.Module):
         except Exception:
             pass
 
+        if not isinstance(encoder, nn.Module):
+            raise BadInheritanceError("Encoder must be a torch.nn.Module.")
         if not isinstance(encoder, acceptable):
-            raise BadInheritanceError(
-                (
-                    "Encoder must inherit from BaseEncoder class from "
-                    "src.legacy.vae.models.nn.base_architectures.BaseEncoder (or pythae's BaseEncoder). "
-                    "Refer to documentation."
-                )
+            warnings.warn(
+                "Loaded encoder does not inherit from the expected BaseEncoder class. "
+                "Proceeding anyway to support legacy pickles saved against different base-class locations."
             )
         self.encoder = encoder
 
@@ -392,13 +391,12 @@ class BaseAE(nn.Module):
         except Exception:
             pass
 
+        if not isinstance(decoder, nn.Module):
+            raise BadInheritanceError("Decoder must be a torch.nn.Module.")
         if not isinstance(decoder, acceptable):
-            raise BadInheritanceError(
-                (
-                    "Decoder must inherit from BaseDecoder class from "
-                    "src.legacy.vae.models.nn.base_architectures.BaseDecoder (or pythae's BaseDecoder). "
-                    "Refer to documentation."
-                )
+            warnings.warn(
+                "Loaded decoder does not inherit from the expected BaseDecoder class. "
+                "Proceeding anyway to support legacy pickles saved against different base-class locations."
             )
         self.decoder = decoder
 
