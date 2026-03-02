@@ -23,7 +23,7 @@ import os
 from omegaconf import OmegaConf
 import pickle
 from typing import List, Literal, Optional, Any, Union
-from lightning.pl_wrappers import LitModel
+from src.core.lightning.pl_wrappers import LitModel
 from torch.utils.data import DataLoader
 from data.data_transforms import basic_transform
 from data.dataset_configs import EvalDataConfig
