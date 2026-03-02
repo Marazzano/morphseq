@@ -598,8 +598,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         root = resolve_root(args)
+        requested_experiments = None
+        if getattr(args, "experiments", None):
+            exp_list = [e.strip() for e in args.experiments.split(",") if e.strip()]
+            if exp_list and not (len(exp_list) == 1 and exp_list[0].lower() == "all"):
+                requested_experiments = exp_list
         try:
-            manager = ExperimentManager(root)
+            manager = ExperimentManager(root, experiments=requested_experiments)
         except Exception as e:
             print(f"ERROR: Failed to initialize ExperimentManager: {e}")
             return 1
@@ -705,8 +710,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         root = resolve_root(args)
+        requested_experiments = None
+        if getattr(args, "experiments", None) and not getattr(args, "later_than", None):
+            exp_list = [e.strip() for e in args.experiments.split(",") if e.strip()]
+            if exp_list and not (len(exp_list) == 1 and exp_list[0].lower() == "all"):
+                requested_experiments = exp_list
         try:
-            manager = ExperimentManager(root)
+            manager = ExperimentManager(root, experiments=requested_experiments)
         except Exception as e:
             print(f"ERROR: Failed to initialize ExperimentManager: {e}")
             return 1

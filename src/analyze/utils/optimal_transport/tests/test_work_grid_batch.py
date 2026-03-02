@@ -5,6 +5,7 @@ import pytest
 
 from analyze.utils.coord.types import BoxYX, CanonicalGrid, CanonicalMaskResult
 from analyze.utils.coord.transforms import TransformChain
+from analyze.utils.optimal_transport.backends.base import BackendResult, UOTBackend
 from analyze.utils.optimal_transport.work_grid_batch import (
     WorkGridBatch,
     prepare_work_grid_batch,
@@ -17,6 +18,55 @@ from analyze.utils.optimal_transport.work_grid_batch import (
     GlobalUnionCrop,
     PerRefUnionCrop,
 )
+
+
+class _DeterministicTestBackend(UOTBackend):
+    """Small, dependency-free backend for unit tests.
+
+    Avoids importing POT/torch and is deterministic across runs.
+    """
+
+    def solve(self, src, tgt, config):  # type: ignore[override]
+        coords_src = src.coords_yx.astype(np.float64) * float(config.coord_scale)
+        coords_tgt = tgt.coords_yx.astype(np.float64) * float(config.coord_scale)
+        weights_src = src.weights.astype(np.float64)
+        weights_tgt = tgt.weights.astype(np.float64)
+
+        m_src = float(weights_src.sum())
+        m_tgt = float(weights_tgt.sum())
+        if m_src <= 0 or m_tgt <= 0:
+            raise ValueError("Source/target mass must be positive for UOT solve.")
+
+        if config.metric == "sqeuclidean":
+            diff = coords_src[:, None, :] - coords_tgt[None, :, :]
+            cost = (diff ** 2).sum(axis=2)
+        elif config.metric == "euclidean":
+            diff = coords_src[:, None, :] - coords_tgt[None, :, :]
+            cost = np.sqrt((diff ** 2).sum(axis=2))
+        else:
+            raise ValueError(f"Unsupported metric: {config.metric}")
+
+        # Simple coupling with exact src marginals (mu_hat == weights_src).
+        coupling = np.outer(weights_src, weights_tgt) / m_tgt
+        weighted_cost = coupling * cost
+        cost_value = float(weighted_cost.sum())
+
+        diagnostics = {
+            "m_src": m_src,
+            "m_tgt": m_tgt,
+            "reg": float(config.epsilon),
+            "reg_m": float(config.marginal_relaxation),
+            "coord_scale": float(config.coord_scale),
+            "backend": "deterministic_test",
+        }
+
+        return BackendResult(
+            coupling=coupling.astype(np.float64) if bool(config.store_coupling) else None,
+            cost=cost_value,
+            diagnostics=diagnostics,
+            cost_per_src=weighted_cost.sum(axis=1).astype(np.float64),
+            cost_per_tgt=weighted_cost.sum(axis=0).astype(np.float64),
+        )
 
 
 def _make_canonical_mask(
@@ -300,7 +350,6 @@ class TestSolvePairs:
         """Smoke test: solve_pairs returns results with correct length."""
         from analyze.utils.optimal_transport.solve_batch import solve_pairs
         from analyze.utils.optimal_transport.config import UOTConfig
-        from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
 
         m1 = _make_test_mask(y0=10, y1=40, x0=20, x1=80)
         m2 = _make_test_mask(y0=15, y1=45, x0=25, x1=85)
@@ -312,7 +361,7 @@ class TestSolvePairs:
         pp = pack_pairs(batch, [("ref", "tgt")])
 
         uot_cfg = UOTConfig(epsilon=1e-1)
-        backend = POTBackend()
+        backend = _DeterministicTestBackend()
         results = solve_pairs(pp, uot_cfg, backend)
 
         assert len(results) == 1
@@ -323,7 +372,6 @@ class TestSolvePairs:
         """Chunked and non-chunked star solve produce identical results."""
         from analyze.utils.optimal_transport.solve_batch import solve_star
         from analyze.utils.optimal_transport.config import UOTConfig
-        from analyze.utils.optimal_transport.backends.pot_backend import POTBackend
 
         m1 = _make_test_mask(y0=10, y1=40, x0=20, x1=80)
         m2 = _make_test_mask(y0=15, y1=45, x0=25, x1=85)
@@ -335,7 +383,7 @@ class TestSolvePairs:
         )
 
         uot_cfg = UOTConfig(epsilon=1e-1)
-        backend = POTBackend()
+        backend = _DeterministicTestBackend()
 
         sp1 = pack_star(batch, ref_ids=["ref"], src_ids=["src_0", "src_1"], chunk_size=1)
         sp2 = pack_star(batch, ref_ids=["ref"], src_ids=["src_0", "src_1"], chunk_size=100)

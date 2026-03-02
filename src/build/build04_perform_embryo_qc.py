@@ -1072,6 +1072,59 @@ def _print_sa_qc_summary(df: pd.DataFrame) -> None:
 
 def _validate_and_prepare_inputs(df: pd.DataFrame) -> pd.DataFrame:
     """Fail-loud validation and dtype coercion for critical columns."""
+    # Build03 outputs may omit surface_area_um (or include it as empty); infer it from pixel area + pixel size if possible.
+    if "surface_area_um" in df.columns:
+        surface_area_um = pd.to_numeric(df["surface_area_um"], errors="coerce")
+        missing_sa = surface_area_um.isna()
+    else:
+        missing_sa = pd.Series([True] * len(df), index=df.index)
+
+    if missing_sa.any():
+        if "area_px" not in df.columns:
+            raise ValueError(
+                "Missing required column 'surface_area_um' (or it is empty) and cannot infer it "
+                "because 'area_px' is also missing."
+            )
+
+        def _ratio(um_col: str, px_col: str) -> pd.Series | None:
+            if um_col not in df.columns or px_col not in df.columns:
+                return None
+            um = pd.to_numeric(df[um_col], errors="coerce")
+            px = pd.to_numeric(df[px_col], errors="coerce")
+            with np.errstate(divide="ignore", invalid="ignore"):
+                r = um / px
+            r = r.where(np.isfinite(r), np.nan)
+            return r
+
+        um_per_px_y = _ratio("Height (um)", "Height (px)")
+        if um_per_px_y is None:
+            um_per_px_y = _ratio("height_um", "height_px")
+
+        um_per_px_x = _ratio("Width (um)", "Width (px)")
+        if um_per_px_x is None:
+            um_per_px_x = _ratio("width_um", "width_px")
+
+        area_px = pd.to_numeric(df["area_px"], errors="coerce")
+        if um_per_px_y is not None and um_per_px_x is not None:
+            um2_per_px2 = um_per_px_y * um_per_px_x
+        elif um_per_px_y is not None:
+            um2_per_px2 = um_per_px_y ** 2
+        elif um_per_px_x is not None:
+            um2_per_px2 = um_per_px_x ** 2
+        else:
+            raise ValueError(
+                "Missing required column 'surface_area_um' and cannot infer pixel size. "
+                "Expected one of: "
+                "('Height (um)' and 'Height (px)') or ('height_um' and 'height_px') or "
+                "('Width (um)' and 'Width (px)') or ('width_um' and 'width_px')."
+            )
+
+        inferred = (area_px * um2_per_px2).astype(float)
+        if "surface_area_um" not in df.columns:
+            df["surface_area_um"] = inferred
+        else:
+            df.loc[missing_sa, "surface_area_um"] = inferred.loc[missing_sa]
+
     required = [
         "embryo_id",
         "predicted_stage_hpf",

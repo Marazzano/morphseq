@@ -31,13 +31,15 @@ set -euo pipefail
 
 # --- CONFIGURATION -----------------------------------------------------------
 REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
-DATA_ROOT="${REPO_ROOT}/morphseq_playground"
+ALT_DATA_ROOT="${REPO_ROOT%/morphseq}/morphseq-docs/morphseq_playground"
+# Allow override.
+DATA_ROOT="${DATA_ROOT:-${REPO_ROOT}/morphseq_playground}"
 MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 PYTHON_EXEC="${PYTHON_EXEC:-/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/${ENV_NAME}/bin/python}"
 
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20251017_part1,20251106"
+DEFAULT_EXPERIMENTS="20260210,20260208,20260219,20260206"
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -50,13 +52,13 @@ DEFAULT_EXPERIMENTS="20251017_part1,20251106"
 
 # Pipeline stage toggles (1=run, 0=skip)
 : "${RUN_METADATA_REBUILD:=0}"
-: "${RUN_BUILD02:=1}"
-: "${RUN_SAM2:=0}"
-: "${RUN_BUILD03:=0}"
+: "${RUN_BUILD02:=0}"
+: "${RUN_SAM2:=1}"
+: "${RUN_BUILD03:=1}"
 : "${BUILD03_SKIP_GEOMETRY_QC:=0}"  # 0=compute full geometry QC (default), 1=fast mode (skip QC, mark all embryos usable)
-: "${RUN_BUILD04:=0}"
-: "${RUN_BUILD06:=0}"
-: "${RUN_SNIP_EXPORT:=0}"
+: "${RUN_BUILD04:=1}"
+: "${RUN_BUILD06:=1}"
+: "${RUN_SNIP_EXPORT:=1}"
 
 # Build02 knobs
 
@@ -80,15 +82,19 @@ echo "[sam2-onwards] JOB_ID=${JOB_ID:-unknown} TASK=${SGE_TASK_ID:-0}"
 echo "[sam2-onwards] Repo root : ${REPO_ROOT}"
 echo "[sam2-onwards] Data root : ${DATA_ROOT}"
 
+if [[ ! -d "${DATA_ROOT}/raw_image_data" && -d "${ALT_DATA_ROOT}/raw_image_data" ]]; then
+  echo "[sam2-onwards] NOTE: Falling back to alternate playground: ${ALT_DATA_ROOT}"
+  DATA_ROOT="${ALT_DATA_ROOT}"
+fi
+
 echo "[sam2-onwards] Run flags - metadata:${RUN_METADATA_REBUILD} b02:${RUN_BUILD02} sam2:${RUN_SAM2} b03:${RUN_BUILD03} snip:${RUN_SNIP_EXPORT} b04:${RUN_BUILD04} b06:${RUN_BUILD06}"
 echo "[sam2-onwards] Build02 params - mode:${BUILD02_MODE} workers:${BUILD02_NUM_WORKERS} overwrite:${BUILD02_OVERWRITE}"
 echo "[sam2-onwards] Build03 flags - skip_geometry_qc:${BUILD03_SKIP_GEOMETRY_QC}"
 echo "[sam2-onwards] SAM2 params - workers:${SAM2_WORKERS} conf:${SAM2_CONFIDENCE} iou:${SAM2_IOU}"
 echo "[sam2-onwards] Snip params - workers:${SNIP_WORKERS} dl_rad:${SNIP_DL_RAD_UM} overwrite:${SNIP_OVERWRITE}"
 if [[ ! -x "${PYTHON_EXEC}" ]]; then
-  echo "[sam2-onwards] WARNING: PYTHON_EXEC not found/executable: ${PYTHON_EXEC}" >&2
-  echo "[sam2-onwards] WARNING: Falling back to 'python' on PATH" >&2
-  PYTHON_EXEC="python"
+  echo "[sam2-onwards] ERROR: PYTHON_EXEC not found/executable: ${PYTHON_EXEC}" >&2
+  exit 2
 fi
 
 # Support SGE array jobs: select one experiment per task using SGE_TASK_ID
@@ -125,25 +131,7 @@ IFS=',' read -r -a SELECTED_EXPERIMENTS <<< "${EXPERIMENT}"
 # Create logs dir if running interactively
 mkdir -p logs
 
-# Activate conda environment (robust to libmamba issues)
-FALLBACK_CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
-if ! command -v conda >/dev/null 2>&1; then
-  if [[ -f "${FALLBACK_CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
-    # shellcheck disable=SC1090
-    source "${FALLBACK_CONDA_BASE}/etc/profile.d/conda.sh"
-  fi
-fi
-if command -v conda >/dev/null 2>&1; then
-  CONDA_BASE="$(conda info --base 2>/dev/null || true)"
-  if [[ -n "${CONDA_BASE}" && -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
-    export CONDA_SOLVER=classic
-    # shellcheck disable=SC1090
-    source "${CONDA_BASE}/etc/profile.d/conda.sh"
-    conda activate "${ENV_NAME}" || echo "[sam2-onwards] WARNING: failed to activate ${ENV_NAME}; continuing"
-  fi
-else
-  echo "[sam2-onwards] WARNING: conda not found in PATH; proceeding without activation"
-fi
+# This script expects `PYTHON_EXEC` to point at the correct interpreter; avoid `conda activate`.
 
 # Prefer CUDA 11.8 toolkit to match PyTorch cu118 builds
 CUDA_MODULE="cuda/11.8.0"
@@ -333,7 +321,7 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
 
 # qsub /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
-# qsub -t 1-13 -tc 1 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
+# qsub -t 1-4 -tc 3 /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_build03_onwards_force.sh
 
 
   # # SAM2 regeneration (11 experiments)
