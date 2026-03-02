@@ -142,7 +142,7 @@ def load_groundingdino_model(config: Dict, device: str = "cuda") -> "torch.nn.Mo
         # Patch the module to use the pure PyTorch fallback even on CUDA.
         try:
             from groundingdino import _C as _gdino_C  # noqa: F401
-        except Exception:
+        except Exception as _c_err:
             try:
                 from groundingdino.models.GroundingDINO import ms_deform_attn as _msda
 
@@ -161,6 +161,11 @@ def load_groundingdino_model(config: Dict, device: str = "cuda") -> "torch.nn.Mo
                         )
 
                 _msda.MultiScaleDeformableAttnFunction = _FallbackMultiScaleDeformableAttnFunction  # type: ignore[attr-defined]
+                warnings.warn(
+                    "GroundingDINO: compiled ops (groundingdino._C) are unavailable/incompatible; "
+                    "using pure-PyTorch ms_deform_attn fallback (slower). "
+                    f"Import error: {_c_err}"
+                )
             except Exception as _e:
                 warnings.warn(
                     f"GroundingDINO: failed to install PyTorch fallback for ms_deform_attn; "
