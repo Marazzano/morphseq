@@ -715,13 +715,15 @@ def _make_plot_video(
                     cv2.polylines(halo_frame, [pts], isClosed=False, color=feat_bgr,
                                   thickness=9, lineType=cv2.LINE_AA)
                     cv2.addWeighted(halo_frame, 0.18, frame, 0.82, 0, frame)
-                    # Sharp line on top
+                    # Black outline stroke, then colored line on top
+                    cv2.polylines(frame, [pts], isClosed=False, color=(0, 0, 0),
+                                  thickness=5, lineType=cv2.LINE_AA)
                     cv2.polylines(frame, [pts], isClosed=False, color=feat_bgr,
                                   thickness=2, lineType=cv2.LINE_AA)
 
                 if px_vis.size >= 1:
                     tip_x, tip_y = int(px_vis[-1]), int(py_vis[-1])
-                    cv2.circle(frame, (tip_x, tip_y), 6, (255, 255, 255), -1, lineType=cv2.LINE_AA)
+                    cv2.circle(frame, (tip_x, tip_y), 7, (0, 0, 0), -1, lineType=cv2.LINE_AA)
                     cv2.circle(frame, (tip_x, tip_y), 5, feat_bgr, -1, lineType=cv2.LINE_AA)
 
             # Cursor only visible while within the embryo's data range
