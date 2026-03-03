@@ -1084,13 +1084,18 @@ def main() -> None:
 
         print(f"=== Panel: {panel_label} ===")
 
-        # Pick featured embryo for this genotype
+        # Pick featured embryo for this panel. Use the cursor window for selection so
+        # you can keep a wide plot x-axis (e.g. 24–120) while selecting embryos that
+        # start near --cursor-min (e.g. ~40) and have good coverage afterwards.
+        pick_t_min = max(float(args.t_min), float(cursor_min))
+        pick_t_max = min(float(args.t_max), float(cursor_max))
+
         explicit_id = featured_ids_map.get(panel_key, None)
         featured_id = _pick_featured_embryo(
             df=df_panel,
             feature_col=feature_col,
-            t_min=float(args.t_min),
-            t_max=float(args.t_max),
+            t_min=pick_t_min,
+            t_max=pick_t_max,
             snip_root=paths.snip_root,
             min_snips=int(args.min_featured_snips),
             min_min_hpf=float(args.min_featured_min_hpf) if args.min_featured_min_hpf is not None else None,
@@ -1101,7 +1106,7 @@ def main() -> None:
 
         featured_df = df_panel[df_panel["embryo_id"].astype(str) == str(featured_id)].copy()
         featured_df = featured_df.sort_values("predicted_stage_hpf")
-        in_window = featured_df["predicted_stage_hpf"].between(float(args.t_min), float(args.t_max), inclusive="both")
+        in_window = featured_df["predicted_stage_hpf"].between(pick_t_min, float(args.t_max), inclusive="both")
         if in_window.any():
             featured_df = featured_df.loc[in_window].copy()
 
