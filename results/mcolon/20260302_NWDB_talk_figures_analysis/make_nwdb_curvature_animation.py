@@ -860,13 +860,13 @@ def _make_plot_video(
                         cv2.polylines(frame, [pts], isClosed=False, color=(0, 0, 0),
                                       thickness=3, lineType=cv2.LINE_AA)
                     cv2.polylines(frame, [pts], isClosed=False, color=feat_bgr,
-                                  thickness=1, lineType=cv2.LINE_AA)
+                                  thickness=2, lineType=cv2.LINE_AA)
 
                 if px_vis.size >= 1:
                     tip_x, tip_y = int(px_vis[-1]), int(py_vis[-1])
                     outer = (0, 0, 0) if bool(trace_outline) else (255, 255, 255)
                     cv2.circle(frame, (tip_x, tip_y), 6, outer, -1, lineType=cv2.LINE_AA)
-                    cv2.circle(frame, (tip_x, tip_y), 4, feat_bgr, -1, lineType=cv2.LINE_AA)
+                    cv2.circle(frame, (tip_x, tip_y), 5, feat_bgr, -1, lineType=cv2.LINE_AA)
 
             # Cursor only visible while within the embryo's data range
             feat_t_max = float(featured_times[-1]) if featured_times.size > 0 else t_max
