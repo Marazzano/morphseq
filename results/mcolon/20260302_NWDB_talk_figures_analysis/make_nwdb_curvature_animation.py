@@ -5,14 +5,13 @@ Produces two MP4s per genotype (wildtype, heterozygous, homozygous) with identic
 FPS and frame count so they can be played side-by-side in slides:
 1) curvature trace plot that "draws" left-to-right over HPF with background
    population traces faded out — one genotype per panel, matching the faceted plot.
-2) embryo snip frames advancing in sync with HPF with a genotype-colored outline.
+2) embryo snip frames advancing in sync with HPF (mask outlines disabled).
 
 Data sources (read-only):
 - results/mcolon/20251229_cep290_phenotype_extraction/final_data/
   - embryo_data_with_labels.csv
   - embryo_cluster_labels.csv
 - morphseq_playground/training_data/bf_embryo_snips/{experiment_date}/...jpg
-- morphseq_playground/sam2_pipeline_files/exported_masks/{experiment_date}/masks/...png
 """
 
 from __future__ import annotations
@@ -90,7 +89,6 @@ class Paths:
     project_root: Path
     data_dir: Path
     snip_root: Path
-    exported_masks_root: Path
     out_dir: Path
     figures_dir: Path
 
@@ -325,7 +323,6 @@ def _resolve_paths(args: argparse.Namespace) -> Paths:
     project_root = Path(__file__).resolve().parents[3]
     data_dir = (project_root / args.data_dir).resolve()
     snip_root = project_root / "morphseq_playground" / "training_data" / "bf_embryo_snips"
-    exported_masks_root = project_root / "morphseq_playground" / "sam2_pipeline_files" / "exported_masks"
     out_dir = Path(args.out_dir).resolve()
     figures_dir = out_dir / "figures"
     if args.figures_subdir:
@@ -335,7 +332,6 @@ def _resolve_paths(args: argparse.Namespace) -> Paths:
         project_root=project_root,
         data_dir=data_dir,
         snip_root=snip_root,
-        exported_masks_root=exported_masks_root,
         out_dir=out_dir,
         figures_dir=figures_dir,
     )
@@ -466,10 +462,6 @@ def _snip_path(snip_root: Path, experiment_date: str, embryo_id: str, frame_inde
     return snip_root / str(experiment_date) / f"{embryo_id}_t{int(frame_index):04d}.jpg"
 
 
-def _mask_path(exported_masks_root: Path, experiment_date: str, exported_mask_path: str) -> Path:
-    return exported_masks_root / str(experiment_date) / "masks" / str(exported_mask_path)
-
-
 def _pick_featured_embryo(
     df: pd.DataFrame,
     feature_col: str,
@@ -557,36 +549,6 @@ def _nearest_index(sorted_times: np.ndarray, t: float) -> int:
     if abs(sorted_times[i] - t) <= abs(sorted_times[j] - t):
         return i
     return j
-
-
-def _draw_mask_outline(
-    img_bgr: np.ndarray,
-    mask_int: np.ndarray,
-    region_label: int,
-    color_bgr: tuple[int, int, int],
-    thickness: int = 3,
-) -> np.ndarray:
-    import cv2
-
-    if mask_int is None:
-        return img_bgr
-    if mask_int.ndim == 3:
-        mask_int = mask_int[..., 0]
-    try:
-        label = int(region_label)
-    except Exception:
-        return img_bgr
-
-    binary = (mask_int == label).astype(np.uint8) * 255
-    if binary.max() == 0:
-        return img_bgr
-
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return img_bgr
-    out = img_bgr.copy()
-    cv2.drawContours(out, contours, contourIdx=-1, color=color_bgr, thickness=thickness)
-    return out
 
 
 def _gaussian_smooth(vals: np.ndarray, sigma: float) -> np.ndarray:
@@ -776,16 +738,13 @@ def _make_plot_video(
 
 def _load_snip_frame(
     snip_root: Path,
-    exported_masks_root: Path,
     experiment_date: str,
     embryo_id: str,
     row: "pd.Series",
-    color_bgr: tuple,
     last_img: Optional["np.ndarray"],
 ) -> Optional["np.ndarray"]:
-    """Load and outline one snip frame (raw size). Returns None only if missing and no fallback."""
+    """Load one snip frame (raw size). Returns None only if missing and no fallback."""
     import cv2
-    from skimage import io as skio
 
     frame_index = int(row["frame_index"])
     p = _snip_path(snip_root, experiment_date, embryo_id, frame_index)
@@ -797,21 +756,6 @@ def _load_snip_frame(
         return last_img
 
     img_bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-    mask_img = None
-    if "exported_mask_path" in row.index and pd.notna(row.get("exported_mask_path", None)):
-        mp = _mask_path(exported_masks_root, experiment_date, str(row["exported_mask_path"]))
-        if mp.exists():
-            try:
-                mask_img = skio.imread(str(mp))
-            except Exception:
-                mask_img = None
-    if mask_img is not None:
-        img_bgr = _draw_mask_outline(
-            img_bgr, mask_img,
-            region_label=row.get("region_label", 1),
-            color_bgr=color_bgr, thickness=3,
-        )
     return img_bgr
 
 
@@ -819,7 +763,6 @@ def _make_embryo_video(
     out_mp4: Path,
     featured_df: pd.DataFrame,
     snip_root: Path,
-    exported_masks_root: Path,
     genotype_color_hex: str,
     t_min: float,
     t_max: float,
@@ -854,8 +797,8 @@ def _make_embryo_video(
         if fi in snip_cache:
             continue
         raw = _load_snip_frame(
-            snip_root, exported_masks_root, experiment_date, embryo_id,
-            row, color_bgr, last_good,
+            snip_root, experiment_date, embryo_id,
+            row, last_good,
         )
         if raw is not None:
             snip_cache[fi] = raw
@@ -1150,7 +1093,6 @@ def main() -> None:
             out_mp4=embryo_mp4,
             featured_df=featured_df,
             snip_root=paths.snip_root,
-            exported_masks_root=paths.exported_masks_root,
             genotype_color_hex=featured_color_hex,
             t_min=float(args.t_min),
             t_max=float(args.t_max),
