@@ -853,20 +853,20 @@ def _make_plot_video(
                     # Halo
                     halo_frame = frame.copy()
                     cv2.polylines(halo_frame, [pts], isClosed=False, color=feat_bgr,
-                                  thickness=9, lineType=cv2.LINE_AA)
+                                  thickness=7, lineType=cv2.LINE_AA)
                     cv2.addWeighted(halo_frame, 0.18, frame, 0.82, 0, frame)
                     # Optional black outline stroke, then colored line on top
                     if bool(trace_outline):
                         cv2.polylines(frame, [pts], isClosed=False, color=(0, 0, 0),
-                                      thickness=5, lineType=cv2.LINE_AA)
+                                      thickness=3, lineType=cv2.LINE_AA)
                     cv2.polylines(frame, [pts], isClosed=False, color=feat_bgr,
-                                  thickness=2, lineType=cv2.LINE_AA)
+                                  thickness=1, lineType=cv2.LINE_AA)
 
                 if px_vis.size >= 1:
                     tip_x, tip_y = int(px_vis[-1]), int(py_vis[-1])
                     outer = (0, 0, 0) if bool(trace_outline) else (255, 255, 255)
-                    cv2.circle(frame, (tip_x, tip_y), 7, outer, -1, lineType=cv2.LINE_AA)
-                    cv2.circle(frame, (tip_x, tip_y), 5, feat_bgr, -1, lineType=cv2.LINE_AA)
+                    cv2.circle(frame, (tip_x, tip_y), 6, outer, -1, lineType=cv2.LINE_AA)
+                    cv2.circle(frame, (tip_x, tip_y), 4, feat_bgr, -1, lineType=cv2.LINE_AA)
 
             # Cursor only visible while within the embryo's data range
             feat_t_max = float(featured_times[-1]) if featured_times.size > 0 else t_max
@@ -1015,18 +1015,17 @@ def _make_embryo_video(
             display_t = min(t, float(times[-1])) if times.size > 0 else t
             label = f"{display_t:.1f} hpf"
             (tw, th), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
-            pad_x, pad_y = 14, 10
+            pad_y = 10
+            strip_h = th + baseline + (2 * pad_y)
             box_alpha = 0.55
             box_color = (210, 210, 210)  # light grey
 
             text_x = (vid_w - tw) // 2
-            text_y = th + pad_y  # OpenCV y is baseline; place near top
+            text_y = (strip_h + th) // 2 - baseline // 2
 
-            # Small translucent box behind the text (not full-width)
-            x0 = max(0, int(text_x - pad_x))
-            y0 = max(0, int(text_y - th - pad_y))
-            x1 = min(int(vid_w - 1), int(text_x + tw + pad_x))
-            y1 = min(int(vid_h - 1), int(text_y + baseline + pad_y))
+            # Full-width translucent grey strip (matches earlier style)
+            x0, y0 = 0, 0
+            x1, y1 = int(vid_w - 1), int(min(vid_h - 1, strip_h))
             overlay = canvas.copy()
             cv2.rectangle(overlay, (x0, y0), (x1, y1), box_color, -1)
             cv2.addWeighted(overlay, float(box_alpha), canvas, float(1.0 - box_alpha), 0, canvas)
@@ -1040,7 +1039,7 @@ def _make_embryo_video(
                 fg_bgr=color_bgr,
                 thickness=int(font_thickness),
                 outline_bgr=(0, 0, 0),
-                outline_thickness=int(font_thickness) + 4,
+                outline_thickness=int(font_thickness) + 2,
             )
 
             writer.write(canvas)
