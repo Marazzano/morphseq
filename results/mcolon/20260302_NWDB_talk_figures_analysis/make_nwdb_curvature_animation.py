@@ -1,10 +1,10 @@
 """
-NWDB talk: CEP290 "Not Penetrant" curvature animation + synchronized embryo snip movie.
+NWDB talk: Per-genotype curvature animations + synchronized embryo snip movies.
 
-Produces two MP4s with identical FPS and frame count so they can be played
-side-by-side in slides:
+Produces two MP4s per genotype (wildtype, heterozygous, homozygous) with identical
+FPS and frame count so they can be played side-by-side in slides:
 1) curvature trace plot that "draws" left-to-right over HPF with background
-   population traces faded out.
+   population traces faded out — one genotype per panel, matching the faceted plot.
 2) embryo snip frames advancing in sync with HPF with a genotype-colored outline.
 
 Data sources (read-only):
@@ -97,7 +97,7 @@ class Paths:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Create NWDB CEP290 Not-Penetrant curvature + embryo animations.",
+        description="Create NWDB CEP290 per-genotype curvature + embryo animations.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
@@ -113,12 +113,54 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cluster-category",
         default="Not Penetrant",
-        help="cluster_categories value to select.",
+        help="cluster_categories value to select (ignored when --no-cluster-filter is set).",
+    )
+    p.add_argument(
+        "--no-cluster-filter",
+        action="store_true",
+        default=True,
+        help="Disable cluster_categories filter; use all embryos per genotype as background.",
+    )
+    p.add_argument(
+        "--cluster-filter",
+        dest="no_cluster_filter",
+        action="store_false",
+        help="Enable cluster_categories filter (use --cluster-category value).",
     )
     p.add_argument(
         "--feature-col",
-        default="baseline_deviation_normalized",
-        help="Curvature-like feature column to plot over time.",
+        default="curvature",
+        help="Feature column to plot over time (derived 'curvature' or raw column name).",
+    )
+    p.add_argument(
+        "--genotypes",
+        default="wildtype,heterozygous,homozygous",
+        help="Comma-separated genotype suffixes to animate (one animation pair per suffix).",
+    )
+    p.add_argument(
+        "--cluster-categories",
+        default="High_to_Low,Low_to_High,Not Penetrant",
+        help="Comma-separated cluster_categories values to animate (one animation pair per category). "
+             "Used when --panel-by=cluster_categories.",
+    )
+    p.add_argument(
+        "--panel-by",
+        choices=["genotype", "cluster_categories"],
+        default="genotype",
+        help="Which column defines the per-panel animations. "
+             "'genotype' renders one panel per genotype suffix; "
+             "'cluster_categories' renders one panel per cluster category.",
+    )
+    p.add_argument(
+        "--featured-embryo-ids",
+        default=None,
+        help="Comma-separated embryo_ids per panel (same order as --genotypes or --cluster-categories). "
+             "Use 'auto' for auto-selection. E.g. '20250512_D02_e01,auto,20250512_E06_e01'.",
+    )
+    p.add_argument(
+        "--ylim",
+        default=None,
+        help="Comma-separated y-axis limits, e.g. '0,1.0'. Matches notebook ylim.",
     )
     p.add_argument(
         "--t-min",
@@ -130,7 +172,21 @@ def _parse_args() -> argparse.Namespace:
         "--t-max",
         type=float,
         default=120.0,
-        help="Maximum HPF for animation.",
+        help="Maximum HPF for the plot x-axis range.",
+    )
+    p.add_argument(
+        "--cursor-min",
+        type=float,
+        default=None,
+        help="HPF where the cursor starts scanning (default: same as --t-min). "
+             "Use to start later, e.g. --t-min 24 --cursor-min 40.",
+    )
+    p.add_argument(
+        "--cursor-max",
+        type=float,
+        default=None,
+        help="HPF where the cursor stops scanning (default: same as --t-max). "
+             "Use to decouple animation duration from plot range, e.g. --t-max 120 --cursor-max 80.",
     )
     p.add_argument(
         "--fps",
@@ -157,6 +213,13 @@ def _parse_args() -> argparse.Namespace:
         help="Minimum number of snip frames required for the featured embryo.",
     )
     p.add_argument(
+        "--min-featured-min-hpf",
+        type=float,
+        default=None,
+        help="Minimum start HPF (min predicted_stage_hpf) required for the featured embryo within the time window. "
+             "Useful to prefer embryos that start later (e.g. 40). If omitted, no constraint is applied.",
+    )
+    p.add_argument(
         "--min-featured-max-hpf",
         type=float,
         default=60.0,
@@ -165,7 +228,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--featured-embryo-id",
         default=None,
-        help="Explicit embryo_id to feature (overrides auto-selection).",
+        help="Explicit embryo_id to feature (single-genotype mode; ignored if --featured-embryo-ids is set).",
     )
     p.add_argument(
         "--prefer-genotype-suffix",
@@ -187,7 +250,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--extend-featured-trace",
         action="store_true",
-        default=True,
+        default=False,
         help="Extend the featured trace flat after its last timepoint to t-max (visualize 'flat').",
     )
     p.add_argument(
@@ -195,6 +258,11 @@ def _parse_args() -> argparse.Namespace:
         dest="extend_featured_trace",
         action="store_false",
         help="Do not extend the featured trace beyond its last timepoint.",
+    )
+    p.add_argument(
+        "--figures-subdir",
+        default=None,
+        help="Subfolder inside figures/ for output (e.g. 'genotype_overlays').",
     )
     p.add_argument(
         "--plot-width",
@@ -207,12 +275,6 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Plot video height in pixels (default: auto-derived from faceting engine config).",
-    )
-    p.add_argument(
-        "--snip-size",
-        type=int,
-        default=600,
-        help="Embryo snip video output size (square, pixels).",
     )
     p.add_argument(
         "--seed",
@@ -266,6 +328,8 @@ def _resolve_paths(args: argparse.Namespace) -> Paths:
     exported_masks_root = project_root / "morphseq_playground" / "sam2_pipeline_files" / "exported_masks"
     out_dir = Path(args.out_dir).resolve()
     figures_dir = out_dir / "figures"
+    if args.figures_subdir:
+        figures_dir = figures_dir / args.figures_subdir
     figures_dir.mkdir(parents=True, exist_ok=True)
     return Paths(
         project_root=project_root,
@@ -277,11 +341,15 @@ def _resolve_paths(args: argparse.Namespace) -> Paths:
     )
 
 
-def _load_not_penetrant_frames(
+def _load_embryo_frames(
     data_dir: Path,
-    cluster_category: str,
-    feature_col: str,
+    raw_feature_col: str,
+    cluster_category: Optional[str] = None,
 ) -> pd.DataFrame:
+    """Load embryo frame data, optionally filtering by cluster category.
+
+    When cluster_category is None, all embryos are loaded (no cluster filter).
+    """
     embryo_frames_path = data_dir / "embryo_data_with_labels.csv"
     embryo_labels_path = data_dir / "embryo_cluster_labels.csv"
     if not embryo_frames_path.exists():
@@ -303,11 +371,15 @@ def _load_not_penetrant_frames(
         )
     labels = labels_raw.drop_duplicates(subset=["embryo_id"], keep="first").copy()
 
-    target = str(cluster_category).strip()
-    keep_ids = set(labels.loc[labels["cluster_categories"] == target, "embryo_id"].astype(str).tolist())
-    if not keep_ids:
-        got = sorted(labels["cluster_categories"].dropna().astype(str).unique().tolist())[:30]
-        raise ValueError(f"No embryos found for cluster_categories=={target!r}. Example categories: {got}")
+    # Determine which embryo IDs to keep
+    if cluster_category is not None:
+        target = str(cluster_category).strip()
+        keep_ids = set(labels.loc[labels["cluster_categories"] == target, "embryo_id"].astype(str).tolist())
+        if not keep_ids:
+            got = sorted(labels["cluster_categories"].dropna().astype(str).unique().tolist())[:30]
+            raise ValueError(f"No embryos found for cluster_categories=={target!r}. Example categories: {got}")
+    else:
+        keep_ids = set(labels["embryo_id"].astype(str).tolist())
 
     usecols = [
         "embryo_id",
@@ -315,7 +387,7 @@ def _load_not_penetrant_frames(
         "frame_index",
         "predicted_stage_hpf",
         "genotype",
-        feature_col,
+        raw_feature_col,
         "exported_mask_path",
         "region_label",
         "use_embryo_flag",
@@ -345,7 +417,7 @@ def _load_not_penetrant_frames(
 
     header = pd.read_csv(embryo_frames_path, nrows=0)
     existing = [c for c in usecols if c in header.columns]
-    missing_critical = [c for c in ["embryo_id", "predicted_stage_hpf", "genotype", feature_col] if c not in existing]
+    missing_critical = [c for c in ["embryo_id", "predicted_stage_hpf", "genotype", raw_feature_col] if c not in existing]
     if missing_critical:
         raise ValueError(f"Missing required columns in embryo_data_with_labels.csv: {missing_critical}")
 
@@ -361,7 +433,7 @@ def _load_not_penetrant_frames(
             df = df[use_flag.astype(str).str.lower().isin(["1", "true", "t", "yes", "y"])].copy()
 
     df["predicted_stage_hpf"] = _safe_float_series(df["predicted_stage_hpf"])
-    df[feature_col] = _safe_float_series(df[feature_col])
+    df[raw_feature_col] = _safe_float_series(df[raw_feature_col])
 
     # Coalesce pretty columns into snakecase for downstream convenience.
     _coalesce_columns(df, "height_um", "Height (um)")
@@ -386,6 +458,10 @@ def _genotype_suffix(genotype: str) -> str:
     return s
 
 
+def _safe_name(s: str) -> str:
+    return str(s).strip().replace(" ", "_").replace("/", "_").replace("\\", "_")
+
+
 def _snip_path(snip_root: Path, experiment_date: str, embryo_id: str, frame_index: int) -> Path:
     return snip_root / str(experiment_date) / f"{embryo_id}_t{int(frame_index):04d}.jpg"
 
@@ -401,8 +477,9 @@ def _pick_featured_embryo(
     t_max: float,
     snip_root: Path,
     min_snips: int,
+    min_min_hpf: Optional[float],
     min_max_hpf: float,
-    prefer_suffix: str,
+    prefer_suffix: Optional[str],
     explicit_embryo_id: Optional[str],
 ) -> str:
     if explicit_embryo_id is not None:
@@ -429,6 +506,8 @@ def _pick_featured_embryo(
 
     # filter criteria
     summary = summary[summary["n_rows"] >= int(min_snips)].copy()
+    if min_min_hpf is not None:
+        summary = summary[summary["min_hpf"] >= float(min_min_hpf)].copy()
     summary = summary[summary["max_hpf"] >= float(min_max_hpf)].copy()
     if summary.empty:
         raise ValueError(
@@ -437,8 +516,11 @@ def _pick_featured_embryo(
         )
 
     # prefer suffix (e.g. wildtype)
-    prefer_suffix = str(prefer_suffix).strip().lower()
-    summary["prefer"] = (summary["suffix"] == prefer_suffix).astype(int)
+    if prefer_suffix is None:
+        summary["prefer"] = 0
+    else:
+        prefer_suffix = str(prefer_suffix).strip().lower()
+        summary["prefer"] = (summary["suffix"] == prefer_suffix).astype(int)
 
     # verify snip existence for a small sample of frames (avoid picking missing snips)
     ok_rows = []
@@ -475,23 +557,6 @@ def _nearest_index(sorted_times: np.ndarray, t: float) -> int:
     if abs(sorted_times[i] - t) <= abs(sorted_times[j] - t):
         return i
     return j
-
-
-def _pad_to_square_and_resize(img_bgr: np.ndarray, out_size: int) -> np.ndarray:
-    h, w = img_bgr.shape[:2]
-    side = max(h, w)
-    pad_y = side - h
-    pad_x = side - w
-    top = pad_y // 2
-    bottom = pad_y - top
-    left = pad_x // 2
-    right = pad_x - left
-    import cv2
-
-    padded = cv2.copyMakeBorder(img_bgr, top, bottom, left, right, borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0))
-    if padded.shape[0] != out_size or padded.shape[1] != out_size:
-        padded = cv2.resize(padded, (out_size, out_size), interpolation=cv2.INTER_AREA)
-    return padded
 
 
 def _draw_mask_outline(
@@ -549,8 +614,12 @@ def _make_plot_video(
     featured_df: pd.DataFrame,
     feature_col: str,
     featured_color_hex: str,
+    color_by: str,
+    color_lookup: dict,
     t_min: float,
     t_max: float,
+    cursor_min: float,
+    cursor_max: float,
     fps: int,
     n_frames_out: int,
     plot_width: int,
@@ -559,10 +628,10 @@ def _make_plot_video(
     seed: int,
     extend_featured_trace: bool,
     smooth_sigma: float,
+    ylim: Optional[tuple[float, float]] = None,
 ) -> None:
     import cv2
     from analyze.viz.plotting.feature_over_time import plot_feature_over_time
-    from analyze.viz.styling.color_mapping_config import GENOTYPE_COLORS
 
     plt.rcParams.update({
         "xtick.labelsize": 12,
@@ -588,11 +657,12 @@ def _make_plot_video(
         features=feature_col,
         time_col="predicted_stage_hpf",
         id_col="embryo_id",
-        color_by="genotype",
-        color_lookup=GENOTYPE_COLORS,
+        color_by=color_by,
+        color_lookup=color_lookup,
         show_individual=True,
         show_error_band=False,
         backend="matplotlib",
+        ylim=ylim,
     )
 
     # Resize the figure to the requested pixel dimensions
@@ -616,6 +686,10 @@ def _make_plot_video(
 
     bg_rgb = _fig_to_rgb_array(bg_fig).copy()
     bg_bgr = cv2.cvtColor(bg_rgb, cv2.COLOR_RGB2BGR)
+
+    # Fade background toward white so the featured trace stands out
+    white = np.full_like(bg_bgr, 255, dtype=np.uint8)
+    cv2.addWeighted(bg_bgr, 0.35, white, 0.65, 0, bg_bgr)
 
     # --- Precompute featured trace in pixel space using the baked axes transform ---
     featured_times = featured_df["predicted_stage_hpf"].to_numpy(dtype=float)
@@ -653,7 +727,7 @@ def _make_plot_video(
 
     feat_bgr = _hex_to_bgr(featured_color_hex)
 
-    out_times = np.linspace(float(t_min), float(t_max), int(n_frames_out))
+    out_times = np.linspace(float(cursor_min), float(cursor_max), int(n_frames_out))
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(out_mp4), fourcc, float(fps), (int(plot_width), int(plot_height)))
     if not writer.isOpened():
@@ -662,9 +736,11 @@ def _make_plot_video(
     try:
         for t in out_times:
             frame = bg_bgr.copy()
+            t_f = float(t)
 
+            # Draw the trace only where there's actual data
             if px_all.size >= 2:
-                m = featured_times <= float(t)
+                m = featured_times <= t_f
                 if not m.any():
                     m[0] = True
                 px_vis = px_all[m].astype(np.int32)
@@ -686,10 +762,12 @@ def _make_plot_video(
                     cv2.circle(frame, (tip_x, tip_y), 6, (255, 255, 255), -1, lineType=cv2.LINE_AA)
                     cv2.circle(frame, (tip_x, tip_y), 5, feat_bgr, -1, lineType=cv2.LINE_AA)
 
-            # Cursor — clipped to axes bounds only
-            cx = _t_to_px(float(t))
-            cx = max(ax_px_x0, min(ax_px_x1, cx))
-            cv2.line(frame, (cx, ax_px_y0), (cx, ax_px_y1), feat_bgr, 1, lineType=cv2.LINE_AA)
+            # Cursor only visible while within the embryo's data range
+            feat_t_max = float(featured_times[-1]) if featured_times.size > 0 else t_max
+            if t_f <= feat_t_max:
+                cx = _t_to_px(t_f)
+                cx = max(ax_px_x0, min(ax_px_x1, cx))
+                cv2.line(frame, (cx, ax_px_y0), (cx, ax_px_y1), feat_bgr, 1, lineType=cv2.LINE_AA)
 
             writer.write(frame)
     finally:
@@ -745,17 +823,18 @@ def _make_embryo_video(
     genotype_color_hex: str,
     t_min: float,
     t_max: float,
+    cursor_min: float,
+    cursor_max: float,
     fps: int,
     n_frames_out: int,
-    out_w: int,
-    out_h: int,
-    snip_padding: int,
     hold_last_frame: bool,
-) -> None:
-    """Render embryo snip video at (out_w x out_h) to match the plot video.
+) -> tuple[int, int]:
+    """Render embryo snip video using raw JPEG dimensions with HPF label overlaid.
 
-    The snip is letterboxed into the canvas with `snip_padding` on each side,
-    centered. A white bar at the top contains the HPF label in the genotype color.
+    The video dimensions match the raw snip JPEGs (e.g. 256x576). The HPF label
+    is drawn directly on top of each frame with a semi-transparent background strip.
+
+    Returns (video_width, video_height) so the caller can report dimensions.
     """
     import cv2
 
@@ -766,22 +845,7 @@ def _make_embryo_video(
     times = featured_df["predicted_stage_hpf"].to_numpy(dtype=float)
     color_bgr = _hex_to_bgr(genotype_color_hex)
 
-    # HPF label bar height
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.9
-    font_thickness = 2
-    sample_label = "120.0 hpf"
-    (_, lh), lbase = cv2.getTextSize(sample_label, font, font_scale, font_thickness)
-    label_bar_h = lh + lbase + 16  # padding above/below text
-
-    # The snip display area below the label bar
-    snip_area_h = out_h - label_bar_h
-    snip_area_w = out_w
-
-    # Max snip size (square) that fits inside the area with padding
-    max_snip = min(snip_area_w, snip_area_h) - 2 * snip_padding
-
-    # Pre-load all unique snip frames at raw size then resize to max_snip square
+    # Pre-load all unique snip frames at raw size (no resize/padding)
     print("  Pre-loading snip frames for crossfade...")
     snip_cache: dict[int, np.ndarray] = {}
     last_good: Optional[np.ndarray] = None
@@ -794,29 +858,36 @@ def _make_embryo_video(
             row, color_bgr, last_good,
         )
         if raw is not None:
-            resized = _pad_to_square_and_resize(raw, max_snip)
-            snip_cache[fi] = resized
-            last_good = resized
+            snip_cache[fi] = raw
+            last_good = raw
 
     if not snip_cache:
         raise RuntimeError("No snip frames could be loaded for the featured embryo.")
 
+    # Get video dimensions from the first cached frame (all snips share dimensions)
+    first_snip = next(iter(snip_cache.values()))
+    snip_h, snip_w = first_snip.shape[:2]
+    # Video codec requires even dimensions
+    vid_w = snip_w if snip_w % 2 == 0 else snip_w + 1
+    vid_h = snip_h if snip_h % 2 == 0 else snip_h + 1
+
     frame_indices = featured_df["frame_index"].to_numpy(dtype=int)
 
-    # Precompute snip placement offsets (centered in snip area)
-    snip_x0 = (snip_area_w - max_snip) // 2
-    snip_y0 = label_bar_h + (snip_area_h - max_snip) // 2
+    # HPF label style
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.7
+    font_thickness = 2
 
-    out_times = np.linspace(float(t_min), float(t_max), int(n_frames_out))
+    out_times = np.linspace(float(cursor_min), float(cursor_max), int(n_frames_out))
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(out_mp4), fourcc, float(fps), (int(out_w), int(out_h)))
+    writer = cv2.VideoWriter(str(out_mp4), fourcc, float(fps), (vid_w, vid_h))
     if not writer.isOpened():
         raise RuntimeError(f"Could not open VideoWriter for: {out_mp4}")
 
     try:
         for t in out_times:
             t = float(t)
-            canvas = np.full((out_h, out_w, 3), 250, dtype=np.uint8)  # near-white background
+            snip = None
 
             if times.size > 0:
                 if t <= times[0]:
@@ -845,27 +916,32 @@ def _make_embryo_video(
                     snip = img_lo.copy()
                 elif img_hi is not None:
                     snip = img_hi.copy()
-                else:
-                    snip = None
 
-                if snip is not None:
-                    canvas[snip_y0:snip_y0 + max_snip, snip_x0:snip_x0 + max_snip] = snip
+            if snip is None:
+                canvas = np.full((vid_h, vid_w, 3), 250, dtype=np.uint8)
+            else:
+                # Place snip into canvas (handles odd-dimension padding)
+                canvas = np.full((vid_h, vid_w, 3), 0, dtype=np.uint8)
+                canvas[:snip_h, :snip_w] = snip
 
-            # HPF label bar (white strip at top)
-            cv2.rectangle(canvas, (0, 0), (out_w, label_bar_h), (255, 255, 255), -1)
-            # Thin separator line
-            cv2.line(canvas, (0, label_bar_h), (out_w, label_bar_h), (220, 220, 220), 1)
-
-            label = f"{t:.1f} hpf"
-            (tw, th), _ = cv2.getTextSize(label, font, font_scale, font_thickness)
-            text_x = (out_w - tw) // 2
-            text_y = (label_bar_h + th) // 2
+            # Overlay HPF label — freeze counter at embryo's last timepoint
+            display_t = min(t, float(times[-1])) if times.size > 0 else t
+            label = f"{display_t:.1f} hpf"
+            (tw, th), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
+            strip_h = th + baseline + 12
+            overlay = canvas.copy()
+            cv2.rectangle(overlay, (0, 0), (vid_w, strip_h), (255, 255, 255), -1)
+            cv2.addWeighted(overlay, 0.6, canvas, 0.4, 0, canvas)
+            text_x = (vid_w - tw) // 2
+            text_y = (strip_h + th) // 2 - baseline // 2
             cv2.putText(canvas, label, (text_x, text_y),
                         font, font_scale, color_bgr, font_thickness, cv2.LINE_AA)
 
             writer.write(canvas)
     finally:
         writer.release()
+
+    return vid_w, vid_h
 
 
 def main() -> None:
@@ -874,98 +950,220 @@ def main() -> None:
 
     sys.path.insert(0, str(paths.project_root / "src"))
     from analyze.trajectory_analysis.viz.styling import get_color_for_genotype
+    from analyze.utils.stats import normalize_arbitrary_feature
+    from analyze.viz.styling.color_mapping_config import GENOTYPE_COLORS
 
-    df = _load_not_penetrant_frames(
+    # Panel keys
+    if args.panel_by == "genotype":
+        panel_keys = [s.strip() for s in args.genotypes.split(",") if s.strip()]
+    else:
+        panel_keys = [s.strip() for s in args.cluster_categories.split(",") if s.strip()]
+
+    # Parse per-panel featured embryo IDs (if provided)
+    featured_ids_map: dict[str, Optional[str]] = {}
+    if args.featured_embryo_ids is not None:
+        ids_list = [s.strip() for s in args.featured_embryo_ids.split(",")]
+        if len(ids_list) != len(panel_keys):
+            raise ValueError(
+                f"--featured-embryo-ids has {len(ids_list)} entries but panel list has {len(panel_keys)}. "
+                "They must match in length."
+            )
+        for key, eid in zip(panel_keys, ids_list):
+            featured_ids_map[key] = None if eid.lower() == "auto" else eid
+    elif args.featured_embryo_id is not None:
+        # Legacy single-embryo override: apply to matching genotype only
+        for key in panel_keys:
+            featured_ids_map[key] = None
+        # We'll check which genotype this embryo belongs to after loading data
+        legacy_featured_id = args.featured_embryo_id
+    else:
+        for key in panel_keys:
+            featured_ids_map[key] = None
+        legacy_featured_id = None
+
+    # Parse ylim
+    ylim: Optional[tuple[float, float]] = None
+    if args.ylim is not None:
+        parts = [float(x.strip()) for x in args.ylim.split(",")]
+        if len(parts) != 2:
+            raise ValueError(f"--ylim must be two comma-separated floats, got: {args.ylim!r}")
+        ylim = (parts[0], parts[1])
+
+    # Determine the raw feature column needed from the CSV
+    raw_feature_col = "baseline_deviation_normalized"
+    use_derived_curvature = args.feature_col == "curvature"
+    feature_col = args.feature_col
+
+    # Load data
+    cluster_cat = None if args.no_cluster_filter else args.cluster_category
+    df = _load_embryo_frames(
         data_dir=paths.data_dir,
-        cluster_category=args.cluster_category,
-        feature_col=args.feature_col,
+        raw_feature_col=raw_feature_col,
+        cluster_category=cluster_cat,
     )
 
-    # Basic range filter (keep enough for background; featured selection also re-filters)
+    # Derive the "curvature" column if needed
+    if use_derived_curvature:
+        df["curvature"] = normalize_arbitrary_feature(
+            df[raw_feature_col],
+            low=0,
+            high_percentile=100,
+            clip=False,
+        )
+        print(f"Derived 'curvature' column from '{raw_feature_col}' via normalize_arbitrary_feature(low=0, high_percentile=100, clip=False)")
+
+    # Basic range filter
     df = df[df["predicted_stage_hpf"].notna()].copy()
 
-    featured_id = _pick_featured_embryo(
-        df=df,
-        feature_col=args.feature_col,
-        t_min=float(args.t_min),
-        t_max=float(args.t_max),
-        snip_root=paths.snip_root,
-        min_snips=int(args.min_featured_snips),
-        min_max_hpf=float(args.min_featured_max_hpf),
-        prefer_suffix=str(args.prefer_genotype_suffix),
-        explicit_embryo_id=args.featured_embryo_id,
-    )
+    # Resolve legacy --featured-embryo-id to the correct genotype
+    if args.featured_embryo_ids is None and args.featured_embryo_id is not None:
+        legacy_featured_id = args.featured_embryo_id
+        match = df[df["embryo_id"].astype(str) == str(legacy_featured_id)]
+        if not match.empty:
+            suffix = _genotype_suffix(str(match["genotype"].iloc[0]))
+            if args.panel_by == "genotype":
+                if suffix in featured_ids_map:
+                    featured_ids_map[suffix] = legacy_featured_id
+            else:
+                cat = str(match["cluster_categories"].iloc[0])
+                if cat in featured_ids_map:
+                    featured_ids_map[cat] = legacy_featured_id
 
-    featured_df = df[df["embryo_id"].astype(str) == str(featured_id)].copy()
-    featured_df = featured_df.sort_values("predicted_stage_hpf")
-    # Limit to time window for mapping; keep at least one row
-    in_window = featured_df["predicted_stage_hpf"].between(float(args.t_min), float(args.t_max), inclusive="both")
-    if in_window.any():
-        featured_df = featured_df.loc[in_window].copy()
-
-    if featured_df.empty:
-        raise ValueError("Featured embryo has no rows after filtering to time window.")
-
-    genotype = str(featured_df["genotype"].iloc[0])
-    genotype_color_hex = get_color_for_genotype(genotype)
-
-    plot_mp4 = paths.figures_dir / f"curvature_animation_{featured_id}.mp4"
-    embryo_mp4 = paths.figures_dir / f"embryo_animation_{featured_id}.mp4"
-
-    print("Selected featured embryo:")
-    print(f"- embryo_id: {featured_id}")
-    print(f"- genotype: {genotype}")
-    print(f"- genotype_color: {genotype_color_hex}")
-    print(f"- n_rows_in_window: {len(featured_df)}")
-    print(f"- time_min/max_in_window: {featured_df['predicted_stage_hpf'].min():.2f} .. {featured_df['predicted_stage_hpf'].max():.2f}")
-
+    # Shared dimensions
     n_frames = max(2, int(round(int(args.n_frames_out) / float(args.speed))))
     default_w, default_h = _default_plot_px()
     out_w = int(args.plot_width) if args.plot_width is not None else default_w
     out_h = int(args.plot_height) if args.plot_height is not None else default_h
-    print(f"Plot dimensions: {out_w}×{out_h} px (from faceting engine config)"
-          if args.plot_width is None else f"Plot dimensions: {out_w}×{out_h} px (user override)")
+    cursor_min = float(args.cursor_min) if args.cursor_min is not None else float(args.t_min)
+    cursor_max = float(args.cursor_max) if args.cursor_max is not None else float(args.t_max)
+    print(f"Plot dimensions: {out_w}x{out_h} px"
+          + (" (from faceting engine config)" if args.plot_width is None else " (user override)"))
+    print(f"Plot x-axis: {args.t_min}--{args.t_max} HPF, cursor scans {cursor_min}--{cursor_max} HPF")
+    print(f"Rendering {n_frames} frames at {args.fps} fps "
+          f"({n_frames / args.fps:.1f}s) -- speed x{args.speed}")
+    if ylim is not None:
+        print(f"ylim: {ylim}")
+    print(f"Panel by: {args.panel_by}")
+    print(f"Panels: {panel_keys}")
+    print()
 
-    print(f"\nRendering {n_frames} frames at {args.fps} fps "
-          f"({n_frames / args.fps:.1f}s) — speed×{args.speed}")
+    saved_files: list[str] = []
 
-    _make_plot_video(
-        out_mp4=plot_mp4,
-        df=df,
-        featured_df=featured_df,
-        feature_col=args.feature_col,
-        featured_color_hex=genotype_color_hex,
-        t_min=float(args.t_min),
-        t_max=float(args.t_max),
-        fps=int(args.fps),
-        n_frames_out=n_frames,
-        plot_width=out_w,
-        plot_height=out_h,
-        background_max_embryos=int(args.background_max_embryos),
-        seed=int(args.seed),
-        extend_featured_trace=bool(args.extend_featured_trace),
-        smooth_sigma=float(args.smooth_sigma),
-    )
+    PHENOTYPE_COLORS = {
+        "High_to_Low": "#E76FA2",     # rose
+        "Low_to_High": "#2FB7B0",     # teal
+        "Not Penetrant": "#3A3A3A",   # charcoal
+    }
 
-    _make_embryo_video(
-        out_mp4=embryo_mp4,
-        featured_df=featured_df,
-        snip_root=paths.snip_root,
-        exported_masks_root=paths.exported_masks_root,
-        genotype_color_hex=genotype_color_hex,
-        t_min=float(args.t_min),
-        t_max=float(args.t_max),
-        fps=int(args.fps),
-        n_frames_out=n_frames,
-        out_w=out_w,
-        out_h=out_h,
-        snip_padding=int(args.snip_size // 20),  # ~5% padding
-        hold_last_frame=bool(args.hold_last_frame),
-    )
+    for panel_key in panel_keys:
+        if args.panel_by == "genotype":
+            genotype_suffix = panel_key
+            full_genotype = f"cep290_{genotype_suffix}"
+            panel_label = f"{genotype_suffix} ({full_genotype})"
+            df_panel = df[df["genotype"] == full_genotype].copy()
+            if df_panel.empty:
+                print(f"  WARNING: No data for genotype '{full_genotype}', skipping.")
+                continue
+            bg_color_by = "genotype"
+            bg_color_lookup = GENOTYPE_COLORS
+            featured_color_hex = get_color_for_genotype(full_genotype)
+            prefer_suffix = genotype_suffix
+            out_prefix = genotype_suffix
+        else:
+            cluster_category = panel_key
+            panel_label = f"{cluster_category}"
+            df_panel = df[df["cluster_categories"] == cluster_category].copy()
+            if df_panel.empty:
+                print(f"  WARNING: No data for cluster_categories '{cluster_category}', skipping.")
+                continue
+            bg_color_by = "cluster_categories"
+            bg_color_lookup = PHENOTYPE_COLORS
+            featured_color_hex = PHENOTYPE_COLORS.get(cluster_category, "#808080")
+            prefer_suffix = None
+            out_prefix = _safe_name(cluster_category)
 
-    print("\nSaved:")
-    print(f"- {plot_mp4}")
-    print(f"- {embryo_mp4}")
+        print(f"=== Panel: {panel_label} ===")
+
+        # Pick featured embryo for this genotype
+        explicit_id = featured_ids_map.get(panel_key, None)
+        featured_id = _pick_featured_embryo(
+            df=df_panel,
+            feature_col=feature_col,
+            t_min=float(args.t_min),
+            t_max=float(args.t_max),
+            snip_root=paths.snip_root,
+            min_snips=int(args.min_featured_snips),
+            min_min_hpf=float(args.min_featured_min_hpf) if args.min_featured_min_hpf is not None else None,
+            min_max_hpf=float(args.min_featured_max_hpf),
+            prefer_suffix=prefer_suffix,
+            explicit_embryo_id=explicit_id,
+        )
+
+        featured_df = df_panel[df_panel["embryo_id"].astype(str) == str(featured_id)].copy()
+        featured_df = featured_df.sort_values("predicted_stage_hpf")
+        in_window = featured_df["predicted_stage_hpf"].between(float(args.t_min), float(args.t_max), inclusive="both")
+        if in_window.any():
+            featured_df = featured_df.loc[in_window].copy()
+
+        if featured_df.empty:
+            print(f"  WARNING: Featured embryo {featured_id} has no rows in time window, skipping.")
+            continue
+
+        plot_mp4 = paths.figures_dir / f"curvature_animation_{out_prefix}_{featured_id}.mp4"
+        embryo_mp4 = paths.figures_dir / f"embryo_animation_{out_prefix}_{featured_id}.mp4"
+
+        print(f"  Featured embryo: {featured_id}")
+        print(f"  Overlay color: {featured_color_hex}")
+        print(f"  Rows in window: {len(featured_df)}")
+        print(f"  HPF range: {featured_df['predicted_stage_hpf'].min():.2f} .. {featured_df['predicted_stage_hpf'].max():.2f}")
+        print(f"  Background embryos: {df_panel['embryo_id'].nunique()}")
+
+        _make_plot_video(
+            out_mp4=plot_mp4,
+            df=df_panel,
+            featured_df=featured_df,
+            feature_col=feature_col,
+            featured_color_hex=featured_color_hex,
+            color_by=bg_color_by,
+            color_lookup=bg_color_lookup,
+            t_min=float(args.t_min),
+            t_max=float(args.t_max),
+            cursor_min=cursor_min,
+            cursor_max=cursor_max,
+            fps=int(args.fps),
+            n_frames_out=n_frames,
+            plot_width=out_w,
+            plot_height=out_h,
+            background_max_embryos=int(args.background_max_embryos),
+            seed=int(args.seed),
+            extend_featured_trace=bool(args.extend_featured_trace),
+            smooth_sigma=float(args.smooth_sigma),
+            ylim=ylim,
+        )
+
+        emb_w, emb_h = _make_embryo_video(
+            out_mp4=embryo_mp4,
+            featured_df=featured_df,
+            snip_root=paths.snip_root,
+            exported_masks_root=paths.exported_masks_root,
+            genotype_color_hex=featured_color_hex,
+            t_min=float(args.t_min),
+            t_max=float(args.t_max),
+            cursor_min=cursor_min,
+            cursor_max=cursor_max,
+            fps=int(args.fps),
+            n_frames_out=n_frames,
+            hold_last_frame=bool(args.hold_last_frame),
+        )
+        print(f"  Embryo video dimensions: {emb_w}x{emb_h} (raw JPEG size)")
+
+        saved_files.append(str(plot_mp4))
+        saved_files.append(str(embryo_mp4))
+        print()
+
+    print("Saved:")
+    for f in saved_files:
+        print(f"- {f}")
 
 
 if __name__ == "__main__":
