@@ -56,4 +56,5 @@ def test_mint_segmentation_tracking_snapshot_stamps_snapshot_and_snip_id() -> No
     assert "frame_snapshot_hash" in v2.columns
     assert isinstance(v2["frame_snapshot_hash"].iloc[0], str) and len(v2["frame_snapshot_hash"].iloc[0]) == 16
     assert v2["embryo_mask_rle"].iloc[0] == v2["mask_rle"].iloc[0]
-    assert v2["embryo_mask_path"].iloc[0] == v2["exported_mask_path"].iloc[0]
+    # embryo_mask_path is intentionally empty so downstream snip processing materializes a per-snip binary PNG from RLE.
+    assert v2["embryo_mask_path"].iloc[0] == ""

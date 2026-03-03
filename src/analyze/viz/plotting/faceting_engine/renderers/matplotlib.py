@@ -19,7 +19,19 @@ def render_matplotlib(
     """Render FigureData to Matplotlib figure."""
     n_rows, n_cols, positions = calculate_grid_map(data, facet)
     figsize = (5 * n_cols, 4.5 * n_rows)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+    # Apply axis sharing. We interpret:
+    # - sharex=True: share x across all subplots (common time axis)
+    # - sharey=True: share y within each row (so different rows can autoscale independently)
+    #
+    # Some older matplotlib versions may not accept string share modes; fall back to booleans.
+    try:
+        sharex = "all" if facet.sharex else False
+        sharey = "row" if facet.sharey else False
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False, sharex=sharex, sharey=sharey)
+    except TypeError:
+        fig, axes = plt.subplots(
+            n_rows, n_cols, figsize=figsize, squeeze=False, sharex=bool(facet.sharex), sharey=bool(facet.sharey)
+        )
     
     legend_entries = {}  # label → color
     
@@ -62,10 +74,24 @@ def render_matplotlib(
             ax.set_ylim(sub.ylim)
         if sub.title:
             ax.set_title(sub.title, fontweight='bold', fontsize=11)
-        if pos['show_x'] and sub.x_label:
-            ax.set_xlabel(sub.x_label, fontsize=10)
-        if pos['show_y'] and sub.y_label:
-            ax.set_ylabel(sub.y_label, fontsize=10)
+        show_x = bool(pos['show_x'] or style.repeat_xlabels)
+        show_y = bool(pos['show_y'] or style.repeat_ylabels)
+        if show_x and sub.x_label:
+            if style.axis_label_fontsize is None:
+                ax.set_xlabel(sub.x_label)
+            else:
+                ax.set_xlabel(sub.x_label, fontsize=style.axis_label_fontsize)
+        if show_y and sub.y_label:
+            if style.axis_label_fontsize is None:
+                ax.set_ylabel(sub.y_label)
+            else:
+                ax.set_ylabel(sub.y_label, fontsize=style.axis_label_fontsize)
+
+        # Tick label visibility (numbers) — independent of axis title visibility.
+        if getattr(style, "repeat_xticklabels", False):
+            ax.tick_params(axis="x", which="both", labelbottom=True)
+        if getattr(style, "repeat_yticklabels", False):
+            ax.tick_params(axis="y", which="both", labelleft=True)
         
         if style.show_grid:
             ax.grid(True, alpha=style.grid_alpha, linestyle='--', linewidth=0.5)

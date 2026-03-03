@@ -187,6 +187,14 @@ def plot_feature_over_time(
     style: Optional[StyleSpec] = None,
     color_palette: Optional[List[str]] = None,  # Generic fallback
     feature: Optional[Union[str, List[str]]] = None,  # Backward-compatible alias for features
+    # Label/tick visibility controls (API-level; avoids needing to import StyleSpec)
+    repeat_xlabels: bool = False,
+    repeat_ylabels: bool = False,
+    repeat_xticklabels: bool = True,
+    repeat_yticklabels: bool = True,
+    # Manual axis limits (blanket applied to all subplots)
+    xlim: Optional[Tuple[float, float]] = None,
+    ylim: Optional[Tuple[float, float]] = None,
 ) -> Any:
     """Plot feature(s) over time, optionally faceted.
     
@@ -242,6 +250,12 @@ def plot_feature_over_time(
         Style specification
     color_palette : List[str], optional
         Fallback palette if color_lookup not provided. Uses STANDARD_PALETTE if None.
+    repeat_xlabels, repeat_ylabels : bool
+        Repeat axis *titles* (e.g. "curvature") on every subplot. Default False.
+    repeat_xticklabels, repeat_yticklabels : bool
+        Repeat tick-label *numbers* on every subplot (useful with shared axes). Default True.
+    xlim, ylim : (float, float), optional
+        If provided, apply these limits to all subplots (useful for consistent scaling).
     
     Returns
     -------
@@ -257,6 +271,12 @@ def plot_feature_over_time(
 
     layout = layout or FacetSpec(row_order=None, col_order=None)
     style = style or default_style()
+    # Plot-level API knobs. These are independent of axis sharing; sharing controls scaling,
+    # while these control axis-title and tick-label visibility.
+    style.repeat_xlabels = bool(repeat_xlabels)
+    style.repeat_ylabels = bool(repeat_ylabels)
+    style.repeat_xticklabels = bool(repeat_xticklabels)
+    style.repeat_yticklabels = bool(repeat_yticklabels)
 
     # Handle multi-feature: if features is a list, treat each as a row facet (no fake column)
     if isinstance(features, (list, tuple)):
@@ -314,6 +334,10 @@ def plot_feature_over_time(
             smooth_method=smooth_method,
             smooth_params=smooth_params,
         )
+        if xlim is not None:
+            subplot.xlim = tuple(float(v) for v in xlim)
+        if ylim is not None:
+            subplot.ylim = tuple(float(v) for v in ylim)
         subplots.append(subplot)
 
     # Title

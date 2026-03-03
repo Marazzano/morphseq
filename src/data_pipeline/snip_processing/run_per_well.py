@@ -19,8 +19,10 @@ from data_pipeline.snip_processing.validate_snip_manifest import validate_snip_m
 
 @dataclass(frozen=True)
 class SnipProcessingConfig:
-    output_shape: tuple[int, int] = (512, 512)
-    target_pixel_size_um: float = 1.0
+    # Legacy downstream models expect (H, W) = (576, 256).
+    output_shape: tuple[int, int] = (576, 256)
+    # Keep explicit target pixel size for determinism across experiments.
+    target_pixel_size_um: float = 7.8
     blend_radius_um: float = 30.0
     save_raw_crops: bool = True
     write_manifest_csv: bool = True

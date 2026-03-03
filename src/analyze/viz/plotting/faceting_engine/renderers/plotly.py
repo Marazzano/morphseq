@@ -24,6 +24,8 @@ def render_plotly(
     fig = make_subplots(
         rows=n_rows,
         cols=n_cols,
+        shared_xaxes="all" if facet.sharex else False,
+        shared_yaxes="rows" if facet.sharey else False,
         vertical_spacing=style.vertical_spacing,
         horizontal_spacing=style.horizontal_spacing,
     )
@@ -40,11 +42,25 @@ def render_plotly(
                 _add_line_trace(fig, trace, pos['row'], pos['col'])
         
         # Axis config
-        x_title = sub.x_label if pos['show_x'] else None
-        y_title = sub.y_label if pos['show_y'] else None
+        show_x = bool(pos['show_x'] or getattr(style, "repeat_xlabels", False))
+        show_y = bool(pos['show_y'] or getattr(style, "repeat_ylabels", False))
+        x_title = sub.x_label if show_x else None
+        y_title = sub.y_label if show_y else None
         
-        fig.update_xaxes(range=sub.xlim, title_text=x_title, row=pos['row'], col=pos['col'])
-        fig.update_yaxes(range=sub.ylim, title_text=y_title, row=pos['row'], col=pos['col'])
+        fig.update_xaxes(
+            range=sub.xlim,
+            title_text=x_title,
+            showticklabels=True if getattr(style, "repeat_xticklabels", False) else None,
+            row=pos['row'],
+            col=pos['col'],
+        )
+        fig.update_yaxes(
+            range=sub.ylim,
+            title_text=y_title,
+            showticklabels=True if getattr(style, "repeat_yticklabels", False) else None,
+            row=pos['row'],
+            col=pos['col'],
+        )
     
     _add_facet_labels(fig, data, n_rows, n_cols)
     
