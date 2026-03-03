@@ -211,6 +211,25 @@ def _parse_args() -> argparse.Namespace:
         help="Minimum number of snip frames required for the featured embryo.",
     )
     p.add_argument(
+        "--n-featured-per-panel",
+        type=int,
+        default=1,
+        help="How many featured embryos to render per panel (top-ranked candidates).",
+    )
+    p.add_argument(
+        "--candidate-end-n",
+        type=int,
+        default=5,
+        help="Number of final timepoints used to compute each embryo's end value for candidate ranking.",
+    )
+    p.add_argument(
+        "--min-featured-end-value",
+        type=float,
+        default=None,
+        help="Minimum end value (median of last --candidate-end-n points) required for a featured embryo. "
+             "Useful for Low_to_High to require it ends high (e.g. 0.6).",
+    )
+    p.add_argument(
         "--min-featured-min-hpf",
         type=float,
         default=None,
@@ -291,6 +310,12 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=2.0,
         help="Gaussian sigma for smoothing the featured trace (in data points; 0 = no smoothing).",
+    )
+    p.add_argument(
+        "--trace-outline",
+        action="store_true",
+        default=False,
+        help="Draw a black outline stroke around the featured trace (helps on busy backgrounds).",
     )
     return p.parse_args()
 
@@ -536,6 +561,120 @@ def _pick_featured_embryo(
     return ok_rows[0]
 
 
+def _rank_featured_candidates(
+    df: pd.DataFrame,
+    feature_col: str,
+    t_min: float,
+    t_max: float,
+    snip_root: Path,
+    min_snips: int,
+    min_min_hpf: Optional[float],
+    min_max_hpf: float,
+    prefer_suffix: Optional[str],
+    candidate_end_n: int,
+    min_end_value: Optional[float],
+    exclude_embryo_ids: set[str],
+    top_k: int,
+) -> pd.DataFrame:
+    """Return ranked candidate embryos (best-first) with end_value and coverage stats."""
+    g = df.copy()
+    g = g[g["predicted_stage_hpf"].between(t_min, t_max, inclusive="both")].copy()
+    g = g[g[feature_col].notna()].copy()
+    if exclude_embryo_ids:
+        g = g[~g["embryo_id"].astype(str).isin({str(x) for x in exclude_embryo_ids})].copy()
+
+    if g.empty:
+        return pd.DataFrame()
+
+    g = g.sort_values(["embryo_id", "predicted_stage_hpf", "frame_index"])
+
+    # End value: median of last N values per embryo within the window
+    n_end = max(1, int(candidate_end_n))
+    end_vals = (
+        g.groupby("embryo_id", observed=True)[feature_col]
+        .tail(n_end)
+        .groupby(g["embryo_id"], observed=True)
+        .median()
+        .rename("end_value")
+        .reset_index()
+    )
+
+    summary = (
+        g.groupby("embryo_id", observed=True)
+        .agg(
+            experiment_date=("experiment_date", "first"),
+            genotype=("genotype", "first"),
+            n_rows=("frame_index", "size"),
+            min_hpf=("predicted_stage_hpf", "min"),
+            max_hpf=("predicted_stage_hpf", "max"),
+            fi0=("frame_index", "first"),
+            fi1=("frame_index", "last"),
+        )
+        .reset_index()
+    )
+    summary["suffix"] = summary["genotype"].map(_genotype_suffix)
+    summary = summary.merge(end_vals, on="embryo_id", how="left", validate="one_to_one")
+
+    # Filters
+    summary = summary[summary["n_rows"] >= int(min_snips)].copy()
+    if min_min_hpf is not None:
+        summary = summary[summary["min_hpf"] >= float(min_min_hpf)].copy()
+    summary = summary[summary["max_hpf"] >= float(min_max_hpf)].copy()
+    if min_end_value is not None:
+        summary = summary[summary["end_value"] >= float(min_end_value)].copy()
+    if summary.empty:
+        return summary
+
+    # Prefer suffix (if provided)
+    if prefer_suffix is None:
+        summary["prefer"] = 0
+    else:
+        prefer_suffix = str(prefer_suffix).strip().lower()
+        summary["prefer"] = (summary["suffix"] == prefer_suffix).astype(int)
+
+    summary = summary.sort_values(
+        ["prefer", "end_value", "max_hpf", "n_rows", "min_hpf"],
+        ascending=[False, False, False, False, True],
+    )
+
+    # Verify snip existence for first/last frame_index (avoid missing snips)
+    keep_rows = []
+    for r in summary.itertuples(index=False):
+        embryo_id = str(r.embryo_id)
+        exp_date = str(r.experiment_date)
+        p0 = _snip_path(snip_root, exp_date, embryo_id, int(r.fi0))
+        p1 = _snip_path(snip_root, exp_date, embryo_id, int(r.fi1))
+        if p0.exists() and p1.exists():
+            keep_rows.append(embryo_id)
+        if len(keep_rows) >= int(top_k):
+            break
+
+    if not keep_rows:
+        return pd.DataFrame()
+
+    return summary[summary["embryo_id"].astype(str).isin(set(keep_rows))].copy()
+
+
+def _put_text_with_outline(
+    img: "np.ndarray",
+    text: str,
+    org: tuple[int, int],
+    font,
+    font_scale: float,
+    fg_bgr: tuple[int, int, int],
+    thickness: int,
+    outline_bgr: tuple[int, int, int] = (0, 0, 0),
+    outline_thickness: Optional[int] = None,
+) -> None:
+    """Draw text with an outline for visibility (OpenCV BGR)."""
+    import cv2
+
+    if outline_thickness is None:
+        outline_thickness = int(thickness) + 3
+    cv2.putText(img, text, org, font, float(font_scale), outline_bgr, int(outline_thickness), cv2.LINE_AA)
+    cv2.putText(img, text, org, font, float(font_scale), fg_bgr, int(thickness), cv2.LINE_AA)
+
+
 def _nearest_index(sorted_times: np.ndarray, t: float) -> int:
     """Return index of nearest value in sorted_times to t (clipped)."""
     if sorted_times.size == 0:
@@ -590,6 +729,7 @@ def _make_plot_video(
     seed: int,
     extend_featured_trace: bool,
     smooth_sigma: float,
+    trace_outline: bool,
     ylim: Optional[tuple[float, float]] = None,
 ) -> None:
     import cv2
@@ -715,15 +855,17 @@ def _make_plot_video(
                     cv2.polylines(halo_frame, [pts], isClosed=False, color=feat_bgr,
                                   thickness=9, lineType=cv2.LINE_AA)
                     cv2.addWeighted(halo_frame, 0.18, frame, 0.82, 0, frame)
-                    # Black outline stroke, then colored line on top
-                    cv2.polylines(frame, [pts], isClosed=False, color=(0, 0, 0),
-                                  thickness=5, lineType=cv2.LINE_AA)
+                    # Optional black outline stroke, then colored line on top
+                    if bool(trace_outline):
+                        cv2.polylines(frame, [pts], isClosed=False, color=(0, 0, 0),
+                                      thickness=5, lineType=cv2.LINE_AA)
                     cv2.polylines(frame, [pts], isClosed=False, color=feat_bgr,
                                   thickness=2, lineType=cv2.LINE_AA)
 
                 if px_vis.size >= 1:
                     tip_x, tip_y = int(px_vis[-1]), int(py_vis[-1])
-                    cv2.circle(frame, (tip_x, tip_y), 7, (0, 0, 0), -1, lineType=cv2.LINE_AA)
+                    outer = (0, 0, 0) if bool(trace_outline) else (255, 255, 255)
+                    cv2.circle(frame, (tip_x, tip_y), 7, outer, -1, lineType=cv2.LINE_AA)
                     cv2.circle(frame, (tip_x, tip_y), 5, feat_bgr, -1, lineType=cv2.LINE_AA)
 
             # Cursor only visible while within the embryo's data range
@@ -875,12 +1017,22 @@ def _make_embryo_video(
             (tw, th), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
             strip_h = th + baseline + 12
             overlay = canvas.copy()
-            cv2.rectangle(overlay, (0, 0), (vid_w, strip_h), (255, 255, 255), -1)
-            cv2.addWeighted(overlay, 0.6, canvas, 0.4, 0, canvas)
+            # Dark strip + outlined text for visibility on varied embryo backgrounds
+            cv2.rectangle(overlay, (0, 0), (vid_w, strip_h), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.7, canvas, 0.3, 0, canvas)
             text_x = (vid_w - tw) // 2
             text_y = (strip_h + th) // 2 - baseline // 2
-            cv2.putText(canvas, label, (text_x, text_y),
-                        font, font_scale, color_bgr, font_thickness, cv2.LINE_AA)
+            _put_text_with_outline(
+                canvas,
+                label,
+                (int(text_x), int(text_y)),
+                font=font,
+                font_scale=float(font_scale),
+                fg_bgr=(255, 255, 255),
+                thickness=int(font_thickness),
+                outline_bgr=(0, 0, 0),
+                outline_thickness=int(font_thickness) + 4,
+            )
 
             writer.write(canvas)
     finally:
@@ -1036,7 +1188,14 @@ def main() -> None:
         pick_t_max = min(float(args.t_max), float(cursor_max))
 
         explicit_id = featured_ids_map.get(panel_key, None)
-        featured_id = _pick_featured_embryo(
+        n_want = max(1, int(args.n_featured_per_panel))
+        selected_ids: list[str] = []
+        exclude_ids: set[str] = set()
+        if explicit_id is not None:
+            selected_ids.append(str(explicit_id))
+            exclude_ids.add(str(explicit_id))
+
+        rank_df = _rank_featured_candidates(
             df=df_panel,
             feature_col=feature_col,
             t_min=pick_t_min,
@@ -1046,69 +1205,113 @@ def main() -> None:
             min_min_hpf=float(args.min_featured_min_hpf) if args.min_featured_min_hpf is not None else None,
             min_max_hpf=float(args.min_featured_max_hpf),
             prefer_suffix=prefer_suffix,
-            explicit_embryo_id=explicit_id,
+            candidate_end_n=int(args.candidate_end_n),
+            min_end_value=float(args.min_featured_end_value) if args.min_featured_end_value is not None else None,
+            exclude_embryo_ids=exclude_ids,
+            top_k=max(30, n_want * 10),
         )
 
-        featured_df = df_panel[df_panel["embryo_id"].astype(str) == str(featured_id)].copy()
-        featured_df = featured_df.sort_values("predicted_stage_hpf")
-        in_window = featured_df["predicted_stage_hpf"].between(pick_t_min, float(args.t_max), inclusive="both")
-        if in_window.any():
-            featured_df = featured_df.loc[in_window].copy()
+        if len(selected_ids) < n_want:
+            ranked_ids = rank_df["embryo_id"].astype(str).tolist() if not rank_df.empty else []
+            for eid in ranked_ids:
+                if eid not in exclude_ids and eid not in selected_ids:
+                    selected_ids.append(eid)
+                if len(selected_ids) >= n_want:
+                    break
 
-        if featured_df.empty:
-            print(f"  WARNING: Featured embryo {featured_id} has no rows in time window, skipping.")
-            continue
+        if not selected_ids:
+            # Fallback to legacy picker if ranking produced nothing
+            selected_ids = [
+                _pick_featured_embryo(
+                    df=df_panel,
+                    feature_col=feature_col,
+                    t_min=pick_t_min,
+                    t_max=pick_t_max,
+                    snip_root=paths.snip_root,
+                    min_snips=int(args.min_featured_snips),
+                    min_min_hpf=float(args.min_featured_min_hpf) if args.min_featured_min_hpf is not None else None,
+                    min_max_hpf=float(args.min_featured_max_hpf),
+                    prefer_suffix=prefer_suffix,
+                    explicit_embryo_id=None,
+                )
+            ]
 
-        plot_mp4 = paths.figures_dir / f"curvature_animation_{out_prefix}_{featured_id}.mp4"
-        embryo_mp4 = paths.figures_dir / f"embryo_animation_{out_prefix}_{featured_id}.mp4"
+        if len(selected_ids) > 1:
+            print(f"  Selected {len(selected_ids)} featured embryos:")
+            if not rank_df.empty:
+                show = rank_df[rank_df["embryo_id"].astype(str).isin(set(selected_ids))].copy()
+                show = show.sort_values(["end_value", "max_hpf", "n_rows"], ascending=[False, False, False])
+                for r in show.itertuples(index=False):
+                    print(
+                        f"   - {r.embryo_id}  end={float(r.end_value):.3f}  "
+                        f"hpf={float(r.min_hpf):.1f}-{float(r.max_hpf):.1f}  rows={int(r.n_rows)}  {r.genotype}"
+                    )
+            else:
+                for eid in selected_ids:
+                    print(f"   - {eid}")
 
-        print(f"  Featured embryo: {featured_id}")
-        print(f"  Overlay color: {featured_color_hex}")
-        print(f"  Rows in window: {len(featured_df)}")
-        print(f"  HPF range: {featured_df['predicted_stage_hpf'].min():.2f} .. {featured_df['predicted_stage_hpf'].max():.2f}")
-        print(f"  Background embryos: {df_panel['embryo_id'].nunique()}")
+        for featured_id in selected_ids:
+            featured_df = df_panel[df_panel["embryo_id"].astype(str) == str(featured_id)].copy()
+            featured_df = featured_df.sort_values("predicted_stage_hpf")
+            in_window = featured_df["predicted_stage_hpf"].between(pick_t_min, float(args.t_max), inclusive="both")
+            if in_window.any():
+                featured_df = featured_df.loc[in_window].copy()
 
-        _make_plot_video(
-            out_mp4=plot_mp4,
-            df=df_panel,
-            featured_df=featured_df,
-            feature_col=feature_col,
-            featured_color_hex=featured_color_hex,
-            color_by=bg_color_by,
-            color_lookup=bg_color_lookup,
-            t_min=float(args.t_min),
-            t_max=float(args.t_max),
-            cursor_min=cursor_min,
-            cursor_max=cursor_max,
-            fps=int(args.fps),
-            n_frames_out=n_frames,
-            plot_width=out_w,
-            plot_height=out_h,
-            background_max_embryos=int(args.background_max_embryos),
-            seed=int(args.seed),
-            extend_featured_trace=bool(args.extend_featured_trace),
-            smooth_sigma=float(args.smooth_sigma),
-            ylim=ylim,
-        )
+            if featured_df.empty:
+                print(f"  WARNING: Featured embryo {featured_id} has no rows in time window, skipping.")
+                continue
 
-        emb_w, emb_h = _make_embryo_video(
-            out_mp4=embryo_mp4,
-            featured_df=featured_df,
-            snip_root=paths.snip_root,
-            genotype_color_hex=featured_color_hex,
-            t_min=float(args.t_min),
-            t_max=float(args.t_max),
-            cursor_min=cursor_min,
-            cursor_max=cursor_max,
-            fps=int(args.fps),
-            n_frames_out=n_frames,
-            hold_last_frame=bool(args.hold_last_frame),
-        )
-        print(f"  Embryo video dimensions: {emb_w}x{emb_h} (raw JPEG size)")
+            plot_mp4 = paths.figures_dir / f"curvature_animation_{out_prefix}_{featured_id}.mp4"
+            embryo_mp4 = paths.figures_dir / f"embryo_animation_{out_prefix}_{featured_id}.mp4"
 
-        saved_files.append(str(plot_mp4))
-        saved_files.append(str(embryo_mp4))
-        print()
+            print(f"  Featured embryo: {featured_id}")
+            print(f"  Overlay color: {featured_color_hex}")
+            print(f"  Rows in window: {len(featured_df)}")
+            print(f"  HPF range: {featured_df['predicted_stage_hpf'].min():.2f} .. {featured_df['predicted_stage_hpf'].max():.2f}")
+            print(f"  Background embryos: {df_panel['embryo_id'].nunique()}")
+
+            _make_plot_video(
+                out_mp4=plot_mp4,
+                df=df_panel,
+                featured_df=featured_df,
+                feature_col=feature_col,
+                featured_color_hex=featured_color_hex,
+                color_by=bg_color_by,
+                color_lookup=bg_color_lookup,
+                t_min=float(args.t_min),
+                t_max=float(args.t_max),
+                cursor_min=cursor_min,
+                cursor_max=cursor_max,
+                fps=int(args.fps),
+                n_frames_out=n_frames,
+                plot_width=out_w,
+                plot_height=out_h,
+                background_max_embryos=int(args.background_max_embryos),
+                seed=int(args.seed),
+                extend_featured_trace=bool(args.extend_featured_trace),
+                smooth_sigma=float(args.smooth_sigma),
+                trace_outline=bool(args.trace_outline),
+                ylim=ylim,
+            )
+
+            emb_w, emb_h = _make_embryo_video(
+                out_mp4=embryo_mp4,
+                featured_df=featured_df,
+                snip_root=paths.snip_root,
+                genotype_color_hex=featured_color_hex,
+                t_min=float(args.t_min),
+                t_max=float(args.t_max),
+                cursor_min=cursor_min,
+                cursor_max=cursor_max,
+                fps=int(args.fps),
+                n_frames_out=n_frames,
+                hold_last_frame=bool(args.hold_last_frame),
+            )
+            print(f"  Embryo video dimensions: {emb_w}x{emb_h} (raw JPEG size)")
+
+            saved_files.append(str(plot_mp4))
+            saved_files.append(str(embryo_mp4))
+            print()
 
     print("Saved:")
     for f in saved_files:
