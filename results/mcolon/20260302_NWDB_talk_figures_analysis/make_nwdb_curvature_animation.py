@@ -1015,20 +1015,29 @@ def _make_embryo_video(
             display_t = min(t, float(times[-1])) if times.size > 0 else t
             label = f"{display_t:.1f} hpf"
             (tw, th), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
-            strip_h = th + baseline + 12
-            overlay = canvas.copy()
-            # Dark strip + outlined text for visibility on varied embryo backgrounds
-            cv2.rectangle(overlay, (0, 0), (vid_w, strip_h), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, canvas, 0.3, 0, canvas)
+            pad_x, pad_y = 14, 10
+            box_alpha = 0.55
+            box_color = (210, 210, 210)  # light grey
+
             text_x = (vid_w - tw) // 2
-            text_y = (strip_h + th) // 2 - baseline // 2
+            text_y = th + pad_y  # OpenCV y is baseline; place near top
+
+            # Small translucent box behind the text (not full-width)
+            x0 = max(0, int(text_x - pad_x))
+            y0 = max(0, int(text_y - th - pad_y))
+            x1 = min(int(vid_w - 1), int(text_x + tw + pad_x))
+            y1 = min(int(vid_h - 1), int(text_y + baseline + pad_y))
+            overlay = canvas.copy()
+            cv2.rectangle(overlay, (x0, y0), (x1, y1), box_color, -1)
+            cv2.addWeighted(overlay, float(box_alpha), canvas, float(1.0 - box_alpha), 0, canvas)
+
             _put_text_with_outline(
                 canvas,
                 label,
                 (int(text_x), int(text_y)),
                 font=font,
                 font_scale=float(font_scale),
-                fg_bgr=(255, 255, 255),
+                fg_bgr=color_bgr,
                 thickness=int(font_thickness),
                 outline_bgr=(0, 0, 0),
                 outline_thickness=int(font_thickness) + 4,
