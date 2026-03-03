@@ -1018,7 +1018,7 @@ def _make_embryo_video(
             pad_y = 10
             strip_h = th + baseline + (2 * pad_y)
             box_alpha = 0.55
-            box_color = (210, 210, 210)  # light grey
+            box_color = (235, 235, 235)  # lighter grey
 
             text_x = (vid_w - tw) // 2
             text_y = (strip_h + th) // 2 - baseline // 2
@@ -1039,7 +1039,7 @@ def _make_embryo_video(
                 fg_bgr=color_bgr,
                 thickness=int(font_thickness),
                 outline_bgr=(0, 0, 0),
-                outline_thickness=int(font_thickness) + 2,
+                outline_thickness=int(font_thickness) + 3,
             )
 
             writer.write(canvas)
