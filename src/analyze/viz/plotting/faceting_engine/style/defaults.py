@@ -33,6 +33,7 @@ class StyleSpec:
     
     # Legend
     legend_fontsize: int = 12
+    legend_loc: str = 'upper right'  # any matplotlib loc string, or 'outside' to place right of axes
 
     # Text (Matplotlib)
     # If None, defer to backend defaults / rcParams.

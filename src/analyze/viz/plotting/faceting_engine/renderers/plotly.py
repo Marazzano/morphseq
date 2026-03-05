@@ -38,6 +38,8 @@ def render_plotly(
         for trace in sub.traces:
             if trace.render_as == 'band' and trace.band_lower is not None:
                 _add_band_trace(fig, trace, pos['row'], pos['col'], style)
+            elif trace.render_as == 'scatter':
+                _add_scatter_trace(fig, trace, pos['row'], pos['col'])
             else:
                 _add_line_trace(fig, trace, pos['row'], pos['col'])
         
@@ -108,6 +110,32 @@ def _add_line_trace(fig, trace: TraceData, row: int, col: int):
             hovertemplate=hovertemplate,
         ),
         row=row, col=col
+    )
+
+
+def _add_scatter_trace(fig, trace: TraceData, row: int, col: int):
+    """Add a marker-only trace."""
+    symbol = "circle-open" if str(trace.style.marker_facecolor).lower() in {"none", "transparent"} else "circle"
+    edge = trace.style.marker_edgecolor or trace.style.color
+    fig.add_trace(
+        go.Scatter(
+            x=trace.x,
+            y=trace.y,
+            mode="markers",
+            marker=dict(
+                symbol=symbol,
+                size=float(trace.style.marker_size),
+                line=dict(color=edge, width=float(trace.style.marker_edgewidth)),
+                color=edge,
+            ),
+            opacity=trace.style.alpha,
+            name=trace.label,
+            legendgroup=trace.legend_group,
+            showlegend=trace.show_legend,
+            hoverinfo="skip",
+        ),
+        row=row,
+        col=col,
     )
 
 

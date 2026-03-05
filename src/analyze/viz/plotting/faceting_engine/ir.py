@@ -19,6 +19,12 @@ class TraceStyle:
     width: float = 1.0
     linestyle: str = '-'  # '-' solid, '--' dashed, ':' dotted
     zorder: int = 1
+    # Marker styling (used when render_as='scatter', or when a renderer supports markers)
+    marker: str = 'o'
+    marker_size: float = 7.0
+    marker_facecolor: str = 'none'  # 'none' for hollow markers (matplotlib)
+    marker_edgecolor: str | None = None
+    marker_edgewidth: float = 2.0
 
 
 _LINESTYLE_MAP = {

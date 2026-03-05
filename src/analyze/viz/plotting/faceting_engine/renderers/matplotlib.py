@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from typing import Dict, Any
 
-from ..ir import FigureData, TraceData, FacetSpec
+from ..ir import FigureData, TraceData, TraceStyle, FacetSpec
 from ..style.defaults import StyleSpec
 from ..utils import calculate_grid_map
 
@@ -33,7 +33,7 @@ def render_matplotlib(
             n_rows, n_cols, figsize=figsize, squeeze=False, sharex=bool(facet.sharex), sharey=bool(facet.sharey)
         )
     
-    legend_entries = {}  # label → color
+    legend_entries: Dict[str, Dict[str, Any]] = {}  # label → {'kind': str, 'style': TraceStyle}
     
     for idx, sub in enumerate(data.subplots):
         pos = positions.get(idx)
@@ -52,6 +52,19 @@ def render_matplotlib(
                     color=trace.style.color, alpha=trace.style.alpha,
                     zorder=trace.style.zorder,
                 )
+            elif trace.render_as == 'scatter':
+                edge = trace.style.marker_edgecolor or trace.style.color
+                ax.scatter(
+                    trace.x,
+                    trace.y,
+                    s=float(trace.style.marker_size) ** 2,
+                    marker=trace.style.marker,
+                    facecolors=trace.style.marker_facecolor,
+                    edgecolors=edge,
+                    linewidths=float(trace.style.marker_edgewidth),
+                    alpha=trace.style.alpha,
+                    zorder=trace.style.zorder,
+                )
             else:
                 ax.plot(
                     trace.x, trace.y,
@@ -62,7 +75,8 @@ def render_matplotlib(
             
             # Collect legend based on show_legend (NOT linewidth heuristic)
             if trace.show_legend and trace.label and trace.label not in legend_entries:
-                legend_entries[trace.label] = trace.style.color
+                kind = 'scatter' if trace.render_as == 'scatter' else 'line'
+                legend_entries[trace.label] = {'kind': kind, 'style': trace.style}
         
         if not has_data:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center',
@@ -98,25 +112,47 @@ def render_matplotlib(
     
     # Unified legend
     if legend_entries:
-        handles = [
-            Line2D([0], [0], color=c, linewidth=style.trend_width, label=lbl)
-            for lbl, c in legend_entries.items()
-        ]
+        handles = []
+        for lbl, entry in legend_entries.items():
+            kind = entry['kind']
+            tstyle: TraceStyle = entry['style']
+            if kind == 'scatter':
+                edge = tstyle.marker_edgecolor or tstyle.color
+                handles.append(
+                    Line2D(
+                        [0],
+                        [0],
+                        color=edge,
+                        marker=tstyle.marker,
+                        markersize=float(tstyle.marker_size),
+                        markerfacecolor=tstyle.marker_facecolor,
+                        markeredgewidth=float(tstyle.marker_edgewidth),
+                        linestyle='None',
+                        label=lbl,
+                    )
+                )
+            else:
+                handles.append(Line2D([0], [0], color=tstyle.color, linewidth=style.trend_width, label=lbl))
         rightmost_ax = axes[0, -1]
-        fig.legend(handles=handles, loc='upper left',
-                   bbox_to_anchor=(1.01, 1.0), bbox_transform=rightmost_ax.transAxes,
-                   fontsize=style.legend_fontsize, frameon=True, framealpha=0.9)
-        plt.subplots_adjust(right=0.82)
-    
+        legend_loc = getattr(style, 'legend_loc', 'upper right')
+        if legend_loc == 'outside':
+            fig.legend(handles=handles, loc='upper left',
+                       bbox_to_anchor=(1.01, 1.0), bbox_transform=rightmost_ax.transAxes,
+                       fontsize=style.legend_fontsize, frameon=True, framealpha=0.9)
+            plt.subplots_adjust(right=0.82)
+        else:
+            rightmost_ax.legend(handles=handles, loc=legend_loc,
+                                fontsize=style.legend_fontsize, frameon=True, framealpha=0.9)
+
     if data.row_labels and n_rows > 1:
         for idx, label in enumerate(data.row_labels):
             y_pos = 1 - (idx + 0.5) / n_rows
             fig.text(0.02, y_pos, label, rotation=90, va='center', ha='right',
                      fontsize=12, fontweight='bold', transform=fig.transFigure)
 
-    
+
     fig.suptitle(data.title, fontsize=14, fontweight='bold')
-    plt.tight_layout(rect=[0.03, 0, 0.82 if legend_entries else 1, 0.96])
+    plt.tight_layout(rect=[0.03, 0, 1, 0.96])
 
     if data.col_labels and n_cols > 1:
         for idx, label in enumerate(data.col_labels):

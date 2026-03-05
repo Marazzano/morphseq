@@ -5,6 +5,7 @@ from .classification_test import (
 )
 from .misclassification import run_misclassification_pipeline, run_stage_geometry
 from .results import ComparisonSpec, MulticlassOVRResults
+from .classification_results import ClassificationResults
 from . import viz
 from . import misclassification
 
@@ -14,6 +15,7 @@ __all__ = [
     "extract_temporal_confusion_profile",
     "MulticlassOVRResults",
     "ComparisonSpec",
+    "ClassificationResults",
     "run_misclassification_pipeline",
     "run_stage_geometry",
     "viz",
