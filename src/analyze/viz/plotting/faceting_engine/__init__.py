@@ -11,7 +11,7 @@ Usage:
 from pathlib import Path
 from typing import Optional, Union, Any
 
-from .ir import TraceData, TraceStyle, SubplotData, FigureData, FacetSpec
+from .ir import TraceData, TraceStyle, SubplotData, FigureData, FacetSpec, resolve_linestyle
 from .style.defaults import StyleSpec, default_style, paper_style
 from .stats import validate_error_type, compute_error_band, compute_linear_fit
 from .utils import iter_facet_cells, calculate_grid_map, compute_figure_size
@@ -59,5 +59,6 @@ __all__ = [
     'StyleSpec', 'default_style', 'paper_style',
     'validate_error_type', 'compute_error_band', 'compute_linear_fit',
     'iter_facet_cells', 'calculate_grid_map', 'compute_figure_size',
+    'resolve_linestyle',
     'render',
 ]

@@ -21,6 +21,44 @@ class TraceStyle:
     zorder: int = 1
 
 
+_LINESTYLE_MAP = {
+    'solid':    ('-',  'solid'),
+    'dashed':   ('--', 'dash'),
+    'dotted':   (':',  'dot'),
+    # also accept matplotlib/plotly codes directly
+    '-':        ('-',  'solid'),
+    '--':       ('--', 'dash'),
+    ':':        (':',  'dot'),
+}
+
+
+def resolve_linestyle(style: str) -> tuple[str, str]:
+    """Return (matplotlib_style, plotly_dash) for a linestyle name or code.
+
+    Parameters
+    ----------
+    style : str
+        Linestyle name ('solid', 'dashed', 'dotted') or code ('-', '--', ':')
+
+    Returns
+    -------
+    tuple[str, str]
+        (matplotlib_linestyle, plotly_dash_value)
+
+    Raises
+    ------
+    ValueError
+        If linestyle is not recognized
+    """
+    key = style.strip().lower()
+    if key not in _LINESTYLE_MAP:
+        raise ValueError(
+            f"Unknown linestyle {style!r}. "
+            f"Use: 'solid', 'dashed', 'dotted' (or '-', '--', ':')."
+        )
+    return _LINESTYLE_MAP[key]
+
+
 # --- Data Content ---
 
 @dataclass

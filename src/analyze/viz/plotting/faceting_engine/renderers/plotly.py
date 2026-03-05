@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Dict, Any
 
-from ..ir import FigureData, TraceData, FacetSpec
+from ..ir import FigureData, TraceData, FacetSpec, resolve_linestyle
 from ..style.defaults import StyleSpec
 from analyze.viz.styling.color_utils import to_rgba_string
 from ..utils import calculate_grid_map, compute_figure_size
@@ -87,7 +87,7 @@ def render_plotly(
 
 def _add_line_trace(fig, trace: TraceData, row: int, col: int):
     """Add a line trace."""
-    line_dash = 'dash' if trace.style.linestyle == '--' else 'solid'
+    _, line_dash = resolve_linestyle(trace.style.linestyle)
     
     hovertemplate = None
     if trace.hover_meta:

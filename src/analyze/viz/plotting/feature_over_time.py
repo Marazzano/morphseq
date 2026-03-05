@@ -19,7 +19,7 @@ from analyze.viz.styling import STANDARD_PALETTE, resolve_color_lookup
 from .faceting_engine import (
     FigureData, SubplotData, TraceData, TraceStyle,
     FacetSpec, StyleSpec, render, default_style,
-    iter_facet_cells, compute_error_band,
+    iter_facet_cells, compute_error_band, resolve_linestyle,
 )
 
 
@@ -63,6 +63,7 @@ def _plot_features_over_time_subplot(
     error_type: str = 'iqr',
     trend_statistic: str = 'median',
     trend_smooth_sigma: float = 1.5,
+    trend_linestyle: str = 'solid',
     bin_width: float = 0.5,
     smooth_method: Optional[str] = 'gaussian',
     smooth_params: Optional[Dict] = None,
@@ -143,9 +144,10 @@ def _plot_features_over_time_subplot(
             statistic=trend_statistic, smooth_sigma=trend_smooth_sigma,
         )
         if trend_t is not None and len(trend_t) > 0:
+            mpl_ls, _ = resolve_linestyle(trend_linestyle)
             traces.append(TraceData(
                 x=np.array(trend_t), y=np.array(trend_v),
-                style=TraceStyle(color=color, alpha=1.0, width=2.2, zorder=5),
+                style=TraceStyle(color=color, alpha=1.0, width=2.2, linestyle=mpl_ls, zorder=5),
                 label=label,
                 legend_group=legend_key,
                 show_legend=show_legend,
@@ -177,6 +179,7 @@ def plot_feature_over_time(
     error_type: str = 'iqr',
     trend_statistic: str = 'median',
     trend_smooth_sigma: float = 1.5,
+    trend_linestyle: str = 'solid',  # 'solid', 'dashed', 'dotted' (or '-', '--', ':')
     bin_width: float = 0.5,
     smooth_method: Optional[str] = 'gaussian',
     smooth_params: Optional[Dict] = None,
@@ -330,6 +333,7 @@ def plot_feature_over_time(
             error_type=error_type,
             trend_statistic=trend_statistic,
             trend_smooth_sigma=trend_smooth_sigma,
+            trend_linestyle=trend_linestyle,
             bin_width=bin_width,
             smooth_method=smooth_method,
             smooth_params=smooth_params,
