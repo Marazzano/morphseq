@@ -773,11 +773,16 @@ def main() -> None:
 
     t_out = np.linspace(t_min, t_max, num=int(n_frames_out), dtype=float)
 
-    # Layout
+    # Layout — two-pass: first pass gets radius for label sizing, second pass
+    # uses the actual top/bottom reservation so wells never clip at any resolution.
     yx1_coords = None
     if args.layout == "yx1_um":
         yx1_coords = _load_yx1_coords(Path(args.yx1_coords_csv))
-    centers = _compute_centers_px(
+
+    label_font = cv2.FONT_HERSHEY_DUPLEX
+
+    # Pass 1: preliminary layout to determine radius and label dimensions
+    centers_prelim = _compute_centers_px(
         layout=str(args.layout),
         width=int(width),
         height=int(height),
@@ -786,7 +791,61 @@ def main() -> None:
         bottom_px=int(margin_px),
         yx1_coords=yx1_coords,
     )
-    radius = _estimate_radius_px(centers, override=args.well_radius_px)
+    radius = _estimate_radius_px(centers_prelim, override=args.well_radius_px)
+
+    axis_font_scale = max(1.1, radius / 35.0)
+
+    # Measure row label width (widest letter)
+    row_label_widths = []
+    for row in "ABCDEFGH":
+        (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
+        row_label_widths.append(tw)
+    max_row_label_w = max(row_label_widths) if row_label_widths else 0
+    row_label_gutter = (max_row_label_w + int(round(0.6 * radius))) if args.label_rows_cols else 0
+
+    # Measure column label height
+    (col_tw, col_th), _ = cv2.getTextSize("12", label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
+    col_label_gutter = (col_th + int(round(0.5 * radius))) if args.label_rows_cols else 0
+
+    # Time label font scales with axis_font_scale (base digit_scale=1.5 at afs=1.1)
+    time_digit_scale = 1.5 * (axis_font_scale / 1.1)
+    time_unit_scale = 0.85 * (axis_font_scale / 1.1)
+
+    # Time label zone height: measure actual text height + padding
+    if args.show_hpf:
+        time_digit_thickness = max(1, int(round(2.0 * time_digit_scale)))
+        (_, tdh), _ = cv2.getTextSize("48", cv2.FONT_HERSHEY_DUPLEX, float(time_digit_scale), time_digit_thickness)
+        time_zone_h = tdh + int(round(0.4 * radius))
+    else:
+        time_zone_h = 0
+
+    # Pass 2+: recompute layout, converging so well circles fit within canvas.
+    # _compute_centers_px places well *centers* inset by margin_px from the usable
+    # zone edges, but the visible well circle extends radius+bbox_pad beyond the
+    # center. We iterate until the inset is large enough.
+    well_inset = margin_px  # initial guess
+    for _layout_iter in range(5):
+        actual_top = time_zone_h + col_label_gutter + well_inset
+        centers = _compute_centers_px(
+            layout=str(args.layout),
+            width=int(width),
+            height=int(height),
+            margin_px=int(well_inset),
+            header_px=int(actual_top),
+            bottom_px=int(well_inset),
+            yx1_coords=yx1_coords,
+        )
+        radius = _estimate_radius_px(centers, override=args.well_radius_px)
+        bbox_pad = int(round(0.75 * radius))
+        needed_inset = radius + bbox_pad + 4  # 4px safety
+        if needed_inset <= well_inset:
+            break
+        well_inset = needed_inset
+    # Recompute font scale with final radius
+    axis_font_scale = max(1.1, radius / 35.0)
+    # Recompute time label scales with final font scale
+    time_digit_scale = 1.5 * (axis_font_scale / 1.1)
+    time_unit_scale = 0.85 * (axis_font_scale / 1.1)
 
     # Track lookup per well
     track_by_well: dict[str, EmbryoTrack] = {t.well: t for t in tracks}
@@ -826,56 +885,24 @@ def main() -> None:
     bbox_pad = int(round(0.75 * radius))
     well_rim_thickness = max(1, int(args.well_rim_thickness))
 
-    # -- Font choice: DUPLEX for all labels --
-    label_font = cv2.FONT_HERSHEY_DUPLEX
-    axis_font_scale = max(1.1, radius / 35.0)
     border_thickness = max(2, int(round(radius / 22.0)))
     plate_corner_radius = int(args.plate_corner_radius) if args.plate_corner_radius is not None else max(4, radius // 2)
 
-    # -- True centering: compute total content bbox, center on canvas --
-    # Measure row label width (widest letter)
-    row_label_widths = []
-    for row in "ABCDEFGH":
-        (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
-        row_label_widths.append(tw)
-    max_row_label_w = max(row_label_widths) if row_label_widths else 0
-    row_label_gutter = (max_row_label_w + int(round(0.6 * radius))) if args.label_rows_cols else 0
-
-    # Measure column label height
-    (col_tw, col_th), _ = cv2.getTextSize("12", label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
-    col_label_gutter = (col_th + int(round(0.5 * radius))) if args.label_rows_cols else 0
-
-    # Time label zone height (reserved at very top of canvas)
-    time_zone_h = int(round(0.45 * header_px)) if args.show_hpf else 0
-
-    # Get current plate bbox (before centering)
+    # -- Centering: horizontal only (vertical already handled by _compute_centers_px) --
     plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, all_96, radius=radius, pad=bbox_pad)
     plate_w = plate_x1 - plate_x0
-    plate_h = plate_y1 - plate_y0
 
-    # Total content box: row_label_gutter + plate + some right padding
+    # Center (row_label_gutter + plate) horizontally on canvas
     total_content_w = row_label_gutter + plate_w
-    total_content_h = time_zone_h + col_label_gutter + plate_h
-
-    # Target position: center content on canvas with symmetric margins
     canvas_margin = 20
     content_x0 = max(canvas_margin, (width - total_content_w) // 2)
-    content_y0 = max(canvas_margin, (height - total_content_h) // 2)
-    # Guard: ensure bottom of plate doesn't exceed canvas
-    plate_bottom = content_y0 + time_zone_h + col_label_gutter + plate_h
-    if plate_bottom > height - canvas_margin:
-        content_y0 = max(canvas_margin, content_y0 - (plate_bottom - (height - canvas_margin)))
-
-    # The plate's top-left should be at:
     target_plate_x0 = content_x0 + row_label_gutter
-    target_plate_y0 = content_y0 + time_zone_h + col_label_gutter
-
     shift_x = int(target_plate_x0 - plate_x0)
-    shift_y = int(target_plate_y0 - plate_y0)
-    if shift_x or shift_y:
+
+    if shift_x:
         for w in list(centers.keys()):
             x, y = centers[w]
-            centers[w] = (int(x + shift_x), int(y + shift_y))
+            centers[w] = (int(x + shift_x), y)
         plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, all_96, radius=radius, pad=bbox_pad)
 
     # Row/col label anchor positions (precise placement with getTextSize)
@@ -1054,8 +1081,8 @@ def main() -> None:
                 else:
                     hpf_txt = f"{t:.{dec}f}"
                 time_font = cv2.FONT_HERSHEY_DUPLEX
-                digit_scale = 1.5
-                unit_scale = 0.85
+                digit_scale = time_digit_scale
+                unit_scale = time_unit_scale
                 digit_thickness = max(1, int(round(2.0 * digit_scale)))
                 unit_thickness = max(1, int(round(2.0 * unit_scale)))
 
@@ -1064,15 +1091,17 @@ def main() -> None:
                 (uw, uh), _ = cv2.getTextSize(" HPF", time_font, float(unit_scale), unit_thickness)
                 total_w = dw + uw
 
-                # Position: between canvas top and column labels
-                # time_zone is above col_label_gutter which is above plate
-                time_label_y = int(content_y0 + time_zone_h * 0.7)
+                # Position: within the time zone above column labels
+                time_zone_top = plate_y0 - col_label_gutter - time_zone_h
+                time_label_y = int(time_zone_top + time_zone_h * 0.7)
                 time_label_y = max(int(dh + 10), time_label_y)
 
                 if str(args.time_label_position) == "top_left":
                     digit_x = 40
                 else:
-                    digit_x = max(10, int(round(width / 2 - total_w / 2)))
+                    # Center over the plate (not the full canvas)
+                    plate_cx = (plate_x0 + plate_x1) // 2
+                    digit_x = max(10, int(round(plate_cx - total_w / 2)))
 
                 # Render digits (larger, brighter)
                 _put_text_with_outline_colors(
