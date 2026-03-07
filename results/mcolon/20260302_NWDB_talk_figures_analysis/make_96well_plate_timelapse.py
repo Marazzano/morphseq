@@ -164,6 +164,24 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--show-well-labels", action="store_true", default=False, help="Overlay well labels in tiles (debug).")
     p.add_argument(
+        "--plate-corner-radius",
+        type=int,
+        default=None,
+        help="Rounded rectangle corner radius for plate border (default: auto = radius//2).",
+    )
+    p.add_argument(
+        "--no-plate-shadow",
+        action="store_true",
+        default=False,
+        help="Disable the subtle drop shadow behind the plate.",
+    )
+    p.add_argument(
+        "--well-rim-thickness",
+        type=int,
+        default=1,
+        help="Well rim stroke width in pixels.",
+    )
+    p.add_argument(
         "--wells",
         default=None,
         help="Comma-separated wells to render (subset for quick iteration). Example: A01,A02,B01",
@@ -411,6 +429,7 @@ def _compute_centers_px(
     height: int,
     margin_px: int,
     header_px: int,
+    bottom_px: int = 0,
     yx1_coords: Optional[pd.DataFrame],
 ) -> dict[str, tuple[int, int]]:
     wells = _all_wells_96()
@@ -419,9 +438,10 @@ def _compute_centers_px(
     h = int(height)
     m = int(margin_px)
     top = max(0, int(header_px))
+    bot = max(0, int(bottom_px))
     if layout == "grid":
         pitch_x = (w - 2 * m) / (12 - 1)
-        usable_h = max(1.0, float(h - top - 2 * m))
+        usable_h = max(1.0, float(h - top - bot - 2 * m))
         pitch_y = usable_h / (8 - 1)
         for ri, row in enumerate("ABCDEFGH"):
             for ci in range(1, 13):
@@ -449,7 +469,7 @@ def _compute_centers_px(
     y0, y1 = float(np.min(y_um)), float(np.max(y_um))
     dx = max(1e-9, x1 - x0)
     dy = max(1e-9, y1 - y0)
-    usable_h = max(1.0, float(h - top - 2 * m))
+    usable_h = max(1.0, float(h - top - bot - 2 * m))
     scale = min((w - 2 * m) / dx, usable_h / dy)
 
     for well, xu, yu in zip(wells, x_um.tolist(), y_um.tolist(), strict=False):
@@ -550,14 +570,56 @@ def _put_text_with_outline_colors(
     font_scale: float,
     fg_bgr: tuple[int, int, int],
     outline_bgr: tuple[int, int, int],
+    font: Optional[int] = None,
 ) -> None:
     import cv2
 
-    font = cv2.FONT_HERSHEY_SIMPLEX
+    if font is None:
+        font = cv2.FONT_HERSHEY_SIMPLEX
     thickness = max(1, int(round(2.0 * font_scale)))
     outline = thickness + 3
     cv2.putText(img, text, org, font, float(font_scale), outline_bgr, int(outline), cv2.LINE_AA)
     cv2.putText(img, text, org, font, float(font_scale), fg_bgr, int(thickness), cv2.LINE_AA)
+
+
+def _draw_rounded_rect(
+    img: np.ndarray,
+    pt1: tuple[int, int],
+    pt2: tuple[int, int],
+    color: tuple[int, int, int],
+    corner_radius: int,
+    thickness: int = -1,
+) -> None:
+    """Draw a rounded rectangle (filled if thickness=-1, outline otherwise)."""
+    import cv2
+
+    x0, y0 = int(pt1[0]), int(pt1[1])
+    x1, y1 = int(pt2[0]), int(pt2[1])
+    r = min(int(corner_radius), (x1 - x0) // 2, (y1 - y0) // 2)
+    r = max(0, r)
+    if r == 0:
+        cv2.rectangle(img, pt1, pt2, color, thickness=thickness, lineType=cv2.LINE_AA)
+        return
+
+    # Build a mask-based approach for filled, or draw arcs+lines for outline
+    if thickness == -1:
+        # Filled rounded rect via compositing
+        cv2.rectangle(img, (x0 + r, y0), (x1 - r, y1), color, thickness=-1, lineType=cv2.LINE_AA)
+        cv2.rectangle(img, (x0, y0 + r), (x1, y1 - r), color, thickness=-1, lineType=cv2.LINE_AA)
+        cv2.circle(img, (x0 + r, y0 + r), r, color, thickness=-1, lineType=cv2.LINE_AA)
+        cv2.circle(img, (x1 - r, y0 + r), r, color, thickness=-1, lineType=cv2.LINE_AA)
+        cv2.circle(img, (x0 + r, y1 - r), r, color, thickness=-1, lineType=cv2.LINE_AA)
+        cv2.circle(img, (x1 - r, y1 - r), r, color, thickness=-1, lineType=cv2.LINE_AA)
+    else:
+        # Outline: four arcs + four lines
+        cv2.ellipse(img, (x0 + r, y0 + r), (r, r), 180, 0, 90, color, thickness, cv2.LINE_AA)
+        cv2.ellipse(img, (x1 - r, y0 + r), (r, r), 270, 0, 90, color, thickness, cv2.LINE_AA)
+        cv2.ellipse(img, (x1 - r, y1 - r), (r, r), 0, 0, 90, color, thickness, cv2.LINE_AA)
+        cv2.ellipse(img, (x0 + r, y1 - r), (r, r), 90, 0, 90, color, thickness, cv2.LINE_AA)
+        cv2.line(img, (x0 + r, y0), (x1 - r, y0), color, thickness, cv2.LINE_AA)
+        cv2.line(img, (x0 + r, y1), (x1 - r, y1), color, thickness, cv2.LINE_AA)
+        cv2.line(img, (x0, y0 + r), (x0, y1 - r), color, thickness, cv2.LINE_AA)
+        cv2.line(img, (x1, y0 + r), (x1, y1 - r), color, thickness, cv2.LINE_AA)
 
 
 def _fit_into_circle_tile(
@@ -571,13 +633,21 @@ def _fit_into_circle_tile(
     well_rim_bgr: tuple[int, int, int],
     label_fg_bgr: tuple[int, int, int],
     label_outline_bgr: tuple[int, int, int],
+    well_rim_thickness: int = 1,
 ) -> np.ndarray:
     import cv2
 
     d = int(2 * radius)
     tile = np.zeros((d, d, 3), dtype=np.uint8)
     tile[:, :] = np.array(outside_bgr, dtype=np.uint8)
-    cv2.circle(tile, (radius, radius), int(radius - 1), tuple(map(int, well_fill_bgr)), thickness=-1, lineType=cv2.LINE_AA)
+
+    # Build circle mask first
+    mask = np.zeros((d, d), dtype=np.uint8)
+    cv2.circle(mask, (radius, radius), int(radius - 1), 255, thickness=-1, lineType=cv2.LINE_AA)
+
+    # Fill well interior with well_fill_bgr
+    tile[mask > 0] = np.array(well_fill_bgr, dtype=np.uint8)
+
     if snip_bgr is not None:
         h, w = snip_bgr.shape[:2]
         if h > 0 and w > 0:
@@ -587,15 +657,18 @@ def _fit_into_circle_tile(
             resized = cv2.resize(snip_bgr, (int(new_w), int(new_h)), interpolation=cv2.INTER_AREA)
             x0 = int((d - new_w) // 2)
             y0 = int((d - new_h) // 2)
-            tile[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+            # Paste snip only within the circle mask
+            snip_mask = mask[y0 : y0 + new_h, x0 : x0 + new_w]
+            tile_region = tile[y0 : y0 + new_h, x0 : x0 + new_w]
+            tile_region[snip_mask > 0] = resized[snip_mask > 0]
 
-    # Clip corners to circle.
-    mask = np.zeros((d, d), dtype=np.uint8)
-    cv2.circle(mask, (radius, radius), int(radius - 1), 255, thickness=-1, lineType=cv2.LINE_AA)
-    tile[mask == 0] = np.array(outside_bgr, dtype=np.uint8)
+    # Faint inner circle for subtle embossed effect
+    if radius > 12:
+        inner_rim_bgr = tuple(max(0, min(255, c + 15)) for c in well_rim_bgr)
+        cv2.circle(tile, (radius, radius), max(1, int(radius - 3)), tuple(map(int, inner_rim_bgr)), thickness=1, lineType=cv2.LINE_AA)
 
     # Well rim
-    cv2.circle(tile, (radius, radius), int(radius - 1), tuple(map(int, well_rim_bgr)), thickness=2, lineType=cv2.LINE_AA)
+    cv2.circle(tile, (radius, radius), int(radius - 1), tuple(map(int, well_rim_bgr)), thickness=int(well_rim_thickness), lineType=cv2.LINE_AA)
 
     if show_label and label:
         _put_text_with_outline_colors(
@@ -651,22 +724,29 @@ def main() -> None:
 
     theme = str(args.theme)
     if theme == "dark":
-        canvas_bg_bgr = (0, 0, 0)
-        tile_outside_bgr = (0, 0, 0)
-        plate_border_bgr = (255, 255, 255)
-        label_fg_bgr = (255, 255, 255)
-        label_outline_bgr = (0, 0, 0)
+        canvas_bg_bgr = (8, 8, 10)
+        plate_fill_bgr = (18, 18, 20)
+        plate_shadow_bgr = (20, 20, 22)
+        tile_outside_bgr = (18, 18, 20)
+        plate_border_bgr = (180, 175, 170)
+        label_fg_bgr = (220, 215, 210)
+        label_outline_bgr = (15, 15, 15)
         well_fill_bgr = (0, 0, 0)
-        well_rim_bgr = (125, 125, 125)
+        well_rim_bgr = (90, 85, 80)
+        time_fg_bgr = (225, 228, 230)
+        time_unit_fg_bgr = (180, 175, 170)
     else:
-        canvas_bg_bgr = (255, 255, 255)
-        # Keep the plate interior dark in light theme for contrast (matches "rest is black" request).
-        tile_outside_bgr = (0, 0, 0)
-        plate_border_bgr = (0, 0, 0)
-        label_fg_bgr = (0, 0, 0)
-        label_outline_bgr = (255, 255, 255)
-        well_fill_bgr = (255, 255, 255)
-        well_rim_bgr = (170, 170, 170)
+        canvas_bg_bgr = (245, 245, 248)
+        plate_fill_bgr = (235, 235, 238)
+        plate_shadow_bgr = (210, 210, 215)
+        tile_outside_bgr = (235, 235, 238)
+        plate_border_bgr = (80, 80, 85)
+        label_fg_bgr = (40, 40, 45)
+        label_outline_bgr = (240, 240, 245)
+        well_fill_bgr = (0, 0, 0)
+        well_rim_bgr = (170, 170, 175)
+        time_fg_bgr = (30, 30, 35)
+        time_unit_fg_bgr = (100, 100, 105)
 
     if args.embryo_metadata_csv:
         embryo_csv = Path(args.embryo_metadata_csv)
@@ -703,6 +783,7 @@ def main() -> None:
         height=int(height),
         margin_px=int(margin_px),
         header_px=int(header_px),
+        bottom_px=int(margin_px),
         yx1_coords=yx1_coords,
     )
     radius = _estimate_radius_px(centers, override=args.well_radius_px)
@@ -731,7 +812,7 @@ def main() -> None:
     if args.out_mp4:
         out_mp4 = Path(args.out_mp4)
     else:
-        out_mp4 = Path(__file__).resolve().parent / "figures" / f"{exp}_plate_timelapse_1080p.mp4"
+        out_mp4 = Path(__file__).resolve().parent / "figures" / "plate_timelapse" / f"{exp}_plate_timelapse_1080p.mp4"
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -742,29 +823,68 @@ def main() -> None:
     wells_to_draw = wells_list if wells_list is not None else _all_wells_96()
     ever_loaded = {w: False for w in wells_to_draw}
     bbox_pad = int(round(0.75 * radius))
+    well_rim_thickness = max(1, int(args.well_rim_thickness))
 
-    # Ensure row/col labels sit outside the plate border by shifting the whole plate
-    # if it would otherwise get clamped against the canvas edge.
-    row_label_gap = int(round(1.10 * radius))
-    col_label_gap = int(round(1.05 * radius))
+    # -- Font choice: DUPLEX for all labels --
+    label_font = cv2.FONT_HERSHEY_DUPLEX
+    axis_font_scale = max(1.1, radius / 35.0)
+    border_thickness = max(2, int(round(radius / 22.0)))
+    plate_corner_radius = int(args.plate_corner_radius) if args.plate_corner_radius is not None else max(4, radius // 2)
+
+    # -- True centering: compute total content bbox, center on canvas --
+    # Measure row label width (widest letter)
+    row_label_widths = []
+    for row in "ABCDEFGH":
+        (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
+        row_label_widths.append(tw)
+    max_row_label_w = max(row_label_widths) if row_label_widths else 0
+    row_label_gutter = (max_row_label_w + int(round(0.6 * radius))) if args.label_rows_cols else 0
+
+    # Measure column label height
+    (col_tw, col_th), _ = cv2.getTextSize("12", label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
+    col_label_gutter = (col_th + int(round(0.5 * radius))) if args.label_rows_cols else 0
+
+    # Time label zone height (reserved at very top of canvas)
+    time_zone_h = int(round(0.45 * header_px)) if args.show_hpf else 0
+
+    # Get current plate bbox (before centering)
     plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, wells_to_draw, radius=radius, pad=bbox_pad)
-    desired_x0 = 20 + (row_label_gap if args.label_rows_cols else 0)
-    desired_y0 = int(header_px) + 20
-    shift_x = max(0, int(desired_x0 - plate_x0))
-    shift_y = max(0, int(desired_y0 - plate_y0))
+    plate_w = plate_x1 - plate_x0
+    plate_h = plate_y1 - plate_y0
+
+    # Total content box: row_label_gutter + plate + some right padding
+    total_content_w = row_label_gutter + plate_w
+    total_content_h = time_zone_h + col_label_gutter + plate_h
+
+    # Target position: center content on canvas with symmetric margins
+    canvas_margin = 20
+    content_x0 = max(canvas_margin, (width - total_content_w) // 2)
+    content_y0 = max(canvas_margin, (height - total_content_h) // 2)
+    # Guard: ensure bottom of plate doesn't exceed canvas
+    plate_bottom = content_y0 + time_zone_h + col_label_gutter + plate_h
+    if plate_bottom > height - canvas_margin:
+        content_y0 = max(canvas_margin, content_y0 - (plate_bottom - (height - canvas_margin)))
+
+    # The plate's top-left should be at:
+    target_plate_x0 = content_x0 + row_label_gutter
+    target_plate_y0 = content_y0 + time_zone_h + col_label_gutter
+
+    shift_x = int(target_plate_x0 - plate_x0)
+    shift_y = int(target_plate_y0 - plate_y0)
     if shift_x or shift_y:
         for w in list(centers.keys()):
             x, y = centers[w]
             centers[w] = (int(x + shift_x), int(y + shift_y))
         plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, wells_to_draw, radius=radius, pad=bbox_pad)
 
-    # Row/col label anchor positions
+    # Row/col label anchor positions (precise placement with getTextSize)
     row_y = {row: centers[f"{row}01"][1] for row in "ABCDEFGH"}
     col_x = {col: centers[f"A{col:02d}"][0] for col in range(1, 13)}
-    row_label_x = int(max(0, plate_x0 - row_label_gap))
-    col_label_y = int(max(0, plate_y0 - col_label_gap))
-    axis_font_scale = max(0.6, radius / 65.0)
-    border_thickness = max(2, int(round(radius / 22.0)))
+
+    # Row labels: right-aligned at a consistent x, vertically centered with well
+    row_label_right_edge = int(plate_x0 - int(round(0.25 * radius)))
+    # Column labels: horizontally centered over well, above plate
+    col_label_baseline_y = int(plate_y0 - int(round(0.25 * radius)))
 
     try:
         for k, t in enumerate(t_out.tolist()):
@@ -776,30 +896,45 @@ def main() -> None:
                 y0 = max(0, plate_y0)
                 x1 = min(int(width) - 1, plate_x1)
                 y1 = min(int(height) - 1, plate_y1)
-                cv2.rectangle(canvas, (x0, y0), (x1, y1), plate_border_bgr, thickness=int(border_thickness), lineType=cv2.LINE_AA)
+                # Drop shadow (offset behind plate)
+                if not args.no_plate_shadow:
+                    _draw_rounded_rect(canvas, (x0 + 4, y0 + 4), (x1 + 4, y1 + 4), plate_shadow_bgr, plate_corner_radius, thickness=-1)
+                # Plate interior fill
+                _draw_rounded_rect(canvas, (x0, y0), (x1, y1), plate_fill_bgr, plate_corner_radius, thickness=-1)
+                # Plate border outline
+                _draw_rounded_rect(canvas, (x0, y0), (x1, y1), plate_border_bgr, plate_corner_radius, thickness=int(border_thickness))
 
             if args.label_rows_cols:
-                # Row labels (A-H) along left
+                # Row labels (A-H) — right-aligned, vertically centered with well
                 for row in "ABCDEFGH":
-                    y = int(row_y[row])
+                    y_center = int(row_y[row])
+                    (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
+                    lx = int(row_label_right_edge - tw)
+                    ly = int(y_center + th // 2)
                     _put_text_with_outline_colors(
                         canvas,
                         row,
-                        (row_label_x, y + int(round(0.35 * radius))),
+                        (lx, ly),
                         font_scale=axis_font_scale,
                         fg_bgr=label_fg_bgr,
                         outline_bgr=label_outline_bgr,
+                        font=label_font,
                     )
-                # Column labels (1-12) along top
+                # Column labels (1-12) — horizontally centered over well
                 for col in range(1, 13):
-                    x = int(col_x[col])
+                    x_center = int(col_x[col])
+                    col_str = str(col)
+                    (tw, th), _ = cv2.getTextSize(col_str, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
+                    lx = int(x_center - tw // 2)
+                    ly = int(col_label_baseline_y)
                     _put_text_with_outline_colors(
                         canvas,
-                        str(col),
-                        (x - int(round(0.22 * radius)), col_label_y),
+                        col_str,
+                        (lx, ly),
                         font_scale=axis_font_scale,
                         fg_bgr=label_fg_bgr,
                         outline_bgr=label_outline_bgr,
+                        font=label_font,
                     )
 
             for well in wells_to_draw:
@@ -816,6 +951,7 @@ def main() -> None:
                         well_rim_bgr=well_rim_bgr,
                         label_fg_bgr=label_fg_bgr,
                         label_outline_bgr=label_outline_bgr,
+                        well_rim_thickness=well_rim_thickness,
                     )
                 else:
                     fi0 = int(fi0_by_well[well][k])
@@ -888,6 +1024,7 @@ def main() -> None:
                         well_rim_bgr=well_rim_bgr,
                         label_fg_bgr=label_fg_bgr,
                         label_outline_bgr=label_outline_bgr,
+                        well_rim_thickness=well_rim_thickness,
                     )
 
                 d = tile.shape[0]
@@ -915,21 +1052,46 @@ def main() -> None:
                     hpf_txt = f"{t:.0f}"
                 else:
                     hpf_txt = f"{t:.{dec}f}"
-                label = f"{hpf_txt} HPF"
-                font_scale = 1.2
+                time_font = cv2.FONT_HERSHEY_DUPLEX
+                digit_scale = 1.5
+                unit_scale = 0.85
+                digit_thickness = max(1, int(round(2.0 * digit_scale)))
+                unit_thickness = max(1, int(round(2.0 * unit_scale)))
+
+                # Measure both parts
+                (dw, dh), _ = cv2.getTextSize(hpf_txt, time_font, float(digit_scale), digit_thickness)
+                (uw, uh), _ = cv2.getTextSize(" HPF", time_font, float(unit_scale), unit_thickness)
+                total_w = dw + uw
+
+                # Position: between canvas top and column labels
+                # time_zone is above col_label_gutter which is above plate
+                time_label_y = int(content_y0 + time_zone_h * 0.7)
+                time_label_y = max(int(dh + 10), time_label_y)
+
                 if str(args.time_label_position) == "top_left":
-                    org = (40, max(40, int(round(0.6 * header_px))))
+                    digit_x = 40
                 else:
-                    # Centered in header band
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), 2)
-                    org = (max(10, int(round(width / 2 - tw / 2))), max(40, int(round(0.6 * header_px))))
+                    digit_x = max(10, int(round(width / 2 - total_w / 2)))
+
+                # Render digits (larger, brighter)
                 _put_text_with_outline_colors(
                     canvas,
-                    label,
-                    org,
-                    font_scale=font_scale,
-                    fg_bgr=label_fg_bgr,
+                    hpf_txt,
+                    (digit_x, time_label_y),
+                    font_scale=digit_scale,
+                    fg_bgr=time_fg_bgr,
                     outline_bgr=label_outline_bgr,
+                    font=time_font,
+                )
+                # Render " HPF" suffix (smaller, dimmer)
+                _put_text_with_outline_colors(
+                    canvas,
+                    " HPF",
+                    (digit_x + dw, time_label_y),
+                    font_scale=unit_scale,
+                    fg_bgr=time_unit_fg_bgr,
+                    outline_bgr=label_outline_bgr,
+                    font=time_font,
                 )
 
             writer.write(canvas)
