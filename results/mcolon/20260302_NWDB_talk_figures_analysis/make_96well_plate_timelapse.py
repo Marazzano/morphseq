@@ -821,6 +821,7 @@ def main() -> None:
         raise RuntimeError(f"Could not open VideoWriter for: {out_mp4}")
 
     wells_to_draw = wells_list if wells_list is not None else _all_wells_96()
+    all_96 = _all_wells_96()  # always use full plate for layout/centering
     ever_loaded = {w: False for w in wells_to_draw}
     bbox_pad = int(round(0.75 * radius))
     well_rim_thickness = max(1, int(args.well_rim_thickness))
@@ -848,7 +849,7 @@ def main() -> None:
     time_zone_h = int(round(0.45 * header_px)) if args.show_hpf else 0
 
     # Get current plate bbox (before centering)
-    plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, wells_to_draw, radius=radius, pad=bbox_pad)
+    plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, all_96, radius=radius, pad=bbox_pad)
     plate_w = plate_x1 - plate_x0
     plate_h = plate_y1 - plate_y0
 
@@ -875,7 +876,7 @@ def main() -> None:
         for w in list(centers.keys()):
             x, y = centers[w]
             centers[w] = (int(x + shift_x), int(y + shift_y))
-        plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, wells_to_draw, radius=radius, pad=bbox_pad)
+        plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, all_96, radius=radius, pad=bbox_pad)
 
     # Row/col label anchor positions (precise placement with getTextSize)
     row_y = {row: centers[f"{row}01"][1] for row in "ABCDEFGH"}
