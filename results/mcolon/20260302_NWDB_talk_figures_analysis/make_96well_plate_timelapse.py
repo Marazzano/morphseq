@@ -88,6 +88,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--width", type=int, default=1920, help="Output video width (px).")
     p.add_argument("--height", type=int, default=1080, help="Output video height (px).")
     p.add_argument("--margin-px", type=int, default=60, help="Canvas margin around the plate (px).")
+    p.add_argument(
+        "--header-px",
+        type=int,
+        default=140,
+        help="Reserve this many pixels at the top for time + row/col labels (prevents overlaying wells).",
+    )
     p.add_argument("--well-radius-px", type=int, default=None, help="Override computed well radius (px).")
     p.add_argument(
         "--draw-plate-border",
@@ -115,6 +121,12 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--fps", type=int, default=20, help="Frames per second.")
     p.add_argument("--n-frames-out", type=int, default=300, help="Number of output frames.")
+    p.add_argument(
+        "--duration-s",
+        type=float,
+        default=None,
+        help="Optional output duration in seconds. If provided, overrides --n-frames-out as round(fps*duration_s).",
+    )
     p.add_argument("--t-min", type=float, default=None, help="Min HPF for playback. Default: start_age_hpf.")
     p.add_argument("--t-max", type=float, default=None, help="Max HPF for playback. Default: robust max over embryos.")
     p.add_argument(
@@ -138,6 +150,18 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--show-hpf", action="store_true", default=True, help="Overlay HPF label.")
     p.add_argument("--hide-hpf", dest="show_hpf", action="store_false", help="Disable HPF label overlay.")
+    p.add_argument(
+        "--time-label-position",
+        choices=["top_left", "top_center"],
+        default="top_center",
+        help="Placement of the time label in the reserved header band.",
+    )
+    p.add_argument(
+        "--time-label-decimals",
+        type=int,
+        default=0,
+        help="Number of decimals to show for HPF in the time label (0 disables sub-hour display).",
+    )
     p.add_argument("--show-well-labels", action="store_true", default=False, help="Overlay well labels in tiles (debug).")
     p.add_argument(
         "--wells",
@@ -198,6 +222,9 @@ def _load_metadata_tracks(
     *,
     wells_subset: Optional[set[str]],
     alive_threshold: float = 0.5,
+    snip_root: Optional[Path] = None,
+    experiment_date: Optional[str] = None,
+    verify_snips: bool = True,
 ) -> tuple[list[EmbryoTrack], dict[str, float], dict[str, tuple[float, int] | None], float, float]:
     """
     Returns:
@@ -215,6 +242,7 @@ def _load_metadata_tracks(
         "predicted_stage_hpf",
         "start_age_hpf",
         "fraction_alive",
+        "dead_flag",
     ]
     cols = [c for c in want if c in header.columns]
     missing_critical = [c for c in ["embryo_id", "well_id", "frame_index", "predicted_stage_hpf"] if c not in cols]
@@ -245,9 +273,15 @@ def _load_metadata_tracks(
     else:
         df["fraction_alive"] = np.nan
 
+    if "dead_flag" in df.columns:
+        df["dead_flag"] = pd.to_numeric(df["dead_flag"], errors="coerce")
+    else:
+        df["dead_flag"] = np.nan
+
     # Choose a single embryo per well:
     # - prefer e01 if present
     # - then maximize survival proxy and coverage
+    # - optionally verify snip existence (avoid selecting embryos with missing JPEGs)
     df["well"] = df["well_id"]
     df["is_e01"] = df["embryo_id"].astype(str).str.endswith("_e01").astype(int)
 
@@ -259,6 +293,7 @@ def _load_metadata_tracks(
             min_hpf=("predicted_stage_hpf", "min"),
             alive_mean=("fraction_alive", "mean"),
             start_age=("start_age_hpf", "median"),
+            min_fi=("frame_index", lambda s: int(pd.to_numeric(s, errors="coerce").min())),
             max_fi=("frame_index", lambda s: int(pd.to_numeric(s, errors="coerce").max())),
         )
         .reset_index()
@@ -272,8 +307,29 @@ def _load_metadata_tracks(
         ["well", "is_e01", "alive_mean", "max_hpf", "n_rows", "max_fi"],
         ascending=[True, False, False, False, False, False],
     )
-    best = per_emb.drop_duplicates(subset=["well"], keep="first").copy()
-    best_by_well = dict(zip(best["well"].tolist(), best["embryo_id"].tolist(), strict=False))
+
+    def snips_ok(well: str, embryo_id: str, min_fi: int, max_fi: int) -> bool:
+        if not verify_snips:
+            return True
+        if snip_root is None or experiment_date is None:
+            return True
+        p0 = _snip_path(snip_root, experiment_date, embryo_id, int(min_fi))
+        p1 = _snip_path(snip_root, experiment_date, embryo_id, int(max_fi))
+        return p0.exists() and p1.exists()
+
+    best_rows = []
+    for well, g in per_emb.groupby("well", sort=False):
+        picked = None
+        for r in g.itertuples(index=False):
+            if snips_ok(str(well), str(r.embryo_id), int(r.min_fi), int(r.max_fi)):
+                picked = r
+                break
+        if picked is None:
+            picked = g.iloc[0]
+        best_rows.append(picked._asdict() if hasattr(picked, "_asdict") else dict(picked))
+
+    best = pd.DataFrame(best_rows)
+    best_by_well = dict(zip(best["well"].astype(str).tolist(), best["embryo_id"].astype(str).tolist(), strict=False))
 
     # Robust t_max: 0.95 quantile of per-embryo max_hpf for selected embryos.
     robust_t_max = float(best["max_hpf"].quantile(0.95))
@@ -310,19 +366,29 @@ def _load_metadata_tracks(
 
         # last alive frame (for freeze/blank at death)
         last_alive_by_well[str(well)] = None
-        if "fraction_alive" in g.columns and g["fraction_alive"].notna().any():
+        # Prefer dead_flag-based death detection if available.
+        # We define "alive" rows as dead_flag==0 when dead_flag has any non-null values for this embryo.
+        use_dead_flag = "dead_flag" in g.columns and g["dead_flag"].notna().any()
+        if use_dead_flag:
+            alive = g[pd.to_numeric(g["dead_flag"], errors="coerce").fillna(0.0) <= 0.5].copy()
+        else:
             alive = g[pd.to_numeric(g["fraction_alive"], errors="coerce") > float(alive_threshold)].copy()
-            if not alive.empty:
-                # Pick the alive row with maximum predicted_stage_hpf; tie-break by max frame_index.
-                alive = alive.sort_values(["predicted_stage_hpf", "frame_index"])
-                last = alive.iloc[-1]
+
+        if not alive.empty:
+            alive = alive.sort_values(["predicted_stage_hpf", "frame_index"])
+            for _, last in alive.iloc[::-1].iterrows():
                 try:
                     lh = float(last["predicted_stage_hpf"])
                     lfi = int(last["frame_index"])
-                    if math.isfinite(lh):
-                        last_alive_by_well[str(well)] = (lh, lfi)
+                    if not math.isfinite(lh):
+                        continue
+                    if verify_snips and snip_root is not None and experiment_date is not None:
+                        if not _snip_path(snip_root, experiment_date, str(embryo_id), int(lfi)).exists():
+                            continue
+                    last_alive_by_well[str(well)] = (lh, lfi)
+                    break
                 except Exception:
-                    last_alive_by_well[str(well)] = None
+                    continue
 
     return tracks, start_age_by_well, last_alive_by_well, default_t_min, robust_t_max
 
@@ -344,6 +410,7 @@ def _compute_centers_px(
     width: int,
     height: int,
     margin_px: int,
+    header_px: int,
     yx1_coords: Optional[pd.DataFrame],
 ) -> dict[str, tuple[int, int]]:
     wells = _all_wells_96()
@@ -351,14 +418,16 @@ def _compute_centers_px(
     w = int(width)
     h = int(height)
     m = int(margin_px)
+    top = max(0, int(header_px))
     if layout == "grid":
         pitch_x = (w - 2 * m) / (12 - 1)
-        pitch_y = (h - 2 * m) / (8 - 1)
+        usable_h = max(1.0, float(h - top - 2 * m))
+        pitch_y = usable_h / (8 - 1)
         for ri, row in enumerate("ABCDEFGH"):
             for ci in range(1, 13):
                 well = f"{row}{ci:02d}"
                 x = int(round(m + (ci - 1) * pitch_x))
-                y = int(round(m + ri * pitch_y))
+                y = int(round(top + m + ri * pitch_y))
                 centers[well] = (x, y)
         return centers
 
@@ -380,11 +449,12 @@ def _compute_centers_px(
     y0, y1 = float(np.min(y_um)), float(np.max(y_um))
     dx = max(1e-9, x1 - x0)
     dy = max(1e-9, y1 - y0)
-    scale = min((w - 2 * m) / dx, (h - 2 * m) / dy)
+    usable_h = max(1.0, float(h - top - 2 * m))
+    scale = min((w - 2 * m) / dx, usable_h / dy)
 
     for well, xu, yu in zip(wells, x_um.tolist(), y_um.tolist(), strict=False):
         x = int(round(m + (float(xu) - x0) * scale))
-        y = int(round(m + (float(yu) - y0) * scale))
+        y = int(round(top + m + (float(yu) - y0) * scale))
         centers[well] = (x, y)
     return centers
 
@@ -496,6 +566,7 @@ def _fit_into_circle_tile(
     radius: int,
     show_label: bool,
     label: str,
+    outside_bgr: tuple[int, int, int],
     well_fill_bgr: tuple[int, int, int],
     well_rim_bgr: tuple[int, int, int],
     label_fg_bgr: tuple[int, int, int],
@@ -505,7 +576,8 @@ def _fit_into_circle_tile(
 
     d = int(2 * radius)
     tile = np.zeros((d, d, 3), dtype=np.uint8)
-    tile[:, :] = np.array(well_fill_bgr, dtype=np.uint8)
+    tile[:, :] = np.array(outside_bgr, dtype=np.uint8)
+    cv2.circle(tile, (radius, radius), int(radius - 1), tuple(map(int, well_fill_bgr)), thickness=-1, lineType=cv2.LINE_AA)
     if snip_bgr is not None:
         h, w = snip_bgr.shape[:2]
         if h > 0 and w > 0:
@@ -520,7 +592,7 @@ def _fit_into_circle_tile(
     # Clip corners to circle.
     mask = np.zeros((d, d), dtype=np.uint8)
     cv2.circle(mask, (radius, radius), int(radius - 1), 255, thickness=-1, lineType=cv2.LINE_AA)
-    tile[mask == 0] = 0
+    tile[mask == 0] = np.array(outside_bgr, dtype=np.uint8)
 
     # Well rim
     cv2.circle(tile, (radius, radius), int(radius - 1), tuple(map(int, well_rim_bgr)), thickness=2, lineType=cv2.LINE_AA)
@@ -566,7 +638,10 @@ def main() -> None:
     height = _ensure_even(int(args.height))
     fps = int(args.fps)
     n_frames_out = int(args.n_frames_out)
+    if args.duration_s is not None:
+        n_frames_out = max(2, int(round(float(args.duration_s) * float(fps))))
     margin_px = int(args.margin_px)
+    header_px = int(args.header_px)
 
     wells_list = _parse_wells_arg(args.wells)
     wells_subset = set(wells_list) if wells_list is not None else None
@@ -577,6 +652,7 @@ def main() -> None:
     theme = str(args.theme)
     if theme == "dark":
         canvas_bg_bgr = (0, 0, 0)
+        tile_outside_bgr = (0, 0, 0)
         plate_border_bgr = (255, 255, 255)
         label_fg_bgr = (255, 255, 255)
         label_outline_bgr = (0, 0, 0)
@@ -584,6 +660,8 @@ def main() -> None:
         well_rim_bgr = (125, 125, 125)
     else:
         canvas_bg_bgr = (255, 255, 255)
+        # Keep the plate interior dark in light theme for contrast (matches "rest is black" request).
+        tile_outside_bgr = (0, 0, 0)
         plate_border_bgr = (0, 0, 0)
         label_fg_bgr = (0, 0, 0)
         label_outline_bgr = (255, 255, 255)
@@ -601,6 +679,9 @@ def main() -> None:
         embryo_csv,
         wells_subset=wells_subset,
         alive_threshold=float(args.alive_threshold),
+        snip_root=snip_root,
+        experiment_date=exp,
+        verify_snips=True,
     )
     if not tracks:
         raise RuntimeError("No embryo tracks selected.")
@@ -621,6 +702,7 @@ def main() -> None:
         width=int(width),
         height=int(height),
         margin_px=int(margin_px),
+        header_px=int(header_px),
         yx1_coords=yx1_coords,
     )
     radius = _estimate_radius_px(centers, override=args.well_radius_px)
@@ -658,15 +740,29 @@ def main() -> None:
         raise RuntimeError(f"Could not open VideoWriter for: {out_mp4}")
 
     wells_to_draw = wells_list if wells_list is not None else _all_wells_96()
+    ever_loaded = {w: False for w in wells_to_draw}
     bbox_pad = int(round(0.75 * radius))
+
+    # Ensure row/col labels sit outside the plate border by shifting the whole plate
+    # if it would otherwise get clamped against the canvas edge.
+    row_label_gap = int(round(1.10 * radius))
+    col_label_gap = int(round(1.05 * radius))
     plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, wells_to_draw, radius=radius, pad=bbox_pad)
+    desired_x0 = 20 + (row_label_gap if args.label_rows_cols else 0)
+    desired_y0 = int(header_px) + 20
+    shift_x = max(0, int(desired_x0 - plate_x0))
+    shift_y = max(0, int(desired_y0 - plate_y0))
+    if shift_x or shift_y:
+        for w in list(centers.keys()):
+            x, y = centers[w]
+            centers[w] = (int(x + shift_x), int(y + shift_y))
+        plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, wells_to_draw, radius=radius, pad=bbox_pad)
+
     # Row/col label anchor positions
     row_y = {row: centers[f"{row}01"][1] for row in "ABCDEFGH"}
     col_x = {col: centers[f"A{col:02d}"][0] for col in range(1, 13)}
-    row_label_x = int(plate_x0 + int(round(0.35 * radius)))
-    col_label_y = int(plate_y0 + int(round(0.65 * radius)))
-    row_label_margin = int(round(0.55 * radius))
-    col_label_margin = int(round(0.35 * radius))
+    row_label_x = int(max(0, plate_x0 - row_label_gap))
+    col_label_y = int(max(0, plate_y0 - col_label_gap))
     axis_font_scale = max(0.6, radius / 65.0)
     border_thickness = max(2, int(round(radius / 22.0)))
 
@@ -689,7 +785,7 @@ def main() -> None:
                     _put_text_with_outline_colors(
                         canvas,
                         row,
-                        (max(8, plate_x0 - row_label_margin), y + int(round(0.35 * radius))),
+                        (row_label_x, y + int(round(0.35 * radius))),
                         font_scale=axis_font_scale,
                         fg_bgr=label_fg_bgr,
                         outline_bgr=label_outline_bgr,
@@ -700,7 +796,7 @@ def main() -> None:
                     _put_text_with_outline_colors(
                         canvas,
                         str(col),
-                        (x - int(round(0.22 * radius)), max(20, plate_y0 - col_label_margin)),
+                        (x - int(round(0.22 * radius)), col_label_y),
                         font_scale=axis_font_scale,
                         fg_bgr=label_fg_bgr,
                         outline_bgr=label_outline_bgr,
@@ -715,6 +811,7 @@ def main() -> None:
                         radius=radius,
                         show_label=bool(args.show_well_labels),
                         label=str(well),
+                        outside_bgr=tile_outside_bgr,
                         well_fill_bgr=well_fill_bgr,
                         well_rim_bgr=well_rim_bgr,
                         label_fg_bgr=label_fg_bgr,
@@ -734,6 +831,8 @@ def main() -> None:
                             return fc.img1
                         p = _snip_path(snip_root, exp, tr.embryo_id, int(fi))
                         img = _read_snp(p)
+                        if img is not None:
+                            ever_loaded[well] = True
                         # Keep a tiny 2-slot cache, updating the older slot.
                         if fc.fi0 is None or fc.fi0 == fi or (fc.fi1 is not None and fc.fi0 == fc.fi1):
                             fc.fi0, fc.img0 = int(fi), img
@@ -784,6 +883,7 @@ def main() -> None:
                         radius=radius,
                         show_label=bool(args.show_well_labels),
                         label=str(well),
+                        outside_bgr=tile_outside_bgr,
                         well_fill_bgr=well_fill_bgr,
                         well_rim_bgr=well_rim_bgr,
                         label_fg_bgr=label_fg_bgr,
@@ -810,12 +910,24 @@ def main() -> None:
                 canvas[cy0:cy1, cx0:cx1] = tile[ty0:ty1, tx0:tx1]
 
             if args.show_hpf:
-                label = f"{exp}   {t:.1f} HPF"
+                dec = max(0, int(args.time_label_decimals))
+                if dec == 0:
+                    hpf_txt = f"{t:.0f}"
+                else:
+                    hpf_txt = f"{t:.{dec}f}"
+                label = f"{hpf_txt} HPF"
+                font_scale = 1.2
+                if str(args.time_label_position) == "top_left":
+                    org = (40, max(40, int(round(0.6 * header_px))))
+                else:
+                    # Centered in header band
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, float(font_scale), 2)
+                    org = (max(10, int(round(width / 2 - tw / 2))), max(40, int(round(0.6 * header_px))))
                 _put_text_with_outline_colors(
                     canvas,
                     label,
-                    (40, 60),
-                    font_scale=1.2,
+                    org,
+                    font_scale=font_scale,
                     fg_bgr=label_fg_bgr,
                     outline_bgr=label_outline_bgr,
                 )
@@ -828,6 +940,11 @@ def main() -> None:
         writer.release()
 
     print(f"Wrote: {out_mp4}")
+    never = [w for w, ok in ever_loaded.items() if not ok]
+    if never:
+        never_s = ",".join(never[:24])
+        extra = f" (+{len(never)-24} more)" if len(never) > 24 else ""
+        print(f"WARNING: {len(never)} wells never loaded any snip JPEG: {never_s}{extra}")
 
 
 if __name__ == "__main__":
