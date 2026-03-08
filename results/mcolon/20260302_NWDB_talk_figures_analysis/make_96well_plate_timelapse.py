@@ -92,7 +92,7 @@ def _parse_args() -> argparse.Namespace:
         "--header-px",
         type=int,
         default=140,
-        help="Reserve this many pixels at the top for time + row/col labels (prevents overlaying wells).",
+        help="(Legacy, ignored by new layout solver.) Reserve pixels at the top.",
     )
     p.add_argument("--well-radius-px", type=int, default=None, help="Override computed well radius (px).")
     p.add_argument(
@@ -190,6 +190,17 @@ def _parse_args() -> argparse.Namespace:
         "--out-mp4",
         default=None,
         help="Output MP4 path. Default: results/.../figures/{experiment}_plate_timelapse_1080p.mp4",
+    )
+    p.add_argument(
+        "--debug-layout",
+        action="store_true",
+        default=False,
+        help="Draw debug overlay: usable zone (cyan), plate bbox (yellow), label bboxes (green), well footprints (red).",
+    )
+    p.add_argument(
+        "--single-frame-png",
+        default=None,
+        help="If set, render a single frame at t_min to this PNG path (for layout verification) and exit.",
     )
     return p.parse_args()
 
@@ -425,29 +436,28 @@ def _load_yx1_coords(yx1_csv: Path) -> pd.DataFrame:
 def _compute_centers_px(
     *,
     layout: str,
-    width: int,
-    height: int,
-    margin_px: int,
-    header_px: int,
-    bottom_px: int = 0,
-    yx1_coords: Optional[pd.DataFrame],
+    center_x_range: tuple[int, int],
+    center_y_range: tuple[int, int],
+    yx1_coords: Optional[pd.DataFrame] = None,
 ) -> dict[str, tuple[int, int]]:
+    """Place 96 well centers within the given pixel ranges.
+
+    center_x_range: (min_cx, max_cx) — leftmost and rightmost well center x.
+    center_y_range: (min_cy, max_cy) — topmost and bottommost well center y.
+    """
     wells = _all_wells_96()
     centers: dict[str, tuple[int, int]] = {}
-    w = int(width)
-    h = int(height)
-    m = int(margin_px)
-    top = max(0, int(header_px))
-    bot = max(0, int(bottom_px))
+    cx_min, cx_max = int(center_x_range[0]), int(center_x_range[1])
+    cy_min, cy_max = int(center_y_range[0]), int(center_y_range[1])
+
     if layout == "grid":
-        pitch_x = (w - 2 * m) / (12 - 1)
-        usable_h = max(1.0, float(h - top - bot - 2 * m))
-        pitch_y = usable_h / (8 - 1)
+        pitch_x = (cx_max - cx_min) / 11.0 if cx_max > cx_min else 1.0
+        pitch_y = (cy_max - cy_min) / 7.0 if cy_max > cy_min else 1.0
         for ri, row in enumerate("ABCDEFGH"):
             for ci in range(1, 13):
                 well = f"{row}{ci:02d}"
-                x = int(round(m + (ci - 1) * pitch_x))
-                y = int(round(top + m + ri * pitch_y))
+                x = int(round(cx_min + (ci - 1) * pitch_x))
+                y = int(round(cy_min + ri * pitch_y))
                 centers[well] = (x, y)
         return centers
 
@@ -465,16 +475,23 @@ def _compute_centers_px(
     x_um = (-coords.loc[wells, "x_um"].to_numpy(dtype=float)).astype(float)
     y_um = (coords.loc[wells, "y_um"].to_numpy(dtype=float)).astype(float)
 
-    x0, x1 = float(np.min(x_um)), float(np.max(x_um))
-    y0, y1 = float(np.min(y_um)), float(np.max(y_um))
-    dx = max(1e-9, x1 - x0)
-    dy = max(1e-9, y1 - y0)
-    usable_h = max(1.0, float(h - top - bot - 2 * m))
-    scale = min((w - 2 * m) / dx, usable_h / dy)
+    x0_um, x1_um = float(np.min(x_um)), float(np.max(x_um))
+    y0_um, y1_um = float(np.min(y_um)), float(np.max(y_um))
+    dx_um = max(1e-9, x1_um - x0_um)
+    dy_um = max(1e-9, y1_um - y0_um)
+    avail_x = max(1, cx_max - cx_min)
+    avail_y = max(1, cy_max - cy_min)
+    scale = min(avail_x / dx_um, avail_y / dy_um)
+
+    # Center the layout within the available range
+    used_x = dx_um * scale
+    used_y = dy_um * scale
+    offset_x = cx_min + (avail_x - used_x) / 2.0
+    offset_y = cy_min + (avail_y - used_y) / 2.0
 
     for well, xu, yu in zip(wells, x_um.tolist(), y_um.tolist(), strict=False):
-        x = int(round(m + (float(xu) - x0) * scale))
-        y = int(round(top + m + (float(yu) - y0) * scale))
+        x = int(round(offset_x + (float(xu) - x0_um) * scale))
+        y = int(round(offset_y + (float(yu) - y0_um) * scale))
         centers[well] = (x, y)
     return centers
 
@@ -773,79 +790,105 @@ def main() -> None:
 
     t_out = np.linspace(t_min, t_max, num=int(n_frames_out), dtype=float)
 
-    # Layout — two-pass: first pass gets radius for label sizing, second pass
-    # uses the actual top/bottom reservation so wells never clip at any resolution.
+    # ── Declarative measure-then-solve layout ──
+    # Font sizes are determined from canvas height (input), breaking the
+    # feedback loop.  Everything is measured, then the usable center range
+    # is solved, wells are placed, and finally validated.
+
     yx1_coords = None
     if args.layout == "yx1_um":
         yx1_coords = _load_yx1_coords(Path(args.yx1_coords_csv))
 
     label_font = cv2.FONT_HERSHEY_DUPLEX
 
-    # Pass 1: preliminary layout to determine radius and label dimensions
+    # Step 1: Font sizes from canvas dimensions — deterministic, no feedback loop
+    axis_font_scale = max(1.1, height / 850.0)
+    axis_font_scale = min(axis_font_scale, 4.0)
+    time_digit_scale = 1.5 * (axis_font_scale / 1.1)
+    time_unit_scale = 0.85 * (axis_font_scale / 1.1)
+
+    # Step 2: Measure all text extents with the actual font backend
+    label_thickness = max(1, int(round(2.0 * axis_font_scale)))
+    gap = int(round(8 * axis_font_scale))  # gap between labels and plate edge
+
+    # Row labels (A-H) — measure widest
+    row_label_widths = []
+    row_label_height = 0
+    for row in "ABCDEFGH":
+        (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), label_thickness)
+        row_label_widths.append(tw)
+        row_label_height = max(row_label_height, th)
+    max_row_label_w = max(row_label_widths) if row_label_widths else 0
+    row_label_gutter = (max_row_label_w + gap) if args.label_rows_cols else 0
+
+    # Column labels (1-12) — measure tallest
+    col_label_widths = {}
+    col_label_height = 0
+    for col in range(1, 13):
+        (tw, th), _ = cv2.getTextSize(str(col), label_font, float(axis_font_scale), label_thickness)
+        col_label_widths[col] = tw
+        col_label_height = max(col_label_height, th)
+    col_label_gutter = (col_label_height + gap) if args.label_rows_cols else 0
+
+    # Time label zone
+    time_digit_thickness = max(1, int(round(2.0 * time_digit_scale)))
+    time_unit_thickness = max(1, int(round(2.0 * time_unit_scale)))
+    if args.show_hpf:
+        (tdw, tdh), _ = cv2.getTextSize("48", cv2.FONT_HERSHEY_DUPLEX, float(time_digit_scale), time_digit_thickness)
+        (tuw, tuh), _ = cv2.getTextSize(" HPF", cv2.FONT_HERSHEY_DUPLEX, float(time_unit_scale), time_unit_thickness)
+        time_text_h = max(tdh, tuh)
+        time_zone_h = time_text_h + gap
+    else:
+        tdw = tdh = tuw = tuh = time_text_h = 0
+        time_zone_h = 0
+
+    # Step 3: Preliminary layout to estimate radius, then compute exact reservations
+    # Use generous initial bounds to get a radius estimate
+    prelim_cx = (row_label_gutter + margin_px, width - margin_px)
+    prelim_cy = (time_zone_h + col_label_gutter + margin_px, height - margin_px)
     centers_prelim = _compute_centers_px(
         layout=str(args.layout),
-        width=int(width),
-        height=int(height),
-        margin_px=int(margin_px),
-        header_px=int(header_px),
-        bottom_px=int(margin_px),
+        center_x_range=prelim_cx,
+        center_y_range=prelim_cy,
         yx1_coords=yx1_coords,
     )
     radius = _estimate_radius_px(centers_prelim, override=args.well_radius_px)
+    bbox_pad = int(round(0.75 * radius))
+    border_thickness = max(2, int(round(radius / 22.0)))
+    eps = 4  # safety margin in pixels
+    well_footprint = radius + bbox_pad + border_thickness // 2 + eps
 
-    axis_font_scale = max(1.1, radius / 35.0)
+    # Step 4: Compute required outer reservations (from canvas edge to well center)
+    top_reserve = time_zone_h + col_label_gutter + well_footprint
+    bottom_reserve = well_footprint
+    left_reserve = row_label_gutter + well_footprint
+    right_reserve = well_footprint
 
-    # Measure row label width (widest letter)
-    row_label_widths = []
-    for row in "ABCDEFGH":
-        (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
-        row_label_widths.append(tw)
-    max_row_label_w = max(row_label_widths) if row_label_widths else 0
-    row_label_gutter = (max_row_label_w + int(round(0.6 * radius))) if args.label_rows_cols else 0
+    # Usable rect for well centers
+    cx_min = int(round(left_reserve))
+    cx_max = int(round(width - right_reserve))
+    cy_min = int(round(top_reserve))
+    cy_max = int(round(height - bottom_reserve))
 
-    # Measure column label height
-    (col_tw, col_th), _ = cv2.getTextSize("12", label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
-    col_label_gutter = (col_th + int(round(0.5 * radius))) if args.label_rows_cols else 0
-
-    # Time label font scales with axis_font_scale (base digit_scale=1.5 at afs=1.1)
-    time_digit_scale = 1.5 * (axis_font_scale / 1.1)
-    time_unit_scale = 0.85 * (axis_font_scale / 1.1)
-
-    # Time label zone height: measure actual text height + padding
-    if args.show_hpf:
-        time_digit_thickness = max(1, int(round(2.0 * time_digit_scale)))
-        (_, tdh), _ = cv2.getTextSize("48", cv2.FONT_HERSHEY_DUPLEX, float(time_digit_scale), time_digit_thickness)
-        time_zone_h = tdh + int(round(0.4 * radius))
-    else:
-        time_zone_h = 0
-
-    # Pass 2+: recompute layout, converging so well circles fit within canvas.
-    # _compute_centers_px places well *centers* inset by margin_px from the usable
-    # zone edges, but the visible well circle extends radius+bbox_pad beyond the
-    # center. We iterate until the inset is large enough.
-    well_inset = margin_px  # initial guess
-    for _layout_iter in range(5):
-        actual_top = time_zone_h + col_label_gutter + well_inset
-        centers = _compute_centers_px(
-            layout=str(args.layout),
-            width=int(width),
-            height=int(height),
-            margin_px=int(well_inset),
-            header_px=int(actual_top),
-            bottom_px=int(well_inset),
-            yx1_coords=yx1_coords,
+    if cx_max <= cx_min or cy_max <= cy_min:
+        raise RuntimeError(
+            f"Canvas {width}x{height} too small for layout. "
+            f"Need cx=[{cx_min},{cx_max}], cy=[{cy_min},{cy_max}]"
         )
-        radius = _estimate_radius_px(centers, override=args.well_radius_px)
-        bbox_pad = int(round(0.75 * radius))
-        needed_inset = radius + bbox_pad + 4  # 4px safety
-        if needed_inset <= well_inset:
-            break
-        well_inset = needed_inset
-    # Recompute font scale with final radius
-    axis_font_scale = max(1.1, radius / 35.0)
-    # Recompute time label scales with final font scale
-    time_digit_scale = 1.5 * (axis_font_scale / 1.1)
-    time_unit_scale = 0.85 * (axis_font_scale / 1.1)
+
+    # Step 5: Place wells and recompute radius from final centers
+    centers = _compute_centers_px(
+        layout=str(args.layout),
+        center_x_range=(cx_min, cx_max),
+        center_y_range=(cy_min, cy_max),
+        yx1_coords=yx1_coords,
+    )
+    radius = _estimate_radius_px(centers, override=args.well_radius_px)
+    bbox_pad = int(round(0.75 * radius))
+
+    # Snap all well centers to integer pixels
+    for w in list(centers.keys()):
+        centers[w] = (int(round(centers[w][0])), int(round(centers[w][1])))
 
     # Track lookup per well
     track_by_well: dict[str, EmbryoTrack] = {t.well: t for t in tracks}
@@ -867,263 +910,342 @@ def main() -> None:
         fi1_by_well[w] = fi1
         alpha_by_well[w] = alpha
 
-    # Output path
+    # Output path (used for MP4 mode; single-frame PNG uses --single-frame-png)
     if args.out_mp4:
         out_mp4 = Path(args.out_mp4)
     else:
         out_mp4 = Path(__file__).resolve().parent / "figures" / "plate_timelapse" / f"{exp}_plate_timelapse_1080p.mp4"
     out_mp4.parent.mkdir(parents=True, exist_ok=True)
 
+    wells_to_draw = wells_list if wells_list is not None else _all_wells_96()
+    all_96 = _all_wells_96()  # always use full plate for layout/centering
+    ever_loaded = {w: False for w in wells_to_draw}
+    well_rim_thickness = max(1, int(args.well_rim_thickness))
+
+    plate_corner_radius = int(args.plate_corner_radius) if args.plate_corner_radius is not None else max(4, radius // 2)
+
+    # Step 6: Compute label anchors from plate bbox
+    plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, all_96, radius=radius, pad=bbox_pad)
+
+    # Row labels: right-aligned just left of plate bbox
+    row_y = {row: centers[f"{row}01"][1] for row in "ABCDEFGH"}
+    col_x = {col: centers[f"A{col:02d}"][0] for col in range(1, 13)}
+    row_label_right_edge = int(plate_x0 - gap // 2)
+    # Column labels: baseline just above plate bbox
+    col_label_baseline_y = int(plate_y0 - gap // 2)
+
+    # Pre-compute snapped label positions for validation and drawing
+    # Row label bboxes: (x0, y0, x1, y1) in canvas coords
+    row_label_bboxes: dict[str, tuple[int, int, int, int]] = {}
+    for row in "ABCDEFGH":
+        (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), label_thickness)
+        lx = int(row_label_right_edge - tw)
+        ly = int(row_y[row] + th // 2)
+        # cv2 text origin is bottom-left; bbox is (left, top, right, bottom)
+        row_label_bboxes[row] = (lx, ly - th, lx + tw, ly)
+
+    # Column label bboxes
+    col_label_bboxes: dict[int, tuple[int, int, int, int]] = {}
+    for col in range(1, 13):
+        col_str = str(col)
+        (tw, th), _ = cv2.getTextSize(col_str, label_font, float(axis_font_scale), label_thickness)
+        lx = int(col_x[col] - tw // 2)
+        ly = int(col_label_baseline_y)
+        col_label_bboxes[col] = (lx, ly - th, lx + tw, ly)
+
+    # Time label bbox (use widest possible text "48 HPF")
+    time_label_bbox: tuple[int, int, int, int] = (0, 0, 0, 0)
+    if args.show_hpf:
+        total_time_w = tdw + tuw
+        time_zone_top = plate_y0 - col_label_gutter - time_zone_h
+        time_label_y = int(time_zone_top + time_zone_h * 0.7)
+        time_label_y = max(int(time_text_h + eps), time_label_y)
+        # Snap to int
+        time_label_y = int(round(time_label_y))
+
+        if str(args.time_label_position) == "top_left":
+            digit_x_base = 40
+        else:
+            plate_cx = (plate_x0 + plate_x1) // 2
+            digit_x_base = int(round(plate_cx - total_time_w / 2))
+            digit_x_base = max(eps, digit_x_base)
+        digit_x_base = int(round(digit_x_base))
+        time_label_bbox = (digit_x_base, time_label_y - time_text_h, digit_x_base + total_time_w, time_label_y)
+
+    # Step 7: Validation assertions
+    outer_r = radius + bbox_pad
+    # Every well circle inside canvas
+    for w in all_96:
+        cx_w, cy_w = centers[w]
+        assert cy_w + outer_r + eps <= height, (
+            f"Well {w} clips bottom: center_y={cy_w} + outer_r={outer_r} + eps={eps} = {cy_w + outer_r + eps} > height={height}"
+        )
+        assert cy_w - outer_r - eps >= 0, (
+            f"Well {w} clips top: center_y={cy_w} - outer_r={outer_r} - eps={eps} = {cy_w - outer_r - eps} < 0"
+        )
+        assert cx_w + outer_r + eps <= width, (
+            f"Well {w} clips right: center_x={cx_w} + outer_r={outer_r} + eps={eps} = {cx_w + outer_r + eps} > width={width}"
+        )
+        assert cx_w - outer_r - eps >= 0, (
+            f"Well {w} clips left: center_x={cx_w} - outer_r={outer_r} - eps={eps} = {cx_w - outer_r - eps} < 0"
+        )
+    # Plate bbox inside canvas
+    assert plate_y1 <= height - eps, f"Plate bottom {plate_y1} exceeds canvas {height}"
+    assert plate_x1 <= width - eps, f"Plate right {plate_x1} exceeds canvas {width}"
+    assert plate_y0 >= eps, f"Plate top {plate_y0} < eps={eps}"
+    assert plate_x0 >= eps, f"Plate left {plate_x0} < eps={eps}"
+
+    # Label bboxes inside canvas
+    if args.label_rows_cols:
+        for row, bb in row_label_bboxes.items():
+            assert bb[0] >= 0, f"Row label {row} clips left: x0={bb[0]}"
+            assert bb[2] <= width, f"Row label {row} clips right: x1={bb[2]}"
+            assert bb[1] >= 0, f"Row label {row} clips top: y0={bb[1]}"
+            assert bb[3] <= height, f"Row label {row} clips bottom: y1={bb[3]}"
+        for col, bb in col_label_bboxes.items():
+            assert bb[0] >= 0, f"Col label {col} clips left: x0={bb[0]}"
+            assert bb[2] <= width, f"Col label {col} clips right: x1={bb[2]}"
+            assert bb[1] >= 0, f"Col label {col} clips top: y0={bb[1]}"
+            assert bb[3] <= height, f"Col label {col} clips bottom: y1={bb[3]}"
+    if args.show_hpf:
+        tb = time_label_bbox
+        assert tb[0] >= 0, f"Time label clips left: x0={tb[0]}"
+        assert tb[2] <= width, f"Time label clips right: x1={tb[2]}"
+        assert tb[1] >= 0, f"Time label clips top: y0={tb[1]}"
+        assert tb[3] <= height, f"Time label clips bottom: y1={tb[3]}"
+        # No overlap between time label and any column label
+        if args.label_rows_cols:
+            for col, cb in col_label_bboxes.items():
+                overlap = (
+                    tb[0] < cb[2] and tb[2] > cb[0] and  # x overlap
+                    tb[1] < cb[3] and tb[3] > cb[1]       # y overlap
+                )
+                assert not overlap, (
+                    f"Time label bbox {tb} overlaps column {col} label bbox {cb}"
+                )
+
+    print(
+        f"Layout: {width}x{height}, radius={radius}, bbox_pad={bbox_pad}, "
+        f"plate=[{plate_x0},{plate_y0}]-[{plate_x1},{plate_y1}], "
+        f"font_scale={axis_font_scale:.2f}, time_digit_scale={time_digit_scale:.2f}"
+    )
+
+    def _render_frame(canvas: np.ndarray, k: int, t: float) -> None:
+        """Render one complete frame onto *canvas* (mutated in-place)."""
+        canvas[:, :] = np.array(canvas_bg_bgr, dtype=np.uint8)
+
+        if args.draw_plate_border:
+            bx0, by0, bx1, by1 = plate_x0, plate_y0, plate_x1, plate_y1
+            # Drop shadow (offset behind plate)
+            if not args.no_plate_shadow:
+                _draw_rounded_rect(canvas, (bx0 + 4, by0 + 4), (bx1 + 4, by1 + 4), plate_shadow_bgr, plate_corner_radius, thickness=-1)
+            # Plate interior fill
+            _draw_rounded_rect(canvas, (bx0, by0), (bx1, by1), plate_fill_bgr, plate_corner_radius, thickness=-1)
+            # Plate border outline
+            _draw_rounded_rect(canvas, (bx0, by0), (bx1, by1), plate_border_bgr, plate_corner_radius, thickness=int(border_thickness))
+
+        if args.label_rows_cols:
+            for row in "ABCDEFGH":
+                bb = row_label_bboxes[row]
+                lx, ly = bb[0], bb[3]  # bottom-left origin for cv2
+                _put_text_with_outline_colors(
+                    canvas, row, (lx, ly),
+                    font_scale=axis_font_scale,
+                    fg_bgr=label_fg_bgr,
+                    outline_bgr=label_outline_bgr,
+                    font=label_font,
+                )
+            for col in range(1, 13):
+                bb = col_label_bboxes[col]
+                lx, ly = bb[0], bb[3]
+                _put_text_with_outline_colors(
+                    canvas, str(col), (lx, ly),
+                    font_scale=axis_font_scale,
+                    fg_bgr=label_fg_bgr,
+                    outline_bgr=label_outline_bgr,
+                    font=label_font,
+                )
+
+        for well in wells_to_draw:
+            cx_w, cy_w = centers[well]
+            tr = track_by_well.get(well)
+            if tr is None:
+                tile = _fit_into_circle_tile(
+                    None,
+                    radius=radius,
+                    show_label=bool(args.show_well_labels),
+                    label=str(well),
+                    outside_bgr=tile_outside_bgr,
+                    well_fill_bgr=well_fill_bgr,
+                    well_rim_bgr=well_rim_bgr,
+                    label_fg_bgr=label_fg_bgr,
+                    label_outline_bgr=label_outline_bgr,
+                    well_rim_thickness=well_rim_thickness,
+                )
+            else:
+                fi0 = int(fi0_by_well[well][k])
+                fi1 = int(fi1_by_well[well][k])
+                a = float(alpha_by_well[well][k])
+
+                fc = cache_by_well[well]
+
+                def load_cached(fi: int, _fc=fc, _tr=tr, _well=well) -> Optional[np.ndarray]:
+                    if _fc.fi0 == fi and _fc.img0 is not None:
+                        return _fc.img0
+                    if _fc.fi1 == fi and _fc.img1 is not None:
+                        return _fc.img1
+                    p = _snip_path(snip_root, exp, _tr.embryo_id, int(fi))
+                    img = _read_snp(p)
+                    if img is not None:
+                        ever_loaded[_well] = True
+                    if _fc.fi0 is None or _fc.fi0 == fi or (_fc.fi1 is not None and _fc.fi0 == _fc.fi1):
+                        _fc.fi0, _fc.img0 = int(fi), img
+                    elif _fc.fi1 is None or _fc.fi1 == fi:
+                        _fc.fi1, _fc.img1 = int(fi), img
+                    else:
+                        if abs(int(fi) - int(_fc.fi0)) >= abs(int(fi) - int(_fc.fi1)):
+                            _fc.fi0, _fc.img0 = int(fi), img
+                        else:
+                            _fc.fi1, _fc.img1 = int(fi), img
+                    return img
+
+                img0 = load_cached(fi0)
+                img1 = load_cached(fi1) if fi1 != fi0 else img0
+
+                snip = None
+                if img0 is None and img1 is None:
+                    snip = None
+                elif img0 is None:
+                    snip = img1
+                elif img1 is None:
+                    snip = img0
+                else:
+                    if fi0 == fi1 or a <= 0.0:
+                        snip = img0
+                    elif a >= 1.0:
+                        snip = img1
+                    else:
+                        snip = cv2.addWeighted(img0, float(1.0 - a), img1, float(a), 0.0)
+
+                if args.missing == "blank" and tr.times_hpf.size > 0:
+                    if t > float(tr.times_hpf[-1]) + 1e-6:
+                        snip = None
+
+                if str(args.death_policy) == "blank_after_death":
+                    last = last_alive_by_well.get(well)
+                    if last is None:
+                        snip = None
+                    else:
+                        if t > float(last[0]) + 1e-6:
+                            snip = None
+
+                tile = _fit_into_circle_tile(
+                    snip,
+                    radius=radius,
+                    show_label=bool(args.show_well_labels),
+                    label=str(well),
+                    outside_bgr=tile_outside_bgr,
+                    well_fill_bgr=well_fill_bgr,
+                    well_rim_bgr=well_rim_bgr,
+                    label_fg_bgr=label_fg_bgr,
+                    label_outline_bgr=label_outline_bgr,
+                    well_rim_thickness=well_rim_thickness,
+                )
+
+            d = tile.shape[0]
+            x0 = int(cx_w - d // 2)
+            y0 = int(cy_w - d // 2)
+            x1 = x0 + d
+            y1 = y0 + d
+
+            # Clip to canvas
+            cl_x0 = max(0, x0)
+            cl_y0 = max(0, y0)
+            cl_x1 = min(int(width), x1)
+            cl_y1 = min(int(height), y1)
+            if cl_x1 <= cl_x0 or cl_y1 <= cl_y0:
+                continue
+            tx0 = cl_x0 - x0
+            ty0 = cl_y0 - y0
+            tx1 = tx0 + (cl_x1 - cl_x0)
+            ty1 = ty0 + (cl_y1 - cl_y0)
+            canvas[cl_y0:cl_y1, cl_x0:cl_x1] = tile[ty0:ty1, tx0:tx1]
+
+        if args.show_hpf:
+            dec = max(0, int(args.time_label_decimals))
+            hpf_txt = f"{t:.0f}" if dec == 0 else f"{t:.{dec}f}"
+            time_font = cv2.FONT_HERSHEY_DUPLEX
+
+            # Measure this frame's digit text (width varies with digit count)
+            (dw_cur, _dh_cur), _ = cv2.getTextSize(hpf_txt, time_font, float(time_digit_scale), time_digit_thickness)
+            (uw_cur, _), _ = cv2.getTextSize(" HPF", time_font, float(time_unit_scale), time_unit_thickness)
+            total_w_cur = dw_cur + uw_cur
+
+            # Use pre-computed y; recompute x for this frame's text width
+            tl_y = time_label_bbox[3]  # baseline y
+            if str(args.time_label_position) == "top_left":
+                dx = 40
+            else:
+                plate_cx = (plate_x0 + plate_x1) // 2
+                dx = int(round(plate_cx - total_w_cur / 2))
+                dx = max(eps, dx)
+            dx = int(round(dx))
+
+            _put_text_with_outline_colors(
+                canvas, hpf_txt, (dx, tl_y),
+                font_scale=time_digit_scale,
+                fg_bgr=time_fg_bgr,
+                outline_bgr=label_outline_bgr,
+                font=time_font,
+            )
+            _put_text_with_outline_colors(
+                canvas, " HPF", (dx + dw_cur, tl_y),
+                font_scale=time_unit_scale,
+                fg_bgr=time_unit_fg_bgr,
+                outline_bgr=label_outline_bgr,
+                font=time_font,
+            )
+
+        # Debug layout overlay
+        if args.debug_layout:
+            # Usable zone rectangle (cyan)
+            cv2.rectangle(canvas, (cx_min, cy_min), (cx_max, cy_max), (255, 255, 0), 1, cv2.LINE_AA)
+            # Plate bbox (yellow)
+            cv2.rectangle(canvas, (plate_x0, plate_y0), (plate_x1, plate_y1), (0, 255, 255), 1, cv2.LINE_AA)
+            # Label bounding boxes (green)
+            if args.label_rows_cols:
+                for bb in row_label_bboxes.values():
+                    cv2.rectangle(canvas, (bb[0], bb[1]), (bb[2], bb[3]), (0, 255, 0), 1, cv2.LINE_AA)
+                for bb in col_label_bboxes.values():
+                    cv2.rectangle(canvas, (bb[0], bb[1]), (bb[2], bb[3]), (0, 255, 0), 1, cv2.LINE_AA)
+            if args.show_hpf:
+                tb = time_label_bbox
+                cv2.rectangle(canvas, (tb[0], tb[1]), (tb[2], tb[3]), (0, 255, 0), 1, cv2.LINE_AA)
+            # Well outer footprints (red, thin)
+            for w in all_96:
+                wcx, wcy = centers[w]
+                cv2.circle(canvas, (wcx, wcy), outer_r, (0, 0, 255), 1, cv2.LINE_AA)
+
+    # Single-frame PNG mode: render one frame and exit
+    if args.single_frame_png:
+        canvas = np.zeros((int(height), int(width), 3), dtype=np.uint8)
+        t_single = float(t_out[0])
+        _render_frame(canvas, 0, t_single)
+        png_path = Path(args.single_frame_png)
+        png_path.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(png_path), canvas)
+        print(f"Wrote single-frame PNG: {png_path}")
+        return
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(out_mp4), fourcc, float(fps), (int(width), int(height)))
     if not writer.isOpened():
         raise RuntimeError(f"Could not open VideoWriter for: {out_mp4}")
 
-    wells_to_draw = wells_list if wells_list is not None else _all_wells_96()
-    all_96 = _all_wells_96()  # always use full plate for layout/centering
-    ever_loaded = {w: False for w in wells_to_draw}
-    bbox_pad = int(round(0.75 * radius))
-    well_rim_thickness = max(1, int(args.well_rim_thickness))
-
-    border_thickness = max(2, int(round(radius / 22.0)))
-    plate_corner_radius = int(args.plate_corner_radius) if args.plate_corner_radius is not None else max(4, radius // 2)
-
-    # -- Centering: horizontal only (vertical already handled by _compute_centers_px) --
-    plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, all_96, radius=radius, pad=bbox_pad)
-    plate_w = plate_x1 - plate_x0
-
-    # Center (row_label_gutter + plate) horizontally on canvas
-    total_content_w = row_label_gutter + plate_w
-    canvas_margin = 20
-    content_x0 = max(canvas_margin, (width - total_content_w) // 2)
-    target_plate_x0 = content_x0 + row_label_gutter
-    shift_x = int(target_plate_x0 - plate_x0)
-
-    if shift_x:
-        for w in list(centers.keys()):
-            x, y = centers[w]
-            centers[w] = (int(x + shift_x), y)
-        plate_x0, plate_y0, plate_x1, plate_y1 = _plate_bbox(centers, all_96, radius=radius, pad=bbox_pad)
-
-    # Row/col label anchor positions (precise placement with getTextSize)
-    row_y = {row: centers[f"{row}01"][1] for row in "ABCDEFGH"}
-    col_x = {col: centers[f"A{col:02d}"][0] for col in range(1, 13)}
-
-    # Row labels: right-aligned at a consistent x, vertically centered with well
-    row_label_right_edge = int(plate_x0 - int(round(0.25 * radius)))
-    # Column labels: horizontally centered over well, above plate
-    col_label_baseline_y = int(plate_y0 - int(round(0.25 * radius)))
-
     try:
         for k, t in enumerate(t_out.tolist()):
             canvas = np.zeros((int(height), int(width), 3), dtype=np.uint8)
-            canvas[:, :] = np.array(canvas_bg_bgr, dtype=np.uint8)
-
-            if args.draw_plate_border:
-                x0 = max(0, plate_x0)
-                y0 = max(0, plate_y0)
-                x1 = min(int(width) - 1, plate_x1)
-                y1 = min(int(height) - 1, plate_y1)
-                # Drop shadow (offset behind plate)
-                if not args.no_plate_shadow:
-                    _draw_rounded_rect(canvas, (x0 + 4, y0 + 4), (x1 + 4, y1 + 4), plate_shadow_bgr, plate_corner_radius, thickness=-1)
-                # Plate interior fill
-                _draw_rounded_rect(canvas, (x0, y0), (x1, y1), plate_fill_bgr, plate_corner_radius, thickness=-1)
-                # Plate border outline
-                _draw_rounded_rect(canvas, (x0, y0), (x1, y1), plate_border_bgr, plate_corner_radius, thickness=int(border_thickness))
-
-            if args.label_rows_cols:
-                # Row labels (A-H) — right-aligned, vertically centered with well
-                for row in "ABCDEFGH":
-                    y_center = int(row_y[row])
-                    (tw, th), _ = cv2.getTextSize(row, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
-                    lx = int(row_label_right_edge - tw)
-                    ly = int(y_center + th // 2)
-                    _put_text_with_outline_colors(
-                        canvas,
-                        row,
-                        (lx, ly),
-                        font_scale=axis_font_scale,
-                        fg_bgr=label_fg_bgr,
-                        outline_bgr=label_outline_bgr,
-                        font=label_font,
-                    )
-                # Column labels (1-12) — horizontally centered over well
-                for col in range(1, 13):
-                    x_center = int(col_x[col])
-                    col_str = str(col)
-                    (tw, th), _ = cv2.getTextSize(col_str, label_font, float(axis_font_scale), max(1, int(round(2.0 * axis_font_scale))))
-                    lx = int(x_center - tw // 2)
-                    ly = int(col_label_baseline_y)
-                    _put_text_with_outline_colors(
-                        canvas,
-                        col_str,
-                        (lx, ly),
-                        font_scale=axis_font_scale,
-                        fg_bgr=label_fg_bgr,
-                        outline_bgr=label_outline_bgr,
-                        font=label_font,
-                    )
-
-            for well in wells_to_draw:
-                cx, cy = centers[well]
-                tr = track_by_well.get(well)
-                if tr is None:
-                    tile = _fit_into_circle_tile(
-                        None,
-                        radius=radius,
-                        show_label=bool(args.show_well_labels),
-                        label=str(well),
-                        outside_bgr=tile_outside_bgr,
-                        well_fill_bgr=well_fill_bgr,
-                        well_rim_bgr=well_rim_bgr,
-                        label_fg_bgr=label_fg_bgr,
-                        label_outline_bgr=label_outline_bgr,
-                        well_rim_thickness=well_rim_thickness,
-                    )
-                else:
-                    fi0 = int(fi0_by_well[well][k])
-                    fi1 = int(fi1_by_well[well][k])
-                    a = float(alpha_by_well[well][k])
-
-                    fc = cache_by_well[well]
-
-                    def load_cached(fi: int) -> Optional[np.ndarray]:
-                        if fc.fi0 == fi and fc.img0 is not None:
-                            return fc.img0
-                        if fc.fi1 == fi and fc.img1 is not None:
-                            return fc.img1
-                        p = _snip_path(snip_root, exp, tr.embryo_id, int(fi))
-                        img = _read_snp(p)
-                        if img is not None:
-                            ever_loaded[well] = True
-                        # Keep a tiny 2-slot cache, updating the older slot.
-                        if fc.fi0 is None or fc.fi0 == fi or (fc.fi1 is not None and fc.fi0 == fc.fi1):
-                            fc.fi0, fc.img0 = int(fi), img
-                        elif fc.fi1 is None or fc.fi1 == fi:
-                            fc.fi1, fc.img1 = int(fi), img
-                        else:
-                            # Replace the "farther" index heuristically
-                            if abs(int(fi) - int(fc.fi0)) >= abs(int(fi) - int(fc.fi1)):
-                                fc.fi0, fc.img0 = int(fi), img
-                            else:
-                                fc.fi1, fc.img1 = int(fi), img
-                        return img
-
-                    img0 = load_cached(fi0)
-                    img1 = load_cached(fi1) if fi1 != fi0 else img0
-
-                    snip = None
-                    if img0 is None and img1 is None:
-                        snip = None
-                    elif img0 is None:
-                        snip = img1
-                    elif img1 is None:
-                        snip = img0
-                    else:
-                        if fi0 == fi1 or a <= 0.0:
-                            snip = img0
-                        elif a >= 1.0:
-                            snip = img1
-                        else:
-                            snip = cv2.addWeighted(img0, float(1.0 - a), img1, float(a), 0.0)
-
-                    # Missing behavior: if blank, drop snip when we're past the embryo's coverage.
-                    if args.missing == "blank" and tr.times_hpf.size > 0:
-                        if t > float(tr.times_hpf[-1]) + 1e-6:
-                            snip = None
-
-                    # Death behavior: if blank_after_death, blank when we're past the last alive time.
-                    if str(args.death_policy) == "blank_after_death":
-                        last = last_alive_by_well.get(well)
-                        if last is None:
-                            snip = None
-                        else:
-                            if t > float(last[0]) + 1e-6:
-                                snip = None
-
-                    tile = _fit_into_circle_tile(
-                        snip,
-                        radius=radius,
-                        show_label=bool(args.show_well_labels),
-                        label=str(well),
-                        outside_bgr=tile_outside_bgr,
-                        well_fill_bgr=well_fill_bgr,
-                        well_rim_bgr=well_rim_bgr,
-                        label_fg_bgr=label_fg_bgr,
-                        label_outline_bgr=label_outline_bgr,
-                        well_rim_thickness=well_rim_thickness,
-                    )
-
-                d = tile.shape[0]
-                x0 = int(cx - d // 2)
-                y0 = int(cy - d // 2)
-                x1 = x0 + d
-                y1 = y0 + d
-
-                # Clip to canvas
-                cx0 = max(0, x0)
-                cy0 = max(0, y0)
-                cx1 = min(int(width), x1)
-                cy1 = min(int(height), y1)
-                if cx1 <= cx0 or cy1 <= cy0:
-                    continue
-                tx0 = cx0 - x0
-                ty0 = cy0 - y0
-                tx1 = tx0 + (cx1 - cx0)
-                ty1 = ty0 + (cy1 - cy0)
-                canvas[cy0:cy1, cx0:cx1] = tile[ty0:ty1, tx0:tx1]
-
-            if args.show_hpf:
-                dec = max(0, int(args.time_label_decimals))
-                if dec == 0:
-                    hpf_txt = f"{t:.0f}"
-                else:
-                    hpf_txt = f"{t:.{dec}f}"
-                time_font = cv2.FONT_HERSHEY_DUPLEX
-                digit_scale = time_digit_scale
-                unit_scale = time_unit_scale
-                digit_thickness = max(1, int(round(2.0 * digit_scale)))
-                unit_thickness = max(1, int(round(2.0 * unit_scale)))
-
-                # Measure both parts
-                (dw, dh), _ = cv2.getTextSize(hpf_txt, time_font, float(digit_scale), digit_thickness)
-                (uw, uh), _ = cv2.getTextSize(" HPF", time_font, float(unit_scale), unit_thickness)
-                total_w = dw + uw
-
-                # Position: within the time zone above column labels
-                time_zone_top = plate_y0 - col_label_gutter - time_zone_h
-                time_label_y = int(time_zone_top + time_zone_h * 0.7)
-                time_label_y = max(int(dh + 10), time_label_y)
-
-                if str(args.time_label_position) == "top_left":
-                    digit_x = 40
-                else:
-                    # Center over the plate (not the full canvas)
-                    plate_cx = (plate_x0 + plate_x1) // 2
-                    digit_x = max(10, int(round(plate_cx - total_w / 2)))
-
-                # Render digits (larger, brighter)
-                _put_text_with_outline_colors(
-                    canvas,
-                    hpf_txt,
-                    (digit_x, time_label_y),
-                    font_scale=digit_scale,
-                    fg_bgr=time_fg_bgr,
-                    outline_bgr=label_outline_bgr,
-                    font=time_font,
-                )
-                # Render " HPF" suffix (smaller, dimmer)
-                _put_text_with_outline_colors(
-                    canvas,
-                    " HPF",
-                    (digit_x + dw, time_label_y),
-                    font_scale=unit_scale,
-                    fg_bgr=time_unit_fg_bgr,
-                    outline_bgr=label_outline_bgr,
-                    font=time_font,
-                )
-
+            _render_frame(canvas, k, t)
             writer.write(canvas)
 
             if (k + 1) % 25 == 0 or (k + 1) == n_frames_out:
