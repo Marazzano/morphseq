@@ -64,6 +64,10 @@ MIN_WT_FRAMES_PER_BIN = 10
 # Metric is non-negative (baseline deviation); enforce lower >= 0 in envelope.
 METRIC_NONNEG = True
 
+# "frame"         → quantile over all frames in bin (original behaviour, frame = unit)
+# "embryo_median" → per-embryo median first, then quantile across embryo medians (robust)
+QUANTILE_UNIT = "embryo_median"
+
 # One-directional penetrance: only flag frames that EXCEED the upper bound.
 # Use True for deviation metrics (baseline_deviation_normalized) where "too low"
 # is not a meaningful phenotype.  When True, the lower bound is ignored for

@@ -66,37 +66,41 @@ def bin_embryos_by_time(
     time_col: str = "predicted_stage_hpf",
     z_cols: Optional[List[str]] = None,
     bin_width: float = 2.0,
-    suffix: str = "_binned"
+    suffix: str = "_binned",
+    agg: str = "mean",
 ) -> pd.DataFrame:
     """
-    Bin VAE embeddings by predicted time and embryo.
+    Bin any numeric columns by predicted time and embryo.
 
-    Always averages embeddings per embryo_id × time_bin, keeping all
-    non-latent metadata columns (e.g., genotype).
+    Aggregates values per embryo_id × time_bin, keeping all non-aggregated
+    metadata columns (e.g., genotype).
 
     Parameters
     ----------
     df : pd.DataFrame
-        Input dataframe containing 'embryo_id', time column, and latent columns.
+        Input dataframe containing 'embryo_id', time column, and numeric columns.
     time_col : str, default="predicted_stage_hpf"
         Column name to bin by.
     z_cols : list of str or None
-        Columns to average. If None, auto-detect those containing 'z_mu_b'.
+        Columns to aggregate. If None, auto-detects columns containing 'z_mu_b'
+        (VAE latent vectors). For scalar metrics, pass z_cols explicitly.
     bin_width : float, default=2.0
         Width of time bins (same units as time_col, usually hours).
     suffix : str, default="_binned"
-        Suffix to append to averaged latent column names.
+        Suffix to append to aggregated column names.
+    agg : str, default="mean"
+        Aggregation function to apply. Must be 'mean' or 'median'.
 
     Returns
     -------
     pd.DataFrame
-        One row per (embryo_id, time_bin) containing averaged latent columns
+        One row per (embryo_id, time_bin) containing aggregated columns
         and preserved metadata.
 
     Raises
     ------
     ValueError
-        If no latent columns are found and z_cols is None.
+        If no columns are found and z_cols is None, or if agg is not supported.
 
     Examples
     --------
@@ -104,6 +108,10 @@ def bin_embryos_by_time(
     >>> df_binned.columns
     Index(['embryo_id', 'time_bin', 'z_mu_b0_binned', 'z_mu_b1_binned', ...])
     """
+    agg_fn = {"mean": "mean", "median": "median"}.get(agg)
+    if agg_fn is None:
+        raise ValueError(f"agg must be 'mean' or 'median', got {agg!r}")
+
     df = df.copy()
 
     # Detect latent columns
@@ -118,14 +126,14 @@ def bin_embryos_by_time(
     # Create time bins
     df["time_bin"] = (np.floor(df[time_col] / bin_width) * bin_width).astype(int)
 
-    # Average latent vectors per embryo × time_bin
-    agg = (
+    # Aggregate columns per embryo × time_bin
+    grouped = (
         df.groupby(["embryo_id", "time_bin"], as_index=False)[z_cols]
-        .mean()
+        .agg(agg_fn)
     )
 
-    # Rename averaged latent columns
-    agg.rename(columns={c: f"{c}{suffix}" for c in z_cols}, inplace=True)
+    # Rename aggregated columns
+    grouped.rename(columns={c: f"{c}{suffix}" for c in z_cols}, inplace=True)
 
     # Merge back non-latent metadata (take first unique per embryo)
     # Exclude time_bin and time_col from meta_cols to avoid conflicts
@@ -136,7 +144,7 @@ def bin_embryos_by_time(
     )
 
     # Merge metadata back in
-    out = agg.merge(meta_df, on="embryo_id", how="left")
+    out = grouped.merge(meta_df, on="embryo_id", how="left")
 
     # Ensure sorting
     out = out.sort_values(["embryo_id", "time_bin"]).reset_index(drop=True)

@@ -56,6 +56,7 @@ from config import (
     OUTPUT_DIR, FIGURE_DIR, TABLE_DIR,
     FIGSIZE_DIAGNOSTIC, FIGSIZE_CURVES, FIGSIZE_HEATMAP, FIGSIZE_BARS,
     KEY_STAGES_HPF, DPI,
+    QUANTILE_UNIT,
 )
 from smoothing import loess_smooth, select_quantile_curve_smoother, SmoothedCurveSelection
 from penetrance_plots import (
@@ -65,6 +66,7 @@ from penetrance_plots import (
     plot_penetrance_curves,
     plot_penetrance_heatmap,
     plot_embryo_consistency,
+    plot_scatter_and_penetrance,
 )
 
 
@@ -72,9 +74,17 @@ from penetrance_plots import (
 # Step 3.1: Raw quantiles per time bin
 # ---------------------------------------------------------------------------
 
-def compute_raw_wt_quantiles(wt_df, min_frames=MIN_WT_FRAMES_PER_BIN):
+def compute_raw_wt_quantiles(wt_df, min_frames=MIN_WT_FRAMES_PER_BIN,
+                              quantile_unit=QUANTILE_UNIT):
     """
     Compute raw 2.5th / 97.5th percentile of METRIC_NAME per time bin.
+
+    Parameters
+    ----------
+    quantile_unit : str
+        "frame"         — quantile over all frames in bin (original behaviour).
+        "embryo_median" — per-embryo median first, then quantile across embryo
+                          medians (robust to single-embryo outliers).
 
     Returns
     -------
@@ -83,15 +93,17 @@ def compute_raw_wt_quantiles(wt_df, min_frames=MIN_WT_FRAMES_PER_BIN):
     """
     rows = []
     for tb, grp in wt_df.groupby("time_bin"):
-        vals = grp[METRIC_NAME].dropna().values
-        n_frames = len(vals)
+        n_frames = grp[METRIC_NAME].notna().sum()
         n_embryos = grp[EMBRYO_COL].nunique()
         supported = n_frames >= min_frames
-        if n_frames > 0:
-            raw_low = float(np.quantile(vals, QUANTILE_LOW))
-            raw_high = float(np.quantile(vals, QUANTILE_HIGH))
-        else:
-            raw_low = raw_high = np.nan
+
+        if quantile_unit == "embryo_median":
+            vals = grp.groupby(EMBRYO_COL)[METRIC_NAME].median().dropna().values
+        else:  # "frame"
+            vals = grp[METRIC_NAME].dropna().values
+
+        raw_low  = float(np.quantile(vals, QUANTILE_LOW))  if len(vals) > 0 else np.nan
+        raw_high = float(np.quantile(vals, QUANTILE_HIGH)) if len(vals) > 0 else np.nan
         rows.append(dict(
             time_bin=tb,
             raw_low=raw_low,
@@ -101,8 +113,8 @@ def compute_raw_wt_quantiles(wt_df, min_frames=MIN_WT_FRAMES_PER_BIN):
             supported=supported,
         ))
     df_q = pd.DataFrame(rows).sort_values("time_bin").reset_index(drop=True)
-    print(f"\nRaw quantiles: {df_q['supported'].sum()}/{len(df_q)} bins supported "
-          f"(>= {min_frames} WT frames)")
+    print(f"\nRaw quantiles ({quantile_unit}): {df_q['supported'].sum()}/{len(df_q)} bins "
+          f"supported (>= {min_frames} WT frames)")
     return df_q
 
 
@@ -522,6 +534,24 @@ def main():
     fig.savefig(FIGURE_DIR / "embryo_consistency_histograms.png", dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: embryo_consistency_histograms.png")
+
+    # 7. Scatter + penetrance by genotype
+    geno_order = [WT_GENOTYPE, HET_GENOTYPE]
+    fig, axes = plot_scatter_and_penetrance(
+        df[df[GENOTYPE_COL].isin(geno_order)],
+        df_env,
+        time_col=TIME_COL,
+        metric_col=METRIC_NAME,
+        embryo_col=EMBRYO_COL,
+        group_col=GENOTYPE_COL,
+        group_order=geno_order,
+        upper_only=UPPER_BOUND_ONLY,
+        title="Scatter + penetrance by genotype",
+        figsize_per_col=(7, 9),
+    )
+    fig.savefig(FIGURE_DIR / "scatter_penetrance_by_genotype.png", dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  Saved: scatter_penetrance_by_genotype.png")
 
     print("\n=== Done ===")
     print(f"  Figures: {FIGURE_DIR}")

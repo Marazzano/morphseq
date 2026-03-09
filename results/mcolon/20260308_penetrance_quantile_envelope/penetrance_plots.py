@@ -184,9 +184,14 @@ def plot_quantile_smoother_selection(
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
+    # Use non-NaN mask (matches what select_quantile_curve_smoother uses internally)
+    # so that candidate_curves arrays align with tx.
+    valid_low  = ~np.isnan(raw_low)
+    valid_high = ~np.isnan(raw_high)
+
     panels = [
-        ("Lower curve (2.5%)",  x[sup_low],  raw_low[sup_low],  lower_result),
-        ("Upper curve (97.5%)", x[sup_high], raw_high[sup_high], upper_result),
+        ("Lower curve (2.5%)",  x[valid_low],  raw_low[valid_low],  lower_result),
+        ("Upper curve (97.5%)", x[valid_high], raw_high[valid_high], upper_result),
     ]
 
     for ax, (title, tx, raw_vals, result) in zip(axes, panels):
