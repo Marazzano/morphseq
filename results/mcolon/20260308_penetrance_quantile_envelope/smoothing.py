@@ -77,20 +77,30 @@ def loess_smooth(
 
 
 def _loess_core(x: np.ndarray, y: np.ndarray, frac: float) -> np.ndarray:
-    """Tricube-weighted local linear regression; no NaN handling."""
-    n = len(x)
+    """Tricube-weighted local linear regression evaluated at x."""
+    return _loess_predict(x, y, x, frac)
+
+
+def _loess_predict(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    x_eval: np.ndarray,
+    frac: float,
+) -> np.ndarray:
+    """Tricube-weighted local linear regression evaluated at x_eval."""
+    n = len(x_train)
     h = max(int(np.ceil(frac * n)), 2)
-    smoothed = np.empty(n)
-    for i in range(n):
-        dists = np.abs(x - x[i])
+    smoothed = np.empty(len(x_eval))
+    for i, x0 in enumerate(x_eval):
+        dists = np.abs(x_train - x0)
         idx = np.argsort(dists)[:h]
         d_max = dists[idx].max()
         if d_max == 0:
-            smoothed[i] = y[i]
+            smoothed[i] = y_train[idx[0]]
             continue
         u = dists[idx] / d_max
         w = (1 - u**3)**3
-        xi, yi, wi = x[idx], y[idx], w
+        xi, yi, wi = x_train[idx], y_train[idx], w
         wsum = wi.sum()
         wmean_x = (wi * xi).sum() / wsum
         wmean_y = (wi * yi).sum() / wsum
@@ -98,8 +108,76 @@ def _loess_core(x: np.ndarray, y: np.ndarray, frac: float) -> np.ndarray:
             (wi * (xi - wmean_x) * (yi - wmean_y)).sum()
             / max((wi * (xi - wmean_x)**2).sum(), 1e-12)
         )
-        smoothed[i] = wmean_y + beta * (x[i] - wmean_x)
+        smoothed[i] = wmean_y + beta * (x0 - wmean_x)
     return smoothed
+
+
+def _local_median(y, window: int, min_points: int) -> np.ndarray:
+    """Centered rolling median using index neighborhoods."""
+    y = np.asarray(y, dtype=float)
+    out = np.full(len(y), np.nan)
+    half = max(int(window) // 2, 0)
+    for i in range(len(y)):
+        lo = max(0, i - half)
+        hi = min(len(y), i + half + 1)
+        vals = y[lo:hi]
+        vals = vals[~np.isnan(vals)]
+        if len(vals) >= min_points:
+            out[i] = np.median(vals)
+    return out
+
+
+def detect_curve_inliers(
+    x,
+    y,
+    *,
+    window: int = 5,
+    min_points: int = 3,
+    sigma_threshold: float = 4.0,
+    min_resid_fraction: float = 0.15,
+):
+    """
+    Detect bins to keep for smoothing using a local-median residual screen.
+
+    Bins with unusually large deviations from the local median are excluded
+    from the LOESS fit but remain in the raw curve and output tables.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if len(x) != len(y):
+        raise ValueError(f"x and y must have the same length; got {len(x)} vs {len(y)}")
+    if len(y) == 0:
+        return np.array([], dtype=bool), {"threshold": np.nan, "excluded_x": []}
+
+    baseline = _local_median(y, window=window, min_points=min_points)
+    ref_mask = ~np.isnan(baseline)
+    residual = y - baseline
+    if ref_mask.sum() < max(min_points, 3):
+        return np.ones(len(y), dtype=bool), {
+            "threshold": np.nan,
+            "robust_sigma": np.nan,
+            "value_range": float(y.max() - y.min()) if len(y) > 1 else 0.0,
+            "excluded_x": [],
+            "baseline": baseline,
+            "residual": residual,
+        }
+
+    centered = residual[ref_mask] - np.median(residual[ref_mask])
+    mad = float(np.median(np.abs(centered)))
+    robust_sigma = 1.4826 * mad
+    value_range = float(y.max() - y.min()) if len(y) > 1 else 0.0
+    threshold = max(sigma_threshold * robust_sigma, min_resid_fraction * value_range, 1e-12)
+
+    inliers = np.ones(len(y), dtype=bool)
+    inliers[ref_mask] = np.abs(residual[ref_mask]) <= threshold
+    return inliers, {
+        "threshold": threshold,
+        "robust_sigma": robust_sigma,
+        "value_range": value_range,
+        "excluded_x": x[~inliers].tolist(),
+        "baseline": baseline,
+        "residual": residual,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -146,12 +224,19 @@ class SmoothedCurveSelection:
           sign_change_rate, residual_range, value_range, any_negative.
     used_fallback : bool
         True if no candidate frac passed and fallback_frac was used.
+    fit_mask : np.ndarray or None
+        Boolean full-length mask indicating which rows were used to fit the
+        selected smoother.
+    fit_diagnostics : dict
+        Diagnostics from the pre-LOESS inlier screen.
     """
     selected_frac: float
     smoothed_y: np.ndarray
     candidate_curves: dict = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
     used_fallback: bool = False
+    fit_mask: np.ndarray | None = None
+    fit_diagnostics: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +250,7 @@ def select_quantile_curve_smoother(
     candidate_fracs,
     nonnegative: bool = False,
     fallback_frac: float = 0.10,
+    fit_mask=None,
 ) -> SmoothedCurveSelection:
     """
     Domain-specific LOESS frac selection for quantile envelope fitting.
@@ -203,8 +289,21 @@ def select_quantile_curve_smoother(
         raise ValueError(f"Need at least 3 points; got {len(x)}")
 
     valid_mask = ~(np.isnan(x) | np.isnan(y))
+    if fit_mask is None:
+        fit_mask = valid_mask.copy()
+    else:
+        fit_mask = np.asarray(fit_mask, dtype=bool)
+        if len(fit_mask) != len(x):
+            raise ValueError(f"fit_mask must have length {len(x)}, got {len(fit_mask)}")
+        fit_mask = valid_mask & fit_mask
+
     xv, yv = x[valid_mask], y[valid_mask]
-    value_range = float(yv.max() - yv.min()) if len(yv) > 1 else 1.0
+    xf, yf = x[fit_mask], y[fit_mask]
+    if len(xf) < 3:
+        fit_mask = valid_mask.copy()
+        xf, yf = xv, yv
+
+    value_range = float(yf.max() - yf.min()) if len(yf) > 1 else 1.0
     roughness_threshold = 0.05 * value_range
 
     diagnostics: dict[float, dict] = {}
@@ -213,7 +312,8 @@ def select_quantile_curve_smoother(
     selected_sm = None
 
     for frac in sorted(candidate_fracs):
-        sm = _loess_core(xv, yv, frac)
+        sm_fit = _loess_predict(xf, yf, xf, frac)
+        sm = _loess_predict(xf, yf, xv, frac)
         candidate_curves[frac] = sm
 
         failed_checks: list[str] = []
@@ -229,10 +329,10 @@ def select_quantile_curve_smoother(
             failed_checks.append("roughness")
 
         # Check 3: oscillation in residual
-        residual = yv - sm
+        residual = yf - sm_fit
         residual_range = float(residual.max() - residual.min()) if len(residual) > 1 else 0.0
         sign_changes = int(np.sum(np.diff(np.sign(residual - residual.mean())) != 0))
-        sign_change_rate = sign_changes / max(len(sm), 1)
+        sign_change_rate = sign_changes / max(len(sm_fit), 1)
         large_oscillation = (residual_range > 0.1 * value_range) and (sign_change_rate > 0.40)
         if large_oscillation:
             failed_checks.append("oscillation")
@@ -257,7 +357,7 @@ def select_quantile_curve_smoother(
     if used_fallback:
         selected_frac = fallback_frac
         if fallback_frac not in candidate_curves:
-            selected_sm = _loess_core(xv, yv, fallback_frac)
+            selected_sm = _loess_predict(xf, yf, xv, fallback_frac)
             candidate_curves[fallback_frac] = selected_sm
         else:
             selected_sm = candidate_curves[fallback_frac]
@@ -272,4 +372,5 @@ def select_quantile_curve_smoother(
         candidate_curves=candidate_curves,
         diagnostics=diagnostics,
         used_fallback=used_fallback,
+        fit_mask=fit_mask,
     )

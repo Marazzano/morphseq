@@ -29,7 +29,7 @@ except Exception:
         "#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e",
     ]
 
-from smoothing import SmoothedCurveSelection
+from smoothing import SmoothedCurveSelection, loess_smooth
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,56 @@ def _resolve_colors(group_order, colors):
     return out
 
 
+def _resolve_curve_display(x, y, *, mode: str, frac: float | None):
+    """Return display y-values, optionally LOESS-smoothed."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if mode == "raw" or frac is None or len(x) < 3:
+        return y
+    if mode != "smoothed":
+        raise ValueError(f"curve mode must be 'raw' or 'smoothed', got {mode!r}")
+    return loess_smooth(x, y, frac)
+
+
+def summarize_binary_penetrance(
+    df: pd.DataFrame,
+    *,
+    group_col: str,
+    bin_col: str,
+    penetrant_col: str,
+    unit_col: str,
+    value_scale: float = 1.0,
+) -> pd.DataFrame:
+    rows = []
+    for (group, time_bin), grp in df.groupby([group_col, bin_col]):
+        valid = grp.dropna(subset=[penetrant_col])
+        if valid.empty:
+            continue
+
+        unit_flags = valid.groupby(unit_col)[penetrant_col].max().astype(float)
+        n_units = int(len(unit_flags))
+        if n_units == 0:
+            continue
+
+        penetrance = float(unit_flags.mean())
+        se = math.sqrt(penetrance * (1.0 - penetrance) / n_units)
+        scaled = unit_flags.to_numpy(dtype=float) * float(value_scale)
+        rows.append(
+            {
+                "group": group,
+                "time_bin": float(time_bin),
+                "penetrance": penetrance * float(value_scale),
+                "se": se * float(value_scale),
+                "q25": float(np.quantile(scaled, 0.25)),
+                "q75": float(np.quantile(scaled, 0.75)),
+                "n_units": n_units,
+                "n_penetrant": int(unit_flags.sum()),
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values(["group", "time_bin"]).reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------------
 # 1. WT envelope diagnostic
 # ---------------------------------------------------------------------------
@@ -70,6 +120,14 @@ def plot_wt_envelope_diagnostic(
     embryo_col: str,
     bin_col: str = "time_bin",
     n_scatter: int = 5000,
+    scatter_label: str = "WT frames",
+    title: str = "WT Envelope Diagnostic",
+    show_raw: bool = True,
+    show_smoothed: bool = True,
+    envelope_lower_col: str = "smoothed_low",
+    envelope_upper_col: str = "smoothed_high",
+    exclude_lower_col: str | None = None,
+    exclude_upper_col: str | None = None,
     ax=None,
     figsize=(14, 8),
 ):
@@ -102,17 +160,42 @@ def plot_wt_envelope_diagnostic(
         fig = ax.get_figure()
 
     sample = wt_df.sample(min(n_scatter, len(wt_df)), random_state=42)
-    ax.scatter(
-        sample[time_col], sample[metric_col],
-        s=2, alpha=0.3, color="#aaaaaa", label="WT frames",
-    )
+    ax.scatter(sample[time_col], sample[metric_col], s=2, alpha=0.3, color="#aaaaaa", label=scatter_label)
 
     sup = df_env["supported"]
     tb_sup = df_env.loc[sup, bin_col]
-    ax.plot(tb_sup, df_env.loc[sup, "raw_low"],  "b--", lw=1, label="Raw 2.5%")
-    ax.plot(tb_sup, df_env.loc[sup, "raw_high"], "r--", lw=1, label="Raw 97.5%")
-    ax.plot(tb_sup, df_env.loc[sup, "smoothed_low"],  "b-", lw=2, label="Smoothed lower")
-    ax.plot(tb_sup, df_env.loc[sup, "smoothed_high"], "r-", lw=2, label="Smoothed upper")
+    if show_raw:
+        ax.plot(tb_sup, df_env.loc[sup, "raw_low"], "b--", lw=1, label="Raw 2.5%")
+        ax.plot(tb_sup, df_env.loc[sup, "raw_high"], "r--", lw=1, label="Raw 97.5%")
+        if exclude_lower_col is not None and exclude_lower_col in df_env.columns:
+            low_ex = sup & df_env[exclude_lower_col].astype(bool)
+            if low_ex.any():
+                ax.scatter(
+                    df_env.loc[low_ex, bin_col],
+                    df_env.loc[low_ex, "raw_low"],
+                    s=45,
+                    color="#1f77b4",
+                    edgecolors="black",
+                    linewidths=0.5,
+                    label="Excluded low-bin support",
+                    zorder=4,
+                )
+        if exclude_upper_col is not None and exclude_upper_col in df_env.columns:
+            high_ex = sup & df_env[exclude_upper_col].astype(bool)
+            if high_ex.any():
+                ax.scatter(
+                    df_env.loc[high_ex, bin_col],
+                    df_env.loc[high_ex, "raw_high"],
+                    s=45,
+                    color="#d62728",
+                    edgecolors="black",
+                    linewidths=0.5,
+                    label="Excluded high-bin support",
+                    zorder=4,
+                )
+    if show_smoothed:
+        ax.plot(tb_sup, df_env.loc[sup, envelope_lower_col], "b-", lw=2, label="Envelope lower")
+        ax.plot(tb_sup, df_env.loc[sup, envelope_upper_col], "r-", lw=2, label="Envelope upper")
 
     # Grey spans for unsupported bins
     unsup_bins = df_env.loc[~sup, bin_col]
@@ -127,7 +210,7 @@ def plot_wt_envelope_diagnostic(
 
     ax.set_xlabel(time_col, fontsize=12)
     ax.set_ylabel(metric_col, fontsize=12)
-    ax.set_title("WT Envelope Diagnostic", fontsize=14, fontweight="bold")
+    ax.set_title(title, fontsize=14, fontweight="bold")
     ax.legend(loc="upper left", fontsize=8)
     _style_ax(ax)
     fig.tight_layout()
@@ -236,6 +319,7 @@ def plot_outside_rate_by_group(
     group_col: str = "group",
     colors: dict | None = None,
     group_order=None,
+    y_label: str = "Outside-envelope rate",
     ax=None,
     figsize=(10, 5),
 ):
@@ -280,7 +364,7 @@ def plot_outside_rate_by_group(
         ax.plot(grp[x_col], grp[y_col], "-o", color=color, ms=4, label=str(group))
 
     ax.set_xlabel(x_col, fontsize=12)
-    ax.set_ylabel("Outside-envelope rate (frame-level)", fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
     ax.set_title("Outside-Envelope Rate by Group", fontsize=14, fontweight="bold")
     ax.set_ylim(bottom=0)
     ax.legend()
@@ -299,9 +383,19 @@ def plot_penetrance_curves(
     x_col: str = "time_bin",
     y_col: str = "penetrance",
     se_col: str = "se",
+    band_lower_col: str = "q25",
+    band_upper_col: str = "q75",
     group_col: str = "group",
     colors: dict | None = None,
     group_order=None,
+    y_label: str = "Penetrance",
+    curve_mode: str = "raw",
+    curve_frac: float | None = None,
+    band_mode: str = "se",
+    show_band: bool = True,
+    show_line: bool = True,
+    show_points: bool = True,
+    smooth_se: bool = True,
     ax=None,
     title: str = "",
     figsize=(12, 8),
@@ -312,7 +406,7 @@ def plot_penetrance_curves(
     Parameters
     ----------
     df : pd.DataFrame
-        Must contain ``x_col``, ``y_col``, ``se_col``, ``group_col``.
+        Must contain ``x_col``, ``y_col``, ``group_col`` and any required band cols.
     x_col, y_col, se_col, group_col : str
     colors : dict group → hex, or None
     group_order : list or None
@@ -339,18 +433,49 @@ def plot_penetrance_curves(
         if grp.empty:
             continue
         color = resolved.get(group, "#808080")
-        ax.plot(grp[x_col], grp[y_col], color=color, lw=2, label=str(group))
-        ax.fill_between(
-            grp[x_col],
-            grp[y_col] - grp[se_col],
-            grp[y_col] + grp[se_col],
-            color=color, alpha=0.2,
-        )
+        x_vals = grp[x_col].to_numpy(dtype=float)
+        y_vals = grp[y_col].to_numpy(dtype=float)
+        y_display = _resolve_curve_display(x_vals, y_vals, mode=curve_mode, frac=curve_frac)
+        if show_points:
+            ax.plot(x_vals, y_vals, "o", color=color, ms=4, alpha=0.8)
+        if show_line:
+            ax.plot(x_vals, y_display, color=color, lw=2.4, label=str(group))
+        elif show_band:
+            ax.plot(x_vals, y_display, color=color, lw=0.0, label=str(group))
+        if show_band:
+            if band_mode == "se":
+                spread = grp[se_col].to_numpy(dtype=float)
+                if smooth_se:
+                    spread = _resolve_curve_display(x_vals, spread, mode=curve_mode, frac=curve_frac)
+                lower = y_display - spread
+                upper = y_display + spread
+            elif band_mode == "iqr":
+                lower = _resolve_curve_display(
+                    x_vals,
+                    grp[band_lower_col].to_numpy(dtype=float),
+                    mode=curve_mode,
+                    frac=curve_frac,
+                )
+                upper = _resolve_curve_display(
+                    x_vals,
+                    grp[band_upper_col].to_numpy(dtype=float),
+                    mode=curve_mode,
+                    frac=curve_frac,
+                )
+            else:
+                raise ValueError(f"band mode must be 'se' or 'iqr', got {band_mode!r}")
+            ax.fill_between(
+                x_vals,
+                lower,
+                upper,
+                color=color,
+                alpha=0.18,
+            )
 
     ax.set_xlabel(x_col, fontsize=12)
-    ax.set_ylabel("Frame-level penetrance", fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
     ax.set_title(title or "Penetrance by category over time", fontsize=14, fontweight="bold")
-    ax.set_ylim(0, 1)
+    ax.set_ylim(0, 1.03)
     ax.legend(bbox_to_anchor=(1.01, 1), loc="upper left", fontsize=9)
     _style_ax(ax)
     fig.tight_layout()
@@ -368,6 +493,7 @@ def plot_penetrance_heatmap(
     y_col: str = "group",
     value_col: str = "penetrance",
     group_order=None,
+    colorbar_label: str = "Penetrance",
     ax=None,
     title: str = "",
     figsize=(14, 6),
@@ -400,7 +526,7 @@ def plot_penetrance_heatmap(
 
     im = ax.imshow(pivot.values, aspect="auto", cmap="YlOrRd", vmin=0, vmax=1,
                    origin="upper")
-    plt.colorbar(im, ax=ax, label="Penetrance")
+    plt.colorbar(im, ax=ax, label=colorbar_label)
 
     ax.set_xticks(range(len(pivot.columns)))
     ax.set_xticklabels([f"{int(c)}" for c in pivot.columns], rotation=90, fontsize=7)
@@ -424,6 +550,8 @@ def plot_embryo_consistency(
     value_col: str = "frac_penetrant",
     colors: dict | None = None,
     group_order=None,
+    xlabel: str = "Frac penetrant",
+    title: str = "Per-embryo penetrance consistency",
     figsize_per_panel=(5, 4),
 ):
     """
@@ -462,7 +590,7 @@ def plot_embryo_consistency(
         color = resolved.get(group, "#808080")
         ax.hist(data, bins=20, range=(0, 1), color=color, alpha=0.7)
         ax.set_title(f"{group} (n={len(data)})", fontsize=14, fontweight="bold")
-        ax.set_xlabel("Frac penetrant", fontsize=12)
+        ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel("# embryos", fontsize=12)
         ax.set_xlim(0, 1)
         _style_ax(ax)
@@ -471,7 +599,7 @@ def plot_embryo_consistency(
     for j in range(n, nrows * ncols):
         axes[j // ncols][j % ncols].set_visible(False)
 
-    fig.suptitle("Per-embryo penetrance consistency", fontsize=14, fontweight="bold")
+    fig.suptitle(title, fontsize=14, fontweight="bold")
     fig.tight_layout()
     return fig, axes
 
@@ -491,7 +619,10 @@ def plot_scatter_and_penetrance(
     penetrant_col: str = "penetrant",
     bin_col: str = "time_bin",
     group_order=None,
+    colors: dict | None = None,
     show_envelope: bool = True,
+    envelope_lower_col: str = "smoothed_low",
+    envelope_upper_col: str = "smoothed_high",
     upper_only: bool = False,
     show_penetrant_markers: bool = True,
     vline_hpf=None,
@@ -502,12 +633,21 @@ def plot_scatter_and_penetrance(
     figsize_per_col=(7, 9),
     scatter_height_ratio: int = 2,
     legend_fontsize: int = 13,
+    top_ylabel: str | None = None,
+    overall_label: str = "Overall",
+    bottom_label: str = "Penetrance (%)",
+    penetrance_curve_mode: str = "raw",
+    penetrance_curve_frac: float | None = None,
+    penetrance_band_mode: str = "se",
+    show_penetrance_band: bool = False,
+    show_penetrance_line: bool = True,
+    show_penetrance_points: bool = True,
 ):
     """
     Two-row multi-panel figure: scatter + envelope (top) and penetrance % (bottom).
 
-    One column per group in ``group_order``.  Monochrome by default (``scatter_color``
-    applies to all groups); pass ``scatter_color`` per call if you want per-group colour.
+    One column per group in ``group_order``. By default the same ``scatter_color``
+    is used for all groups; pass ``colors`` for per-group colours.
 
     Top row
     -------
@@ -536,6 +676,7 @@ def plot_scatter_and_penetrance(
         Time-bin column (used for penetrance aggregation and x-axis of bottom row).
     group_order : list or None
         Order of panels left → right.  If None, uses sorted unique values.
+    colors : dict group → hex, or None
     show_envelope : bool
         Draw the WT envelope band and dashed bounds on each top panel.
     upper_only : bool
@@ -582,14 +723,16 @@ def plot_scatter_and_penetrance(
     # Pre-build envelope lookup (supported bins only)
     sup_mask = df_env["supported"].values.astype(bool)
     env_x = df_env.loc[sup_mask, bin_col].values.astype(float)
-    env_low = df_env.loc[sup_mask, "smoothed_low"].values
-    env_high = df_env.loc[sup_mask, "smoothed_high"].values
+    env_low = df_env.loc[sup_mask, envelope_lower_col].values
+    env_high = df_env.loc[sup_mask, envelope_upper_col].values
+    resolved = _resolve_colors(group_order, colors)
 
     for ci, group in enumerate(group_order):
         ax_top = axes[0, ci]
         ax_bot = axes[1, ci]
 
         gdf = df[df[group_col] == group]
+        group_color = resolved.get(group, scatter_color)
 
         # ── Scatter panel ──────────────────────────────────────────────────
         # Subsample per group for speed
@@ -604,19 +747,19 @@ def plot_scatter_and_penetrance(
 
             ax_top.scatter(
                 non_pen[time_col], non_pen[metric_col],
-                s=10, alpha=0.15, color=scatter_color,
+                s=10, alpha=0.15, color=group_color,
                 marker="o", linewidths=0, label="Within bounds",
             )
             ax_top.scatter(
                 pen_pts[time_col], pen_pts[metric_col],
-                s=60, alpha=0.85, color=scatter_color,
+                s=60, alpha=0.85, color=group_color,
                 marker="X", edgecolors="black", linewidths=0.6,
                 label="Outside bounds",
             )
         else:
             ax_top.scatter(
                 gdf_plot[time_col], gdf_plot[metric_col],
-                s=18, alpha=0.35, color=scatter_color,
+                s=18, alpha=0.35, color=group_color,
                 marker="o", linewidths=0,
             )
 
@@ -635,17 +778,17 @@ def plot_scatter_and_penetrance(
         if vline_hpf is not None:
             ax_top.axvline(vline_hpf, color="black", ls=":", lw=2, alpha=0.8)
 
-        # ── Title: group name + embryo count + overall frame-level penetrance ──
+        # ── Title: group name + embryo count + overall rate ─────────────────
         total_emb = gdf[embryo_col].nunique()
         pen_valid = gdf[penetrant_col].dropna()
         overall_pct = pen_valid.mean() * 100 if len(pen_valid) > 0 else float("nan")
 
         ax_top.set_title(
-            f"{group}\n{total_emb} embryos | Overall: {overall_pct:.1f}%",
+            f"{group}\n{total_emb} embryos | {overall_label}: {overall_pct:.1f}%",
             fontsize=14, fontweight="bold",
         )
         if ci == 0:
-            ax_top.set_ylabel(metric_col, fontsize=12)
+            ax_top.set_ylabel(top_ylabel or metric_col, fontsize=12)
 
         if show_penetrant_markers:
             ax_top.legend(loc="upper right", fontsize=legend_fontsize, framealpha=0.9)
@@ -653,35 +796,57 @@ def plot_scatter_and_penetrance(
         _style_ax(ax_top)
 
         # ── Penetrance curve (bottom) ──────────────────────────────────────
-        pen_rows = []
-        for tb, tgrp in gdf.groupby(bin_col):
-            valid = tgrp.dropna(subset=[penetrant_col])
-            n_emb = valid[embryo_col].nunique()
-            if n_emb == 0:
-                continue
-            # Embryo-level: fraction of embryos with ≥1 penetrant frame in this bin
-            pen_emb = (
-                valid.groupby(embryo_col)[penetrant_col].max().sum()
-            )
-            pen_rows.append({
-                "time_bin": float(tb),
-                "penetrance_pct": (pen_emb / n_emb) * 100,
-            })
-
-        if pen_rows:
-            pen_df = pd.DataFrame(pen_rows).sort_values("time_bin")
-            ax_bot.plot(
-                pen_df["time_bin"], pen_df["penetrance_pct"],
-                "o-", color=scatter_color, lw=2.5, ms=5,
-            )
+        pen_df = summarize_binary_penetrance(
+            gdf,
+            group_col=group_col,
+            bin_col=bin_col,
+            penetrant_col=penetrant_col,
+            unit_col=embryo_col,
+            value_scale=100.0,
+        )
+        pen_df = pen_df[pen_df["group"] == group].sort_values("time_bin")
+        if not pen_df.empty:
+            x_vals = pen_df["time_bin"].to_numpy(dtype=float)
+            y_vals = pen_df["penetrance"].to_numpy(dtype=float)
+            y_display = _resolve_curve_display(x_vals, y_vals, mode=penetrance_curve_mode, frac=penetrance_curve_frac)
+            if show_penetrance_band:
+                if penetrance_band_mode == "se":
+                    spread = pen_df["se"].to_numpy(dtype=float)
+                    lower = y_display - spread
+                    upper = y_display + spread
+                elif penetrance_band_mode == "iqr":
+                    lower = _resolve_curve_display(
+                        x_vals,
+                        pen_df["q25"].to_numpy(dtype=float),
+                        mode=penetrance_curve_mode,
+                        frac=penetrance_curve_frac,
+                    )
+                    upper = _resolve_curve_display(
+                        x_vals,
+                        pen_df["q75"].to_numpy(dtype=float),
+                        mode=penetrance_curve_mode,
+                        frac=penetrance_curve_frac,
+                    )
+                else:
+                    raise ValueError(
+                        f"penetrance band mode must be 'se' or 'iqr', got {penetrance_band_mode!r}"
+                    )
+                ax_bot.fill_between(x_vals, lower, upper, color=group_color, alpha=0.18)
+            if show_penetrance_points:
+                ax_bot.plot(x_vals, y_vals, "o", color=group_color, ms=5, alpha=0.85)
+            if show_penetrance_line:
+                ax_bot.plot(
+                    x_vals, y_display,
+                    "-", color=group_color, lw=2.5,
+                )
 
         if vline_hpf is not None:
             ax_bot.axvline(vline_hpf, color="black", ls=":", lw=2, alpha=0.8)
 
         ax_bot.set_xlabel("Hours Post Fertilization (hpf)", fontsize=12)
         if ci == 0:
-            ax_bot.set_ylabel("Penetrance (%)", fontsize=12)
-        ax_bot.set_ylim(0, 100)
+            ax_bot.set_ylabel(bottom_label, fontsize=12)
+        ax_bot.set_ylim(0, 103)
         _style_ax(ax_bot)
 
     if title:

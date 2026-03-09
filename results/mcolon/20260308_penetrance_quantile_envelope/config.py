@@ -2,10 +2,11 @@
 Configuration for WT quantile envelope penetrance pipeline.
 
 Design decisions:
-- Penetrance is frame-level (embryo summaries are secondary/descriptive)
-- Smoothing selected by envelope shape stability, NOT by optimizing WT outside-rate
-- WT calibration reported as diagnostic; formal inference deferred to phase 2
-- Het embryos serve as additional WT-like reference for calibration comparison
+- Primary presentation outputs are embryo-level: one embryo summary per time bin.
+- Embryo-level classification defaults to a hybrid rule:
+  raw WT quantiles where support is clean, robust-smoothed thresholds otherwise.
+- Frame-level calibration and scatter remain available as diagnostics only.
+- Het embryos serve as an additional WT-like reference for calibration comparison.
 """
 
 from pathlib import Path
@@ -58,15 +59,38 @@ LOESS_FRAC_OVERRIDE = None
 # Used if no candidate frac passes validity checks.
 LOESS_FALLBACK_FRAC = 0.10
 
-# Minimum WT frames in a bin to compute quantile (otherwise unsupported=True).
+# Minimum WT frames in a bin for frame-level diagnostic envelopes.
 MIN_WT_FRAMES_PER_BIN = 10
+
+# Minimum WT embryo-bin summaries in a bin for embryo-level envelopes.
+MIN_WT_EMBRYOS_PER_BIN = 10
 
 # Metric is non-negative (baseline deviation); enforce lower >= 0 in envelope.
 METRIC_NONNEG = True
 
-# "frame"         → quantile over all frames in bin (original behaviour, frame = unit)
-# "embryo_median" → per-embryo median first, then quantile across embryo medians (robust)
-QUANTILE_UNIT = "embryo_median"
+# Embryo-bin summary statistic used for the main presentation path.
+EMBRYO_BIN_AGG = "median"
+
+# Robust smoothing excludes bins whose raw quantile deviates strongly from
+# a local median before LOESS is fit.
+ROBUST_SMOOTHING_WINDOW = 5
+ROBUST_SMOOTHING_MIN_POINTS = 3
+ROBUST_SMOOTHING_SIGMA_THRESHOLD = 4.0
+ROBUST_SMOOTHING_MIN_RESID_FRACTION = 0.15
+
+# Threshold source for calling penetrance.
+# "raw"      -> empirical per-bin quantiles only
+# "smoothed" -> smoothed envelope only
+# "hybrid"   -> raw when support is clean, smoothed for excluded/unsupported bins
+EMBRYO_CALL_MODE = "hybrid"
+FRAME_DIAGNOSTIC_CALL_MODE = "smoothed"
+
+# Presentation curve display controls. These affect plotted penetrance curves,
+# not the saved penetrance table or threshold calls.
+PRESENTATION_CURVE_MODE = "smoothed"   # "raw" or "smoothed"
+PRESENTATION_CURVE_FRAC = 0.20
+PRESENTATION_CURVE_SHOW_POINTS = True
+PRESENTATION_CURVE_SMOOTH_SE = True
 
 # One-directional penetrance: only flag frames that EXCEED the upper bound.
 # Use True for deviation metrics (baseline_deviation_normalized) where "too low"
