@@ -26,6 +26,7 @@ from typing import Optional
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -316,6 +317,37 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Draw a black outline stroke around the featured trace (helps on busy backgrounds).",
+    )
+    p.add_argument(
+        "--filter-genotype",
+        default=None,
+        help="If set, restrict background embryos to this genotype suffix (e.g. 'homozygous'). "
+             "Useful when panel-by=cluster_categories but you only want one genotype shown.",
+    )
+    p.add_argument(
+        "--trend-linestyle",
+        default="dotted",
+        choices=["solid", "dashed", "dotted", "-", "--", ":"],
+        help="Linestyle for trend line (default: dotted)",
+    )
+    p.add_argument(
+        "--bin-width",
+        type=float,
+        default=0.5,
+        help="HPF bin width used for the trend line in the background plot.",
+    )
+    p.add_argument(
+        "--plot-style",
+        default="background",
+        choices=["background", "trace_only"],
+        help="Render the curvature animation either with faded population background traces "
+             "or as a clean single-trace plot.",
+    )
+    p.add_argument(
+        "--skip-embryo-video",
+        action="store_true",
+        default=False,
+        help="Only render the curvature plot animation; skip the synchronized embryo snip MP4.",
     )
     return p.parse_args()
 
@@ -709,6 +741,125 @@ def _ax_data_to_pixel(ax, x_data: np.ndarray, y_data: np.ndarray) -> tuple[np.nd
     return px.astype(np.float32), py.astype(np.float32)
 
 
+def _prepare_featured_trace(
+    featured_df: pd.DataFrame,
+    feature_col: str,
+    smooth_sigma: float,
+    *,
+    extend_to: Optional[float] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    times = featured_df["predicted_stage_hpf"].to_numpy(dtype=float)
+    vals = featured_df[feature_col].to_numpy(dtype=float)
+    finite = np.isfinite(times) & np.isfinite(vals)
+    times = times[finite]
+    vals = vals[finite]
+    if times.size == 0:
+        return np.array([], dtype=float), np.array([], dtype=float)
+
+    order = np.argsort(times)
+    times = times[order]
+    vals = _gaussian_smooth(vals[order], smooth_sigma)
+
+    if extend_to is not None and times[-1] < float(extend_to):
+        times = np.concatenate([times, [float(extend_to)]])
+        vals = np.concatenate([vals, [vals[-1]]])
+
+    return times, vals
+
+
+def _build_reference_plot_figure(
+    df: pd.DataFrame,
+    feature_col: str,
+    color_by: str,
+    color_lookup: dict,
+    t_min: float,
+    t_max: float,
+    background_max_embryos: int,
+    seed: int,
+    trend_linestyle: str,
+    bin_width: float,
+    ylim: Optional[tuple[float, float]],
+    force_xlim: bool,
+):
+    from analyze.viz.plotting.feature_over_time import plot_feature_over_time
+
+    rng = np.random.default_rng(int(seed))
+
+    bg = df[df["predicted_stage_hpf"].between(t_min, t_max, inclusive="both")].copy()
+    bg = bg[bg[feature_col].notna()].copy()
+    bg_ids = bg["embryo_id"].astype(str).unique().tolist()
+    if len(bg_ids) > int(background_max_embryos):
+        bg_ids = rng.choice(bg_ids, size=int(background_max_embryos), replace=False).tolist()
+    bg = bg[bg["embryo_id"].isin(bg_ids)].copy()
+
+    fig = plot_feature_over_time(
+        bg,
+        features=feature_col,
+        time_col="predicted_stage_hpf",
+        id_col="embryo_id",
+        color_by=color_by,
+        color_lookup=color_lookup,
+        show_individual=True,
+        show_trend=True,
+        show_error_band=False,
+        backend="matplotlib",
+        xlim=(float(t_min), float(t_max)) if force_xlim else None,
+        ylim=ylim,
+        trend_linestyle=trend_linestyle,
+        bin_width=float(bin_width),
+    )
+    ax = fig.axes[0]
+    if force_xlim:
+        ax.set_xlim(float(t_min), float(t_max))
+        ax.set_xticks(np.linspace(float(t_min), float(t_max), 5))
+    return fig, ax
+
+
+def _blank_trace_figure_from_reference(ref_fig: plt.Figure, ref_ax) -> tuple[plt.Figure, any]:
+    fig = plt.figure(figsize=ref_fig.get_size_inches(), dpi=ref_fig.dpi)
+    ax = fig.add_axes(ref_ax.get_position())
+    # Preserve the rendered limits from the reference plot. Copying the tick
+    # locations here can expand the axis (e.g. from ~20-124 out to 0-140),
+    # so let Matplotlib keep the reference locator behavior.
+    ax.set_xlim(ref_ax.get_xlim())
+    ax.set_ylim(ref_ax.get_ylim())
+    ax.set_xlabel(ref_ax.get_xlabel())
+    ax.set_ylabel(ref_ax.get_ylabel())
+    if ref_ax.get_title():
+        ax.set_title(ref_ax.get_title())
+    ax.grid(alpha=0.15, linewidth=0.7)
+    ax.set_axisbelow(True)
+    return fig, ax
+
+
+def _save_trace_only_still(
+    out_png: Path,
+    ref_fig: plt.Figure,
+    ref_ax,
+    featured_df: pd.DataFrame,
+    feature_col: str,
+    featured_color_hex: str,
+    smooth_sigma: float,
+    extend_featured_trace: bool,
+    t_max: float,
+    trace_outline: bool,
+) -> None:
+    still_fig, still_ax = _blank_trace_figure_from_reference(ref_fig, ref_ax)
+    extend_to = float(t_max) if extend_featured_trace else None
+    xs, ys = _prepare_featured_trace(
+        featured_df,
+        feature_col,
+        smooth_sigma,
+        extend_to=extend_to,
+    )
+    if xs.size >= 1:
+        line = still_ax.plot(xs, ys, color=featured_color_hex, linewidth=3.0, solid_capstyle="round")[0]
+        if bool(trace_outline):
+            line.set_path_effects([pe.Stroke(linewidth=4.8, foreground="black"), pe.Normal()])
+    still_fig.savefig(str(out_png), dpi=ref_fig.dpi)
+    plt.close(still_fig)
+
+
 def _make_plot_video(
     out_mp4: Path,
     df: pd.DataFrame,
@@ -730,83 +881,114 @@ def _make_plot_video(
     extend_featured_trace: bool,
     smooth_sigma: float,
     trace_outline: bool,
+    trend_linestyle: str = "dotted",
+    bin_width: float = 0.5,
+    plot_style: str = "background",
     ylim: Optional[tuple[float, float]] = None,
 ) -> None:
     import cv2
-    from analyze.viz.plotting.feature_over_time import plot_feature_over_time
 
     plt.rcParams.update({
-        "xtick.labelsize": 12,
-        "ytick.labelsize": 12,
-        "axes.labelsize": 14,
+        "xtick.labelsize": 15,
+        "ytick.labelsize": 15,
+        "axes.labelsize": 17,
     })
     dpi = 100
 
-    rng = np.random.default_rng(int(seed))
-
-    # Background data in HPF range
-    bg = df[df["predicted_stage_hpf"].between(t_min, t_max, inclusive="both")].copy()
-    bg = bg[bg[feature_col].notna()].copy()
-    bg_ids = bg["embryo_id"].astype(str).unique().tolist()
-    if len(bg_ids) > int(background_max_embryos):
-        bg_ids = rng.choice(bg_ids, size=int(background_max_embryos), replace=False).tolist()
-    bg = bg[bg["embryo_id"].isin(bg_ids)].copy()
-
-    # --- Render the styled background once using plot_feature_over_time ---
-    print("  Rendering styled background figure...")
-    bg_fig = plot_feature_over_time(
-        bg,
-        features=feature_col,
-        time_col="predicted_stage_hpf",
-        id_col="embryo_id",
+    print("  Rendering styled reference figure...")
+    ref_fig, ref_ax = _build_reference_plot_figure(
+        df=df,
+        feature_col=feature_col,
         color_by=color_by,
         color_lookup=color_lookup,
-        show_individual=True,
-        show_error_band=False,
-        backend="matplotlib",
+        t_min=t_min,
+        t_max=t_max,
+        background_max_embryos=background_max_embryos,
+        seed=seed,
+        trend_linestyle=trend_linestyle,
+        bin_width=bin_width,
         ylim=ylim,
+        force_xlim=(plot_style == "background"),
     )
 
-    # Resize the figure to the requested pixel dimensions
-    bg_fig.set_size_inches(plot_width / dpi, plot_height / dpi)
-    bg_fig.set_dpi(dpi)
+    # Save unfaded PNGs before removing legend for video
+    bg_ax_leg = ref_fig.axes[0]
+    leg = bg_ax_leg.get_legend()
 
-    # Extract the (single) axes from the background figure for coordinate transforms
-    bg_ax = bg_fig.axes[0]
+    if plot_style == "background":
+        unfaded_png = out_mp4.with_name(out_mp4.stem.replace("curvature_animation", "background_unfaded") + ".png")
+        ref_fig.savefig(str(unfaded_png), bbox_inches="tight", dpi=dpi)
+        print(f"  Saved unfaded background: {unfaded_png.name}")
+
+        if leg is not None:
+            leg.remove()
+            bg_ax_leg.legend(
+                handles=leg.legend_handles,
+                labels=[t.get_text() for t in leg.get_texts()],
+                loc="upper left",
+                bbox_to_anchor=(1.01, 1.0),
+                bbox_transform=bg_ax_leg.transAxes,
+                fontsize=leg.get_texts()[0].get_fontsize() if leg.get_texts() else 12,
+                frameon=True, framealpha=0.9,
+            )
+        unfaded_outside_png = out_mp4.with_name(out_mp4.stem.replace("curvature_animation", "background_unfaded_legend_outside") + ".png")
+        ref_fig.savefig(str(unfaded_outside_png), bbox_inches="tight", dpi=dpi)
+        print(f"  Saved unfaded background (legend outside): {unfaded_outside_png.name}")
+
+    trace_only_png = out_mp4.with_name(out_mp4.stem.replace("curvature_animation", "trace_only_static") + ".png")
+    _save_trace_only_still(
+        out_png=trace_only_png,
+        ref_fig=ref_fig,
+        ref_ax=ref_ax,
+        featured_df=featured_df,
+        feature_col=feature_col,
+        featured_color_hex=featured_color_hex,
+        smooth_sigma=smooth_sigma,
+        extend_featured_trace=extend_featured_trace,
+        t_max=t_max,
+        trace_outline=trace_outline,
+    )
+    print(f"  Saved trace-only still: {trace_only_png.name}")
+
+    # Remove legend entirely for the video — cleaner look
+    leg_out = bg_ax_leg.get_legend()
+    if leg_out is not None:
+        leg_out.remove()
+
+    if plot_style == "trace_only":
+        plot_fig, bg_ax = _blank_trace_figure_from_reference(ref_fig, ref_ax)
+        plt.close(ref_fig)
+    else:
+        plot_fig = ref_fig
+        bg_ax = ref_ax
+
+    # Auto-detect video size from the rendered canvas — no forced resize
+    plot_fig.canvas.draw()
+    canvas_w, canvas_h = plot_fig.canvas.get_width_height()
+    plot_width, plot_height = int(canvas_w), int(canvas_h)
+    print(f"  Video frame size: {plot_width}x{plot_height} px (auto-detected from canvas)")
 
     # Read y/x limits from the rendered figure (trust what the function set)
     x_lim = bg_ax.get_xlim()
     y_lim = bg_ax.get_ylim()
     y0, y1 = float(y_lim[0]), float(y_lim[1])
 
-    # Bake to numpy (render once — this is the only matplotlib draw call)
-    bg_fig.canvas.draw()
-    canvas_w, canvas_h = bg_fig.canvas.get_width_height()
-    if int(canvas_w) != int(plot_width) or int(canvas_h) != int(plot_height):
-        print(f"NOTE: canvas {canvas_w}x{canvas_h} != requested {plot_width}x{plot_height}; using canvas size.")
-        plot_width, plot_height = int(canvas_w), int(canvas_h)
-
-    bg_rgb = _fig_to_rgb_array(bg_fig).copy()
+    bg_rgb = _fig_to_rgb_array(plot_fig).copy()
     bg_bgr = cv2.cvtColor(bg_rgb, cv2.COLOR_RGB2BGR)
+    plt.close(plot_fig)
 
-    # Fade background toward white so the featured trace stands out
-    white = np.full_like(bg_bgr, 255, dtype=np.uint8)
-    cv2.addWeighted(bg_bgr, 0.35, white, 0.65, 0, bg_bgr)
+    if plot_style == "background":
+        white = np.full_like(bg_bgr, 255, dtype=np.uint8)
+        cv2.addWeighted(bg_bgr, 0.35, white, 0.65, 0, bg_bgr)
 
     # --- Precompute featured trace in pixel space using the baked axes transform ---
-    featured_times = featured_df["predicted_stage_hpf"].to_numpy(dtype=float)
-    featured_vals = featured_df[feature_col].to_numpy(dtype=float)
-    finite = np.isfinite(featured_times) & np.isfinite(featured_vals)
-    featured_times = featured_times[finite]
-    featured_vals = featured_vals[finite]
-    order = np.argsort(featured_times)
-    featured_times = featured_times[order]
-    featured_vals = _gaussian_smooth(featured_vals[order], smooth_sigma)
-
-    # Extend flat to t_max
-    if extend_featured_trace and featured_times.size > 0 and featured_times[-1] < t_max:
-        featured_times = np.concatenate([featured_times, [float(t_max)]])
-        featured_vals = np.concatenate([featured_vals, [featured_vals[-1]]])
+    extend_to = float(t_max) if extend_featured_trace else None
+    featured_times, featured_vals = _prepare_featured_trace(
+        featured_df,
+        feature_col,
+        smooth_sigma,
+        extend_to=extend_to,
+    )
 
     if featured_times.size >= 2:
         px_all, py_all = _ax_data_to_pixel(bg_ax, featured_times, featured_vals)
@@ -818,14 +1000,12 @@ def _make_plot_video(
         return int(round(xy[0, 0]))
 
     # Axes bounding box in pixel coords (image origin = top-left)
-    fig_h_px = bg_fig.get_figheight() * bg_fig.dpi
+    fig_h_px = plot_height
     bbox = bg_ax.get_window_extent()  # display coords, origin bottom-left
     ax_px_x0 = int(round(bbox.x0))
     ax_px_x1 = int(round(bbox.x1))
     ax_px_y0 = int(round(fig_h_px - bbox.y1))  # flip to image coords (top)
     ax_px_y1 = int(round(fig_h_px - bbox.y0))  # flip to image coords (bottom)
-
-    plt.close(bg_fig)
 
     feat_bgr = _hex_to_bgr(featured_color_hex)
 
@@ -863,10 +1043,11 @@ def _make_plot_video(
                                   thickness=2, lineType=cv2.LINE_AA)
 
                 if px_vis.size >= 1:
-                    tip_x, tip_y = int(px_vis[-1]), int(py_vis[-1])
-                    outer = (0, 0, 0) if bool(trace_outline) else (255, 255, 255)
-                    cv2.circle(frame, (tip_x, tip_y), 6, outer, -1, lineType=cv2.LINE_AA)
-                    cv2.circle(frame, (tip_x, tip_y), 5, feat_bgr, -1, lineType=cv2.LINE_AA)
+                    if plot_style != "trace_only":
+                        tip_x, tip_y = int(px_vis[-1]), int(py_vis[-1])
+                        outer = (0, 0, 0) if bool(trace_outline) else (255, 255, 255)
+                        cv2.circle(frame, (tip_x, tip_y), 6, outer, -1, lineType=cv2.LINE_AA)
+                        cv2.circle(frame, (tip_x, tip_y), 5, feat_bgr, -1, lineType=cv2.LINE_AA)
 
             # Cursor only visible while within the embryo's data range
             feat_t_max = float(featured_times[-1]) if featured_times.size > 0 else t_max
@@ -1116,6 +1297,8 @@ def main() -> None:
             clip=False,
         )
         print(f"Derived 'curvature' column from '{raw_feature_col}' via normalize_arbitrary_feature(low=0, high_percentile=100, clip=False)")
+        if ylim is None:
+            ylim = (0.0, 1.0)
 
     # Basic range filter
     df = df[df["predicted_stage_hpf"].notna()].copy()
@@ -1143,9 +1326,13 @@ def main() -> None:
     cursor_max = float(args.cursor_max) if args.cursor_max is not None else float(args.t_max)
     print(f"Plot dimensions: {out_w}x{out_h} px"
           + (" (from faceting engine config)" if args.plot_width is None else " (user override)"))
-    print(f"Plot x-axis: {args.t_min}--{args.t_max} HPF, cursor scans {cursor_min}--{cursor_max} HPF")
+    print(f"Data window: {args.t_min}--{args.t_max} HPF, cursor scans {cursor_min}--{cursor_max} HPF")
     print(f"Rendering {n_frames} frames at {args.fps} fps "
           f"({n_frames / args.fps:.1f}s) -- speed x{args.speed}")
+    print(f"Plot style: {args.plot_style}")
+    if args.plot_style == "trace_only":
+        print("Trace-only x-axis: auto-resolved from the rendered reference figure")
+    print(f"Trend bin width: {args.bin_width} HPF")
     if ylim is not None:
         print(f"ylim: {ylim}")
     print(f"Panel by: {args.panel_by}")
@@ -1178,6 +1365,9 @@ def main() -> None:
             cluster_category = panel_key
             panel_label = f"{cluster_category}"
             df_panel = df[df["cluster_categories"] == cluster_category].copy()
+            if args.filter_genotype:
+                full_fg = f"cep290_{args.filter_genotype}"
+                df_panel = df_panel[df_panel["genotype"].isin([args.filter_genotype, full_fg])].copy()
             if df_panel.empty:
                 print(f"  WARNING: No data for cluster_categories '{cluster_category}', skipping.")
                 continue
@@ -1299,26 +1489,35 @@ def main() -> None:
                 extend_featured_trace=bool(args.extend_featured_trace),
                 smooth_sigma=float(args.smooth_sigma),
                 trace_outline=bool(args.trace_outline),
+                trend_linestyle=args.trend_linestyle,
+                bin_width=float(args.bin_width),
+                plot_style=args.plot_style,
                 ylim=ylim,
             )
 
-            emb_w, emb_h = _make_embryo_video(
-                out_mp4=embryo_mp4,
-                featured_df=featured_df,
-                snip_root=paths.snip_root,
-                genotype_color_hex=featured_color_hex,
-                t_min=float(args.t_min),
-                t_max=float(args.t_max),
-                cursor_min=cursor_min,
-                cursor_max=cursor_max,
-                fps=int(args.fps),
-                n_frames_out=n_frames,
-                hold_last_frame=bool(args.hold_last_frame),
-            )
-            print(f"  Embryo video dimensions: {emb_w}x{emb_h} (raw JPEG size)")
-
             saved_files.append(str(plot_mp4))
-            saved_files.append(str(embryo_mp4))
+            trace_png = plot_mp4.with_name(plot_mp4.stem.replace("curvature_animation", "trace_only_static") + ".png")
+            if trace_png.exists():
+                saved_files.append(str(trace_png))
+
+            if bool(args.skip_embryo_video):
+                print("  Skipped embryo video (--skip-embryo-video)")
+            else:
+                emb_w, emb_h = _make_embryo_video(
+                    out_mp4=embryo_mp4,
+                    featured_df=featured_df,
+                    snip_root=paths.snip_root,
+                    genotype_color_hex=featured_color_hex,
+                    t_min=float(args.t_min),
+                    t_max=float(args.t_max),
+                    cursor_min=cursor_min,
+                    cursor_max=cursor_max,
+                    fps=int(args.fps),
+                    n_frames_out=n_frames,
+                    hold_last_frame=bool(args.hold_last_frame),
+                )
+                print(f"  Embryo video dimensions: {emb_w}x{emb_h} (raw JPEG size)")
+                saved_files.append(str(embryo_mp4))
             print()
 
     print("Saved:")
