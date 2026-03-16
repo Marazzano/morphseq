@@ -97,4 +97,4 @@ python scripts/visualize.py --checkpoint <ckpt> --output figures/
 - **Identifiability**: beta, D, and R_e interact. D is global. R_e is per-embryo. Mean of lambda_e is constrained to 1. See spec §3.5 and §6.6.
 - **Gradient flow**: backprop through `torch.linalg.solve` can produce NaNs if the system is ill-conditioned. Add a small diagonal jitter (1e-6) to H^T H + Lambda before solving.
 - **Mode initialization**: all phi_m networks must initialize near zero so training starts on the baseline landscape. Use small weight init (e.g., scale default init by 0.01).
-- **S_m initialization**: always zero. Modes start as pure potentials.
+- **S_m normalization and initialization**: all S_m are Frobenius-normalized (||S_m||_F = 1) via reparameterization. For orthogonal modes, initialize unconstrained entries at small random values — NOT zero (normalization would divide by zero). Mode effect is initially negligible because c_m starts near zero via the ridge prior. For Helmholtz modes, S_m starts frozen at zero during potential-only phase; switch to normalized reparameterization with small random init when unfreezing.

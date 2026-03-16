@@ -44,7 +44,7 @@ where:
 |--------|-------------|
 | $\phi_0(z)$ | Baseline developmental potential (scalar field, shared across all embryos) |
 | $\phi_m(z)$ | Mode potentials (scalar fields, $m = 1, \dots, M$) |
-| $S_m$ | Antisymmetric matrix per mode ($S_m = -S_m^\top$), encoding rotational dynamics |
+| $S_m$ | Antisymmetric matrix per mode ($S_m = -S_m^\top$, $\|S_m\|_F = 1$), encoding rotational dynamics |
 | $\beta > 0$ | Global drift scale for baseline potential |
 | $c_e \in \mathbb{R}^M$ | Mode loadings per embryo (unconstrained reals) |
 | $R_e > 0$ | Rate parameter per embryo |
@@ -81,6 +81,8 @@ This has several notable properties:
 **Limitations.** Modes cannot create new branching points that don't exist in $\phi_0$. They can redirect which branch a trajectory follows, and shape how it traverses a valley, but the topology of the landscape — where valleys exist and where they split — is determined entirely by $\phi_0$. This is appropriate for a developmental landscape with no attractors (no $\nabla \phi_0 = 0$), where perturbations are expected to redirect fate decisions rather than create novel fates. Mode drift is strongest in transit regions where $\|\nabla \phi_0\|$ is large, and weakest near flat regions of the landscape.
 
 **Closed-form solve.** The drift remains linear in $c$, so the closed-form ridge solve (§4.1) applies identically. The design matrix columns become $H_{t,m} = R_e \, S_m \, \nabla_z \phi_0(z_t) \, \Delta t$.
+
+**Phenotypic distance in $c$-space.** With the Frobenius normalization $\|S_m\|_F = 1$ (§5.2), all modes have comparable strength and the loading vector $c_e \in \mathbb{R}^M$ is a well-scaled dynamical phenotype. Euclidean distance $\|c_a - c_b\|$ directly measures how differently two embryos interact with the developmental landscape. Combined with the scalar stage difference $|\phi_0(z_a) - \phi_0(z_b)|$, this gives a clean two-component phenotypic comparison: developmental timing (from $\phi_0$) and dynamical character (from $c$). For the full Helmholtz variant, $c$-space distances are less interpretable because mode power also depends on the $\phi_m$ network magnitudes (see §5.2).
 
 This variant should be implemented alongside the full Helmholtz model as a model selection flag (e.g., `mode_type: "orthogonal" | "helmholtz" | "potential_only"`). Comparing the two directly tests whether perturbation effects in the data can be fully explained as redirections of baseline flow, or whether they require genuinely novel landscape features.
 
@@ -176,11 +178,16 @@ Each of $\phi_0, \phi_1, \dots, \phi_M$ is a small MLP: $\mathbb{R}^d \to \mathb
 
 Each $S_m$ is a learnable constant $d \times d$ antisymmetric matrix. Parameterize by learning the $d(d-1)/2$ upper-triangular entries and antisymmetrizing. Initialize at zero (pure potential modes at start of training).
 
+**Frobenius normalization (orthogonal modes).** For the orthogonal-modes variant (§3.4), constrain $\|S_m\|_F = 1$ for all $m$. Reparameterize as $S_m = \tilde{S}_m / \|\tilde{S}_m\|_F$ where $\tilde{S}_m$ is unconstrained. This ensures that the mode loadings $c_m$ directly measure mode strength in comparable units, making Euclidean distance in $c$-space a meaningful phenotypic distance. Without this constraint, the model can trade scale between $S_m$ and $c_m$ freely, destroying the interpretability of the loading vectors.
+
+**Frobenius normalization (Helmholtz modes).** For the full Helmholtz variant, the situation is less clean. The effective strength of mode $m$ is $\|(-I + S_m) \nabla \phi_m(z)\|$, which varies spatially because $\nabla \phi_m$ depends on $z$. Normalizing $\|S_m\|_F = 1$ still helps (it removes the $S_m$-scaling degeneracy) but does not fully equalize mode power since the $\phi_m$ networks contribute their own scale. As a practical compromise, normalize $\|S_m\|_F = 1$ for the Helmholtz variant as well, and accept that $c$-space distances are more interpretable for orthogonal modes than for Helmholtz modes.
+
 ### 5.3 Initialization
 
 - Mode networks $\phi_m$ ($m \geq 1$): initialize weights near zero so all embryos start on the baseline landscape. Modes are recruited as training progresses.
 - Baseline network $\phi_0$: standard initialization (e.g., Xavier/He).
-- $S_m$: initialize at zero.
+- $S_m$ **(orthogonal modes)**: initialize the unconstrained $\tilde{S}_m$ entries at small random values (e.g., $\mathcal{N}(0, 0.01)$). The Frobenius normalization ensures $\|S_m\|_F = 1$ from the start. Cannot initialize at exactly zero under normalization (division by zero). The random init gives random mode orientations, which is appropriate since no mode direction is privileged a priori. Mode effect is still initially negligible because mode loadings $c_m$ start near zero (via the ridge prior).
+- $S_m$ **(Helmholtz modes)**: initialize at zero during the potential-only phase ($S_m$ frozen). When unfreezing $S_m$ in a later build stage, switch to the normalized reparameterization with small random $\tilde{S}_m$.
 
 ---
 
@@ -242,21 +249,29 @@ Within each stage, the data sampling and forward pass logic are identical.
 
 Each training iteration:
 
-1. For each trajectory in the batch, randomly select a contiguous fragment starting at some $t_0$.
-2. Randomly sample a prediction horizon $k \in \{1, 2, 3, 4\}$ (in units of the experiment's time resolution).
-3. The context is $z_{t_0:t_n}$ (used to infer $c_e$, $v_e$, $R_e$); the target is $z_{t_n + k}$.
+1. **Trajectory selection with class balancing.** Sample trajectories with probability proportional to temperature-scaled class weights. For class $p$ with $N_p$ trajectories out of $N_{\text{total}}$:
 
-This forces the model to produce calibrated predictions across a range of horizons and trajectory lengths rather than overfitting to full-trajectory reconstruction.
+$$w_p \propto \left(\frac{N_p}{N_{\text{total}}}\right)^{1 - \gamma}$$
+
+where $\gamma \in [0, 1]$ controls balancing strength. At $\gamma = 0$, sampling is proportional to class frequency (no rebalancing). At $\gamma = 1$, all classes are sampled equally regardless of size. Default: $\gamma = 0.5$ (square-root weighting).
+
+2. **Context window placement.** For each selected trajectory, randomly sample a start index $t_0$ uniformly from valid positions (i.e., positions where at least $W$ consecutive points are available as context and at least 1 future point exists). The context is $z_{t_0:t_0+W}$. This means the same trajectory contributes different context/target splits across epochs, exposing the model to contexts from early, middle, and late development.
+
+3. **Target sampling.** Sample $M$ target indices uniformly from $\{t_n+1, \ldots, \min(t_{\text{end}}, t_n + K_{\text{max}})\}$, where $t_n = t_0 + W$ is the last context point. Each target is scored as an independent single-step transition from its observed predecessor (teacher forcing — see §7.3). Default: $M = 1$. Increase to 3–5 if single-step displacements are dominated by noise in the embeddings.
 
 **Time resolution**: within any single experiment, all embryos share a uniform time step $\Delta t$. Across experiments, $\Delta t$ may differ. The model should accept $\Delta t$ as an input per experiment. The heteroscedasticity correction (weighting rows by $1/\sqrt{2D\Delta t}$) applies when training across experiments with different resolutions.
 
-**Horizon curriculum**: consider starting with $k=1$ only during early training (within each stage) and introducing longer horizons once basis functions have stabilized. Multi-step backpropagation through stochastic simulation is noisy; premature exposure to large $k$ may destabilize learning.
-
 ### 7.3 Loss Function
 
-$$\mathcal{L} = -\sum_e \log p(z_{t_n + k}^{(e)} | z_{t_n}^{(e)}, \xi_e^*, R_e^*) + \alpha_1 \mathcal{R}_1 + \alpha_2 \mathcal{R}_2 + \alpha_3 \mathcal{R}_3$$
+$$\mathcal{L} = -\sum_e \frac{1}{M} \sum_{m=1}^{M} \log p(z_{t_m}^{(e)} | z_{t_m - 1}^{(e)}, \xi_e^*, R_e^*) + \alpha_1 \mathcal{R}_1 + \alpha_2 \mathcal{R}_2 + \alpha_3 \mathcal{R}_3$$
 
-For multi-step prediction ($k > 1$), the likelihood is evaluated by forward-simulating $k$ steps under Euler-Maruyama from $z_{t_n}$ and scoring the target $z_{t_n+k}$. For $k = 1$, the transition log-likelihood under Euler-Maruyama is:
+where $t_1, \ldots, t_M$ are the randomly sampled target indices (§7.2). Each target is scored as a **single-step transition from the observed preceding point** (teacher forcing). The model never chains its own predictions during training — every evaluation is one Euler step from a real data point. This avoids compounding error and Euler stability issues.
+
+The key property: $c_e^*$ and $R_e^*$ are inferred from the context window only, but the loss is evaluated on future transitions that were not used for inference. This meta-learning structure ensures $\phi_0$ is optimized to be a potential where context-inferred loadings generalize to unseen future behavior.
+
+When $M > 1$, averaging over multiple future transitions reduces the impact of embedding noise on gradient estimates, since each individual single-step displacement may have poor signal-to-noise ratio.
+
+The single-step transition log-likelihood under Euler-Maruyama is:
 
 $$\log p(z_{t+1} | z_t) = -\frac{d}{2} \log(4\pi D \Delta t) - \frac{\| z_{t+1} - z_t - f(z_t; \xi_e^*, R_e^*) \Delta t \|^2}{4 D \Delta t}$$
 
@@ -278,16 +293,15 @@ $$\log p(z_{t+1} | z_t) = -\frac{d}{2} \log(4\pi D \Delta t) - \frac{\| z_{t+1} 
 
 ### 7.5 Forward Pass (Single Training Step)
 
-1. Sample a fragment and prediction horizon $k$ per trajectory (§7.1).
+1. Sample trajectories (class-balanced), context windows, and $M$ target indices per trajectory (§7.2).
 2. Compute $\nabla_z \phi_0(z_t)$ and $\nabla_z \phi_m(z_t)$ at all context transitions via autodiff.
 3. Assemble design matrix $H$ and residual vector $R$ per embryo (context only).
 4. Solve for $\xi_e^* = [c_e^*; v_e^*]$ via ridge regression.
 5. Compute $R_e^*$ via scalar projection.
 6. Iterate steps 3–5 once or twice (alternating $c/v$ and $R$).
-7. Forward-simulate $k$ steps from $z_{t_n}$ under the inferred dynamics.
-8. Evaluate log-likelihood of observed $z_{t_n+k}$ under the predicted distribution.
-9. Add regularization penalties.
-10. Backpropagate through everything (including the linear solve and forward simulation) into network weights.
+7. For each of the $M$ target transitions: evaluate the drift $f(z_{t_m-1}; \xi_e^*, R_e^*)$ at the observed predecessor and compute the single-step log-likelihood of the observed target $z_{t_m}$.
+8. Average the $M$ log-likelihoods per embryo. Add regularization penalties.
+9. Backpropagate through everything (including the linear solve) into network weights.
 
 ---
 
@@ -461,15 +475,14 @@ All evaluation is logged to Weights & Biases (W&B). Every model checkpoint — i
 The following are computed and logged at each evaluation checkpoint:
 
 - **Held-out NLL**: negative log-likelihood on test transitions. Primary metric. Reported separately for each test tier (§10).
-- **Per-horizon NLL**: broken out by prediction horizon $k \in \{1, 2, 3, 4\}$. Reveals where the model struggles.
+- **Per-horizon NLL**: at evaluation time, score targets at fixed horizons $k \in \{1, 2, 4, 8, 16\}$ steps from the context endpoint (teacher-forced single-step likelihoods). Reveals how prediction quality degrades with distance from the context window.
 - **Earth mover's distance (EMD)**: between predicted forward distributions (sampled from the SDE) and observed positions at each horizon. Captures distributional accuracy beyond mean prediction.
-- **Baseline comparison**: kernel regression scores on the same test sets, always visible as a reference line on all plots.
-- **$\phi_0$-only comparison**: scores from the stage 1 checkpoint, always visible as a second reference line. The gap between kernel → $\phi_0$-only measures the value of learned dynamics; the gap between $\phi_0$-only → full model measures the value of modes.
+- **Baseline comparisons**: all five models (§11.2) evaluated on the same test sets, always visible as reference lines on all plots. The gaps between successive models in the complexity hierarchy isolate the contribution of each component.
 - **Mode utilization diagnostics**:
   - Distribution of $\|v_e\|$ across test embryos (canary: large values mean modes aren't explaining the data)
   - Distribution of residual norms after the $c_e$ solve (are the modes a good basis?)
-  - Per-mode average $|c_{e,m}|$ (which modes are being used?)
-  - $\|S_m\|_F$ per mode (how non-conservative are the learned dynamics?)
+  - Per-mode average $|c_{e,m}|$ (which modes are being used? With $\|S_m\|_F = 1$, these are directly comparable across modes)
+  - Per-mode $c_m$ variance across embryos (modes with low variance are effectively constant and could be absorbed into $\phi_0$)
 
 ### 11.2 Five Models Always Compared
 
@@ -549,7 +562,10 @@ High-dimensional uncertainty is reported in two complementary ways:
 | $\alpha_1$ | Mode gradient penalty weight | Tune |
 | $\alpha_2$ | Mode potential power penalty weight | Tune |
 | $\alpha_3$ | Hessian smoothness penalty weight | Tune |
-| $\sigma$ (baseline) | Kernel bandwidth | Cross-validate |
+| $W$ | Context window length (points) | 5–11 |
+| $M_{\text{targets}}$ | Future transitions scored per fragment | 1 (increase to 3–5 if noisy) |
+| $K_{\text{max}}$ | Max horizon for target sampling (steps) | All remaining points |
+| $\gamma$ | Class balancing temperature | 0.5 |
 
 ---
 
