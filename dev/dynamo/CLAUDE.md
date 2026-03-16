@@ -17,7 +17,7 @@ project_root/
 ├── dynamo/                     # <-- this submodule (name TBD)
 │   ├── data/                   # Data loading, fragment sampling
 │   ├── models/                 # Model definitions (potentials, baselines)
-│   ├── inference/              # Closed-form solvers for c, v, R
+│   ├── inference/              # Closed-form solvers for c, R
 │   ├── training/               # Training loops (staged)
 │   ├── eval/                   # Metrics, W&B logging
 │   ├── viz/                    # Visualization panels (trajectory view, prediction fan, phenotype space, mode deflection)
@@ -31,7 +31,7 @@ project_root/
 - **Framework**: plain PyTorch. No Lightning. No unnecessary abstractions.
 - **Python**: 3.10+
 - **Logging**: Weights & Biases (wandb)
-- **Differentiation**: all per-embryo inference (c, v, R) must be batched and differentiable. Use `torch.linalg.solve` for ridge systems. Gradients must flow through the linear solve into network parameters.
+- **Differentiation**: all per-embryo inference (c, R) must be batched and differentiable. Use `torch.linalg.solve` for ridge systems. Gradients must flow through the linear solve into network parameters.
 - **Smooth activations only**: use softplus or ELU in all potential networks. Never ReLU.
 
 ## Build Sequence

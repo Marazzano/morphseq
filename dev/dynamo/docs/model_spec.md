@@ -36,7 +36,7 @@ where:
 
 The drift decomposes as:
 
-$$f(z; c_e, R_e) = R_e \left[ -\beta \, \nabla_z \phi_0(z) + \sum_{m=1}^{M} c_{e,m} \, (-I + S_m) \, \nabla_z \phi_m(z) \right] + v_e \cdot w_e(z)$$
+$$f(z; c_e, R_e) = R_e \left[ -\beta \, \nabla_z \phi_0(z) + \sum_{m=1}^{M} c_{e,m} \, (-I + S_m) \, \nabla_z \phi_m(z) \right]$$
 
 where:
 
@@ -48,8 +48,6 @@ where:
 | $\beta > 0$ | Global drift scale for baseline potential |
 | $c_e \in \mathbb{R}^M$ | Mode loadings per embryo (unconstrained reals) |
 | $R_e > 0$ | Rate parameter per embryo |
-| $v_e \in \mathbb{R}^d$ | Embryo-specific local drift correction |
-| $w_e(z)$ | Spatial decay kernel for local correction (see §3.6) |
 
 ### 3.3 Mode Parameterization (Helmholtz)
 
@@ -70,7 +68,7 @@ $$f_m(z) = S_m \, \nabla_z \phi_0(z)$$
 
 The total drift becomes:
 
-$$f(z; c_e, R_e) = R_e \left[-\beta I + \sum_m c_{e,m} \, S_m \right] \nabla_z \phi_0(z) + v_e \cdot w_e(z)$$
+$$f(z; c_e, R_e) = R_e \left[-\beta I + \sum_m c_{e,m} \, S_m \right] \nabla_z \phi_0(z)$$
 
 This has several notable properties:
 
@@ -102,25 +100,13 @@ where:
 
 $R_e$ modulates the **entire** drift (baseline + modes), not just the baseline. This reflects the assumption that temperature scales developmental rate uniformly. A key consequence: $R_e$ factors out of the least-squares solve for $c_e$, so mode loadings are invariant to developmental tempo.
 
-### 3.6 Embryo-Specific Local Drift Correction
-
-The term $v_e \cdot w_e(z)$ handles OOD trajectories that the mode basis cannot adequately represent:
-
-$$w_e(z) = \exp\left( -\frac{\| z - \bar{z}_e \|^2}{2\sigma_w^2} \right)$$
-
-where $\bar{z}_e$ is the centroid of observed points for embryo $e$, and $\sigma_w$ is a fixed kernel width (set to the median pairwise distance within observed trajectories, or similar).
-
-This correction applies a constant drift vector $v_e$ near the observed data and decays to zero far from it, so the embryo reverts to the mode-predicted dynamics for forward prediction. At each observed transition, $w_e(z_t)$ is a precomputed scalar, so the correction enters the closed-form solve as additional columns in the design matrix (see §4.1).
-
-**Regularization**: $v_e$ should be penalized more strongly than $c_e$ to ensure the modes get first priority in explaining dynamics. Use a separate regularization weight $\lambda_v > \lambda_c$.
-
 ---
 
 ## 4. Inference (Per-Embryo)
 
-All per-embryo quantities ($c_e$, $R_e$, $v_e$) are inferred via closed-form solves — no inner optimization loop, no encoder network.
+All per-embryo quantities ($c_e$, $R_e$) are inferred via closed-form solves — no inner optimization loop, no encoder network.
 
-### 4.1 Closed-Form Solve for Mode Loadings $c_e$ and Local Correction $v_e$
+### 4.1 Closed-Form Solve for Mode Loadings $c_e$
 
 Under Euler-Maruyama discretization, for transition $(z_t, z_{t+1})$ with time step $\Delta t$:
 
@@ -131,24 +117,21 @@ With $R_e$ known (or estimated separately, see §4.2), define:
 - Observed displacement: $\delta_t = z_{t+1} - z_t$
 - Baseline prediction: $g_t = -R_e \, \beta \, \nabla_z \phi_0(z_t) \, \Delta t$
 - Mode contribution vectors: $h_{t,m} = R_e \, (-I + S_m) \, \nabla_z \phi_m(z_t) \, \Delta t$
-- Local correction columns: $h_{t,d+j} = w_e(z_t) \, \Delta t \, \mathbf{e}_j$ for $j = 1, \dots, d$
 - Residual: $r_t = \delta_t - g_t$
-
-The combined unknown vector is $\xi_e = [c_e; v_e] \in \mathbb{R}^{M+d}$.
 
 **Heteroscedasticity correction**: if $\Delta t$ varies across transitions, weight each row by $1 / \sqrt{2D \Delta t_i}$.
 
-Stack all transitions into a system $R = H \xi$ where $R \in \mathbb{R}^{Td}$, $H \in \mathbb{R}^{Td \times (M+d)}$. The regularized solution is:
+Stack all transitions into a system $R = H c_e$ where $R \in \mathbb{R}^{Td}$, $H \in \mathbb{R}^{Td \times M}$. The regularized solution is:
 
-$$\xi_e^* = (H^\top H + \Lambda)^{-1} (H^\top R + \Lambda \, \xi_0)$$
+$$c_e^* = (H^\top H + \lambda_c I_M)^{-1} (H^\top R + \lambda_c \, c_{0,p(e)})$$
 
-where $\Lambda = \text{diag}(\lambda_c I_M, \, \lambda_v I_d)$ is a block-diagonal regularization matrix with separate strengths for mode loadings and local correction, and $\xi_0 = [c_{0,p(e)}; \, \mathbf{0}]$ is the prior (class-level loadings for $c$, zero for $v$).
+where $\lambda_c$ is the L2 regularization strength and $c_{0,p(e)}$ is the class-level prior for embryo $e$'s perturbation class.
 
-This is an $(M+d) \times (M+d)$ linear system (e.g., $15 \times 15$ for $M=5$, $d=10$). Solved via `torch.linalg.solve`. Fully differentiable — gradients flow through the solve into the network parameters.
+This is an $M \times M$ linear system (e.g., $5 \times 5$ for $M=5$). Solved via `torch.linalg.solve`. Fully differentiable — gradients flow through the solve into the network parameters.
 
 ### 4.2 Closed-Form Solve for Rate $R_e$
 
-Given $c_e^*$ and $v_e^*$, the total predicted drift direction at each transition is known. $R_e$ is a scalar multiplier on the structured component. The optimal $R_e$ is:
+Given $c_e^*$, the total predicted drift direction at each transition is known. $R_e$ is a scalar multiplier on the structured component. The optimal $R_e$ is:
 
 $$R_e^* = \frac{\sum_t \delta_t^\top \hat{f}_t \, \Delta t}{\sum_t \| \hat{f}_t \|^2 \, \Delta t^2}$$
 
@@ -197,11 +180,7 @@ Each $S_m$ is a learnable constant $d \times d$ antisymmetric matrix. Parameteri
 
 L2 penalty on $c_e$, implemented as the $\lambda_c$ term in the ridge solve (§4.1). Controls shrinkage toward the class-level prior $c_{0,p}$.
 
-### 6.2 Local Correction Regularization
-
-L2 penalty on $v_e$ with $\lambda_v > \lambda_c$. Ensures modes explain dynamics first; local correction is a residual.
-
-### 6.3 Mode Gradient Magnitude
+### 6.2 Mode Gradient Magnitude
 
 Penalize the average drift magnitude of each mode across training data:
 
@@ -209,7 +188,7 @@ $$\mathcal{R}_1 = \mathbb{E}_{z \sim \text{data}} \left[ \sum_m \| (-I + S_m) \n
 
 This constrains modes to be "small" relative to baseline without creating adversarial coupling between $\phi_0$ and the modes.
 
-### 6.4 Mode Potential Power
+### 6.3 Mode Potential Power
 
 Penalize the total scalar power of each mode across the data manifold:
 
@@ -217,7 +196,7 @@ $$\mathcal{R}_2 = \mathbb{E}_{z \sim \text{data}} \left[ \sum_m \phi_m(z)^2 \rig
 
 This constrains modes from dominating the baseline landscape in terms of potential value, preserving the interpretability of $\phi_0$ as the primary developmental stage coordinate.
 
-### 6.5 Hessian Smoothness
+### 6.4 Hessian Smoothness
 
 Penalize rapid spatial variation in each potential:
 
@@ -225,7 +204,7 @@ $$\mathcal{R}_3 = \mathbb{E}_{z \sim \text{data}} \left[ \sum_m \| \nabla_z^2 \p
 
 Computed via double backward passes. Encourages smooth, broad landscape features per mode.
 
-### 6.6 Rate Parameter Centering
+### 6.5 Rate Parameter Centering
 
 Mean-centering constraint on $\lambda_e$ across the training set: $\bar{\lambda} = 1$. Implemented via reparameterization (§3.5).
 
@@ -237,9 +216,9 @@ Mean-centering constraint on $\lambda_e$ across the training set: $\bar{\lambda}
 
 Training proceeds in stages to enforce the interpretive hierarchy: $\phi_0$ defines baseline development, modes capture deviations.
 
-**Stage 1: Baseline potential only.** Train $\phi_0$ network weights, $\beta$, $D$, and $R_e$ (per embryo). No modes, no $v_e$. This produces the $\phi_0$-only model, which is saved as a checkpoint and serves as a permanent evaluation baseline alongside the kernel regression.
+**Stage 1: Baseline potential only.** Train $\phi_0$ network weights, $\beta$, $D$, and $R_e$ (per embryo). No modes. This produces the $\phi_0$-only model, which is saved as a checkpoint and serves as a permanent evaluation baseline alongside the kernel regression.
 
-**Stage 2: Introduce modes.** Freeze $\phi_0$. Introduce mode potentials $\phi_m$, antisymmetric matrices $S_m$ (initialized at zero), class-level priors $c_{0,p}$, and local correction $v_e$. Train with the closed-form $[c_e; v_e]$ solve active. $R_e$ continues to update. Regularization terms $\mathcal{R}_1$, $\mathcal{R}_2$, $\mathcal{R}_3$ are active.
+**Stage 2: Introduce modes.** Freeze $\phi_0$. Introduce mode potentials $\phi_m$, antisymmetric matrices $S_m$ (initialized at zero), class-level priors $c_{0,p}$. Train with the closed-form $c_e$ solve active. $R_e$ continues to update. Regularization terms $\mathcal{R}_1$, $\mathcal{R}_2$, $\mathcal{R}_3$ are active.
 
 **Stage 3 (optional): Fine-tune baseline.** Unfreeze $\phi_0$ with a heavily reduced learning rate (e.g., $10\times$ lower than stage 2). This allows the baseline to adjust slightly to accommodate the modes. Monitor whether $\phi_0$ drifts significantly from its stage 1 form — if it does, the modes aren't expressive enough. Skip this stage initially.
 
@@ -263,7 +242,7 @@ where $\gamma \in [0, 1]$ controls balancing strength. At $\gamma = 0$, sampling
 
 ### 7.3 Loss Function
 
-$$\mathcal{L} = -\sum_e \frac{1}{M} \sum_{m=1}^{M} \log p(z_{t_m}^{(e)} | z_{t_m - 1}^{(e)}, \xi_e^*, R_e^*) + \alpha_1 \mathcal{R}_1 + \alpha_2 \mathcal{R}_2 + \alpha_3 \mathcal{R}_3$$
+$$\mathcal{L} = -\sum_e \frac{1}{M} \sum_{m=1}^{M} \log p(z_{t_m}^{(e)} | z_{t_m - 1}^{(e)}, c_e^*, R_e^*) + \alpha_1 \mathcal{R}_1 + \alpha_2 \mathcal{R}_2 + \alpha_3 \mathcal{R}_3$$
 
 where $t_1, \ldots, t_M$ are the randomly sampled target indices (§7.2). Each target is scored as a **single-step transition from the observed preceding point** (teacher forcing). The model never chains its own predictions during training — every evaluation is one Euler step from a real data point. This avoids compounding error and Euler stability issues.
 
@@ -273,7 +252,7 @@ When $M > 1$, averaging over multiple future transitions reduces the impact of e
 
 The single-step transition log-likelihood under Euler-Maruyama is:
 
-$$\log p(z_{t+1} | z_t) = -\frac{d}{2} \log(4\pi D \Delta t) - \frac{\| z_{t+1} - z_t - f(z_t; \xi_e^*, R_e^*) \Delta t \|^2}{4 D \Delta t}$$
+$$\log p(z_{t+1} | z_t) = -\frac{d}{2} \log(4\pi D \Delta t) - \frac{\| z_{t+1} - z_t - f(z_t; c_e^*, R_e^*) \Delta t \|^2}{4 D \Delta t}$$
 
 ### 7.4 Parameters and Their Optimization Method
 
@@ -287,7 +266,6 @@ $$\log p(z_{t+1} | z_t) = -\frac{d}{2} \log(4\pi D \Delta t) - \frac{\| z_{t+1} 
 | $D$ | Backprop | Global scalar diffusion |
 | $c_{0,p}$ | Backprop (or analytic) | Class-level priors |
 | $c_e$ | Closed-form (ridge) | Per-embryo, inside forward pass |
-| $v_e$ | Closed-form (ridge) | Per-embryo, inside forward pass |
 | $R_e$ | Closed-form (projection) | Per-embryo, inside forward pass |
 | $\lambda_e$ | Absorbed into $R_e$ | Via reparameterization |
 
@@ -296,10 +274,10 @@ $$\log p(z_{t+1} | z_t) = -\frac{d}{2} \log(4\pi D \Delta t) - \frac{\| z_{t+1} 
 1. Sample trajectories (class-balanced), context windows, and $M$ target indices per trajectory (§7.2).
 2. Compute $\nabla_z \phi_0(z_t)$ and $\nabla_z \phi_m(z_t)$ at all context transitions via autodiff.
 3. Assemble design matrix $H$ and residual vector $R$ per embryo (context only).
-4. Solve for $\xi_e^* = [c_e^*; v_e^*]$ via ridge regression.
+4. Solve for $c_e^*$ via ridge regression.
 5. Compute $R_e^*$ via scalar projection.
-6. Iterate steps 3–5 once or twice (alternating $c/v$ and $R$).
-7. For each of the $M$ target transitions: evaluate the drift $f(z_{t_m-1}; \xi_e^*, R_e^*)$ at the observed predecessor and compute the single-step log-likelihood of the observed target $z_{t_m}$.
+6. Iterate steps 3–5 once or twice (alternating $c$ and $R$).
+7. For each of the $M$ target transitions: evaluate the drift $f(z_{t_m-1}; c_e^*, R_e^*)$ at the observed predecessor and compute the single-step log-likelihood of the observed target $z_{t_m}$.
 8. Average the $M$ log-likelihoods per embryo. Add regularization penalties.
 9. Backpropagate through everything (including the linear solve) into network weights.
 
@@ -458,7 +436,7 @@ Hold out random embryos from known classes, stratified by trajectory length. Com
 
 ### Tier 3: Out-of-Span Perturbation (Stress Test)
 
-Hold out a perturbation class suspected to be outside the mode basis span. The model should produce poor predictions but with appropriately high uncertainty (large residuals, large $v_e$ corrections). Confident wrong predictions indicate poor calibration.
+Hold out a perturbation class suspected to be outside the mode basis span. The model should produce poor predictions but with appropriately high uncertainty (large residuals). Confident wrong predictions indicate poor calibration.
 
 ### Tier 4: Horizon Sweep
 
@@ -479,7 +457,6 @@ The following are computed and logged at each evaluation checkpoint:
 - **Earth mover's distance (EMD)**: between predicted forward distributions (sampled from the SDE) and observed positions at each horizon. Captures distributional accuracy beyond mean prediction.
 - **Baseline comparisons**: all five models (§11.2) evaluated on the same test sets, always visible as reference lines on all plots. The gaps between successive models in the complexity hierarchy isolate the contribution of each component.
 - **Mode utilization diagnostics**:
-  - Distribution of $\|v_e\|$ across test embryos (canary: large values mean modes aren't explaining the data)
   - Distribution of residual norms after the $c_e$ solve (are the modes a good basis?)
   - Per-mode average $|c_{e,m}|$ (which modes are being used? With $\|S_m\|_F = 1$, these are directly comparable across modes)
   - Per-mode $c_m$ variance across embryos (modes with low variance are effectively constant and could be absorbed into $\phi_0$)
@@ -557,8 +534,6 @@ High-dimensional uncertainty is reported in two complementary ways:
 | Hidden depth | MLP layers per potential | 2 |
 | Activation | Smooth nonlinearity | Softplus |
 | $\lambda_c$ | L2 penalty on mode loadings | Cross-validate |
-| $\lambda_v$ | L2 penalty on local correction | $5\text{–}10 \times \lambda_c$ |
-| $\sigma_w$ | Local correction decay width | Median pairwise distance |
 | $\alpha_1$ | Mode gradient penalty weight | Tune |
 | $\alpha_2$ | Mode potential power penalty weight | Tune |
 | $\alpha_3$ | Hessian smoothness penalty weight | Tune |
@@ -573,6 +548,7 @@ High-dimensional uncertainty is reported in two complementary ways:
 
 The following were discussed and deemed valuable but deferred in the interest of starting lean:
 
+- **Embryo-specific local drift correction ($v_e$)**: add a per-embryo constant drift vector $v_e \in \mathbb{R}^d$ with a spatial decay kernel $w_e(z) = \exp(-\|z - \bar{z}_e\|^2 / 2\sigma_w^2)$ centered on the embryo's observed data. The term $v_e \cdot w_e(z)$ would handle OOD trajectories that the mode basis cannot adequately represent, applying near the observed data and decaying to zero for forward prediction. $v_e$ would enter the closed-form ridge solve as additional columns in the design matrix (expanding $c_e$ to $[c_e; v_e]$), with a separate regularization weight $\lambda_v > \lambda_c$ to ensure modes get first priority. Pursue if residual analysis after mode fitting shows systematic per-embryo biases that the mode basis cannot capture.
 - **Underdamped Langevin (momentum)**: augment state with velocity to capture ballistic arcs. Doubles state dimension, adds damping parameter $\gamma$. Breaks closed-form $c$ solve. Pursue if first-order model fails to capture curved trajectories.
 - **Diagonal diffusion**: replace scalar $D$ with per-dimension $D_i$. Minimal complexity increase, likely worthwhile if residual analysis shows anisotropic noise.
 - **Time-varying potential**: allow landscape to deform over developmental time. Handles "same state, different stage, different future." Partially preserves closed-form structure if time dependence is simple.
@@ -595,14 +571,14 @@ Implement and test in this order. Each step produces a runnable, evaluable artif
 3. **Simple kernel regression (§9.1).** Nearest-point lookup baseline. One hyperparameter. Implement in an afternoon. This is the absolute floor.
 4. **Branching particle filter (§9.2).** Direction-aware matching, local recruitment, multimodal predictions. More complex but substantially more powerful. Implement in layers: first get selection and single-shot prediction working (follow references forward, no recruitment), then add recruitment logic.
 5. **$\phi_0$-only model (Stage 1).** Single baseline potential, $\beta$, $D$, $R_e$. No modes. Train and evaluate. Save checkpoint — this becomes the permanent $\phi_0$-only reference.
-6. **Orthogonal modes (§3.4).** Freeze $\phi_0$. Introduce antisymmetric matrices $S_m$ operating on $\nabla \phi_0$, closed-form $[c_e; v_e]$ solve, class-level priors $c_{0,p}$. Train and evaluate. This is the simplest mode variant and tests whether redirecting baseline flow is sufficient.
+6. **Orthogonal modes (§3.4).** Freeze $\phi_0$. Introduce antisymmetric matrices $S_m$ operating on $\nabla \phi_0$, closed-form $c_e$ solve, class-level priors $c_{0,p}$. Train and evaluate. This is the simplest mode variant and tests whether redirecting baseline flow is sufficient.
 7. **Full Helmholtz modes.** Introduce independent mode potentials $\phi_m$ with $S_m = 0$ (potential-only modes). Train and evaluate. Compare to orthogonal modes to assess whether independent landscape features add value.
 8. **Unfreeze $S_m$ on full model.** Allow non-conservative dynamics in the Helmholtz modes. Compare to potential-only modes.
 9. **Add regularization terms incrementally.** Introduce $\mathcal{R}_1$, $\mathcal{R}_2$, $\mathcal{R}_3$ one at a time (applicable to Helmholtz modes only; orthogonal modes do not require them), monitoring impact on both performance and interpretability.
 
 ### 15.3 Key Implementation Constraints
 
-- All per-embryo inference ($c_e$, $v_e$, $R_e$) must be batched and differentiable. Use `torch.linalg.solve` for the ridge systems.
+- All per-embryo inference ($c_e$, $R_e$) must be batched and differentiable. Use `torch.linalg.solve` for the ridge systems.
 - Mode type selection should be a single config flag: `mode_type: "orthogonal" | "helmholtz" | "potential_only"`. The orthogonal variant uses $S_m \nabla \phi_0$ (no $\phi_m$ networks). The Helmholtz variant uses $(-I + S_m) \nabla \phi_m$. The potential-only variant is Helmholtz with $S_m$ frozen at zero.
 - The kernel baselines (simple and particle filter) should be standalone modules sharing the same data loading and evaluation pipeline.
 - The five-model comparison (simple kernel, particle filter, $\phi_0$-only, orthogonal modes, full Helmholtz) must be trivially reproducible at any point during development.
