@@ -30,7 +30,7 @@ class TimmEncoder(nn.Module):
         # -------- 1) build backbone --------
         if self._is_patch_family():
             # ViT-style backbone (tokens out)
-            self.backbone = create_model(self.model_name, pretrained=self.use_pretrained_weights, in_chans=self.cfg.input_dim[0]) # e.g. 192 / 768
+            self.backbone = create_model(self.model_name, pretrained=self.use_pretrained_weights, in_chans=self.cfg.input_dim[0])
             if self.model_name[:3] == "vit":
                 self.backbone = vit_resize(self.backbone, (self.cfg.input_dim[1], self.cfg.input_dim[2]))
             elif self.model_name[:4] == "swin":

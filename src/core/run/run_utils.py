@@ -14,9 +14,12 @@ import torch
 from hydra.core.hydra_config import HydraConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
 import yaml
+import pickle
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from pytorch_lightning.loggers import WandbLogger
+import src.core.run.compat  # noqa: F401 — register legacy module aliases
 
 torch.set_float32_matmul_precision("medium")
 # good default
@@ -338,26 +341,176 @@ def initialize_model(config):
     return model, model_config, data_config, loss_fn, pips_fn, train_config
 
 
-# def initialize_ldm_model(config):
-#     # initialize the model
-#     config_full = config.copy()
-#     model_dict = config.pop("model", OmegaConf.create())
-#     target = model_dict["config_target"]
-#     model_config = get_obj_from_str(target)
-#     model_config = model_config.from_cfg(cfg=config_full)
-#
-#     # parse dataset related options and merge with defaults as needed
-#     # data_config = model_config.dataconfig
-#     # # get train/test/eval indices
-#     # data_config.make_metadata()
-#
-#
-#     # initialize model
-#     model = build_from_config(model_config)
-#     if hasattr(model_config.lossconfig, "metric_array"):
-#         model_config.lossconfig.metric_array = data_config.metric_array
-#     loss_fn = model_config.lossconfig.create_module()  # or model.compute_loss
-#
-#     train_config = model_config.trainconfig
-#
-#     return model, model_config, data_config, loss_fn, train_config
+# ----------------------------------------------------------------------
+#  Inference utility: load a trained model from a run directory
+# ----------------------------------------------------------------------
+
+def _find_data_root(run_path: Path) -> Path:
+    """Walk up from *run_path* to find the directory containing ``metadata/age_key.csv``."""
+    p = run_path
+    for _ in range(6):
+        if (p / "metadata" / "age_key.csv").is_file():
+            return p
+        p = p.parent
+    raise FileNotFoundError(
+        f"Could not locate metadata/age_key.csv above {run_path}"
+    )
+
+
+def _patch_hydra_config(config, run_path: Path, data_root: Path):
+    """Replace ``${hydra:...}`` / ``${ancestor:...}`` interpolations with concrete values."""
+    OmegaConf.update(config, "wandb.run_name", run_path.name, force_add=True)
+    OmegaConf.update(config, "wandb.group", run_path.parent.name, force_add=True)
+    OmegaConf.update(config, "model.dataconfig.root", str(data_root), force_add=True)
+
+
+def _remap_legacy_path(value):
+    """Rewrite ``src.X.…`` → ``src.core.X.…`` for known relocated packages."""
+    _LEGACY_PREFIXES = ("src.models.", "src.losses.", "src.lightning.", "src.data.")
+    if isinstance(value, str):
+        for prefix in _LEGACY_PREFIXES:
+            if value.startswith(prefix):
+                return value.replace(prefix, f"src.core.{prefix[4:]}", 1)
+    return value
+
+
+def _patch_legacy_targets(config):
+    """Walk the config dict and rewrite any legacy module path strings."""
+    if not OmegaConf.is_config(config):
+        return
+    if OmegaConf.is_list(config):
+        return  # skip lists — they contain data values, not module paths
+    for key in list(config):
+        node = config[key]
+        if OmegaConf.is_config(node):
+            _patch_legacy_targets(node)
+        elif isinstance(node, str):
+            remapped = _remap_legacy_path(node)
+            if remapped != node:
+                OmegaConf.update(config, key, remapped)
+
+
+def load_trained_model(
+    run_path,
+    ckpt_name="last.ckpt",
+    split_path=None,
+    map_location="cpu",
+):
+    """Load a trained LitModel from a Hydra run directory for inference.
+
+    Parameters
+    ----------
+    run_path : str or Path
+        Path to the run directory (the one containing ``.hydra/config.yaml``
+        and ``checkpoints/``).
+    ckpt_name : str, optional
+        Checkpoint filename inside ``run_path/checkpoints/``.  Defaults to
+        ``"last.ckpt"``.  Pass ``None`` to auto-select the newest checkpoint.
+    split_path : str or Path, optional
+        Path to ``split_indices.pkl``.  Defaults to
+        ``run_path / "split_indices.pkl"`` if it exists.
+    map_location : str, optional
+        Device for ``torch.load``.  Defaults to ``"cpu"``.
+
+    Returns
+    -------
+    lit_model : LitModel
+        Frozen LitModel ready for ``trainer.predict()``.
+    eval_data_config : BaseDataConfig
+        Data config with correct transforms and train/test/eval splits.
+    model_config : object
+        The full model config (access ``ddconfig``, ``lossconfig``, etc.).
+    """
+    from src.core.data.dataset_configs import BaseDataConfig
+
+    run_path = Path(run_path)
+    cfg_path = run_path / ".hydra" / "config.yaml"
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"No Hydra config found at {cfg_path}")
+
+    # --- Resolve checkpoint path ---
+    ckpt_dir = run_path / "checkpoints"
+    if ckpt_name is not None:
+        ckpt_path = ckpt_dir / ckpt_name
+    else:
+        ckpts = sorted(ckpt_dir.glob("*.ckpt"))
+        if not ckpts:
+            raise FileNotFoundError(f"No checkpoints in {ckpt_dir}")
+        ckpt_path = ckpts[-1]
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
+    # --- Resolve split file ---
+    if split_path is None:
+        split_path = run_path / "split_indices.pkl"
+    split_path = Path(split_path)
+
+    # --- Load and patch config ---
+    data_root = _find_data_root(run_path)
+    config = OmegaConf.load(str(cfg_path))
+    _patch_hydra_config(config, run_path, data_root)
+    _patch_legacy_targets(config)
+    config_dict = OmegaConf.to_container(config, resolve=True)
+
+    # --- Build model architecture from config ---
+    model, model_config, train_data_config, loss_fn, _, train_config = initialize_model(
+        config_dict
+    )
+
+    # --- Build eval data config with correct transforms ---
+    input_dim = model_config.ddconfig.input_dim
+    target_size = (input_dim[1], input_dim[2])
+
+    if split_path.exists():
+        with open(split_path, "rb") as f:
+            split_dict = pickle.load(f)
+        eval_data_config = BaseDataConfig(
+            train_indices=np.asarray(split_dict["train"]),
+            test_indices=np.asarray(split_dict["test"]),
+            eval_indices=np.asarray(split_dict["eval"]),
+            root=train_data_config.root,
+            return_sample_names=True,
+            transform_name="basic",
+            transform_kwargs={"target_size": target_size},
+        )
+    else:
+        eval_data_config = BaseDataConfig(
+            root=train_data_config.root,
+            return_sample_names=True,
+            transform_name="basic",
+            transform_kwargs={"target_size": target_size},
+        )
+    eval_data_config.make_metadata()
+
+    # --- Load checkpoint with shape-filtered state_dict ---
+    lit_model = LitModel(
+        model=model,
+        loss_fn=loss_fn,
+        data_cfg=eval_data_config,
+        train_cfg=train_config,
+    )
+
+    ckpt = torch.load(str(ckpt_path), map_location=map_location, weights_only=False)
+    state_dict = ckpt["state_dict"]
+
+    # Only load weights whose shapes match (handles discriminator renames,
+    # Swin relative_position_bias_table size mismatches, etc.)
+    model_sd = lit_model.state_dict()
+    filtered = {
+        k: v for k, v in state_dict.items()
+        if k in model_sd and v.shape == model_sd[k].shape
+    }
+    skipped = [k for k in state_dict if k not in filtered]
+    lit_model.load_state_dict(filtered, strict=False)
+
+    if skipped:
+        warnings.warn(
+            f"load_trained_model: skipped {len(skipped)} state_dict keys with "
+            f"shape mismatches or renames (e.g. {skipped[:3]})",
+            stacklevel=2,
+        )
+
+    lit_model.eval()
+    lit_model.freeze()
+
+    return lit_model, eval_data_config, model_config
