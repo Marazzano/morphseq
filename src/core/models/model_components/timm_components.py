@@ -28,13 +28,20 @@ class TimmEncoder(nn.Module):
         self.latent_dim = cfg.latent_dim
 
         # -------- 1) build backbone --------
+        hw = (self.cfg.input_dim[1], self.cfg.input_dim[2])
         if self._is_patch_family():
             # ViT-style backbone (tokens out)
-            self.backbone = create_model(self.model_name, pretrained=self.use_pretrained_weights, in_chans=self.cfg.input_dim[0])
+            extra_kw = {}
+            if self.model_name.startswith("swin"):
+                extra_kw["img_size"] = hw  # Swin needs correct size for attention masks
+            self.backbone = create_model(
+                self.model_name, pretrained=self.use_pretrained_weights,
+                in_chans=self.cfg.input_dim[0], **extra_kw,
+            )
             if self.model_name[:3] == "vit":
-                self.backbone = vit_resize(self.backbone, (self.cfg.input_dim[1], self.cfg.input_dim[2]))
+                self.backbone = vit_resize(self.backbone, hw)
             elif self.model_name[:4] == "swin":
-                self.backbone = swin_resize(self.backbone, (self.cfg.input_dim[1], self.cfg.input_dim[2]))
+                self.backbone = swin_resize(self.backbone, hw)
 
             self.embed_dim = self.backbone.num_features
         else:
