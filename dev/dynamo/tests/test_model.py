@@ -90,13 +90,15 @@ def _make_dataset(
     )
 
 
-def _make_batch(B: int = 8, L: int = 10, d: int = 5) -> FragmentBatch:
+def _make_batch(B: int = 8, L: int = 10, d: int = 5, M: int = 1) -> FragmentBatch:
     """Create a synthetic FragmentBatch for testing."""
     context = torch.randn(B, L, d)
     context_mask = torch.ones(B, L, dtype=torch.bool)
-    target = torch.randn(B, d)
+    targets = torch.randn(B, M, d)
+    predecessors = torch.randn(B, M, d)
     time_deltas = torch.full((B, L - 1), 300.0)
-    horizon_dt = torch.full((B,), 300.0)
+    horizon_dts = torch.full((B, M), 300.0)
+    context_to_target_dts = torch.full((B, M), 300.0)
     delta_t = torch.full((B,), 300.0)
     temperature = torch.full((B,), 28.5)
     class_idx = torch.zeros(B, dtype=torch.long)
@@ -104,9 +106,11 @@ def _make_batch(B: int = 8, L: int = 10, d: int = 5) -> FragmentBatch:
     return FragmentBatch(
         context=context,
         context_mask=context_mask,
-        target=target,
+        targets=targets,
+        predecessors=predecessors,
         time_deltas=time_deltas,
-        horizon_dt=horizon_dt,
+        horizon_dts=horizon_dts,
+        context_to_target_dts=context_to_target_dts,
         delta_t=delta_t,
         temperature=temperature,
         class_idx=class_idx,
@@ -288,6 +292,7 @@ class TestPhi0OnlyModel:
         result = model(batch)
         assert "loss" in result
         assert "nll" in result
+        assert "hessian_penalty" in result
         assert "R_e" in result
         assert "beta" in result
         assert "D" in result
@@ -535,6 +540,8 @@ class TestCheckpoint:
                     "init_log_D": -2.0,
                     "n_forward_samples": 50,
                     "rate_clamp_min": 1e-6,
+                    "alpha_0": 0.01,
+                    "hessian_n_points": 64,
                 },
                 "best_nll": 5.0,
                 "input_dim": 5,

@@ -43,6 +43,8 @@ class Phi0OnlyModel(nn.Module):
         init_log_D: Initial value of log(D).
         n_forward_samples: Number of Euler-Maruyama samples for predict().
         rate_clamp_min: Floor on R_e from closed-form solve.
+        alpha_0: Weight for Hessian smoothness penalty R0 (spec §6.2).
+        hessian_n_points: Number of points subsampled per batch for R0 (controls cost).
     """
 
     def __init__(
@@ -55,6 +57,8 @@ class Phi0OnlyModel(nn.Module):
         init_log_D: float = -2.0,
         n_forward_samples: int = 50,
         rate_clamp_min: float = 1e-6,
+        alpha_0: float = 0.01,
+        hessian_n_points: int = 64,
     ) -> None:
         super().__init__()
         self.phi0 = PotentialNetwork(input_dim, hidden_dim, n_hidden, activation)
@@ -62,6 +66,8 @@ class Phi0OnlyModel(nn.Module):
         self.log_D = nn.Parameter(torch.tensor(init_log_D, dtype=torch.float32))
         self.n_forward_samples = n_forward_samples
         self.rate_clamp_min = rate_clamp_min
+        self.alpha_0 = alpha_0
+        self.hessian_n_points = hessian_n_points
 
     @property
     def beta(self) -> Tensor:
@@ -123,47 +129,71 @@ class Phi0OnlyModel(nn.Module):
         return z_last, R_e
 
     def forward(self, batch: FragmentBatch) -> dict:
-        """Training forward pass: compute NLL loss on target transitions.
+        """Training forward pass: compute teacher-forced multi-target NLL loss.
 
-        Infers R_e from context transitions (closed-form), then scores the
-        target transition as a single-step Euler-Maruyama NLL. Gradients
-        flow through the R_e solve into phi0 network weights.
+        Infers R_e from context transitions (closed-form), then scores each
+        of M target transitions as a single-step Euler-Maruyama NLL from its
+        observed predecessor (teacher forcing — spec §7.3). Gradients flow
+        through the R_e solve into phi0 network weights.
 
         Args:
             batch: FragmentBatch from the data pipeline.
 
         Returns:
             Dict with keys:
-                loss: scalar mean NLL over batch.
-                nll: (B,) per-sample NLL.
+                loss: scalar total loss (NLL + alpha_0 * R0).
+                nll: (B,) per-sample NLL (averaged over M targets).
+                hessian_penalty: scalar R0 value.
                 R_e: (B,) inferred rates.
                 beta: scalar.
                 D: scalar.
         """
-        d = batch.context.shape[-1]
-        z_last, R_e = self._extract_context_transitions(batch)
+        B, _, d = batch.context.shape
+        M = batch.targets.shape[1]
+        _, R_e = self._extract_context_transitions(batch)
 
-        # Drift at last context frame → predicted target
-        grad_phi0_last = self.phi0.gradient(z_last)                       # (B, d)
-        drift = R_e.unsqueeze(-1) * (-self.beta * grad_phi0_last)         # (B, d)
-        horizon_dt = batch.horizon_dt                                     # (B,)
-        predicted = z_last + drift * horizon_dt.unsqueeze(-1)             # (B, d)
+        # Teacher-forced: score each target from its observed predecessor
+        predecessors = batch.predecessors                                  # (B, M, d)
+        targets = batch.targets                                            # (B, M, d)
+        horizon_dts = batch.horizon_dts                                    # (B, M)
 
-        # Single-step NLL (spec §7.3):
+        # Compute gradient of phi0 at all predecessor points
+        pred_flat = predecessors.reshape(B * M, d)                         # (B*M, d)
+        grad_flat = self.phi0.gradient(pred_flat)                          # (B*M, d)
+        grad_phi0 = grad_flat.reshape(B, M, d)                            # (B, M, d)
+
+        # Drift at each predecessor: R_e * (-beta * grad_phi0)
+        drift = R_e[:, None, None] * (-self.beta * grad_phi0)             # (B, M, d)
+        predicted = predecessors + drift * horizon_dts.unsqueeze(-1)       # (B, M, d)
+
+        # Single-step NLL per target (spec §7.3):
         #   NLL = (d/2) log(4 pi D dt) + ||target - predicted||^2 / (4 D dt)
-        diff = batch.target - predicted                                   # (B, d)
+        diff = targets - predicted                                         # (B, M, d)
         D = self.D
-        four_D_dt = 4.0 * D * horizon_dt                                 # (B,)
-        nll = (
+        four_D_dt = 4.0 * D * horizon_dts                                 # (B, M)
+        nll_per_target = (
             0.5 * d * torch.log(math.pi * four_D_dt.clamp(min=1e-10))
             + (diff ** 2).sum(dim=-1) / four_D_dt.clamp(min=1e-10)
-        )  # (B,)
+        )  # (B, M)
 
-        loss = nll.mean()
+        # Average over M targets per sample, then over batch
+        nll = nll_per_target.mean(dim=1)                                   # (B,)
+        nll_mean = nll.mean()
+
+        # Hessian smoothness penalty R0 (spec §6.2)
+        # Subsample context points to control compute cost
+        z_all = batch.context[batch.context_mask]  # (N_valid, d)
+        n_pts = min(self.hessian_n_points, z_all.shape[0])
+        idx = torch.randperm(z_all.shape[0], device=z_all.device)[:n_pts]
+        z_sample = z_all[idx]
+        r0 = self.phi0.hessian_penalty(z_sample)
+
+        loss = nll_mean + self.alpha_0 * r0
 
         return {
             "loss": loss,
             "nll": nll.detach(),
+            "hessian_penalty": r0.detach(),
             "R_e": R_e.detach(),
             "beta": self.beta.detach(),
             "D": D.detach(),
@@ -174,7 +204,8 @@ class Phi0OnlyModel(nn.Module):
         """Prediction for eval pipeline (Predictor protocol).
 
         Infers R_e from context, then produces predicted mean, diagonal
-        covariance, and forward samples via Euler-Maruyama.
+        covariance, and forward samples via Euler-Maruyama. Uses the first
+        target's predecessor and horizon_dt for the prediction step.
 
         Args:
             batch: FragmentBatch from the data pipeline.
@@ -186,10 +217,10 @@ class Phi0OnlyModel(nn.Module):
         B, _, d = batch.context.shape
         z_last, R_e = self._extract_context_transitions(batch)
 
-        # Drift at last context frame
+        # For eval, predict from last context frame using first target's dt
         grad_phi0_last = self.phi0.gradient(z_last)
         drift = R_e.unsqueeze(-1) * (-self.beta * grad_phi0_last)
-        horizon_dt = batch.horizon_dt
+        horizon_dt = batch.horizon_dts[:, 0]  # Use first target's dt
 
         # Mean prediction: single Euler step
         predicted_mean = z_last + drift * horizon_dt.unsqueeze(-1)  # (B, d)

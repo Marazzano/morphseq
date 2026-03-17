@@ -49,6 +49,8 @@ class TrainConfig:
     min_context: int = 3
     max_context: Optional[int] = None
     horizons: Tuple[int, ...] = (1, 2, 3, 4)
+    gamma: float = 0.5
+    n_targets: int = 1
     eval_fraction: float = 0.15
     batch_size: int = 64
     num_workers: int = 0
@@ -61,6 +63,8 @@ class TrainConfig:
     init_log_D: float = -2.0
     n_forward_samples: int = 50
     rate_clamp_min: float = 1e-6
+    alpha_0: float = 0.01
+    hessian_n_points: int = 64
 
     # --- Optimizer ---
     lr: float = 1e-3
@@ -190,12 +194,16 @@ class Stage1Trainer:
             max_context=cfg.max_context,
             horizons=cfg.horizons,
             epoch_length=cfg.epoch_length,
+            gamma=cfg.gamma,
+            n_targets=cfg.n_targets,
         )
         eval_frag = FragmentDataset(
             eval_ds,
             min_context=cfg.min_context,
             max_context=cfg.max_context,
             horizons=cfg.horizons,
+            gamma=0.0,  # No rebalancing for eval — use natural frequencies
+            n_targets=1,  # Single target for eval metrics
         )
 
         train_loader = DataLoader(
@@ -216,6 +224,8 @@ class Stage1Trainer:
             init_log_D=cfg.init_log_D,
             n_forward_samples=cfg.n_forward_samples,
             rate_clamp_min=cfg.rate_clamp_min,
+            alpha_0=cfg.alpha_0,
+            hessian_n_points=cfg.hessian_n_points,
         ).to(self.device)
         logger.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -261,6 +271,8 @@ class Stage1Trainer:
                 msg = (
                     f"Epoch {epoch+1:4d}/{cfg.n_epochs} | "
                     f"loss={train_metrics['loss']:.4f} | "
+                    f"nll={train_metrics['nll']:.4f} | "
+                    f"R0={train_metrics['hessian_penalty']:.4f} | "
                     f"beta={train_metrics['beta']:.4f} | "
                     f"D={train_metrics['D']:.6f} | "
                     f"mean_R_e={train_metrics['mean_R_e']:.4f} | "
@@ -326,6 +338,8 @@ class Stage1Trainer:
         cfg = self.config
 
         total_loss = 0.0
+        total_nll = 0.0
+        total_r0 = 0.0
         total_R_e = 0.0
         n_batches = 0
 
@@ -342,11 +356,15 @@ class Stage1Trainer:
             optimizer.step()
 
             total_loss += loss.item()
+            total_nll += result["nll"].mean().item()
+            total_r0 += result["hessian_penalty"].item()
             total_R_e += result["R_e"].mean().item()
             n_batches += 1
 
         return {
             "loss": total_loss / max(n_batches, 1),
+            "nll": total_nll / max(n_batches, 1),
+            "hessian_penalty": total_r0 / max(n_batches, 1),
             "beta": model.beta.item(),
             "D": model.D.item(),
             "mean_R_e": total_R_e / max(n_batches, 1),
@@ -420,9 +438,11 @@ def _batch_to_device(batch, device: torch.device):
     return FragmentBatch(
         context=batch.context.to(device),
         context_mask=batch.context_mask.to(device),
-        target=batch.target.to(device),
+        targets=batch.targets.to(device),
+        predecessors=batch.predecessors.to(device),
         time_deltas=batch.time_deltas.to(device),
-        horizon_dt=batch.horizon_dt.to(device),
+        horizon_dts=batch.horizon_dts.to(device),
+        context_to_target_dts=batch.context_to_target_dts.to(device),
         delta_t=batch.delta_t.to(device),
         temperature=batch.temperature.to(device),
         class_idx=batch.class_idx.to(device),

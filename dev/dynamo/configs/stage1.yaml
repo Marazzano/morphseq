@@ -10,6 +10,8 @@ min_trajectory_length: 3
 min_context: 3
 max_context: null
 horizons: [1, 2, 3, 4]
+gamma: 0.5               # Class-balanced sampling strength (§7.2): 0=natural, 1=uniform
+n_targets: 1             # Teacher-forced targets per fragment (M in §7.3); increase to 3-5 if noisy
 eval_fraction: 0.15
 batch_size: 64
 num_workers: 0
@@ -22,6 +24,8 @@ init_log_beta: 0.0   # beta starts at 1.0
 init_log_D: -2.0     # D starts at ~0.14
 n_forward_samples: 50
 rate_clamp_min: 1.0e-6
+alpha_0: 0.01            # Hessian smoothness penalty weight (§6.2)
+hessian_n_points: 64     # Points subsampled per batch for R0 (controls cost vs variance)
 
 # --- Optimizer ---
 lr: 1.0e-3

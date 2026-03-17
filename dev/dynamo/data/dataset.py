@@ -1,18 +1,20 @@
 """PyTorch Dataset implementing fragment sampling (model spec §7.2).
 
 Each sample is a randomly drawn contiguous fragment from one embryo's
-trajectory, paired with a target observation at a randomly sampled
-prediction horizon k ∈ {1, 2, 3, 4}.
+trajectory, paired with M target observations at randomly sampled
+prediction horizons (teacher-forced: each target is scored as a single-step
+transition from its observed predecessor).
 
 Returned tensors:
-    context    : (L, D)   PC-space trajectory fragment (the "observed" part)
-    target     : (D,)     single PC-space vector at horizon k after context
-    time_deltas: (L-1,)   inter-frame Δt values within the context (seconds)
-    horizon_dt : scalar   time gap from last context frame to target (seconds)
-    delta_t    : scalar   experiment-level median Δt (seconds)
-    temperature: scalar   incubation temperature (°C, may be NaN)
-    class_idx  : int      integer index for perturbation class
-    embryo_idx : int      index into the trajectory list
+    context      : (L, D)   PC-space trajectory fragment (the "observed" part)
+    targets      : (M, D)   target PC-space vectors at M sampled horizons
+    predecessors : (M, D)   observed predecessor for each target (teacher forcing)
+    time_deltas  : (L-1,)   inter-frame Δt values within the context (seconds)
+    horizon_dts  : (M,)     time gap from predecessor to target for each target
+    delta_t      : scalar   experiment-level median Δt (seconds)
+    temperature  : scalar   incubation temperature (°C, may be NaN)
+    class_idx    : int      integer index for perturbation class
+    embryo_idx   : int      index into the trajectory list
 
 The custom collate function `fragment_collate_fn` pads variable-length
 context fragments and returns a boolean mask.
@@ -40,6 +42,12 @@ class FragmentDataset(Dataset):
         horizons: Prediction horizons to sample from (in units of frames).
         epoch_length: Virtual epoch size. Since sampling is stochastic, this controls
             how many samples constitute one "epoch" for the DataLoader.
+        gamma: Class-balanced sampling strength (spec §7.2). 0 = proportional to
+            class frequency (no rebalancing), 1 = uniform across classes.
+            Default 0.5 (square-root weighting).
+        n_targets: Number of target transitions to sample per fragment (M in spec
+            §7.3). Each target is teacher-forced: scored as a single-step transition
+            from its observed predecessor. Default 1.
     """
 
     def __init__(
@@ -49,6 +57,8 @@ class FragmentDataset(Dataset):
         max_context: Optional[int] = None,
         horizons: Sequence[int] = (1, 2, 3, 4),
         epoch_length: Optional[int] = None,
+        gamma: float = 0.5,
+        n_targets: int = 1,
     ) -> None:
         self.trajs = trajectory_dataset.trajectories
         self.class_to_idx = trajectory_dataset.class_to_idx
@@ -71,6 +81,45 @@ class FragmentDataset(Dataset):
             )
         self._epoch_length = epoch_length or len(self.valid_indices)
         self._rng = np.random.default_rng()
+        self.n_targets = n_targets
+
+        # Class-balanced sampling weights (spec §7.2)
+        self._sampling_weights = self._compute_class_weights(gamma)
+
+    def _compute_class_weights(self, gamma: float) -> np.ndarray:
+        """Compute per-trajectory sampling weights from class frequencies.
+
+        w_p ∝ (N_p / N_total)^(1 - gamma), then each trajectory in class p
+        gets weight w_p / N_p so the per-trajectory probabilities sum to 1.
+
+        Args:
+            gamma: Balancing strength. 0 = natural frequencies, 1 = uniform classes.
+
+        Returns:
+            (len(valid_indices),) normalized probability array.
+        """
+        # Count class frequencies among valid trajectories
+        class_counts: Dict[str, int] = {}
+        for i in self.valid_indices:
+            cls = self.trajs[i].perturbation_class
+            class_counts[cls] = class_counts.get(cls, 0) + 1
+        n_total = len(self.valid_indices)
+
+        # Per-class weight: (N_p / N_total)^(1-gamma)
+        class_weight = {
+            cls: (count / n_total) ** (1.0 - gamma)
+            for cls, count in class_counts.items()
+        }
+
+        # Per-trajectory weight: class_weight / N_p (uniform within class)
+        weights = np.array([
+            class_weight[self.trajs[i].perturbation_class] / class_counts[self.trajs[i].perturbation_class]
+            for i in self.valid_indices
+        ], dtype=np.float64)
+
+        # Normalize to probability distribution
+        weights /= weights.sum()
+        return weights
 
     def __len__(self) -> int:
         return self._epoch_length
@@ -80,56 +129,80 @@ class FragmentDataset(Dataset):
         self._rng = np.random.default_rng(seed)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """Sample a random fragment + horizon from a random trajectory.
+        """Sample a random fragment + M target transitions from a random trajectory.
 
         The ``idx`` argument is used only to drive the DataLoader iteration
         count; the actual embryo and fragment are sampled randomly.
+
+        Each of the M targets is teacher-forced: we return both the target
+        point and its observed predecessor, so the model scores a single-step
+        transition from real data (never chaining its own predictions).
         """
         rng = self._rng
 
-        # Pick a random trajectory
-        traj_idx = self.valid_indices[rng.integers(len(self.valid_indices))]
+        # Pick a random trajectory (class-balanced)
+        sel = rng.choice(len(self.valid_indices), p=self._sampling_weights)
+        traj_idx = self.valid_indices[sel]
         traj = self.trajs[traj_idx]
         T = len(traj.trajectory)
 
-        # Pick a horizon k that fits within this trajectory
+        # Maximum horizon that fits
         feasible_horizons = [k for k in self.horizons if T >= self.min_context + k]
         if not feasible_horizons:
-            # Fallback: use k=1 (guaranteed by valid_indices filter)
             feasible_horizons = [1]
-        k = int(rng.choice(feasible_horizons))
+        k_max_feasible = max(feasible_horizons)
 
-        # Determine context length bounds
-        max_ctx = T - k  # leave room for horizon
+        # Determine context length bounds (leave room for largest feasible horizon)
+        max_ctx = T - k_max_feasible
         if self.max_context is not None:
             max_ctx = min(max_ctx, self.max_context)
+        max_ctx = max(max_ctx, self.min_context)
         ctx_len = int(rng.integers(self.min_context, max_ctx + 1))
 
         # Pick random start position
-        latest_start = T - ctx_len - k
+        latest_start = T - ctx_len - 1  # need at least 1 future frame
         start = int(rng.integers(0, latest_start + 1))
+        context_end = start + ctx_len  # exclusive; this is t_n
 
-        context_end = start + ctx_len  # exclusive
-        target_idx = context_end + k - 1  # 0-indexed position of target
+        # Target pool: indices from t_n+1 to min(T-1, t_n + K_max)
+        target_pool_end = min(T, context_end + self.max_horizon)
+        target_pool = list(range(context_end, target_pool_end))
+
+        # Sample M targets (with replacement if pool < M)
+        M = self.n_targets
+        if len(target_pool) >= M:
+            target_indices = rng.choice(target_pool, size=M, replace=False)
+        else:
+            target_indices = rng.choice(target_pool, size=M, replace=True)
+        target_indices = np.sort(target_indices)
 
         # Extract arrays
-        context = traj.trajectory[start:context_end]                 # (L, D)
-        target = traj.trajectory[target_idx]                          # (D,)
-        time_ctx = traj.time_seconds[start:context_end]               # (L,)
-        time_target = traj.time_seconds[target_idx]
+        context = traj.trajectory[start:context_end]                     # (L, D)
+        targets = traj.trajectory[target_indices]                         # (M, D)
+        predecessors = traj.trajectory[target_indices - 1]                # (M, D)
+        time_ctx = traj.time_seconds[start:context_end]                   # (L,)
 
         # Inter-frame deltas within context
-        time_deltas = np.diff(time_ctx)                               # (L-1,)
-        # Time from last context frame to target
-        horizon_dt = time_target - time_ctx[-1]
+        time_deltas = np.diff(time_ctx)                                   # (L-1,)
+
+        # Per-target: time from predecessor to target (single-step dt for teacher forcing)
+        horizon_dts = (traj.time_seconds[target_indices]
+                       - traj.time_seconds[target_indices - 1])           # (M,)
+
+        # Time from last context frame to each target (for eval/baselines)
+        context_to_target_dts = (traj.time_seconds[target_indices]
+                                 - time_ctx[-1])                          # (M,)
 
         class_idx = self.class_to_idx.get(traj.perturbation_class, -1)
 
         return {
-            "context": torch.from_numpy(context).float(),             # (L, D)
-            "target": torch.from_numpy(target).float(),               # (D,)
-            "time_deltas": torch.from_numpy(time_deltas).float(),     # (L-1,)
-            "horizon_dt": torch.tensor(horizon_dt, dtype=torch.float32),
+            "context": torch.from_numpy(context).float(),                # (L, D)
+            "targets": torch.from_numpy(targets).float(),                # (M, D)
+            "predecessors": torch.from_numpy(predecessors).float(),      # (M, D)
+            "time_deltas": torch.from_numpy(time_deltas).float(),        # (L-1,)
+            "horizon_dts": torch.from_numpy(horizon_dts).float(),        # (M,)
+            "context_to_target_dts": torch.from_numpy(
+                context_to_target_dts).float(),                          # (M,)
             "delta_t": torch.tensor(traj.delta_t, dtype=torch.float32),
             "temperature": torch.tensor(traj.temperature, dtype=torch.float32),
             "class_idx": torch.tensor(class_idx, dtype=torch.long),
@@ -143,14 +216,16 @@ class FragmentDataset(Dataset):
 
 @dataclass
 class FragmentBatch:
-    """Padded batch of fragments.
+    """Padded batch of fragments with M teacher-forced targets.
 
     Attributes:
         context: (B, L_max, D) padded context trajectories.
         context_mask: (B, L_max) boolean mask — True for real frames.
-        target: (B, D) target vectors.
+        targets: (B, M, D) target vectors.
+        predecessors: (B, M, D) observed predecessor for each target (teacher forcing).
         time_deltas: (B, L_max-1) padded inter-frame Δt values.
-        horizon_dt: (B,) time gap from last context frame to target.
+        horizon_dts: (B, M) single-step dt from predecessor to target.
+        context_to_target_dts: (B, M) time from last context frame to each target.
         delta_t: (B,) experiment-level median Δt.
         temperature: (B,) incubation temperatures.
         class_idx: (B,) perturbation class indices.
@@ -158,13 +233,25 @@ class FragmentBatch:
     """
     context: torch.Tensor
     context_mask: torch.Tensor
-    target: torch.Tensor
+    targets: torch.Tensor
+    predecessors: torch.Tensor
     time_deltas: torch.Tensor
-    horizon_dt: torch.Tensor
+    horizon_dts: torch.Tensor
+    context_to_target_dts: torch.Tensor
     delta_t: torch.Tensor
     temperature: torch.Tensor
     class_idx: torch.Tensor
     embryo_idx: torch.Tensor
+
+    @property
+    def target(self) -> torch.Tensor:
+        """First target vector (B, D). Backward-compat for single-target code."""
+        return self.targets[:, 0]
+
+    @property
+    def horizon_dt(self) -> torch.Tensor:
+        """Time from last context frame to first target (B,). Backward-compat."""
+        return self.context_to_target_dts[:, 0]
 
 
 def fragment_collate_fn(samples: List[Dict[str, torch.Tensor]]) -> FragmentBatch:
@@ -188,9 +275,11 @@ def fragment_collate_fn(samples: List[Dict[str, torch.Tensor]]) -> FragmentBatch
     return FragmentBatch(
         context=context,
         context_mask=context_mask,
-        target=torch.stack([s["target"] for s in samples]),
+        targets=torch.stack([s["targets"] for s in samples]),
+        predecessors=torch.stack([s["predecessors"] for s in samples]),
         time_deltas=time_deltas,
-        horizon_dt=torch.stack([s["horizon_dt"] for s in samples]),
+        horizon_dts=torch.stack([s["horizon_dts"] for s in samples]),
+        context_to_target_dts=torch.stack([s["context_to_target_dts"] for s in samples]),
         delta_t=torch.stack([s["delta_t"] for s in samples]),
         temperature=torch.stack([s["temperature"] for s in samples]),
         class_idx=torch.stack([s["class_idx"] for s in samples]),

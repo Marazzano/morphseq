@@ -15,9 +15,9 @@ project_root/
 ├── docs/
 │   └── model_spec.md          # Full technical specification (the source of truth)
 ├── dynamo/                     # <-- this submodule (name TBD)
-│   ├── data/                   # Data loading, fragment sampling
+│   ├── data/                   # Data loading, fragment sampling, class-balanced sampling
 │   ├── models/                 # Model definitions (potentials, baselines)
-│   ├── inference/              # Closed-form solvers for c, v, R
+│   ├── inference/              # Closed-form solvers for c, R
 │   ├── training/               # Training loops (staged)
 │   ├── eval/                   # Metrics, W&B logging
 │   ├── viz/                    # Visualization panels (trajectory view, prediction fan, phenotype space, mode deflection)
@@ -31,21 +31,21 @@ project_root/
 - **Framework**: plain PyTorch. No Lightning. No unnecessary abstractions.
 - **Python**: 3.10+
 - **Logging**: Weights & Biases (wandb)
-- **Differentiation**: all per-embryo inference (c, v, R) must be batched and differentiable. Use `torch.linalg.solve` for ridge systems. Gradients must flow through the linear solve into network parameters.
+- **Differentiation**: all per-embryo inference (c, R) must be batched and differentiable. Use `torch.linalg.solve` for ridge systems. Gradients must flow through the linear solve into network parameters.
 - **Smooth activations only**: use softplus or ELU in all potential networks. Never ReLU.
 
 ## Build Sequence
 
 Implement in this order. Each step must be runnable and testable before moving to the next. See `docs/model_spec.md` §15.2 for rationale.
 
-1. Data loading and fragment sampling
+1. Data loading and fragment sampling (includes class-balanced sampling with γ, random context window placement, M-target sampling)
 2. Evaluation and visualization stack (against dummy predictions)
-3. Kernel baseline (non-trivial — see spec §9 carefully; this is a branching particle filter, not a simple lookup)
-4. phi0-only model (Stage 1 training)
-5. Orthogonal modes (S_m applied to nabla phi0, no phi_m networks)
-6. Full Helmholtz modes with S_m = 0 (independent phi_m networks, potential-only)
-7. Unfreeze S_m on full model
-8. Add regularization terms incrementally
+3. Simple kernel regression baseline (nearest-point lookup — trivial, implement first)
+4. Branching particle filter baseline (non-trivial — see spec §9.2; implement in layers: selection → single-shot prediction → recruitment)
+5. phi0-only model (Stage 1 training) — includes Hessian smoothness penalty R0 on phi0, rate identifiability constraint, teacher-forced multi-target loss
+6. Orthogonal modes (S_m applied to nabla phi0, ||S_m||_F = 1, no phi_m networks) — this is the priority model
+7. Full Helmholtz modes with S_m = 0 (independent phi_m networks, potential-only, with R1/R2/R3 regularization)
+8. Unfreeze S_m on full model
 
 ## Data Format
 
@@ -80,11 +80,14 @@ pytest dynamo/tests/ -v
 # Train stage 1 (phi0 only)
 python scripts/train.py --config configs/stage1.yaml
 
-# Train stage 2 (modes)
-python scripts/train.py --config configs/stage2.yaml --checkpoint <stage1_ckpt>
+# Train stage 2 (orthogonal modes)
+python scripts/train.py --config configs/stage2_orthogonal.yaml --checkpoint <stage1_ckpt>
 
-# Evaluate all four models
-python scripts/evaluate.py --models kernel,phi0,orthogonal,full --test-tier all
+# Train stage 2 (Helmholtz modes)
+python scripts/train.py --config configs/stage2_helmholtz.yaml --checkpoint <stage1_ckpt>
+
+# Evaluate all five models
+python scripts/evaluate.py --models simple_kernel,particle_filter,phi0,orthogonal,full --test-tier all
 
 # Generate visualization panels
 python scripts/visualize.py --checkpoint <ckpt> --output figures/
@@ -92,8 +95,10 @@ python scripts/visualize.py --checkpoint <ckpt> --output figures/
 
 ## Things to Watch For
 
-- **Kernel baseline complexity**: this is NOT a simple nearest-neighbor lookup. It is a branching particle filter with local recruitment, weight inheritance, and rate adjustment. Read spec §9 in full before implementing. Key: recruitment is local per-reference, never against a global centroid. This preserves multimodal predictions at bifurcations.
+- **Particle filter baseline complexity**: the branching particle filter (§9.2) is NOT a simple nearest-neighbor lookup. It involves direction-aware matching via linear fits, per-reference speed ratios matched on developmental progress, local recruitment with weight inheritance, and particle caps. Read spec §9.2 in full before implementing. Key: recruitment is local per-reference, never against a global centroid. This preserves multimodal predictions at bifurcations. Implement in layers: selection → single-shot prediction → recruitment.
 - **Identifiability**: beta, D, and R_e interact. D is global. R_e is per-embryo. Mean of lambda_e is constrained to 1. See spec §3.5 and §6.6.
 - **Gradient flow**: backprop through `torch.linalg.solve` can produce NaNs if the system is ill-conditioned. Add a small diagonal jitter (1e-6) to H^T H + Lambda before solving.
 - **Mode initialization**: all phi_m networks must initialize near zero so training starts on the baseline landscape. Use small weight init (e.g., scale default init by 0.01).
-- **S_m initialization**: always zero. Modes start as pure potentials.
+- **S_m normalization and initialization**: all S_m are Frobenius-normalized (||S_m||_F = 1) via reparameterization. For orthogonal modes, initialize unconstrained entries at small random values — NOT zero (normalization would divide by zero). Mode effect is initially negligible because c_m starts near zero via the ridge prior. For Helmholtz modes, S_m starts frozen at zero during potential-only phase; switch to normalized reparameterization with small random init when unfreezing.
+- **phi0 smoothness**: Hessian penalty R0 must be active from stage 1. This is critical — nabla phi0 defines everything downstream (drift, isoclines, orthogonal mode directions).
+- **Class imbalance**: data is severely imbalanced across perturbation classes. Class-balanced sampling (§7.2) with γ=0.5 must be implemented in the data loader from the start.

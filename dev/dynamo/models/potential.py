@@ -89,3 +89,45 @@ class PotentialNetwork(nn.Module):
                 retain_graph=True,
             )
         return grad
+
+    def hessian_penalty(self, z: Tensor) -> Tensor:
+        """Compute R0 = mean over batch of ||∇²φ(z)||²_F (spec §6.2).
+
+        Uses a double backward pass: first compute ∇φ, then differentiate
+        each component of ∇φ w.r.t. z to get one row of the Hessian at a
+        time. The squared Frobenius norm is the sum of squared entries.
+
+        Args:
+            z: (B, d) input points (sampled from training data).
+
+        Returns:
+            Scalar: mean ||∇²φ(z)||²_F over the batch.
+        """
+        B, d = z.shape
+        with torch.enable_grad():
+            z_input = z.detach().requires_grad_(True)
+            phi = self.forward(z_input)
+
+            # First-order gradient: (B, d)
+            (grad,) = torch.autograd.grad(
+                outputs=phi,
+                inputs=z_input,
+                grad_outputs=torch.ones_like(phi),
+                create_graph=True,
+                retain_graph=True,
+            )
+
+            # Second-order: compute each row of the Hessian
+            hess_frob_sq = z_input.new_zeros(B)
+            for j in range(d):
+                (row_j,) = torch.autograd.grad(
+                    outputs=grad[:, j],
+                    inputs=z_input,
+                    grad_outputs=torch.ones(B, device=z.device),
+                    create_graph=True,
+                    retain_graph=True,
+                )
+                # row_j is (B, d) — the j-th row of H for each sample
+                hess_frob_sq = hess_frob_sq + (row_j ** 2).sum(dim=-1)
+
+        return hess_frob_sq.mean()

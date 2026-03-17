@@ -180,7 +180,15 @@ Each $S_m$ is a learnable constant $d \times d$ antisymmetric matrix. Parameteri
 
 L2 penalty on $c_e$, implemented as the $\lambda_c$ term in the ridge solve (§4.1). Controls shrinkage toward the class-level prior $c_{0,p}$.
 
-### 6.2 Mode Gradient Magnitude
+### 6.2 Baseline Potential Smoothness
+
+Penalize rapid spatial variation in $\phi_0$:
+
+$$\mathcal{R}_0 = \mathbb{E}_{z \sim \text{data}} \left[ \| \nabla_z^2 \phi_0(z) \|_F^2 \right]$$
+
+This encourages $\phi_0$ to define a smooth developmental landscape with broad valleys rather than noisy, highly curved features. Computed via double backward passes. Active from stage 1 training onward — $\phi_0$ smoothness is critical because $\nabla \phi_0$ appears everywhere: it defines the drift, the isoclines, and the mode directions in the orthogonal variant.
+
+### 6.3 Mode Gradient Magnitude (Helmholtz only)
 
 Penalize the average drift magnitude of each mode across training data:
 
@@ -188,7 +196,7 @@ $$\mathcal{R}_1 = \mathbb{E}_{z \sim \text{data}} \left[ \sum_m \| (-I + S_m) \n
 
 This constrains modes to be "small" relative to baseline without creating adversarial coupling between $\phi_0$ and the modes.
 
-### 6.3 Mode Potential Power
+### 6.4 Mode Potential Power (Helmholtz only)
 
 Penalize the total scalar power of each mode across the data manifold:
 
@@ -196,7 +204,7 @@ $$\mathcal{R}_2 = \mathbb{E}_{z \sim \text{data}} \left[ \sum_m \phi_m(z)^2 \rig
 
 This constrains modes from dominating the baseline landscape in terms of potential value, preserving the interpretability of $\phi_0$ as the primary developmental stage coordinate.
 
-### 6.4 Hessian Smoothness
+### 6.5 Hessian Smoothness (Helmholtz only)
 
 Penalize rapid spatial variation in each potential:
 
@@ -204,7 +212,7 @@ $$\mathcal{R}_3 = \mathbb{E}_{z \sim \text{data}} \left[ \sum_m \| \nabla_z^2 \p
 
 Computed via double backward passes. Encourages smooth, broad landscape features per mode.
 
-### 6.5 Rate Parameter Centering
+### 6.6 Rate Parameter Centering
 
 Mean-centering constraint on $\lambda_e$ across the training set: $\bar{\lambda} = 1$. Implemented via reparameterization (§3.5).
 
@@ -216,7 +224,7 @@ Mean-centering constraint on $\lambda_e$ across the training set: $\bar{\lambda}
 
 Training proceeds in stages to enforce the interpretive hierarchy: $\phi_0$ defines baseline development, modes capture deviations.
 
-**Stage 1: Baseline potential only.** Train $\phi_0$ network weights, $\beta$, $D$, and $R_e$ (per embryo). No modes. This produces the $\phi_0$-only model, which is saved as a checkpoint and serves as a permanent evaluation baseline alongside the kernel regression.
+**Stage 1: Baseline potential only.** Train $\phi_0$ network weights, $\beta$, $D$, and $R_e$ (per embryo). No modes. Hessian smoothness penalty $\mathcal{R}_0$ active. This produces the $\phi_0$-only model, which is saved as a checkpoint and serves as a permanent evaluation baseline alongside the kernel regression.
 
 **Stage 2: Introduce modes.** Freeze $\phi_0$. Introduce mode potentials $\phi_m$, antisymmetric matrices $S_m$ (initialized at zero), class-level priors $c_{0,p}$. Train with the closed-form $c_e$ solve active. $R_e$ continues to update. Regularization terms $\mathcal{R}_1$, $\mathcal{R}_2$, $\mathcal{R}_3$ are active.
 
@@ -242,9 +250,9 @@ where $\gamma \in [0, 1]$ controls balancing strength. At $\gamma = 0$, sampling
 
 ### 7.3 Loss Function
 
-$$\mathcal{L} = -\sum_e \frac{1}{M} \sum_{m=1}^{M} \log p(z_{t_m}^{(e)} | z_{t_m - 1}^{(e)}, c_e^*, R_e^*) + \alpha_1 \mathcal{R}_1 + \alpha_2 \mathcal{R}_2 + \alpha_3 \mathcal{R}_3$$
+$$\mathcal{L} = -\sum_e \frac{1}{M} \sum_{m=1}^{M} \log p(z_{t_m}^{(e)} | z_{t_m - 1}^{(e)}, c_e^*, R_e^*) + \alpha_0 \mathcal{R}_0 + \alpha_1 \mathcal{R}_1 + \alpha_2 \mathcal{R}_2 + \alpha_3 \mathcal{R}_3$$
 
-where $t_1, \ldots, t_M$ are the randomly sampled target indices (§7.2). Each target is scored as a **single-step transition from the observed preceding point** (teacher forcing). The model never chains its own predictions during training — every evaluation is one Euler step from a real data point. This avoids compounding error and Euler stability issues.
+where $t_1, \ldots, t_M$ are the randomly sampled target indices (§7.2). $\mathcal{R}_0$ (baseline smoothness) is active in all stages; $\mathcal{R}_1$, $\mathcal{R}_2$, $\mathcal{R}_3$ are active only when Helmholtz modes are present. Each target is scored as a **single-step transition from the observed preceding point** (teacher forcing). The model never chains its own predictions during training — every evaluation is one Euler step from a real data point. This avoids compounding error and Euler stability issues.
 
 The key property: $c_e^*$ and $R_e^*$ are inferred from the context window only, but the loss is evaluated on future transitions that were not used for inference. This meta-learning structure ensures $\phi_0$ is optimized to be a potential where context-inferred loadings generalize to unseen future behavior.
 
@@ -534,6 +542,7 @@ High-dimensional uncertainty is reported in two complementary ways:
 | Hidden depth | MLP layers per potential | 2 |
 | Activation | Smooth nonlinearity | Softplus |
 | $\lambda_c$ | L2 penalty on mode loadings | Cross-validate |
+| $\alpha_0$ | Baseline Hessian smoothness penalty weight | Tune |
 | $\alpha_1$ | Mode gradient penalty weight | Tune |
 | $\alpha_2$ | Mode potential power penalty weight | Tune |
 | $\alpha_3$ | Hessian smoothness penalty weight | Tune |
@@ -566,15 +575,14 @@ Plain PyTorch. No PyTorch Lightning initially — the non-standard forward pass 
 
 Implement and test in this order. Each step produces a runnable, evaluable artifact.
 
-1. **Data loading and fragment sampling.** Define the data interface: per embryo, provide trajectory tensor, experiment-level $\Delta t$, temperature $T_e$, perturbation class label. Implement the random fragment and horizon sampling (§7.2).
+1. **Data loading and fragment sampling.** Define the data interface: per embryo, provide trajectory tensor, experiment-level $\Delta t$, temperature $T_e$, perturbation class label. Implement class-balanced sampling ($\gamma$), random context window placement, and $M$-target sampling (§7.2). These are required infrastructure for all subsequent model training.
 2. **Evaluation and visualization stack.** Build the W&B logging, metric computation (§11), and visualization panels (§12) against dummy/random predictions. This infrastructure must exist before any model is trained.
 3. **Simple kernel regression (§9.1).** Nearest-point lookup baseline. One hyperparameter. Implement in an afternoon. This is the absolute floor.
 4. **Branching particle filter (§9.2).** Direction-aware matching, local recruitment, multimodal predictions. More complex but substantially more powerful. Implement in layers: first get selection and single-shot prediction working (follow references forward, no recruitment), then add recruitment logic.
-5. **$\phi_0$-only model (Stage 1).** Single baseline potential, $\beta$, $D$, $R_e$. No modes. Train and evaluate. Save checkpoint — this becomes the permanent $\phi_0$-only reference.
-6. **Orthogonal modes (§3.4).** Freeze $\phi_0$. Introduce antisymmetric matrices $S_m$ operating on $\nabla \phi_0$, closed-form $c_e$ solve, class-level priors $c_{0,p}$. Train and evaluate. This is the simplest mode variant and tests whether redirecting baseline flow is sufficient.
-7. **Full Helmholtz modes.** Introduce independent mode potentials $\phi_m$ with $S_m = 0$ (potential-only modes). Train and evaluate. Compare to orthogonal modes to assess whether independent landscape features add value.
+5. **$\phi_0$-only model (Stage 1).** Single baseline potential, $\beta$, $D$, $R_e$. No modes. Includes: Hessian smoothness penalty $\mathcal{R}_0$ on $\phi_0$ (§6.2), rate identifiability constraint mean($\lambda_e$) = 1 (§3.5), teacher-forced multi-target loss (§7.3). Train and evaluate. Save checkpoint — this becomes the permanent $\phi_0$-only reference.
+6. **Orthogonal modes (§3.4).** Freeze $\phi_0$. Introduce antisymmetric matrices $S_m$ with Frobenius normalization $\|S_m\|_F = 1$ (§5.2), closed-form $c_e$ solve, class-level priors $c_{0,p}$. Train and evaluate. This is the simplest mode variant and tests whether redirecting baseline flow is sufficient.
+7. **Full Helmholtz modes.** Introduce independent mode potentials $\phi_m$ with $S_m = 0$ (potential-only modes). Activate Helmholtz-specific regularization $\mathcal{R}_1$, $\mathcal{R}_2$, $\mathcal{R}_3$ (§6.3–6.5). Train and evaluate. Compare to orthogonal modes to assess whether independent landscape features add value.
 8. **Unfreeze $S_m$ on full model.** Allow non-conservative dynamics in the Helmholtz modes. Compare to potential-only modes.
-9. **Add regularization terms incrementally.** Introduce $\mathcal{R}_1$, $\mathcal{R}_2$, $\mathcal{R}_3$ one at a time (applicable to Helmholtz modes only; orthogonal modes do not require them), monitoring impact on both performance and interpretability.
 
 ### 15.3 Key Implementation Constraints
 
