@@ -288,9 +288,11 @@ def _batch_to_device(batch: FragmentBatch, device: torch.device) -> FragmentBatc
     return FragmentBatch(
         context=batch.context.to(device),
         context_mask=batch.context_mask.to(device),
-        target=batch.target.to(device),
+        targets=batch.targets.to(device),
+        predecessors=batch.predecessors.to(device),
         time_deltas=batch.time_deltas.to(device),
-        horizon_dt=batch.horizon_dt.to(device),
+        horizon_dts=batch.horizon_dts.to(device),
+        context_to_target_dts=batch.context_to_target_dts.to(device),
         delta_t=batch.delta_t.to(device),
         temperature=batch.temperature.to(device),
         class_idx=batch.class_idx.to(device),

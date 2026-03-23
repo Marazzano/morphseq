@@ -11,8 +11,8 @@ import math
 @dataclass
 class BasicLoss:
     target: Literal[
-        "src.losses.loss_functions.VAELossBasic"
-    ] = "src.losses.loss_functions.VAELossBasic"
+        "src.core.losses.loss_functions.VAELossBasic"
+    ] = "src.core.losses.loss_functions.VAELossBasic"
 
     max_epochs: int = 25 # this will be overwritten by whatever is passed to the trainconfig
 

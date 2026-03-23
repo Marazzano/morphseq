@@ -195,9 +195,9 @@ class TestLinearExtrapolationPredictor:
         assert result.predicted_cov_diag.shape == (8, 5)
 
     def test_extrapolation_direction(self) -> None:
-        """Predicted mean should be in the direction of the last velocity."""
+        """With n_points=2, predicted mean should match 2-point extrapolation."""
         batch = _make_batch(n=4, D=5)
-        pred = LinearExtrapolationPredictor()
+        pred = LinearExtrapolationPredictor(n_points=2)
         result = pred.predict(batch)
 
         lengths = batch.context_mask.sum(dim=1).long()

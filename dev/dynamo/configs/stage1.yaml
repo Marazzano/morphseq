@@ -1,0 +1,52 @@
+# Stage 1: phi0-only model
+# See docs/model_spec.md §7.1 and §15.2 step 5.
+
+# --- Data ---
+build_dir: ""  # Path to build06 output directory
+experiment_ids: null  # null = auto-discover all experiments
+n_components: 10
+scale: true
+min_trajectory_length: 3
+min_context: 3
+max_context: null
+horizons: [1, 2, 3, 4]
+gamma: 0.5               # Class-balanced sampling strength (§7.2): 0=natural, 1=uniform
+n_targets: 1             # Teacher-forced targets per fragment (M in §7.3); increase to 3-5 if noisy
+eval_fraction: 0.15
+batch_size: 64
+num_workers: 0
+
+# --- Model ---
+hidden_dim: 64
+n_hidden: 2
+activation: "softplus"
+init_log_beta: 0.0   # beta starts at 1.0
+init_log_D: -2.0     # D starts at ~0.14
+n_forward_samples: 50
+rate_clamp_min: 1.0e-6
+alpha_0: 0.01            # Hessian smoothness penalty weight (§6.2)
+hessian_n_points: 64     # Points subsampled per batch for R0 (controls cost vs variance)
+
+# --- Optimizer ---
+lr: 1.0e-3
+weight_decay: 0.0
+scheduler: "cosine"   # "cosine" | "none"
+grad_clip_norm: 10.0
+
+# --- Training ---
+n_epochs: 200
+epoch_length: 2000
+eval_every: 10
+eval_n_batches: 50
+
+# --- Checkpointing ---
+checkpoint_dir: "checkpoints/stage1"
+save_every: 50
+
+# --- Logging ---
+wandb_project: "morphseq-dynamo"
+wandb_run_name: null
+log_every: 1
+
+# --- Device ---
+device: "cpu"

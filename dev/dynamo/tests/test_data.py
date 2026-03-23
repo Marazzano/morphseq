@@ -130,15 +130,17 @@ class TestFragmentDataset:
 
     def test_sample_shapes(self) -> None:
         ds = _make_dataset(n_dim=10)
-        fds = FragmentDataset(ds, min_context=3, horizons=(1, 2))
+        fds = FragmentDataset(ds, min_context=3, horizons=(1, 2), n_targets=1)
         sample = fds[0]
 
         D = 10
+        M = 1
         L = sample["context"].shape[0]
         assert sample["context"].shape == (L, D)
-        assert sample["target"].shape == (D,)
+        assert sample["targets"].shape == (M, D)
+        assert sample["predecessors"].shape == (M, D)
         assert sample["time_deltas"].shape == (L - 1,)
-        assert sample["horizon_dt"].shape == ()
+        assert sample["horizon_dts"].shape == (M,)
         assert sample["delta_t"].shape == ()
         assert sample["class_idx"].dtype == torch.long
 
@@ -156,7 +158,7 @@ class TestFragmentDataset:
         # Smoke test: no IndexError over many samples
         for _ in range(200):
             sample = fds[0]
-            assert sample["target"].shape == (5,)
+            assert sample["targets"].shape[1] == 5
 
     def test_time_deltas_positive(self) -> None:
         ds = _make_dataset()
@@ -166,12 +168,12 @@ class TestFragmentDataset:
             td = sample["time_deltas"]
             assert (td >= 0).all(), "Time deltas should be non-negative"
 
-    def test_horizon_dt_positive(self) -> None:
+    def test_horizon_dts_positive(self) -> None:
         ds = _make_dataset()
         fds = FragmentDataset(ds, min_context=2)
         for _ in range(50):
             sample = fds[0]
-            assert sample["horizon_dt"].item() > 0
+            assert (sample["horizon_dts"] > 0).all()
 
     def test_short_trajectories_filtered(self) -> None:
         """Trajectories shorter than min_context+1 should be excluded."""
@@ -212,16 +214,21 @@ class TestCollation:
         batch = fragment_collate_fn(samples)
         B = 4
         D = 5
+        M = samples[0]["targets"].shape[0]
         L_max = batch.context.shape[1]
 
         assert batch.context.shape == (B, L_max, D)
         assert batch.context_mask.shape == (B, L_max)
-        assert batch.target.shape == (B, D)
+        assert batch.targets.shape == (B, M, D)
+        assert batch.predecessors.shape == (B, M, D)
         assert batch.time_deltas.shape == (B, L_max - 1)
-        assert batch.horizon_dt.shape == (B,)
+        assert batch.horizon_dts.shape == (B, M)
         assert batch.delta_t.shape == (B,)
         assert batch.temperature.shape == (B,)
         assert batch.class_idx.shape == (B,)
+        # Backward-compat properties
+        assert batch.target.shape == (B, D)
+        assert batch.horizon_dt.shape == (B,)
 
     def test_mask_consistency(self) -> None:
         samples = self._get_samples(4)
@@ -296,5 +303,6 @@ class TestRealData:
 
         assert batch.context.shape[0] == 8
         assert batch.context.shape[2] == 10
-        assert batch.target.shape == (8, 10)
-        assert (batch.horizon_dt > 0).all()
+        assert batch.targets.shape[0] == 8
+        assert batch.targets.shape[2] == 10
+        assert (batch.horizon_dts > 0).all()

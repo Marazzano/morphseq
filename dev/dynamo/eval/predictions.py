@@ -108,14 +108,16 @@ class PersistencePredictor:
 
 
 class LinearExtrapolationPredictor:
-    """Predict by linearly extrapolating the last observed velocity.
+    """Predict by fitting a linear trend to the last N context frames.
 
-    Uses the last two context frames to estimate velocity, then extrapolates
-    forward by horizon_dt. Variance is isotropic and scales with horizon.
+    Fits a least-squares line through the last N valid context frames
+    (in time), then extrapolates forward by horizon_dt. More robust than
+    using only 2 frames when observations are noisy.
     """
 
-    def __init__(self, noise_scale: float = 0.1) -> None:
+    def __init__(self, noise_scale: float = 0.1, n_points: int = 5) -> None:
         self.noise_scale = noise_scale
+        self.n_points = n_points
 
     def predict(self, batch: FragmentBatch) -> PredictionResult:
         B = batch.context.shape[0]
@@ -123,19 +125,48 @@ class LinearExtrapolationPredictor:
         device = batch.context.device
 
         lengths = batch.context_mask.sum(dim=1).long()  # (B,)
-        last_idx = lengths - 1
-        prev_idx = torch.clamp(last_idx - 1, min=0)
 
-        last_frame = batch.context[torch.arange(B, device=device), last_idx]
-        prev_frame = batch.context[torch.arange(B, device=device), prev_idx]
+        # Process each sample individually (variable-length contexts)
+        means = []
+        for b in range(B):
+            L = lengths[b].item()
+            n_use = min(self.n_points, L)
 
-        # Velocity from last two frames, normalized by delta_t
-        velocity = (last_frame - prev_frame) / batch.delta_t.unsqueeze(-1).clamp(min=1e-6)
+            if n_use < 2:
+                # Fall back to persistence
+                means.append(batch.context[b, L - 1])
+                continue
 
-        # Extrapolate
-        mean = last_frame + velocity * batch.horizon_dt.unsqueeze(-1)
+            # Extract last n_use frames and their cumulative times
+            start = L - n_use
+            frames = batch.context[b, start:L]  # (n_use, D)
 
-        var = (self.noise_scale ** 2) * batch.horizon_dt.unsqueeze(-1).expand(B, D)
+            # Build time axis from inter-frame deltas, relative to first used frame
+            if n_use == L:
+                deltas = batch.time_deltas[b, :L - 1]  # (L-1,)
+            else:
+                deltas = batch.time_deltas[b, start:L - 1]  # (n_use-1,)
+            t = torch.zeros(n_use, device=device)
+            t[1:] = torch.cumsum(deltas, dim=0)
+
+            # Least-squares: velocity = Cov(t, z) / Var(t), intercept follows
+            t_mean = t.mean()
+            t_centered = t - t_mean  # (n_use,)
+            var_t = (t_centered ** 2).sum().clamp(min=1e-8)
+
+            z_mean = frames.mean(dim=0)  # (D,)
+            z_centered = frames - z_mean.unsqueeze(0)  # (n_use, D)
+            cov_tz = (t_centered.unsqueeze(-1) * z_centered).sum(dim=0)  # (D,)
+
+            velocity = cov_tz / var_t  # (D,)
+
+            # Extrapolate from last frame
+            last_frame = frames[-1]  # (D,)
+            mean = last_frame + velocity * batch.horizon_dt[b]
+            means.append(mean)
+
+        mean = torch.stack(means, dim=0)  # (B, D)
+        var = (self.noise_scale ** 2) * batch.horizon_dt.unsqueeze(-1).abs().expand(B, D)
 
         return PredictionResult(
             predicted_mean=mean,
