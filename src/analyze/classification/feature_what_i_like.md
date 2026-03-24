@@ -991,14 +991,16 @@ you'd want to inspect.
 
 ### Stacking and predictions
 
-`stack()` merges scores and `uns["comparisons"]`. **Prediction layers
-are intentionally not merged.**
+`stack()` merges scores and `uns["comparisons"]` only. **Prediction,
+confusion, and raw-null layers are not merged by design.**
 
-Scores are the thing you compare across runs. Predictions are the thing
-you inspect within a single run. Stacking predictions from different
-models — which may have seen different classes, had different training
-sets, or used different comparison modes — into one table would be
-misleading. Those probabilities aren't on the same scale.
+**Layers are diagnostic artifacts, not canonical merge targets.**
+Scores are cross-run comparable summaries. Predictions are run-local
+diagnostics. Raw prediction probabilities are not guaranteed to be
+directly comparable across runs, because runs may differ in class
+composition, comparison structure, feature sets, and training
+distributions. The same principle applies to confusion profiles and
+null arrays.
 
 ```python
 # Compare AUROC across runs → use the stacked object
@@ -1122,21 +1124,22 @@ class ClassificationAnalysis:
 
     # ── Stacking ─────────────────────────────────────────────────────────
     #
-    # Merges scores and uns["comparisons"]. Prediction layers are NOT merged.
+    # stack() merges scores and uns["comparisons"] only.
+    # Prediction, confusion, and raw-null layers are not merged by design.
     #
-    # This is intentional, not a gap. Scores are the thing you compare
-    # across runs. Predictions are the thing you inspect within a single
-    # run. Stacking predictions from different models (which saw different
-    # classes, had different training sets) into one table is misleading —
-    # those probabilities aren't on the same scale.
+    # Layers are diagnostic artifacts, not canonical merge targets.
+    # Predictions are the clearest example — raw prediction probabilities
+    # are not guaranteed to be directly comparable across runs, because
+    # runs may differ in class composition, comparison structure, feature
+    # sets, and training distributions — but the same principle applies
+    # to confusion profiles and null arrays.
     #
-    # To inspect raw probabilities for a specific comparison, use the
-    # original results object, not the stacked one:
+    # Use stacked objects for summary-level comparison across runs.
+    # Use original ClassificationAnalysis objects to inspect raw
+    # predictions or other run-local diagnostics:
     #
     #   results_ovr.layers["predictions"]              # binary p_pos table
     #   results_ovr.layers["multiclass_predictions"]   # wide pred_proba_* table
-    #
-    # The stacked object is for cross-run comparison of summary statistics.
 
     def stack(self, other, on_conflict="error") -> "ClassificationAnalysis":
         """Merge scores and uns['comparisons']. Layers are not merged."""
