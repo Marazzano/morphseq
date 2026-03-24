@@ -57,8 +57,11 @@ def run_classification(
     # ── Layer 5: output / control ─────────────────────────────────────────
     verbose: bool = True,
     save_predictions: bool = False,             # tidy binary predictions.parquet
-    save_multiclass_predictions: bool = True,   # wide embryo_predictions_augmented.parquet (all-vs-rest only)
+    save_multiclass_predictions: bool = False,  # wide embryo_predictions_augmented.parquet (all-vs-rest only)
     save_null_arrays: bool = False,             # raw per-permutation arrays; summary stats always in scores
+    # save_multiclass_predictions defaults to False because the wide table can be
+    # large and is only needed by the misclassification pipeline. Users who run
+    # run_misclassification_pipeline() should set this to True explicitly.
 ) -> ClassificationAnalysis:
 ```
 
@@ -112,8 +115,9 @@ Their roles are different:
 
 - **`comparisons`** — Chooses the *strategy* for generating pairs. A string
   scheme (`"all_vs_rest"`, `"all_pairs"`) auto-generates pairs from the data.
-  A `DataFrame` gives full manual control. When omitted, the mode is inferred
-  from whether `negative` is set.
+  A `pd.DataFrame` or `list[dict]` gives full manual control (`list[dict]` is
+  normalized to DataFrame immediately at ingestion). When omitted, the mode is
+  inferred from whether `negative` is set.
 
 #### Mode resolution table
 
@@ -124,7 +128,7 @@ Their roles are different:
 | set (scope) | omitted | `"all_vs_rest"` | all-vs-rest (scoped) | same as above, explicit scheme |
 | set (scope) | omitted | `"all_pairs"` | all-pairs (scoped) | every unordered pair within scope |
 | set | set | omitted | explicit | Cartesian product of positive × negative groups |
-| omitted | omitted | `pd.DataFrame` | design table | pairs come from table rows |
+| omitted | omitted | `pd.DataFrame` or `list[dict]` | explicit design | pairs come from rows |
 
 #### Hard mutual-exclusion errors
 
@@ -132,7 +136,7 @@ These combinations are always rejected at call time by `run_classification()`:
 
 | Combination | Why it's an error |
 |---|---|
-| `comparisons=DataFrame` + any `positive` or `negative` | Design table defines its own pairs — extra constraints are ambiguous |
+| `comparisons=DataFrame/list[dict]` + any `positive` or `negative` | Design rows define their own pairs — extra constraints are ambiguous |
 | `comparisons=str_scheme` + `negative` | Schemes generate their own negatives — user-provided negative conflicts |
 | `comparisons=str_scheme` + `positive` as scalar | Scalar positive with a scheme is ambiguous (is it a scope or a single comparison?). Use a 1-element list to be explicit. |
 | `negative` set but `positive` omitted | Negative without positive is almost always a user mistake |
@@ -159,7 +163,18 @@ results = run_classification(
     n_permutations=100,
 )
 
-# 3. Advanced — explicit design table
+# 3. Advanced — explicit design (list[dict] is the ergonomic form)
+results = run_classification(
+    df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
+    comparisons=[
+        {"positive": "homo", "negative": "wildtype"},
+        {"positive": "homo", "negative": "het"},
+        {"positive": "het",  "negative": "wildtype"},
+    ],
+    features={"embedding": "z_mu_b"},
+)
+
+# Equivalent — pd.DataFrame also accepted
 design = pd.DataFrame({
     "positive": ["homo", "homo", "het"],
     "negative": ["wildtype", "het", "wildtype"],
@@ -380,7 +395,7 @@ There are four possible modes:
 | `"explicit"` | both `positive` and `negative` given | Cartesian product of positive × negative groups |
 | `"rest"` | no `negative` given | Each positive group vs all remaining classes |
 | `"all_pairs"` | `comparisons="all_pairs"` | Every unordered pair of classes |
-| `"design_table"` | `comparisons` is a DataFrame | Pairs come directly from the table rows |
+| `"explicit_design"` | `comparisons` is a DataFrame or list[dict] | Pairs come directly from the rows |
 
 #### Helpers
 
@@ -879,7 +894,7 @@ run_classification(df, ...)              ← orchestrator in run_classification.
     ├─ 7b. _collect_multiclass_predictions()
     │                                  → wide multiclass predictions  (all-vs-rest only,
     │                                     save_multiclass_predictions=True)
-    └─ 8. _collect_confusion()         → confusion DataFrame  (optional)
+    └─ 8. _collect_confusion()         → confusion DataFrame  (always emitted)
 ```
 
 Each step runs once per `(feature_set, comparison)` pair. Results are concatenated into
@@ -1197,10 +1212,10 @@ class ClassificationAnalysis:
         return ClassificationAnalysis(scores=scores, uns=merged_uns,
                                       layers=_LazyLayers(None))
 
-    # Plotting
-    def plot_aurocs(self, facet_col="feature_set", **kwargs):
+    # Plotting — thin sugar, all inference happens inside plot_aurocs_over_time
+    def plot_aurocs(self, *, curve_col=None, facet_col=None, **kwargs):
         from .viz.auroc_over_time import plot_aurocs_over_time
-        return plot_aurocs_over_time(self.scores, curve_col="positive_label",
+        return plot_aurocs_over_time(self.scores, curve_col=curve_col,
                                      facet_col=facet_col, **kwargs)
 
     # Persistence
@@ -1480,7 +1495,7 @@ my_run/
 | Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_null_arrays=True`) | diagnostic only |
 | Confusion profile | `confusion.parquet` | always (all modes) | cheap; captures error asymmetry |
 | Predictions (binary) | `predictions.parquet` | off (`save_predictions=True`) | per-comparison diagnostics |
-| Predictions (multiclass) | `embryo_predictions_augmented.parquet` | on for all-vs-rest (`save_multiclass_predictions=True`) | required by misclassification pipeline |
+| Predictions (multiclass) | `embryo_predictions_augmented.parquet` | off (`save_multiclass_predictions=True`; all-vs-rest only) | required by misclassification pipeline |
 
 ---
 
@@ -1550,7 +1565,7 @@ def _listify(val: str | list[str]) -> list[str]:
       ├─ 7a. _collect_predictions()           → tidy binary predictions (save_predictions=True)
       ├─ 7b. _collect_multiclass_predictions()→ wide multiclass predictions (all-vs-rest,
       │                                          save_multiclass_predictions=True)
-      └─ 8. _collect_confusion()              → confusion_profile DataFrame (optional)
+      └─ 8. _collect_confusion()              → confusion_profile DataFrame (always emitted)
 
   Each step is currently tangled inside _run_multiclass_classification and run_classification_test. The names above are what
   they should be called after cleanup.
@@ -1634,8 +1649,9 @@ def _listify(val: str | list[str]) -> list[str]:
       "is_correct":      bool,
   }
 
-  This works for every mode — all-vs-rest, pairwise, all-pairs. The multiclass pred_proba_{class} columns can be kept as a
-  separate optional multiclass_predictions table if needed, but they're not the primary predictions contract.
+  This works for every mode — all-vs-rest, pairwise, all-pairs. The multiclass pred_proba_{class} columns live in the
+  `multiclass_predictions` layer (`save_multiclass_predictions=True`, all-vs-rest only) — a named first-class artifact,
+  but not the primary predictions contract.
 
   Step 8 — _collect_confusion() (currently extract_temporal_confusion_profile)
 
