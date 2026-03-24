@@ -48,14 +48,49 @@ def run_classification(
     n_permutations: int = 100,
     n_splits: int = 5,
     min_samples_per_class: int = 3,
-    n_jobs: int = 1,                 # parallelizes permutation test only
-    random_state: int = 42,
+    min_samples_per_member: int = 2, # per-constituent minimum in pooled groups
+    n_jobs: int = 1,                 # execution strategy is implementation-defined
+    random_state: int = 42,          # root seed; child seeds derived for CV, estimator, permutations
 
     # ── Layer 5: output / control ─────────────────────────────────────────
     verbose: bool = True,
     save_null_arrays: bool = False,  # raw per-permutation arrays; summary stats always in scores
 ) -> ClassificationAnalysis:
 ```
+
+### `random_state` contract
+
+`random_state` is a root seed. The implementation derives deterministic child
+seeds from it — one per stochastic component — rather than sharing a single
+mutable RNG object. This keeps reproducibility clean even under parallel execution.
+
+Child seeds must be threaded into:
+- CV splitter (`StratifiedKFold(random_state=...)`)
+- Estimator (`LogisticRegression(random_state=...)`)
+- Permutation RNG (per-permutation seed derived from root)
+
+Derived seeds use a deterministic scheme (e.g. `SeedSequence.spawn()` or
+`root + offset`) so that results are identical regardless of `n_jobs`.
+
+### `features` type narrowing
+
+The public API accepts `dict[str, str | list[str]]` for convenience:
+
+```python
+features={"embedding": "z_mu_b", "shape": ["length", "width"]}
+```
+
+The first resolver step (`_resolve_feature_columns`) collapses this to:
+
+```python
+dict[str, list[str]]
+```
+
+so the rest of the pipeline never sees the `str` variant:
+- `"z_mu_b"` → prefix-matched to `["z_mu_b_0", "z_mu_b_1", ...]`
+- `["length", "width"]` → passed through as-is
+
+After this point, every feature set value is always a `list[str]`.
 
 ### How `positive`, `negative`, and `comparisons` interact
 
@@ -595,7 +630,7 @@ if dupes:
     )
 ```
 
-### Step 6 — Min-sample check and per-member warnings (standalone function)
+### Step 6 — Min-sample check (standalone function)
 
 **Called by `run_classification()`, NOT inside `resolve_comparisons()`.**
 Requires `label_counts` which needs DataFrame access (counting unique `id_col` units).
@@ -603,33 +638,63 @@ Requires `label_counts` which needs DataFrame access (counting unique `id_col` u
 `label_counts` must count **unique `id_col` units**, not rows.
 Row counts are inflated by time points and must not be used here.
 
+#### Two thresholds, not one
+
+Pooled groups create a risk of **hidden minorities**: a group passes the
+total-count check but one constituent contributes almost nothing. For example,
+`("rare_mutant", "common_het")` with counts `{rare_mutant: 1, common_het: 50}`
+passes a group minimum of 3 but `rare_mutant` is statistically ornamental.
+
+To catch this, validation enforces two levels:
+
+| Check | What it does | Default | Severity |
+|---|---|---|---|
+| **Group minimum** | total unique units across all members of a group | `min_samples_per_class=3` | hard error |
+| **Per-member minimum** | each individual member in a pooled group | `min_samples_per_member=2` | hard error |
+
+For non-pooled groups (single class label), both checks collapse to the same thing.
+
 ```python
 def check_min_samples(
     resolved: list[ResolvedComparison],
-    label_counts: dict[str, int],    # {class_label: n_unique_embryos}
-    min_samples: int,
-    warn_threshold: int = 5,
+    label_counts: dict[str, int],    # {class_label: n_unique_units}
+    min_samples_per_class: int,      # group-level minimum
+    min_samples_per_member: int = 2, # per-constituent minimum in pooled groups
 ) -> None:
+    """
+    Validate that every group in every comparison has enough data.
+
+    Two checks:
+    1. Group total: sum of counts across all members ≥ min_samples_per_class
+    2. Per-member: each individual member ≥ min_samples_per_member
+       (only meaningful for pooled groups with ≥ 2 members)
+    """
     for rc in resolved:
-        for members, side_label, side_name in [
+        for members, group_label, side_name in [
             (rc.positive_members, rc.positive_label, "positive"),
             (rc.negative_members, rc.negative_label, "negative"),
         ]:
-            union_n = sum(label_counts.get(m, 0) for m in members)
-            if union_n < min_samples:
+            # 1. Group-level check
+            group_total = sum(label_counts.get(m, 0) for m in members)
+            if group_total < min_samples_per_class:
                 raise ValueError(
-                    f"Comparison {rc.comparison_id!r}: {side_name} '{side_label}' "
-                    f"has only {union_n} embryos (min={min_samples})."
+                    f"Comparison {rc.comparison_id!r}: {side_name} "
+                    f"group '{group_label}' has only {group_total} units "
+                    f"(min_samples_per_class={min_samples_per_class})."
                 )
-            for m in members:
-                n = label_counts.get(m, 0)
-                if n < warn_threshold:
-                    warnings.warn(
-                        f"Comparison {rc.comparison_id!r}: member '{m}' in {side_name} "
-                        f"pool '{side_label}' has only {n} embryos. "
-                        f"Consider whether pooling is appropriate.",
-                        UserWarning, stacklevel=3,
-                    )
+
+            # 2. Per-member check (catches hidden minorities in pooled groups)
+            if len(members) >= 2:
+                for m in members:
+                    n = label_counts.get(m, 0)
+                    if n < min_samples_per_member:
+                        raise ValueError(
+                            f"Comparison {rc.comparison_id!r}: member '{m}' "
+                            f"in {side_name} pool '{group_label}' has only "
+                            f"{n} units (min_samples_per_member="
+                            f"{min_samples_per_member}). Each constituent "
+                            f"in a pooled group must contribute meaningfully."
+                        )
 ```
 
 ---
@@ -789,7 +854,7 @@ run_classification(df, ...)              ← orchestrator in run_classification.
     │       ├─ cross_val_predict()     → probabilities
     │       ├─ roc_auc_score()         → auroc_obs
     │       └─ _permutation_test_ovr() → null_aurocs → pval, null_mean, null_std
-    │                                    (n_jobs parallelizes here only)
+    │                                    (n_jobs execution strategy is implementation-defined)
     ├─ 6. _collect_scores()            → scores DataFrame  ← THE canonical table
     ├─ 7. _collect_predictions()       → predictions DataFrame  (optional)
     └─ 8. _collect_confusion()         → confusion DataFrame  (optional)
@@ -905,8 +970,11 @@ use `time_bin_center` as the canonical time key.
 }
 ```
 
-Only emitted for multiclass (all-vs-rest) runs. Skip for pairwise comparisons — the
-2×2 confusion adds nothing over AUROC.
+Emitted for all comparison modes, including pairwise. Even for binary (2×2)
+comparisons, confusion captures error asymmetry at the chosen threshold —
+a model that collapses toward wildtype is very different from one that
+overcalls mutant, even if AUROC looks similar. Since predictions are
+already collected, computing confusion is cheap.
 
 ---
 
@@ -1281,7 +1349,7 @@ my_run/
   scores.parquet            ← always
   metadata.json             ← always (uns dict)
   predictions.parquet       ← optional (save_predictions=True)
-  confusion.parquet         ← optional (multiclass runs only)
+  confusion.parquet         ← always
   null_distributions.npz    ← optional (save_null_arrays=True)
 ```
 
@@ -1293,7 +1361,7 @@ my_run/
 |---|---|---|---|
 | Null stats (mean/std/n) | columns in `scores` | always | free, always useful |
 | Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_null_arrays=True`) | diagnostic only |
-| Confusion profile | `confusion.parquet` | on for multiclass, skip for pairwise | cheap + meaningful |
+| Confusion profile | `confusion.parquet` | always (all modes) | cheap; captures error asymmetry |
 | Predictions | `predictions.parquet` | off (`save_predictions=True`) | grows with scale |
 
 ---
@@ -1359,7 +1427,7 @@ def _listify(val: str | list[str]) -> list[str]:
       │       ├─ cross_val_predict()          → probabilities
       │       ├─ roc_auc_score()              → auroc_obs
       │       └─ _permutation_test_ovr()      → null_aurocs → pval, null_mean, null_std
-      │                                         (n_jobs parallelizes here only)
+      │                                         (n_jobs execution strategy is implementation-defined)
       ├─ 6. _collect_scores()                 → scores DataFrame (THE canonical table)
       ├─ 7. _collect_predictions()            → predictions DataFrame (optional)
       └─ 8. _collect_confusion()              → confusion_profile DataFrame (optional)
@@ -1786,7 +1854,7 @@ def plot_confusion(self, **kwargs):
     if conf is None:
         raise KeyError(
             "No confusion layer available. "
-            "Re-run run_classification() — confusion is saved automatically for multiclass runs."
+            "Re-run run_classification() — confusion is saved automatically."
         )
     from .viz.confusion import plot_confusion
     return plot_confusion(self.scores, conf, **kwargs)
