@@ -2,7 +2,7 @@
 
 Status: approved front-end spec for the next implementation phase.
 
-This document is the canonical reference for the new `classify()` API and its comparison
+This document is the canonical reference for the new `run_classification()` API and its comparison
 resolution contract. It supersedes the previous conversation dump.
 
 ---
@@ -12,7 +12,7 @@ resolution contract. It supersedes the previous conversation dump.
 1. **DataFrame-first.** Input is always a plain `pd.DataFrame`. No wrapper object required.
 2. **Multi-feature is the native unit of thought.** `features={}` dict is always named; the
    results table always has a `feature_set` column.
-3. **One entry point.** `classify()` covers all modes. No `run_ovr()`, `run_pairwise()` siblings.
+3. **One entry point.** `run_classification()` covers all modes. No `run_ovr()`, `run_pairwise()` siblings.
 4. **Layered signature.** Data contract → comparison spec → features → model/binning → output.
 5. **Fail fast.** All validation happens before any computation.
 6. **Symmetric pooling.** Pooled positives and pooled negatives work identically at the
@@ -23,7 +23,7 @@ resolution contract. It supersedes the previous conversation dump.
 ## Public entry point
 
 ```python
-def classify(
+def run_classification(
     # ── Layer 1: data contract (required, keyword-only after df) ──────────
     df: pd.DataFrame,
     *,
@@ -48,17 +48,16 @@ def classify(
     n_permutations: int = 100,
     n_splits: int = 5,
     min_samples_per_class: int = 3,
-    n_jobs: int = 1,
+    n_jobs: int = 1,                 # parallelizes permutation test only
     random_state: int = 42,
 
     # ── Layer 5: output / control ─────────────────────────────────────────
     verbose: bool = True,
-    save_null: bool = True,
-    allow_overlap: bool = False,
+    save_null_arrays: bool = False,  # raw per-permutation arrays; summary stats always in scores
 ) -> ClassificationAnalysis:
 ```
 
-### Comparison mode rules (mutually exclusive, enforced at call time)
+### Comparison mode rules (mutually exclusive, enforced at call time by `run_classification`)
 
 | `positive` | `negative` | `comparisons` | Mode |
 |---|---|---|---|
@@ -80,13 +79,13 @@ def classify(
 
 ```python
 # 1. Discovery — all classes, all-vs-rest, one or more feature sets
-results = classify(
+results = run_classification(
     df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
     features={"embedding": "z_mu_b"},
 )
 
 # 2. Targeted — explicit positive/negative, multiple named feature sets
-results = classify(
+results = run_classification(
     df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
     positive=["homo", "het"],
     negative="wildtype",
@@ -103,7 +102,7 @@ design = pd.DataFrame({
     "positive": ["homo", "homo", "het"],
     "negative": ["wildtype", "het", "wildtype"],
 })
-results = classify(
+results = run_classification(
     df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
     comparisons=design,
     features={"embedding": "z_mu_b"},
@@ -197,12 +196,17 @@ user input (positive, negative, comparisons, available_labels)
     ↓  Step 2  — determine mode + normalize to sides
     ↓  Step 3  — canonicalize pooled tuples (sort + dedupe, both sides)
     ↓  Step 4  — expand to raw pairs (mode-dependent)
-    ↓  Step 5  — overlap check (positive_members ∩ negative_members = ∅)
+    ↓  Step 5  — overlap check (positive_members ∩ negative_members = ∅; always enforced)
     ↓  Step 6  — label existence check (pure — no DataFrame access)
     ↓  Step 7  — rest expansion (rest-mode only)
     ↓  Step 8  — deduplicate (on final pairs, after rest expansion)
     ↓  Step 9  — _to_resolved (→ list[ResolvedComparison])
-    ↓  Step 10 — min-sample check + per-member warnings
+    ↓           — collision detection (error if duplicate comparison_ids)
+resolve_comparisons() returns here: list[ResolvedComparison]
+
+    ↓  Step 10 — check_min_samples() — called by run_classification(),
+    ↓            NOT inside resolve_comparisons(). Requires label_counts
+    ↓            (unique id_col units per class), which is data-dependent.
 backend receives: list[ResolvedComparison]
 ```
 
@@ -215,11 +219,11 @@ def resolve_comparisons(
     comparisons: ComparisonScheme,
     available_labels: set[str],    # = set(df[class_col].unique()), computed by caller
     class_col: str,                # used only in error messages
-    allow_overlap: bool = False,
 ) -> list[ResolvedComparison]:
     """
-    Pure function. No DataFrame access.
+    Pure function. No DataFrame access. Steps 1–9 only.
     available_labels must be computed by the caller before calling this.
+    Step 10 (min-sample check) is handled separately by check_min_samples().
     """
 ```
 
@@ -260,7 +264,7 @@ def _to_sides(val: UserComparisonSpec, all_labels: list[str]) -> list[Comparison
         return [val]
     return list(val)
 
-# Mode detection (after mutual-exclusion checks in classify())
+# Mode detection (after mutual-exclusion checks in run_classification())
 if isinstance(comparisons, pd.DataFrame):
     mode = "design_table"
 
@@ -348,11 +352,10 @@ for pos_side, neg_side in raw_pairs:
     if neg_side is None:
         continue  # rest-mode: skip until Step 7
     overlap = _members(pos_side) & _members(neg_side)
-    if overlap and not allow_overlap:
+    if overlap:
         raise ValueError(
             f"Comparison ({pos_side!r} vs {neg_side!r}) has overlapping class labels: "
-            f"{sorted(overlap)}. The same label cannot appear on both sides. "
-            f"Pass allow_overlap=True to permit this explicitly."
+            f"{sorted(overlap)}. The same label cannot appear on both sides."
         )
 ```
 
@@ -430,15 +433,29 @@ def _to_resolved(pos_side: ComparisonSide, neg_side: ComparisonSide) -> Resolved
     )
 
 resolved: list[ResolvedComparison] = [_to_resolved(p, n) for p, n in raw_pairs]
+
+# Collision detection — comparison_ids must be unique
+ids = [rc.comparison_id for rc in resolved]
+dupes = [cid for cid in ids if ids.count(cid) > 1]
+if dupes:
+    raise ValueError(
+        f"comparison_id collision: {sorted(set(dupes))}. "
+        f"Distinct comparisons produced the same filesystem-safe ID. "
+        f"This typically happens when class labels differ only in characters "
+        f"that get sanitized (spaces, slashes, etc.)."
+    )
 ```
 
-### Step 10 — Min-sample check and per-member warnings
+### Step 10 — Min-sample check and per-member warnings (standalone function)
 
-`label_counts` must count **unique `id_col` units (embryos)**, not rows.
+**Called by `run_classification()`, NOT inside `resolve_comparisons()`.**
+Requires `label_counts` which needs DataFrame access (counting unique `id_col` units).
+
+`label_counts` must count **unique `id_col` units**, not rows.
 Row counts are inflated by time points and must not be used here.
 
 ```python
-def _check_min_samples(
+def check_min_samples(
     resolved: list[ResolvedComparison],
     label_counts: dict[str, int],    # {class_label: n_unique_embryos}
     min_samples: int,
@@ -588,16 +605,18 @@ subset["_y"] = subset["genotype"].isin({"crispant","homo"}).astype(int)
 ## Internal factory line
 
 ```
-classify(df, ...)
+run_classification(df, ...)              ← orchestrator in run_classification.py
     │
     ├─ 1. _resolve_feature_columns()   → dict[str, list[str]]  (feature_set → col list)
-    ├─ 2. resolve_comparisons()        → list[ResolvedComparison]
+    ├─ 2. resolve_comparisons()        → list[ResolvedComparison]  (Steps 1–9)
+    ├─ 2b. check_min_samples()         → validate sample counts  (Step 10, data-dependent)
     ├─ 3. _build_binary_labels()       → filtered df with _y column  (per comparison)
-    ├─ 4. _bin_and_aggregate()         → df binned by (embryo_id, time_bin)
+    ├─ 4. _bin_and_aggregate()         → df binned by (id_col, time_bin)
     ├─ 5. _run_classification_loop()   → raw per-bin result dicts
     │       ├─ cross_val_predict()     → probabilities
     │       ├─ roc_auc_score()         → auroc_obs
     │       └─ _permutation_test_ovr() → null_aurocs → pval, null_mean, null_std
+    │                                    (n_jobs parallelizes here only)
     ├─ 6. _collect_scores()            → scores DataFrame  ← THE canonical table
     ├─ 7. _collect_predictions()       → predictions DataFrame  (optional)
     └─ 8. _collect_confusion()         → confusion DataFrame  (optional)
@@ -675,13 +694,13 @@ def _collect_scores(
 ## Step 7 — `_collect_predictions()` — binary per comparison
 
 Works for every mode (all-vs-rest, pairwise, all-pairs). One row per
-(embryo_id, time_bin_center, comparison_id, feature_set).
+(id_col, time_bin_center, comparison_id, feature_set).
 
 ```python
 {
     "feature_set":     str,
     "comparison_id":   str,
-    "embryo_id":       str,
+    id_col:            str,    # uses the actual id_col name (e.g. "embryo_id")
     "time_bin_center": float,
     "y_true":          int,    # 1 = positive side, 0 = negative side
     "p_pos":           float,  # probability of positive class
@@ -808,7 +827,19 @@ class ClassificationAnalysis:
         if on_conflict == "overwrite" and overlap:
             scores = scores.drop_duplicates(
                 subset=["feature_set", "comparison_id", "time_bin_center"], keep="last")
-        return ClassificationAnalysis(scores=scores, uns={**self.uns, **other.uns},
+        # Deep-merge uns["comparisons"]; error on key collision
+        merged_uns = {k: v for k, v in self.uns.items() if k != "comparisons"}
+        merged_uns.update({k: v for k, v in other.uns.items() if k != "comparisons"})
+        self_comps = self.uns.get("comparisons", {})
+        other_comps = other.uns.get("comparisons", {})
+        collision = set(self_comps) & set(other_comps)
+        if collision and on_conflict == "error":
+            raise ValueError(f"uns['comparisons'] key collision: {sorted(collision)}")
+        if on_conflict == "overwrite":
+            merged_uns["comparisons"] = {**self_comps, **other_comps}
+        else:
+            merged_uns["comparisons"] = {**self_comps, **other_comps}
+        return ClassificationAnalysis(scores=scores, uns=merged_uns,
                                       layers=_LazyLayers(None))
 
     # Plotting
@@ -1078,7 +1109,7 @@ my_run/
   metadata.json             ← always (uns dict)
   predictions.parquet       ← optional (save_predictions=True)
   confusion.parquet         ← optional (multiclass runs only)
-  null_distributions.npz    ← optional (save_nulls="full")
+  null_distributions.npz    ← optional (save_null_arrays=True)
 ```
 
 ---
@@ -1088,7 +1119,7 @@ my_run/
 | Artifact | Storage | Default | When |
 |---|---|---|---|
 | Null stats (mean/std/n) | columns in `scores` | always | free, always useful |
-| Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_nulls="full"`) | diagnostic only |
+| Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_null_arrays=True`) | diagnostic only |
 | Confusion profile | `confusion.parquet` | on for multiclass, skip for pairwise | cheap + meaningful |
 | Predictions | `predictions.parquet` | off (`save_predictions=True`) | grows with scale |
 
@@ -1144,16 +1175,18 @@ def _listify(val: str | list[str]) -> list[str]:
   ---
   The internal factory line, named clearly
 
-  classify(df, ...)
+  run_classification(df, ...)              ← orchestrator in run_classification.py
       │
       ├─ 1. _resolve_feature_columns()        → list[str] per feature set
-      ├─ 2. resolve_comparisons()             → list[ResolvedComparison]
+      ├─ 2. resolve_comparisons()             → list[ResolvedComparison] (Steps 1–9)
+      ├─ 2b. check_min_samples()              → validate sample counts (Step 10)
       ├─ 3. _build_binary_labels()            → filtered df with _y column
-      ├─ 4. _bin_and_aggregate()              → df binned by (embryo_id, time_bin)
+      ├─ 4. _bin_and_aggregate()              → df binned by (id_col, time_bin)
       ├─ 5. _run_classification_loop()        → raw per-bin results dict
       │       ├─ cross_val_predict()          → probabilities
       │       ├─ roc_auc_score()              → auroc_obs
       │       └─ _permutation_test_ovr()      → null_aurocs → pval, null_mean, null_std
+      │                                         (n_jobs parallelizes here only)
       ├─ 6. _collect_scores()                 → scores DataFrame (THE canonical table)
       ├─ 7. _collect_predictions()            → predictions DataFrame (optional)
       └─ 8. _collect_confusion()              → confusion_profile DataFrame (optional)
@@ -1318,21 +1351,23 @@ def _listify(val: str | list[str]) -> list[str]:
   ---
   Summary: what changes where
 
-  ┌──────────────────────────────┬─────────────────────────────────────────────────────────────────────────┐
-  │           Location           │                                 Change                                  │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ Inner loop (step 5)          │ Rename auroc_observed→auroc_obs, drop positive_class/negative_class     │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ _collect_scores() (new)      │ Canonical column assembly, feature_set added, no JSON blobs             │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ _collect_predictions() (new) │ Binary per comparison, works for all modes                              │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ results.py                   │ Rename comparisons→scores, drop null_summary slot                       │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ save()                       │ Remove null_summary parquet, add comparison_membership to metadata.json │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ Plotters                     │ Delete _auroc_col() / _time_col() alias helpers                         │
-  └──────────────────────────────┴─────────────────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────┐
+  │           Location                  │                                 Change                                   │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ run_classification.py (new)         │ Orchestrator: wires engine pieces, calls resolve → check → loop → build  │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/loop.py (new)                │ Inner loop: auroc_obs (not auroc_observed), no positive_class/neg_class  │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/comparison_resolution.py     │ resolve_comparisons() Steps 1–9 + check_min_samples() standalone        │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/analysis.py (new)            │ ClassificationAnalysis, _LazyLayers, _validate_scores                    │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/null.py (new)                │ NullDistributions save/load                                              │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ results.py (legacy)                 │ FutureWarning shim for MulticlassOVRResults, ComparisonSpec              │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ Plotters                            │ Delete _auroc_col() / _time_col() alias helpers                          │
+  └─────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────┘
 
 ---
 
@@ -1481,7 +1516,7 @@ def plot_aurocs_over_time(
     title: str = "AUROC over time",
     x_label: str = "Hours Post Fertilization (hpf)",
     y_label: str = "AUROC",
-    style: StyleSpec | None = None,
+    style: dict | None = None,
 
     # ── output ────────────────────────────────────────────────────────────
     backend: Literal["plotly", "matplotlib", "both"] = "plotly",
@@ -1578,7 +1613,7 @@ def plot_confusion(self, **kwargs):
     if conf is None:
         raise KeyError(
             "No confusion layer available. "
-            "Re-run classify() — confusion is saved automatically for multiclass runs."
+            "Re-run run_classification() — confusion is saved automatically for multiclass runs."
         )
     from .viz.confusion import plot_confusion
     return plot_confusion(self.scores, conf, **kwargs)
@@ -1721,17 +1756,20 @@ results.plot_confusion(feature_set="embedding", backend="matplotlib")
 ```
 classification/
   __init__.py                     ← public API surface (see below)
+  run_classification.py           ← orchestrator: wires engine pieces together
 
-  # ── new implementation files ─────────────────────────────────────────────
-  _classify.py                    classify() entry point
-  _comparison_resolution.py       resolve_comparisons(), ResolvedComparison,
-                                  all validators (_validate_comparison_side,
+  # ── engine (internal implementation) ─────────────────────────────────────
+  engine/
+    __init__.py
+    comparison_resolution.py      resolve_comparisons(), ResolvedComparison,
+                                  check_min_samples(), all validators
+                                  (_validate_comparison_side,
                                   _canonicalize_side, _check_labels_exist, etc.)
-  _loop.py                        _run_classification_loop(), _bin_and_aggregate(),
+    loop.py                       _run_classification_loop(), _bin_and_aggregate(),
                                   _build_binary_labels(), _collect_scores(),
                                   _collect_predictions(), _collect_confusion()
-  _null.py                        NullDistributions dataclass + save/load
-  _analysis.py                    ClassificationAnalysis, _LazyLayers,
+    null.py                       NullDistributions dataclass + save/load
+    analysis.py                   ClassificationAnalysis, _LazyLayers,
                                   _validate_scores, _listify
 
   # ── legacy files (shimmed, not deleted) ──────────────────────────────────
@@ -1742,7 +1780,7 @@ classification/
   results.py                      FutureWarning shims:
                                     MulticlassOVRResults, ComparisonSpec
   classification_results.py       FutureWarning shim: ClassificationResults
-  permutation_utils.py            unchanged (internal, not public)
+  permutation_utils.py            unchanged (shared, not classification-specific)
 
   # ── viz ───────────────────────────────────────────────────────────────────
   viz/
@@ -1766,16 +1804,13 @@ classification/
 
   # ── tests ─────────────────────────────────────────────────────────────────
   tests/
-    test_classify.py              new: classify() + ClassificationAnalysis
+    test_run_classification.py    new: run_classification() + ClassificationAnalysis
     test_comparison_resolution.py new: resolve_comparisons()
     test_null_distributions.py    new: NullDistributions save/load roundtrip
     test_classification_test.py   existing (keep until migration complete)
     test_classification_results.py existing (keep until migration complete)
     test_misclassification_*.py   unchanged
 ```
-
-Leading underscore on implementation files (`_classify.py` etc.) signals
-"internal — import from the package, not from these files directly."
 
 ---
 
@@ -1790,19 +1825,19 @@ Public API for time-binned AUROC classification with permutation testing.
 
 Primary interface
 -----------------
-    classify(df, ...)                 → ClassificationAnalysis
+    run_classification(df, ...)       → ClassificationAnalysis
     ClassificationAnalysis.load(path) → ClassificationAnalysis
 
 Legacy (deprecated, will be removed)
 -------------------------------------
-    run_classification_test           → use classify()
+    run_classification_test           → use run_classification()
     MulticlassOVRResults              → use ClassificationAnalysis
     ClassificationResults             → use ClassificationAnalysis
 """
 
 # ── Primary ───────────────────────────────────────────────────────────────────
-from ._classify import classify
-from ._analysis import ClassificationAnalysis
+from .run_classification import run_classification
+from .engine.analysis import ClassificationAnalysis
 
 # ── Submodules ────────────────────────────────────────────────────────────────
 from . import viz
@@ -1822,7 +1857,7 @@ from .classification_results import ClassificationResults
 
 __all__ = [
     # Primary
-    "classify",
+    "run_classification",
     "ClassificationAnalysis",
     # Submodules
     "viz",
@@ -1846,7 +1881,7 @@ __all__ = [
 
 | Tier | Symbols | Status |
 |---|---|---|
-| **Primary** | `classify`, `ClassificationAnalysis` | new, canonical |
+| **Primary** | `run_classification`, `ClassificationAnalysis` | new, canonical |
 | **Submodules** | `viz`, `misclassification` | unchanged |
 | **Pipeline** | `run_misclassification_pipeline`, `run_stage_geometry` | unchanged, stays public |
 | **Legacy** | `run_classification_test`, `MulticlassOVRResults`, `ClassificationResults`, `ComparisonSpec` | importable, `FutureWarning` on call |
@@ -1865,13 +1900,13 @@ def run_classification_test(df, groupby, groups="all", reference="rest",
                              features="z_mu_b", **kwargs):
     warnings.warn(
         "run_classification_test() is deprecated and will be removed in a future release. "
-        "Use classify() instead:\n"
-        "  from analyze.classification import classify\n"
-        "  results = classify(df, class_col=groupby, id_col=..., time_col=...,\n"
+        "Use run_classification() instead:\n"
+        "  from analyze.classification import run_classification\n"
+        "  results = run_classification(df, class_col=groupby, id_col=..., time_col=...,\n"
         "                     positive=groups, negative=reference, features={...})",
         FutureWarning, stacklevel=2,
     )
-    from ._classify import classify as _classify
+    from .run_classification import run_classification as _run
     # translate old kwargs → new kwargs and delegate
     ...
 ```
@@ -1882,7 +1917,7 @@ def run_classification_test(df, groupby, groups="all", reference="rest",
 
 ```python
 # New — canonical
-from analyze.classification import classify, ClassificationAnalysis
+from analyze.classification import run_classification, ClassificationAnalysis
 
 # Old — still works, warns on call
 from analyze.classification import run_classification_test, MulticlassOVRResults
@@ -1895,8 +1930,8 @@ results.plot_aurocs()                                           # object sugar
 from analyze.classification import run_misclassification_pipeline, run_stage_geometry
 from analyze.classification.viz import plot_confusion_profile
 
-# difference_detection shim (unchanged, adds classify + ClassificationAnalysis)
-from analyze.difference_detection import classify   # FutureWarning on module import
+# difference_detection shim (unchanged, adds run_classification + ClassificationAnalysis)
+from analyze.difference_detection import run_classification   # FutureWarning on module import
 ```
 
 ---
@@ -1912,7 +1947,7 @@ warnings.warn(
     FutureWarning, stacklevel=2,
 )
 from analyze.classification import (
-    classify,
+    run_classification,
     ClassificationAnalysis,
     run_classification_test,
     MulticlassOVRResults,
