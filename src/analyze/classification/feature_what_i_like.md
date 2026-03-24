@@ -380,9 +380,10 @@ from itertools import product, combinations
 if isinstance(comparisons, pd.DataFrame):
     # ── design_table ──────────────────────────────────────────────────
     # Pairs come directly from the user's DataFrame.
+    # Cells can be strings or pooled tuples.
     _validate_design_table(comparisons)
     raw_pairs = [
-        (row["positive"], row["negative"])
+        (_canonicalize_group(row["positive"]), _canonicalize_group(row["negative"]))
         for _, row in comparisons.iterrows()
     ]
 
@@ -406,7 +407,8 @@ elif comparisons == "all_pairs":
             )
 
     # Direction is alphabetical: earlier label is always "positive"
-    labels = sorted(class_scope)
+    # Dedupe in case user passed duplicates in the scope list
+    labels = sorted(set(class_scope))
     raw_pairs = [(a, b) for a, b in combinations(labels, 2)]
 
 
@@ -444,12 +446,12 @@ else:
     # Every positive group × every negative group (Cartesian product).
     # Example: positives=[A, B], negatives=[C, D]
     #        → (A,C), (A,D), (B,C), (B,D)
+    #
+    # Note: positive=None + negative=set is already rejected as a hard
+    # error by run_classification(), so positive is always set here.
 
     # 1. Normalize user inputs to groups
-    positive_groups = (
-        _to_groups(positive) if positive is not None
-        else [label for label in sorted(available_labels)]
-    )
+    positive_groups = _to_groups(positive)
     negative_groups = _to_groups(negative)
 
     # 2. Canonicalize pooled groups
@@ -581,11 +583,12 @@ resolved: list[ResolvedComparison] = [
 # ── Collision detection ─────────────────────────────────────────────────
 # comparison_ids must be unique. Collisions happen when class labels
 # differ only in characters that get sanitized (spaces, slashes, etc.).
-ids = [rc.comparison_id for rc in resolved]
-dupes = [cid for cid in ids if ids.count(cid) > 1]
+from collections import Counter
+counts = Counter(rc.comparison_id for rc in resolved)
+dupes = sorted(cid for cid, n in counts.items() if n > 1)
 if dupes:
     raise ValueError(
-        f"comparison_id collision: {sorted(set(dupes))}. "
+        f"comparison_id collision: {dupes}. "
         f"Distinct comparisons produced the same filesystem-safe ID. "
         f"This typically happens when class labels differ only in "
         f"characters that get sanitized (spaces, slashes, etc.)."
@@ -633,18 +636,47 @@ def check_min_samples(
 
 ## Design table validation
 
+Design tables accept both string class labels and pooled tuples.
+Each cell in the `positive` and `negative` columns must be either
+a `str` (single class) or a `tuple[str, ...]` (pooled group).
+
 ```python
 def _validate_design_table(df: pd.DataFrame) -> None:
     required = {"positive", "negative"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"comparisons DataFrame missing columns: {sorted(missing)}")
+
     for col in required:
         if df[col].isnull().any():
             raise ValueError(f"comparisons DataFrame column {col!r} contains nulls.")
-        if not df[col].map(lambda x: isinstance(x, str)).all():
-            raise ValueError(f"comparisons DataFrame column {col!r} must contain strings only.")
-    if df.duplicated(subset=["positive", "negative"]).any():
+
+        for i, val in enumerate(df[col]):
+            if isinstance(val, str):
+                continue
+            if isinstance(val, tuple):
+                if not all(isinstance(v, str) for v in val):
+                    raise TypeError(
+                        f"comparisons[{col!r}][{i}]: tuple elements must all be strings."
+                    )
+                if len(val) < 2:
+                    raise ValueError(
+                        f"comparisons[{col!r}][{i}]: pooled tuple must have ≥ 2 elements."
+                    )
+                continue
+            raise TypeError(
+                f"comparisons[{col!r}][{i}]: must be a string or tuple of strings. "
+                f"Got {type(val).__name__}"
+            )
+
+    # Deduplicate check: canonicalize before comparing so
+    # ("a","b") and ("b","a") are treated as the same pair
+    canon = df.copy()
+    for col in required:
+        canon[col] = canon[col].map(
+            lambda v: tuple(sorted(v)) if isinstance(v, tuple) else v
+        )
+    if canon.duplicated(subset=["positive", "negative"]).any():
         raise ValueError("comparisons DataFrame contains duplicate (positive, negative) rows.")
 ```
 
@@ -671,7 +703,8 @@ def build_binary_labels(
     vector within time strata — pooled positives and pooled negatives are
     handled identically.
     """
-    subset = df[df[class_col].isin(comparison.positive_members | set(comparison.negative_members))].copy()
+    members = set(comparison.positive_members) | set(comparison.negative_members)
+    subset = df[df[class_col].isin(members)].copy()
     subset["_y"] = subset[class_col].isin(comparison.positive_members).astype(int)
     return subset
 ```
