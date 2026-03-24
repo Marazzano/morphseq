@@ -57,7 +57,7 @@ def run_classification(
     # ── Layer 5: output / control ─────────────────────────────────────────
     verbose: bool = True,
     save_predictions: bool = False,             # tidy binary predictions.parquet
-    save_multiclass_predictions: bool = False,  # wide embryo_predictions_augmented.parquet (all-vs-rest only)
+    save_multiclass_predictions: bool = False,  # wide multiclass_predictions.parquet (all-vs-rest only)
     save_null_arrays: bool = False,             # raw per-permutation arrays; summary stats always in scores
     # save_multiclass_predictions defaults to False because the wide table can be
     # large and is only needed by the misclassification pipeline. Users who run
@@ -337,7 +337,7 @@ Each value must be one of:
 - `None` (not provided)
 
 ```python
-def _validate_group(val, param_name: str) -> None:
+def _validate_group_input(val, param_name: str) -> None:
     """Validate that val is a legal UserComparisonSpec value."""
 
     # None means "not provided" — that's fine
@@ -365,7 +365,7 @@ def _validate_group(val, param_name: str) -> None:
     # A list means "enumerate these groups" — validate each element
     if isinstance(val, list):
         for i, item in enumerate(val):
-            _validate_group(item, f"{param_name}[{i}]")
+            _validate_group_input(item, f"{param_name}[{i}]")
         return
 
     # Anything else is an error
@@ -374,8 +374,8 @@ def _validate_group(val, param_name: str) -> None:
         f"Got {type(val).__name__}"
     )
 
-_validate_group(positive, "positive")
-_validate_group(negative, "negative")
+_validate_group_input(positive, "positive")
+_validate_group_input(negative, "negative")
 ```
 
 ### Step 2 — Resolve and expand comparisons
@@ -400,7 +400,7 @@ There are four possible modes:
 #### Helpers
 
 ```python
-def _to_groups(val: UserComparisonSpec) -> list[ComparisonGroup]:
+def _as_group_list(val: UserComparisonSpec) -> list[ComparisonGroup]:
     """Wrap a single group in a list; pass through a list unchanged."""
     if isinstance(val, (str, tuple)):
         return [val]
@@ -421,7 +421,7 @@ def _canonicalize_group(group: ComparisonGroup) -> ComparisonGroup:
     return result
 
 
-def _members(group: ComparisonGroup) -> set[str]:
+def _group_members(group: ComparisonGroup) -> set[str]:
     """Return the set of class labels in a group."""
     if isinstance(group, str):
         return {group}
@@ -441,8 +441,8 @@ if isinstance(comparisons, list):
     comparisons = pd.DataFrame(comparisons)
 
 if isinstance(comparisons, pd.DataFrame):
-    # ── design_table ──────────────────────────────────────────────────
-    # Pairs come directly from the user's DataFrame.
+    # ── explicit_design ───────────────────────────────────────────────
+    # Pairs come directly from the user's DataFrame or list[dict].
     # Cells can be strings or pooled tuples.
     _validate_design_table(comparisons)
     raw_pairs = [
@@ -481,7 +481,7 @@ elif comparisons in ("all_vs_rest", None) and negative is None:
 
     # 1. Normalize user inputs to groups
     positive_groups = (
-        _to_groups(positive) if positive is not None
+        _as_group_list(positive) if positive is not None
         else [label for label in sorted(available_labels)]
     )
 
@@ -491,7 +491,7 @@ elif comparisons in ("all_vs_rest", None) and negative is None:
     # 3. Expand: compute the "rest" complement immediately
     raw_pairs = []
     for pg in positive_groups:
-        rest_labels = sorted(available_labels - _members(pg))
+        rest_labels = sorted(available_labels - _group_members(pg))
 
         if len(rest_labels) == 0:
             raise ValueError(
@@ -514,8 +514,8 @@ else:
     # error by run_classification(), so positive is always set here.
 
     # 1. Normalize user inputs to groups
-    positive_groups = _to_groups(positive)
-    negative_groups = _to_groups(negative)
+    positive_groups = _as_group_list(positive)
+    negative_groups = _as_group_list(negative)
 
     # 2. Canonicalize pooled groups
     positive_groups = [_canonicalize_group(g) for g in positive_groups]
@@ -541,7 +541,7 @@ invalid because `"het"` is on both sides. Always enforced.
 
 ```python
 for pos_group, neg_group in raw_pairs:
-    overlap = _members(pos_group) & _members(neg_group)
+    overlap = _group_members(pos_group) & _group_members(neg_group)
     if overlap:
         raise ValueError(
             f"Comparison ({pos_group!r} vs {neg_group!r}) has overlapping "
@@ -569,8 +569,8 @@ def _check_labels_exist(
     # Collect every label mentioned across all pairs
     referenced = set()
     for pos_group, neg_group in raw_pairs:
-        referenced |= _members(pos_group)
-        referenced |= _members(neg_group)
+        referenced |= _group_members(pos_group)
+        referenced |= _group_members(neg_group)
 
     # Check for unknown labels
     unknown = referenced - available_labels
@@ -887,14 +887,14 @@ run_classification(df, ...)              ← orchestrator in run_classification.
     ├─ 5. _run_classification_loop()   → raw per-bin result dicts
     │       ├─ cross_val_predict()     → probabilities
     │       ├─ roc_auc_score()         → auroc_obs
-    │       └─ _permutation_test_ovr() → null_aurocs → pval, null_mean, null_std
-    │                                    (n_jobs execution strategy is implementation-defined)
-    ├─ 6. _collect_scores()            → scores DataFrame  ← THE canonical table
-    ├─ 7a. _collect_predictions()      → tidy binary predictions  (save_predictions=True)
+    │       └─ _permutation_test_binary() → null_aurocs → pval, null_mean, null_std
+    │                                      (n_jobs execution strategy is implementation-defined)
+    ├─ 6. _collect_scores()              → scores DataFrame  ← THE canonical table
+    ├─ 7a. _collect_binary_predictions() → tidy binary predictions  (save_predictions=True)
     ├─ 7b. _collect_multiclass_predictions()
-    │                                  → wide multiclass predictions  (all-vs-rest only,
-    │                                     save_multiclass_predictions=True)
-    └─ 8. _collect_confusion()         → confusion DataFrame  (always emitted)
+    │                                    → wide multiclass predictions  (all-vs-rest only,
+    │                                       save_multiclass_predictions=True)
+    └─ 8. _collect_confusion()           → confusion DataFrame  (always emitted)
 ```
 
 Each step runs once per `(feature_set, comparison)` pair. Results are concatenated into
@@ -966,7 +966,7 @@ def _collect_scores(
 
 ---
 
-## Step 7 — `_collect_predictions()` — binary per comparison
+## Step 7 — `_collect_binary_predictions()` — binary per comparison
 
 Works for every mode (all-vs-rest, pairwise, all-pairs). One row per
 (id_col, time_bin_center, comparison_id, feature_set).
@@ -999,7 +999,7 @@ The tidy binary table above is the new standard for per-comparison
 diagnostics (AUROC breakdowns, per-embryo accuracy in binary tasks).
 
 The misclassification pipeline (`run_misclassification_pipeline`) requires
-a **separate wide multiclass format** — `embryo_predictions_augmented.parquet` —
+a **separate wide multiclass format** — `multiclass_predictions.parquet` —
 with one row per `(embryo_id, time_bin)` and wide `pred_proba_{class}` columns
 for every class. This format is needed because:
 
@@ -1019,7 +1019,7 @@ They coexist:
 | Table | Shape | Saved by | Consumed by |
 |---|---|---|---|
 | `predictions.parquet` (tidy binary) | (id, time_bin, comparison, feature_set) → y_true, p_pos | `run_classification()` | scores plots, per-comparison diagnostics |
-| `embryo_predictions_augmented.parquet` (wide multiclass) | (id, time_bin) → true_class, pred_class, pred_proba_* | `run_classification()` (all-vs-rest mode) | misclassification pipeline |
+| `multiclass_predictions.parquet` (wide multiclass) | (id, time_bin) → true_class, pred_class, pred_proba_* | `run_classification()` (all-vs-rest mode) | misclassification pipeline |
 
 The wide table is only meaningful for all-vs-rest runs where the model
 sees all classes simultaneously. For pairwise or explicit comparisons,
@@ -1253,14 +1253,14 @@ class _LazyLayers:
     Layers
     ------
     "predictions"              pd.DataFrame         predictions.parquet (tidy binary)
-    "multiclass_predictions"   pd.DataFrame         embryo_predictions_augmented.parquet (wide)
+    "multiclass_predictions"   pd.DataFrame         multiclass_predictions.parquet (wide)
     "confusion"                pd.DataFrame         confusion.parquet
     "null_full"                NullDistributions     null_distributions.npz
     """
 
     _REGISTRY: dict[str, tuple[str, str]] = {
         "predictions":             ("predictions.parquet", "parquet"),
-        "multiclass_predictions":  ("embryo_predictions_augmented.parquet", "parquet"),
+        "multiclass_predictions":  ("multiclass_predictions.parquet", "parquet"),
         "confusion":   ("confusion.parquet",   "parquet"),
         "null_full":   ("null_distributions.npz", "nulls"),
     }
@@ -1480,7 +1480,7 @@ my_run/
   scores.parquet                          ← always
   metadata.json                           ← always (uns dict)
   predictions.parquet                     ← optional (save_predictions=True) — tidy binary
-  embryo_predictions_augmented.parquet    ← optional (all-vs-rest mode) — wide multiclass
+  multiclass_predictions.parquet    ← optional (all-vs-rest mode) — wide multiclass
   confusion.parquet                       ← always
   null_distributions.npz                  ← optional (save_null_arrays=True)
 ```
@@ -1495,7 +1495,97 @@ my_run/
 | Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_null_arrays=True`) | diagnostic only |
 | Confusion profile | `confusion.parquet` | always (all modes) | cheap; captures error asymmetry |
 | Predictions (binary) | `predictions.parquet` | off (`save_predictions=True`) | per-comparison diagnostics |
-| Predictions (multiclass) | `embryo_predictions_augmented.parquet` | off (`save_multiclass_predictions=True`; all-vs-rest only) | required by misclassification pipeline |
+| Predictions (multiclass) | `multiclass_predictions.parquet` | off (`save_multiclass_predictions=True`; all-vs-rest only) | required by misclassification pipeline |
+
+---
+
+## Misclassification pipeline — fail-loud contract
+
+If `run_misclassification_pipeline()` is called and the `multiclass_predictions` layer
+is missing, raise immediately with a direct remediation message:
+
+```python
+def run_misclassification_pipeline(analysis: ClassificationAnalysis, ...):
+    if "multiclass_predictions" not in analysis.layers:
+        raise ValueError(
+            "Misclassification pipeline requires the multiclass_predictions layer. "
+            "Re-run run_classification() with save_multiclass_predictions=True."
+        )
+    ...
+```
+
+This makes the dependency between `save_multiclass_predictions=False` (the default)
+and `run_misclassification_pipeline()` explicit at runtime, rather than producing a
+cryptic KeyError downstream.
+
+---
+
+## Refactoring contract — renames and boundaries
+
+### Rename table (old → new)
+
+These renames are locked. Apply during implementation; do not preserve old names in new code.
+
+| Old name | New name | Scope |
+|---|---|---|
+| `_permutation_test_ovr()` | `_permutation_test_binary()` | engine/loop.py |
+| `auroc_observed` | `auroc_obs` | everywhere (inner loop, scores, plotters) |
+| `positive_class` / `negative_class` | dropped — use `positive_label` / `negative_label` from `ResolvedComparison` | scores assembly |
+| `_validate_group()` | `_validate_group_input()` | engine/comparison_resolution.py |
+| `_to_groups()` | `_as_group_list()` | engine/comparison_resolution.py |
+| `_members()` | `_group_members()` | engine/comparison_resolution.py |
+| `_collect_predictions()` | `_collect_binary_predictions()` | engine/loop.py |
+| `embryo_predictions_augmented.parquet` | `multiclass_predictions.parquet` | on-disk, `_LazyLayers._REGISTRY` |
+| `ComparisonSpec` | legacy shim only — no new internal use | results.py (shim) |
+| `run_multiclass_classification_test` | legacy shim only — routes to `run_classification` | classification_test.py (shim) |
+| `_auroc_col()` / `_time_col()` | deleted — columns are always `auroc_obs` and `time_bin_center` | plotters |
+| `plot_confusion_profile` | `plot_confusion` | viz/confusion.py |
+| `design_table` (mode name) | `explicit_design` | mode resolution, comments |
+
+### Normalization boundary
+
+All user-provided comparison specs — `pd.DataFrame`, `list[dict]`, `positive`/`negative` —
+are normalized into `list[tuple[ComparisonGroup, ComparisonGroup]]` (raw_pairs) inside
+`resolve_comparisons()`, Steps 1–4. After Step 5, the only internal representation is
+`list[ResolvedComparison]`. No downstream code ever sees raw user input forms.
+
+`list[dict]` is normalized to `pd.DataFrame` immediately at the top of `resolve_comparisons()`.
+This keeps the DataFrame validation path as the single code path for manual designs.
+
+### Canonical assembly boundaries
+
+- **`_collect_scores()`** — the only place that assembles identity keys + result keys into a scores row
+- **`build_binary_labels()`** — the only place that knows about pooling and constructs `_y`
+- **`_collect_binary_predictions()`** — the only place that assembles tidy binary prediction rows
+- **`_collect_multiclass_predictions()`** — the only place that assembles wide multiclass rows
+
+No other code should build these row schemas.
+
+### Persistence defaults (locked)
+
+| Artifact | Default | Rationale |
+|---|---|---|
+| `scores.parquet` | always | core contract |
+| `metadata.json` | always | provenance + comparison membership |
+| `confusion.parquet` | always | cheap, captures error asymmetry even in binary tasks |
+| `predictions.parquet` | off (`save_predictions=True`) | can be large; diagnostic |
+| `multiclass_predictions.parquet` | off (`save_multiclass_predictions=True`) | can be large; only needed by misclassification pipeline |
+| `null_distributions.npz` | off (`save_null_arrays=True`) | summary stats always in scores; raw arrays are diagnostic |
+
+### Test seams (boundary tests for refactoring)
+
+These tests validate the seams between modules. They let internals change freely.
+
+| Test | What it validates |
+|---|---|
+| `test_resolve_comparisons_*` | all modes produce correct `list[ResolvedComparison]`; mutual-exclusion errors fire; label existence checks work |
+| `test_check_min_samples_*` | group-level and per-member thresholds; pooled hidden-minority detection |
+| `test_build_binary_labels_*` | pooled and unpooled `_y` construction; row filtering; no index-alignment bugs |
+| `test_collect_scores_schema` | output schema matches canonical column contract; no extra columns |
+| `test_save_load_roundtrip` | `ClassificationAnalysis.save()` → `.load()` produces identical `scores`, `uns`, and available layers |
+| `test_lazy_layers_missing` | `_LazyLayers.__getitem__` raises `KeyError` with clear message when layer absent |
+| `test_misclassification_missing_layer` | `run_misclassification_pipeline()` raises `ValueError` when `multiclass_predictions` layer missing |
+| `test_null_distributions_roundtrip` | `NullDistributions.save()` → `.load()` preserves arrays and index |
 
 ---
 
@@ -1559,10 +1649,10 @@ def _listify(val: str | list[str]) -> list[str]:
       ├─ 5. _run_classification_loop()        → raw per-bin results dict
       │       ├─ cross_val_predict()          → probabilities
       │       ├─ roc_auc_score()              → auroc_obs
-      │       └─ _permutation_test_ovr()      → null_aurocs → pval, null_mean, null_std
+      │       └─ _permutation_test_binary()      → null_aurocs → pval, null_mean, null_std
       │                                         (n_jobs execution strategy is implementation-defined)
       ├─ 6. _collect_scores()                 → scores DataFrame (THE canonical table)
-      ├─ 7a. _collect_predictions()           → tidy binary predictions (save_predictions=True)
+      ├─ 7a. _collect_binary_predictions()           → tidy binary predictions (save_predictions=True)
       ├─ 7b. _collect_multiclass_predictions()→ wide multiclass predictions (all-vs-rest,
       │                                          save_multiclass_predictions=True)
       └─ 8. _collect_confusion()              → confusion_profile DataFrame (always emitted)
@@ -1630,7 +1720,7 @@ def _listify(val: str | list[str]) -> list[str]:
   What gets dropped: positive_class, negative_class, negative_mode, groupby (repeated every row — move to metadata),
   negative_members JSON blob (move to metadata keyed by comparison_id).
 
-  Step 7 — _collect_predictions() (currently lines 402–429)
+  Step 7 — _collect_binary_predictions() (currently lines 402–429)
 
   Currently wide-format with pred_proba_{class} columns for every class — only works for the multiclass all-vs-rest path. For
   pairwise comparisons it's never populated.
@@ -2145,11 +2235,12 @@ classification/
     __init__.py
     comparison_resolution.py      resolve_comparisons(), ResolvedComparison,
                                   check_min_samples(), all validators
-                                  (_validate_group, _canonicalize_group,
+                                  (_validate_group_input, _canonicalize_group,
+                                  _as_group_list, _group_members,
                                   _check_labels_exist, etc.)
     loop.py                       _run_classification_loop(), _bin_and_aggregate(),
                                   _build_binary_labels(), _collect_scores(),
-                                  _collect_predictions(), _collect_confusion()
+                                  _collect_binary_predictions(), _collect_confusion()
     null.py                       NullDistributions dataclass + save/load
     analysis.py                   ClassificationAnalysis, _LazyLayers,
                                   _validate_scores, _listify
