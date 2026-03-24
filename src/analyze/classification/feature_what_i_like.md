@@ -38,7 +38,9 @@ def run_classification(
 
     # Scheme / advanced path — overrides simple path
     # str scheme accepts positive= as a class-scope LIST filter only
-    comparisons: Literal["all_vs_rest", "all_pairs"] | pd.DataFrame | None = None,
+    comparisons: ComparisonScheme = None,
+    # Accepts: "all_vs_rest", "all_pairs", pd.DataFrame, list[dict], or None
+    # list[dict] rows are normalized to DataFrame immediately at ingestion
 
     # ── Layer 3: features (always named, always a dict) ───────────────────
     features: dict[str, str | list[str]],   # {"name": "prefix_or_col_list"}
@@ -47,14 +49,16 @@ def run_classification(
     bin_width: float = 4.0,
     n_permutations: int = 100,
     n_splits: int = 5,
-    min_samples_per_class: int = 3,
+    min_samples_per_group: int = 3,  # group-level minimum (per side of comparison)
     min_samples_per_member: int = 2, # per-constituent minimum in pooled groups
     n_jobs: int = 1,                 # execution strategy is implementation-defined
     random_state: int = 42,          # root seed; child seeds derived for CV, estimator, permutations
 
     # ── Layer 5: output / control ─────────────────────────────────────────
     verbose: bool = True,
-    save_null_arrays: bool = False,  # raw per-permutation arrays; summary stats always in scores
+    save_predictions: bool = False,             # tidy binary predictions.parquet
+    save_multiclass_predictions: bool = True,   # wide embryo_predictions_augmented.parquet (all-vs-rest only)
+    save_null_arrays: bool = False,             # raw per-permutation arrays; summary stats always in scores
 ) -> ClassificationAnalysis:
 ```
 
@@ -195,7 +199,12 @@ ComparisonGroup = ClassLabel | PooledGroup  # one group of labels on one side of
 UserComparisonSpec = ClassLabel | PooledGroup | list[ClassLabel | PooledGroup]
 
 # What comparisons= accepts
-ComparisonScheme = Literal["all_vs_rest", "all_pairs"] | pd.DataFrame | None
+ComparisonScheme = (
+    Literal["all_vs_rest", "all_pairs"]
+    | pd.DataFrame
+    | list[dict[str, ComparisonGroup]]   # row-oriented: [{"positive": ..., "negative": ...}]
+    | None
+)
 ```
 
 **Why `ComparisonGroup`?** Each comparison has two sides (positive vs negative).
@@ -411,6 +420,10 @@ from itertools import product, combinations
 
 # ── Mutual-exclusion checks happen earlier in run_classification() ──
 
+
+# ── Normalize list[dict] to DataFrame immediately ────────────────────
+if isinstance(comparisons, list):
+    comparisons = pd.DataFrame(comparisons)
 
 if isinstance(comparisons, pd.DataFrame):
     # ── design_table ──────────────────────────────────────────────────
@@ -649,7 +662,7 @@ To catch this, validation enforces two levels:
 
 | Check | What it does | Default | Severity |
 |---|---|---|---|
-| **Group minimum** | total unique units across all members of a group | `min_samples_per_class=3` | hard error |
+| **Group minimum** | total unique units across all members of a group | `min_samples_per_group=3` | hard error |
 | **Per-member minimum** | each individual member in a pooled group | `min_samples_per_member=2` | hard error |
 
 For non-pooled groups (single class label), both checks collapse to the same thing.
@@ -658,14 +671,14 @@ For non-pooled groups (single class label), both checks collapse to the same thi
 def check_min_samples(
     resolved: list[ResolvedComparison],
     label_counts: dict[str, int],    # {class_label: n_unique_units}
-    min_samples_per_class: int,      # group-level minimum
+    min_samples_per_group: int,      # group-level minimum
     min_samples_per_member: int = 2, # per-constituent minimum in pooled groups
 ) -> None:
     """
     Validate that every group in every comparison has enough data.
 
     Two checks:
-    1. Group total: sum of counts across all members ≥ min_samples_per_class
+    1. Group total: sum of counts across all members ≥ min_samples_per_group
     2. Per-member: each individual member ≥ min_samples_per_member
        (only meaningful for pooled groups with ≥ 2 members)
     """
@@ -676,11 +689,11 @@ def check_min_samples(
         ]:
             # 1. Group-level check
             group_total = sum(label_counts.get(m, 0) for m in members)
-            if group_total < min_samples_per_class:
+            if group_total < min_samples_per_group:
                 raise ValueError(
                     f"Comparison {rc.comparison_id!r}: {side_name} "
                     f"group '{group_label}' has only {group_total} units "
-                    f"(min_samples_per_class={min_samples_per_class})."
+                    f"(min_samples_per_group={min_samples_per_group})."
                 )
 
             # 2. Per-member check (catches hidden minorities in pooled groups)
@@ -744,6 +757,12 @@ def _validate_design_table(df: pd.DataFrame) -> None:
     if canon.duplicated(subset=["positive", "negative"]).any():
         raise ValueError("comparisons DataFrame contains duplicate (positive, negative) rows.")
 ```
+
+**Serialization note:** Design tables with pooled tuples are a Python-native
+convenience. If serialized externally (e.g. to CSV or JSON), tuple preservation
+must be handled carefully — a round-tripped CSV will stringify tuples. For
+persistent manual comparison specs, prefer `list[dict]` input (which survives
+JSON serialization) or rebuild from code.
 
 ---
 
@@ -856,7 +875,10 @@ run_classification(df, ...)              ← orchestrator in run_classification.
     │       └─ _permutation_test_ovr() → null_aurocs → pval, null_mean, null_std
     │                                    (n_jobs execution strategy is implementation-defined)
     ├─ 6. _collect_scores()            → scores DataFrame  ← THE canonical table
-    ├─ 7. _collect_predictions()       → predictions DataFrame  (optional)
+    ├─ 7a. _collect_predictions()      → tidy binary predictions  (save_predictions=True)
+    ├─ 7b. _collect_multiclass_predictions()
+    │                                  → wide multiclass predictions  (all-vs-rest only,
+    │                                     save_multiclass_predictions=True)
     └─ 8. _collect_confusion()         → confusion DataFrame  (optional)
 ```
 
@@ -1042,6 +1064,14 @@ a model that collapses toward wildtype is very different from one that
 overcalls mutant, even if AUROC looks similar. Since predictions are
 already collected, computing confusion is cheap.
 
+**For pooled binary comparisons,** `true_class` and `predicted_class` refer
+to the comparison *side labels* (`positive_label` / `negative_label`), not
+the underlying biological class identities. For example, in a comparison
+with `positive=("homo", "crispant")` and `negative=("wildtype", "het")`,
+the confusion rows use `"crispant+homo"` and `"het+wildtype"` — not the
+four individual genotypes. This keeps confusion aligned with the binary
+prediction task, not the original class taxonomy.
+
 ---
 
 ## Canonical `scores` table — column contract
@@ -1152,7 +1182,7 @@ class ClassificationAnalysis:
         if on_conflict == "overwrite" and overlap:
             scores = scores.drop_duplicates(
                 subset=["feature_set", "comparison_id", "time_bin_center"], keep="last")
-        # Deep-merge uns["comparisons"]; error on key collision
+        # Merge uns["comparisons"] by comparison_id; error on key collision
         merged_uns = {k: v for k, v in self.uns.items() if k != "comparisons"}
         merged_uns.update({k: v for k, v in other.uns.items() if k != "comparisons"})
         self_comps = self.uns.get("comparisons", {})
@@ -1450,7 +1480,7 @@ my_run/
 | Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_null_arrays=True`) | diagnostic only |
 | Confusion profile | `confusion.parquet` | always (all modes) | cheap; captures error asymmetry |
 | Predictions (binary) | `predictions.parquet` | off (`save_predictions=True`) | per-comparison diagnostics |
-| Predictions (multiclass) | `embryo_predictions_augmented.parquet` | on for all-vs-rest | required by misclassification pipeline |
+| Predictions (multiclass) | `embryo_predictions_augmented.parquet` | on for all-vs-rest (`save_multiclass_predictions=True`) | required by misclassification pipeline |
 
 ---
 
@@ -1517,7 +1547,9 @@ def _listify(val: str | list[str]) -> list[str]:
       │       └─ _permutation_test_ovr()      → null_aurocs → pval, null_mean, null_std
       │                                         (n_jobs execution strategy is implementation-defined)
       ├─ 6. _collect_scores()                 → scores DataFrame (THE canonical table)
-      ├─ 7. _collect_predictions()            → predictions DataFrame (optional)
+      ├─ 7a. _collect_predictions()           → tidy binary predictions (save_predictions=True)
+      ├─ 7b. _collect_multiclass_predictions()→ wide multiclass predictions (all-vs-rest,
+      │                                          save_multiclass_predictions=True)
       └─ 8. _collect_confusion()              → confusion_profile DataFrame (optional)
 
   Each step is currently tangled inside _run_multiclass_classification and run_classification_test. The names above are what
@@ -2004,7 +2036,7 @@ Temporary `MulticlassOVRResults` input shim inside `plot_aurocs_over_time`:
 
 ```python
 # At top of plot_aurocs_over_time, before validation
-if hasattr(scores, "comparisons") and isinstance(scores, MulticlassOVRResults):
+if isinstance(scores, MulticlassOVRResults):
     warnings.warn(
         "Passing MulticlassOVRResults to plot_aurocs_over_time is deprecated. "
         "Pass result.scores (a DataFrame) instead.",
@@ -2050,6 +2082,11 @@ results.plot_aurocs()
 # Override curve grouping
 results.plot_aurocs(curve_col="comparison_id")
 results.plot_aurocs(curve_col="negative_label")   # curves per reference
+
+# Ambiguous case: same positive vs multiple negatives
+# e.g. homo__vs__wildtype AND homo__vs__het both have positive_label="homo"
+# → infer_curve_col warns and defaults to comparison_id
+# → pass curve_col="positive_label" explicitly to override if intentional
 
 # Override faceting
 results.plot_aurocs(facet_col=None)               # all curves on one panel
@@ -2257,7 +2294,7 @@ results.plot_aurocs()                                           # object sugar
 
 # Misclassification (unchanged)
 from analyze.classification import run_misclassification_pipeline, run_stage_geometry
-from analyze.classification.viz import plot_confusion_profile
+from analyze.classification.viz import plot_confusion
 
 # difference_detection shim (unchanged, adds run_classification + ClassificationAnalysis)
 from analyze.difference_detection import run_classification   # FutureWarning on module import
