@@ -2,7 +2,7 @@
 
 Status: approved front-end spec for the next implementation phase.
 
-This document is the canonical reference for the new `classify()` API and its comparison
+This document is the canonical reference for the new `run_classification()` API and its comparison
 resolution contract. It supersedes the previous conversation dump.
 
 ---
@@ -12,7 +12,7 @@ resolution contract. It supersedes the previous conversation dump.
 1. **DataFrame-first.** Input is always a plain `pd.DataFrame`. No wrapper object required.
 2. **Multi-feature is the native unit of thought.** `features={}` dict is always named; the
    results table always has a `feature_set` column.
-3. **One entry point.** `classify()` covers all modes. No `run_ovr()`, `run_pairwise()` siblings.
+3. **One entry point.** `run_classification()` covers all modes. No `run_ovr()`, `run_pairwise()` siblings.
 4. **Layered signature.** Data contract → comparison spec → features → model/binning → output.
 5. **Fail fast.** All validation happens before any computation.
 6. **Symmetric pooling.** Pooled positives and pooled negatives work identically at the
@@ -23,7 +23,7 @@ resolution contract. It supersedes the previous conversation dump.
 ## Public entry point
 
 ```python
-def classify(
+def run_classification(
     # ── Layer 1: data contract (required, keyword-only after df) ──────────
     df: pd.DataFrame,
     *,
@@ -38,7 +38,9 @@ def classify(
 
     # Scheme / advanced path — overrides simple path
     # str scheme accepts positive= as a class-scope LIST filter only
-    comparisons: Literal["all_vs_rest", "all_pairs"] | pd.DataFrame | None = None,
+    comparisons: ComparisonScheme = None,
+    # Accepts: "all_vs_rest", "all_pairs", pd.DataFrame, list[dict], or None
+    # list[dict] rows are normalized to DataFrame immediately at ingestion
 
     # ── Layer 3: features (always named, always a dict) ───────────────────
     features: dict[str, str | list[str]],   # {"name": "prefix_or_col_list"}
@@ -47,46 +49,109 @@ def classify(
     bin_width: float = 4.0,
     n_permutations: int = 100,
     n_splits: int = 5,
-    min_samples_per_class: int = 3,
-    n_jobs: int = 1,
-    random_state: int = 42,
+    min_samples_per_group: int = 3,  # group-level minimum (per side of comparison)
+    min_samples_per_member: int = 2, # per-constituent minimum in pooled groups
+    n_jobs: int = 1,                 # execution strategy is implementation-defined
+    random_state: int = 42,          # root seed; child seeds derived for CV, estimator, permutations
 
     # ── Layer 5: output / control ─────────────────────────────────────────
     verbose: bool = True,
-    save_null: bool = True,
-    allow_overlap: bool = False,
+    save_predictions: bool = False,             # tidy binary predictions.parquet
+    save_multiclass_predictions: bool = False,  # wide multiclass_predictions.parquet (all-vs-rest only)
+    save_null_arrays: bool = False,             # raw per-permutation arrays; summary stats always in scores
+    # save_multiclass_predictions defaults to False because the wide table can be
+    # large and is only needed by the misclassification pipeline. Users who run
+    # run_misclassification_pipeline() should set this to True explicitly.
 ) -> ClassificationAnalysis:
 ```
 
-### Comparison mode rules (mutually exclusive, enforced at call time)
+### `random_state` contract
 
-| `positive` | `negative` | `comparisons` | Mode |
-|---|---|---|---|
-| omitted | omitted | omitted | all-vs-rest across all classes in `class_col` |
-| scalar or list | scalar, list, or tuple | omitted | explicit cartesian product |
-| list (scope filter) | omitted | `"all_vs_rest"` | all-vs-rest within scope |
-| list (scope filter) | omitted | `"all_pairs"` | all unordered pairs within scope |
-| omitted | omitted | `pd.DataFrame` | explicit design table |
+`random_state` is a root seed. The implementation derives deterministic child
+seeds from it — one per stochastic component — rather than sharing a single
+mutable RNG object. This keeps reproducibility clean even under parallel execution.
 
-**Hard mutual-exclusion errors:**
-- `comparisons=DataFrame` + any `positive` or `negative` → `ValueError`
-- `comparisons=str_scheme` + `negative` → `ValueError`
-- `comparisons=str_scheme` + `positive` as scalar → `ValueError`
-  (scalar positive with a scheme is ambiguous; use a 1-element list)
-- `negative` set but `positive` omitted, `comparisons` omitted → `ValueError`
-  (negative without positive is almost always a user mistake)
+Child seeds must be threaded into:
+- CV splitter (`StratifiedKFold(random_state=...)`)
+- Estimator (`LogisticRegression(random_state=...)`)
+- Permutation RNG (per-permutation seed derived from root)
+
+Derived seeds use a deterministic scheme (e.g. `SeedSequence.spawn()` or
+`root + offset`) so that results are identical regardless of `n_jobs`.
+
+### `features` type narrowing
+
+The public API accepts `dict[str, str | list[str]]` for convenience:
+
+```python
+features={"embedding": "z_mu_b", "shape": ["length", "width"]}
+```
+
+The first resolver step (`_resolve_feature_columns`) collapses this to:
+
+```python
+dict[str, list[str]]
+```
+
+so the rest of the pipeline never sees the `str` variant:
+- `"z_mu_b"` → prefix-matched to `["z_mu_b_0", "z_mu_b_1", ...]`
+- `["length", "width"]` → passed through as-is
+
+After this point, every feature set value is always a `list[str]`.
+
+### How `positive`, `negative`, and `comparisons` interact
+
+These three parameters work together to define what gets compared.
+Their roles are different:
+
+- **`positive`** — Selects *which classes* to focus on. In scheme modes
+  (`"all_vs_rest"`, `"all_pairs"`), it acts as a **scope filter** — it limits
+  which classes participate but doesn't define the full comparison. In explicit
+  mode, it defines the left-hand group(s).
+
+- **`negative`** — Defines the right-hand group(s). Much more restricted:
+  it's only valid in explicit mode. Setting `negative` forces explicit mode.
+  Cannot be combined with any scheme.
+
+- **`comparisons`** — Chooses the *strategy* for generating pairs. A string
+  scheme (`"all_vs_rest"`, `"all_pairs"`) auto-generates pairs from the data.
+  A `pd.DataFrame` or `list[dict]` gives full manual control (`list[dict]` is
+  normalized to DataFrame immediately at ingestion). When omitted, the mode is
+  inferred from whether `negative` is set.
+
+#### Mode resolution table
+
+| `positive` | `negative` | `comparisons` | Mode | What happens |
+|---|---|---|---|---|
+| omitted | omitted | omitted | all-vs-rest | every class vs all others |
+| set (scope) | omitted | omitted | all-vs-rest (scoped) | each listed class vs all others |
+| set (scope) | omitted | `"all_vs_rest"` | all-vs-rest (scoped) | same as above, explicit scheme |
+| set (scope) | omitted | `"all_pairs"` | all-pairs (scoped) | every unordered pair within scope |
+| set | set | omitted | explicit | Cartesian product of positive × negative groups |
+| omitted | omitted | `pd.DataFrame` or `list[dict]` | explicit design | pairs come from rows |
+
+#### Hard mutual-exclusion errors
+
+These combinations are always rejected at call time by `run_classification()`:
+
+| Combination | Why it's an error |
+|---|---|
+| `comparisons=DataFrame/list[dict]` + any `positive` or `negative` | Design rows define their own pairs — extra constraints are ambiguous |
+| `comparisons=str_scheme` + `negative` | Schemes generate their own negatives — user-provided negative conflicts |
+| `comparisons=str_scheme` + `positive` as scalar | Scalar positive with a scheme is ambiguous (is it a scope or a single comparison?). Use a 1-element list to be explicit. |
+| `negative` set but `positive` omitted | Negative without positive is almost always a user mistake |
 
 ### Three standard usage patterns
 
 ```python
 # 1. Discovery — all classes, all-vs-rest, one or more feature sets
-results = classify(
+results = run_classification(
     df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
     features={"embedding": "z_mu_b"},
 )
 
 # 2. Targeted — explicit positive/negative, multiple named feature sets
-results = classify(
+results = run_classification(
     df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
     positive=["homo", "het"],
     negative="wildtype",
@@ -98,12 +163,23 @@ results = classify(
     n_permutations=100,
 )
 
-# 3. Advanced — explicit design table
+# 3. Advanced — explicit design (list[dict] is the ergonomic form)
+results = run_classification(
+    df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
+    comparisons=[
+        {"positive": "homo", "negative": "wildtype"},
+        {"positive": "homo", "negative": "het"},
+        {"positive": "het",  "negative": "wildtype"},
+    ],
+    features={"embedding": "z_mu_b"},
+)
+
+# Equivalent — pd.DataFrame also accepted
 design = pd.DataFrame({
     "positive": ["homo", "homo", "het"],
     "negative": ["wildtype", "het", "wildtype"],
 })
-results = classify(
+results = run_classification(
     df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
     comparisons=design,
     features={"embedding": "z_mu_b"},
@@ -130,16 +206,26 @@ results = classify(
 ## Type definitions
 
 ```python
-ClassLabel     = str
-PooledGroup    = tuple[str, ...]          # ≥ 2 elements, sorted+deduped at ingest
-ComparisonSide = ClassLabel | PooledGroup
+ClassLabel      = str
+PooledGroup     = tuple[str, ...]           # ≥ 2 elements, sorted+deduped at ingest
+ComparisonGroup = ClassLabel | PooledGroup  # one group of labels on one side of a comparison
 
 # What the user may pass to positive= or negative=
 UserComparisonSpec = ClassLabel | PooledGroup | list[ClassLabel | PooledGroup]
 
 # What comparisons= accepts
-ComparisonScheme = Literal["all_vs_rest", "all_pairs"] | pd.DataFrame | None
+ComparisonScheme = (
+    Literal["all_vs_rest", "all_pairs"]
+    | pd.DataFrame
+    | list[dict[str, ComparisonGroup]]   # row-oriented: [{"positive": ..., "negative": ...}]
+    | None
+)
 ```
+
+**Why `ComparisonGroup`?** Each comparison has two sides (positive vs negative).
+A `ComparisonGroup` is one of those sides — either a single class label like `"wt"`,
+or a pooled tuple like `("wt", "ctrl")`. The name reads as "one group of labels that
+can be compared against another group."
 
 ### Encoding convention
 
@@ -193,16 +279,34 @@ class ResolvedComparison:
 
 ```
 user input (positive, negative, comparisons, available_labels)
-    ↓  Step 1  — validate types
-    ↓  Step 2  — determine mode + normalize to sides
-    ↓  Step 3  — canonicalize pooled tuples (sort + dedupe, both sides)
-    ↓  Step 4  — expand to raw pairs (mode-dependent)
-    ↓  Step 5  — overlap check (positive_members ∩ negative_members = ∅)
-    ↓  Step 6  — label existence check (pure — no DataFrame access)
-    ↓  Step 7  — rest expansion (rest-mode only)
-    ↓  Step 8  — deduplicate (on final pairs, after rest expansion)
-    ↓  Step 9  — _to_resolved (→ list[ResolvedComparison])
-    ↓  Step 10 — min-sample check + per-member warnings
+    ↓
+    ↓  Step 1  — validate input types
+    ↓
+    ↓  Step 2  — resolve and expand comparisons
+    ↓            determine mode
+    ↓            normalize user inputs to groups
+    ↓            canonicalize pooled groups (sort + dedupe)
+    ↓            expand to complete raw_pairs
+    ↓
+    ↓            After this step, raw_pairs is always:
+    ↓              list[(ComparisonGroup, ComparisonGroup)]
+    ↓            No None placeholders. No deferred work.
+    ↓
+    ↓  Step 3  — validate expanded pairs
+    ↓            overlap check (same label can't be on both sides)
+    ↓            label existence check (catch typos early)
+    ↓
+    ↓  Step 4  — deduplicate (remove identical pairs)
+    ↓
+    ↓  Step 5  — convert to ResolvedComparison objects
+    ↓            collision detection (error if duplicate comparison_ids)
+    ↓
+resolve_comparisons() returns here: list[ResolvedComparison]
+
+    ↓  Step 6  — check_min_samples() — called by run_classification(),
+    ↓            NOT inside resolve_comparisons(). Needs label_counts
+    ↓            (unique id_col units per class), which requires DataFrame.
+    ↓
 backend receives: list[ResolvedComparison]
 ```
 
@@ -215,62 +319,149 @@ def resolve_comparisons(
     comparisons: ComparisonScheme,
     available_labels: set[str],    # = set(df[class_col].unique()), computed by caller
     class_col: str,                # used only in error messages
-    allow_overlap: bool = False,
 ) -> list[ResolvedComparison]:
     """
-    Pure function. No DataFrame access.
+    Pure function. No DataFrame access. Steps 1–5 only.
     available_labels must be computed by the caller before calling this.
+    Step 6 (min-sample check) is handled separately by check_min_samples().
     """
 ```
 
-### Step 1 — Type validation
+### Step 1 — Validate input types
+
+Check that `positive` and `negative` are valid types before doing anything else.
+Each value must be one of:
+- a string (single class label)
+- a tuple of strings (pooled group, ≥ 2 elements)
+- a list of the above (multiple groups to enumerate)
+- `None` (not provided)
 
 ```python
-def _validate_comparison_side(val, param_name: str) -> None:
+def _validate_group_input(val, param_name: str) -> None:
+    """Validate that val is a legal UserComparisonSpec value."""
+
+    # None means "not provided" — that's fine
     if val is None:
         return
+
+    # A plain string is a single class label — always valid
     if isinstance(val, str):
         return
+
+    # A tuple means "pool these classes into one group"
     if isinstance(val, tuple):
         if not all(isinstance(v, str) for v in val):
-            raise TypeError(f"{param_name}: tuple elements must all be strings. Got {val!r}")
+            raise TypeError(
+                f"{param_name}: every element in a pooled tuple must be a string. "
+                f"Got {val!r}"
+            )
         if len(val) < 2:
             raise ValueError(
-                f"{param_name}: pooled tuple must have ≥ 2 elements. "
-                f"For a single class use a string, not a 1-tuple."
+                f"{param_name}: a pooled tuple must have at least 2 elements. "
+                f"For a single class, use a plain string instead of a 1-tuple."
             )
         return
+
+    # A list means "enumerate these groups" — validate each element
     if isinstance(val, list):
         for i, item in enumerate(val):
-            _validate_comparison_side(item, f"{param_name}[{i}]")
+            _validate_group_input(item, f"{param_name}[{i}]")
         return
+
+    # Anything else is an error
     raise TypeError(
-        f"{param_name} must be str, tuple[str,...], or list thereof. Got {type(val)}"
+        f"{param_name} must be a string, tuple of strings, or list of those. "
+        f"Got {type(val).__name__}"
     )
 
-_validate_comparison_side(positive, "positive")
-_validate_comparison_side(negative, "negative")
+_validate_group_input(positive, "positive")
+_validate_group_input(negative, "negative")
 ```
 
-### Step 2 — Determine mode and normalize to sides
+### Step 2 — Resolve and expand comparisons
+
+This is the one step where mode matters. It determines what the user
+intended, normalizes their inputs, and expands everything into complete
+`(positive_group, negative_group)` pairs.
+
+After this step finishes, the rest of the pipeline doesn't need to know
+which mode was used. Every pair is complete — no `None` placeholders,
+no deferred work.
+
+There are four possible modes:
+
+| Mode | When | What happens |
+|---|---|---|
+| `"explicit"` | both `positive` and `negative` given | Cartesian product of positive × negative groups |
+| `"rest"` | no `negative` given | Each positive group vs all remaining classes |
+| `"all_pairs"` | `comparisons="all_pairs"` | Every unordered pair of classes |
+| `"explicit_design"` | `comparisons` is a DataFrame or list[dict] | Pairs come directly from the rows |
+
+#### Helpers
 
 ```python
-def _to_sides(val: UserComparisonSpec, all_labels: list[str]) -> list[ComparisonSide]:
+def _as_group_list(val: UserComparisonSpec) -> list[ComparisonGroup]:
+    """Wrap a single group in a list; pass through a list unchanged."""
     if isinstance(val, (str, tuple)):
         return [val]
     return list(val)
 
-# Mode detection (after mutual-exclusion checks in classify())
+
+def _canonicalize_group(group: ComparisonGroup) -> ComparisonGroup:
+    """Sort + dedupe a pooled tuple. Pass strings through unchanged."""
+    if isinstance(group, str):
+        return group
+
+    result = tuple(sorted(set(group)))
+    if len(result) < 2:
+        raise ValueError(
+            f"Pooled tuple collapsed to fewer than 2 unique elements "
+            f"after deduplication: {group!r}"
+        )
+    return result
+
+
+def _group_members(group: ComparisonGroup) -> set[str]:
+    """Return the set of class labels in a group."""
+    if isinstance(group, str):
+        return {group}
+    return set(group)
+```
+
+#### Mode detection and expansion
+
+```python
+from itertools import product, combinations
+
+# ── Mutual-exclusion checks happen earlier in run_classification() ──
+
+
+# ── Normalize list[dict] to DataFrame immediately ────────────────────
+if isinstance(comparisons, list):
+    comparisons = pd.DataFrame(comparisons)
+
 if isinstance(comparisons, pd.DataFrame):
-    mode = "design_table"
+    # ── explicit_design ───────────────────────────────────────────────
+    # Pairs come directly from the user's DataFrame or list[dict].
+    # Cells can be strings or pooled tuples.
+    _validate_design_table(comparisons)
+    raw_pairs = [
+        (_canonicalize_group(row["positive"]), _canonicalize_group(row["negative"]))
+        for _, row in comparisons.iterrows()
+    ]
+
 
 elif comparisons == "all_pairs":
-    mode = "all_pairs"
-    # positive= accepted as a scope filter (list only; scalar already blocked)
+    # ── all_pairs ─────────────────────────────────────────────────────
+    # Every unordered pair of single labels.
+    # positive= is accepted as a scope filter (which classes to pair).
+
     class_scope: list[str] = (
-        list(positive) if positive is not None else sorted(available_labels)
+        list(positive) if positive is not None
+        else sorted(available_labels)
     )
-    # Tuples forbidden in scope for all_pairs
+
+    # Pooled tuples don't make sense for all_pairs — only single labels
     for i, s in enumerate(class_scope):
         if isinstance(s, tuple):
             raise ValueError(
@@ -278,85 +469,94 @@ elif comparisons == "all_pairs":
                 f"Scope entries must be single class labels (strings)."
             )
 
-elif comparisons in ("all_vs_rest", None) and negative is None:
-    mode = "rest"
-    pos_sides = _to_sides(positive, sorted(available_labels)) if positive is not None \
-                else list(sorted(available_labels))
-
-else:  # comparisons is None, negative is not None
-    mode = "explicit"
-    pos_sides = _to_sides(positive, sorted(available_labels)) if positive is not None \
-                else list(sorted(available_labels))
-    neg_sides = _to_sides(negative, sorted(available_labels))
-```
-
-### Step 3 — Canonicalize pooled tuples
-
-```python
-def _canonicalize_side(side: ComparisonSide) -> ComparisonSide:
-    if isinstance(side, tuple):
-        result = tuple(sorted(set(side)))
-        if len(result) < 2:
-            raise ValueError(
-                f"Pooled tuple collapsed to < 2 unique elements after deduplication: {side!r}"
-            )
-        return result
-    return side
-
-if mode == "explicit":
-    pos_sides = [_canonicalize_side(s) for s in pos_sides]
-    neg_sides = [_canonicalize_side(s) for s in neg_sides]
-elif mode == "rest":
-    pos_sides = [_canonicalize_side(s) for s in pos_sides]
-# all_pairs and design_table: sides are strings, canonicalization is a no-op
-```
-
-### Step 4 — Expand to raw pairs (mode-dependent)
-
-```python
-from itertools import product, combinations
-
-if mode == "explicit":
-    # Cartesian product: every positive × every negative
-    # "list enumerates" rule: [A, B] × [C, D] → (A,C), (A,D), (B,C), (B,D)
-    raw_pairs = list(product(pos_sides, neg_sides))
-
-elif mode == "rest":
-    # Defer negative — computed per-positive in Step 7
-    raw_pairs = [(p, None) for p in pos_sides]
-
-elif mode == "all_pairs":
-    # Unordered combinations; deterministic direction = alphabetical (a < b → a is positive)
-    labels = sorted(class_scope)
+    # Direction is alphabetical: earlier label is always "positive"
+    # Dedupe in case user passed duplicates in the scope list
+    labels = sorted(set(class_scope))
     raw_pairs = [(a, b) for a, b in combinations(labels, 2)]
 
-elif mode == "design_table":
-    _validate_design_table(comparisons)
-    raw_pairs = [
-        (row["positive"], row["negative"])
-        for _, row in comparisons.iterrows()
-    ]
+
+elif comparisons in ("all_vs_rest", None) and negative is None:
+    # ── rest ──────────────────────────────────────────────────────────
+    # Each positive group vs everything else.
+
+    # 1. Normalize user inputs to groups
+    positive_groups = (
+        _as_group_list(positive) if positive is not None
+        else [label for label in sorted(available_labels)]
+    )
+
+    # 2. Canonicalize pooled groups
+    positive_groups = [_canonicalize_group(g) for g in positive_groups]
+
+    # 3. Expand: compute the "rest" complement immediately
+    raw_pairs = []
+    for pg in positive_groups:
+        rest_labels = sorted(available_labels - _group_members(pg))
+
+        if len(rest_labels) == 0:
+            raise ValueError(
+                f"No remaining classes to form 'rest' for "
+                f"positive={pg!r}. "
+                f"All available labels are already in the positive group."
+            )
+
+        raw_pairs.append((pg, tuple(rest_labels)))
+
+
+else:
+    # ── explicit ──────────────────────────────────────────────────────
+    # comparisons is None, negative is provided.
+    # Every positive group × every negative group (Cartesian product).
+    # Example: positives=[A, B], negatives=[C, D]
+    #        → (A,C), (A,D), (B,C), (B,D)
+    #
+    # Note: positive=None + negative=set is already rejected as a hard
+    # error by run_classification(), so positive is always set here.
+
+    # 1. Normalize user inputs to groups
+    positive_groups = _as_group_list(positive)
+    negative_groups = _as_group_list(negative)
+
+    # 2. Canonicalize pooled groups
+    positive_groups = [_canonicalize_group(g) for g in positive_groups]
+    negative_groups = [_canonicalize_group(g) for g in negative_groups]
+
+    # 3. Expand: Cartesian product
+    raw_pairs = list(product(positive_groups, negative_groups))
 ```
 
-### Step 5 — Overlap check
+**Post-condition:** `raw_pairs` is always `list[(ComparisonGroup, ComparisonGroup)]`.
+Both elements are present. No `None`s. No deferred work.
+
+### Step 3 — Validate expanded pairs
+
+Now that every pair is complete, validate them uniformly.
+No mode-specific branching needed here.
+
+#### Overlap check
+
+The same class label cannot appear on both sides of a comparison.
+For example, `positive=("wt", "het")` vs `negative=("het", "mut")` is
+invalid because `"het"` is on both sides. Always enforced.
 
 ```python
-def _members(side: ComparisonSide) -> set[str]:
-    return {side} if isinstance(side, str) else set(side)
-
-for pos_side, neg_side in raw_pairs:
-    if neg_side is None:
-        continue  # rest-mode: skip until Step 7
-    overlap = _members(pos_side) & _members(neg_side)
-    if overlap and not allow_overlap:
+for pos_group, neg_group in raw_pairs:
+    overlap = _group_members(pos_group) & _group_members(neg_group)
+    if overlap:
         raise ValueError(
-            f"Comparison ({pos_side!r} vs {neg_side!r}) has overlapping class labels: "
-            f"{sorted(overlap)}. The same label cannot appear on both sides. "
-            f"Pass allow_overlap=True to permit this explicitly."
+            f"Comparison ({pos_group!r} vs {neg_group!r}) has overlapping "
+            f"class labels: {sorted(overlap)}. "
+            f"The same label cannot appear on both sides."
         )
 ```
 
-### Step 6 — Label existence check (pure)
+#### Label existence check
+
+Make sure every class label referenced in the pairs actually exists
+in the data. This catches typos before any computation starts.
+
+Pure function — no DataFrame access. The caller passes
+`available_labels = set(df[class_col].unique())`.
 
 ```python
 def _check_labels_exist(
@@ -364,38 +564,28 @@ def _check_labels_exist(
     available_labels: set[str],
     class_col: str,
 ) -> None:
+    """Error if any label in raw_pairs is not in available_labels."""
+
+    # Collect every label mentioned across all pairs
     referenced = set()
-    for pos_side, neg_side in raw_pairs:
-        referenced |= _members(pos_side)
-        if neg_side is not None:
-            referenced |= _members(neg_side)
+    for pos_group, neg_group in raw_pairs:
+        referenced |= _group_members(pos_group)
+        referenced |= _group_members(neg_group)
+
+    # Check for unknown labels
     unknown = referenced - available_labels
     if unknown:
         raise ValueError(
-            f"Class labels not found in {class_col!r}: {sorted(unknown)}. "
-            f"Available: {sorted(available_labels)}"
+            f"Class labels not found in column {class_col!r}: {sorted(unknown)}. "
+            f"Available labels: {sorted(available_labels)}"
         )
 
 _check_labels_exist(raw_pairs, available_labels, class_col)
 ```
 
-### Step 7 — Rest expansion (rest-mode only)
+### Step 4 — Deduplicate
 
-```python
-if mode == "rest":
-    expanded = []
-    for pos_side, _ in raw_pairs:
-        rest = tuple(sorted(available_labels - _members(pos_side)))
-        if len(rest) == 0:
-            raise ValueError(
-                f"No remaining classes to form 'rest' for positive={pos_side!r}. "
-                f"All available labels are in the positive side."
-            )
-        expanded.append((pos_side, rest))
-    raw_pairs = expanded
-```
-
-### Step 8 — Deduplicate (on final pairs)
+Remove identical pairs. Order-preserving.
 
 ```python
 seen: set[tuple] = set()
@@ -408,19 +598,38 @@ for pair in raw_pairs:
 raw_pairs = deduped
 ```
 
-### Step 9 — Convert to `ResolvedComparison`
+### Step 5 — Convert to `ResolvedComparison`
+
+Convert each `(positive_group, negative_group)` pair into a
+`ResolvedComparison` dataclass. This is the final internal
+representation that the backend receives.
 
 ```python
 def _sanitize_id(label: str) -> str:
+    """Replace non-filesystem-safe characters with underscores."""
     import re
     return re.sub(r"[^A-Za-z0-9._-]", "_", label)
 
-def _to_resolved(pos_side: ComparisonSide, neg_side: ComparisonSide) -> ResolvedComparison:
-    pos_members = (pos_side,) if isinstance(pos_side, str) else pos_side
-    neg_members = (neg_side,) if isinstance(neg_side, str) else neg_side
+
+def _to_resolved(
+    pos_group: ComparisonGroup,
+    neg_group: ComparisonGroup,
+) -> ResolvedComparison:
+    """Build a ResolvedComparison from one (positive, negative) pair."""
+
+    # Normalize to tuples so members are always iterable
+    pos_members = (pos_group,) if isinstance(pos_group, str) else pos_group
+    neg_members = (neg_group,) if isinstance(neg_group, str) else neg_group
+
+    # Human-readable labels: "crispant+homo", "het+wildtype"
     positive_label = "+".join(pos_members)
     negative_label = "+".join(neg_members)
-    comparison_id = _sanitize_id(positive_label) + "__vs__" + _sanitize_id(negative_label)
+
+    # Filesystem-safe ID: "crispant_homo__vs__het_wildtype"
+    comparison_id = (
+        _sanitize_id(positive_label) + "__vs__" + _sanitize_id(negative_label)
+    )
+
     return ResolvedComparison(
         positive_members=pos_members,
         negative_members=neg_members,
@@ -429,46 +638,100 @@ def _to_resolved(pos_side: ComparisonSide, neg_side: ComparisonSide) -> Resolved
         comparison_id=comparison_id,
     )
 
-resolved: list[ResolvedComparison] = [_to_resolved(p, n) for p, n in raw_pairs]
+
+resolved: list[ResolvedComparison] = [
+    _to_resolved(pos, neg) for pos, neg in raw_pairs
+]
+
+# ── Collision detection ─────────────────────────────────────────────────
+# comparison_ids must be unique. Collisions happen when class labels
+# differ only in characters that get sanitized (spaces, slashes, etc.).
+from collections import Counter
+counts = Counter(rc.comparison_id for rc in resolved)
+dupes = sorted(cid for cid, n in counts.items() if n > 1)
+if dupes:
+    raise ValueError(
+        f"comparison_id collision: {dupes}. "
+        f"Distinct comparisons produced the same filesystem-safe ID. "
+        f"This typically happens when class labels differ only in "
+        f"characters that get sanitized (spaces, slashes, etc.)."
+    )
 ```
 
-### Step 10 — Min-sample check and per-member warnings
+### Step 6 — Min-sample check (standalone function)
 
-`label_counts` must count **unique `id_col` units (embryos)**, not rows.
+**Called by `run_classification()`, NOT inside `resolve_comparisons()`.**
+Requires `label_counts` which needs DataFrame access (counting unique `id_col` units).
+
+`label_counts` must count **unique `id_col` units**, not rows.
 Row counts are inflated by time points and must not be used here.
 
+#### Two thresholds, not one
+
+Pooled groups create a risk of **hidden minorities**: a group passes the
+total-count check but one constituent contributes almost nothing. For example,
+`("rare_mutant", "common_het")` with counts `{rare_mutant: 1, common_het: 50}`
+passes a group minimum of 3 but `rare_mutant` is statistically ornamental.
+
+To catch this, validation enforces two levels:
+
+| Check | What it does | Default | Severity |
+|---|---|---|---|
+| **Group minimum** | total unique units across all members of a group | `min_samples_per_group=3` | hard error |
+| **Per-member minimum** | each individual member in a pooled group | `min_samples_per_member=2` | hard error |
+
+For non-pooled groups (single class label), both checks collapse to the same thing.
+
 ```python
-def _check_min_samples(
+def check_min_samples(
     resolved: list[ResolvedComparison],
-    label_counts: dict[str, int],    # {class_label: n_unique_embryos}
-    min_samples: int,
-    warn_threshold: int = 5,
+    label_counts: dict[str, int],    # {class_label: n_unique_units}
+    min_samples_per_group: int,      # group-level minimum
+    min_samples_per_member: int = 2, # per-constituent minimum in pooled groups
 ) -> None:
+    """
+    Validate that every group in every comparison has enough data.
+
+    Two checks:
+    1. Group total: sum of counts across all members ≥ min_samples_per_group
+    2. Per-member: each individual member ≥ min_samples_per_member
+       (only meaningful for pooled groups with ≥ 2 members)
+    """
     for rc in resolved:
-        for members, side_label, side_name in [
+        for members, group_label, side_name in [
             (rc.positive_members, rc.positive_label, "positive"),
             (rc.negative_members, rc.negative_label, "negative"),
         ]:
-            union_n = sum(label_counts.get(m, 0) for m in members)
-            if union_n < min_samples:
+            # 1. Group-level check
+            group_total = sum(label_counts.get(m, 0) for m in members)
+            if group_total < min_samples_per_group:
                 raise ValueError(
-                    f"Comparison {rc.comparison_id!r}: {side_name} '{side_label}' "
-                    f"has only {union_n} embryos (min={min_samples})."
+                    f"Comparison {rc.comparison_id!r}: {side_name} "
+                    f"group '{group_label}' has only {group_total} units "
+                    f"(min_samples_per_group={min_samples_per_group})."
                 )
-            for m in members:
-                n = label_counts.get(m, 0)
-                if n < warn_threshold:
-                    warnings.warn(
-                        f"Comparison {rc.comparison_id!r}: member '{m}' in {side_name} "
-                        f"pool '{side_label}' has only {n} embryos. "
-                        f"Consider whether pooling is appropriate.",
-                        UserWarning, stacklevel=3,
-                    )
+
+            # 2. Per-member check (catches hidden minorities in pooled groups)
+            if len(members) >= 2:
+                for m in members:
+                    n = label_counts.get(m, 0)
+                    if n < min_samples_per_member:
+                        raise ValueError(
+                            f"Comparison {rc.comparison_id!r}: member '{m}' "
+                            f"in {side_name} pool '{group_label}' has only "
+                            f"{n} units (min_samples_per_member="
+                            f"{min_samples_per_member}). Each constituent "
+                            f"in a pooled group must contribute meaningfully."
+                        )
 ```
 
 ---
 
 ## Design table validation
+
+Design tables accept both string class labels and pooled tuples.
+Each cell in the `positive` and `negative` columns must be either
+a `str` (single class) or a `tuple[str, ...]` (pooled group).
 
 ```python
 def _validate_design_table(df: pd.DataFrame) -> None:
@@ -476,14 +739,45 @@ def _validate_design_table(df: pd.DataFrame) -> None:
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"comparisons DataFrame missing columns: {sorted(missing)}")
+
     for col in required:
         if df[col].isnull().any():
             raise ValueError(f"comparisons DataFrame column {col!r} contains nulls.")
-        if not df[col].map(lambda x: isinstance(x, str)).all():
-            raise ValueError(f"comparisons DataFrame column {col!r} must contain strings only.")
-    if df.duplicated(subset=["positive", "negative"]).any():
+
+        for i, val in enumerate(df[col]):
+            if isinstance(val, str):
+                continue
+            if isinstance(val, tuple):
+                if not all(isinstance(v, str) for v in val):
+                    raise TypeError(
+                        f"comparisons[{col!r}][{i}]: tuple elements must all be strings."
+                    )
+                if len(val) < 2:
+                    raise ValueError(
+                        f"comparisons[{col!r}][{i}]: pooled tuple must have ≥ 2 elements."
+                    )
+                continue
+            raise TypeError(
+                f"comparisons[{col!r}][{i}]: must be a string or tuple of strings. "
+                f"Got {type(val).__name__}"
+            )
+
+    # Deduplicate check: canonicalize before comparing so
+    # ("a","b") and ("b","a") are treated as the same pair
+    canon = df.copy()
+    for col in required:
+        canon[col] = canon[col].map(
+            lambda v: tuple(sorted(v)) if isinstance(v, tuple) else v
+        )
+    if canon.duplicated(subset=["positive", "negative"]).any():
         raise ValueError("comparisons DataFrame contains duplicate (positive, negative) rows.")
 ```
+
+**Serialization note:** Design tables with pooled tuples are a Python-native
+convenience. If serialized externally (e.g. to CSV or JSON), tuple preservation
+must be handled carefully — a round-tripped CSV will stringify tuples. For
+persistent manual comparison specs, prefer `list[dict]` input (which survives
+JSON serialization) or rebuild from code.
 
 ---
 
@@ -508,7 +802,8 @@ def build_binary_labels(
     vector within time strata — pooled positives and pooled negatives are
     handled identically.
     """
-    subset = df[df[class_col].isin(comparison.positive_members | set(comparison.negative_members))].copy()
+    members = set(comparison.positive_members) | set(comparison.negative_members)
+    subset = df[df[class_col].isin(members)].copy()
     subset["_y"] = subset[class_col].isin(comparison.positive_members).astype(int)
     return subset
 ```
@@ -542,27 +837,21 @@ negative = ("wildtype", "het")      # pooled negative
 comparisons = None
 ```
 
-**Step 1:** Both sides are valid tuples with ≥ 2 strings. ✓
+**Step 1:** Both values are valid tuples with ≥ 2 strings. ✓
 
-**Step 2:** `comparisons=None`, `negative` is not None → `mode = "explicit"`.
-- `pos_sides = [("homo", "crispant")]`
-- `neg_sides = [("wildtype", "het")]`
+**Step 2:** Resolve and expand.
+- `comparisons=None`, `negative` is not None → `mode = "explicit"`.
+- Normalize: `positive_groups = [("homo", "crispant")]`, `negative_groups = [("wildtype", "het")]`
+- Canonicalize: `("homo", "crispant")` → `("crispant", "homo")`, `("wildtype", "het")` → `("het", "wildtype")`
+- Expand (Cartesian product): `raw_pairs = [(("crispant","homo"), ("het","wildtype"))]`
 
-**Step 3:** Canonicalize:
-- `("homo", "crispant")` → `("crispant", "homo")` (sorted)
-- `("wildtype", "het")` → `("het", "wildtype")` (sorted)
+**Step 3:** Validate.
+- Overlap: `{"crispant","homo"} ∩ {"het","wildtype"} = ∅` ✓
+- Label existence: all four labels in `available_labels`. ✓
 
-**Step 4:** Cartesian product → `[(("crispant","homo"), ("het","wildtype"))]`
+**Step 4:** One pair, no duplicates.
 
-**Step 5:** `{"crispant","homo"} ∩ {"het","wildtype"} = ∅` ✓
-
-**Step 6:** All four labels in `available_labels`. ✓
-
-**Step 7:** Not rest-mode. Skip.
-
-**Step 8:** One pair, no duplicates.
-
-**Step 9:**
+**Step 5:**
 ```python
 ResolvedComparison(
     positive_members = ("crispant", "homo"),
@@ -573,7 +862,7 @@ ResolvedComparison(
 )
 ```
 
-**Step 10:** Check union embryo counts for each side against `min_samples`.
+**Step 6:** Check union embryo counts for each group against `min_samples`.
 
 **Backend:**
 ```python
@@ -588,19 +877,24 @@ subset["_y"] = subset["genotype"].isin({"crispant","homo"}).astype(int)
 ## Internal factory line
 
 ```
-classify(df, ...)
+run_classification(df, ...)              ← orchestrator in run_classification.py
     │
     ├─ 1. _resolve_feature_columns()   → dict[str, list[str]]  (feature_set → col list)
-    ├─ 2. resolve_comparisons()        → list[ResolvedComparison]
+    ├─ 2. resolve_comparisons()        → list[ResolvedComparison]  (Steps 1–5)
+    ├─ 2b. check_min_samples()         → validate sample counts  (Step 6, data-dependent)
     ├─ 3. _build_binary_labels()       → filtered df with _y column  (per comparison)
-    ├─ 4. _bin_and_aggregate()         → df binned by (embryo_id, time_bin)
+    ├─ 4. _bin_and_aggregate()         → df binned by (id_col, time_bin)
     ├─ 5. _run_classification_loop()   → raw per-bin result dicts
     │       ├─ cross_val_predict()     → probabilities
     │       ├─ roc_auc_score()         → auroc_obs
-    │       └─ _permutation_test_ovr() → null_aurocs → pval, null_mean, null_std
-    ├─ 6. _collect_scores()            → scores DataFrame  ← THE canonical table
-    ├─ 7. _collect_predictions()       → predictions DataFrame  (optional)
-    └─ 8. _collect_confusion()         → confusion DataFrame  (optional)
+    │       └─ _permutation_test_binary() → null_aurocs → pval, null_mean, null_std
+    │                                      (n_jobs execution strategy is implementation-defined)
+    ├─ 6. _collect_scores()              → scores DataFrame  ← THE canonical table
+    ├─ 7a. _collect_binary_predictions() → tidy binary predictions  (save_predictions=True)
+    ├─ 7b. _collect_multiclass_predictions()
+    │                                    → wide multiclass predictions  (all-vs-rest only,
+    │                                       save_multiclass_predictions=True)
+    └─ 8. _collect_confusion()           → confusion DataFrame  (always emitted)
 ```
 
 Each step runs once per `(feature_set, comparison)` pair. Results are concatenated into
@@ -672,26 +966,92 @@ def _collect_scores(
 
 ---
 
-## Step 7 — `_collect_predictions()` — binary per comparison
+## Step 7 — `_collect_binary_predictions()` — binary per comparison
 
 Works for every mode (all-vs-rest, pairwise, all-pairs). One row per
-(embryo_id, time_bin_center, comparison_id, feature_set).
+(id_col, time_bin_center, comparison_id, feature_set).
+
+**`p_pos` is the raw model probability for all modes.** For a
+`homo_vs_wildtype` comparison, `p_pos = 0.87` means the model thinks
+there's an 87% chance this embryo-at-this-timepoint belongs to the
+positive group. You can plot it per embryo over time, check calibration,
+or inspect which embryos the model is uncertain about — all from this
+one table, regardless of whether the run was all-vs-rest or pairwise.
 
 ```python
 {
     "feature_set":     str,
     "comparison_id":   str,
-    "embryo_id":       str,
+    id_col:            str,    # uses the actual id_col name (e.g. "embryo_id")
     "time_bin_center": float,
     "y_true":          int,    # 1 = positive side, 0 = negative side
-    "p_pos":           float,  # probability of positive class
-    "y_pred":          int,    # hard call
+    "p_pos":           float,  # raw model probability of positive class
+    "y_pred":          int,    # hard call at 0.5 threshold
     "is_correct":      bool,
 }
 ```
 
-The multiclass `pred_proba_{class}` wide format is NOT part of the primary predictions
-contract. If needed, expose as a separate optional "multiclass_predictions" layer.
+### Relationship to the misclassification pipeline
+
+**These are two different prediction tables for two different purposes.**
+
+The tidy binary table above is the new standard for per-comparison
+diagnostics (AUROC breakdowns, per-embryo accuracy in binary tasks).
+
+The misclassification pipeline (`run_misclassification_pipeline`) requires
+a **separate wide multiclass format** — `multiclass_predictions.parquet` —
+with one row per `(embryo_id, time_bin)` and wide `pred_proba_{class}` columns
+for every class. This format is needed because:
+
+- **Trajectory analysis** (`trajectory.py`) builds feature matrices from
+  full per-class probability vectors (soft, delta, residual stages).
+  `p_pos` alone is insufficient — it doesn't say *which* classes the model
+  confused the embryo with.
+- **Top-confused-as analysis** (`null.py`) permutes `pred_class` to test
+  whether an embryo's confusion pattern is non-random. This needs the
+  original multiclass identity, not a binary collapse.
+- **`io.py` validation** requires `pred_proba_*` columns that sum to ~1.0
+  per row — a hard contract.
+
+The binary predictions table does **not** replace the wide multiclass one.
+They coexist:
+
+| Table | Shape | Saved by | Consumed by |
+|---|---|---|---|
+| `predictions.parquet` (tidy binary) | (id, time_bin, comparison, feature_set) → y_true, p_pos | `run_classification()` | scores plots, per-comparison diagnostics |
+| `multiclass_predictions.parquet` (wide multiclass) | (id, time_bin) → true_class, pred_class, pred_proba_* | `run_classification()` (all-vs-rest mode) | misclassification pipeline |
+
+The wide table is only meaningful for all-vs-rest runs where the model
+sees all classes simultaneously. For pairwise or explicit comparisons,
+the binary table is the right artifact — and `p_pos` is the raw probability
+you'd want to inspect.
+
+### Stacking and predictions
+
+`stack()` merges scores and `uns["comparisons"]` only. **Prediction,
+confusion, and raw-null layers are not merged by design.**
+
+**Layers are diagnostic artifacts, not canonical merge targets.**
+Scores are cross-run comparable summaries. Predictions are run-local
+diagnostics. Raw prediction probabilities are not guaranteed to be
+directly comparable across runs, because runs may differ in class
+composition, comparison structure, feature sets, and training
+distributions. The same principle applies to confusion profiles and
+null arrays.
+
+```python
+# Compare AUROC across runs → use the stacked object
+combined = results_ovr.stack(results_pw)
+combined.scores  # unified scores table
+
+# Inspect raw probabilities for a specific run → use the original
+results_pw.layers["predictions"]              # binary p_pos per embryo
+results_ovr.layers["multiclass_predictions"]  # wide pred_proba_* for misclassification
+```
+
+**Bridge for v2:** A future utility could reconstruct the wide format from
+a complete set of all-vs-rest binary predictions, but this is not required
+for the initial implementation.
 
 ---
 
@@ -713,8 +1073,19 @@ use `time_bin_center` as the canonical time key.
 }
 ```
 
-Only emitted for multiclass (all-vs-rest) runs. Skip for pairwise comparisons — the
-2×2 confusion adds nothing over AUROC.
+Emitted for all comparison modes, including pairwise. Even for binary (2×2)
+comparisons, confusion captures error asymmetry at the chosen threshold —
+a model that collapses toward wildtype is very different from one that
+overcalls mutant, even if AUROC looks similar. Since predictions are
+already collected, computing confusion is cheap.
+
+**For pooled binary comparisons,** `true_class` and `predicted_class` refer
+to the comparison *side labels* (`positive_label` / `negative_label`), not
+the underlying biological class identities. For example, in a comparison
+with `positive=("homo", "crispant")` and `negative=("wildtype", "het")`,
+the confusion rows use `"crispant+homo"` and `"het+wildtype"` — not the
+four individual genotypes. This keeps confusion aligned with the binary
+prediction task, not the original class taxonomy.
 
 ---
 
@@ -796,9 +1167,27 @@ class ClassificationAnalysis:
         return ClassificationAnalysis(scores=s.copy(), uns=self.uns,
                                       layers=self.layers._fork())
 
-    # Stacking — scores only; layers are NOT merged
+    # ── Stacking ─────────────────────────────────────────────────────────
+    #
+    # stack() merges scores and uns["comparisons"] only.
+    # Prediction, confusion, and raw-null layers are not merged by design.
+    #
+    # Layers are diagnostic artifacts, not canonical merge targets.
+    # Predictions are the clearest example — raw prediction probabilities
+    # are not guaranteed to be directly comparable across runs, because
+    # runs may differ in class composition, comparison structure, feature
+    # sets, and training distributions — but the same principle applies
+    # to confusion profiles and null arrays.
+    #
+    # Use stacked objects for summary-level comparison across runs.
+    # Use original ClassificationAnalysis objects to inspect raw
+    # predictions or other run-local diagnostics:
+    #
+    #   results_ovr.layers["predictions"]              # binary p_pos table
+    #   results_ovr.layers["multiclass_predictions"]   # wide pred_proba_* table
+
     def stack(self, other, on_conflict="error") -> "ClassificationAnalysis":
-        """Merge scores tables. Layers are not merged; stacked object is in-memory only."""
+        """Merge scores and uns['comparisons']. Layers are not merged."""
         new_keys = set(zip(other.scores["feature_set"], other.scores["comparison_id"]))
         existing = set(zip(self.scores["feature_set"], self.scores["comparison_id"]))
         overlap  = new_keys & existing
@@ -808,13 +1197,25 @@ class ClassificationAnalysis:
         if on_conflict == "overwrite" and overlap:
             scores = scores.drop_duplicates(
                 subset=["feature_set", "comparison_id", "time_bin_center"], keep="last")
-        return ClassificationAnalysis(scores=scores, uns={**self.uns, **other.uns},
+        # Merge uns["comparisons"] by comparison_id; error on key collision
+        merged_uns = {k: v for k, v in self.uns.items() if k != "comparisons"}
+        merged_uns.update({k: v for k, v in other.uns.items() if k != "comparisons"})
+        self_comps = self.uns.get("comparisons", {})
+        other_comps = other.uns.get("comparisons", {})
+        collision = set(self_comps) & set(other_comps)
+        if collision and on_conflict == "error":
+            raise ValueError(f"uns['comparisons'] key collision: {sorted(collision)}")
+        if on_conflict == "overwrite":
+            merged_uns["comparisons"] = {**self_comps, **other_comps}
+        else:
+            merged_uns["comparisons"] = {**self_comps, **other_comps}
+        return ClassificationAnalysis(scores=scores, uns=merged_uns,
                                       layers=_LazyLayers(None))
 
-    # Plotting
-    def plot_aurocs(self, facet_col="feature_set", **kwargs):
+    # Plotting — thin sugar, all inference happens inside plot_aurocs_over_time
+    def plot_aurocs(self, *, curve_col=None, facet_col=None, **kwargs):
         from .viz.auroc_over_time import plot_aurocs_over_time
-        return plot_aurocs_over_time(self.scores, curve_col="positive_label",
+        return plot_aurocs_over_time(self.scores, curve_col=curve_col,
                                      facet_col=facet_col, **kwargs)
 
     # Persistence
@@ -851,13 +1252,15 @@ class _LazyLayers:
 
     Layers
     ------
-    "predictions"  pd.DataFrame    predictions.parquet
-    "confusion"    pd.DataFrame    confusion.parquet
-    "null_full"    NullDistributions  null_distributions.npz
+    "predictions"              pd.DataFrame         predictions.parquet (tidy binary)
+    "multiclass_predictions"   pd.DataFrame         multiclass_predictions.parquet (wide)
+    "confusion"                pd.DataFrame         confusion.parquet
+    "null_full"                NullDistributions     null_distributions.npz
     """
 
     _REGISTRY: dict[str, tuple[str, str]] = {
-        "predictions": ("predictions.parquet", "parquet"),
+        "predictions":             ("predictions.parquet", "parquet"),
+        "multiclass_predictions":  ("multiclass_predictions.parquet", "parquet"),
         "confusion":   ("confusion.parquet",   "parquet"),
         "null_full":   ("null_distributions.npz", "nulls"),
     }
@@ -1074,11 +1477,12 @@ def _validate_scores(df: pd.DataFrame) -> None:
 
 ```
 my_run/
-  scores.parquet            ← always
-  metadata.json             ← always (uns dict)
-  predictions.parquet       ← optional (save_predictions=True)
-  confusion.parquet         ← optional (multiclass runs only)
-  null_distributions.npz    ← optional (save_nulls="full")
+  scores.parquet                          ← always
+  metadata.json                           ← always (uns dict)
+  predictions.parquet                     ← optional (save_predictions=True) — tidy binary
+  multiclass_predictions.parquet    ← optional (all-vs-rest mode) — wide multiclass
+  confusion.parquet                       ← always
+  null_distributions.npz                  ← optional (save_null_arrays=True)
 ```
 
 ---
@@ -1088,9 +1492,100 @@ my_run/
 | Artifact | Storage | Default | When |
 |---|---|---|---|
 | Null stats (mean/std/n) | columns in `scores` | always | free, always useful |
-| Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_nulls="full"`) | diagnostic only |
-| Confusion profile | `confusion.parquet` | on for multiclass, skip for pairwise | cheap + meaningful |
-| Predictions | `predictions.parquet` | off (`save_predictions=True`) | grows with scale |
+| Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_null_arrays=True`) | diagnostic only |
+| Confusion profile | `confusion.parquet` | always (all modes) | cheap; captures error asymmetry |
+| Predictions (binary) | `predictions.parquet` | off (`save_predictions=True`) | per-comparison diagnostics |
+| Predictions (multiclass) | `multiclass_predictions.parquet` | off (`save_multiclass_predictions=True`; all-vs-rest only) | required by misclassification pipeline |
+
+---
+
+## Misclassification pipeline — fail-loud contract
+
+If `run_misclassification_pipeline()` is called and the `multiclass_predictions` layer
+is missing, raise immediately with a direct remediation message:
+
+```python
+def run_misclassification_pipeline(analysis: ClassificationAnalysis, ...):
+    if "multiclass_predictions" not in analysis.layers:
+        raise ValueError(
+            "Misclassification pipeline requires the multiclass_predictions layer. "
+            "Re-run run_classification() with save_multiclass_predictions=True."
+        )
+    ...
+```
+
+This makes the dependency between `save_multiclass_predictions=False` (the default)
+and `run_misclassification_pipeline()` explicit at runtime, rather than producing a
+cryptic KeyError downstream.
+
+---
+
+## Refactoring contract — renames and boundaries
+
+### Rename table (old → new)
+
+These renames are locked. Apply during implementation; do not preserve old names in new code.
+
+| Old name | New name | Scope |
+|---|---|---|
+| `_permutation_test_ovr()` | `_permutation_test_binary()` | engine/loop.py |
+| `auroc_observed` | `auroc_obs` | everywhere (inner loop, scores, plotters) |
+| `positive_class` / `negative_class` | dropped — use `positive_label` / `negative_label` from `ResolvedComparison` | scores assembly |
+| `_validate_group()` | `_validate_group_input()` | engine/comparison_resolution.py |
+| `_to_groups()` | `_as_group_list()` | engine/comparison_resolution.py |
+| `_members()` | `_group_members()` | engine/comparison_resolution.py |
+| `_collect_predictions()` | `_collect_binary_predictions()` | engine/loop.py |
+| `embryo_predictions_augmented.parquet` | `multiclass_predictions.parquet` | on-disk, `_LazyLayers._REGISTRY` |
+| `ComparisonSpec` | legacy shim only — no new internal use | results.py (shim) |
+| `run_multiclass_classification_test` | legacy shim only — routes to `run_classification` | classification_test.py (shim) |
+| `_auroc_col()` / `_time_col()` | deleted — columns are always `auroc_obs` and `time_bin_center` | plotters |
+| `plot_confusion_profile` | `plot_confusion` | viz/confusion.py |
+| `design_table` (mode name) | `explicit_design` | mode resolution, comments |
+
+### Normalization boundary
+
+All user-provided comparison specs — `pd.DataFrame`, `list[dict]`, `positive`/`negative` —
+are normalized into `list[tuple[ComparisonGroup, ComparisonGroup]]` (raw_pairs) inside
+`resolve_comparisons()`, Steps 1–4. After Step 5, the only internal representation is
+`list[ResolvedComparison]`. No downstream code ever sees raw user input forms.
+
+`list[dict]` is normalized to `pd.DataFrame` immediately at the top of `resolve_comparisons()`.
+This keeps the DataFrame validation path as the single code path for manual designs.
+
+### Canonical assembly boundaries
+
+- **`_collect_scores()`** — the only place that assembles identity keys + result keys into a scores row
+- **`build_binary_labels()`** — the only place that knows about pooling and constructs `_y`
+- **`_collect_binary_predictions()`** — the only place that assembles tidy binary prediction rows
+- **`_collect_multiclass_predictions()`** — the only place that assembles wide multiclass rows
+
+No other code should build these row schemas.
+
+### Persistence defaults (locked)
+
+| Artifact | Default | Rationale |
+|---|---|---|
+| `scores.parquet` | always | core contract |
+| `metadata.json` | always | provenance + comparison membership |
+| `confusion.parquet` | always | cheap, captures error asymmetry even in binary tasks |
+| `predictions.parquet` | off (`save_predictions=True`) | can be large; diagnostic |
+| `multiclass_predictions.parquet` | off (`save_multiclass_predictions=True`) | can be large; only needed by misclassification pipeline |
+| `null_distributions.npz` | off (`save_null_arrays=True`) | summary stats always in scores; raw arrays are diagnostic |
+
+### Test seams (boundary tests for refactoring)
+
+These tests validate the seams between modules. They let internals change freely.
+
+| Test | What it validates |
+|---|---|
+| `test_resolve_comparisons_*` | all modes produce correct `list[ResolvedComparison]`; mutual-exclusion errors fire; label existence checks work |
+| `test_check_min_samples_*` | group-level and per-member thresholds; pooled hidden-minority detection |
+| `test_build_binary_labels_*` | pooled and unpooled `_y` construction; row filtering; no index-alignment bugs |
+| `test_collect_scores_schema` | output schema matches canonical column contract; no extra columns |
+| `test_save_load_roundtrip` | `ClassificationAnalysis.save()` → `.load()` produces identical `scores`, `uns`, and available layers |
+| `test_lazy_layers_missing` | `_LazyLayers.__getitem__` raises `KeyError` with clear message when layer absent |
+| `test_misclassification_missing_layer` | `run_misclassification_pipeline()` raises `ValueError` when `multiclass_predictions` layer missing |
+| `test_null_distributions_roundtrip` | `NullDistributions.save()` → `.load()` preserves arrays and index |
 
 ---
 
@@ -1144,19 +1639,23 @@ def _listify(val: str | list[str]) -> list[str]:
   ---
   The internal factory line, named clearly
 
-  classify(df, ...)
+  run_classification(df, ...)              ← orchestrator in run_classification.py
       │
       ├─ 1. _resolve_feature_columns()        → list[str] per feature set
-      ├─ 2. resolve_comparisons()             → list[ResolvedComparison]
+      ├─ 2. resolve_comparisons()             → list[ResolvedComparison] (Steps 1–5)
+      ├─ 2b. check_min_samples()              → validate sample counts (Step 6)
       ├─ 3. _build_binary_labels()            → filtered df with _y column
-      ├─ 4. _bin_and_aggregate()              → df binned by (embryo_id, time_bin)
+      ├─ 4. _bin_and_aggregate()              → df binned by (id_col, time_bin)
       ├─ 5. _run_classification_loop()        → raw per-bin results dict
       │       ├─ cross_val_predict()          → probabilities
       │       ├─ roc_auc_score()              → auroc_obs
-      │       └─ _permutation_test_ovr()      → null_aurocs → pval, null_mean, null_std
+      │       └─ _permutation_test_binary()      → null_aurocs → pval, null_mean, null_std
+      │                                         (n_jobs execution strategy is implementation-defined)
       ├─ 6. _collect_scores()                 → scores DataFrame (THE canonical table)
-      ├─ 7. _collect_predictions()            → predictions DataFrame (optional)
-      └─ 8. _collect_confusion()              → confusion_profile DataFrame (optional)
+      ├─ 7a. _collect_binary_predictions()           → tidy binary predictions (save_predictions=True)
+      ├─ 7b. _collect_multiclass_predictions()→ wide multiclass predictions (all-vs-rest,
+      │                                          save_multiclass_predictions=True)
+      └─ 8. _collect_confusion()              → confusion_profile DataFrame (always emitted)
 
   Each step is currently tangled inside _run_multiclass_classification and run_classification_test. The names above are what
   they should be called after cleanup.
@@ -1221,7 +1720,7 @@ def _listify(val: str | list[str]) -> list[str]:
   What gets dropped: positive_class, negative_class, negative_mode, groupby (repeated every row — move to metadata),
   negative_members JSON blob (move to metadata keyed by comparison_id).
 
-  Step 7 — _collect_predictions() (currently lines 402–429)
+  Step 7 — _collect_binary_predictions() (currently lines 402–429)
 
   Currently wide-format with pred_proba_{class} columns for every class — only works for the multiclass all-vs-rest path. For
   pairwise comparisons it's never populated.
@@ -1240,8 +1739,9 @@ def _listify(val: str | list[str]) -> list[str]:
       "is_correct":      bool,
   }
 
-  This works for every mode — all-vs-rest, pairwise, all-pairs. The multiclass pred_proba_{class} columns can be kept as a
-  separate optional multiclass_predictions table if needed, but they're not the primary predictions contract.
+  This works for every mode — all-vs-rest, pairwise, all-pairs. The multiclass pred_proba_{class} columns live in the
+  `multiclass_predictions` layer (`save_multiclass_predictions=True`, all-vs-rest only) — a named first-class artifact,
+  but not the primary predictions contract.
 
   Step 8 — _collect_confusion() (currently extract_temporal_confusion_profile)
 
@@ -1318,21 +1818,23 @@ def _listify(val: str | list[str]) -> list[str]:
   ---
   Summary: what changes where
 
-  ┌──────────────────────────────┬─────────────────────────────────────────────────────────────────────────┐
-  │           Location           │                                 Change                                  │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ Inner loop (step 5)          │ Rename auroc_observed→auroc_obs, drop positive_class/negative_class     │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ _collect_scores() (new)      │ Canonical column assembly, feature_set added, no JSON blobs             │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ _collect_predictions() (new) │ Binary per comparison, works for all modes                              │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ results.py                   │ Rename comparisons→scores, drop null_summary slot                       │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ save()                       │ Remove null_summary parquet, add comparison_membership to metadata.json │
-  ├──────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ Plotters                     │ Delete _auroc_col() / _time_col() alias helpers                         │
-  └──────────────────────────────┴─────────────────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────┐
+  │           Location                  │                                 Change                                   │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ run_classification.py (new)         │ Orchestrator: wires engine pieces, calls resolve → check → loop → build  │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/loop.py (new)                │ Inner loop: auroc_obs (not auroc_observed), no positive_class/neg_class  │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/comparison_resolution.py     │ resolve_comparisons() Steps 1–5 + check_min_samples() standalone        │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/analysis.py (new)            │ ClassificationAnalysis, _LazyLayers, _validate_scores                    │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ engine/null.py (new)                │ NullDistributions save/load                                              │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ results.py (legacy)                 │ FutureWarning shim for MulticlassOVRResults, ComparisonSpec              │
+  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
+  │ Plotters                            │ Delete _auroc_col() / _time_col() alias helpers                          │
+  └─────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────┘
 
 ---
 
@@ -1481,7 +1983,7 @@ def plot_aurocs_over_time(
     title: str = "AUROC over time",
     x_label: str = "Hours Post Fertilization (hpf)",
     y_label: str = "AUROC",
-    style: StyleSpec | None = None,
+    style: dict | None = None,
 
     # ── output ────────────────────────────────────────────────────────────
     backend: Literal["plotly", "matplotlib", "both"] = "plotly",
@@ -1578,7 +2080,7 @@ def plot_confusion(self, **kwargs):
     if conf is None:
         raise KeyError(
             "No confusion layer available. "
-            "Re-run classify() — confusion is saved automatically for multiclass runs."
+            "Re-run run_classification() — confusion is saved automatically."
         )
     from .viz.confusion import plot_confusion
     return plot_confusion(self.scores, conf, **kwargs)
@@ -1640,7 +2142,7 @@ Temporary `MulticlassOVRResults` input shim inside `plot_aurocs_over_time`:
 
 ```python
 # At top of plot_aurocs_over_time, before validation
-if hasattr(scores, "comparisons") and isinstance(scores, MulticlassOVRResults):
+if isinstance(scores, MulticlassOVRResults):
     warnings.warn(
         "Passing MulticlassOVRResults to plot_aurocs_over_time is deprecated. "
         "Pass result.scores (a DataFrame) instead.",
@@ -1687,6 +2189,11 @@ results.plot_aurocs()
 results.plot_aurocs(curve_col="comparison_id")
 results.plot_aurocs(curve_col="negative_label")   # curves per reference
 
+# Ambiguous case: same positive vs multiple negatives
+# e.g. homo__vs__wildtype AND homo__vs__het both have positive_label="homo"
+# → infer_curve_col warns and defaults to comparison_id
+# → pass curve_col="positive_label" explicitly to override if intentional
+
 # Override faceting
 results.plot_aurocs(facet_col=None)               # all curves on one panel
 results.plot_aurocs(facet_row="negative_label", facet_col="feature_set")
@@ -1721,17 +2228,21 @@ results.plot_confusion(feature_set="embedding", backend="matplotlib")
 ```
 classification/
   __init__.py                     ← public API surface (see below)
+  run_classification.py           ← orchestrator: wires engine pieces together
 
-  # ── new implementation files ─────────────────────────────────────────────
-  _classify.py                    classify() entry point
-  _comparison_resolution.py       resolve_comparisons(), ResolvedComparison,
-                                  all validators (_validate_comparison_side,
-                                  _canonicalize_side, _check_labels_exist, etc.)
-  _loop.py                        _run_classification_loop(), _bin_and_aggregate(),
+  # ── engine (internal implementation) ─────────────────────────────────────
+  engine/
+    __init__.py
+    comparison_resolution.py      resolve_comparisons(), ResolvedComparison,
+                                  check_min_samples(), all validators
+                                  (_validate_group_input, _canonicalize_group,
+                                  _as_group_list, _group_members,
+                                  _check_labels_exist, etc.)
+    loop.py                       _run_classification_loop(), _bin_and_aggregate(),
                                   _build_binary_labels(), _collect_scores(),
-                                  _collect_predictions(), _collect_confusion()
-  _null.py                        NullDistributions dataclass + save/load
-  _analysis.py                    ClassificationAnalysis, _LazyLayers,
+                                  _collect_binary_predictions(), _collect_confusion()
+    null.py                       NullDistributions dataclass + save/load
+    analysis.py                   ClassificationAnalysis, _LazyLayers,
                                   _validate_scores, _listify
 
   # ── legacy files (shimmed, not deleted) ──────────────────────────────────
@@ -1742,7 +2253,7 @@ classification/
   results.py                      FutureWarning shims:
                                     MulticlassOVRResults, ComparisonSpec
   classification_results.py       FutureWarning shim: ClassificationResults
-  permutation_utils.py            unchanged (internal, not public)
+  permutation_utils.py            unchanged (shared, not classification-specific)
 
   # ── viz ───────────────────────────────────────────────────────────────────
   viz/
@@ -1766,16 +2277,13 @@ classification/
 
   # ── tests ─────────────────────────────────────────────────────────────────
   tests/
-    test_classify.py              new: classify() + ClassificationAnalysis
+    test_run_classification.py    new: run_classification() + ClassificationAnalysis
     test_comparison_resolution.py new: resolve_comparisons()
     test_null_distributions.py    new: NullDistributions save/load roundtrip
     test_classification_test.py   existing (keep until migration complete)
     test_classification_results.py existing (keep until migration complete)
     test_misclassification_*.py   unchanged
 ```
-
-Leading underscore on implementation files (`_classify.py` etc.) signals
-"internal — import from the package, not from these files directly."
 
 ---
 
@@ -1790,19 +2298,19 @@ Public API for time-binned AUROC classification with permutation testing.
 
 Primary interface
 -----------------
-    classify(df, ...)                 → ClassificationAnalysis
+    run_classification(df, ...)       → ClassificationAnalysis
     ClassificationAnalysis.load(path) → ClassificationAnalysis
 
 Legacy (deprecated, will be removed)
 -------------------------------------
-    run_classification_test           → use classify()
+    run_classification_test           → use run_classification()
     MulticlassOVRResults              → use ClassificationAnalysis
     ClassificationResults             → use ClassificationAnalysis
 """
 
 # ── Primary ───────────────────────────────────────────────────────────────────
-from ._classify import classify
-from ._analysis import ClassificationAnalysis
+from .run_classification import run_classification
+from .engine.analysis import ClassificationAnalysis
 
 # ── Submodules ────────────────────────────────────────────────────────────────
 from . import viz
@@ -1822,7 +2330,7 @@ from .classification_results import ClassificationResults
 
 __all__ = [
     # Primary
-    "classify",
+    "run_classification",
     "ClassificationAnalysis",
     # Submodules
     "viz",
@@ -1846,7 +2354,7 @@ __all__ = [
 
 | Tier | Symbols | Status |
 |---|---|---|
-| **Primary** | `classify`, `ClassificationAnalysis` | new, canonical |
+| **Primary** | `run_classification`, `ClassificationAnalysis` | new, canonical |
 | **Submodules** | `viz`, `misclassification` | unchanged |
 | **Pipeline** | `run_misclassification_pipeline`, `run_stage_geometry` | unchanged, stays public |
 | **Legacy** | `run_classification_test`, `MulticlassOVRResults`, `ClassificationResults`, `ComparisonSpec` | importable, `FutureWarning` on call |
@@ -1865,13 +2373,13 @@ def run_classification_test(df, groupby, groups="all", reference="rest",
                              features="z_mu_b", **kwargs):
     warnings.warn(
         "run_classification_test() is deprecated and will be removed in a future release. "
-        "Use classify() instead:\n"
-        "  from analyze.classification import classify\n"
-        "  results = classify(df, class_col=groupby, id_col=..., time_col=...,\n"
+        "Use run_classification() instead:\n"
+        "  from analyze.classification import run_classification\n"
+        "  results = run_classification(df, class_col=groupby, id_col=..., time_col=...,\n"
         "                     positive=groups, negative=reference, features={...})",
         FutureWarning, stacklevel=2,
     )
-    from ._classify import classify as _classify
+    from .run_classification import run_classification as _run
     # translate old kwargs → new kwargs and delegate
     ...
 ```
@@ -1882,7 +2390,7 @@ def run_classification_test(df, groupby, groups="all", reference="rest",
 
 ```python
 # New — canonical
-from analyze.classification import classify, ClassificationAnalysis
+from analyze.classification import run_classification, ClassificationAnalysis
 
 # Old — still works, warns on call
 from analyze.classification import run_classification_test, MulticlassOVRResults
@@ -1893,10 +2401,10 @@ results.plot_aurocs()                                           # object sugar
 
 # Misclassification (unchanged)
 from analyze.classification import run_misclassification_pipeline, run_stage_geometry
-from analyze.classification.viz import plot_confusion_profile
+from analyze.classification.viz import plot_confusion
 
-# difference_detection shim (unchanged, adds classify + ClassificationAnalysis)
-from analyze.difference_detection import classify   # FutureWarning on module import
+# difference_detection shim (unchanged, adds run_classification + ClassificationAnalysis)
+from analyze.difference_detection import run_classification   # FutureWarning on module import
 ```
 
 ---
@@ -1912,7 +2420,7 @@ warnings.warn(
     FutureWarning, stacklevel=2,
 )
 from analyze.classification import (
-    classify,
+    run_classification,
     ClassificationAnalysis,
     run_classification_test,
     MulticlassOVRResults,
