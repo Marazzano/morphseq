@@ -198,20 +198,30 @@ class ResolvedComparison:
 ```
 user input (positive, negative, comparisons, available_labels)
     ↓
-    ↓  Step 1  — validate types (is each value a str, tuple, or list?)
-    ↓  Step 2  — determine mode + normalize to groups
-    ↓  Step 3  — canonicalize pooled tuples (sort + dedupe)
-    ↓  Step 4  — expand to raw pairs (positive_group, negative_group)
-    ↓  Step 5  — overlap check (same label can't be on both sides)
-    ↓  Step 6  — label existence check (catch typos — no DataFrame needed)
-    ↓  Step 7  — rest expansion (rest-mode: fill in the "rest" negative)
-    ↓  Step 8  — deduplicate (remove identical pairs)
-    ↓  Step 9  — convert to ResolvedComparison objects
-    ↓           — collision detection (error if duplicate comparison_ids)
+    ↓  Step 1  — validate input types
+    ↓
+    ↓  Step 2  — resolve and expand comparisons
+    ↓            determine mode
+    ↓            normalize user inputs to groups
+    ↓            canonicalize pooled groups (sort + dedupe)
+    ↓            expand to complete raw_pairs
+    ↓
+    ↓            After this step, raw_pairs is always:
+    ↓              list[(ComparisonGroup, ComparisonGroup)]
+    ↓            No None placeholders. No deferred work.
+    ↓
+    ↓  Step 3  — validate expanded pairs
+    ↓            overlap check (same label can't be on both sides)
+    ↓            label existence check (catch typos early)
+    ↓
+    ↓  Step 4  — deduplicate (remove identical pairs)
+    ↓
+    ↓  Step 5  — convert to ResolvedComparison objects
+    ↓            collision detection (error if duplicate comparison_ids)
     ↓
 resolve_comparisons() returns here: list[ResolvedComparison]
 
-    ↓  Step 10 — check_min_samples() — called by run_classification(),
+    ↓  Step 6  — check_min_samples() — called by run_classification(),
     ↓            NOT inside resolve_comparisons(). Needs label_counts
     ↓            (unique id_col units per class), which requires DataFrame.
     ↓
@@ -229,13 +239,13 @@ def resolve_comparisons(
     class_col: str,                # used only in error messages
 ) -> list[ResolvedComparison]:
     """
-    Pure function. No DataFrame access. Steps 1–9 only.
+    Pure function. No DataFrame access. Steps 1–5 only.
     available_labels must be computed by the caller before calling this.
-    Step 10 (min-sample check) is handled separately by check_min_samples().
+    Step 6 (min-sample check) is handled separately by check_min_samples().
     """
 ```
 
-### Step 1 — Type validation
+### Step 1 — Validate input types
 
 Check that `positive` and `negative` are valid types before doing anything else.
 Each value must be one of:
@@ -286,19 +296,26 @@ _validate_group(positive, "positive")
 _validate_group(negative, "negative")
 ```
 
-### Step 2 — Determine mode and normalize to groups
+### Step 2 — Resolve and expand comparisons
 
-Figure out which comparison mode the user wants, then convert
-their `positive`/`negative` inputs into lists of `ComparisonGroup`s.
+This is the one step where mode matters. It determines what the user
+intended, normalizes their inputs, and expands everything into complete
+`(positive_group, negative_group)` pairs.
+
+After this step finishes, the rest of the pipeline doesn't need to know
+which mode was used. Every pair is complete — no `None` placeholders,
+no deferred work.
 
 There are four possible modes:
 
 | Mode | When | What happens |
 |---|---|---|
-| `"design_table"` | `comparisons` is a DataFrame | Pairs come from the table rows |
-| `"all_pairs"` | `comparisons="all_pairs"` | Every ordered pair of classes |
-| `"rest"` | no `negative` given | Each positive group vs all remaining classes |
 | `"explicit"` | both `positive` and `negative` given | Cartesian product of positive × negative groups |
+| `"rest"` | no `negative` given | Each positive group vs all remaining classes |
+| `"all_pairs"` | `comparisons="all_pairs"` | Every unordered pair of classes |
+| `"design_table"` | `comparisons` is a DataFrame | Pairs come directly from the table rows |
+
+#### Helpers
 
 ```python
 def _to_groups(val: UserComparisonSpec) -> list[ComparisonGroup]:
@@ -308,58 +325,6 @@ def _to_groups(val: UserComparisonSpec) -> list[ComparisonGroup]:
     return list(val)
 
 
-# ── Mode detection ──────────────────────────────────────────────────────
-# (mutual-exclusion checks happen earlier in run_classification())
-
-if isinstance(comparisons, pd.DataFrame):
-    mode = "design_table"
-
-elif comparisons == "all_pairs":
-    mode = "all_pairs"
-
-    # positive= is accepted as a scope filter (which classes to pair)
-    class_scope: list[str] = (
-        list(positive) if positive is not None
-        else sorted(available_labels)
-    )
-
-    # Pooled tuples don't make sense for all_pairs — only single labels
-    for i, s in enumerate(class_scope):
-        if isinstance(s, tuple):
-            raise ValueError(
-                f"comparisons='all_pairs': positive[{i}] is a tuple. "
-                f"Scope entries must be single class labels (strings)."
-            )
-
-elif comparisons in ("all_vs_rest", None) and negative is None:
-    mode = "rest"
-
-    # Each positive group will be compared against "the rest"
-    positive_groups = (
-        _to_groups(positive) if positive is not None
-        else [label for label in sorted(available_labels)]
-    )
-
-else:
-    # comparisons is None, negative is provided → explicit mode
-    mode = "explicit"
-
-    positive_groups = (
-        _to_groups(positive) if positive is not None
-        else [label for label in sorted(available_labels)]
-    )
-    negative_groups = _to_groups(negative)
-```
-
-### Step 3 — Canonicalize pooled tuples
-
-Sort and deduplicate elements inside pooled tuples so that
-`("homo", "crispant")` and `("crispant", "homo")` become the same canonical
-form `("crispant", "homo")`. This ensures deterministic comparison IDs.
-
-Single class labels (strings) pass through unchanged.
-
-```python
 def _canonicalize_group(group: ComparisonGroup) -> ComparisonGroup:
     """Sort + dedupe a pooled tuple. Pass strings through unchanged."""
     if isinstance(group, str):
@@ -374,69 +339,120 @@ def _canonicalize_group(group: ComparisonGroup) -> ComparisonGroup:
     return result
 
 
-if mode == "explicit":
-    positive_groups = [_canonicalize_group(g) for g in positive_groups]
-    negative_groups = [_canonicalize_group(g) for g in negative_groups]
-
-elif mode == "rest":
-    positive_groups = [_canonicalize_group(g) for g in positive_groups]
-
-# all_pairs and design_table: groups are plain strings, no canonicalization needed
+def _members(group: ComparisonGroup) -> set[str]:
+    """Return the set of class labels in a group."""
+    if isinstance(group, str):
+        return {group}
+    return set(group)
 ```
 
-### Step 4 — Expand to raw pairs (mode-dependent)
-
-Turn the groups into `(positive_group, negative_group)` pairs.
-Each pair will become one binary classification task.
+#### Mode detection and expansion
 
 ```python
 from itertools import product, combinations
 
-if mode == "explicit":
-    # Every positive group × every negative group (Cartesian product).
-    # Example: positives=[A, B], negatives=[C, D] → (A,C), (A,D), (B,C), (B,D)
-    raw_pairs = list(product(positive_groups, negative_groups))
+# ── Mutual-exclusion checks happen earlier in run_classification() ──
 
-elif mode == "rest":
-    # Negative side is not known yet — it gets filled in at Step 7.
-    # Use None as a placeholder for now.
-    raw_pairs = [(pg, None) for pg in positive_groups]
 
-elif mode == "all_pairs":
-    # Every unordered pair of single labels.
-    # Direction is alphabetical: the earlier label is always "positive".
-    labels = sorted(class_scope)
-    raw_pairs = [(a, b) for a, b in combinations(labels, 2)]
-
-elif mode == "design_table":
+if isinstance(comparisons, pd.DataFrame):
+    # ── design_table ──────────────────────────────────────────────────
     # Pairs come directly from the user's DataFrame.
     _validate_design_table(comparisons)
     raw_pairs = [
         (row["positive"], row["negative"])
         for _, row in comparisons.iterrows()
     ]
+
+
+elif comparisons == "all_pairs":
+    # ── all_pairs ─────────────────────────────────────────────────────
+    # Every unordered pair of single labels.
+    # positive= is accepted as a scope filter (which classes to pair).
+
+    class_scope: list[str] = (
+        list(positive) if positive is not None
+        else sorted(available_labels)
+    )
+
+    # Pooled tuples don't make sense for all_pairs — only single labels
+    for i, s in enumerate(class_scope):
+        if isinstance(s, tuple):
+            raise ValueError(
+                f"comparisons='all_pairs': positive[{i}] is a tuple. "
+                f"Scope entries must be single class labels (strings)."
+            )
+
+    # Direction is alphabetical: earlier label is always "positive"
+    labels = sorted(class_scope)
+    raw_pairs = [(a, b) for a, b in combinations(labels, 2)]
+
+
+elif comparisons in ("all_vs_rest", None) and negative is None:
+    # ── rest ──────────────────────────────────────────────────────────
+    # Each positive group vs everything else.
+
+    # 1. Normalize user inputs to groups
+    positive_groups = (
+        _to_groups(positive) if positive is not None
+        else [label for label in sorted(available_labels)]
+    )
+
+    # 2. Canonicalize pooled groups
+    positive_groups = [_canonicalize_group(g) for g in positive_groups]
+
+    # 3. Expand: compute the "rest" complement immediately
+    raw_pairs = []
+    for pg in positive_groups:
+        rest_labels = sorted(available_labels - _members(pg))
+
+        if len(rest_labels) == 0:
+            raise ValueError(
+                f"No remaining classes to form 'rest' for "
+                f"positive={pg!r}. "
+                f"All available labels are already in the positive group."
+            )
+
+        raw_pairs.append((pg, tuple(rest_labels)))
+
+
+else:
+    # ── explicit ──────────────────────────────────────────────────────
+    # comparisons is None, negative is provided.
+    # Every positive group × every negative group (Cartesian product).
+    # Example: positives=[A, B], negatives=[C, D]
+    #        → (A,C), (A,D), (B,C), (B,D)
+
+    # 1. Normalize user inputs to groups
+    positive_groups = (
+        _to_groups(positive) if positive is not None
+        else [label for label in sorted(available_labels)]
+    )
+    negative_groups = _to_groups(negative)
+
+    # 2. Canonicalize pooled groups
+    positive_groups = [_canonicalize_group(g) for g in positive_groups]
+    negative_groups = [_canonicalize_group(g) for g in negative_groups]
+
+    # 3. Expand: Cartesian product
+    raw_pairs = list(product(positive_groups, negative_groups))
 ```
 
-### Step 5 — Overlap check
+**Post-condition:** `raw_pairs` is always `list[(ComparisonGroup, ComparisonGroup)]`.
+Both elements are present. No `None`s. No deferred work.
+
+### Step 3 — Validate expanded pairs
+
+Now that every pair is complete, validate them uniformly.
+No mode-specific branching needed here.
+
+#### Overlap check
 
 The same class label cannot appear on both sides of a comparison.
 For example, `positive=("wt", "het")` vs `negative=("het", "mut")` is
-invalid because `"het"` is on both sides.
-
-This is always enforced — there is no opt-out flag.
+invalid because `"het"` is on both sides. Always enforced.
 
 ```python
-def _members(group: ComparisonGroup) -> set[str]:
-    """Return the set of class labels in a group."""
-    if isinstance(group, str):
-        return {group}
-    return set(group)
-
 for pos_group, neg_group in raw_pairs:
-    # In rest-mode, the negative side hasn't been filled in yet (Step 7)
-    if neg_group is None:
-        continue
-
     overlap = _members(pos_group) & _members(neg_group)
     if overlap:
         raise ValueError(
@@ -446,14 +462,13 @@ for pos_group, neg_group in raw_pairs:
         )
 ```
 
-### Step 6 — Label existence check (pure)
+#### Label existence check
 
 Make sure every class label referenced in the pairs actually exists
-in the data. This catches typos early — before any computation starts.
+in the data. This catches typos before any computation starts.
 
-This is a pure function (no DataFrame access). The caller passes
-`available_labels = set(df[class_col].unique())` before calling
-`resolve_comparisons()`.
+Pure function — no DataFrame access. The caller passes
+`available_labels = set(df[class_col].unique())`.
 
 ```python
 def _check_labels_exist(
@@ -467,8 +482,7 @@ def _check_labels_exist(
     referenced = set()
     for pos_group, neg_group in raw_pairs:
         referenced |= _members(pos_group)
-        if neg_group is not None:
-            referenced |= _members(neg_group)
+        referenced |= _members(neg_group)
 
     # Check for unknown labels
     unknown = referenced - available_labels
@@ -481,33 +495,9 @@ def _check_labels_exist(
 _check_labels_exist(raw_pairs, available_labels, class_col)
 ```
 
-### Step 7 — Rest expansion (rest-mode only)
+### Step 4 — Deduplicate
 
-In rest-mode, the negative side was left as `None` in Step 4.
-Now fill it in: for each positive group, "rest" = all other labels
-that are not in the positive group.
-
-```python
-if mode == "rest":
-    expanded = []
-
-    for pos_group, _ in raw_pairs:
-        # "Rest" is every available label that's NOT in the positive group
-        rest_labels = sorted(available_labels - _members(pos_group))
-
-        if len(rest_labels) == 0:
-            raise ValueError(
-                f"No remaining classes to form 'rest' for "
-                f"positive={pos_group!r}. "
-                f"All available labels are already in the positive group."
-            )
-
-        expanded.append((pos_group, tuple(rest_labels)))
-
-    raw_pairs = expanded
-```
-
-### Step 8 — Deduplicate (on final pairs)
+Remove identical pairs. Order-preserving.
 
 ```python
 seen: set[tuple] = set()
@@ -520,7 +510,7 @@ for pair in raw_pairs:
 raw_pairs = deduped
 ```
 
-### Step 9 — Convert to `ResolvedComparison`
+### Step 5 — Convert to `ResolvedComparison`
 
 Convert each `(positive_group, negative_group)` pair into a
 `ResolvedComparison` dataclass. This is the final internal
@@ -579,7 +569,7 @@ if dupes:
     )
 ```
 
-### Step 10 — Min-sample check and per-member warnings (standalone function)
+### Step 6 — Min-sample check and per-member warnings (standalone function)
 
 **Called by `run_classification()`, NOT inside `resolve_comparisons()`.**
 Requires `label_counts` which needs DataFrame access (counting unique `id_col` units).
@@ -692,27 +682,21 @@ negative = ("wildtype", "het")      # pooled negative
 comparisons = None
 ```
 
-**Step 1:** Both sides are valid tuples with ≥ 2 strings. ✓
+**Step 1:** Both values are valid tuples with ≥ 2 strings. ✓
 
-**Step 2:** `comparisons=None`, `negative` is not None → `mode = "explicit"`.
-- `positive_groups = [("homo", "crispant")]`
-- `negative_groups = [("wildtype", "het")]`
+**Step 2:** Resolve and expand.
+- `comparisons=None`, `negative` is not None → `mode = "explicit"`.
+- Normalize: `positive_groups = [("homo", "crispant")]`, `negative_groups = [("wildtype", "het")]`
+- Canonicalize: `("homo", "crispant")` → `("crispant", "homo")`, `("wildtype", "het")` → `("het", "wildtype")`
+- Expand (Cartesian product): `raw_pairs = [(("crispant","homo"), ("het","wildtype"))]`
 
-**Step 3:** Canonicalize:
-- `("homo", "crispant")` → `("crispant", "homo")` (sorted)
-- `("wildtype", "het")` → `("het", "wildtype")` (sorted)
+**Step 3:** Validate.
+- Overlap: `{"crispant","homo"} ∩ {"het","wildtype"} = ∅` ✓
+- Label existence: all four labels in `available_labels`. ✓
 
-**Step 4:** Cartesian product → `[(("crispant","homo"), ("het","wildtype"))]`
+**Step 4:** One pair, no duplicates.
 
-**Step 5:** `{"crispant","homo"} ∩ {"het","wildtype"} = ∅` ✓
-
-**Step 6:** All four labels in `available_labels`. ✓
-
-**Step 7:** Not rest-mode. Skip.
-
-**Step 8:** One pair, no duplicates.
-
-**Step 9:**
+**Step 5:**
 ```python
 ResolvedComparison(
     positive_members = ("crispant", "homo"),
@@ -723,7 +707,7 @@ ResolvedComparison(
 )
 ```
 
-**Step 10:** Check union embryo counts for each side against `min_samples`.
+**Step 6:** Check union embryo counts for each group against `min_samples`.
 
 **Backend:**
 ```python
@@ -741,8 +725,8 @@ subset["_y"] = subset["genotype"].isin({"crispant","homo"}).astype(int)
 run_classification(df, ...)              ← orchestrator in run_classification.py
     │
     ├─ 1. _resolve_feature_columns()   → dict[str, list[str]]  (feature_set → col list)
-    ├─ 2. resolve_comparisons()        → list[ResolvedComparison]  (Steps 1–9)
-    ├─ 2b. check_min_samples()         → validate sample counts  (Step 10, data-dependent)
+    ├─ 2. resolve_comparisons()        → list[ResolvedComparison]  (Steps 1–5)
+    ├─ 2b. check_min_samples()         → validate sample counts  (Step 6, data-dependent)
     ├─ 3. _build_binary_labels()       → filtered df with _y column  (per comparison)
     ├─ 4. _bin_and_aggregate()         → df binned by (id_col, time_bin)
     ├─ 5. _run_classification_loop()   → raw per-bin result dicts
@@ -1311,8 +1295,8 @@ def _listify(val: str | list[str]) -> list[str]:
   run_classification(df, ...)              ← orchestrator in run_classification.py
       │
       ├─ 1. _resolve_feature_columns()        → list[str] per feature set
-      ├─ 2. resolve_comparisons()             → list[ResolvedComparison] (Steps 1–9)
-      ├─ 2b. check_min_samples()              → validate sample counts (Step 10)
+      ├─ 2. resolve_comparisons()             → list[ResolvedComparison] (Steps 1–5)
+      ├─ 2b. check_min_samples()              → validate sample counts (Step 6)
       ├─ 3. _build_binary_labels()            → filtered df with _y column
       ├─ 4. _bin_and_aggregate()              → df binned by (id_col, time_bin)
       ├─ 5. _run_classification_loop()        → raw per-bin results dict
@@ -1491,7 +1475,7 @@ def _listify(val: str | list[str]) -> list[str]:
   ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
   │ engine/loop.py (new)                │ Inner loop: auroc_obs (not auroc_observed), no positive_class/neg_class  │
   ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ engine/comparison_resolution.py     │ resolve_comparisons() Steps 1–9 + check_min_samples() standalone        │
+  │ engine/comparison_resolution.py     │ resolve_comparisons() Steps 1–5 + check_min_samples() standalone        │
   ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
   │ engine/analysis.py (new)            │ ClassificationAnalysis, _LazyLayers, _validate_scores                    │
   ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
