@@ -57,23 +57,46 @@ def run_classification(
 ) -> ClassificationAnalysis:
 ```
 
-### Comparison mode rules (mutually exclusive, enforced at call time by `run_classification`)
+### How `positive`, `negative`, and `comparisons` interact
 
-| `positive` | `negative` | `comparisons` | Mode |
-|---|---|---|---|
-| omitted | omitted | omitted | all-vs-rest across all classes in `class_col` |
-| scalar or list | scalar, list, or tuple | omitted | explicit cartesian product |
-| list (scope filter) | omitted | `"all_vs_rest"` | all-vs-rest within scope |
-| list (scope filter) | omitted | `"all_pairs"` | all unordered pairs within scope |
-| omitted | omitted | `pd.DataFrame` | explicit design table |
+These three parameters work together to define what gets compared.
+Their roles are different:
 
-**Hard mutual-exclusion errors:**
-- `comparisons=DataFrame` + any `positive` or `negative` → `ValueError`
-- `comparisons=str_scheme` + `negative` → `ValueError`
-- `comparisons=str_scheme` + `positive` as scalar → `ValueError`
-  (scalar positive with a scheme is ambiguous; use a 1-element list)
-- `negative` set but `positive` omitted, `comparisons` omitted → `ValueError`
-  (negative without positive is almost always a user mistake)
+- **`positive`** — Selects *which classes* to focus on. In scheme modes
+  (`"all_vs_rest"`, `"all_pairs"`), it acts as a **scope filter** — it limits
+  which classes participate but doesn't define the full comparison. In explicit
+  mode, it defines the left-hand group(s).
+
+- **`negative`** — Defines the right-hand group(s). Much more restricted:
+  it's only valid in explicit mode. Setting `negative` forces explicit mode.
+  Cannot be combined with any scheme.
+
+- **`comparisons`** — Chooses the *strategy* for generating pairs. A string
+  scheme (`"all_vs_rest"`, `"all_pairs"`) auto-generates pairs from the data.
+  A `DataFrame` gives full manual control. When omitted, the mode is inferred
+  from whether `negative` is set.
+
+#### Mode resolution table
+
+| `positive` | `negative` | `comparisons` | Mode | What happens |
+|---|---|---|---|---|
+| omitted | omitted | omitted | all-vs-rest | every class vs all others |
+| set (scope) | omitted | omitted | all-vs-rest (scoped) | each listed class vs all others |
+| set (scope) | omitted | `"all_vs_rest"` | all-vs-rest (scoped) | same as above, explicit scheme |
+| set (scope) | omitted | `"all_pairs"` | all-pairs (scoped) | every unordered pair within scope |
+| set | set | omitted | explicit | Cartesian product of positive × negative groups |
+| omitted | omitted | `pd.DataFrame` | design table | pairs come from table rows |
+
+#### Hard mutual-exclusion errors
+
+These combinations are always rejected at call time by `run_classification()`:
+
+| Combination | Why it's an error |
+|---|---|
+| `comparisons=DataFrame` + any `positive` or `negative` | Design table defines its own pairs — extra constraints are ambiguous |
+| `comparisons=str_scheme` + `negative` | Schemes generate their own negatives — user-provided negative conflicts |
+| `comparisons=str_scheme` + `positive` as scalar | Scalar positive with a scheme is ambiguous (is it a scope or a single comparison?). Use a 1-element list to be explicit. |
+| `negative` set but `positive` omitted | Negative without positive is almost always a user mistake |
 
 ### Three standard usage patterns
 
