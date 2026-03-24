@@ -129,9 +129,9 @@ results = run_classification(
 ## Type definitions
 
 ```python
-ClassLabel     = str
-PooledGroup    = tuple[str, ...]          # ≥ 2 elements, sorted+deduped at ingest
-ComparisonSide = ClassLabel | PooledGroup
+ClassLabel      = str
+PooledGroup     = tuple[str, ...]           # ≥ 2 elements, sorted+deduped at ingest
+ComparisonGroup = ClassLabel | PooledGroup  # one group of labels on one side of a comparison
 
 # What the user may pass to positive= or negative=
 UserComparisonSpec = ClassLabel | PooledGroup | list[ClassLabel | PooledGroup]
@@ -139,6 +139,11 @@ UserComparisonSpec = ClassLabel | PooledGroup | list[ClassLabel | PooledGroup]
 # What comparisons= accepts
 ComparisonScheme = Literal["all_vs_rest", "all_pairs"] | pd.DataFrame | None
 ```
+
+**Why `ComparisonGroup`?** Each comparison has two sides (positive vs negative).
+A `ComparisonGroup` is one of those sides — either a single class label like `"wt"`,
+or a pooled tuple like `("wt", "ctrl")`. The name reads as "one group of labels that
+can be compared against another group."
 
 ### Encoding convention
 
@@ -192,21 +197,24 @@ class ResolvedComparison:
 
 ```
 user input (positive, negative, comparisons, available_labels)
-    ↓  Step 1  — validate types
-    ↓  Step 2  — determine mode + normalize to sides
-    ↓  Step 3  — canonicalize pooled tuples (sort + dedupe, both sides)
-    ↓  Step 4  — expand to raw pairs (mode-dependent)
-    ↓  Step 5  — overlap check (positive_members ∩ negative_members = ∅; always enforced)
-    ↓  Step 6  — label existence check (pure — no DataFrame access)
-    ↓  Step 7  — rest expansion (rest-mode only)
-    ↓  Step 8  — deduplicate (on final pairs, after rest expansion)
-    ↓  Step 9  — _to_resolved (→ list[ResolvedComparison])
+    ↓
+    ↓  Step 1  — validate types (is each value a str, tuple, or list?)
+    ↓  Step 2  — determine mode + normalize to groups
+    ↓  Step 3  — canonicalize pooled tuples (sort + dedupe)
+    ↓  Step 4  — expand to raw pairs (positive_group, negative_group)
+    ↓  Step 5  — overlap check (same label can't be on both sides)
+    ↓  Step 6  — label existence check (catch typos — no DataFrame needed)
+    ↓  Step 7  — rest expansion (rest-mode: fill in the "rest" negative)
+    ↓  Step 8  — deduplicate (remove identical pairs)
+    ↓  Step 9  — convert to ResolvedComparison objects
     ↓           — collision detection (error if duplicate comparison_ids)
+    ↓
 resolve_comparisons() returns here: list[ResolvedComparison]
 
     ↓  Step 10 — check_min_samples() — called by run_classification(),
-    ↓            NOT inside resolve_comparisons(). Requires label_counts
-    ↓            (unique id_col units per class), which is data-dependent.
+    ↓            NOT inside resolve_comparisons(). Needs label_counts
+    ↓            (unique id_col units per class), which requires DataFrame.
+    ↓
 backend receives: list[ResolvedComparison]
 ```
 
@@ -229,52 +237,93 @@ def resolve_comparisons(
 
 ### Step 1 — Type validation
 
+Check that `positive` and `negative` are valid types before doing anything else.
+Each value must be one of:
+- a string (single class label)
+- a tuple of strings (pooled group, ≥ 2 elements)
+- a list of the above (multiple groups to enumerate)
+- `None` (not provided)
+
 ```python
-def _validate_comparison_side(val, param_name: str) -> None:
+def _validate_group(val, param_name: str) -> None:
+    """Validate that val is a legal UserComparisonSpec value."""
+
+    # None means "not provided" — that's fine
     if val is None:
         return
+
+    # A plain string is a single class label — always valid
     if isinstance(val, str):
         return
+
+    # A tuple means "pool these classes into one group"
     if isinstance(val, tuple):
         if not all(isinstance(v, str) for v in val):
-            raise TypeError(f"{param_name}: tuple elements must all be strings. Got {val!r}")
+            raise TypeError(
+                f"{param_name}: every element in a pooled tuple must be a string. "
+                f"Got {val!r}"
+            )
         if len(val) < 2:
             raise ValueError(
-                f"{param_name}: pooled tuple must have ≥ 2 elements. "
-                f"For a single class use a string, not a 1-tuple."
+                f"{param_name}: a pooled tuple must have at least 2 elements. "
+                f"For a single class, use a plain string instead of a 1-tuple."
             )
         return
+
+    # A list means "enumerate these groups" — validate each element
     if isinstance(val, list):
         for i, item in enumerate(val):
-            _validate_comparison_side(item, f"{param_name}[{i}]")
+            _validate_group(item, f"{param_name}[{i}]")
         return
+
+    # Anything else is an error
     raise TypeError(
-        f"{param_name} must be str, tuple[str,...], or list thereof. Got {type(val)}"
+        f"{param_name} must be a string, tuple of strings, or list of those. "
+        f"Got {type(val).__name__}"
     )
 
-_validate_comparison_side(positive, "positive")
-_validate_comparison_side(negative, "negative")
+_validate_group(positive, "positive")
+_validate_group(negative, "negative")
 ```
 
-### Step 2 — Determine mode and normalize to sides
+### Step 2 — Determine mode and normalize to groups
+
+Figure out which comparison mode the user wants, then convert
+their `positive`/`negative` inputs into lists of `ComparisonGroup`s.
+
+There are four possible modes:
+
+| Mode | When | What happens |
+|---|---|---|
+| `"design_table"` | `comparisons` is a DataFrame | Pairs come from the table rows |
+| `"all_pairs"` | `comparisons="all_pairs"` | Every ordered pair of classes |
+| `"rest"` | no `negative` given | Each positive group vs all remaining classes |
+| `"explicit"` | both `positive` and `negative` given | Cartesian product of positive × negative groups |
 
 ```python
-def _to_sides(val: UserComparisonSpec, all_labels: list[str]) -> list[ComparisonSide]:
+def _to_groups(val: UserComparisonSpec) -> list[ComparisonGroup]:
+    """Wrap a single group in a list; pass through a list unchanged."""
     if isinstance(val, (str, tuple)):
         return [val]
     return list(val)
 
-# Mode detection (after mutual-exclusion checks in run_classification())
+
+# ── Mode detection ──────────────────────────────────────────────────────
+# (mutual-exclusion checks happen earlier in run_classification())
+
 if isinstance(comparisons, pd.DataFrame):
     mode = "design_table"
 
 elif comparisons == "all_pairs":
     mode = "all_pairs"
-    # positive= accepted as a scope filter (list only; scalar already blocked)
+
+    # positive= is accepted as a scope filter (which classes to pair)
     class_scope: list[str] = (
-        list(positive) if positive is not None else sorted(available_labels)
+        list(positive) if positive is not None
+        else sorted(available_labels)
     )
-    # Tuples forbidden in scope for all_pairs
+
+    # Pooled tuples don't make sense for all_pairs — only single labels
     for i, s in enumerate(class_scope):
         if isinstance(s, tuple):
             raise ValueError(
@@ -284,57 +333,83 @@ elif comparisons == "all_pairs":
 
 elif comparisons in ("all_vs_rest", None) and negative is None:
     mode = "rest"
-    pos_sides = _to_sides(positive, sorted(available_labels)) if positive is not None \
-                else list(sorted(available_labels))
 
-else:  # comparisons is None, negative is not None
+    # Each positive group will be compared against "the rest"
+    positive_groups = (
+        _to_groups(positive) if positive is not None
+        else [label for label in sorted(available_labels)]
+    )
+
+else:
+    # comparisons is None, negative is provided → explicit mode
     mode = "explicit"
-    pos_sides = _to_sides(positive, sorted(available_labels)) if positive is not None \
-                else list(sorted(available_labels))
-    neg_sides = _to_sides(negative, sorted(available_labels))
+
+    positive_groups = (
+        _to_groups(positive) if positive is not None
+        else [label for label in sorted(available_labels)]
+    )
+    negative_groups = _to_groups(negative)
 ```
 
 ### Step 3 — Canonicalize pooled tuples
 
+Sort and deduplicate elements inside pooled tuples so that
+`("homo", "crispant")` and `("crispant", "homo")` become the same canonical
+form `("crispant", "homo")`. This ensures deterministic comparison IDs.
+
+Single class labels (strings) pass through unchanged.
+
 ```python
-def _canonicalize_side(side: ComparisonSide) -> ComparisonSide:
-    if isinstance(side, tuple):
-        result = tuple(sorted(set(side)))
-        if len(result) < 2:
-            raise ValueError(
-                f"Pooled tuple collapsed to < 2 unique elements after deduplication: {side!r}"
-            )
-        return result
-    return side
+def _canonicalize_group(group: ComparisonGroup) -> ComparisonGroup:
+    """Sort + dedupe a pooled tuple. Pass strings through unchanged."""
+    if isinstance(group, str):
+        return group
+
+    result = tuple(sorted(set(group)))
+    if len(result) < 2:
+        raise ValueError(
+            f"Pooled tuple collapsed to fewer than 2 unique elements "
+            f"after deduplication: {group!r}"
+        )
+    return result
+
 
 if mode == "explicit":
-    pos_sides = [_canonicalize_side(s) for s in pos_sides]
-    neg_sides = [_canonicalize_side(s) for s in neg_sides]
+    positive_groups = [_canonicalize_group(g) for g in positive_groups]
+    negative_groups = [_canonicalize_group(g) for g in negative_groups]
+
 elif mode == "rest":
-    pos_sides = [_canonicalize_side(s) for s in pos_sides]
-# all_pairs and design_table: sides are strings, canonicalization is a no-op
+    positive_groups = [_canonicalize_group(g) for g in positive_groups]
+
+# all_pairs and design_table: groups are plain strings, no canonicalization needed
 ```
 
 ### Step 4 — Expand to raw pairs (mode-dependent)
+
+Turn the groups into `(positive_group, negative_group)` pairs.
+Each pair will become one binary classification task.
 
 ```python
 from itertools import product, combinations
 
 if mode == "explicit":
-    # Cartesian product: every positive × every negative
-    # "list enumerates" rule: [A, B] × [C, D] → (A,C), (A,D), (B,C), (B,D)
-    raw_pairs = list(product(pos_sides, neg_sides))
+    # Every positive group × every negative group (Cartesian product).
+    # Example: positives=[A, B], negatives=[C, D] → (A,C), (A,D), (B,C), (B,D)
+    raw_pairs = list(product(positive_groups, negative_groups))
 
 elif mode == "rest":
-    # Defer negative — computed per-positive in Step 7
-    raw_pairs = [(p, None) for p in pos_sides]
+    # Negative side is not known yet — it gets filled in at Step 7.
+    # Use None as a placeholder for now.
+    raw_pairs = [(pg, None) for pg in positive_groups]
 
 elif mode == "all_pairs":
-    # Unordered combinations; deterministic direction = alphabetical (a < b → a is positive)
+    # Every unordered pair of single labels.
+    # Direction is alphabetical: the earlier label is always "positive".
     labels = sorted(class_scope)
     raw_pairs = [(a, b) for a, b in combinations(labels, 2)]
 
 elif mode == "design_table":
+    # Pairs come directly from the user's DataFrame.
     _validate_design_table(comparisons)
     raw_pairs = [
         (row["positive"], row["negative"])
@@ -344,22 +419,41 @@ elif mode == "design_table":
 
 ### Step 5 — Overlap check
 
-```python
-def _members(side: ComparisonSide) -> set[str]:
-    return {side} if isinstance(side, str) else set(side)
+The same class label cannot appear on both sides of a comparison.
+For example, `positive=("wt", "het")` vs `negative=("het", "mut")` is
+invalid because `"het"` is on both sides.
 
-for pos_side, neg_side in raw_pairs:
-    if neg_side is None:
-        continue  # rest-mode: skip until Step 7
-    overlap = _members(pos_side) & _members(neg_side)
+This is always enforced — there is no opt-out flag.
+
+```python
+def _members(group: ComparisonGroup) -> set[str]:
+    """Return the set of class labels in a group."""
+    if isinstance(group, str):
+        return {group}
+    return set(group)
+
+for pos_group, neg_group in raw_pairs:
+    # In rest-mode, the negative side hasn't been filled in yet (Step 7)
+    if neg_group is None:
+        continue
+
+    overlap = _members(pos_group) & _members(neg_group)
     if overlap:
         raise ValueError(
-            f"Comparison ({pos_side!r} vs {neg_side!r}) has overlapping class labels: "
-            f"{sorted(overlap)}. The same label cannot appear on both sides."
+            f"Comparison ({pos_group!r} vs {neg_group!r}) has overlapping "
+            f"class labels: {sorted(overlap)}. "
+            f"The same label cannot appear on both sides."
         )
 ```
 
 ### Step 6 — Label existence check (pure)
+
+Make sure every class label referenced in the pairs actually exists
+in the data. This catches typos early — before any computation starts.
+
+This is a pure function (no DataFrame access). The caller passes
+`available_labels = set(df[class_col].unique())` before calling
+`resolve_comparisons()`.
 
 ```python
 def _check_labels_exist(
@@ -367,16 +461,21 @@ def _check_labels_exist(
     available_labels: set[str],
     class_col: str,
 ) -> None:
+    """Error if any label in raw_pairs is not in available_labels."""
+
+    # Collect every label mentioned across all pairs
     referenced = set()
-    for pos_side, neg_side in raw_pairs:
-        referenced |= _members(pos_side)
-        if neg_side is not None:
-            referenced |= _members(neg_side)
+    for pos_group, neg_group in raw_pairs:
+        referenced |= _members(pos_group)
+        if neg_group is not None:
+            referenced |= _members(neg_group)
+
+    # Check for unknown labels
     unknown = referenced - available_labels
     if unknown:
         raise ValueError(
-            f"Class labels not found in {class_col!r}: {sorted(unknown)}. "
-            f"Available: {sorted(available_labels)}"
+            f"Class labels not found in column {class_col!r}: {sorted(unknown)}. "
+            f"Available labels: {sorted(available_labels)}"
         )
 
 _check_labels_exist(raw_pairs, available_labels, class_col)
@@ -384,17 +483,27 @@ _check_labels_exist(raw_pairs, available_labels, class_col)
 
 ### Step 7 — Rest expansion (rest-mode only)
 
+In rest-mode, the negative side was left as `None` in Step 4.
+Now fill it in: for each positive group, "rest" = all other labels
+that are not in the positive group.
+
 ```python
 if mode == "rest":
     expanded = []
-    for pos_side, _ in raw_pairs:
-        rest = tuple(sorted(available_labels - _members(pos_side)))
-        if len(rest) == 0:
+
+    for pos_group, _ in raw_pairs:
+        # "Rest" is every available label that's NOT in the positive group
+        rest_labels = sorted(available_labels - _members(pos_group))
+
+        if len(rest_labels) == 0:
             raise ValueError(
-                f"No remaining classes to form 'rest' for positive={pos_side!r}. "
-                f"All available labels are in the positive side."
+                f"No remaining classes to form 'rest' for "
+                f"positive={pos_group!r}. "
+                f"All available labels are already in the positive group."
             )
-        expanded.append((pos_side, rest))
+
+        expanded.append((pos_group, tuple(rest_labels)))
+
     raw_pairs = expanded
 ```
 
@@ -413,17 +522,36 @@ raw_pairs = deduped
 
 ### Step 9 — Convert to `ResolvedComparison`
 
+Convert each `(positive_group, negative_group)` pair into a
+`ResolvedComparison` dataclass. This is the final internal
+representation that the backend receives.
+
 ```python
 def _sanitize_id(label: str) -> str:
+    """Replace non-filesystem-safe characters with underscores."""
     import re
     return re.sub(r"[^A-Za-z0-9._-]", "_", label)
 
-def _to_resolved(pos_side: ComparisonSide, neg_side: ComparisonSide) -> ResolvedComparison:
-    pos_members = (pos_side,) if isinstance(pos_side, str) else pos_side
-    neg_members = (neg_side,) if isinstance(neg_side, str) else neg_side
+
+def _to_resolved(
+    pos_group: ComparisonGroup,
+    neg_group: ComparisonGroup,
+) -> ResolvedComparison:
+    """Build a ResolvedComparison from one (positive, negative) pair."""
+
+    # Normalize to tuples so members are always iterable
+    pos_members = (pos_group,) if isinstance(pos_group, str) else pos_group
+    neg_members = (neg_group,) if isinstance(neg_group, str) else neg_group
+
+    # Human-readable labels: "crispant+homo", "het+wildtype"
     positive_label = "+".join(pos_members)
     negative_label = "+".join(neg_members)
-    comparison_id = _sanitize_id(positive_label) + "__vs__" + _sanitize_id(negative_label)
+
+    # Filesystem-safe ID: "crispant_homo__vs__het_wildtype"
+    comparison_id = (
+        _sanitize_id(positive_label) + "__vs__" + _sanitize_id(negative_label)
+    )
+
     return ResolvedComparison(
         positive_members=pos_members,
         negative_members=neg_members,
@@ -432,17 +560,22 @@ def _to_resolved(pos_side: ComparisonSide, neg_side: ComparisonSide) -> Resolved
         comparison_id=comparison_id,
     )
 
-resolved: list[ResolvedComparison] = [_to_resolved(p, n) for p, n in raw_pairs]
 
-# Collision detection — comparison_ids must be unique
+resolved: list[ResolvedComparison] = [
+    _to_resolved(pos, neg) for pos, neg in raw_pairs
+]
+
+# ── Collision detection ─────────────────────────────────────────────────
+# comparison_ids must be unique. Collisions happen when class labels
+# differ only in characters that get sanitized (spaces, slashes, etc.).
 ids = [rc.comparison_id for rc in resolved]
 dupes = [cid for cid in ids if ids.count(cid) > 1]
 if dupes:
     raise ValueError(
         f"comparison_id collision: {sorted(set(dupes))}. "
         f"Distinct comparisons produced the same filesystem-safe ID. "
-        f"This typically happens when class labels differ only in characters "
-        f"that get sanitized (spaces, slashes, etc.)."
+        f"This typically happens when class labels differ only in "
+        f"characters that get sanitized (spaces, slashes, etc.)."
     )
 ```
 
@@ -562,8 +695,8 @@ comparisons = None
 **Step 1:** Both sides are valid tuples with ≥ 2 strings. ✓
 
 **Step 2:** `comparisons=None`, `negative` is not None → `mode = "explicit"`.
-- `pos_sides = [("homo", "crispant")]`
-- `neg_sides = [("wildtype", "het")]`
+- `positive_groups = [("homo", "crispant")]`
+- `negative_groups = [("wildtype", "het")]`
 
 **Step 3:** Canonicalize:
 - `("homo", "crispant")` → `("crispant", "homo")` (sorted)
@@ -1763,8 +1896,8 @@ classification/
     __init__.py
     comparison_resolution.py      resolve_comparisons(), ResolvedComparison,
                                   check_min_samples(), all validators
-                                  (_validate_comparison_side,
-                                  _canonicalize_side, _check_labels_exist, etc.)
+                                  (_validate_group, _canonicalize_group,
+                                  _check_labels_exist, etc.)
     loop.py                       _run_classification_loop(), _bin_and_aggregate(),
                                   _build_binary_labels(), _collect_scores(),
                                   _collect_predictions(), _collect_confusion()
