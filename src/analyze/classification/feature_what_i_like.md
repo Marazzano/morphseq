@@ -9,7 +9,9 @@ resolution contract. It supersedes the previous conversation dump.
 
 ## Guiding principles
 
-1. **DataFrame-first.** Input is always a plain `pd.DataFrame`. No wrapper object required.
+1. **DataFrame-first for the main dataset.** The primary data input is always a plain
+   `pd.DataFrame` (no wrapper object required). Comparison specs may be passed in convenient
+   Python forms and are normalized immediately.
 2. **Multi-feature is the native unit of thought.** `features={}` dict is always named; the
    results table always has a `feature_set` column.
 3. **One entry point.** `run_classification()` covers all modes. No `run_ovr()`, `run_pairwise()` siblings.
@@ -128,7 +130,7 @@ Their roles are different:
 | set (scope) | omitted | `"all_vs_rest"` | all-vs-rest (scoped) | same as above, explicit scheme |
 | set (scope) | omitted | `"all_pairs"` | all-pairs (scoped) | every unordered pair within scope |
 | set | set | omitted | explicit | Cartesian product of positive × negative groups |
-| omitted | omitted | `pd.DataFrame` or `list[dict]` | explicit design | pairs come from rows |
+| omitted | omitted | `pd.DataFrame` or `list[dict]` | manual design (`explicit_design`) | pairs come from rows |
 
 #### Hard mutual-exclusion errors
 
@@ -163,7 +165,7 @@ results = run_classification(
     n_permutations=100,
 )
 
-# 3. Advanced — explicit design (list[dict] is the ergonomic form)
+# 3. Advanced — manual design (list[dict] is the ergonomic form)
 results = run_classification(
     df, class_col="genotype", id_col="embryo_id", time_col="predicted_stage_hpf",
     comparisons=[
@@ -214,13 +216,19 @@ ComparisonGroup = ClassLabel | PooledGroup  # one group of labels on one side of
 UserComparisonSpec = ClassLabel | PooledGroup | list[ClassLabel | PooledGroup]
 
 # What comparisons= accepts
+class ComparisonRow(TypedDict):
+    positive: ComparisonGroup
+    negative: ComparisonGroup
+
 ComparisonScheme = (
     Literal["all_vs_rest", "all_pairs"]
     | pd.DataFrame
-    | list[dict[str, ComparisonGroup]]   # row-oriented: [{"positive": ..., "negative": ...}]
+    | list[ComparisonRow]                # row-oriented: [{"positive": ..., "negative": ...}]
     | None
 )
 ```
+
+For manual design rows, only `{"positive": ..., "negative": ...}` keys are valid.
 
 **Why `ComparisonGroup`?** Each comparison has two sides (positive vs negative).
 A `ComparisonGroup` is one of those sides — either a single class label like `"wt"`,
@@ -787,7 +795,7 @@ Everything downstream of this function (CV, AUROC, permutation) sees only `_y` a
 unaware that pooling occurred.
 
 ```python
-def build_binary_labels(
+def _build_binary_labels(
     df: pd.DataFrame,
     class_col: str,
     comparison: ResolvedComparison,
@@ -994,6 +1002,9 @@ one table, regardless of whether the run was all-vs-rest or pairwise.
 ### Relationship to the misclassification pipeline
 
 **These are two different prediction tables for two different purposes.**
+
+`run_misclassification_pipeline()` consumes a `ClassificationAnalysis` object
+and reads its `multiclass_predictions` layer.
 
 The tidy binary table above is the new standard for per-comparison
 diagnostics (AUROC breakdowns, per-embryo accuracy in binary tasks).
@@ -1217,6 +1228,16 @@ class ClassificationAnalysis:
         from .viz.auroc_over_time import plot_aurocs_over_time
         return plot_aurocs_over_time(self.scores, curve_col=curve_col,
                                      facet_col=facet_col, **kwargs)
+
+    def plot_confusion(self, **kwargs):
+        conf = self.layers.get("confusion")
+        if conf is None:
+            raise KeyError(
+                "No confusion layer available. "
+                "Re-run run_classification() — confusion is saved automatically."
+            )
+        from .viz.confusion import plot_confusion
+        return plot_confusion(self.scores, conf, **kwargs)
 
     # Persistence
     def save(self, path, overwrite=False) -> Path:
@@ -1526,21 +1547,33 @@ cryptic KeyError downstream.
 
 These renames are locked. Apply during implementation; do not preserve old names in new code.
 
+#### Renamed
+
 | Old name | New name | Scope |
 |---|---|---|
 | `_permutation_test_ovr()` | `_permutation_test_binary()` | engine/loop.py |
 | `auroc_observed` | `auroc_obs` | everywhere (inner loop, scores, plotters) |
-| `positive_class` / `negative_class` | dropped — use `positive_label` / `negative_label` from `ResolvedComparison` | scores assembly |
 | `_validate_group()` | `_validate_group_input()` | engine/comparison_resolution.py |
 | `_to_groups()` | `_as_group_list()` | engine/comparison_resolution.py |
 | `_members()` | `_group_members()` | engine/comparison_resolution.py |
 | `_collect_predictions()` | `_collect_binary_predictions()` | engine/loop.py |
 | `embryo_predictions_augmented.parquet` | `multiclass_predictions.parquet` | on-disk, `_LazyLayers._REGISTRY` |
-| `ComparisonSpec` | legacy shim only — no new internal use | results.py (shim) |
-| `run_multiclass_classification_test` | legacy shim only — routes to `run_classification` | classification_test.py (shim) |
-| `_auroc_col()` / `_time_col()` | deleted — columns are always `auroc_obs` and `time_bin_center` | plotters |
 | `plot_confusion_profile` | `plot_confusion` | viz/confusion.py |
 | `design_table` (mode name) | `explicit_design` | mode resolution, comments |
+
+#### Deleted
+
+| Old name | Replacement / note | Scope |
+|---|---|---|
+| `positive_class` / `negative_class` | dropped — use `positive_label` / `negative_label` from `ResolvedComparison` | scores assembly |
+| `_auroc_col()` / `_time_col()` | deleted — columns are always `auroc_obs` and `time_bin_center` | plotters |
+
+#### Retained only as legacy shim
+
+| Old name | Shim behavior | Scope |
+|---|---|---|
+| `ComparisonSpec` | legacy shim only — no new internal use | results.py (shim) |
+| `run_multiclass_classification_test` | legacy shim only — routes to `run_classification` | classification_test.py (shim) |
 
 ### Normalization boundary
 
@@ -1555,7 +1588,7 @@ This keeps the DataFrame validation path as the single code path for manual desi
 ### Canonical assembly boundaries
 
 - **`_collect_scores()`** — the only place that assembles identity keys + result keys into a scores row
-- **`build_binary_labels()`** — the only place that knows about pooling and constructs `_y`
+- **`_build_binary_labels()`** — the only place that knows about pooling and constructs `_y`
 - **`_collect_binary_predictions()`** — the only place that assembles tidy binary prediction rows
 - **`_collect_multiclass_predictions()`** — the only place that assembles wide multiclass rows
 
@@ -1567,7 +1600,7 @@ No other code should build these row schemas.
 |---|---|---|
 | `scores.parquet` | always | core contract |
 | `metadata.json` | always | provenance + comparison membership |
-| `confusion.parquet` | always | cheap, captures error asymmetry even in binary tasks |
+| `confusion.parquet` | always | aggregated at the same time-bin granularity as scores; compact enough to save by default while capturing error asymmetry even in binary tasks |
 | `predictions.parquet` | off (`save_predictions=True`) | can be large; diagnostic |
 | `multiclass_predictions.parquet` | off (`save_multiclass_predictions=True`) | can be large; only needed by misclassification pipeline |
 | `null_distributions.npz` | off (`save_null_arrays=True`) | summary stats always in scores; raw arrays are diagnostic |
@@ -1635,206 +1668,6 @@ uns = {
 def _listify(val: str | list[str]) -> list[str]:
     return [val] if isinstance(val, str) else list(val)
 ```
-
-  ---
-  The internal factory line, named clearly
-
-  run_classification(df, ...)              ← orchestrator in run_classification.py
-      │
-      ├─ 1. _resolve_feature_columns()        → list[str] per feature set
-      ├─ 2. resolve_comparisons()             → list[ResolvedComparison] (Steps 1–5)
-      ├─ 2b. check_min_samples()              → validate sample counts (Step 6)
-      ├─ 3. _build_binary_labels()            → filtered df with _y column
-      ├─ 4. _bin_and_aggregate()              → df binned by (id_col, time_bin)
-      ├─ 5. _run_classification_loop()        → raw per-bin results dict
-      │       ├─ cross_val_predict()          → probabilities
-      │       ├─ roc_auc_score()              → auroc_obs
-      │       └─ _permutation_test_binary()      → null_aurocs → pval, null_mean, null_std
-      │                                         (n_jobs execution strategy is implementation-defined)
-      ├─ 6. _collect_scores()                 → scores DataFrame (THE canonical table)
-      ├─ 7a. _collect_binary_predictions()           → tidy binary predictions (save_predictions=True)
-      ├─ 7b. _collect_multiclass_predictions()→ wide multiclass predictions (all-vs-rest,
-      │                                          save_multiclass_predictions=True)
-      └─ 8. _collect_confusion()              → confusion_profile DataFrame (always emitted)
-
-  Each step is currently tangled inside _run_multiclass_classification and run_classification_test. The names above are what
-  they should be called after cleanup.
-
-  ---
-  What each step produces and what's wrong with it today
-
-  Step 5 output — raw per-bin dict (inside _run_multiclass_classification)
-
-  Currently produces two different column name sets depending on the path:
-
-  # Inner loop output (lines 369-387)
-  {
-      "auroc_observed": ...,      # ← wrong name, gets renamed at boundary
-      "positive_class": ...,      # ← duplicate of positive added later
-      "negative_class": "Rest",   # ← only in all-vs-rest path
-      "time_bin": int(t),
-      "time_bin_center": ...,
-      ...
-  }
-
-  Fix: rename auroc_observed → auroc_obs here, inside the loop. Drop positive_class and negative_class entirely — they're not
-  needed; positive_label and negative_label come from the ResolvedComparison.
-
-  Step 6 — _collect_scores() (currently lines 725–742, 806–822)
-
-  This is the boundary where per-comparison results get merged with ResolvedComparison metadata. Currently it does column
-  renaming at this boundary (auroc_observed → auroc_obs), adds positive/negative from the spec, and serializes negative_members
-  as a JSON string.
-
-  The clean version:
-
-  def _collect_scores(
-      bin_results: list[dict],          # raw rows from step 5
-      comparison: ResolvedComparison,
-      feature_set: str,
-  ) -> list[dict]:
-      rows = []
-      for r in bin_results:
-          rows.append({
-              # identity keys
-              "feature_set":     feature_set,
-              "comparison_id":   comparison.comparison_id,
-              "positive_label":  comparison.positive_label,
-              "negative_label":  comparison.negative_label,
-              # time
-              "time_bin_center": r["time_bin_center"],
-              "time_bin":        r["time_bin"],
-              "bin_width":       r["bin_width"],
-              # results
-              "auroc_obs":       r["auroc_obs"],          # renamed in step 5
-              "pval":            r["pval"],
-              "n_pos":           r["n_positive"],
-              "n_neg":           r["n_negative"],
-              # null summary (optional but standard)
-              "auroc_null_mean": r.get("auroc_null_mean"),
-              "auroc_null_std":  r.get("auroc_null_std"),
-              "n_permutations":  r.get("auroc_n_permutations"),
-          })
-      return rows
-
-  What gets dropped: positive_class, negative_class, negative_mode, groupby (repeated every row — move to metadata),
-  negative_members JSON blob (move to metadata keyed by comparison_id).
-
-  Step 7 — _collect_binary_predictions() (currently lines 402–429)
-
-  Currently wide-format with pred_proba_{class} columns for every class — only works for the multiclass all-vs-rest path. For
-  pairwise comparisons it's never populated.
-
-  The clean version — binary per comparison:
-
-  # One row per (embryo_id, time_bin_center, comparison_id, feature_set)
-  {
-      "feature_set":     feature_set,
-      "comparison_id":   comparison.comparison_id,
-      "embryo_id":       eid,
-      "time_bin_center": ...,
-      "y_true":          1 or 0,     # binary label for THIS comparison
-      "p_pos":           float,      # probability of positive side
-      "y_pred":          1 or 0,     # hard call
-      "is_correct":      bool,
-  }
-
-  This works for every mode — all-vs-rest, pairwise, all-pairs. The multiclass pred_proba_{class} columns live in the
-  `multiclass_predictions` layer (`save_multiclass_predictions=True`, all-vs-rest only) — a named first-class artifact,
-  but not the primary predictions contract.
-
-  Step 8 — _collect_confusion() (currently extract_temporal_confusion_profile)
-
-  This is fine — just needs feature_set and comparison_id added, and time_bin_center as the canonical time key instead of
-  time_bin.
-
-  ---
-  The canonical scores table — exact column contract
-
-  REQUIRED (always present, never null):
-    feature_set      str     name from features={} dict
-    comparison_id    str     "homo__vs__wildtype_het"
-    positive_label   str     "homo" or "homo+crispant"
-    negative_label   str     "wildtype" or "wildtype+het"
-    time_bin_center  float   canonical x-axis for all plots
-    auroc_obs        float   observed AUROC
-
-  STANDARD (present unless n_permutations=0):
-    pval             float
-    auroc_null_mean  float
-    auroc_null_std   float
-    n_permutations   int
-    n_pos            int
-    n_neg            int
-
-  OPTIONAL:
-    time_bin         int     bin start (useful as join key, not for plotting)
-    bin_width        float
-
-  Key invariants:
-  - (feature_set, comparison_id, time_bin_center) is the unique key — no duplicates
-  - No JSON blobs, no list-in-cell
-  - No positive_class / negative_class alias columns
-  - auroc_obs is the one AUROC column name — no alias fallback needed anywhere
-
-  Where negative_members / positive_members live:
-  In metadata["comparisons"] keyed by comparison_id:
-
-  {
-    "comparisons": {
-      "homo__vs__wildtype_het": {
-        "positive_members": ["homo"],
-        "negative_members": ["wildtype", "het"],
-        "positive_label": "homo",
-        "negative_label": "wildtype+het"
-      }
-    }
-  }
-
-  ---
-  What the plotter needs from scores
-
-  plot_aurocs_over_time currently checks for auroc_obs/auroc_observed via _auroc_col() and time_bin_center/time_bin via
-  _time_col(). Under the new contract those alias helpers are deleted — the columns are always auroc_obs and time_bin_center, no
-   fallback needed.
-
-  The plotter already uses curve_col="positive" and facet_col="feature_set" as optional parameters. Under the new contract:
-
-  # multi-feature, single comparison → facet by feature_set
-  plot_aurocs_over_time(results.scores, curve_col="positive_label", facet_col="feature_set")
-
-  # single feature, multi-comparison → curves by positive_label
-  plot_aurocs_over_time(results.scores, curve_col="positive_label")
-
-  No alias logic, no dict-of-DataFrames, no intermediate reshaping.
-
-  ---
-  The null_summary table — verdict
-
-  Delete it. The null stats (auroc_null_mean, auroc_null_std, n_permutations) are already in scores. The only reason to have a
-  separate null_summary table is if you store raw per-permutation arrays, which isn't implemented. Until that's needed,
-  null_summary is pure redundancy. Remove the slot from ClassificationAnalysis and remove the separate parquet file from save().
-
-  ---
-  Summary: what changes where
-
-  ┌─────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────┐
-  │           Location                  │                                 Change                                   │
-  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ run_classification.py (new)         │ Orchestrator: wires engine pieces, calls resolve → check → loop → build  │
-  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ engine/loop.py (new)                │ Inner loop: auroc_obs (not auroc_observed), no positive_class/neg_class  │
-  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ engine/comparison_resolution.py     │ resolve_comparisons() Steps 1–5 + check_min_samples() standalone        │
-  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ engine/analysis.py (new)            │ ClassificationAnalysis, _LazyLayers, _validate_scores                    │
-  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ engine/null.py (new)                │ NullDistributions save/load                                              │
-  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ results.py (legacy)                 │ FutureWarning shim for MulticlassOVRResults, ComparisonSpec              │
-  ├─────────────────────────────────────┼──────────────────────────────────────────────────────────────────────────┤
-  │ Plotters                            │ Delete _auroc_col() / _time_col() alias helpers                          │
-  └─────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────┘
 
 ---
 
@@ -2240,7 +2073,9 @@ classification/
                                   _check_labels_exist, etc.)
     loop.py                       _run_classification_loop(), _bin_and_aggregate(),
                                   _build_binary_labels(), _collect_scores(),
-                                  _collect_binary_predictions(), _collect_confusion()
+                                  _collect_binary_predictions(),
+                                  _collect_multiclass_predictions(),
+                                  _collect_confusion()
     null.py                       NullDistributions dataclass + save/load
     analysis.py                   ClassificationAnalysis, _LazyLayers,
                                   _validate_scores, _listify
