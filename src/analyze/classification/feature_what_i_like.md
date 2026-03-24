@@ -947,8 +947,43 @@ Works for every mode (all-vs-rest, pairwise, all-pairs). One row per
 }
 ```
 
-The multiclass `pred_proba_{class}` wide format is NOT part of the primary predictions
-contract. If needed, expose as a separate optional "multiclass_predictions" layer.
+### Relationship to the misclassification pipeline
+
+**These are two different prediction tables for two different purposes.**
+
+The tidy binary table above is the new standard for per-comparison
+diagnostics (AUROC breakdowns, per-embryo accuracy in binary tasks).
+
+The misclassification pipeline (`run_misclassification_pipeline`) requires
+a **separate wide multiclass format** — `embryo_predictions_augmented.parquet` —
+with one row per `(embryo_id, time_bin)` and wide `pred_proba_{class}` columns
+for every class. This format is needed because:
+
+- **Trajectory analysis** (`trajectory.py`) builds feature matrices from
+  full per-class probability vectors (soft, delta, residual stages).
+  `p_pos` alone is insufficient — it doesn't say *which* classes the model
+  confused the embryo with.
+- **Top-confused-as analysis** (`null.py`) permutes `pred_class` to test
+  whether an embryo's confusion pattern is non-random. This needs the
+  original multiclass identity, not a binary collapse.
+- **`io.py` validation** requires `pred_proba_*` columns that sum to ~1.0
+  per row — a hard contract.
+
+The binary predictions table does **not** replace the wide multiclass one.
+They coexist:
+
+| Table | Shape | Saved by | Consumed by |
+|---|---|---|---|
+| `predictions.parquet` (tidy binary) | (id, time_bin, comparison, feature_set) → y_true, p_pos | `run_classification()` | scores plots, per-comparison diagnostics |
+| `embryo_predictions_augmented.parquet` (wide multiclass) | (id, time_bin) → true_class, pred_class, pred_proba_* | `run_classification()` (all-vs-rest mode) | misclassification pipeline |
+
+The wide table is only meaningful for all-vs-rest runs where the model
+sees all classes simultaneously. For pairwise or explicit comparisons,
+the binary table is the right artifact.
+
+**Bridge for v2:** A future utility could reconstruct the wide format from
+a complete set of all-vs-rest binary predictions, but this is not required
+for the initial implementation.
 
 ---
 
@@ -1123,13 +1158,15 @@ class _LazyLayers:
 
     Layers
     ------
-    "predictions"  pd.DataFrame    predictions.parquet
-    "confusion"    pd.DataFrame    confusion.parquet
-    "null_full"    NullDistributions  null_distributions.npz
+    "predictions"              pd.DataFrame         predictions.parquet (tidy binary)
+    "multiclass_predictions"   pd.DataFrame         embryo_predictions_augmented.parquet (wide)
+    "confusion"                pd.DataFrame         confusion.parquet
+    "null_full"                NullDistributions     null_distributions.npz
     """
 
     _REGISTRY: dict[str, tuple[str, str]] = {
-        "predictions": ("predictions.parquet", "parquet"),
+        "predictions":             ("predictions.parquet", "parquet"),
+        "multiclass_predictions":  ("embryo_predictions_augmented.parquet", "parquet"),
         "confusion":   ("confusion.parquet",   "parquet"),
         "null_full":   ("null_distributions.npz", "nulls"),
     }
@@ -1346,11 +1383,12 @@ def _validate_scores(df: pd.DataFrame) -> None:
 
 ```
 my_run/
-  scores.parquet            ← always
-  metadata.json             ← always (uns dict)
-  predictions.parquet       ← optional (save_predictions=True)
-  confusion.parquet         ← always
-  null_distributions.npz    ← optional (save_null_arrays=True)
+  scores.parquet                          ← always
+  metadata.json                           ← always (uns dict)
+  predictions.parquet                     ← optional (save_predictions=True) — tidy binary
+  embryo_predictions_augmented.parquet    ← optional (all-vs-rest mode) — wide multiclass
+  confusion.parquet                       ← always
+  null_distributions.npz                  ← optional (save_null_arrays=True)
 ```
 
 ---
@@ -1362,7 +1400,8 @@ my_run/
 | Null stats (mean/std/n) | columns in `scores` | always | free, always useful |
 | Raw null arrays | `null_distributions.npz` via `NullDistributions` | off (`save_null_arrays=True`) | diagnostic only |
 | Confusion profile | `confusion.parquet` | always (all modes) | cheap; captures error asymmetry |
-| Predictions | `predictions.parquet` | off (`save_predictions=True`) | grows with scale |
+| Predictions (binary) | `predictions.parquet` | off (`save_predictions=True`) | per-comparison diagnostics |
+| Predictions (multiclass) | `embryo_predictions_augmented.parquet` | on for all-vs-rest | required by misclassification pipeline |
 
 ---
 
