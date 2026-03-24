@@ -934,6 +934,13 @@ def _collect_scores(
 Works for every mode (all-vs-rest, pairwise, all-pairs). One row per
 (id_col, time_bin_center, comparison_id, feature_set).
 
+**`p_pos` is the raw model probability for all modes.** For a
+`homo_vs_wildtype` comparison, `p_pos = 0.87` means the model thinks
+there's an 87% chance this embryo-at-this-timepoint belongs to the
+positive group. You can plot it per embryo over time, check calibration,
+or inspect which embryos the model is uncertain about — all from this
+one table, regardless of whether the run was all-vs-rest or pairwise.
+
 ```python
 {
     "feature_set":     str,
@@ -941,8 +948,8 @@ Works for every mode (all-vs-rest, pairwise, all-pairs). One row per
     id_col:            str,    # uses the actual id_col name (e.g. "embryo_id")
     "time_bin_center": float,
     "y_true":          int,    # 1 = positive side, 0 = negative side
-    "p_pos":           float,  # probability of positive class
-    "y_pred":          int,    # hard call
+    "p_pos":           float,  # raw model probability of positive class
+    "y_pred":          int,    # hard call at 0.5 threshold
     "is_correct":      bool,
 }
 ```
@@ -979,7 +986,29 @@ They coexist:
 
 The wide table is only meaningful for all-vs-rest runs where the model
 sees all classes simultaneously. For pairwise or explicit comparisons,
-the binary table is the right artifact.
+the binary table is the right artifact — and `p_pos` is the raw probability
+you'd want to inspect.
+
+### Stacking and predictions
+
+`stack()` merges scores and `uns["comparisons"]`. **Prediction layers
+are intentionally not merged.**
+
+Scores are the thing you compare across runs. Predictions are the thing
+you inspect within a single run. Stacking predictions from different
+models — which may have seen different classes, had different training
+sets, or used different comparison modes — into one table would be
+misleading. Those probabilities aren't on the same scale.
+
+```python
+# Compare AUROC across runs → use the stacked object
+combined = results_ovr.stack(results_pw)
+combined.scores  # unified scores table
+
+# Inspect raw probabilities for a specific run → use the original
+results_pw.layers["predictions"]              # binary p_pos per embryo
+results_ovr.layers["multiclass_predictions"]  # wide pred_proba_* for misclassification
+```
 
 **Bridge for v2:** A future utility could reconstruct the wide format from
 a complete set of all-vs-rest binary predictions, but this is not required
@@ -1091,9 +1120,26 @@ class ClassificationAnalysis:
         return ClassificationAnalysis(scores=s.copy(), uns=self.uns,
                                       layers=self.layers._fork())
 
-    # Stacking — scores only; layers are NOT merged
+    # ── Stacking ─────────────────────────────────────────────────────────
+    #
+    # Merges scores and uns["comparisons"]. Prediction layers are NOT merged.
+    #
+    # This is intentional, not a gap. Scores are the thing you compare
+    # across runs. Predictions are the thing you inspect within a single
+    # run. Stacking predictions from different models (which saw different
+    # classes, had different training sets) into one table is misleading —
+    # those probabilities aren't on the same scale.
+    #
+    # To inspect raw probabilities for a specific comparison, use the
+    # original results object, not the stacked one:
+    #
+    #   results_ovr.layers["predictions"]              # binary p_pos table
+    #   results_ovr.layers["multiclass_predictions"]   # wide pred_proba_* table
+    #
+    # The stacked object is for cross-run comparison of summary statistics.
+
     def stack(self, other, on_conflict="error") -> "ClassificationAnalysis":
-        """Merge scores tables. Layers are not merged; stacked object is in-memory only."""
+        """Merge scores and uns['comparisons']. Layers are not merged."""
         new_keys = set(zip(other.scores["feature_set"], other.scores["comparison_id"]))
         existing = set(zip(self.scores["feature_set"], self.scores["comparison_id"]))
         overlap  = new_keys & existing
