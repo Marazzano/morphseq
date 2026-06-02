@@ -53,64 +53,128 @@ the contract for *everything after* it.
 
 ## 🌾 THE GRAIN TRANSITION (verified from the active Snakefile, 2026-06-02)
 
-Three zones. Transition points are sharp.
+**Four zones** (stitching pulled out of bootstrap into its own image-materialization
+zone). Transition points are sharp. Each stage is classified by two *independent* fields
+— `fanout` (where files land) and `execution` (how many jobs) — defined in the
+DESIGN PRINCIPLES section below.
 
-### Zone A — EXPERIMENT-GRAIN BOOTSTRAP  (must process the whole experiment)
-Families: `experiment_metadata/`, `built_image_data/`
+### Zone A — EXPERIMENT-GRAIN BOOTSTRAP  (needs the raw blob before wells exist)
+Family: `experiment_metadata/` · all stages `fanout=experiment, execution=single`
 | Stage | Output (under `{output_root}`) | Why it can't be per-well |
 |---|---|---|
 | `normalize_plate_metadata` | `experiment_metadata/{exp}/plate_metadata.csv` | the plate *is* the experiment |
 | `extract_scope_metadata_{scope}` | `experiment_metadata/{exp}/scope_metadata__{scope}.csv` | reads the whole raw file |
 | `map_series_to_wells` | `experiment_metadata/{exp}/series_well_mapping.csv` (+`.provenance.json`) | **this is where wells are discovered** |
 | `apply_series_mapping` | `experiment_metadata/{exp}/scope_metadata_mapped.csv` (+`.validated`) | joins mapping onto scope rows |
-| `build_stitched_images` | `built_image_data/{exp}/stitched_ff_images/{well}/{channel}/` | per-well *images*, but driven by the discovered well list (see fan-point note) |
-| `build_frame_contract` | `experiment_metadata/{exp}/frame_contract.csv` | the canonical frame-level contract |
+| `build_frame_contract` | `experiment_metadata/{exp}/frame_contract.csv` | the canonical frame-level contract; feeds the checkpoint |
+| `discover_wells` *(checkpoint)* | `experiment_metadata/{exp}/wells.txt` | filters contract wells → the canonical well list (global `well_id`) |
 
-### ⟱ FAN POINT — the well list now exists ⟱
-The first artifact that knows the full well set is **`series_well_mapping.csv`**
-(wells discovered) → solidified by **`frame_contract.csv`**. Everything after this can,
-in principle, run one-well-at-a-time. (`build_stitched_images` already iterates the
-discovered wells — likely the natural seam; confirm the "available wells" mechanism.)
+### ⟱ FAN POINT — `discover_wells` checkpoint (verified: Snakefile:427) ⟱
+The well list becomes a **first-class artifact** here: `wells.txt`, keyed on global
+`well_id`, emitted by the `discover_wells` Snakemake **checkpoint** (Snakefile:427),
+which `wells_for_experiment()` expands the per-well DAG from. This — not
+`series_well_mapping.csv` — is the true fan point. (Q1/Q3 RESOLVED.)
+> ⚠️ **Two redundant well-discovery paths exist today** — flag for consolidation
+> (plan Win 4/5): `_wells_from_mapping` (Snakefile:270, keyed on local `well_index`,
+> used only by stitching) vs. the `discover_wells` checkpoint (keyed on global
+> `well_id`). Collapse to one source of truth = the checkpoint.
 
-### Zone B — PER-WELL, THEN MERGED  (the only place `per_well/` exists today)
-Families: `segmentation_and_tracking/`, `processed_snips/`
-| Stage | Per-well shard | Merged artifact |
+### Zone B0 — IMAGE MATERIALIZATION  (`fanout=per_well, execution=single`)
+Family: `built_image_data/`
+| Stage | Output | fanout / execution |
+|---|---|---|
+| `build_stitched_images` | `built_image_data/{exp}/stitched_ff_images/{well}/{channel}/` | **per_well** output, **single** looping job |
+
+**Why its own zone:** stitching is *not* discovery — it *consumes* the discovered
+mapping to **materialize physical images** for downstream computation. That is a real
+boundary (bootstrap answers "what exists?"; stitching answers "materialize it"). But it
+is **well-addressable, not necessarily one-job-per-well**: the raw reader may prefer to
+open the experiment blob once. So `fanout=per_well` (well-organized output) while
+`execution=single` (one looping job) — the canonical proof the two fields are
+independent. Revisit `execution=per_well` only if it buys a real compute/staleness/debug
+win.
+
+### Zone B — PER-WELL COMPUTATION  (`fanout=per_well, execution=per_well`)
+Families today: `segmentation_and_tracking/`, `processed_snips/` (the only `per_well/`
+that exists). Target adds: `computed_features/`, `quality_control/`, `analysis_ready/`.
+| Stage | Per-well shard | Merged artifact (Zone C) |
 |---|---|---|
 | `segment_and_track_per_well` → `merge_segmentation_tracking` | `segmentation_and_tracking/{exp}/per_well/{well_id}/contracts/segmentation_tracking.csv` | `segmentation_and_tracking/{exp}/contracts/segmentation_tracking.csv` |
 | `run_snip_processing_per_well` → `merge_snip_manifests` | `processed_snips/{exp}/per_well/{well_id}/contracts/snip_manifest.parquet` | `processed_snips/{exp}/contracts/snip_manifest.parquet` |
+| *(Scope-5 target)* features / local QC / analysis_ready | `…/{exp}/per_well/{well_id}/…` | thin concat → Zone C |
 
-This is **already** the plan's Scope-5 pattern (per-well shard + merge), built and
-working — but only for these two stages.
+Segmentation + snips are **already** the plan's Scope-5 pattern (per-well shard +
+merge), built and working. Scope 5 extends this rhythm (`run_X_per_well → merge_X →
+validate_X`) to features/QC/analysis_ready.
 
-### Zone C — currently experiment-grain, but CONFIRMED per-well-able
-Families: `computed_features/`, `quality_control/`, `analysis_ready/`
-- Layout is 3-level: `family/{exp}/{stage_subfolder}/{file}` (+ `.validated` sentinel beside almost every CSV).
-  - e.g. `computed_features/{exp}/mask_geometry/mask_geometry_metrics.csv`,
-    `computed_features/{exp}/consolidated/consolidated_snip_features.csv`,
-    `quality_control/{exp}/death_detection/death_detection_flags.csv`.
-- **Experiment-grain in the layout today** — no `per_well/` written under Zone C yet.
-- **But it is per-well-able with certainty (mdcolon, known fact, 2026-06-02): every
-  Zone-C computation is per-snip / per-embryo — there is NO cross-well computation.**
-  Zone C is experiment-grain *only because* it reads the **merged** Zone-B contract.
-  **The merge is the sole barrier**, not any real cohort statistic. Feed Zone C a single
-  well's slice and every stage produces correct per-well output. This is no longer a
-  thing to verify — it is the green light to push Zone C to per-well (the target model
-  below).
+**Zone B target is CONFIRMED safe (mdcolon known fact + verified 2026-06-02):** every
+features/QC computation is per-snip / per-embryo — **zero cross-well computation.** The
+only thing making features/QC experiment-grain today is that they read the *merged*
+Zone-B contract; **the merge is the sole barrier**, not any cohort statistic. (Empirical
+check: the only percentile/quantile code is `build_sa_reference.py` — an **offline**
+reference-curve builder, *not* a Snakefile stage — and `embryo_qc` percentiles are
+per-embryo across Z-pairs. So there is **no cohort QC stage**.)
+
+### Zone C — MERGE / PUBLICATION  (thin concat at the END of the DAG; NOT "cohort")
+Families: `segmentation_and_tracking/`, `processed_snips/`, `computed_features/`,
+`quality_control/`, `analysis_ready/` (each `{exp}/contracts|consolidated/…`).
+- Pure **concatenation** of per-well shards into experiment-level publication tables.
+  Layout: `family/{exp}/{contracts|consolidated}/{file}` (+ `.validated` sentinel).
+- **It is *not* a cohort-computation zone** — verified above, nothing cross-well is
+  computed. "Merge/publication," not "cohort." Moves to the **end** of the DAG so it
+  stops acting as a mid-pipeline barrier.
 
 ---
 
 ## 🧭 DESIGN PRINCIPLES WE'VE LOCKED (from this discussion)
 
-Three orthogonal axes — keep them separate or the model gets muddy:
+Orthogonal axes — keep them separate or the model gets muddy:
 
 | Axis | Question | Lives in | Notes |
 |---|---|---|---|
 | **identity** | "What is this object's canonical name?" | the **data** | `well_id = {exp}_{well}`, the through-line in *rows* AND in the canonical post-fan path. |
 | **layout** | "Where does this artifact live under the root?" | the **registry (code)** | `family / {exp} / [per_well/{well_id}/] [subfolder] / file`. A fixed contract. |
-| **fanout** | "Does *this stage* shard per well?" | the **registry (per stage)** | `experiment` (Zone 0 bootstrap) vs `per_well_then_merge` (everything post-fan: Zones B **and** C). This field *is* the grain-transition map. |
+| **fanout** | "*Where do this stage's files land?*" | the **registry (per stage)** | `experiment` vs `per_well` (per_well implies a merge step). See below. |
+| **execution** | "*How many jobs run this stage?*" | the **registry (per stage)** | `single` vs `per_well`. Separate from fanout. See below. |
+| **grain** *(informational)* | "What is one row?" | the **registry (per artifact)** | `frame` · `snip` · `embryo` · `well`. Row semantics, not file placement. |
+
+### ⭐ `fanout` vs `execution` — the distinction (do not conflate)
+
+The names both sound like "per well," but they answer **different questions** and are
+**independent**. This is the subtle hinge of the whole design.
+
+| | **`fanout`** | **`execution`** |
+|---|---|---|
+| Question | *Where do the output files land?* | *How many processes run the stage?* |
+| About | the **artifact path** (DAG output shape) | the **job count** (scheduler work plan) |
+| Decided by | the **data model** (is this a per-well thing?) | **practical compute/IO** (worth N jobs vs. 1 loop?) |
+| Changes when | the **layout contract** changes | the **performance strategy** changes |
+| Read by | `paths.py` (build the path) + the merge step | the Snakefile (`expand()` over wells vs. one rule) |
+
+**Mnemonic:** `fanout` = *where the files go.* `execution` = *how many workers go.*
+
+**Proof they're independent — all four combinations are real or reachable:**
+
+| `fanout` | `execution` | Example | Meaning |
+|---|---|---|---|
+| `experiment` | `single` | scope_metadata; an experiment-level **plot** | one file, one job — plain experiment stage |
+| `per_well` | `single` | **stitched images today** | files land per well, but **one job loops** all wells (open the raw blob once) |
+| `per_well` | `per_well` | segmentation; features (post-Scope-5) | files land per well **and** one job per well (parallel, incremental rerun) |
+| `experiment` | `per_well` | *(rare / none today)* | reachable but unusual — N workers → one experiment-grain output |
+
+The `per_well` + `single` row (stitching) is the clincher: if the two were one concept,
+that combination couldn't exist — yet it is exactly what stitching does. **A single
+overloaded `fanout` enum would re-conflate them**, so when stitching later goes per-job
+you'd change `fanout` and accidentally imply its *paths* moved. Two fields, two reasons
+to change.
+
+**Why this earns its keep (mdcolon):** adding, say, an experiment-level plot becomes
+trivial and unambiguous — declare `fanout=experiment` and `paths.py` lands it at the
+experiment level, with execution strategy a completely separate, later concern.
 
 Pinned mantra:
 > **Bootstrap is experiment-grain. After well discovery, computation is per-well.
+> `fanout` says where files go; `execution` says how many workers go — keep them apart.
 > Merged artifacts are publication products. Scoped runs are optional scratch, not
 > architecture.**
 
@@ -130,11 +194,12 @@ Decisions adopted from the discussion:
   validate_X`. Merged artifacts become thin **publication products** at the end of the
   DAG, not a mid-pipeline barrier. Snakemake then gives incremental single-well
   recompute for free.
-- **Registry is two levels only:** `stage → artifact`. No deeper nesting. `family`/
-  `subfolder` are real on-disk folders (flat, as verified — e.g. many stages share
-  `experiment_metadata/`); `fanout` is per-stage; `kind` ∈ {primary, sidecar, sentinel,
-  report}; `schema` per artifact. Consider `table_grain` (frame/snip/embryo) separate
-  from file placement so the two don't get conflated.
+- **Registry is two levels only:** `stage → artifact`. No deeper nesting. Per **stage**:
+  `family`/`subfolder` (real on-disk folders, flat — e.g. many stages share
+  `experiment_metadata/`), `fanout` (`experiment`|`per_well`), `execution`
+  (`single`|`per_well`). Per **artifact**: `file`, `kind` ∈ {primary, sidecar, sentinel,
+  report}, `schema`, and `grain` (`frame`|`snip`|`embryo`|`well` — row semantics, kept
+  separate from file placement).
 - **One pipeline-wide registry** in `pipeline_orchestrator/lib/paths.py` (orchestration
   kingdom), imported by both the Snakefile and the Python entrypoints. Identity stays in
   `identifiers/` (separate kingdom).
@@ -144,20 +209,22 @@ Decisions adopted from the discussion:
 ## 🎯 THE TARGET MODEL (committed 2026-06-02 — Zone C confirmed per-well-able)
 
 ```
-Zone 0 — experiment bootstrap          (experiment-grain; discovers wells)
-  experiment_metadata/{exp}/...        plate, scope, series_well_mapping, frame_contract
-  built_image_data/{exp}/...           stitched images (driven by discovered wells)
+Zone A — experiment bootstrap        (fanout=experiment, execution=single; discovers wells)
+  experiment_metadata/{exp}/...      plate, scope, series_mapping, frame_contract, wells.txt
 
-  ── FAN POINT ──  discovered_wells = [20250912_A01, 20250912_A02, ...]
+  ── FAN POINT: discover_wells checkpoint → wells.txt (global well_id) ──
 
-Zone 1 — per-well canonical computation  (one well = one independent unit, E2E)
+Zone B0 — image materialization      (fanout=per_well, execution=single)
+  built_image_data/{exp}/stitched_ff_images/{well}/{channel}/   (one job loops wells)
+
+Zone B — per-well canonical computation   (fanout=per_well, execution=per_well; one well = one unit, E2E)
   segmentation_and_tracking/{exp}/per_well/{well_id}/...
   processed_snips/{exp}/per_well/{well_id}/...
   computed_features/{exp}/per_well/{well_id}/...        ← NEW (was experiment-grain)
   quality_control/{exp}/per_well/{well_id}/...          ← NEW
   analysis_ready/{exp}/per_well/{well_id}/...           ← NEW
 
-Zone 2 — merged / publication products  (thin concat at the END of the DAG)
+Zone C — merged / publication products    (thin concat at the END of the DAG; NOT cohort)
   segmentation_and_tracking/{exp}/contracts/segmentation_tracking.csv
   processed_snips/{exp}/contracts/snip_manifest.parquet
   computed_features/{exp}/consolidated/...
@@ -186,26 +253,44 @@ stages legally support `per_well`.
 
 ## ❓ OPEN QUESTIONS (next session — don't lose these)
 
-1. **Where exactly is the fan point?** Candidate: right after `series_well_mapping` /
-   `frame_contract`. Confirm whether `build_stitched_images` already keys off an
-   "available wells" list (mdcolon's hunch) — that seam likely *is* the fan point.
-2. ~~**Is Zone C truly per-well-able?**~~ **RESOLVED (mdcolon, known fact 2026-06-02):
-   Zone C is 100% per-well — every computation is per-snip/per-embryo, zero cross-well.
-   The merge is the only barrier. Green light to push Zone C to per-well.**
-3. **What does the well list look like as a first-class artifact?** Today it's implicit
-   in `series_well_mapping.csv` + `selected_wells.txt`. For one-well-E2E it may want to
-   be an explicit checkpoint output that the fan reads.
-4. **Map `src/` onto the grain shape — but later.** `src/` is already stage-organized
-   (`metadata_ingest/`, `segmentation/`, `feature_extraction/`…). Decide depth of reorg
-   (light: align names + entrypoint index, vs. heavier: group by zone) *after* the grain
-   model is settled. Grain drives layout, not the reverse.
+1. ~~**Where exactly is the fan point?**~~ **RESOLVED: the `discover_wells` checkpoint
+   (Snakefile:427) → `wells.txt` (global `well_id`).** Stitching's earlier
+   `_wells_from_mapping` iteration is a *separate, redundant* pre-fan path (local
+   `well_index`) → consolidate to the checkpoint (Win 4/5).
+2. ~~**Is Zone C truly per-well-able?**~~ **RESOLVED (mdcolon known fact + verified):
+   100% per-snip/per-embryo, zero cross-well. No cohort QC stage exists
+   (`build_sa_reference.py` is offline, not a Snakefile rule). Green light.**
+3. ~~**Well list as first-class artifact?**~~ **RESOLVED: `wells.txt` from the checkpoint
+   already is one (global `well_id`).** Cleanup = make it the *single* source;
+   `selected_wells.txt` becomes a pure input filter (Win 5: checkpoint is truth, config
+   only filters); `series_well_mapping.csv` stays raw discovery.
+4. **Map `src/` onto the grain shape — light, and via the registry, later.** `src/` is
+   already stage-organized; the "map" is the **registry itself** (`stage → family →
+   fanout → execution → entrypoint`), NOT a directory move. **Principle: code location ≠
+   pipeline stage** (e.g. YX1/Keyence stitching lives in microscope-specific folders but
+   is one conceptual stage). Only light touch worth doing: standardize each stage's
+   entrypoint behind a `tasks.py` verb (Win 2) so the entrypoint name matches its
+   registry key. Do this *after* the registry exists.
+
+### Remaining real unknowns (genuinely open)
+- **Stitching `execution`:** stays `single` for now; revisit `per_well` only if it buys a
+  real compute/staleness/debug win (depends on raw-reader IO behavior).
+- **`scope_metadata__{scope}` variant dimension:** the microscope token (`__yx1`,
+  `__keyence`) in filenames — decide how the registry models per-microscope artifact
+  variants (a `{scope}` placeholder in the artifact `file`, vs. separate rows).
+- **Scope-2 migration touch:** `discover_wells` reads `frame_contract.csv`'s `well_index`
+  column (Snakefile:448), which Scope 2 deletes → this checkpoint is a migration site.
 
 ---
 
 ## ⏸️ WHERE WE PAUSED (2026-06-02)
 
-The grain model is now **settled and committed**: experiment-grain bootstrap → fan →
-per-well canonical (Zones B and C) → thin merged publication. Zone C being fully
-per-well is a confirmed fact (mdcolon), not an assumption — so scoped_runs is demoted to
-scratch and `per_well/{well_id}` becomes the canonical post-fan path. Next: confirm the
-fan point (Q1), then write the concrete `lib/paths.py` registry against this model.
+The grain model is **settled and committed**: four zones — A (experiment bootstrap,
+discovers wells) → **fan = `discover_wells` checkpoint** → B0 (image materialization,
+`per_well`/`single`) → B (per-well canonical, `per_well`/`per_well`) → C (thin merged
+publication, not cohort). Two **independent** registry fields lock the design:
+`fanout` (where files land) vs. `execution` (how many jobs). Zone-C per-well-safety and
+the absence of any cohort stage are verified facts, not assumptions; scoped_runs is
+demoted to scratch. **All four original open questions are resolved.** Next: write the
+concrete `lib/paths.py` registry against this model (stage→artifact, with
+`family`/`fanout`/`execution` per stage and `file`/`kind`/`schema`/`grain` per artifact).
