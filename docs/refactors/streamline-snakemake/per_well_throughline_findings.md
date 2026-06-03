@@ -252,19 +252,22 @@ no-merge stage exists), optional `subfolder`.
 **No `kind`/`schema`/`grain`/`execution` fields.** Sentinels/sidecars are *derived
 helpers*, not rows.
 
-**API (boring on purpose — explicit `artifact_scope`, no magical `well_id=None`):**
+**API (boring on purpose — explicit `path_mode`, no magical `well_id=None`):**
 ```python
-ArtifactScope = Literal["experiment", "per_well", "merged"]
-Fanout        = Literal["experiment", "per_well_then_merge"]
+PathMode = Literal["experiment", "per_well", "merged"]
+Fanout   = Literal["experiment", "per_well_then_merge"]
 
 artifact_path(root, stage, artifact, experiment_id, *,
-              artifact_scope="experiment",      # experiment | per_well | merged
-              well_id=None,                     # required iff artifact_scope == per_well
-              format_vars=None)                 # filename tokens, e.g. {"scope": "yx1"}
+              path_mode="experiment",      # experiment | per_well | merged (the path branch)
+              well_id=None,                # required iff path_mode == per_well
+              format_vars=None)            # filename tokens, e.g. {"scope": "yx1"}
 
 validated_path(*args, **kwargs)   # derived: artifact_path(...) + ".validated"
 provenance_path(*args, **kwargs)  # derived: artifact_path(...) + ".provenance.json"
 ```
+> **`path_mode`, not `artifact_scope`** — avoids colliding with microscope-`scope`
+> (`format_vars={"scope":"yx1"}`). `path_mode` selects the *path branch*; `format_vars`
+> fills *filename tokens*. Two different ideas, two different arg names.
 
 **Resolution rules (the whole engine):**
 ```
@@ -272,17 +275,23 @@ experiment                       → {root}/{family}/{exp}/{subfolder?}/{file}
 per_well_then_merge + per_well   → {root}/{family}/{exp}/per_well/{well_id}/{subfolder?}/{file}
 per_well_then_merge + merged     → {root}/{family}/{exp}/{subfolder?}/{file}
 ```
-Validate loudly: `experiment` rejects `well_id`; `per_well` requires it; `merged`
-rejects it. (Boring APIs age well.)
+**The resolver MUST enforce `fanout` — this is what makes the registry a contract, not
+"an f-string generator with delusions of authority."** A field with no reader shouldn't
+exist (bloat audit); enforcing `fanout` is what *earns it its place*:
+- `fanout=experiment` → only `path_mode="experiment"`; rejects `well_id`.
+- `fanout=per_well_then_merge` → `path_mode` ∈ {`per_well` (requires `well_id`), `merged`
+  (rejects `well_id`)}.
+- Without this check, `artifact_path("plate_metadata", path_mode="per_well", ...)` would
+  hallucinate a `per_well/` path the registry said can't exist. (See Worked Example.)
 
 ### 🔬 Microscope (`yx1`/`keyence`) — a Zone-A-only variant (RESOLVED, verified 2026-06-02)
 
 The microscope is load-bearing for **exactly two front stages** and then **dissolves**:
 - It appears as a **filename token in ONE artifact**: `scope_metadata__{scope}.csv`
   (YX1 vs Keyence). Handled by `format_vars={"scope": "yx1"}` — **do not** explode into
-  fake per-microscope artifacts, and **do not** overload the word `scope` (that's the
-  `artifact_scope` path-branch). Use `format_vars` (filename tokens) vs. `artifact_scope`
-  (path branch) — two different ideas, two different argument names.
+  fake per-microscope artifacts, and **do not** overload the word `scope` (that's why the
+  path-branch arg is `path_mode`, not `scope`). Use `format_vars` (filename tokens) vs.
+  `path_mode` (path branch) — two different ideas, two different argument names.
 - It is a **code-dispatch** choice for extract + stitch (`build_stitched_images_yx1` vs.
   a Keyence rule) — a `src_family`/deferred-index concern, **NOT a path concern.**
 - **Verified:** stitched-image *output* paths are microscope-agnostic
@@ -290,6 +299,138 @@ The microscope is load-bearing for **exactly two front stages** and then **disso
   and `scope_metadata_mapped.csv` has already dropped the token. So the microscope
   **converges into canonical metadata at `apply_series_mapping` and never reappears as a
   path/filename after Zone A.** The registry needs **no** microscope-aware `fanout`.
+
+---
+
+## 📐 WORKED EXAMPLE — `paths.py` end-to-end (the spec to build against)
+
+This is the concrete walkthrough of how the pipeline interacts with the registry, on
+**real** stages. It shows all three sides: **registry row → Snakefile `output:` →
+entrypoint call → resolved path.** Hardened per the fanout-enforcement critique.
+
+### The registry (written once, in `lib/paths.py`)
+```python
+STAGES = {
+    "plate_metadata": {                          # experiment-grain (the real first rule)
+        "family": "experiment_metadata",
+        "fanout": "experiment",
+        "artifacts": {"csv": "plate_metadata.csv"},
+    },
+    "scope_metadata": {                          # experiment-grain + microscope token
+        "family": "experiment_metadata",
+        "fanout": "experiment",
+        "artifacts": {
+            "raw":    "scope_metadata__{scope}.csv",   # {scope} → format_vars
+            "mapped": "scope_metadata_mapped.csv",
+        },
+    },
+    "mask_geometry": {                           # per-well (Zone B)
+        "family": "computed_features",
+        "fanout": "per_well_then_merge",
+        "subfolder": "mask_geometry",
+        "artifacts": {"metrics": "mask_geometry_metrics.csv"},
+    },
+}
+```
+
+### The engine (≈20 lines, enforces `fanout`)
+```python
+def artifact_path(root, stage, artifact, experiment_id, *,
+                  path_mode="experiment", well_id=None, format_vars=None):
+    spec     = STAGES[stage]
+    fanout   = spec["fanout"]
+    filename = spec["artifacts"][artifact].format(**(format_vars or {}))
+    base     = Path(root) / spec["family"] / experiment_id
+
+    if fanout == "experiment":
+        if path_mode != "experiment":
+            raise ValueError(f"{stage}.{artifact} is experiment-grain")
+        if well_id is not None:
+            raise ValueError(f"{stage}.{artifact} does not accept well_id")
+    elif fanout == "per_well_then_merge":
+        if path_mode == "per_well":
+            if well_id is None:
+                raise ValueError(f"{stage}.{artifact} requires well_id")
+            base = base / "per_well" / well_id
+        elif path_mode == "merged":
+            if well_id is not None:
+                raise ValueError(f"{stage}.{artifact} merged output rejects well_id")
+        else:
+            raise ValueError(f"{stage}.{artifact} supports path_mode per_well|merged")
+    else:
+        raise ValueError(f"Unknown fanout: {fanout}")
+
+    if "subfolder" in spec:
+        base = base / spec["subfolder"]
+    return base / filename
+```
+
+### Case 1 — experiment-grain (`plate_metadata`)
+```python
+artifact_path(ROOT, "plate_metadata", "csv", "20250912")
+#   → {ROOT}/experiment_metadata/20250912/plate_metadata.csv   (byte-identical to today)
+```
+**Snakefile** — `output:` becomes a call, not a typed string:
+```python
+from data_pipeline.pipeline_orchestrator.lib.paths import artifact_path
+rule normalize_plate_metadata:
+    output:
+        csv = lambda wc: artifact_path(DATA_ROOT, "plate_metadata", "csv", wc.experiment)
+```
+
+### Case 2 — microscope token (`format_vars`, NOT exploded artifacts)
+```python
+artifact_path(ROOT, "scope_metadata", "raw", "20250912", format_vars={"scope": "yx1"})
+#   → {ROOT}/experiment_metadata/20250912/scope_metadata__yx1.csv
+artifact_path(ROOT, "scope_metadata", "mapped", "20250912")
+#   → {ROOT}/experiment_metadata/20250912/scope_metadata_mapped.csv
+```
+
+### Case 3 — per-well stage, the `path_mode` branch (`well_id` lives in the path)
+```python
+artifact_path(ROOT, "mask_geometry", "metrics", "20250912",
+              path_mode="per_well", well_id="20250912_B01")
+#   → {ROOT}/computed_features/20250912/per_well/20250912_B01/mask_geometry/mask_geometry_metrics.csv
+artifact_path(ROOT, "mask_geometry", "metrics", "20250912", path_mode="merged")
+#   → {ROOT}/computed_features/20250912/mask_geometry/mask_geometry_metrics.csv
+validated_path(ROOT, "mask_geometry", "metrics", "20250912",
+               path_mode="per_well", well_id="20250912_B01")
+#   → ...mask_geometry_metrics.csv.validated   (derived suffix; matches existing on-disk convention)
+```
+
+### Case 4 — the hallucination the resolver now BLOCKS
+```python
+artifact_path(ROOT, "plate_metadata", "csv", "20250912",
+              path_mode="per_well", well_id="20250912_B01")
+#   ❌ ValueError: plate_metadata.csv is experiment-grain
+#   (without fanout-enforcement this would mint a fake per_well/ path — the whole point)
+```
+
+### Case 5 — the merge consumes the SAME registry (ties to the well-runner)
+```python
+rule merge_mask_geometry:
+    input:
+        shards = lambda wc: checkpoint_well_shards(checkpoints, "mask_geometry", "metrics", wc)
+        #   → one DECLARED per-well path per active_well (built via artifact_path path_mode="per_well")
+    output:
+        merged = lambda wc: artifact_path(DATA_ROOT, "mask_geometry", "metrics",
+                                          wc.experiment, path_mode="merged")
+```
+The same row produces both the per-well shard paths AND the merged path → the merge can
+never disagree with what the per-well stage wrote.
+
+### ⚠️ Orchestration / core boundary (do NOT infect core functions)
+Path resolution lives at the **task/rule boundary**. Pure processing functions still
+receive **concrete paths** — they must not know about `output_root` or the registry:
+```python
+# tasks.py / rule boundary — KNOWS the registry
+out = artifact_path(output_root, "plate_metadata", "csv", exp)
+process_plate_layout(input_file=..., experiment_id=exp, output_csv=out)
+
+# core function — registry-ignorant, testable in isolation
+def process_plate_layout(input_file: Path, experiment_id: str, output_csv: Path): ...
+```
+This keeps the two kingdoms clean: resolution is orchestration; compute stays pure.
 
 ---
 
