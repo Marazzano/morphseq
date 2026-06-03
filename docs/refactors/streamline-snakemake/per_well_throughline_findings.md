@@ -449,7 +449,7 @@ per-well path/shard logic (slightly wrong) by hand.
 **The mechanism it exposes (small, sharp):**
 ```python
 # paths (in lib/paths.py — the registry; see Lean MVP Contract above)
-artifact_path(root, stage, artifact, exp, artifact_scope=..., well_id=..., format_vars=...)
+artifact_path(root, stage, artifact, exp, path_mode=..., well_id=..., format_vars=...)
 validated_path(...) / provenance_path(...)            # derived sentinel helpers
 
 # well selection + shard collection (lib/well_runner.py)
@@ -466,7 +466,7 @@ def checkpoint_well_shards(checkpoints, stage, artifact, wildcards) -> list[str]
     """The ONE sanctioned way to build a merge's input list: forces the discover_wells
     checkpoint, returns DECLARED per-well shard paths for active_wells. Never a glob."""
     return [artifact_path(ROOT, stage, artifact, wildcards.experiment,
-                          artifact_scope="per_well", well_id=w)
+                          path_mode="per_well", well_id=w)
             for w in active_wells(checkpoints, wildcards.experiment, config, wildcards)]
 ```
 
@@ -486,6 +486,77 @@ source (Win 4, delete the `targets.py` copy); checkpoint is truth, config only f
 (Win 5). Also folds in the cleanup of the **two redundant discovery paths** today
 (`_wells_from_mapping` on local `well_index` vs. the checkpoint on global `well_id` →
 collapse to the checkpoint). *(mdcolon to elaborate on the discovery-path specifics.)*
+
+### What's actually IN `lib/well_runner.py` (the full contents)
+
+Five things, no more. It is glue, not logic:
+
+| Function | Job | Reads | Returns |
+|---|---|---|---|
+| `active_wells(checkpoints, exp, config, wc)` | the ONE "which wells run" | checkpoint `wells.txt` + `config["target_wells"]` | `list[well_id]` |
+| `checkpoint_well_shards(checkpoints, stage, artifact, wc)` | merge input list (declared, never globbed) | `active_wells` + `artifact_path` | `list[path]` |
+| `read_wells(path)` | parse `wells.txt` → `list[well_id]` | the file | `list[str]` |
+| `WellRun` *(optional value object)* | bind `(exp, well, well_id, root)`; hand ONE object to a per-well entrypoint so it never re-derives shape | — | dataclass |
+| `_validate_requested_exist(...)` | fail loud if a requested well isn't discovered | — | raises |
+
+It does **not** contain: ID minting (→ `identifiers/`), path layout (→ `paths.py`), or
+any staleness logic (→ Snakemake). If a function here starts computing *what a file is
+named* or *what a row means*, it has crossed into the wrong kingdom.
+
+### How it interfaces with `config.yaml` (the science knobs)
+
+The well-runner reads exactly **one** key from config — the selection filter:
+```yaml
+# config.yaml (committed, science)
+experiments:  [20250912]      # which experiments (read by the Snakefile, not the runner)
+target_wells: []              # [] = all discovered; ["B01"] or ["20250912_B01"] = subset
+                              #   ↑ the ONLY config key active_wells() reads
+```
+**Config only *filters*; the checkpoint *decides* what exists** (Win 5). `target_wells`
+can name a well that doesn't exist → `active_wells()` raises (not silently empty). This is
+the one-line escape hatch that makes one-well / subset / full runs the same DAG (Tenet 10,
+11). Note: `target_wells` accepts local (`B01`) or global (`20250912_B01`) — the runner
+normalizes to global `well_id` via `identifiers/` before comparing.
+
+> Machine knobs (`output_root`, `python`, `device`) live in **`env.yaml`** (Scope 3), not
+> here. The well-runner takes `output_root` as a **parameter**, never derives it — that's
+> why Scope 3 precedes the runner.
+
+### How it interfaces with Snakemake tasks (the wiring)
+
+Two touch points, both at the **rule boundary** (never inside core functions):
+
+**(1) Per-well rules — expand the DAG over `active_wells`:**
+```python
+rule compute_mask_geometry_well:
+    input:   seg = lambda wc: artifact_path(DATA_ROOT, "segmentation_tracking", "csv",
+                                wc.experiment, path_mode="per_well", well_id=wc.well_id)
+    output:  out = lambda wc: artifact_path(DATA_ROOT, "mask_geometry", "metrics",
+                                wc.experiment, path_mode="per_well", well_id=wc.well_id)
+```
+**(2) Merge rules — collect shards via the runner (declared inputs):**
+```python
+rule merge_mask_geometry:
+    input:   shards = lambda wc: checkpoint_well_shards(checkpoints, "mask_geometry", "metrics", wc)
+    output:  merged = lambda wc: artifact_path(DATA_ROOT, "mask_geometry", "metrics",
+                                wc.experiment, path_mode="merged")
+```
+
+**The dispatch layer (`tasks.py`) — STATUS: does not exist yet (Win 2).** Today every
+rule shells out via deep `-m data_pipeline.feature_extraction.entrypoints.compute_mask_geometry`
+(verified: Snakefile uses `-m module` for *all* stages; there is no `tasks.py`). Win 2
+routes these through verbs: `... tasks compute-mask-geometry --well-id ...`, so the
+Snakefile knows **verbs, not module paths**. The well-runner and `tasks.py` are siblings:
+```
+Snakefile rule  ──shell──►  tasks.py <verb> --well-id B01 --output-root ...
+                                │  (resolves paths via paths.py, picks core fn)
+                                ▼
+                            core compute fn(input_path, output_path)   ← registry-ignorant
+```
+So the full chain per stage: **rule (expands over active_wells) → tasks verb (resolves
+paths) → core fn (concrete paths).** Three layers, each in its own kingdom. Building
+`tasks.py` is Win 2 (independent, eases Scope 5); until then rules call `-m module`
+directly and the well-runner helpers are imported into the Snakefile at parse time.
 
 ---
 
