@@ -293,6 +293,61 @@ The microscope is load-bearing for **exactly two front stages** and then **disso
 
 ---
 
+## 🤖 THE WELL-RUNNER — `lib/well_runner.py` (orchestration kingdom)
+
+**Core tenet: the well-runner provides MECHANISM, not staleness.** Snakemake owns
+staleness (mtimes + DAG). The well-runner's whole job is to make it *easy to wire the DAG
+so that per-well staleness is preserved* — i.e. to stop every rule from re-deriving the
+per-well path/shard logic (slightly wrong) by hand.
+
+> **Two kingdoms (hard boundary):** the well-runner **imports** ID constructors from
+> `identifiers/`; it **never mints IDs**. Identity flows *into* orchestration, never the
+> other way. `lib/paths.py` (placement) + `lib/well_runner.py` (well selection + shard
+> collection) are the orchestration kingdom; `identifiers/` is the identity kingdom.
+
+**The mechanism it exposes (small, sharp):**
+```python
+# paths (in lib/paths.py — the registry; see Lean MVP Contract above)
+artifact_path(root, stage, artifact, exp, artifact_scope=..., well_id=..., format_vars=...)
+validated_path(...) / provenance_path(...)            # derived sentinel helpers
+
+# well selection + shard collection (lib/well_runner.py)
+def active_wells(checkpoints, experiment, config, wildcards) -> list[str]:
+    """The ONE definition of 'which wells run.' discovered ∩ target. Fail loud on a
+    requested-but-missing well. (excluded = deferred future hook, not built.)"""
+    discovered = read_wells(checkpoints.discover_wells.get(experiment=experiment).output.wells_txt)
+    target = config.get("target_wells") or discovered
+    active = [w for w in discovered if w in target]
+    _validate_requested_exist(active, target, discovered)   # missing requested → raise
+    return active
+
+def checkpoint_well_shards(checkpoints, stage, artifact, wildcards) -> list[str]:
+    """The ONE sanctioned way to build a merge's input list: forces the discover_wells
+    checkpoint, returns DECLARED per-well shard paths for active_wells. Never a glob."""
+    return [artifact_path(ROOT, stage, artifact, wildcards.experiment,
+                          artifact_scope="per_well", well_id=w)
+            for w in active_wells(checkpoints, wildcards.experiment, config, wildcards)]
+```
+
+**Three well-lists (keep distinct):**
+| List | Meaning | Role in the DAG |
+|---|---|---|
+| `discovered_wells` | metadata says these exist (`wells.txt`) | discovery output |
+| `active_wells` | `discovered ∩ target` | **the control list** — declared inputs, fail-loud |
+| `validated_wells` | active wells whose per-well validation passed | **OUTCOME, never a dependency** (off-spine, like a merged view) |
+
+> ☠️ **`validated_wells` must never gate the merge.** Merge depends on `active_wells`;
+> an active well failing validation = **hard error**, not a silent shrink of the set.
+> (Same skull rule as merged files: observed results never drive the DAG.)
+
+**This is plan Win 4 + Win 5 made concrete:** one `active_wells()` = one well-selection
+source (Win 4, delete the `targets.py` copy); checkpoint is truth, config only filters
+(Win 5). Also folds in the cleanup of the **two redundant discovery paths** today
+(`_wells_from_mapping` on local `well_index` vs. the checkpoint on global `well_id` →
+collapse to the checkpoint). *(mdcolon to elaborate on the discovery-path specifics.)*
+
+---
+
 ## 🎯 THE TARGET MODEL (committed 2026-06-02 — Zone C confirmed per-well-able)
 
 ```
@@ -338,6 +393,111 @@ stages legally support `per_well`.
 
 ---
 
+## ⚙️ PER-WELL DAG MECHANICS (staleness · spine · merge-DAG · concurrency)
+
+### Staleness model
+Snakemake staleness = **file mtimes + DAG edges**, nothing more. There is no per-well
+intelligence — output is stale iff a declared `input:` is newer. So **per-well staleness
+exists only if the spine is wired per-well end-to-end.** Today the **merge wall** breaks
+it: Zone C reads the *merged* contract, so touching one well re-runs all wells'
+features/QC. (Tenet 7)
+
+### The spine rule ☠️
+The spine is the per-well shard chain — each well-local stage reads the **previous
+stage's per-well shard**:
+```
+seg/{well} → snips/{well} → features/{well} → qc/{well} → analysis_ready/{well}
+```
+Merged files are **off-spine materialized views** (notebooks, inspection, publication).
+☠️ **A merged file must never be read as input by a well-local stage** — that recreates
+the merge wall and destroys per-well staleness.
+
+> **Precise rule (bootstrap-OK vs merged-bad):** reading an *experiment-grain bootstrap*
+> artifact (`wells.txt`) as a well-local input is **fine** — it's upstream of the fan.
+> Reading a *merged view* (post-fan, assembled-from-shards) is **forbidden**. The test:
+> was this file made by collapsing per-well shards? If yes, don't depend on it.
+
+**Scope-5 fix item:** `surface_area_qc` currently reads `consolidated_features` (merged)
+— an accidental merge wall. It does per-snip work vs. an external curve, so it converts
+cleanly to reading per-well shards. (Tenets 2, 7)
+
+### Merge-DAG construction (how the DAG auto-detects the right wells)
+At parse time Snakemake doesn't know how many wells exist (it's runtime data). The
+**checkpoint** resolves this: `checkpoints.discover_wells.get(...)` forces a DAG re-plan
+with the discovered list. Merge inputs must therefore be a **checkpoint-derived,
+DECLARED `input:` list** (via `checkpoint_well_shards`) — the only pattern that gives
+**both** correct well-detection **and** correct staleness. (Tenet 8)
+
+**DO-NOT (each silently breaks the dependency edge):**
+| Anti-pattern | Why it breaks |
+|---|---|
+| `glob("per_well/*/...")` | parse-time snapshot; misses unbuilt wells; can read mid-write |
+| inputs from `config["wells"]` | bypasses checkpoint; can name nonexistent wells (Win 5) |
+| inputs from `series_well_mapping` directly | the *other* (pre-fan, local `well_index`) discovery path |
+| shell iterates the per-well dir | no `input:` edges at all → fires early, no re-trigger |
+
+### Concurrency / write safety — a non-issue by construction
+| Scenario | Concern? | Why |
+|---|---|---|
+| Parallel *different* wells → own shards | ❌ | `well_id` in path = disjoint files; can't collide |
+| Merge reads a mid-write shard | ❌ | DAG dependency edge = the lock (inputs declared, not globbed) |
+| Same well, two concurrent invocations | ⚠️ rare | operator error; Snakemake's working-dir lock catches the common form |
+
+No locking machinery needed. Two invariants keep it safe (both already decided):
+**(1) well_id in the path**, **(2) merge inputs declared, not globbed.** Optional cheap
+hardening: per-well entrypoints write to `*.tmp` then atomic `os.rename()`. (Tenet 9)
+
+### Merge cadence — deferred (Step 6 / tuning, NOT architecture)
+*Per-stage* merges (fire on every well touch) vs *stage-group* merges (one big merge at
+a zone boundary, e.g. `consolidated_features` after all features). This only changes
+*how often* off-spine merges fire — the spine is per-well shards either way. **Decide
+later; it is performance tuning, not a design decision.**
+
+---
+
+## 🪟 ZONE-A NARROWING — the frame contract joins the spine (2026-06-02)
+
+> **The whole refactor in one sentence:** the frame contract moves from an
+> experiment-grain fan-point *barrier* to a per-well *spine artifact*. Metadata discovers
+> wells; per-well frame contracts validate that each active well's metadata aligns with
+> its stitched images. The merged experiment frame contract is a derived view and must
+> not feed downstream well-local rules.
+
+**Accepted revision (mdcolon):** Zone A *narrows* to **discovery only**. Reconciliation
+(metadata ∩ images) and the existence check join the **per-well spine**. Discovery stays
+experiment-grain (you can't discover B01 from B01 alone) — so this narrows, not
+contradicts, the "Zone A is experiment-grain" founding assumption.
+
+**Today, `build_frame_contract` fuses THREE jobs at experiment grain** (discover +
+reconcile + existence-check across all wells) → an experiment-grain barrier. **Split it:**
+
+| Step | Stage (renamed) | Inputs | Output | Fanout |
+|---|---|---|---|---|
+| 1 | `discover_wells_from_metadata` *(checkpoint)* | `series_well_mapping.csv` (**metadata only — no images**) | `wells.txt` | experiment (fan point, moved **earlier**) |
+| 2 | `stitch_well` | this well's raw images + its `scope_metadata_mapped` rows | `built_image_data/{exp}/stitched_ff_images/{well}/{channel}/` | per-well image tree (**off-registry**) |
+| 3 | `validate_frame_contract_well` | this well's **images (Step 2)** + this well's **metadata rows** | `frame_contract/{exp}/per_well/{well_id}/frame_contract.csv` | `per_well_then_merge` |
+
+**Consequences (each preserves a tenet):**
+- **Segmentation reads its per-well slice**, not the whole contract. *(Verified: today it
+  reads the full contract and immediately filters to one `well_id`, using only per-well
+  fields like `source_micrometers_per_pixel`.)* **This is what makes one-well == whole
+  experiment for the front half** — nothing in segmentation's path is experiment-grain.
+  (Tenet 10)
+- **Step 3 IS the per-well validate** (metadata aligns with images on disk) — Tenet 6
+  (merge = concat + validate), here as per-well check + concat.
+- `merge_frame_contract` = concat of per-well slices → off-spine experiment **view**.
+  ☠️ nothing downstream reads it. (Tenets 2, 3)
+- **`stitched_inventory.csv` drops out of the spine** → optional off-spine report (today
+  it's load-bearing because the frame contract needs it; here it isn't).
+- Discovery reads `series_well_mapping` / `scope_metadata_mapped` — **already
+  microscope-converged** (Tenet 5), so early discovery is microscope-agnostic.
+
+**Naming adopted:** `discover_wells_from_metadata` (clarifies: metadata-only, doesn't
+check images) and `validate_frame_contract_well` (clarifies: it's a *check*, not just
+row formatting).
+
+---
+
 ## ❓ OPEN QUESTIONS (next session — don't lose these)
 
 1. ~~**Where exactly is the fan point?**~~ **RESOLVED: the `discover_wells` checkpoint
@@ -353,7 +513,7 @@ stages legally support `per_well`.
    only filters); `series_well_mapping.csv` stays raw discovery.
 4. **Map `src/` onto the grain shape — light, and via the registry, later.** `src/` is
    already stage-organized; the "map" is the **registry itself** (`stage → family →
-   fanout → execution → entrypoint`), NOT a directory move. **Principle: code location ≠
+   fanout → artifacts`, + deferred `src_family`), NOT a directory move. **Principle: code location ≠
    pipeline stage** (e.g. YX1/Keyence stitching lives in microscope-specific folders but
    is one conceptual stage). Only light touch worth doing: standardize each stage's
    entrypoint behind a `tasks.py` verb (Win 2) so the entrypoint name matches its
@@ -365,8 +525,15 @@ stages legally support `per_well`.
 - **`scope_metadata__{scope}` variant dimension:** the microscope token (`__yx1`,
   `__keyence`) — **RESOLVED:** filename token via `format_vars`, converges out at
   `scope_metadata_mapped.csv` (see Microscope section above).
-- **Stitching fanout value:** per-well-no-merge — add bare `per_well`, or keep image
-  trees out of the registry entirely (leaning the latter). Decide when writing `paths.py`.
+- **Stitching fanout value:** ~~per-well-no-merge~~ **RESOLVED: image trees live OUTSIDE
+  the registry.** The registry governs *tabular contract artifacts* (`.csv`/`.parquet`);
+  stitched-image *directories* are a different kind of output with their own path logic.
+  Keeps `fanout` at two values. (Confirm the exact image-path helper when writing `paths.py`.)
+- **Merge cadence:** per-stage vs stage-group merges — **deferred to Step 6 / tuning**
+  (see DAG Mechanics). Not architecture.
+- **Two redundant discovery paths:** `_wells_from_mapping` (local `well_index`) vs.
+  `discover_wells` checkpoint (global `well_id`) → collapse to the checkpoint via
+  `active_wells()` (Win 4/5). *(mdcolon to elaborate on specifics.)*
 - **Scope-2 migration touch:** `discover_wells` reads `frame_contract.csv`'s `well_index`
   column (Snakefile:448), which Scope 2 deletes → this checkpoint is a migration site.
 
@@ -384,7 +551,21 @@ to a **lean path resolver** (Bloat Audit): per-stage `family`/`fanout`/optional
 reader). The `fanout` vs `execution` distinction stays as a *documented concept*, not a
 field. Zone-C per-well-safety and
 the absence of any cohort stage are verified facts, not assumptions; scoped_runs is
-demoted to scratch. **All four original open questions are resolved.** Next: write the
-concrete `lib/paths.py` registry against this model (stage→artifact, with
-per-stage `family`/`fanout`/optional `subfolder` and per-artifact filename templates
-(see Lean MVP Contract).
+demoted to scratch. The **well-runner** (`lib/well_runner.py`) provides *mechanism, not
+staleness* — `active_wells()`, `checkpoint_well_shards()` — and imports IDs from
+`identifiers/`, never mints them. The **frame contract is split** into early
+metadata-only discovery + a per-well validate stage (Zone-A narrowing), so segmentation
+reads a per-well slice and one-well == whole-experiment for the front half too.
+
+**The actual blocker:** none of the back/front-half wiring is safe to build until
+`well_id` means exactly one thing — **Scope 1** (create `identifiers/`) + **Scope 2**
+(flip semantics). The spine keys on `well_id`. That unglamorous front end is the real
+critical path.
+
+**Next concrete steps, in order:**
+1. The **`paths.py` worked example** still owed (see formal plan's "START HERE"): walk one
+   real first-stage through the registry, both Snakefile and entrypoint sides — to feel
+   the format before generalizing. ⭐ (mdcolon asked for this; not yet done.)
+2. **Scope 1** — create `identifiers/` (`constructors`/`parsers`/`validators`), zero-risk,
+   additive, unblocks everything.
+3. Then `lib/paths.py` (Lean MVP Contract) + `lib/well_runner.py`.
