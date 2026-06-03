@@ -5,6 +5,24 @@
 **Companion to:** `well_id_throughline_refactor_plan.md` (the formal scopes/plan).
 **Verified against disk + Snakefile:** 2026-06-02.
 
+> ## ⚠️ READ THIS FIRST — CURRENT vs TARGET
+> This doc describes **two architectures** and they must never be confused:
+> - **CURRENT** = the verified shape of the active Snakefile *today* (tagged 🔵 CURRENT).
+> - **TARGET** = the architecture we're refactoring *toward* (tagged 🟢 TARGET).
+>
+> Where a fact is "verified," it describes **CURRENT** unless tagged 🟢. The refactor's
+> whole job is to move CURRENT → TARGET. A statement that blends them is a bug in this doc.
+>
+> **Registry scope (decided, applies to all TARGET sections):** `paths.py` registers
+> **tabular contract artifacts only** (`.csv`/`.parquet` + their derived sentinels).
+> **Image directory trees** (`stitched_ff_images/`) are **outside the registry** — they
+> have their own path logic. This is why `fanout` has only two values (see Bloat Audit).
+>
+> **Document map:** Goal → Central Insight → Grain Transition (🔵 current zones) →
+> Design Principles → Bloat Audit → Lean MVP Contract + Worked Example (🟢 paths.py spec)
+> → Well-Runner (🟢) → DAG Mechanics → Zone-A Narrowing (🟢 the frame-contract split) →
+> Target Model → Open Questions → Pause/Next-steps.
+
 ---
 
 ## 🎯 THE GOAL (pin this — everything serves it)
@@ -51,14 +69,13 @@ the contract for *everything after* it.
 
 ---
 
-## 🌾 THE GRAIN TRANSITION (verified from the active Snakefile, 2026-06-02)
+## 🌾 THE GRAIN TRANSITION — 🔵 CURRENT (verified from the active Snakefile, 2026-06-02)
 
-**Four zones** (stitching pulled out of bootstrap into its own image-materialization
-zone). Transition points are sharp. Each stage is classified by two *independent* fields
-— `fanout` (where files land) and `execution` (how many jobs) — defined in the
-DESIGN PRINCIPLES section below.
+**This section describes the VERIFIED CURRENT Snakefile.** The frame-contract split and
+the earlier fan point are 🟢 TARGET — see "Zone-A Narrowing" below. Here, four zones
+(stitching pulled out of bootstrap into its own image-materialization zone).
 
-### Zone A — EXPERIMENT-GRAIN BOOTSTRAP  (needs the raw blob before wells exist)
+### Zone A — EXPERIMENT-GRAIN BOOTSTRAP  (needs the raw blob before wells exist) 🔵
 Family: `experiment_metadata/` · all stages `fanout=experiment`
 | Stage | Output (under `{output_root}`) | Why it can't be per-well |
 |---|---|---|
@@ -66,11 +83,17 @@ Family: `experiment_metadata/` · all stages `fanout=experiment`
 | `extract_scope_metadata_{scope}` | `experiment_metadata/{exp}/scope_metadata__{scope}.csv` | reads the whole raw file |
 | `map_series_to_wells` | `experiment_metadata/{exp}/series_well_mapping.csv` (+`.provenance.json`) | **this is where wells are discovered** |
 | `apply_series_mapping` | `experiment_metadata/{exp}/scope_metadata_mapped.csv` (+`.validated`) | joins mapping onto scope rows |
-| `build_frame_contract` | `experiment_metadata/{exp}/frame_contract.csv` | the canonical frame-level contract; feeds the checkpoint |
+| `build_frame_contract` | `experiment_metadata/{exp}/frame_contract.csv` | 🔵 **CURRENT** canonical frame-level contract; feeds the checkpoint. 🟢 TARGET splits this per-well (Zone-A Narrowing). |
 | `discover_wells` *(checkpoint)* | `experiment_metadata/{exp}/wells.txt` | filters contract wells → the canonical well list (global `well_id`) |
 
-### ⟱ FAN POINT — `discover_wells` checkpoint (verified: Snakefile:427) ⟱
-The well list becomes a **first-class artifact** here: `wells.txt`, keyed on global
+### ⟱ FAN POINT ⟱
+- **🔵 CURRENT:** `discover_wells` checkpoint reads **`frame_contract.csv`** (Snakefile:427)
+  → `wells.txt`. So the fan currently sits *after* stitching + frame-contract build.
+- **🟢 TARGET:** `discover_wells_from_metadata` reads **`series_well_mapping.csv`** → moves
+  the fan *earlier* (before stitching). Same checkpoint mechanism, earlier input. (See
+  Zone-A Narrowing.)
+
+The well list is a **first-class artifact** either way: `wells.txt`, keyed on global
 `well_id`, emitted by the `discover_wells` Snakemake **checkpoint** (Snakefile:427),
 which `wells_for_experiment()` expands the per-well DAG from. This — not
 `series_well_mapping.csv` — is the true fan point. (Q1/Q3 RESOLVED.)
@@ -116,13 +139,21 @@ Segmentation + snips are **already** the plan's Scope-5 pattern (per-well shard 
 merge), built and working. Scope 5 extends this rhythm (`run_X_per_well → merge_X →
 validate_X`) to features/QC/analysis_ready.
 
-**Zone B target is CONFIRMED safe (mdcolon known fact + verified 2026-06-02):** every
-features/QC computation is per-snip / per-embryo — **zero cross-well computation.** The
-only thing making features/QC experiment-grain today is that they read the *merged*
-Zone-B contract; **the merge is the sole barrier**, not any cohort statistic. (Empirical
-check: the only percentile/quantile code is `build_sa_reference.py` — an **offline**
-reference-curve builder, *not* a Snakefile stage — and `embryo_qc` percentiles are
-per-embryo across Z-pairs. So there is **no cohort QC stage**.)
+**Zone B target — two separate claims, don't conflate them:**
+- **MATH: per-well (owner-confirmed + spot-checked).** mdcolon states as known fact that
+  every features/QC computation is per-snip / per-embryo — no cohort statistic. Spot-check
+  agrees: the only percentile/quantile code is `build_sa_reference.py` (an **offline**
+  reference-curve builder, *not* a Snakefile stage) and `embryo_qc` percentiles are
+  per-embryo across Z-pairs → **no cohort QC stage exists.** *(Not a full grep-audit; an
+  appendix table of module/searched-for/result would upgrade this from "confirmed by owner
+  + spot-check" to "exhaustively verified.")*
+- **WIRING: not yet per-well.** Several rules currently read the *merged* Zone-B contract
+  (e.g. `surface_area_qc` reads `consolidated_features`) — accidental merge walls. The math
+  doesn't need cross-well data, but the **wiring** must be converted to per-well shard
+  inputs (Scope-5 work). "Zero cross-well math" ≠ "zero rules read merged inputs."
+
+So: the merge is the **only** barrier (no cohort math blocks the split), and the remaining
+work is **rewiring**, not rewriting algorithms.
 
 ### Zone C — MERGE / PUBLICATION  (thin concat at the END of the DAG; NOT "cohort")
 Families: `segmentation_and_tracking/`, `processed_snips/`, `computed_features/`,
@@ -141,9 +172,9 @@ Orthogonal axes — keep them separate or the model gets muddy:
 
 | Axis | Question | Lives in | MVP? |
 |---|---|---|---|
-| **identity** | "What is this object's canonical name?" | the **data** | `well_id = {exp}_{well}`, the through-line in *rows* AND the canonical post-fan path. |
-| **layout** | "Where does this artifact live under the root?" | the **registry (code)** | `family / {exp} / [per_well/{well_id}/] [subfolder] / file`. A fixed contract. |
-| **fanout** | "*Where do this stage's files land?*" | the **registry (per stage)** | ✅ MVP. `experiment` vs `per_well_then_merge` (two values — see contract below). |
+| **identity** | "What is this object's canonical name?" | the **data** | `well_id = {exp}_{well}`, the through-line in *rows* AND the canonical post-fan path of **registered** artifacts. |
+| **layout** | "Where does this *registered* artifact live?" | the **registry (code)** | `family / {exp} / [per_well/{well_id}/] [subfolder] / file`. A fixed contract. |
+| **fanout** | "*Where do this stage's REGISTERED (tabular) artifacts land?*" | the **registry (per stage)** | ✅ MVP. `experiment` vs `per_well_then_merge` (two values — image trees are off-registry, see contract). |
 | **execution** | "*How many jobs run this stage?*" | (future Snakefile) | ⛔ **DEFERRED** — documented concept, NOT an MVP field. `paths.py` never reads it. See below. |
 | **grain** *(informational)* | "What is one row?" | (future) | ⛔ **DEFERRED** — `frame`·`snip`·`embryo`·`well`. Nothing reads it yet. |
 
@@ -202,9 +233,19 @@ Decisions adopted from the discussion:
   scratch lever; do **not** build the registry around it; revisit removal after the
   post-fan per-well conversion is complete.
 - **Every post-fan stage follows the same rhythm:** `run_X_per_well → merge_X →
-  validate_X`. Merged artifacts become thin **publication products** at the end of the
-  DAG, not a mid-pipeline barrier. Snakemake then gives incremental single-well
+  validate_merged_X`. Merged artifacts become thin **publication products** at the end of
+  the DAG, not a mid-pipeline barrier. Snakemake then gives incremental single-well
   recompute for free.
+
+  > **"validate" means three different things (#11) — keep them distinct:**
+  > 1. **per-well validation gate** — a per-well check (`validate_frame_contract_well`:
+  >    does this well's metadata align with its images? QC flag computation). On the spine.
+  > 2. **merged-file validation** (`validate_merged_X`) — structural check that the
+  >    concatenated file is well-formed; writes the `.validated` sentinel. Off-spine.
+  > 3. **algorithmic QC** — produces QC *flags* (data), not just a sentinel.
+  >
+  > "Merge = concat + validate" specifically means **concat + (2) merged-file validation.**
+  > The frame/image *alignment* check is **(1)**, and it is per-well — not part of the merge.
 - **Registry is two levels only:** `stage → artifact`. No deeper nesting. See the Lean
   MVP Contract below for the exact (small) field set.
 - **One pipeline-wide registry** in `pipeline_orchestrator/lib/paths.py` (orchestration
@@ -243,11 +284,27 @@ a doc note, add the field the day a real consumer exists.
 
 ---
 
-## 🧰 LEAN MVP CONTRACT for `lib/paths.py` (the spec to build)
+## 🧰 LEAN MVP CONTRACT for `lib/paths.py` (the spec to build) — 🟢 TARGET
+
+> **SCOPE BOUNDARY (decided):** `paths.py` registers **tabular contract artifacts only**
+> (`.csv`/`.parquet` + their derived `.validated`/`.provenance.json` sentinels). It does
+> **NOT** register **image directory trees** (`stitched_ff_images/`) — those have their
+> own path logic. This is *why* `fanout` needs only two values: the one per-well-no-merge
+> output (stitched images) is off-registry.
+
+> **Stage keys = executable verbs, not families (decided, #13):** a registry stage key
+> maps to a rule/`tasks.py` verb (`mask_geometry`, `pose_kinematics`, `consolidated_features`),
+> **not** to a top-level family (`computed_features`). `family` is a *field*; many stages
+> share one family. This keeps stage keys aligned with `tasks.py` verbs (Win 2).
+
+> **`well` vs `well_id` in paths (decided, #6):** **registered** per-well artifacts use
+> the global `well_id` (`per_well/20250912_B01/…`). **Image trees** (off-registry) use the
+> local `well` (`stitched_ff_images/B01/…`) because they mirror microscope/plate folder
+> layout. The distinction is deliberate, not legacy — registered = global, image-tree = local.
 
 **Per stage:** `family`, `fanout` ∈ {`experiment`, `per_well_then_merge`} (**two values
-only** — every per-well stage on disk merges; ship a bare `per_well` value the day a
-no-merge stage exists), optional `subfolder`.
+only** — every *registered* per-well stage merges; image trees are off-registry; ship a
+bare `per_well` value the day a registered no-merge stage exists), optional `subfolder`.
 **Per artifact:** a filename template (supports `{token}` for microscope variants).
 **No `kind`/`schema`/`grain`/`execution` fields.** Sentinels/sidecars are *derived
 helpers*, not rows.
@@ -481,7 +538,7 @@ def checkpoint_well_shards(checkpoints, stage, artifact, wildcards) -> list[str]
 > an active well failing validation = **hard error**, not a silent shrink of the set.
 > (Same skull rule as merged files: observed results never drive the DAG.)
 
-**This is plan Win 4 + Win 5 made concrete:** one `active_wells()` = one well-selection
+**This is plan Win 4 + Win 5 made concrete:** one `select_active_wells()` = one well-selection
 source (Win 4, delete the `targets.py` copy); checkpoint is truth, config only filters
 (Win 5). Also folds in the cleanup of the **two redundant discovery paths** today
 (`_wells_from_mapping` on local `well_index` vs. the checkpoint on global `well_id` →
@@ -493,11 +550,17 @@ Five things, no more. It is glue, not logic:
 
 | Function | Job | Reads | Returns |
 |---|---|---|---|
-| `active_wells(checkpoints, exp, config, wc)` | the ONE "which wells run" | checkpoint `wells.txt` + `config["target_wells"]` | `list[well_id]` |
-| `checkpoint_well_shards(checkpoints, stage, artifact, wc)` | merge input list (declared, never globbed) | `active_wells` + `artifact_path` | `list[path]` |
+| `select_active_wells(discovered, target, exp)` | **PURE** list arithmetic (unit-testable, no Snakemake) | args only | `list[well_id]` |
 | `read_wells(path)` | parse `wells.txt` → `list[well_id]` | the file | `list[str]` |
+| `active_wells_from_checkpoint(checkpoints, wc, config)` | Snakemake glue: get checkpoint → `read_wells` → `select_active_wells` | checkpoint + config | `list[well_id]` |
+| `checkpoint_well_shards(*, checkpoints, wc, config, root, stage, artifact, ...)` | merge input list (declared, never globbed) | the above + `artifact_path` | `list[path]` |
 | `WellRun` *(optional value object)* | bind `(exp, well, well_id, root)`; hand ONE object to a per-well entrypoint so it never re-derives shape | — | dataclass |
-| `_validate_requested_exist(...)` | fail loud if a requested well isn't discovered | — | raises |
+
+> **Pure-vs-glue split (#8/#9, decided):** the selection *logic* (`select_active_wells`)
+> is **pure** — no `checkpoints`, no globals — so it's unit-testable "without summoning
+> Snakemake from the basement." The Snakemake-aware wrapper is a thin shell around it.
+> Likewise `checkpoint_well_shards` takes `root`/`config` as **explicit params**, never
+> reads them as module globals (specs that depend on unmentioned globals become haunted).
 
 It does **not** contain: ID minting (→ `identifiers/`), path layout (→ `paths.py`), or
 any staleness logic (→ Snakemake). If a function here starts computing *what a file is
@@ -510,13 +573,21 @@ The well-runner reads exactly **one** key from config — the selection filter:
 # config.yaml (committed, science)
 experiments:  [20250912]      # which experiments (read by the Snakefile, not the runner)
 target_wells: []              # [] = all discovered; ["B01"] or ["20250912_B01"] = subset
-                              #   ↑ the ONLY config key active_wells() reads
+                              #   ↑ the ONLY config key the selection logic reads
 ```
-**Config only *filters*; the checkpoint *decides* what exists** (Win 5). `target_wells`
-can name a well that doesn't exist → `active_wells()` raises (not silently empty). This is
-the one-line escape hatch that makes one-well / subset / full runs the same DAG (Tenet 10,
-11). Note: `target_wells` accepts local (`B01`) or global (`20250912_B01`) — the runner
-normalizes to global `well_id` via `identifiers/` before comparing.
+**Config only *filters*; the checkpoint *decides* what exists** (Win 5). This is the
+one-line escape hatch that makes one-well / subset / full runs the same DAG (Tenets 10, 11).
+
+**`target_wells` semantics (specified, #7):**
+- **Local (`B01`)** → interpreted **per experiment** (matches `B01` in *every* experiment
+  in the run). Normalized to global `well_id` against the *current* experiment's
+  `discovered` set.
+- **Global (`20250912_B01`)** → applies **only** to that experiment.
+- **Mixed local/global** in one list: allowed.
+- **Validation (all hard errors, never silent):** requested well not in `discovered` →
+  raise; duplicate after normalization → raise; empty `active` set → raise. (`[]` means
+  "all discovered," which is the only way to get the full set — not the same as empty active.)
+- Normalization to global `well_id` uses `identifiers/` (the runner imports, never mints).
 
 > Machine knobs (`output_root`, `python`, `device`) live in **`env.yaml`** (Scope 3), not
 > here. The well-runner takes `output_root` as a **parameter**, never derives it — that's
@@ -586,22 +657,27 @@ Zone C — merged / publication products    (thin concat at the END of the DAG; 
   analysis_ready/{exp}/analysis_ready.csv
 ```
 
-- **Full run** = build all per-well outputs for all discovered wells, then build merged.
-- **One-well run** = build per-well outputs for one `well_id` (merged optional/skipped).
-  No special mode — just a different target.
+**Merged-or-not is a TARGET distinction, not a mode (#12):** the rhythm
+(`run_X_per_well → merge_X → validate_merged_X`) doesn't conflict with one-well runs —
+*you just request a different target:*
+```
+snakemake .../analysis_ready/{exp}/per_well/{well_id}/...   # one well; NO merge built
+snakemake .../analysis_ready/{exp}/analysis_ready.csv       # active wells + merged product
+```
+- **Per-well target** → builds that well's chain only; merge not requested → not built.
+- **Experiment/publication target** → builds active wells, *then* the merged product.
 
-**Path function — `well_id` lives in the canonical path, not a separate root:**
-```python
-artifact_path(output_root, stage="computed_features", artifact="mask_geometry",
-              experiment_id=exp, well_id=well_id, scope="per_well")
+No special mode — same DAG, the requested target decides whether the merge node runs.
+
+**Path function — `well_id` lives in the canonical path, not a separate root.** See the
+**Worked Example** above for the authoritative API (`path_mode`, `stage="mask_geometry"`
+as a *verb* not a family, fanout-enforced). Sketch:
+```
+artifact_path(root, "mask_geometry", "metrics", exp, path_mode="per_well", well_id=well_id)
 #   → computed_features/{exp}/per_well/{well_id}/mask_geometry/mask_geometry_metrics.csv
-
-artifact_path(output_root, stage="computed_features", artifact="mask_geometry",
-              experiment_id=exp, scope="merged")
+artifact_path(root, "mask_geometry", "metrics", exp, path_mode="merged")
 #   → computed_features/{exp}/mask_geometry/mask_geometry_metrics.csv
 ```
-`scope ∈ {per_well, merged}` selects the branch; `fanout` in the registry declares which
-stages legally support `per_well`.
 
 ---
 
@@ -695,8 +771,9 @@ reconcile + existence-check across all wells) → an experiment-grain barrier. *
   fields like `source_micrometers_per_pixel`.)* **This is what makes one-well == whole
   experiment for the front half** — nothing in segmentation's path is experiment-grain.
   (Tenet 10)
-- **Step 3 IS the per-well validate** (metadata aligns with images on disk) — Tenet 6
-  (merge = concat + validate), here as per-well check + concat.
+- **Step 3 IS the per-well validation gate** (validate type 1: metadata aligns with images
+  on disk) — this is a *spine* check, distinct from the merged-file validation that
+  `merge_frame_contract` does. (See the three-meanings-of-validate note.)
 - `merge_frame_contract` = concat of per-well slices → off-spine experiment **view**.
   ☠️ nothing downstream reads it. (Tenets 2, 3)
 - **`stitched_inventory.csv` drops out of the spine** → optional off-spine report (today
@@ -712,10 +789,11 @@ row formatting).
 
 ## ❓ OPEN QUESTIONS (next session — don't lose these)
 
-1. ~~**Where exactly is the fan point?**~~ **RESOLVED: the `discover_wells` checkpoint
-   (Snakefile:427) → `wells.txt` (global `well_id`).** Stitching's earlier
-   `_wells_from_mapping` iteration is a *separate, redundant* pre-fan path (local
-   `well_index`) → consolidate to the checkpoint (Win 4/5).
+1. ~~**Where exactly is the fan point?**~~ **RESOLVED (with current/target split):**
+   🔵 CURRENT fan = `discover_wells` checkpoint reading `frame_contract.csv` (Snakefile:427).
+   🟢 TARGET fan = `discover_wells_from_metadata` reading `series_well_mapping.csv` (moved
+   earlier, before stitching). Stitching's `_wells_from_mapping` (local `well_index`) is a
+   *separate, redundant* path → consolidate to the checkpoint (Win 4/5).
 2. ~~**Is Zone C truly per-well-able?**~~ **RESOLVED (mdcolon known fact + verified):
    100% per-snip/per-embryo, zero cross-well. No cohort QC stage exists
    (`build_sa_reference.py` is offline, not a Snakefile rule). Green light.**
@@ -745,7 +823,7 @@ row formatting).
   (see DAG Mechanics). Not architecture.
 - **Two redundant discovery paths:** `_wells_from_mapping` (local `well_index`) vs.
   `discover_wells` checkpoint (global `well_id`) → collapse to the checkpoint via
-  `active_wells()` (Win 4/5). *(mdcolon to elaborate on specifics.)*
+  `select_active_wells()` (Win 4/5). *(mdcolon to elaborate on specifics.)*
 - **Scope-2 migration touch:** `discover_wells` reads `frame_contract.csv`'s `well_index`
   column (Snakefile:448), which Scope 2 deletes → this checkpoint is a migration site.
 
@@ -753,31 +831,49 @@ row formatting).
 
 ## ⏸️ WHERE WE PAUSED (2026-06-02)
 
-The grain model is **settled and committed**: four zones — A (experiment bootstrap,
-discovers wells) → **fan = `discover_wells` checkpoint** → B0 (image materialization,
-per-well image tree, likely outside the registry) → B (per-well canonical,
-`per_well_then_merge`) → C (thin merged publication, not cohort). The registry is trimmed
+The grain model is **settled**. 🔵 CURRENT: four zones — A (bootstrap) → fan
+(`discover_wells` checkpoint, reads frame_contract) → B0 (stitching) → B
+(segmentation/snips per-well) → C (merged). 🟢 TARGET: pushes B/C fully per-well, splits
+the frame contract per-well (Zone-A narrowing), moves the fan earlier
+(`discover_wells_from_metadata`). The registry is trimmed
 to a **lean path resolver** (Bloat Audit): per-stage `family`/`fanout`/optional
 `subfolder`, per-artifact filename template; sentinels are derived helpers;
 `execution`/`grain`/`schema`/`kind`/`src_family` are deferred (each named with its future
 reader). The `fanout` vs `execution` distinction stays as a *documented concept*, not a
-field. Zone-C per-well-safety and
-the absence of any cohort stage are verified facts, not assumptions; scoped_runs is
-demoted to scratch. The **well-runner** (`lib/well_runner.py`) provides *mechanism, not
-staleness* — `active_wells()`, `checkpoint_well_shards()` — and imports IDs from
-`identifiers/`, never mints them. The **frame contract is split** into early
-metadata-only discovery + a per-well validate stage (Zone-A narrowing), so segmentation
-reads a per-well slice and one-well == whole-experiment for the front half too.
+field. Zone-C per-well-safety: **math** owner-confirmed + spot-checked; **wiring** still
+has merge-wall reads to convert (not the same claim). scoped_runs demoted to scratch. The
+**well-runner** provides *mechanism, not staleness* (`select_active_wells` pure +
+checkpoint glue + `checkpoint_well_shards`); imports IDs from `identifiers/`, never mints.
+The **frame contract is split** (🟢 TARGET) into early metadata-only discovery + a per-well
+validate stage, so segmentation reads a per-well slice and one-well == whole-experiment for
+the front half too.
 
 **The actual blocker:** none of the back/front-half wiring is safe to build until
 `well_id` means exactly one thing — **Scope 1** (create `identifiers/`) + **Scope 2**
 (flip semantics). The spine keys on `well_id`. That unglamorous front end is the real
 critical path.
 
-**Next concrete steps, in order:**
-1. The **`paths.py` worked example** still owed (see formal plan's "START HERE"): walk one
-   real first-stage through the registry, both Snakefile and entrypoint sides — to feel
-   the format before generalizing. ⭐ (mdcolon asked for this; not yet done.)
-2. **Scope 1** — create `identifiers/` (`constructors`/`parsers`/`validators`), zero-risk,
-   additive, unblocks everything.
-3. Then `lib/paths.py` (Lean MVP Contract) + `lib/well_runner.py`.
+(The `paths.py` worked example is **done** — see the WORKED EXAMPLE section. ✅)
+
+**Next concrete steps, in order (revised per audit #15 — identifiers BEFORE paths.py):**
+1. **Scope 1** — create `identifiers/` (`constructors`/`parsers`/`validators`). Zero-risk,
+   additive, unblocks everything that keys on `well_id`.
+2. **Implement `lib/paths.py`** from the Lean MVP Contract + Worked Example (fanout-
+   enforced). Safe to build now; per-well paths use `well_id` but aren't *wired* into the
+   DAG until Scope 2.
+3. **Scope 2** — migrate `well`/`well_id` semantics in schemas + call sites; regenerate.
+4. **Implement `lib/well_runner.py`** on normalized IDs (`select_active_wells` pure +
+   checkpoint glue + `checkpoint_well_shards`).
+5. **Wire one stage** end-to-end through the registry as the proof, then replicate.
+   *(Win 2 `tasks.py` verbs can land independently anytime to ease this.)*
+
+---
+
+## 🗂️ AUDIT TODO (raised 2026-06-02, not yet actioned)
+- **Verify `.validated` sentinel convention is uniform** (`{filename}.validated` for *all*
+  sentinels). If any rule uses `.{stem}.validated` or `{stem}.validated`, either normalize
+  or give `validated_path` options. *(Assumption in the MVP contract, not yet verified.)*
+- **Optional exhaustive Zone-C grep-audit** (module / searched-for / result table) to
+  upgrade "owner-confirmed + spot-check" → "exhaustively verified."
+- **Consider splitting this doc** if it keeps growing: Conceptual (north star) vs
+  Implementation Spec. For now the CURRENT/TARGET tags + document map at top carry the load.
