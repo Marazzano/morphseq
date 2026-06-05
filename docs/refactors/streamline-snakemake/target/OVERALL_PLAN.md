@@ -1,0 +1,245 @@
+# Overall Plan — streamline-snakemake refactor
+
+**Status:** Plan / index. Produced from the 2026-06-05 audit pass (`../AUDIT_PASSOFF.md`).
+**Owner:** mdcolon
+**What this is:** the single top-level statement of the whole refactor — goal, end-to-end
+spine, build order, per-stage status, open items, and audit findings. It is a **plan/index**:
+detail lives in the linked `target/` docs, not here. Tags follow the north star:
+🔵 **CURRENT** = verified in the active Snakefile today; 🟢 **TARGET** = what we build toward.
+
+**Grounded against:** `src/data_pipeline/pipeline_orchestrator/Snakefile` (read end-to-end
+2026-06-05) + the working tree on branch `mdcolon/20260605_refactor_docs_orientation`.
+
+**Read for detail:** [[per_well_throughline_findings]] (north star) ·
+[[current_state_and_next_steps]] (on-disk state) · [[well_id_throughline_refactor_plan]]
+(Scopes 1–5) · [[front_end_naming_and_flow]] (ingest + fan) ·
+[[stitched_handoff_contract]] (input seam) · [[model_input_handoff_contract]] (embeddings seam).
+
+> ⚠️ **Read the Audit Findings (§6) before executing this plan.** One finding is
+> build-blocking on this branch: the feature-extraction entrypoints the Snakefile calls
+> **do not exist here** (F1). Several docs describe the pipeline as "wired end-to-end /
+> ✅ ported"; that is true on a *different* branch, not this one.
+
+---
+
+## 1. Goal
+
+Cross the experiment-grain bootstrap **once** to discover which wells exist, then run each
+well **independently end-to-end** through the whole spine. After the well list is
+materialized (the fan), everything is embarrassingly parallel — one well per process, no
+cross-well barrier. The shape is **bootstrap → fan → per-well compute (incl. embeddings) →
+merge/publish**, with merged tables as thin publication views at the *end* of the DAG, not
+mid-pipeline barriers. **Embeddings is a late spine stage that FEEDS analysis_ready** (it is
+not a terminal tail): latents join on `snip_id` and flip the reserved `embedding_calculated`
+flag. The grain drives the file layout, governed by a lean path registry; identity
+(`well_id` = `{exp}_{well}`) is the through-line in both rows and paths. Detail: [[per_well_throughline_findings]] §GOAL.
+
+---
+
+## 2. The end-to-end spine (ordered stages)
+
+Status legend: **built** (rule + code present, this branch) · **rewire** (built but reads a
+merged input — the merge-wall, Scope 5) · **not-built** (no rule/code) · **off-branch**
+(rule present but the code it calls is missing here — see F1).
+
+🔵 **CURRENT execution order** (the fan sits LATE — after stitching, because
+`build_frame_contract` consumes the stitched inventory):
+
+| # | Stage (rule) | Family | fanout | execution | Status |
+|---|---|---|---|---|---|
+| **Zone A — experiment bootstrap** (`fanout=experiment`; discovers wells) |
+| A1 | `normalize_plate_metadata` | experiment_metadata | experiment | single | built |
+| A2 | `extract_scope_metadata_{yx1,keyence}` | experiment_metadata | experiment | single | built |
+| A3 | `map_series_to_wells_yx1` | experiment_metadata | experiment | single | built · *raw well-identity discovery* |
+| A4 | `apply_series_mapping_yx1` → `scope_metadata_mapped.csv` | experiment_metadata | experiment | single | built |
+| **Zone B0 — image materialization** (per-well tree, NO merge; **off-registry**) |
+| B0 | `build_stitched_images_yx1` (+`…_all` → `stitched_inventory.csv`) | built_image_data | per_well *(tree)* | single (loops wells) | built · 🔵 keys on local `well_index`; 🟢 → `well_id` |
+| **Zone A (cont.) — frame contract + FAN** |
+| A5 | `build_frame_contract` → `frame_contract.csv` | experiment_metadata | experiment | single | built · 🟢 splits per-well (Zone-A narrowing) |
+| **⟱ FAN** | `discover_wells` *(checkpoint)* → 🔵 `wells.txt` / 🟢 `discovered_wells.txt` | experiment_metadata | experiment | single | built · 🔵 reads `frame_contract.csv`, writes `wells.txt`; 🟢 reads `scope_metadata_mapped.csv` (earlier), writes `discovered_wells.txt` |
+| **Zone B — per-well computation** (`fanout=per_well_then_merge`) |
+| B1 | `segment_and_track_per_well` → `merge_segmentation_tracking` | segmentation_and_tracking | per_well_then_merge | per_well | built |
+| B2 | `run_snip_processing_per_well` → `merge_snip_manifests` | processed_snips | per_well_then_merge | per_well | built |
+| B3 | `generate_auxiliary_masks` | auxiliary_masks | experiment | single | built *(per-experiment, reads frame contract)* |
+| B4 | `compute_mask_geometry` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
+| B5 | `compute_pose_kinematics` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
+| B6 | `compute_fraction_alive` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
+| B7 | `compute_stage_predictions` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
+| B8 | `consolidate_features` → `consolidated_snip_features.csv` | computed_features | experiment | single | **off-branch (F1)** |
+| Q1 | `compute_segmentation_qc` | quality_control | experiment *(🟢 per_well)* | single | built |
+| Q2 | `compute_viability_qc` | quality_control | experiment | single | **rewire** — reads `consolidated_features` (F4) |
+| Q3 | `compute_death_detection` | quality_control | experiment *(🟢 per_well)* | single | built |
+| Q4 | `compute_surface_area_qc` | quality_control | experiment | single | **rewire** — reads `consolidated_features` (merge-wall) |
+| Q5 | `compute_auxiliary_mask_qc` | quality_control | experiment *(🟢 per_well)* | single | built |
+| Q6 | `compute_focus_qc` | quality_control | experiment *(🟢 per_well)* | single | built *(stub: `focus_flag=False`)* |
+| Q7 | `compute_motion_qc` | quality_control | experiment *(🟢 per_well)* | single | built *(stub: `motion_flag=False`)* |
+| Q8 | `consolidate_qc` → `qc_flags.csv` | quality_control | experiment | single | built |
+| **Zone B (cont.) — MODEL / EMBEDDINGS** (legacy build_06; FEEDS analysis_ready) |
+| E1 | `compute_embeddings` → `per_well/{well_id}/latents.parquet` | embeddings | per_well | **single** (model loaded once) | **not-built** (active frontier) |
+| E2 | `merge_embeddings` → `contracts/latents.parquet` | embeddings | per_well_then_merge | single | **not-built** |
+| **Zone C / publication** |
+| C1 | `assemble_analysis_ready` → `analysis_ready.csv` | analysis_ready | experiment | single | built · 🟢 gains `latents.parquet` input; `embedding_calculated` hardcoded `False` today |
+
+> **Embeddings execution call (verified reasoning):** `fanout=per_well` + `execution=single`
+> — latents land per-well (spine + incremental staleness) but **one job loads the legacy
+> model once** and encodes all run wells, because a per-well `conda run -n mseq_pipeline_py3.9`
+> reload (process spawn + checkpoint deserialize) would dominate the encode. Same shape as
+> stitching (B0). Detail: [[model_input_handoff_contract]] §6.2.
+
+---
+
+## 3. Build order (with dependencies)
+
+From [[current_state_and_next_steps]] §"Recommended order" + [[per_well_throughline_findings]]
+§"Next concrete steps". **Not invented here** — reproduced so the plan is self-contained.
+
+```
+0.  FIX F1 (entrypoints)   ← PREREQUISITE on this branch: the feature-extraction code the
+                             Snakefile calls is missing here. Nothing back-half runs until
+                             it is restored/ported. (See §6 F1; blocks-build.)
+1.  Scope 1  identifiers/   ← create constructors/parsers/validators. Empty, additive,
+                             zero-risk. Unblocks everything keying on well_id; the layer the
+                             handoff validator depends on. Use canonical _t{time_index:04d}.
+2.  Scope 3  env.yaml       ← separate later track (config.yaml exists; env + path-decoupling
+                             do not). Precedes the well-runner (runner takes output_root as a
+                             param, never derives it). Also lands model_python_env for E1.
+3.  lib/paths.py + STAGES   ← the registry (imports identifiers). Fanout-enforced resolver.
+                             Depends on Scope 1.  ⚠️ resolve F2 (sentinel convention) here.
+4.  Scope 2                 ← flip well/well_id semantics in schemas + call sites; regenerate.
+                             Migration site: the discover_wells checkpoint reads well_index
+                             (Snakefile:448,459) — see §5.
+5.  lib/well_runner.py      ← select_run_wells (pure) + checkpoint glue + merge_trigger_inputs
+                             + WellRun. Built on normalized IDs (needs Scope 1/2).
+6.  Wire ONE stage E2E      ← through the registry as the proof, then replicate to the rest;
+                             this is where Scope-5 per-well conversion + merge-wall rewires land.
+7.  Embeddings (E1/E2)      ← the active frontier; needs paths.py + well-runner + Scope 3
+                             (model_python_env). FEEDS analysis_ready (add latents input).
+```
+
+Independent of the chain: **Win 2 `tasks.py`** (verb dispatch) can land anytime and eases
+step 6. Detail: [[well_id_throughline_refactor_plan]] (Scopes), [[per_well_throughline_findings]]
+§WELL-RUNNER.
+
+---
+
+## 4. Per-stage status table (countable remaining work)
+
+| Bucket | Count | Stages |
+|---|---|---|
+| **built** (rule + code, this branch) | 12 | A1–A5, B0, B1, B2, B3, Q1, Q3, Q5, Q6*, Q7*, Q8, C1 *(Q6/Q7 are stubs)* |
+| **rewire** (built, reads merged input — Scope 5) | 2 | Q2 viability_qc, Q4 surface_area_qc |
+| **off-branch** (rule present, code missing here — F1) | 5 | B4–B8 (mask_geometry, pose_kinematics, fraction_alive, stage_predictions, consolidate_features) |
+| **not-built** (no rule/code) | 2 | E1 compute_embeddings, E2 merge_embeddings |
+| **scaffolding not-built** | 2 pkgs | `identifiers/` (Scope 1), `embeddings/` (both 0-byte `__init__.py` only) |
+| **infra not-built** | — | `lib/paths.py`, `lib/well_runner.py`, `tasks.py`, `env.yaml` |
+
+*(Count note: A2 and B0 each have microscope variants; counted once.)*
+
+**Headline:** on this branch the back half is **not** runnable end-to-end — 5 feature stages
+are off-branch (F1) and 2 embedding stages are unbuilt. The front half (A→B0→fan→seg→snips)
+and the QC/consolidation/analysis-ready *rules* are present.
+
+---
+
+## 5. Open items — blocks-build vs defer
+
+| Item | Disposition | Reason |
+|---|---|---|
+| **F1: feature entrypoints missing on this branch** | **blocks-build** | Snakefile calls `feature_extraction.entrypoints.compute_*`; only `__init__.py` exists here → `ModuleNotFoundError` for B4–B8 and everything downstream. (§6 F1) |
+| Exhaustive Zone-C grep-audit | **DONE** (safe) | Ran it — no cohort/cross-well statistic anywhere in features+QC+joins. (§6 F3) |
+| **F2: `.validated` sentinel convention not uniform** | **blocks-build** (for `paths.py`) · **DECIDED** | Two conventions coexist (28 dot-prefixed `.X.validated` vs 30 suffix `X.csv.validated`). **Decision (2026-06-05): standardize on dot-prefixed hidden `.{filename}.validated`** (matches the spine artifacts; `validated_path = parent / f".{name}.validated"`, no per-stage flag). Action: rename the ~30 suffix sentinels in feature/QC rules during Scope-5 wiring. |
+| `models_root` location | safe-to-defer | Leaning Scope-3 `env.yaml` reusing legacy `models/legacy/<name>` layout; confirm when wiring E1. |
+| `mseq_pipeline_py3.9` env name | **confirmed** (safe) | Env exists (`…/mamba/envs/mseq_pipeline_py3.9`); switch at `legacy_model_utils.py:204`. (§6 F5) |
+| Stitching `execution` (single vs per_well) | safe-to-defer | Stays `single`; revisit only for a real IO/compute/debug win. |
+| Merge cadence (per-stage vs stage-group) | safe-to-defer | Performance tuning, not architecture. |
+| Scope-2 migration site (`discover_wells` reads `well_index`) | safe-to-defer (track) | Confirmed: Snakefile:448,459 read `well_index` from the contract; the `materialize_selected_wells`/`_wells_from_mapping` path reads it too (:240). Scope 2 must update both; order is safe (Scope 2 precedes well-runner). |
+
+---
+
+## 6. Audit findings (what did / did NOT hold up)
+
+Audited the five spine claims (AUDIT_PASSOFF §2), the "settled decisions" (§3), and the
+open-items (§4), grounding every claim against the Snakefile + working tree.
+
+### Spine claims — verdicts
+
+| # | Claim | Verdict |
+|---|---|---|
+| 1 | Fan is a checkpoint; per-well staleness needs a per-well spine | ✅ **HOLDS.** `checkpoint discover_wells` (Snakefile:427) reads `frame_contract.csv` (:434) → `wells.txt` (:438); `wells_for_experiment` expands the per-well DAG off it (:476–480). 🔵 CURRENT tag accurate. |
+| 2 | Zone C is per-well-able (no cohort math) | ✅ **HOLDS — now exhaustively verified.** Grepped all QC + join modules **and** the (deleted) feature blobs from git: every aggregate is **within-embryo / within-Z-stack** (`embryo_qc` `np.percentile(...,5)` is "across all Z-pairs" of one embryo; `surface_area_qc` compares to the external `sa_reference_curves.csv`, no quantile). No cross-well statistic exists. Upgrades the doc's "spot-check" to "exhaustive." **Caveat:** feature code audited from git history because it's off-branch (F1). |
+| 3 | The merge wall is rewiring, not algorithm change | ✅ **HOLDS, but doc UNDERCOUNTS.** Doc names only `surface_area_qc`. Actually **two** Zone-B QC rules read the merged `consolidated_features`: `compute_viability_qc` (Snakefile:753) **and** `compute_surface_area_qc` (:799). Both do per-snip work → both rewire cleanly to per-well shards. (F4) |
+| 4 | `fanout` vs `execution` holds for embeddings | ✅ **HOLDS** (as design; unbuilt). Reasoning verified: per-well `conda run` model reload would dominate → one batched job, per-well shards. Contract §6.2 and findings doc agree. Same shape as stitching B0 (which the Snakefile confirms is per-well-tree + single-job). |
+| 5 | Embeddings FEEDS analysis_ready; gate not circular | ✅ **HOLDS.** No embeddings rule in the Snakefile (unbuilt, active frontier). `assemble_analysis_ready` reads only features + qc_flags (Snakefile:937–940), **not** latents. `embedding_calculated` hardcoded `False` (`assemble.py:65`) reserves the seam. Gate comes from QC consolidation, not analysis_ready — non-circular. |
+
+### Findings (named, not silently resolved)
+
+- **F1 — BUILD-BLOCKING: feature-extraction entrypoints absent on this branch.** The
+  Snakefile calls `data_pipeline.feature_extraction.entrypoints.compute_mask_geometry`
+  (and pose_kinematics / fraction_alive / stage_predictions / consolidate_features), but
+  `src/data_pipeline/feature_extraction/` here contains **only `__init__.py`** (a stray
+  `__pycache__/consolidate_features.cpython-310.pyc` is the only trace). The flat
+  implementations were deleted in commit `84b4aae3` ("remove stale files"); the
+  `entrypoints/` submodule exists only on branch `mdcolon/20260222_docs_snakemake_remake`.
+  **Consequence:** the docs' "wired end-to-end through analysis-ready" / "✅ ported"
+  (ORIENTATION §52–55, current_state §89 "verified 2026-06-04") is true on *that* branch,
+  **not this one** — B4–B8 would `ModuleNotFoundError`. **Action:** restore/port the
+  entrypoints (or rebase onto the branch that has them) before any back-half run. This is
+  step 0 of the build order.
+
+- **F2 — BUILD-BLOCKING for the registry: `.validated` sentinel convention not uniform.
+  DECIDED 2026-06-05 → dot-prefixed hidden.**
+  The Snakefile mixes **dot-prefixed hidden** sentinels (`.frame_contract.validated`,
+  `.segmentation_tracking.validated`, `.analysis_ready.validated` — 28 occurrences) with
+  **suffix** sentinels (`mask_geometry_metrics.csv.validated`, `qc_flags.csv.validated` —
+  30 occurrences). The MVP `validated_path()` helper assumes a single form
+  ([[per_well_throughline_findings]] AUDIT TODO flagged this as unverified — now
+  **confirmed non-uniform**). **Decision: standardize on `.{filename}.validated`** (the
+  dot-prefixed hidden form already used by the load-bearing spine artifacts the checkpoint
+  and merges depend on). Then `validated_path(...) = artifact_path(...).parent /
+  f".{name}.validated"` — a one-liner, no per-stage convention flag (this kills the F2
+  branching entirely). **Action:** rename the ~30 suffix sentinels (the feature/QC
+  `*.csv.validated` outputs) to the dot-prefixed form during Scope-5 wiring; update the
+  corresponding `done = ...` lines in those rules.
+
+- **F3 — RESOLVES open question #2 (the #1 audit item): Zone-C cohort audit is clean.**
+  See spine claim 2. The exhaustive grep the docs marked "pending" is done; no cohort math.
+
+- **F4 — Doc undercounts the merge-wall.** `compute_viability_qc` also reads
+  `consolidated_features` (Snakefile:753), not just `surface_area_qc`. Both are Scope-5
+  rewires. Update the findings doc's Scope-5 list to name both. (Not blocking; tracking.)
+
+- **F5 — CONFIRMS: model sub-env exists.** `mseq_pipeline_py3.9` is present
+  (`…/mamba/envs/mseq_pipeline_py3.9`); the `conda run -n mseq_pipeline_py3.9` switch is at
+  `legacy_model_utils.py:204`. Contract §8 Q5 answered: yes, still current.
+
+- **F6 — "Merge never shrinks" is 🟢 TARGET, not 🔵 CURRENT (correctly tagged, worth
+  flagging).** The current merges (`merge_snip_manifests`, `merge_segmentation_tracking`)
+  take `--inputs` = the **declared** per-well shard paths from `wells_for_experiment` and
+  merge **only those** — they do **not** scan-all-present-shards. So with a subset
+  `target_wells`, today's merged file *would* shrink to the run subset. The doc's
+  "triggers narrowly, composes broadly (execution-time scan of all `.validated` shards)" is
+  an unbuilt TARGET behavior ([[per_well_throughline_findings]] §GUIDING PRINCIPLE). The doc
+  tags it 🟢 correctly; this finding just makes the CURRENT≠TARGET gap explicit so the
+  well-runner build (step 5) knows the scan is *new* work, not a rewire.
+
+### Decisions confirmed settled (AUDIT_PASSOFF §3)
+
+Frame-contract → dedicated `frame_contracts/` family (findings §1002, DECIDED 2026-06-05);
+multi-channel → channel as rows (findings §1005); `well_id` canonical everywhere incl. image
+trees (findings §347); `target_wells` = compute filter never merge-membership (verified: merge
+inputs derive from the checkpoint via `wells_for_experiment`, not `TARGET_WELLS`); registry
+governs tabular artifacts only (image trees off-registry); model interpreter → `env.yaml`
+(contract §6.5, reconciled). **No stale "leaning/open" text blocks the build** — the two spots
+the pass-off flagged (findings #5 frame-contract family, stitched-contract §193) read as
+resolved in the current `target/` docs.
+
+---
+
+## 7. Bottom line
+
+The **design is coherent and the spine claims hold** — the per-well architecture, the fan
+checkpoint, the no-cohort-math guarantee, and the embeddings-feeds-analysis_ready ordering are
+all verified against code. The **blockers are implementation-state, not design**: (F1) the
+feature entrypoints are missing on this branch, and (F2) the sentinel convention must be
+unified before the path registry can be trusted. Build order: **fix F1 → Scope 1 →
+paths.py (resolve F2) → Scope 2/3 → well-runner → wire one stage → embeddings.**

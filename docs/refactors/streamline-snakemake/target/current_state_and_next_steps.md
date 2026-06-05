@@ -21,6 +21,7 @@ All refactor docs live in `target/` (the two throughline docs were `git mv`'d he
 | `stitched_handoff_contract.md` | the stitched drop-in seam + frame_inventory contract | design complete |
 | `model_input_handoff_contract.md` | the model/embedding seam (legacy build_06): inference-first encode of snips → latents; symlink view of `processed_snip_path`; reuses `gen_embeddings` + the `mseq_pipeline_py3.9` sub-env | design (inference) complete; training deferred |
 | `current_state_and_next_steps.md` | **this doc** — verified on-disk state | living |
+| `OVERALL_PLAN.md` | top-level plan/index: goal, the ordered spine (family/fanout/execution/status per stage), build order, per-stage status table, open items, **audit findings** (2026-06-05) | living |
 
 **Not yet a dedicated target doc** (specified *inside* the findings doc, not broken out):
 - the **per-well stage pattern** for features + QC (Scope 5) — see "The Per-Well Stage Pattern" below
