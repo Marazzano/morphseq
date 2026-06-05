@@ -171,7 +171,7 @@ The front end is **7 rules**: 1 plate root + 2 scope-front + 1 join + 1 fan + 2 
 | `join_series_mapping_to_scope_metadata` | `scope_metadata__{scope}.csv` + `series_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | the join; **`well_id` minted here**. ← CONVERGENCE LINE. |
 | `discover_wells` *(checkpoint)* | `scope_metadata_mapped.csv` (#13) | `discovered_wells.txt` | Shared | reads the `well_id` column; emits ALL discovered well_ids. ⟱ FAN ⟱ |
 | `stitch_well` *(per well_id)* | raw + this well's mapping rows | `stitched_ff_images/{well_id}/{channel}/` + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; keyed on `well_id`. |
-| `validate_frame_contract_well` *(per well_id)* | this well's images + metadata rows | `…/per_well/{well_id}/frame_contract.csv` | Shared | post-fan per-well validation gate (metadata ∩ images). |
+| `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `stitched_handoff_contract.md`. |
 
 **`well_id` is born at the join, read at discovery (matches code, line 68).**
 `map_series_to_wells` produces only the *mapping* (`series_number → well_index`), not a per-row
@@ -209,7 +209,10 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 - **Keyence ingest already resolves the well** — `extract_keyence_scope_metadata` calls
   `_extract_well_from_path()` (`XY01a`→`A01`) during extraction, so Keyence's `map_series_to_wells`
   is a passthrough and needs no raw read.
-- `build_frame_contract` is a **single** microscope-agnostic rule today (Snakefile:404).
+- `build_frame_contract` is a **single** microscope-agnostic rule today (Snakefile:404). *(TARGET
+  splits this into per-well `build_frame_inventory_well` + shared `validate_frame_inventory_well`,
+  and renames the table `frame_contract` → `frame_inventory` — see `stitched_handoff_contract.md`.
+  Name kept here as-is because it describes today's code.)*
 - Stitched-image output paths carry **no** scope token (findings doc, Microscope section).
 
 ### What's microscope-specific vs shared
@@ -220,7 +223,7 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 | `join_series_mapping_to_scope_metadata` | **NO** (shared) | pure table join; code in `scope/shared/` |
 | `discover_wells` | **NO** (shared) | reads the converged `scope_metadata_mapped.csv` |
 | `stitch_well` | **YES** — `{yx1, keyence}` | reads the raw file to build images (format-specific) |
-| `validate_frame_contract_well` | **NO** (shared) | reads converged metadata + stitched images |
+| `validate_frame_inventory_well` | **NO** (shared) | reads converged metadata + stitched images (TARGET name; was `validate_frame_contract_well`) |
 
 > So there are **two microscope-specific points**: the **metadata front** (`ingest_scope_metadata`
 > + `map_series_to_wells`, on the scope branch before convergence) and the **image build**
@@ -361,19 +364,33 @@ keyed on `well_id`:
    │     out: built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/
    │          sentinel: .well_{well_id}.done              ← well_id, not well_index
    │
-   └─► validate_frame_contract_well  [per well_id]        (Zone-A spine, fanout=per_well_then_merge)
-         in:  this well's images (from stitch_well) + this well's metadata rows
-         out: <frame-contract-family>/{exp}/per_well/{well_id}/frame_contract.csv
-         (this IS the per-well validation gate: metadata ∩ images on disk)
+   ├─► build_frame_inventory_well   [per well_id]        (Zone-A spine, fanout=per_well_then_merge)
+   │     in:  this well's images (from stitch_well) + this well's metadata rows
+   │     out: <frame-inventory-family>/{exp}/per_well/{well_id}/{well_id}_frame_inventory.csv
+   └─► validate_frame_inventory_well [per well_id]        (the shared gate)
+         in:  {well_id}_frame_inventory.csv
+         out: {well_id}_frame_inventory.csv.validated + {well_id}_handoff_report.md
+         (per-well validation gate: metadata ∩ images on disk; sentinel = trusted)
 ```
+
+> **The stitched seam is the public "drop-in here" point.** `stitch_well` +
+> `build_frame_inventory_well` + the shared `validate_frame_inventory_well` are the boundary at
+> which an **outside dataset** can enter the pipeline microscope-agnostically (no raw read, no
+> ingest): organize a stitched tree + author a minimal `frame_inventory` CSV, then the strict
+> shared validator admits it. The full input contract (layout, required columns, immutable frame
+> key, one-file+sentinel model, native+drop-in flows, worked walkthrough) is
+> **`stitched_handoff_contract.md`** — this section's post-fan counterpart. *(Names here are
+> TARGET; the `paths.py` examples further below also use the TARGET `frame_inventory` name. Only
+> explicit "today's code" callouts keep the legacy `frame_contract`. The code rename is a Scope-2
+> migration.)*
 
 - **`target_wells` is config-only** (no materialized `selected_wells.txt`): the checkpoint
   emits ALL discovered `well_id`s; the well-runner computes `active_wells = discovered ∩
   target_wells` from config (findings-doc Win 5). `materialize_selected_wells` dissolves.
-- **`frame_contract` is NOT a fan input** (TARGET): discovery reads only
-  `scope_metadata_mapped.csv`. The frame contract is rebuilt per-well *after* the fan as
-  `validate_frame_contract_well`, and its merged form is an off-spine view nothing downstream
-  reads.
+- **`frame_inventory` is NOT a fan input** (TARGET): discovery reads only
+  `scope_metadata_mapped.csv`. The frame inventory is built per-well *after* the fan
+  (`build_frame_inventory_well`) and gated by `validate_frame_inventory_well`; its merged form is
+  an off-spine view nothing downstream reads.
 - **`stitched_inventory.csv` drops out of the spine** → optional off-spine report.
 
 ---
@@ -426,11 +443,13 @@ STAGES = {
         "artifacts": {"wells": "discovered_wells.txt"},
     },
 
-    # ── POST-FAN (per well_id) — frame contract joins the spine ───────────────
-    "validate_frame_contract_well": {
-        "family": "experiment_metadata",            # <frame-contract-family> — see findings #5 (leaning frame_contracts/)
+    # ── POST-FAN (per well_id) — frame inventory joins the spine ──────────────
+    # build_frame_inventory_well writes the shard; validate_frame_inventory_well writes
+    # only the .validated sentinel + report (one-file+sentinel model — see stitched_handoff_contract.md).
+    "frame_inventory_well": {                        # stage key for the per-well shard path
+        "family": "experiment_metadata",            # <frame-inventory-family> — see findings #5 (leaning frame_inventory/)
         "fanout": "per_well_then_merge",
-        "artifacts": {"contract": "frame_contract.csv"},
+        "artifacts": {"inventory": "{well_id}_frame_inventory.csv"},   # well_id IN the filename
     },
 }
 ```
@@ -462,11 +481,14 @@ artifact_path(ROOT, "discover_wells", "wells", "20250912")
 #   → {ROOT}/experiment_metadata/20250912/discovered_wells.txt   (contents: well_id per line)
 
 # post-fan, per well_id:
-artifact_path(ROOT, "validate_frame_contract_well", "contract", "20250912",
+artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912",
               path_mode="per_well", well_id="20250912_B01")
-#   → {ROOT}/experiment_metadata/20250912/per_well/20250912_B01/frame_contract.csv
-artifact_path(ROOT, "validate_frame_contract_well", "contract", "20250912", path_mode="merged")
-#   → {ROOT}/experiment_metadata/20250912/frame_contract.csv   (off-spine merged view)
+#   → {ROOT}/experiment_metadata/20250912/per_well/20250912_B01/20250912_B01_frame_inventory.csv
+validated_path(ROOT, "frame_inventory_well", "inventory", "20250912",
+               path_mode="per_well", well_id="20250912_B01")
+#   → {ROOT}/.../per_well/20250912_B01/20250912_B01_frame_inventory.csv.validated   (the gate's only csv-side output)
+artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912", path_mode="merged")
+#   → {ROOT}/experiment_metadata/20250912/20250912_frame_inventory.csv   (off-spine merged view)
 
 # stitching (OFF-registry, own helper) — keyed on well_id:
 #   → {ROOT}/built_image_data/20250912/stitched_ff_images/20250912_B01/BF/
@@ -519,8 +541,8 @@ artifact_path(ROOT, "validate_frame_contract_well", "contract", "20250912", path
 - **`target_wells` input form:** accept both local+global and normalize to `well_id` (today's
   behavior), vs. require strict `well_id`. Leaning "accept both, normalize" for ergonomics —
   confirm when wiring the well-runner.
-- **`<frame-contract-family>`** for `validate_frame_contract_well`: keep `experiment_metadata/`
-  vs. dedicated `frame_contracts/` (findings #5, leaning the dedicated family). Placeholder
+- **`<frame-inventory-family>`** for `frame_inventory_well`: keep `experiment_metadata/`
+  vs. dedicated `frame_inventory/` (findings #5, leaning the dedicated family). Placeholder
   in the registry row above until decided.
 - *(resolved)* `map_series_to_wells` and `join_series_mapping_to_scope_metadata` are **kept
   as separate stages** — map is per-scope CSV logic (always-present passthrough), the join is

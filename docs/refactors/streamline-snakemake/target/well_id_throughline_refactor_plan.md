@@ -4,6 +4,28 @@
 **Owner:** mdcolon
 **Related:** `identifier_and_wildcard_contract.md` (the existing grammar doc this plan revises and finishes).
 
+> **On-disk reality check (verified 2026-06-02).** Several passages below were written
+> as if scaffolding already exists. It does not. Before implementing, know:
+> - `src/data_pipeline/identifiers/` exists but is an **empty package** (`__init__.py`,
+>   0 bytes). There is **no** `shared/` namespace and **no** flat `identifiers.py` to
+>   "split." Scope 1 is **create**, not split.
+> - **No `build_well_id`/`build_image_id`/`build_embryo_id`/`build_snip_id` exist
+>   anywhere.** IDs are minted inline as f-strings — e.g.
+>   `f"{experiment_id}_{well_index}"` at `metadata_ingest/scope/yx1_scope_metadata.py`,
+>   `keyence_scope_metadata.py`, and `metadata_ingest/mapping/series_well_mapper_keyence.py`.
+> - There is **no** `feature_extraction/io/paths.py` registry and **no**
+>   `FEATURE_OUTPUT_FILENAMES` / `feature_output_path`. The path registry is built
+>   fresh in Scope 4, not promoted from an existing one.
+> - There are **no `rules/*.smk` files** on disk. The "orphaned `.smk` blueprint"
+>   referenced below is gone; read git history (`e25d3d93`, `ba9d41b8`) if you want the
+>   shape, but there is nothing to `include` or delete.
+>
+> Consequence: the "compat `__init__.py` shim → near-zero import churn" benefit is
+> **moot** — there are zero existing importers of the identifier names to preserve.
+> Scope 1 is purely "write the constructors + (optionally) repoint the inline
+> f-strings." Passages that still say "split," "orphaned `.smk`," or "existing
+> registry" are left in place for design rationale but are superseded by this banner.
+
 ---
 
 ## Why this exists
@@ -674,16 +696,33 @@ code-output are guaranteed identical. "Add a feature" becomes a recipe: (1) one
 registry row, (2) the compute function, (3) a `tasks.py` subcommand, (4) copy a rule
 template changing only the stage name.
 
-**DECISION STILL TO MAKE (mdcolon, later):**
-1. **Registry scope:** one pipeline-wide `shared/paths.py` registry for *all* stages,
-   vs. per-domain registries (like today's `feature_extraction/io/paths.py`) that the
-   well-runner composes. (Claude leans pipeline-wide for the "add in one place" goal;
-   bigger consolidation.)
-2. Where it formally lands (likely Scope 4, alongside `per_well_artifact_path` — same
-   function family, both consume `output_root`).
+**DECISION (resolved 2026-06-02):**
+1. **Registry scope: ONE pipeline-wide registry.** A single `STAGES` table in
+   `pipeline_orchestrator/lib/paths.py` covers *all* stages. The `family` field
+   (`computed_features`, `quality_control`, `experiment_metadata`, …) namespaces the
+   domains *inside* one dict, so a pipeline-wide table loses nothing a per-domain split
+   would give — and it preserves the whole point ("add a feature = one row, in one
+   place"). Per-domain registries would force the Snakefile to import from N modules
+   and re-litigate family/grain per domain. (There is no `feature_extraction/io/paths.py`
+   to promote anyway — see the reality-check banner.)
+2. **Where it lands: `pipeline_orchestrator/lib/paths.py` (Scope 4)**, alongside
+   `per_well_artifact_path`. The registry consumes `output_root`, so it belongs in the
+   **orchestration** kingdom, not in `identifiers/` (identity). It is *not* in `shared/`
+   (there is no `shared/`); it sits next to the well-runner that already consumes
+   `output_root`.
+3. **Kingdom boundary stays hard.** `lib/paths.py` (orchestration: knows `output_root`,
+   `per_well/`, families, grain) is a *different file* from `identifiers/` (identity:
+   knows naming). The Snakefile imports from **both** at parse time (it already does
+   `from data_pipeline... import ...` — verified at Snakefile lines 95, 302 — so the
+   "one registry imported by both Snakefile and entrypoint" claim is mechanically
+   already proven; no new machinery needed).
 
 ## Suggested first action when resuming
 
-Decide the registry-scope question above, then begin **Scope 1** (the additive,
-zero-risk `shared/identifiers/` package + compat `__init__.py` shim) — it changes no
-call sites and can land safely on its own.
+The registry-scope question is **resolved** (one pipeline-wide `lib/paths.py`, Scope 4 —
+see the DECISION block above). The remaining "feel it out" step is the **`paths.py`
+worked example** below (how the *first stage* interacts with the registry from both the
+Snakefile and the Python side), then begin **Scope 1**: **create** (not split) the
+`identifiers/` package — fill the empty `src/data_pipeline/identifiers/__init__.py` with
+`constructors.py` / `parsers.py` / `validators.py` / `README.md`. It changes no call
+sites and can land safely on its own.

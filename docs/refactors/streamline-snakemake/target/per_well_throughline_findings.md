@@ -23,6 +23,11 @@
 > Design Principles → Bloat Audit → Lean MVP Contract + Worked Example (🟢 paths.py spec)
 > → Well-Runner (🟢) → DAG Mechanics → Zone-A Narrowing (🟢 the frame-contract split) →
 > Target Model → Open Questions → Pause/Next-steps.
+>
+> **Companion target docs:** `target/front_end_naming_and_flow.md` (front-end ingest +
+> fan detail) and `target/stitched_handoff_contract.md` (the stitched **drop-in** input
+> contract — tree layout + frame-contract columns + strict entry gate for outside datasets;
+> standardizes the per-frame axis as `time_index`, the T dimension).
 
 ---
 
