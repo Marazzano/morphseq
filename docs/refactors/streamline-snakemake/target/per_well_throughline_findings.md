@@ -835,25 +835,36 @@ Zone B — per-well canonical computation   (fanout=per_well_then_merge; one wel
   quality_control/{exp}/per_well/{well_id}/...          ← NEW
   analysis_ready/{exp}/per_well/{well_id}/...           ← NEW
 
+Zone B (cont.) — MODEL / EMBEDDINGS    (legacy build_06; encodes snips → latents; FEEDS analysis_ready)
+  embeddings/{exp}/per_well/{well_id}/latents.parquet   (snip_id → z_mu_*; per-well shard)
+  embeddings/{exp}/bf_embryo_snips/{exp}/...             (symlink VIEW of processed_snip_path)
+
 Zone C — merged / publication products    (thin concat at the END of the DAG; NOT cohort)
   segmentation_and_tracking/{exp}/contracts/segmentation_tracking.csv
   processed_snips/{exp}/contracts/snip_manifest.parquet
   computed_features/{exp}/consolidated/...
   quality_control/{exp}/consolidated/...
-  analysis_ready/{exp}/analysis_ready.csv
-
-Zone D — model / embeddings    (legacy build_06; consumes snip_manifest, encodes → latents)
-  embeddings/{exp}/morph_latents_{exp}.csv         (snip_id → z_mu_*; keyed by snip_id)
-  embeddings/{exp}/bf_embryo_snips/{exp}/...        (symlink VIEW of processed_snip_path)
+  embeddings/{exp}/contracts/latents.parquet
+  analysis_ready/{exp}/analysis_ready.csv               (joins latents → embedding_calculated)
 ```
 
-> **Zone D is specified in `target/model_input_handoff_contract.md`, not here.** It is the
-> model seam (legacy build_06): inference-first, reuses `gen_embeddings` + the
-> `mseq_pipeline_py3.9` sub-env, keyed on `snip_id` (no `pert_id`/splits — those are
-> training, deferred). It is **not yet built** (`src/data_pipeline/embeddings/` is empty).
-> Grain note: encode is naturally per-well-able (snips are already per-well shards), but the
-> legacy encoder loops an experiment's snips in one job — its `fanout`/`execution` placement
-> in the registry is an **open item** for whoever wires it (see the contract §8).
+> **Embeddings is a LATE SPINE STAGE that feeds analysis_ready — NOT a terminal "Zone D".**
+> Legacy is explicit: `build06: df02 + latents → df03`, and `analysis_ready` already
+> reserves `embedding_calculated` (today hardcoded False). So the spine is
+> `… features → qc → embeddings → analysis_ready`; latents join on `snip_id` and flip
+> `embedding_calculated`. The seam is specified in `target/model_input_handoff_contract.md`
+> (inference-first; reuses `gen_embeddings` + the `mseq_pipeline_py3.9` sub-env; no
+> `pert_id`/splits — training deferred). **Not yet built** (`src/data_pipeline/embeddings/`
+> is empty).
+>
+> **⭐ Embeddings is the canonical `fanout=per_well` + `execution=single` (batched) stage**
+> (decided 2026-06-05). Latents land **per-well** (spine + incremental staleness preserved),
+> but **ONE job loads the model once** and encodes all *run* wells, writing each well's
+> shard — because loading the legacy model through the Py-3.9 `conda run` sub-env **per well**
+> would dominate the actual encode (process spawn + checkpoint deserialize ≫ encoding a few
+> hundred snips). This is the *clincher* row of the `fanout` vs `execution` table made real:
+> per-well files, single looping job — same shape as stitching. (See the merge body / present-
+> shard scan; the batched encoder writes shards, the merge composes them.)
 
 **Merged-or-not is a TARGET distinction, not a mode (#12):** the rhythm
 (`run_X_per_well → merge_X → validate_merged_X`) doesn't conflict with one-well runs —
@@ -984,9 +995,21 @@ reconcile + existence-check across all wells) → an experiment-grain barrier. *
 >   `fanout=per_well_then_merge`, matching the other spine families (`segmentation_and_tracking/`,
 >   `processed_snips/`, …). Cost: a new family + a migration of the on-disk location.
 >
-> **Leaning (b)** for grain consistency (it makes the frame contract look like every other
-> spine artifact), but this is **not yet decided** — resolve when writing the registry. The
-> `<frame-contract-family>` placeholder in the Step-3 row above stands in until then.
+> **DECIDED 2026-06-05 → (b) dedicated `frame_contracts/` family.** The frame contract
+> becomes a per-well spine artifact (`fanout=per_well_then_merge`), so it goes in its own
+> uniformly-per-well family alongside `segmentation_and_tracking/`, `processed_snips/`, etc.,
+> rather than muddying the experiment-grain `experiment_metadata/` bootstrap family. The
+> `<frame-contract-family>` placeholder in the Step-3 row resolves to **`frame_contracts/`**.
+> Cost accepted: a new family + on-disk migration of the frame-contract location.
+>
+> **Multi-channel (DECIDED 2026-06-05): one per-well contract, channel as ROWS.** The frame
+> contract already keys on `(experiment_id, well_id, channel_id, time_int)` and built images
+> already nest `stitched_ff_images/{well_id}/{channel}/` — so multi-channel is **not** a
+> structural change. Keep **one** `frame_contract.csv` shard per well
+> (`frame_contracts/{exp}/per_well/{well_id}/frame_contract.csv`); additional channels are
+> just more rows. Do **not** split to per-well-per-channel shards (premature while BF-only;
+> deeper spine for no current win). Today the builder selects BF (`_determine_bf_channel`),
+> collapsing to one channel; the row-grain already supports more without redesign.
 
 **Consequences (each preserves a tenet):**
 - **Segmentation reads its per-well slice**, not the whole contract. *(Verified: today it

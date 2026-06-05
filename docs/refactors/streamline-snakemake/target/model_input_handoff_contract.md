@@ -204,47 +204,71 @@ Goal: reproduce Build06's *inference* behavior on the new pipeline's outputs —
 encode processed snips into latents keyed by `snip_id`. No training, no
 `pert_id`, no `model_inputs` join required to encode.
 
-### 6.1 Inputs / outputs
+### 6.0 Spine position (IMPORTANT — embeddings FEEDS analysis_ready)
+Embeddings is a **late spine stage**, not a terminal tail. Legacy:
+`build06: df02 + latents → df03`; and `analysis_ready` reserves
+`embedding_calculated` (today hardcoded False). So:
 ```
-INPUT (per experiment, from the new pipeline):
-  data_pipeline_output/processed_snips/<exp>/contracts/snip_manifest.parquet
-    -> processed_snip_path  (the JPGs to encode; gate on analysis_ready.use_snip)
+… snips → features → qc → EMBEDDINGS → analysis_ready
+                          (latents join on snip_id, flip embedding_calculated)
+```
+**Dependency-ordering consequence:** the `use_snip` gate **cannot** come from
+`analysis_ready` (that would be circular — analysis_ready is downstream of us).
+Gate from the **QC consolidation** instead (`quality_control/.../qc_flags.csv`,
+which defines `use_snip` upstream of analysis_ready), or simply encode **all**
+snips and let analysis_ready do the gating on join. (See §8 Q2.)
 
-OUTPUT:
-  data_pipeline_output/embeddings/<exp>/
-    bf_embryo_snips/<exp>/<snip_id>.jpg     # symlink view (Decision 1)
-    morph_latents_<exp>.csv                  # snip_id, z_mu_*, (z_sigma_*)
-    .embeddings.validated
+### 6.1 Inputs / outputs (per-well shard + symlink view)
+```
+INPUT (per RUN well):
+  processed_snips/<exp>/per_well/<well_id>/contracts/snip_manifest.parquet
+    -> processed_snip_path  (the JPGs to encode)
+  quality_control/<exp>/consolidated/qc_flags.csv   (optional use_snip gate; NOT analysis_ready)
+
+OUTPUT (per-well shard — fanout=per_well):
+  embeddings/<exp>/per_well/<well_id>/latents.parquet   # snip_id, z_mu_*, (z_sigma_*)
+  embeddings/<exp>/per_well/<well_id>/.latents.validated
+OUTPUT (merged publication, Zone C):
+  embeddings/<exp>/contracts/latents.parquet           # thin concat of shards
+  embeddings/<exp>/bf_embryo_snips/<exp>/<snip_id>.jpg  # symlink view (Decision 1)
 ```
 
-### 6.2 Steps (mirrors `generate_latents_with_repo_images`)
-1. **Materialize the symlink view.** From `snip_manifest.parquet`, optionally
-   filtered to `use_snip` via `analysis_ready`, symlink each
-   `processed_snip_path` to `embeddings/<exp>/bf_embryo_snips/<exp>/<snip_id>.jpg`.
-   (Symlink, not copy — manifest stays source of truth.)
-2. **Load the model** from `models/legacy/<model_name>` (reuse
-   `resolve_model_dir` / `load_legacy_model_safe`).
-3. **Encode.** Build the dataset over the symlink view
-   (`EvalDataConfig` / `_SnipDataset`), `basic_transform(target_size=(288,128))`,
-   `batch_size=64`, `shuffle=False`, eval + `no_grad`; run
-   `extract_embeddings_legacy`.
-4. **Write** `morph_latents_<exp>.csv` (`snip_id, z_mu_*`).
+### 6.2 Execution — fanout=per_well, execution=SINGLE (batched). ⭐ the key call.
+Latents land **per well** (spine + incremental staleness), but **ONE job loads
+the model once** and encodes all *run* wells, writing each well's shard. Loading
+the legacy model through the Py-3.9 `conda run` sub-env **per well** would dominate
+the encode (process spawn + checkpoint deserialize ≫ encoding a few hundred snips).
+This is the canonical `per_well` + `single` stage — same shape as stitching.
+
+Steps (mirrors `generate_latents_with_repo_images`):
+1. **Resolve run wells** (well-runner `run_wells`), and for each, its snip shard +
+   `processed_snip_path`s; symlink them into the `bf_embryo_snips/<exp>/` view.
+2. **Load the model ONCE** from `models_root/.../<model_name>` (reuse
+   `resolve_model_dir` / `load_legacy_model_safe` → the `conda run` sub-env once).
+3. **Encode all run wells** in batches (`basic_transform(target_size=(288,128))`,
+   `batch_size=64`, `shuffle=False`, eval + `no_grad`, `extract_embeddings_legacy`).
+4. **Write each well's shard** `per_well/<well_id>/latents.parquet` (`snip_id, z_mu_*`).
 
 > Identity is carried entirely by the `snip_id` file stem — no metadata join is
-> needed to produce latents. Biology is joined *after*, downstream.
+> needed to produce latents. Biology is joined *after*, in analysis_ready.
 
 ### 6.3 Reuse vs. rebuild
-The existing `services/gen_embeddings.py` already implements this loop; the only
-new piece is **sourcing images from the new pipeline (manifest → symlink view)**
-instead of the repo's hand-built `training_data/bf_embryo_snips`. Prefer wrapping
-the existing service over rewriting the encoder loop.
+The existing `services/gen_embeddings.py` already implements the encode loop; the
+new pieces are (a) **sourcing images from the manifest** (→ symlink view) instead
+of the hand-built `training_data/bf_embryo_snips`, and (b) **partitioning output
+per well** while keeping the single model load. Prefer wrapping the service over
+rewriting the encoder.
 
 ### 6.4 Snakemake integration
-A new rule (`compute_embeddings` / build_06) consuming the merged
-`snip_manifest.parquet` (+ optionally `analysis_ready.csv` for the `use_snip`
-gate), producing `embeddings/<exp>/morph_latents_<exp>.csv`. Slots after
-`merge_snip_manifests` (and after `assemble_analysis_ready` if gating on
-`use_snip`).
+Two rules following the spine rhythm:
+- `compute_embeddings` (**fanout=per_well, execution=single**): declared inputs =
+  the run wells' snip shards (via `merge_trigger_inputs`-style fan), loads the model
+  once, writes each `per_well/<well_id>/latents.parquet` + `.validated`.
+- `merge_embeddings` (Zone C): thin concat of present `.validated` shards →
+  `embeddings/<exp>/contracts/latents.parquet`.
+
+Then `assemble_analysis_ready` gains `latents.parquet` (merged) as an input,
+joins on `snip_id`, and sets `embedding_calculated=True` for matched snips.
 
 ### 6.5 Environment / sub-environment (IMPORTANT)
 
@@ -324,12 +348,18 @@ categorical maps for `pert_id`/`e_id`.
 ## 8. Open questions
 
 **For the inference pass (this one):**
-1. **Where do trained models live** in the new `data_pipeline_output` layout
-   (vs. legacy `models/legacy/<model_name>`)? Keep the legacy path or relocate?
-2. **`use_snip` gating at inference** — encode all snips, or only `use_snip`?
-   (Original Build06 gated on `use_embryo_flag` from Build04.)
-3. **Output location** — confirm `embeddings/<exp>/` under `data_pipeline_output`
-   and the latents filename convention.
+1. **Where do trained models live** — leaning Scope-3 `models_root` (machine path
+   in `env.yaml`), reusing the legacy `models/legacy/<model_name>` layout under it.
+   Confirm when wiring.
+2. **`use_snip` gating — RESOLVED (ordering):** embeddings **feeds** analysis_ready,
+   so the gate can NOT come from analysis_ready (circular). Either gate from QC
+   consolidation (`qc_flags.csv`, upstream) or encode all snips and let
+   analysis_ready gate on join. Default: **encode all**, gate downstream. (§6.0)
+3. **Output location — RESOLVED:** per-well shard
+   `embeddings/<exp>/per_well/<well_id>/latents.parquet` + merged
+   `embeddings/<exp>/contracts/latents.parquet`. (§6.1)
+   - **Execution — RESOLVED:** `fanout=per_well`, `execution=single` (batched;
+     model loaded once). (§6.2)
 4. **Env config — RESOLVED:** the model interpreter is a machine knob → belongs
    in Scope 3's `env.yaml` (`runtime.model_python_env`), **not** `config.yaml`.
    Interim: read it from a single non-hardcoded value defaulting to
