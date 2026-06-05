@@ -4,7 +4,7 @@
  Context
 
  The pipeline has metadata alignment (Phase 1-2) and frame
- contracts producing frame_contract.csv. Phase 3 consumes that
+ contracts producing frame_manifest.csv. Phase 3 consumes that
  manifest, runs detector + tracker models per well, and emits
  canonical contract outputs. Construction 2 (Ingestor +
  Normalizer) isolates model-output parsing from contract mapping —
@@ -16,8 +16,8 @@
 
  Locked invariants
 
- - time_int is canonical — Phase 3 contracts use `time_int`
- only (no `time_int`)
+ - frame_index == time_int — both columns kept for backward
+ compat, validated to match, sourced from frame_manifest.csv
  - Absolute pixel bbox is canonical — xyxy format, float values,
  clamped to image bounds
  - Parquet for intermediate contracts, CSV only for final
@@ -25,11 +25,10 @@
  - Per-well shards first, merge to experiment-level — no write
  collisions
  - Provenance stamped once by NormalizeContext — not by ingestors
- - Deterministic sort before writes — (well_id, time_int,
+ - Deterministic sort before writes — (well_id, frame_index,
  image_id, embryo_id)
- - Explicit mask contracts per head (future-proof):
-   - embryo_mask_rle.parquet (mask_type column still included)
-   - embryo_track_instances.parquet
+ - mask_type column on mask_rle — future-proofs yolk/aux mask
+ integration
  - model_release defaults to "unknown" not "" — no empty-string
  join hazards
 
@@ -37,33 +36,34 @@
  File Layout
 
  src/data_pipeline/
-   models/                                     # NEW — self-contained model loaders
-     groundingdino.py
-     sam2.py
-     paths.py
-   segmentation_and_tracking/                   # NEW — Phase 3 implementation
-     raw_types.py                               # NEW — RawDetection, RawTrack, RawMask, SeedSelection
-     normalize_context.py                       # NEW — NormalizeContext provenance stamper
-     ingestors/
-       __init__.py                              # NEW — dispatch + interface check
-       gdino_ingestor.py                        # NEW — wraps gdino_detection.py -> RawDetection
-       sam2_ingestor.py                         # NEW — wraps propagation.py -> RawTrack/RawMask
-       detectron2_ingestor.py                   # NEW — stub
-       sam3_ingestor.py                         # NEW — stub
+   segmentation/
+     raw_types.py                              # NEW —
+ RawDetection, RawTrack, RawMask, SeedSelection
+     normalize_context.py                      # NEW —
+ NormalizeContext provenance stamper
      normalizers/
-       __init__.py
-       normalize_frame_detections.py
-       normalize_seed_selection.py
-       normalize_track_instances.py
-       normalize_mask_rle.py
-       normalize_segmentation_tracking.py
-     qc/
-       render_overlays.py                       # NEW — writes overlay frames + MP4 from segmentation_tracking.csv
+       __init__.py                             # NEW — public API
+ re-exports
+       normalize_detections.py                 # NEW
+       normalize_seed_selection.py             # NEW
+       normalize_tracks.py                     # NEW
+       normalize_masks.py                      # NEW
+       normalize_segmentation_tracking.py      # NEW — final join
+     ingestors/
+       __init__.py                             # NEW —
+ get_detector_ingestor / get_tracker_ingestor + interface check
+       gdino_ingestor.py                       # NEW — wraps
+ gdino_detection.py -> RawDetection
+       sam2_ingestor.py                        # NEW — wraps
+ propagation.py -> RawTrack/RawMask
+       detectron2_ingestor.py                  # NEW — stub
+       sam3_ingestor.py                        # NEW — stub
      pipelines/
-       __init__.py
-       segmentation_and_tracking.py             # NEW — per-well runner
-       merge_segmentation_and_tracking_contracts.py
-       validate_segmentation_and_tracking.py
+       __init__.py                             # NEW
+       segmentation_and_tracking.py            # NEW — single
+ Phase 3 per-well runner
+       validate_segmentation_tracking.py       # NEW — contract
+ validator + sentinel
    schemas/
      segmentation.py                           # MODIFY — add
  sub-contract schemas (new constants, keep old stable)
@@ -89,7 +89,7 @@
 
  @dataclass
  class RawDetection:
-     time_int: int
+     frame_index: int
      image_id: str
      box_xyxy_norm: list[float]           # normalized [0,1] —
  kept for traceability only
@@ -108,11 +108,9 @@
 
  @dataclass
  class RawTrack:
-     time_int: int
+     frame_index: int
      image_id: str
      embryo_id: str
-     embryo_local_id: str = ""            # tracker-native ID (backend/debug)
-     channel_id: str = ""                # e.g. "BF" (future: fluorescence channels)
      mask: Any                            # np.ndarray (H,W)
  binary — freed after RLE
      bbox_xyxy_abs: list[float]           # absolute pixel float
@@ -128,11 +126,9 @@
 
  @dataclass
  class RawMask:
-     time_int: int
+     frame_index: int
      image_id: str
      embryo_id: str
-     embryo_local_id: str = ""            # tracker-native ID (backend/debug)
-     channel_id: str = ""                # e.g. "BF"
      mask_type: str                       # "sam" | "yolk" |
  "focus" | etc.
      mask_rle: dict[str, Any]             # {"counts": str,
@@ -156,7 +152,7 @@
      experiment_id: str
      well_id: str
      video_id: str
-     seed_time_int: int
+     seed_frame_index: int
      seed_image_id: str
      num_detections: int
      avg_confidence: float
@@ -218,9 +214,8 @@
 
  REQUIRED_COLUMNS_FRAME_DETECTIONS = [
      "experiment_id", "well_id", "video_id", "image_id",
-     "time_int",
+     "frame_index", "time_int",
      "detection_index",
-     "detection_instance_id",             # stable per-image id: "{image_id}_det{idx:03d}"
      "box_x_min_abs", "box_y_min_abs", "box_x_max_abs",
  "box_y_max_abs",
      "detection_confidence",
@@ -234,7 +229,7 @@
 
  REQUIRED_COLUMNS_SEED_SELECTION = [
      "experiment_id", "well_id", "video_id",
-     "seed_time_int", "seed_image_id",
+     "seed_frame_index", "seed_image_id",
      "num_detections", "avg_confidence", "selection_reason",
      "candidate_frames_evaluated",
      "selected_detection_indices",
@@ -246,8 +241,7 @@
 
  REQUIRED_COLUMNS_TRACK_INSTANCES = [
      "experiment_id", "video_id", "well_id", "well_index",
-     "image_id", "embryo_id", "time_int",
-     "embryo_local_id", "channel_id", "instance_id",
+     "image_id", "embryo_id", "frame_index", "time_int",
      "bbox_x_min", "bbox_y_min", "bbox_x_max", "bbox_y_max",
      "area_px", "mask_confidence",
      "centroid_x_px", "centroid_y_px",
@@ -261,8 +255,8 @@
 
  REQUIRED_COLUMNS_MASK_RLE = [
      "experiment_id", "video_id", "well_id",
-     "image_id", "embryo_id", "snip_id", "time_int",
-     "embryo_local_id", "channel_id", "instance_id",
+     "image_id", "embryo_id", "snip_id", "frame_index",
+ "time_int",
      "mask_type",                        # "sam" | "yolk" |
  "focus" | etc.
      "mask_rle", "area_px",
@@ -306,7 +300,7 @@
 
  gdino_ingestor.py
 
- - ingest_detections(model, image_path, *, time_int, image_id,
+ - ingest_detections(model, image_path, *, frame_index, image_id,
  image_height_px, image_width_px, ...) -> list[RawDetection]
    - Calls existing detect_embryos() + filter_detections()
    - Computes box_xyxy_abs from normalized + image dims, clamps to
@@ -345,9 +339,11 @@
 
  1. _validate_provenance(records) — raises if source_backend or
  run_id empty
- 2. time_int comes from frame_contract.csv (source of truth)
+ 2. frame_index == time_int invariant: reads frame_index from
+ record, copies to time_int (both columns same value, sourced from
+  frame_manifest.csv via the runner)
  3. validate_dataframe_schema() + uniqueness check on UNIQUE_KEY_*
- 4. Deterministic sort before returning: (well_id, time_int,
+ 4. Deterministic sort before returning: (well_id, frame_index,
  image_id, embryo_id)
 
  Files
@@ -387,52 +383,38 @@
 
  Output layout (per-well shards)
 
- {output_dir}/segmentation_and_tracking/{experiment}/per_well/{well}/
-     contracts/                      # REAL (downstream reads)
-         frame_detections.parquet
-         seed_selection.parquet
-         embryo_track_instances.parquet
-         embryo_mask_rle.parquet
-         segmentation_tracking.csv
-         .segment_and_track.validated
-     masks/                          # REAL (PNG exports by head)
-         embryo_mask/{snip_id}_mask.png
-     artifacts/                      # OPTIONAL/heavy (copy or symlink)
-         raw_frames/{image_id}.jpg
-         sam2_frames/00000.jpg ...
-         overlays/embryo_mask/{well_slug}_embryo_mask_overlay.mp4
-         overlays/embryo_mask/frames/{image_id}_embryo_mask_overlay.jpg (optional)
+ {output_dir}/segmentation/{experiment}/per_well/{well}/
+     frame_detections.parquet
+     seed_selection.parquet
+     track_instances.parquet
+     mask_rle.parquet
+     segmentation_tracking.csv
+     masks/                          # exported PNGs
+     .segment_and_track.validated    # per-well validation
+ sentinel
 
  Experiment-level merged outputs (from merge rule)
 
- {output_dir}/segmentation_and_tracking/{experiment}/contracts/
+ {output_dir}/segmentation/{experiment}/contracts/
      frame_detections.parquet
      seed_selection.parquet
-     embryo_track_instances.parquet
-     embryo_mask_rle.parquet
+     track_instances.parquet
+     mask_rle.parquet
      segmentation_tracking.csv
      .segmentation_tracking.validated
-
- Experiment-level browse view (symlink-only, disposable)
-
- {output_dir}/segmentation_and_tracking/{experiment}/views/
-     wells/{well_slug} -> ../per_well/{well}
-     masks/embryo_mask/{well_slug} -> ../../per_well/.../masks/embryo_mask
-     videos/overlays/embryo_mask/{well_slug}_embryo_mask_overlay.mp4 -> ../../per_well/.../artifacts/overlays/embryo_mask/...
-     frames/overlays/embryo_mask/{well_slug} -> ../../per_well/.../artifacts/overlays/embryo_mask/frames (if enabled)
 
  Runner flow
 
  def run_segmentation_and_tracking(
-     *, frame_contract_csv, experiment_id, well_id, output_dir,
+     *, frame_manifest_csv, experiment_id, well_id, output_dir,
      pipeline_config, model_paths..., device, run_id, verbose
  ) -> dict[str, Path]:
 
      run_id = run_id or uuid.uuid4().hex[:8]
      backends = load_segmentation_backends_config(pipeline_config)
 
-     # Load manifest, filter to well, use time_int as the
-     # canonical temporal index for Phase 3
+     # Load manifest, filter to well, enforce frame_index ==
+ time_int
      well_df = ...
 
      # Create provenance contexts
@@ -469,7 +451,7 @@
      raw_tracks = tracker_ingestor.ingest_propagation(...)
      tracker_ctx.stamp(raw_tracks)
      tracks_df = normalize_tracks(raw_tracks, ...)
-     tracks_df.to_parquet(shard_dir / "embryo_track_instances.parquet")
+     tracks_df.to_parquet(shard_dir / "track_instances.parquet")
 
      # 4. Masks (RLE + PNG export) -> stamp -> normalize -> write
  parquet shard
@@ -479,7 +461,7 @@
  mask=None)
      tracker_ctx.stamp(raw_masks)
      masks_df = normalize_masks(raw_masks, ...)
-     masks_df.to_parquet(shard_dir / "embryo_mask_rle.parquet")
+     masks_df.to_parquet(shard_dir / "mask_rle.parquet")
 
      # 5. Final CSV contract
      final_df = build_segmentation_tracking_contract(masks_df,
@@ -497,25 +479,25 @@
 
  Three rules: shard, merge, validate
 
- rule segment_and_track_well:
+ rule segment_and_track:
      # Per {experiment}/{well}
-     input: validated frame_contract
-     output: per_well/{well}/contracts/.segment_and_track.validated
+     input: validated frame_manifest
+     output: per_well/{well}/.segment_and_track.validated
      resources: gpu=1
 
- rule merge_segmentation_and_tracking_contracts:
+ rule merge_segmentation_contracts:
      # Per {experiment} — concat all per-well shards into
  experiment-level
-     input: expand(per_well/{well}/contracts/.segment_and_track.validated
+     input: expand(per_well/{well}/.segment_and_track.validated
  for well in wells)
      output:
          contracts/frame_detections.parquet
          contracts/seed_selection.parquet
-         contracts/embryo_track_instances.parquet
-         contracts/embryo_mask_rle.parquet
+         contracts/track_instances.parquet
+         contracts/mask_rle.parquet
          contracts/segmentation_tracking.csv
 
- rule validate_segmentation_and_tracking:
+ rule validate_segmentation_tracking:
      # Per {experiment} — validates merged experiment-level
  contracts
      input: contracts/segmentation_tracking.csv
@@ -534,40 +516,18 @@
  segmentation:
    detector_backend: "groundingdino"
    tracker_backend: "sam2"
-
- segmentation_and_tracking:
-   channel_id: "BF"
+   tracking_mode: "native_bidirectional"
    device: "cuda"
-   models_root: "models"
-   groundingdino_repo: "GroundingDINO"
-   groundingdino_config: "groundingdino/config/GroundingDINO_SwinT_OGC.py"
-   groundingdino_weights: "/path/to/groundingdino_weights.pth"
-   groundingdino_release: "unknown"
-   sam2_models_root: "sam2"
-   sam2_config: "configs/sam2.1/sam2.1_hiera_l.yaml"
-   sam2_checkpoint: "checkpoints/sam2.1_hiera_large.pt"
-   mask_type: "embryo"
-   raw_frames:
-     enabled: true
-     mode: "symlink"
-     write_sam2_seq_dir: true
-   qc_overlay:
-     enabled: true
-     write_video: true
-     write_frames: false
-     render:
-       scale: 1.0
-       label_font_scale: 0.8
-       label_thickness: 2
-       banner_font_scale: 1.0
-       banner_thickness: 2
+   gdino_config: "/path/to/GroundingDINO_SwinT_OGC.py"
+   gdino_weights: "/path/to/groundingdino_swint_ogc.pth"
+   gdino_release: ""                      # -> "unknown"
    sam2_config: "/path/to/sam2_hiera_l.yaml"
    sam2_checkpoint: "/path/to/sam2_hiera_large.pt"
    sam2_release: ""                       # -> "unknown"
 
  tasks.py — add segment-and-track subcommand
 
- CLI: --frame-contract-csv, --experiment, --well-id, --output-dir,
+ CLI: --frame-manifest-csv, --experiment, --well-id, --output-dir,
   --config-yaml, --device, --run-id
 
  ---
@@ -591,7 +551,7 @@
 
  - Each normalizer produces DataFrame matching REQUIRED_COLUMNS_*
  - Missing provenance raises ValueError
- - time_int carried through output
+ - frame_index == time_int invariant holds in output
  - Deterministic sort order
  - Unique key violations detected
  - model_release never empty (should be "unknown")
@@ -662,7 +622,7 @@
  tests/test_segmentation_normalizers.py
  tests/test_segmentation_contracts.py -v
  2. CLI smoke test: python -m
- data_pipeline.pipeline_orchestrator.tasks segmentation-and-tracking
+ data_pipeline.pipeline_orchestrator.tasks segment-and-track
  --help
  3. Snakemake dry run: snakemake -n segmentation_complete
  4. Single-well GPU run (if env available): verify all per-well
@@ -674,8 +634,9 @@
  1. NormalizeContext centralizes provenance — ingestors return raw
   records without provenance. Runner stamps once per backend.
  Single attribution point.
- 2. time_int is the only temporal index in Phase 3 — taken
- from frame_contract.csv and carried through contracts.
+ 2. frame_index == time_int invariant enforced — both columns kept
+  (backward compat), validated to match, sourced from
+ frame_manifest.csv. Normalizers copy frame_index to time_int.
  3. Absolute pixel bbox canonical, xyxy float — normalized bbox
  kept only on RawDetection for traceability. All contracts use
  absolute pixel float coords.
@@ -705,7 +666,7 @@
  import time.
  12. Unique keys include (source_backend, run_id) — prevents rerun
   row duplication.
- 13. Deterministic sort before all writes — (well_id, time_int,
+ 13. Deterministic sort before all writes — (well_id, frame_index,
   image_id, embryo_id). Makes diffs reproducible.
  14. Per-well validation sentinels — merge consumes only validated
   shards. Experiment-level contract validated again after merge.

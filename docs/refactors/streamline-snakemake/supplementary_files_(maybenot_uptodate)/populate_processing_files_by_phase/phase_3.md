@@ -9,11 +9,11 @@ quality-control masks. All Stage 3 modules must rely on the manifest and
 
 ## Inputs
 
-- `frame_contract.csv` (Phase 2b) – authoritative list of
+- `experiment_image_manifest.json` (Phase 2b) – authoritative list of
   wells, channels, frames.
 - `built_image_data/{exp}/stitched_ff_images/…` (Phase 2a) – normalized
   stitched imagery.
-- Aligned metadata (Phase 1) for calibration (`frame_contract`).
+- Aligned metadata (Phase 1) for calibration (`scope_and_plate_metadata`).
 
 ---
 
@@ -104,7 +104,7 @@ def propagate_bidirectional(predictor, frame_paths: list[Path], seed_idx: int,
     return merge_results(forward, backward)  # prefers forward when both exist
 ```
 
-`propagate_forward` always receives a `start_index`, so offset `0` from SAM2 maps back to the real `time_int` (the seed frame in the forward pass, the seed frame in reversed space for backward). When we do the reverse slice, we remap offsets with `seed_idx - offset` before merging, keeping everything keyed by true chronology.
+`propagate_forward` always receives a `start_index`, so offset `0` from SAM2 maps back to the real frame index (the seed frame in the forward pass, the seed frame in reversed space for backward). When we do the reverse slice, we remap offsets with `seed_idx - offset` before merging, keeping everything keyed by true chronology.
 
 
 

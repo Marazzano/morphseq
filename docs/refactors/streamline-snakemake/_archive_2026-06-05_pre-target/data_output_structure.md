@@ -1,10 +1,10 @@
 # MorphSeq Pipeline: Data Output Structure
 
-**Status:** Phase 1-4 Implemented; Phase 5+ Planned (refactor)
+**Status:** Target Output Spec (refactor)
 **Audience:** Scientists and developers
-**Last Updated:** 2026-02-28
+**Last Updated:** 2026-02-10
 
-**Note:** Phase 1-4 outputs and paths in this doc reflect the current implementation (`segmentation_and_tracking/` and `processed_snips/`). Downstream phases may still contain legacy outputs/paths until wired.
+**Note:** This is the intended end-state output layout for the refactor; the repo may still contain legacy outputs until the implementation is complete.
 
 ## 2026-02-10 - Addendum, highlighting what we need to change in the original doc
 This addendum is additive only. The original output structure remains valid.
@@ -18,7 +18,7 @@ Clarifications:
 2. Keep stitched image materialization scope-specific.
 3. Keep pre-segmentation canonical contracts as:
    - `stitched_image_index.csv`
-   - `frame_contract.csv` (canonical frame metadata table)
+   - `frame_manifest.csv` (canonical frame metadata table)
 4. Canonical frame-level naming remains:
    - `channel_id`
    - `channel_name_raw`
@@ -28,13 +28,10 @@ Clarifications:
 ## TL;DR
 Pre-segmentation now has two key CSV contracts:
 
-1. `plate_metadata.csv` is the user-provided experiment annotation.
-2. `scope_series_metadata_raw.csv` is the microscope-side series output.
-3. `scope_series_metadata_mapped.csv` is the scope-to-well mapping result.
-4. `stitched_image_index.csv` is the materialization truth.
-5. `frame_contract.csv` is the canonical frame-level table for segmentation.
+1. `stitched_image_index.csv` tells you what stitched files were materialized.
+2. `frame_manifest.csv` is the canonical frame-level table for segmentation.
 
-Plate metadata re-enters later at the feature stage, not before segmentation.
+The old `experiment_image_manifest.json` is deprecated and removed.
 
 ---
 
@@ -56,66 +53,31 @@ Plate metadata re-enters later at the feature stage, not before segmentation.
 ├── experiment_metadata/
 │   └── {experiment_id}/
 │       ├── plate_metadata.csv
-│       ├── scope_series_metadata_raw.csv
+│       ├── scope_metadata_raw.csv
 │       ├── series_well_mapping.csv
 │       ├── series_well_mapping_provenance.json
-│       ├── scope_series_metadata_mapped.csv
+│       ├── scope_metadata_mapped.csv
 │       ├── stitched_image_index.csv
-│       └── frame_contract.csv
+│       └── frame_manifest.csv
 │
 ├── built_image_data/
 │   └── {experiment_id}/
 │       └── stitched_ff_images/
 │           └── {well_index}/{channel_id}/{image_id}.tif
 │
-├── segmentation_and_tracking/                 # PHASE 3 OUTPUTS (implemented)
+├── segmentation/
 │   └── {experiment_id}/
-│       ├── per_well/
-│       │   └── {experiment_id}_{well_slug}/   # per-well shard (REAL files)
-│       │       ├── contracts/
-│       │       │   ├── frame_detections.parquet
-│       │       │   ├── seed_selection.parquet
-│       │       │   ├── embryo_track_instances.parquet
-│       │       │   ├── embryo_mask_rle.parquet
-│       │       │   ├── segmentation_tracking.csv
-│       │       │   └── .segment_and_track.validated
-│       │       ├── masks/
-│       │       │   └── embryo_mask/{snip_id}_mask.png
-│       │       └── artifacts/                 # optional/heavy (REAL or symlinks)
-│       │           ├── raw_frames/{image_id}.jpg
-│       │           ├── sam2_frames/00000.jpg
-│       │           └── overlays/embryo_mask/{well_slug}_embryo_mask_overlay.mp4
-│       ├── contracts/                          # merged experiment contracts (REAL)
-│       │   ├── frame_detections.parquet
-│       │   ├── seed_selection.parquet
-│       │   ├── embryo_track_instances.parquet
-│       │   ├── embryo_mask_rle.parquet
-│       │   ├── segmentation_tracking.csv
-│       │   └── .segmentation_tracking.validated
-│       └── views/                              # symlink-only browse view (DISPOSABLE)
-│           ├── wells/{well_slug} -> ../per_well/{experiment_id}_{well_slug}
-│           ├── masks/embryo_mask/{well_slug} -> ../../per_well/.../masks/embryo_mask
-│           └── videos/overlays/embryo_mask/{well_slug}_embryo_mask_overlay.mp4 -> ../../per_well/.../artifacts/overlays/embryo_mask/...
+│       ├── gdino_detections.json
+│       ├── sam2_raw_output.json
+│       ├── segmentation_tracking.csv
+│       ├── mask_images/
+│       └── unet_masks/
 │
 ├── processed_snips/
 │   └── {experiment_id}/
-│       ├── per_well/
-│       │   └── {well_id}/
-│       │       ├── contracts/
-│       │       │   ├── snip_manifest.parquet
-│       │       │   ├── snip_manifest.csv
-│       │       │   └── .snip_processing.validated
-│       │       ├── processed/{snip_id}.jpg
-│       │       ├── raw_crops/{snip_id}.tif            # optional (config: snip_processing.save_raw_crops)
-│       │       └── artifacts/background_stats.json     # optional (for debugging/provenance)
-│       ├── contracts/
-│       │   ├── snip_manifest.parquet
-│       │   ├── snip_manifest.csv
-│       │   └── .snip_manifest.validated
-│       └── views/                                     # symlink-only browse view (DISPOSABLE)
-│           ├── wells/{well_slug} -> ../per_well/{well_id}
-│           ├── processed/{well_slug} -> ../per_well/{well_id}/processed
-│           └── raw_crops/{well_slug} -> ../per_well/{well_id}/raw_crops
+│       ├── raw_crops/
+│       ├── processed/
+│       └── snip_manifest.csv
 │
 ├── computed_features/
 │   └── {experiment_id}/
@@ -158,14 +120,14 @@ Core columns:
 - `well_index`
 - `channel_id`
 - `time_int`
-- `time_int`
+- `frame_index`
 - `image_id`
 - `stitched_image_path`
 - `materialization_status`
 - `source_artifact_path`
 - `source_artifact_kind`
 
-### `frame_contract.csv`
+### `frame_manifest.csv`
 Purpose:
 - Canonical frame-level input to segmentation and downstream joins.
 
@@ -177,7 +139,7 @@ Core columns:
 - `channel_id`
 - `channel_name_raw`
 - `time_int`
-- `time_int`
+- `frame_index`
 - `image_id`
 - `stitched_image_path`
 - `micrometers_per_pixel`
@@ -206,8 +168,8 @@ experiment_id
 └── well_index (A01, B12, ...)
     └── well_id = {experiment_id}_{well_index}
         └── channel_id (BF, GFP, ...)
-            └── time_int (0-based contiguous order)
-                └── image_id = {well_id}_{channel_id}_t{time_int}
+            └── frame_index (0-based contiguous order)
+                └── image_id = {well_id}_{channel_id}_t{frame_index}
                     └── embryo_id (starts at segmentation stage)
                         └── snip_id
 ```
@@ -224,16 +186,14 @@ Files marked as validated enforce schema and non-null rules:
 
 - Pre-segmentation:
   - `plate_metadata.csv`
-  - `scope_series_metadata_raw.csv`
-  - `scope_series_metadata_mapped.csv`
+  - `scope_metadata_raw.csv`
+  - `scope_metadata_mapped.csv`
   - `series_well_mapping.csv`
   - `stitched_image_index.csv`
-  - `frame_contract.csv`
+  - `frame_manifest.csv`
 - Post-segmentation:
-  - `segmentation_and_tracking/{exp}/contracts/segmentation_tracking.csv`
-  - `segmentation_and_tracking/{exp}/contracts/.segmentation_tracking.validated`
-  - `processed_snips/{exp}/contracts/snip_manifest.csv`
-  - `processed_snips/{exp}/contracts/.snip_manifest.validated`
+  - `segmentation_tracking.csv`
+  - `snip_manifest.csv`
   - `consolidated_snip_features.csv`
   - `consolidated_qc_flags.csv`
   - embedding outputs
@@ -246,16 +206,16 @@ Files marked as validated enforce schema and non-null rules:
 When checking a new experiment:
 
 1. Confirm `plate_metadata.csv` looks correct.
-2. Confirm `scope_series_metadata_mapped.csv` has correct wells/channels/timing.
+2. Confirm `scope_metadata_mapped.csv` has correct wells/channels/timing.
 3. Confirm `stitched_image_index.csv` has expected materialization outcomes.
-4. Confirm `frame_contract.csv` has complete calibration and metadata rows.
-5. Run segmentation from `frame_contract.csv`.
+4. Confirm `frame_manifest.csv` has complete calibration and metadata rows.
+5. Run segmentation from `frame_manifest.csv`.
 
 ---
 
 ## Deprecated Output
 
 Removed/deprecated:
-- `frame_contract.csv`
+- `experiment_image_manifest.json`
 
 Do not build new tooling that depends on this file.

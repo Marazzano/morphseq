@@ -21,7 +21,7 @@ Ingest updates to apply:
    - shared utilities remain shared (for example alignment helpers).
 2. Keep `materialize_stitched_images_*` as the pipeline stage label.
 3. Use reporter pattern in builders for `stitched_image_index.csv` (no filename crawler parsing).
-4. Treat `frame_contract.csv` as the canonical frame metadata contract consumed by segmentation.
+4. Treat `frame_manifest.csv` as the canonical frame metadata contract consumed by segmentation.
 5. Canonical naming in frame-level contracts:
    - `channel_id` (normalized)
    - `channel_name_raw` (provenance label)
@@ -29,10 +29,10 @@ Ingest updates to apply:
    - `micrometers_per_pixel` (required)
 
 ## TL;DR
-The pipeline now uses two CSV handoff contracts:
+The pipeline now uses two CSV handoff contracts instead of `experiment_image_manifest.json`:
 
 1. `stitched_image_index.csv`
-2. `frame_contract.csv`
+2. `frame_manifest.csv`
 
 Why this change:
 - It avoids fragile filename parsing.
@@ -40,11 +40,10 @@ Why this change:
 - It gives downstream stages one clear, validated frame-level source of truth.
 
 In practical terms:
-- `plate_metadata.csv` is user input and stays out of the pre-segmentation contract.
 - YX1 and Keyence each build/symlink stitched images in their own way.
 - While they do that, they also report rows for `stitched_image_index.csv`.
-- A shared join step builds `frame_contract.csv` from stitched index + scope metadata.
-- Segmentation consumes `frame_contract.csv`.
+- A shared join step builds `frame_manifest.csv` from stitched index + scope metadata + plate metadata.
+- Segmentation consumes `frame_manifest.csv`.
 
 Important boundary:
 - `embryo_id` is not available before segmentation and must not appear in pre-segmentation contracts.
@@ -72,7 +71,7 @@ Important boundary:
 - Use `temperature` for temperature column.
 
 ### 5) Calibration fidelity
-- `micrometers_per_pixel` is required in `frame_contract.csv`.
+- `micrometers_per_pixel` is required in `frame_manifest.csv`.
 - Downstream feature extraction and QC depend on this being present.
 
 ---
@@ -82,18 +81,18 @@ Important boundary:
 ```
 PHASE 1: METADATA INGEST
   Plate metadata -> plate_metadata.csv
-  Scope metadata -> scope_series_metadata_raw.csv
+  Scope metadata -> scope_metadata_raw.csv
   Scope-specific mapping -> series_well_mapping.csv
-  Mapping applied -> scope_series_metadata_mapped.csv
+  Mapping applied -> scope_metadata_mapped.csv
 
 PHASE 2: IMAGE BUILD + FRAME CONTRACT
   Scope-specific image build/symlink -> stitched_ff_images/
   Reporter rows from builders -> stitched_image_index.csv
   Shared validation -> stitched_image_index.csv (validated)
-  Shared join + validation -> frame_contract.csv (canonical)
+  Shared join + validation -> frame_manifest.csv (canonical)
 
 PHASE 3+: DOWNSTREAM PROCESSING
-  Segmentation consumes frame_contract.csv
+  Segmentation consumes frame_manifest.csv
   Segmentation -> snip processing -> features -> QC -> embeddings -> analysis-ready
 ```
 
@@ -108,10 +107,10 @@ src/data_pipeline/
 │   ├── __init__.py
 │   ├── channel_normalization.py
 │   ├── plate_metadata.py
-│   ├── scope_series_metadata_raw.py
-│   ├── scope_series_metadata_mapped.py
+│   ├── scope_metadata_raw.py
+│   ├── scope_metadata_mapped.py
 │   ├── stitched_image_index.py          # NEW
-│   ├── frame_contract.py                # NEW
+│   ├── frame_manifest.py                # NEW
 │   ├── segmentation.py
 │   ├── snip_processing.py
 │   ├── features.py
@@ -131,10 +130,10 @@ src/data_pipeline/
 │   │   │   ├── map_series_to_wells.py
 │   │   │   └── apply_series_mapping.py
 │   │   └── shared/
-│   │       └── apply_series_mapping.py
-│   └── frame_contract/                  # Shared handoff into segmentation
-│       ├── build_frame_contract.py
-│       └── validate_frame_contract.py
+│   │       └── align_scope_plate.py
+│   └── frame_manifest/                  # Shared handoff into segmentation
+│       ├── build_frame_manifest.py
+│       └── validate_frame_manifest.py
 │
 ├── image_building/
 │   ├── scope/                           # Scope-first image pipelines
@@ -186,15 +185,15 @@ This is the current agreed migration set for code changes.
 
 ### Add New Files
 1. `src/data_pipeline/schemas/stitched_image_index.py`
-2. `src/data_pipeline/schemas/frame_contract.py`
+2. `src/data_pipeline/schemas/frame_manifest.py`
 3. `src/data_pipeline/image_building/handoff/io.py`
 4. `src/data_pipeline/image_building/handoff/validate_stitched_index.py`
-5. `src/data_pipeline/metadata_ingest/frame_contract/build_frame_contract.py`
+5. `src/data_pipeline/metadata_ingest/frame_manifest/build_frame_manifest.py`
 
 ### Remove Legacy Files
-1. `src/data_pipeline/metadata_ingest/frame_contract/build_frame_contract.py`
-2. `src/data_pipeline/schemas/frame_contract.py`
-3. `src/data_pipeline/metadata_ingest/frame_contract/__init__.py`
+1. `src/data_pipeline/metadata_ingest/manifests/generate_image_manifest.py`
+2. `src/data_pipeline/schemas/image_manifest.py`
+3. `src/data_pipeline/metadata_ingest/manifests/__init__.py` (optional)
 
 ---
 
@@ -210,7 +209,7 @@ Required columns:
 - `well_index`
 - `channel_id`
 - `time_int`
-- `time_int`
+- `frame_index`
 - `image_id`
 - `stitched_image_path`
 - `materialization_status` (`written`, `symlinked`, `skipped`, `failed`)
@@ -221,7 +220,7 @@ Optional columns:
 - `image_width_px`
 - `image_height_px`
 
-### `frame_contract.csv`
+### `frame_manifest.csv`
 Canonical frame-level input for segmentation and downstream phases.
 
 Required columns:
@@ -232,7 +231,7 @@ Required columns:
 - `channel_id`
 - `channel_name_raw`
 - `time_int`
-- `time_int`
+- `frame_index`
 - `image_id`
 - `stitched_image_path`
 - `micrometers_per_pixel`
@@ -254,46 +253,45 @@ Uniqueness key for both contracts:
 
 Frame semantics:
 - `time_int` is the acquisition time key.
-- `time_int` is contiguous 0-based order after sorting by `time_int` per `(experiment_id, well_id, channel_id)`.
+- `frame_index` is contiguous 0-based order after sorting by `time_int` per `(experiment_id, well_id, channel_id)`.
 
 ---
 
 ## Revised Rule Flow
 
 1. Normalize plate metadata -> `plate_metadata.csv`
-2. Extract scope metadata -> `scope_series_metadata_raw.csv`
+2. Extract scope metadata -> `scope_metadata_raw.csv`
 3. Scope-specific mapping -> `series_well_mapping.csv`
-4. Apply mapping -> `scope_series_metadata_mapped.csv`
+4. Apply mapping -> `scope_metadata_mapped.csv`
 5. Scope-specific stitched image materialization + emit `stitched_image_index.csv`
 6. Validate stitched index
-7. Build `frame_contract.csv` by joining:
-   - `scope_series_metadata_mapped.csv`
+7. Build `frame_manifest.csv` by joining:
+   - `scope_metadata_mapped.csv`
    - `stitched_image_index.csv`
+   - `plate_metadata.csv`
 
-Then segmentation consumes `frame_contract.csv`.
+Then segmentation consumes `frame_manifest.csv`.
 
 ---
 
 ## Validation and Acceptance Checks
 
 1. No duplicate frame keys in `stitched_image_index.csv`.
-2. No duplicate frame keys in `frame_contract.csv`.
-3. Every `stitched_image_path` in `frame_contract.csv` exists.
+2. No duplicate frame keys in `frame_manifest.csv`.
+3. Every `stitched_image_path` in `frame_manifest.csv` exists.
 4. Every row has non-null `micrometers_per_pixel`.
 5. Every row has non-null `temperature` and `start_age_hpf` when required.
 6. No `embryo_id` appears before segmentation outputs.
 
 ---
 
-## Removed Legacy Paths
+## Files Planned for Removal by This Architecture Update
 
-The old manifest and plate-alignment paths are already removed from the active workflow:
-- `src/data_pipeline/metadata_ingest/frame_manifest/`
-- `src/data_pipeline/metadata_ingest/manifests/`
-- `src/data_pipeline/metadata_ingest/plate/align_scope_plate.py`
-- `src/data_pipeline/schemas/frame_manifest.py`
+- `src/data_pipeline/metadata_ingest/manifests/generate_image_manifest.py`
 - `src/data_pipeline/schemas/image_manifest.py`
-- `src/data_pipeline/schemas/scope_and_plate_metadata.py`
+- `src/data_pipeline/metadata_ingest/manifests/__init__.py` (optional cleanup)
+
+These are safe to remove once `frame_manifest.csv` path is wired in Snakefile.
 
 ---
 
@@ -301,14 +299,14 @@ The old manifest and plate-alignment paths are already removed from the active w
 
 Use this mental model:
 - If the question is "What image files were produced and from what source?" read `stitched_image_index.csv`.
-- If the question is "What frame-level table should I trust for analysis/segmentation inputs?" read `frame_contract.csv`.
+- If the question is "What frame-level table should I trust for analysis/segmentation inputs?" read `frame_manifest.csv`.
 - If the question is "Where do embryos start?" that begins at segmentation, not metadata ingest.
 
 When debugging:
 1. Check `plate_metadata.csv`.
-2. Check `scope_series_metadata_mapped.csv`.
+2. Check `scope_metadata_mapped.csv`.
 3. Check `stitched_image_index.csv` for missing/failed frames.
-4. Check `frame_contract.csv` for join completeness and calibration columns.
+4. Check `frame_manifest.csv` for join completeness and calibration columns.
 
 ---
 
@@ -323,7 +321,7 @@ How to read this safely:
 - The sections above this appendix are the canonical current plan.
 - If any statement below conflicts with the current plan, follow the current plan.
 - Legacy term mapping:
-  - `frame_contract.csv` -> `stitched_image_index.csv` + `frame_contract.csv`
+  - `experiment_image_manifest.json` -> `stitched_image_index.csv` + `frame_manifest.csv`
   - flat scope modules -> scope-first layout (`metadata_ingest/scope/{yx1,keyence}/...`)
   - flat image building modules -> scope-first + shared handoff (`image_building/scope/...` + `image_building/handoff/...`)
 
@@ -342,8 +340,8 @@ The MorphSeq pipeline processes zebrafish embryo timelapse data through these ma
 ```
 METADATA NORMALIZATION & VALIDATION
   Plate layout Excel → normalized plate_metadata.csv (schema-backed)
-  Microscope headers → scope_series_metadata_raw.csv (per-microscope extractors, schema-backed)
-  Join plate + scope → scope_series_metadata_mapped.csv (shared, schema-backed)
+  Microscope headers → scope_metadata_raw.csv (per-microscope extractors, schema-backed)
+  Join plate + scope → scope_metadata_mapped.csv (shared, schema-backed)
 
 IMAGE PREPROCESSING
   Raw microscope data → Stitched FF images + metadata
@@ -382,8 +380,8 @@ ANALYSIS-READY TABLE
 **Key Principles:**
 - Step boundaries stay explicit: preprocessing → segmentation → feature extraction → QC → QC consolidation → embeddings → analysis-ready hand-off
 - Schema-backed validation at every consolidation point: REQUIRED_COLUMNS_* live in `src/data_pipeline/schemas/` and each writer enforces column existence + non-null.
-- Plate metadata normalization is isolated: `metadata_ingest/plate/plate_processing.py` standardizes Excel inputs, microscopes export only scope metadata, scope-specific mapping modules (`metadata_ingest/scope/{yx1,keyence}/map_series_to_wells.py`) record series→well alignment, and shared joiners produce `scope_series_metadata_mapped.csv`.
-- `frame_contract.csv` (built from `stitched_image_index.csv` + `scope_series_metadata_mapped.csv`) is the single source of truth for per-well, per-channel frame ordering; all segmentation rules consume `experiment_metadata/{exp}/frame_contract.csv`.
+- Plate metadata normalization is isolated: `metadata_ingest/plate/plate_processing.py` standardizes Excel inputs, microscopes export only scope metadata, scope-specific mapping modules (`metadata_ingest/scope/{yx1,keyence}/map_series_to_wells.py`) record series→well alignment, and shared joiners produce `scope_metadata_mapped.csv`.
+- `frame_manifest.csv` (built from `stitched_image_index.csv` + `scope_metadata_mapped.csv` + `plate_metadata.csv`) is the single source of truth for per-well, per-channel frame ordering; all segmentation rules consume `experiment_metadata/{exp}/frame_manifest.csv`.
 - `consolidated_snip_features.csv` is the single feature source for every QC module (no duplicate joins)
 - Surface-area metrics must be converted to `area_um2` using microscope metadata before downstream use (no pure pixel-area logic)
 - QC modules are grouped by dependency (`auxiliary_mask_qc`, `segmentation_qc`, `morphology_qc`), and their merge is tracked in `consolidated_qc_flags.csv`
@@ -440,10 +438,10 @@ src/data_pipeline/
 ├── schemas/                                     # REQUIRED_COLUMNS_* definitions (imported everywhere)
 │   ├── __init__.py
 │   ├── channel_normalization.py                # NEW - Channel name mappings (CHANNEL_NORMALIZATION_MAP, VALID_CHANNEL_NAMES)
-│   ├── scope_series_metadata_raw.py
-│   ├── scope_series_metadata_mapped.py
+│   ├── scope_metadata_raw.py
+│   ├── scope_metadata_mapped.py
 │   ├── stitched_image_index.py              # NEW
-│   ├── frame_contract.py                    # NEW
+│   ├── frame_manifest.py                    # NEW
 │   ├── plate_metadata.py
 │   ├── snip_processing.py
 │   ├── features.py
@@ -461,9 +459,9 @@ src/data_pipeline/
 │   │   │   ├── extract_scope_metadata.py   # Keyence scope metadata extractor (schema-backed)
 │   │   │   └── map_series_to_wells.py     # Keyence series ↔ well mapping with provenance
 │   │   └── shared/
-│   │       └── apply_series_mapping.py    # Apply validated series-to-well mapping → scope_series_metadata_mapped.csv
-│   └── frame_contract/
-│       └── build_frame_contract.py     # Build frame_contract.csv from stitched_image_index.csv + scope_series_metadata_mapped.csv
+│   │       └── apply_series_mapping.py    # Join validated plate + scope metadata → scope_metadata_mapped.csv
+│   └── frame_manifest/
+│       └── build_frame_manifest.py     # Build frame_manifest.csv from stitched_image_index.csv + scope_metadata_mapped.csv + plate_metadata.csv
 │
 ├── image_building/                            # Phase 2 stitched image generation
 │   ├── scope/
@@ -544,7 +542,7 @@ src/data_pipeline/
 ### **schemas/**
 **Purpose:** Centralize `REQUIRED_COLUMNS_*` lists used by consolidation steps. Each schema module is imported by its writer to enforce column presence and non-null constraints (see data_validation_plan).
 
-- `plate_metadata.py`, `scope_series_metadata_raw.py`, `scope_series_metadata_mapped.py`: Guard metadata normalization before it reaches downstream logic.
+- `plate_metadata.py`, `scope_metadata_raw.py`, `scope_metadata_mapped.py`: Guard metadata normalization before it reaches downstream logic.
 - `segmentation.py`, `snip_processing.py`, `features.py`: Define expectations for SAM2 outputs, snip manifests, and consolidated feature tables.
 - `quality_control.py`, `analysis_ready.py`: Keep QC merges and final analysis hand-off aligned with the validation contract.
 
@@ -573,7 +571,7 @@ src/data_pipeline/
 ### **segmentation/**
 **Purpose:** Detect and track embryos, generate masks
 
-**Execution model:** Every SAM2 tracking job operates **per well**. Upstream Snakemake rules emit `frame_contract.csv` that enumerates stitched frames for a given well in chronological order. The segmentation modules assume they receive the list of frame file paths and metadata for exactly one well at a time.
+**Execution model:** Every SAM2 tracking job operates **per well**. Upstream Snakemake rules emit `frame_manifest.csv` that enumerates stitched frames for a given well in chronological order. The segmentation modules assume they receive the list of frame file paths and metadata for exactly one well at a time.
 
 #### **grounded_sam2/** - SAM2 + GroundingDINO pipeline (PRIMARY)
 - **frame_organization_for_sam2.py**: Reorganize well/timepoint images into video frame sequences
@@ -584,8 +582,8 @@ src/data_pipeline/
 - **csv_formatter.py**: Flatten nested JSON to schema-aligned `segmentation_tracking.csv` (adds mask_rle, source paths, well_id, `is_seed_frame`)
 
 **Flow detail:**
-- `gdino_detection.py` runs first, producing detections for a single well (its own model + step) using the per-channel frame lists from `frame_contract.csv`.
-- `frame_organization_for_sam2.py` takes the per-well frame list from `frame_contract.csv` and enforces the strict ordering SAM2 expects by symlinking frames into a temporary directory (no classes—just context-manager helpers). Each temp directory corresponds to the subset of frames we are about to process (seed→end for forward, reversed 0→seed for backward).
+- `gdino_detection.py` runs first, producing detections for a single well (its own model + step) using the per-channel frame lists from `frame_manifest.csv`.
+- `frame_organization_for_sam2.py` takes the per-well frame list from `frame_manifest.csv` and enforces the strict ordering SAM2 expects by symlinking frames into a temporary directory (no classes—just context-manager helpers). Each temp directory corresponds to the subset of frames we are about to process (seed→end for forward, reversed 0→seed for backward).
 - The SAM2 propagation code (`propagation.py`) consumes the temp directory plus GDINO seed boxes to run inference. `propagate_forward()` stores results keyed by the original frame indices by passing a `start_index`; `propagate_bidirectional()` slices the frame list twice, runs forward propagation on each slice, and remaps backward results with `original_idx = seed_idx - offset` before merging. The modules stay separate, but Snakemake still calls them within one `rule_track`.
 - Downstream helpers (`mask_export.py`, `csv_formatter.py`) simply read the SAM2 outputs and export masks/metadata.
 
@@ -655,7 +653,7 @@ def propagate_bidirectional(predictor, frame_paths: list[Path], seed_idx: int,
     return merge_results(forward, backward)  # prefers forward when both exist
 ```
 
-`propagate_forward` always receives a `start_index`, so offset `0` from SAM2 maps back to the real `time_int` (the seed frame in the forward pass, the seed frame in reversed space for backward). When we do the reverse slice, we remap offsets with `seed_idx - offset` before merging, keeping everything keyed by true chronology.
+`propagate_forward` always receives a `start_index`, so offset `0` from SAM2 maps back to the real frame index (the seed frame in the forward pass, the seed frame in reversed space for backward). When we do the reverse slice, we remap offsets with `seed_idx - offset` before merging, keeping everything keyed by true chronology.
 
 #### **unet/** - AUXILIARY MASKS FOR QC
 - **inference.py**: Run inference on all 5 UNet models
@@ -680,20 +678,15 @@ Shared utilities for all segmentation methods:
 **Purpose:** Extract and align embryo crops ahead of feature/QC stages
 
 **Core operations:**
-- **extraction.py**: Crop embryo regions with padding using SAM2 masks (used by `process_snips.py`)
-- **rotation.py**: PCA-based alignment to standard orientation (optionally yolk-guided if yolk mask is available)
+- **extraction.py**: Crop embryo regions with padding using SAM2 masks
+- **rotation.py**: PCA-based alignment to standard orientation
 - **augmentation.py**: CLAHE, background noise injection, and edge blending for model-ready crops
-- **process_snips.py**: Per-snip end-to-end processing (crop + rotate + augment) + optional raw crop export
-- **pipelines/snip_processing.py**: Per-well runner (writes shards + sentinel)
-- **pipelines/merge_snip_manifests.py**: Experiment-level merge + `views/` symlink browse layer
-- **pipelines/validate_snip_manifest.py**: Schema + key validation and `.snip_manifest.validated` sentinel
+- **manifest_generation.py**: Scan processed snips, attach metadata, and write schema-validated manifest
 
 **snip_id management:**
-- `snip_id` is assigned during Phase 3 segmentation/tracking and carried forward in `segmentation_tracking.csv`
-- Format (current): `{well_id}_embryo_{embryo_index}_f{frame:04d}` (e.g., `20240418_A01_embryo_0_f0000`)
-- Manifest resides in:
-  - `processed_snips/{experiment_id}/per_well/{well_id}/contracts/snip_manifest.parquet` (per-well shards)
-  - `processed_snips/{experiment_id}/contracts/snip_manifest.parquet` (merged experiment contract)
+- `snip_id` is assigned during extraction using `segmentation_tracking.csv`
+- Format: `{embryo_id}_s{frame:04d}` (e.g., `embryo_001_s0005`)
+- Manifest resides in `processed_snips/{experiment_id}/snip_manifest.csv` (schema-backed) combining raw + processed paths
 
 ---
 
@@ -708,16 +701,6 @@ Shared utilities for all segmentation methods:
 - **consolidate_features.py**: Merge segmentation_tracking + mask_geometry + pose_kinematics + fraction_alive + stage data (plus plate/scope metadata columns) into `consolidated_snip_features.csv` with schema validation
 
 **Key principle:** Features operate on masks/tracking metadata (not raw snip pixels); the merge output is the single source consumed by all QC modules.
-
-**Implementation boundary for the feature split:**
-- Core operation modules stay at the package level with names that describe the computation, not the workflow.
-- Thin workflow wrappers should move into `feature_extraction/entrypoints/` once the split lands.
-- Snakemake should depend on wrappers only.
-- Feature modules should stay plate-free where possible and compute independently.
-- The first merge of plate metadata should happen after the feature tables are computed, at the feature/analysis boundary.
-- `stage_predictions` can remain plate-aware as an individual output, but it should not force an early broad merge into all feature modules.
-- Core operations should enforce mathematical/data invariants, while schema checks, file I/O, and `.validated` sentinels stay in the wrapper layer.
-- Avoid a generic `pipelines/` bucket once this is split; use well-named operation files and entrypoints instead.
 
 ---
 
@@ -794,7 +777,7 @@ Functions:
 **Purpose:** Handle experiment-level metadata outside of Snakemake orchestration.
 
 - **plate_processing.py**: Normalize raw plate layout Excel files, fill experiment IDs, and write `plate_metadata.csv` using `REQUIRED_COLUMNS_PLATE_METADATA`.
-- **build_frame_contract.py**: Read `scope_series_metadata_mapped.csv` + `stitched_image_index.csv`, normalize channel names, and emit `frame_contract.csv` validated by `schemas/frame_contract.py`.
+- **build_frame_manifest.py**: Read `scope_metadata_mapped.csv` + `stitched_image_index.csv` + `plate_metadata.csv`, normalize channel names, and emit `frame_manifest.csv` validated by `schemas/frame_manifest.py`.
 - **enrichment.py**: Merge perturbation metadata, genotype/phenotype mappings (downstream of validated plate metadata)
 
 ---
@@ -828,9 +811,9 @@ Functions:
    - Single implementation reused by all preprocessing modules
    - Handles CUDA availability checking, fallback to CPU
    - Supports string inputs ("cuda", "cpu", "auto")
-7. `src/data_pipeline/schemas/` package with placeholder `REQUIRED_COLUMNS_*` lists for plate, scope, segmentation, snip, features, QC, analysis-ready tables, plus seeded `channel_normalization.py`, `stitched_image_index.py`, and `frame_contract.py`.
+7. `src/data_pipeline/schemas/` package with placeholder `REQUIRED_COLUMNS_*` lists for plate, scope, segmentation, snip, features, QC, analysis-ready tables, plus seeded `channel_normalization.py`, `stitched_image_index.py`, and `frame_manifest.py`.
 8. `metadata/plate_processing.py` scaffold that reads Excel layouts, normalizes column names, and emits schema-aligned `plate_metadata.csv` (without full edge-case handling yet).
-9. `metadata_ingest/frame_contract/build_frame_contract.py` scaffold that reads `scope_series_metadata_mapped.csv` + `stitched_image_index.csv`, applies channel normalization, and writes schema-aligned `frame_contract.csv`.
+9. `metadata_ingest/frame_manifest/build_frame_manifest.py` scaffold that reads `scope_metadata_mapped.csv` + `stitched_image_index.csv` + `plate_metadata.csv`, applies channel normalization, and writes schema-aligned `frame_manifest.csv`.
 
 **Critical verifications (BLOCKING for Week 2):**
 10. **Verify UNet post-processing assumption:**
@@ -860,8 +843,8 @@ Functions:
 **Preprocessing**
 - Extract from `build01A_compile_keyence_torch.py` → `metadata_ingest/scope/keyence/` (stitching + `extract_scope_metadata.py` that emits schema-aligned CSV)
 - Extract from `build01B_compile_yx1_images_torch.py` → `metadata_ingest/scope/yx1/` (processing + `extract_scope_metadata.py` for YX1 headers)
-- Implement scope-specific `metadata_ingest/scope/{yx1,keyence}/map_series_to_wells.py` + shared `metadata_ingest/scope/shared/apply_series_mapping.py` pipeline that consumes validated series mapping + scope metadata, enforces `REQUIRED_COLUMNS_SERIES_MAPPING`, and yields schema-checked `scope_series_metadata_mapped.csv`
-- Wire up `metadata_ingest/frame_contract/build_frame_contract.py` to read `scope_series_metadata_mapped.csv` + `stitched_image_index.csv` and emit `frame_contract.csv`
+- Implement scope-specific `metadata_ingest/scope/{yx1,keyence}/map_series_to_wells.py` + shared `metadata_ingest/scope/shared/apply_series_mapping.py` pipeline that consumes validated plate + scope metadata, enforces `REQUIRED_COLUMNS_SERIES_MAPPING`, and yields schema-checked `scope_metadata_mapped.csv`
+- Wire up `metadata_ingest/frame_manifest/build_frame_manifest.py` to read `scope_metadata_mapped.csv` + `stitched_image_index.csv` + `plate_metadata.csv` and emit `frame_manifest.csv`
 
 **UNet segmentation (auxiliary masks)**
 - Extract from `build02B_segment_bf_main.py` → `segmentation/unet/`
@@ -869,7 +852,7 @@ Functions:
 
 **Create Snakemake rules for preprocessing + UNet masks**
 
-**Deliverable:** Can stitch images, publish schema-validated scope metadata, emit `stitched_image_index.csv` and `frame_contract.csv`, and run UNet via Snakemake
+**Deliverable:** Can stitch images, publish schema-validated scope metadata, emit `stitched_image_index.csv` and `frame_manifest.csv`, and run UNet via Snakemake
 
 ---
 
@@ -1026,20 +1009,20 @@ This section provides the complete data pipeline output structure aligned with t
 ```
 experiment_metadata/{exp}/
 ├── plate_metadata.csv                  # Parsed plate layout (schema: REQUIRED_COLUMNS_PLATE_METADATA)
-├── scope_series_metadata_raw.csv              # Per-microscope scope metadata (schema: REQUIRED_COLUMNS_SCOPE_METADATA_RAW)
+├── scope_metadata_raw.csv              # Per-microscope scope metadata (schema: REQUIRED_COLUMNS_SCOPE_METADATA_RAW)
 ├── series_well_mapping.csv             # Explicit series_number → well_index mapping (with mapping_method)
 ├── series_well_mapping_provenance.json  # Mapping summary, warnings, provenance info
-└── scope_series_metadata_mapped.csv           # Joined & validated metadata (schema: REQUIRED_COLUMNS_SCOPE_METADATA_MAPPED)
+└── scope_metadata_mapped.csv           # Joined & validated metadata (schema: REQUIRED_COLUMNS_SCOPE_METADATA_MAPPED)
 ```
 
 ### **Experiment Metadata** (Phase 1 hand-off → Phase 2)
 ```
 experiment_metadata/{exp}/
 ├── plate_metadata.csv [VALIDATED]                # Normalized well annotations from Excel
-├── scope_series_metadata_raw.csv [VALIDATED]             # Microscope metadata (px/μm, frame_interval_s, etc.)
-├── scope_series_metadata_mapped.csv [VALIDATED]          # Joined metadata (authoritative source)
+├── scope_metadata_raw.csv [VALIDATED]             # Microscope metadata (px/μm, frame_interval_s, etc.)
+├── scope_metadata_mapped.csv [VALIDATED]          # Joined metadata (authoritative source)
 ├── stitched_image_index.csv [VALIDATED]           # Per-image record emitted during stitching (reporter pattern)
-└── frame_contract.csv [VALIDATED]                 # Canonical frame-level contract for segmentation
+└── frame_manifest.csv [VALIDATED]                 # Canonical frame-level contract for segmentation
 ```
 
 ### **Built Image Data** (Phase 2 outputs)
@@ -1048,7 +1031,7 @@ built_image_data/{exp}/
 └── stitched_ff_images/
     └── {well_id}/                                # well_id = {experiment_id}_{well_index}
         └── {channel_id}/                       # Normalized channel name (BF, GFP, etc.)
-            └── {well_id}_{channel_id}_t{time_int}.tif  # image_id-based filename
+            └── {well_id}_{channel_id}_t{frame_index}.tif  # image_id-based filename
 
 build_diagnostics/{exp}/
 └── stitching_{microscope}.csv                    # Z-stack / stitching QA logs per microscope
@@ -1056,8 +1039,8 @@ build_diagnostics/{exp}/
 
 **Key points:**
 - Channel names normalized during `extract_scope_metadata` (Phase 1)
-- `image_id` format: `{experiment_id}_{well_index}_{channel_id}_t{time_int}` (self-documenting)
-- Provenance tracked via `channel_name_raw` in `stitched_image_index.csv` / `frame_contract.csv`
+- `image_id` format: `{experiment_id}_{well_index}_{channel_id}_t{frame_index}` (self-documenting)
+- Provenance tracked via `channel_name_raw` in `stitched_image_index.csv` / `frame_manifest.csv`
 
 ### **Segmentation Outputs** (Phase 3 outputs)
 ```
@@ -1077,27 +1060,16 @@ segmentation/{exp}/
 
 **ID generation:**
 - `embryo_id` = `{image_id}_{embryo_index}` (e.g., `exp_A01_BF_t0000_e01`)
-- `snip_id` = `{embryo_id}_t{time_int}` (e.g., `exp_A01_BF_t0000_e01_t0000`)
+- `snip_id` = `{embryo_id}_t{frame_index}` (e.g., `exp_A01_BF_t0000_e01_t0000`)
 
 ### **Snip Processing** (Phase 4 outputs)
 ```
 processed_snips/{exp}/
-├── per_well/{well_id}/                            # per-well shard (REAL files; Snakemake-safe)
-│   ├── contracts/
-│   │   ├── snip_manifest.parquet
-│   │   ├── snip_manifest.csv
-│   │   └── .snip_processing.validated
-│   ├── processed/{snip_id}.jpg                    # processed snip (crop + rotate + augment)
-│   ├── raw_crops/{snip_id}.tif                    # optional (if save_raw_crops=true)
-│   └── artifacts/background_stats.json            # optional (debug/provenance)
-├── contracts/                                     # merged experiment contracts (REAL)
-│   ├── snip_manifest.parquet
-│   ├── snip_manifest.csv
-│   └── .snip_manifest.validated
-└── views/                                         # symlink-only browse view (DISPOSABLE)
-    ├── wells/{well_slug} -> ../per_well/{well_id}
-    ├── processed/{well_slug} -> ../per_well/{well_id}/processed
-    └── raw_crops/{well_slug} -> ../per_well/{well_id}/raw_crops
+├── raw_crops/                                    # Unprocessed TIF crops (pre-rotation)
+│   └── {snip_id}.tif
+├── processed/                                    # Fully processed JPEGs (rotation + CLAHE + noise)
+│   └── {snip_id}.jpg
+└── snip_manifest.csv [VALIDATED]                 # Authoritative snip inventory (paths, rotation, timestamps)
 ```
 
 ### **Feature Extraction** (Phase 5 outputs)
@@ -1152,10 +1124,10 @@ All schema files live in `src/data_pipeline/schemas/`:
 schemas/
 ├── channel_normalization.py          # CHANNEL_NORMALIZATION_MAP, VALID_CHANNEL_NAMES, BRIGHTFIELD_CHANNELS
 ├── stitched_image_index.py           # REQUIRED_COLUMNS_STITCHED_IMAGE_INDEX
-├── frame_contract.py                 # REQUIRED_COLUMNS_FRAME_MANIFEST
+├── frame_manifest.py                 # REQUIRED_COLUMNS_FRAME_MANIFEST
 ├── plate_metadata.py                 # REQUIRED_COLUMNS_PLATE_METADATA
-├── scope_series_metadata_raw.py             # REQUIRED_COLUMNS_SCOPE_METADATA_RAW
-├── scope_series_metadata_mapped.py          # REQUIRED_COLUMNS_SCOPE_METADATA_MAPPED
+├── scope_metadata_raw.py             # REQUIRED_COLUMNS_SCOPE_METADATA_RAW
+├── scope_metadata_mapped.py          # REQUIRED_COLUMNS_SCOPE_METADATA_MAPPED
 ├── segmentation.py                   # REQUIRED_COLUMNS_SEGMENTATION_TRACKING
 ├── snip_processing.py                # REQUIRED_COLUMNS_SNIP_MANIFEST
 ├── features.py                       # REQUIRED_COLUMNS_CONSOLIDATED_FEATURES

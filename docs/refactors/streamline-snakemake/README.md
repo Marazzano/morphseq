@@ -1,7 +1,14 @@
 # Streamline-Snakemake Refactor Documentation
 
 **Organization Date:** 2025-11-06
-**Status:** Refactor docs describe the target `plate_metadata.csv` -> `scope_series_metadata_raw.csv` -> `scope_series_metadata_mapped.csv` -> `stitched_image_index.csv` -> `frame_contract.csv` architecture (implementation may still be in progress)
+**Status:** Refactor docs describe the target `stitched_image_index.csv` + `frame_manifest.csv` architecture (implementation may still be in progress)
+
+> ⚠️ **This README has stale terminology (as of 2026-06-05).** The wired
+> Snakefile uses **`frame_contract.csv` / `stitched_inventory.csv`**, not the
+> `frame_manifest.csv` / `stitched_image_index.csv` named below, and downstream
+> stages **are** now wired into the Snakefile. For current truth start at
+> **`ORIENTATION_for_final_review.md`** (this dir) and the **`target/`** docs
+> (authoritative, verified 2026-06-04). Treat this README as intent/history.
 
 ---
 
@@ -10,7 +17,7 @@
 - Limit conceptual updates to ingest and pre-segmentation handoff only.
 - Treat ingest as scope-first (YX1 and Keyence stay separate through extraction and mapping).
 - Keep `materialize_stitched_images_*` as the stage name; scope builders implement the behavior.
-- Keep frame-level handoff on `stitched_image_index.csv` + `frame_contract.csv`.
+- Keep frame-level handoff on `stitched_image_index.csv` + `frame_manifest.csv`.
 - Use `channel_id`, preserve `channel_name_raw`, use `temperature`, and require `micrometers_per_pixel` in frame-level metadata.
 
 ---
@@ -19,43 +26,27 @@
 If you only remember one thing:
 
 1. `stitched_image_index.csv` tells you what stitched images were materialized.
-2. `frame_contract.csv` is the canonical frame table that segmentation should trust.
+2. `frame_manifest.csv` is the canonical frame table that segmentation should trust.
 3. `embryo_id` starts at segmentation, not during metadata ingest.
 
 ---
 
-## Core Documentation (Target)
+## Core Documentation (current)
 
-### 1. `processing_files_pipeline_structure_and_plan.md`
-**Architecture spec**
-- Why this design changed
-- Full module structure
-- Contract definitions and validation checks
-- Scientist-friendly debugging flow
+The authoritative spec is **`target/`** (verified 2026-06-04); the orientation
+map is **`ORIENTATION_for_final_review.md`**. The architecture docs that used to
+be listed here were archived 2026-06-05 (stale terminology) — see below.
 
-### 2. `snakemake_rules_data_flow.md`
-**Rule-by-rule implementation spec**
-- Exact stage flow through `frame_contract.csv`
-- Rule purposes and I/O expectations
-- Naming conventions (`channel_id`, `channel_name_raw`, `temperature`)
-
-### 3. `data_output_structure.md`
-**Output file and directory spec**
-- Canonical output tree
-- Contract files and required columns
-- Practical checklist for experiment validation
-
-### 4. `DATA_INGESTION_AND_TESTING_STRATEGY.md`
-**Data setup and testing guidance**
-- Symlink strategy
-- Test dataset guidance
-- Stepwise validation approach
-
-### 5. `USER_GUIDE.md`
-**Operator quickstart**
-- Day-to-day run commands
-- Overwrite behavior
-- Keyence tiling diagnostics and troubleshooting
+- **`ORIENTATION_for_final_review.md`** — read first. Map of docs, files, and
+  legacy-vs-target.
+- **`target/`** — the authoritative design (`current_state_and_next_steps.md`,
+  `per_well_throughline_findings.md`, `well_id_throughline_refactor_plan.md`,
+  `front_end_naming_and_flow.md`, `stitched_handoff_contract.md`,
+  `model_input_handoff_contract.md`).
+- **`_archive_2026-06-05_pre-target/`** — the prior architecture docs. Stale
+  contract names (`frame_manifest`/`stitched_image_index`), but still useful for
+  the **dataset-output tree** and **`src/` script structure**. See that folder's
+  README.
 
 ---
 
@@ -65,25 +56,26 @@ This table is meant to answer: “where do I find an example of this *today*?”
 
 | Stage | Current repo codepaths + artifacts | Target refactor codepaths + artifacts |
 |---|---|---|
-| Phase 1: plate metadata | `src/data_pipeline/metadata_ingest/plate/plate_processing.py` (invoked by `src/data_pipeline/pipeline_orchestrator/Snakefile`) → `data_pipeline_output/experiment_metadata/{exp}/plate_metadata.csv` | Same logical output, but kept out of the pre-segmentation contract and merged later at the feature stage. |
-| Phase 1: scope metadata extraction | `src/data_pipeline/metadata_ingest/scope/yx1_scope_metadata.py` / `src/data_pipeline/metadata_ingest/scope/keyence_scope_metadata.py` → `data_pipeline_output/experiment_metadata/{exp}/scope_series_metadata_raw.csv` | Split into `scope_series_metadata_raw.csv` + `scope_series_metadata_mapped.csv` per `processing_files_pipeline_structure_and_plan.md` and `snakemake_rules_data_flow.md`. |
-| Phase 1: series→well mapping | Mapping helpers: `src/data_pipeline/metadata_ingest/mapping/series_well_mapper_yx1.py`, `src/data_pipeline/metadata_ingest/mapping/series_well_mapper_keyence.py` | Target is explicit `series_well_mapping.csv` + provenance, then `apply_series_mapping` to produce `scope_series_metadata_mapped.csv`. |
-| Phase 2: stitched image materialization | Builders: `src/data_pipeline/image_building/scope/yx1/stitched_ff_builder.py`, `src/data_pipeline/image_building/scope/keyence/stitched_ff_builder.py`; shared tiler utility: `src/data_pipeline/image_building/utils/frame_tiler.py` → `data_pipeline_output/built_image_data/{exp}/stitched_ff_images/{well}/{channel}/...tif` | Keep scope-specific builders, but add reporter output `stitched_image_index.csv` during materialization (no crawler parsing). |
-| Phase 2 handoff contract | Reporter-emitted stitched index + frame contract builder: `src/data_pipeline/metadata_ingest/frame_contract/build_frame_contract.py` (+ `src/data_pipeline/schemas/frame_contract.py`) → `frame_contract.csv` | The canonical handoff is now two CSV contracts: `stitched_image_index.csv` + `frame_contract.csv` (schemas + validators included). |
-| Phase 3: segmentation_and_tracking | Phase 3 runner + merge + validate are wired into Snakemake under `src/data_pipeline/segmentation_and_tracking/` and `src/data_pipeline/pipeline_orchestrator/rules/segmentation_and_tracking.smk` → `data_pipeline_output/segmentation_and_tracking/{exp}/{per_well,contracts,views}/...` | Segmentation consumes `frame_contract.csv` as the canonical frame table; outputs are written as per-well shards + merged experiment contracts with an experiment-level `views/` symlink gallery for browsing. |
+| Phase 1: plate metadata | `src/data_pipeline/metadata_ingest/plate/plate_processing.py` (invoked by `src/data_pipeline/pipeline_orchestrator/Snakefile`) → `data_pipeline_output/experiment_metadata/{exp}/plate_metadata.csv` | Same logical output, but treated as an input to the pre-segmentation handoff join (`frame_manifest.csv`). |
+| Phase 1: scope metadata extraction | `src/data_pipeline/metadata_ingest/scope/yx1_scope_metadata.py` / `src/data_pipeline/metadata_ingest/scope/keyence_scope_metadata.py` → `data_pipeline_output/experiment_metadata/{exp}/scope_metadata.csv` | Split into `scope_metadata_raw.csv` + `scope_metadata_mapped.csv` per `_archive_2026-06-05_pre-target/processing_files_pipeline_structure_and_plan.md` and `_archive_2026-06-05_pre-target/snakemake_rules_data_flow.md`. |
+| Phase 1: series→well mapping + alignment | Mapping helpers: `src/data_pipeline/metadata_ingest/mapping/series_well_mapper_yx1.py`, `src/data_pipeline/metadata_ingest/mapping/series_well_mapper_keyence.py`; join/validate: `src/data_pipeline/metadata_ingest/mapping/align_scope_plate.py` → `scope_and_plate_metadata.csv` | Target is explicit `series_well_mapping.csv` + provenance, then `apply_series_mapping` to produce `scope_metadata_mapped.csv`. |
+| Phase 2: stitched image materialization | Builders: `src/data_pipeline/image_building/yx1/stitched_ff_builder.py`, `src/data_pipeline/image_building/keyence/stitched_ff_builder.py` → `data_pipeline_output/built_image_data/{exp}/stitched_ff_images/{well}/{channel}/...tif` | Keep scope-specific builders, but add reporter output `stitched_image_index.csv` during materialization (no crawler parsing). |
+| Phase 2 handoff contract | Crawler + JSON manifest: `src/data_pipeline/metadata_ingest/manifests/generate_image_manifest.py` (+ `src/data_pipeline/schemas/image_manifest.py`) → `experiment_image_manifest.json` | Replace with two CSV contracts: `stitched_image_index.csv` + `frame_manifest.csv` (schemas + validators planned). |
+| Phase 3+: segmentation and downstream | Code exists under `src/data_pipeline/segmentation/`, `src/data_pipeline/snip_processing/`, `src/data_pipeline/feature_extraction/`, `src/data_pipeline/quality_control/`, `src/data_pipeline/analysis_ready/` (not yet wired into `Snakefile`) | Same downstream logic, but segmentation consumes `frame_manifest.csv` as the canonical frame table (per the three core docs). |
 
 Notes:
-- The current `Snakefile` uses heredocs with `python`; for refactor wiring, prefer calling modules via `"$PYTHON" -m data_pipeline...` (see `DATA_INGESTION_AND_TESTING_STRATEGY.md`).
+- The current `Snakefile` uses heredocs with `python`; for refactor wiring, prefer calling modules via `"$PYTHON" -m data_pipeline...` (see `_archive_2026-06-05_pre-target/DATA_INGESTION_AND_TESTING_STRATEGY.md`).
 - Current stitched image filenames are `{well}_{channel}_t{time_int:04d}.tif`; the refactor docs assume `image_id` includes `well_id` (and therefore `experiment_id`) for globally unique IDs.
 
 ---
 
 ## Recommended Reading Order
 
-1. `processing_files_pipeline_structure_and_plan.md`
-2. `snakemake_rules_data_flow.md`
-3. `data_output_structure.md`
-4. `DATA_INGESTION_AND_TESTING_STRATEGY.md`
+1. `ORIENTATION_for_final_review.md`
+2. `target/current_state_and_next_steps.md`
+3. `target/per_well_throughline_findings.md`
+4. `target/well_id_throughline_refactor_plan.md`
+5. (reference, as needed) `_archive_2026-06-05_pre-target/` — dataset-output tree + `src/` structure
 
 ---
 
@@ -92,16 +84,16 @@ Notes:
 1. Normalize plate metadata.
 2. Extract scope metadata.
 3. Run scope-specific series mapping.
-4. Apply mapping to produce `scope_series_metadata_mapped.csv`.
+4. Apply mapping to produce `scope_metadata_mapped.csv`.
 5. Materialize stitched images (scope-specific).
 6. Emit and validate `stitched_image_index.csv`.
-7. Build and validate `frame_contract.csv`.
-8. Start segmentation using `frame_contract.csv`.
+7. Build and validate `frame_manifest.csv`.
+8. Start segmentation using `frame_manifest.csv`.
 
 ---
 
 ## Notes on Legacy Documents
 
 - `logs/` and `_Archive/` retain historical planning and review context.
-- Historical references to `frame_contract.csv` are deprecated.
+- Historical references to `experiment_image_manifest.json` are deprecated.
 - Use the four core docs above for current implementation decisions.
