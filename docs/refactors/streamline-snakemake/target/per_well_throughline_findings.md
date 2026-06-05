@@ -412,16 +412,16 @@ exist (bloat audit); enforcing `fanout` is what *earns it its place*:
   - `format_vars` fills **filename tokens only** — it never affects the path branch (that's
     `path_mode`). The two are orthogonal by construction.
 - **MVP non-goal:** the resolver does **not** validate that `well_id` is well-formed or that
-  it exists in `wells.txt` — see the MVP-validation note below. It validates *fanout/path_mode
+  it exists in `discovered_wells.txt` — see the MVP-validation note below. It validates *fanout/path_mode
   consistency* and *registry membership*, nothing about identity content.
 
 > **`well_id` validation in `paths.py` (decided, #16) — MVP does NOT validate it.** `paths.py`
 > treats `well_id` as an **opaque string** to slot into the path; it does *not* check the
-> `{exp}_{well}` shape and does *not* check membership in `wells.txt`. **Why deliberate, not
+> `{exp}_{well}` shape and does *not* check membership in `discovered_wells.txt`. **Why deliberate, not
 > lazy:** (1) **kingdom boundary** — well-formedness is the `identifiers/` kingdom's job (its
 > validators), and `paths.py` (orchestration) must not duplicate identity logic; (2)
-> **existence** is the **checkpoint/well-runner's** job — `active_wells` only ever feeds
-> resolved `well_id`s that came *from* `wells.txt`, so by construction the resolver never sees
+> **existence** is the **checkpoint/well-runner's** job — `run_wells` only ever feeds
+> resolved `well_id`s that came *from* `discovered_wells.txt`, so by construction the resolver never sees
 > a non-existent well on the sanctioned path. So the *callers* guarantee a valid `well_id`;
 > the resolver just places it. **If** we later want belt-and-suspenders, the hook is explicit:
 > `paths.py` would *import* `identifiers.validators.is_well_id()` (never re-implement it) and
@@ -570,10 +570,10 @@ artifact_path(ROOT, "plate_metadata", "csv", "20250912",
 ```python
 rule merge_mask_geometry:
     input:
-        shards = lambda wc: checkpoint_well_shards(
+        shards = lambda wc: merge_trigger_inputs(
             checkpoints=checkpoints, wc=wc, config=config, root=DATA_ROOT,
             stage="mask_geometry", artifact="metrics")
-        #   → one DECLARED per-well path per active_well (built via artifact_path path_mode="per_well")
+        #   → one DECLARED per-well path per RUN well (the trigger; merge body scans for full content)
         #     all args explicit kwargs — never reads root/config as module globals (#8)
     output:
         merged = lambda wc: artifact_path(DATA_ROOT, "mask_geometry", "metrics",
@@ -615,61 +615,127 @@ per-well path/shard logic (slightly wrong) by hand.
 artifact_path(root, stage, artifact, exp, path_mode=..., well_id=..., format_vars=...)
 validated_path(...) / provenance_path(...)            # derived sentinel helpers
 
-# well selection + shard collection (lib/well_runner.py)
-def active_wells_from_checkpoint(*, checkpoints, wc, config) -> list[str]:
-    """The ONE definition of 'which wells run.' discovered ∩ target. Fail loud on a
-    requested-but-missing well. (excluded = deferred future hook, not built.)"""
-    discovered = read_wells(checkpoints.discover_wells.get(experiment=wc.experiment).output.wells_txt)
-    target = config.get("target_wells") or discovered
-    return select_active_wells(discovered=discovered, target=target, exp=wc.experiment)  # raises on missing
+# well selection + the merge trigger (lib/well_runner.py)
+def run_wells(*, checkpoints, wc, config) -> list[str]:
+    """The ONE definition of 'what computes now.' discovered ∩ target; empty target → all.
+    Fail loud on a requested-but-missing well."""
+    discovered = read_wells(checkpoints.discover_wells.get(experiment=wc.experiment).output.discovered_wells_txt)
+    return select_run_wells(discovered=discovered, target=config.get("target_wells") or [], exp=wc.experiment)
 
-def checkpoint_well_shards(*, checkpoints, wc, config, root, stage, artifact) -> list[str]:
-    """The ONE sanctioned way to build a merge's input list: forces the discover_wells
-    checkpoint, returns DECLARED per-well shard paths for active_wells. Never a glob.
-    root/config are EXPLICIT params — never module globals (#8)."""
-    return [artifact_path(root, stage, artifact, wc.experiment,
-                          path_mode="per_well", well_id=w)
-            for w in active_wells_from_checkpoint(checkpoints=checkpoints, wc=wc, config=config)]
+def merge_trigger_inputs(*, checkpoints, wc, config, root, stage, artifact) -> list[str]:
+    """The merge's DECLARED inputs = the RUN wells' shards (the trigger edges). Built via
+    WellRun.shard() so generate-side and merge-side agree. NOT the full merge content —
+    the merge BODY scans all present `.validated` shards at execution time (tasks.py)."""
+    return [str(WellRun(wc.experiment, w, root).shard(stage, artifact))
+            for w in run_wells(checkpoints=checkpoints, wc=wc, config=config)]
 ```
+
+> ## ⭐ GUIDING PRINCIPLE — the merge triggers narrowly, composes broadly, NEVER shrinks (2026-06-04)
+> **Triggered** by what ran (the run wells' shards are the merge's *declared* inputs = the DAG
+> edges). **Composed** over every valid shard *seeable on disk* (an execution-time scan in the
+> merge body). `target_wells` selects what **computes**, never what the merge **includes**.
+> So: run B01 → B01's edge fires the merge → the merge re-cats **all** present valid shards
+> (A01 + A02 + B01) → the merged file stays whole. It grows as wells gain shards; it cannot shrink.
 
 **Three well-lists (keep distinct):**
 | List | Meaning | Role in the DAG |
 |---|---|---|
-| `discovered_wells` | metadata says these exist (`wells.txt`) | discovery output |
-| `active_wells` | `discovered ∩ target` | **the control list** — declared inputs, fail-loud |
-| `validated_wells` | active wells whose per-well validation passed | **OUTCOME, never a dependency** (off-spine, like a merged view) |
+| `discovered_wells` | metadata says these exist (`discovered_wells.txt`) | discovery output (the checkpoint) |
+| `run_wells` | `discovered ∩ target` (empty target → all) | **the compute-control list** — the per-well fan-out **and** the merge's *trigger* edges |
+| *present valid shards* | wells with a `.validated` shard on disk **right now** | the merge **content** (scanned at execution time, not a DAG dependency) |
 
-> ☠️ **`validated_wells` must never gate the merge.** Merge depends on `active_wells`;
-> an active well failing validation = **hard error**, not a silent shrink of the set.
-> (Same skull rule as merged files: observed results never drive the DAG.)
+> ☠️ **The skull rule, refined (2026-06-04 — supersedes "merge depends on `active_wells`").**
+> A **run well** failing validation is a **hard error** (its shard is a required, declared input
+> that didn't materialize) — *that* invariant stands. But a **non-run well** that simply has no
+> shard is **fine** — it is just absent from the merge content, not an error. This is **not**
+> "validation gating the merge": the merge content comes from *which shards exist on disk*, not
+> from live validation results driving the DAG. (Old text said merge inputs = `active_wells`; that
+> would shrink the merged file to the run subset — the bug this revision fixes.)
 
-**This is plan Win 4 + Win 5 made concrete:** one `select_active_wells()` = one well-selection
-source (Win 4, delete the `targets.py` copy); checkpoint is truth, config only filters
-(Win 5). Also folds in the cleanup of the **two redundant discovery paths** today
-(`_wells_from_mapping` on local `well_index` vs. the checkpoint on global `well_id` →
-collapse to the checkpoint). *(mdcolon to elaborate on the discovery-path specifics.)*
+**This is plan Win 4 + Win 5 made concrete** (see `well_id_throughline_refactor_plan.md` §Scope 4):
+one `select_run_wells()` = one well-selection source (Win 4, delete the `targets.py` copy);
+checkpoint is truth, config only filters (Win 5). Also folds in the cleanup of the **two redundant
+discovery paths** today (`_wells_from_mapping` on local `well_index` vs. the `discover_wells`
+checkpoint on global `well_id` → collapse to the checkpoint).
+
+> **`target_wells` is a COMPUTE-selection knob, NOT a merge-membership filter (loud note).**
+> `target_wells: [B01]` means "recompute B01 now" — it does **not** mean "publish only B01."
+> The merge always composes over all seeable valid shards. (A future `publish_wells` could filter
+> the *merged product* if ever needed; out of MVP scope.)
 
 ### What's actually IN `lib/well_runner.py` (the full contents)
 
-Five things, no more. It is glue, not logic:
+Six things, no more. It is glue, not logic. (Formal home: `well_id_throughline_refactor_plan.md`
+§Scope 4.)
 
-| Function | Job | Reads | Returns |
+| Symbol | Job | Reads | Returns |
 |---|---|---|---|
-| `select_active_wells(discovered, target, exp)` | **PURE** list arithmetic (unit-testable, no Snakemake) | args only | `list[well_id]` |
-| `read_wells(path)` | parse `wells.txt` → `list[well_id]` | the file | `list[str]` |
-| `active_wells_from_checkpoint(*, checkpoints, wc, config)` | Snakemake glue: get checkpoint → `read_wells` → `select_active_wells` | checkpoint + config | `list[well_id]` |
-| `checkpoint_well_shards(*, checkpoints, wc, config, root, stage, artifact)` | merge input list (declared, never globbed) | the above + `artifact_path` | `list[path]` |
-| `WellRun` *(optional value object)* | bind `(exp, well, well_id, root)`; hand ONE object to a per-well entrypoint so it never re-derives shape | — | dataclass |
+| `select_run_wells(*, discovered, target, exp)` | **PURE** list arithmetic (unit-testable, no Snakemake). `discovered ∩ target`; empty target → all; fail-loud on missing. Lifts the inline subset-normalize logic out of the `discover_wells` checkpoint (Snakefile:453–467). | args only | `list[well_id]` |
+| `read_wells(path)` | parse `discovered_wells.txt` → `list[well_id]` (lifts `wells_for_experiment`, Snakefile:478–480) | the file | `list[str]` |
+| `run_wells(*, checkpoints, wc, config)` | Snakemake glue: force checkpoint → `read_wells` → `select_run_wells`. The ONE "what computes now." Replaces `wells_for_experiment` (Snakefile:476). | checkpoint + config | `list[well_id]` |
+| `WellRun` + `well_run(wc, root)` | **per-well path binder** — bind `(experiment_id, well_id, root)` once; `.shard(stage, artifact)` / `.sentinel(...)` delegate to `paths.py` (`artifact_path(path_mode="per_well")`). Composes NO path strings itself. | — | dataclass |
+| `merge_trigger_inputs(*, checkpoints, wc, config, root, stage, artifact)` | the merge's **declared inputs = the run wells' shards** (the trigger edges). Built via `WellRun.shard()` so generate-side and merge-side can't disagree. **Not** the full content. | the above | `list[path]` |
 
-> **Pure-vs-glue split (#8/#9, decided):** the selection *logic* (`select_active_wells`)
-> is **pure** — no `checkpoints`, no globals — so it's unit-testable "without summoning
-> Snakemake from the basement." The Snakemake-aware wrapper is a thin shell around it.
-> Likewise `checkpoint_well_shards` takes `root`/`config` as **explicit params**, never
-> reads them as module globals (specs that depend on unmentioned globals become haunted).
+> **`artifact_path` is the `paths.py` registry call.** `WellRun` imports it; the **layout**
+> (`{family}/{exp}/per_well/{well_id}/...`) lives in `paths.py`, never in the well-runner. The
+> stage→family through-line is resolved there: `stage="mask_geometry"` → its registry row has
+> `family="computed_features"` → path `computed_features/{exp}/per_well/{well_id}/...`.
 
-It does **not** contain: ID minting (→ `identifiers/`), path layout (→ `paths.py`), or
-any staleness logic (→ Snakemake). If a function here starts computing *what a file is
-named* or *what a row means*, it has crossed into the wrong kingdom.
+> **Parse-time vs checkpoint-time (the Snakemake gotcha).** `artifact_path` is imported at
+> Snakefile **parse time** (plain Python). But per-well paths are wrapped in `lambda wc: ...` and
+> evaluated **lazily, after the `discover_wells` checkpoint resolves** — because the well list is
+> runtime data. That's *why* every per-well `input:`/`output:` and the merge inputs are lambdas.
+
+> **Pure-vs-glue split (#8/#9):** `select_run_wells` is **pure** — no `checkpoints`, no globals —
+> unit-testable "without summoning Snakemake from the basement." `merge_trigger_inputs` takes
+> `root`/`config` as **explicit params**, never module globals (specs that lean on unmentioned
+> globals become haunted).
+
+> **The merge CONTENT does NOT live here.** `merge_trigger_inputs` returns only the *trigger*
+> edges. The execution-time "scan all present `.validated` shards and cat them" is the **merge
+> body's** job (`tasks.py` / the merge core fn), which asks `paths.py` for the per-well glob
+> grammar. **Tenet-8 carve-out (2026-06-04):** a present-shard scan is permitted **inside the
+> merge body at execution time** (the run-wells' declared edges already triggered the rule; the
+> scan only assembles content). It is **still banned** in any `input:` list (glob-as-dependency /
+> glob-as-well-list destroys staleness). Keying the scan on the `.validated` sentinel (atomic,
+> post-completion — Tenet 9) avoids mid-write reads.
+
+It does **not** contain: ID minting (→ `identifiers/`), path layout (→ `paths.py`), execution or
+the present-shard scan (→ `tasks.py`), or any staleness logic (→ Snakemake). If a function here
+starts composing a path string, running a stage, or scanning the filesystem, it has crossed into
+the wrong kingdom.
+
+### Worked run — `target_wells: [B01]`, discovered `{A01, A02, B01}`, A01/A02 already built
+
+```
+rule compute_mask_geometry_well:                              # GENERATE (fans over run_wells)
+    input:  lambda wc: well_run(wc, ROOT).shard("segmentation_tracking")
+    output: lambda wc: well_run(wc, ROOT).shard("mask_geometry"),     # → computed_features/{exp}/per_well/{well_id}/...
+            lambda wc: well_run(wc, ROOT).sentinel("mask_geometry")
+    shell:  "tasks compute-mask-geometry --well-id {wildcards.well_id} --in {input} --out {output[0]}"
+
+rule merge_mask_geometry:                                     # MERGE
+    input:  lambda wc: merge_trigger_inputs(checkpoints=checkpoints, wc=wc, config=config,
+                            root=ROOT, stage="mask_geometry", artifact="metrics")   # = run wells' shards (TRIGGER)
+    output: artifact_path(ROOT, "mask_geometry", "metrics", "{experiment}", path_mode="merged")
+    shell:  "tasks merge-mask-geometry --stage mask_geometry --output-root {ROOT} --out {output}"
+            #        └─ merge body scans per_well/*/mask_geometry.validated → cats ALL present (CONTENT)
+```
+1. `discover_wells` → `discovered_wells.txt = {A01, A02, B01}`.
+2. `select_run_wells(discovered={A01,A02,B01}, target=[B01])` → `run_wells = [B01]`.
+3. Generate fans over `[B01]` → builds **only** `per_well/B01/...` (A01/A02 not recomputed — isolated).
+4. `merge_trigger_inputs` = `[WellRun(20250912, B01, ROOT).shard("mask_geometry")]` → the merge's
+   declared input is **B01's shard**.
+5. **Trigger:** B01's shard is newer than the merged output → `merge_mask_geometry` fires. **Once.**
+6. **Content:** the merge body scans `per_well/*/mask_geometry.validated` → finds **A01, A02, B01**
+   → cats all three → merged file = `A01 + A02 + B01`. **Does not shrink.**
+7. Re-invoke with nothing changed → B01's shard mtime unchanged → merge **skipped** (idempotent).
+   Full plate (`target_wells: []`) → `run_wells = {A01,A02,B01}` → same DAG, wider selection.
+
+> **The one caveat (kept honest):** if a non-run shard changed *without* any run well changing in
+> the same invocation, the merge wouldn't auto-fire (its declared edges didn't move). But you only
+> change a shard by **running its well** — which makes it a run well, a declared edge, a trigger.
+> So in normal operation the merged file always reflects the full current state.
 
 ### How it interfaces with `config.yaml` (the science knobs)
 
@@ -715,22 +781,22 @@ one-line escape hatch that makes one-well / subset / full runs the same DAG (Ten
 
 Two touch points, both at the **rule boundary** (never inside core functions):
 
-**(1) Per-well rules — expand the DAG over `active_wells`:**
+**(1) Per-well rules — expand the DAG over `run_wells` (paths via `WellRun`):**
 ```python
 rule compute_mask_geometry_well:
-    input:   seg = lambda wc: artifact_path(DATA_ROOT, "segmentation_tracking", "csv",
-                                wc.experiment, path_mode="per_well", well_id=wc.well_id)
-    output:  out = lambda wc: artifact_path(DATA_ROOT, "mask_geometry", "metrics",
-                                wc.experiment, path_mode="per_well", well_id=wc.well_id)
+    input:   seg = lambda wc: well_run(wc, DATA_ROOT).shard("segmentation_tracking")
+    output:  out = lambda wc: well_run(wc, DATA_ROOT).shard("mask_geometry"),
+             done = lambda wc: well_run(wc, DATA_ROOT).sentinel("mask_geometry")
 ```
-**(2) Merge rules — collect shards via the runner (declared inputs):**
+**(2) Merge rules — declared inputs = run wells' shards (the trigger); body scans for content:**
 ```python
 rule merge_mask_geometry:
-    input:   shards = lambda wc: checkpoint_well_shards(
+    input:   shards = lambda wc: merge_trigger_inputs(           # TRIGGER edges = run wells' shards
                  checkpoints=checkpoints, wc=wc, config=config, root=DATA_ROOT,
-                 stage="mask_geometry", artifact="metrics")     # all explicit kwargs (#8)
+                 stage="mask_geometry", artifact="metrics")      # all explicit kwargs (#8)
     output:  merged = lambda wc: artifact_path(DATA_ROOT, "mask_geometry", "metrics",
                                 wc.experiment, path_mode="merged")
+    # tasks merge-mask-geometry body scans per_well/*/mask_geometry.validated → cats ALL present (CONTENT)
 ```
 
 **The dispatch layer (`tasks.py`) — STATUS: does not exist yet (Win 2).** Today every
@@ -744,7 +810,7 @@ Snakefile rule  ──shell──►  tasks.py <verb> --well-id B01 --output-roo
                                 ▼
                             core compute fn(input_path, output_path)   ← registry-ignorant
 ```
-So the full chain per stage: **rule (expands over active_wells) → tasks verb (resolves
+So the full chain per stage: **rule (expands over run_wells) → tasks verb (resolves
 paths) → core fn (concrete paths).** Three layers, each in its own kingdom. Building
 `tasks.py` is Win 2 (independent, eases Scope 5); until then rules call `-m module`
 directly and the well-runner helpers are imported into the Snakefile at parse time.
@@ -755,9 +821,9 @@ directly and the well-runner helpers are imported into the Snakefile at parse ti
 
 ```
 Zone A — experiment bootstrap        (fanout=experiment; discovers wells)
-  experiment_metadata/{exp}/...      plate, scope, series_mapping, frame_contract, wells.txt
+  experiment_metadata/{exp}/...      plate, scope, series_mapping, frame_inventory, discovered_wells.txt
 
-  ── FAN POINT: discover_wells checkpoint → wells.txt (global well_id) ──
+  ── FAN POINT: discover_wells checkpoint → discovered_wells.txt (global well_id) ──
 
 Zone B0 — image materialization      (per-well image tree, NO merge; outside the registry)
   built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/   (well_id; one job loops wells)
@@ -821,7 +887,7 @@ Merged files are **off-spine materialized views** (notebooks, inspection, public
 the merge wall and destroys per-well staleness.
 
 > **Precise rule (bootstrap-OK vs merged-bad):** reading an *experiment-grain bootstrap*
-> artifact (`wells.txt`) as a well-local input is **fine** — it's upstream of the fan.
+> artifact (`discovered_wells.txt`) as a well-local input is **fine** — it's upstream of the fan.
 > Reading a *merged view* (post-fan, assembled-from-shards) is **forbidden**. The test:
 > was this file made by collapsing per-well shards? If yes, don't depend on it.
 
@@ -833,7 +899,7 @@ cleanly to reading per-well shards. (Tenets 2, 7)
 At parse time Snakemake doesn't know how many wells exist (it's runtime data). The
 **checkpoint** resolves this: `checkpoints.discover_wells.get(...)` forces a DAG re-plan
 with the discovered list. Merge inputs must therefore be a **checkpoint-derived,
-DECLARED `input:` list** (via `checkpoint_well_shards`) — the only pattern that gives
+DECLARED `input:` list** (via `merge_trigger_inputs`) — the only pattern that gives
 **both** correct well-detection **and** correct staleness. (Tenet 8)
 
 **DO-NOT (each silently breaks the dependency edge):**
@@ -991,7 +1057,7 @@ row formatting).
   (see DAG Mechanics). Not architecture.
 - **Two redundant discovery paths:** `_wells_from_mapping` (local `well_index`) vs.
   `discover_wells` checkpoint (global `well_id`) → collapse to the checkpoint via
-  `select_active_wells()` (Win 4/5). *(mdcolon to elaborate on specifics.)*
+  `select_run_wells()` (Win 4/5). *(mdcolon to elaborate on specifics.)*
 - **Scope-2 migration touch:** `discover_wells` reads `frame_contract.csv`'s `well_index`
   column (Snakefile:448), which Scope 2 deletes → this checkpoint is a migration site.
 
@@ -1011,8 +1077,10 @@ to a **lean path resolver** (Bloat Audit): per-stage `family`/`fanout`/optional
 reader). The `fanout` vs `execution` distinction stays as a *documented concept*, not a
 field. Zone-C per-well-safety: **math** owner-confirmed + spot-checked; **wiring** still
 has merge-wall reads to convert (not the same claim). scoped_runs demoted to scratch. The
-**well-runner** provides *mechanism, not staleness* (`select_active_wells` pure +
-checkpoint glue + `checkpoint_well_shards`); imports IDs from `identifiers/`, never mints.
+**well-runner** provides *mechanism, not staleness* (`select_run_wells` pure +
+checkpoint glue + `merge_trigger_inputs` + `WellRun`); imports IDs from `identifiers/`, never
+mints. Merge **triggers** on run-wells' declared edges, **composes** over all present valid shards
+(execution-time scan in the merge body) — never shrinks (revised 2026-06-04).
 The **frame contract is split** (🟢 TARGET) into early metadata-only discovery + a per-well
 validate stage, so segmentation reads a per-well slice and one-well == whole-experiment for
 the front half too.
@@ -1040,17 +1108,18 @@ critical path.
 3. **Scope 2** — migrate `well`/`well_id` semantics in schemas + call sites; regenerate.
    - **Tests:** regression on regenerated contract files (schema/columns unchanged except the
      intended `well`/`well_id` flip); spot-check a known well (`20250912_B01`).
-4. **Implement `lib/well_runner.py`** on normalized IDs (`select_active_wells` pure +
-   checkpoint glue + `checkpoint_well_shards`).
-   - **Tests:** **pure** unit tests on `select_active_wells` (no Snakemake) — `[]`→all,
+4. **Implement `lib/well_runner.py`** on normalized IDs (`select_run_wells` pure +
+   checkpoint glue + `merge_trigger_inputs` + `WellRun`).
+   - **Tests:** **pure** unit tests on `select_run_wells` (no Snakemake) — `[]`→all,
      local/global/mixed filters, multi-experiment empty-policy (#7), and all hard-error cases
-     (missing requested, duplicate-after-normalize, empty active). The glue wrappers get a
-     thin smoke test with a faked checkpoint.
+     (missing requested, duplicate-after-normalize, empty run set). The glue wrappers get a
+     thin smoke test with a faked checkpoint. Plus the merge-content test: with A01/A02 already
+     built and `target_wells=[B01]`, the merged file = A01+A02+B01 (does not shrink).
 5. **Wire one stage** end-to-end through the registry as the proof, then replicate.
    *(Win 2 `tasks.py` verbs can land independently anytime to ease this.)*
-   - **Tests:** a one-well DAG run (request a per-well target → only that well builds, no
-     merge) and an experiment target (active wells + merged product); assert the merge input
-     list is the declared `checkpoint_well_shards`, never a glob.
+   - **Tests:** a one-well DAG run (request a per-well target → only that well builds);
+     assert the merge's declared inputs are `merge_trigger_inputs` (run wells), never a glob,
+     and the merge body composes over all present `.validated` shards.
 
 ---
 
