@@ -841,7 +841,19 @@ Zone C — merged / publication products    (thin concat at the END of the DAG; 
   computed_features/{exp}/consolidated/...
   quality_control/{exp}/consolidated/...
   analysis_ready/{exp}/analysis_ready.csv
+
+Zone D — model / embeddings    (legacy build_06; consumes snip_manifest, encodes → latents)
+  embeddings/{exp}/morph_latents_{exp}.csv         (snip_id → z_mu_*; keyed by snip_id)
+  embeddings/{exp}/bf_embryo_snips/{exp}/...        (symlink VIEW of processed_snip_path)
 ```
+
+> **Zone D is specified in `target/model_input_handoff_contract.md`, not here.** It is the
+> model seam (legacy build_06): inference-first, reuses `gen_embeddings` + the
+> `mseq_pipeline_py3.9` sub-env, keyed on `snip_id` (no `pert_id`/splits — those are
+> training, deferred). It is **not yet built** (`src/data_pipeline/embeddings/` is empty).
+> Grain note: encode is naturally per-well-able (snips are already per-well shards), but the
+> legacy encoder loops an experiment's snips in one job — its `fanout`/`execution` placement
+> in the registry is an **open item** for whoever wires it (see the contract §8).
 
 **Merged-or-not is a TARGET distinction, not a mode (#12):** the rhythm
 (`run_X_per_well → merge_X → validate_merged_X`) doesn't conflict with one-well runs —
