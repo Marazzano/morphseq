@@ -8,6 +8,8 @@ and **what is legacy vs. target** so you don't have to rediscover the layout.
 > **Read this first, then the `target/` docs.** This file is a map, not the spec.
 > The design lives in `target/` (symlinked). Some top-level docs here are stale —
 > see "Doc trust order" below.
+>
+> **Auditing this refactor?** Start with [`AUDIT_PASSOFF.md`](AUDIT_PASSOFF.md) (this dir) — reading order, the spine claims to scrutinize, and your deliverable (`target/OVERALL_PLAN.md`).
 
 ---
 

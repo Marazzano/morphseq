@@ -15,10 +15,12 @@ detail lives in the linked `target/` docs, not here. Tags follow the north star:
 (Scopes 1–5) · [[front_end_naming_and_flow]] (ingest + fan) ·
 [[stitched_handoff_contract]] (input seam) · [[model_input_handoff_contract]] (embeddings seam).
 
-> ⚠️ **Read the Audit Findings (§6) before executing this plan.** One finding is
-> build-blocking on this branch: the feature-extraction entrypoints the Snakefile calls
-> **do not exist here** (F1). Several docs describe the pipeline as "wired end-to-end /
-> ✅ ported"; that is true on a *different* branch, not this one.
+> ⚠️ **Read the Audit Findings (§6) before executing this plan.** The audit was run on the
+> `20260605` orientation worktree, where the feature-extraction entrypoints were absent (F1).
+> They **do exist on this branch** (`20260222_docs_snakemake_remake`, the canonical refactor
+> branch with the code) — so F1 was a **branch artifact, now resolved** by consolidating docs
+> onto this branch. The one remaining build-time decision is F2 (sentinel convention — DECIDED
+> below). See §6 for the full verdicts.
 
 ---
 
@@ -39,8 +41,7 @@ flag. The grain drives the file layout, governed by a lean path registry; identi
 ## 2. The end-to-end spine (ordered stages)
 
 Status legend: **built** (rule + code present, this branch) · **rewire** (built but reads a
-merged input — the merge-wall, Scope 5) · **not-built** (no rule/code) · **off-branch**
-(rule present but the code it calls is missing here — see F1).
+merged input — the merge-wall, Scope 5) · **not-built** (no rule/code).
 
 🔵 **CURRENT execution order** (the fan sits LATE — after stitching, because
 `build_frame_contract` consumes the stitched inventory):
@@ -61,11 +62,11 @@ merged input — the merge-wall, Scope 5) · **not-built** (no rule/code) · **o
 | B1 | `segment_and_track_per_well` → `merge_segmentation_tracking` | segmentation_and_tracking | per_well_then_merge | per_well | built |
 | B2 | `run_snip_processing_per_well` → `merge_snip_manifests` | processed_snips | per_well_then_merge | per_well | built |
 | B3 | `generate_auxiliary_masks` | auxiliary_masks | experiment | single | built *(per-experiment, reads frame contract)* |
-| B4 | `compute_mask_geometry` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
-| B5 | `compute_pose_kinematics` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
-| B6 | `compute_fraction_alive` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
-| B7 | `compute_stage_predictions` | computed_features | experiment *(🟢 per_well)* | single | **off-branch (F1)** |
-| B8 | `consolidate_features` → `consolidated_snip_features.csv` | computed_features | experiment | single | **off-branch (F1)** |
+| B4 | `compute_mask_geometry` | computed_features | experiment *(🟢 per_well)* | single | built (F1 resolved) |
+| B5 | `compute_pose_kinematics` | computed_features | experiment *(🟢 per_well)* | single | built (F1 resolved) |
+| B6 | `compute_fraction_alive` | computed_features | experiment *(🟢 per_well)* | single | built (F1 resolved) |
+| B7 | `compute_stage_predictions` | computed_features | experiment *(🟢 per_well)* | single | built (F1 resolved) |
+| B8 | `consolidate_features` → `consolidated_snip_features.csv` | computed_features | experiment | single | built (F1 resolved) |
 | Q1 | `compute_segmentation_qc` | quality_control | experiment *(🟢 per_well)* | single | built |
 | Q2 | `compute_viability_qc` | quality_control | experiment | single | **rewire** — reads `consolidated_features` (F4) |
 | Q3 | `compute_death_detection` | quality_control | experiment *(🟢 per_well)* | single | built |
@@ -94,9 +95,9 @@ From [[current_state_and_next_steps]] §"Recommended order" + [[per_well_through
 §"Next concrete steps". **Not invented here** — reproduced so the plan is self-contained.
 
 ```
-0.  FIX F1 (entrypoints)   ← PREREQUISITE on this branch: the feature-extraction code the
-                             Snakefile calls is missing here. Nothing back-half runs until
-                             it is restored/ported. (See §6 F1; blocks-build.)
+    (F1 resolved: the feature-extraction entrypoints exist on this branch — the gap was a
+     branch artifact of the orientation worktree. Verify with: ls src/data_pipeline/
+     feature_extraction/entrypoints/ — expect 7 compute_*.py.)
 1.  Scope 1  identifiers/   ← create constructors/parsers/validators. Empty, additive,
                              zero-risk. Unblocks everything keying on well_id; the layer the
                              handoff validator depends on. Use canonical _t{time_index:04d}.
@@ -126,18 +127,18 @@ step 6. Detail: [[well_id_throughline_refactor_plan]] (Scopes), [[per_well_throu
 
 | Bucket | Count | Stages |
 |---|---|---|
-| **built** (rule + code, this branch) | 12 | A1–A5, B0, B1, B2, B3, Q1, Q3, Q5, Q6*, Q7*, Q8, C1 *(Q6/Q7 are stubs)* |
+| **built** (rule + code, this branch) | 17 | A1–A5, B0, B1, B2, B3, B4–B8 (features, F1 resolved), Q1, Q3, Q5, Q6*, Q7*, Q8, C1 *(Q6/Q7 are stubs)* |
 | **rewire** (built, reads merged input — Scope 5) | 2 | Q2 viability_qc, Q4 surface_area_qc |
-| **off-branch** (rule present, code missing here — F1) | 5 | B4–B8 (mask_geometry, pose_kinematics, fraction_alive, stage_predictions, consolidate_features) |
 | **not-built** (no rule/code) | 2 | E1 compute_embeddings, E2 merge_embeddings |
 | **scaffolding not-built** | 2 pkgs | `identifiers/` (Scope 1), `embeddings/` (both 0-byte `__init__.py` only) |
 | **infra not-built** | — | `lib/paths.py`, `lib/well_runner.py`, `tasks.py`, `env.yaml` |
 
 *(Count note: A2 and B0 each have microscope variants; counted once.)*
 
-**Headline:** on this branch the back half is **not** runnable end-to-end — 5 feature stages
-are off-branch (F1) and 2 embedding stages are unbuilt. The front half (A→B0→fan→seg→snips)
-and the QC/consolidation/analysis-ready *rules* are present.
+**Headline:** on the canonical refactor branch the spine is wired **through analysis_ready**
+(features B4–B8 present; F1 was a branch artifact). Remaining work: build **embeddings**
+(E1/E2, the active frontier), rewire the 2 merge-wall QC reads to per-well shards (Scope 5),
+and the per-well infra (`identifiers/`, `paths.py`, `well_runner.py`, `env.yaml`).
 
 ---
 
@@ -145,7 +146,7 @@ and the QC/consolidation/analysis-ready *rules* are present.
 
 | Item | Disposition | Reason |
 |---|---|---|
-| **F1: feature entrypoints missing on this branch** | **blocks-build** | Snakefile calls `feature_extraction.entrypoints.compute_*`; only `__init__.py` exists here → `ModuleNotFoundError` for B4–B8 and everything downstream. (§6 F1) |
+| **F1: feature entrypoints (branch artifact)** | **RESOLVED** | Absent on the `20260605` orientation worktree where the audit ran; **present on this branch** (`feature_extraction/entrypoints/`, 7 files). Resolved by consolidating docs onto the code branch. (§6 F1) |
 | Exhaustive Zone-C grep-audit | **DONE** (safe) | Ran it — no cohort/cross-well statistic anywhere in features+QC+joins. (§6 F3) |
 | **F2: `.validated` sentinel convention not uniform** | **blocks-build** (for `paths.py`) · **DECIDED** | Two conventions coexist (28 dot-prefixed `.X.validated` vs 30 suffix `X.csv.validated`). **Decision (2026-06-05): standardize on dot-prefixed hidden `.{filename}.validated`** (matches the spine artifacts; `validated_path = parent / f".{name}.validated"`, no per-stage flag). Action: rename the ~30 suffix sentinels in feature/QC rules during Scope-5 wiring. |
 | `models_root` location | safe-to-defer | Leaning Scope-3 `env.yaml` reusing legacy `models/legacy/<name>` layout; confirm when wiring E1. |
@@ -166,25 +167,25 @@ open-items (§4), grounding every claim against the Snakefile + working tree.
 | # | Claim | Verdict |
 |---|---|---|
 | 1 | Fan is a checkpoint; per-well staleness needs a per-well spine | ✅ **HOLDS.** `checkpoint discover_wells` (Snakefile:427) reads `frame_contract.csv` (:434) → `wells.txt` (:438); `wells_for_experiment` expands the per-well DAG off it (:476–480). 🔵 CURRENT tag accurate. |
-| 2 | Zone C is per-well-able (no cohort math) | ✅ **HOLDS — now exhaustively verified.** Grepped all QC + join modules **and** the (deleted) feature blobs from git: every aggregate is **within-embryo / within-Z-stack** (`embryo_qc` `np.percentile(...,5)` is "across all Z-pairs" of one embryo; `surface_area_qc` compares to the external `sa_reference_curves.csv`, no quantile). No cross-well statistic exists. Upgrades the doc's "spot-check" to "exhaustive." **Caveat:** feature code audited from git history because it's off-branch (F1). |
+| 2 | Zone C is per-well-able (no cohort math) | ✅ **HOLDS — now exhaustively verified.** Grepped all QC + join modules **and** the feature modules: every aggregate is **within-embryo / within-Z-stack** (`embryo_qc` `np.percentile(...,5)` is "across all Z-pairs" of one embryo; `surface_area_qc` compares to the external `sa_reference_curves.csv`, no quantile). No cross-well statistic exists. Upgrades the doc's "spot-check" to "exhaustive." *(Feature modules were audited from git blobs during the orientation-worktree pass; they are present on this branch — F1.)* |
 | 3 | The merge wall is rewiring, not algorithm change | ✅ **HOLDS, but doc UNDERCOUNTS.** Doc names only `surface_area_qc`. Actually **two** Zone-B QC rules read the merged `consolidated_features`: `compute_viability_qc` (Snakefile:753) **and** `compute_surface_area_qc` (:799). Both do per-snip work → both rewire cleanly to per-well shards. (F4) |
 | 4 | `fanout` vs `execution` holds for embeddings | ✅ **HOLDS** (as design; unbuilt). Reasoning verified: per-well `conda run` model reload would dominate → one batched job, per-well shards. Contract §6.2 and findings doc agree. Same shape as stitching B0 (which the Snakefile confirms is per-well-tree + single-job). |
 | 5 | Embeddings FEEDS analysis_ready; gate not circular | ✅ **HOLDS.** No embeddings rule in the Snakefile (unbuilt, active frontier). `assemble_analysis_ready` reads only features + qc_flags (Snakefile:937–940), **not** latents. `embedding_calculated` hardcoded `False` (`assemble.py:65`) reserves the seam. Gate comes from QC consolidation, not analysis_ready — non-circular. |
 
 ### Findings (named, not silently resolved)
 
-- **F1 — BUILD-BLOCKING: feature-extraction entrypoints absent on this branch.** The
-  Snakefile calls `data_pipeline.feature_extraction.entrypoints.compute_mask_geometry`
-  (and pose_kinematics / fraction_alive / stage_predictions / consolidate_features), but
-  `src/data_pipeline/feature_extraction/` here contains **only `__init__.py`** (a stray
-  `__pycache__/consolidate_features.cpython-310.pyc` is the only trace). The flat
-  implementations were deleted in commit `84b4aae3` ("remove stale files"); the
-  `entrypoints/` submodule exists only on branch `mdcolon/20260222_docs_snakemake_remake`.
-  **Consequence:** the docs' "wired end-to-end through analysis-ready" / "✅ ported"
-  (ORIENTATION §52–55, current_state §89 "verified 2026-06-04") is true on *that* branch,
-  **not this one** — B4–B8 would `ModuleNotFoundError`. **Action:** restore/port the
-  entrypoints (or rebase onto the branch that has them) before any back-half run. This is
-  step 0 of the build order.
+- **F1 — RESOLVED (branch artifact): feature-extraction entrypoints.** During the audit
+  (run on the `20260605` orientation worktree), `src/data_pipeline/feature_extraction/`
+  contained **only `__init__.py`** — so the Snakefile's calls to
+  `feature_extraction.entrypoints.compute_*` (mask_geometry / pose_kinematics /
+  fraction_alive / stage_predictions / consolidate_features) would `ModuleNotFoundError`,
+  contradicting the docs' "wired end-to-end / ✅ ported." **Root cause:** the orientation +
+  audit docs had been committed on `20260605` (an *older* fork that predates the
+  `entrypoints/` submodule and also carries unrelated CEP290/label-transfer work), while the
+  real refactor code — including the 7 `entrypoints/compute_*.py` — lives on
+  `mdcolon/20260222_docs_snakemake_remake`. **Resolution:** the docs were consolidated onto
+  `20260222` (this branch), so docs and the entrypoint code now live together. B4–B8 are
+  **built** here. Verify: `ls src/data_pipeline/feature_extraction/entrypoints/`.
 
 - **F2 — BUILD-BLOCKING for the registry: `.validated` sentinel convention not uniform.
   DECIDED 2026-06-05 → dot-prefixed hidden.**
@@ -237,9 +238,11 @@ resolved in the current `target/` docs.
 
 ## 7. Bottom line
 
-The **design is coherent and the spine claims hold** — the per-well architecture, the fan
+The **design is coherent and all five spine claims hold** — the per-well architecture, the fan
 checkpoint, the no-cohort-math guarantee, and the embeddings-feeds-analysis_ready ordering are
-all verified against code. The **blockers are implementation-state, not design**: (F1) the
-feature entrypoints are missing on this branch, and (F2) the sentinel convention must be
-unified before the path registry can be trusted. Build order: **fix F1 → Scope 1 →
-paths.py (resolve F2) → Scope 2/3 → well-runner → wire one stage → embeddings.**
+all verified against code. **No design blockers remain.** F1 (missing feature entrypoints) was
+a branch artifact, now resolved by consolidating docs onto the code branch. F2 (sentinel
+convention) is DECIDED (dot-prefixed hidden) — an implementation detail for `paths.py`. The
+real remaining work is **building**, not fixing: **Scope 1 (`identifiers/`) → `paths.py`
+(apply F2) → Scope 2/3 → `well_runner.py` → wire one stage → embeddings (E1/E2, the active
+frontier)**, plus the 2 merge-wall QC rewires (Scope 5).
