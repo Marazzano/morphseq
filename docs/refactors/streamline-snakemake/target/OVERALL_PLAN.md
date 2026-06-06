@@ -98,9 +98,17 @@ From [[current_state_and_next_steps]] §"Recommended order" + [[per_well_through
     (F1 resolved: the feature-extraction entrypoints exist on this branch — the gap was a
      branch artifact of the orientation worktree. Verify with: ls src/data_pipeline/
      feature_extraction/entrypoints/ — expect 7 compute_*.py.)
-1.  Scope 1  identifiers/   ← create constructors/parsers/validators. Empty, additive,
-                             zero-risk. Unblocks everything keying on well_id; the layer the
-                             handoff validator depends on. Use canonical _t{time_index:04d}.
+1.  Scope 1  shared/identifiers/  ← SPLIT the existing flat `shared/identifiers.py` (58 lines,
+                             already imported by 10 modules) into a package: constructors.py +
+                             NEW parsers.py (split_well_id; move normalize_embryo_local_track_id)
+                             + NEW validators.py (validate_well_id) + README.md. KEEP current
+                             signatures so the `__init__.py` re-export shim leaves all 10 importers
+                             green → zero-risk. The well_id-first signature flip + `well_index→well`
+                             rename is Scope 2 (it breaks 6 mint sites). Restore/keep the
+                             `identifier_and_wildcard_contract.md` reference (recovered 2026-06-05).
+                             ⚠️ NOTE: the real home is `shared/identifiers/`, NOT the empty
+                             top-level `src/data_pipeline/identifiers/` package (a decoy — delete it
+                             or leave inert). Use canonical _t{time_int:04d}.
 2.  Scope 3  env.yaml       ← separate later track (config.yaml exists; env + path-decoupling
                              do not). Precedes the well-runner (runner takes output_root as a
                              param, never derives it). Also lands model_python_env for E1.
@@ -130,7 +138,7 @@ step 6. Detail: [[well_id_throughline_refactor_plan]] (Scopes), [[per_well_throu
 | **built** (rule + code, this branch) | 17 | A1–A5, B0, B1, B2, B3, B4–B8 (features, F1 resolved), Q1, Q3, Q5, Q6*, Q7*, Q8, C1 *(Q6/Q7 are stubs)* |
 | **rewire** (built, reads merged input — Scope 5) | 2 | Q2 viability_qc, Q4 surface_area_qc |
 | **not-built** (no rule/code) | 2 | E1 compute_embeddings, E2 merge_embeddings |
-| **scaffolding not-built** | 2 pkgs | `identifiers/` (Scope 1), `embeddings/` (both 0-byte `__init__.py` only) |
+| **scaffolding** | 1 pkg + 1 split | `embeddings/` (0-byte `__init__.py`, **not-built**); `shared/identifiers/` (Scope 1 = **split an existing 58-line module**, not a create — see §3 step 1). The top-level `identifiers/` 0-byte package is a decoy, not the target. |
 | **infra not-built** | — | `lib/paths.py`, `lib/well_runner.py`, `tasks.py`, `env.yaml` |
 
 *(Count note: A2 and B0 each have microscope variants; counted once.)*
@@ -138,7 +146,7 @@ step 6. Detail: [[well_id_throughline_refactor_plan]] (Scopes), [[per_well_throu
 **Headline:** on the canonical refactor branch the spine is wired **through analysis_ready**
 (features B4–B8 present; F1 was a branch artifact). Remaining work: build **embeddings**
 (E1/E2, the active frontier), rewire the 2 merge-wall QC reads to per-well shards (Scope 5),
-and the per-well infra (`identifiers/`, `paths.py`, `well_runner.py`, `env.yaml`).
+and the per-well infra (`shared/identifiers/` split, `paths.py`, `well_runner.py`, `env.yaml`).
 
 ---
 
@@ -154,6 +162,8 @@ and the per-well infra (`identifiers/`, `paths.py`, `well_runner.py`, `env.yaml`
 | Stitching `execution` (single vs per_well) | safe-to-defer | Stays `single`; revisit only for a real IO/compute/debug win. |
 | Merge cadence (per-stage vs stage-group) | safe-to-defer | Performance tuning, not architecture. |
 | Scope-2 migration site (`discover_wells` reads `well_index`) | safe-to-defer (track) | Confirmed: Snakefile:448,459 read `well_index` from the contract; the `materialize_selected_wells`/`_wells_from_mapping` path reads it too (:240). Scope 2 must update both; order is safe (Scope 2 precedes well-runner). |
+| **F7: Scope 1 is a SPLIT, not a create** | **plan-corrected** (2026-06-05) | `shared/identifiers.py` already exists (58 lines) and is imported by **10 modules**; `build_well_id(well_index)` returns the bare local `A01` (so `well_id==well_index` today). Per-well tree keys `per_well/{well_id}/` on this LOCAL value (the 🔵→🟢 flip is unbuilt). The well-runner needs `well_id` GLOBAL → that is the Scope-2 2-arg flip + `well_index→well` rename, breaking 6 mint sites. Scope 1 stays zero-risk by keeping signatures. (§6 F7) |
+| Contract doc `identifier_and_wildcard_contract.md` was deleted | **RESOLVED** (2026-06-05) | Dropped in `8d680daa` doc-reorg but still referenced by code (`shared/identifiers.py:3` + 2 more) and the well_id plan. **Recovered verbatim** from `8e1764b6` + status banner (documents 🔵 CURRENT local-`well_id`). The other 9 docs that commit deleted have **0 live refs** (superseded cleanly). |
 
 ---
 
@@ -223,6 +233,24 @@ open-items (§4), grounding every claim against the Snakefile + working tree.
   tags it 🟢 correctly; this finding just makes the CURRENT≠TARGET gap explicit so the
   well-runner build (step 5) knows the scan is *new* work, not a rewire.
 
+- **F7 — Scope 1 is a SPLIT of an existing module, not a greenfield create (2026-06-05
+  audit on `20260222`).** The earlier framing ("create empty `identifiers/`, zero-risk")
+  was stale on two counts. (a) `src/data_pipeline/shared/identifiers.py` **already exists**
+  (58 lines: `build_well_id`/`build_image_id`/`build_embryo_id`/`build_snip_id`/
+  `normalize_embryo_local_track_id`/`sanitize_experiment_id`) and is **imported by 10
+  modules** — so Scope 1 is the *split* the well_id plan describes (lines 173–182), into
+  `constructors.py` + new `parsers.py`/`validators.py`, behind a re-export shim. The empty
+  top-level `src/data_pipeline/identifiers/` package is a **decoy** — the real home is
+  `shared/identifiers/`. (b) `build_well_id(well_index)` today returns the **bare local
+  label `A01`**, so `well_id == well_index` and the per-well tree (`per_well/{well_id}/`)
+  keys on a LOCAL id (matches B0's 🔵 tag). **The well-runner needs a GLOBAL `well_id`**
+  (`{experiment_id}_{well}`) — that is the **Scope-2** 2-arg signature flip
+  (`build_well_id(experiment_id, well)`, sanitize moved up) + `well_index→well` column
+  rename, which **breaks 6 mint sites** (`build_well_id`×3 keyence/map_series/yx1,
+  `build_image_id`×5, `build_embryo_id`×1 sam2_ingestor). Keeping Scope 1 to the split-only
+  (signatures unchanged) preserves its zero-risk character; the flip that unblocks the
+  well-runner is owned by Scope 2. (§5 F7)
+
 ### Decisions confirmed settled (AUDIT_PASSOFF §3)
 
 Frame-contract → dedicated `frame_contracts/` family (findings §1002, DECIDED 2026-06-05);
@@ -243,6 +271,6 @@ checkpoint, the no-cohort-math guarantee, and the embeddings-feeds-analysis_read
 all verified against code. **No design blockers remain.** F1 (missing feature entrypoints) was
 a branch artifact, now resolved by consolidating docs onto the code branch. F2 (sentinel
 convention) is DECIDED (dot-prefixed hidden) — an implementation detail for `paths.py`. The
-real remaining work is **building**, not fixing: **Scope 1 (`identifiers/`) → `paths.py`
+real remaining work is **building**, not fixing: **Scope 1 (`shared/identifiers/` split) → `paths.py`
 (apply F2) → Scope 2/3 → `well_runner.py` → wire one stage → embeddings (E1/E2, the active
 frontier)**, plus the 2 merge-wall QC rewires (Scope 5).
