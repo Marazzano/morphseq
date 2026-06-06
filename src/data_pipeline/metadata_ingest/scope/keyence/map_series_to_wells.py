@@ -176,7 +176,7 @@ def map_series_to_wells_keyence(
             row = {
                 'experiment_id': experiment_id,
                 'well_index': well_index,
-                'well_id': build_well_id(well_index),
+                'well_id': build_well_id(experiment_id, well_index),
                 'series_number': series_number,
                 'position_index': pos_idx,
                 'mapping_method': 'keyence_directory_structure',

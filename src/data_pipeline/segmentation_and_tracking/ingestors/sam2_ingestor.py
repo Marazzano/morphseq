@@ -16,7 +16,6 @@ from ..raw_types import RawMask, RawTrack
 def ingest_propagation(
     results: dict[int, dict[str, dict]],
     *,
-    experiment_id: str,
     image_id_by_time_int: dict[int, str],
     seed_time_int: int,
     seed_image_id: str,
@@ -35,7 +34,9 @@ def ingest_propagation(
             conf = float(emb.get("confidence", 0.0))
             embryo_local_id = str(embryo_id)
             embryo_local_track_id = normalize_embryo_local_track_id(embryo_local_id)
-            embryo_global_id = build_embryo_id(str(experiment_id), str(well_id), embryo_local_track_id)
+            # well_id is global ({experiment_id}_{well_index}); embryo_id is well_id-first,
+            # so experiment_id is no longer needed here.
+            embryo_global_id = build_embryo_id(str(well_id), embryo_local_track_id)
             tracks.append(
                 RawTrack(
                     time_int=int(time_int),

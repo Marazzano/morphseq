@@ -472,7 +472,7 @@ def materialize_stitched_images(
 
             image_id = row.get("image_id")
             if pd.isna(image_id) or not str(image_id):
-                image_id = build_image_id(experiment, well_index, channel_id, time_int)
+                image_id = build_image_id(well_id, channel_id, time_int)
             image_id = str(image_id)
 
             output_path = stitched_root / well_index / channel_id / f"{image_id}.{image_extension}"

@@ -59,8 +59,8 @@ def build_frame_contract(
     df["time_int"] = fi
 
     df["image_id"] = [
-        build_image_id(exp_id, str(w), str(ch), int(t))
-        for w, ch, t in zip(df["well_id"], df["channel_id"], df["time_int"])
+        build_image_id(str(well_id), str(ch), int(t))
+        for well_id, ch, t in zip(df["well_id"], df["channel_id"], df["time_int"])
     ]
 
     df["stitched_image_path"] = [

@@ -4,27 +4,25 @@
 **Owner:** mdcolon
 **Related:** `identifier_and_wildcard_contract.md` (the existing grammar doc this plan revises and finishes).
 
-> **On-disk reality check (verified 2026-06-02).** Several passages below were written
-> as if scaffolding already exists. It does not. Before implementing, know:
-> - `src/data_pipeline/identifiers/` exists but is an **empty package** (`__init__.py`,
->   0 bytes). There is **no** `shared/` namespace and **no** flat `identifiers.py` to
->   "split." Scope 1 is **create**, not split.
-> - **No `build_well_id`/`build_image_id`/`build_embryo_id`/`build_snip_id` exist
->   anywhere.** IDs are minted inline as f-strings — e.g.
->   `f"{experiment_id}_{well_index}"` at `metadata_ingest/scope/yx1_scope_metadata.py`,
->   `keyence_scope_metadata.py`, and `metadata_ingest/mapping/series_well_mapper_keyence.py`.
-> - There is **no** `feature_extraction/io/paths.py` registry and **no**
->   `FEATURE_OUTPUT_FILENAMES` / `feature_output_path`. The path registry is built
->   fresh in Scope 4, not promoted from an existing one.
-> - There are **no `rules/*.smk` files** on disk. The "orphaned `.smk` blueprint"
->   referenced below is gone; read git history (`e25d3d93`, `ba9d41b8`) if you want the
->   shape, but there is nothing to `include` or delete.
+> **STATUS UPDATE (2026-06-05): Scope 1 is DONE; the 2026-06-02 banner below is obsolete.**
+> On branch `mdcolon/20260222_docs_snakemake_remake`:
+> - `shared/identifiers/` is a **real package** (`constructors.py`/`parsers.py`/`validators.py`/
+>   `__init__.py` shim/`README.md`), split from a pre-existing flat `shared/identifiers.py`,
+>   imported by 10 modules. (The empty top-level `src/data_pipeline/identifiers/` is a decoy.)
+> - `build_well_id`/`build_image_id`/`build_embryo_id`/`build_snip_id` **exist** and now mint the
+>   **GLOBAL** grammar: `build_well_id(experiment_id, well_index) -> "{exp}_{well_index}"`, and
+>   `build_image_id`/`build_embryo_id` are `well_id`-first. `split_well_id` + `validate_well_id`
+>   are implemented. The 6 metadata-ingest mint sites are updated. Tests:
+>   `tests/data_pipeline/shared/identifiers/` (13 pass).
+> - **DECISION (overrides the "rename `well_index → well`" in §"Canonical model" below):** the
+>   local label column **keeps the name `well_index`**, NOT `well`. A column `well` adjacent to
+>   `well_id` reads as "the well," reviving the ambiguity this refactor kills. `well_index` is
+>   unambiguously the local index/label. Treat every "`well`" below as "`well_index`".
 >
-> Consequence: the "compat `__init__.py` shim → near-zero import churn" benefit is
-> **moot** — there are zero existing importers of the identifier names to preserve.
-> Scope 1 is purely "write the constructors + (optionally) repoint the inline
-> f-strings." Passages that still say "split," "orphaned `.smk`," or "existing
-> registry" are left in place for design rationale but are superseded by this banner.
+> ⚠️ The 2026-06-02 reality-check that said "Scope 1 is create not split, no `shared/`, no
+> constructors, zero importers" was true then and is **false now**. The remaining work is
+> downstream: schemas, the per-well landmines, the `video_id` collapse, well-runner, paths.py,
+> env. See `target/well_id_global_migration_map.md`.
 
 ---
 
@@ -52,11 +50,11 @@ prerequisite for the real goal: **run one well through the entire pipeline.**
 
 Two names, not three. `well_index` is a **misnomer** — it stores the string label
 `A01`, not an integer — and is redundant with the local label. It is renamed to
-`well`.
+`well_index`.
 
 ```
 experiment_id = 20240418            global experiment identifier
-well          = A01                 local well label (was: well_index)
+well_index          = A01                 local well label (was: well_index)
 well_id       = 20240418_A01        global well identifier (replaces video_id)
 channel       = BF                  local imaging channel token
 image_id      = 20240418_A01_BF_t0003

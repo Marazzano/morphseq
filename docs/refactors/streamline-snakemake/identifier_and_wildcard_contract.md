@@ -1,16 +1,25 @@
 # Identifier and Wildcard Contract
 
-> **Status (2026-06-05): documents the 🔵 CURRENT convention, where `well_id` is the
-> plate-LOCAL label (`A01`).** This doc was restored verbatim (commit `8e1764b6`) after being
-> dropped in the `8d680daa` doc-reorg; it is referenced by `shared/identifiers.py`,
-> `experiment_identity.py`, and `path_contracts.py`, so the reference must not dangle.
+> **Status (2026-06-05, UPDATED): `well_id` is GLOBAL.** The identifier grammar in
+> `shared/identifiers/` now mints `well_id = {experiment_id}_{well_index}` (global, unique across
+> experiments). The local plate label is the column **`well_index`** (kept — NOT renamed to `well`;
+> a column named `well` next to `well_id` would read as "the well," reintroducing the very ambiguity
+> this refactor removes). The constructors are `well_id`-first:
 >
-> ⚠️ The 🟢 TARGET refactor **redefines `well_id` as GLOBAL `{experiment_id}_{well}`** and renames
-> today's local label to `well` (retiring `well_index`). Under TARGET, the IDs below become
-> `image_id = {well_id}_{channel_id}_t{time_int:04d}` etc., with `well_id` already global — so the
-> `{experiment_id}_{well_id}_…` joins shown here collapse to `{well_id}_…`. For that flip and its
-> call-site migration see `target/well_id_throughline_refactor_plan.md` (Scopes 1–2). Read this doc
-> for the **hierarchy and grammar**, not for the local-vs-global `well_id` semantics.
+> ```
+> experiment_id = 20240418
+> well_index    = A01                  local label (column only, after the fan)
+> well_id       = 20240418_A01         GLOBAL = {experiment_id}_{well_index}
+> image_id      = {well_id}_{channel_id}_t{time_int:04d}     = 20240418_A01_BF_t0003
+> embryo_id     = {well_id}_e{idx:02d}                        = 20240418_A01_e07
+> snip_id       = {embryo_id}_t{time_int:04d}                 = 20240418_A01_e07_t0003
+> ```
+>
+> ⚠️ **The worked examples BELOW predate this and use a LOCAL `well_id = A01`** (this doc was
+> restored verbatim from commit `8e1764b6`). Read the box above for the canonical (global) grammar;
+> the sections below are kept for the **hierarchy/structure** but their `{experiment_id}_{well_id}_…`
+> joins are superseded by `{well_id}_…` (well_id already carries the experiment). See
+> `target/front_end_naming_and_flow.md` (Decision 7) and `target/well_id_global_migration_map.md`.
 
 ## TL;DR
 

@@ -42,26 +42,36 @@ def test_reexport_from_legacy_flat_path():
 def test_reexport_from_shared_package():
     from data_pipeline.shared import build_well_id as bwi
 
-    assert bwi("A01") == "A01"
+    assert bwi("20240418", "A01") == "20240418_A01"
 
 
-# --- CURRENT (local-well_id) constructor grammar -------------------------------
+# --- GLOBAL well_id constructor grammar ----------------------------------------
 
 
-def test_build_well_id_is_local_label():
-    assert build_well_id("A01") == "A01"
-    assert build_well_id("  A01 ") == "A01"
+def test_build_well_id_is_global_and_sanitizes_experiment():
+    assert build_well_id("20240418", "A01") == "20240418_A01"
+    assert build_well_id("  20240418 ", "  A01 ") == "20240418_A01"
+    # experiment_id is sanitized ONCE here, so well_id is born clean
+    assert build_well_id("2024 0418", "A01") == "2024_0418_A01"
 
 
-def test_build_image_id_sanitizes_experiment():
-    assert build_image_id("2024 0418", "A01", "BF", 3) == "2024_0418_A01_BF_t0003"
-    assert build_image_id("20240418", "A01", "BF", 3) == "20240418_A01_BF_t0003"
+def test_build_image_id_is_well_id_first():
+    well_id = build_well_id("20240418", "A01")
+    assert build_image_id(well_id, "BF", 3) == "20240418_A01_BF_t0003"
 
 
-def test_build_embryo_and_snip_id():
-    eid = build_embryo_id("20240418", "A01", 7)
+def test_build_embryo_and_snip_id_well_id_first():
+    well_id = build_well_id("20240418", "A01")
+    eid = build_embryo_id(well_id, 7)
     assert eid == "20240418_A01_e07"
     assert build_snip_id(eid, 3) == "20240418_A01_e07_t0003"
+
+
+def test_full_grammar_composes():
+    # experiment_id + well_index -> well_id -> image/embryo/snip, all global
+    well_id = build_well_id("20240418", "A01")
+    assert build_image_id(well_id, "BF", 3) == "20240418_A01_BF_t0003"
+    assert build_snip_id(build_embryo_id(well_id, 7), 3) == "20240418_A01_e07_t0003"
 
 
 def test_sanitize_experiment_id():
@@ -78,14 +88,33 @@ def test_normalize_embryo_local_track_id():
         normalize_embryo_local_track_id("no-digits")
 
 
-# --- Scope-2 scaffolds must not be usable yet ----------------------------------
+# --- split_well_id: inverse of build_well_id -----------------------------------
 
 
-def test_split_well_id_is_scope2_stub():
-    with pytest.raises(NotImplementedError):
+def test_split_well_id_roundtrips_build_well_id():
+    well_id = build_well_id("20240418", "A01")
+    assert split_well_id(well_id) == ("20240418", "A01")
+
+
+def test_split_well_id_rejects_bare_local_label():
+    with pytest.raises(ValueError):
         split_well_id("A01")
 
 
-def test_validate_well_id_is_scope2_stub():
-    with pytest.raises(NotImplementedError):
+# --- validate_well_id: guard rail against leaked local labels -------------------
+
+
+def test_validate_well_id_accepts_global():
+    assert validate_well_id("20240418_A01") == "20240418_A01"
+
+
+def test_validate_well_id_rejects_bare_local_label():
+    with pytest.raises(ValueError):
         validate_well_id("A01")
+    with pytest.raises(ValueError):
+        validate_well_id("B12")
+
+
+def test_validate_well_id_rejects_empty():
+    with pytest.raises(ValueError):
+        validate_well_id("")

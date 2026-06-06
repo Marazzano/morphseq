@@ -209,8 +209,8 @@ def extract_yx1_scope_metadata(
                     channel = _normalize_channel_name(raw_channel)
 
                     # Build IDs (temporary - will be refined by series mapper)
-                    well_id = build_well_id(well_index)
-                    image_id = build_image_id(experiment_id, well_id, channel, t_idx)
+                    well_id = build_well_id(experiment_id, well_index)
+                    image_id = build_image_id(well_id, channel, t_idx)
 
                     row = {
                         'experiment_id': experiment_id,

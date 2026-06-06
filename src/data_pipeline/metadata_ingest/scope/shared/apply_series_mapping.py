@@ -81,7 +81,13 @@ def apply_series_mapping(
         lambda raw: _resolve_mapped_well(str(raw), series_lookup, known_wells, prefer_zero_based=prefer_zero_based)
     )
 
-    mapped_df["well_id"] = mapped_df["well_index"].map(build_well_id)
+    # Convergence / promotion point: well_id = f"{experiment_id}_{well_index}".
+    # This is the join where every row reliably has both, so well_id is minted here
+    # (front_end_naming_and_flow.md Decision 11).
+    mapped_df["well_id"] = [
+        build_well_id(experiment_id, well_index)
+        for well_index in mapped_df["well_index"].astype(str)
+    ]
     mapped_df["channel_id"] = mapped_df.get("channel", "BF").astype(str)
 
     if "raw_channel_name" in mapped_df.columns:
@@ -90,8 +96,8 @@ def apply_series_mapping(
         mapped_df["channel_name_raw"] = mapped_df["channel_id"].astype(str)
 
     mapped_df["image_id"] = [
-        build_image_id(experiment_id, well, channel, int(t))
-        for well, channel, t in zip(mapped_df["well_id"].astype(str), mapped_df["channel_id"].astype(str), mapped_df["time_int"].astype(int))
+        build_image_id(well_id, channel, int(t))
+        for well_id, channel, t in zip(mapped_df["well_id"].astype(str), mapped_df["channel_id"].astype(str), mapped_df["time_int"].astype(int))
     ]
 
     mapped_df = add_elapsed_time_columns(

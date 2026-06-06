@@ -8,18 +8,32 @@ See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
 
 from __future__ import annotations
 
+import re
+
+
+# A local well label (e.g. A01, B12). A *bare* match is exactly what a global
+# well_id must NOT be — it means an un-promoted local label leaked downstream.
+_WELL_INDEX_RE = re.compile(r"^[A-Za-z]\d{1,3}$")
+
 
 def validate_well_id(well_id: str) -> str:
     """Assert ``well_id`` is a well-formed GLOBAL well id; return it unchanged.
 
-    Scope-2 only. Its whole purpose is to reject a bare local ``A01`` once
-    ``well_id`` semantics flip to global ``{experiment_id}_{well}`` — i.e. to stop
-    stale local-``well_id`` data from silently flowing. Under the CURRENT (Scope 1)
-    convention ``well_id`` IS the local ``A01``, so enforcing the global form now
-    would reject every legitimately-current value. Activated in Scope 2. See
-    target/well_id_throughline_refactor_plan.md (Scopes 1-2).
+    The guard rail that stops a stale local ``A01`` from silently flowing once
+    ``well_id`` is global (``{experiment_id}_{well_index}``). Fails loudly on a
+    bare local label so an un-promoted id is caught at the boundary, not at a
+    silently-empty join.
     """
-    raise NotImplementedError(
-        "validate_well_id enforces GLOBAL well_id ({experiment_id}_{well}); "
-        "activated in Scope 2. Today's well_id is the local label 'A01'."
-    )
+    text = str(well_id).strip()
+    if not text:
+        raise ValueError("well_id is empty")
+    if _WELL_INDEX_RE.match(text):
+        raise ValueError(
+            f"well_id {well_id!r} is a bare LOCAL well_index, not a global well_id "
+            "({experiment_id}_{well_index}). A local label leaked past promotion."
+        )
+    if "_" not in text:
+        raise ValueError(
+            f"well_id {well_id!r} is not global: expected {{experiment_id}}_{{well_index}}."
+        )
+    return text

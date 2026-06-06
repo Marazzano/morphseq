@@ -284,13 +284,13 @@ def extract_keyence_scope_metadata(
             time_int = _extract_time_int_from_path(tiff_path)
 
             # Build row
-            well_id = build_well_id(well_index)
+            well_id = build_well_id(experiment_id, well_index)
             row = {
                 'experiment_id': experiment_id,
                 'well_index': well_index,
                 'well_id': well_id,
                 'time_int': time_int,
-                'image_id': build_image_id(experiment_id, well_id, normalized_channel, time_int),
+                'image_id': build_image_id(well_id, normalized_channel, time_int),
 
                 # Spatial calibration
                 'micrometers_per_pixel': micrometers_per_pixel,

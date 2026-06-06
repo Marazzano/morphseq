@@ -7,12 +7,21 @@ upstream in metadata ingest; constructors only assemble the canonical string.
 
 See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
 
-NOTE (Scope 1, 2026-06-05): signatures here are the CURRENT (local-``well_id``)
-forms, unchanged by the package split. ``well_id`` is the plate-LOCAL label
-(``A01``) today. The TARGET refactor (Scope 2) flips ``build_well_id`` to
-``(experiment_id, well)`` so ``well_id`` becomes global ``{experiment_id}_{well}``
-and ``build_image_id``/``build_embryo_id`` become ``well_id``-first; see
-target/well_id_throughline_refactor_plan.md.
+Canonical model (the sign on the door):
+    experiment_id = 20240418            global experiment id
+    well_index    = A01                 LOCAL well label, unique within an experiment
+    well_id       = 20240418_A01        GLOBAL well id = {experiment_id}_{well_index}
+    channel_id    = BF                  local channel token
+    image_id      = {well_id}_{channel_id}_t{time_int:04d}
+    embryo_id     = {well_id}_e{local_embryo_index:02d}
+    snip_id       = {embryo_id}_t{time_int:04d}
+
+Compositional grammar — every id is ``parent_id + local_token``. ``build_well_id``
+is the ONE join point where ``experiment_id`` and ``well_index`` meet; every id
+downstream is ``well_id``-first and inherits its global, sanitized prefix. See
+target/well_id_throughline_refactor_plan.md and
+target/front_end_naming_and_flow.md (Decision 7: well_id is the canonical key
+everywhere after the fan; well_index survives only as a scope-table column).
 """
 
 from __future__ import annotations
@@ -33,21 +42,26 @@ def sanitize_experiment_id(value: str) -> str:
     return cleaned.strip("_-")
 
 
-def build_well_id(well_index: str) -> str:
-    """Return the canonical plate-local well ID, e.g. A01."""
-    return str(well_index).strip()
+def build_well_id(experiment_id: str, well_index: str) -> str:
+    """Return the canonical GLOBAL well id, e.g. ``20240418_A01``.
+
+    This is the one place ``experiment_id`` and the local ``well_index`` are
+    joined; ``experiment_id`` is sanitized here so every downstream id inherits a
+    clean global prefix.
+    """
+    return f"{sanitize_experiment_id(experiment_id)}_{str(well_index).strip()}"
 
 
-def build_image_id(experiment_id: str, well_id: str, channel_id: str, time_int: int) -> str:
-    """Return the canonical image ID for one channel at one timepoint."""
-    return f"{sanitize_experiment_id(experiment_id)}_{build_well_id(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
+def build_image_id(well_id: str, channel_id: str, time_int: int) -> str:
+    """Return the canonical image id for one channel at one timepoint."""
+    return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
 
 
-def build_embryo_id(experiment_id: str, well_id: str, local_track_id: int) -> str:
-    """Return the canonical embryo ID for one tracked embryo within one well."""
-    return f"{sanitize_experiment_id(experiment_id)}_{build_well_id(well_id)}_e{int(local_track_id):02d}"
+def build_embryo_id(well_id: str, local_track_id: int) -> str:
+    """Return the canonical embryo id for one tracked embryo within one well."""
+    return f"{str(well_id)}_e{int(local_track_id):02d}"
 
 
 def build_snip_id(embryo_id: str, time_int: int) -> str:
-    """Return the canonical snip ID for one embryo at one timepoint."""
+    """Return the canonical snip id for one embryo at one timepoint."""
     return f"{str(embryo_id)}_t{int(time_int):04d}"

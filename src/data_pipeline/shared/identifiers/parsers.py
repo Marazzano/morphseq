@@ -30,17 +30,25 @@ def normalize_embryo_local_track_id(value: object) -> int:
     return int(match.group(1))
 
 
-def split_well_id(well_id: str) -> tuple[str, str]:
-    """Decompose a GLOBAL ``well_id`` into ``(experiment_id, well)``.
+_WELL_INDEX_RE = re.compile(r"^[A-Za-z]\d{1,3}$")
 
-    Scope-2 only. The CURRENT (Scope 1) ``well_id`` is the plate-LOCAL label
-    (``A01``) — a single token with no ``experiment_id`` to split out — so this
-    is intentionally not implemented yet. It activates when ``build_well_id``
-    flips to ``(experiment_id, well)`` and ``well_id`` becomes
-    ``{experiment_id}_{well}``. See
-    target/well_id_throughline_refactor_plan.md (Scope 2).
+
+def split_well_id(well_id: str) -> tuple[str, str]:
+    """Decompose a GLOBAL ``well_id`` into ``(experiment_id, well_index)``.
+
+    Inverse of ``build_well_id``: ``"20240418_A01" -> ("20240418", "A01")``. The
+    well_index is the final underscore-delimited token (a local plate label like
+    ``A01``); everything before it is the experiment id. This replaces the ad-hoc
+    ``.rsplit("_", 1)`` / ``re.match(r"^(.+)_([A-H]\\d{2})$", …)`` scattered through
+    the per-well boundaries and the legacy ``video_id`` parsing.
     """
-    raise NotImplementedError(
-        "split_well_id requires GLOBAL well_id ({experiment_id}_{well}); "
-        "activated in Scope 2. Today's well_id is the local label 'A01'."
-    )
+    text = str(well_id).strip()
+    if "_" not in text:
+        raise ValueError(
+            f"well_id {well_id!r} is not global ({{experiment_id}}_{{well_index}}); "
+            "it looks like a bare local well_index."
+        )
+    experiment_id, well_index = text.rsplit("_", 1)
+    if not experiment_id or not well_index:
+        raise ValueError(f"Could not split well_id {well_id!r} into (experiment_id, well_index)")
+    return experiment_id, well_index
