@@ -301,6 +301,43 @@ def _resolve_filename(
         ) from None
 
 
+# Three directory concepts in the layout, each built in exactly ONE place so they cannot drift:
+#   _experiment_step_dir   {stage}/{exp}              the experiment base
+#   _per_well_step_dir      {stage}/{exp}/per_well    where ALL a step's per-well shards live
+#   step_dir(..., well_id)  {stage}/{exp}/per_well/{well_id}   one well's shard dir
+# The public composers (step_dir, per_well_step_dir) build downward from these bricks — no caller
+# ever has to strip a level off with ``.parent`` to name the per-well directory.
+
+
+def _experiment_step_dir(root: PathLike, step: str, experiment_id: str) -> Path:
+    """The experiment-level directory for a step: ``{stage}/{exp}``. The ONE place this is built."""
+    spec = _lookup_step(step)
+    return Path(root) / spec["stage"] / str(experiment_id)
+
+
+def _per_well_step_dir(root: PathLike, step: str, experiment_id: str) -> Path:
+    """The directory holding ALL of a step's per-well shards: ``{stage}/{exp}/per_well``.
+
+    The ONE place ``PER_WELL_DIRNAME`` is joined to the experiment base. Asserts the step
+    actually fans out per-well (``_normalize_path_mode`` fails loud on an experiment-grain step,
+    which has no per-well directory). A specific shard dir is this plus ``{well_id}`` (step_dir);
+    the merge lists this directly.
+    """
+    _normalize_path_mode(step, PATH_MODE_PER_WELL)  # guard: per_well_then_merge steps only
+    return _experiment_step_dir(root, step, experiment_id) / PER_WELL_DIRNAME
+
+
+def per_well_step_dir(root: PathLike, step: str, experiment_id: str) -> Path:
+    """Return the directory holding ALL per-well shards for a per_well_then_merge step.
+
+    The named path concept ``{stage}/{exp}/per_well`` — agnostic to who reads it (the merge lists
+    it to discover which wells have shards; a cleanup might walk it; a report might count it). It
+    is the per-well sibling of ``step_dir``'s experiment view, NOT a specific well's shard
+    (that needs ``well_id`` via ``step_dir``). Fails loud on an experiment-grain step.
+    """
+    return _per_well_step_dir(root, step, experiment_id)
+
+
 def step_dir(
     root: PathLike,
     step: str,
@@ -315,21 +352,20 @@ def step_dir(
     and yields ``{stage}/{exp}/per_well/{well_id}``; ``experiment``/``merged`` modes yield
     ``{stage}/{exp}``. ``path_mode=None`` resolves to the step's only legal mode for an
     experiment-grain step, but a per_well_then_merge step must be told ``per_well`` or ``merged``
-    (see _normalize_path_mode).
+    (see _normalize_path_mode). Composes from the directory bricks above so the per-well shard dir
+    is always ``per_well_step_dir(...) / {well_id}`` — the two never drift.
     """
     mode = _normalize_path_mode(step, path_mode)
-    spec = _lookup_step(step)
-    base = Path(root) / spec["stage"] / str(experiment_id)
     if mode == PATH_MODE_PER_WELL:
         if not well_id:
             raise ValueError(
                 f"path_mode='per_well' for step {step!r} requires well_id (the GLOBAL "
                 f"{{experiment_id}}_{{well_index}} key)."
             )
-        return base / PER_WELL_DIRNAME / str(well_id)
-    # experiment | merged -> same directory (the per_well_then_merge merged view lands beside an
-    # experiment-grain artifact); the distinction is intent, enforced upstream by fanout.
-    return base
+        return _per_well_step_dir(root, step, experiment_id) / str(well_id)
+    # experiment | merged -> the experiment base (the per_well_then_merge merged view lands beside
+    # an experiment-grain artifact); the distinction is intent, enforced upstream by fanout.
+    return _experiment_step_dir(root, step, experiment_id)
 
 
 def artifact_path(

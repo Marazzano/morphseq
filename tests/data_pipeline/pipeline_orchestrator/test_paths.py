@@ -19,6 +19,7 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
     artifact_path,
     known_artifacts,
     known_steps,
+    per_well_step_dir,
     provenance_path,
     step_dir,
     validated_path,
@@ -131,6 +132,29 @@ class TestPathModeRules:
     def test_unknown_path_mode_raises(self):
         with pytest.raises(ValueError):
             step_dir(ROOT, "discover_wells", EXP, path_mode="sideways")
+
+
+class TestPerWellStepDir:
+    """per_well_step_dir names the directory holding ALL of a step's per-well shards
+    ({stage}/{exp}/per_well) — the place the merge lists to discover which wells have shards.
+    It composes with step_dir so a specific shard dir is always per_well_step_dir(...) / well_id."""
+
+    def test_per_well_step_dir_returns_directory_containing_shards(self):
+        assert per_well_step_dir(ROOT, "frame_inventory", EXP) == \
+            ROOT / "experiment_metadata" / EXP / PER_WELL_DIRNAME
+
+    def test_step_dir_per_well_is_per_well_step_dir_plus_well_id(self):
+        # The composition rule: a specific well's shard dir is the per-well dir + the well_id.
+        assert step_dir(ROOT, "frame_inventory", EXP, path_mode="per_well", well_id=WELL) == \
+            per_well_step_dir(ROOT, "frame_inventory", EXP) / WELL
+
+    def test_per_well_step_dir_rejects_experiment_step(self):
+        # An experiment-grain step has no per-well directory — fail loud.
+        with pytest.raises(ValueError) as excinfo:
+            per_well_step_dir(ROOT, "discover_wells", EXP)
+        message = str(excinfo.value)
+        assert "discover_wells" in message
+        assert "per_well" in message
 
 
 class TestTemplateAndIdentityRules:

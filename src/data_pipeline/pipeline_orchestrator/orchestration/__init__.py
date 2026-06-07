@@ -5,8 +5,8 @@ selection) — distinct from the IDENTITY layer (``data_pipeline.shared.identifi
 are named). Both the Snakefile and the Python entrypoints import from here so rule-output and
 code-output paths stay identical.
 
-Currently: ``paths.py`` (the pipeline-wide path registry). The well-runner (well selection,
-WellRun, shard merge) lands here next.
+Currently: ``paths.py`` (the pipeline-wide path registry) and ``well_runner.py`` (well selection
++ shard merge helpers; WellRun lands here next).
 """
 
 from __future__ import annotations
@@ -22,9 +22,16 @@ from data_pipeline.pipeline_orchestrator.orchestration.paths import (
     artifact_path,
     known_artifacts,
     known_steps,
+    per_well_step_dir,
     provenance_path,
     step_dir,
     validated_path,
+)
+from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
+    collect_well_shard_paths,
+    run_well_shard_paths,
+    concat_well_shards_to_file,
+    run_well_ids_for_experiment,
 )
 
 __all__ = [
@@ -36,9 +43,14 @@ __all__ = [
     "PATH_MODE_PER_WELL",
     "PATH_MODE_MERGED",
     "step_dir",
+    "per_well_step_dir",
     "artifact_path",
     "validated_path",
     "provenance_path",
     "known_steps",
     "known_artifacts",
+    "run_well_ids_for_experiment",
+    "collect_well_shard_paths",
+    "run_well_shard_paths",
+    "concat_well_shards_to_file",
 ]
