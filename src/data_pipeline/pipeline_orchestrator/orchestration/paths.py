@@ -10,12 +10,16 @@ THE VOCABULARY (used consistently across the whole refactor — do not blur thes
               e.g. ``experiment_metadata``, ``computed_features``, ``quality_control``.
               This is "where am I in the pipeline" from a user's seat. MANY steps share a stage.
 
-    step      one unit of work WITHIN a stage — a rule / function / tasks.py verb's output slot.
-              e.g. ``ingest_scope_metadata``, ``frame_inventory_well``. These are the REGISTRY
-              KEYS (``PIPELINE_STEPS`` below). A step is named by a NOUN (the output slot), not a
-              rule verb, because SEVERAL rules can act on one step — ``build_frame_inventory_well``
-              and ``validate_frame_inventory_well`` both reference the single ``frame_inventory_well``
-              step. (step != rule: one step, possibly several rules.)
+    step      one unit of work WITHIN a stage — a function / ``tasks.py`` verb's OUTPUT SLOT.
+              e.g. ``ingest_scope_metadata``, ``frame_inventory``. These are the
+              REGISTRY KEYS (``PIPELINE_STEPS`` below).
+              A step is named by a NOUN (the output slot it owns), never a rule verb (``build_*``).
+              The reason: several Snakemake *rules* can act on one step — e.g.
+              ``build_frame_inventory_for_well`` AND ``validate_frame_inventory_for_well`` both
+              reference the single ``frame_inventory`` step. (step != rule: one step,
+              possibly several rules. Most steps map to one rule and stay verb-shaped per the
+              locked front_end_naming_and_flow.md stage names; the noun form is used where 2+
+              rules share a step.)
 
     artifact  one FILE a step produces. A step can produce several, so each step's ``artifacts``
               is a dict (e.g. ``mapping`` -> ``series_well_mapping.csv``). The ``.validated``
@@ -29,6 +33,13 @@ So the layout is::
       root         STAGE      experiment      per-well shape       a step's
     (env.yaml)  (folder)     (caller)        (step's fanout)        FILE
 
+⛔ NO-LEAKAGE BOUNDARY (the hard rule for this file). ``paths.py`` only ever **SUBSTITUTES**
+caller-provided identity tokens (``experiment_id``, ``well_id``) into filename templates. It
+**NEVER MINTS OR DERIVES** an identity value — no ``f"{exp}_{well}"``, no splitting a well_id, no
+stuffing one token into another's slot. Minting/parsing identity is the IDENTITY kingdom's job
+(``shared/identifiers/``); anything in here that needs to *build* an id must import from there.
+Identity flows *into* orchestration, never the other way.
+
 THREE THINGS KEPT DELIBERATELY SEPARATE (see
 docs/refactors/streamline-snakemake/well_id_throughline_refactor_plan.md and
 target/front_end_naming_and_flow.md):
@@ -36,10 +47,6 @@ target/front_end_naming_and_flow.md):
     Root      output_root            env.yaml (machine-specific)    -> passed in here as `root`
     Layout    {stage}/{exp}/...      THIS FILE (a code contract)    -> PIPELINE_STEPS + helpers
     Selection which wells/features   config.yaml (a science choice) -> NOT here
-
-This file knows ``output_root``, stages, grain, and the ``per_well/{well_id}`` shape. It does
-NOT mint identifiers — that is the IDENTITY kingdom (``shared/identifiers/``). Identity flows
-*into* orchestration, never the other way.
 
 ⚠️ FORWARD DECLARATION (2026-06-06). This registry names the **TARGET** artifacts
 (``frame_inventory``, ``discovered_wells.txt``, the ``ingest_*``/``join_*`` step keys). Several
@@ -62,20 +69,34 @@ from typing import Optional, Union
 
 PathLike = Union[str, Path]
 
-# Grain of a step's outputs (its "fanout"):
-#   "experiment"          -> one artifact per experiment (pre-fan, or an off-spine merged view)
+# The fixed sub-directory name for one well's shard. Part of the path contract, not a magic
+# string scattered in the helpers.
+PER_WELL_DIRNAME = "per_well"
+
+# Grain of a step's outputs (its "fanout") — and which path_modes each grain permits:
+#   "experiment"          -> one artifact per experiment. Allowed path_mode: experiment.
 #   "per_well_then_merge" -> a per-well shard at per_well/{well_id}/, concatenated to an
-#                            experiment-level merged view
+#                            experiment-level merged view. Allowed path_mode: per_well | merged.
 EXPERIMENT = "experiment"
 PER_WELL_THEN_MERGE = "per_well_then_merge"
 
-# How to resolve a path for a given call (independent of the step's declared grain):
+# How to resolve a path for a given call. Each step's `fanout` constrains which of these is legal
+# (enforced by _validate_path_mode_for_step):
 #   "experiment" -> {stage}/{exp}/{file}                      (the experiment-grain artifact)
 #   "per_well"   -> {stage}/{exp}/per_well/{well_id}/{file}   (one well's shard)
 #   "merged"     -> {stage}/{exp}/{file}                      (the concatenated experiment view)
+# Note: "experiment" and "merged" land in the same directory, but they are kept distinct so a
+# per_well_then_merge step's merged view is requested as "merged" (explicit intent), never
+# "experiment".
 PATH_MODE_EXPERIMENT = "experiment"
 PATH_MODE_PER_WELL = "per_well"
 PATH_MODE_MERGED = "merged"
+
+# Which path_modes each fanout allows.
+_ALLOWED_PATH_MODES: dict[str, tuple[str, ...]] = {
+    EXPERIMENT: (PATH_MODE_EXPERIMENT,),
+    PER_WELL_THEN_MERGE: (PATH_MODE_PER_WELL, PATH_MODE_MERGED),
+}
 
 
 # ──────────────────────────────────────────────────────────────────────────────────────────
@@ -91,9 +112,12 @@ PATH_MODE_MERGED = "merged"
 # Per row (keyed by STEP):
 #   stage     : the pipeline phase / top-level folder under output_root (many steps share one)
 #   fanout    : the step's grain (EXPERIMENT | PER_WELL_THEN_MERGE)
-#   artifacts : {artifact_key: filename_template}; templates may reference {well_id} and any
-#               key passed via `format_vars` (e.g. {scope}). Sidecars (.validated,
-#               .provenance.json) are DERIVED by the helpers below, not listed as artifacts.
+#   artifacts : {artifact_key: template}. A template is EITHER a single string (same filename in
+#               every legal path_mode) OR a {path_mode: string} dict when the filename differs by
+#               mode (e.g. a per-well shard names the well, the merged view names the experiment).
+#               Templates substitute caller-provided tokens only ({experiment_id}, {well_id}, and
+#               any format_vars like {scope}) — see the NO-LEAKAGE BOUNDARY above. Sidecars
+#               (.validated, .provenance.json) are DERIVED by the helpers, not listed here.
 PIPELINE_STEPS: dict[str, dict] = {
     # ── PLATE LINEAGE (Excel — authored design + plate geometry) ──────────────
     "ingest_plate_metadata": {
@@ -115,7 +139,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         # .provenance.json via provenance_path().
         "artifacts": {"mapping": "series_well_mapping.csv"},
     },
-    "join_series_mapping_to_scope_metadata": {  # CONVERGENCE LINE; well_id minted here
+    "join_series_mapping_to_scope_metadata": {  # CONVERGENCE LINE; well_id minted here (upstream)
         "stage": "experiment_metadata",
         "fanout": EXPERIMENT,
         # .validated via validated_path().
@@ -131,35 +155,42 @@ PIPELINE_STEPS: dict[str, dict] = {
 
     # ── POST-FAN (per well_id) — frame inventory joins the spine ──────────────
     # Key is the NOUN (the output slot), not a rule verb: this one step is written by TWO rules —
-    # build_frame_inventory_well (writes the shard) + validate_frame_inventory_well (writes only
-    # the .validated sentinel + report; one-file+sentinel model, see stitched_handoff_contract.md).
-    # A neutral noun key reads right from both. Do NOT rename to build_*.
-    "frame_inventory_well": {
+    # build_frame_inventory_for_well (writes the shard) + validate_frame_inventory_for_well
+    # (writes only the .validated sentinel + report; one-file+sentinel model, see
+    # stitched_handoff_contract.md). A neutral noun key reads right from both. Do NOT rename to
+    # build_*. The per_well shard names the WELL; the merged view names the EXPERIMENT — two
+    # honest templates, so paths.py never has to fabricate a {well_id} value for the merged file.
+    "frame_inventory": {
         "stage": "experiment_metadata",  # OPEN (findings #5 leans a dedicated frame_inventory/
                                          # stage); placeholder until that is decided.
         "fanout": PER_WELL_THEN_MERGE,
-        "artifacts": {"inventory": "{well_id}_frame_inventory.csv"},  # well_id IN the filename
+        "artifacts": {
+            "inventory": {
+                PATH_MODE_PER_WELL: "{well_id}_frame_inventory.csv",
+                PATH_MODE_MERGED: "{experiment_id}_frame_inventory.csv",
+            },
+        },
     },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────
 # Two private lookups turn registry keys into concrete values, failing loudly on a typo:
 #   _lookup_step("discover_wells")         -> {"stage": ..., "fanout": ..., "artifacts": ...}
-#   _resolve_filename("ingest_scope_metadata", "raw", {"scope": "yx1"})
+#   _resolve_filename("ingest_scope_metadata", "raw", "experiment", {"scope": "yx1"})
 #                                          -> "scope_metadata__yx1.csv"
 #
 # Four public functions build paths from them (root + experiment come from the caller):
 #   step_dir        -> the FOLDER, no filename
 #       step_dir(ROOT, "discover_wells", "20250912")
 #           -> {ROOT}/experiment_metadata/20250912
-#       step_dir(ROOT, "frame_inventory_well", "20250912", path_mode="per_well",
+#       step_dir(ROOT, "frame_inventory", "20250912", path_mode="per_well",
 #                well_id="20250912_B01")
 #           -> {ROOT}/experiment_metadata/20250912/per_well/20250912_B01
 #
 #   artifact_path   -> FOLDER + filename  (the one you'll call most)
 #       artifact_path(ROOT, "discover_wells", "wells", "20250912")
 #           -> {ROOT}/experiment_metadata/20250912/discovered_wells.txt
-#       artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912",
+#       artifact_path(ROOT, "frame_inventory", "inventory", "20250912",
 #                     path_mode="per_well", well_id="20250912_B01")
 #           -> {ROOT}/.../per_well/20250912_B01/20250912_B01_frame_inventory.csv
 #
@@ -170,6 +201,16 @@ PIPELINE_STEPS: dict[str, dict] = {
 #   provenance_path -> artifact_path + ".provenance.json"  (the sidecar beside it)
 #       provenance_path(ROOT, "map_series_to_wells", "mapping", "20250912")
 #           -> {ROOT}/experiment_metadata/20250912/series_well_mapping.csv.provenance.json
+
+
+def known_steps() -> tuple[str, ...]:
+    """Return all registered step names (sorted) — handy for tests and docs generation."""
+    return tuple(sorted(PIPELINE_STEPS))
+
+
+def known_artifacts(step: str) -> tuple[str, ...]:
+    """Return a step's registered artifact keys (sorted)."""
+    return tuple(sorted(_lookup_step(step)["artifacts"]))
 
 
 def _lookup_step(step: str) -> dict:
@@ -183,10 +224,55 @@ def _lookup_step(step: str) -> dict:
         )
 
 
-def _resolve_filename(step: str, artifact: str, format_vars: Optional[dict] = None) -> str:
-    """Fill in an artifact's filename template (e.g. ``scope_metadata__{scope}.csv``).
+def _validate_path_mode_for_step(step: str, path_mode: Optional[str]) -> str:
+    """Resolve and validate ``path_mode`` against the step's fanout.
 
-    Raises KeyError naming the step's known artifacts if ``artifact`` is not one of them.
+    ``path_mode=None`` means "use the obvious one": an EXPERIMENT step has exactly one legal mode
+    (``experiment``), so None resolves to it — callers of experiment-grain steps need not pass
+    path_mode. A PER_WELL_THEN_MERGE step has TWO legal modes (``per_well`` vs ``merged``) with no
+    neutral default, so the caller MUST choose; None (or an illegal value) raises a message that
+    spells out the choice. This makes ``fanout`` executable, not decorative.
+    """
+    fanout = _lookup_step(step)["fanout"]
+    allowed = _ALLOWED_PATH_MODES.get(fanout)
+    if allowed is None:
+        raise ValueError(f"Step {step!r} has unknown fanout {fanout!r}.")
+
+    if path_mode is None:
+        if fanout == EXPERIMENT:
+            return PATH_MODE_EXPERIMENT
+        # PER_WELL_THEN_MERGE: two legal modes, no neutral default — make the user pick, say why.
+        raise ValueError(
+            f"Step {step!r} has fanout={PER_WELL_THEN_MERGE!r}. "
+            f"Pass path_mode={PATH_MODE_PER_WELL!r} or path_mode={PATH_MODE_MERGED!r} explicitly."
+        )
+
+    if path_mode not in allowed:
+        if fanout == PER_WELL_THEN_MERGE:
+            raise ValueError(
+                f"Step {step!r} has fanout={PER_WELL_THEN_MERGE!r}, so the caller must choose "
+                f"path_mode={PATH_MODE_PER_WELL!r} for a well shard or path_mode={PATH_MODE_MERGED!r} "
+                f"for the experiment-level file. Got path_mode={path_mode!r}."
+            )
+        raise ValueError(
+            f"Step {step!r} has fanout={fanout!r}, so path_mode must be {allowed[0]!r}; "
+            f"got {path_mode!r}."
+        )
+    return path_mode
+
+
+def _resolve_filename(
+    step: str,
+    artifact: str,
+    path_mode: str,
+    format_vars: Optional[dict] = None,
+) -> str:
+    """Fill in an artifact's filename template for the given ``path_mode``.
+
+    The template is either a single string (same filename in every mode) or a
+    ``{path_mode: string}`` dict (filename differs by mode). Raises KeyError naming the step's
+    known artifacts if ``artifact`` is unknown, and ValueError (naming the missing token + the
+    template) if a ``{token}`` in the template was not supplied.
     """
     spec = _lookup_step(step)
     try:
@@ -196,7 +282,22 @@ def _resolve_filename(step: str, artifact: str, format_vars: Optional[dict] = No
             f"Step {step!r} has no artifact {artifact!r}. "
             f"Known artifacts: {sorted(spec['artifacts'])}."
         )
-    return template.format(**(format_vars or {}))
+    if isinstance(template, dict):
+        try:
+            template = template[path_mode]
+        except KeyError:
+            raise ValueError(
+                f"Artifact {artifact!r} of step {step!r} has no filename for path_mode "
+                f"{path_mode!r}; defined for {sorted(template)}."
+            )
+    try:
+        return template.format(**(format_vars or {}))
+    except KeyError as missing:
+        raise ValueError(
+            f"Filename template {template!r} for {step}/{artifact} needs token {missing} "
+            f"which was not supplied (got format_vars={format_vars!r}). Pass it via format_vars, "
+            f"or well_id=/experiment_id= as appropriate."
+        )
 
 
 def step_dir(
@@ -204,30 +305,30 @@ def step_dir(
     step: str,
     experiment_id: str,
     *,
-    path_mode: str = PATH_MODE_EXPERIMENT,
+    path_mode: Optional[str] = None,
     well_id: Optional[str] = None,
 ) -> Path:
     """Return the directory that holds a step's artifact, before the filename is appended.
 
     The directory lives under the step's ``stage`` folder. ``per_well`` mode requires ``well_id``
     and yields ``{stage}/{exp}/per_well/{well_id}``; ``experiment``/``merged`` modes yield
-    ``{stage}/{exp}``.
+    ``{stage}/{exp}``. ``path_mode=None`` resolves to the step's only legal mode for an
+    experiment-grain step, but a per_well_then_merge step must be told ``per_well`` or ``merged``
+    (see _validate_path_mode_for_step).
     """
+    mode = _validate_path_mode_for_step(step, path_mode)
     spec = _lookup_step(step)
     base = Path(root) / spec["stage"] / str(experiment_id)
-    if path_mode == PATH_MODE_PER_WELL:
+    if mode == PATH_MODE_PER_WELL:
         if not well_id:
             raise ValueError(
                 f"path_mode='per_well' for step {step!r} requires well_id (the GLOBAL "
                 f"{{experiment_id}}_{{well_index}} key)."
             )
-        return base / "per_well" / str(well_id)
-    if path_mode in (PATH_MODE_EXPERIMENT, PATH_MODE_MERGED):
-        return base
-    raise ValueError(
-        f"Unknown path_mode {path_mode!r}; expected one of "
-        f"{(PATH_MODE_EXPERIMENT, PATH_MODE_PER_WELL, PATH_MODE_MERGED)}."
-    )
+        return base / PER_WELL_DIRNAME / str(well_id)
+    # experiment | merged -> same directory (the per_well_then_merge merged view lands beside an
+    # experiment-grain artifact); the distinction is intent, enforced upstream by fanout.
+    return base
 
 
 def artifact_path(
@@ -236,7 +337,7 @@ def artifact_path(
     artifact: str,
     experiment_id: str,
     *,
-    path_mode: str = PATH_MODE_EXPERIMENT,
+    path_mode: Optional[str] = None,
     well_id: Optional[str] = None,
     format_vars: Optional[dict] = None,
 ) -> Path:
@@ -248,23 +349,33 @@ def artifact_path(
                       format_vars={"scope": "yx1"})
         #   -> {ROOT}/experiment_metadata/20250912/scope_metadata__yx1.csv
 
-        artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912",
+        artifact_path(ROOT, "frame_inventory", "inventory", "20250912",
                       path_mode="per_well", well_id="20250912_B01")
         #   -> {ROOT}/experiment_metadata/20250912/per_well/20250912_B01/20250912_B01_frame_inventory.csv
+
+        artifact_path(ROOT, "frame_inventory", "inventory", "20250912",
+                      path_mode="merged")
+        #   -> {ROOT}/experiment_metadata/20250912/20250912_frame_inventory.csv
     """
-    directory = step_dir(
-        root, step, experiment_id, path_mode=path_mode, well_id=well_id
-    )
-    # well_id is a first-class filename token (e.g. "{well_id}_frame_inventory.csv"). In
-    # per_well mode it is the well's global id; in merged mode the concatenated experiment view
-    # is named with the experiment id, so the {well_id} slot resolves to experiment_id there
-    # (matches target/front_end_naming_and_flow.md: merged -> {exp}_frame_inventory.csv).
+    mode = _validate_path_mode_for_step(step, path_mode)
+    directory = step_dir(root, step, experiment_id, path_mode=mode, well_id=well_id)
+    # Build the template namespace from SUPPLIED values only — never fabricate identity (see the
+    # NO-LEAKAGE BOUNDARY). experiment_id is always available; well_id only if the caller passed
+    # it. The merged template names the experiment (it uses {experiment_id}); the per_well
+    # template names the well (it uses {well_id}). A template that references a token we did not
+    # supply raises a clear ValueError in _resolve_filename.
     fmt = dict(format_vars or {})
-    if path_mode == PATH_MODE_MERGED:
-        fmt.setdefault("well_id", str(experiment_id))
-    elif well_id is not None:
-        fmt.setdefault("well_id", str(well_id))
-    return directory / _resolve_filename(step, artifact, fmt)
+    reserved = {"experiment_id", "well_id"}
+    bad = reserved & set(fmt)
+    if bad:
+        raise ValueError(
+            f"Do not pass identity tokens via format_vars: {sorted(bad)}. "
+            f"Use experiment_id= and well_id= instead."
+        )
+    fmt["experiment_id"] = str(experiment_id)
+    if well_id is not None:
+        fmt["well_id"] = str(well_id)
+    return directory / _resolve_filename(step, artifact, mode, fmt)
 
 
 def validated_path(
@@ -273,7 +384,7 @@ def validated_path(
     artifact: str,
     experiment_id: str,
     *,
-    path_mode: str = PATH_MODE_EXPERIMENT,
+    path_mode: Optional[str] = None,
     well_id: Optional[str] = None,
     format_vars: Optional[dict] = None,
 ) -> Path:
@@ -298,7 +409,7 @@ def provenance_path(
     artifact: str,
     experiment_id: str,
     *,
-    path_mode: str = PATH_MODE_EXPERIMENT,
+    path_mode: Optional[str] = None,
     well_id: Optional[str] = None,
     format_vars: Optional[dict] = None,
 ) -> Path:

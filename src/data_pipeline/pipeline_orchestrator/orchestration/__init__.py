@@ -12,6 +12,7 @@ WellRun, shard merge) lands here next.
 from __future__ import annotations
 
 from data_pipeline.pipeline_orchestrator.orchestration.paths import (
+    PER_WELL_DIRNAME,
     EXPERIMENT,
     PATH_MODE_EXPERIMENT,
     PATH_MODE_MERGED,
@@ -19,6 +20,8 @@ from data_pipeline.pipeline_orchestrator.orchestration.paths import (
     PER_WELL_THEN_MERGE,
     PIPELINE_STEPS,
     artifact_path,
+    known_artifacts,
+    known_steps,
     provenance_path,
     step_dir,
     validated_path,
@@ -28,6 +31,7 @@ __all__ = [
     "PIPELINE_STEPS",
     "EXPERIMENT",
     "PER_WELL_THEN_MERGE",
+    "PER_WELL_DIRNAME",
     "PATH_MODE_EXPERIMENT",
     "PATH_MODE_PER_WELL",
     "PATH_MODE_MERGED",
@@ -35,4 +39,6 @@ __all__ = [
     "artifact_path",
     "validated_path",
     "provenance_path",
+    "known_steps",
+    "known_artifacts",
 ]

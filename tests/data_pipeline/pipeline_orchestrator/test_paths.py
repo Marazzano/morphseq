@@ -12,8 +12,11 @@ from pathlib import Path
 import pytest
 
 from data_pipeline.pipeline_orchestrator.orchestration import (
+    PER_WELL_DIRNAME,
     PIPELINE_STEPS,
     artifact_path,
+    known_artifacts,
+    known_steps,
     provenance_path,
     step_dir,
     validated_path,
@@ -56,23 +59,23 @@ def test_discover_wells():
 
 
 def test_frame_inventory_per_well_embeds_well_id():
-    assert artifact_path(ROOT, "frame_inventory_well", "inventory", EXP,
+    assert artifact_path(ROOT, "frame_inventory", "inventory", EXP,
                          path_mode="per_well", well_id=WELL) == \
-        ROOT / "experiment_metadata" / EXP / "per_well" / WELL / f"{WELL}_frame_inventory.csv"
-    assert validated_path(ROOT, "frame_inventory_well", "inventory", EXP,
+        ROOT / "experiment_metadata" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_inventory.csv"
+    assert validated_path(ROOT, "frame_inventory", "inventory", EXP,
                           path_mode="per_well", well_id=WELL) == \
-        ROOT / "experiment_metadata" / EXP / "per_well" / WELL / f"{WELL}_frame_inventory.csv.validated"
+        ROOT / "experiment_metadata" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_inventory.csv.validated"
 
 
 def test_frame_inventory_merged_uses_experiment_id():
     # The concatenated experiment view is named with the experiment id, not a well_id.
-    assert artifact_path(ROOT, "frame_inventory_well", "inventory", EXP, path_mode="merged") == \
+    assert artifact_path(ROOT, "frame_inventory", "inventory", EXP, path_mode="merged") == \
         ROOT / "experiment_metadata" / EXP / f"{EXP}_frame_inventory.csv"
 
 
 def test_step_dir_per_well():
-    assert step_dir(ROOT, "frame_inventory_well", EXP, path_mode="per_well", well_id=WELL) == \
-        ROOT / "experiment_metadata" / EXP / "per_well" / WELL
+    assert step_dir(ROOT, "frame_inventory", EXP, path_mode="per_well", well_id=WELL) == \
+        ROOT / "experiment_metadata" / EXP / PER_WELL_DIRNAME / WELL
 
 
 # ── error paths fail loudly ─────────────────────────────────────────────────────────────────
@@ -89,12 +92,45 @@ def test_unknown_artifact_raises():
 
 def test_per_well_without_well_id_raises():
     with pytest.raises(ValueError):
-        artifact_path(ROOT, "frame_inventory_well", "inventory", EXP, path_mode="per_well")
+        artifact_path(ROOT, "frame_inventory", "inventory", EXP, path_mode="per_well")
 
 
 def test_unknown_path_mode_raises():
     with pytest.raises(ValueError):
         step_dir(ROOT, "discover_wells", EXP, path_mode="sideways")
+
+
+# ── explicit mode and token errors ───────────────────────────────────────────────────────────
+
+def test_frame_inventory_requires_explicit_path_mode():
+    with pytest.raises(ValueError, match="Pass path_mode='per_well' or path_mode='merged' explicitly"):
+        artifact_path(ROOT, "frame_inventory", "inventory", EXP)
+
+
+def test_identity_tokens_cannot_be_passed_via_format_vars():
+    with pytest.raises(ValueError, match="Do not pass identity tokens via format_vars"):
+        artifact_path(
+            ROOT,
+            "ingest_plate_metadata",
+            "csv",
+            EXP,
+            format_vars={"experiment_id": "fake", "well_id": "fake"},
+        )
+
+
+def test_missing_template_token_names_template():
+    with pytest.raises(ValueError) as excinfo:
+        artifact_path(ROOT, "ingest_scope_metadata", "raw", EXP)
+
+    message = str(excinfo.value)
+    assert "scope" in message
+    assert "scope_metadata__{scope}.csv" in message
+
+
+def test_known_steps_and_artifacts_are_sorted():
+    assert "frame_inventory" in known_steps()
+    assert known_artifacts("frame_inventory") == ("inventory",)
+    assert known_artifacts("discover_wells") == ("wells",)
 
 
 # ── registry shape invariants ───────────────────────────────────────────────────────────────
