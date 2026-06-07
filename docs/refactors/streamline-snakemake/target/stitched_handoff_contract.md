@@ -560,6 +560,61 @@ data_pipeline/stitched_handoff/                 # 'stitched' = the product (alre
   `…/stitched_ff_images/{well_id}/.done` (self-contained). Leaning self-contained; confirm against
   sentinel-handling code first.
 
+## 🧪 UPSTREAM CAPABILITY TO TRANSFER — heterogeneous tile counts & Z-depth (native stitch)
+
+> **Added mdcolon 2026-06-06, from a live Keyence run.** This is **upstream** of the seam (the
+> native FF/stitch producer, not the drop-in contract), but it is a **real capability the current
+> code has that the new `stitch_well` stage must reproduce** — otherwise the migrated pipeline will
+> crash on experiments the legacy one handles. Recording it here so it isn't silently dropped when
+> stitching is reimplemented per-well.
+
+**What the legacy producer tolerates.** Today's Keyence builder
+(`src/build/build01A_compile_keyence_torch.py::build_ff_from_keyence`) batches per-well z-stacks
+through a `torch` `DataLoader` to compute the flat-field (LoG focus) projection **before** stitching.
+Real plates are **not shape-uniform across wells**:
+
+- **Tile count varies** — most wells have N tiles, some have 2N (e.g. 3-tile wells alongside a
+  6-tile well in `20260331_b9d2_18hpf_plate01`).
+- **Z-depth varies** — wells in the *same* experiment can be imaged with different numbers of
+  z-planes (e.g. `20260416_cep290_30to48hpf_plate01_t02`: well A01 has **15** planes, the rest
+  **14**).
+
+The dataset pads Z only **within** a sample (to that sample's `max_z`), never **across** samples.
+So a multi-sample batch contains differently-shaped `(n_tiles, Z, H, W)` tensors, and collation
+fails two distinct ways:
+
+| Heterogeneity | Failure mode | Mechanism |
+|---|---|---|
+| tile count (3 vs 6) | `RuntimeError: stack expects each tensor to be equal size` | `default_collate` → `torch.stack` on unequal dim-0 |
+| Z-depth (14 vs 15) | `RuntimeError: Trying to resize storage that is not resizable` | with `pin_memory=True`, the collate `out=` buffer is sized from the first sample and can't resize for the next |
+
+There is **also** a correctness trap beyond the crash: the per-batch save loop reads a single
+`n_tiles = len(meta_dict["tile_zpaths"])` for filename composition, so a *mixed-tile* batch that
+somehow collated would **mislabel** saved tiles.
+
+**The legacy fix (the capability, stated portably).** Detect heterogeneity cheaply from the sample
+list (`{len(s["tile_zpaths"])}` for tiles, `{len(zp) for ...}` for Z — no image loads) and **force
+`batch_size=1`** when either tiles **or** Z vary. One-at-a-time processing sidesteps both collation
+failures and the mislabeling, at a throughput cost only for the affected experiments.
+
+**What the new per-well stitch must guarantee (transfer target).** In the target design, stitching
+is **already per-well** (`stitch_well[well_id]`), which structurally avoids cross-well batching — so
+the *tile-count* hazard largely dissolves. But the **within-well, across-tile / across-time**
+shape variation must still be handled explicitly. Carry these requirements into `stitch_well` /
+`build_frame_inventory_well`:
+
+- **Do not assume uniform Z or tile count** across the frames a single well contributes; pad/handle
+  per-frame rather than per-batch, or process one frame at a time.
+- **A varying Z-depth is a legitimate input, not an error** — it must not abort the FF projection.
+- This dovetails with the validator's existing **dims self-check** (`image_width_px/height_px`,
+  Channel Sync rectangularity): those checks are about the **stitched output** frames being
+  rectangular per channel/time. The heterogeneity here is about **raw pre-stitch z-stacks**, which
+  live *upstream* of the seam — so the new stitcher owns it, and the `frame_inventory` the seam
+  validates should already be shape-clean. **Capability ownership: native `stitch_well`, not the
+  shared gate.**
+
+---
+
 ## 🔧 REFACTOR ITEMS (this doc surfaces)
 - **Rename `frame_contract` → `frame_inventory`** (Scope-2): **37 Snakefile refs**, 3 Python modules
   (`auxiliary_masks/inference.py`, `materialize_auxiliary_masks.py`, `…/frame_contract/build_frame_contract.py`),
@@ -574,6 +629,12 @@ data_pipeline/stitched_handoff/                 # 'stitched' = the product (alre
   dataset-level CSV → `discovered_wells.txt`; enforce single-experiment.
 - **Create `data_pipeline/stitched_handoff/`** (contract/paths/validate/build/split) with the small
   dataclasses + `split_dropin_inventory_by_well()`.
+- **Preserve heterogeneous-shape tolerance in native `stitch_well`** (see *Upstream Capability*
+  section): the FF/focus-projection step must not assume uniform tile count or Z-depth across a
+  well's frames. Legacy guard = force `batch_size=1` on heterogeneity
+  (`build01A_compile_keyence_torch.py`); per-well stitching removes the cross-well case but must
+  still handle within-well varying Z (e.g. 14 vs 15 planes) without aborting. Verified on
+  `20260331_b9d2_18hpf_plate01` (tiles) and `20260416_cep290_30to48hpf_plate01_t02` (Z).
 
 ## 🔗 RELATED-DOC UPDATES NEEDED
 - `data_output_structure.md`: `frame_manifest.csv`/`frame_contract` → `frame_inventory`; fix path/
