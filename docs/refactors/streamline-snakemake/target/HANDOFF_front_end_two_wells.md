@@ -16,7 +16,7 @@ and **2 wells of Keyence**, one well at a time. Prove the wired front end works 
 1. `target/pipeline_file_philosophy.md` — **the conventions any code you touch must follow.** The two
    hard constraints: paths via `orchestration/paths.py`, ids via `shared/identifiers/`; the two
    kingdoms stay separate. Conformance checklist at the bottom.
-2. `target/front_end_naming_and_flow.md` — what the front-end stages ARE (the ingest lineages, the
+2. `target/front_end_naming_and_frame_inventory_flow.md` — what the front-end stages ARE (the ingest lineages, the
    fan, the convergence line). The flow you're running:
    `ingest_scope_metadata → map_series_to_wells → join_series_mapping_to_scope_metadata → discover_wells`.
 3. `target/frame_inventory_well_runner_audit.md` — known gaps (e.g. frame_inventory rules are a dormant
@@ -82,7 +82,7 @@ per-microscope modules — read these to understand the real-data behavior:
 - Mapping: `keyence/map_series_to_wells.py` — near-passthrough (well already resolved at ingest).
 - **Legacy FF/stitch builder (real-data-tested):** `src/build/build01A_compile_keyence_torch.py` and
   `src/build/build01AB_stitch_keyence_z_slices.py`. The stitched-handoff contract
-  (`target/stitched_handoff_contract.md`, "Upstream Capability to Transfer") documents two REAL
+  (`target/frame_inventory_handoff_contract.md`, "Upstream Capability to Transfer") documents two REAL
   failure modes you must respect: **heterogeneous tile counts** (3 vs 6 tiles/well) and
   **varying Z-depth** (14 vs 15 planes) — legacy forces `batch_size=1` on heterogeneity. The new
   per-well stitch avoids the cross-well case but must still handle within-well varying Z without

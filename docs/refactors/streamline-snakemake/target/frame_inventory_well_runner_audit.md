@@ -9,9 +9,9 @@ the front-end Snakefile wiring on branch `mdcolon/20260222_docs_snakemake_remake
 - The uncommitted front-end wiring (Snakefile rename-to-TARGET + registry routing, `tasks.py`
   verb renames, `paths.py`/`well_runner.py` banner updates, `materialize_stitched_images.py`
   well-id filter) committed alongside this audit.
-**Specs checked against:** [`front_end_naming_and_flow.md`](front_end_naming_and_flow.md),
+**Specs checked against:** [`front_end_naming_and_frame_inventory_flow.md`](front_end_naming_and_frame_inventory_flow.md),
 [`well_id_throughline_refactor_plan.md`](well_id_throughline_refactor_plan.md),
-[`stitched_handoff_contract.md`](stitched_handoff_contract.md).
+[`frame_inventory_handoff_contract.md`](frame_inventory_handoff_contract.md).
 
 > **Back-pointers:** this file is referenced from the code it audits so the findings are not lost:
 > `orchestration/paths.py`, `orchestration/well_runner.py`,
@@ -72,7 +72,7 @@ weak `validate_dataframe_schema` that the contract's Refactor Items explicitly s
 **promoted**, not reused. Reusing it under the TARGET name risks the name lying (the same sin Win 3
 calls out about `echo "ok" > validated`).
 **Fix:** either rename to `validate_frame_inventory_schema` (honest interim name) or add a
-`# TODO(Scope 2): promote to strict file-level gate per stitched_handoff_contract.md` at the
+`# TODO(Scope 2): promote to strict file-level gate per frame_inventory_handoff_contract.md` at the
 function. *(TODO added in the audit commit; full promotion deferred to Scope 2.)*
 
 ### 3. 🟠 The merged `frame_inventory` is validated twice
@@ -117,7 +117,7 @@ collapse isn't forgotten.
 
 The uncommitted front-end wiring fixed several drift items an earlier review would have flagged:
 - `discover_wells` now reads `scope_metadata_mapped.csv` (not the frame contract) — matches
-  Decision 5 of `front_end_naming_and_flow.md` (discovery is metadata-only).
+  Decision 5 of `front_end_naming_and_frame_inventory_flow.md` (discovery is metadata-only).
 - The checkpoint emits `discovered_wells.txt` and `wells_for_experiment` delegates to
   `run_well_ids_for_experiment` — the well-runner is now wired (the `well_runner.py` banner was
   updated to say so).

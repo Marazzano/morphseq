@@ -37,8 +37,8 @@ embeddings → analysis_ready" is fully specified with no silent gaps.
    mechanics, the frame-contract split, open questions, and the numbered
    next-steps with tests (bottom).
 4. **`target/well_id_throughline_refactor_plan.md`** — the formal Scopes 1–5.
-5. **`target/front_end_naming_and_flow.md`** — ingest lineages + the fan.
-6. **`target/stitched_handoff_contract.md`** — the microscope-agnostic input seam.
+5. **`target/front_end_naming_and_frame_inventory_flow.md`** — ingest lineages + the fan.
+6. **`target/frame_inventory_handoff_contract.md`** — the microscope-agnostic input seam.
 7. **`target/model_input_handoff_contract.md`** — the model/embedding seam
    (legacy build_06), which feeds analysis_ready.
 

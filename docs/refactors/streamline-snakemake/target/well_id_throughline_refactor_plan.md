@@ -56,7 +56,7 @@
 > - `pipeline_orchestrator/orchestration/{__init__.py,paths.py}` created. `paths.py` holds the
 >   one pipeline-wide `STAGES` table + `artifact_path`/`validated_path`/`provenance_path`/
 >   `stage_dir`, with `path_mode ∈ {experiment, per_well, merged}`. Built strictly to the spec in
->   `target/front_end_naming_and_flow.md` (§ PATHS.PY REGISTRY ROWS / Resolved paths).
+>   `target/front_end_naming_and_frame_inventory_flow.md` (§ PATHS.PY REGISTRY ROWS / Resolved paths).
 > - **DECISION (forward declaration):** the registry names the **TARGET** artifacts only
 >   (`frame_inventory`, `discovered_wells.txt`, `ingest_*`/`join_*` stage keys), NOT today's
 >   on-disk names (`frame_contract.csv`, `wells.txt`). It is the contract Scope 2/5 converge onto

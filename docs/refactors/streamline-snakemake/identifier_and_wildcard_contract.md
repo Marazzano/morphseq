@@ -19,7 +19,7 @@
 > restored verbatim from commit `8e1764b6`). Read the box above for the canonical (global) grammar;
 > the sections below are kept for the **hierarchy/structure** but their `{experiment_id}_{well_id}_…`
 > joins are superseded by `{well_id}_…` (well_id already carries the experiment). See
-> `target/front_end_naming_and_flow.md` (Decision 7) and `target/well_id_global_migration_map.md`.
+> `target/front_end_naming_and_frame_inventory_flow.md` (Decision 7) and `target/well_id_global_migration_map.md`.
 
 ## TL;DR
 

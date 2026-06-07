@@ -41,7 +41,7 @@ be listed here were archived 2026-06-05 (stale terminology) — see below.
   legacy-vs-target.
 - **`target/`** — the authoritative design (`current_state_and_next_steps.md`,
   `per_well_throughline_findings.md`, `well_id_throughline_refactor_plan.md`,
-  `front_end_naming_and_flow.md`, `stitched_handoff_contract.md`,
+  `front_end_naming_and_frame_inventory_flow.md`, `frame_inventory_handoff_contract.md`,
   `model_input_handoff_contract.md`).
 - **`_archive_2026-06-05_pre-target/`** — the prior architecture docs. Stale
   contract names (`frame_manifest`/`stitched_image_index`), but still useful for

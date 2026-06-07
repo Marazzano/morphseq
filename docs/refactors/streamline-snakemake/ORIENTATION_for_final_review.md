@@ -38,8 +38,8 @@ wired end-to-end **through analysis-ready**, but the **model/embedding step
 - `current_state_and_next_steps.md` — verified on-disk state + recommended order (the "where are we" anchor).
 - `per_well_throughline_findings.md` — north star: grain model, registry, well-runner, DAG mechanics.
 - `well_id_throughline_refactor_plan.md` — the formal **Scopes 1–5** (incl. Scope 3 = config/env).
-- `front_end_naming_and_flow.md` — ingest lineages, fan-out, post-fan tail.
-- `stitched_handoff_contract.md` — the microscope-agnostic stitched drop-in seam.
+- `front_end_naming_and_frame_inventory_flow.md` — ingest lineages, fan-out, post-fan tail.
+- `frame_inventory_handoff_contract.md` — the microscope-agnostic stitched drop-in seam.
 
 ---
 

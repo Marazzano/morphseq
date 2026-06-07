@@ -1,4 +1,4 @@
-# Front-End Naming & Flow — Ingest Lineages + Well Discovery (🟢 TARGET)
+# Front-End Naming & Frame Inventory Flow — Ingest Lineages + Well Discovery (🟢 TARGET)
 
 **Status:** active spec for the **early phase** of the refactor (front of the pipeline,
 through the fan point and its immediate post-fan tail). Being fleshed out with mdcolon
@@ -8,8 +8,7 @@ points here for front-end specifics.
 to THIS doc on front-end detail and the canonical-key decision) and
 `../well_id_throughline_refactor_plan.md` (the formal scopes).
 **Scope of THIS doc:** the two metadata **ingest lineages**, **well discovery**, the
-**canonical well key** (`well_id`), the post-fan front-end tail (stitch + per-well frame
-contract), and the `paths.py` registry rows for these stages. It is the input for building
+**canonical well key** (`well_id`), the post-fan front-end tail (stitch + per-well frame inventory), and the `paths.py` registry rows for these stages. It is the input for building
 `lib/paths.py`'s front end.
 
 ---
@@ -172,7 +171,7 @@ The front end is **7 rules**: 1 plate root + 2 scope-front + 1 join + 1 fan + 2 
 | `join_series_mapping_to_scope_metadata` | `scope_metadata__{scope}.csv` + `series_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | the join; **`well_id` minted here**. ← microscope convergence line. |
 | `discover_wells` *(checkpoint)* | `scope_metadata_mapped.csv` (#13) | `discovered_wells.txt` | Shared | reads the `well_id` column; emits ALL discovered well_ids. ⟱ FAN ⟱ |
 | `stitch_well` *(per well_id)* | raw + this well's mapping rows | `stitched_ff_images/{well_id}/{channel}/` + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; keyed on `well_id`. |
-| `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `stitched_handoff_contract.md`. |
+| `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `frame_inventory_handoff_contract.md`. |
 
 **`well_id` is born at the join, read at discovery (matches code, line 68).**
 `map_series_to_wells` produces only the *mapping* (`series`, `raw_position_label` → `well_index`),
@@ -212,7 +211,7 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
   is a passthrough and needs no raw read.
 - `build_frame_contract` is a **single** microscope-agnostic rule today (Snakefile:404). *(TARGET
   splits this into per-well `build_frame_inventory_well` + shared `validate_frame_inventory_well`,
-  and renames the table `frame_contract` → `frame_inventory` — see `stitched_handoff_contract.md`.
+  and renames the table `frame_contract` → `frame_inventory` — see `frame_inventory_handoff_contract.md`.
   Name kept here as-is because it describes today's code.)*
 - Stitched-image output paths carry **no** scope token (findings doc, Microscope section).
 
@@ -385,7 +384,7 @@ keyed on `well_id`:
 > tree -> shared frame_inventory`) and external handoff mode (`already-canonical stitched handoff
 > tree -> shared frame_inventory`). The full input contract (layout, required columns, immutable
 > frame key, one-file+sentinel model, native+drop-in flows, worked walkthrough) is
-> **`stitched_handoff_contract.md`** — this section's post-fan counterpart. *(Names here are
+> **`frame_inventory_handoff_contract.md`** — this section's post-fan counterpart. *(Names here are
 > TARGET; the `paths.py` examples further below also use the TARGET `frame_inventory` name. Only
 > explicit "today's code" callouts keep the legacy `frame_contract`. The code rename is a Scope-2
 > migration.)*
@@ -451,7 +450,7 @@ STAGES = {
 
     # ── POST-FAN (per well_id) — frame inventory joins the spine ──────────────
     # build_frame_inventory_well writes the shard; validate_frame_inventory_well writes
-    # only the .validated sentinel + report (one-file+sentinel model — see stitched_handoff_contract.md).
+    # only the .validated sentinel + report (one-file+sentinel model — see frame_inventory_handoff_contract.md).
     "frame_inventory": {                             # stage key for the per-well shard path
         "stage": "experiment_metadata",            # <frame-inventory-stage> — see findings #5 (leaning frame_inventory/)
         "fanout": "per_well_then_merge",

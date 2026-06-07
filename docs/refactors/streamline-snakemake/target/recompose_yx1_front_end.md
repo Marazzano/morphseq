@@ -8,9 +8,9 @@ must not fuse. They meet only at the convergence line (the shared join), which n
 **North star (read first, in order):**
 1. `pipeline_file_philosophy.md` — the conventions every change must satisfy (the two hard
    constraints, nouns-for-steps, fail-loud, the conformance checklist). **Judge every file against it.**
-2. `front_end_naming_and_flow.md` — the target flow + naming (the "ONE raw read" + convergence-line
+2. `front_end_naming_and_frame_inventory_flow.md` — the target flow + naming (the "ONE raw read" + convergence-line
    decisions this doc implements).
-3. `stitched_handoff_contract.md` — only for Phase 2 (the stitched seam + `well_id`-keyed tree).
+3. `frame_inventory_handoff_contract.md` — only for Phase 2 (the stitched seam + `well_id`-keyed tree).
 
 ---
 

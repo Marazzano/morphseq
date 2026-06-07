@@ -4,7 +4,7 @@
 move. Verified against code on 2026-06-04. This is the "where are we" anchor; the design lives in
 the other `target/` docs.
 **Companion to:** `per_well_throughline_findings.md` (north star), `well_id_throughline_refactor_plan.md`
-(the formal Scopes), `front_end_naming_and_flow.md` (front-end), `stitched_handoff_contract.md`
+(the formal Scopes), `front_end_naming_and_frame_inventory_flow.md` (front-end), `frame_inventory_handoff_contract.md`
 (the drop-in seam).
 
 ---
@@ -17,8 +17,8 @@ All refactor docs live in `target/` (the two throughline docs were `git mv`'d he
 |---|---|---|
 | `per_well_throughline_findings.md` | north star: grain model, registry, well-runner, DAG mechanics | design complete |
 | `well_id_throughline_refactor_plan.md` | the formal Scopes 1–5 | design complete |
-| `front_end_naming_and_flow.md` | ingest lineages, fan, post-fan tail | design complete |
-| `stitched_handoff_contract.md` | the stitched drop-in seam + frame_inventory contract | design complete |
+| `front_end_naming_and_frame_inventory_flow.md` | ingest lineages, fan, post-fan tail | design complete |
+| `frame_inventory_handoff_contract.md` | the stitched drop-in seam + frame_inventory contract | design complete |
 | `model_input_handoff_contract.md` | the model/embedding seam (legacy build_06): inference-first encode of snips → latents; symlink view of `processed_snip_path`; reuses `gen_embeddings` + the `mseq_pipeline_py3.9` sub-env | design (inference) complete; training deferred |
 | `current_state_and_next_steps.md` | **this doc** — verified on-disk state | living |
 | `OVERALL_PLAN.md` | top-level plan/index: goal, the ordered spine (family/fanout/execution/status per stage), build order, per-stage status table, open items, **audit findings** (2026-06-05) | living |
@@ -38,7 +38,7 @@ All refactor docs live in `target/` (the two throughline docs were `git mv`'d he
 - `metadata_ingest/scope/keyence_scope_metadata.py:261` → `well_id`; `:265` → `image_id` (uses `_f{time_int:04d}`)
 - `metadata_ingest/mapping/series_well_mapper_keyence.py:177` → `well_id`
 
-**What goes in it** (per the plan + the immutable-key decision in `stitched_handoff_contract.md`):
+**What goes in it** (per the plan + the immutable-key decision in `frame_inventory_handoff_contract.md`):
 ```
 identifiers/
     __init__.py     re-exports the public names

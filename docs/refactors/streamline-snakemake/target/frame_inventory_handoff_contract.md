@@ -1,10 +1,10 @@
-# Stitched Handoff Contract — the drop-in seam (🟢 TARGET)
+# Frame Inventory Handoff Contract — the drop-in seam (🟢 TARGET)
 
 **Status:** active spec, mdcolon 2026-06-04. Defines the **one explicit contract** for the
 stitched-image handoff so an external dataset can be organized and pushed through the pipeline
 from segmentation onward — the way any standard image-processing pipeline declares its input
 format.
-**Companion to:** `front_end_naming_and_flow.md` (the front-end ingest + fan spec — this doc is
+**Companion to:** `front_end_naming_and_frame_inventory_flow.md` (the front-end ingest + fan spec — this doc is
 its post-fan "drop-in here" counterpart) and `per_well_throughline_findings.md` (the north-star
 findings doc; the stitched image tree is **off-registry** there).
 **Scope of THIS doc:** the stitched-image **directory tree** (the pixel store), the
@@ -150,7 +150,7 @@ set of `image_id`s realized as pixels on disk.
 > own main image OUTPUT is PNG** (viewable directly in a VS Code session over the cluster).
 
 This tree is **off-registry** — its own path helper, not a `STAGES` row, keyed on `well_id`
-(`front_end_naming_and_flow.md`, Decision 7).
+(`front_end_naming_and_frame_inventory_flow.md`, Decision 7).
 
 ### (2) The frame inventory (the per-frame table the pixels can't carry)
 
@@ -234,7 +234,7 @@ the drop-in file the *same table* the native pipeline builds internally.
 
 **Enrichment columns** (genotype, treatment, medium, temperature, start_age_hpf, timing) come from
 the **plate lineage** and join far downstream at `consolidate_features` — **not** part of this
-handoff, **not** required for a drop-in segmentation run (`front_end_naming_and_flow.md`: the plate
+handoff, **not** required for a drop-in segmentation run (`front_end_naming_and_frame_inventory_flow.md`: the plate
 lineage is a separate root).
 
 #### Format: CSV all the way through this seam (decided 2026-06-04)
@@ -639,7 +639,7 @@ shape variation must still be handled explicitly. Carry these requirements into 
 ## 🔗 RELATED-DOC UPDATES NEEDED
 - `data_output_structure.md`: `frame_manifest.csv`/`frame_contract` → `frame_inventory`; fix path/
   calibration column names to match code; add this drop-in contract to "Practical Flow for Scientists."
-- `front_end_naming_and_flow.md`: rename `validate_frame_contract_well` →
+- `front_end_naming_and_frame_inventory_flow.md`: rename `validate_frame_contract_well` →
   `validate_frame_inventory_well`; cross-link this doc from the post-fan flow as the "drop-in here"
   companion.
 - `per_well_throughline_findings.md`: note `frame_contract` → `frame_inventory` vocabulary; the

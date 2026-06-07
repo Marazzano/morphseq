@@ -4,8 +4,8 @@
 implementations that already embody it — `orchestration/paths.py` and `orchestration/well_runner.py`
 — and the locked identity/orchestration constraints. **Every new rule, task, and module in the
 refactor conforms to this.**
-**Companion to:** `front_end_naming_and_flow.md` (what the front-end stages are),
-`well_id_throughline_refactor_plan.md` (the Scopes), `stitched_handoff_contract.md` (the seam).
+**Companion to:** `front_end_naming_and_frame_inventory_flow.md` (what the front-end stages are),
+`well_id_throughline_refactor_plan.md` (the Scopes), `frame_inventory_handoff_contract.md` (the seam).
 
 ---
 
@@ -64,7 +64,7 @@ validate rule).
 - rules: `build_frame_inventory_for_well`, `validate_frame_inventory_for_well`, `merge_frame_inventory` (actions)
 
 Some locked front-end step keys remain verb-shaped (`ingest_*`, `discover_wells`) because they are
-already part of `front_end_naming_and_flow.md`. That's a fixed exception, not a license — new keys
+already part of `front_end_naming_and_frame_inventory_flow.md`. That's a fixed exception, not a license — new keys
 prefer nouns.
 
 ### Names carry their position in the flow

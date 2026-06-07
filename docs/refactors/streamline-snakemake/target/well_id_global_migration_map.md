@@ -41,7 +41,7 @@ the same pass, or an old local `A01` will silently fail to match a new global `2
   old-arity calls remain; all 10 importers green. (Also removed the now-dead `experiment_id`
   param from `ingest_propagation` — well_id-first `build_embryo_id` made it unused.)
 - **Sections B, D, E, F: NOT STARTED** (deferred, downstream of the foundation).
-- ⚠️ **Frame-contract rename:** `front_end_naming_and_flow.md` (Decision, lines 214/367–373)
+- ⚠️ **Frame-contract rename:** `front_end_naming_and_frame_inventory_flow.md` (Decision, lines 214/367–373)
   renames the table `frame_contract` → `frame_inventory` and splits `build_frame_contract` into
   `build_frame_inventory_well` + `validate_frame_inventory_well`. Section B's `frame_contract.py`
   row must fold in that rename when Section B is executed. Not done here.
