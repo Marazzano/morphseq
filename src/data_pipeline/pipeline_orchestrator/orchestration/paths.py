@@ -47,18 +47,19 @@ target/front_end_naming_and_flow.md):
     Layout    {stage}/{exp}/...      THIS FILE (a code contract)    -> PIPELINE_STEPS + helpers
     Selection which wells/features   config.yaml (a science choice) -> NOT here
 
-⚠️ FORWARD DECLARATION (2026-06-06). This registry names the **TARGET** artifacts
-(``frame_inventory``, ``discovered_wells.txt``, the ``ingest_*``/``join_*`` step keys). Several
-of these names do not exist on disk yet — they are produced once Scope 2 (the data-semantics
-migration) and Scope 5 (per-well back half) reconstruct each step. The registry is the
-**contract those scopes converge onto**; it is intentionally NOT yet wired into the live
-Snakefile (which still emits the legacy ``frame_contract.csv`` / ``wells.txt`` names). Wire each
-step to this registry as it is reconstructed.
+⚠️ FORWARD DECLARATION (2026-06-06, updated 2026-06-07). This registry names the **TARGET**
+artifacts (``frame_inventory``, ``discovered_wells.txt``, the ``ingest_*``/``join_*`` step keys).
+The live root Snakefile now uses these registry rows for the front-end metadata/discovery flow,
+while the back half still emits the legacy ``frame_contract.csv`` family until Scope 5 lands.
+The registry remains the **contract those scopes converge onto**; wire each remaining step to this
+registry as it is reconstructed.
 
 Coverage: **front-end steps only** for now (the two metadata ingest lineages, well discovery,
 and the post-fan frame-inventory tail). Back-half steps (segmentation, snips, aux, features,
 QC, analysis_ready) get rows when Scope 5 specifies their stage/grain. Spec:
 target/front_end_naming_and_flow.md (§ PATHS.PY REGISTRY ROWS).
+Audit: target/frame_inventory_well_runner_audit.md (review of the registry + the frame_inventory
+adapter + well-runner that consume it).
 """
 
 from __future__ import annotations

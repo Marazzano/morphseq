@@ -14,6 +14,13 @@ import os
 import json
 import yaml
 
+from data_pipeline.pipeline_orchestrator.orchestration import (
+    artifact_path,
+    provenance_path,
+    run_well_ids_for_experiment,
+    validated_path,
+)
+
 # Configuration — two kingdoms, two files (Scope 3 of the well-id throughline refactor):
 #   config.yaml : the SCIENCE (what to run)      — committed, loaded as Snakemake `config`
 #   env.yaml    : the ENVIRONMENT (where/how)    — GITIGNORED, loaded as a plain dict
@@ -71,6 +78,45 @@ ANALYSIS_READY_DIR = DATA_ROOT / "analysis_ready"
 EXPERIMENTS = config.get("experiments", ["20250912"])
 MICROSCOPE = str(config.get("microscope", "YX1"))
 
+
+def _scope_token(microscope: str) -> str:
+    return str(microscope).strip().lower()
+
+
+FRONT_END_EXPERIMENT = "{experiment}"
+SCOPE_TOKEN = _scope_token(MICROSCOPE)
+PLATE_METADATA_CSV = artifact_path(
+    DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
+)
+SCOPE_METADATA_CSV = artifact_path(
+    DATA_ROOT,
+    "ingest_scope_metadata",
+    "raw",
+    FRONT_END_EXPERIMENT,
+    format_vars={"scope": SCOPE_TOKEN},
+)
+SERIES_WELL_MAPPING_CSV = artifact_path(
+    DATA_ROOT, "map_series_to_wells", "mapping", FRONT_END_EXPERIMENT
+)
+SERIES_WELL_MAPPING_PROVENANCE = provenance_path(
+    DATA_ROOT, "map_series_to_wells", "mapping", FRONT_END_EXPERIMENT
+)
+SCOPE_METADATA_MAPPED_CSV = artifact_path(
+    DATA_ROOT,
+    "join_series_mapping_to_scope_metadata",
+    "mapped",
+    FRONT_END_EXPERIMENT,
+)
+SCOPE_METADATA_MAPPED_VALIDATED = validated_path(
+    DATA_ROOT,
+    "join_series_mapping_to_scope_metadata",
+    "mapped",
+    FRONT_END_EXPERIMENT,
+)
+DISCOVERED_WELLS_TXT = artifact_path(
+    DATA_ROOT, "discover_wells", "wells", FRONT_END_EXPERIMENT
+)
+
 print(f"Project root: {PROJECT_ROOT}")
 print(f"Output root:  {DATA_ROOT}")
 print(f"Inputs root:  {INPUTS_DIR}")
@@ -91,31 +137,34 @@ ruleorder: run_snip_processing_per_well > merge_snip_manifests
 include: str(WORKFLOW_DIR / "rules" / "frame_inventory.smk")
 include: str(WORKFLOW_DIR / "rules" / "quality_control.smk")
 
-def experiment_well_ids(experiment: str) -> list[str]:
-    configured = config.get("experiment_wells") or {}
-    wells = configured.get(str(experiment))
-    if wells is None:
-        wells = configured.get(experiment)
-    if wells is None:
-        for key, value in configured.items():
-            if str(key) == str(experiment):
-                wells = value
-                break
-    if wells:
+def _configured_wells_for_experiment(experiment: str) -> list[str]:
+    for config_key in ("target_wells", "experiment_wells"):
+        configured = config.get(config_key) or {}
+        wells = configured.get(str(experiment))
+        if wells is None:
+            wells = configured.get(experiment)
+        if wells is None:
+            for key, value in configured.items():
+                if str(key) == str(experiment):
+                    wells = value
+                    break
+        if wells is None:
+            continue
+        if isinstance(wells, str):
+            return [wells]
         return [str(w) for w in wells]
-
-    # When experiment_wells is absent from config, return [] so that discover_wells
-    # derives wells from a freshly-rebuilt frame_contract.csv via the checkpoint path.
-    # Do not read frame_contract.csv here — that file may be stale and would bypass
-    # the checkpoint/source-of-truth flow.
     return []
+
+
+def _selected_wells_csv(experiment: str) -> str:
+    return ",".join(_configured_wells_for_experiment(experiment))
 
 # ============================================================================
 # Plate metadata (optional for build/segment/snips)
 # ============================================================================
 
 
-rule normalize_plate_metadata:
+rule ingest_plate_metadata:
     """
     Normalize and validate plate layout metadata.
 
@@ -125,13 +174,13 @@ rule normalize_plate_metadata:
     input:
         plate_file = PLATE_METADATA_DIR / "{experiment}_well_metadata.xlsx"
     output:
-        normalized_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "plate_metadata.csv",
+        normalized_csv = PLATE_METADATA_CSV,
         validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".plate_metadata.validated"
     params:
         experiment_id = "{experiment}"
     shell:
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks normalize-plate \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-plate-metadata \
           --input-file "{input.plate_file}" \
           --experiment "{params.experiment_id}" \
           --output-csv "{output.normalized_csv}"
@@ -140,11 +189,11 @@ rule normalize_plate_metadata:
 
 
 
-rule extract_scope_metadata_yx1:
+rule ingest_scope_metadata:
     """
-    Extract scope metadata from YX1 ND2 files.
+    Extract scope metadata from the configured microscope's raw image files.
 
-    Reads ND2 metadata to extract:
+    Reads raw metadata to extract:
     - Micrometers per pixel (calibration)
     - Frame interval (timing)
     - Image dimensions
@@ -153,87 +202,66 @@ rule extract_scope_metadata_yx1:
     - Timestamps
     """
     input:
-        raw_images_dir = RAW_IMAGES_DIR / "YX1" / "{experiment}"
+        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}"
     output:
-        scope_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "scope_metadata_raw.csv"
+        scope_csv = SCOPE_METADATA_CSV
     params:
         experiment_id = "{experiment}"
     shell:
         """
-        {RUN} -m data_pipeline.metadata_ingest.scope.yx1.extract_scope_metadata \
-          --raw-yx1-experiment-dir "{input.raw_images_dir}" \
-          --experiment-id "{params.experiment_id}" \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-scope-metadata \
+          --raw-images-dir "{input.raw_images_dir}" \
+          --experiment "{params.experiment_id}" \
+          --microscope "{MICROSCOPE}" \
           --output-csv "{output.scope_csv}"
         """
 
 
-rule extract_scope_metadata_keyence:
+rule map_series_to_wells:
     """
-    Extract scope metadata from Keyence raw image files.
+    Physical series-to-well mapping for the configured microscope.
 
-    Reads TIFF headers to extract:
-    - Micrometers per pixel (calibration)
-    - Frame interval (timing)
-    - Image dimensions
-    - Channel information
-    - Timestamps
+    The YX1 backend still needs raw ND2 access in this first pass, so the rule keeps
+    raw_images_dir wired through tasks.py even though the path contract is now front-end aligned.
     """
     input:
-        raw_images_dir = RAW_IMAGES_DIR / "Keyence" / "{experiment}"
+        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}",
+        scope_csv = SCOPE_METADATA_CSV,
     output:
-        scope_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "scope_metadata_raw.csv"
+        mapping_csv = SERIES_WELL_MAPPING_CSV,
+        provenance_json = SERIES_WELL_MAPPING_PROVENANCE,
     params:
         experiment_id = "{experiment}"
     shell:
         """
-        {RUN} -m data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata \
-          --raw-keyence-experiment-dir "{input.raw_images_dir}" \
-          --experiment-id "{params.experiment_id}" \
-          --output-csv "{output.scope_csv}"
-        """
-
-
-rule map_series_to_wells_yx1:
-    """
-    Physical YX1 series-to-well mapping (ND2 stage positions + reference XY).
-    Does not depend on plate metadata.
-    """
-    input:
-        raw_images_dir = RAW_IMAGES_DIR / "YX1" / "{experiment}"
-    output:
-        mapping_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "series_well_mapping.csv",
-        provenance_json = EXPERIMENT_METADATA_DIR / "{experiment}" / "series_well_mapping.provenance.json"
-    params:
-        experiment_id = "{experiment}"
-    shell:
-        """
-        {RUN} -m data_pipeline.metadata_ingest.scope.yx1.map_series_to_wells \
-          --raw-yx1-experiment-dir "{input.raw_images_dir}" \
-          --experiment-id "{params.experiment_id}" \
-          --use-xy-reference \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-series-to-wells \
+          --experiment "{params.experiment_id}" \
+          --microscope "{MICROSCOPE}" \
+          --scope-csv "{input.scope_csv}" \
+          --raw-images-dir "{input.raw_images_dir}" \
           --output-mapping-csv "{output.mapping_csv}" \
           --output-provenance-json "{output.provenance_json}"
         """
 
 
-rule apply_series_mapping_yx1:
+rule join_series_mapping_to_scope_metadata:
     """
     Apply series mapping to raw scope metadata to produce canonical well_index/well_id/image_id.
     """
     input:
-        scope_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "scope_metadata_raw.csv",
-        mapping_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "series_well_mapping.csv"
+        scope_csv = SCOPE_METADATA_CSV,
+        mapping_csv = SERIES_WELL_MAPPING_CSV,
     output:
-        mapped_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "scope_metadata_mapped.csv",
-        validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".scope_metadata_mapped.validated"
+        mapped_csv = SCOPE_METADATA_MAPPED_CSV,
+        validated = SCOPE_METADATA_MAPPED_VALIDATED,
     shell:
         """
-        {RUN} -m data_pipeline.metadata_ingest.scope.shared.apply_series_mapping \
-          --scope-metadata-csv "{input.scope_csv}" \
-          --series-well-mapping-csv "{input.mapping_csv}" \
-          --output-scope-metadata-mapped-csv "{output.mapped_csv}" \
-          --experiment-id "{wildcards.experiment}"
-        echo "ok" > "{output.validated}"
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks join-series-mapping-to-scope-metadata \
+          --experiment "{wildcards.experiment}" \
+          --scope-csv "{input.scope_csv}" \
+          --mapping-csv "{input.mapping_csv}" \
+          --output-csv "{output.mapped_csv}"
+        printf 'ok\n' > "{output.validated}"
         """
 
 # ============================================================================
@@ -241,17 +269,17 @@ rule apply_series_mapping_yx1:
 # ============================================================================
 
 
-rule materialize_stitched_images_yx1:
+rule materialize_stitched_images:
     input:
-        raw_images_dir = RAW_IMAGES_DIR / "YX1" / "{experiment}",
-        mapping_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "series_well_mapping.csv",
-        scope_csv = EXPERIMENT_METADATA_DIR / "{experiment}" / "scope_metadata_mapped.csv",
+        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}",
+        mapping_csv = SERIES_WELL_MAPPING_CSV,
+        scope_csv = SCOPE_METADATA_MAPPED_CSV,
     output:
         stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
         done = BUILT_IMAGE_DATA_DIR / "{experiment}" / ".materialize_stitched_images.done"
     params:
         experiment_id = "{experiment}",
-        selected_wells = lambda wc: ",".join(experiment_well_ids(wc.experiment)),
+        selected_wells = lambda wc: _selected_wells_csv(wc.experiment),
         device = lambda wc: str(config.get("image_building", {}).get("device", "cuda")),
         overwrite = lambda wc: int(bool(config.get("image_building", {}).get("overwrite", False))),
         z_buffer = lambda wc: int(bool(config.get("image_building", {}).get("yx1", {}).get("z_buffer", False))),
@@ -259,7 +287,7 @@ rule materialize_stitched_images_yx1:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-stitched \
           --experiment "{params.experiment_id}" \
-          --microscope "YX1" \
+          --microscope "{MICROSCOPE}" \
           --raw-images-dir "{input.raw_images_dir}" \
           --scope-csv "{input.scope_csv}" \
           --mapping-csv "{input.mapping_csv}" \
@@ -276,7 +304,7 @@ rule materialize_stitched_images_yx1:
 rule build_frame_contract:
     input:
         stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
-        mapped_scope = EXPERIMENT_METADATA_DIR / "{experiment}" / "scope_metadata_mapped.csv",
+        mapped_scope = SCOPE_METADATA_MAPPED_CSV,
     output:
         contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
         validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
@@ -294,38 +322,43 @@ rule build_frame_contract:
 
 checkpoint discover_wells:
     input:
-        contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
+        mapped_csv = SCOPE_METADATA_MAPPED_CSV,
+        validated = SCOPE_METADATA_MAPPED_VALIDATED,
     output:
-        wells_txt = EXPERIMENT_METADATA_DIR / "{experiment}" / "wells.txt"
-    params:
-        selected_wells = lambda wc: ",".join(experiment_well_ids(wc.experiment)),
+        wells = DISCOVERED_WELLS_TXT,
     shell:
         """
         {RUN} << 'EOF'
 from pathlib import Path
 import pandas as pd
 
-contract = Path("{input.contract}")
-selected_csv = "{params.selected_wells}".strip()
-if selected_csv:
-    wells = sorted({{part.strip() for part in selected_csv.split(",") if part.strip()}})
-else:
-    df = pd.read_csv(contract)
-    wells = sorted(set(df["well_id"].astype(str).tolist()))
+mapped_csv = Path("{input.mapped_csv}")
+df = pd.read_csv(mapped_csv)
+if "well_id" not in df.columns:
+    raise ValueError(f"{mapped_csv} is missing required well_id column")
 
-out = Path("{output.wells_txt}")
+wells = []
+seen = set()
+for value in df["well_id"].dropna().astype(str):
+    well_id = value.strip()
+    if not well_id or well_id in seen:
+        continue
+    seen.add(well_id)
+    wells.append(well_id)
+
+out = Path("{output.wells}")
 out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text("\\n".join(wells) + "\\n")
+out.write_text("\n".join(wells) + "\n")
 EOF
         """
 
-
 def wells_for_experiment(wildcards):
-    ck = checkpoints.discover_wells.get(experiment=wildcards.experiment)
-    p = ck.output.wells_txt
-    with open(p, "r", encoding="utf-8") as f:
-        return [ln.strip() for ln in f if ln.strip()]
+    checkpoints.discover_wells.get(experiment=wildcards.experiment)
+    return run_well_ids_for_experiment(
+        wildcards.experiment,
+        config,
+        output_root=DATA_ROOT,
+    )
 
 
 # ============================================================================
@@ -468,11 +501,11 @@ rule aggregate_auxiliary_masks:
     input:
         manifests=lambda wc: [
             AUXILIARY_MASKS_DIR / wc.experiment / "per_well" / well_id / "contracts" / "auxiliary_masks.csv"
-            for well_id in experiment_well_ids(wc.experiment)
+            for well_id in wells_for_experiment(wc)
         ],
         well_done=lambda wc: [
             AUXILIARY_MASKS_DIR / wc.experiment / "per_well" / well_id / "contracts" / ".auxiliary_masks.validated"
-            for well_id in experiment_well_ids(wc.experiment)
+            for well_id in wells_for_experiment(wc)
         ],
     output:
         manifest = AUXILIARY_MASKS_DIR / "{experiment}" / "contracts" / "auxiliary_masks.csv",
@@ -566,7 +599,7 @@ rule compute_stage_predictions:
         segmentation_tracking_done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
         frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
         frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-        plate_metadata = EXPERIMENT_METADATA_DIR / "{experiment}" / "plate_metadata.csv",
+        plate_metadata = PLATE_METADATA_CSV,
         plate_metadata_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".plate_metadata.validated",
     output:
         csv = FEATURES_DIR / "{experiment}" / "stage_predictions" / "stage_predictions.csv",
@@ -595,7 +628,7 @@ rule consolidate_features:
         fraction_alive_done = FEATURES_DIR / "{experiment}" / "fraction_alive" / "fraction_alive.csv.validated",
         stage_predictions = FEATURES_DIR / "{experiment}" / "stage_predictions" / "stage_predictions.csv",
         stage_predictions_done = FEATURES_DIR / "{experiment}" / "stage_predictions" / "stage_predictions.csv.validated",
-        plate_metadata = EXPERIMENT_METADATA_DIR / "{experiment}" / "plate_metadata.csv",
+        plate_metadata = PLATE_METADATA_CSV,
     output:
         csv = FEATURES_DIR / "{experiment}" / "consolidated" / "consolidated_snip_features.csv",
         done = FEATURES_DIR / "{experiment}" / "consolidated" / "consolidated_snip_features.csv.validated",

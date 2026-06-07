@@ -42,10 +42,13 @@ no bare slug ever travels internally.
 
 ⚠️ FORWARD DECLARATION. Like ``paths.py``, this reads the TARGET artifacts via the registry
 (``discovered_wells.txt``, per-well shard paths), global ``well_id``s only. It does NOT tolerate
-the legacy ``wells.txt`` / local-id form and is NOT yet wired into the live Snakefile.
+the legacy ``wells.txt`` / local-id form and is wired into the live Snakefile's
+post-checkpoint well expansion path.
 
 Spec: docs/refactors/streamline-snakemake/well_id_throughline_refactor_plan.md (Scope 4) and
 target/front_end_naming_and_flow.md (Decision 8).
+Audit: target/frame_inventory_well_runner_audit.md (concat_well_shards_to_file is the canonical
+merge primitive; finding #4 flags frame_inventory.merge_frame_inventory_shards for re-duplicating it).
 """
 
 from __future__ import annotations

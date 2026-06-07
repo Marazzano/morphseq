@@ -409,7 +409,10 @@ def materialize_stitched_images(
     )
     selected = _parse_selected_wells(selected_wells)
     if selected:
-        scope_df = scope_df[scope_df["well_index"].astype(str).isin(selected)].copy()
+        selected_mask = scope_df["well_index"].astype(str).isin(selected)
+        if "well_id" in scope_df.columns:
+            selected_mask = selected_mask | scope_df["well_id"].astype(str).isin(selected)
+        scope_df = scope_df[selected_mask].copy()
 
     if scope_df.empty:
         raise ValueError(f"No scope rows available for experiment {experiment} after well filtering")

@@ -180,20 +180,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_norm = sub.add_parser("normalize-plate")
+    p_norm = sub.add_parser("ingest-plate-metadata", aliases=["normalize-plate"])
     p_norm.add_argument("--input-file", type=Path, required=True)
     p_norm.add_argument("--experiment", required=True)
     p_norm.add_argument("--output-csv", type=Path, required=True)
     p_norm.set_defaults(func=cmd_normalize_plate)
 
-    p_scope = sub.add_parser("extract-scope")
+    p_scope = sub.add_parser("ingest-scope-metadata", aliases=["extract-scope"])
     p_scope.add_argument("--raw-images-dir", type=Path, required=True)
     p_scope.add_argument("--experiment", required=True)
     p_scope.add_argument("--microscope", choices=["YX1", "Keyence"], required=True)
     p_scope.add_argument("--output-csv", type=Path, required=True)
     p_scope.set_defaults(func=cmd_extract_scope)
 
-    p_map = sub.add_parser("map-series")
+    p_map = sub.add_parser("map-series-to-wells", aliases=["map-series"])
     p_map.add_argument("--experiment", required=True)
     p_map.add_argument("--microscope", choices=["YX1", "Keyence"], required=True)
     # Deprecated: plate metadata should not be required for physical series mapping.
@@ -211,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--dy-cv-tol", type=float, default=0.15)
     p_map.set_defaults(func=cmd_map_series)
 
-    p_apply = sub.add_parser("apply-series")
+    p_apply = sub.add_parser("join-series-mapping-to-scope-metadata", aliases=["apply-series"])
     p_apply.add_argument("--experiment", required=True)
     p_apply.add_argument("--scope-csv", type=Path, required=True)
     p_apply.add_argument("--mapping-csv", type=Path, required=True)
