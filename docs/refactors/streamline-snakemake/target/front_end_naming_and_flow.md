@@ -44,7 +44,8 @@ The front of the pipeline is **two independent metadata lineages** that run in p
 > in the raw microscope file regardless of whether a human filled in the plate spreadsheet.
 > Discovery is purely a function of the **scope/raw lineage**; the plate lineage is an
 > *annotation* you join on afterward (it enriches already-discovered wells; it does not
-> discover them).
+> discover them). The scope lineage converges at `join_series_mapping_to_scope_metadata`; the
+> plate lineage still converges with scope later at `consolidate_features`.
 
 **Verified in the current Snakefile (2026-06-03):**
 - `normalize_plate_metadata` output (`plate_metadata.csv`) is **not consumed by any front
@@ -168,17 +169,17 @@ The front end is **7 rules**: 1 plate root + 2 scope-front + 1 join + 1 fan + 2 
 | `ingest_plate_metadata` | `{exp}_well_metadata.xlsx` | `plate_metadata.csv` | — | the OTHER root; genotype/condition + plate geometry. No front-end consumer. |
 | `ingest_scope_metadata` | **raw ND2/TIFF (ONLY raw read)** | `scope_metadata__{scope}.csv` | **MS** | per-scope extract; emits stage XY (YX1) / resolved well (Keyence). |
 | `map_series_to_wells` | `scope_metadata__{scope}.csv` | `series_well_mapping.csv` (+ `.provenance.json`) | **MS** *(CSV→CSV)* | constant interface, always runs. YX1: XY match; Keyence: passthrough. |
-| `join_series_mapping_to_scope_metadata` | `scope_metadata__{scope}.csv` + `series_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | the join; **`well_id` minted here**. ← CONVERGENCE LINE. |
+| `join_series_mapping_to_scope_metadata` | `scope_metadata__{scope}.csv` + `series_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | the join; **`well_id` minted here**. ← microscope convergence line. |
 | `discover_wells` *(checkpoint)* | `scope_metadata_mapped.csv` (#13) | `discovered_wells.txt` | Shared | reads the `well_id` column; emits ALL discovered well_ids. ⟱ FAN ⟱ |
 | `stitch_well` *(per well_id)* | raw + this well's mapping rows | `stitched_ff_images/{well_id}/{channel}/` + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; keyed on `well_id`. |
 | `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `stitched_handoff_contract.md`. |
 
 **`well_id` is born at the join, read at discovery (matches code, line 68).**
-`map_series_to_wells` produces only the *mapping* (`series_number → well_index`), not a per-row
-table, so it can't mint `well_id`. `join_series_mapping_to_scope_metadata` is the first point
-where every row reliably has both `experiment_id` and resolved `well_index` →
-`well_id = f"{exp}_{well_index}"`. `discover_wells` then just reads the existing column. (See
-"The canonical well key" for why `well_id` is canonical everywhere after the fan.)
+`map_series_to_wells` produces only the *mapping* (`raw_position_label → well_index`), not a
+per-row table, so it can't mint `well_id`. `join_series_mapping_to_scope_metadata` is the first
+point where every row reliably has both `experiment_id` and resolved `well_index` →
+`well_id = build_well_id(exp, well_index)`. `discover_wells` then just reads the existing column.
+(See "The canonical well key" for why `well_id` is canonical everywhere after the fan.)
 
 ---
 
@@ -268,7 +269,7 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 
 ## 🔑 THE CANONICAL WELL KEY — `well_id` everywhere (DECISION, mdcolon 2026-06-03)
 
-**Decision: `well_id` (`{exp}_{well}`, e.g. `20250912_B01`) is the canonical well key across
+**Decision: `well_id` (`build_well_id(exp, well_index)`, e.g. `20250912_B01`) is the canonical well key across
 the ENTIRE DAG after the fan.** There is exactly **one** key downstream of discovery — no
 local/global split. This **reverses** the findings-doc "image-tree = local" stance (which is
 now superseded; see note below).
@@ -276,17 +277,18 @@ now superseded; see note below).
 ### Where each key lives
 | Key | Form | Where it lives | Lifetime |
 |---|---|---|---|
-| `well_index` | local (`B01`) | a **column** in the scope-metadata tables (`series_well_mapping.csv`, `scope_metadata_mapped.csv`) — the microscope emits local labels; it has no concept of "which experiment" | **born at the raw file; promoted to `well_id` at the join.** Survives only as a column, never as a path/wildcard/key downstream. |
+| `raw_position_label` | raw microscope token (`P03`, `XY01a`, etc.) | a **column** in the scope-metadata tables (`scope_metadata__{scope}.csv`, `series_well_mapping.csv`) — the microscope emits raw position labels; it has no concept of a local plate well yet | **born at raw ingest; resolved by mapping.** Survives only as a raw column, never as a path/wildcard/key downstream. |
+| `well_index` | local plate well label (`B01`) | a **column** in the scope-metadata tables (`series_well_mapping.csv`, `scope_metadata_mapped.csv`) — mapping resolves the raw position label into a local well label | **born at mapping; promoted to `well_id` at the join.** Survives only as a column, never as a path/wildcard/key downstream. |
 | `well_id` | global (`20250912_B01`) | the join output column, then **everything after the fan**: `discovered_wells.txt`, the per-well wildcard, the image dir, all sentinels, all shard paths, `target_wells` (normalized) | **canonical from the join onward.** |
 
 ### The promotion is FREE — no extra piping (the key realization)
-`well_id` is **not more information** than `well_index` — it is `well_index` plus a value the
+`raw_position_label` is the raw token that map_series_to_wells resolves into `well_index`. `well_id` is **not more information** than `well_index` — it is `well_index` plus a value the
 pipeline *already has in hand*: the experiment. So the promotion is a pure local construction,
-**one f-string, zero plumbing**:
+**one helper call, zero plumbing**:
 
 ```python
 # inside join_series_mapping_to_scope_metadata — exp_id is on every row, well_index is resolved
-well_id = exp_id + "_" + well_index      # matches current code (apply_series_mapping.py:68)
+well_id = build_well_id(exp_id, well_index)      # matches current code (apply_series_mapping.py:68)
 ```
 
 No lookup table, no threading a value through earlier stages. **The join is the natural
@@ -297,14 +299,14 @@ construction at the fan. (`map_series_to_wells` can't mint it: it produces only 
 `series_number → well_index` mapping, not a per-row table.)
 
 ```
-raw file ─► emits LOCAL labels (well_index = B01)              instrument knows no "experiment"
+raw file ─► emits RAW POSITION labels (raw_position_label)      instrument knows no local well yet
    │
    ▼
-ingest + map ─► well_index lives here as a COLUMN              ← local is CORRECT here
+ingest + map ─► raw_position_label is resolved into well_index  ← local is CORRECT here
    │            (scope_metadata, series_well_mapping)
    ▼
-join_series_mapping_to_scope_metadata                          ← THE ONE conversion (free)
-   │  PROMOTE: well_id = exp_id + "_" + well_index
+join_series_mapping_to_scope_metadata                          ← microscope convergence
+   │  PROMOTE: well_id = build_well_id(exp_id, well_index)
    │  → scope_metadata_mapped.csv carries well_id column
    ▼
 discover_wells ─► reads well_id column → discovered_wells.txt
@@ -338,9 +340,9 @@ discover_wells ─► reads well_id column → discovered_wells.txt
   an **opaque string**: it's only a dict key (`well_series_mapping`) and the output dir/filename
   component (`output_dir / well_name / "BF" / ...`). It never parses it. So the switch is a
   **pure substitution** — build the mapping as `{well_id: series_number}` in the Snakefile rule
-  (where `well_id = f"{exp}_{well_index}"` is constructed from `series_well_mapping.csv`), and
+  (where `well_id = build_well_id(exp, well_index)` is constructed from `series_well_mapping.csv`), and
   the dir/filename become `well_id` automatically. **Zero logic change in the helper; one
-  f-string in the rule.**
+  helper call in the rule.**
 
 > **Supersedes findings-doc "image-tree = local."** The findings doc (Lean MVP Contract,
 > "`well` vs `well_id` in paths") currently says image trees use local `well` to mirror the
@@ -373,12 +375,13 @@ keyed on `well_id`:
          (per-well validation gate: metadata ∩ images on disk; sentinel = trusted)
 ```
 
-> **The stitched seam is the public "drop-in here" point.** `stitch_well` +
+> **The canonical stitched handoff tree is the public "drop-in here" point.** `stitch_well` +
 > `build_frame_inventory_well` + the shared `validate_frame_inventory_well` are the boundary at
-> which an **outside dataset** can enter the pipeline microscope-agnostically (no raw read, no
-> ingest): organize a stitched tree + author a minimal `frame_inventory` CSV, then the strict
-> shared validator admits it. The full input contract (layout, required columns, immutable frame
-> key, one-file+sentinel model, native+drop-in flows, worked walkthrough) is
+> which the shared pipeline begins. There are two entry modes into that seam: native microscope
+> mode (`raw microscope data -> microscope-specific stitch runner -> canonical stitched handoff
+> tree -> shared frame_inventory`) and external handoff mode (`already-canonical stitched handoff
+> tree -> shared frame_inventory`). The full input contract (layout, required columns, immutable
+> frame key, one-file+sentinel model, native+drop-in flows, worked walkthrough) is
 > **`stitched_handoff_contract.md`** — this section's post-fan counterpart. *(Names here are
 > TARGET; the `paths.py` examples further below also use the TARGET `frame_inventory` name. Only
 > explicit "today's code" callouts keep the legacy `frame_contract`. The code rename is a Scope-2
@@ -397,39 +400,39 @@ keyed on `well_id`:
 
 ## 🧰 PATHS.PY REGISTRY ROWS (front-end stages) — 🟢 TARGET
 
-Per the Lean MVP Contract (findings doc): per-stage `family`, `fanout` ∈
-{`experiment`, `per_well_then_merge`}, optional `subfolder`; per-artifact filename template;
-sentinels (`.validated`, `.provenance.json`) are **derived helpers**, not rows.
+Per the Lean MVP Contract (findings doc): per-stage `stage`, `fanout` ∈
+{`experiment`, `per_well_then_merge`}, optional `subfolder`; per-artifact filename/template
+shape; sentinels (`.validated`, `.provenance.json`) are **derived helpers**, not rows.
 
 All front-end stages are **experiment-grain** (`fanout=experiment`) — they run once per
-experiment, before the fan. They share the `experiment_metadata` family (unchanged from today).
+experiment, before the fan. They share the `experiment_metadata` stage (unchanged from today).
 
 ```python
 STAGES = {
     # ── PLATE LINEAGE (Excel — authored design + plate geometry) ──────────────
     "ingest_plate_metadata": {
-        "family": "experiment_metadata",
+        "stage": "experiment_metadata",
         "fanout": "experiment",
         "artifacts": {"csv": "plate_metadata.csv"},
     },
 
     # ── SCOPE LINEAGE (raw microscope file — acquisition facts) ───────────────
     "ingest_scope_metadata": {
-        "family": "experiment_metadata",
+        "stage": "experiment_metadata",
         "fanout": "experiment",
         "artifacts": {
             "raw": "scope_metadata__{scope}.csv",   # {scope} → format_vars={"scope":"yx1"|"keyence"}
         },
     },
     "map_series_to_wells": {
-        "family": "experiment_metadata",
+        "stage": "experiment_metadata",
         "fanout": "experiment",
         "artifacts": {
             "mapping": "series_well_mapping.csv",   # .provenance.json via provenance_path()
         },
     },
     "join_series_mapping_to_scope_metadata": {      # the join; well_id minted here (CONVERGENCE)
-        "family": "experiment_metadata",
+        "stage": "experiment_metadata",
         "fanout": "experiment",
         "artifacts": {
             "mapped": "scope_metadata_mapped.csv",  # .validated via validated_path()
@@ -438,7 +441,7 @@ STAGES = {
 
     # ── FAN POINT (well discovery — checkpoint) ───────────────────────────────
     "discover_wells": {                              # emits discovered_wells.txt in well_id form
-        "family": "experiment_metadata",
+        "stage": "experiment_metadata",
         "fanout": "experiment",
         "artifacts": {"wells": "discovered_wells.txt"},
     },
@@ -446,10 +449,15 @@ STAGES = {
     # ── POST-FAN (per well_id) — frame inventory joins the spine ──────────────
     # build_frame_inventory_well writes the shard; validate_frame_inventory_well writes
     # only the .validated sentinel + report (one-file+sentinel model — see stitched_handoff_contract.md).
-    "frame_inventory_well": {                        # stage key for the per-well shard path
-        "family": "experiment_metadata",            # <frame-inventory-family> — see findings #5 (leaning frame_inventory/)
+    "frame_inventory": {                             # stage key for the per-well shard path
+        "stage": "experiment_metadata",            # <frame-inventory-stage> — see findings #5 (leaning frame_inventory/)
         "fanout": "per_well_then_merge",
-        "artifacts": {"inventory": "{well_id}_frame_inventory.csv"},   # well_id IN the filename
+        "artifacts": {
+            "inventory": {
+                "per_well": "{well_id}_frame_inventory.csv",  # well_id IN the filename
+                "merged": "{exp}_frame_inventory.csv",
+            },
+        },
     },
 }
 ```
@@ -481,13 +489,13 @@ artifact_path(ROOT, "discover_wells", "wells", "20250912")
 #   → {ROOT}/experiment_metadata/20250912/discovered_wells.txt   (contents: well_id per line)
 
 # post-fan, per well_id:
-artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912",
+artifact_path(ROOT, "frame_inventory", "inventory", "20250912",
               path_mode="per_well", well_id="20250912_B01")
 #   → {ROOT}/experiment_metadata/20250912/per_well/20250912_B01/20250912_B01_frame_inventory.csv
-validated_path(ROOT, "frame_inventory_well", "inventory", "20250912",
+validated_path(ROOT, "frame_inventory", "inventory", "20250912",
                path_mode="per_well", well_id="20250912_B01")
 #   → {ROOT}/.../per_well/20250912_B01/20250912_B01_frame_inventory.csv.validated   (the gate's only csv-side output)
-artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912", path_mode="merged")
+artifact_path(ROOT, "frame_inventory", "inventory", "20250912", path_mode="merged")
 #   → {ROOT}/experiment_metadata/20250912/20250912_frame_inventory.csv   (off-spine merged view)
 
 # stitching (OFF-registry, own helper) — keyed on well_id:
@@ -512,19 +520,22 @@ artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912", path_mode="
    geometry, so "plate metadata" is accurate).
 5. **`discover_wells` reads `scope_metadata_mapped.csv`** (#13) — full metadata co-located
    with the well set at discovery.
-6. All **pre-fan** stages are **`fanout=experiment`**, family **`experiment_metadata`**.
+6. All **pre-fan** stages are **`fanout=experiment`**, stage **`experiment_metadata`**.
 7. **`well_id` is the canonical key everywhere after the fan** (image dir, sentinels,
-   wildcard, shards, `target_wells`). `well_index` survives only as a **column** in the
-   scope tables. Promotion (`well_id = f"{exp}_{well_index}"`) happens once, at
-   `discover_wells` — **free, no extra piping.** Image-building change verified small
-   (opaque-string substitution in `stitched_ff_builder.py`). **Supersedes findings-doc
-   "image-tree = local."**
+   wildcard, shards, `target_wells`). `raw_position_label` survives only as the raw microscope
+   token in the scope tables; `well_index` is the resolved local plate well label column.
+   Promotion (`well_id = build_well_id(exp, well_index)`) happens once, at
+   `join_series_mapping_to_scope_metadata`; `discover_wells` only reads it. Image-building
+   change verified small (opaque-string substitution in `stitched_ff_builder.py`).
+   **Supersedes findings-doc "image-tree = local."**
 8. **`target_wells` is config-only** (no `selected_wells.txt`); checkpoint emits all
    discovered `well_id`s, well-runner filters. `materialize_selected_wells` dissolves.
 9. **ONE raw read.** `ingest_scope_metadata` is the **sole** stage that opens the raw
-    microscope files; `map_series_to_wells` becomes CSV→CSV. Per-microscope stages = three
-    (`ingest_scope_metadata`, `map_series_to_wells`, `stitch_well`) but only ingest + stitch
-    touch raw. Everything converges at `join_series_mapping_to_scope_metadata`.
+    microscope files in Phase 1; `map_series_to_wells` becomes CSV→CSV. Per-microscope stages =
+    three (`ingest_scope_metadata`, `map_series_to_wells`, `stitch_well`) but only ingest +
+    stitch touch raw. The microscope-specific scope branch converges at
+    `join_series_mapping_to_scope_metadata`; the plate/scope roots still converge later at
+    `consolidate_features`.
 10. **`map_series_to_wells` stays a stage** with a constant interface (`scope_metadata →
     series_well_mapping`), **always runs** (scope-invariant DAG). Per-scope logic inside:
     YX1 = XY match, Keyence = passthrough (well already resolved at ingest). Not skippable.
@@ -541,9 +552,9 @@ artifact_path(ROOT, "frame_inventory_well", "inventory", "20250912", path_mode="
 - **`target_wells` input form:** accept both local+global and normalize to `well_id` (today's
   behavior), vs. require strict `well_id`. Leaning "accept both, normalize" for ergonomics —
   confirm when wiring the well-runner.
-- **`<frame-inventory-family>`** for `frame_inventory_well`: keep `experiment_metadata/`
-  vs. dedicated `frame_inventory/` (findings #5, leaning the dedicated family). Placeholder
-  in the registry row above until decided.
+- **`<frame-inventory-stage>`** for `frame_inventory`: keep `experiment_metadata/` vs.
+  dedicated `frame_inventory/` (findings #5, leaning the dedicated stage). Placeholder in the
+  registry row above until decided.
 - *(resolved)* `map_series_to_wells` and `join_series_mapping_to_scope_metadata` are **kept
   as separate stages** — map is per-scope CSV logic (always-present passthrough), the join is
   the shared convergence point. Not folded.

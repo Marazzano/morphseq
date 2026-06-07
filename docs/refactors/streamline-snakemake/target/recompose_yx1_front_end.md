@@ -27,8 +27,8 @@ This doc maps L1→L2→L3 for YX1 and prescribes the recomposition.
 
 ## 🚦 THE TWO PHASES — a HARD line at the GPU boundary
 
-YX1's build is **two phases with different resource profiles**. Keep them separated; do not fuse the
-flow into one job.
+YX1's native-microscope entry mode is **two phases with different resource profiles**. Keep them separated; do not fuse the
+flow into one job. The shared pipeline begins at the canonical stitched handoff tree; the external-handoff entry mode starts there.
 
 ```
   PHASE 1 — METADATA (CPU, implement NOW)                    │  PHASE 2 — STITCH (GPU, specified, deferred)
@@ -57,7 +57,7 @@ flow into one job.
 - CSV→CSV `map_series_to_wells`
 - config-sourced reference path
 
-### 1B — Safety parity
+### 1B — Safety parity (stay out of 1A unless the immediate smoke run needs it)
 - BF env override
 - timestamp jump detection
 - KMeans QC
@@ -95,8 +95,8 @@ flow into one job.
 
 | Target step | Existing code | Reuse | Reorient | Rewrite | Missing |
 |---|---|---|---|---|---|
-| `ingest_scope_metadata` (the ONE raw metadata read in Phase 1) | `extract_scope_metadata.py`; live rule; `tasks.py::cmd_extract_scope` | timestamp impute, channel normalize, ND2 open, schema-validate+write | **stop minting `well_id`/`image_id`** (emit only `raw_position_label`, not a resolved well label) | **ADD `x_um`/`y_um` stage-XY columns per series** so map can be CSV→CSV | BF env override; timestamp jump-detection (lesson 6) |
-| `map_series_to_wells` (CSV→CSV) | `map_series_to_wells.py`; live rule; `cmd_map_series` | KD-tree XY match, grid-validator call, distance tol, provenance + gap/dup warnings | **read stage XY from `scope_metadata__yx1.csv` columns** instead of re-opening the ND2; drop `nd2_path` from signature + rule input + verb | replace hardcoded `DEFAULT_REF_XY_PATH` with a config-sourced path; delete dead fallbacks | (decide) KMeans match-QC (lesson 5) |
+| `ingest_scope_metadata` (the ONE raw metadata read in Phase 1) | `extract_scope_metadata.py`; live rule; `tasks.py::cmd_extract_scope` | timestamp impute, channel normalize, ND2 open, schema-validate+write | **stop minting `well_id`/`image_id`** (emit only `raw_position_label`, not a resolved well label) | **ADD `x_um`/`y_um` stage-XY columns per series** so map can be CSV→CSV | 1B: BF env override; timestamp jump-detection (only pull into 1A if the smoke run proves it is required) |
+| `map_series_to_wells` (CSV→CSV) | `map_series_to_wells.py`; live rule; `cmd_map_series` | KD-tree XY match, grid-validator call, distance tol, provenance + gap/dup warnings | **read stage XY from `scope_metadata__yx1.csv` columns** instead of re-opening the ND2; drop `nd2_path` from signature + rule input + verb | replace hardcoded `DEFAULT_REF_XY_PATH` with a config-sourced path; delete dead fallbacks | 1B: KMeans match-QC (only pull into 1A if the smoke run proves it is required) |
 | `join_series_mapping_to_scope_metadata` ← **CONVERGENCE; NOT this doc's to design** | `scope/shared/apply_series_mapping.py` (shared) | the whole join; `well_id` minted here (correct point) | — | normalize `.validated` suffix (open audit) | — |
 | `discover_wells` ← shared, already TARGET-shaped | `checkpoint discover_wells` | reads `well_id` col → `discovered_wells.txt` | — | — | — |
 
@@ -109,7 +109,7 @@ under `scope/yx1/`). The join and everything after are shared — out of scope h
    - Emit acquisition facts **+ stage XY (`x_um`,`y_um`) per series**.
    - Emit only `raw_position_label` (the raw ND2 position label). **Remove `well_id`/`image_id` minting** —
      those are born at the join. Fix the duplicate `'time_int'` key.
-   - Port the BF-channel env override + timestamp jump-detection (lessons 6-7).
+   - Phase 1B: port the BF-channel env override + timestamp jump-detection (lessons 6-7) only if the smoke run needs them.
    - Schema: add `x_um`/`y_um` to `REQUIRED_COLUMNS_SCOPE_METADATA` (⚠️ shared schema — coordinate; see
      "Cross-cutting" below).
 2. **`map_series_to_wells.py` — rewrite the read path to CSV→CSV.**
@@ -117,8 +117,8 @@ under `scope/yx1/`). The join and everything after are shared — out of scope h
      `nd2_path`. Remove the ND2 glob from `tasks.py::cmd_map_series`.
    - Source the reference grid path from config (`scope_metadata.yx1.ref_xy_csv` or similar), not a
      module constant.
+   - Phase 1B: port a lightweight `_qc_well_assignments` as a post-match assertion (lesson 5) only if the smoke run needs it.
    - Delete dead `_parse_series_number_map`/`_build_implicit_mapping`.
-   - (Decision needed) port a lightweight `_qc_well_assignments` as a post-match assertion (lesson 5).
 3. **`validate_xy_reference_grid.py` — keep as-is** (the exemplar).
 4. **`generate_xy_reference.py` — relocate** to a `tools/`-style location (not a DAG node);
    de-duplicate `extract_nd2_stage_positions` (import one shared `nd2_stage_positions` helper).
@@ -127,7 +127,8 @@ under `scope/yx1/`). The join and everything after are shared — out of scope h
 - NO-LEAKAGE: `extract_scope_metadata.py` mints `well_id`/`image_id` at the wrong moment → move to join.
 - Second raw metadata read in Phase 1: `map_series_to_wells.py` re-opens the ND2 → CSV→CSV.
 - Hardcoded path string: `DEFAULT_REF_XY_PATH` → config.
-- Minor: duplicate `'time_int'` key; dead helpers; `cmd_map_series` self-globs the ND2 (delete once CSV→CSV).
+- Minor / safety parity: duplicate `'time_int'` key; dead helpers; `cmd_map_series` self-globs the ND2 (delete once CSV→CSV).
+- Keep BF env override, timestamp jump detection, and KMeans QC in 1B unless the immediate smoke run forces one of them into 1A.
 
 ---
 
@@ -139,6 +140,8 @@ under `scope/yx1/`). The join and everything after are shared — out of scope h
 **Reuse the shared engine — do NOT rewrite stitching.** `image_building/utils/frame_tiler.py` (419
 lines: `stitch_frame_tiles`, `FrameTilingConfig`, `FallbackParams`, QC, legacy-canvas fallback) is
 the LIVE shared stitch engine. The YX1 `stitch_well` **calls it**; it does not reimplement tiling.
+This is the native-microscope entry mode; the shared pipeline does not care about YX1 vs Keyence
+once the canonical stitched handoff tree exists.
 
 **Target shape:**
 - `stitch_well[well_id]` — per-well fanout (not the current experiment-grain loop). Reads this well's
@@ -146,6 +149,7 @@ the LIVE shared stitch engine. The YX1 `stitch_well` **calls it**; it does not r
   keyed on **`well_id`** (compose via `shared/identifiers`, never an f-string in a path helper);
   sentinel `.well_{well_id}.done`.
 - Off-registry image path comes from a `stitched_handoff/paths.py` helper, not an inline string.
+  That helper is the practical seam between native microscope mode and the shared pipeline.
 - YX1 focus/stitch specifics stay in the YX1 backend; the cross-microscope tiling stays in `frame_tiler`.
 
 **Orphaned stitch code (deferred until after Phase 1 — do not clean up yet):** `image_building/yx1/
@@ -156,13 +160,14 @@ first**, confirm no unique capability, then delete). `frame_tiler.py` is KEPT.
 ---
 
 ## 🔗 CROSS-CUTTING (shared with the Keyence doc — coordinate, don't fuse)
-These touch shared surfaces; resolve them jointly so the two microscopes stay consistent:
+These touch shared surfaces; resolve them jointly so the two microscopes stay consistent. The
+shared side begins at the canonical stitched handoff tree; the native side ends there:
 - **Scope-metadata schema** (`REQUIRED_COLUMNS_SCOPE_METADATA`) — both ingests change it (YX1 adds
   `x_um`/`y_um`; Keyence adds position). Change once, together.
 - **`.validated` sentinel suffix** (leading vs trailing dot) at the join — shared open audit.
 - **The orphan-shim deletion** — both microscopes have a `scope/{scope}/stitched_ff_builder.py`;
   verify-then-delete each against the inlined logic, but only after Phase 1 is green. `frame_tiler.py` stays for both.
-- **The convergence line itself** (`join_...`, `discover_wells`) — neither microscope doc designs it.
+- **The convergence line itself** (`join_...`, `discover_wells`) — neither microscope doc designs it. The seam that matters for the shared pipeline is the canonical stitched handoff tree.
 
 ## ✅ DONE-FOR-PHASE-1 (YX1)
 - `ingest_scope_metadata` emits `raw_position_label` + stage XY, no premature `well_id`.
