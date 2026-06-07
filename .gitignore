@@ -117,3 +117,7 @@ _Archive/
 
 # mdcolon results-specific rules moved to results/mcolon/.gitignore
 # (see results/mcolon/.gitignore for details)
+
+# Machine-specific pipeline environment (interpreter, data/input/model paths).
+# Copy env.example.yaml -> env.yaml on each machine; never commit env.yaml.
+src/data_pipeline/pipeline_orchestrator/env.yaml

@@ -9,7 +9,7 @@ rule compute_segmentation_qc:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "segmentation_qc" / "segmentation_qc_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.compute_segmentation_qc \
+        {RUN} -m data_pipeline.quality_control.entrypoints.compute_segmentation_qc \
           --segmentation-tracking-csv "{input.segmentation_tracking}" \
           --output-csv "{output.csv}"
         """
@@ -24,7 +24,7 @@ rule compute_viability_qc:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "viability_qc" / "viability_qc_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.compute_viability_qc \
+        {RUN} -m data_pipeline.quality_control.entrypoints.compute_viability_qc \
           --fraction-alive-csv "{input.features}" \
           --features-csv "{input.features}" \
           --output-csv "{output.csv}"
@@ -40,7 +40,7 @@ rule compute_death_detection:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "death_detection" / "death_detection_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.compute_death_detection           --fraction-alive-csv "{input.features}"           --features-csv "{input.features}"           --output-csv "{output.csv}"
+        {RUN} -m data_pipeline.quality_control.entrypoints.compute_death_detection           --fraction-alive-csv "{input.features}"           --features-csv "{input.features}"           --output-csv "{output.csv}"
         """
 
 
@@ -54,7 +54,7 @@ rule compute_surface_area_qc:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "surface_area_qc" / "surface_area_qc_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.compute_surface_area_qc \
+        {RUN} -m data_pipeline.quality_control.entrypoints.compute_surface_area_qc \
           --features-csv "{input.features}" \
           --sa-reference-csv "{input.sa_reference}" \
           --output-csv "{output.csv}"
@@ -70,7 +70,7 @@ rule compute_auxiliary_mask_qc:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "auxiliary_mask_qc" / "auxiliary_mask_qc_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.compute_auxiliary_mask_qc \
+        {RUN} -m data_pipeline.quality_control.entrypoints.compute_auxiliary_mask_qc \
           --auxiliary-masks-csv "{input.auxiliary_masks}" \
           --output-csv "{output.csv}"
         """
@@ -85,7 +85,7 @@ rule compute_focus_qc:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "focus_qc" / "focus_qc_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.compute_focus_qc \
+        {RUN} -m data_pipeline.quality_control.entrypoints.compute_focus_qc \
           --features-csv "{input.features}" \
           --output-csv "{output.csv}"
         """
@@ -100,7 +100,7 @@ rule compute_motion_qc:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "motion_qc" / "motion_qc_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.compute_motion_qc \
+        {RUN} -m data_pipeline.quality_control.entrypoints.compute_motion_qc \
           --features-csv "{input.features}" \
           --output-csv "{output.csv}"
         """
@@ -129,7 +129,7 @@ rule consolidate_qc:
         done = QUALITY_CONTROL_DIR / "{experiment}" / "consolidated" / "qc_flags.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.quality_control.entrypoints.consolidate_qc \
+        {RUN} -m data_pipeline.quality_control.entrypoints.consolidate_qc \
           --features-csv "{input.features}" \
           --segmentation-qc-csv "{input.segmentation_qc}" \
           --viability-qc-csv "{input.viability_qc}" \
@@ -154,7 +154,7 @@ rule assemble_analysis_ready:
         schema = ANALYSIS_READY_DIR / "{experiment}" / "analysis_ready.schema.json",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.analysis_ready.entrypoints.assemble_analysis_ready \
+        {RUN} -m data_pipeline.analysis_ready.entrypoints.assemble_analysis_ready \
           --features-csv "{input.features}" \
           --qc-flags-csv "{input.qc_flags}" \
           --output-csv "{output.csv}" \

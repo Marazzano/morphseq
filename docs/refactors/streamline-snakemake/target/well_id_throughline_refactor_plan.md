@@ -24,6 +24,33 @@
 > downstream: schemas, the per-well landmines, the `video_id` collapse, well-runner, paths.py,
 > env. See `target/well_id_global_migration_map.md`.
 
+> **STATUS UPDATE (2026-06-06): Scope 3 (env + RUN helper) is DONE.**
+> On branch `mdcolon/20260222_docs_snakemake_remake`:
+> - `pipeline_orchestrator/env.example.yaml` (committed template) + `env.yaml` (GITIGNORED,
+>   added to repo-root `.gitignore`) now live beside the Snakefile. `env.yaml` carries
+>   `runtime.{conda_env,device}` and `paths.{input_root,output_root,models_root}` (all three
+>   roots first-class, absolute). `env.yaml`'s paths reproduce today's on-disk layout
+>   (`output_root=<repo>/data_pipeline_output`, inputs/models beneath) so **nothing moved on
+>   disk** — pure decoupling.
+> - The Snakefile loads `env.yaml` as a plain dict (NOT merged into Snakemake `config`),
+>   derives `DATA_ROOT`/`INPUTS_DIR`/`MODELS_DIR` from it, and **deletes the hardcoded
+>   interpreter**. `project_root` is still derived from the Snakefile location (no per-machine
+>   setup). Verified: `snakemake -n` parses, env loads, DAG builds (12 jobs).
+> - **DECISION (deviates from this plan's text — interpreter pin):** instead of a `runtime.python`
+>   absolute `bin/python` path, the env pins the **conda env NAME** (`runtime.conda_env`) and the
+>   single shell prefix `RUN = conda run -n {env} --no-capture-output env PYTHONPATH="{SRC_ROOT}"
+>   python` resolves the interpreter. This is portable (any machine with that env name) and obeys
+>   the repo rule "never bare python / conda activate" — which the old hardcoded path violated.
+> - **DECISION (deviates — Win 1 done in full now, not incrementally):** all **31** rule shells
+>   (22 in the Snakefile + 9 in `quality_control.smk`) were converted from the copy-pasted
+>   `PYTHONPATH="..." "{PYTHON}"` prefix to the one `{RUN}` token. One convention everywhere;
+>   the orphaned `.smk` files' separate `params`(`PYTHON_EXE`/`SRC_ROOT`) style will fold into
+>   `{RUN}` when each is revived (no two-conventions split carried forward).
+> - **DECISION (deviates — well-runner/paths home):** the orchestration library lands in
+>   `pipeline_orchestrator/orchestration/` (a NAMED subpackage), **not** the plan's generic
+>   `lib/`. Same kingdom boundary (orchestration ≠ identity), clearer name. Treat every
+>   "`pipeline_orchestrator/lib/`" below as "`pipeline_orchestrator/orchestration/`".
+
 ---
 
 ## Why this exists

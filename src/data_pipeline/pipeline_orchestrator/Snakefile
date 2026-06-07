@@ -12,31 +12,57 @@ Contract-driven pipeline:
 from pathlib import Path
 import os
 import json
+import yaml
 
-# Configuration
-# Path is relative to Snakefile location
+# Configuration — two kingdoms, two files (Scope 3 of the well-id throughline refactor):
+#   config.yaml : the SCIENCE (what to run)      — committed, loaded as Snakemake `config`
+#   env.yaml    : the ENVIRONMENT (where/how)    — GITIGNORED, loaded as a plain dict
+# Both live beside this Snakefile. env.yaml is loaded separately (NOT merged into `config`) so
+# that gitignoring machine paths stays clean. See:
+#   docs/refactors/streamline-snakemake/well_id_throughline_refactor_plan.md (Scope 3)
 configfile: str(Path(workflow.basedir) / "config.yaml")
 
-# Get project root
 WORKFLOW_DIR = Path(workflow.basedir)
+# project_root is still DERIVED from the Snakefile location (zero per-machine setup needed);
+# only the data/input/model ROOTS are made explicit/environment-driven below.
 PROJECT_ROOT = WORKFLOW_DIR.parent.parent.parent
 
-# Pinned interpreter (per repo rules).
-PYTHON = "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+# --- Environment layer (env.yaml) -------------------------------------------------------------
+_ENV_PATH = WORKFLOW_DIR / "env.yaml"
+if not _ENV_PATH.exists():
+    raise FileNotFoundError(
+        f"Missing per-machine environment file: {_ENV_PATH}\n"
+        f"Copy the template and edit it for this machine:\n"
+        f"    cp {WORKFLOW_DIR / 'env.example.yaml'} {_ENV_PATH}"
+    )
+env = yaml.safe_load(_ENV_PATH.read_text())
 
-# Data root from config
-DATA_ROOT = PROJECT_ROOT / config.get("data_root", "data_pipeline_output")
-INPUTS_DIR = DATA_ROOT / "inputs"
+# Interpreter: pinned by conda ENV NAME and resolved via `conda run -n` (portable; obeys the
+# repo rule "never bare python / conda activate"). RUN is the ONE shell-prefix used by every
+# rule: it activates the env and puts src/ on PYTHONPATH, then you append `-m <module> ...` or
+# a script path. This replaces the per-rule `PYTHONPATH="..." "{PYTHON}"` boilerplate (Win 1).
+CONDA_ENV = str(env["runtime"]["conda_env"])
+DEVICE = str(env["runtime"].get("device", "cuda"))
+SRC_ROOT = f"{PROJECT_ROOT}:{PROJECT_ROOT}/src"
+RUN = (
+    f"conda run -n {CONDA_ENV} --no-capture-output "
+    f'env PYTHONPATH="{SRC_ROOT}" python'
+)
+
+# Roots are first-class ABSOLUTE paths from env.yaml — data location is no longer welded to code
+# location. The LAYOUT beneath each root stays in code (the pipeline path contract).
+DATA_ROOT = Path(env["paths"]["output_root"])
+INPUTS_DIR = Path(env["paths"]["input_root"])
+MODELS_DIR = Path(env["paths"]["models_root"])
 PLATE_METADATA_DIR = INPUTS_DIR / "plate_metadata"
 RAW_IMAGES_DIR = INPUTS_DIR / "raw_image_data"
 
-# Output directories (within data_root)
+# Output directories (layout beneath output_root — code contract, not environment)
 EXPERIMENT_METADATA_DIR = DATA_ROOT / "experiment_metadata"
 BUILT_IMAGE_DATA_DIR = DATA_ROOT / "built_image_data"
 SEGMENTATION_DIR = DATA_ROOT / "segmentation_and_tracking"
 PROCESSED_SNIPS_DIR = DATA_ROOT / "processed_snips"
 AUXILIARY_MASKS_DIR = DATA_ROOT / "auxiliary_masks"
-MODELS_DIR = DATA_ROOT / "models"
 FEATURES_DIR = DATA_ROOT / "computed_features"
 QUALITY_CONTROL_DIR = DATA_ROOT / "quality_control"
 ANALYSIS_READY_DIR = DATA_ROOT / "analysis_ready"
@@ -46,9 +72,12 @@ EXPERIMENTS = config.get("experiments", ["20250912"])
 MICROSCOPE = str(config.get("microscope", "YX1"))
 
 print(f"Project root: {PROJECT_ROOT}")
-print(f"Data root: {DATA_ROOT}")
-print(f"Experiments: {EXPERIMENTS}")
-print(f"Microscope: {MICROSCOPE}")
+print(f"Output root:  {DATA_ROOT}")
+print(f"Inputs root:  {INPUTS_DIR}")
+print(f"Models root:  {MODELS_DIR}")
+print(f"Conda env:    {CONDA_ENV}")
+print(f"Experiments:  {EXPERIMENTS}")
+print(f"Microscope:   {MICROSCOPE}")
 
 # Wildcard and identifier contract source:
 # docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md
@@ -101,7 +130,7 @@ rule normalize_plate_metadata:
         experiment_id = "{experiment}"
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.pipeline_orchestrator.tasks normalize-plate \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks normalize-plate \
           --input-file "{input.plate_file}" \
           --experiment "{params.experiment_id}" \
           --output-csv "{output.normalized_csv}"
@@ -130,7 +159,7 @@ rule extract_scope_metadata_yx1:
         experiment_id = "{experiment}"
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.metadata_ingest.scope.yx1.extract_scope_metadata \
+        {RUN} -m data_pipeline.metadata_ingest.scope.yx1.extract_scope_metadata \
           --raw-yx1-experiment-dir "{input.raw_images_dir}" \
           --experiment-id "{params.experiment_id}" \
           --output-csv "{output.scope_csv}"
@@ -156,7 +185,7 @@ rule extract_scope_metadata_keyence:
         experiment_id = "{experiment}"
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata \
+        {RUN} -m data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata \
           --raw-keyence-experiment-dir "{input.raw_images_dir}" \
           --experiment-id "{params.experiment_id}" \
           --output-csv "{output.scope_csv}"
@@ -177,7 +206,7 @@ rule map_series_to_wells_yx1:
         experiment_id = "{experiment}"
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.metadata_ingest.scope.yx1.map_series_to_wells \
+        {RUN} -m data_pipeline.metadata_ingest.scope.yx1.map_series_to_wells \
           --raw-yx1-experiment-dir "{input.raw_images_dir}" \
           --experiment-id "{params.experiment_id}" \
           --use-xy-reference \
@@ -198,7 +227,7 @@ rule apply_series_mapping_yx1:
         validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".scope_metadata_mapped.validated"
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.metadata_ingest.scope.shared.apply_series_mapping \
+        {RUN} -m data_pipeline.metadata_ingest.scope.shared.apply_series_mapping \
           --scope-metadata-csv "{input.scope_csv}" \
           --series-well-mapping-csv "{input.mapping_csv}" \
           --output-scope-metadata-mapped-csv "{output.mapped_csv}" \
@@ -227,7 +256,7 @@ rule materialize_stitched_images_yx1:
         z_buffer = lambda wc: int(bool(config.get("image_building", {}).get("yx1", {}).get("z_buffer", False))),
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.pipeline_orchestrator.tasks materialize-stitched \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-stitched \
           --experiment "{params.experiment_id}" \
           --microscope "YX1" \
           --raw-images-dir "{input.raw_images_dir}" \
@@ -254,7 +283,7 @@ rule build_frame_contract:
         channel_id = lambda wildcards: str(config.get("segmentation_and_tracking", {}).get("channel_id", "BF")),
     shell:
         """
-                PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.metadata_ingest.frame_contract.build_frame_contract \
+                {RUN} -m data_pipeline.metadata_ingest.frame_contract.build_frame_contract \
                     --stitched-index-csv "{input.stitched_index}" \
                     --scope-metadata-csv "{input.mapped_scope}" \
                     --output-csv "{output.contract}"
@@ -272,7 +301,7 @@ checkpoint discover_wells:
         selected_wells = lambda wc: ",".join(experiment_well_ids(wc.experiment)),
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" << 'EOF'
+        {RUN} << 'EOF'
 from pathlib import Path
 import pandas as pd
 
@@ -314,7 +343,7 @@ rule segment_and_track_per_well:
         pipeline_cfg = lambda wc: json.dumps(config),
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.segmentation_and_tracking.entrypoints.run_segmentation_and_tracking \
+        {RUN} -m data_pipeline.segmentation_and_tracking.entrypoints.run_segmentation_and_tracking \
           --frame-manifest "{input.manifest}" \
           --experiment-id "{wildcards.experiment}" \
           --well-id "{wildcards.well_id}" \
@@ -334,7 +363,7 @@ rule merge_segmentation_tracking:
         merged = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.segmentation_and_tracking.pipelines.merge_segmentation_and_tracking_contracts           --experiment "{wildcards.experiment}"           --output-root "{DATA_ROOT}"
+        {RUN} -m data_pipeline.segmentation_and_tracking.pipelines.merge_segmentation_and_tracking_contracts           --experiment "{wildcards.experiment}"           --output-root "{DATA_ROOT}"
         """
 
 
@@ -345,7 +374,7 @@ rule validate_segmentation_tracking:
         done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" {PROJECT_ROOT}/src/data_pipeline/segmentation_and_tracking/pipelines/validate_segmentation_and_tracking.py           --input-csv "{input.merged}"           --output-flag "{output.done}"
+        {RUN} {PROJECT_ROOT}/src/data_pipeline/segmentation_and_tracking/pipelines/validate_segmentation_and_tracking.py           --input-csv "{input.merged}"           --output-flag "{output.done}"
         """
 
 # ============================================================================
@@ -369,7 +398,7 @@ rule run_snip_processing_per_well:
         bg_seed = lambda wc: int(config.get("snip_processing", {}).get("background_seed", 309)),
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.snip_processing.run_from_segmentation_tracking \
+        {RUN} -m data_pipeline.snip_processing.run_from_segmentation_tracking \
           --segmentation-tracking "{input.seg}" \
           --output-root "{DATA_ROOT}" \
           --output-shape {params.out_h} {params.out_w} \
@@ -391,7 +420,7 @@ rule merge_snip_manifests:
         merged = PROCESSED_SNIPS_DIR / "{experiment}" / "contracts" / "snip_manifest.parquet",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.snip_processing.pipelines.merge_snip_manifests           --experiment "{wildcards.experiment}"           --output-root "{DATA_ROOT}"           --write-views 1
+        {RUN} -m data_pipeline.snip_processing.pipelines.merge_snip_manifests           --experiment "{wildcards.experiment}"           --output-root "{DATA_ROOT}"           --write-views 1
         """
 
 
@@ -402,7 +431,7 @@ rule validate_snip_manifest:
         done = PROCESSED_SNIPS_DIR / "{experiment}" / "contracts" / ".snip_manifest_merged.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" {PROJECT_ROOT}/src/data_pipeline/snip_processing/pipelines/validate_snip_manifest.py           --input "{input.merged}"           --output-flag "{output.done}"
+        {RUN} {PROJECT_ROOT}/src/data_pipeline/snip_processing/pipelines/validate_snip_manifest.py           --input "{input.merged}"           --output-flag "{output.done}"
         """
 
 # ============================================================================
@@ -423,7 +452,7 @@ rule generate_auxiliary_masks_well:
         overwrite_flag = lambda wc: "--overwrite" if bool(config.get("auxiliary_masks", {}).get("overwrite", False)) else "",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.auxiliary_masks.materialize_auxiliary_masks \
+        {RUN} -m data_pipeline.auxiliary_masks.materialize_auxiliary_masks \
           --frame-contract "{input.frame_contract}" \
           --output-root "{AUXILIARY_MASKS_DIR}/{wildcards.experiment}/per_well/{wildcards.well_id}" \
           --output-manifest-csv "{output.manifest}" \
@@ -449,7 +478,7 @@ rule aggregate_auxiliary_masks:
         done = AUXILIARY_MASKS_DIR / "{experiment}" / "contracts" / ".auxiliary_masks.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.auxiliary_masks.merge_auxiliary_masks \
+        {RUN} -m data_pipeline.auxiliary_masks.merge_auxiliary_masks \
           --inputs {input.manifests} \
           --output-manifest-csv "{output.manifest}"
         """
@@ -470,7 +499,7 @@ rule compute_mask_geometry:
         done = FEATURES_DIR / "{experiment}" / "mask_geometry" / "mask_geometry_metrics.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.feature_extraction.entrypoints.compute_mask_geometry \
+        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_mask_geometry \
           --segmentation-tracking "{input.segmentation_tracking}" \
           --frame-contract "{input.frame_contract}" \
           --output-csv "{output.csv}"
@@ -487,7 +516,7 @@ rule compute_curvature_metrics:
         done = FEATURES_DIR / "{experiment}" / "curvature_metrics" / "curvature_metrics.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.feature_extraction.entrypoints.compute_curvature_metrics \
+        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_curvature_metrics \
           --segmentation-tracking "{input.segmentation_tracking}" \
           --frame-contract "{input.frame_contract}" \
           --output-csv "{output.csv}"
@@ -504,7 +533,7 @@ rule compute_pose_kinematics:
         done = FEATURES_DIR / "{experiment}" / "pose_kinematics" / "pose_kinematics_metrics.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.feature_extraction.entrypoints.compute_pose_kinematics \
+        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_pose_kinematics \
           --segmentation-tracking "{input.segmentation_tracking}" \
           --frame-contract "{input.frame_contract}" \
           --output-csv "{output.csv}"
@@ -523,7 +552,7 @@ rule compute_fraction_alive:
         done = FEATURES_DIR / "{experiment}" / "fraction_alive" / "fraction_alive.csv.validated",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.feature_extraction.entrypoints.compute_fraction_alive \
+        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_fraction_alive \
           --segmentation-tracking "{input.segmentation_tracking}" \
           --frame-contract "{input.frame_contract}" \
           --auxiliary-masks-manifest "{input.auxiliary_masks}" \
@@ -545,7 +574,7 @@ rule compute_stage_predictions:
         stage_cfg = lambda wc: json.dumps(config.get("feature_extraction", {}).get("stage_predictions", {})),
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.feature_extraction.entrypoints.compute_stage_predictions           --segmentation-tracking "{input.segmentation_tracking}"           --frame-contract "{input.frame_contract}"           --plate-metadata "{input.plate_metadata}"           --stage-cfg '{params.stage_cfg}'           --output-csv "{output.csv}"
+        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_stage_predictions           --segmentation-tracking "{input.segmentation_tracking}"           --frame-contract "{input.frame_contract}"           --plate-metadata "{input.plate_metadata}"           --stage-cfg '{params.stage_cfg}'           --output-csv "{output.csv}"
         """
 
 
@@ -572,7 +601,7 @@ rule consolidate_features:
         schema = FEATURES_DIR / "{experiment}" / "consolidated" / "consolidated_snip_features.schema.json",
     shell:
         """
-        PYTHONPATH="{PROJECT_ROOT}:{PROJECT_ROOT}/src" "{PYTHON}" -m data_pipeline.feature_extraction.entrypoints.consolidate_features \
+        {RUN} -m data_pipeline.feature_extraction.entrypoints.consolidate_features \
           --segmentation-tracking "{input.segmentation_tracking}" \
           --frame-contract "{input.frame_contract}" \
           --mask-geometry "{input.mask_geometry}" \
