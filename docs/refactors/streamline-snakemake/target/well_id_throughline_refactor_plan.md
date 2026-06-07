@@ -68,10 +68,28 @@
 > - Tests: `tests/data_pipeline/pipeline_orchestrator/test_paths.py` (13 pass) pin every resolved
 >   path to the doc's worked examples + error paths + registry-shape invariants. No regressions
 >   (identifiers 13/13 green; `snakemake -n` still parses).
-> - **OPEN (carried from the doc):** `frame_inventory_well` family is a placeholder
+> - **OPEN (carried from the doc):** `frame_inventory_well` stage is a placeholder
 >   (`experiment_metadata` vs a dedicated `frame_inventory/`); the `.validated` leading-vs-trailing
 >   dot mismatch (`apply_series_mapping` writes leading-dot today, registry emits trailing) — both
->   resolved when those stages are reconstructed.
+>   resolved when those steps are reconstructed.
+
+> **VOCABULARY (LOCKED 2026-06-06) — use these three words consistently everywhere.**
+> Worked out while building `paths.py`; the registry, the Snakefile, and all docs adopt them.
+> | Term | Is | On disk | Cardinality |
+> |---|---|---|---|
+> | **stage** | a PHASE of the pipeline (the user-facing "where am I") | the **top-level folder** under `output_root` (`experiment_metadata`, `computed_features`, `quality_control`, …) | ~10; many steps share one |
+> | **step** | one unit of work WITHIN a stage (a rule/function/`tasks.py` verb's **output slot**) | NOT a folder — it is a **registry key** (`PIPELINE_STEPS`) | many per stage |
+> | **artifact** | one FILE a step produces (`.validated`/`.provenance.json` are DERIVED sidecars) | a **filename** (a step's `artifacts` dict holds 1+) | 1+ per step |
+> Path shape: `output_root / {stage} / {experiment} / [per_well/{well_id}/] {artifact}`.
+> - **step ≠ rule.** One step can be acted on by several rules — e.g. `frame_inventory_well` (step)
+>   is written by `build_frame_inventory_well` AND `validate_frame_inventory_well` (rules). That is
+>   why a step key is a **NOUN** (the output slot), never a rule verb (`build_*`): a noun reads
+>   right from every rule that touches it.
+> - **This RENAMES the earlier `paths.py` field/symbol names** (the prior status banner above used
+>   the placeholder "STAGES table" / `family` field): the dict is now **`PIPELINE_STEPS`**, the
+>   coarse field is **`stage`** (was `family`), and the dir helper is **`step_dir`** (was
+>   `stage_dir`). `artifact_path`/`validated_path`/`provenance_path` keep their names; their first
+>   positional arg is now `step`. Tests updated; 13 pass.
 
 ---
 

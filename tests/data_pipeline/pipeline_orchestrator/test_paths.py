@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 
 from data_pipeline.pipeline_orchestrator.orchestration import (
-    STAGES,
+    PIPELINE_STEPS,
     artifact_path,
     provenance_path,
-    stage_dir,
+    step_dir,
     validated_path,
 )
 
@@ -70,8 +70,8 @@ def test_frame_inventory_merged_uses_experiment_id():
         ROOT / "experiment_metadata" / EXP / f"{EXP}_frame_inventory.csv"
 
 
-def test_stage_dir_per_well():
-    assert stage_dir(ROOT, "frame_inventory_well", EXP, path_mode="per_well", well_id=WELL) == \
+def test_step_dir_per_well():
+    assert step_dir(ROOT, "frame_inventory_well", EXP, path_mode="per_well", well_id=WELL) == \
         ROOT / "experiment_metadata" / EXP / "per_well" / WELL
 
 
@@ -94,13 +94,13 @@ def test_per_well_without_well_id_raises():
 
 def test_unknown_path_mode_raises():
     with pytest.raises(ValueError):
-        stage_dir(ROOT, "discover_wells", EXP, path_mode="sideways")
+        step_dir(ROOT, "discover_wells", EXP, path_mode="sideways")
 
 
 # ── registry shape invariants ───────────────────────────────────────────────────────────────
 
-def test_every_stage_has_required_keys():
-    for stage, spec in STAGES.items():
-        assert "family" in spec, f"{stage} missing family"
-        assert spec["fanout"] in ("experiment", "per_well_then_merge"), f"{stage} bad fanout"
-        assert spec["artifacts"], f"{stage} has no artifacts"
+def test_every_step_has_required_keys():
+    for step, spec in PIPELINE_STEPS.items():
+        assert "stage" in spec, f"{step} missing stage"
+        assert spec["fanout"] in ("experiment", "per_well_then_merge"), f"{step} bad fanout"
+        assert spec["artifacts"], f"{step} has no artifacts"
