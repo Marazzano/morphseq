@@ -88,6 +88,7 @@ ruleorder: generate_auxiliary_masks_well > aggregate_auxiliary_masks
 ruleorder: segment_and_track_per_well > merge_segmentation_tracking
 ruleorder: run_snip_processing_per_well > merge_snip_manifests
 
+include: str(WORKFLOW_DIR / "rules" / "frame_inventory.smk")
 include: str(WORKFLOW_DIR / "rules" / "quality_control.smk")
 
 def experiment_well_ids(experiment: str) -> list[str]:
