@@ -4,6 +4,13 @@ The current live pipeline still produces frame_contract.csv as the physical fram
 This module is a behavior-preserving adapter: it treats that table as the legacy source of the
 new frame_inventory product, splits it into per-well shards, validates those shards, and
 merges shards back into the experiment-level inventory.
+
+AUDIT (2026-06-07): docs/refactors/streamline-snakemake/target/frame_inventory_well_runner_audit.md
+records the open gaps here — validate_frame_inventory is the WEAK schema check (not yet the strict
+file-level gate the stitched-handoff contract specifies; finding #2), merge_frame_inventory_shards
+duplicates well_runner.concat_well_shards_to_file (finding #4), the well_id filter assumes a global
+well_id already in frame_contract.csv (pre-Scope-2 artifacts have a local one; finding #5), and the
+unique key still uses time_int rather than the canonical time_index (finding #6).
 """
 
 from __future__ import annotations
@@ -55,8 +62,12 @@ def build_frame_inventory_for_well(
     )
     shard = frame_df.loc[mask].copy()
     if shard.empty:
+        # TODO(Scope 2): a pre-Scope-2 frame_contract.csv may carry a LOCAL well_id (e.g. 'A01'),
+        # so the global-well_id filter finds nothing — regenerate the source. (Audit finding #5.)
         raise ValueError(
-            f"No frame_contract rows for experiment={experiment_id!r}, well_id={global_well_id!r}."
+            f"No frame_contract rows for experiment={experiment_id!r}, well_id={global_well_id!r}. "
+            "The source may be a pre-Scope-2 artifact whose well_id is still a local label; "
+            "regenerate frame_contract.csv with the global well_id grammar."
         )
     _validate_unique_keys(shard, context="frame_inventory")
     output_csv = Path(output_csv)
@@ -66,7 +77,13 @@ def build_frame_inventory_for_well(
 
 
 def validate_frame_inventory(input_csv: Path, output_flag: Path) -> pd.DataFrame:
-    """Validate one frame_inventory table and write its sentinel."""
+    """Validate one frame_inventory table and write its sentinel.
+
+    TODO(Scope 2): this is the WEAK interim check (schema columns + nulls + unique key only). The
+    stitched_handoff_contract.md gate is strict + file-level: paths exist, images open, real dims
+    == declared, micrometers_per_pixel > 0, BF contiguous, channels rectangular, derived ids
+    recomputed from atoms. Promote this then (audit finding #2).
+    """
     df = _read_frame_inventory_table(Path(input_csv))
     _validate_unique_keys(df, context="frame_inventory")
     output_flag = Path(output_flag)
@@ -96,6 +113,7 @@ def merge_frame_inventory_shards(input_csvs: Sequence[Path], output_csv: Path) -
 
     merged = pd.concat(frames, axis=0, ignore_index=True)
     _validate_unique_keys(merged, context="frame_inventory")
+    # TODO(Scope 2): time_int → canonical time_index (audit finding #6).
     sort_cols = [c for c in ["experiment_id", "well_id", "channel_id", "time_int"] if c in merged.columns]
     if sort_cols:
         merged = merged.sort_values(sort_cols).reset_index(drop=True)

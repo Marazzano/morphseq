@@ -6,6 +6,16 @@ still builds ``frame_contract.csv`` as the physical frame table; these rules spl
 per-well inventory shards and merge those shards back to the experiment-level inventory.
 
 Do not split detection/segmentation here. Do not bulk-import stale rule fragments.
+
+⚠️ FORWARD DECLARATION (2026-06-07). These rules are NOT yet on the default DAG: `rule all` does
+not request the per-well shards or the merged inventory, and segmentation still reads
+`frame_contract.csv` directly. They run only when their output is named on the CLI. Scope 5 wires
+them into the spine when segmentation moves onto the per-well shard. Until then this file is a
+parsed-but-dormant forward declaration (mirrors the `paths.py` banner).
+
+AUDIT (2026-06-07): docs/refactors/streamline-snakemake/target/frame_inventory_well_runner_audit.md
+(finding #1 = this dead branch; #3 = the merged-level validate rule double-validates a file the
+merge already checked).
 """
 
 import importlib.util
