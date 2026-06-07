@@ -14,6 +14,11 @@ from data_pipeline.metadata_ingest.scope.keyence.map_series_to_wells import map_
 from data_pipeline.metadata_ingest.scope.yx1.map_series_to_wells import map_series_to_wells_yx1
 from data_pipeline.metadata_ingest.scope.shared.apply_series_mapping import apply_series_mapping
 from data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
+from data_pipeline.metadata_ingest.frame_inventory import (
+    build_frame_inventory_for_well,
+    merge_frame_inventory_shards,
+    validate_frame_inventory,
+)
 from data_pipeline.segmentation_and_tracking.pipelines.segmentation_and_tracking import run_segmentation_and_tracking
 
 
@@ -117,6 +122,23 @@ def cmd_materialize_stitched(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_build_frame_inventory_for_well(args: argparse.Namespace) -> None:
+    build_frame_inventory_for_well(
+        frame_contract_csv=args.frame_contract_csv,
+        experiment_id=args.experiment,
+        well_id=args.well_id,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_frame_inventory(args: argparse.Namespace) -> None:
+    validate_frame_inventory(input_csv=args.input_csv, output_flag=args.output_flag)
+
+
+def cmd_merge_frame_inventory(args: argparse.Namespace) -> None:
+    merge_frame_inventory_shards(input_csvs=args.inputs, output_csv=args.output_csv)
+
+
 def cmd_segmentation_and_tracking(args: argparse.Namespace) -> None:
     cfg = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
     run_segmentation_and_tracking(
@@ -213,6 +235,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_mat.add_argument("--overwrite", default="false")
     p_mat.add_argument("--done-flag", type=Path, required=False)
     p_mat.set_defaults(func=cmd_materialize_stitched)
+
+    p_fi_build = sub.add_parser("build-frame-inventory-for-well")
+    p_fi_build.add_argument("--frame-contract-csv", type=Path, required=True)
+    p_fi_build.add_argument("--experiment", required=True)
+    p_fi_build.add_argument("--well-id", required=True)
+    p_fi_build.add_argument("--output-csv", type=Path, required=True)
+    p_fi_build.set_defaults(func=cmd_build_frame_inventory_for_well)
+
+    p_fi_validate = sub.add_parser("validate-frame-inventory")
+    p_fi_validate.add_argument("--input-csv", type=Path, required=True)
+    p_fi_validate.add_argument("--output-flag", type=Path, required=True)
+    p_fi_validate.set_defaults(func=cmd_validate_frame_inventory)
+
+    p_fi_merge = sub.add_parser("merge-frame-inventory")
+    p_fi_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
+    p_fi_merge.add_argument("--output-csv", type=Path, required=True)
+    p_fi_merge.set_defaults(func=cmd_merge_frame_inventory)
 
     p_sat = sub.add_parser("segmentation-and-tracking")
     p_sat.add_argument("--frame-contract-csv", type=Path, required=True)
