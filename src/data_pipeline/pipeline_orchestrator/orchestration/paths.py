@@ -152,13 +152,14 @@ PIPELINE_STEPS: dict[str, dict] = {
         "artifacts": {"wells": "discovered_wells.txt"},  # one well_id per line
     },
 
-    # ── POST-FAN (per well_id) — frame inventory joins the spine ──────────────
-    # Key is the NOUN (the output slot), not a rule verb: this one step is written by TWO rules —
-    # build_frame_inventory_for_well (writes the shard) + validate_frame_inventory_for_well
-    # (writes only the .validated sentinel + report; one-file+sentinel model, see
-    # stitched_handoff_contract.md). A neutral noun key reads right from both. Do NOT rename to
-    # build_*. The per_well shard names the WELL; the merged view names the EXPERIMENT — two
-    # honest templates, so paths.py never has to fabricate a {well_id} value for the merged file.
+    # ── POST-FAN — frame inventory joins the spine ────────────────────────────
+    # "frame_inventory" is the logical product (a noun), kept as ONE step. Snakemake may use
+    # several rules around it: build_frame_inventory_for_well writes the per-well shards,
+    # validate_frame_inventory_for_well writes validation sentinels/reports, and a merge writes the
+    # experiment-level view (one-file+sentinel model, see stitched_handoff_contract.md). Those are
+    # actions (verbs); the registry keeps one noun-like step for the product they all touch. The
+    # per_well shard names the WELL; the merged view names the EXPERIMENT — two honest templates,
+    # so paths.py never has to fabricate a {well_id} value for the merged file.
     "frame_inventory": {
         "stage": "experiment_metadata",  # OPEN (findings #5 leans a dedicated frame_inventory/
                                          # stage); placeholder until that is decided.
