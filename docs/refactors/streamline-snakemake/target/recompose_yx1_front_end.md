@@ -62,6 +62,7 @@ flow into one job. The shared pipeline begins at the canonical stitched handoff 
 - timestamp jump detection
 - KMeans QC
 - cleanup / dead-code removal
+- `generate_xy_reference.py` relocation / dead-helper cleanup
 
 ## What L2 has today (inventory + narrative judgment)
 
@@ -70,7 +71,7 @@ flow into one job. The shared pipeline begins at the canonical stitched handoff 
 | `yx1/extract_scope_metadata.py` (271) | opens ND2, reads calibration/dims/channels, imputes+monotonizes timestamps, normalizes channel, writes `scope_metadata__yx1.csv` | **Partial.** Honest name/docstring, BUT mints `well_id`/`image_id` at ingest (lines ~212-213) before a real well exists — violates "well_id born at the join." Does NOT emit stage XY. Duplicate `'time_int'` dict key. |
 | `yx1/map_series_to_wells.py` (510) | **re-opens the ND2** for stage XY, KD-tree matches to a reference grid, writes `series_well_mapping.csv` + `.provenance.json` | **Fails the central rule.** Target says map is **CSV→CSV**; this re-reads raw (the 2nd raw metadata read in Phase 1). Hardcoded absolute `DEFAULT_REF_XY_PATH` (line ~21). Dead helpers `_parse_series_number_map`/`_build_implicit_mapping`. |
 | `yx1/validate_xy_reference_grid.py` (200) | geometric sanity-check on the reference grid; fail-loud with previews | **Good — the exemplar.** Keyword-only, fail-loud-with-the-words. Match this altitude. |
-| `yx1/generate_xy_reference.py` (232) | offline one-shot tool: builds the `well,x_um,y_um` reference CSV from a verified experiment | **Out-of-band, fine.** NOT a DAG node. Hardcodes ref experiment + `morphseq_playground` paths; duplicates `extract_nd2_stage_positions` (drift risk). |
+| `yx1/generate_xy_reference.py` (232) | offline one-shot tool: builds the `well,x_um,y_um` reference CSV from a verified experiment | **Out-of-band / Phase 1B cleanup.** NOT a DAG node. Hardcodes ref experiment + `morphseq_playground` paths; duplicates `extract_nd2_stage_positions` (drift risk). |
 
 ## The real-data lessons from L1 (`build01B`) — must survive
 1. **Distance tolerance = half-grid-spacing** (`max_distance_um=4500` ≈ 9000/2). A match beyond half a
@@ -108,7 +109,7 @@ under `scope/yx1/`). The join and everything after are shared — out of scope h
 1. **`extract_scope_metadata.py` — reorient to a pure raw-reader.**
    - Emit acquisition facts **+ stage XY (`x_um`,`y_um`) per series**.
    - Emit only `raw_position_label` (the raw ND2 position label). **Remove `well_id`/`image_id` minting** —
-     those are born at the join. Fix the duplicate `'time_int'` key.
+     those are born at the join; `image_id` is minted later when frames/images are materialized and the final frame key exists. Fix the duplicate `'time_int'` key.
    - Phase 1B: port the BF-channel env override + timestamp jump-detection (lessons 6-7) only if the smoke run needs them.
    - Schema: add `x_um`/`y_um` to `REQUIRED_COLUMNS_SCOPE_METADATA` (⚠️ shared schema — coordinate; see
      "Cross-cutting" below).
@@ -120,15 +121,15 @@ under `scope/yx1/`). The join and everything after are shared — out of scope h
    - Phase 1B: port a lightweight `_qc_well_assignments` as a post-match assertion (lesson 5) only if the smoke run needs it.
    - Delete dead `_parse_series_number_map`/`_build_implicit_mapping`.
 3. **`validate_xy_reference_grid.py` — keep as-is** (the exemplar).
-4. **`generate_xy_reference.py` — relocate** to a `tools/`-style location (not a DAG node);
+4. **Phase 1B / cleanup: `generate_xy_reference.py` — relocate** to a `tools/`-style location (not a DAG node);
    de-duplicate `extract_nd2_stage_positions` (import one shared `nd2_stage_positions` helper).
 
 ## Philosophy violations to fix (YX1, Phase 1)
-- NO-LEAKAGE: `extract_scope_metadata.py` mints `well_id`/`image_id` at the wrong moment → move to join.
+- NO-LEAKAGE: `extract_scope_metadata.py` mints `well_id`/`image_id` at the wrong moment → move to join; `image_id` is minted later when frames/images are materialized and the final frame key exists.
 - Second raw metadata read in Phase 1: `map_series_to_wells.py` re-opens the ND2 → CSV→CSV.
 - Hardcoded path string: `DEFAULT_REF_XY_PATH` → config.
 - Minor / safety parity: duplicate `'time_int'` key; dead helpers; `cmd_map_series` self-globs the ND2 (delete once CSV→CSV).
-- Keep BF env override, timestamp jump detection, and KMeans QC in 1B unless the immediate smoke run forces one of them into 1A.
+- Keep BF env override, timestamp jump detection, and KMeans QC in 1B unless the immediate smoke run forces one of them into 1A. The relocation / dead-helper cleanup for `generate_xy_reference.py` also stays in 1B.
 
 ---
 

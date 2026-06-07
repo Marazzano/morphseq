@@ -175,10 +175,10 @@ The front end is **7 rules**: 1 plate root + 2 scope-front + 1 join + 1 fan + 2 
 | `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `stitched_handoff_contract.md`. |
 
 **`well_id` is born at the join, read at discovery (matches code, line 68).**
-`map_series_to_wells` produces only the *mapping* (`raw_position_label → well_index`), not a
-per-row table, so it can't mint `well_id`. `join_series_mapping_to_scope_metadata` is the first
+`map_series_to_wells` produces only the *mapping* (`series`, `raw_position_label` → `well_index`),
+not a per-row table, so it can't mint `well_id`. `join_series_mapping_to_scope_metadata` is the first
 point where every row reliably has both `experiment_id` and resolved `well_index` →
-`well_id = build_well_id(exp, well_index)`. `discover_wells` then just reads the existing column.
+`well_id = build_well_id(experiment_id, well_index)`. `discover_wells` then just reads the existing column.
 (See "The canonical well key" for why `well_id` is canonical everywhere after the fan.)
 
 ---
@@ -228,8 +228,11 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 
 > So there are **two microscope-specific points**: the **metadata front** (`ingest_scope_metadata`
 > + `map_series_to_wells`, on the scope branch before convergence) and the **image build**
-> (`stitch_well`, after the fan). Both *read the raw file*; that's the common thread. The
-> moment data is in canonical tables, the microscope is gone.
+> (`stitch_well`, after the fan). The join is the metadata convergence line: microscope-specific
+> metadata interpretation ends there. Image building has its own native-microscope segment after
+> the fan (`stitch_well`) and converges again at the canonical stitched handoff tree. The common
+> thread is scope-specific interpretation: ingest and stitch read raw data; map is scope-specific
+> but CSV→CSV. The moment data is in canonical tables, the microscope is gone.
 
 ### TARGET dispatch model (DECISIONS, mdcolon 2026-06-03)
 1. **Keyence is first-class — wire it fully.** Today Keyence is **half-wired**: it has
@@ -339,10 +342,10 @@ discover_wells ─► reads well_id column → discovered_wells.txt
   stitching helper (`yx1/stitched_ff_builder.py::compile_yx1_data`) treats the well label as
   an **opaque string**: it's only a dict key (`well_series_mapping`) and the output dir/filename
   component (`output_dir / well_name / "BF" / ...`). It never parses it. So the switch is a
-  **pure substitution** — build the mapping as `{well_id: series_number}` in the Snakefile rule
-  (where `well_id = build_well_id(exp, well_index)` is constructed from `series_well_mapping.csv`), and
-  the dir/filename become `well_id` automatically. **Zero logic change in the helper; one
-  helper call in the rule.**
+  **pure substitution** — build the mapping as `{well_id: series_number}` in the task/backend that prepares stitch inputs
+  (where `well_id = build_well_id(experiment_id, well_index)` is carried through or constructed
+  from a table that already has `well_id`), and the dir/filename become `well_id` automatically.
+  **Zero logic change in the helper; one helper call in the rule.**
 
 > **Supersedes findings-doc "image-tree = local."** The findings doc (Lean MVP Contract,
 > "`well` vs `well_id` in paths") currently says image trees use local `well` to mirror the
@@ -404,8 +407,8 @@ Per the Lean MVP Contract (findings doc): per-stage `stage`, `fanout` ∈
 {`experiment`, `per_well_then_merge`}, optional `subfolder`; per-artifact filename/template
 shape; sentinels (`.validated`, `.provenance.json`) are **derived helpers**, not rows.
 
-All front-end stages are **experiment-grain** (`fanout=experiment`) — they run once per
-experiment, before the fan. They share the `experiment_metadata` stage (unchanged from today).
+All pre-fan front-end stages are **experiment-grain** (`fanout=experiment`) — they run once per
+experiment, before the fan. The immediate post-fan tail begins with `frame_inventory`, which is `per_well_then_merge`. They share the `experiment_metadata` stage (unchanged from today).
 
 ```python
 STAGES = {
@@ -455,7 +458,7 @@ STAGES = {
         "artifacts": {
             "inventory": {
                 "per_well": "{well_id}_frame_inventory.csv",  # well_id IN the filename
-                "merged": "{exp}_frame_inventory.csv",
+                "merged": "{experiment_id}_frame_inventory.csv",
             },
         },
     },
