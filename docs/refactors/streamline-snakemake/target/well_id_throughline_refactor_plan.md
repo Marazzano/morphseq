@@ -51,6 +51,28 @@
 >   `lib/`. Same kingdom boundary (orchestration ≠ identity), clearer name. Treat every
 >   "`pipeline_orchestrator/lib/`" below as "`pipeline_orchestrator/orchestration/`".
 
+> **STATUS UPDATE (2026-06-06): the `paths.py` registry (front-end slice) is DONE.**
+> On branch `mdcolon/20260222_docs_snakemake_remake`:
+> - `pipeline_orchestrator/orchestration/{__init__.py,paths.py}` created. `paths.py` holds the
+>   one pipeline-wide `STAGES` table + `artifact_path`/`validated_path`/`provenance_path`/
+>   `stage_dir`, with `path_mode ∈ {experiment, per_well, merged}`. Built strictly to the spec in
+>   `target/front_end_naming_and_flow.md` (§ PATHS.PY REGISTRY ROWS / Resolved paths).
+> - **DECISION (forward declaration):** the registry names the **TARGET** artifacts only
+>   (`frame_inventory`, `discovered_wells.txt`, `ingest_*`/`join_*` stage keys), NOT today's
+>   on-disk names (`frame_contract.csv`, `wells.txt`). It is the contract Scope 2/5 converge onto
+>   and is intentionally **not yet wired into the live Snakefile** — each stage is pointed at the
+>   registry as it is reconstructed.
+> - **Coverage = front-end stages only** (the two ingest lineages, `map_series_to_wells`, the
+>   join, `discover_wells`, `frame_inventory_well`). Back-half rows (segmentation/snips/aux/
+>   features/QC/analysis_ready) are added in Scope 5 once their grain/family are specified.
+> - Tests: `tests/data_pipeline/pipeline_orchestrator/test_paths.py` (13 pass) pin every resolved
+>   path to the doc's worked examples + error paths + registry-shape invariants. No regressions
+>   (identifiers 13/13 green; `snakemake -n` still parses).
+> - **OPEN (carried from the doc):** `frame_inventory_well` family is a placeholder
+>   (`experiment_metadata` vs a dedicated `frame_inventory/`); the `.validated` leading-vs-trailing
+>   dot mismatch (`apply_series_mapping` writes leading-dot today, registry emits trailing) — both
+>   resolved when those stages are reconstructed.
+
 ---
 
 ## Why this exists
