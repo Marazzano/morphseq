@@ -104,7 +104,7 @@ The front of the pipeline is **two independent metadata lineages** that run in p
 
 ## 🌊 FLOW — the scope branch (ONE raw read, then CSV all the way down)
 
-The scope lineage reads the raw file **exactly once** (`ingest_scope_metadata`); everything
+The scope lineage reads the raw metadata **exactly once** in Phase 1 (`ingest_scope_metadata`); everything
 after is CSV→CSV. The **convergence line** (where the microscope stops mattering) sits right
 after `map_series_to_wells`.
 
