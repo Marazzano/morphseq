@@ -26,7 +26,6 @@ REQUIRED_COLUMNS_FRAME_CONTRACT = [
 ]
 
 UNIQUE_KEY_FRAME_CONTRACT = (
-    "experiment_id",
     "well_id",
     "channel_id",
     "time_int",

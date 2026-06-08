@@ -6,15 +6,15 @@ from data_pipeline.schemas.segmentation import REQUIRED_COLUMNS_SEGMENTATION_TRA
 from ._shared import validate_schema
 
 
-def build_segmentation_tracking_contract(mask_rle_df: pd.DataFrame, *, well_index: int) -> pd.DataFrame:
+def build_segmentation_tracking_contract(mask_rle_df: pd.DataFrame, *, well_index: str) -> pd.DataFrame:
     """
-    Build the legacy-ish `segmentation_tracking.csv` contract from mask_rle rows.
+    Build the `segmentation_tracking.csv` contract from mask_rle rows.
 
     Downstream pipelines primarily consume this file.
     """
     df = mask_rle_df.copy()
     if "well_index" not in df.columns:
-        df["well_index"] = int(well_index)
+        df["well_index"] = str(well_index)
 
     # Map names expected by REQUIRED_COLUMNS_SEGMENTATION_TRACKING.
     rename = {

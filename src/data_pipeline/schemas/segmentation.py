@@ -8,8 +8,7 @@ which contains embryo masks, tracking metadata, and SAM2-specific fields.
 REQUIRED_COLUMNS_SEGMENTATION_TRACKING = [
     # Core IDs
     'experiment_id',
-    'video_id',
-    'well_id',              # Well identifier for grouping
+    'well_id',              # Global well id: {experiment_id}_{well_index}
     'well_index',
     'image_id',
     'embryo_id',
@@ -42,7 +41,6 @@ REQUIRED_COLUMNS_SEGMENTATION_TRACKING = [
 REQUIRED_COLUMNS_FRAME_DETECTIONS = [
     "experiment_id",
     "well_id",
-    "video_id",
     "image_id",
     "time_int",
     "detection_index",
@@ -72,7 +70,6 @@ UNIQUE_KEY_FRAME_DETECTIONS = [
 REQUIRED_COLUMNS_SEED_SELECTION = [
     "experiment_id",
     "well_id",
-    "video_id",
     "seed_time_int",
     "seed_image_id",
     "num_detections",
@@ -87,13 +84,11 @@ REQUIRED_COLUMNS_SEED_SELECTION = [
 UNIQUE_KEY_SEED_SELECTION = [
     "experiment_id",
     "well_id",
-    "video_id",
     "run_id",
 ]
 
 REQUIRED_COLUMNS_TRACK_INSTANCES = [
     "experiment_id",
-    "video_id",
     "well_id",
     "well_index",
     "image_id",
@@ -128,7 +123,6 @@ UNIQUE_KEY_TRACK_INSTANCES = [
 
 REQUIRED_COLUMNS_MASK_RLE = [
     "experiment_id",
-    "video_id",
     "well_id",
     "image_id",
     "embryo_id",

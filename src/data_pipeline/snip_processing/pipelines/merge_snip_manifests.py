@@ -19,13 +19,9 @@ def merge_snip_manifests(*, experiment: str, output_root: Path, write_views: boo
         views_root.mkdir(parents=True, exist_ok=True)
 
     all_wells = sorted([p.name for p in per_well_root.iterdir() if p.is_dir()])
-    qualified = [w for w in all_wells if str(w).startswith(f"{experiment}_")]
-    wells = sorted(qualified or all_wells)
-    if not wells:
+    if not all_wells:
         raise ValueError(f"No per-well snip outputs found under: {per_well_root}")
-
-    def _slug(well_dir_name: str) -> str:
-        return str(well_dir_name).split("_")[-1]
+    wells = all_wells
 
     def _is_valid_well(well_root: Path) -> bool:
         return (well_root / "contracts" / ".snip_processing.validated").exists()
@@ -54,6 +50,7 @@ def merge_snip_manifests(*, experiment: str, output_root: Path, write_views: boo
     valid_wells = [w for w in wells if _is_valid_well(per_well_root / w)]
     if not valid_wells:
         raise ValueError(f"No validated per-well snip manifests found under: {per_well_root}")
+
 
     parts_pq = []
     parts_csv = []
@@ -85,11 +82,10 @@ def merge_snip_manifests(*, experiment: str, output_root: Path, write_views: boo
     (views_root / "raw_crops").mkdir(parents=True, exist_ok=True)
 
     for w in valid_wells:
-        slug = _slug(w)
         well_root = per_well_root / w
-        _symlink_rel_force(well_root, views_root / "wells" / slug, allow_missing=True)
-        _symlink_rel_force(well_root / "processed", views_root / "processed" / slug, allow_missing=True)
-        _symlink_rel_force(well_root / "raw_crops", views_root / "raw_crops" / slug, allow_missing=True)
+        _symlink_rel_force(well_root, views_root / "wells" / w, allow_missing=True)
+        _symlink_rel_force(well_root / "processed", views_root / "processed" / w, allow_missing=True)
+        _symlink_rel_force(well_root / "raw_crops", views_root / "raw_crops" / w, allow_missing=True)
 
 
 def _parse_args() -> argparse.Namespace:

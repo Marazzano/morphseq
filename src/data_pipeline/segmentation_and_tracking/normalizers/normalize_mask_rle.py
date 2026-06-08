@@ -17,7 +17,6 @@ def normalize_mask_rle(
     *,
     experiment_id: str,
     well_id: str,
-    video_id: str,
     channel_id: str,
 ) -> pd.DataFrame:
     validate_provenance(masks, stage_name="mask_rle")
@@ -31,7 +30,6 @@ def normalize_mask_rle(
         rows.append(
             {
                 "experiment_id": str(experiment_id),
-                "video_id": str(video_id),
                 "well_id": str(well_id),
                 "image_id": str(m.image_id),
                 "embryo_id": str(m.embryo_id),

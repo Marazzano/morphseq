@@ -18,15 +18,9 @@ def merge_contracts(*, experiment: str, output_root: Path) -> None:
     views_root.mkdir(parents=True, exist_ok=True)
 
     all_wells = sorted([p.name for p in per_well_root.iterdir() if p.is_dir()])
-    # Prefer experiment-qualified per_well directories (e.g. "20240418_A01") when present.
-    qualified = [w for w in all_wells if str(w).startswith(f"{experiment}_")]
-    wells = sorted(qualified or all_wells)
-    if not wells:
+    if not all_wells:
         raise ValueError(f"No per-well outputs found under: {per_well_root}")
-
-    def _slug(well_dir_name: str) -> str:
-        # per_well directories are often experiment-qualified (e.g. 20240418_A01).
-        return str(well_dir_name).split("_")[-1]
+    wells = all_wells
 
     def _symlink_rel_force(src: Path, dst: Path, *, allow_missing: bool = True) -> bool:
         """
@@ -137,37 +131,36 @@ def merge_contracts(*, experiment: str, output_root: Path) -> None:
 
     # Build symlink-only browse views into the per-well shards.
     for well in valid_wells:
-        slug = _slug(well)
         well_root = per_well_root / well
 
-        _symlink_rel_force(well_root, views_root / "wells" / slug, allow_missing=True)
+        _symlink_rel_force(well_root, views_root / "wells" / well, allow_missing=True)
 
         # Raw frames / raw video (head-agnostic)
         _symlink_rel_force(
             well_root / "artifacts" / "raw_frames",
-            views_root / "frames" / "raw" / slug,
+            views_root / "frames" / "raw" / well,
             allow_missing=True,
         )
         _symlink_rel_force(
-            well_root / "artifacts" / "raw_video" / f"{slug}_raw.mp4",
-            views_root / "videos" / "raw" / f"{slug}_raw.mp4",
+            well_root / "artifacts" / "raw_video" / f"{well}_raw.mp4",
+            views_root / "videos" / "raw" / f"{well}_raw.mp4",
             allow_missing=True,
         )
 
         for head in per_well_heads.get(well, ["embryo_mask"]):
             _symlink_rel_force(
                 well_root / "masks" / head,
-                views_root / "masks" / head / slug,
+                views_root / "masks" / head / well,
                 allow_missing=True,
             )
             _symlink_rel_force(
-                well_root / "artifacts" / "overlays" / head / f"{slug}_{head}_overlay.mp4",
-                views_root / "videos" / "overlays" / head / f"{slug}_{head}_overlay.mp4",
+                well_root / "artifacts" / "overlays" / head / f"{well}_{head}_overlay.mp4",
+                views_root / "videos" / "overlays" / head / f"{well}_{head}_overlay.mp4",
                 allow_missing=True,
             )
             _symlink_rel_force(
                 well_root / "artifacts" / "overlays" / head / "frames",
-                views_root / "frames" / "overlays" / head / slug,
+                views_root / "frames" / "overlays" / head / well,
                 allow_missing=True,
             )
 

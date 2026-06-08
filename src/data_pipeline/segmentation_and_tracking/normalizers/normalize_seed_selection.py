@@ -18,7 +18,6 @@ def normalize_seed_selection(seeds: list[SeedSelection]) -> pd.DataFrame:
             {
                 "experiment_id": str(s.experiment_id),
                 "well_id": str(s.well_id),
-                "video_id": str(s.video_id),
                 "seed_time_int": int(s.seed_time_int),
                 "seed_image_id": str(s.seed_image_id),
                 "num_detections": int(s.num_detections),

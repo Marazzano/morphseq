@@ -202,8 +202,8 @@ def flatten_sam2_json_to_csv(
             seed_frame_info = video_data.get("seed_frame_info", {})
             seed_frame_id = seed_frame_info.get("seed_frame")
 
-            # Extract well_id from video_id (last part after underscore)
-            well_id = video_id.split("_")[-1] if "_" in video_id else video_id
+            # video_id is the global well_id (e.g. "20240418_A01")
+            well_id = video_id
 
             image_ids = video_data.get("image_ids", {})
 

@@ -77,7 +77,6 @@ def ingest_seed_selection(
     *,
     experiment_id: str,
     well_id: str,
-    video_id: str,
     min_detections: int = 1,
 ) -> SeedSelection:
     # Convert to the legacy selection input shape: image_id -> list[{"confidence":...}, ...]
@@ -100,7 +99,6 @@ def ingest_seed_selection(
     return SeedSelection(
         experiment_id=str(experiment_id),
         well_id=str(well_id),
-        video_id=str(video_id),
         seed_time_int=seed_time_int,
         seed_image_id=str(seed_image_id),
         num_detections=num,

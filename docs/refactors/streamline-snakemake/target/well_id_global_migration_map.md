@@ -34,13 +34,22 @@ the same pass, or an old local `A01` will silently fail to match a new global `2
 
 ---
 
-## STATUS (2026-06-05)
+## STATUS (2026-06-07)
 - **Section A (grammar): DONE.** Global `well_id`-first constructors + `split_well_id` +
   `validate_well_id` implemented; 13 tests pass.
 - **Section C (6 mint sites): DONE.** All metadata-ingest mint sites pass the new args; no
   old-arity calls remain; all 10 importers green. (Also removed the now-dead `experiment_id`
   param from `ingest_propagation` — well_id-first `build_embryo_id` made it unused.)
-- **Sections B, D, E, F: NOT STARTED** (deferred, downstream of the foundation).
+- **Section B (schemas): DONE.** `video_id` deleted from all 6 segmentation schema constants +
+  `UNIQUE_KEY_SEED_SELECTION`. `UNIQUE_KEY_FRAME_CONTRACT` drops `experiment_id` (well_id global).
+- **Section D (landmines): DONE.** All 7 defensive re-derivation sites fixed in one pass.
+  Per-well dirs now use global `well_id`; merge scripts drop `_slug()`; `csv_formatter.py` bug fixed.
+- **Section E (video_id collapse): PARTIAL.** `segmentation_and_tracking/` normalizers, raw_types,
+  and ingestors fully cleaned. `video_generation/` subsystem (6 files) NOT YET — see
+  `HANDOFF_segmentation_tracking_paths_wiring.md`.
+- **Section F (docs/Snakefile): NOT STARTED** — defer to after paths.py wiring.
+- **paths.py wiring: NOT STARTED** — back-half steps (`segmentation_tracking`, `snip_manifest`,
+  etc.) not yet in `PIPELINE_STEPS`. See `HANDOFF_segmentation_tracking_paths_wiring.md`.
 - ⚠️ **Frame-contract rename:** `front_end_naming_and_frame_inventory_flow.md` (Decision, lines 214/367–373)
   renames the table `frame_contract` → `frame_inventory` and splits `build_frame_contract` into
   `build_frame_inventory_well` + `validate_frame_inventory_well`. Section B's `frame_contract.py`

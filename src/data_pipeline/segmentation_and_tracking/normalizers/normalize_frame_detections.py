@@ -16,7 +16,6 @@ def normalize_frame_detections(
     *,
     experiment_id: str,
     well_id: str,
-    video_id: str,
 ) -> pd.DataFrame:
     validate_provenance(detections, stage_name="frame_detections")
 
@@ -34,7 +33,6 @@ def normalize_frame_detections(
                 {
                     "experiment_id": str(experiment_id),
                     "well_id": str(well_id),
-                    "video_id": str(video_id),
                     "image_id": str(image_id),
                     "time_int": int(d.time_int),
                     "detection_index": int(idx),

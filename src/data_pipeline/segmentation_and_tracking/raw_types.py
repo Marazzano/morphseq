@@ -89,7 +89,6 @@ class SeedSelection:
 
     experiment_id: str
     well_id: str
-    video_id: str
     seed_time_int: int
     seed_image_id: str
     num_detections: int

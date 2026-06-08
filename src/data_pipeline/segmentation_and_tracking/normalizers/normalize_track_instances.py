@@ -23,8 +23,7 @@ def normalize_track_instances(
     *,
     experiment_id: str,
     well_id: str,
-    well_index: int,
-    video_id: str,
+    well_index: str,
 ) -> pd.DataFrame:
     validate_provenance(tracks, stage_name="track_instances")
     rows = []
@@ -37,9 +36,8 @@ def normalize_track_instances(
         rows.append(
             {
                 "experiment_id": str(experiment_id),
-                "video_id": str(video_id),
                 "well_id": str(well_id),
-                "well_index": int(well_index),
+                "well_index": str(well_index),
                 "image_id": str(t.image_id),
                 "embryo_id": str(t.embryo_id),
                 "embryo_local_id": str(t.embryo_local_id),

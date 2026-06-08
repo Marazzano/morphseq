@@ -14,7 +14,7 @@ from data_pipeline.segmentation.backends import load_segmentation_backends_confi
 from data_pipeline.segmentation.grounded_sam2.gdino_detection import convert_boxes_to_sam2_format
 from data_pipeline.segmentation.grounded_sam2.propagation import propagate_bidirectional
 from data_pipeline.segmentation.grounded_sam2.frame_organization_for_sam2 import sam2_frame_context
-from data_pipeline.segmentation.grounded_sam2.csv_formatter import extract_well_index
+from data_pipeline.shared.identifiers import split_well_id
 
 from ..normalize_context import NormalizeContext
 from ..ingestors import get_detector_ingestor, get_tracker_ingestor
@@ -64,16 +64,10 @@ def run_segmentation_and_tracking(
     sat_cfg = (pipeline_config.get("segmentation_and_tracking") or {})
     channel_id = str(sat_cfg.get("channel_id", "BF"))
 
-    # Manifest `well_id` is often experiment-qualified (e.g. "20240418_A01").
-    # Use that value for filtering and storage so we match contracts.
+    # well_id is the global id (e.g. "20240418_A01") — use it directly for storage and filtering.
     requested_well_id = str(well_id)
-    if not requested_well_id.startswith(f"{experiment_id}_"):
-        candidate = f"{experiment_id}_{requested_well_id}"
-    else:
-        candidate = requested_well_id
-    storage_well_id = candidate.split("_", 1)[-1]
 
-    shard_dir = output_root / "segmentation_and_tracking" / str(experiment_id) / "per_well" / str(storage_well_id)
+    shard_dir = output_root / "segmentation_and_tracking" / str(experiment_id) / "per_well" / requested_well_id
     shard_dir.mkdir(parents=True, exist_ok=True)
 
     # Canonical per-well output roots (real files).
@@ -84,11 +78,8 @@ def run_segmentation_and_tracking(
 
     # Load manifest and filter to BF frames for this well.
     manifest = pd.read_csv(frame_contract_csv)
-    well_id_col = manifest["well_id"].astype(str)
-    wanted = {str(requested_well_id), candidate}
     well_df = manifest[
-        (manifest["experiment_id"].astype(str) == str(experiment_id))
-        & (well_id_col.isin(wanted))
+        (manifest["well_id"].astype(str) == requested_well_id)
         & (manifest["channel_id"].astype(str) == str(channel_id))
     ].copy()
     if len(well_df) == 0:
@@ -100,18 +91,8 @@ def run_segmentation_and_tracking(
     if max_frames is not None:
         well_df = well_df.head(int(max_frames)).reset_index(drop=True)
 
-    manifest_well_id = str(well_df["well_id"].iloc[0])
-    # Canonical for contracts: match frame_contract well_id.
-    canonical_well_id = manifest_well_id
-    # Human-facing shorthand used in some IDs.
-    well_slug = canonical_well_id.split("_")[-1]
-    video_id = f"{experiment_id}_{well_slug}"
-    # frame_contract well_index may be a string like "A01" (legacy). Normalize to 1-96 index.
-    well_index_raw = str(well_df["well_index"].iloc[0])
-    try:
-        well_index = int(well_index_raw)
-    except ValueError:
-        well_index = int(extract_well_index(well_index_raw))
+    canonical_well_id = str(well_df["well_id"].iloc[0])
+    _, well_index = split_well_id(canonical_well_id)
 
     # Mask head folder naming: embryo_mask, yolk_mask, etc.
     mask_type = str(sat_cfg.get("mask_type", "embryo"))
@@ -150,11 +131,10 @@ def run_segmentation_and_tracking(
     # Optional: raw video (no masks) for quick QC.
     raw_video_cfg = (sat_cfg.get("raw_video") or {})
     if bool(raw_video_cfg.get("enabled", False)):
-        well_slug = str(canonical_well_id).split("_")[-1]
         render_raw_video(
             frames=frames_for_qc,
             out_dir=artifacts_dir / "raw_video",
-            out_name=f"{well_slug}_raw.mp4",
+            out_name=f"{canonical_well_id}_raw.mp4",
             cfg=RawVideoConfig(
                 fps=int(raw_video_cfg.get("fps", 10)),
                 codec=str(raw_video_cfg.get("codec", "mp4v")),
@@ -215,7 +195,7 @@ def run_segmentation_and_tracking(
         raw_dets_all.extend(raw)
 
     det_ctx.stamp(raw_dets_all)
-    det_df = normalize_frame_detections(raw_dets_all, experiment_id=experiment_id, well_id=canonical_well_id, video_id=video_id)
+    det_df = normalize_frame_detections(raw_dets_all, experiment_id=experiment_id, well_id=canonical_well_id)
     det_df.to_parquet(contracts_dir / "frame_detections.parquet", index=False)
 
     # Seed selection.
@@ -223,7 +203,6 @@ def run_segmentation_and_tracking(
         dets_by_image,
         experiment_id=experiment_id,
         well_id=canonical_well_id,
-        video_id=video_id,
         min_detections=int(sat_cfg.get("min_detections", 1)),
     )
     seed.detector_backend = det_ctx.source_backend
@@ -306,7 +285,6 @@ def run_segmentation_and_tracking(
         experiment_id=experiment_id,
         well_id=canonical_well_id,
         well_index=well_index,
-        video_id=video_id,
     )
     tracks_df.to_parquet(contracts_dir / "embryo_track_instances.parquet", index=False)
 
@@ -323,7 +301,6 @@ def run_segmentation_and_tracking(
         raw_masks,
         experiment_id=experiment_id,
         well_id=canonical_well_id,
-        video_id=video_id,
         channel_id=str(channel_id),
     )
     masks_df.to_parquet(contracts_dir / "embryo_mask_rle.parquet", index=False)
@@ -357,7 +334,7 @@ def run_segmentation_and_tracking(
                 segmentation_tracking_csv,
                 output_root=output_root,
                 out_dir=qc_dir,
-                out_name=f"{well_slug}_{render_mask_head}_overlay.mp4",
+                out_name=f"{canonical_well_id}_{render_mask_head}_overlay.mp4",
                 cfg=qc_video_cfg,
                 mask_type=str(render_mask_type) if render_mask_type is not None else None,
                 frame_suffix=f"_{render_mask_head}_overlay",
