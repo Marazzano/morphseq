@@ -95,6 +95,11 @@ From [[current_state_and_next_steps]] §"Recommended order" + [[per_well_through
 §"Next concrete steps". **Not invented here** — reproduced so the plan is self-contained.
 
 ```
+    ✅ DONE (2026-06-07 audit on 20260222):
+    - Scope 1 (shared/identifiers/ split), Scope 3 (env.yaml), paths.py, well_runner.py, tasks.py
+    - Front-end rules wired to TARGET shape (discover_wells reads scope_metadata_mapped.csv)
+    - YX1 Phase 1 recompose: CSV→CSV map_series_to_wells, no premature IDs, x_um/y_um in scope CSV
+
     (F1 resolved: the feature-extraction entrypoints exist on this branch — the gap was a
      branch artifact of the orientation worktree. Verify with: ls src/data_pipeline/
      feature_extraction/entrypoints/ — expect 7 compute_*.py.)
@@ -133,20 +138,20 @@ step 6. Detail: [[well_id_throughline_refactor_plan]] (Scopes), [[per_well_throu
 
 ## 4. Per-stage status table (countable remaining work)
 
-| Bucket | Count | Stages |
+**Updated 2026-06-07 after audit on `20260222_docs_snakemake_remake` (the canonical code branch).**
+
+| Bucket | Count | Stages / items |
 |---|---|---|
 | **built** (rule + code, this branch) | 17 | A1–A5, B0, B1, B2, B3, B4–B8 (features, F1 resolved), Q1, Q3, Q5, Q6*, Q7*, Q8, C1 *(Q6/Q7 are stubs)* |
 | **rewire** (built, reads merged input — Scope 5) | 2 | Q2 viability_qc, Q4 surface_area_qc |
 | **not-built** (no rule/code) | 2 | E1 compute_embeddings, E2 merge_embeddings |
-| **scaffolding** | 1 pkg + 1 split | `embeddings/` (0-byte `__init__.py`, **not-built**); `shared/identifiers/` (Scope 1 = **split an existing 58-line module**, not a create — see §3 step 1). The top-level `identifiers/` 0-byte package is a decoy, not the target. |
-| **infra not-built** | — | `lib/paths.py`, `lib/well_runner.py`, `tasks.py`, `env.yaml` |
+| **infra — BUILT** (was "not-built" in prior version) | — | `shared/identifiers/` split ✅; `orchestration/paths.py` ✅; `orchestration/well_runner.py` ✅; `tasks.py` ✅; `env.yaml` + `env.example.yaml` ✅ |
+| **YX1 Phase 1 recompose — BUILT + SMOKE RUN PASSED 2026-06-07** | — | `extract_yx1_scope_metadata.py` emits `raw_position_label`+`x_um`/`y_um`, no premature IDs; `map_yx1_series_to_wells.py` is CSV→CSV (no ND2 re-open), ref path config-sourced; Snakefile `map_series_to_wells` rule drops `raw_images_dir`; schema updated. Smoke run on `20250912` (95 wells): all 4 stages clean, `well_id=20250912_A01` global IDs confirmed. |
+| **scaffolding** | 1 pkg | `embeddings/` (0-byte `__init__.py`, **not-built**) |
 
 *(Count note: A2 and B0 each have microscope variants; counted once.)*
 
-**Headline:** on the canonical refactor branch the spine is wired **through analysis_ready**
-(features B4–B8 present; F1 was a branch artifact). Remaining work: build **embeddings**
-(E1/E2, the active frontier), rewire the 2 merge-wall QC reads to per-well shards (Scope 5),
-and the per-well infra (`shared/identifiers/` split, `paths.py`, `well_runner.py`, `env.yaml`).
+**Headline:** YX1 Phase 1 recompose and smoke run are complete. Next: **Scope 2** global `well_id` flip (`build_well_id(exp, well)` 2-arg; 6 mint sites) → wire one stage E2E through `paths.py` registry → embeddings (E1/E2).
 
 ---
 

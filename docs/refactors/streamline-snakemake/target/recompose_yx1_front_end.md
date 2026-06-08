@@ -170,9 +170,30 @@ shared side begins at the canonical stitched handoff tree; the native side ends 
   verify-then-delete each against the inlined logic, but only after Phase 1 is green. `frame_tiler.py` stays for both.
 - **The convergence line itself** (`join_...`, `discover_wells`) — neither microscope doc designs it. The seam that matters for the shared pipeline is the canonical stitched handoff tree.
 
-## ✅ DONE-FOR-PHASE-1 (YX1)
-- `ingest_scope_metadata` emits `raw_position_label` + stage XY, no premature `well_id`.
-- `map_series_to_wells` is CSV→CSV (no ND2 re-read), ref path from config.
-- `map_series_to_wells` has no `nd2_path` and does not reopen the ND2.
-- `scope_metadata_mapped.csv` (global `well_id`) + `discovered_wells.txt` produced for 2 YX1 wells of
-  `20250912`, via snakemake, conforming to the philosophy doc. Front-end tests green.
+## ✅ DONE-FOR-PHASE-1 (YX1) — smoke run verified 2026-06-07
+
+### Phase 1A implementation
+- `ingest_scope_metadata` emits `raw_position_label` + stage XY (`x_um`/`y_um`), no premature `well_id`/`image_id`.
+  Duplicate `'time_int'` dict key fixed. Schema updated (`REQUIRED_COLUMNS_SCOPE_METADATA` drops `well_id`/`image_id`/`well_index`, adds `raw_position_label`/`x_um`/`y_um`).
+- Module renamed: `scope/yx1/extract_scope_metadata.py` → `extract_yx1_scope_metadata.py` (matches function name).
+- `map_series_to_wells` is CSV→CSV (no ND2 re-open). `extract_nd2_stage_positions` deleted. `DEFAULT_REF_XY_PATH`
+  replaced by config-sourced `scope_metadata.yx1.ref_xy_csv`. Dead helpers (`_parse_series_number_map`,
+  `_build_implicit_mapping`, `map_nd2_to_wells_by_xy`) deleted. `--raw-images-dir` dropped from Snakefile rule
+  and `tasks.py` parser. `ref_xy_csv` is now a **required** argument (no silent default).
+- Module renamed: `scope/yx1/map_series_to_wells.py` → `map_yx1_series_to_wells.py`.
+- `apply_series_mapping` (the join/convergence) updated to read `raw_position_label` column when present
+  (falls back to `well_index` for Keyence backward compat).
+- `config.yaml` gains `scope_metadata.yx1.ref_xy_csv` key.
+- `env.yaml` gains `conda_base` for Snakemake subshell conda resolution.
+- `discover_wells` rule moved from heredoc to `tasks.py` `discover-wells` verb (fixed NameError).
+
+### Two-Well Smoke Run — PASSED
+- Experiment `20250912` (95 positions, T=113, W=95, Z=15 = 10 735 rows).
+- All 4 stages completed cleanly: `ingest_scope_metadata` → `map_series_to_wells` → `join_series_mapping_to_scope_metadata` → `discover_wells`.
+- XY matching: 95 positions, distance min=0.0 max=0.0 mean=0.0 µm (perfect match against reference grid).
+- `scope_metadata_mapped.csv`: `well_id = 20250912_A01` format (global ID) ✅
+- `discovered_wells.txt`: 95 wells, all global IDs ✅
+
+### Infrastructure fixes uncovered during smoke run
+- `pulp` version conflict: snakemake 7.32.4 requires `pip install "pulp<2.8"` (documented in `env.example.yaml`).
+- Snakefile parse needs `PYTHONPATH` set in the outer `conda run` invocation — wired via `env PYTHONPATH=...` in `RUN` variable.

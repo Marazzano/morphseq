@@ -9,9 +9,9 @@ from pathlib import Path
 from data_pipeline.metadata_ingest.experiment_identity import resolve_experiment_id
 from data_pipeline.metadata_ingest.plate.plate_processing import process_plate_layout
 from data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata import extract_keyence_scope_metadata
-from data_pipeline.metadata_ingest.scope.yx1.extract_scope_metadata import extract_yx1_scope_metadata
+from data_pipeline.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import extract_yx1_scope_metadata
 from data_pipeline.metadata_ingest.scope.keyence.map_series_to_wells import map_series_to_wells_keyence
-from data_pipeline.metadata_ingest.scope.yx1.map_series_to_wells import map_series_to_wells_yx1
+from data_pipeline.metadata_ingest.scope.yx1.map_yx1_series_to_wells import map_series_to_wells_yx1
 from data_pipeline.metadata_ingest.scope.shared.apply_series_mapping import apply_series_mapping
 from data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
 from data_pipeline.metadata_ingest.frame_inventory import (
@@ -63,15 +63,15 @@ def cmd_extract_scope(args: argparse.Namespace) -> None:
 
 def cmd_map_series(args: argparse.Namespace) -> None:
     if args.microscope == "YX1":
-        experiment_id = resolve_experiment_id(args.raw_images_dir, args.microscope, explicit_experiment_id=args.experiment)
-        nd2_files = sorted(args.raw_images_dir.glob("*.nd2"))
-        nd2_path = nd2_files[0] if nd2_files else None
+        if not args.ref_xy_csv:
+            raise ValueError(
+                "--ref-xy-csv is required for YX1 mapping. "
+                "Set scope_metadata.yx1.ref_xy_csv in config.yaml."
+            )
         map_series_to_wells_yx1(
             scope_metadata_csv=args.scope_csv,
             output_mapping_csv=args.output_mapping_csv,
             output_provenance_json=args.output_provenance_json,
-            nd2_path=nd2_path,
-            use_xy_reference=True,
             ref_xy_csv=args.ref_xy_csv,
             max_distance_um=args.max_distance_um,
             allow_unmapped_wells=_parse_bool(args.allow_unmapped_wells),
@@ -139,6 +139,26 @@ def cmd_merge_frame_inventory(args: argparse.Namespace) -> None:
     merge_frame_inventory_shards(input_csvs=args.inputs, output_csv=args.output_csv)
 
 
+def cmd_discover_wells(args: argparse.Namespace) -> None:
+    import pandas as pd
+    mapped_csv = Path(args.mapped_csv)
+    df = pd.read_csv(mapped_csv)
+    if "well_id" not in df.columns:
+        raise ValueError(f"{mapped_csv} is missing required well_id column")
+    seen: set[str] = set()
+    wells: list[str] = []
+    for value in df["well_id"].dropna().astype(str):
+        well_id = value.strip()
+        if not well_id or well_id in seen:
+            continue
+        seen.add(well_id)
+        wells.append(well_id)
+    out = Path(args.output_wells)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(wells) + "\n")
+    print(f"Discovered {len(wells)} wells → {out}")
+
+
 def cmd_segmentation_and_tracking(args: argparse.Namespace) -> None:
     cfg = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
     run_segmentation_and_tracking(
@@ -196,10 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_map = sub.add_parser("map-series-to-wells", aliases=["map-series"])
     p_map.add_argument("--experiment", required=True)
     p_map.add_argument("--microscope", choices=["YX1", "Keyence"], required=True)
-    # Deprecated: plate metadata should not be required for physical series mapping.
-    p_map.add_argument("--plate-csv", type=Path, required=False, default=None)
     p_map.add_argument("--scope-csv", type=Path, required=True)
-    p_map.add_argument("--raw-images-dir", type=Path, required=True)
     p_map.add_argument("--output-mapping-csv", type=Path, required=True)
     p_map.add_argument("--output-provenance-json", type=Path, required=True)
     p_map.add_argument("--ref-xy-csv", type=Path, default=None)
@@ -235,6 +252,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_mat.add_argument("--overwrite", default="false")
     p_mat.add_argument("--done-flag", type=Path, required=False)
     p_mat.set_defaults(func=cmd_materialize_stitched)
+
+    p_discover = sub.add_parser("discover-wells")
+    p_discover.add_argument("--mapped-csv", type=Path, required=True)
+    p_discover.add_argument("--output-wells", type=Path, required=True)
+    p_discover.set_defaults(func=cmd_discover_wells)
 
     p_fi_build = sub.add_parser("build-frame-inventory-for-well")
     p_fi_build.add_argument("--frame-contract-csv", type=Path, required=True)

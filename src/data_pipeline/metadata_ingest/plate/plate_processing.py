@@ -62,7 +62,7 @@ def process_plate_layout(
 
     # Generate well_id (format: experiment_id_well_index)
     if 'well_id' not in df.columns:
-        df['well_id'] = df['well_index'].map(build_well_id)
+        df['well_id'] = df['well_index'].map(lambda w: build_well_id(experiment_id, w))
 
     # Some historical well metadata files do not include temperature.
     # Use zebrafish default culture temperature to preserve schema contract.

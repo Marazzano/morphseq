@@ -6,14 +6,16 @@ including spatial and temporal calibration parameters.
 """
 
 REQUIRED_COLUMNS_SCOPE_METADATA = [
-    # Core identifiers
+    # Raw acquisition identity (pre-mapping; well_id is minted later at the join)
     'experiment_id',
-    'well_id',
-    'well_index',
-    'image_id',
+    'raw_position_label',
     'time_int',
 
-    # Spatial calibration (extracted from microscope)
+    # Stage XY (µm) — per series, T=0; enables CSV→CSV well mapping downstream
+    'x_um',
+    'y_um',
+
+    # Spatial calibration
     'micrometers_per_pixel',
     'image_width_px',
     'image_height_px',
@@ -28,5 +30,4 @@ REQUIRED_COLUMNS_SCOPE_METADATA = [
     'microscope_id',
     'channel',
     'z_position',
-    'time_int',
 ]

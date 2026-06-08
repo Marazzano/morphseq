@@ -49,10 +49,12 @@ env = yaml.safe_load(_ENV_PATH.read_text())
 # rule: it activates the env and puts src/ on PYTHONPATH, then you append `-m <module> ...` or
 # a script path. This replaces the per-rule `PYTHONPATH="..." "{PYTHON}"` boilerplate (Win 1).
 CONDA_ENV = str(env["runtime"]["conda_env"])
+CONDA_BASE = str(env["runtime"].get("conda_base", ""))
+CONDA_BIN = f"{CONDA_BASE}/bin/conda" if CONDA_BASE else "conda"
 DEVICE = str(env["runtime"].get("device", "cuda"))
 SRC_ROOT = f"{PROJECT_ROOT}:{PROJECT_ROOT}/src"
 RUN = (
-    f"conda run -n {CONDA_ENV} --no-capture-output "
+    f"{CONDA_BIN} run -n {CONDA_ENV} --no-capture-output "
     f'env PYTHONPATH="{SRC_ROOT}" python'
 )
 
@@ -116,6 +118,11 @@ SCOPE_METADATA_MAPPED_VALIDATED = validated_path(
 DISCOVERED_WELLS_TXT = artifact_path(
     DATA_ROOT, "discover_wells", "wells", FRONT_END_EXPERIMENT
 )
+
+# YX1 reference plate XY grid (config-sourced; required for CSV→CSV series mapping).
+# Set scope_metadata.yx1.ref_xy_csv in config.yaml to a real path before running YX1.
+_YX1_REF_XY_CSV = config.get("scope_metadata", {}).get("yx1", {}).get("ref_xy_csv", "")
+YX1_REF_XY_CSV = Path(_YX1_REF_XY_CSV) if _YX1_REF_XY_CSV else None
 
 print(f"Project root: {PROJECT_ROOT}")
 print(f"Output root:  {DATA_ROOT}")
@@ -219,26 +226,27 @@ rule ingest_scope_metadata:
 
 rule map_series_to_wells:
     """
-    Physical series-to-well mapping for the configured microscope.
+    Physical series-to-well mapping (CSV→CSV) for the configured microscope.
 
-    The YX1 backend still needs raw ND2 access in this first pass, so the rule keeps
-    raw_images_dir wired through tasks.py even though the path contract is now front-end aligned.
+    YX1: reads stage XY from scope_metadata CSV (no second ND2 open).
+         Requires scope_metadata.yx1.ref_xy_csv in config.yaml.
+    Keyence: near-passthrough (well already resolved at ingest).
     """
     input:
-        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}",
         scope_csv = SCOPE_METADATA_CSV,
     output:
         mapping_csv = SERIES_WELL_MAPPING_CSV,
         provenance_json = SERIES_WELL_MAPPING_PROVENANCE,
     params:
-        experiment_id = "{experiment}"
+        experiment_id = "{experiment}",
+        ref_xy_csv = str(YX1_REF_XY_CSV) if YX1_REF_XY_CSV else "",
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-series-to-wells \
           --experiment "{params.experiment_id}" \
           --microscope "{MICROSCOPE}" \
           --scope-csv "{input.scope_csv}" \
-          --raw-images-dir "{input.raw_images_dir}" \
+          --ref-xy-csv "{params.ref_xy_csv}" \
           --output-mapping-csv "{output.mapping_csv}" \
           --output-provenance-json "{output.provenance_json}"
         """
@@ -328,28 +336,9 @@ checkpoint discover_wells:
         wells = DISCOVERED_WELLS_TXT,
     shell:
         """
-        {RUN} << 'EOF'
-from pathlib import Path
-import pandas as pd
-
-mapped_csv = Path("{input.mapped_csv}")
-df = pd.read_csv(mapped_csv)
-if "well_id" not in df.columns:
-    raise ValueError(f"{mapped_csv} is missing required well_id column")
-
-wells = []
-seen = set()
-for value in df["well_id"].dropna().astype(str):
-    well_id = value.strip()
-    if not well_id or well_id in seen:
-        continue
-    seen.add(well_id)
-    wells.append(well_id)
-
-out = Path("{output.wells}")
-out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text("\n".join(wells) + "\n")
-EOF
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks discover-wells \
+          --mapped-csv "{input.mapped_csv}" \
+          --output-wells "{output.wells}"
         """
 
 def wells_for_experiment(wildcards):

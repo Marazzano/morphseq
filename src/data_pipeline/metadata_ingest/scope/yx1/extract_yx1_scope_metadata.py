@@ -14,8 +14,6 @@ import nd2
 from data_pipeline.schemas.scope_metadata import REQUIRED_COLUMNS_SCOPE_METADATA
 from data_pipeline.schemas.channel_normalization import CHANNEL_NORMALIZATION_MAP
 from data_pipeline.io.validators import validate_dataframe_schema
-from data_pipeline.shared.identifiers import build_image_id
-from data_pipeline.shared.identifiers import build_well_id
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -195,29 +193,43 @@ def extract_yx1_scope_metadata(
 
         log.info(f"Frame interval: {frame_interval_s:.2f}s")
 
-        # Build metadata rows (one per well, timepoint, channel)
+        # Extract stage XY positions (T=0, one per series/position)
+        stage_xy: dict[int, tuple[float, float]] = {}
+        for w_idx in range(n_w):
+            # Frame index at T=0 for position w_idx
+            idx = w_idx * n_z * max(n_c, 1)
+            try:
+                md = nd.frame_metadata(idx)
+                ch0 = getattr(md, "channels", [None])[0]
+                if ch0 and hasattr(ch0, "position"):
+                    stage = ch0.position.stagePositionUm
+                    stage_xy[w_idx] = (
+                        getattr(stage, "x", float("nan")),
+                        getattr(stage, "y", float("nan")),
+                    )
+            except Exception:
+                stage_xy[w_idx] = (float("nan"), float("nan"))
+
+        # Build metadata rows: one row per (position, timepoint, channel).
+        # raw_position_label is the raw ND2 P-index as a string — not a well label.
+        # well_id is minted later at join_series_mapping_to_scope_metadata.
         rows = []
 
         for w_idx in range(n_w):
-            well_index = f"{w_idx:02d}"  # Will be mapped to well ID later
+            raw_position_label = str(w_idx)
+            x_um, y_um = stage_xy.get(w_idx, (float("nan"), float("nan")))
 
             for t_idx in range(n_t):
                 time_s = timestamps[t_idx]
 
-                for c_idx, raw_channel in enumerate(channel_names):
-                    # Normalize channel name
+                for raw_channel in channel_names:
                     channel = _normalize_channel_name(raw_channel)
-
-                    # Build IDs (temporary - will be refined by series mapper)
-                    well_id = build_well_id(experiment_id, well_index)
-                    image_id = build_image_id(well_id, channel, t_idx)
-
                     row = {
                         'experiment_id': experiment_id,
-                        'well_id': well_id,
-                        'well_index': well_index,
-                        'image_id': image_id,
+                        'raw_position_label': raw_position_label,
                         'time_int': t_idx,
+                        'x_um': x_um,
+                        'y_um': y_um,
                         'micrometers_per_pixel': micrometers_per_pixel,
                         'image_width_px': image_width_px,
                         'image_height_px': image_height_px,
@@ -227,8 +239,7 @@ def extract_yx1_scope_metadata(
                         'experiment_time_s': time_s,
                         'microscope_id': 'YX1',
                         'channel': channel,
-                        'z_position': 0,  # Z-stacked, so single plane
-                        'time_int': t_idx,
+                        'z_position': 0,
                     }
                     rows.append(row)
 
@@ -236,7 +247,7 @@ def extract_yx1_scope_metadata(
     df = pd.DataFrame(rows)
 
     log.info(f"Created metadata with {len(df)} rows")
-    log.info(f"Wells: {df['well_index'].nunique()}, Timepoints: {df['time_int'].nunique()}, Channels: {df['channel'].nunique()}")
+    log.info(f"Positions: {df['raw_position_label'].nunique()}, Timepoints: {df['time_int'].nunique()}, Channels: {df['channel'].nunique()}")
 
     # Validate schema
     validate_dataframe_schema(df, REQUIRED_COLUMNS_SCOPE_METADATA, "YX1 scope metadata")

@@ -74,7 +74,10 @@ def apply_series_mapping(
     known_wells = set(str(w) for w in mapping_df.get("well_index", pd.Series(dtype=str)).dropna().unique())
 
     mapped_df = scope_df.copy()
-    mapped_df["well_index_raw"] = mapped_df["well_index"].astype(str)
+    # raw_position_label is the pre-mapping P-index column emitted by ingest_scope_metadata.
+    # Fall back to well_index for Keyence scopes that don't emit raw_position_label.
+    source_col = "raw_position_label" if "raw_position_label" in mapped_df.columns else "well_index"
+    mapped_df["well_index_raw"] = mapped_df[source_col].astype(str)
     raw_ints = pd.to_numeric(mapped_df["well_index_raw"], errors="coerce").dropna().astype(int).tolist()
     prefer_zero_based = (0 in set(raw_ints))
     mapped_df["well_index"] = mapped_df["well_index_raw"].map(
