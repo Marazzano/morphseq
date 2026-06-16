@@ -32,7 +32,7 @@ flow into one job. The shared pipeline begins at the canonical stitched handoff 
 
 ```
   PHASE 1 — METADATA (CPU, implement NOW)                    │  PHASE 2 — STITCH (GPU, specified, deferred)
-  ingest_scope_metadata → map_series_to_wells →             │  stitch_well[well_id]
+  ingest_scope_metadata → map_positions_to_wells →          │  stitch_well[well_id]
   join_series_mapping_to_scope_metadata → discover_wells    │  (LoG focus-projection + frame_tiler stitch)
             (no GPU; the 2-well smoke run needs this)        │  (needs a GPU; depends on Phase 1)
                             └──────────── CONVERGENCE LINE (microscope gone) ────────────┘
@@ -189,7 +189,7 @@ shared side begins at the canonical stitched handoff tree; the native side ends 
 
 ### Two-Well Smoke Run — PASSED
 - Experiment `20250912` (95 positions, T=113, W=95, Z=15 = 10 735 rows).
-- All 4 stages completed cleanly: `ingest_scope_metadata` → `map_series_to_wells` → `join_series_mapping_to_scope_metadata` → `discover_wells`.
+- All 4 stages completed cleanly: `ingest_scope_metadata` → `map_positions_to_wells` → `join_series_mapping_to_scope_metadata` → `discover_wells`.
 - XY matching: 95 positions, distance min=0.0 max=0.0 mean=0.0 µm (perfect match against reference grid).
 - `scope_metadata_mapped.csv`: `well_id = 20250912_A01` format (global ID) ✅
 - `discovered_wells.txt`: 95 wells, all global IDs ✅
@@ -197,3 +197,89 @@ shared side begins at the canonical stitched handoff tree; the native side ends 
 ### Infrastructure fixes uncovered during smoke run
 - `pulp` version conflict: snakemake 7.32.4 requires `pip install "pulp<2.8"` (documented in `env.example.yaml`).
 - Snakefile parse needs `PYTHONPATH` set in the outer `conda run` invocation — wired via `env PYTHONPATH=...` in `RUN` variable.
+
+---
+
+# ════════ PHASE 1C — YX1 ACQUISITION INVENTORY (record-only) — IMPLEMENTED 2026-06-16 ════════
+
+**Companion:** `acquisition_inventory_flow.md` (the full TARGET, written for Keyence's messy
+re-acquisition collisions). **YX1 is the simple, no-collision case** that paves the path before
+Keyence's reconstruction logic lands. **Firewall holds:** this section imports no Keyence logic.
+
+## YX1 is a TENSOR — record everything, collapse nothing
+YX1 is `dask_arr[time, position, Z, channel, Y, X]` (`materialize_stitched_images.py:139-142`). A
+frame's address is a tuple of indices into **one ND2** (Y/X are pixels). The acquisition inventory
+is the **maximal system of record** for that tensor — not a thin address table:
+
+```
+acquisition_inventory__yx1.csv   ONE ROW PER FULL TENSOR COORDINATE (position, z, channel, time)
+   experiment_id, raw_position_label, position_index, z_index,
+   channel_index, channel, raw_channel_name, time_index, acquisition_time_s,
+   x_um, y_um, micrometers_per_pixel, image_width_px, image_height_px,
+   objective_magnification, microscope_id, n_z, source_nd2_path
+```
+
+- **Z is EXPLODED** (one row per `z_index` 0..n_z-1), even though stitch LoG-projects it today —
+  the inventory is the record a future per-Z extraction / z-stack save will read. No per-plane
+  *file* exists (planes are array slices in the ND2) → `source_nd2_path`, no `source_image_path`.
+- **No collision is possible** (one ND2 cell per coordinate) → every YX1 well is `clean` by
+  construction; the cell-uniqueness check is a defensive assertion, the YX1 analogue of Keyence's
+  collision key.
+
+## Axis standardization (the tensor vocabulary) + the `map_positions_to_wells` rename
+The inventory is a NEW artifact, so it is born with the standardized `*_index` names (no Scope-2
+ripple): `time_int`→`time_index`, +`position_index`, +`z_index`, +`channel_index`,
+`experiment_time_s`→`acquisition_time_s`. (The legacy `scope_metadata__yx1.csv` keeps its current
+names until the Scope-2 collapse; it is **byte-for-byte unchanged** by this work — record-only.)
+
+Vocabulary also drove the rename **`map_series_to_wells` → `map_positions_to_wells`** ("series" is
+ND2 jargon; "position" is the tensor P axis). Full rename: rule + `tasks.py` verb (NO back-compat
+alias — they get messy) + `PIPELINE_STEPS` key + artifact `series_well_mapping.csv` →
+`position_well_mapping.csv` + module `map_yx1_series_to_wells.py` → `map_yx1_positions_to_wells.py`.
+The mapping CSV **keeps the `series_number` column** (the literal 1-based ND2 series, `series =
+P + 1`) — distinct from the 0-based `position_index`; conflating them breaks the join's off-by-one.
+
+## The channel mapping lives HERE, once
+Today channel info is re-derived in three places that each lose something: extract normalizes but
+drops `raw_channel_name` and emits no `channel_index`; the join falls back to losing the raw name;
+stitch re-derives the numeric index via `_select_yx1_channel_index` and keeps only BF. The
+inventory records `channel_index ↔ raw_channel_name ↔ channel` for **every** channel, once, at the
+one raw read — the durable source the deferred channel-aware stitch reads.
+
+## Validator — per-scope wrapper + shared check PRIMITIVES (DRY where honest)
+Even though YX1 can't collide, both scopes want defensive schema/sanity checks. The validator is
+**scope-specific in WHAT it checks, shared in HOW** (the doc's "thin parameterized skeleton, each
+scope declares its key"):
+- `scope/shared/acquisition_checks.py` — pure, scope-agnostic primitives: `assert_columns_present`,
+  `assert_positive_column` (µm/px + dims > 0), `assert_unique_on_key`,
+  `assert_channel_mapping_consistent`. Keyence reuses these with its own (colliding) key.
+- `scope/yx1/acquisition_inventory.py` — declares `YX1_ACQUISITION_INVENTORY_COLUMNS` + the cell
+  key `(position_index, z_index, channel_index, time_index)` and calls the primitives.
+
+## What was built (record-only, CPU, experiment-grain — NOT per-well)
+- `scope/yx1/acquisition_inventory.py` (NEW): row builder + `validate_yx1_acquisition_inventory`.
+- `scope/shared/acquisition_checks.py` (NEW): the shared primitives.
+- `extract_yx1_scope_metadata.py`: emits `acquisition_inventory__yx1.csv` from the SAME single ND2
+  read (optional `--acquisition-inventory-csv`).
+- `paths.py`: `ingest_scope_metadata` gains the `acquisition_inventory` artifact; `Snakefile` adds
+  it as a **YX1-only** `+output:`. `tasks.py` threads the path through (Keyence: no inventory yet).
+- 10 unit tests pass (`scope/tests/test_acquisition_inventory.py`).
+
+> **Grain (the per-well question):** the inventory is emitted at `ingest_scope_metadata`, which is
+> **experiment-grain and runs BEFORE the `discover_wells` fan** — so there is no `well_id` yet
+> (keyed on `raw_position_label`/`position_index`, like `scope_metadata__yx1.csv`). It is **NOT** a
+> per-well shard and does **not** touch the `well_runner.py` machinery. The inventory only goes
+> per-well when its CONSUMER (`stitch_well[well_id]`) does — the deferred stitch pass.
+
+## Deferred (next pass — see `current_state_and_next_steps.md` open decision)
+- **Stitch reads the inventory:** `materialize_stitched_images` consumes
+  `acquisition_inventory__yx1.csv` as its `(well → position_index, channel_index, z)` lookup,
+  becoming channel-aware + Z-aware, killing the in-stitch `_select_yx1_channel_index`/`yx1_series_map`
+  re-derivation. Touches the GPU path.
+- **Per-scope materialization + mandated layout:** split `materialize_stitched_images.py` (mixed
+  `if microscope` file) into per-scope stitch backends sharing only constructors + the
+  `frame_inventory` schema/validator; mandate the canonical stitched tree for the native producer
+  (mismatch = fail), keeping free-form `source_image_path` only at the external drop-in ingress.
+  Microscope boundary runs **through** stitch — code self-documents as scope-specific up to it.
+- Keyence acquisition inventory + conflicts + `resolve_acquisitions` (Keyence-only; YX1 has no
+  quarantine).

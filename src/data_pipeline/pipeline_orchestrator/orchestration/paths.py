@@ -21,7 +21,7 @@ THE VOCABULARY (used consistently across the whole refactor — do not blur thes
               front_end_naming_and_flow.md.
 
     artifact  one FILE a step produces. A step can produce several, so each step's ``artifacts``
-              is a dict (e.g. ``mapping`` -> ``series_well_mapping.csv``). The ``.validated``
+              is a dict (e.g. ``mapping`` -> ``position_well_mapping.csv``). The ``.validated``
               sentinel and ``.provenance.json`` sidecar are DERIVED from an artifact (helpers
               below), not separate artifacts.
 
@@ -131,13 +131,18 @@ PIPELINE_STEPS: dict[str, dict] = {
         "stage": "experiment_metadata",
         "fanout": EXPERIMENT,
         # {scope} -> format_vars={"scope": "yx1" | "keyence"}; the ONLY raw read.
-        "artifacts": {"raw": "scope_metadata__{scope}.csv"},
+        # acquisition_inventory: the maximal per-coordinate record emitted from that one read
+        # (YX1: record-only, scope-shaped — see target/acquisition_inventory_flow.md).
+        "artifacts": {
+            "raw": "scope_metadata__{scope}.csv",
+            "acquisition_inventory": "acquisition_inventory__{scope}.csv",
+        },
     },
-    "map_series_to_wells": {
+    "map_positions_to_wells": {
         "stage": "experiment_metadata",
         "fanout": EXPERIMENT,
         # .provenance.json via provenance_path().
-        "artifacts": {"mapping": "series_well_mapping.csv"},
+        "artifacts": {"mapping": "position_well_mapping.csv"},
     },
     "join_series_mapping_to_scope_metadata": {  # CONVERGENCE LINE; well_id minted here (upstream)
         "stage": "experiment_metadata",
@@ -200,8 +205,8 @@ PIPELINE_STEPS: dict[str, dict] = {
 #           -> {ROOT}/experiment_metadata/20250912/scope_metadata_mapped.csv.validated
 #
 #   provenance_path -> artifact_path + ".provenance.json"  (the sidecar beside it)
-#       provenance_path(ROOT, "map_series_to_wells", "mapping", "20250912")
-#           -> {ROOT}/experiment_metadata/20250912/series_well_mapping.csv.provenance.json
+#       provenance_path(ROOT, "map_positions_to_wells", "mapping", "20250912")
+#           -> {ROOT}/experiment_metadata/20250912/position_well_mapping.csv.provenance.json
 
 
 def known_steps() -> tuple[str, ...]:

@@ -97,11 +97,18 @@ SCOPE_METADATA_CSV = artifact_path(
     FRONT_END_EXPERIMENT,
     format_vars={"scope": SCOPE_TOKEN},
 )
-SERIES_WELL_MAPPING_CSV = artifact_path(
-    DATA_ROOT, "map_series_to_wells", "mapping", FRONT_END_EXPERIMENT
+SCOPE_ACQUISITION_INVENTORY_CSV = artifact_path(
+    DATA_ROOT,
+    "ingest_scope_metadata",
+    "acquisition_inventory",
+    FRONT_END_EXPERIMENT,
+    format_vars={"scope": SCOPE_TOKEN},
 )
-SERIES_WELL_MAPPING_PROVENANCE = provenance_path(
-    DATA_ROOT, "map_series_to_wells", "mapping", FRONT_END_EXPERIMENT
+POSITION_WELL_MAPPING_CSV = artifact_path(
+    DATA_ROOT, "map_positions_to_wells", "mapping", FRONT_END_EXPERIMENT
+)
+POSITION_WELL_MAPPING_PROVENANCE = provenance_path(
+    DATA_ROOT, "map_positions_to_wells", "mapping", FRONT_END_EXPERIMENT
 )
 SCOPE_METADATA_MAPPED_CSV = artifact_path(
     DATA_ROOT,
@@ -211,22 +218,34 @@ rule ingest_scope_metadata:
     input:
         raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}"
     output:
-        scope_csv = SCOPE_METADATA_CSV
+        # YX1 emits the maximal acquisition inventory from the one raw read (record-only).
+        # Keyence does not yet, so the inventory output is YX1-only.
+        **(
+            {"scope_csv": SCOPE_METADATA_CSV, "acquisition_inventory_csv": SCOPE_ACQUISITION_INVENTORY_CSV}
+            if MICROSCOPE == "YX1"
+            else {"scope_csv": SCOPE_METADATA_CSV}
+        )
     params:
-        experiment_id = "{experiment}"
+        experiment_id = "{experiment}",
+        acquisition_inventory_arg = (
+            lambda wc, output: f'--acquisition-inventory-csv "{output.acquisition_inventory_csv}"'
+            if MICROSCOPE == "YX1"
+            else ""
+        ),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-scope-metadata \
           --raw-images-dir "{input.raw_images_dir}" \
           --experiment "{params.experiment_id}" \
           --microscope "{MICROSCOPE}" \
-          --output-csv "{output.scope_csv}"
+          --output-csv "{output.scope_csv}" \
+          {params.acquisition_inventory_arg}
         """
 
 
-rule map_series_to_wells:
+rule map_positions_to_wells:
     """
-    Physical series-to-well mapping (CSV→CSV) for the configured microscope.
+    Physical positions-to-wells mapping (CSV→CSV) for the configured microscope.
 
     YX1: reads stage XY from scope_metadata CSV (no second ND2 open).
          Requires scope_metadata.yx1.ref_xy_csv in config.yaml.
@@ -235,14 +254,14 @@ rule map_series_to_wells:
     input:
         scope_csv = SCOPE_METADATA_CSV,
     output:
-        mapping_csv = SERIES_WELL_MAPPING_CSV,
-        provenance_json = SERIES_WELL_MAPPING_PROVENANCE,
+        mapping_csv = POSITION_WELL_MAPPING_CSV,
+        provenance_json = POSITION_WELL_MAPPING_PROVENANCE,
     params:
         experiment_id = "{experiment}",
         ref_xy_csv = str(YX1_REF_XY_CSV) if YX1_REF_XY_CSV else "",
     shell:
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-series-to-wells \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-positions-to-wells \
           --experiment "{params.experiment_id}" \
           --microscope "{MICROSCOPE}" \
           --scope-csv "{input.scope_csv}" \
@@ -258,7 +277,7 @@ rule join_series_mapping_to_scope_metadata:
     """
     input:
         scope_csv = SCOPE_METADATA_CSV,
-        mapping_csv = SERIES_WELL_MAPPING_CSV,
+        mapping_csv = POSITION_WELL_MAPPING_CSV,
     output:
         mapped_csv = SCOPE_METADATA_MAPPED_CSV,
         validated = SCOPE_METADATA_MAPPED_VALIDATED,
@@ -280,7 +299,7 @@ rule join_series_mapping_to_scope_metadata:
 rule materialize_stitched_images:
     input:
         raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}",
-        mapping_csv = SERIES_WELL_MAPPING_CSV,
+        mapping_csv = POSITION_WELL_MAPPING_CSV,
         scope_csv = SCOPE_METADATA_MAPPED_CSV,
     output:
         stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",

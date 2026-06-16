@@ -1,9 +1,14 @@
 """
-YX1 series-to-well mapping (CSV→CSV).
+YX1 positions-to-wells mapping (CSV→CSV).
 
-Maps YX1 ND2 series numbers to plate well positions using nearest-neighbor XY
+Maps YX1 ND2 positions to plate well positions using nearest-neighbor XY
 matching against a reference plate grid.  Stage XY positions are read from the
 scope_metadata CSV produced by extract_scope_metadata (no second ND2 open).
+
+Vocabulary note: the ND2 P axis is a "position" (the standardized tensor axis). The mapping CSV
+keeps the column ``series_number`` (the 1-based ND2 series, ``series = P + 1``) — that off-by-one
+is load-bearing in the join, so it is preserved as a literal provenance column, distinct from the
+0-based ``position_index`` the acquisition inventory carries.
 """
 
 import argparse
@@ -123,7 +128,7 @@ def _map_positions_to_wells_by_xy(
     return mapping, diagnostics
 
 
-def map_series_to_wells_yx1(
+def map_positions_to_wells_yx1(
     scope_metadata_csv: Path,
     output_mapping_csv: Path,
     output_provenance_json: Path,
@@ -135,7 +140,7 @@ def map_series_to_wells_yx1(
     dx_cv_tol: float = 0.15,
     dy_cv_tol: float = 0.15,
 ) -> pd.DataFrame:
-    """Map YX1 series positions to plate wells (CSV→CSV, no ND2 re-open).
+    """Map YX1 positions to plate wells (CSV→CSV, no ND2 re-open).
 
     Stage XY is read from scope_metadata_csv (produced by ingest_scope_metadata).
     The reference plate grid is loaded from ref_xy_csv (config-sourced).
@@ -277,7 +282,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    map_series_to_wells_yx1(
+    map_positions_to_wells_yx1(
         scope_metadata_csv=args.scope_metadata_csv,
         output_mapping_csv=args.output_mapping_csv,
         output_provenance_json=args.output_provenance_json,

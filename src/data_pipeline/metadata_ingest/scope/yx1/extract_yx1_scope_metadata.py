@@ -14,6 +14,9 @@ import nd2
 from data_pipeline.schemas.scope_metadata import REQUIRED_COLUMNS_SCOPE_METADATA
 from data_pipeline.schemas.channel_normalization import CHANNEL_NORMALIZATION_MAP
 from data_pipeline.io.validators import validate_dataframe_schema
+from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
+    build_yx1_acquisition_inventory,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -139,7 +142,8 @@ def _normalize_channel_name(raw_name: str) -> str:
 def extract_yx1_scope_metadata(
     raw_data_dir: Path,
     output_csv: Path,
-    experiment_id: str
+    experiment_id: str,
+    acquisition_inventory_csv: Path | None = None,
 ) -> pd.DataFrame:
     """
     Extract YX1 scope metadata from ND2 file.
@@ -148,6 +152,10 @@ def extract_yx1_scope_metadata(
         raw_data_dir: Directory containing ND2 file
         output_csv: Output path for scope_series_metadata_raw.csv
         experiment_id: Experiment identifier
+        acquisition_inventory_csv: Optional output path for the maximal per-coordinate
+            ``acquisition_inventory__yx1.csv`` (one row per (position, z, channel, time)). When
+            given, it is emitted from the SAME single ND2 read — record-only, nothing downstream
+            consumes it yet.
 
     Returns:
         DataFrame with validated scope metadata
@@ -172,9 +180,15 @@ def extract_yx1_scope_metadata(
         image_height_px = shape[-2]  # Y
         image_width_px = shape[-1]   # X
 
-        # Get channel names
+        # Get channel names + the full channel mapping (index ↔ raw name ↔ normalized token).
+        # This triple is recorded once in the acquisition inventory instead of being re-derived
+        # (and partly lost) downstream at the join and at stitch.
         channel_names = [c.channel.name for c in nd.frame_metadata(0).channels]
         log.info(f"Raw channel names: {channel_names}")
+        channel_mapping = [
+            (idx, _normalize_channel_name(raw_name), raw_name)
+            for idx, raw_name in enumerate(channel_names)
+        ]
 
         # Get objective info
         try:
@@ -257,6 +271,31 @@ def extract_yx1_scope_metadata(
     df.to_csv(output_csv, index=False)
     log.info(f"Wrote scope metadata to {output_csv}")
 
+    # Emit the maximal acquisition inventory from the SAME single ND2 read (record-only).
+    # One row per full tensor coordinate (position, z, channel, time) — Z exploded, channel
+    # mapping preserved. Nothing downstream consumes it yet.
+    if acquisition_inventory_csv is not None:
+        inventory_df = build_yx1_acquisition_inventory(
+            experiment_id=experiment_id,
+            n_t=n_t,
+            n_z=n_z,
+            timestamps=timestamps,
+            channels=channel_mapping,
+            stage_xy=stage_xy,
+            micrometers_per_pixel=micrometers_per_pixel,
+            image_width_px=image_width_px,
+            image_height_px=image_height_px,
+            objective_magnification=objective,
+            source_nd2_path=nd2_path,
+        )
+        acquisition_inventory_csv = Path(acquisition_inventory_csv)
+        acquisition_inventory_csv.parent.mkdir(parents=True, exist_ok=True)
+        inventory_df.to_csv(acquisition_inventory_csv, index=False)
+        log.info(
+            f"Wrote acquisition inventory ({len(inventory_df)} rows) to "
+            f"{acquisition_inventory_csv}"
+        )
+
     return df
 
 
@@ -266,6 +305,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--raw-yx1-experiment-dir", type=Path, required=True)
     p.add_argument("--output-csv", type=Path, required=True)
     p.add_argument("--experiment-id", required=True)
+    p.add_argument(
+        "--acquisition-inventory-csv",
+        type=Path,
+        default=None,
+        help="Optional output path for acquisition_inventory__yx1.csv (record-only).",
+    )
     return p.parse_args()
 
 
@@ -275,6 +320,7 @@ def main() -> None:
         raw_data_dir=args.raw_yx1_experiment_dir,
         output_csv=args.output_csv,
         experiment_id=args.experiment_id,
+        acquisition_inventory_csv=args.acquisition_inventory_csv,
     )
 
 

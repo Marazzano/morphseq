@@ -11,7 +11,7 @@ from data_pipeline.metadata_ingest.plate.plate_processing import process_plate_l
 from data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata import extract_keyence_scope_metadata
 from data_pipeline.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import extract_yx1_scope_metadata
 from data_pipeline.metadata_ingest.scope.keyence.map_series_to_wells import map_series_to_wells_keyence
-from data_pipeline.metadata_ingest.scope.yx1.map_yx1_series_to_wells import map_series_to_wells_yx1
+from data_pipeline.metadata_ingest.scope.yx1.map_yx1_positions_to_wells import map_positions_to_wells_yx1
 from data_pipeline.metadata_ingest.scope.shared.apply_series_mapping import apply_series_mapping
 from data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
 from data_pipeline.metadata_ingest.frame_inventory import (
@@ -49,6 +49,7 @@ def cmd_extract_scope(args: argparse.Namespace) -> None:
             raw_data_dir=args.raw_images_dir,
             output_csv=args.output_csv,
             experiment_id=experiment_id,
+            acquisition_inventory_csv=getattr(args, "acquisition_inventory_csv", None),
         )
     elif args.microscope == "Keyence":
         experiment_id = resolve_experiment_id(args.raw_images_parent, args.microscope, explicit_experiment_id=args.experiment)
@@ -61,14 +62,14 @@ def cmd_extract_scope(args: argparse.Namespace) -> None:
         raise ValueError(f"Unsupported microscope: {args.microscope}")
 
 
-def cmd_map_series(args: argparse.Namespace) -> None:
+def cmd_map_positions(args: argparse.Namespace) -> None:
     if args.microscope == "YX1":
         if not args.ref_xy_csv:
             raise ValueError(
                 "--ref-xy-csv is required for YX1 mapping. "
                 "Set scope_metadata.yx1.ref_xy_csv in config.yaml."
             )
-        map_series_to_wells_yx1(
+        map_positions_to_wells_yx1(
             scope_metadata_csv=args.scope_csv,
             output_mapping_csv=args.output_mapping_csv,
             output_provenance_json=args.output_provenance_json,
@@ -211,9 +212,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_scope.add_argument("--experiment", required=True)
     p_scope.add_argument("--microscope", choices=["YX1", "Keyence"], required=True)
     p_scope.add_argument("--output-csv", type=Path, required=True)
+    p_scope.add_argument(
+        "--acquisition-inventory-csv",
+        type=Path,
+        default=None,
+        help="Optional output path for acquisition_inventory__{scope}.csv (YX1: record-only).",
+    )
     p_scope.set_defaults(func=cmd_extract_scope)
 
-    p_map = sub.add_parser("map-series-to-wells", aliases=["map-series"])
+    p_map = sub.add_parser("map-positions-to-wells")
     p_map.add_argument("--experiment", required=True)
     p_map.add_argument("--microscope", choices=["YX1", "Keyence"], required=True)
     p_map.add_argument("--scope-csv", type=Path, required=True)
@@ -226,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--col-x-tol-um", type=float, default=1200.0)
     p_map.add_argument("--dx-cv-tol", type=float, default=0.15)
     p_map.add_argument("--dy-cv-tol", type=float, default=0.15)
-    p_map.set_defaults(func=cmd_map_series)
+    p_map.set_defaults(func=cmd_map_positions)
 
     p_apply = sub.add_parser("join-series-mapping-to-scope-metadata", aliases=["apply-series"])
     p_apply.add_argument("--experiment", required=True)

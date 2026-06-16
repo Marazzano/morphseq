@@ -126,6 +126,45 @@ per-well shards**, not rewriting algorithms.
 
 ---
 
+## 🛑 OPEN DECISION (mdcolon 2026-06-16) — mandate the stitched layout + split materialization per-scope
+
+Raised while building the YX1 acquisition inventory. Two coupled changes, **own focused pass**
+(the handoff-contract rewrite + a stitch refactor); recorded here so it isn't lost.
+
+**The smell.** `materialize_stitched_images.py` (661 lines) is **one microscope-mixed file** —
+`if microscope == "YX1" / elif "Keyence"` branches plus a shared `drop_duplicates(..., keep="first")`
+that *pretends both scopes stitch the same way.* They do not: YX1 = ND2 tensor-slice + LoG focus;
+Keyence = TIFF-tile mosaic + re-acquisition collision resolution. DRY-over-a-false-sameness is
+exactly what gets dangerous and annoying to debug.
+
+**Recommendation (independent analysis).** Separate the two questions the handoff contract conflates:
+
+- **A — on-disk layout.** For the **NATIVE** producer (the path we control), *mandate* the canonical
+  `stitched_ff_images/{well_id}/{channel}/{well_id}_{channel}_t{time:04d}.{ext}` tree: stitch writes
+  it, the validator derives each path **from the frame key**, `source_image_path` becomes derived,
+  and a layout/filename mismatch is a **hard FAIL** (today it is a *warning* —
+  `frame_inventory_handoff_contract.md:139-142`, Decisions 11–12). The free-form
+  `source_image_path`-points-anywhere flexibility earns its keep **only** at the **external drop-in**
+  ingress (a user who can't reorganize) — keep warning-not-fail *there only*. Net: the native path
+  loses the arbitrary-path-resolution machinery and gets simpler; the drop-in escape hatch survives
+  where it's actually needed.
+- **B — split materialization into per-scope routes (the real win).** `stitch_well` dispatches to a
+  **YX1 backend** and a **Keyence backend** that genuinely differ; they **share only** the honestly
+  shared surface: the `identifiers/` path/id constructors, the `frame_inventory` **schema +
+  validator**, and the focus primitive (`image_building/shared/log_focus.py`). The mandate is **same
+  OUTPUT contract (tree layout + schema), independently produced** — NOT same stitching code.
+
+> **The clean seam:** scope-divergent producers → ONE enforced handoff (canonical tree + frame
+> inventory schema). The acquisition inventory is the scope-specific *input* to each route; the
+> frame inventory is the shared *output*. This is the microscope boundary, made structural.
+
+**Scope of the rewrite when it happens:** flip `frame_inventory_handoff_contract.md` (recommended →
+required for native; mismatch warning → fail; `source_image_path` derived natively, tolerated at
+drop-in) and reconcile Decisions 11–12; split `materialize_stitched_images.py` into
+`stitched_index/scope/{yx1,keyence}/` backends + a thin dispatcher (Task #9). Self-document each
+backend as scope-specific up to the stitched handoff boundary. Keep it lean — don't pre-build shared
+modules the second scope doesn't force.
+
 ## 🧭 Recommended order
 
 ```

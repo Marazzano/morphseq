@@ -1,7 +1,7 @@
 """Validate physical (plate-free) series->well mapping.
 
 This validator exists to prevent silently generating downstream artifacts under the
-wrong well IDs. It checks that `series_well_mapping.csv` can fully map the scope
+wrong well IDs. It checks that `position_well_mapping.csv` can fully map the scope
 rows to `well_index` values, and that those `well_index` values are canonical
 (A01-style) unless an explicit override is enabled.
 """
