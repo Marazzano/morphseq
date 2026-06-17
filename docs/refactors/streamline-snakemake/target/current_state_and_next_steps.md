@@ -6,6 +6,28 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: Steps 4+5 — comparison gate + two-well fan PASSED)
+
+**What shipped:**
+- `acquisition_inventory__yx1.csv` generated for `20250912` (161,025 rows).
+- `position_well_mapping.csv` regenerated for `20250912` in new contract format (`experiment_id, position_index, well_index, well_id, mapping_method`).
+- `tasks.py::cmd_materialize_yx1_well_candidate` fixed: joins `position_well_mapping.csv` (`--position-well-mapping-csv`) to add `well_index/well_id` before filtering; uses `validate_position_well_mapping` guard. Test updated + new join test added by auto-reformatter.
+- B01 smoke: **113 frames written**, all paths resolve, correct schema. mdcolon visual sign-off: **accepted**.
+- **Step 4 comparison gate PASSED:**
+  - 113/113 frames compared. 0 byte-identical (expected — legacy=JPEG, candidate=PNG; format difference, not algorithm difference).
+  - Numeric diff: max_abs_diff 10–12/255 (mean ~10.3), mean_abs_diff ~1.5, p99 5.0 — consistent with JPEG compression artifacts only.
+  - QC evidence saved to `data_pipeline_output/stitch_candidate_qc/20250912/20250912_B01/`: `comparison_summary.csv` (113 rows, `human_review_status=accepted`), `frame_diff_metrics.csv`, 113 side-by-side JPEGs, `side_by_side.mp4`.
+  - **human_review_status=accepted** (mdcolon visual sign-off on candidate frames; diff is JPEG codec noise only).
+- 56/56 targeted tests pass.
+- **Step 5 two-well fan smoke PASSED:** C01 (`20250912_C01`, position_index=2) ran cleanly — 113 frames, 0 missing paths, done flag exists. Only B01 has legacy stitched output so numeric diff on C01 skipped; B01 is the accepted comparison baseline. The fan is real: B01→position_index=1, C01→position_index=2 (different positions, not hardcoded).
+- `side_by_side.mp4` (219 MB) saved alongside comparison evidence.
+- 56/56 tests pass throughout.
+**What's broken/half-done:** nothing. Steps 1–5 complete.
+**Next concrete action:** Step 6 — PROMOTE candidate to live spine. (1) Rename/repoint `stitch_well_candidate` → `stitch_well` in `paths.py` (change `candidate/` prefix to live path). (2) Add `stitch_well` Snakemake rule fanned over `discovered_wells.txt` (replaces the experiment-grain `materialize_stitched_images` rule). (3) Wire `validate_frame_inventory_for_well` to read the materializer-emitted shard (not the `frame_contract.csv` adapter). (4) Add the per-well `{well_id}_frame_inventory.csv.validated` target to `rule all` or front-end target. Verify: `20250912` chain runs end-to-end `ingest→…→stitch_well[well_id]→validate_frame_inventory_for_well` and produces per-well frame inventories keyed on `time_index` with resolving paths.
+**Open decisions:** none blocking Step 6.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: Step 3 — stitch_well_candidate / layout.py)
 
 **What shipped:**
