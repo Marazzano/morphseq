@@ -61,9 +61,11 @@ Apply beyond the front end — read when a roadmap step touches identity, contra
 > and `OVERALL_PLAN.md` §1b):
 > - **MICROSCOPE ZONE** = scope-aware code (raw → … → stitch backends). YX1 vs Keyence differ here.
 > - **PER-WELL ZONE** = well-sharded execution (`discover_wells` → … → end).
-> - **THE STITCH OVERLAP** = where both are true (`discover_wells → stitch → frame_inventory`). The
->   special machinery (`discover_wells` fan, `well_runner`, scope stitch backends, shared-but-scope-aware
->   validators) all live here. Crossing `frame_inventory` = **exit the Microscope Zone** ("post-microscope land").
+> - **THE STITCH OVERLAP** = where well-sharded execution begins before microscope-specific production
+>   is fully gone (`discover_wells → stitch → frame_inventory`). The special machinery lives here:
+>   `discover_wells` fan, `well_runner`, scope stitch backends, scope-aware pre-handoff validators,
+>   and the shared `frame_inventory` contract/validator. Crossing `frame_inventory` = **exit the
+>   Microscope Zone** ("post-microscope land").
 
 - **The front-half goal:** build the Stitch Overlap correctly and exit into a validated **per-well
   `frame_inventory`** shard, then stop. Everything past it is pure Per-Well Zone and already agnostic.

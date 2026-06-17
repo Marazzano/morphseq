@@ -14,6 +14,17 @@ The old data_pipeline/schemas package is legacy compatibility during migration.
 The goal is to avoid a central schema drawer where column lists drift away from the pipeline
 boundary that gives them meaning.
 
+Naming rule:
+
+```text
+*_contract.py      owns a data-product contract
+validate_*.py      validates a stage/artifact
+*_validators.py    shared validation mechanics
+```
+
+Avoid vague names like `contracts.py` for new target files. Avoid generic helper names that look
+like first-class pipeline artifacts.
+
 ---
 
 ## Ownership Rule
@@ -22,7 +33,7 @@ Each contract module answers one domain question:
 
 | Domain product | Contract owner | Meaning |
 |---|---|---|
-| `discovered_wells.txt` | `metadata_ingest/well_discovery/contracts.py` | physical well identities from canonical metadata |
+| `discovered_wells.txt` | `metadata_ingest/well_discovery/discovered_wells_contract.py` | physical well identities from canonical metadata |
 | `acquisition_inventory__yx1.csv` | `metadata_ingest/scope/yx1/acquisition_inventory.py` | YX1 raw tensor-coordinate inventory |
 | `acquisition_inventory__keyence.csv` | `metadata_ingest/scope/keyence/acquisition_inventory.py` | Keyence raw acquisition/tile/plane inventory |
 | `well_acquisition_summary__{scope}.csv` | `metadata_ingest/contracts/well_acquisition_summary.py` | per-well stitch eligibility |
@@ -43,8 +54,7 @@ data_pipeline/
       parsers.py
       validators.py
 
-    table_contracts.py
-      TableContract
+    table_validators.py
       assert_columns_present
       assert_unique_on_key
       assert_positive_numeric
@@ -55,7 +65,7 @@ data_pipeline/
       well_acquisition_summary.py
 
     well_discovery/
-      contracts.py
+      discovered_wells_contract.py
       from_scope_metadata.py
       from_frame_inventory.py
       discover_wells.py
@@ -146,15 +156,9 @@ Compatibility aliases may exist at adapters, but target contracts should name ta
 
 ## Shared Mechanics
 
-`shared/table_contracts.py` should contain generic mechanics only:
+`shared/table_validators.py` should contain generic mechanics only:
 
 ```python
-@dataclass(frozen=True)
-class TableContract:
-    name: str
-    required_columns: tuple[str, ...]
-    unique_key: tuple[str, ...] = ()
-
 def assert_columns_present(df, required_columns, *, contract_name): ...
 def assert_unique_on_key(df, key, *, contract_name): ...
 def assert_positive_numeric(df, column, *, contract_name): ...
@@ -163,6 +167,23 @@ def assert_allowed_values(df, column, allowed_values, *, contract_name): ...
 
 It must not import microscope packages, frame inventory, well discovery, segmentation, or Snakemake.
 Domain packages import these helpers, not the other way around.
+
+Do not add a `TableContract` class unless an actual caller needs a structured object. Named constants
+plus explicit validator functions are clearer for the front-half work.
+
+### Path values are not artifact paths
+
+`pipeline_orchestrator/orchestration/paths.py` owns artifact paths:
+
+```text
+output_root / stage / experiment / per_well / well_id / artifact
+```
+
+The existing `shared/path_contracts.py` is different: it validates path **values inside tables**
+(`require_existing_path`, `resolve_data_root_relative_path`). It is **not** part of the Beat 1
+front-half target layout and should not be moved just to satisfy this roadmap. If future work touches
+it, the clearer name would be `shared/path_value_validators.py`. Do not add artifact-path semantics
+there.
 
 ---
 
@@ -184,8 +205,8 @@ Domain packages import these helpers, not the other way around.
 Do not migrate every schema at once. Start with the front-half handoff because it is the active
 refactor boundary.
 
-1. Add `metadata_ingest/well_discovery/contracts.py`.
-2. Add `shared/table_contracts.py`.
+1. Add `metadata_ingest/well_discovery/discovered_wells_contract.py`.
+2. Add `shared/table_validators.py` only if local contract modules would otherwise duplicate checks.
 3. Add `metadata_ingest/contracts/well_acquisition_summary.py`.
 4. Add `image_materialization/stitched/contracts/frame_inventory_contract.py`.
 5. Move frame-inventory builders/validators to import the domain frame contract.

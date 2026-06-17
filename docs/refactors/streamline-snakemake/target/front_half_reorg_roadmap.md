@@ -70,8 +70,9 @@ the overlap.
  stage:  ingest → map → join │ discover_wells │ stitch_well │ frame_inventory │ segment → features → QC
  ════════════════════════════════════════════════════════════════════════════════════════════════════►
 
- ┌──────────────── MICROSCOPE ZONE (scope-AWARE code) ─────────────┐
- │ raw reads · scope schemas · scope mapping · scope STITCH backends │   YX1 vs Keyence do DIFFERENT work
+ ┌──────────── MICROSCOPE ZONE (scope-aware production) ───────────┐
+ │ raw reads · scope schemas · scope mapping · scope STITCH backends│   YX1 vs Keyence do DIFFERENT work
+ │ exits only at the validated per-well frame_inventory shard       │
  └──────────────────────────────────────────────────────────────────┘
                           ┌──────────────────── PER-WELL ZONE (well-SHARDED execution) ──────────────────┐
                           │ every stage runs ONE well at a time, on the well spine (well_runner)           │
@@ -84,12 +85,12 @@ the overlap.
                                              ╚═══════════════════╝
 ```
 
-- **MICROSCOPE ZONE** = scope-AWARE code (raw → … → stitch backends). YX1 and Keyence diverge here.
-  **Ends after stitch.**
+- **MICROSCOPE ZONE** = scope-aware production (raw → … → stitch backends). YX1 and Keyence
+  diverge here. **Exits at the validated per-well `frame_inventory` shard.**
 - **PER-WELL ZONE** = well-SHARDED execution (discover_wells → … → end). **Starts at discover_wells.**
-- **THE STITCH OVERLAP** (`discover_wells → stitch_well → frame_inventory`) = where BOTH are true:
-  per-well jobs running scope-specific code. **This roadmap's whole job is to build the overlap
-  correctly and exit it cleanly into `frame_inventory`.**
+- **THE STITCH OVERLAP** (`discover_wells → stitch_well → frame_inventory`) = the graph region where
+  well-sharded execution begins before microscope-specific production is fully gone. **This
+  roadmap's whole job is to build the overlap correctly and exit it cleanly into `frame_inventory`.**
 
 **The special machinery — it lives IN the overlap, which is why it never placed cleanly:**
 
@@ -98,12 +99,36 @@ the overlap.
 | **`discover_wells`** | LEFT EDGE of the overlap (bootstrap/fan) | turns experiment-grain scope metadata into the per-well world — the moment the Per-Well Zone *begins*. Microscope-agnostic itself. |
 | **`well_runner`** | spans the overlap | the per-well scheduler born at the fan; decides `run_wells = discovered ∩ target [∩ eligible]`. |
 | **stitch backends** | BODY of the overlap | per-well jobs (Per-Well Zone) + scope-specific code (Microscope Zone) — the ONLY place both are maximally true. |
-| **validators** | the overlap's EXIT gate | ONE shared contract, but **take scope-specific input** (the frame_inventory validator is scope-aware at its edges). "Different backends, shared validator" is the overlap's defining property, not a contradiction. |
+| **pre-handoff validators** | inside the Microscope Zone / overlap | scope-aware validators over scope-shaped inputs: physical mapping, acquisition inventory, acquisition resolution. They prevent bad microscope evidence from reaching stitch. |
+| **`frame_inventory` builder** | RIGHT EDGE adapter | scope-aware producer code writes the shared manifest rows from native stitched output. |
+| **`frame_inventory` validator** | EXIT gate | microscope-agnostic shared contract validator. It checks manifest atoms, derived IDs, uniqueness, and path existence/content tiers; it does not learn YX1/Keyence logic. |
 | **`frame_inventory`** | RIGHT EDGE of the overlap | crossing it = you LEAVE the Microscope Zone. Pure Per-Well + agnostic from here = **"post-microscope land."** |
 
 > **Beat 1 = build the STITCH OVERLAP and exit into `frame_inventory`.** Beat 2 = the pure Per-Well
 > Zone past the overlap (segmentation/features/QC). "Why is stitch per-well but segmentation isn't?"
 > → stitch is IN the overlap (per-well + scope-aware); segmentation is PAST it (per-well + agnostic).
+
+### Validator Ladder — what each validator IS
+
+Use validator names by **stage contract**, not a generic "the validator." The confusion is exactly
+that some validators are scope-aware and some are shared:
+
+| Stage / artifact | Validator role | Kind | What it proves |
+|---|---|---|---|
+| `map_positions_to_wells` → `position_well_mapping.csv` | physical mapping validator | scope-aware check over a shared mapping role | raw positions map to canonical wells without illegal ambiguity. |
+| `scope_metadata_mapped.csv` | canonical metadata validator | shared-ish metadata contract | rows have valid global `well_id`s; `discover_wells` can trust the file. |
+| `acquisition_inventory__{scope}.csv` | acquisition inventory validator | scope backend contract | raw acquisition evidence is well-formed for that microscope. |
+| `resolve_acquisitions` outputs | acquisition resolution validator | scope backend resolver | each well has either one active source or an explicit quarantine reason. |
+| `stitch_well` | producer/runtime checks | scope backend | the backend can materialize frames from resolved input. |
+| `frame_inventory.csv` | frame inventory contract validator | shared, microscope-agnostic | manifest atoms/derived IDs/uniqueness/path tiers satisfy the shared handoff. |
+| SAM2 ingest view | consumer layout validator | shared consumer-side view | frames can be presented as ordered `NNNN.ext` per well/channel. |
+
+Rule:
+
+```text
+Scope-aware validators exist BEFORE the handoff.
+The frame_inventory validator IS the handoff and stays microscope-agnostic.
+```
 
 ---
 
@@ -207,15 +232,18 @@ Flexibility lives only in physical LAYOUT (bends only at the external door, only
 This roadmap uses **domain-level schemas**: a data product's contract lives with the package that
 owns that product. Shared code provides validation mechanics only.
 
+**Naming rule:** if a file owns a data contract, its filename should say `*_contract.py`; if a file
+only validates, its filename should say `validate_*` or `*_validators.py`. Avoid vague names like
+`contracts.py` and avoid generic helpers that look like first-class pipeline contracts.
+
 ```
-shared/table_contracts.py
-  TableContract
+shared/table_validators.py
   assert_columns_present
-  assert_unique_on_key 
+  assert_unique_on_key
   assert_positive_numeric
   assert_allowed_values
 
-metadata_ingest/well_discovery/contracts.py
+metadata_ingest/well_discovery/discovered_wells_contract.py
   discovered_wells.txt contract
 
 metadata_ingest/contracts/well_acquisition_summary.py
@@ -231,7 +259,7 @@ image_materialization/stitched/contracts/frame_inventory_contract.py
   frame_inventory.csv contract: atoms, derived ids, required columns, unique key
 ```
 
-**Rule:** contract modules own meaning; `shared/table_contracts.py` owns mechanics. The old
+**Rule:** contract modules own meaning; `shared/table_validators.py` owns mechanics. The old
 `data_pipeline/schemas/` package remains as a legacy compatibility layer until importers are
 migrated. Do not widen it with new target semantics.
 
@@ -239,7 +267,8 @@ migrated. Do not widen it with new target semantics.
 > domain-contract END STATE — it is NOT a prerequisite checklist. Build each contract module only when
 > a step actually consumes it (follow `schema_layout.md`'s migration order). For the YX1 path that
 > means **exactly two** contracts, built when their step needs them:
-> - `well_discovery/contracts.py` + `shared/table_contracts.py` — **Step 1** (discovery consumes them).
+> - `well_discovery/discovered_wells_contract.py` + maybe `shared/table_validators.py` — **Step 1**
+>   (discovery consumes them; add the shared helper only if local validation code would duplicate).
 > - `image_materialization/stitched/contracts/frame_inventory_contract.py` — **Step 2** (the smallest,
 >   most load-bearing contract: the stitch-consume cutover and the native producer both key on its
 >   atoms, so it earns its place at Step 2, before stitch is touched).
@@ -255,20 +284,27 @@ See `schema_layout.md` for the target layout, import rules, and migration order.
 
 ## Target Package Layout
 
-> **Legend:** ✅ built+wired · 🔨 NEW (this plan) · 🔧 modified · ⏸ deferred (Keyence/Beat 2) · ⏳ move LAST
+> **Status legend:** ✅ built+wired · 🔨 NEW (this plan) · 🔧 modified · ⏸ deferred (Keyence/Beat 2) · ⏳ move LAST
+>
+> **Role legend:** **SHARED MECHANICS** = reusable checks/helpers, no domain meaning ·
+> **SHARED CONTRACT** = domain contract consumed across scopes · **SOURCE DISPATCHER** =
+> chooses by source contract, not microscope · **SCOPE BACKEND** = YX1/Keyence implementation ·
+> **ORCHESTRATION** = graph/path/run-set logic · **LEGACY COMPAT** = migration shim only.
 
 ```
 data_pipeline/
 
   shared/                                    # KINGDOM: identity + generic mechanics (no domain logic)
-    identifiers/                             # ✅ BUILT + wired (Scope 1)
+    identifiers/                             # ✅ BUILT + wired (Scope 1) — SHARED CONTRACT for ID grammar
       constructors.py                        #   build_well_id / build_image_id (_t{time_index:04d})
       parsers.py                             #   split_well_id / parse_image_id
-      validators.py                          #   validate_well_id (fail loud on bare A01) / recompute_and_check
-    table_contracts.py                       # 🔨 NEW (Step 1/2) — generic MECHANICS only: TableContract,
+      validators.py                          #   SHARED VALIDATOR: validate_well_id / recompute_and_check
+    table_validators.py                      # 🔨 MAYBE (only if duplication appears) — SHARED VALIDATORS:
                                              #   assert_columns_present/unique_on_key/positive_numeric/allowed_values.
-                                             #   Imports NOTHING domain.
-    path_contracts.py                        # (existing) shared path helpers
+                                             #   No TableContract class unless a caller actually needs it.
+    path_value_validators.py                 # ⏸ MAYBE ONLY: rename of existing path_contracts.py if touched later.
+                                             #   Path VALUE validation only (require_existing_path);
+                                             #   do not create/move for Beat 1; NOT an artifact registry.
 
   metadata_ingest/                           # UPSTREAM of stitch — scope-specific
     plate/
@@ -276,47 +312,57 @@ data_pipeline/
 
     scope/
       yx1/
-        acquisition_inventory.py             # ✅ BUILT — owns YX1 schema + tensor cell key
-        extract_yx1_scope_metadata.py        # ✅ BUILT — the ONE raw ND2 read
-        map_yx1_positions_to_wells.py        # ✅ BUILT (renamed from map_series_to_wells)
+        acquisition_inventory.py             # ✅ BUILT — SCOPE BACKEND CONTRACT+VALIDATOR:
+                                             #   owns YX1 schema + tensor cell key
+        extract_yx1_scope_metadata.py        # ✅ BUILT — SCOPE BACKEND: the ONE raw ND2 read
+        map_yx1_positions_to_wells.py        # ✅ BUILT — SCOPE BACKEND: XY→well mapping
         generate_xy_reference.py             # ✅ exists (offline tool; not a DAG node)
-        validate_xy_reference_grid.py        # ✅ exists (the exemplar validator)
+        validate_xy_reference_grid.py        # ✅ exists — SCOPE BACKEND VALIDATOR for YX1 reference grid
       keyence/                               # ⏸ SEPARATE TRACK (not YX1 Beat 1)
-        acquisition_inventory.py             # ⏸ DEFERRED (Keyence collision model)
-        extract_keyence_scope_metadata.py
-        map_keyence_positions_to_wells.py
-        resolve_keyence_acquisitions.py      # ⏸ DEFERRED (collision resolve — Keyence-only)
+        acquisition_inventory.py             # ⏸ DEFERRED — SCOPE BACKEND CONTRACT+VALIDATOR:
+                                             #   Keyence raw-unit schema + collision key
+        extract_keyence_scope_metadata.py    # SCOPE BACKEND: raw TIFF/XML read
+        map_keyence_positions_to_wells.py    # SCOPE BACKEND: folder/layout→well mapping
+        resolve_keyence_acquisitions.py      # ⏸ DEFERRED — SCOPE BACKEND RESOLVER:
+                                             #   collision classification + eligibility producer
       shared/
-        acquisition_checks.py                # ✅ BUILT — scope-agnostic check primitives
-        apply_position_mapping.py            # ✅ exists (the join / convergence line)
-        validate_physical_well_mapping.py    # ✅ exists
+        acquisition_checks.py                # ✅ BUILT — SHARED MECHANICS:
+                                             #   scope-agnostic check primitives; scopes declare keys
+        apply_position_mapping.py            # ✅ exists — SHARED JOIN: convergence line, mints well_id
+        validate_physical_well_mapping.py    # ✅ exists — SHARED MECHANICS for mapping cardinality;
+                                             #   YX1 requires 1 position↔1 well; Keyence differs pre-resolve
 
-    well_discovery/                          # 🔨 NEW (Step 1) — SHARED, source-contract-dispatched
+    well_discovery/                          # 🔨 NEW (Step 1) — SOURCE DISPATCHER, not microscope-dispatched
       __init__.py
-      contracts.py                           #   discovered_wells.txt contract (uses table_contracts)
+      discovered_wells_contract.py           #   SHARED CONTRACT+VALIDATOR: discovered_wells.txt
       from_scope_metadata.py                 #   discover_wells_from_scope_metadata(mapped_csv → wells)
       from_frame_inventory.py                #   ⏸ DEFERRED (drop-in twin; external path)
       discover_wells.py                      #   dispatcher by SOURCE, not microscope
 
     contracts/                               # ⏸ DEFERRED home (eligibility — Keyence-weighted)
-      well_acquisition_summary.py            #   ⏸ NOT built on YX1 path (∩ eligible deferred)
+      well_acquisition_summary.py            #   ⏸ SHARED CONTRACT: well_id + active_for_stitch +
+                                             #   quarantine_reason; producer is scope backend
 
   image_materialization/                     # DOWNSTREAM of stitch — frame_inventory lives HERE
     stitched/
-      materialize_stitched_images.py         # 🔧 Step 6 (promote): thin DISPATCHER (microscope → backend)
+      materialize_stitched_images.py         # 🔧 Step 6 (promote) — MICROSCOPE DISPATCHER:
+                                             #   chooses backend by microscope
                                              #   today: 1 mixed 43-branch file in metadata_ingest/stitched_index/ (legacy)
-      layout.py                              # 🔨 NEW (Step 3, candidate writes through it) — the TREE:
+      layout.py                              # 🔨 NEW (Step 3) — SHARED CONTRACT helper for native TREE:
                                              #   native pixel paths; ONE FILE (→ subpackage if it earns it); imports identifiers
-      frame_inventory.py                     # 🔧 Step 6 (promote): the TABLE — build + validate; IMPORTS the
-                                             #   contract below; native per-well producer; keys on time_index
+      frame_inventory.py                     # 🔧 Step 6 (promote) — SHARED IMPLEMENTATION:
+                                             #   build/validate shared manifest rows; imports contract below.
+                                             #   Native builders feed it; validator stays microscope-agnostic.
       contracts/
-        frame_inventory_contract.py          # 🔨 NEW (Step 2) — the MEANING (PURL): identity ATOMS,
+        frame_inventory_contract.py          # 🔨 NEW (Step 2) — SHARED CONTRACT (PURL): identity ATOMS,
                                              #   DERIVED ids, REQUIRED columns, UNIQUE_KEY (atoms; time_index)
       scope/
         yx1/
-          materialize_yx1_stitched_images.py # 🔨 Step 3 (the candidate backend) — ND2 tensor slice + LoG focus
+          materialize_yx1_stitched_images.py # 🔨 Step 3 — SCOPE BACKEND:
+                                             #   ND2 tensor slice + LoG focus; emits native rows/images
         keyence/
-          materialize_keyence_stitched_images.py  # ⏸ stub now (route to legacy); full = Keyence track
+          materialize_keyence_stitched_images.py  # ⏸ SCOPE BACKEND:
+                                             #   stub now; full version consumes resolved Keyence inventory
 
     shared/                                  # ⏳ MOVE LAST (only after stitched pkg is stable)
       log_focus.py                           #   ⏳ keep in image_building/shared/ until then
@@ -324,14 +370,17 @@ data_pipeline/
       image_io.py
 
   schemas/                                   # ⚠️ LEGACY COMPAT ONLY during migration
-    frame_contract.py                        #   do NOT add target semantics; retire gradually
-    stitched_image_index.py                  #   ⏸ RETIRE (Step 7) — intermediate absorbed into frame_inventory
+    frame_contract.py                        #   LEGACY COMPAT; do NOT add target semantics; retire gradually
+    stitched_image_index.py                  #   LEGACY COMPAT; ⏸ RETIRE (Step 7)
 
   pipeline_orchestrator/
     tasks.py                                 # thin: parse + delegate only
     orchestration/
-      paths.py                               # ✅ PIPELINE_STEPS registry — TABULAR artifact paths
-      well_runner.py                         # ✅ partial — concat_well_shards_to_file exists;
+      paths.py                               # ✅ ORCHESTRATION: PIPELINE_STEPS registry — tabular artifact paths.
+                                             #   This is the artifact path-of-record. Existing
+                                             #   shared/path_contracts.py validates table path values only.
+      well_runner.py                         # ✅ ORCHESTRATION: run set + shard fan/merge helpers;
+                                             #   reads shared summaries, never scope-only columns.
                                              #   selected_well_ids_for_experiment = Beat 2 hole
 ```
 
@@ -435,7 +484,7 @@ layout.py               image_materialization/stitched/  the TREE — WHERE the 
 > later — that is when `layout.py` → `layout/` (`constructors.py` · `parse.py` · `contract.py`) earns
 > the split. Not
 > before. Off-registry either way: `layout` owns IMAGE-TREE paths (off the tabular registry);
-> `lib/paths.py` owns TABULAR artifact paths. Different families, same ID grammar (both import
+> `pipeline_orchestrator/orchestration/paths.py` owns TABULAR artifact paths. Different families, same ID grammar (both import
 > `shared/identifiers`, neither inline-mints — two-kingdoms holds).
 
 ---
@@ -445,14 +494,14 @@ layout.py               image_materialization/stitched/  the TREE — WHERE the 
 > **🎤 DECISION GATE (mdcolon to be interviewed at Step 1).** The layout below is a PROPOSAL, not
 > locked. Before building `well_discovery/`, walk through with mdcolon: is the source-contract
 > dispatcher (`from_scope_metadata` / `from_frame_inventory`) the right shape, or overkill for YX1
-> now? How thin is `contracts.py`? Does `discover_wells.py` dispatch belong here or in `tasks.py`?
+> now? How thin is `discovered_wells_contract.py`? Does `discover_wells.py` dispatch belong here or in `tasks.py`?
 > **Do not build to this structure without that conversation.**
 
 `well_discovery` is **shared and source-contract-specific, not microscope-specific.**
 
 ```
 well_discovery/
-  contracts.py
+  discovered_wells_contract.py
     read_discovered_wells(path) -> list[well_id]
     write_discovered_wells(path, wells)
     validate_discovered_wells(wells)
@@ -535,7 +584,7 @@ So layout is centralized; ID grammar still belongs to `shared/identifiers`.
   inventory lives in `metadata_ingest/scope/` (UPSTREAM). They are NOT the same artifact.
 - `paths.py` owns TABULAR artifact paths and fanout enforcement; `layout.py` owns OFF-registry image
   paths. Different families, same ID grammar.
-- Domain-level contract modules own schema meaning; `shared/table_contracts.py` owns reusable
+- Domain-level contract modules own schema meaning; `shared/table_validators.py` owns reusable
   validation mechanics. `data_pipeline/schemas/` is legacy compatibility during migration.
 - `tasks.py` only parses and delegates.
 - sidecars are derived via path helpers, not registered as first-class artifacts.
@@ -684,7 +733,8 @@ Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
 
 Add only the **two** contracts the YX1 path consumes (per the anti-whale guard) before touching frame
 inventory or moving packages.
-- Add `shared/table_contracts.py` for generic mechanics only (if Step 1 didn't already).
+- Add `shared/table_validators.py` for generic mechanics only if Step 1 would otherwise duplicate
+  local validation code.
 - Add `image_materialization/stitched/contracts/frame_inventory_contract.py` as the atom-based PURL
   for the stitched handoff (`experiment_id, well_index, channel_id, time_index` are the key;
   `well_id` and `image_id` are derived/checkable). The Step 3 stitch-consume cutover and the Step 6

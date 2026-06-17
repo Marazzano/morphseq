@@ -48,26 +48,29 @@ live in the overlap.
  ingest → map → join │ discover_wells │ stitch_well │ frame_inventory │ segment → features → embeddings → QC
  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════►
 
- ┌──── MICROSCOPE ZONE (scope-AWARE) ────┐
- │ raw reads · scope schemas · scope      │   ← a small FRONT BUMP. YX1 vs Keyence differ ONLY here.
- │ mapping · scope STITCH backends        │
+ ┌──── MICROSCOPE ZONE (scope-AWARE)   ────┐
+ │ raw reads · scope schemas · scope       │   ← a small FRONT BUMP. YX1 vs Keyence differ ONLY here.
+ │ mapping · scope STITCH backends         │
  └─────────────────────────────────────────┘
-                  ┌──────────────────── PER-WELL ZONE (well-SHARDED) ───────────────────────────────────────┐
-                  │ every stage runs ONE well at a time on the well spine (well_runner) — the bulk of the DAG  │
+                  ┌──────────────────── PER-WELL ZONE (well-SHARDED)  ───────────────────────────────────────┐
+                  │ every stage runs ONE well at a time on the well spine (well_runner) — the bulk of the DAG │
                   └──────────────────────────────────────────────────────────────────────────────────────────┘
-                  ▲              ╔═══════════════╗              ▲
+                  ▲             ╔═══════════════╗              ▲
            discover_wells       ║ STITCH OVERLAP║       frame_inventory
            = bootstrap/FAN      ║ per-well AND  ║       = EXIT microscope land
            (well_runner born)   ║ scope-aware   ║       (pure per-well + agnostic →)
                                 ╚═══════════════╝
 ```
 
-- **MICROSCOPE ZONE** = scope-aware code; ends after stitch. The ONLY place YX1/Keyence diverge.
+- **MICROSCOPE ZONE** = scope-aware production; exits at the validated per-well `frame_inventory`
+  shard. The ONLY place YX1/Keyence diverge.
 - **PER-WELL ZONE** = well-sharded execution; starts at `discover_wells`, runs to the end. The bulk.
-- **THE STITCH OVERLAP** (`discover_wells → stitch → frame_inventory`) = both at once. The special
+- **THE STITCH OVERLAP** (`discover_wells → stitch → frame_inventory`) = the graph region where
+  well-sharded execution begins before microscope-specific production is fully gone. The special
   machinery lives here: `discover_wells` (the fan/left edge), `well_runner` (the per-well scheduler),
-  stitch backends (scope-specific producers), shared-but-scope-aware validators, and `frame_inventory`
-  (the right edge = "post-microscope land"). **Crossing `frame_inventory` exits the Microscope Zone.**
+  stitch backends (scope-specific producers), scope-aware pre-handoff validators, the shared
+  `frame_inventory` contract/validator, and `frame_inventory` itself (the right edge =
+  "post-microscope land"). **Crossing `frame_inventory` exits the Microscope Zone.**
 
 > The **front-half refactor** (`front_half_reorg_roadmap.md`) is precisely *"build the Stitch Overlap
 > correctly and exit into a per-well `frame_inventory`."* Everything past frame_inventory is pure
@@ -154,8 +157,10 @@ From [[current_state_and_next_steps]] §"Recommended order" + [[per_well_through
 2.  Scope 3  env.yaml       ← separate later track (config.yaml exists; env + path-decoupling
                              do not). Precedes the well-runner (runner takes output_root as a
                              param, never derives it). Also lands model_python_env for E1.
-3.  lib/paths.py + STAGES   ← the registry (imports identifiers). Fanout-enforced resolver.
-                             Depends on Scope 1.  ⚠️ resolve F2 (sentinel convention) here.
+3.  pipeline_orchestrator/orchestration/paths.py + PIPELINE_STEPS
+                          ← the artifact path registry (imports identifiers). Fanout-enforced
+                             resolver. Depends on Scope 1. ⚠️ resolve F2 (sentinel convention)
+                             here.
 4.  Scope 2                 ← flip well/well_id semantics in schemas + call sites; regenerate.
                              Migration site: the discover_wells checkpoint reads well_index
                              (Snakefile:448,459) — see §5.
