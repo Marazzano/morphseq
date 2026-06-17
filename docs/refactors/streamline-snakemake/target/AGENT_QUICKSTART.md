@@ -57,6 +57,15 @@ These are distilled from `pipeline_file_philosophy.md`. A change that breaks one
 - `shared/table_validators.py` owns reusable validation *mechanics* (no domain meaning).
 - `data_pipeline/schemas/` is legacy-compat only. Do not add new semantics there.
 
+**Tests live in the parallel test tree:**
+- For new or changed `src/data_pipeline/...` code, add/update tests under the matching
+  `tests/data_pipeline/...` path. Example:
+  `src/data_pipeline/metadata_ingest/well_discovery/discovered_wells_contract.py` →
+  `tests/data_pipeline/metadata_ingest/well_discovery/test_discovered_wells_contract.py`.
+- Do not hide target tests inside the source package unless the package already has a local legacy
+  `tests/` convention that you are explicitly preserving. The front-half target convention is the
+  parallel top-level `tests/data_pipeline/...` tree.
+
 **Scope-aware validators live BEFORE the handoff. The `frame_inventory` validator is agnostic:**
 - Validators for raw position mapping, acquisition inventory, and acquisition resolution live in the Microscope Zone (upstream of `frame_inventory`).
 - The `frame_inventory` contract validator is shared and microscope-agnostic. It does not learn YX1/Keyence logic.

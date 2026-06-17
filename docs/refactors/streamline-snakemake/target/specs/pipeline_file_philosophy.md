@@ -158,6 +158,28 @@ Error-message tests check for the **important words** ("not a bare local label",
 merged"), not exact prose, so wording can improve without breaking the suite. A test that mirrors the
 implementation just asserts the code equals itself; a test that pins the contract catches drift.
 
+### Tests live in a parallel test tree
+For `src/data_pipeline/...`, write tests under the matching `tests/data_pipeline/...` path. This keeps
+the implementation package focused on runtime code and gives reviewers a predictable place to look
+for contract coverage.
+
+Examples:
+
+```text
+src/data_pipeline/shared/identifiers/constructors.py
+tests/data_pipeline/shared/identifiers/test_identifiers.py
+
+src/data_pipeline/pipeline_orchestrator/orchestration/paths.py
+tests/data_pipeline/pipeline_orchestrator/test_paths.py
+
+src/data_pipeline/metadata_ingest/well_discovery/discovered_wells_contract.py
+tests/data_pipeline/metadata_ingest/well_discovery/test_discovered_wells_contract.py
+```
+
+Local `src/.../tests/` folders are legacy or package-local exceptions. Do not add new front-half tests
+there unless you are deliberately preserving an existing local convention for that package. New
+front-half work should use the parallel top-level test tree.
+
 ---
 
 ## 📐 THE "ADD A STAGE" RECIPE (what conformance buys you)
@@ -191,6 +213,7 @@ inventing a new path string or a new id format, a constraint was broken.
 - [ ] Every guard fails loud with a message that names the fix.
 - [ ] Module docstring orients (jobs + why + boundaries) before the code.
 - [ ] Sidecars derived via helpers, never hardcoded or registry rows.
+- [ ] Tests for `src/data_pipeline/...` live in the parallel `tests/data_pipeline/...` tree.
 - [ ] Tests pin resolved paths + failure modes (important words, not exact prose), not impl internals.
 
 ---
