@@ -5,11 +5,13 @@ Run with: PYTHONPATH=src pytest tests/data_pipeline/metadata_ingest/test_well_di
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from data_pipeline.pipeline_orchestrator import tasks
 from data_pipeline.metadata_ingest.well_discovery.discovered_wells_contract import (
     read_discovered_wells,
     validate_discovered_wells,
@@ -18,11 +20,6 @@ from data_pipeline.metadata_ingest.well_discovery.discovered_wells_contract impo
 from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_scope_metadata import (
     discover_wells_from_scope_metadata,
 )
-
-# Resolve tasks.py via the repo root defined in conftest — no hard-coded depth traversal.
-from tests.conftest import REPO_ROOT
-
-_TASKS_PY = REPO_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "tasks.py"
 
 
 # ── contract helpers ─────────────────────────────────────────────────────────
@@ -122,11 +119,7 @@ def test_bare_well_index_in_csv_raises(tmp_path: Path) -> None:
 
 def test_tasks_cmd_discover_wells_has_no_business_logic() -> None:
     """tasks.py handler must not contain pandas or inline well logic."""
-    source = _TASKS_PY.read_text()
-
-    start = source.index("def cmd_discover_wells(")
-    next_def = source.index("\ndef ", start + 1)
-    body = source[start:next_def]
+    body = inspect.getsource(tasks.cmd_discover_wells)
 
     assert "import pandas" not in body, "cmd_discover_wells must not import pandas"
     assert "pd.read_csv" not in body, "cmd_discover_wells must not call pd.read_csv"
