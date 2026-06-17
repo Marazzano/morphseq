@@ -3,7 +3,7 @@
 **Status:** sequencing + package-layout roadmap, mdcolon 2026-06-16. The *physical reorg* companion
 to the data-flow specs. Where the other `target/` docs say what each artifact MEANS, this one says
 where the code LIVES and in WHAT ORDER to move it.
-**Companion to:** `../current_state_and_next_steps.md` (verified on-disk state),
+**Companion to:** `current_state_and_next_steps.md` (verified on-disk state),
 `specs/front_end/recompose_yx1_front_end.md` (YX1 build), `specs/front_end/acquisition_inventory_flow.md`
 (scope-specific upstream record + eligibility), `specs/front_end/frame_inventory_handoff_contract.md`
 (the shared downstream seam), `specs/front_end/run_well_schema.md` (discovered/eligible/runnable
@@ -128,7 +128,8 @@ ONE VALIDATOR checks all three (THREE tiers — Beat 1 ships the first two):
   Level 1.5 — path EXISTENCE       (every source_image_path resolves; cheap, no image open)  ← Beat 1
   Level 2   — file CONTENT         (images OPEN, dims match, µm/px>0, BF contiguous, rectangular)
                                    ← the strict gate; NEXT PHASE, identical for native + external.
-  Level 3 - sam2 ingenstion requires iamges from a well/channgel are in the one folder (also a check that we can do the symlink renaming on the fly (requiremnet as wee need ot go to NNNN.ext for sam2 ingestion)  ← NEXT PHASE, identical for native + external.)
+  Level 3   — SAM2 ingestion layout (frames for one well/channel can be presented as one ordered
+              folder, including NNNN.ext symlink/view generation)                 ← NEXT PHASE.
 ```
 
 **Strictness lives in the manifest (identity + existence + uniqueness — never bends).
@@ -689,7 +690,7 @@ Build the dedicated stitch-comparison helper (NOT the segmentation video rendere
 - **Verify:** the candidate fans per-well; QC summaries are green/accepted for the sampled wells.
 
 ### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE
-write 
+
 Now (and only now) cut over: the candidate becomes the real path; `build_frame_inventory_for_well`
 reads it. This is the END of the microscope-aware pipeline — the top of the dam.
 - **Promote:** rename `stitch_well_candidate` → `stitch_well`; move candidate paths to the real

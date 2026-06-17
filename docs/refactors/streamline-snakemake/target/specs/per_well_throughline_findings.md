@@ -24,8 +24,8 @@
 > → Well-Runner (🟢) → DAG Mechanics → Zone-A Narrowing (🟢 the frame-contract split) →
 > Target Model → Open Questions → Pause/Next-steps.
 >
-> **Companion target docs:** `target/front_end_naming_and_frame_inventory_flow.md` (front-end ingest +
-> fan detail) and `target/frame_inventory_handoff_contract.md` (the stitched **drop-in** input
+> **Companion target docs:** `front_end/front_end_naming_and_frame_inventory_flow.md` (front-end ingest +
+> fan detail) and `front_end/frame_inventory_handoff_contract.md` (the stitched **drop-in** input
 > contract — tree layout + frame-contract columns + strict entry gate for outside datasets;
 > standardizes the per-frame axis as `time_index`, the T dimension).
 
@@ -268,7 +268,7 @@ Decisions adopted from the discussion:
   carries `{family}/{exp}/per_well/{well_id}/...` for *every registered (tabular) post-fan
   stage* (Zones B and C alike). **(Stitching's image tree is off-registry** — separate path
   helper, no `STAGES` row — but it now **also keys on `well_id`**: `stitched_ff_images/{well_id}/`,
-  not local `well`. REVISED 2026-06-03; see Zone B0 and `target/front_end_naming_and_frame_inventory_flow.md`.)
+  not local `well`. REVISED 2026-06-03; see Zone B0 and `front_end/front_end_naming_and_frame_inventory_flow.md`.)
   "Run one well" is then **not a special mode** — it is just targeting
   that one well's canonical outputs and letting Snakemake's per-file staleness do the
   rest. This **supersedes** the earlier "root-rebasing first" stance.
@@ -354,7 +354,7 @@ a doc note, add the field the day a real consumer exists.
 > the microscope/plate layout): the `{exp}/` parent already disambiguates, and keying the
 > addressable unit on a globally-unique id is the whole spirit of the per-well spine. The
 > image-building change is a small opaque-string substitution (verified).
-> **See `target/front_end_naming_and_frame_inventory_flow.md` → "The canonical well key" for the full
+> **See `front_end/front_end_naming_and_frame_inventory_flow.md` → "The canonical well key" for the full
 > rationale, pros/cons, and blast-radius verification.**
 
 **Per stage:** `family`, `fanout` ∈ {`experiment`, `per_well_then_merge`} (**two values
@@ -852,7 +852,7 @@ Zone C — merged / publication products    (thin concat at the END of the DAG; 
 > Legacy is explicit: `build06: df02 + latents → df03`, and `analysis_ready` already
 > reserves `embedding_calculated` (today hardcoded False). So the spine is
 > `… features → qc → embeddings → analysis_ready`; latents join on `snip_id` and flip
-> `embedding_calculated`. The seam is specified in `target/model_input_handoff_contract.md`
+> `embedding_calculated`. The seam is specified in `model_input_handoff_contract.md`
 > (inference-first; reuses `gen_embeddings` + the `mseq_pipeline_py3.9` sub-env; no
 > `pert_id`/splits — training deferred). **Not yet built** (`src/data_pipeline/embeddings/`
 > is empty).
@@ -970,7 +970,7 @@ reconcile + existence-check across all wells) → an experiment-grain barrier. *
 
 | Step | Stage (renamed) | Inputs | Output | Fanout |
 |---|---|---|---|---|
-| 1 | `discover_wells_from_metadata` *(checkpoint)* | `scope_metadata_mapped.csv` (**canonical metadata, no images** — extracts the well set; #13) | `discovered_wells.txt` (🟢 TARGET renames `wells.txt`; see `target/front_end_naming_and_frame_inventory_flow.md`) | experiment (fan point, moved **earlier**) |
+| 1 | `discover_wells_from_metadata` *(checkpoint)* | `scope_metadata_mapped.csv` (**canonical metadata, no images** — extracts the well set; #13) | `discovered_wells.txt` (🟢 TARGET renames `wells.txt`; see `front_end/front_end_naming_and_frame_inventory_flow.md`) | experiment (fan point, moved **earlier**) |
 | 2 | `stitch_well` | this well's raw images + its `scope_metadata_mapped` rows | `built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/` (well_id; REVISED 2026-06-03) | per-well image tree (**off-registry**) |
 | 3 | `validate_frame_contract_well` | this well's **images (Step 2)** + this well's **metadata rows** | `<frame-contract-family>/{exp}/per_well/{well_id}/frame_contract.csv` | `per_well_then_merge` |
 

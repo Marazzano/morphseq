@@ -22,7 +22,7 @@
 > ⚠️ The 2026-06-02 reality-check that said "Scope 1 is create not split, no `shared/`, no
 > constructors, zero importers" was true then and is **false now**. The remaining work is
 > downstream: schemas, the per-well landmines, the `video_id` collapse, well-runner, paths.py,
-> env. See `target/well_id_global_migration_map.md`.
+> env. See `well_id_global_migration_map.md`.
 
 > **STATUS UPDATE (2026-06-06): Scope 3 (env + RUN helper) is DONE.**
 > On branch `mdcolon/20260222_docs_snakemake_remake`:
@@ -56,7 +56,7 @@
 > - `pipeline_orchestrator/orchestration/{__init__.py,paths.py}` created. `paths.py` holds the
 >   one pipeline-wide `STAGES` table + `artifact_path`/`validated_path`/`provenance_path`/
 >   `stage_dir`, with `path_mode ∈ {experiment, per_well, merged}`. Built strictly to the spec in
->   `target/front_end_naming_and_frame_inventory_flow.md` (§ PATHS.PY REGISTRY ROWS / Resolved paths).
+>   `front_end/front_end_naming_and_frame_inventory_flow.md` (§ PATHS.PY REGISTRY ROWS / Resolved paths).
 > - **DECISION (forward declaration):** the registry names the **TARGET** artifacts only
 >   (`frame_inventory`, `discovered_wells.txt`, `ingest_*`/`join_*` stage keys), NOT today's
 >   on-disk names (`frame_contract.csv`, `wells.txt`). It is the contract Scope 2/5 converge onto

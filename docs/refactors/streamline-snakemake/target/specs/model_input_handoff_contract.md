@@ -295,7 +295,7 @@ block.** The target refactor already specifies the environment story as **Scope
 gitignored **`env.yaml`** beside `config.yaml`; science knobs stay in
 `config.yaml`. The model interpreter is a *machine knob*, so it belongs in
 `env.yaml.runtime`, **not** in `config.yaml`. (See
-`target/well_id_throughline_refactor_plan.md` Scope 3.)
+`well_id_throughline_refactor_plan.md` Scope 3.)
 
 The build_06 env therefore slots into the planned `env.yaml`:
 ```yaml

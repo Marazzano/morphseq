@@ -1,7 +1,8 @@
 # `target/` — streamline-snakemake refactor docs (INDEX)
 
-**The map for this folder.** 18 docs accumulated here; this index says *which one to open for what*,
-and which are live vs reference vs history. Reorganized 2026-06-17 into role-based folders.
+**The map for this folder.** 19 markdown docs live here now; this index says *which one to open for
+what*, and which are live vs reference vs history. Reorganized 2026-06-17 from an 18-doc flat folder
+into role-based folders.
 
 ---
 
