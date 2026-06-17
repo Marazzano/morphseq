@@ -10,9 +10,12 @@ from data_pipeline.metadata_ingest.experiment_identity import resolve_experiment
 from data_pipeline.metadata_ingest.plate.plate_processing import process_plate_layout
 from data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata import extract_keyence_scope_metadata
 from data_pipeline.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import extract_yx1_scope_metadata
-from data_pipeline.metadata_ingest.scope.keyence.map_series_to_wells import map_series_to_wells_keyence
+from data_pipeline.metadata_ingest.scope.keyence.map_keyence_positions_to_wells import map_positions_to_wells_keyence
 from data_pipeline.metadata_ingest.scope.yx1.map_yx1_positions_to_wells import map_positions_to_wells_yx1
-from data_pipeline.metadata_ingest.scope.shared.apply_series_mapping import apply_series_mapping
+from data_pipeline.metadata_ingest.scope.shared.apply_position_to_well_mapping import (
+    apply_position_to_well_mapping,
+)
+from data_pipeline.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
 from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_scope_metadata import (
     discover_wells_from_scope_metadata,
@@ -76,6 +79,7 @@ def cmd_map_positions(args: argparse.Namespace) -> None:
             scope_metadata_csv=args.scope_csv,
             output_mapping_csv=args.output_mapping_csv,
             output_provenance_json=args.output_provenance_json,
+            experiment_id=args.experiment,
             ref_xy_csv=args.ref_xy_csv,
             max_distance_um=args.max_distance_um,
             allow_unmapped_wells=_parse_bool(args.allow_unmapped_wells),
@@ -86,7 +90,7 @@ def cmd_map_positions(args: argparse.Namespace) -> None:
         )
     elif args.microscope == "Keyence":
         experiment_id = resolve_experiment_id(args.raw_images_parent, args.microscope, explicit_experiment_id=args.experiment)
-        map_series_to_wells_keyence(
+        map_positions_to_wells_keyence(
             raw_data_dir=args.raw_images_parent,
             scope_metadata_csv=args.scope_csv,
             output_mapping_csv=args.output_mapping_csv,
@@ -97,8 +101,8 @@ def cmd_map_positions(args: argparse.Namespace) -> None:
         raise ValueError(f"Unsupported microscope: {args.microscope}")
 
 
-def cmd_apply_series(args: argparse.Namespace) -> None:
-    apply_series_mapping(
+def cmd_apply_position_to_well_mapping(args: argparse.Namespace) -> None:
+    apply_position_to_well_mapping(
         scope_metadata_csv=args.scope_csv,
         mapping_csv=args.mapping_csv,
         output_csv=args.output_csv,
@@ -148,6 +152,52 @@ def cmd_discover_wells(args: argparse.Namespace) -> None:
         mapped_csv=Path(args.mapped_csv),
         output_wells=Path(args.output_wells),
     )
+
+
+def cmd_materialize_yx1_well_candidate(args: argparse.Namespace) -> None:
+    import pandas as pd
+    from data_pipeline.image_materialization.stitched.scope.yx1.materialize_yx1_stitched_images import (
+        materialize_yx1_well,
+    )
+
+    acq_df = pd.read_csv(args.acquisition_inventory_csv)
+    acq_df["experiment_id"] = acq_df["experiment_id"].astype(str)
+
+    mapping_df = pd.read_csv(args.position_well_mapping_csv)
+    mapping_df["experiment_id"] = mapping_df["experiment_id"].astype(str)
+    validate_position_well_mapping(mapping_df, scope_label=str(args.position_well_mapping_csv))
+    mapping_df = mapping_df[mapping_df["experiment_id"] == str(args.experiment)].copy()
+    acq_df = acq_df.merge(
+        mapping_df[["experiment_id", "position_index", "well_index", "well_id"]],
+        on=["experiment_id", "position_index"],
+        how="left",
+        validate="many_to_one",
+    )
+
+    well_rows = acq_df[
+        (acq_df["experiment_id"].astype(str) == str(args.experiment))
+        & (acq_df["well_id"].astype(str) == str(args.well_id))
+    ]
+    if well_rows.empty:
+        raise ValueError(
+            f"No acquisition inventory rows found for experiment={args.experiment!r}, "
+            f"well_id={args.well_id!r} after joining position_well_mapping."
+        )
+    inv_df = materialize_yx1_well(
+        experiment_id=args.experiment,
+        well_id=args.well_id,
+        well_index=args.well_index,
+        well_acquisition_inventory_df=well_rows,
+        nd2_path=Path(args.nd2_path),
+        built_image_data_dir=Path(args.built_image_data_dir),
+        device=getattr(args, "device", "cuda"),
+    )
+    out_csv = Path(args.frame_inventory_csv)
+    done = Path(args.done_flag)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    done.parent.mkdir(parents=True, exist_ok=True)
+    inv_df.to_csv(out_csv, index=False)
+    done.touch()
 
 
 def cmd_segmentation_and_tracking(args: argparse.Namespace) -> None:
@@ -225,13 +275,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--dy-cv-tol", type=float, default=0.15)
     p_map.set_defaults(func=cmd_map_positions)
 
-    p_apply = sub.add_parser("join-series-mapping-to-scope-metadata", aliases=["apply-series"])
+    p_apply = sub.add_parser("apply-position-to-well-mapping")
     p_apply.add_argument("--experiment", required=True)
     p_apply.add_argument("--scope-csv", type=Path, required=True)
     p_apply.add_argument("--mapping-csv", type=Path, required=True)
     p_apply.add_argument("--output-csv", type=Path, required=True)
     p_apply.add_argument("--selected-wells", default="")
-    p_apply.set_defaults(func=cmd_apply_series)
+    p_apply.set_defaults(func=cmd_apply_position_to_well_mapping)
 
     p_mat = sub.add_parser("materialize-stitched")
     p_mat.add_argument("--experiment", required=True)
@@ -271,6 +321,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_fi_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
     p_fi_merge.add_argument("--output-csv", type=Path, required=True)
     p_fi_merge.set_defaults(func=cmd_merge_frame_inventory)
+
+    p_yx1 = sub.add_parser("materialize-yx1-well-candidate")
+    p_yx1.add_argument("--experiment", required=True)
+    p_yx1.add_argument("--well-id", required=True)
+    p_yx1.add_argument("--well-index", required=True)
+    p_yx1.add_argument("--acquisition-inventory-csv", type=Path, required=True)
+    p_yx1.add_argument("--position-well-mapping-csv", type=Path, required=True)
+    p_yx1.add_argument("--nd2-path", type=Path, required=True)
+    p_yx1.add_argument("--built-image-data-dir", type=Path, required=True)
+    p_yx1.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_yx1.add_argument("--done-flag", type=Path, required=True)
+    p_yx1.add_argument("--device", default="cuda")
+    p_yx1.set_defaults(func=cmd_materialize_yx1_well_candidate)
 
     p_sat = sub.add_parser("segmentation-and-tracking")
     p_sat.add_argument("--frame-contract-csv", type=Path, required=True)

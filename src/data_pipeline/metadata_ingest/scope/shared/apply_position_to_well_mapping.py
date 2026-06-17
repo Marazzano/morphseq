@@ -1,4 +1,4 @@
-"""Apply series-to-well mapping to scope metadata."""
+"""Apply canonical position-to-well mapping to scope metadata."""
 
 from __future__ import annotations
 
@@ -11,52 +11,11 @@ import pandas as pd
 from data_pipeline.metadata_ingest.time_helpers import add_elapsed_time_columns
 from data_pipeline.metadata_ingest.time_helpers import add_frame_interval_unit_columns
 from data_pipeline.metadata_ingest.time_helpers import ensure_time_int_column
+from data_pipeline.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.shared.identifiers import build_image_id
-from data_pipeline.shared.identifiers import build_well_id
 
 
-def _build_series_lookup(mapping_df: pd.DataFrame) -> dict[int, str]:
-    lookup: dict[int, str] = {}
-    for _, row in mapping_df.iterrows():
-        series_number = row.get("series_number")
-        well_index = row.get("well_index")
-        if pd.isna(series_number) or pd.isna(well_index):
-            continue
-        lookup[int(series_number)] = str(well_index)
-    return lookup
-
-
-def _resolve_mapped_well(
-    scope_well_index: str,
-    series_lookup: dict[int, str],
-    known_wells: set[str],
-    *,
-    prefer_zero_based: bool,
-) -> str:
-    # If scope is already mapped to plate-like well names (e.g. A04), keep it.
-    if scope_well_index in known_wells:
-        return scope_well_index
-
-    # Try YX1 convention where scope well index is 0-based series index.
-    try:
-        scope_idx_int = int(scope_well_index)
-    except (TypeError, ValueError):
-        return scope_well_index
-
-    if prefer_zero_based:
-        if (scope_idx_int + 1) in series_lookup:
-            return series_lookup[scope_idx_int + 1]
-        return scope_well_index
-
-    # Prefer 1-based mapping, but allow 0-based scopes as a fallback.
-    if scope_idx_int in series_lookup:
-        return series_lookup[scope_idx_int]
-    if (scope_idx_int + 1) in series_lookup:
-        return series_lookup[scope_idx_int + 1]
-    return scope_well_index
-
-
-def apply_series_mapping(
+def apply_position_to_well_mapping(
     scope_metadata_csv: Path,
     mapping_csv: Path,
     output_csv: Path,
@@ -66,31 +25,48 @@ def apply_series_mapping(
     """Map scope rows to plate wells and canonical IDs for downstream contracts."""
     scope_df = ensure_time_int_column(
         pd.read_csv(scope_metadata_csv),
-        stage_name="scope_series_metadata_mapped_input",
+        stage_name="scope_metadata_position_mapping_input",
     )
     mapping_df = pd.read_csv(mapping_csv)
+    scope_df["experiment_id"] = scope_df["experiment_id"].astype(str)
+    mapping_df["experiment_id"] = mapping_df["experiment_id"].astype(str)
+    validate_position_well_mapping(mapping_df, scope_label=str(mapping_csv))
+    mapping_df = mapping_df[mapping_df["experiment_id"] == str(experiment_id)].copy()
+    scope_df = scope_df[scope_df["experiment_id"] == str(experiment_id)].copy()
+    if scope_df.empty:
+        raise ValueError(f"No scope metadata rows for experiment={experiment_id!r}.")
+    if mapping_df.empty:
+        raise ValueError(f"No position_well_mapping rows for experiment={experiment_id!r}.")
 
-    series_lookup = _build_series_lookup(mapping_df)
-    known_wells = set(str(w) for w in mapping_df.get("well_index", pd.Series(dtype=str)).dropna().unique())
-
+    source_col = "raw_position_label" if "raw_position_label" in scope_df.columns else "position_index"
+    if source_col not in scope_df.columns:
+        raise ValueError(
+            "scope metadata must contain raw_position_label or position_index to apply "
+            "position_well_mapping.csv"
+        )
     mapped_df = scope_df.copy()
-    # raw_position_label is the pre-mapping P-index column emitted by ingest_scope_metadata.
-    # Fall back to well_index for Keyence scopes that don't emit raw_position_label.
-    source_col = "raw_position_label" if "raw_position_label" in mapped_df.columns else "well_index"
-    mapped_df["well_index_raw"] = mapped_df[source_col].astype(str)
-    raw_ints = pd.to_numeric(mapped_df["well_index_raw"], errors="coerce").dropna().astype(int).tolist()
-    prefer_zero_based = (0 in set(raw_ints))
-    mapped_df["well_index"] = mapped_df["well_index_raw"].map(
-        lambda raw: _resolve_mapped_well(str(raw), series_lookup, known_wells, prefer_zero_based=prefer_zero_based)
+    mapped_df["position_index"] = pd.to_numeric(
+        mapped_df[source_col], errors="raise"
+    ).astype(int)
+
+    identity_cols = ["experiment_id", "position_index", "well_index", "well_id"]
+    mapped_df = mapped_df.drop(columns=["well_index", "well_id"], errors="ignore").merge(
+        mapping_df[identity_cols],
+        on=["experiment_id", "position_index"],
+        how="left",
+        validate="many_to_one",
     )
 
-    # Convergence / promotion point: well_id = f"{experiment_id}_{well_index}".
-    # This is the join where every row reliably has both, so well_id is minted here
-    # (front_end_naming_and_flow.md Decision 11).
-    mapped_df["well_id"] = [
-        build_well_id(experiment_id, well_index)
-        for well_index in mapped_df["well_index"].astype(str)
-    ]
+    missing_identity = mapped_df["well_id"].isna()
+    if missing_identity.any():
+        sample = mapped_df.loc[
+            missing_identity, ["experiment_id", "position_index"]
+        ].drop_duplicates().head(10).to_dict(orient="records")
+        raise ValueError(
+            "position_well_mapping.csv does not cover all scope metadata positions. "
+            f"Missing preview: {sample}"
+        )
+
     mapped_df["channel_id"] = mapped_df.get("channel", "BF").astype(str)
 
     if "raw_channel_name" in mapped_df.columns:
@@ -141,7 +117,7 @@ def apply_series_mapping(
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scope-metadata-csv", type=Path, required=True)
-    p.add_argument("--series-well-mapping-csv", type=Path, required=True)
+    p.add_argument("--position-well-mapping-csv", type=Path, required=True)
     p.add_argument("--output-scope-metadata-mapped-csv", type=Path, required=True)
     p.add_argument("--experiment-id", required=True)
     return p.parse_args()
@@ -149,9 +125,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    apply_series_mapping(
+    apply_position_to_well_mapping(
         scope_metadata_csv=args.scope_metadata_csv,
-        mapping_csv=args.series_well_mapping_csv,
+        mapping_csv=args.position_well_mapping_csv,
         output_csv=args.output_scope_metadata_mapped_csv,
         experiment_id=args.experiment_id,
     )

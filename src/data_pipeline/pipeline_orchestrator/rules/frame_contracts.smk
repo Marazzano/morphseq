@@ -34,7 +34,7 @@ def _scope_dir(experiment: str) -> Path:
 rule materialize_stitched_images:
     input:
         scope_csv=lambda wc: _scope_dir(wc.experiment) / "scope_series_metadata_mapped.csv",
-        mapping_csv=lambda wc: _scope_dir(wc.experiment) / "series_well_mapping.csv",
+        mapping_csv=lambda wc: _scope_dir(wc.experiment) / "position_well_mapping.csv",
         raw_images_dir=lambda wc: RAW_IMAGES_DIR / _microscope(wc.experiment) / wc.experiment
     output:
         stitched_index_csv=EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
@@ -126,4 +126,3 @@ rule validate_frame_contract:
             'PYTHONPATH="{params.pythonpath}" "{params.python}" -m data_pipeline.metadata_ingest.frame_contract.validate_frame_contract '
             '--input-csv "{input.frame_contract_csv}" --output-flag "{output.validation_flag}"'
         )
-

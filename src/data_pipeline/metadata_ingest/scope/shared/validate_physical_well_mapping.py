@@ -1,4 +1,4 @@
-"""Validate physical (plate-free) series->well mapping.
+"""Validate physical (plate-free) position-to-well mapping.
 
 This validator exists to prevent silently generating downstream artifacts under the
 wrong well IDs. It checks that `position_well_mapping.csv` can fully map the scope
@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from data_pipeline.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.metadata_ingest.time_helpers import ensure_time_int_column
 
 
@@ -28,50 +29,6 @@ def _parse_bool(value: str | bool) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _build_series_lookup(mapping_df: pd.DataFrame) -> dict[int, str]:
-    lookup: dict[int, str] = {}
-    for _, row in mapping_df.iterrows():
-        series_number = row.get("series_number")
-        well_index = row.get("well_index")
-        if pd.isna(series_number) or pd.isna(well_index):
-            continue
-        try:
-            lookup[int(series_number)] = str(well_index)
-        except Exception:
-            continue
-    return lookup
-
-
-def _resolve_mapped_well(
-    scope_well_index: str,
-    series_lookup: dict[int, str],
-    known_wells: set[str],
-    *,
-    prefer_zero_based: bool,
-) -> str:
-    # If scope is already mapped to plate-like well names (e.g. A04), keep it.
-    if scope_well_index in known_wells:
-        return scope_well_index
-
-    # Try convention where scope well index is 0-based series index.
-    try:
-        scope_idx_int = int(scope_well_index)
-    except (TypeError, ValueError):
-        return scope_well_index
-
-    if prefer_zero_based:
-        if (scope_idx_int + 1) in series_lookup:
-            return series_lookup[scope_idx_int + 1]
-        return scope_well_index
-
-    # Prefer 1-based mapping, but allow 0-based scopes as a fallback.
-    if scope_idx_int in series_lookup:
-        return series_lookup[scope_idx_int]
-    if (scope_idx_int + 1) in series_lookup:
-        return series_lookup[scope_idx_int + 1]
-    return scope_well_index
-
-
 def validate_physical_well_mapping(
     *,
     scope_metadata_csv: Path,
@@ -80,62 +37,39 @@ def validate_physical_well_mapping(
 ) -> dict:
     scope_df = ensure_time_int_column(pd.read_csv(scope_metadata_csv), stage_name="validate_physical_well_mapping.scope")
     mapping_df = pd.read_csv(mapping_csv)
-    if mapping_df.empty:
-        raise ValueError(f"Empty mapping_csv: {mapping_csv}")
+    scope_df["experiment_id"] = scope_df["experiment_id"].astype(str)
+    mapping_df["experiment_id"] = mapping_df["experiment_id"].astype(str)
+    validate_position_well_mapping(mapping_df, scope_label=str(mapping_csv))
 
-    for required in ["series_number", "well_index"]:
-        if required not in mapping_df.columns:
-            raise ValueError(f"mapping_csv missing required column: {required}")
+    source_col = "raw_position_label" if "raw_position_label" in scope_df.columns else "position_index"
+    if source_col not in scope_df.columns:
+        raise ValueError("scope metadata must contain raw_position_label or position_index")
 
-    # Basic uniqueness checks.
-    dup_series = mapping_df["series_number"].duplicated(keep=False)
-    if dup_series.any():
-        preview = mapping_df.loc[dup_series, ["series_number", "well_index"]].head(10).to_dict(orient="records")
-        raise ValueError(f"Duplicate series_number entries in mapping_csv (preview): {preview}")
+    scope_positions = (
+        scope_df.assign(position_index=lambda d: pd.to_numeric(d[source_col], errors="raise").astype(int))
+        [["experiment_id", "position_index"]]
+        .drop_duplicates()
+    )
+    covered = scope_positions.merge(
+        mapping_df[["experiment_id", "position_index", "well_index"]],
+        on=["experiment_id", "position_index"],
+        how="left",
+        validate="one_to_one",
+    )
 
-    dup_well = mapping_df["well_index"].duplicated(keep=False)
-    if dup_well.any():
-        preview = mapping_df.loc[dup_well, ["series_number", "well_index"]].head(10).to_dict(orient="records")
-        raise ValueError(f"Duplicate well_index entries in mapping_csv (preview): {preview}")
-
-    series_lookup = _build_series_lookup(mapping_df)
-    known_wells = set(str(w) for w in mapping_df["well_index"].dropna().unique())
-
-    raw_scope_wells = sorted(set(scope_df["well_index"].astype(str).unique().tolist()))
-    raw_ints = []
-    for w in raw_scope_wells:
-        try:
-            raw_ints.append(int(w))
-        except Exception:
-            continue
-    prefer_zero_based = (0 in raw_ints)
-
-    resolved = {
-        w: _resolve_mapped_well(str(w), series_lookup, known_wells, prefer_zero_based=prefer_zero_based)
-        for w in raw_scope_wells
-    }
-
-    unmapped = [raw for raw, mapped in resolved.items() if str(mapped) == str(raw) and raw not in known_wells]
+    unmapped_rows = covered[covered["well_index"].isna()]
+    unmapped = unmapped_rows[["experiment_id", "position_index"]].to_dict(orient="records")
     if unmapped:
         # If we can't map any raw wells, Phase 3 should not run unless the user explicitly opted in.
         if not allow_unmapped_wells:
             raise ValueError(
-                "Physical well mapping appears incomplete (raw scope wells not mapped). "
+                "Physical well mapping appears incomplete (scope positions not mapped). "
                 f"Unmapped preview: {unmapped[:10]}. "
                 "Fix mapping inputs (YX1 XY reference / Keyence layout) or set scope_ingest.allow_unmapped_wells=true."
             )
 
-    # Ensure scope wells map to unique well_index values (otherwise Phase 3 would write collisions).
-    mapped_vals = [str(v) for v in resolved.values()]
-    if len(set(mapped_vals)) != len(mapped_vals):
-        # If we're in override mode, duplicates are still bad: they indicate we cannot uniquely identify wells.
-        dup = pd.Series(mapped_vals).value_counts()
-        dup = dup[dup > 1]
-        preview = dup.head(10).to_dict()
-        raise ValueError(f"Resolved scope wells map to duplicate well_index values (preview): {preview}")
-
     bad_well_indices: list[str] = []
-    for mapped in resolved.values():
+    for mapped in covered["well_index"].dropna().astype(str):
         mapped = str(mapped)
         if CANONICAL_WELL_RE.match(mapped):
             continue
@@ -152,12 +86,12 @@ def validate_physical_well_mapping(
         )
 
     diagnostics = {
-        "n_scope_wells": int(len(raw_scope_wells)),
+        "n_scope_positions": int(len(scope_positions)),
         "n_mapping_rows": int(len(mapping_df)),
         "allow_unmapped_wells": bool(allow_unmapped_wells),
-        "raw_scope_wells_preview": raw_scope_wells[:12],
-        "resolved_mapping_preview": [{"raw": k, "mapped": v} for k, v in list(resolved.items())[:12]],
-        "unmapped_raw_wells_preview": unmapped[:12],
+        "scope_positions_preview": scope_positions.head(12).to_dict(orient="records"),
+        "resolved_mapping_preview": covered.head(12).to_dict(orient="records"),
+        "unmapped_positions_preview": unmapped[:12],
     }
     return diagnostics
 

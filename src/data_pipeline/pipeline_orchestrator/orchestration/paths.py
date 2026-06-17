@@ -144,7 +144,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         # .provenance.json via provenance_path().
         "artifacts": {"mapping": "position_well_mapping.csv"},
     },
-    "join_series_mapping_to_scope_metadata": {  # CONVERGENCE LINE; well_id minted here (upstream)
+    "apply_position_to_well_mapping": {  # CONVERGENCE LINE; well_id comes from the position map.
         "stage": "experiment_metadata",
         "fanout": EXPERIMENT,
         # .validated via validated_path().
@@ -201,7 +201,7 @@ PIPELINE_STEPS: dict[str, dict] = {
 #           -> {ROOT}/.../per_well/20250912_B01/20250912_B01_frame_inventory.csv
 #
 #   validated_path  -> artifact_path + ".validated"        (the sentinel beside it)
-#       validated_path(ROOT, "join_series_mapping_to_scope_metadata", "mapped", "20250912")
+#       validated_path(ROOT, "apply_position_to_well_mapping", "mapped", "20250912")
 #           -> {ROOT}/experiment_metadata/20250912/scope_metadata_mapped.csv.validated
 #
 #   provenance_path -> artifact_path + ".provenance.json"  (the sidecar beside it)
@@ -433,7 +433,7 @@ def validated_path(
 ) -> Path:
     """Return the ``{artifact}.validated`` sentinel beside an artifact (trailing-suffix form).
 
-    ⚠️ Today ``apply_series_mapping`` writes a LEADING-dot form (``.scope_metadata_mapped.validated``)
+    ⚠️ Today ``apply_position_to_well_mapping`` writes a LEADING-dot form (``.scope_metadata_mapped.validated``)
     while this helper assumes the TARGET trailing form (``scope_metadata_mapped.csv.validated``).
     That mismatch is an open audit item (front_end doc, "Sentinel-suffix audit still open") to be
     normalized on-disk when the step is reconstructed — this helper deliberately emits the target

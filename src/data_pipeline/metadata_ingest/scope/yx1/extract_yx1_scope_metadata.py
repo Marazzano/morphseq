@@ -226,7 +226,7 @@ def extract_yx1_scope_metadata(
 
         # Build metadata rows: one row per (position, timepoint, channel).
         # raw_position_label is the raw ND2 P-index as a string — not a well label.
-        # well_id is minted later at join_series_mapping_to_scope_metadata.
+        # well_id is attached later by apply_position_to_well_mapping.
         rows = []
 
         for w_idx in range(n_w):

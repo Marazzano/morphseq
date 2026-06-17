@@ -231,6 +231,14 @@ def _extract_well_from_path(file_path: Path) -> str:
     return "unknown"
 
 
+def _extract_position_label_within_well(file_path: Path) -> str:
+    """Return the Keyence acquisition-position token within a well directory."""
+    for part in file_path.parts:
+        if re.fullmatch(r"P\d+", part, flags=re.IGNORECASE):
+            return part.upper()
+    return "P0"
+
+
 def extract_keyence_scope_metadata(
     raw_data_dir: Path,
     experiment_id: str,
@@ -259,6 +267,13 @@ def extract_keyence_scope_metadata(
 
     # Discover TIFF files
     tiff_files = _discover_keyence_files(raw_data_dir, experiment_id)
+    position_keys = sorted(
+        {
+            (_extract_well_from_path(path), _extract_position_label_within_well(path))
+            for path in tiff_files
+        }
+    )
+    position_index_by_key = {key: idx for idx, key in enumerate(position_keys)}
 
     # Extract metadata from each file
     rows = []
@@ -268,6 +283,8 @@ def extract_keyence_scope_metadata(
 
             # Extract well from path
             well_index = _extract_well_from_path(tiff_path)
+            position_key = (well_index, _extract_position_label_within_well(tiff_path))
+            position_index = position_index_by_key[position_key]
 
             # Normalize channel name
             raw_channel = meta.get('Channel', 'unknown')
@@ -287,6 +304,8 @@ def extract_keyence_scope_metadata(
             well_id = build_well_id(experiment_id, well_index)
             row = {
                 'experiment_id': experiment_id,
+                'raw_position_label': str(position_index),
+                'position_index': position_index,
                 'well_index': well_index,
                 'well_id': well_id,
                 'time_int': time_int,
@@ -297,6 +316,8 @@ def extract_keyence_scope_metadata(
                 'image_width_px': meta.get('Width (px)', 0),
                 'image_height_px': meta.get('Height (px)', 0),
                 'objective_magnification': meta.get('Objective', 'unknown'),
+                'x_um': np.nan,
+                'y_um': np.nan,
 
                 # Temporal calibration
                 'absolute_start_time': meta.get('Time (s)', 0),

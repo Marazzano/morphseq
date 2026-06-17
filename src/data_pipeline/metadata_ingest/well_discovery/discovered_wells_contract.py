@@ -4,7 +4,7 @@ discovered_wells.txt is physical identity, not QC-passed or runnable identity:
   run_wells = discovered_wells ∩ target_wells [ ∩ eligible_wells ]
 
 Validation rejects bare local well_index labels (e.g. "A01") that leaked past
-the well_id promotion step in join_series_mapping_to_scope_metadata.
+the well_id promotion step in apply_position_to_well_mapping.
 """
 
 from __future__ import annotations

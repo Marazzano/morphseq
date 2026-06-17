@@ -4,7 +4,7 @@ Single discovery source for Beat 1 (YX1 path). Reads the post-join canonical
 metadata CSV, extracts unique global well_ids in encounter order, validates
 them, and writes discovered_wells.txt.
 
-scope_metadata_mapped.csv is produced by join_series_mapping_to_scope_metadata,
+scope_metadata_mapped.csv is produced by apply_position_to_well_mapping,
 which is downstream of both YX1 and Keyence mapping — it already contains global
 well_ids. This function reads that shared artifact, so it never needs to know
 which microscope produced it.

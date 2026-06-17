@@ -6,6 +6,29 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: Step 3 — stitch_well_candidate / layout.py)
+
+**What shipped:**
+- `image_materialization/stitched/layout.py` — locked image layout (`materialized_images/{candidate/}{well_id}/projection/{channel_id}/{image_id}.png`). One generic constructor `materialized_image_path` + `projection_frame_path` wrapper. Product-type-aware (`projection` / `z_stack`), enforces `z_index` consistency, validates `well_id` and extension. Pure path math. 15/15 tests pass at `tests/data_pipeline/image_materialization/stitched/test_layout.py`.
+- `image_materialization/stitched/scope/__init__.py` + `scope/yx1/__init__.py` — package stubs.
+- `image_materialization/stitched/scope/yx1/materialize_yx1_stitched_images.py` — two image-math primitives (`materialize_ff_projection` / `materialize_max_projection`) + per-well orchestrator `materialize_yx1_well`. Emits flat frame-inventory schema with `z_index` (pd.NA for projections), `image_product_type`, `projection_method`. Entry guard checks well_id/well_index/experiment_id consistency + unambiguous position_index. 11/11 tests pass at `tests/data_pipeline/image_materialization/stitched/scope/yx1/test_materialize_yx1.py`.
+- `pipeline_orchestrator/tasks.py` — added `cmd_materialize_yx1_well_candidate` (thin dispatcher; explicit `--built-image-data-dir` and `--position-well-mapping-csv` args).
+- **Key design decisions locked:** `layout.py` takes `built_image_data_dir` (not `DATA_ROOT`); no registry row for Step 3 (standalone B01 only, no `well_runner`); `materialize_max_projection` stub defined to lock naming convention; `nd2` imported at module level (not locally) so tests can patch it.
+**What's broken/half-done:** nothing — targeted tests pass. B01 smoke run on real ND2 data is Step 4's gate (not yet run — requires GPU).
+**Next concrete action:** Step 3 B01 smoke — run `cmd_materialize_yx1_well_candidate` on `20250912_B01` with real ND2 data. CLI: `PYTHONPATH=src /net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python -m data_pipeline.pipeline_orchestrator.tasks materialize-yx1-well-candidate --experiment 20250912 --well-id 20250912_B01 --well-index B01 --acquisition-inventory-csv <path> --position-well-mapping-csv <position_well_mapping.csv> --nd2-path <path> --built-image-data-dir <BUILT_IMAGE_DATA_DIR> --frame-inventory-csv <out.csv> --done-flag <out.done>`. Confirm images land under `materialized_images/candidate/20250912_B01/projection/BF/` and frame_inventory CSV has correct row count. Then Step 4: comparison gate vs legacy stitched output.
+**Open decisions:** none blocking the B01 smoke.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: Step 2 — frame_inventory_contract.py)
+
+**What shipped:** `image_materialization/stitched/contracts/frame_inventory_contract.py` — the shared microscope-agnostic handoff seam. Contains: `REQUIRED_FRAME_INVENTORY_COLUMNS` (8 atoms), `DERIVED_FRAME_INVENTORY_COLUMNS` (well_id, image_id), `derive_well_id`/`derive_image_id` helpers, `assert_derived_ids_consistent` guard (recomputes from atoms, fails loud), and three frozen dataclasses (`StitchedHandoffSpec`, `FrameInventorySpec`, `WellHandoff`). `__init__.py` chain created for `image_materialization/`, `stitched/`, `contracts/`. 16/16 tests pass at `tests/data_pipeline/image_materialization/stitched/contracts/test_frame_inventory_contract.py` (no flags, no `__init__.py` in test tree — Option A convention confirmed). Decision: acquisition_inventory and frame_inventory are fully separate; no shared base; `time_index` name overlap is intentional vocabulary alignment only.
+**What's broken/half-done:** nothing — fully verified.
+**Next concrete action:** Step 3 — build `stitch_well_candidate` beside the legacy stitcher. Create `src/data_pipeline/image_materialization/stitched/stitch_well_candidate.py` (per-well, reads the acquisition inventory + frame_inventory contract, writes stitched images + `{well_id}_frame_inventory.csv` for ONE well). Run on B01 of `20250912`. No Snakemake wiring yet — the candidate runs standalone.
+**Open decisions:** none blocking Step 3.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: Step 1 — extract well_discovery/)
 
 **What shipped:** `well_discovery/` package extracted from `tasks.py` (no behavior change). Three new files: `__init__.py`, `discovered_wells_contract.py` (read/write/validate), `discover_wells_from_scope_metadata.py` (the logic, now with `validate_discovered_wells` guard). `tasks.py::cmd_discover_wells` is now a pure 3-line delegator (no pandas, no business logic). 12/12 smoke tests pass at `tests/data_pipeline/metadata_ingest/test_well_discovery.py`.

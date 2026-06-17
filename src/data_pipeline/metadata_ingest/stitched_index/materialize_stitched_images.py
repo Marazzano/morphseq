@@ -27,6 +27,7 @@ from data_pipeline.metadata_ingest.time_helpers import add_elapsed_time_columns
 from data_pipeline.metadata_ingest.time_helpers import add_frame_interval_unit_columns
 from data_pipeline.metadata_ingest.time_helpers import ensure_time_int_column
 from data_pipeline.shared.identifiers import build_image_id
+from data_pipeline.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.utils.cuda_diagnostics import resolve_device
 
 log = logging.getLogger(__name__)
@@ -103,18 +104,18 @@ def _write_placeholder_image(
     return "placeholder"
 
 
-def _build_yx1_well_to_series_map(mapping_csv: Path | None) -> dict[str, int]:
+def _build_yx1_well_to_position_map(mapping_csv: Path | None) -> dict[str, int]:
     if mapping_csv is None or not mapping_csv.exists():
         return {}
     mapping_df = pd.read_csv(mapping_csv)
+    validate_position_well_mapping(mapping_df, scope_label=str(mapping_csv))
     out: dict[str, int] = {}
     for _, row in mapping_df.iterrows():
-        series_number = row.get("series_number")
+        position_index = row.get("position_index")
         well_index = row.get("well_index")
-        if pd.isna(series_number) or pd.isna(well_index):
+        if pd.isna(position_index) or pd.isna(well_index):
             continue
-        # Convert to 0-based ND2 series index.
-        out[str(well_index)] = int(series_number) - 1
+        out[str(well_index)] = int(position_index)
     return out
 
 
@@ -442,7 +443,7 @@ def materialize_stitched_images(
     keyence_master_params = _keyence_master_params_path(raw_images_dir, experiment) if microscope == "Keyence" else None
     keyence_device = resolve_device(device_preference)
     yx1_device = resolve_device(device_preference)
-    yx1_series_map = _build_yx1_well_to_series_map(mapping_csv) if microscope == "YX1" else {}
+    yx1_position_map = _build_yx1_well_to_position_map(mapping_csv) if microscope == "YX1" else {}
     image_extension = _normalize_extension(output_image_extension)
     keyence_method = str(keyence_projection_method or "log").strip().lower()
 
@@ -498,13 +499,13 @@ def materialize_stitched_images(
             source_kind: str
 
             if microscope == "YX1" and nd is not None and dask_arr is not None:
-                series_index = yx1_series_map.get(well_index)
-                if series_index is not None:
+                position_index = yx1_position_map.get(well_index)
+                if position_index is not None:
                     image = _materialize_yx1_image(
                         nd=nd,
                         dask_arr=dask_arr,
                         time_int=time_int,
-                        series_index=series_index,
+                        series_index=position_index,
                         channel_index=channel_index,
                         device=yx1_device,
                     )

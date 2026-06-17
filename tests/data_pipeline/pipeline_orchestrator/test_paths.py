@@ -43,12 +43,12 @@ class TestResolvedArtifactPaths:
                              format_vars={"scope": "yx1"}) == \
             ROOT / "experiment_metadata" / EXP / "scope_metadata__yx1.csv"
 
-    def test_map_series_to_wells(self):
-        assert artifact_path(ROOT, "map_series_to_wells", "mapping", EXP) == \
-            ROOT / "experiment_metadata" / EXP / "series_well_mapping.csv"
+    def test_map_positions_to_wells(self):
+        assert artifact_path(ROOT, "map_positions_to_wells", "mapping", EXP) == \
+            ROOT / "experiment_metadata" / EXP / "position_well_mapping.csv"
 
-    def test_join_series_mapping_to_scope_metadata(self):
-        assert artifact_path(ROOT, "join_series_mapping_to_scope_metadata", "mapped", EXP) == \
+    def test_apply_position_to_well_mapping(self):
+        assert artifact_path(ROOT, "apply_position_to_well_mapping", "mapped", EXP) == \
             ROOT / "experiment_metadata" / EXP / "scope_metadata_mapped.csv"
 
     def test_discover_wells(self):
@@ -72,8 +72,8 @@ class TestDerivedSidecarPaths:
     suffix behavior against both an experiment-grain and a per-well artifact."""
 
     def test_validated_path_appends_suffix_to_experiment_artifact(self):
-        base = artifact_path(ROOT, "join_series_mapping_to_scope_metadata", "mapped", EXP)
-        assert validated_path(ROOT, "join_series_mapping_to_scope_metadata", "mapped", EXP) == \
+        base = artifact_path(ROOT, "apply_position_to_well_mapping", "mapped", EXP)
+        assert validated_path(ROOT, "apply_position_to_well_mapping", "mapped", EXP) == \
             base.with_name(base.name + ".validated")
 
     def test_validated_path_appends_suffix_to_per_well_artifact(self):
@@ -84,8 +84,8 @@ class TestDerivedSidecarPaths:
             base.with_name(base.name + ".validated")
 
     def test_provenance_path_appends_suffix_to_artifact(self):
-        base = artifact_path(ROOT, "map_series_to_wells", "mapping", EXP)
-        assert provenance_path(ROOT, "map_series_to_wells", "mapping", EXP) == \
+        base = artifact_path(ROOT, "map_positions_to_wells", "mapping", EXP)
+        assert provenance_path(ROOT, "map_positions_to_wells", "mapping", EXP) == \
             base.with_name(base.name + ".provenance.json")
 
 

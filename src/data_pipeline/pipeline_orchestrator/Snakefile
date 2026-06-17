@@ -112,13 +112,13 @@ POSITION_WELL_MAPPING_PROVENANCE = provenance_path(
 )
 SCOPE_METADATA_MAPPED_CSV = artifact_path(
     DATA_ROOT,
-    "join_series_mapping_to_scope_metadata",
+    "apply_position_to_well_mapping",
     "mapped",
     FRONT_END_EXPERIMENT,
 )
 SCOPE_METADATA_MAPPED_VALIDATED = validated_path(
     DATA_ROOT,
-    "join_series_mapping_to_scope_metadata",
+    "apply_position_to_well_mapping",
     "mapped",
     FRONT_END_EXPERIMENT,
 )
@@ -271,9 +271,9 @@ rule map_positions_to_wells:
         """
 
 
-rule join_series_mapping_to_scope_metadata:
+rule apply_position_to_well_mapping:
     """
-    Apply series mapping to raw scope metadata to produce canonical well_index/well_id/image_id.
+    Apply position-to-well mapping to raw scope metadata to produce canonical well_index/well_id/image_id.
     """
     input:
         scope_csv = SCOPE_METADATA_CSV,
@@ -283,7 +283,7 @@ rule join_series_mapping_to_scope_metadata:
         validated = SCOPE_METADATA_MAPPED_VALIDATED,
     shell:
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks join-series-mapping-to-scope-metadata \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks apply-position-to-well-mapping \
           --experiment "{wildcards.experiment}" \
           --scope-csv "{input.scope_csv}" \
           --mapping-csv "{input.mapping_csv}" \

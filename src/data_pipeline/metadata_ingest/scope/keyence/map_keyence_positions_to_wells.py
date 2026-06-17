@@ -1,27 +1,26 @@
 """
-Keyence-specific series to well mapping.
+Keyence-specific position-to-well mapping.
 
-Maps Keyence microscope series numbers to well positions based on file structure.
+Maps Keyence microscope acquisition positions to well positions based on file structure.
 """
 
 import argparse
 import pandas as pd
 import json
 from pathlib import Path
-from typing import Dict, Any
 import logging
 
-from data_pipeline.io.validators import validate_dataframe_schema
+from data_pipeline.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.shared.identifiers import build_well_id
 
 log = logging.getLogger(__name__)
 
-# Series mapping schema
-REQUIRED_COLUMNS_SERIES_MAPPING = [
+# Position mapping schema
+REQUIRED_COLUMNS_POSITION_MAPPING = [
     'experiment_id',
+    'position_index',
     'well_index',
     'well_id',
-    'series_number',
     'mapping_method',
 ]
 
@@ -113,7 +112,7 @@ def _count_positions_per_well(well_path: Path) -> int:
     return 0
 
 
-def map_series_to_wells_keyence(
+def map_positions_to_wells_keyence(
     raw_data_dir: Path,
     scope_metadata_csv: Path,
     output_mapping_csv: Path,
@@ -121,29 +120,29 @@ def map_series_to_wells_keyence(
     experiment_id: str,
 ) -> pd.DataFrame:
     """
-    Map Keyence series to wells (plate-free).
+    Map Keyence acquisition positions to wells (plate-free).
 
     For Keyence microscopes, the mapping strategy is:
     1. Discover well directories (XY## or W0##)
     2. Count positions per well (P* subdirs or single position)
-    3. Assign sequential series numbers
+    3. Assign sequential acquisition position indices
     4. Cross-reference with scope metadata to flag missing wells
 
     Args:
         raw_data_dir: Root directory containing raw Keyence data
         scope_metadata_csv: Path to validated scope_series_metadata_raw.csv
-        output_mapping_csv: Path to write series_well_mapping.csv
+        output_mapping_csv: Path to write position_well_mapping.csv
         output_provenance_json: Path to write mapping_provenance.json
         experiment_id: Experiment identifier (used for composing well_id)
 
     Returns:
-        DataFrame with series-to-well mapping
+        DataFrame with position-to-well mapping
 
     Raises:
         FileNotFoundError: If required files not found
         ValueError: If mapping fails validation
     """
-    log.info(f"Mapping Keyence series to wells for {experiment_id}")
+    log.info(f"Mapping Keyence positions to wells for {experiment_id}")
 
     # Load scope metadata to cross-reference
     scope_df = pd.read_csv(scope_metadata_csv)
@@ -153,7 +152,7 @@ def map_series_to_wells_keyence(
 
     # Build mapping
     rows = []
-    series_number = 0
+    position_index = 0
     warnings = []
 
     for well_index, well_path in wells:
@@ -164,10 +163,8 @@ def map_series_to_wells_keyence(
             warnings.append(f"Well {well_index}: No images found")
             continue
 
-        # For each position, create a series mapping
+        # For each acquisition position, create a position mapping.
         for pos_idx in range(n_positions):
-            series_number += 1
-
             scope_has_well = well_index in scope_df['well_index'].values
 
             if not scope_has_well:
@@ -175,44 +172,40 @@ def map_series_to_wells_keyence(
 
             row = {
                 'experiment_id': experiment_id,
+                'position_index': position_index,
                 'well_index': well_index,
                 'well_id': build_well_id(experiment_id, well_index),
-                'series_number': series_number,
-                'position_index': pos_idx,
                 'mapping_method': 'keyence_directory_structure',
+                'position_index_within_well': pos_idx,
                 'n_positions_in_well': n_positions,
                 'source_directory': str(well_path),
             }
 
             rows.append(row)
+            position_index += 1
 
     if not rows:
-        raise ValueError(f"No valid series-to-well mappings found for {experiment_id}")
+        raise ValueError(f"No valid position-to-well mappings found for {experiment_id}")
 
     # Build DataFrame
     df = pd.DataFrame(rows)
 
-    # Validate against schema
-    validate_dataframe_schema(
-        df,
-        REQUIRED_COLUMNS_SERIES_MAPPING,
-        stage_name="Keyence series-to-well mapping"
-    )
+    validate_position_well_mapping(df, scope_label="Keyence position_well_mapping")
 
     # Write output CSV
     output_mapping_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_mapping_csv, index=False)
-    log.info(f"Wrote Keyence series mapping to {output_mapping_csv}")
+    log.info(f"Wrote Keyence position-well mapping to {output_mapping_csv}")
 
     # Write provenance JSON
     provenance = {
         'experiment_id': experiment_id,
         'microscope': 'Keyence',
         'mapping_method': 'keyence_directory_structure',
-        'n_series': int(len(df)),
+        'n_positions': int(len(df)),
         'n_wells': int(df['well_index'].nunique()),
         'mapping_summary': {
-            'total_series': int(len(df)),
+            'total_positions': int(len(df)),
             'total_wells': int(df['well_index'].nunique()),
             'wells_with_multiple_positions': int((df['n_positions_in_well'] > 1).sum()),
         },
@@ -237,12 +230,12 @@ def map_series_to_wells_keyence(
     return df
 
 
-def load_series_well_mapping(mapping_csv: Path) -> pd.DataFrame:
+def load_position_well_mapping(mapping_csv: Path) -> pd.DataFrame:
     """
-    Load and validate series-to-well mapping.
+    Load and validate position-to-well mapping.
 
     Args:
-        mapping_csv: Path to series_well_mapping.csv
+        mapping_csv: Path to position_well_mapping.csv
 
     Returns:
         Validated DataFrame
@@ -252,15 +245,11 @@ def load_series_well_mapping(mapping_csv: Path) -> pd.DataFrame:
         ValueError: If validation fails
     """
     if not mapping_csv.exists():
-        raise FileNotFoundError(f"Series mapping not found: {mapping_csv}")
+        raise FileNotFoundError(f"Position mapping not found: {mapping_csv}")
 
     df = pd.read_csv(mapping_csv)
 
-    validate_dataframe_schema(
-        df,
-        REQUIRED_COLUMNS_SERIES_MAPPING,
-        stage_name="Series-to-well mapping"
-    )
+    validate_position_well_mapping(df, scope_label=str(mapping_csv))
 
     return df
 
@@ -278,7 +267,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    map_series_to_wells_keyence(
+    map_positions_to_wells_keyence(
         raw_data_dir=args.raw_keyence_experiment_dir,
         scope_metadata_csv=args.scope_metadata_csv,
         output_mapping_csv=args.output_mapping_csv,
