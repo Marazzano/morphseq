@@ -726,7 +726,14 @@ the Per-Well Zone. The implementation is microscope-agnostic.
 
 **FLOW:** `scope_metadata_mapped.csv → discovered_wells.txt`.
 
-Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
+This step creates the fan point without changing what the fan means. Today the logic lives inline in
+`tasks.py`, which makes discovery look like a task-script convenience instead of a real data product.
+Moving it into `well_discovery/` gives `discovered_wells.txt` one home and one contract:
+physical wells present in canonical metadata, not validated wells, not runnable wells.
+
+The important restraint is that this is not a new routing system. For Beat 1 there is one discovery
+source, `scope_metadata_mapped.csv`, so the implementation is direct. The future frame-inventory
+source and any dispatcher wait until the second source exists.
 
 **FILES:**
 - **Create**
@@ -760,6 +767,15 @@ before the stitch producer starts emitting it.
 
 Add only the **two** contracts the YX1 path consumes (per the anti-whale guard) before touching frame
 inventory or moving packages.
+
+This step is the guardrail before the risky stitch work. The candidate stitcher and the promoted
+frame-inventory producer need to agree on identity atoms, derived IDs, required columns, and unique
+keys before either writes new output. Put that meaning beside the data product, not in a global schema
+drawer and not in `tasks.py`.
+
+The anti-whale rule matters here: do not build every future contract just because the target tree can
+name them. YX1 needs the discovered-wells contract and the frame-inventory handoff contract. Keyence
+eligibility contracts wait until Keyence conflict resolution forces them.
 
 **FILES:**
 - **Create**
@@ -795,6 +811,22 @@ execution plus YX1-specific production code.
 beside the legacy `materialize_stitched_images[{exp}]` branch.
 
 The strangler core: build the new per-well stitch as a **candidate branch**, legacy untouched.
+This is the first risky cut, because it changes two things that matter: the unit of execution
+(`experiment → well`) and the source of stitch lookup truth (inline derivation → acquisition
+inventory). Do not make that cut inside the live rule. The candidate branch is a parallel producer:
+same raw experiment, same target well, new per-well implementation, isolated output tree.
+
+That gives the migration a clean test shape:
+
+```text
+legacy experiment-grain stitch for B01      ← baseline
+candidate per-well stitch for B01           ← new path
+compare them before anything downstream sees the new path
+```
+
+If the candidate fails, the live pipeline still runs. If it succeeds for one well and passes the
+comparison gate, then the fan can widen to all discovered wells. Promotion happens later, after the
+candidate branch has earned the right to replace the legacy branch.
 
 **FILES:**
 - **Create**
@@ -835,7 +867,14 @@ producer before anything is promoted.
 
 **FLOW:** `legacy stitched B01 + candidate stitched B01 → stitch_candidate_qc evidence`.
 
-Build the dedicated stitch-comparison helper (NOT the segmentation video renderers — wrong layer).
+This step turns "looks equivalent" into recorded evidence. It is deliberately separate from Step 3:
+first prove the candidate can write frames, then compare those frames against the legacy baseline. The
+comparison lives at the stitch layer, not in segmentation, because the question is whether the new
+producer preserved the image handoff before any downstream consumer transforms it.
+
+The gate has three layers because byte identity may be too strict for a per-well rewrite of a batched
+producer. A byte match is ideal. A byte mismatch triggers numeric diff and visual review. Promotion is
+not allowed until the comparison evidence exists and mdcolon accepts the side-by-side output.
 
 **FILES:**
 - **Create**
@@ -869,6 +908,15 @@ of a single B01 slice.
 
 **FLOW:** `discover_wells checkpoint → run_well_ids_for_experiment → stitch_well_candidate[well_id]`.
 
+This step widens only after the one-well proof. B01 proves the new code path can be equivalent in the
+smallest useful case; fanning proves the orchestration shape can handle the whole discovered well set.
+The legacy branch still remains live, so this is a scale-out test of the candidate branch, not a
+cutover.
+
+Keep the run-set simple for YX1: `discovered ∩ target`. Do not introduce the Keyence eligibility term
+here. The purpose is to prove that the fan starts at `discover_wells` and that each well can run as an
+isolated stitch job.
+
 **FILES:**
 - **Edit**
   - `src/data_pipeline/pipeline_orchestrator/Snakefile` or rules include
@@ -894,6 +942,15 @@ validate_frame_inventory_for_well[well_id]`.
 
 Now (and only now) cut over: the candidate becomes the real path; `build_frame_inventory_for_well`
 reads it. This is the END of the microscope-aware pipeline — the top of the dam.
+
+This is the moment the migration stops being a side branch. The candidate has already produced frames
+for one well, passed comparison, and fanned over the discovered set. Promotion means the target graph
+now trusts that branch and points the per-well frame-inventory builder at it. The handoff shard becomes
+the live product of the microscope-aware front half.
+
+The boundary is important: Step 6 promotes only up to validated per-well `frame_inventory`. It does
+not repoint segmentation, features, or QC. That keeps the scope-aware migration separate from the
+downstream per-well migration in Beat 2.
 
 **FILES:**
 - **Create / move into target home**
@@ -938,7 +995,13 @@ per-well stitch → frame_inventory handoff; this deletes the old experiment-gra
 **FLOW:** remove `materialize_stitched_images[{exp}] → stitched_image_index → frame_contract` from
 the YX1 producer path.
 
-Only after Step 6 is green and stable:
+This step removes the old path only after the new path is live and stable. Until now, the experiment
+grain chain exists as a safety rail and comparison baseline. Once Step 6 proves the per-well
+frame-inventory handoff is the live front-half product, keeping the old YX1 producer path becomes
+confusing: two ways to stitch, two handoff names, two grains.
+
+Strangling is not just deletion. It also archives the cutover evidence and collapses duplicated helper
+logic so the remaining graph has one obvious path through the microscope boundary.
 
 **FILES:**
 - **Delete / stop importing on the YX1 path**
