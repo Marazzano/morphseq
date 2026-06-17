@@ -753,6 +753,7 @@ source and any dispatcher wait until the second source exists.
   output_wells)`; `tasks.py` just delegates (no pandas). No dispatcher yet.
 - **Verify:** `snakemake -n` parses; 20250912 produces identical `discovered_wells.txt`; tests (dup
   collapse, missing `well_id` fails, local `A01` fails, `tasks.py` has no business logic).
+- **COMMIT:** `refactor: extract well_discovery/ from tasks.py (no behavior change)`
 
 ### Step 2 — Establish front-half domain contracts  ·  🧩 the shared contract the overlap exits on  *(low risk, NO behavior change)*
 
@@ -804,6 +805,7 @@ eligibility contracts wait until Keyence conflict resolution forces them.
 - Leave `schemas/frame_contract.py` as legacy compatibility; do not add new target semantics there.
 - **Verify:** import-only/unit tests for required columns, unique keys, and derived-id rules. No
   Snakemake behavior changes yet.
+- **COMMIT:** `feat: add frame_inventory_contract.py and discovered_wells_contract.py (no pipeline behavior change)`
 
 ### Step 3 — Add `stitch_well_candidate[well_id]` BESIDE legacy  ·  🧩 OVERLAP body (per-well + scope-aware stitch)
 
@@ -872,6 +874,7 @@ Promotion happens later, after the candidate branch has earned the right to repl
   compare against). GPU step.
 - **Verify (this commit):** `stitch_well_candidate[20250912_B01]` runs and writes isolated output.
   No comparison yet — just that the candidate produces frames and its candidate frame-inventory shard.
+- **COMMIT:** `feat: add stitch_well_candidate[well_id] beside legacy; per-well YX1 materializer + layout.py (B01 only)`
 
 ### Step 4 — The COMPARISON GATE on one well (`stitch_candidate_qc/`)  ·  🧩 OVERLAP body (prove the scope backend)
 
@@ -913,6 +916,7 @@ not allowed until the comparison evidence exists and mdcolon accepts the side-by
   Byte-identical = ideal/auto-pass. Byte mismatch ≠ failure — it's `np.allclose`-within-tolerance +
   visual confirmation that legacy and candidate are *the same image*. **No promotion without mdcolon's
   visual sign-off.**
+- **COMMIT:** `feat: add stitch_candidate_qc B01 comparison evidence (human_review_status=accepted)`
 
 ### Step 5 — Fan the candidate over discovered wells  ·  🧩 OVERLAP body (per-well fan of the scope backend)
 
@@ -947,6 +951,7 @@ isolated stitch job.
   comparison gate; the second well proves the target/fan path is not hardcoded.
 - **Verify:** two candidate wells run through per-well stitch + candidate frame-inventory output; B01
   has full visual acceptance; the second well has a green smoke/QC summary.
+- **COMMIT:** `feat: fan stitch_well_candidate over two-well set; confirm orchestration checkpoint`
 
 ### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE  ·  🧩 EXIT the overlap → frame_inventory (post-microscope land)
 
@@ -1001,6 +1006,7 @@ downstream per-well migration in Beat 2.
   runs end-to-end and produces per-well frame inventories that (a) key on `time_index`, (b) have
   derived `well_id`/`image_id` recomputing from atoms, (c) have resolving `source_image_path`s.
   **YX1 has crossed the microscope boundary; Beat 1 is DONE.**
+- **COMMIT:** `feat: promote stitch_well_candidate → stitch_well; per-well frame_inventory is the live handoff (Beat 1 finish line)`
 
 ### Step 7 — STRANGLE the legacy path  ·  🧩 cleanup (remove the old Microscope-Zone chain)
 
@@ -1047,6 +1053,7 @@ logic so the remaining graph has one obvious path through the microscope boundar
 - **Collapse the audit's duplications** (cheap, ~40 lines): `merge_frame_inventory_shards` →
   `well_runner.concat_well_shards_to_file(...)` (audit #4); drop the merged-level double-validate
   (audit #3); keep a `time_int` compat alias for not-yet-migrated downstream readers (gradual).
+- **COMMIT:** `refactor: strangle legacy materialize_stitched_images + stitched_image_index + frame_contract YX1 path; archive candidate QC evidence`
 
 > **🏁 When Steps 6+7 pass, the microscope-aware part of the pipeline is DONE for YX1.** That is the
 > goal of this roadmap. (Keyence walks the same strangler steps; Beat 2 deepens per-well execution

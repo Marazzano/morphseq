@@ -6,16 +6,16 @@ into role-based folders.
 
 ---
 
-## 🚦 START HERE (the 3 live drivers — top level)
+## 🚦 START HERE (the 4 live drivers — top level)
 
 | Open this | When |
 |---|---|
-| **`current_state_and_next_steps.md`** | **"Where are we RIGHT NOW?"** — verified on-disk state + the immediate next action. The status doc. Read this first. |
+| **`AGENT_QUICKSTART.md`** | **"What do I do at turn 1?"** — cold-start protocol, end-of-session protocol, immutable conceptual anchors, pointer map. Read this before anything else. |
+| **`current_state_and_next_steps.md`** | **"Where are we RIGHT NOW?"** — append-only timestamped session log; the top snapshot block is the live state. Read the quickstart first, then this. |
 | **`front_half_reorg_roadmap.md`** | **"What's the plan to get YX1 to stitch?"** — the BINDING front-half implementation plan (the 7-step strangler migration to a per-well `frame_inventory`). The active driver. |
 | **`OVERALL_PLAN.md`** | **"What's the WHOLE refactor?"** — the top-level plan/index for the entire streamline-snakemake effort (all stages, build order, per-stage status). Broader than the front half. |
 
-> **Reading order for a cold start:** `current_state` (where we are) → `front_half_reorg_roadmap`
-> (what we're doing next) → dip into `specs/` only as the roadmap points you there.
+> **Reading order for a cold start:** `AGENT_QUICKSTART.md` (the protocol) → `current_state` (where we are) → `front_half_reorg_roadmap` (what we're doing next) → dip into `specs/` only as the roadmap points you there.
 
 ---
 

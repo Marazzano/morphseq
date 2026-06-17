@@ -6,6 +6,15 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: quickstart + handoff protocol setup)
+
+**What shipped:** `AGENT_QUICKSTART.md` created (cold-start + end-of-session protocol, pointer map, conceptual anchors). No code changes this session — doc/process work only.
+**What's broken/half-done:** nothing in flight.
+**Next concrete action:** Step 1 — extract `well_discovery/` from `tasks.py`. Create `src/data_pipeline/metadata_ingest/well_discovery/__init__.py` + `discovered_wells_contract.py` + `discover_wells_from_scope_metadata.py`; edit `tasks.py` to delegate (no pandas). Verify: `snakemake -n` parses; `20250912` produces identical `discovered_wells.txt`.
+**Open decisions:** Step 2 decision gate — acquisition/frame contract shape (how the shipped `scope/yx1/acquisition_inventory.py` schema/key relates to `frame_inventory_contract.py`). Interview mdcolon before building Step 2.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-17
 
 **Where we are (front half, YX1):**
