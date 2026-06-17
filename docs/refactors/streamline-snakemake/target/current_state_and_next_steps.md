@@ -6,6 +6,15 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: Step 1 — extract well_discovery/)
+
+**What shipped:** `well_discovery/` package extracted from `tasks.py` (no behavior change). Three new files: `__init__.py`, `discovered_wells_contract.py` (read/write/validate), `discover_wells_from_scope_metadata.py` (the logic, now with `validate_discovered_wells` guard). `tasks.py::cmd_discover_wells` is now a pure 3-line delegator (no pandas, no business logic). 12/12 smoke tests pass at `tests/data_pipeline/metadata_ingest/test_well_discovery.py`.
+**What's broken/half-done:** nothing — fully verified.
+**Next concrete action:** Step 2 decision gate interview with mdcolon (see Open decisions below), then build `image_materialization/stitched/contracts/frame_inventory_contract.py`.
+**Open decisions:** Step 2 — acquisition/frame contract shape interview (how `scope/yx1/acquisition_inventory.py` schema/key relates to `frame_inventory_contract.py` atoms). Must interview mdcolon before building Step 2.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-17 (session: quickstart + handoff protocol setup)
 
 **What shipped:** `AGENT_QUICKSTART.md` created (cold-start + end-of-session protocol, pointer map, conceptual anchors). No code changes this session — doc/process work only.

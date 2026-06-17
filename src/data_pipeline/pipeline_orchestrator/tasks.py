@@ -14,6 +14,9 @@ from data_pipeline.metadata_ingest.scope.keyence.map_series_to_wells import map_
 from data_pipeline.metadata_ingest.scope.yx1.map_yx1_positions_to_wells import map_positions_to_wells_yx1
 from data_pipeline.metadata_ingest.scope.shared.apply_series_mapping import apply_series_mapping
 from data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
+from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_scope_metadata import (
+    discover_wells_from_scope_metadata,
+)
 from data_pipeline.metadata_ingest.frame_inventory import (
     build_frame_inventory_for_well,
     merge_frame_inventory_shards,
@@ -141,23 +144,10 @@ def cmd_merge_frame_inventory(args: argparse.Namespace) -> None:
 
 
 def cmd_discover_wells(args: argparse.Namespace) -> None:
-    import pandas as pd
-    mapped_csv = Path(args.mapped_csv)
-    df = pd.read_csv(mapped_csv)
-    if "well_id" not in df.columns:
-        raise ValueError(f"{mapped_csv} is missing required well_id column")
-    seen: set[str] = set()
-    wells: list[str] = []
-    for value in df["well_id"].dropna().astype(str):
-        well_id = value.strip()
-        if not well_id or well_id in seen:
-            continue
-        seen.add(well_id)
-        wells.append(well_id)
-    out = Path(args.output_wells)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(wells) + "\n")
-    print(f"Discovered {len(wells)} wells → {out}")
+    discover_wells_from_scope_metadata(
+        mapped_csv=Path(args.mapped_csv),
+        output_wells=Path(args.output_wells),
+    )
 
 
 def cmd_segmentation_and_tracking(args: argparse.Namespace) -> None:
