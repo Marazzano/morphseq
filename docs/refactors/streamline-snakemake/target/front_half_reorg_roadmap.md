@@ -3,11 +3,13 @@
 **Status:** sequencing + package-layout roadmap, mdcolon 2026-06-16. The *physical reorg* companion
 to the data-flow specs. Where the other `target/` docs say what each artifact MEANS, this one says
 where the code LIVES and in WHAT ORDER to move it.
-**Companion to:** `current_state_and_next_steps.md` (verified on-disk state),
-`recompose_yx1_front_end.md` (YX1 build), `acquisition_inventory_flow.md` (scope-specific upstream
-record + eligibility), `frame_inventory_handoff_contract.md` (the shared downstream seam),
-`well_id_throughline_refactor_plan.md` (the Scopes 1–5 spine this roadmap rides), and
-`schema_layout.md` (the domain-owned contract layout this roadmap now assumes).
+**Companion to:** `../current_state_and_next_steps.md` (verified on-disk state),
+`specs/front_end/recompose_yx1_front_end.md` (YX1 build), `specs/front_end/acquisition_inventory_flow.md`
+(scope-specific upstream record + eligibility), `specs/front_end/frame_inventory_handoff_contract.md`
+(the shared downstream seam), `specs/front_end/run_well_schema.md` (discovered/eligible/runnable
+well-state + Keyence reacquisition test plan), `specs/well_id_throughline_refactor_plan.md` (the
+Scopes 1–5 spine this roadmap rides), and `specs/schema_layout.md` (the domain-owned contract layout).
+*(Paths reflect the 2026-06-17 `target/` reorg — see `README.md`.)*
 
 > **🟡 IMPLEMENTATION STATUS (2026-06-17): plan LOCKED, building NEXT — in stages.** Design is settled
 > and internally reviewed; we implement the YX1 path next, **one step at a time, each verified before
@@ -687,7 +689,7 @@ Build the dedicated stitch-comparison helper (NOT the segmentation video rendere
 - **Verify:** the candidate fans per-well; QC summaries are green/accepted for the sampled wells.
 
 ### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE
-
+write 
 Now (and only now) cut over: the candidate becomes the real path; `build_frame_inventory_for_well`
 reads it. This is the END of the microscope-aware pipeline — the top of the dam.
 - **Promote:** rename `stitch_well_candidate` → `stitch_well`; move candidate paths to the real

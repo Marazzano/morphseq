@@ -1,8 +1,39 @@
-# Current State & Next Steps (🔵 verified 2026-06-04)
+# Current State & Next Steps — the STATUS doc
 
-**Status:** a snapshot of where the refactor actually stands on disk, plus the recommended next
-move. Verified against code on 2026-06-04. This is the "where are we" anchor; the design lives in
-the other `target/` docs.
+**Status:** the "where are we RIGHT NOW" anchor. The current snapshot below (2026-06-17) is the live
+truth; the dated sections further down are earlier verified state, kept for history. Design lives in
+`specs/`; the active front-half plan is `front_half_reorg_roadmap.md`. See `README.md` for the map.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-17
+
+**Where we are (front half, YX1):**
+- ✅ **Shipped:** `shared/identifiers/` (built + wired) · YX1 metadata spine (`ingest_scope_metadata`
+  → `map_positions_to_wells` → join → `discover_wells`, smoke-verified on `20250912`) · YX1
+  `acquisition_inventory__yx1.csv` (record-only, 161k-row smoke).
+- ❌ **Not built:** the per-well stitch (`stitch_well`) · the live per-well `frame_inventory` spine
+  (the rules exist but the branch is DEAD — segmentation still reads legacy `frame_contract.csv`) ·
+  `image_materialization/` package · `well_discovery/` package (discovery still inline in `tasks.py`).
+
+**The plan (LOCKED, building next — in stages):** `front_half_reorg_roadmap.md` — a **7-step STRANGLER
+migration** to a validated per-well `frame_inventory` shard (the end of the microscope-aware pipeline):
+> 1 extract `well_discovery` · 2 domain contracts (as consumed) · 3 `stitch_well_candidate` beside
+> legacy (per-well, inventory-fed, isolated paths; run B01) · 4 comparison gate on B01 (byte → numeric
+> diff → side-by-side video; **mdcolon's visual sign-off**) · 5 fan candidate · 🏁 6 promote to live
+> spine (finish line) · 7 strangle legacy.
+
+**Next concrete action:** **Step 1 — extract `well_discovery/` from `tasks.py`** (low-risk, no behavior
+change, legacy stays green). Two 🎤 decision gates are flagged in the roadmap (well_discovery layout;
+the acquisition/frame contract shape) — interview before building those.
+
+> ⚠️ The dated sections below predate the 2026-06-17 reorg + strangler plan. Trust the snapshot above
+> and the roadmap for anything front-half; the older material is Scope-1/3 + per-well-pattern context.
+
+---
+
+## 📂 (historical, 2026-06-04) Doc coverage — superseded by `README.md`
+
 **Companion to:** `per_well_throughline_findings.md` (north star), `well_id_throughline_refactor_plan.md`
 (the formal Scopes), `front_end_naming_and_frame_inventory_flow.md` (front-end), `frame_inventory_handoff_contract.md`
 (the drop-in seam).
