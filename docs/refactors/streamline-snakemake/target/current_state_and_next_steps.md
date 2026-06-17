@@ -24,8 +24,9 @@ migration** to a validated per-well `frame_inventory` shard (the end of the micr
 > spine (finish line) · 7 strangle legacy.
 
 **Next concrete action:** **Step 1 — extract `well_discovery/` from `tasks.py`** (low-risk, no behavior
-change, legacy stays green). Two 🎤 decision gates are flagged in the roadmap (well_discovery layout;
-the acquisition/frame contract shape) — interview before building those.
+change, legacy stays green). The well-discovery shape is now intentionally boring: contract +
+`discover_wells_from_scope_metadata.py`, no dispatcher until a second source exists. The remaining 🎤
+decision gate is the acquisition/frame contract shape — interview before building that.
 
 > ⚠️ The dated sections below predate the 2026-06-17 reorg + strangler plan. Trust the snapshot above
 > and the roadmap for anything front-half; the older material is Scope-1/3 + per-well-pattern context.

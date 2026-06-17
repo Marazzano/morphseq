@@ -66,9 +66,9 @@ data_pipeline/
 
     well_discovery/
       discovered_wells_contract.py
-      from_scope_metadata.py
-      from_frame_inventory.py
-      discover_wells.py
+      discover_wells_from_scope_metadata.py
+      discover_wells_from_frame_inventory.py   # future/drop-in
+      discover_wells.py                        # future dispatcher only when 2 sources exist
 
     scope/
       yx1/

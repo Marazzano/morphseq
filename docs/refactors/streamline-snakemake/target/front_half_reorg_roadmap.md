@@ -287,8 +287,8 @@ See `schema_layout.md` for the target layout, import rules, and migration order.
 > **Status legend:** ✅ built+wired · 🔨 NEW (this plan) · 🔧 modified · ⏸ deferred (Keyence/Beat 2) · ⏳ move LAST
 >
 > **Role legend:** **SHARED MECHANICS** = reusable checks/helpers, no domain meaning ·
-> **SHARED CONTRACT** = domain contract consumed across scopes · **SOURCE DISPATCHER** =
-> chooses by source contract, not microscope · **SCOPE BACKEND** = YX1/Keyence implementation ·
+> **SHARED CONTRACT** = domain contract consumed across scopes · **SOURCE IMPLEMENTATION** =
+> source-contract-specific code, not microscope-specific · **SCOPE BACKEND** = YX1/Keyence implementation ·
 > **ORCHESTRATION** = graph/path/run-set logic · **LEGACY COMPAT** = migration shim only.
 
 ```
@@ -332,12 +332,12 @@ data_pipeline/
         validate_physical_well_mapping.py    # ✅ exists — SHARED MECHANICS for mapping cardinality;
                                              #   YX1 requires 1 position↔1 well; Keyence differs pre-resolve
 
-    well_discovery/                          # 🔨 NEW (Step 1) — SOURCE DISPATCHER, not microscope-dispatched
+    well_discovery/                          # 🔨 NEW (Step 1) — source-contract implementation, not microscope-specific
       __init__.py
       discovered_wells_contract.py           #   SHARED CONTRACT+VALIDATOR: discovered_wells.txt
-      from_scope_metadata.py                 #   discover_wells_from_scope_metadata(mapped_csv → wells)
-      from_frame_inventory.py                #   ⏸ DEFERRED (drop-in twin; external path)
-      discover_wells.py                      #   dispatcher by SOURCE, not microscope
+      discover_wells_from_scope_metadata.py  #   current source: scope_metadata_mapped.csv → discovered_wells.txt
+      discover_wells_from_frame_inventory.py #   ⏸ DEFERRED (drop-in twin; external path)
+      discover_wells.py                      #   ⏸ DEFERRED dispatcher; add only when 2 sources exist
 
     contracts/                               # ⏸ DEFERRED home (eligibility — Keyence-weighted)
       well_acquisition_summary.py            #   ⏸ SHARED CONTRACT: well_id + active_for_stitch +
@@ -491,13 +491,9 @@ layout.py               image_materialization/stitched/  the TREE — WHERE the 
 
 ## well_discovery/ Organization
 
-> **🎤 DECISION GATE (mdcolon to be interviewed at Step 1).** The layout below is a PROPOSAL, not
-> locked. Before building `well_discovery/`, walk through with mdcolon: is the source-contract
-> dispatcher (`from_scope_metadata` / `from_frame_inventory`) the right shape, or overkill for YX1
-> now? How thin is `discovered_wells_contract.py`? Does `discover_wells.py` dispatch belong here or in `tasks.py`?
-> **Do not build to this structure without that conversation.**
-
-`well_discovery` is **shared and source-contract-specific, not microscope-specific.**
+`well_discovery` is **shared and source-contract-specific, not microscope-specific.** For Beat 1,
+there is only one source contract (`scope_metadata_mapped.csv`), so do **not** add a dispatcher yet.
+Add a dispatcher only when the second source (`frame_inventory`) exists.
 
 ```
 well_discovery/
@@ -505,12 +501,12 @@ well_discovery/
     read_discovered_wells(path) -> list[well_id]
     write_discovered_wells(path, wells)
     validate_discovered_wells(wells)
-  from_scope_metadata.py
+  discover_wells_from_scope_metadata.py
     discover_wells_from_scope_metadata(mapped_csv, output_wells)
-  from_frame_inventory.py
+  discover_wells_from_frame_inventory.py
     discover_wells_from_frame_inventory(frame_inventory_csv, output_wells)   # future / drop-in
   discover_wells.py
-    dispatcher by SOURCE CONTRACT, not microscope:  source="scope_metadata" | "frame_inventory"
+    # future only: dispatcher by SOURCE CONTRACT, not microscope
 ```
 
 Rules: `discover_wells_from_scope_metadata` reads `scope_metadata_mapped.csv`; requires global
@@ -736,17 +732,16 @@ Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
 - **Create**
   - `src/data_pipeline/metadata_ingest/well_discovery/__init__.py`
   - `src/data_pipeline/metadata_ingest/well_discovery/discovered_wells_contract.py`
-  - `src/data_pipeline/metadata_ingest/well_discovery/from_scope_metadata.py`
-  - `src/data_pipeline/metadata_ingest/well_discovery/discover_wells.py`
+  - `src/data_pipeline/metadata_ingest/well_discovery/discover_wells_from_scope_metadata.py`
 - **Edit**
   - `src/data_pipeline/pipeline_orchestrator/tasks.py`
   - `src/data_pipeline/pipeline_orchestrator/Snakefile` only if the task invocation changes
 - **Do not create yet**
-  - `from_frame_inventory.py` (external/drop-in twin; not needed for YX1 Beat 1)
+  - `discover_wells_from_frame_inventory.py` (external/drop-in twin; not needed for YX1 Beat 1)
+  - `discover_wells.py` (dispatcher; add only when the second source exists)
 
 - Move the `discover-wells` logic out of `tasks.py` → `discover_wells_from_scope_metadata(mapped_csv,
-  output_wells)`; `tasks.py` just delegates (no pandas). Dispatcher keys on **source**
-  (`scope_metadata`), not microscope.
+  output_wells)`; `tasks.py` just delegates (no pandas). No dispatcher yet.
 - **Verify:** `snakemake -n` parses; 20250912 produces identical `discovered_wells.txt`; tests (dup
   collapse, missing `well_id` fails, local `A01` fails, `tasks.py` has no business logic).
 
