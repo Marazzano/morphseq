@@ -360,11 +360,12 @@ configurable `output_root`.
 > contract). `output_root` is the env knob; `segmentation_and_tracking/{exp}/per_well/{well_id}/...`
 > stays in code.
 
-**The core problem (verified 2026-06-01).** Today
-`DATA_ROOT = PROJECT_ROOT / config.get("data_root", "data_pipeline_output")`, and
-`PROJECT_ROOT` is derived by walking up 3 dirs from the Snakefile. So **data location
-is welded to code location** — every output piles up *inside the git repo*. The
-interpreter is also hardcoded to a personal home-dir path
+**The core problem (verified 2026-06-01; old behavior now removed from the active Snakefile).**
+The historical pattern was
+`DATA_ROOT = PROJECT_ROOT / config.get("data_root", "data_pipeline_output")`, with
+`PROJECT_ROOT` derived by walking up 3 dirs from the Snakefile. That welded **data location
+to code location** — every output piled up *inside the git repo*. The
+interpreter was also hardcoded to a personal home-dir path
 (`PYTHON = "/net/.../mdcolon/software/.../bin/python"`), so no other machine/user can
 run the pipeline without editing the Snakefile.
 

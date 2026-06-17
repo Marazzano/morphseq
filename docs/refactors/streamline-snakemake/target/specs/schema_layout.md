@@ -179,11 +179,12 @@ plus explicit validator functions are clearer for the front-half work.
 output_root / stage / experiment / per_well / well_id / artifact
 ```
 
-The existing `shared/path_contracts.py` is different: it validates path **values inside tables**
-(`require_existing_path`, `resolve_data_root_relative_path`). It is **not** part of the Beat 1
-front-half target layout and should not be moved just to satisfy this roadmap. If future work touches
-it, the clearer name would be `shared/path_value_validators.py`. Do not add artifact-path semantics
-there.
+The old `shared/path_contracts.py` is now a deprecation tripwire, not an active target helper. It
+used to resolve path **values inside tables** with a hidden `data_pipeline_output` default. Do not
+move that behavior. Fix call sites to receive concrete paths or explicit configured roots from the
+Snakefile/tasks layer. If future work needs a helper, the clearer name would be
+`shared/path_value_validators.py`, and it must take roots as parameters. Do not add artifact-path
+semantics there.
 
 ---
 

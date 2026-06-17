@@ -20,7 +20,7 @@ microscope: "YX1"
 plate_metadata:
   enabled: true
   # Expected input path:
-  #   {data_root}/inputs/plate_metadata/{experiment}_well_metadata.xlsx
+  #   {input_root}/plate_metadata/{experiment}_well_metadata.xlsx
 
 # Scope metadata (physical) extraction.
 scope_metadata:

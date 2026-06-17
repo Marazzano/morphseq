@@ -302,9 +302,9 @@ data_pipeline/
     table_validators.py                      # 🔨 MAYBE (only if duplication appears) — SHARED VALIDATORS:
                                              #   assert_columns_present/unique_on_key/positive_numeric/allowed_values.
                                              #   No TableContract class unless a caller actually needs it.
-    path_value_validators.py                 # ⏸ MAYBE ONLY: rename of existing path_contracts.py if touched later.
-                                             #   Path VALUE validation only (require_existing_path);
-                                             #   do not create/move for Beat 1; NOT an artifact registry.
+    path_value_validators.py                 # ⏸ MAYBE ONLY: future explicit path-value helpers if needed.
+                                             #   Must take configured roots as parameters; no hidden defaults.
+                                             #   Do not create/move for Beat 1; NOT an artifact registry.
 
   metadata_ingest/                           # UPSTREAM of stitch — scope-specific
     plate/
@@ -377,8 +377,8 @@ data_pipeline/
     tasks.py                                 # thin: parse + delegate only
     orchestration/
       paths.py                               # ✅ ORCHESTRATION: PIPELINE_STEPS registry — tabular artifact paths.
-                                             #   This is the artifact path-of-record. Existing
-                                             #   shared/path_contracts.py validates table path values only.
+                                             #   This is the artifact path-of-record. The old
+                                             #   shared/path_contracts.py is now a deprecation tripwire.
       well_runner.py                         # ✅ ORCHESTRATION: run set + shard fan/merge helpers;
                                              #   reads shared summaries, never scope-only columns.
                                              #   selected_well_ids_for_experiment = Beat 2 hole
@@ -655,6 +655,17 @@ So layout is centralized; ID grammar still belongs to `shared/identifiers`.
 beside legacy → comparison gate on one well (human visual sign-off) → fan candidate → promote to live
 spine (the finish line) → strangle legacy.
 
+**How to read the steps below:** each step is a FLOW card, not just a task list:
+
+```text
+ZONE       where this step lives in the overlapping-zone model
+FLOW       which arrow in the front-half river changes
+FILES      concrete source files created/edited/deferred
+VERIFY     the gate before the next commit
+```
+
+This is intentional. If a step cannot name its zone and files, it is too vague to implement safely.
+
 ### ⚠️ THE TRUE DAG TODAY (verified on disk 2026-06-17) — read before the steps
 
 The stitch→handoff stretch is **more wired than the roadmap implied, and at the WRONG GRAIN.** What
@@ -714,16 +725,37 @@ merge_frame_inventory[{exp}]          → 🏁 the agnostic handoff (LIVE) ─�
 
 ### Step 1 — Extract `well_discovery/` from `tasks.py`  ·  🧩 OVERLAP left edge (the fan/bootstrap)  *(low risk, NO behavior change)*
 
+**ZONE:** left edge of the STITCH OVERLAP. This is where experiment-grain canonical metadata enters
+the Per-Well Zone. The implementation is microscope-agnostic.
+
+**FLOW:** `scope_metadata_mapped.csv → discovered_wells.txt`.
+
 Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
-- Create `metadata_ingest/well_discovery/{__init__,contracts,from_scope_metadata,discover_wells}.py`.
+
+**FILES:**
+- **Create**
+  - `src/data_pipeline/metadata_ingest/well_discovery/__init__.py`
+  - `src/data_pipeline/metadata_ingest/well_discovery/discovered_wells_contract.py`
+  - `src/data_pipeline/metadata_ingest/well_discovery/from_scope_metadata.py`
+  - `src/data_pipeline/metadata_ingest/well_discovery/discover_wells.py`
+- **Edit**
+  - `src/data_pipeline/pipeline_orchestrator/tasks.py`
+  - `src/data_pipeline/pipeline_orchestrator/Snakefile` only if the task invocation changes
+- **Do not create yet**
+  - `from_frame_inventory.py` (external/drop-in twin; not needed for YX1 Beat 1)
+
 - Move the `discover-wells` logic out of `tasks.py` → `discover_wells_from_scope_metadata(mapped_csv,
   output_wells)`; `tasks.py` just delegates (no pandas). Dispatcher keys on **source**
   (`scope_metadata`), not microscope.
 - **Verify:** `snakemake -n` parses; 20250912 produces identical `discovered_wells.txt`; tests (dup
   collapse, missing `well_id` fails, local `A01` fails, `tasks.py` has no business logic).
-- **Skip:** `from_frame_inventory.py` (the drop-in twin) — external path, not needed for YX1.
 
 ### Step 2 — Establish front-half domain contracts  ·  🧩 the shared contract the overlap exits on  *(low risk, NO behavior change)*
+
+**ZONE:** contract rail through the STITCH OVERLAP. This step defines the shared handoff language
+before the stitch producer starts emitting it.
+
+**FLOW:** no artifact edge changes yet; this creates the contracts that Step 3 and Step 6 import.
 
 > **🎤 DECISION GATE (mdcolon to be interviewed before building).** The **acquisition-inventory
 > contract** shape (how the already-shipped `scope/yx1/acquisition_inventory.py` schema/key relates to
@@ -733,6 +765,20 @@ Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
 
 Add only the **two** contracts the YX1 path consumes (per the anti-whale guard) before touching frame
 inventory or moving packages.
+
+**FILES:**
+- **Create**
+  - `src/data_pipeline/image_materialization/__init__.py`
+  - `src/data_pipeline/image_materialization/stitched/__init__.py`
+  - `src/data_pipeline/image_materialization/stitched/contracts/__init__.py`
+  - `src/data_pipeline/image_materialization/stitched/contracts/frame_inventory_contract.py`
+- **Maybe create only if duplicated locally**
+  - `src/data_pipeline/shared/table_validators.py`
+- **Do not create yet**
+  - `src/data_pipeline/metadata_ingest/contracts/well_acquisition_summary.py`
+- **Leave as legacy compat**
+  - `src/data_pipeline/schemas/frame_contract.py`
+
 - Add `shared/table_validators.py` for generic mechanics only if Step 1 would otherwise duplicate
   local validation code.
 - Add `image_materialization/stitched/contracts/frame_inventory_contract.py` as the atom-based PURL
@@ -747,7 +793,32 @@ inventory or moving packages.
 
 ### Step 3 — Add `stitch_well_candidate[well_id]` BESIDE legacy  ·  🧩 OVERLAP body (per-well + scope-aware stitch)
 
+**ZONE:** body of the STITCH OVERLAP. This is the first place that is maximally both: per-well
+execution plus YX1-specific production code.
+
+**FLOW:** `discovered_wells.txt + acquisition_inventory__yx1.csv → stitch_well_candidate[well_id]`
+beside the legacy `materialize_stitched_images[{exp}]` branch.
+
 The strangler core: build the new per-well stitch as a **candidate branch**, legacy untouched.
+
+**FILES:**
+- **Create**
+  - `src/data_pipeline/image_materialization/stitched/layout.py`
+  - `src/data_pipeline/image_materialization/stitched/scope/__init__.py`
+  - `src/data_pipeline/image_materialization/stitched/scope/yx1/__init__.py`
+  - `src/data_pipeline/image_materialization/stitched/scope/yx1/materialize_yx1_stitched_images.py`
+- **Edit**
+  - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py`
+    (`stitch_well_candidate` row / isolated candidate sentinel)
+  - `src/data_pipeline/pipeline_orchestrator/Snakefile` or
+    `src/data_pipeline/pipeline_orchestrator/rules/frame_contracts.smk`
+    (new candidate rule; legacy rule stays untouched)
+  - `src/data_pipeline/pipeline_orchestrator/tasks.py`
+    (candidate task entrypoint if needed)
+- **Do not edit behavior in**
+  - `src/data_pipeline/metadata_ingest/stitched_index/materialize_stitched_images.py`
+    (legacy remains the baseline)
+
 - Create `image_materialization/stitched/scope/yx1/materialize_yx1_stitched_images.py` as a **per-well**
   producer from the start (no in-place re-grain of the live rule). It **consumes
   `acquisition_inventory__yx1.csv`** for its `(well → position_index, channel_index, z)` lookup —
@@ -764,7 +835,27 @@ The strangler core: build the new per-well stitch as a **candidate branch**, leg
 
 ### Step 4 — The COMPARISON GATE on one well (`stitch_candidate_qc/`)  ·  🧩 OVERLAP body (prove the scope backend)
 
+**ZONE:** body of the STITCH OVERLAP. This step proves the new scope backend against the legacy
+producer before anything is promoted.
+
+**FLOW:** `legacy stitched B01 + candidate stitched B01 → stitch_candidate_qc evidence`.
+
 Build the dedicated stitch-comparison helper (NOT the segmentation video renderers — wrong layer).
+
+**FILES:**
+- **Create**
+  - `src/data_pipeline/image_materialization/stitched/stitch_candidate_qc.py`
+- **Edit**
+  - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py`
+    (QC evidence path helpers or registry row, if kept under the pipeline root)
+  - `src/data_pipeline/pipeline_orchestrator/Snakefile` or rules include
+    (optional QC rule/target)
+- **Output evidence**
+  - `stitch_candidate_qc/{experiment}/{well_id}/comparison_summary.csv`
+  - `stitch_candidate_qc/{experiment}/{well_id}/frame_diff_metrics.csv`
+  - `stitch_candidate_qc/{experiment}/{well_id}/side_by_side_frames/{image_id}_compare.jpg`
+  - `stitch_candidate_qc/{experiment}/{well_id}/side_by_side.mp4`
+
 - New `stitch_candidate_qc/{exp}/{well_id}/` artifact: `comparison_summary.csv` (`image_id,
   legacy_path, candidate_path, same_bytes, max_abs_diff, mean_abs_diff, p99_abs_diff, ssim?,
   human_review_status`), `frame_diff_metrics.csv`, `side_by_side_frames/{image_id}_compare.jpg`
@@ -778,6 +869,20 @@ Build the dedicated stitch-comparison helper (NOT the segmentation video rendere
 
 ### Step 5 — Fan the candidate over discovered wells  ·  🧩 OVERLAP body (per-well fan of the scope backend)
 
+**ZONE:** body of the STITCH OVERLAP. Same YX1 backend, now fanned through the real well set instead
+of a single B01 slice.
+
+**FLOW:** `discover_wells checkpoint → run_well_ids_for_experiment → stitch_well_candidate[well_id]`.
+
+**FILES:**
+- **Edit**
+  - `src/data_pipeline/pipeline_orchestrator/Snakefile` or rules include
+    (candidate expands over the checkpoint instead of B01)
+  - `src/data_pipeline/pipeline_orchestrator/orchestration/well_runner.py` only if existing
+    `run_well_ids_for_experiment` cannot express `discovered ∩ target`
+  - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py` only if candidate fanout paths
+    need adjustment
+
 - Once B01 is visually accepted, fan `stitch_well_candidate[well_id]` over the `discover_wells`
   checkpoint set (`run_well_ids_for_experiment` = `discovered ∩ target`) — drop the B01 hardcode.
 - Run the candidate over all `20250912` wells; spot-check a few more wells through `stitch_candidate_qc`
@@ -786,8 +891,33 @@ Build the dedicated stitch-comparison helper (NOT the segmentation video rendere
 
 ### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE  ·  🧩 EXIT the overlap → frame_inventory (post-microscope land)
 
+**ZONE:** right edge of the STITCH OVERLAP. This is the microscope exit adapter: YX1-specific
+stitch output becomes a shared, validated per-well `frame_inventory` shard.
+
+**FLOW:** `stitch_well[well_id] → build_frame_inventory_for_well[well_id] →
+validate_frame_inventory_for_well[well_id]`.
+
 Now (and only now) cut over: the candidate becomes the real path; `build_frame_inventory_for_well`
 reads it. This is the END of the microscope-aware pipeline — the top of the dam.
+
+**FILES:**
+- **Create / move into target home**
+  - `src/data_pipeline/image_materialization/stitched/frame_inventory.py`
+    (native per-well builder + Level 1/1.5 validator that imports `frame_inventory_contract.py`)
+  - `src/data_pipeline/image_materialization/stitched/materialize_stitched_images.py`
+    (thin dispatcher after promote)
+- **Edit**
+  - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py`
+    (`stitch_well` live row; `frame_inventory` path remains per-well then merge)
+  - `src/data_pipeline/pipeline_orchestrator/rules/frame_inventory.smk`
+    (builder reads native stitch output, not `frame_contract.csv`)
+  - `src/data_pipeline/pipeline_orchestrator/Snakefile`
+    (front-end target includes validated per-well frame inventory shards)
+  - `src/data_pipeline/pipeline_orchestrator/tasks.py`
+    (frame-inventory task imports new target home)
+- **Leave downstream consumers alone**
+  - segmentation/features/QC still migrate in Beat 2
+
 - **Promote:** rename `stitch_well_candidate` → `stitch_well`; move candidate paths to the real
   `built_image_data` location (or repoint `paths.py` from `candidate/` to live).
 - **Native per-well frame_inventory:** point `build_frame_inventory_for_well` at the per-well stitch
@@ -807,7 +937,30 @@ reads it. This is the END of the microscope-aware pipeline — the top of the da
 
 ### Step 7 — STRANGLE the legacy path  ·  🧩 cleanup (remove the old Microscope-Zone chain)
 
+**ZONE:** cleanup after exiting the STITCH OVERLAP. The live microscope-aware path is now the
+per-well stitch → frame_inventory handoff; this deletes the old experiment-grain chain.
+
+**FLOW:** remove `materialize_stitched_images[{exp}] → stitched_image_index → frame_contract` from
+the YX1 producer path.
+
 Only after Step 6 is green and stable:
+
+**FILES:**
+- **Delete / stop importing on the YX1 path**
+  - `src/data_pipeline/metadata_ingest/stitched_index/materialize_stitched_images.py`
+  - `src/data_pipeline/metadata_ingest/stitched_index/validate_stitched_image_index.py`
+  - YX1 uses of `src/data_pipeline/metadata_ingest/microscope_data_ingest/frame_contract/`
+- **Edit**
+  - `src/data_pipeline/pipeline_orchestrator/Snakefile`
+  - `src/data_pipeline/pipeline_orchestrator/rules/frame_contracts.smk`
+  - `src/data_pipeline/pipeline_orchestrator/rules/frame_inventory.smk`
+  - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py`
+  - `src/data_pipeline/pipeline_orchestrator/orchestration/well_runner.py`
+- **Keep as legacy compatibility until downstream readers move**
+  - `src/data_pipeline/schemas/frame_contract.py`
+- **Archive, not delete**
+  - `stitch_candidate_qc/` evidence
+
 - **Delete the legacy stitch chain:** `materialize_stitched_images[{exp}]`, `stitched_image_index.csv`
   + `validate_stitched_image_index` (its file-existence check now lives in the frame_inventory gate),
   `build_frame_contract` + `validate_frame_contract` on the YX1 path, and their inline Snakefile path
