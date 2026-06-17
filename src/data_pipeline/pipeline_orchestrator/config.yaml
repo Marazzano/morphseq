@@ -1,8 +1,5 @@
 # MorphSeq Pipeline Configuration
 
-# Data paths
-data_root: "data_pipeline_output"
-
 # Experiments to process
 experiments:
   - 20250912
