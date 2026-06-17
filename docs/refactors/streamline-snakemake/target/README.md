@@ -57,11 +57,17 @@ Apply beyond the front end — read when a roadmap step touches identity, contra
 
 ## 🧭 The mental model (so the specs cohere)
 
-> **The stitcher is a DAM.** Upstream = microscope-specific (`acquisition_inventory`); downstream =
-> agnostic (`frame_inventory`). This refactor's front-half goal: get YX1's raw data over the dam into
-> one validated **per-well `frame_inventory`** shard, then stop. Everything past it already works.
+> **TWO OVERLAPPING ZONES** (the organizing lens — full diagram in `front_half_reorg_roadmap.md`
+> and `OVERALL_PLAN.md` §1b):
+> - **MICROSCOPE ZONE** = scope-aware code (raw → … → stitch backends). YX1 vs Keyence differ here.
+> - **PER-WELL ZONE** = well-sharded execution (`discover_wells` → … → end).
+> - **THE STITCH OVERLAP** = where both are true (`discover_wells → stitch → frame_inventory`). The
+>   special machinery (`discover_wells` fan, `well_runner`, scope stitch backends, shared-but-scope-aware
+>   validators) all live here. Crossing `frame_inventory` = **exit the Microscope Zone** ("post-microscope land").
 
-- **Two inventories, NOT the same:** `acquisition_inventory` (upstream, scope-shaped) ≠ `frame_inventory` (downstream, agnostic).
+- **The front-half goal:** build the Stitch Overlap correctly and exit into a validated **per-well
+  `frame_inventory`** shard, then stop. Everything past it is pure Per-Well Zone and already agnostic.
+- **Two inventories, NOT the same:** `acquisition_inventory` (Microscope Zone, scope-shaped) ≠ `frame_inventory` (the exit, agnostic).
 - **Two "per-well":** identity (`well_id` is global — done) vs execution (run one well through a stage — the work).
-- **Beat 1** (the roadmap) = raw → stitch → validated `frame_inventory` shard. **Beat 2** = repoint segmentation/features/QC at it.
+- **Beat 1** (the roadmap) = build the overlap → validated `frame_inventory` shard. **Beat 2** = the pure Per-Well Zone past it.
 - **Strategy = STRANGLER:** build the new per-well stitch beside legacy, prove on one well (B01) at a 3-layer comparison gate (ending in a human visual sign-off), promote, delete legacy.

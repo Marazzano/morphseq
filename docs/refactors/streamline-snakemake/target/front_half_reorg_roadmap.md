@@ -47,11 +47,9 @@ reasoned about in isolation. That is the destination.
 > they read today until Beat 2 migrates them onto the shard. **The stitcher is the dam; Beat 1 gets
 > the river over the dam and into a validated per-well shard. Beat 2 carries it downstream.**
 >
-> **Why stitch is per-well in Beat 1 but segmentation isn't:** the per-well *fan* is one early shared
-> point (`discover_wells`); the microscope *boundary* is at stitch. Stitch sits at the intersection —
-> it is both the last microscope-aware stage AND must be per-well so the already-per-well
-> frame_inventory has a per-well producer. The downstream stages are agnostic and already work at
-> their current grain; re-graining them is a separate, lower-risk pass (Beat 2).
+> **Why stitch is per-well in Beat 1 but segmentation isn't:** stitch sits in the **Stitch Overlap**
+> (per-well AND scope-aware); segmentation is **past** the overlap (per-well but agnostic). See
+> "🧩 The Two Overlapping Zones" below — it's the lens for the whole plan.
 
 **Two kinds of "per-well" — keep them distinct** (the thing the other docs blur):
 - **per-well IDENTITY** = `well_id` means one global thing. Covered (Scope 1/2).
@@ -59,6 +57,53 @@ reasoned about in isolation. That is the destination.
   microscope-aware spine** (`stitch_well` + `build_frame_inventory_for_well`, which already exist
   per-well). **Beat 2 extends it across the agnostic back half** via `well_runner.py` —
   `selected_well_ids_for_experiment` and the generic per-well stage template are still the hole there.
+
+---
+
+## 🧩 THE TWO OVERLAPPING ZONES — the organizing lens (read this first)
+
+The pipeline has **two data-engineering zones defined by DIFFERENT axes**, and they **OVERLAP** — they
+are not sequential. Almost every awkward placement question in this refactor dissolves once you see
+the overlap.
+
+```
+ stage:  ingest → map → join │ discover_wells │ stitch_well │ frame_inventory │ segment → features → QC
+ ════════════════════════════════════════════════════════════════════════════════════════════════════►
+
+ ┌──────────────── MICROSCOPE ZONE (scope-AWARE code) ─────────────┐
+ │ raw reads · scope schemas · scope mapping · scope STITCH backends │   YX1 vs Keyence do DIFFERENT work
+ └──────────────────────────────────────────────────────────────────┘
+                          ┌──────────────────── PER-WELL ZONE (well-SHARDED execution) ──────────────────┐
+                          │ every stage runs ONE well at a time, on the well spine (well_runner)           │
+                          └───────────────────────────────────────────────────────────────────────────────┘
+                          ▲                  ╔═══════════════════╗                  ▲
+                   discover_wells            ║  THE STITCH       ║           frame_inventory
+                   = BOOTSTRAP / FAN         ║  OVERLAP          ║           = EXIT microscope land
+                   (left edge of overlap;    ║  per-well AND     ║           (right edge; pure per-well
+                    well_runner born here)   ║  scope-aware      ║            + agnostic from here on)
+                                             ╚═══════════════════╝
+```
+
+- **MICROSCOPE ZONE** = scope-AWARE code (raw → … → stitch backends). YX1 and Keyence diverge here.
+  **Ends after stitch.**
+- **PER-WELL ZONE** = well-SHARDED execution (discover_wells → … → end). **Starts at discover_wells.**
+- **THE STITCH OVERLAP** (`discover_wells → stitch_well → frame_inventory`) = where BOTH are true:
+  per-well jobs running scope-specific code. **This roadmap's whole job is to build the overlap
+  correctly and exit it cleanly into `frame_inventory`.**
+
+**The special machinery — it lives IN the overlap, which is why it never placed cleanly:**
+
+| Thing | Position | Why it's special |
+|---|---|---|
+| **`discover_wells`** | LEFT EDGE of the overlap (bootstrap/fan) | turns experiment-grain scope metadata into the per-well world — the moment the Per-Well Zone *begins*. Microscope-agnostic itself. |
+| **`well_runner`** | spans the overlap | the per-well scheduler born at the fan; decides `run_wells = discovered ∩ target [∩ eligible]`. |
+| **stitch backends** | BODY of the overlap | per-well jobs (Per-Well Zone) + scope-specific code (Microscope Zone) — the ONLY place both are maximally true. |
+| **validators** | the overlap's EXIT gate | ONE shared contract, but **take scope-specific input** (the frame_inventory validator is scope-aware at its edges). "Different backends, shared validator" is the overlap's defining property, not a contradiction. |
+| **`frame_inventory`** | RIGHT EDGE of the overlap | crossing it = you LEAVE the Microscope Zone. Pure Per-Well + agnostic from here = **"post-microscope land."** |
+
+> **Beat 1 = build the STITCH OVERLAP and exit into `frame_inventory`.** Beat 2 = the pure Per-Well
+> Zone past the overlap (segmentation/features/QC). "Why is stitch per-well but segmentation isn't?"
+> → stitch is IN the overlap (per-well + scope-aware); segmentation is PAST it (per-well + agnostic).
 
 ---
 
@@ -618,7 +663,7 @@ merge_frame_inventory[{exp}]          → 🏁 the agnostic handoff (LIVE) ─�
 > **The YX1 PRODUCER path moves to frame_inventory as the canonical handoff; downstream consumers
 > migrate gradually (Beat 2).**
 
-### Step 1 — Extract `well_discovery/` from `tasks.py`  *(low risk, NO behavior change)*
+### Step 1 — Extract `well_discovery/` from `tasks.py`  ·  🧩 OVERLAP left edge (the fan/bootstrap)  *(low risk, NO behavior change)*
 
 Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
 - Create `metadata_ingest/well_discovery/{__init__,contracts,from_scope_metadata,discover_wells}.py`.
@@ -629,7 +674,7 @@ Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
   collapse, missing `well_id` fails, local `A01` fails, `tasks.py` has no business logic).
 - **Skip:** `from_frame_inventory.py` (the drop-in twin) — external path, not needed for YX1.
 
-### Step 2 — Establish front-half domain contracts  *(low risk, NO behavior change)*
+### Step 2 — Establish front-half domain contracts  ·  🧩 the shared contract the overlap exits on  *(low risk, NO behavior change)*
 
 > **🎤 DECISION GATE (mdcolon to be interviewed before building).** The **acquisition-inventory
 > contract** shape (how the already-shipped `scope/yx1/acquisition_inventory.py` schema/key relates to
@@ -650,7 +695,7 @@ inventory or moving packages.
 - **Verify:** import-only/unit tests for required columns, unique keys, and derived-id rules. No
   Snakemake behavior changes yet.
 
-### Step 3 — Add `stitch_well_candidate[well_id]` BESIDE legacy (isolated paths; per-well + inventory-fed from birth)
+### Step 3 — Add `stitch_well_candidate[well_id]` BESIDE legacy  ·  🧩 OVERLAP body (per-well + scope-aware stitch)
 
 The strangler core: build the new per-well stitch as a **candidate branch**, legacy untouched.
 - Create `image_materialization/stitched/scope/yx1/materialize_yx1_stitched_images.py` as a **per-well**
@@ -667,7 +712,7 @@ The strangler core: build the new per-well stitch as a **candidate branch**, leg
 - **Verify (this commit):** `stitch_well_candidate[20250912_B01]` runs and writes isolated output.
   No comparison yet — just that the candidate produces frames.
 
-### Step 4 — The COMPARISON GATE on one well (`stitch_candidate_qc/`) — three layers, human eyes last
+### Step 4 — The COMPARISON GATE on one well (`stitch_candidate_qc/`)  ·  🧩 OVERLAP body (prove the scope backend)
 
 Build the dedicated stitch-comparison helper (NOT the segmentation video renderers — wrong layer).
 - New `stitch_candidate_qc/{exp}/{well_id}/` artifact: `comparison_summary.csv` (`image_id,
@@ -681,7 +726,7 @@ Build the dedicated stitch-comparison helper (NOT the segmentation video rendere
   visual confirmation that legacy and candidate are *the same image*. **No promotion without mdcolon's
   visual sign-off.**
 
-### Step 5 — Fan the candidate over discovered wells (still beside legacy)
+### Step 5 — Fan the candidate over discovered wells  ·  🧩 OVERLAP body (per-well fan of the scope backend)
 
 - Once B01 is visually accepted, fan `stitch_well_candidate[well_id]` over the `discover_wells`
   checkpoint set (`run_well_ids_for_experiment` = `discovered ∩ target`) — drop the B01 hardcode.
@@ -689,7 +734,7 @@ Build the dedicated stitch-comparison helper (NOT the segmentation video rendere
   (don't need all by eye — B01 proved the method; sample the rest).
 - **Verify:** the candidate fans per-well; QC summaries are green/accepted for the sampled wells.
 
-### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE
+### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE  ·  🧩 EXIT the overlap → frame_inventory (post-microscope land)
 
 Now (and only now) cut over: the candidate becomes the real path; `build_frame_inventory_for_well`
 reads it. This is the END of the microscope-aware pipeline — the top of the dam.
@@ -710,7 +755,7 @@ reads it. This is the END of the microscope-aware pipeline — the top of the da
   derived `well_id`/`image_id` recomputing from atoms, (c) have resolving `source_image_path`s.
   **YX1 has crossed the microscope boundary; Beat 1 is DONE.**
 
-### Step 7 — STRANGLE the legacy path (delete the old branch + the candidate scaffolding)
+### Step 7 — STRANGLE the legacy path  ·  🧩 cleanup (remove the old Microscope-Zone chain)
 
 Only after Step 6 is green and stable:
 - **Delete the legacy stitch chain:** `materialize_stitched_images[{exp}]`, `stitched_image_index.csv`

@@ -38,6 +38,43 @@ flag. The grain drives the file layout, governed by a lean path registry; identi
 
 ---
 
+## 1b. The two OVERLAPPING zones (the organizing lens)
+
+The pipeline has **two data-engineering zones on DIFFERENT axes that OVERLAP** (not sequential). This
+lens explains why `discover_wells`/`well_runner`/stitch are the special, hard-to-place parts — they
+live in the overlap.
+
+```
+ ingest → map → join │ discover_wells │ stitch_well │ frame_inventory │ segment → features → embeddings → QC
+ ═══════════════════════════════════════════════════════════════════════════════════════════════════════════►
+
+ ┌──── MICROSCOPE ZONE (scope-AWARE) ────┐
+ │ raw reads · scope schemas · scope      │   ← a small FRONT BUMP. YX1 vs Keyence differ ONLY here.
+ │ mapping · scope STITCH backends        │
+ └─────────────────────────────────────────┘
+                  ┌──────────────────── PER-WELL ZONE (well-SHARDED) ───────────────────────────────────────┐
+                  │ every stage runs ONE well at a time on the well spine (well_runner) — the bulk of the DAG  │
+                  └──────────────────────────────────────────────────────────────────────────────────────────┘
+                  ▲              ╔═══════════════╗              ▲
+           discover_wells       ║ STITCH OVERLAP║       frame_inventory
+           = bootstrap/FAN      ║ per-well AND  ║       = EXIT microscope land
+           (well_runner born)   ║ scope-aware   ║       (pure per-well + agnostic →)
+                                ╚═══════════════╝
+```
+
+- **MICROSCOPE ZONE** = scope-aware code; ends after stitch. The ONLY place YX1/Keyence diverge.
+- **PER-WELL ZONE** = well-sharded execution; starts at `discover_wells`, runs to the end. The bulk.
+- **THE STITCH OVERLAP** (`discover_wells → stitch → frame_inventory`) = both at once. The special
+  machinery lives here: `discover_wells` (the fan/left edge), `well_runner` (the per-well scheduler),
+  stitch backends (scope-specific producers), shared-but-scope-aware validators, and `frame_inventory`
+  (the right edge = "post-microscope land"). **Crossing `frame_inventory` exits the Microscope Zone.**
+
+> The **front-half refactor** (`front_half_reorg_roadmap.md`) is precisely *"build the Stitch Overlap
+> correctly and exit into a per-well `frame_inventory`."* Everything past frame_inventory is pure
+> Per-Well Zone (this section's bulk) and already agnostic.
+
+---
+
 ## 2. The end-to-end spine (ordered stages)
 
 Status legend: **built** (rule + code present, this branch) · **rewire** (built but reads a
