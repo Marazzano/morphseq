@@ -11,8 +11,9 @@ record + eligibility), `frame_inventory_handoff_contract.md` (the shared downstr
 
 > **🟡 IMPLEMENTATION STATUS (2026-06-17): plan LOCKED, building NEXT — in stages.** Design is settled
 > and internally reviewed; we implement the YX1 path next, **one step at a time, each verified before
-> the next** (Steps 1→5 below). Do NOT do it as one big change — the byte-compare gate (Steps 3→4)
-> and the per-step verifies are the whole point. This commit is the plan; code follows incrementally.
+> the next** (Steps 1→7 below, a STRANGLER migration). Do NOT do it as one big change — the new
+> per-well stitch grows BESIDE legacy and is proven on one well at a three-layer comparison gate
+> (ending in mdcolon's visual sign-off) before promotion. This commit is the plan; code follows.
 
 ---
 
@@ -86,7 +87,7 @@ run_wells = discovered_wells ∩ target_wells [ ∩ eligible_wells ]     ← ∩
 > 1, `run_wells = discovered ∩ target` (the `∩ eligible` term is **absent in code** and stays so).
 > `well_acquisition_summary__{scope}.csv` + `resolve_acquisitions` are **Keyence-weighted** (they
 > exist to quarantine re-acquisition collisions, which YX1 can't have). For YX1, "is this well good?"
-> is answered by the **per-well frame_inventory validator** (Step 5), not a separate eligibility
+> is answered by the **per-well frame_inventory validator** (Step 6), not a separate eligibility
 > artifact. So every `well_acquisition_summary` / `resolve_acquisitions` / `∩ eligible` row below is
 > **target architecture, built when Keyence forces it** — see "NOT in this plan."
 
@@ -275,7 +276,7 @@ data_pipeline/
 
   schemas/                                   # ⚠️ LEGACY COMPAT ONLY during migration
     frame_contract.py                        #   do NOT add target semantics; retire gradually
-    stitched_image_index.py                  #   ⏸ RETIRE (Step 5c) — intermediate absorbed into frame_inventory
+    stitched_image_index.py                  #   ⏸ RETIRE (Step 7) — intermediate absorbed into frame_inventory
 
   pipeline_orchestrator/
     tasks.py                                 # thin: parse + delegate only
@@ -301,7 +302,8 @@ data_pipeline/
 **Already correct (no change):** `ingest_scope_metadata` (incl. `acquisition_inventory__{scope}.csv`),
 `map_positions_to_wells`, `join_series_mapping_to_scope_metadata`, `discover_wells`.
 
-**🔨 NEW row — `stitch_well` (register the off-registry stitch; Step 4b):**
+**🔨 NEW row — `stitch_well` (register the off-registry stitch; added as `stitch_well_candidate` at
+Step 3, renamed to `stitch_well` at promote/Step 6):**
 ```python
 "stitch_well": {
     "stage": "built_image_data",            # the pixel store root (off the experiment_metadata stage)
@@ -327,12 +329,12 @@ data_pipeline/
             PATH_MODE_MERGED:   "{experiment_id}_frame_inventory.csv",  # already correct
         },
     },
-    # CHANGE: producer repoints from frame_contract.csv → per-well stitch output (Step 5a);
-    #         product keys on time_index, not time_int (Step 5c, gradual).
+    # CHANGE: producer repoints from frame_contract.csv → per-well stitch output (Step 6);
+    #         product keys on time_index, not time_int (Step 6/7, gradual).
 },
 ```
 
-**⏸ RETIRE from the path-of-record (Step 5c, gradual):**
+**⏸ RETIRE from the path-of-record (Step 7, gradual):**
 - `stitched_image_index.csv` + its `.validated` — **delete** (intermediate absorbed; never was a registry row, so this is removing the inline Snakefile strings).
 - `frame_contract.csv` + `.frame_contract.validated` — **collapse on the YX1 producer**; the inline Snakefile strings retire as downstream readers migrate to the shard. `schemas/frame_contract.py` stays legacy-compat.
 
@@ -573,20 +575,45 @@ package passes smoke tests.
 > The phases above are the full front-half target. This section is the **concrete next YX1 work**,
 > grounded in what is actually on disk today — not the doc's aspirations.
 
-> **🚧 BINDING COMMIT BOUNDARIES (review guardrails, 2026-06-17 — not optional).** The design is clean;
-> the implementation gets muddy only if a step is swallowed whole. So these are **separate commits,
-> each verified before the next** — do NOT land them together:
-> - **4a ≠ 4b.** `4a` moves files/imports ONLY (no DAG grain change) → byte-compare. `4b` converts
->   `materialize_stitched_images` → `stitch_well[well_id]` ONLY → byte-compare (per-well union == old
->   experiment output). Moving files and flipping the fan point in one diff is where refactor gremlins
->   nest.
-> - **Step 5 splits into 5a–5e** (one wiring change per commit): `5a` build frame_inventory from the
->   per-well stitch output · `5b` add the validated per-well shard as a live front-end target · `5c`
->   absorb the path-existence check + retire `stitched_image_index` on the YX1 path · `5d` simplify the
->   merge (call `concat_well_shards_to_file`, drop the double-validate) · `5e` keep a `time_int` compat
->   alias for not-yet-migrated downstream readers.
-> - **Do NOT migrate segmentation/features/QC in Beat 1.** Repointing consumers is Beat 2. "Everything
->   to frame_inventory" means the **YX1 PRODUCER** path — downstream consumers migrate gradually.
+> **🌿 PREFERRED MIGRATION STRATEGY (decided mdcolon 2026-06-17): STRANGLER branch + one-well vertical
+> slice.** The legacy spine runs to `stitch → stitched_image_index → frame_contract` TODAY. **Do NOT
+> re-grain the live stitch rule in place** — that breaks the working path the moment you start. Instead
+> grow the new per-well path BESIDE the legacy one, prove it on ONE well, then cut over and strangle
+> the old path. The legacy pipeline stays runnable the entire time.
+>
+> ```
+> legacy: materialize_stitched_images[{exp}] → stitched_image_index → frame_contract   (stays GREEN, untouched)
+> new:    stitch_well_candidate[well_id] → candidate frame_inventory shard             (grows beside it)
+>            → COMPARISON GATE (one well) → fan → PROMOTE → strangle legacy
+> ```
+>
+> **🚦 THE COMPARISON GATE IS THREE-LAYERED — human eyes are the final acceptance.** Per-well stitch
+> may NOT be byte-identical to batched legacy stitch (focus/LoG projection or normalization can depend
+> on batch composition). So byte-identity is the *ideal*, not the *gate*:
+> 1. **byte/hash compare** — pass = ideal, done.
+> 2. **numeric image-diff** (on mismatch) — `max/mean/p99 abs-diff`, optional SSIM, per frame.
+> 3. **human visual QC** (REQUIRED for promotion) — side-by-side `legacy | candidate | abs-diff heatmap`
+>    frames + an `.mp4`; **mdcolon confirms by eye before promotion.**
+>
+> > **Byte-identical pass is ideal. Byte mismatch is NOT automatic failure — it triggers numeric diff
+> > + visual review. Final acceptance requires human visual confirmation (mdcolon's eyes).**
+>
+> **New QC artifact (`stitch_candidate_qc/`) — a DEDICATED stitch-comparison helper, NOT the
+> segmentation video renderers** (`render_raw_video.py`/`render_overlays.py` exist but are DOWNSTREAM
+> of frame_inventory — wrong layer for raw-stitch comparison):
+> ```
+> stitch_candidate_qc/{experiment}/{well_id}/
+>     comparison_summary.csv        # image_id, legacy_path, candidate_path, same_bytes,
+>                                   # max_abs_diff, mean_abs_diff, p99_abs_diff, ssim?, human_review_status
+>     frame_diff_metrics.csv
+>     side_by_side_frames/{image_id}_compare.jpg     # legacy | candidate | abs-diff heatmap
+>     side_by_side.mp4
+> ```
+>
+> **🚧 BINDING COMMIT BOUNDARIES (not optional).** Separate commits, each verified before the next;
+> the candidate branch writes ISOLATED paths so the two stitch paths never collide. The candidate
+> scaffolding (`stitch_well_candidate`, `stitch_candidate_qc`, candidate paths) is **throwaway —
+> deleted at the strangle step.** Do NOT migrate segmentation/features/QC in Beat 1 (Beat 2).
 
 ### Reality baseline (verified)
 
@@ -599,10 +626,10 @@ package passes smoke tests.
 | Stitch consumes the inventory | ❌ **no** — still inline `_select_yx1_channel_index` (:121), `yx1_series_map` (:445,:501), `drop_duplicates(keep="first")` (:431) |
 | `image_materialization/` | ❌ **does not exist** — stitch lives in `metadata_ingest/stitched_index/materialize_stitched_images.py` (43 microscope branches) |
 
-**Net:** identifiers is already off the list. The real next work is **5 steps, increasing risk**
-(Step 4 has two parts): extract discovery → front-half domain contracts → stitch consume cutover →
-[4a] rehome+split [4b] re-grain stitch per-well → activate the (already-built) per-well
-frame_inventory branch as the live spine.
+**Net:** identifiers is already off the list. The real next work is a **7-step STRANGLER migration**
+(legacy stays green throughout): extract discovery → domain contracts → `stitch_well_candidate`
+beside legacy → comparison gate on one well (human visual sign-off) → fan candidate → promote to live
+spine (the finish line) → strangle legacy.
 
 ### ⚠️ THE TRUE DAG TODAY (verified on disk 2026-06-17) — read before the steps
 
@@ -634,16 +661,16 @@ merge_frame_inventory[{exp}]         → experiment-level frame_inventory  🏁 
    the fan point earlier** (Step 4).
 3. **The frame_inventory branch is DEAD** — `rule all` stops at features; `merge_frame_inventory` is
    never requested; **segmentation still reads `frame_contract.csv` directly.** Reaching the finish
-   line = **making the per-well frame_inventory the live spine and retiring `frame_contract`** (Step 5).
+   line = **making the per-well frame_inventory the live spine and retiring `frame_contract`** (Steps 6–7).
 4. **The per-well rules ALREADY EXIST** (`build_/validate_/merge_frame_inventory`). Step 5 is
    **wiring + collapsing duplicates, not building** — point the live path at the shards.
 
-**The TARGET DAG after Steps 4b+5 (what we collapse TO):**
+**The TARGET DAG after promote+strangle (Steps 6–7) — what we collapse TO:**
 
 ```
 discover_wells (checkpoint = THE FAN)
         ↓  ⟱ per-well ⟱
-stitch_well[well_id]                  → per-well stitched images (via layout.py)   🔴 re-grained (4b)
+stitch_well[well_id]                  → per-well stitched images (via layout.py)   🔴 candidate→promoted (Steps 3,6)
         ↓
 build_frame_inventory_for_well[well_id]  → {well_id}_frame_inventory.csv  (NATIVE per-well producer; keys on time_index)
         ↓
@@ -685,146 +712,108 @@ inventory or moving packages.
 - **Verify:** import-only/unit tests for required columns, unique keys, and derived-id rules. No
   Snakemake behavior changes yet.
 
-### Step 3 — YX1 stitch CONSUMES the acquisition inventory  *(data-source cutover; intended output-preserving)*
+### Step 3 — Add `stitch_well_candidate[well_id]` BESIDE legacy (isolated paths; per-well + inventory-fed from birth)
 
-The heart of it and the payoff of Phase 1C: stitch stops re-deriving what the inventory records.
-Three inline derivations die here:
+The strangler core: build the new per-well stitch as a **candidate branch**, legacy untouched.
+- Create `image_materialization/stitched/scope/yx1/materialize_yx1_stitched_images.py` as a **per-well**
+  producer from the start (no in-place re-grain of the live rule). It **consumes
+  `acquisition_inventory__yx1.csv`** for its `(well → position_index, channel_index, z)` lookup —
+  killing the legacy inline `_select_yx1_channel_index` (:121), `yx1_series_map` (:445,:501), and the
+  `drop_duplicates(keep="first")` (:431) re-derivations in one go (they live only in the legacy file,
+  which stays as-is).
+- Add `rule stitch_well_candidate[well_id]` writing to **ISOLATED candidate paths** (e.g.
+  `built_image_data/{exp}/candidate/...` + `.well_{well_id}.candidate.done`) so it can NEVER collide
+  with the live `materialize_stitched_images` output. Register via `paths.py` (no inline strings).
+- Run it for **B01 only** first (legacy B01 stitched frames already exist on disk → a baseline to
+  compare against). GPU step.
+- **Verify (this commit):** `stitch_well_candidate[20250912_B01]` runs and writes isolated output.
+  No comparison yet — just that the candidate produces frames.
 
-```
-_select_yx1_channel_index (:121)     → read channel_index from acquisition_inventory__yx1.csv
-yx1_series_map (:445, :501)          → read position_index from the inventory
-drop_duplicates(keep="first") (:431) → assert unique on the tensor cell (YX1 can't collide → fail-loud)
-```
+### Step 4 — The COMPARISON GATE on one well (`stitch_candidate_qc/`) — three layers, human eyes last
 
-- Do this **IN PLACE** in `metadata_ingest/stitched_index/materialize_stitched_images.py` — BEFORE
-  any rehome. Add `acquisition_inventory__yx1.csv` as a declared stitch `input:` (YX1); replace the
-  three derivations with a `(well → position_index, channel_index, z)` lookup; replace `keep="first"`
-  with a fail-loud uniqueness assertion on the cell key.
-- **Verify:** stitch one YX1 well on 20250912 and **byte-compare** the stitched output against the
-  current pipeline's output — must be IDENTICAL (this is a refactor, not a behavior change). GPU step;
-  needs the cluster GPU.
+Build the dedicated stitch-comparison helper (NOT the segmentation video renderers — wrong layer).
+- New `stitch_candidate_qc/{exp}/{well_id}/` artifact: `comparison_summary.csv` (`image_id,
+  legacy_path, candidate_path, same_bytes, max_abs_diff, mean_abs_diff, p99_abs_diff, ssim?,
+  human_review_status`), `frame_diff_metrics.csv`, `side_by_side_frames/{image_id}_compare.jpg`
+  (`legacy | candidate | abs-diff heatmap`), and `side_by_side.mp4`.
+- Run the three-layer gate on **B01**: (1) byte/hash; (2) on mismatch, numeric diff; (3) generate the
+  side-by-side frames + video.
+- **Verify (THE human gate):** **mdcolon reviews the side-by-side by eye and sets `human_review_status`.**
+  Byte-identical = ideal/auto-pass. Byte mismatch ≠ failure — it's `np.allclose`-within-tolerance +
+  visual confirmation that legacy and candidate are *the same image*. **No promotion without mdcolon's
+  visual sign-off.**
 
-> **Why in-place, before the move:** don't combine "new data source" with "new file location." If the
-> byte-compare fails you want to know it was the data wiring, not the rehome.
+### Step 5 — Fan the candidate over discovered wells (still beside legacy)
 
-### Step 4 — Rehome + split per-scope **AND re-grain stitch per-well**  *(churn + the grain flip — only after Step 3 is green)*
+- Once B01 is visually accepted, fan `stitch_well_candidate[well_id]` over the `discover_wells`
+  checkpoint set (`run_well_ids_for_experiment` = `discovered ∩ target`) — drop the B01 hardcode.
+- Run the candidate over all `20250912` wells; spot-check a few more wells through `stitch_candidate_qc`
+  (don't need all by eye — B01 proved the method; sample the rest).
+- **Verify:** the candidate fans per-well; QC summaries are green/accepted for the sampled wells.
 
-Two things land together here: the package move (no behavior change) and the **fan-point flip**
-(experiment-grain → per-well). Do them in this order, each verified:
+### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE
 
-**4a — Rehome + split (no behavior change):**
-- Create `image_materialization/stitched/`; split the 43-branch file → thin dispatcher +
-  `scope/yx1/materialize_yx1_stitched_images.py` (+ a Keyence stub that routes to existing logic so
-  Keyence doesn't break).
-- Extract `layout.py` (path constructors, imports `identifiers`) — **one file**.
-- Move `frame_inventory.py` to `image_materialization/stitched/` (its DOWNSTREAM home) only after it
-  imports the domain-owned `contracts/frame_inventory_contract.py`.
-- Update Snakefile + `paths.py` + `tasks.py` import paths. **Do NOT move** `log_focus.py` /
-  `frame_tiler.py` yet.
-- **Verify:** `snakemake -n` parses; re-run Step 3's byte-compare (still identical).
+Now (and only now) cut over: the candidate becomes the real path; `build_frame_inventory_for_well`
+reads it. This is the END of the microscope-aware pipeline — the top of the dam.
+- **Promote:** rename `stitch_well_candidate` → `stitch_well`; move candidate paths to the real
+  `built_image_data` location (or repoint `paths.py` from `candidate/` to live).
+- **Native per-well frame_inventory:** point `build_frame_inventory_for_well` at the per-well stitch
+  output instead of selecting rows from an experiment-grain `frame_contract.csv` — the adapter becomes
+  a native per-well producer; the product speaks **`time_index`** natively.
+- **Make the branch LIVE up to the shard (NOT the consumer):** add the per-well
+  `{well_id}_frame_inventory.csv.validated` sentinels to a front-end target so the branch runs (today
+  it's dead — audit #1). **Beat 1 stops at the validated shard.** Repointing segmentation/features/QC
+  is **Beat 2** (downstream consumers, far side of the handoff).
+- **Validator = Level 1 + Level 1.5** (identity + path-existence; absorbs the retired stitched-index
+  file-existence check). Level 2 (image-open/dims) deferred.
+- **Verify (the done-for-the-microscope-aware-part check):** for `20250912`, the chain `ingest →
+  map_positions → join → discover → stitch_well[well_id] → build/validate_frame_inventory_for_well`
+  runs end-to-end and produces per-well frame inventories that (a) key on `time_index`, (b) have
+  derived `well_id`/`image_id` recomputing from atoms, (c) have resolving `source_image_path`s.
+  **YX1 has crossed the microscope boundary; Beat 1 is DONE.**
 
-**4b — Re-grain stitch to per-well (`stitch_well[well_id]`):** this is the FAN-POINT FLIP the audit
-calls for — move the per-well fan from `build_frame_inventory_for_well` UP to stitch.
-- Convert `rule materialize_stitched_images[{experiment}]` → `rule stitch_well[well_id]` (post-fan,
-  one well per job). It reads this well's mapping rows + acquisition-inventory rows; writes this
-  well's stitched images through `layout.py`; sentinel `.well_{well_id}.done`.
-- **Register it** — add the `stitch_well` `PIPELINE_STEPS` row (see "registry deltas" above) and move
-  the inline Snakefile path strings (`stitched_image_index.csv`, `.done`) onto `paths.py` /
-  `layout.py`. This fixes the current Hard-Constraint-1 violation (stitch paths are inline today).
-- The well list comes from the **discover_wells checkpoint** fan (`run_well_ids_for_experiment` =
-  `discovered ∩ target`), not the experiment-grain `--selected-wells` param.
-- **Why now, not Beat 2:** `build_frame_inventory_for_well` is ALREADY per-well; a per-well consumer
-  reading an experiment-grain producer is the grain mismatch. Re-graining stitch is what lets the
-  already-per-well frame_inventory have a per-well image producer — required for the finish line.
-- **Verify:** `snakemake -n` shows `stitch_well` fanning per well; stitch the 2 wells of `20250912`;
-  byte-compare against Step 3's experiment-grain output (per-well union == experiment output).
+### Step 7 — STRANGLE the legacy path (delete the old branch + the candidate scaffolding)
 
-### 🏁 Step 5 — Activate the per-well `frame_inventory` branch = REACH THE FINISH LINE
-The per-well rules **already exist** (`build_/validate_/merge_frame_inventory`). This step is
-**WIRING + collapsing duplicates, not building new logic**: make the per-well frame_inventory the
-**live spine**, retire the legacy `frame_contract` AND `stitched_image_index` intermediates, and
-flip the axis name. This is the END of the microscope-aware pipeline — the top of the dam.
+Only after Step 6 is green and stable:
+- **Delete the legacy stitch chain:** `materialize_stitched_images[{exp}]`, `stitched_image_index.csv`
+  + `validate_stitched_image_index` (its file-existence check now lives in the frame_inventory gate),
+  `build_frame_contract` + `validate_frame_contract` on the YX1 path, and their inline Snakefile path
+  strings. `schemas/frame_contract.py` stays legacy-compat until no importer needs it.
+- **Delete the candidate scaffolding** (`stitch_candidate_qc`, the `candidate/` paths) — it was
+  throwaway; its job (prove the new path) is done.
+- **Collapse the audit's duplications** (cheap, ~40 lines): `merge_frame_inventory_shards` →
+  `well_runner.concat_well_shards_to_file(...)` (audit #4); drop the merged-level double-validate
+  (audit #3); keep a `time_int` compat alias for not-yet-migrated downstream readers (gradual).
 
-**5a — Native per-well producer:** point `build_frame_inventory_for_well` at the **per-well stitch
-output** (Step 4b) instead of selecting rows from an experiment-grain `frame_contract.csv` — the
-adapter becomes a native per-well producer.
-
-**5b — Make the branch LIVE up to the shard (NOT the consumer):** add the per-well
-`{well_id}_frame_inventory.csv.validated` sentinels to a front-end target so the branch is reachable
-and runs (today it's a dead branch — audit finding #1). **Beat 1 stops at the validated shard.**
-Repointing **segmentation** to read the shard (instead of `frame_contract.csv`) is the first
-**Beat 2** task, not this step — it's a downstream/agnostic-consumer change, on the far side of the
-handoff boundary. (Keeping it out of Beat 1 is the scope discipline: Beat 1 owns the producer +
-gate; Beat 2 owns the consumers.)
-
-**5c — The YX1 PRODUCER path moves to frame_inventory as the canonical handoff — and the `time_index`
-shift is GRADUAL, not big-bang (decided mdcolon 2026-06-17). Downstream consumers migrate gradually
-(Beat 2):**
-- **The frame_inventory PRODUCT speaks `time_index` natively.** The domain contract (Step 2) declares
-  `time_index`; the new per-well producer keys/sorts on `time_index`. **Legacy `frame_contract.csv`
-  readers (segmentation, features) migrate GRADUALLY** — keep a `time_int` compat alias / view during
-  transition rather than flipping every downstream rule in one commit. No big-bang rename. (The
-  end-state is handoff-contract Decision 19 + the Scope-2 `frame_contract → frame_inventory` rename,
-  reached incrementally.)
-- **Retire `frame_contract` on the YX1 path incrementally:** the `stitched_image_index → frame_
-  contract` chain collapses into the per-well `frame_inventory` for the YX1 producer; downstream
-  consumers repoint to the shard one at a time. `schemas/frame_contract.py` stays as legacy compat
-  until no importer needs it (do not add target semantics there).
-- **Retire `stitched_image_index.csv` + `validate_stitched_image_index`** (settled 2026-06-17): it
-  was an experiment-grain INTERMEDIATE between stitch and frame_contract. Its three checks (schema,
-  unique key, **file-existence**) are exactly what the per-well frame_inventory validator's
-  **Level 1.5** does (path-existence only — see "NOT in this plan") — so **absorb the file-existence
-  check into the per-well gate and DELETE the intermediate table + validator.** Nothing of value lost;
-  one redundant table + one redundant validator gone. (Per-well stitch already knows its own paths via
-  `layout.py`, so the intermediate index has no remaining job.) **Image-open/dim checks (Level 2) are
-  NOT added here** — existence only.
-
-**5d — Collapse the audit's duplications (cheap, do here while rewiring; ~40 lines total):**
-- **Audit #4** — `merge_frame_inventory_shards` hand-rolls concat+drift+sort+key (~30 lines). Replace
-  the body with a call to the canonical `well_runner.concat_well_shards_to_file(...)`. One function.
-- **Audit #3** — the merged file is validated twice (merge calls `_validate_unique_keys`, then the
-  `.smk` `validate_frame_inventory` rule re-checks it). **Drop the merged-level validate rule**; the
-  per-well `validate_frame_inventory_for_well` gate stays (the load-bearing one).
-
-- **Verify (the done-for-the-microscope-aware-part check):** for the 2 YX1 wells of `20250912`, the
-  chain `ingest → map_positions → join → discover → stitch_well[well_id] → build/validate_frame_
-  inventory_for_well` runs end-to-end and produces per-well frame inventories that (a) key on
-  `time_index` (no `time_int`), (b) have derived `well_id`/`image_id` recomputing from atoms, and
-  (c) have resolving `source_image_path`s. No `stitched_image_index.csv` is produced on the YX1 path
-  (absorbed); `frame_contract.csv` is collapsed for the producer but a compat view may still serve
-  not-yet-migrated downstream readers. **At this point YX1 has crossed the microscope boundary and
-  Beat 1 is DONE** — the validated per-well shard exists. Pointing segmentation/features/QC AT that
-  shard is **Beat 2** (downstream consumers, far side of the handoff); they keep reading what they
-  read today until then.
-
-> **🏁 When Step 5 passes, the microscope-aware part of the pipeline is DONE for YX1.** That is the
-> goal of this roadmap. (Keyence walks the same steps; Beat 2 deepens per-well execution across the
-> whole back half via `well_runner.py`.)
+> **🏁 When Steps 6+7 pass, the microscope-aware part of the pipeline is DONE for YX1.** That is the
+> goal of this roadmap. (Keyence walks the same strangler steps; Beat 2 deepens per-well execution
+> across the whole back half via `well_runner.py`.)
 
 ### NOT in this YX1 plan (explicit)
 - **Eligibility / `resolve_acquisitions` as a SEPARATE artifact** — settled: eligibility IS the
   validator ("are there actually good wells?"), shared mechanics + scope-specific checks, living in
-  the **per-well frame_inventory validator** (Step 5), NOT a standalone `well_acquisition_summary`.
+  the **per-well frame_inventory validator** (Step 6), NOT a standalone `well_acquisition_summary`.
   The roadmap's `∩ eligible` term stays **deferred until Keyence** forces collision-based quarantine.
-- **Validator — THREE tiers, Step 5 ships the first two:**
+- **Validator — THREE tiers, Step 6 ships the first two:**
   - **Level 1 — identity/uniqueness** (schema, nulls, unique key, derived-id recompute). Exists today.
   - **Level 1.5 — path EXISTENCE** (every `source_image_path` resolves). This is the one check
-    absorbed from the retired `validate_stitched_image_index` (Step 5c). Cheap (`Path.exists()`, no
-    image open). **Step 5 ships Levels 1 + 1.5.**
+    absorbed from the retired `validate_stitched_image_index` (Step 7). Cheap (`Path.exists()`, no
+    image open). **Step 6 ships Levels 1 + 1.5.**
   - **Level 2 — file CONTENT** (images OPEN, real dims == declared, BF contiguous, channels
-    rectangular). Opens every image → slow. **Deferred to the next, shared phase — NOT Step 5.**
-  > The line: Step 5's gate proves *the wells exist and the manifest is self-consistent and its paths
+    rectangular). Opens every image → slow. **Deferred to the next, shared phase — NOT Step 6.**
+  > The line: Step 6's gate proves *the wells exist and the manifest is self-consistent and its paths
   > resolve* — it does NOT open images. That's the honest "is this well good?" gate for Beat 1.
-- **Full `well_runner.py` per-well EXECUTION across the back half** — Beat 2 (Step 4b makes *stitch*
+- **Full `well_runner.py` per-well EXECUTION across the back half** — Beat 2 (Steps 3/5 make *stitch*
   per-well; Beat 2 makes *every* stage per-well via the runner).
 - **Keyence** — separate track (collisions, `resolve_acquisitions`, heterogeneous tile/Z).
 
-### The one-line sequence
-> identifiers ✅ → **extract `well_discovery`** (safe) → **domain-level contracts** (safe, as consumed)
-> → **YX1 stitch consumes inventory** (data-source cutover; output-preserving, byte-compare) →
-> **rehome+split AND re-grain stitch per-well** (`stitch_well[well_id]`; fan-point flip) → **🏁 activate
-> the per-well frame_inventory branch** (wiring + collapsing duplicates: retire `frame_contract` +
-> `stitched_image_index`, flip `time_int → time_index`, YX1 producer path → frame_inventory) = end of
-> the microscope-aware pipeline. Each step verified before the next; the **byte-compare (Steps 3→4) is
-> the load-bearing gate**; **Step 4b's fan-point flip and Step 5's live frame_inventory are the finish
-> line.** (Downstream consumers migrate in Beat 2 — NOT here.)
+### The one-line sequence (STRANGLER + one-well slice)
+> identifiers ✅ → **(1) extract `well_discovery`** (safe) → **(2) domain contracts** (as consumed) →
+> **(3) `stitch_well_candidate` BESIDE legacy** (per-well + inventory-fed, isolated paths; run B01) →
+> **(4) COMPARISON GATE on B01** (byte → numeric diff → side-by-side video; **mdcolon's eyes accept**) →
+> **(5) fan candidate over discovered wells** → **🏁 (6) PROMOTE to live spine** (native per-well
+> frame_inventory; `time_index`; validated shard = finish line) → **(7) STRANGLE legacy** (delete
+> `materialize_stitched_images` / `stitched_image_index` / `frame_contract` + the candidate
+> scaffolding; collapse the audit dups). Legacy stays GREEN through Step 5; **the human visual gate
+> (Step 4) is load-bearing**; **the promoted validated shard (Step 6) is the finish line.** Downstream
+> consumers migrate in Beat 2 — NOT here.
