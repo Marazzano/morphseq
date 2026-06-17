@@ -126,6 +126,7 @@ ONE VALIDATOR checks all three (THREE tiers — Beat 1 ships the first two):
   Level 1.5 — path EXISTENCE       (every source_image_path resolves; cheap, no image open)  ← Beat 1
   Level 2   — file CONTENT         (images OPEN, dims match, µm/px>0, BF contiguous, rectangular)
                                    ← the strict gate; NEXT PHASE, identical for native + external.
+  Level 3 - sam2 ingenstion requires iamges from a well/channgel are in the one folder (also a check that we can do the symlink renaming on the fly (requiremnet as wee need ot go to NNNN.ext for sam2 ingestion)  ← NEXT PHASE, identical for native + external.)
 ```
 
 **Strictness lives in the manifest (identity + existence + uniqueness — never bends).
@@ -162,7 +163,7 @@ owns that product. Shared code provides validation mechanics only.
 shared/table_contracts.py
   TableContract
   assert_columns_present
-  assert_unique_on_key
+  assert_unique_on_key 
   assert_positive_numeric
   assert_allowed_values
 
@@ -254,18 +255,18 @@ data_pipeline/
 
   image_materialization/                     # DOWNSTREAM of stitch — frame_inventory lives HERE
     stitched/
-      materialize_stitched_images.py         # 🔧 Step 4: thin DISPATCHER (microscope → backend)
-                                             #   today: 1 mixed 43-branch file in metadata_ingest/stitched_index/
-      layout.py                              # 🔨 NEW (Step 4) — the TREE: native pixel paths; ONE FILE
-                                             #   (→ subpackage later only if it earns it); imports identifiers
-      frame_inventory.py                     # 🔧 Step 5: the TABLE — build + validate; IMPORTS the contract
-                                             #   below; native per-well producer; keys on time_index
+      materialize_stitched_images.py         # 🔧 Step 6 (promote): thin DISPATCHER (microscope → backend)
+                                             #   today: 1 mixed 43-branch file in metadata_ingest/stitched_index/ (legacy)
+      layout.py                              # 🔨 NEW (Step 3, candidate writes through it) — the TREE:
+                                             #   native pixel paths; ONE FILE (→ subpackage if it earns it); imports identifiers
+      frame_inventory.py                     # 🔧 Step 6 (promote): the TABLE — build + validate; IMPORTS the
+                                             #   contract below; native per-well producer; keys on time_index
       contracts/
         frame_inventory_contract.py          # 🔨 NEW (Step 2) — the MEANING (PURL): identity ATOMS,
                                              #   DERIVED ids, REQUIRED columns, UNIQUE_KEY (atoms; time_index)
       scope/
         yx1/
-          materialize_yx1_stitched_images.py # 🔨 Step 4 — ND2 tensor slice + LoG focus
+          materialize_yx1_stitched_images.py # 🔨 Step 3 (the candidate backend) — ND2 tensor slice + LoG focus
         keyence/
           materialize_keyence_stitched_images.py  # ⏸ stub now (route to legacy); full = Keyence track
 
@@ -382,8 +383,9 @@ layout.py               image_materialization/stitched/  the TREE — WHERE the 
 
 > **`layout.py` is ONE FILE now — it MAY graduate to a subpackage later, if it earns it.** Today it
 > only needs the path constructors. When Mode A (`build_frame_inventory_from_layout`, the parse-tree
-> sugar) and the native enforcement ("mismatch = FAIL") actually get written — Phase 4/5 — that is
-> when `layout.py` → `layout/` (`constructors.py` · `parse.py` · `contract.py`) earns the split. Not
+> sugar) and the native enforcement ("mismatch = FAIL") actually get written — at promote (Step 6) or
+> later — that is when `layout.py` → `layout/` (`constructors.py` · `parse.py` · `contract.py`) earns
+> the split. Not
 > before. Off-registry either way: `layout` owns IMAGE-TREE paths (off the tabular registry);
 > `lib/paths.py` owns TABULAR artifact paths. Different families, same ID grammar (both import
 > `shared/identifiers`, neither inline-mints — two-kingdoms holds).
@@ -391,6 +393,12 @@ layout.py               image_materialization/stitched/  the TREE — WHERE the 
 ---
 
 ## well_discovery/ Organization
+
+> **🎤 DECISION GATE (mdcolon to be interviewed at Step 1).** The layout below is a PROPOSAL, not
+> locked. Before building `well_discovery/`, walk through with mdcolon: is the source-contract
+> dispatcher (`from_scope_metadata` / `from_frame_inventory`) the right shape, or overkill for YX1
+> now? How thin is `contracts.py`? Does `discover_wells.py` dispatch belong here or in `tasks.py`?
+> **Do not build to this structure without that conversation.**
 
 `well_discovery` is **shared and source-contract-specific, not microscope-specific.**
 
@@ -462,111 +470,6 @@ return stitched_channel_dir(root, well_id, channel_id) / f"{image_id}.{ext}"
 ```
 
 So layout is centralized; ID grammar still belongs to `shared/identifiers`.
-
----
-
-## Phases — the CONCEPTUAL target ordering (superseded by the binding Steps 1–7)
-
-> **⚠️ This section is the architecture-order view (what each piece IS, in dependency order). The
-> BINDING implementation plan is the STRANGLER "🛠️ YX1 IMPLEMENTATION PLAN — Steps 1–7" below.**
-> Where this section and the Steps disagree, the Steps win — they encode the strangler discipline
-> (candidate beside legacy, comparison gate, promote, strangle) that this conceptual ordering does
-> not. Kept for the per-piece descriptions; do not implement "phase by phase" in place.
-
-### Phase 0: Identifiers (`shared/identifiers/`) — the foundation, do FIRST
-Empty/additive/zero-risk. Constructors (`build_well_id`/`build_image_id` `_t{time_index:04d}`),
-parsers, validators (`validate_well_id` fails loud on bare `A01`; `recompute_and_check`). Layout and
-the validator both depend on this — it cannot come second. (Scope 1.)
-
-### Phase 1: Extract Well Discovery From tasks.py
-New: `well_discovery/{__init__,contracts,from_scope_metadata}.py`. Edit: `tasks.py`. Artifact:
-`experiment_metadata/{experiment}/discovered_wells.txt`. DAG step `discover_wells`, experiment fan
-point. **Behavior change: none.** Tests: unique wells preserve first-seen order; duplicates collapse;
-missing `well_id` fails loud; local IDs like `A01` fail validation; `tasks.py` delegates (no
-pandas/business logic).
-
-### Phase 1.5: Establish ONLY the consumed Domain-Level Contracts
-Create the contract homes the YX1 path actually consumes, before changing frame-inventory behavior
-or moving packages:
-
-```
-shared/table_contracts.py                                        # mechanics
-well_discovery/contracts.py                                      # discovered_wells.txt
-image_materialization/stitched/contracts/frame_inventory_contract.py   # the handoff
-```
-
-**DEFERRED (do NOT build on the YX1 path):**
-```
-metadata_ingest/contracts/well_acquisition_summary.py           # eligibility — Keyence-weighted
-```
-
-The frame-inventory contract is atom-based:
-
-```
-FRAME_INVENTORY_IDENTITY_ATOMS = ("experiment_id", "well_index", "channel_id", "time_index")
-DERIVED_COLUMNS_FRAME_INVENTORY = ("well_id", "image_id")
-UNIQUE_KEY_FRAME_INVENTORY = FRAME_INVENTORY_IDENTITY_ATOMS
-```
-
-It defines required columns, derived-id recomputation rules, and compatibility aliases for the
-current transition (`time_int` -> `time_index`, `stitched_image_path` -> `source_image_path`) only
-where needed. `schemas/frame_contract.py` becomes legacy compatibility; new code imports the domain
-contract. **Behavior change: none** until importers are migrated.
-
-### Phase 2: Formalize Acquisition Inventory Contracts (YX1 already shipped — Keyence catches up)
-The scope/shared validator split is already built for YX1 (`acquisition_checks.py`,
-`scope/yx1/acquisition_inventory.py`). This phase is mostly **Keyence catching up** to YX1's pattern.
-
-```
-scope/shared/acquisition_checks.py   assert_columns_present · assert_positive_column ·
-                                     assert_unique_on_key · assert_channel_mapping_consistent
-scope/yx1/acquisition_inventory.py   declares YX1 schema + uniqueness key, calls shared primitives  ✅ DONE
-scope/keyence/acquisition_inventory.py  later: Keyence schema + raw/collision key, calls primitives
-```
-
-Artifact `acquisition_inventory__{scope}.csv` on `ingest_scope_metadata` (experiment grain, before
-`well_id` fanout). YX1 record-only already emits; Keyence later.
-
-### Phase 3 (DEFERRED — Keyence): Eligibility Target Shape — NOT on the YX1 path
-> **Not in Beat 1 for YX1.** This is the TARGET shape, built when Keyence forces it. For YX1,
-> eligibility IS the per-well frame_inventory validator (see "NOT in this plan"); `run_wells =
-> discovered ∩ target` with no `∩ eligible` term.
-
-Target (Keyence): new artifact `well_acquisition_summary__{scope}.csv`; DAG step `resolve_acquisitions`
-(Keyence needs real collision resolution; YX1 would be passthrough). Does NOT change
-`discovered_wells.txt`; emits per-well eligibility; the well-runner intersects it. Tests (when built):
-quarantined well stays discovered but is excluded from the run set; collision-failed wells inactive.
-
-### Phase 4: Rehome Stitch Into image_materialization — split per-scope backends
-> **Two different-risk things used to be fused here; do not implement them in the same commit.**
-> First gate the data-source cutover — stitch CONSUMING `acquisition_inventory__yx1.csv` as its
-> `(well → position/channel/z)` lookup, killing the in-stitch `_select_yx1_channel_index`/
-> `yx1_series_map` re-derivation. This is intended output-preserving and requires a byte-compare.
-> Then do the package move into `image_materialization/stitched/` as import churn with no behavior
-> change.
-
-```
-materialize_stitched_images.py        dispatcher — selects backend by microscope
-layout.py                             canonical path constructors (one file; subpackage only if it earns it)
-frame_inventory.py                    shared output table: domain-contract import + build + validate
-scope/yx1/materialize_yx1_stitched_images.py        ND2 tensor slice + Z projection / LoG focus
-scope/keyence/materialize_keyence_stitched_images.py  TIFF tiles + mosaic + collision-aware
-```
-
-Shared layer = `layout.py` + frame inventory schema/validator (+ focus primitive where honestly
-reusable) — NOT shared producer code. Canonical native layout falls out **by construction** (backends
-write through `layout.py`). Do NOT move `log_focus.py` / `frame_tiler.py` yet — only after this
-package passes smoke tests.
-
-### Phase 5: Flip the validator to strict-for-native + remove legacy
-- **Validator flip:** native layout mismatch warning → hard FAIL (`source_image_path` derived for
-  native; warning survives only at external drop-in). This is the only thing Phase 5 ADDS over
-  Phase 4 — the layout was already enforced by construction.
-- **Legacy removal (after smoke tests):** no shims; direct import updates; delete old packages;
-  grep/import audit for stale refs. Candidate removals: `metadata_ingest/stitched_index/`,
-  `image_building/yx1/`, `image_building/keyence/`, `image_building/scope/`.
-- Validation: focused unit tests pass; `snakemake -n` parses; front-end smoke path flows through
-  `discover_wells`; stitch smoke passes when GPU/runtime constraints allow.
 
 ---
 
@@ -725,12 +628,18 @@ Pure structure; touches no images; the one Beat-1 graph piece genuinely missing.
 
 ### Step 2 — Establish front-half domain contracts  *(low risk, NO behavior change)*
 
+> **🎤 DECISION GATE (mdcolon to be interviewed before building).** The **acquisition-inventory
+> contract** shape (how the already-shipped `scope/yx1/acquisition_inventory.py` schema/key relates to
+> the new `frame_inventory_contract.py`, and whether they share anything) is NOT locked — walk through
+> it with mdcolon first. The frame_inventory contract columns/key below are a proposal to confirm, not
+> a prescription.
+
 Add only the **two** contracts the YX1 path consumes (per the anti-whale guard) before touching frame
 inventory or moving packages.
 - Add `shared/table_contracts.py` for generic mechanics only (if Step 1 didn't already).
 - Add `image_materialization/stitched/contracts/frame_inventory_contract.py` as the atom-based PURL
   for the stitched handoff (`experiment_id, well_index, channel_id, time_index` are the key;
-  `well_id` and `image_id` are derived/checkable). The Step 3 stitch-consume cutover and the Step 5
+  `well_id` and `image_id` are derived/checkable). The Step 3 stitch-consume cutover and the Step 6
   native producer both key on these atoms, so it earns its place here, before stitch is touched.
 - **DO NOT add** `metadata_ingest/contracts/well_acquisition_summary.py` — eligibility is deferred
   (Keyence-weighted; see "NOT in this plan").
