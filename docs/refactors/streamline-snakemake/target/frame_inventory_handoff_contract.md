@@ -7,6 +7,12 @@ format.
 **Companion to:** `front_end_naming_and_frame_inventory_flow.md` (the front-end ingest + fan spec — this doc is
 its post-fan "drop-in here" counterpart) and `per_well_throughline_findings.md` (the north-star
 findings doc; the stitched image tree is **off-registry** there).
+**Upstream counterpart:** `acquisition_inventory_flow.md` — the **pre-stitch, microscope-specific**
+record of *what was physically acquired* (per `raw_acquisition_unit`, scope-shaped). The
+**acquisition inventory** is a different kind of information from the **frame inventory**: the
+former is upstream/scope-specific/per-raw-unit (it feeds the scope stitcher); this doc's frame
+inventory is downstream/agnostic/per-stitched-frame (it feeds segmentation). The stitcher is the
+boundary between them — see that doc's "Acquisition inventory ≠ frame inventory."
 **Scope of THIS doc:** the stitched-image **directory tree** (the pixel store), the
 **`frame_inventory`** table that travels with it, the **immutable frame key**, the **strict
 shared validator** (`validate_frame_inventory_well`), and a **worked walkthrough** of both
