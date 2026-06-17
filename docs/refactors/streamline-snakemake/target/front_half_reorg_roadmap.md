@@ -41,7 +41,8 @@ reasoned about in isolation. That is the destination.
 >
 > **🏁 THE FINISH LINE for this roadmap = a validated PER-WELL `frame_inventory` shard.** That is the
 > END of the microscope-aware part: raw data flows `ingest → map → join → discover →
-> stitch_well[well_id] → build/validate_frame_inventory_for_well` and produces a valid per-well shard.
+> stitch_well[well_id]` where the materializer emits a per-well `frame_inventory` shard, then the
+> shard is validated.
 > **The handoff is the boundary; Beat 1 builds the producer side (up to and including the shard +
 > its gate). Beat 1 does NOT repoint the consumer side** — segmentation/features/QC keep reading what
 > they read today until Beat 2 migrates them onto the shard. **The stitcher is the dam; Beat 1 gets
@@ -54,8 +55,8 @@ reasoned about in isolation. That is the destination.
 **Two kinds of "per-well" — keep them distinct** (the thing the other docs blur):
 - **per-well IDENTITY** = `well_id` means one global thing. Covered (Scope 1/2).
 - **per-well EXECUTION** = actually run ONE well through a stage. **Beat 1 builds it for the
-  microscope-aware spine** (`stitch_well` + `build_frame_inventory_for_well`, which already exist
-  per-well). **Beat 2 extends it across the agnostic back half** via `well_runner.py` —
+  microscope-aware spine** (`stitch_well` emits images + a per-well frame-inventory shard, then
+  `validate_frame_inventory_for_well` gates it). **Beat 2 extends it across the agnostic back half** via `well_runner.py` —
   `selected_well_ids_for_experiment` and the generic per-well stage template are still the hole there.
 
 ---
@@ -693,17 +694,18 @@ merge_frame_inventory[{exp}]         → experiment-level frame_inventory  🏁 
 3. **The frame_inventory branch is DEAD** — `rule all` stops at features; `merge_frame_inventory` is
    never requested; **segmentation still reads `frame_contract.csv` directly.** Reaching the finish
    line = **making the per-well frame_inventory the live spine and retiring `frame_contract`** (Steps 6–7).
-4. **The per-well rules ALREADY EXIST** (`build_/validate_/merge_frame_inventory`). Step 6 is
-   **wiring + collapsing duplicates, not building** — point the live path at the shards.
+4. **The per-well frame-inventory rules ALREADY EXIST** as an adapter
+   (`build_/validate_/merge_frame_inventory`). Step 6 changes the producer contract: the materializer
+   emits the shard, validation gates it, and the legacy build adapter is retired or reduced to a thin
+   compatibility target.
 
 **The TARGET DAG after promote+strangle (Steps 6–7) — what we collapse TO:**
 
 ```
 discover_wells (checkpoint = THE FAN)
         ↓  ⟱ per-well ⟱
-stitch_well[well_id]                  → per-well stitched images (via layout.py)   🔴 candidate→promoted (Steps 3,6)
-        ↓
-build_frame_inventory_for_well[well_id]  → {well_id}_frame_inventory.csv  (NATIVE per-well producer; keys on time_index)
+stitch_well[well_id]                  → per-well stitched images (via layout.py)
+                                      → {well_id}_frame_inventory.csv (emitted by materializer)
         ↓
 validate_frame_inventory_for_well[well_id]  (absorbs the old stitched-index file-existence check)
         ↓
@@ -761,17 +763,18 @@ before the stitch producer starts emitting it.
 
 > **🎤 DECISION GATE (mdcolon to be interviewed before building).** The **acquisition-inventory
 > contract** shape (how the already-shipped `scope/yx1/acquisition_inventory.py` schema/key relates to
-> the new `frame_inventory_contract.py`, and whether they share anything) is NOT locked — walk through
-> it with mdcolon first. The frame_inventory contract columns/key below are a proposal to confirm, not
-> a prescription.
+> the new `frame_inventory_contract.py`, and whether they share anything) is NOT locked. Also interview
+> the **native layout + frame-inventory writer interface together**: by design, the materializer should
+> write the frame-inventory rows while it produces image files, so there is no later path/table mismatch.
+> The frame_inventory contract columns/key below are a proposal to confirm, not a prescription.
 
 Add only the **two** contracts the YX1 path consumes (per the anti-whale guard) before touching frame
 inventory or moving packages.
 
-This step is the guardrail before the risky stitch work. The candidate stitcher and the promoted
-frame-inventory producer need to agree on identity atoms, derived IDs, required columns, and unique
-keys before either writes new output. Put that meaning beside the data product, not in a global schema
-drawer and not in `tasks.py`.
+This step is the guardrail before the risky stitch work. The candidate stitcher and the
+frame-inventory writer need to agree on identity atoms, derived IDs, required columns, unique keys,
+and canonical paths before either writes new output. Put that meaning beside the data product, not in
+a global schema drawer and not in `tasks.py`.
 
 The anti-whale rule matters here: do not build every future contract just because the target tree can
 name them. YX1 needs the discovered-wells contract and the frame-inventory handoff contract. Keyence
@@ -807,8 +810,9 @@ eligibility contracts wait until Keyence conflict resolution forces them.
 **ZONE:** body of the STITCH OVERLAP. This is the first place that is maximally both: per-well
 execution plus YX1-specific production code.
 
-**FLOW:** `discovered_wells.txt + acquisition_inventory__yx1.csv → stitch_well_candidate[well_id]`
-beside the legacy `materialize_stitched_images[{exp}]` branch.
+**FLOW:** `discovered_wells.txt + acquisition_inventory__yx1.csv →
+stitch_well_candidate[well_id] + candidate frame_inventory[well_id]` beside the legacy
+`materialize_stitched_images[{exp}]` branch.
 
 The strangler core: build the new per-well stitch as a **candidate branch**, legacy untouched.
 This is the first risky cut, because it changes two things that matter: the unit of execution
@@ -816,21 +820,27 @@ This is the first risky cut, because it changes two things that matter: the unit
 inventory). Do not make that cut inside the live rule. The candidate branch is a parallel producer:
 same raw experiment, same target well, new per-well implementation, isolated output tree.
 
+Design `layout.py` and `frame_inventory.py` together here. The materializer should not write images
+and then ask a later scanner to rediscover what happened. It should construct each output path through
+`layout.py`, write the image there, and emit the matching frame-inventory row in the same producer
+flow. That is how native output avoids path/table drift.
+
 That gives the migration a clean test shape:
 
 ```text
 legacy experiment-grain stitch for B01      ← baseline
-candidate per-well stitch for B01           ← new path
+candidate per-well stitch + inventory B01   ← new path
 compare them before anything downstream sees the new path
 ```
 
 If the candidate fails, the live pipeline still runs. If it succeeds for one well and passes the
-comparison gate, then the fan can widen to all discovered wells. Promotion happens later, after the
-candidate branch has earned the right to replace the legacy branch.
+comparison gate, then the fan can widen to one additional well as a fast orchestration smoke.
+Promotion happens later, after the candidate branch has earned the right to replace the legacy branch.
 
 **FILES:**
 - **Create**
   - `src/data_pipeline/image_materialization/stitched/layout.py`
+  - `src/data_pipeline/image_materialization/stitched/frame_inventory.py`
   - `src/data_pipeline/image_materialization/stitched/scope/__init__.py`
   - `src/data_pipeline/image_materialization/stitched/scope/yx1/__init__.py`
   - `src/data_pipeline/image_materialization/stitched/scope/yx1/materialize_yx1_stitched_images.py`
@@ -855,10 +865,13 @@ candidate branch has earned the right to replace the legacy branch.
 - Add `rule stitch_well_candidate[well_id]` writing to **ISOLATED candidate paths** (e.g.
   `built_image_data/{exp}/candidate/...` + `.well_{well_id}.candidate.done`) so it can NEVER collide
   with the live `materialize_stitched_images` output. Register via `paths.py` (no inline strings).
+- Have the candidate producer emit a candidate per-well frame-inventory shard as it writes images.
+  The row's `source_image_path` should be the exact path returned by `layout.py`, not a path recovered
+  later by scanning the tree.
 - Run it for **B01 only** first (legacy B01 stitched frames already exist on disk → a baseline to
   compare against). GPU step.
 - **Verify (this commit):** `stitch_well_candidate[20250912_B01]` runs and writes isolated output.
-  No comparison yet — just that the candidate produces frames.
+  No comparison yet — just that the candidate produces frames and its candidate frame-inventory shard.
 
 ### Step 4 — The COMPARISON GATE on one well (`stitch_candidate_qc/`)  ·  🧩 OVERLAP body (prove the scope backend)
 
@@ -908,10 +921,11 @@ of a single B01 slice.
 
 **FLOW:** `discover_wells checkpoint → run_well_ids_for_experiment → stitch_well_candidate[well_id]`.
 
-This step widens only after the one-well proof. B01 proves the new code path can be equivalent in the
-smallest useful case; fanning proves the orchestration shape can handle the whole discovered well set.
-The legacy branch still remains live, so this is a scale-out test of the candidate branch, not a
-cutover.
+This step widens only after the one-well proof, but it does **not** run the whole experiment. B01
+proves the new code path can be equivalent in the smallest useful case; one additional well proves
+the fan is real and not a hardcoded B01 path. Running every 20250912 well would be too expensive for
+the migration proof. The legacy branch still remains live, so this is a fast orchestration smoke of
+the candidate branch, not a cutover.
 
 Keep the run-set simple for YX1: `discovered ∩ target`. Do not introduce the Keyence eligibility term
 here. The purpose is to prove that the fan starts at `discover_wells` and that each well can run as an
@@ -920,32 +934,35 @@ isolated stitch job.
 **FILES:**
 - **Edit**
   - `src/data_pipeline/pipeline_orchestrator/Snakefile` or rules include
-    (candidate expands over the checkpoint instead of B01)
+    (candidate expands over a small selected well set instead of hardcoded B01)
   - `src/data_pipeline/pipeline_orchestrator/orchestration/well_runner.py` only if existing
     `run_well_ids_for_experiment` cannot express `discovered ∩ target`
   - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py` only if candidate fanout paths
     need adjustment
 
-- Once B01 is visually accepted, fan `stitch_well_candidate[well_id]` over the `discover_wells`
-  checkpoint set (`run_well_ids_for_experiment` = `discovered ∩ target`) — drop the B01 hardcode.
-- Run the candidate over all `20250912` wells; spot-check a few more wells through `stitch_candidate_qc`
-  (don't need all by eye — B01 proved the method; sample the rest).
-- **Verify:** the candidate fans per-well; QC summaries are green/accepted for the sampled wells.
+- Once B01 is visually accepted, fan `stitch_well_candidate[well_id]` over a **two-well selected set**
+  drawn from `discover_wells` (B01 + one other known-good well). This proves the checkpoint fan and
+  target selection without paying the cost of all `20250912` wells.
+- Run `stitch_candidate_qc` on the second well as a quick sanity check. B01 remains the full human
+  comparison gate; the second well proves the target/fan path is not hardcoded.
+- **Verify:** two candidate wells run through per-well stitch + candidate frame-inventory output; B01
+  has full visual acceptance; the second well has a green smoke/QC summary.
 
 ### 🏁 Step 6 — PROMOTE the candidate to the live spine = REACH THE FINISH LINE  ·  🧩 EXIT the overlap → frame_inventory (post-microscope land)
 
 **ZONE:** right edge of the STITCH OVERLAP. This is the microscope exit adapter: YX1-specific
 stitch output becomes a shared, validated per-well `frame_inventory` shard.
 
-**FLOW:** `stitch_well[well_id] → build_frame_inventory_for_well[well_id] →
+**FLOW:** `stitch_well[well_id] emits images + frame_inventory[well_id] →
 validate_frame_inventory_for_well[well_id]`.
 
-Now (and only now) cut over: the candidate becomes the real path; `build_frame_inventory_for_well`
-reads it. This is the END of the microscope-aware pipeline — the top of the dam.
+Now (and only now) cut over: the candidate becomes the real path, and the materializer-emitted
+frame-inventory shard becomes the handoff artifact that validation reads. This is the END of the
+microscope-aware pipeline — the top of the dam.
 
 This is the moment the migration stops being a side branch. The candidate has already produced frames
-for one well, passed comparison, and fanned over the discovered set. Promotion means the target graph
-now trusts that branch and points the per-well frame-inventory builder at it. The handoff shard becomes
+and frame-inventory rows for B01, passed comparison, and proven the fan on a second well. Promotion
+means the target graph now trusts that branch. The handoff shard emitted by the materializer becomes
 the live product of the microscope-aware front half.
 
 The boundary is important: Step 6 promotes only up to validated per-well `frame_inventory`. It does
@@ -954,15 +971,13 @@ downstream per-well migration in Beat 2.
 
 **FILES:**
 - **Create / move into target home**
-  - `src/data_pipeline/image_materialization/stitched/frame_inventory.py`
-    (native per-well builder + Level 1/1.5 validator that imports `frame_inventory_contract.py`)
   - `src/data_pipeline/image_materialization/stitched/materialize_stitched_images.py`
     (thin dispatcher after promote)
 - **Edit**
   - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py`
     (`stitch_well` live row; `frame_inventory` path remains per-well then merge)
   - `src/data_pipeline/pipeline_orchestrator/rules/frame_inventory.smk`
-    (builder reads native stitch output, not `frame_contract.csv`)
+    (validator consumes the materializer-emitted shard, not a `frame_contract.csv` adapter)
   - `src/data_pipeline/pipeline_orchestrator/Snakefile`
     (front-end target includes validated per-well frame inventory shards)
   - `src/data_pipeline/pipeline_orchestrator/tasks.py`
@@ -972,9 +987,9 @@ downstream per-well migration in Beat 2.
 
 - **Promote:** rename `stitch_well_candidate` → `stitch_well`; move candidate paths to the real
   `built_image_data` location (or repoint `paths.py` from `candidate/` to live).
-- **Native per-well frame_inventory:** point `build_frame_inventory_for_well` at the per-well stitch
-  output instead of selecting rows from an experiment-grain `frame_contract.csv` — the adapter becomes
-  a native per-well producer; the product speaks **`time_index`** natively.
+- **Native per-well frame_inventory:** stop selecting rows from an experiment-grain
+  `frame_contract.csv`. The materializer-emitted per-well shard is the native product; validation
+  checks it speaks **`time_index`** natively and that its paths resolve.
 - **Make the branch LIVE up to the shard (NOT the consumer):** add the per-well
   `{well_id}_frame_inventory.csv.validated` sentinels to a front-end target so the branch runs (today
   it's dead — audit #1). **Beat 1 stops at the validated shard.** Repointing segmentation/features/QC
@@ -982,7 +997,7 @@ downstream per-well migration in Beat 2.
 - **Validator = Level 1 + Level 1.5** (identity + path-existence; absorbs the retired stitched-index
   file-existence check). Level 2 (image-open/dims) deferred.
 - **Verify (the done-for-the-microscope-aware-part check):** for `20250912`, the chain `ingest →
-  map_positions → join → discover → stitch_well[well_id] → build/validate_frame_inventory_for_well`
+  map_positions → join → discover → stitch_well[well_id] → validate_frame_inventory_for_well`
   runs end-to-end and produces per-well frame inventories that (a) key on `time_index`, (b) have
   derived `well_id`/`image_id` recomputing from atoms, (c) have resolving `source_image_path`s.
   **YX1 has crossed the microscope boundary; Beat 1 is DONE.**
@@ -1059,8 +1074,8 @@ logic so the remaining graph has one obvious path through the microscope boundar
 > identifiers ✅ → **(1) extract `well_discovery`** (safe) → **(2) domain contracts** (as consumed) →
 > **(3) `stitch_well_candidate` BESIDE legacy** (per-well + inventory-fed, isolated paths; run B01) →
 > **(4) COMPARISON GATE on B01** (byte → numeric diff → side-by-side video; **mdcolon's eyes accept**) →
-> **(5) fan candidate over discovered wells** → **🏁 (6) PROMOTE to live spine** (native per-well
-> frame_inventory; `time_index`; validated shard = finish line) → **(7) STRANGLE legacy** (delete
+> **(5) fan candidate over a two-well selected set** → **🏁 (6) PROMOTE to live spine**
+> (materializer-emitted per-well frame_inventory; `time_index`; validated shard = finish line) → **(7) STRANGLE legacy** (delete
 > `materialize_stitched_images` / `stitched_image_index` / `frame_contract` + the candidate
 > scaffolding; collapse the audit dups). Legacy stays GREEN through Step 5; **the human visual gate
 > (Step 4) is load-bearing**; **the promoted validated shard (Step 6) is the finish line.** Downstream

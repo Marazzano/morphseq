@@ -20,8 +20,8 @@ truth; the dated sections further down are earlier verified state, kept for hist
 migration** to a validated per-well `frame_inventory` shard (the end of the microscope-aware pipeline):
 > 1 extract `well_discovery` · 2 domain contracts (as consumed) · 3 `stitch_well_candidate` beside
 > legacy (per-well, inventory-fed, isolated paths; run B01) · 4 comparison gate on B01 (byte → numeric
-> diff → side-by-side video; **mdcolon's visual sign-off**) · 5 fan candidate · 🏁 6 promote to live
-> spine (finish line) · 7 strangle legacy.
+> diff → side-by-side video; **mdcolon's visual sign-off**) · 5 two-well fan smoke · 🏁 6 promote to
+> live spine (finish line) · 7 strangle legacy.
 
 **Next concrete action:** **Step 1 — extract `well_discovery/` from `tasks.py`** (low-risk, no behavior
 change, legacy stays green). The well-discovery shape is now intentionally boring: contract +
