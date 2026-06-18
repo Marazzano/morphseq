@@ -35,7 +35,8 @@ scope_metadata:
 
 # Image building (stitched FF images).
 image_building:
-  device: "cuda"
+  # "auto" → resolve_device picks cuda if available, else cpu (announced as AUTO_MODE_CHOSEN).
+  device: "auto"
   overwrite: false
   yx1:
     z_buffer: false

@@ -42,6 +42,7 @@ from data_pipeline.image_materialization.materialization_plan import (
 from data_pipeline.image_materialization.scope.scope_resolver_for_materialization_plan import (
     resolve_materialization_plan,
 )
+from data_pipeline.utils.cuda_diagnostics import resolve_device
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def run_materialize_well(
     well_acquisition_inventory_df: pd.DataFrame,  # carries source_nd2_path (the raw-source pointer)
     built_image_data_dir: Path,
     config: dict | None = None,
-    device: str = "cuda",
+    device: str = "auto",
     candidate: bool = False,
     smoke_max_time_indices: int | None = None,
 ) -> pd.DataFrame:
@@ -68,9 +69,16 @@ def run_materialize_well(
 
     Step 6 is YX1-only live: any ``scope_name`` other than ``"yx1"`` raises ``UnsupportedScopeError``.
 
+    The ``device`` preference (``"auto"`` / ``"cuda"`` / ``"cpu"``) is auto-resolved HERE via the shared
+    ``resolve_device`` (the same resolver the rest of the pipeline uses); the backend receives a concrete
+    device. ``"auto"`` (the default) → CUDA if available, else CPU. The chosen device is announced on
+    stdout as ``AUTO_MODE_CHOSEN: requested=... -> CUDA|CPU`` so a run's device decision is observable.
+
     Args:
         scope_name: microscope key. Step 6 supports ``"yx1"`` only.
         config: pipeline config dict (``image_materialization.products``); ``None`` → default plan.
+        device: device preference — ``"auto"`` (default), ``"cuda"``, or ``"cpu"``. Resolved to a
+            concrete device by ``resolve_device`` before the backend runs.
         candidate: ``True`` writes under ``materialized_images/candidate/`` (isolated from live).
         smoke_max_time_indices: TEMPORARY smoke cap — if set, the backend materializes only the
             first N time_indices (no-GPU / fast smoke). ``None`` = full well (production).
@@ -92,9 +100,16 @@ def run_materialize_well(
         scope_name=scope_name,
         requested_plan=requested_plan,
     )
+
+    # Auto-resolve the device preference (auto/cuda/cpu) to a concrete device the backend can use,
+    # and announce the choice so it is observable in the run output.
+    resolved_device = resolve_device(device)
+    log.info("AUTO_MODE_CHOSEN: requested=%s -> %s", device, resolved_device.upper())
+    print(f"AUTO_MODE_CHOSEN: requested={device!r} -> {resolved_device.upper()}", flush=True)
+
     log.info(
-        "run_materialize_well: experiment=%s well=%s scope=%s products=%d candidate=%s",
-        experiment_id, well_id, scope_name, len(resolved_plan.products), candidate,
+        "run_materialize_well: experiment=%s well=%s scope=%s products=%d device=%s candidate=%s",
+        experiment_id, well_id, scope_name, len(resolved_plan.products), resolved_device, candidate,
     )
 
     from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
@@ -108,7 +123,7 @@ def run_materialize_well(
         well_acquisition_inventory_df=well_acquisition_inventory_df,
         built_image_data_dir=built_image_data_dir,
         resolved_plan=resolved_plan,
-        device=device,
+        device=resolved_device,
         candidate=candidate,
         smoke_max_time_indices=smoke_max_time_indices,
     )
