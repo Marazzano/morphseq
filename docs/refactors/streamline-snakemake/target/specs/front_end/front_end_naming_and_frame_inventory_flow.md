@@ -101,7 +101,7 @@ The front of the pipeline is **two independent metadata lineages** that run in p
 > Microscope (`yx1`/`keyence`) is a **code-dispatch** detail (chosen by `config["microscope"]`
 > inside one rule — NOT a `_yx1`/`_keyence` rule suffix), not part of the stage name or the
 > path. It applies to **three** per-scope stages: `ingest_scope_metadata` (the only raw read),
-> `map_positions_to_wells` (per-scope CSV logic), and `stitch_well` after the fan. It converges out
+> `map_positions_to_wells` (per-scope CSV logic), and `materialize_well` after the fan. It converges out
 > at `apply_position_to_well_mapping` and only ever appears as a filename token
 > (`scope_metadata__{scope}.csv`) handled by `format_vars`. **See "What is split per-microscope"
 > above for the full split, dispatch model, and the Keyence wiring gap.**
@@ -176,7 +176,7 @@ The front end is **7 rules**: 1 plate root + 2 scope-front + 1 join + 1 fan + 2 
 | `map_positions_to_wells` | `scope_metadata__{scope}.csv` | `position_well_mapping.csv` (+ `.provenance.json`) | **MS** *(CSV→CSV)* | constant interface, always runs. YX1: XY match; Keyence: passthrough. |
 | `apply_position_to_well_mapping` | `scope_metadata__{scope}.csv` + `position_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | applies mapping; **`well_id` minted here**. ← microscope convergence line. |
 | `discover_wells` *(checkpoint)* | `scope_metadata_mapped.csv` (#13) | `discovered_wells.txt` | Shared | reads the `well_id` column; emits ALL discovered well_ids. ⟱ FAN ⟱ |
-| `stitch_well` *(per well_id)* | raw + this well's mapping rows + configured image-product set | materialized images + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; one sentinel per well for the configured product set. Channel/method/z granularity lives as rows in `frame_inventory`, not Snakemake wildcards. |
+| `materialize_well` *(per well_id)* | raw + this well's mapping rows + configured image-product set | materialized images + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; one sentinel per well for the configured product set. Channel/method/z granularity lives as rows in `frame_inventory`, not Snakemake wildcards. **Named for the stage, not one op** — the producer composes XY (stitch) then Z (projection/z_stack); "stitch" is one step, not the whole stage (see `pipeline_file_philosophy.md` → Image materialization). Scope-specific code ends at the canonical `FieldsForTime` bundle; everything after is shared. |
 | `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `frame_inventory_handoff_contract.md`. |
 
 **`well_id` is born at the join, read at discovery (matches code, line 68).**
@@ -228,14 +228,14 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 | `map_positions_to_wells` | **YES** — `{yx1, keyence}` | per-scope position→well **logic** (YX1: XY match; Keyence: passthrough) — but **CSV→CSV, no raw** |
 | `apply_position_to_well_mapping` | **NO** (shared) | pure table join; code in `scope/shared/` |
 | `discover_wells` | **NO** (shared) | reads the converged `scope_metadata_mapped.csv` |
-| `stitch_well` | **YES** — `{yx1, keyence}` | reads the raw file to build images (format-specific) |
+| `materialize_well` | **YES** — `{yx1, keyence}` | reads the raw file to build images (format-specific) |
 | `validate_frame_inventory_well` | **NO** (shared) | reads converged metadata + stitched images (TARGET name; was `validate_frame_contract_well`) |
 
 > So there are **two microscope-specific points**: the **metadata front** (`ingest_scope_metadata`
 > + `map_positions_to_wells`, on the scope branch before convergence) and the **image build**
-> (`stitch_well`, after the fan). The join is the metadata convergence line: microscope-specific
+> (`materialize_well`, after the fan). The join is the metadata convergence line: microscope-specific
 > metadata interpretation ends there. Image building has its own native-microscope segment after
-> the fan (`stitch_well`) and converges again at the canonical stitched handoff tree. The common
+> the fan (`materialize_well`) and converges again at the canonical stitched handoff tree. The common
 > thread is scope-specific interpretation: ingest and stitch read raw data; map is scope-specific
 > but CSV→CSV. The moment data is in canonical tables, the microscope is gone.
 
@@ -248,7 +248,7 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
    both. **Wiring the missing Keyence rules is in scope.** *(⚠️ gap to close — see below.)*
 2. **One stage, backend chosen by config — NOT scope-suffixed rules.** A microscope-specific
    stage is **one** stage key / `tasks.py` verb (`ingest_scope_metadata`, `map_positions_to_wells`,
-   `stitch_well`); the backend (`yx1`/`keyence`) is selected **by config inside the one rule**,
+   `materialize_well`); the backend (`yx1`/`keyence`) is selected **by config inside the one rule**,
    not by duplicating the rule with a `_yx1`/`_keyence` suffix. This is the "microscope =
    code-dispatch, not a path/DAG concern" principle made concrete. The scope only ever appears
    as a **filename token** (`scope_metadata__{scope}.csv` via `format_vars`) — never as a rule
@@ -260,14 +260,14 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
    ```
    This replaces today's two scope-suffixed rules. *(Refactor item: collapse
    `extract_scope_metadata_yx1` + `_keyence` into one `ingest_scope_metadata` with config
-   dispatch; same for `map_positions_to_wells` and `stitch_well`.)*
+   dispatch; same for `map_positions_to_wells` and `materialize_well`.)*
 
 > **⚠️ KEYENCE WIRING GAP (verified, must close for full symmetry):**
 > | Stage | yx1 rule | keyence rule | keyence code exists? |
 > |---|---|---|---|
 > | `ingest_scope_metadata` | ✅ | ✅ | ✅ |
 > | `map_positions_to_wells` | ✅ | ❌ **missing** | ✅ `series_well_mapper_keyence.py` |
-> | `stitch_well` | ✅ | ❌ **missing** | ✅ `image_building/keyence/stitched_ff_builder.py` |
+> | `materialize_well` | ✅ | ❌ **missing** | ✅ `image_building/keyence/stitched_ff_builder.py` (legacy; becomes the keyence backend behind `FieldsForTime`) |
 >
 > The code is there; the **rules** aren't. Closing this gap is part of the "one stage, config
 > dispatch" refactor — when each stage becomes one config-dispatched rule, Keyence is wired by
@@ -369,13 +369,13 @@ keyed on `well_id`:
 ```
 ⟱ FAN: discovered_wells.txt (well_id) ⟱
    │
-   ├─► stitch_well  [per well_id]                         (Zone B0, off-registry image tree)
+   ├─► materialize_well  [per well_id]                         (Zone B0, off-registry image tree)
    │     in:  this well's raw images + its scope_metadata_mapped rows
    │     out: built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/
    │          sentinel: .well_{well_id}.done              ← well_id, not well_index
    │
    ├─► build_frame_inventory_well   [per well_id]        (Zone-A spine, fanout=per_well_then_merge)
-   │     in:  this well's images (from stitch_well) + this well's metadata rows
+   │     in:  this well's images (from materialize_well) + this well's metadata rows
    │     out: <frame-inventory-family>/{exp}/per_well/{well_id}/{well_id}_frame_inventory.csv
    └─► validate_frame_inventory_well [per well_id]        (the shared gate)
          in:  {well_id}_frame_inventory.csv
@@ -383,7 +383,7 @@ keyed on `well_id`:
          (per-well validation gate: metadata ∩ images on disk; sentinel = trusted)
 ```
 
-> **The canonical stitched handoff tree is the public "drop-in here" point.** `stitch_well` +
+> **The canonical stitched handoff tree is the public "drop-in here" point.** `materialize_well` +
 > `build_frame_inventory_well` + the shared `validate_frame_inventory_well` are the boundary at
 > which the shared pipeline begins. There are two entry modes into that seam: native microscope
 > mode (`raw microscope data -> microscope-specific stitch runner -> canonical stitched handoff
@@ -394,6 +394,14 @@ keyed on `well_id`:
 > TARGET; the `paths.py` examples further below also use the TARGET `frame_inventory` name. Only
 > explicit "today's code" callouts keep the legacy `frame_contract`. The code rename is a Scope-2
 > migration.)*
+
+> **`materialize_well` internals are specified in `pipeline_file_philosophy.md` → "Image
+> materialization."** This doc owns the *stage's place in the DAG* (one rule, config-dispatched,
+> per well_id, off-registry image tree). The philosophy doc owns the *producer's internal model*:
+> the `FieldsForTime` backend seam ("raw chaos in, canonical bundles out"), the two product axes
+> (XY composition then Z projection/z_stack — stitch is one step, not the whole stage), and the
+> `frame_tiler`/`compose_fields` layout. Keep them in sync: this doc says **where** the stage runs;
+> the philosophy doc says **how** the producer is built.
 
 - **`target_wells` is config-only** (no materialized `selected_wells.txt`): the checkpoint
   emits ALL discovered `well_id`s; the well-runner computes `active_wells = discovered ∩
@@ -540,7 +548,7 @@ artifact_path(ROOT, "frame_inventory", "inventory", "20250912", path_mode="merge
    discovered `well_id`s, well-runner filters. `materialize_selected_wells` dissolves.
 9. **ONE raw read.** `ingest_scope_metadata` is the **sole** stage that opens the raw
     microscope files in Phase 1; `map_positions_to_wells` becomes CSV→CSV. Per-microscope stages =
-    three (`ingest_scope_metadata`, `map_positions_to_wells`, `stitch_well`) but only ingest +
+    three (`ingest_scope_metadata`, `map_positions_to_wells`, `materialize_well`) but only ingest +
     stitch touch raw. The microscope-specific scope branch converges at
     `apply_position_to_well_mapping`; the plate/scope roots still converge later at
     `consolidate_features`.
@@ -576,7 +584,7 @@ artifact_path(ROOT, "frame_inventory", "inventory", "20250912", path_mode="merge
   the code file `scope/shared/apply_series_mapping.py` can keep its name or follow).
 - **Rename `wells.txt` → `discovered_wells.txt`** (checkpoint output, Snakefile:438;
   `wells_for_experiment()` reader; any `paths.py` row).
-- **Close the Keyence wiring gap:** add the missing `map_positions_to_wells` + `stitch_well`
+- **Close the Keyence wiring gap:** add the missing `map_positions_to_wells` + `materialize_well`
   Keyence paths (code exists, rules don't). Falls out for free once stages become
   config-dispatched single rules.
 - **Collapse scope-suffixed rules** (`extract_scope_metadata_yx1`/`_keyence`, etc.) into one
