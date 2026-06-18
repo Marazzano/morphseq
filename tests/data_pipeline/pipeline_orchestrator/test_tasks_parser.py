@@ -91,8 +91,8 @@ def test_materialize_yx1_well_candidate_joins_position_mapping(tmp_path):
     )
 
     with patch(
-        "data_pipeline.image_materialization.stitched.scope.yx1"
-        ".materialize_yx1_stitched_images.materialize_yx1_well",
+        "data_pipeline.image_materialization.scope.yx1"
+        ".materialize_well_yx1.materialize_yx1_well",
         side_effect=_fake_materialize_yx1_well,
     ):
         tasks.cmd_materialize_yx1_well_candidate(args)

@@ -9,14 +9,16 @@ pixel files + frame-inventory rows.  It has two layers:
 
   Per-well orchestrator:
     ``materialize_yx1_well``       — reads ONE well's ND2 slices, calls the BF primitive,
-                                     writes files through ``layout.py``, returns inventory rows.
+                                     writes files through ``materialized_image_paths.py``,
+                                     returns inventory rows.
 
 Step 3 scope: BF only (``projection_method='focus_stack'``).  Fluorescence channels use
 ``materialize_max_projection``; that wiring is deferred until GFP acquisition inventory lands.
 
 Import rules: this module imports image primitives from ``image_building/``, path resolution
-from ``layout.py``, ID helpers from ``shared/identifiers/``, and the frame-inventory contract
-for column names.  It MUST NOT import orchestration, tasks, or Snakemake rules.
+from ``materialized_image_paths.py``, ID helpers from ``shared/identifiers/``, and the
+frame-inventory contract for column names.  It MUST NOT import orchestration, tasks, or
+Snakemake rules.
 """
 
 from __future__ import annotations
@@ -36,8 +38,8 @@ from data_pipeline.image_building.scope.yx1.stitched_ff_builder import (
     _get_stack,
 )
 from data_pipeline.image_building.shared.log_focus import LoG_focus_stacker, im_rescale
-from data_pipeline.image_materialization.stitched import layout
-from data_pipeline.image_materialization.stitched.contracts.frame_inventory_contract import (
+from data_pipeline.image_materialization import materialized_image_paths
+from data_pipeline.image_materialization.frame_inventory_contract import (
     REQUIRED_FRAME_INVENTORY_COLUMNS,
     derive_well_id,
 )
@@ -107,7 +109,7 @@ def materialize_yx1_well(
     """Materialize projection frames for ONE YX1 well and return frame-inventory rows.
 
     Reads Z-stacks from the ND2 tensor (one slice per time_index), focus-stacks each into a
-    BF projection frame, writes images through ``layout.py``, and records one frame-inventory
+    BF projection frame, writes images through ``materialized_image_paths.py``, and records one frame-inventory
     row per (time_index, channel_id) pair as it goes.  BF only for Step 3.
 
     Args:
@@ -182,7 +184,7 @@ def materialize_yx1_well(
             stack = _get_stack(dask_arr, t=t, w=position_index)
             ff = materialize_ff_projection(stack, device=device)
 
-            out_path = layout.projection_frame_path(
+            out_path = materialized_image_paths.projection_frame_path(
                 built_image_data_dir,
                 experiment_id=experiment_id,
                 well_id=well_id,

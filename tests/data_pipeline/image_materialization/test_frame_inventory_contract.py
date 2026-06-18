@@ -10,7 +10,7 @@ Three coverage areas:
 import pytest
 import pandas as pd
 
-from data_pipeline.image_materialization.stitched.contracts.frame_inventory_contract import (
+from data_pipeline.image_materialization.frame_inventory_contract import (
     REQUIRED_FRAME_INVENTORY_COLUMNS,
     DERIVED_FRAME_INVENTORY_COLUMNS,
     FrameInventorySpec,

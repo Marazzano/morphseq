@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from data_pipeline.image_materialization.stitched.contracts.frame_inventory_contract import (
+from data_pipeline.image_materialization.frame_inventory_contract import (
     ALLOWED_IMAGE_SUFFIXES,
 )
 from data_pipeline.shared.identifiers.constructors import build_image_id

@@ -1,10 +1,10 @@
-"""Tests for image_materialization/stitched/layout.py — pure path math, no disk I/O."""
+"""Tests for image_materialization/materialized_image_paths.py — pure path math, no disk I/O."""
 
 from pathlib import Path
 
 import pytest
 
-from data_pipeline.image_materialization.stitched.layout import (
+from data_pipeline.image_materialization.materialized_image_paths import (
     ALLOWED_IMAGE_PRODUCT_TYPES,
     materialized_image_path,
     projection_frame_path,

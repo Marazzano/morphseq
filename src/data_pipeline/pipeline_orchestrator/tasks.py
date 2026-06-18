@@ -156,7 +156,7 @@ def cmd_discover_wells(args: argparse.Namespace) -> None:
 
 def cmd_materialize_yx1_well_candidate(args: argparse.Namespace) -> None:
     import pandas as pd
-    from data_pipeline.image_materialization.stitched.scope.yx1.materialize_yx1_stitched_images import (
+    from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
         materialize_yx1_well,
     )
 

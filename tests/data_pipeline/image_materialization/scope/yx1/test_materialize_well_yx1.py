@@ -1,4 +1,4 @@
-"""Tests for materialize_yx1_stitched_images — mocked ND2 + image ops, no GPU required."""
+"""Tests for materialize_well_yx1 — mocked ND2 + image ops, no GPU required."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -7,12 +7,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_pipeline.image_materialization.stitched.scope.yx1.materialize_yx1_stitched_images import (
+from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
     materialize_ff_projection,
     materialize_yx1_well,
     _EMITTED_COLUMNS,
 )
-from data_pipeline.image_materialization.stitched.layout import projection_frame_path
+from data_pipeline.image_materialization.materialized_image_paths import projection_frame_path
 
 EXP = "20250912"
 WELL_INDEX = "B01"
@@ -40,8 +40,8 @@ class TestMaterializeFFProjection:
     def test_returns_2d_uint8(self):
         stack = np.random.randint(0, 1000, size=(5, 64, 64), dtype=np.uint16)
         with patch(
-            "data_pipeline.image_materialization.stitched.scope.yx1"
-            ".materialize_yx1_stitched_images.LoG_focus_stacker"
+            "data_pipeline.image_materialization.scope.yx1"
+            ".materialize_well_yx1.LoG_focus_stacker"
         ) as mock_log:
             mock_log.return_value = (np.ones((64, 64), dtype=np.float32) * 100, None)
             result = materialize_ff_projection(stack, device="cpu")
@@ -70,7 +70,7 @@ class TestMaterializeYX1Well:
     def _run(self, inventory_df, tmp_path, candidate=True):
         nd_mock = self._make_mock_nd2(n_t=len(inventory_df))
 
-        _mod = "data_pipeline.image_materialization.stitched.scope.yx1.materialize_yx1_stitched_images"
+        _mod = "data_pipeline.image_materialization.scope.yx1.materialize_well_yx1"
         with (
             patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
             patch(f"{_mod}.materialize_ff_projection",
