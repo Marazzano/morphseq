@@ -1,6 +1,6 @@
 # `target/` — streamline-snakemake refactor docs (INDEX)
 
-**The map for this folder.** 19 markdown docs live here now; this index says *which one to open for
+**The map for this folder.** 29 markdown docs live here now; this index says *which one to open for
 what*, and which are live vs reference vs history. Reorganized 2026-06-17 from an 18-doc flat folder
 into role-based folders.
 
@@ -30,6 +30,22 @@ The architecture for the front half — discovery, run-well state, the inventori
 | `frame_inventory_handoff_contract.md` | The DOWNSTREAM, agnostic seam — the per-frame table segmentation reads (the finish line) |
 | `run_well_schema.md` | discovered vs eligible vs runnable well-state; Keyence reacquisition test plan |
 | `recompose_yx1_front_end.md` | The YX1-only build (microscope-scoped; the L1→L2→L3 mapping) |
+
+## 📁 `specs/detect-seg-track/` — downstream TARGET specs (validated frames → tracked masks)
+
+The architecture for the first post-`frame_inventory` stage: detection, segmentation, tracking,
+and the adapter seams that let model backends change without changing downstream contracts.
+
+| Doc | The one question it answers |
+|---|---|
+| `README.md` | What is this planning space, and where should new detect/segment/track notes go? |
+| `targets/overall_goal_and_plan.md` | What is the staged plan to split `segment_and_track_per_well` safely? |
+| `targets/adapter_seams.md` | How should model backends plug in without leaking backend-native output downstream? |
+| `targets/detection_world.md` | What is the detector product contract and validator? |
+| `targets/segmentation_world.md` | What is the mask/segmentation product contract and validator? |
+| `targets/tracking_world.md` | What is the temporal identity product contract and validator? |
+| `working/open_questions.md` | Where do unresolved decisions live while mdcolon and agents iterate? |
+| `working/current_audit_notes.md` | What did the current code audit find about the fused runner? |
 
 ## 📁 `specs/` — CROSS-CUTTING + downstream TARGET specs (whole-pipeline)
 
