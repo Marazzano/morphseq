@@ -6,6 +6,45 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 (session: Step 6 commit 2 — promote materialize_well to the live spine = BEAT 1 FINISH LINE)
+
+**What shipped (commit 2 — orchestration wiring; the branch is now LIVE up to the validated shard):**
+- `orchestration/paths.py` — added the live `materialize_well` step (`stage=built_image_data`,
+  `fanout=PER_WELL_THEN_MERGE`): per-well `inventory` shard + `done` sentinel. `candidate/` vs live
+  stays owned by `materialized_image_paths.py`, not the registry. Paths resolve to
+  `built_image_data/{exp}/per_well/{well_id}/{well_id}_frame_inventory.csv` (+ `.validated`, `.done`).
+- `rules/frame_inventory.smk` — new `rule materialize_well` fanned over `discovered_wells.txt`
+  (via `_frame_inventory_run_wells`), calls `tasks materialize-well … --candidate false`. Repointed
+  `rule validate_frame_inventory_for_well` to consume the MATERIALIZER-emitted shard (dropped the
+  `frame_contract.csv` adapter; `build_frame_inventory_for_well` removed).
+- `Snakefile` — added `rule front_half` (the Beat-1 target) whose input is the validated per-well
+  shards for every discovered well. `rule all` (default → features) is UNTOUCHED. Dry-run
+  `snakemake -n front_half` parses and the checkpoint-gated DAG resolves
+  (ingest→map→join→discover→materialize_well→validate_frame_inventory_for_well).
+- **ND2 path now travels INSIDE the acquisition inventory** (`source_nd2_path`), not a CLI/sequencer
+  arg — conceptually correct (the inventory is the record of what was acquired). Dropped `nd2_path`
+  from the backend, `run_materialize_well`, and the CLI. `well_index` is derived from `well_id` via
+  `split_well_id` (no `.split` in the rule). `cmd_materialize_well` is a pure CLI adapter calling
+  `run_materialize_well`. Smoke cap (`smoke_max_time_indices`, config `image_materialization.smoke_max_time_indices`;
+  ≤0 = no cap) wired through the rule for the no-GPU 2-well × first-3-frames run.
+- Tests: **159 passed** (full `tests/data_pipeline/` tree). Snakemake dry-run clean.
+
+**What's broken/half-done:** nothing for Beat 1. The branch runs to the validated per-well
+frame_inventory shard. NOT yet committed at the moment of writing this block (about to commit).
+
+**Next concrete action:** run the real no-GPU smoke — `snakemake front_half` for `20250912` with
+`image_materialization.smoke_max_time_indices: 3` and target_wells = 2 wells (B01,C01), confirm
+per-well shards + `.validated` land under `built_image_data/20250912/per_well/`. Then Step 7
+(strangle the legacy `materialize_stitched_images` / `frame_contract` chain) is the cleanup, and
+Beat 2 (repoint segmentation/features/QC onto the per-well shard) is the far side of the handoff.
+
+**Open decisions:** Source-image validation (does the ND2 exist/open) conceptually belongs in the
+acquisition-inventory validator, not the materializer — trivial for YX1 (one ND2, guarded by the
+`source_nd2_path.nunique()==1` check). Add an explicit file-exists/opens assertion there if desired
+(small separate edit; not blocking). Stray untracked files left in place by request.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-18 (session: Step 6 commit 1 — materialization-plan capability gate)
 
 **What shipped (commit 1 of Step 6 — the gate; NO orchestration wiring yet):**

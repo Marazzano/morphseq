@@ -154,11 +154,16 @@ def cmd_discover_wells(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_materialize_yx1_well_candidate(args: argparse.Namespace) -> None:
+def cmd_materialize_well(args: argparse.Namespace) -> None:
+    """CLI adapter: resolve file/CLI args, then hand them to the materialization sequencer.
+
+    This is a pure CLI adapter — it reads CSVs, performs the position→well join, loads config,
+    and delegates the domain workflow to ``run_materialize_well``. It does NOT know scope quirks
+    or how the plan is resolved; the sequencer + resolver own that.
+    """
     import pandas as pd
-    from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
-        materialize_yx1_well,
-    )
+    from data_pipeline.image_materialization.run_materialize_well import run_materialize_well
+    from data_pipeline.shared.identifiers.parsers import split_well_id
 
     acq_df = pd.read_csv(args.acquisition_inventory_csv)
     acq_df["experiment_id"] = acq_df["experiment_id"].astype(str)
@@ -183,14 +188,36 @@ def cmd_materialize_yx1_well_candidate(args: argparse.Namespace) -> None:
             f"No acquisition inventory rows found for experiment={args.experiment!r}, "
             f"well_id={args.well_id!r} after joining position_well_mapping."
         )
-    inv_df = materialize_yx1_well(
+
+    # well_index comes from the well_id via the identity parser — never split by hand. If the CLI
+    # also supplied --well-index, cross-check it against the parsed value (catch a wiring typo).
+    _, well_index = split_well_id(str(args.well_id))
+    if getattr(args, "well_index", None) and str(args.well_index) != well_index:
+        raise ValueError(
+            f"--well-index={args.well_index!r} disagrees with well_id {args.well_id!r} "
+            f"(parses to well_index={well_index!r})."
+        )
+
+    config = None
+    if getattr(args, "config_yaml", None):
+        config = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
+
+    # A non-positive smoke cap means "no cap" (Snakemake passes 0 when the knob is unset).
+    smoke_cap = getattr(args, "smoke_max_time_indices", None)
+    if smoke_cap is not None and smoke_cap <= 0:
+        smoke_cap = None
+
+    inv_df = run_materialize_well(
         experiment_id=args.experiment,
         well_id=args.well_id,
-        well_index=args.well_index,
-        well_acquisition_inventory_df=well_rows,
-        nd2_path=Path(args.nd2_path),
+        well_index=well_index,
+        scope_name=args.scope,
+        well_acquisition_inventory_df=well_rows,  # carries source_nd2_path
         built_image_data_dir=Path(args.built_image_data_dir),
+        config=config,
         device=getattr(args, "device", "cuda"),
+        candidate=_parse_bool(getattr(args, "candidate", "false")),
+        smoke_max_time_indices=smoke_cap,
     )
     out_csv = Path(args.frame_inventory_csv)
     done = Path(args.done_flag)
@@ -322,18 +349,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_fi_merge.add_argument("--output-csv", type=Path, required=True)
     p_fi_merge.set_defaults(func=cmd_merge_frame_inventory)
 
-    p_yx1 = sub.add_parser("materialize-yx1-well-candidate")
-    p_yx1.add_argument("--experiment", required=True)
-    p_yx1.add_argument("--well-id", required=True)
-    p_yx1.add_argument("--well-index", required=True)
-    p_yx1.add_argument("--acquisition-inventory-csv", type=Path, required=True)
-    p_yx1.add_argument("--position-well-mapping-csv", type=Path, required=True)
-    p_yx1.add_argument("--nd2-path", type=Path, required=True)
-    p_yx1.add_argument("--built-image-data-dir", type=Path, required=True)
-    p_yx1.add_argument("--frame-inventory-csv", type=Path, required=True)
-    p_yx1.add_argument("--done-flag", type=Path, required=True)
-    p_yx1.add_argument("--device", default="cuda")
-    p_yx1.set_defaults(func=cmd_materialize_yx1_well_candidate)
+    p_mw = sub.add_parser(
+        "materialize-well", aliases=["materialize-yx1-well-candidate"]
+    )
+    p_mw.add_argument("--experiment", required=True)
+    p_mw.add_argument("--well-id", required=True)
+    # --well-index is optional: derived from --well-id via the identity parser. Pass it only to
+    # cross-check (a mismatch fails loud).
+    p_mw.add_argument("--well-index", default=None)
+    p_mw.add_argument("--scope", default="yx1")
+    p_mw.add_argument("--acquisition-inventory-csv", type=Path, required=True)
+    p_mw.add_argument("--position-well-mapping-csv", type=Path, required=True)
+    p_mw.add_argument("--built-image-data-dir", type=Path, required=True)
+    p_mw.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_mw.add_argument("--done-flag", type=Path, required=True)
+    p_mw.add_argument("--config-yaml", type=Path, default=None)
+    p_mw.add_argument("--candidate", default="false")
+    p_mw.add_argument("--smoke-max-time-indices", type=int, default=None)
+    p_mw.add_argument("--device", default="cuda")
+    p_mw.set_defaults(func=cmd_materialize_well)
 
     p_sat = sub.add_parser("segmentation-and-tracking")
     p_sat.add_argument("--frame-contract-csv", type=Path, required=True)

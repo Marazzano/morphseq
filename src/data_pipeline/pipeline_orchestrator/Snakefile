@@ -675,6 +675,34 @@ rule feature_extraction_complete:
 # Workflow Targets
 # ============================================================================
 
+def _front_half_targets(wc=None):
+    # Step 6 finish line (Beat 1): the validated per-well frame_inventory shards emitted by the
+    # live materialize_well branch. Making these a target is what takes the branch LIVE.
+    targets = []
+    for exp in EXPERIMENTS:
+        for well_id in wells_for_experiment(_NS(experiment=exp)):
+            targets.append(str(_materialize_well_validated(exp, well_id=well_id)))
+    return targets
+
+
+class _NS:
+    # tiny wildcards stand-in so wells_for_experiment (which reads wildcards.experiment) can be
+    # called outside a rule context for the front_half aggregate target.
+    def __init__(self, experiment):
+        self.experiment = experiment
+
+
+rule front_half:
+    """Step 6 finish line — build the live per-well frame_inventory shards through validation.
+
+    Runs ingest → map → join → discover → materialize_well[well_id] →
+    validate_frame_inventory_for_well for every discovered well. Does NOT drive segmentation /
+    features (that is Beat 2). This is the explicit Beat-1 target; `rule all` is untouched.
+    """
+    input:
+        _front_half_targets
+
+
 rule all:
     default_target: True
     """

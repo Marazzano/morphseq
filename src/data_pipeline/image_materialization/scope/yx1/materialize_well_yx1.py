@@ -104,7 +104,6 @@ def materialize_yx1_well(
     well_id: str,
     well_index: str,
     well_acquisition_inventory_df: pd.DataFrame,
-    nd2_path: Path,
     built_image_data_dir: Path,
     resolved_plan: ResolvedMaterializationPlan,
     device: str = "cuda",
@@ -116,6 +115,10 @@ def materialize_yx1_well(
     Reads Z-stacks from the ND2 tensor (one slice per time_index), focus-stacks each into a
     BF projection frame, writes images through ``materialized_image_paths.py``, and records one frame-inventory
     row per (time_index, channel_id) pair as it goes.  BF only for Step 3.
+
+    The ND2 source path is NOT a parameter: it is read from the inventory's ``source_nd2_path``
+    column (the acquisition inventory is the record of what was acquired and from which file). The
+    entry guard asserts that column is unambiguous for the well, so there is one source of truth.
 
     This backend is an EXECUTOR: it accepts a ``ResolvedMaterializationPlan`` (a commitment, never
     a request) and asserts every product resolves to ``xy_composition='identity'`` — YX1 has one
@@ -129,7 +132,6 @@ def materialize_yx1_well(
         well_acquisition_inventory_df: acquisition inventory rows for THIS well only.
             Must carry ``position_index``, ``time_index``, ``source_nd2_path``,
             ``micrometers_per_pixel``, ``image_width_px``, ``image_height_px``.
-        nd2_path: path to the single ``.nd2`` file for this experiment.
         built_image_data_dir: stage root (``DATA_ROOT / "built_image_data"``), resolved
             by the caller.
         resolved_plan: the scope-resolved product set (from ``resolve_materialization_plan``).
@@ -146,7 +148,7 @@ def materialize_yx1_well(
 
     Raises:
         ValueError: on well_id / well_index / experiment_id inconsistency, empty
-            inventory, ambiguous position_index / nd2_path, or a non-identity resolved product.
+            inventory, ambiguous position_index / source_nd2_path, or a non-identity resolved product.
     """
     # Executor guard — this backend only does identity XY composition. Fail loud otherwise.
     if not resolved_plan.products:
@@ -185,10 +187,12 @@ def materialize_yx1_well(
     um_per_px = float(well_acquisition_inventory_df["micrometers_per_pixel"].iloc[0])
     img_w = int(well_acquisition_inventory_df["image_width_px"].iloc[0])
     img_h = int(well_acquisition_inventory_df["image_height_px"].iloc[0])
+    # The ND2 source comes from the inventory (the record of what was acquired), not a CLI arg.
+    nd2_path = Path(well_acquisition_inventory_df["source_nd2_path"].iloc[0])
 
     log.info(
-        "materialize_yx1_well: experiment=%s well=%s position_index=%d device=%s candidate=%s",
-        experiment_id, well_id, position_index, device, candidate,
+        "materialize_yx1_well: experiment=%s well=%s position_index=%d nd2=%s device=%s candidate=%s",
+        experiment_id, well_id, position_index, nd2_path, device, candidate,
     )
 
     nd = nd2.ND2File(nd2_path)

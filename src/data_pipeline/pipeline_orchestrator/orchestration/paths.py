@@ -158,6 +158,26 @@ PIPELINE_STEPS: dict[str, dict] = {
         "artifacts": {"wells": "discovered_wells.txt"},  # one well_id per line
     },
 
+    # ── PER-WELL MATERIALIZATION (the scope backend; emits images + the inventory shard) ──
+    # materialize_well[well_id] is the live promotion of the accepted candidate (Step 6). It runs
+    # ONE well at a time (fanned over discovered_wells.txt), writes pixel files through
+    # materialized_image_paths.py (candidate/ vs live owned THERE, not the registry), and emits the
+    # per-well frame-inventory shard that validate_frame_inventory_for_well consumes. The done
+    # sentinel means "the configured image-product set for this well finished."
+    "materialize_well": {
+        "stage": "built_image_data",
+        "fanout": PER_WELL_THEN_MERGE,
+        "artifacts": {
+            "inventory": {
+                PATH_MODE_PER_WELL: "{well_id}_frame_inventory.csv",
+                PATH_MODE_MERGED: "{experiment_id}_frame_inventory.csv",
+            },
+            "done": {
+                PATH_MODE_PER_WELL: "{well_id}.materialize_well.done",
+            },
+        },
+    },
+
     # ── POST-FAN — frame inventory joins the spine ────────────────────────────
     # "frame_inventory" is the logical product (a noun), kept as ONE step. Snakemake may use
     # several rules around it: build_frame_inventory_for_well writes the per-well shards,

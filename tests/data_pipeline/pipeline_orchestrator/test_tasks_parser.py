@@ -9,9 +9,10 @@ import pandas as pd
 from data_pipeline.pipeline_orchestrator import tasks
 
 
-def test_materialize_yx1_well_candidate_parses_local_well_label():
+def test_materialize_well_parses_local_well_label():
     parser = tasks.build_parser()
 
+    # legacy alias still parses to the same command (back-compat for existing smoke invocations).
     args = parser.parse_args([
         "materialize-yx1-well-candidate",
         "--experiment",
@@ -24,8 +25,6 @@ def test_materialize_yx1_well_candidate_parses_local_well_label():
         "acquisition.csv",
         "--position-well-mapping-csv",
         "position_well_mapping.csv",
-        "--nd2-path",
-        "experiment.nd2",
         "--built-image-data-dir",
         "built_image_data",
         "--frame-inventory-csv",
@@ -36,14 +35,15 @@ def test_materialize_yx1_well_candidate_parses_local_well_label():
         "cpu",
     ])
 
-    assert args.func is tasks.cmd_materialize_yx1_well_candidate
+    assert args.func is tasks.cmd_materialize_well
+    assert args.scope == "yx1"  # default
     assert args.well_index == "B01"
     assert args.acquisition_inventory_csv == Path("acquisition.csv")
     assert args.position_well_mapping_csv == Path("position_well_mapping.csv")
     assert args.frame_inventory_csv == Path("out/frame_inventory.csv")
 
 
-def test_materialize_yx1_well_candidate_joins_position_mapping(tmp_path):
+def test_materialize_well_joins_position_mapping(tmp_path):
     acquisition_csv = tmp_path / "acquisition.csv"
     mapping_csv = tmp_path / "position_well_mapping.csv"
     frame_inventory_csv = tmp_path / "out" / "frame_inventory.csv"
@@ -75,18 +75,24 @@ def test_materialize_yx1_well_candidate_joins_position_mapping(tmp_path):
         assert list(well_rows["position_index"]) == [2]
         assert list(well_rows["well_index"]) == ["B01"]
         assert list(well_rows["well_id"]) == ["20250912_B01"]
+        # The sequencer resolved the plan and handed the backend a resolved (identity) product.
+        resolved = kwargs["resolved_plan"]
+        assert resolved.products[0].xy_composition == "identity"
         return pd.DataFrame([{"experiment_id": "20250912", "well_index": "B01"}])
 
     args = Namespace(
         experiment="20250912",
         well_id="20250912_B01",
         well_index="B01",
+        scope="yx1",
         acquisition_inventory_csv=acquisition_csv,
         position_well_mapping_csv=mapping_csv,
-        nd2_path=tmp_path / "experiment.nd2",
         built_image_data_dir=tmp_path / "built_image_data",
         frame_inventory_csv=frame_inventory_csv,
         done_flag=done_flag,
+        config_yaml=None,
+        candidate="true",
+        smoke_max_time_indices=None,
         device="cpu",
     )
 
@@ -95,7 +101,7 @@ def test_materialize_yx1_well_candidate_joins_position_mapping(tmp_path):
         ".materialize_well_yx1.materialize_yx1_well",
         side_effect=_fake_materialize_yx1_well,
     ):
-        tasks.cmd_materialize_yx1_well_candidate(args)
+        tasks.cmd_materialize_well(args)
 
     assert frame_inventory_csv.exists()
     assert done_flag.exists()

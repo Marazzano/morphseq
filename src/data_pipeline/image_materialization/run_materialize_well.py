@@ -10,17 +10,18 @@ Separation of concerns (the three roles):
 
 Call chain:
 
-    tasks.py / Snakemake                       = resolves CLI/file args (nd2_path, inventory, config)
+    tasks.py / Snakemake                       = parses CLI args, passes file paths + loaded tables
       └─► run_materialize_well()               = THIS file — the sequencer
             ├─ load_image_materialization_plan(config)        (the request)
             ├─ resolve_materialization_plan(scope, requested) (→ resolved plan; no backend)
             └─ call scope backend with resolved plan + the raw inputs it was handed
 
 The resolver owns plan-narrowing scope quirks; the sequencer owns backend selection. Both are
-scope-aware, for different reasons. Step 6 backend selection is YX1-only: the raw-source argument
-(``nd2_path``) is still YX1-shaped (Keyence has no ND2). Making raw-source inputs scope-neutral is
-the NEXT migration, done together with the Keyence resolver route + backend. Until then this
-sequencer calls only the ``yx1`` backend; any other scope fails loud.
+scope-aware, for different reasons. Step 6 backend selection is YX1-only. The raw-source pointer
+travels INSIDE the acquisition inventory (its ``source_nd2_path`` column) rather than as a bespoke
+argument — so the sequencer's signature is already scope-neutral; only backend selection is
+YX1-only. Making backend selection itself scope-neutral is the NEXT migration, done together with
+the Keyence resolver route + backend. Until then this sequencer calls only the ``yx1`` backend.
 
 Import rules: imports ``materialization_plan``, the resolver, and (lazily) the YX1 backend. It MUST
 NOT import orchestration paths or Snakemake rules — paths are resolved by callers / the backend via
@@ -51,8 +52,7 @@ def run_materialize_well(
     well_id: str,
     well_index: str,
     scope_name: str,
-    well_acquisition_inventory_df: pd.DataFrame,
-    nd2_path: Path,  # YX1-only Step-6 live input; not scope-neutral yet (see module docstring)
+    well_acquisition_inventory_df: pd.DataFrame,  # carries source_nd2_path (the raw-source pointer)
     built_image_data_dir: Path,
     config: dict | None = None,
     device: str = "cuda",
@@ -93,7 +93,7 @@ def run_materialize_well(
         requested_plan=requested_plan,
     )
     log.info(
-        "materialize_well: experiment=%s well=%s scope=%s products=%d candidate=%s",
+        "run_materialize_well: experiment=%s well=%s scope=%s products=%d candidate=%s",
         experiment_id, well_id, scope_name, len(resolved_plan.products), candidate,
     )
 
@@ -106,7 +106,6 @@ def run_materialize_well(
         well_id=well_id,
         well_index=well_index,
         well_acquisition_inventory_df=well_acquisition_inventory_df,
-        nd2_path=nd2_path,
         built_image_data_dir=built_image_data_dir,
         resolved_plan=resolved_plan,
         device=device,
