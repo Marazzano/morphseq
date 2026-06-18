@@ -190,7 +190,7 @@ The native/external asymmetry is **not** two validators. It is one contract fill
 THE CONTRACT (one):     frame_inventory.csv  — downstream consumes the MANIFEST, never "folder vibes."
 
 THREE PRODUCERS of it:
-  native      → layout.py CONSTRUCTS source_image_path from the frame key (canonical, enforced).
+  native      → materialized_image_paths.py CONSTRUCTS source_image_path from the frame key (canonical, enforced).
   external A  → build_frame_inventory_from_layout.py PARSES a canonical tree → manifest.  ← SUGAR, not a 2nd contract
   external B  → user AUTHORS the manifest; paths arbitrary but explicit, readable, unique, complete.
 
@@ -211,7 +211,7 @@ Flexibility lives only in physical LAYOUT (bends only at the external door, only
 | frame identity (atoms) | strict | strict | strict |
 | path exists / readable / unique | strict | strict | strict |
 | physical layout | **canonical, enforced (mismatch = FAIL)** | canonical (the helper parses it) | arbitrary |
-| how the manifest is obtained | `layout.py` constructs | `build_frame_inventory_from_layout` parses *(next phase)* | user authors |
+| how the manifest is obtained | `materialized_image_paths.py` constructs | `build_frame_inventory_from_layout` parses *(next phase)* | user authors |
 
 > **Atoms vs derived ids.** The user/producer authors ATOMS (`experiment_id, well_index, channel_id,
 > time_index`) + path + dims + µm/px. `well_id`/`image_id` are DERIVED — the validator recomputes
@@ -221,7 +221,7 @@ Flexibility lives only in physical LAYOUT (bends only at the external door, only
 
 > **The frame-inventory contract PURL is domain-owned, not global-schema-owned.**
 > The source of truth for this handoff is
-> `image_materialization/stitched/contracts/frame_inventory_contract.py`. The existing
+> `image_materialization/frame_inventory_contract.py`. The existing
 > `schemas/frame_contract.py` is a legacy compatibility module only: do not add new semantics there.
 > It is currently stale three ways (named `frame_contract`; key uses `time_int` not `time_index`;
 > keyed on `well_id` not the atoms). Fix the domain contract first, then migrate importers to it.
@@ -344,26 +344,22 @@ data_pipeline/
       well_acquisition_summary.py            #   ⏸ SHARED CONTRACT: well_id + active_for_stitch +
                                              #   quarantine_reason; producer is scope backend
 
-  image_materialization/                     # DOWNSTREAM of stitch — frame_inventory lives HERE
-    stitched/
-      materialize_stitched_images.py         # 🔧 Step 6 (promote) — MICROSCOPE DISPATCHER:
-                                             #   chooses backend by microscope
-                                             #   today: 1 mixed 43-branch file in metadata_ingest/stitched_index/ (legacy)
-      layout.py                              # 🔨 NEW (Step 3) — SHARED CONTRACT helper for native TREE:
-                                             #   native pixel paths; ONE FILE (→ subpackage if it earns it); imports identifiers
-      frame_inventory.py                     # 🔧 Step 6 (promote) — SHARED IMPLEMENTATION:
-                                             #   build/validate shared manifest rows; imports contract below.
-                                             #   Native builders feed it; validator stays microscope-agnostic.
-      contracts/
-        frame_inventory_contract.py          # 🔨 NEW (Step 2) — SHARED CONTRACT (PURL): identity ATOMS,
-                                             #   DERIVED ids, REQUIRED columns, UNIQUE_KEY (atoms; time_index)
-      scope/
-        yx1/
-          materialize_yx1_stitched_images.py # 🔨 Step 3 — SCOPE BACKEND:
+  image_materialization/                     # DOWNSTREAM of ingest; exits at frame_inventory
+    materialization_plan.py                  # 🔧 Step 6 — WHAT products are requested
+                                             #   (initially BF/projection/focus_stack only)
+    materialized_image_paths.py              # 🔧 Step 6 — WHERE one concrete product file lands
+                                             #   takes built_image_data_dir explicitly; imports no paths.py
+    stitch_well.py                           # 🔧 Step 6 — PRODUCE dispatcher:
+                                             #   chooses backend by microscope; thin, tasks.py-style
+    frame_inventory_contract.py              # 🔨 Step 2 / move in Step 6 — RECORD contract:
+                                             #   atoms, derived ids, required columns, product row grain
+    scope/
+      yx1/
+        stitch_well_yx1.py                   # 🔨 Step 3 / rename in Step 6 — SCOPE BACKEND:
                                              #   ND2 tensor slice + LoG focus; emits native rows/images
-        keyence/
-          materialize_keyence_stitched_images.py  # ⏸ SCOPE BACKEND:
-                                             #   stub now; full version consumes resolved Keyence inventory
+      keyence/
+        stitch_well_keyence.py               # ⏸ SCOPE BACKEND:
+                                             #   future; consumes resolved Keyence inventory
 
     shared/                                  # ⏳ MOVE LAST (only after stitched pkg is stable)
       log_focus.py                           #   ⏳ keep in image_building/shared/ until then
@@ -403,7 +399,7 @@ data_pipeline/
 
 **🔨 NEW row — `stitch_well` (Step 6, promoted):**
 Step 3 intentionally did **not** add a `stitch_well_candidate` registry row. The candidate ran as a
-standalone comparison path, and candidate image isolation is owned by `layout.py` via
+standalone comparison path, and candidate image isolation is owned by `materialized_image_paths.py` via
 `candidate=True`. Step 6 adds the live orchestration artifact/sentinel and calls the accepted
 materializer with `candidate=False`.
 ```python
@@ -416,10 +412,11 @@ materializer with `candidate=False`.
     },
 },
 ```
-> Note: the image files themselves stay **off-registry** — `layout.py::materialized_image_path(...)`
-> / `projection_frame_path(...)` owns them (image trees are not tabular artifacts). Only the live
-> sentinel is a registry row. The candidate's `candidate/` prefix is controlled by `layout.py`, not
-> `paths.py`; that separation keeps registry artifacts and image layout from drifting.
+> Note: the image files themselves stay **off-registry** —
+> `materialized_image_paths.py::materialized_image_path(...)` / `projection_frame_path(...)` owns
+> them (image trees are not tabular artifacts). Only the live sentinel is a registry row. The
+> candidate's `candidate/` prefix is controlled by `materialized_image_paths.py`, not `paths.py`;
+> that separation keeps registry artifacts and image layout from drifting.
 
 **🔧 CHANGED row — `frame_inventory` (de-stale; Step 6):**
 ```python
@@ -446,39 +443,37 @@ materializer with `candidate=False`.
 `resolved_acquisition_inventory__{scope}.csv`, `well_acquisition_summary__{scope}.csv`). These are the
 eligibility artifacts — registered only when Keyence forces them.
 
-### The three colliding names — drawn straight (acquisition inventory vs frame inventory vs layout)
+### The three colliding names — drawn straight (acquisition inventory vs frame inventory vs image paths)
 
 These three got blurred; the lines are clean once stated:
 
 ```
 acquisition_inventory   metadata_ingest/scope/{scope}/   the RAW record — UPSTREAM of stitch, scope-specific
-frame_inventory         image_materialization/stitched/  the FRAME table — DOWNSTREAM of stitch, agnostic
-layout.py               image_materialization/stitched/  the TREE — WHERE the .tif pixels live (a path)
+frame_inventory         image_materialization/           the FRAME table — DOWNSTREAM of stitch, agnostic
+materialized_image_paths.py image_materialization/        the TREE — WHERE pixel files live (a path)
 ```
 
 - **Acquisition inventory is NOT frame inventory.** Acquisition inventory lives in
   `metadata_ingest` (the scope-specific raw record, before stitch). Frame inventory lives in
   `image_materialization` (the agnostic per-frame table, after stitch). The stitcher is the boundary.
   *(Today's `metadata_ingest/frame_inventory/` is a legacy behavior-preserving adapter; the target
-  HOME for the frame inventory is `image_materialization/stitched/`.)*
-- **`layout.py` ≠ `frame_inventory.py`.** `layout.py` answers *"where does this frame's pixel file
-  go?"* → a **path**. `frame_inventory.py` answers *"what do we know about this frame, and is it
-  valid?"* → a **table + the gate**. `layout` builds paths → frame_inventory records them → the
-  validator verifies they resolve. `layout` never reads the table; `frame_inventory` never invents a
-  path (native: gets it from `layout`; drop-in: takes it as authored).
+  HOME for the frame inventory is `image_materialization/`.)*
+- **`materialized_image_paths.py` ≠ `frame_inventory_contract.py`.** `materialized_image_paths.py`
+  answers *"where does this concrete image product file go?"* → a **path**.
+  `frame_inventory_contract.py` answers *"what observed rows are valid?"* → a **table contract +
+  the gate**. Image paths are constructed first → frame inventory records them → the validator
+  verifies they resolve. `materialized_image_paths.py` never reads the table; frame inventory never
+  invents a path (native: gets it from the path helper; drop-in: takes it as authored).
 - **`frame_contract` is just the OLD NAME for `frame_inventory`** (rename target, handoff doc
   Decision 18) — it is NOT a separate artifact and does NOT appear as a box in the target tree. Only
   surviving as `schemas/frame_contract.py` for legacy compatibility until importers move to the
   domain contract.
 
-> **`layout.py` is ONE FILE now — it MAY graduate to a subpackage later, if it earns it.** Today it
-> only needs the path constructors. When Mode A (`build_frame_inventory_from_layout`, the parse-tree
-> sugar) and the native enforcement ("mismatch = FAIL") actually get written — at promote (Step 6) or
-> later — that is when `layout.py` → `layout/` (`constructors.py` · `parse.py` · `contract.py`) earns
-> the split. Not
-> before. Off-registry either way: `layout` owns IMAGE-TREE paths (off the tabular registry);
-> `pipeline_orchestrator/orchestration/paths.py` owns TABULAR artifact paths. Different families, same ID grammar (both import
-> `shared/identifiers`, neither inline-mints — two-kingdoms holds).
+> **`materialized_image_paths.py` is ONE FILE.** Do not make a `layout/` category folder just to
+> hold one concept. It owns image-tree paths off the tabular registry. `paths.py` owns stage roots,
+> declared artifacts, fanout, and sentinels. The bridge is explicit: callers pass
+> `built_image_data_dir` into every public path function. The helper imports identifiers, but never
+> imports `pipeline_orchestrator.orchestration.paths` and never constructs `DATA_ROOT` itself.
 
 ---
 
@@ -535,27 +530,38 @@ overload `discovered_wells.txt`.**
 
 ---
 
-## layout.py Ownership
+## materialized_image_paths.py Ownership
 
-`image_materialization/stitched/layout.py` is the only place that knows native stitched image layout.
-It owns the path constructors:
+`image_materialization/materialized_image_paths.py` is the only generic place that knows native
+materialized image layout. It owns the path constructors:
 
 ```python
-def stitched_well_dir(root: Path, well_id: str) -> Path: ...
-def stitched_channel_dir(root: Path, well_id: str, channel_id: str) -> Path: ...
-def stitched_frame_path(root, well_id, channel_id, time_index, ext="tif") -> Path: ...
+def materialized_image_path(
+    built_image_data_dir: Path,
+    *,
+    experiment_id: str,
+    well_id: str,
+    channel_id: str,
+    time_index: int,
+    image_product_type: str,
+    z_index: int | None = None,
+    ext: str = "png",
+    candidate: bool = False,
+) -> Path: ...
 ```
 
-**Important rule — `layout.py` imports `shared/identifiers`; it validates/builds identity tokens through
-identifiers, never inline-mints:**
+**Important rule — `materialized_image_paths.py` imports `shared/identifiers`; it validates/builds
+identity tokens through identifiers, never inline-mints:**
 
 ```python
 well_id  = validate_well_id(well_id)
 image_id = build_image_id(well_id, channel_id, time_index)
-return stitched_channel_dir(root, well_id, channel_id) / f"{image_id}.{ext}"
+return product_dir / f"{image_id}.{ext}"
 ```
 
-So layout is centralized; ID grammar still belongs to `shared/identifiers`.
+It also imports no orchestration helpers. The function's first argument is always
+`built_image_data_dir`, supplied by the caller from `paths.py`/Snakemake. That makes the boundary
+testable: a grep for `pipeline_orchestrator.orchestration.paths` in this module should stay empty.
 
 ---
 
@@ -567,18 +573,18 @@ So layout is centralized; ID grammar still belongs to `shared/identifiers`.
 - `discovered_wells.txt` is physical identity, not QC-passed identity.
 - validated/eligible wells are separate and intersected later.
 - `discover_wells` does NOT dispatch by microscope; image materialization DOES.
-- `layout.py` (one file; subpackage later only if it earns it) owns stitched image paths; uses
-  `shared/identifiers` for ID grammar.
-- frame inventory lives in `image_materialization/stitched/` (DOWNSTREAM of stitch); acquisition
+- `materialized_image_paths.py` owns materialized image paths; takes `built_image_data_dir`
+  explicitly; imports no orchestration paths; uses `shared/identifiers` for ID grammar.
+- frame inventory lives in `image_materialization/` (DOWNSTREAM of stitch); acquisition
   inventory lives in `metadata_ingest/scope/` (UPSTREAM). They are NOT the same artifact.
-- `paths.py` owns TABULAR artifact paths and fanout enforcement; `layout.py` owns OFF-registry image
-  paths. Different families, same ID grammar.
+- `paths.py` owns TABULAR artifact paths, roots, sentinels, and fanout enforcement;
+  `materialized_image_paths.py` owns OFF-registry image paths. Different families, same ID grammar.
 - Domain-level contract modules own schema meaning; `shared/table_validators.py` owns reusable
   validation mechanics. `data_pipeline/schemas/` is legacy compatibility during migration.
 - `tasks.py` only parses and delegates.
 - sidecars are derived via path helpers, not registered as first-class artifacts.
 - ONE manifest contract; shared validator enforces manifest invariants, while the native builder
-  enforces canonical layout by construction through `layout.py`.
+  enforces canonical layout by construction through `materialized_image_paths.py`.
 
 ---
 
@@ -696,7 +702,7 @@ merge_frame_inventory[{exp}]         → experiment-level frame_inventory  🏁 
 ```
 discover_wells (checkpoint = THE FAN)
         ↓  ⟱ per-well ⟱
-stitch_well[well_id]                  → per-well stitched images (via layout.py)
+stitch_well[well_id]                  → per-well materialized images (via materialized_image_paths.py)
                                       → {well_id}_frame_inventory.csv (emitted by materializer)
         ↓
 validate_frame_inventory_for_well[well_id]  (absorbs the old stitched-index file-existence check)
@@ -968,8 +974,17 @@ downstream per-well migration in Beat 2.
 
 **FILES:**
 - **Create / move into target home**
-  - `src/data_pipeline/image_materialization/stitched/materialize_stitched_images.py`
-    (thin dispatcher after promote)
+  - `src/data_pipeline/image_materialization/materialization_plan.py`
+    (configured image-product intent; Step 6 supports only BF/projection/focus_stack)
+  - `src/data_pipeline/image_materialization/materialized_image_paths.py`
+    (move generic path grammar out of `stitched/layout.py`; takes `built_image_data_dir`
+    explicitly and imports no orchestration paths)
+  - `src/data_pipeline/image_materialization/stitch_well.py`
+    (thin microscope dispatcher after promote)
+  - `src/data_pipeline/image_materialization/scope/yx1/stitch_well_yx1.py`
+    (rename/move the accepted YX1 implementation)
+  - `src/data_pipeline/image_materialization/frame_inventory_contract.py`
+    (move the shared contract beside the stage moments)
 - **Edit**
   - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py`
     (`stitch_well` live row; `frame_inventory` path remains per-well then merge)
@@ -983,7 +998,7 @@ downstream per-well migration in Beat 2.
   - segmentation/features/QC still migrate in Beat 2
 
 - **Promote:** add/wire the live `stitch_well` rule and sentinel; call the accepted materializer with
-  `candidate=False` so `layout.py` writes the real `built_image_data` image tree.
+  `candidate=False` so `materialized_image_paths.py` writes the real `built_image_data` image tree.
 - **Product-set grain:** `stitch_well` remains **one job per well**, not per channel, method, or
   z-slice. The live sentinel means "the configured image-product set for this well completed." For
   Step 6, that set is intentionally one accepted product: `channel_id=BF`,

@@ -107,6 +107,31 @@ The per-well directory `{stage}/{exp}/per_well/{well_id}` is composed *downward*
 `.parent`. If a path concept can be derived two ways, it will eventually be derived two *different*
 ways — so it gets one home.
 
+### Image materialization reads top-to-bottom: plan → address → produce → record
+`image_materialization/` is one stage/kingdom, so its generic files sit side by side and their names
+carry their moment in the flow:
+
+```text
+image_materialization/
+  materialization_plan.py        # what image products this run intends to make
+  materialized_image_paths.py    # where one concrete product file lands inside the pixel store
+  stitch_well.py                 # producer dispatcher; routes to the scope backend
+  frame_inventory_contract.py    # observed manifest contract; what actually exists
+  scope/
+    yx1/stitch_well_yx1.py       # real fork: microscope implementation
+    keyence/stitch_well_keyence.py
+```
+
+Do not create category folders like `planning/` or `layout/` unless they become real stages/kingdoms
+with more than one coherent public concept. Folder = stage/kingdom; file = moment within it. The
+only subfolder here is `scope/`, because the code really forks by microscope there.
+
+Bridge rule: `materialized_image_paths.py` is the pixel-file sibling of orchestration `paths.py`,
+not a second path registry. It takes `built_image_data_dir` as the first positional argument in every
+public path function, never constructs a root, never has a `PROJECT_ROOT` fallback, and never imports
+`pipeline_orchestrator.orchestration.paths`. `paths.py` resolves stage roots, declared artifacts, and
+sentinels; `materialized_image_paths.py` resolves concrete files inside the pixel store.
+
 ---
 
 ## 🧱 STRUCTURAL CONVENTIONS
@@ -210,6 +235,7 @@ inventing a new path string or a new id format, a constraint was broken.
 - [ ] Controlled tokens are named constants, defined once.
 - [ ] `output_root` (and every dependency) passed explicitly; no haunted globals.
 - [ ] `paths.py` constructs paths only — no `.exists()`, no directory listing, no file reads.
+- [ ] `materialized_image_paths.py` takes `built_image_data_dir` explicitly and imports no orchestration path helpers.
 - [ ] Snakemake input functions declare expected paths only; they do not live-check files the DAG is meant to build.
 - [ ] Runtime collectors may inspect disk, but their name/docstring says they are runtime/disk-scan helpers.
 - [ ] `tasks.py` verbs are thin — parse + delegate to the stage module, no stage logic.
