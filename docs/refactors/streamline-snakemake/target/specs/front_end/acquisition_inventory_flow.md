@@ -41,7 +41,7 @@ the `well_acquisition_summary` is emitted by **`resolve`**, not `map`; and the s
 | `resolve_acquisitions` **logic** | scope-specific | Keyence reconstructs; YX1 = passthrough |
 | `well_acquisition_summary` **producer** | scope-specific | each scope's `resolve` fills it |
 | `well_acquisition_summary` **3 generic columns** (`well_id`, `active_for_stitch`, `quarantine_reason`) | **SHARED contract** | the *only* thing shared orchestration reads — eligibility, not logic |
-| `stitch_well` | scope-specific | consumes the resolved inventory (one raw read) |
+| `materialize_well` | scope-specific | consumes the resolved inventory (one raw read) |
 | `frame_inventory` + everything after stitched images | **SHARED** | post-stitch, agnostic, P/Z collapsed |
 
 > **The narrow-shared rule:** SHARE only the **check-engine skeleton** + the **3-column

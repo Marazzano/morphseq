@@ -259,9 +259,9 @@ Build the per-well stitch DAG for the experiment.
 Assertions:
 
 ```text
-stitch_well[B03] is not requested by the normal run_wells fan
-stitch_well[clean_well] is requested
-if stitch_well[B03] is forced manually, it fails loud because no resolved active acquisition rows exist
+materialize_well[B03] is not requested by the normal run_wells fan
+materialize_well[clean_well] is requested
+if materialize_well[B03] is forced manually, it fails loud because no resolved active acquisition rows exist
 ```
 
 ### Manual Resolution Test
@@ -274,7 +274,7 @@ Assertions:
 B03 active_for_stitch flips to true
 resolved_acquisition_inventory__keyence.csv contains only the selected acquisition group
 run_wells includes B03 when B03 is targeted
-stitch_well[B03] consumes the resolved inventory, not the raw/conflicted inventory
+materialize_well[B03] consumes the resolved inventory, not the raw/conflicted inventory
 ```
 
 ---

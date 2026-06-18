@@ -118,7 +118,7 @@ concern, deferred, not a path concern).
 
 > **🔵 CURRENT placement:** stitching sits **upstream of the fan** today because
 > `build_frame_contract` reads the stitched inventory. 🟢 TARGET moves it *below* the fan
-> (`stitch_well`, per discovered well) — see Zone-A Narrowing. Its per-well-no-merge output
+> (`materialize_well`, per discovered well) — see Zone-A Narrowing. Its per-well-no-merge output
 > shape is unchanged; only its DAG position relative to the fan moves.
 
 > **⚠️ fanout-value wrinkle (stitching forces a decision).** Stitching writes per-well
@@ -971,7 +971,7 @@ reconcile + existence-check across all wells) → an experiment-grain barrier. *
 | Step | Stage (renamed) | Inputs | Output | Fanout |
 |---|---|---|---|---|
 | 1 | `discover_wells_from_metadata` *(checkpoint)* | `scope_metadata_mapped.csv` (**canonical metadata, no images** — extracts the well set; #13) | `discovered_wells.txt` (🟢 TARGET renames `wells.txt`; see `front_end/front_end_naming_and_frame_inventory_flow.md`) | experiment (fan point, moved **earlier**) |
-| 2 | `stitch_well` | this well's raw images + its `scope_metadata_mapped` rows | `built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/` (well_id; REVISED 2026-06-03) | per-well image tree (**off-registry**) |
+| 2 | `materialize_well` | this well's raw images + its `scope_metadata_mapped` rows | `built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/` (well_id; REVISED 2026-06-03) | per-well image tree (**off-registry**) |
 | 3 | `validate_frame_contract_well` | this well's **images (Step 2)** + this well's **metadata rows** | `<frame-contract-family>/{exp}/per_well/{well_id}/frame_contract.csv` | `per_well_then_merge` |
 
 > **⚠️ TODO (#5) — decide the target frame-contract family. Why this is a real open

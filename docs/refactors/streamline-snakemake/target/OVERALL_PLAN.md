@@ -45,7 +45,7 @@ lens explains why `discover_wells`/`well_runner`/stitch are the special, hard-to
 live in the overlap.
 
 ```
- ingest → map → join │ discover_wells │ stitch_well │ frame_inventory │ segment → features → embeddings → QC
+ ingest → map → join │ discover_wells │ materialize_well │ frame_inventory │ segment → features → embeddings → QC
  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════►
 
  ┌──── MICROSCOPE ZONE (scope-AWARE)   ────┐

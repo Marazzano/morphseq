@@ -78,7 +78,7 @@ These are distilled from `pipeline_file_philosophy.md`. A change that breaks one
 ## 📐 THE TWO OVERLAPPING ZONES (the organizing lens)
 
 ```
- ingest → map → join │ discover_wells │ stitch_well │ frame_inventory │ segment → features → QC
+ ingest → map → join │ discover_wells │ materialize_well │ frame_inventory │ segment → features → QC
  ═══════════════════════════════════════════════════════════════════════════════════════════════►
 
  ┌──── MICROSCOPE ZONE (scope-AWARE)   ────┐

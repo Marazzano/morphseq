@@ -37,7 +37,7 @@ flow into one job. The shared pipeline begins at the canonical stitched handoff 
 
 ```
   PHASE 1 — METADATA (CPU, implement NOW)                    │  PHASE 2 — STITCH (GPU, specified, deferred)
-  ingest_scope_metadata → map_positions_to_wells →          │  stitch_well[well_id]
+  ingest_scope_metadata → map_positions_to_wells →          │  materialize_well[well_id]
   join_series_mapping_to_scope_metadata → discover_wells    │  (LoG focus-projection + frame_tiler stitch)
             (no GPU; the 2-well smoke run needs this)        │  (needs a GPU; depends on Phase 1)
                             └──────────── CONVERGENCE LINE (microscope gone) ────────────┘
@@ -145,12 +145,12 @@ under `scope/yx1/`). The join and everything after are shared — out of scope h
 
 **Reuse the shared engine — do NOT rewrite stitching.** `image_building/utils/frame_tiler.py` (419
 lines: `stitch_frame_tiles`, `FrameTilingConfig`, `FallbackParams`, QC, legacy-canvas fallback) is
-the LIVE shared stitch engine. The YX1 `stitch_well` **calls it**; it does not reimplement tiling.
+the LIVE shared stitch engine. The YX1 `materialize_well` **calls it**; it does not reimplement tiling.
 This is the native-microscope entry mode; the shared pipeline does not care about YX1 vs Keyence
 once the canonical stitched handoff tree exists.
 
 **Target shape:**
-- `stitch_well[well_id]` — per-well fanout (not the current experiment-grain loop). Reads this well's
+- `materialize_well[well_id]` — per-well fanout (not the current experiment-grain loop). Reads this well's
   raw frames + its mapping rows; writes `built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/`
   keyed on **`well_id`** (compose via `shared/identifiers`, never an f-string in a path helper);
   sentinel `.well_{well_id}.done`.
@@ -276,7 +276,7 @@ scope declares its key"):
 > **experiment-grain and runs BEFORE the `discover_wells` fan** — so there is no `well_id` yet
 > (keyed on `raw_position_label`/`position_index`, like `scope_metadata__yx1.csv`). It is **NOT** a
 > per-well shard and does **not** touch the `well_runner.py` machinery. The inventory only goes
-> per-well when its CONSUMER (`stitch_well[well_id]`) does — the deferred stitch pass.
+> per-well when its CONSUMER (`materialize_well[well_id]`) does — the deferred stitch pass.
 
 ## Deferred (next pass — see `current_state_and_next_steps.md` open decision)
 - **Stitch reads the inventory:** `materialize_stitched_images` consumes

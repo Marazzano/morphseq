@@ -99,7 +99,7 @@ per-frame key.)
 
 ### Product-set grain — orchestration stays per-well
 
-`stitch_well[well_id]` is the orchestration unit. It does **not** fan out by channel,
+`materialize_well[well_id]` is the orchestration unit. It does **not** fan out by channel,
 projection method, or z-slice. Inside that one well job, the materializer writes the configured
 image-product set and records the exact products as rows in `frame_inventory`.
 
@@ -332,7 +332,7 @@ cannot tell which producer ran — that is the design goal, and it realizes the 
 scope_metadata_mapped.csv  (expected: well/channel/time/calibration — METADATA-ONLY, no images)
    ↓  discover_wells_from_metadata (checkpoint) → discovered_wells.txt
    ⟱ FAN ⟱   (fan is metadata-only, so active_wells exists BEFORE stitching — findings #13)
-   ↓  stitch_well[well_id]  →  images on disk  +  .well_{well_id}.done
+   ↓  materialize_well[well_id]  →  images on disk  +  .well_{well_id}.done
    ↓  build_frame_inventory_well[well_id]:  join expected scope rows + OBSERVE the stitched tree
    │      → {well_id}_frame_inventory.csv
    ↓  validate_frame_inventory_well[well_id]            ◄── shared gate
@@ -597,7 +597,7 @@ data_pipeline/stitched_handoff/                 # 'stitched' = the product (alre
 
 > **Added mdcolon 2026-06-06, from a live Keyence run.** This is **upstream** of the seam (the
 > native FF/stitch producer, not the drop-in contract), but it is a **real capability the current
-> code has that the new `stitch_well` stage must reproduce** — otherwise the migrated pipeline will
+> code has that the new `materialize_well` stage must reproduce** — otherwise the migrated pipeline will
 > crash on experiments the legacy one handles. Recording it here so it isn't silently dropped when
 > stitching is reimplemented per-well.
 
@@ -631,9 +631,9 @@ list (`{len(s["tile_zpaths"])}` for tiles, `{len(zp) for ...}` for Z — no imag
 failures and the mislabeling, at a throughput cost only for the affected experiments.
 
 **What the new per-well stitch must guarantee (transfer target).** In the target design, stitching
-is **already per-well** (`stitch_well[well_id]`), which structurally avoids cross-well batching — so
+is **already per-well** (`materialize_well[well_id]`), which structurally avoids cross-well batching — so
 the *tile-count* hazard largely dissolves. But the **within-well, across-tile / across-time**
-shape variation must still be handled explicitly. Carry these requirements into `stitch_well` /
+shape variation must still be handled explicitly. Carry these requirements into `materialize_well` /
 `build_frame_inventory_well`:
 
 - **Do not assume uniform Z or tile count** across the frames a single well contributes; pad/handle
@@ -643,7 +643,7 @@ shape variation must still be handled explicitly. Carry these requirements into 
   Channel Sync rectangularity): those checks are about the **stitched output** frames being
   rectangular per channel/time. The heterogeneity here is about **raw pre-stitch z-stacks**, which
   live *upstream* of the seam — so the new stitcher owns it, and the `frame_inventory` the seam
-  validates should already be shape-clean. **Capability ownership: native `stitch_well`, not the
+  validates should already be shape-clean. **Capability ownership: native `materialize_well`, not the
   shared gate.**
 
 ---
@@ -662,7 +662,7 @@ shape variation must still be handled explicitly. Carry these requirements into 
   dataset-level CSV → `discovered_wells.txt`; enforce single-experiment.
 - **Create `data_pipeline/stitched_handoff/`** (contract/paths/validate/build/split) with the small
   dataclasses + `split_dropin_inventory_by_well()`.
-- **Preserve heterogeneous-shape tolerance in native `stitch_well`** (see *Upstream Capability*
+- **Preserve heterogeneous-shape tolerance in native `materialize_well`** (see *Upstream Capability*
   section): the FF/focus-projection step must not assume uniform tile count or Z-depth across a
   well's frames. Legacy guard = force `batch_size=1` on heterogeneity
   (`build01A_compile_keyence_torch.py`); per-well stitching removes the cross-well case but must
