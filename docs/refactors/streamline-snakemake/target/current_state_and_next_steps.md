@@ -6,6 +6,84 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 12:08 (session: next-batch #1 — ND2-exists/opens hardening at the acquisition-inventory CONSUME boundary)
+
+**What shipped (item #1 of the next batch — the small bridge before Step 7):**
+- **One authoritative validator, two modes.** `metadata_ingest/scope/yx1/acquisition_inventory.py`
+  grew `assert_acquisition_sources_readable(df, *, scope_label)` (each UNIQUE `source_nd2_path` must
+  exist AND open via `nd2.ND2File(path).close()` — open-then-close, no tensor read; O(#ND2s) not
+  O(#rows)) and a keyword-only `check_sources: bool = False` on `validate_yx1_acquisition_inventory`.
+  `nd2` imported at module level (matches the extract/materialize modules; lets tests patch it).
+  Build time keeps `check_sources=False` (the ND2 was just opened to build the inventory — re-opening
+  is tautological); the CONSUME boundary passes `True`.
+- **Consume call lives in the YX1 backend's entry guard** (`image_materialization/scope/yx1/
+  materialize_well_yx1.py`), right after the `source_nd2_path.nunique()==1` tripwire and BEFORE the
+  ND2 is opened: `validate_yx1_acquisition_inventory(well_acquisition_inventory_df, check_sources=True)`.
+  Placement rationale (mdcolon-approved): `run_materialize_well.py` is deliberately scope-NEUTRAL, so a
+  YX1-specific validator can't live there; the YX1 backend is the *immediate domain consumer* and
+  already owns the `source_nd2_path` guards. `tasks.py` stays a thin CLI adapter (untouched). The
+  readability LOGIC is owned by the acquisition contract; the backend only CALLS it. New import is
+  YX1→YX1 (image_materialization/scope/yx1 → metadata_ingest/scope/yx1) — import-coherent, does not
+  touch the identity/orchestration kingdoms. The `nunique()==1` guard stays as a local tripwire.
+- **frame_inventory validator UNTOUCHED** (stays microscope-agnostic — immutable anchor).
+- **Doctrine recorded** in `specs/pipeline_file_philosophy.md`: new structural-conventions section
+  "**Validators live where the contract lives; call them where the risk appears**" (one contract → one
+  authoritative validator owned where the product lives; lifecycle differences are a MODE FLAG, not a
+  forked second validator; source/disk checks fire at the consume boundary) + a matching CONFORMANCE
+  CHECKLIST line.
+- Tests: **161 passed** (`tests/data_pipeline/`) + the in-source acquisition suite. Added 5
+  source-readability cases to `metadata_ingest/scope/tests/test_acquisition_inventory.py`
+  (default-skips-IO, opens-ok, missing-file, unopenable, opens-each-unique-path-once) and a backend
+  guard `test_missing_source_nd2_fails_loud_before_tensor_read` to
+  `tests/.../test_materialize_well_yx1.py`. The materializer test fixture `_make_inventory` was made
+  **schema-complete** (carries every `YX1_ACQUISITION_INVENTORY_COLUMN`) because the consume-side
+  validator re-runs the full contract; the patched-ND2 tests now point `source_nd2_path` at a real
+  empty file under `tmp_path` so `.exists()` passes before the open is faked.
+
+**Verification:** `snakemake front_half --configfile config_smoke_front_half_20250912.yaml
+--rerun-triggers mtime --cores 1 --forcerun materialize_well` → **5 of 5 steps (100%) done**, both
+wells re-materialized through the new consume-side check, real ND2 exists/opens → passes silently,
+`AUTO_MODE_CHOSEN -> CPU` printed, `SMOKE_FRAME_CAP_ACTIVE` honored. (This snakemake build parses a
+bare positional as a configfile, so the target goes BEFORE `--configfile`: `snakemake front_half
+--configfile ...`, not `snakemake --configfile ... front_half`.)
+
+**What's broken/half-done:** nothing. NOT yet committed (code + tests + 2 docs staged in working
+tree). Smoke knobs in `config_smoke_front_half_20250912.yaml` are the overlay; main `config.yaml`
+inert as before.
+
+**ALSO this session — organization/concern-mixing audit (mdcolon-requested):**
+- Applied the **Contract → Validation → Builder** section-banner reorg to the exemplar
+  `acquisition_inventory.py` (the concrete example mdcolon gave) — 15 in-source tests still green.
+- Codified the convention in `pipeline_file_philosophy.md`: new "**One file reads top-to-bottom in
+  flow order, with section banners marking each concern**" section (+ the "banners separate, a SPLIT
+  fixes a real mix" caveat) + a CONFORMANCE CHECKLIST line.
+- Ran a 3-zone read-only audit (image_materialization / metadata_ingest / orchestration) and recorded
+  it in `specs/file_organization_audit.md` (severity table; HIGH=split, MEDIUM=banner+small extract,
+  LOW=clean).
+- Added internal flow banners to `materialize_yx1_well` (Entry guard → ND2 setup → Materialize loop →
+  Inventory assembly) using the file's existing `# ---` style — no behavior change.
+- **HIGH audit item #2 FIXED (thin-dispatcher restore):** the position→well join + per-well row
+  selection moved out of `tasks.py::cmd_materialize_well` into a NEW pure domain function
+  `image_materialization/select_well_acquisition_rows.py` (DataFrames + well_id in → row-slice out;
+  imports identity, NOT orchestration — verified `image_materialization/` imports `well_runner` 0
+  times). Named for the INPUT it slices, NOT `…_shard` (that's well_runner's OUTPUT vocabulary). See
+  the audit doc's "Placement note" for the full `well_runner` boundary rationale. `cmd_materialize_well`
+  is now read+validate (file boundary) → adapter → `run_materialize_well` → write. +5 unit tests.
+  **181 passed**; smoke re-run **5/5 steps** through the extracted adapter (both wells).
+- The remaining HIGH audit item — `materialize_stitched_images.py` per-scope split — stays for **Step 7**
+  (the locked split decision + legacy strangler), NOT a drive-by edit.
+
+**Next concrete action:** Step 7 — the legacy strangler (`materialize_stitched_images` /
+`build_frame_contract` / `build_frame_inventory_for_well` + its legacy tests + `schemas/frame_contract.py`),
+scoped to dead-on-front_half pieces only (Beat 2 still reads `frame_contract.csv` — don't delete its
+production until Beat 2 repoints downstream). Fold the MEDIUM banner cleanups from
+`file_organization_audit.md` in as you touch those files.
+
+**Open decisions:** none blocking Step 7. The MEDIUM audit items are opportunistic (apply when a file
+is already being edited), not a standalone pass.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-18 11:18 (session: Step 6 no-GPU SMOKE PASSED + device auto-resolution + frame_inventory validator repoint)
 
 **What shipped (the smoke walk-across — Beat 1 proven end-to-end on real data):**

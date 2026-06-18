@@ -155,39 +155,32 @@ def cmd_discover_wells(args: argparse.Namespace) -> None:
 
 
 def cmd_materialize_well(args: argparse.Namespace) -> None:
-    """CLI adapter: resolve file/CLI args, then hand them to the materialization sequencer.
+    """CLI adapter: read inputs, delegate the domain work, write outputs.
 
-    This is a pure CLI adapter — it reads CSVs, performs the position→well join, loads config,
-    and delegates the domain workflow to ``run_materialize_well``. It does NOT know scope quirks
-    or how the plan is resolved; the sequencer + resolver own that.
+    Thin dispatcher — it reads CSVs, normalizes CLI/state args, and delegates: the position→well
+    join + per-well row selection is ``select_well_acquisition_rows`` (a pure domain step); the
+    materialization workflow is ``run_materialize_well`` (the sequencer). This function holds no
+    dataframe algebra and no scope/plan knowledge.
     """
     import pandas as pd
     from data_pipeline.image_materialization.run_materialize_well import run_materialize_well
+    from data_pipeline.image_materialization.select_well_acquisition_rows import (
+        select_well_acquisition_rows,
+    )
     from data_pipeline.shared.identifiers.parsers import split_well_id
 
+    # Read static inputs (file boundary) + validate the mapping here, at the file boundary.
     acq_df = pd.read_csv(args.acquisition_inventory_csv)
-    acq_df["experiment_id"] = acq_df["experiment_id"].astype(str)
-
     mapping_df = pd.read_csv(args.position_well_mapping_csv)
-    mapping_df["experiment_id"] = mapping_df["experiment_id"].astype(str)
     validate_position_well_mapping(mapping_df, scope_label=str(args.position_well_mapping_csv))
-    mapping_df = mapping_df[mapping_df["experiment_id"] == str(args.experiment)].copy()
-    acq_df = acq_df.merge(
-        mapping_df[["experiment_id", "position_index", "well_index", "well_id"]],
-        on=["experiment_id", "position_index"],
-        how="left",
-        validate="many_to_one",
-    )
 
-    well_rows = acq_df[
-        (acq_df["experiment_id"].astype(str) == str(args.experiment))
-        & (acq_df["well_id"].astype(str) == str(args.well_id))
-    ]
-    if well_rows.empty:
-        raise ValueError(
-            f"No acquisition inventory rows found for experiment={args.experiment!r}, "
-            f"well_id={args.well_id!r} after joining position_well_mapping."
-        )
+    # Domain join + per-well row selection (no dataframe algebra in the dispatcher).
+    well_rows = select_well_acquisition_rows(
+        acq_df,
+        mapping_df,
+        experiment_id=str(args.experiment),
+        well_id=str(args.well_id),
+    )
 
     # well_index comes from the well_id via the identity parser — never split by hand. If the CLI
     # also supplied --well-index, cross-check it against the parsed value (catch a wiring typo).
