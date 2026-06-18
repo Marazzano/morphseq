@@ -6,6 +6,53 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 14:52 (session: acquisition schema policy + time atom wired through — Beat 2 foundation, Parts 1–2)
+
+**The plan:** `~/.claude/plans/committed-working-tree-flickering-rocket.md` — acquisition-inventory
+schema policy (two-tier) + time atom + legacy frame_contract cutover. Parts 1–2 DONE; Part 3 (legacy
+delete, clean-room cut) and Part 4 (back-half repoint) pending.
+
+**What shipped:**
+- **Part 1 (commit `eb2ba16f`):** `specs/acquisition_inventory_schema_policy.md` — the two-tier schema
+  doctrine (Tier 1 shared/hard-checked vs Tier 2 scope-specific/soft; validator hard-checks the core,
+  allows+ignores scope extras) + the time-atom policy (acquisition OWNS+DERIVES `elapsed_time_s`,
+  frame_inventory CARRIES, downstream reads one name) + the scope→inventory adapter seam as DESIGN
+  intent (config-driven `raw_channel_name→channel_id` routed through the scope backend, mirrors the
+  detection backend pattern — built separately). Linked from README.
+- **Part 2 (commit `2cef1094`):** time atom wired through YX1 end-to-end.
+  - NEW `metadata_ingest/scope/acquisition_inventory_contract.py` owns
+    `REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS` (Tier-1 shared). YX1 schema = CORE + YX1 Tier-2
+    extras. Validator hard-checks core then full YX1 schema.
+  - YX1 acquisition derives `elapsed_time_s` (per-position rebased) reusing
+    `time_helpers.add_elapsed_time_columns(experiment_time_col="acquisition_time_s")`; finite/non-neg
+    assertion added.
+  - `frame_inventory_contract.py` requires `elapsed_time_s` + `acquisition_time_s` (carried block; NOT
+    in the unique key). `materialize_well_yx1` SELECTS them through (no derivation in the pixel stage).
+  - **RENAMED `channel` → `channel_id`** in the YX1 acquisition inventory (the converged downstream
+    name) — schema tuple, builder, channel-mapping validator, + test fixtures.
+
+**Verification:** 164 passed (`tests/data_pipeline/`). front_half smoke **9/9 (100%)** on real ND2 for
+both wells (B01,C01) after force-rerunning `ingest_scope_metadata` (to regenerate the acquisition
+inventory under the new schema) + `materialize_well`. Both shards carry `channel_id` + per-well-rebased
+`elapsed_time_s` (t=0 → 0.0) + raw `acquisition_time_s`.
+
+**What's broken/half-done:** nothing. The on-disk `acquisition_inventory__yx1.csv` for 20250912 was
+regenerated under the new schema (channel_id, elapsed_time_s present).
+
+**Next concrete action:** **Part 3 — delete the legacy frame_contract producer** (clean-room cut:
+`materialize_stitched_images` + `validate_stitched_image_index` + `build_frame_contract` +
+`validate_frame_contract` + `schemas/frame_contract.py` + the inline Snakefile rules + the
+`cmd_materialize_stitched` task). `rule all` goes INTENTIONALLY RED at the segmentation/features seam;
+`front_half` stays green. Then **Part 4** repoints the back half onto the per-well shard stage-by-stage
+(turns `rule all` green again). `time_helpers.py` STAYS (the shared derivation).
+
+**Deferred (specified, not built):** full Tier-2 optical extraction expansion (nd2 `Microscope` struct
+for YX1; BZ-X exposure/gain/binning for Keyence) + the scope→inventory channel adapter refactor.
+
+**Open decisions:** none blocking Part 3.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-18 13:35 (session: front-end de-legacy sweep — delete two verified-dead clusters)
 
 **What shipped (commit `17d471b3`):** the front end no longer carries duplicate/orphaned legacy
