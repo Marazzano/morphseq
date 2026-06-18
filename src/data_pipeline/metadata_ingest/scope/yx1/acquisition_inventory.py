@@ -30,6 +30,7 @@ import pandas as pd
 from data_pipeline.metadata_ingest.scope.acquisition_inventory_contract import (
     REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
 )
+from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
 from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
     assert_channel_mapping_consistent,
     assert_columns_present,
@@ -139,10 +140,40 @@ def validate_yx1_acquisition_inventory(df: pd.DataFrame, *, check_sources: bool 
     assert_positive_column(df, "image_width_px", scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "image_height_px", scope_label=_SCOPE_LABEL)
     assert_channel_mapping_consistent(df, normalized_column="channel_id", scope_label=_SCOPE_LABEL)
+    assert_channel_id_in_vocabulary(df, scope_label=_SCOPE_LABEL)
     assert_unique_on_key(df, YX1_ACQUISITION_CELL_KEY, scope_label=_SCOPE_LABEL)
     assert_elapsed_time_valid(df, scope_label=_SCOPE_LABEL)
     if check_sources:
         assert_acquisition_sources_readable(df, scope_label=_SCOPE_LABEL)
+
+
+def assert_channel_id_in_vocabulary(df: pd.DataFrame, *, scope_label: str) -> None:
+    """Fail loud unless every ``channel_id`` is in the controlled vocabulary ``VALID_CHANNEL_NAMES``.
+
+    The acquisition inventory is where ``channel_id`` is MINTED (the scope extractor normalizes
+    ``raw_channel_name`` → ``channel_id`` as the inventory is built). The normalizer falls back to
+    "use the raw name as-is" with only a log warning on an unrecognized channel, so an UNKNOWN channel
+    would otherwise pass through silently as its own ``channel_id`` and flow downstream. This is the
+    catch net: an unmapped channel fails HERE, at the system of record, naming the raw string so the
+    fix is to extend the normalization map (or the vocabulary), not to invent a channel downstream.
+    """
+    allowed = set(VALID_CHANNEL_NAMES)
+    seen = df["channel_id"].astype(str)
+    bad = seen[~seen.isin(allowed)]
+    if not bad.empty:
+        offenders = sorted(bad.unique())
+        # Surface the raw names that produced the bad tokens, so the fix is obvious.
+        raw = (
+            sorted(df.loc[bad.index, "raw_channel_name"].astype(str).unique())
+            if "raw_channel_name" in df.columns
+            else ["<raw_channel_name column absent>"]
+        )
+        raise ValueError(
+            f"{scope_label}: channel_id value(s) {offenders} are not in the allowed channel "
+            f"vocabulary {sorted(allowed)}. Raw channel name(s) behind them: {raw}. An unrecognized "
+            "channel fell through normalization — add it to the channel normalization map / "
+            "VALID_CHANNEL_NAMES rather than letting a raw name pass through as a channel_id."
+        )
 
 
 def assert_elapsed_time_valid(df: pd.DataFrame, *, scope_label: str) -> None:

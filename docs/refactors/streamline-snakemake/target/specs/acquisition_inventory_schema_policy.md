@@ -155,6 +155,22 @@ scope**, not tracked as data. The inventory records the OUTPUT triple
 (`channel_index ↔ raw_channel_name ↔ channel_id`) per row, but the MAPPING RULE itself is not a
 first-class artifact.
 
+**Where an unknown channel is caught (the minting boundary).** `channel_id` is MINTED as the
+acquisition inventory is built (the scope extractor normalizes `raw_channel_name → channel_id` in the
+same flow that writes the inventory — the raw `scope_metadata` artifact has no `channel_id` yet, so the
+gate cannot live there). The normalizer falls back to "use the raw name as-is" with only a log warning
+on an unrecognized channel, so an unknown channel would otherwise pass through silently as its own
+`channel_id`. Two distinct checks live on the acquisition validator, and only the first existed before:
+
+```text
+mapping CONSISTENCY  — assert_channel_mapping_consistent: the triple is 1:1:1 (no drift). (existing)
+controlled VOCABULARY — assert_channel_id_in_vocabulary: channel_id ∈ VALID_CHANNEL_NAMES.  (added)
+```
+
+The vocabulary gate is the catch net: an unmapped raw name that falls through to a pass-through
+`channel_id` fails loud at the acquisition inventory (the system of record), naming the raw string, so
+the fix is to extend the normalization map / vocabulary — not to invent a channel downstream.
+
 **Target (deferred, its own pass):**
 - The scope→inventory mapping is **config-specific** and should be **routed through the scope backend**
   the same way a detector backend routes its config (prompt/thresholds). For channel that means a

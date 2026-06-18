@@ -19,6 +19,7 @@ from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
     YX1_ACQUISITION_CELL_KEY,
     YX1_ACQUISITION_INVENTORY_COLUMNS,
     assert_acquisition_sources_readable,
+    assert_channel_id_in_vocabulary,
     build_yx1_acquisition_inventory,
     build_yx1_acquisition_inventory_rows,
     validate_yx1_acquisition_inventory,
@@ -129,6 +130,20 @@ def test_validate_rejects_bad_calibration():
     df.loc[0, "micrometers_per_pixel"] = 0.0
     with pytest.raises(ValueError, match="micrometers_per_pixel"):
         validate_yx1_acquisition_inventory(df)
+
+
+def test_validate_rejects_unknown_channel_id():
+    # An unrecognized raw channel falls through the normalizer as its own channel_id; the vocabulary
+    # gate must catch it HERE (at the minting point) rather than let it flow downstream.
+    df = _make_inventory()
+    df["channel_id"] = "Cy5"  # not in VALID_CHANNEL_NAMES
+    with pytest.raises(ValueError, match="not in the allowed channel vocabulary"):
+        validate_yx1_acquisition_inventory(df)
+
+
+def test_assert_channel_id_in_vocabulary_passes_on_known_tokens():
+    df = _make_inventory()  # channels default to BF/GFP — both valid
+    assert_channel_id_in_vocabulary(df, scope_label=_LABEL)  # no raise
 
 
 # ── source readability (check_sources mode) ──────────────────────────────────────────────────
