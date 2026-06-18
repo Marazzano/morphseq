@@ -6,6 +6,49 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 13:35 (session: front-end de-legacy sweep — delete two verified-dead clusters)
+
+**What shipped (commit `17d471b3`):** the front end no longer carries duplicate/orphaned legacy
+modules and rule files. Two provably-dead clusters removed (8 files, −890 lines, zero blast radius):
+- **Cluster A — dead Python (no importers):** `metadata_ingest/microscope_data_ingest/` (a never-wired
+  SECOND `build_frame_contract`) + `metadata_ingest/stitched_index/debug_keyence_stitch.py` (standalone
+  debug script).
+- **Cluster B — orphaned rule files:** `rules/frame_contracts.smk`, `scope_ingest.smk`,
+  `segmentation_and_tracking.smk`, `snip_processing.smk`, `stage_predictions.smk`. The Snakefile
+  `include:` list is ONLY `frame_inventory.smk` + `quality_control.smk` (Snakefile:151–152), and every
+  rule in the five deleted files has a LIVE inline Snakefile equivalent (e.g.
+  `segment_and_track_well`→`segment_and_track_per_well`, `snip_processing_well`→
+  `run_snip_processing_per_well`, `extract_scope_metadata_yx1`→inline `ingest_scope_metadata`). They
+  were duplicate definitions, not parked work. `rules/` now holds exactly the two included files.
+
+**Verification (the core safety check):** captured `snakemake -n` job-stats BEFORE deleting, then again
+AFTER — **IDENTICAL**: `rule all` = 17 jobs, `front_half` = 5 jobs. Proves nothing live was removed.
+Plus: **164 passed** (`tests/data_pipeline/`, unchanged), `tasks.py` imports clean (it still imports the
+LIVE `materialize_stitched_images`, untouched), `grep microscope_data_ingest|debug_keyence_stitch` over
+`src/`+`tests/` → no hits.
+
+**Process note:** first commit attempt used `git add -A` and swept in unrelated detect-seg-track doc
+edits + the two known strays; soft-reset and re-committed ONLY the 8 deletions. The detect-seg-track doc
+mods + `may_need_to_be_domunented!.md` + `tests/improvements/` are left dangling in the working tree,
+untouched (per standing instruction).
+
+**What's broken/half-done:** nothing. The live `frame_contract.csv` producer chain
+(`materialize_stitched_images` + `validate_stitched_image_index` + `build_frame_contract` +
+`validate_frame_contract` + `schemas/frame_contract.py` + the inline Snakefile rules at 299/331) is the
+deferred "key events" set — LEFT FULLY INTACT because `rule all` / the back half still consumes it.
+
+**Next concrete action:** **Beat 2** — repoint the downstream already-agnostic stages (segmentation →
+snips → features → QC + aux masks) to read the per-well `frame_inventory` shard instead of
+`frame_contract.csv`, via `well_runner.py`. ONLY after Beat 2 lands does deleting the `frame_contract`
+producer chain become safe (= the rest of the roadmap's full Step 7). Recommended shape: incremental
+strangler, one stage at a time (segmentation first), keeping `rule all` green throughout. The MEDIUM
+`file_organization_audit.md` banner cleanups remain opportunistic.
+
+**Open decisions:** Beat 2 scoping (incremental-per-stage vs full sweep vs a compat-shim bridge) — to
+be decided when Beat 2 planning opens.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-18 13:12 (session: Step 7 — strangle the dead build_frame_inventory_for_well legacy adapter)
 
 **What shipped (commit `e114fbb1`):** the off-DAG legacy `build_frame_inventory_for_well` adapter is
