@@ -13,11 +13,28 @@ from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
     _EMITTED_COLUMNS,
 )
 from data_pipeline.image_materialization.materialized_image_paths import projection_frame_path
+from data_pipeline.image_materialization.materialization_plan import (
+    ResolvedImageProduct,
+    ResolvedMaterializationPlan,
+)
+from data_pipeline.shared.identifiers.constructors import build_well_id
 
 EXP = "20250912"
 WELL_INDEX = "B01"
-WELL_ID = f"{EXP}_{WELL_INDEX}"
+WELL_ID = build_well_id(EXP, WELL_INDEX)  # never mint ids by hand, even in tests
 ROOT = Path("/fake/built_image_data")
+
+# The one accepted YX1 product, already resolved (identity XY composition).
+IDENTITY_PLAN = ResolvedMaterializationPlan(
+    products=(
+        ResolvedImageProduct(
+            channel_id="BF",
+            image_product_type="projection",
+            projection_method="focus_stack",
+            xy_composition="identity",
+        ),
+    )
+)
 
 
 def _make_inventory(n_times: int = 3, position_index: int = 2) -> pd.DataFrame:
@@ -87,6 +104,7 @@ class TestMaterializeYX1Well:
                 well_acquisition_inventory_df=inventory_df,
                 nd2_path=Path("/fake/exp.nd2"),
                 built_image_data_dir=tmp_path,
+                resolved_plan=IDENTITY_PLAN,
                 device="cpu",
                 candidate=candidate,
             )
@@ -143,11 +161,12 @@ class TestMaterializeYX1Well:
         with pytest.raises(ValueError, match="well_id mismatch"):
             materialize_yx1_well(
                 experiment_id=EXP,
-                well_id="20250912_C04",  # wrong
+                well_id=build_well_id(EXP, "C04"),  # wrong well_index on purpose
                 well_index=WELL_INDEX,
                 well_acquisition_inventory_df=inv,
                 nd2_path=Path("/fake/exp.nd2"),
                 built_image_data_dir=tmp_path,
+                resolved_plan=IDENTITY_PLAN,
                 device="cpu",
             )
 
@@ -163,6 +182,7 @@ class TestMaterializeYX1Well:
                 well_acquisition_inventory_df=inv,
                 nd2_path=Path("/fake/exp.nd2"),
                 built_image_data_dir=tmp_path,
+                resolved_plan=IDENTITY_PLAN,
                 device="cpu",
             )
 
@@ -176,5 +196,55 @@ class TestMaterializeYX1Well:
                 well_acquisition_inventory_df=inv,
                 nd2_path=Path("/fake/exp.nd2"),
                 built_image_data_dir=tmp_path,
+                resolved_plan=IDENTITY_PLAN,
                 device="cpu",
             )
+
+    def test_non_identity_resolved_product_raises(self, tmp_path):
+        inv = _make_inventory(n_times=1)
+        bad_plan = ResolvedMaterializationPlan(
+            products=(
+                ResolvedImageProduct(
+                    channel_id="BF",
+                    image_product_type="projection",
+                    projection_method="focus_stack",
+                    xy_composition="mosaic",  # YX1 should never receive this
+                ),
+            )
+        )
+        with pytest.raises(ValueError, match="identity"):
+            materialize_yx1_well(
+                experiment_id=EXP,
+                well_id=WELL_ID,
+                well_index=WELL_INDEX,
+                well_acquisition_inventory_df=inv,
+                nd2_path=Path("/fake/exp.nd2"),
+                built_image_data_dir=tmp_path,
+                resolved_plan=bad_plan,
+                device="cpu",
+            )
+
+    def test_smoke_cap_limits_time_indices(self, tmp_path):
+        inv = _make_inventory(n_times=10)
+        nd_mock = self._make_mock_nd2(n_t=10)
+        _mod = "data_pipeline.image_materialization.scope.yx1.materialize_well_yx1"
+        with (
+            patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
+            patch(f"{_mod}.materialize_ff_projection",
+                  return_value=np.zeros((8, 8), dtype=np.uint8)),
+            patch(f"{_mod}.skio.imsave"),
+            patch(f"{_mod}._get_stack",
+                  return_value=np.ones((4, 8, 8), dtype=np.uint16)),
+        ):
+            df = materialize_yx1_well(
+                experiment_id=EXP,
+                well_id=WELL_ID,
+                well_index=WELL_INDEX,
+                well_acquisition_inventory_df=inv,
+                nd2_path=Path("/fake/exp.nd2"),
+                built_image_data_dir=tmp_path,
+                resolved_plan=IDENTITY_PLAN,
+                device="cpu",
+                smoke_max_time_indices=3,
+            )
+        assert len(df) == 3

@@ -1,8 +1,63 @@
 # Current State & Next Steps — the STATUS doc
 
-**Status:** the "where are we RIGHT NOW" anchor. The current snapshot below (2026-06-17) is the live
+**Status:** the "where are we RIGHT NOW" anchor. The current snapshot below (2026-06-18) is the live
 truth; the dated sections further down are earlier verified state, kept for history. Design lives in
 `specs/`; the active front-half plan is `front_half_reorg_roadmap.md`. See `README.md` for the map.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 (session: Step 6 commit 1 — materialization-plan capability gate)
+
+**What shipped (commit 1 of Step 6 — the gate; NO orchestration wiring yet):**
+- `image_materialization/materialization_plan.py` — the NOUNS: global vocab (`SUPPORTED_CHANNELS`
+  IMPORTED from `schemas/channel_normalization.VALID_CHANNEL_NAMES`, never redefined;
+  `SUPPORTED_IMAGE_PRODUCT_TYPES`, `SUPPORTED_PROJECTION_METHODS`, `SUPPORTED_XY_COMPOSITION_REQUESTS`,
+  `RESOLVED_XY_COMPOSITIONS`), 4 frozen dataclasses (`ImageProductRequest`/`ResolvedImageProduct`
+  + plan tuples), `load_image_materialization_plan(config)`, and global product-shape grammar
+  (`projection` requires a method; `z_stack` forbids one). No scope behavior. Exceptions are
+  scope-neutral.
+- `image_materialization/scope/scope_resolver_for_materialization_plan.py` — the semantic
+  TRANSLATOR: `resolve_materialization_plan(scope_name, requested_plan) → ResolvedMaterializationPlan`.
+  Does NOT touch a backend. YX1 live (required axes strict; `xy_composition` auto/identity→identity,
+  mosaic→identity+warning). Keyence is a RESERVED private sketch — deliberately NOT routed by the
+  public resolver (no cardboard doorway).
+- `image_materialization/run_materialize_well.py` — the SEQUENCER (renamed from materialize_well.py):
+  load plan → resolve → call backend with the raw inputs it was HANDED (it does not gather/resolve
+  file args — tasks.py/Snakemake does). Step-6 backend selection is YX1-only; `nd2_path` is a
+  YX1-shaped Step-6 input (scope-neutral input bundles are the next migration).
+- `scope/yx1/materialize_well_yx1.py` — EXECUTOR: now takes `resolved_plan`, asserts every product
+  resolves to `xy_composition=='identity'` (guards a future resolver bug), and honors a TEMPORARY
+  `smoke_max_time_indices` cap (no-GPU 2-well × first-3-frames smoke).
+- Tests: 68 passed. New `test_materialization_plan.py` + `test_scope_resolver_for_materialization_plan.py`;
+  updated `test_materialize_well_yx1.py` (resolved-plan signature, identity-assert, smoke cap). Tests
+  never mint ids (use `build_well_id`). Real-import smoke of the 4-module graph clean.
+
+**Key locked design (request ≠ resolved vocabulary):** config requests products → resolver normalizes
+per scope → backend executes only resolved. `stitch` is renamed `xy_composition` (single-tile YX1
+doesn't "skip stitching" — its XY composition RESOLVES to identity). Separation of concerns:
+plan=nouns, resolver=translator (no backend), run_materialize_well=sequencer (backend selection),
+backend=executor. See memory `project_materialization_plan_resolver.md`.
+
+**What's broken/half-done:** `tasks.py` still has the old `cmd_materialize_yx1_well_candidate` calling
+the backend directly — NOT yet repointed to `run_materialize_well`. That is the first move of commit 2.
+Nothing committed for commit 2 yet.
+
+**Next concrete action (Step 6 commit 2 — promote to live spine):**
+(1) Repoint `tasks.py`: `cmd_materialize_yx1_well_candidate` → a dispatcher that resolves CLI args
+(nd2_path, inventory shard, config) and calls `run_materialize_well(...)`. tasks.py stays a pure CLI
+adapter. (2) `orchestration/paths.py`: add the live `materialize_well` step row
+(`fanout=PER_WELL_THEN_MERGE`, per-well shard + done sentinel); `candidate/` vs live stays owned by
+`materialized_image_paths.py`, not the registry. (3) `rules/frame_inventory.smk`: add a
+`materialize_well` rule fanned over `discovered_wells.txt` calling the materializer `candidate=False`;
+repoint `validate_frame_inventory_for_well` to read the materializer-emitted shard (drop the
+`frame_contract.csv` adapter). (4) `Snakefile`: add per-well `{well_id}_frame_inventory.csv.validated`
+to the front-end target so the branch goes LIVE. Verify: `20250912` runs
+`ingest→…→materialize_well[well_id]→validate_frame_inventory_for_well` end-to-end (per-well inventories
+key on `time_index`, derived ids recompute, paths resolve). = Beat 1 DONE.
+
+**Open decisions:** none blocking commit 2. (Stray untracked files
+`specs/front_end/may_need_to_be_domunented!.md` + `tests/improvements/` are left in place by request —
+not work products, clean up later.)
 
 ---
 

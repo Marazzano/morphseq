@@ -43,6 +43,9 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
     REQUIRED_FRAME_INVENTORY_COLUMNS,
     derive_well_id,
 )
+from data_pipeline.image_materialization.materialization_plan import (
+    ResolvedMaterializationPlan,
+)
 
 log = logging.getLogger(__name__)
 
@@ -103,14 +106,21 @@ def materialize_yx1_well(
     well_acquisition_inventory_df: pd.DataFrame,
     nd2_path: Path,
     built_image_data_dir: Path,
+    resolved_plan: ResolvedMaterializationPlan,
     device: str = "cuda",
     candidate: bool = True,
+    smoke_max_time_indices: int | None = None,
 ) -> pd.DataFrame:
     """Materialize projection frames for ONE YX1 well and return frame-inventory rows.
 
     Reads Z-stacks from the ND2 tensor (one slice per time_index), focus-stacks each into a
     BF projection frame, writes images through ``materialized_image_paths.py``, and records one frame-inventory
     row per (time_index, channel_id) pair as it goes.  BF only for Step 3.
+
+    This backend is an EXECUTOR: it accepts a ``ResolvedMaterializationPlan`` (a commitment, never
+    a request) and asserts every product resolves to ``xy_composition='identity'`` — YX1 has one
+    tile per well/channel/time, so identity is its only XY composition. The assert fails loud if a
+    non-identity product ever reaches here (guards against a future resolver/router bug).
 
     Args:
         experiment_id: global experiment identifier.
@@ -122,9 +132,13 @@ def materialize_yx1_well(
         nd2_path: path to the single ``.nd2`` file for this experiment.
         built_image_data_dir: stage root (``DATA_ROOT / "built_image_data"``), resolved
             by the caller.
+        resolved_plan: the scope-resolved product set (from ``resolve_materialization_plan``).
+            Every product must be BF / projection / focus_stack / identity for Step 6.
         device: PyTorch device for focus stacking (``"cuda"`` or ``"cpu"``).
         candidate: if ``True``, writes under ``materialized_images/candidate/`` so paths
             can never collide with the live tree.
+        smoke_max_time_indices: TEMPORARY smoke cap — if set, only the first N time_indices are
+            materialized (no-GPU / fast smoke). ``None`` = full well (production).
 
     Returns:
         DataFrame with columns ``_EMITTED_COLUMNS`` — one row per materialized frame.
@@ -132,8 +146,18 @@ def materialize_yx1_well(
 
     Raises:
         ValueError: on well_id / well_index / experiment_id inconsistency, empty
-            inventory, or ambiguous position_index / nd2_path.
+            inventory, ambiguous position_index / nd2_path, or a non-identity resolved product.
     """
+    # Executor guard — this backend only does identity XY composition. Fail loud otherwise.
+    if not resolved_plan.products:
+        raise ValueError("resolved_plan has no products to materialize.")
+    for product in resolved_plan.products:
+        if product.xy_composition != "identity":
+            raise ValueError(
+                f"materialize_yx1_well only executes xy_composition='identity'; got "
+                f"{product.xy_composition!r}. YX1 is single-tile — this indicates a resolver bug."
+            )
+
     # Entry guard — fail loud before any disk work.
     expected_well_id = derive_well_id(experiment_id, well_index)
     if expected_well_id != well_id:
@@ -178,6 +202,13 @@ def materialize_yx1_well(
             dask_arr = dask_arr[:, :, :, bf_idx, :, :]
 
         time_indices = sorted(well_acquisition_inventory_df["time_index"].unique())
+        if smoke_max_time_indices is not None:
+            # TEMPORARY smoke cap — first N time_indices only (no-GPU / fast smoke).
+            time_indices = time_indices[:smoke_max_time_indices]
+            log.warning(
+                "SMOKE CAP active: materializing only first %d time_indices for well %s.",
+                smoke_max_time_indices, well_id,
+            )
         rows: list[dict] = []
 
         for t in time_indices:
