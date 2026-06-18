@@ -30,7 +30,7 @@ import pandas as pd
 from data_pipeline.metadata_ingest.scope.acquisition_inventory_contract import (
     REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
 )
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
+from data_pipeline.schemas.channel_normalization import validate_channel_id
 from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
     assert_channel_mapping_consistent,
     assert_columns_present,
@@ -157,23 +157,11 @@ def assert_channel_id_in_vocabulary(df: pd.DataFrame, *, scope_label: str) -> No
     catch net: an unmapped channel fails HERE, at the system of record, naming the raw string so the
     fix is to extend the normalization map (or the vocabulary), not to invent a channel downstream.
     """
-    allowed = set(VALID_CHANNEL_NAMES)
-    seen = df["channel_id"].astype(str)
-    bad = seen[~seen.isin(allowed)]
-    if not bad.empty:
-        offenders = sorted(bad.unique())
-        # Surface the raw names that produced the bad tokens, so the fix is obvious.
-        raw = (
-            sorted(df.loc[bad.index, "raw_channel_name"].astype(str).unique())
-            if "raw_channel_name" in df.columns
-            else ["<raw_channel_name column absent>"]
-        )
-        raise ValueError(
-            f"{scope_label}: channel_id value(s) {offenders} are not in the allowed channel "
-            f"vocabulary {sorted(allowed)}. Raw channel name(s) behind them: {raw}. An unrecognized "
-            "channel fell through normalization — add it to the channel normalization map / "
-            "VALID_CHANNEL_NAMES rather than letting a raw name pass through as a channel_id."
-        )
+    # Delegate the membership rule to the vocabulary owner (validate_channel_id); this validator does
+    # not re-implement the vocabulary. The scope adapter already guaranteed canonical channel_id at
+    # mint time — this is the contract-time net for hand-edited / stale tables.
+    for channel_id in df["channel_id"].astype(str).unique():
+        validate_channel_id(channel_id)
 
 
 def assert_elapsed_time_valid(df: pd.DataFrame, *, scope_label: str) -> None:

@@ -12,7 +12,9 @@ import pandas as pd
 import nd2
 
 from data_pipeline.schemas.scope_metadata import REQUIRED_COLUMNS_SCOPE_METADATA
-from data_pipeline.schemas.channel_normalization import CHANNEL_NORMALIZATION_MAP
+from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
+from data_pipeline.metadata_ingest.scope.yx1.mappings import YX1_CHANNEL_MAP
+from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
 from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
     build_yx1_acquisition_inventory,
@@ -107,36 +109,15 @@ def _extract_timestamps(nd: nd2.ND2File, n_t: int, n_w: int, n_z: int, n_c: int 
     return s.to_numpy()
 
 
-def _normalize_channel_name(raw_name: str) -> str:
-    """
-    Normalize YX1 channel name to standard name.
-
-    Args:
-        raw_name: Raw channel name from ND2
-
-    Returns:
-        Normalized channel name (e.g., 'BF', 'GFP')
-    """
-    # Try direct mapping first
-    if raw_name in CHANNEL_NORMALIZATION_MAP:
-        return CHANNEL_NORMALIZATION_MAP[raw_name]
-
-    # Try case-insensitive match for common patterns
-    raw_lower = raw_name.lower()
-
-    # Check for BF variations
-    if any(x in raw_lower for x in ['dia', 'empty', 'brightfield', 'bf']):
-        return 'BF'
-
-    # Check for fluorescence channels
-    if 'gfp' in raw_lower:
-        return 'GFP'
-    if 'rfp' in raw_lower or 'mcherry' in raw_lower:
-        return 'RFP'
-
-    # Default: return as-is and warn
-    log.warning(f"Unknown channel name '{raw_name}' - using as-is")
-    return raw_name
+def _to_channel_id(raw_name: str) -> str:
+    """Map a raw ND2 channel string to its canonical channel_id (exact-match; fail loud if unknown)."""
+    return apply_canonical_mapping(
+        raw_name,
+        YX1_CHANNEL_MAP,
+        vocabulary=VALID_CHANNEL_NAMES,
+        field="channel_id",
+        scope_name="YX1",
+    )
 
 
 def extract_yx1_scope_metadata(
@@ -186,7 +167,7 @@ def extract_yx1_scope_metadata(
         channel_names = [c.channel.name for c in nd.frame_metadata(0).channels]
         log.info(f"Raw channel names: {channel_names}")
         channel_mapping = [
-            (idx, _normalize_channel_name(raw_name), raw_name)
+            (idx, _to_channel_id(raw_name), raw_name)
             for idx, raw_name in enumerate(channel_names)
         ]
 
@@ -237,7 +218,7 @@ def extract_yx1_scope_metadata(
                 time_s = timestamps[t_idx]
 
                 for raw_channel in channel_names:
-                    channel = _normalize_channel_name(raw_channel)
+                    channel = _to_channel_id(raw_channel)
                     row = {
                         'experiment_id': experiment_id,
                         'raw_position_label': raw_position_label,

@@ -6,6 +6,61 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 16:24 (session: canonical scope channel adapter — Beat 2 foundation refinement)
+
+**The plan:** `~/.claude/plans/committed-working-tree-flickering-rocket.md` — canonical mapping
+adapter now DONE. This completes the mapper/vocabulary/validator split that was deferred in the 14:52
+snapshot: mappings translate scope dialect, the vocabulary defines canonical language, validators guard
+contracts.
+
+**What shipped:**
+- `schemas/channel_normalization.py` now owns only the canonical channel language:
+  `VALID_CHANNEL_NAMES`, `BRIGHTFIELD_CHANNELS`, and `validate_channel_id(channel_id)`.
+- NEW `metadata_ingest/scope/shared/canonical_mapper.py` provides the generic exact-match applier:
+  raw scope value + per-scope mapping + canonical vocabulary -> canonical token. It fails loud on both
+  unmapped raw values and non-canonical mapping targets.
+- Per-scope dialect DATA moved out of the schema module:
+  - `scope/yx1/mappings.py`: `YX1_CHANNEL_MAP`
+  - `scope/keyence/mappings.py`: `KEYENCE_CHANNEL_MAP`
+- YX1 and Keyence extractors no longer use fuzzy `_normalize_channel_name` logic or silent raw
+  pass-through. They call the shared applier through small `_to_channel_id(...)` wrappers.
+- The YX1 acquisition inventory contract check delegates membership to `validate_channel_id(...)`
+  instead of re-implementing the vocabulary set.
+- Real-data smoke surfaced a previously implicit YX1 dialect label: the 20250912 ND2 reports raw
+  channel `"Empty"`. It is now explicitly mapped in `YX1_CHANNEL_MAP` as `"Empty": "BF"` instead of
+  being inferred by substring/fuzzy logic.
+- Tests added for the shared mapper, unmapped failure, non-canonical target failure, per-scope map
+  integrity, and `validate_channel_id`.
+
+**Verification:**
+- Interpreter sanity check used the required env:
+  `/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python`.
+- Focused adapter/acquisition tests: **24 passed**.
+- Baseline: **188 passed, 1 existing skimage dtype warning**
+  (`tests/data_pipeline/ src/data_pipeline/metadata_ingest/scope/tests/`).
+- Grep gate: no `_normalize_channel_name` or `CHANNEL_NORMALIZATION_MAP` remains in
+  `src/data_pipeline` / `tests/data_pipeline`.
+- Front-half smoke with forced `ingest_scope_metadata` reminted
+  `data_pipeline_output/experiment_metadata/20250912/acquisition_inventory__yx1.csv` through the new
+  applier: 161,025 rows, `raw_channel_name=['Empty']`, `channel_id=['BF']`, `elapsed_time_s` present.
+  Mapping and mapped-metadata validation completed; `discover_wells` found 95 wells.
+
+**What's broken/half-done:** the full front-half smoke is **not green** in this session. It reached
+forced `materialize_well` for `20250912_B01`, then the process was system-killed during CPU projection
+after announcing `SMOKE_FRAME_CAP_ACTIVE`. This happened after the channel adapter path completed and
+looks like the existing materializer/runtime memory issue, not a mapper failure.
+
+**Next concrete action:** continue the parent Beat-2 cutover: Part 3 delete the legacy
+`frame_contract` producer (clean-room cut; expect `rule all` to go intentionally red at the
+segmentation/features seam while `front_half` remains the target to protect), then Part 4 repoint the
+back half onto per-well frame-inventory shards. Separately, investigate the CPU materializer kill before
+using the full 20250912 smoke as a green gate again.
+
+**Open decisions:** none blocking Part 3. The materializer memory/runtime issue is a verification
+blocker for the full smoke, not a design blocker for the channel adapter.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-18 14:52 (session: acquisition schema policy + time atom wired through — Beat 2 foundation, Parts 1–2)
 
 **The plan:** `~/.claude/plans/committed-working-tree-flickering-rocket.md` — acquisition-inventory

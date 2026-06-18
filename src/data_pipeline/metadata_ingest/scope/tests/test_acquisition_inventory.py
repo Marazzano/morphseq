@@ -133,11 +133,11 @@ def test_validate_rejects_bad_calibration():
 
 
 def test_validate_rejects_unknown_channel_id():
-    # An unrecognized raw channel falls through the normalizer as its own channel_id; the vocabulary
-    # gate must catch it HERE (at the minting point) rather than let it flow downstream.
+    # Contract-time validation must still catch stale or hand-edited tables with non-canonical
+    # channel_id values even though the scope adapter now fails earlier at mint time.
     df = _make_inventory()
     df["channel_id"] = "Cy5"  # not in VALID_CHANNEL_NAMES
-    with pytest.raises(ValueError, match="not in the allowed channel vocabulary"):
+    with pytest.raises(ValueError, match="not in the canonical vocabulary"):
         validate_yx1_acquisition_inventory(df)
 
 

@@ -13,7 +13,9 @@ import logging
 import re
 
 from data_pipeline.schemas.scope_metadata import REQUIRED_COLUMNS_SCOPE_METADATA
-from data_pipeline.schemas.channel_normalization import CHANNEL_NORMALIZATION_MAP
+from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
+from data_pipeline.metadata_ingest.scope.keyence.mappings import KEYENCE_CHANNEL_MAP
+from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
 from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.shared.identifiers import build_image_id
 from data_pipeline.shared.identifiers import build_well_id
@@ -106,37 +108,15 @@ def _scrape_keyence_metadata(tiff_path: Path) -> Dict[str, Any]:
     return meta_dict
 
 
-def _normalize_channel_name(raw_channel: str) -> str:
-    """
-    Normalize Keyence channel name to standard name.
-
-    Args:
-        raw_channel: Raw channel name from microscope
-
-    Returns:
-        Normalized channel name (e.g., "BF", "GFP", "RFP")
-    """
-    # Try direct lookup first
-    if raw_channel in CHANNEL_NORMALIZATION_MAP:
-        return CHANNEL_NORMALIZATION_MAP[raw_channel]
-
-    # Try case-insensitive match
-    raw_lower = raw_channel.lower()
-    for key, value in CHANNEL_NORMALIZATION_MAP.items():
-        if key.lower() == raw_lower:
-            return value
-
-    # Common Keyence variations
-    if 'bright' in raw_lower or 'bf' in raw_lower or 'phase' in raw_lower:
-        return 'BF'
-    elif 'gfp' in raw_lower or 'green' in raw_lower:
-        return 'GFP'
-    elif 'rfp' in raw_lower or 'red' in raw_lower or 'cherry' in raw_lower:
-        return 'RFP'
-
-    # Default: return as-is with warning
-    log.warning(f"Unknown channel name '{raw_channel}', using as-is")
-    return raw_channel
+def _to_channel_id(raw_channel: str) -> str:
+    """Map a raw Keyence channel string to its canonical channel_id (exact-match; fail loud if unknown)."""
+    return apply_canonical_mapping(
+        raw_channel,
+        KEYENCE_CHANNEL_MAP,
+        vocabulary=VALID_CHANNEL_NAMES,
+        field="channel_id",
+        scope_name="Keyence",
+    )
 
 
 def _discover_keyence_files(raw_data_dir: Path, experiment_id: str) -> List[Path]:
@@ -286,9 +266,9 @@ def extract_keyence_scope_metadata(
             position_key = (well_index, _extract_position_label_within_well(tiff_path))
             position_index = position_index_by_key[position_key]
 
-            # Normalize channel name
+            # Map the raw scope channel label to the canonical channel_id.
             raw_channel = meta.get('Channel', 'unknown')
-            normalized_channel = _normalize_channel_name(raw_channel)
+            normalized_channel = _to_channel_id(raw_channel)
 
             # Compute micrometers per pixel
             width_um = meta.get('Width (um)', 0)
