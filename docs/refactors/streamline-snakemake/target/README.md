@@ -58,6 +58,7 @@ Apply beyond the front end — read when a roadmap step touches identity, contra
 | `well_id_throughline_refactor_plan.md` | The formal Scopes 1–5 spine (identity grammar → migration → env → well-runner → per-well) |
 | `well_id_global_migration_map.md` | The Scope-2 `well_id` local→global migration map |
 | `schema_layout.md` | Domain-owned contracts — schemas live with their data product; mechanics are shared |
+| `acquisition_inventory_schema_policy.md` | Two-tier inventory schema (shared/hard-checked vs scope-specific/soft) + the time-atom policy (`elapsed_time_s`) |
 | `model_input_handoff_contract.md` | The MODEL/embedding seam (downstream — not front-end) |
 
 ## 📁 `archive/` — point-in-time / stale (kept for provenance, do NOT treat as current)
