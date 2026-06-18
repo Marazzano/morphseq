@@ -22,7 +22,37 @@ truth; the dated sections further down are earlier verified state, kept for hist
 - **Step 5 two-well fan smoke PASSED:** C01 (`20250912_C01`, position_index=2) ran cleanly — 113 frames, 0 missing paths, done flag exists. Only B01 has legacy stitched output so numeric diff on C01 skipped; B01 is the accepted comparison baseline. The fan is real: B01→position_index=1, C01→position_index=2 (different positions, not hardcoded).
 - `side_by_side.mp4` (219 MB) saved alongside comparison evidence.
 **What's broken/half-done:** nothing. Steps 1–5 complete.
-**Next concrete action:** Step 6 — PROMOTE candidate to live spine. (1) Move generic image-materialization moments to the flat target shape: `materialization_plan.py` (what to make), `materialized_image_paths.py` (where one product file lands), `stitch_well.py` (thin dispatcher), `frame_inventory_contract.py` (observed manifest contract), with the YX1 fork under `scope/yx1/stitch_well_yx1.py`. `materialized_image_paths.py` takes `built_image_data_dir` explicitly and imports no orchestration paths. (2) Add/wire the live `stitch_well` orchestration path/sentinel in `paths.py`; the image tree's `candidate/` vs live layout remains owned by `materialized_image_paths.py` via `candidate=True/False`, not by the registry. (3) Add `stitch_well` Snakemake rule fanned over `discovered_wells.txt` and call the accepted materializer with `candidate=False` (replaces the experiment-grain `materialize_stitched_images` rule). (4) Keep the orchestration grain **per well**: the sentinel means "the configured product set for this well finished." Step 6's configured product set is deliberately minimal — `BF` projection via `focus_stack`; channel/method/z-slice expansion happens inside the well job later and is recorded as rows in `frame_inventory`, not as new Snakemake wildcards. (5) Wire `validate_frame_inventory_for_well` to read the materializer-emitted shard (not the `frame_contract.csv` adapter). (6) Add the per-well `{well_id}_frame_inventory.csv.validated` target to `rule all` or front-end target. Verify: `20250912` chain runs end-to-end `ingest→…→stitch_well[well_id]→validate_frame_inventory_for_well` and produces per-well frame inventories keyed on `time_index` with resolving paths.
+**Next concrete action:** Step 6 — PROMOTE candidate to live spine. **Naming/layout updated 2026-06-17:**
+the producer is named for the STAGE (`materialize_well`), not one op (`stitch_well` was too narrow —
+stitch is one composition step, peer to projection). Files are FLAT under `image_materialization/`
+(filenames carry the moment; only `scope/` is a subfolder) — the `stitched/` nesting from Steps 2–5
+collapses. See `front_half_reorg_roadmap.md` → Target Package Layout for the exact filenames and the
+compose/adapter/axes/Keyence-compat plumbing. **Do the move/rename as its own mechanical commit
+(verified green) BEFORE wiring new logic.**
+
+(1) Restructure to the flat target shape: `materialization_plan.py` (intent only — product set, no
+microscope geometry), `materialized_image_paths.py` (where one product file lands; was
+`stitched/layout.py`), `materialize_well.py` (thin dispatcher; was `stitch_well.py`),
+`frame_inventory_contract.py` (observed manifest; was `stitched/contracts/`), YX1 fork at
+`scope/yx1/materialize_well_yx1.py` (was `scope/yx1/materialize_yx1_stitched_images.py`).
+`materialized_image_paths.py` takes `built_image_data_dir` explicitly and imports no orchestration
+paths. (2) Add/wire the live `materialize_well` orchestration path/sentinel in `paths.py`; `candidate/`
+vs live layout stays owned by `materialized_image_paths.py` via `candidate=True/False`, not the
+registry. (3) Add `materialize_well` Snakemake rule fanned over `discovered_wells.txt`, call the
+accepted materializer with `candidate=False` (replaces experiment-grain `materialize_stitched_images`).
+(4) Keep grain **per well**: the sentinel means "the configured product set for this well finished."
+Step 6's set is deliberately minimal — `BF` projection via `focus_stack`; channel/method/z-slice
+expansion happens inside the well job later, recorded as `frame_inventory` rows, not Snakemake
+wildcards. (5) Wire `validate_frame_inventory_for_well` to read the materializer-emitted shard (not the
+`frame_contract.csv` adapter). (6) Add the per-well `{well_id}_frame_inventory.csv.validated` target to
+`rule all` / front-end target. Verify: `20250912` runs end-to-end
+`ingest→…→materialize_well[well_id]→validate_frame_inventory_for_well` and produces per-well frame
+inventories keyed on `time_index` with resolving paths.
+
+> **Compose/axes/Keyence are NOT Step 6.** Step 6 promotes the EXISTING accepted YX1 materializer under
+> the new names. The acquired-image-tiles seam, `compose_xy_mosaic`, `materialize_image_product`
+> branch table, max/z_stack, and the clean-vs-legacy `FrameTilingConfig` are later work — they're
+> specified in the roadmap so the names are reserved, but Step 6 ships the rename + live wiring only.
 **Open decisions:** none blocking Step 6.
 
 ---

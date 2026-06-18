@@ -107,97 +107,32 @@ The per-well directory `{stage}/{exp}/per_well/{well_id}` is composed *downward*
 `.parent`. If a path concept can be derived two ways, it will eventually be derived two *different*
 ways — so it gets one home.
 
-### Image materialization reads top-to-bottom: plan → fields → compose → address → record
-`image_materialization/` is one stage/kingdom, so its generic concepts sit as named subfolders (each a
-real concept, not a junk drawer) and read in flow order. The producer is named for the *stage*
-(`materialize_well`), **not** for one operation it performs (`stitch_well` was too narrow — stitching
-is one composition step, peer to projection, not the whole stage):
+### Image materialization reads top-to-bottom: intent → acquired tiles → XY mosaic → image product → paths → frame inventory
+`image_materialization/` is one stage/kingdom. Its files sit side by side (no category subfolders —
+filenames carry the moment), and the producer is named for the *stage* (`materialize_well`), **not**
+for one operation it performs — stitching is one composition step, peer to projection, not the whole
+stage. The stable doctrine, in flow order:
 
-```text
-image_materialization/
-  planning/
-    materialization_plan.py        # WHAT products to make (intent; path-blind, disk-blind, scope-blind)
-  fields/
-    fields_for_time.py             # the canonical backend→shared seam (FieldsForTime / TileField)
-  xy_composition/
-    frame_tiler.py                 # scope-agnostic XY tile composition (single-tile = identity)
-    compose_fields.py              # adapter: FieldsForTime.tiles → TileSpec[] → stitch → mosaic
-  projection/
-    project_z.py                   # Z collapse (focus_stack | max | mean) vs z_stack passthrough
-  layout/
-    materialized_image_paths.py    # WHERE one concrete product file lands in the pixel store
-  frame_inventory_contract.py      # observed manifest contract; what actually got produced
-  materialize_well.py              # thin producer dispatcher; picks the scope backend
-  scope/
-    yx1/materialize_well_yx1.py    # real fork: ND2 → FieldsForTime + tiling config
-    keyence/materialize_well_keyence.py  # real fork: TIFF set → FieldsForTime + tiling config
-```
+- **Planning decides product intent.** What image products a run should make — path-blind, disk-blind,
+  scope-blind. The plan holds product intent only; "this well is one tile or many" is acquisition
+  fact, not user-typed intent.
+- **Scope backends convert raw microscope data into canonical *acquired image tiles* and declared
+  geometry/config.** This is the microscope boundary, made structural. A backend may provide
+  microscope-derived geometry; it must not leak microscope logic downstream.
+- **Shared code owns XY composition, image-product materialization, paths, and frame_inventory rows.**
+  Once the acquired tiles are canonical, no code is microscope-aware. The single-tile case is the
+  trivial (identity) composition.
+- **Pixel path helpers take `built_image_data_dir` explicitly and import no orchestration paths.**
+  `materialized_image_paths.py` is the pixel-file sibling of orchestration `paths.py`, not a second
+  registry: first positional arg is the root, no `PROJECT_ROOT` fallback, no
+  `pipeline_orchestrator.orchestration.paths` import. `paths.py` resolves stage roots / declared
+  artifacts / sentinels; pixel helpers resolve concrete files inside the pixel store.
 
-Folder = stage/kingdom or a real concept with its own public surface; file = moment within it. Each
-subfolder here names a genuine concept (planning, fields, xy_composition, projection, layout), not an
-abstract category — `planning/`/`layout/` earn their place because each owns one coherent contract.
-`scope/` is the microscope fork. Avoid a generic `shared/` or `utils/` drawer: name the concept
-(`xy_composition/`), not its sharedness.
-
-#### The sacred boundary: raw microscope chaos in, canonical field bundles out
-The microscope seam is **not "one function differs"** — it is a small backend *adapter*. A scope
-backend's job is everything from raw storage up to canonical bundles: select this well/channel/time's
-inventory rows, resolve source paths, load pixels, attach tile geometry, and return a `FieldsForTime`
-**plus** the `FrameTilingConfig` for its quirks. After that bundle, **all** code is shared:
-XY composition → projection/z_stack → path → frame_inventory row. The durable rule:
-
-> **Microscope-specific code ends where raw files become canonical `FieldsForTime`. Everything after
-> is shared.** The backend exposes two things: `fields_for_time(...) → FieldsForTime` and
-> `frame_tiling_config(...) → FrameTilingConfig`. Reading pixels is not the only scope-specific job;
-> constructing the tiling config (incl. any legacy-compat quirks) is too.
-
-#### Two tile abstractions — different levels, never merged
-`FieldsForTime` / `TileField` is the **microscope-aware backend output** (position_index, x/y µm,
-z indices, channel, time, µm-per-px, source paths, provenance). `TileSpec` / `FrameTileResult` is the
-**stitcher-local** I/O (`tile_id` + `image` in; stitched + transforms + QC out). They are different
-abstraction levels and must not be fused — that is the "one concept, one home" rule applied to a
-*seam*. The adapter (`compose_fields.py`) is the customs office between the two worlds: it unpacks
-`FieldsForTime.tiles → [TileSpec]`, calls the stitcher, and carries geometry forward. Stitch QC
-(`FrameTileResult.qc`, `fallback_used`) flows on into `frame_inventory` as provenance columns.
-
-#### Two product axes, composed in sequence (not mutually exclusive)
-Per the microscopy literature, **XY composition** (tile fields) and **Z handling** (collapse vs
-preserve) are orthogonal axes applied in order, not rival product types. A finished frame can be both
-a stitched mosaic *and* a focus-stack. The plan request encodes only the Z axis as a product type;
-the XY axis is decided by acquisition reality (one tile vs many), not by the user:
-
-```python
-@dataclass(frozen=True)
-class ImageProductRequest:                       # what the PLAN holds — product intent only
-    channel_id: str
-    image_product_type: Literal["projection", "z_stack"]
-    projection_method: Literal["focus_stack", "max", "mean"] | None = None
-# projection ⇒ projection_method set, output rows z_index = None
-# z_stack    ⇒ projection_method None, output rows z_index = int (one file per z)
-```
-
-`z_stack` is a **product shape, not a projection method**. The plan does **not** carry
-`stitch`/`single_tile`/microscope geometry — "this well is one tile or many" is acquisition fact the
-backend knows, not product intent the user types. Plan = *what to make*; backend + acquisition
-inventory = *what raw geometry exists*; `xy_composition` = *how fields are composed*.
-
-#### Legacy Keyence quirks are a locked room, not the architecture
-`frame_tiler` carries historical Keyence-compat options (`use_legacy_canvas`, `legacy_canvas_shape`,
-`transpose_after_stitch`, `invert_intensity`, `compat_postprocess`). These are **barnacles, not
-universal XY-composition primitives.** The generic `FrameTilingConfig` is clean
-(`alignment_method`, `fallback_order`, `qc_thresholds`); the legacy options live in a clearly-named
-compat struct the **Keyence backend** sets to reproduce older outputs during migration. They are not
-part of the generic image-materialization contract — a future reader must never mistake
-`invert_intensity` for a shared concept. (When `frame_tiler.py` moves here from
-`image_building/utils/`, its docstring must drop "Keyence" from the headline: it is scope-agnostic XY
-composition whose single-tile case is identity; Keyence is just one caller.)
-
-Bridge rule: `layout/materialized_image_paths.py` is the pixel-file sibling of orchestration
-`paths.py`, not a second path registry. It takes `built_image_data_dir` as the first positional
-argument in every public path function, never constructs a root, never has a `PROJECT_ROOT` fallback,
-and never imports `pipeline_orchestrator.orchestration.paths`. `paths.py` resolves stage roots,
-declared artifacts, and sentinels; `materialized_image_paths.py` resolves concrete files inside the
-pixel store.
+> Folder = stage/kingdom; file = moment within it. The only subfolder here is `scope/`, because the
+> code really forks by microscope there. Exact filenames, dataclass names, the compose/adapter
+> internals, the product-axis schema, and the legacy-Keyence-compat handling live in the running
+> roadmap (`front_half_reorg_roadmap.md`) until they survive implementation — then the stable parts
+> compile back here. Doctrine here; plumbing there.
 
 ---
 
@@ -302,13 +237,9 @@ inventing a new path string or a new id format, a constraint was broken.
 - [ ] Controlled tokens are named constants, defined once.
 - [ ] `output_root` (and every dependency) passed explicitly; no haunted globals.
 - [ ] `paths.py` constructs paths only — no `.exists()`, no directory listing, no file reads.
-- [ ] `materialized_image_paths.py` takes `built_image_data_dir` explicitly and imports no orchestration path helpers.
+- [ ] Pixel path helpers take `built_image_data_dir` explicitly and import no orchestration path helpers.
 - [ ] The producer is named for the stage (`materialize_well`), not one operation (`stitch_well`); stitch + projection are peer composition steps.
-- [ ] Scope-specific code ends at `FieldsForTime`; backend exposes `fields_for_time(...)` AND `frame_tiling_config(...)`; nothing after the bundle is microscope-aware.
-- [ ] `FieldsForTime`/`TileField` (backend output) is never merged with `TileSpec`/`FrameTileResult` (stitcher I/O); the adapter is the named seam.
-- [ ] The materialization plan holds product intent only (`image_product_type`, `projection_method`); no `stitch`/`single_tile`/microscope geometry leaks into it.
-- [ ] `z_stack` is a product shape (z_index = int), not a `projection_method`; projection rows have z_index = None.
-- [ ] Legacy Keyence tiling quirks (`use_legacy_canvas`, `invert_intensity`, …) live in a backend-owned compat struct, not the generic `FrameTilingConfig`; `frame_tiler` docstring is scope-agnostic.
+- [ ] Scope-specific code ends at canonical acquired image tiles; nothing after the bundle is microscope-aware.
 - [ ] Snakemake input functions declare expected paths only; they do not live-check files the DAG is meant to build.
 - [ ] Runtime collectors may inspect disk, but their name/docstring says they are runtime/disk-scan helpers.
 - [ ] `tasks.py` verbs are thin — parse + delegate to the stage module, no stage logic.

@@ -395,13 +395,14 @@ keyed on `well_id`:
 > explicit "today's code" callouts keep the legacy `frame_contract`. The code rename is a Scope-2
 > migration.)*
 
-> **`materialize_well` internals are specified in `pipeline_file_philosophy.md` → "Image
-> materialization."** This doc owns the *stage's place in the DAG* (one rule, config-dispatched,
-> per well_id, off-registry image tree). The philosophy doc owns the *producer's internal model*:
-> the `FieldsForTime` backend seam ("raw chaos in, canonical bundles out"), the two product axes
-> (XY composition then Z projection/z_stack — stitch is one step, not the whole stage), and the
-> `frame_tiler`/`compose_fields` layout. Keep them in sync: this doc says **where** the stage runs;
-> the philosophy doc says **how** the producer is built.
+> **`materialize_well` is named for the stage, not one op.** Stitching is one composition step (peer
+> to projection), not the whole stage — hence `materialize_well`, not `stitch_well`. This doc owns the
+> *stage's place in the DAG* (one rule, config-dispatched, per well_id, off-registry image tree). The
+> stable doctrine — intent → acquired tiles → XY mosaic → image product → paths → frame inventory, and
+> "scope-specific code ends at canonical acquired image tiles" — is in `pipeline_file_philosophy.md` →
+> "Image materialization." The producer's internal plumbing (exact filenames, the acquired-tiles
+> dataclass, compose/adapter, product-axis schema, legacy-Keyence-compat) lives in
+> `front_half_reorg_roadmap.md` until it survives implementation. This doc: **where** the stage runs.
 
 - **`target_wells` is config-only** (no materialized `selected_wells.txt`): the checkpoint
   emits ALL discovered `well_id`s; the well-runner computes `active_wells = discovered ∩

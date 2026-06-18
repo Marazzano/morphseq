@@ -345,26 +345,44 @@ data_pipeline/
                                              #   quarantine_reason; producer is scope backend
 
   image_materialization/                     # DOWNSTREAM of ingest; exits at frame_inventory
-    materialization_plan.py                  # 🔧 Step 6 — WHAT products are requested
-                                             #   (initially BF/projection/focus_stack only)
-    materialized_image_paths.py              # 🔧 Step 6 — WHERE one concrete product file lands
-                                             #   takes built_image_data_dir explicitly; imports no paths.py
-    stitch_well.py                           # 🔧 Step 6 — PRODUCE dispatcher:
-                                             #   chooses backend by microscope; thin, tasks.py-style
+                                             #   FLAT files — filenames carry the moment; only scope/ is a subfolder.
+                                             #   Producer named for the STAGE (materialize_well), not one op (stitch_well).
+                                             #   Reads: intent → acquired tiles → XY mosaic → image product → paths → frame inventory.
+    materialization_plan.py                  # 🔧 Step 6 — WHAT products are requested (intent only).
+                                             #   ImageProductRequest(channel_id, image_product_type∈{projection,z_stack},
+                                             #   projection_method∈{focus_stack,max,mean}|None). Step 6 = BF/projection/focus_stack only.
+                                             #   NO stitch/single_tile/microscope geometry — that's acquisition fact, not intent.
+    acquired_image_tiles.py                  # 🔨 Step 6 — the SCOPE→SHARED seam (canonical bundle).
+                                             #   AcquiredImageTiles / one tile carries: position_index, x/y µm, z indices,
+                                             #   channel, time, µm-per-px, source paths, provenance. ("acquired image tiles",
+                                             #   NOT "fields" — field is overloaded.) Microscope code ends HERE.
+    compose_xy_mosaic.py                     # 🔨 Step 6 — SHARED adapter+XY composition.
+                                             #   AcquiredImageTiles.tiles → TileSpec[] → frame_tiler → mosaic; single tile = identity.
+                                             #   TileSpec/FrameTileResult (stitcher-local) is NEVER merged with AcquiredImageTiles.
+                                             #   Stitch QC (FrameTileResult.qc, fallback_used) flows on as frame_inventory provenance.
+    materialize_image_product.py             # 🔨 Step 6 — SHARED product branch (owns the product, not just Z math).
+                                             #   projection ⇒ collapse Z (focus_stack|max|mean), z_index=None;
+                                             #   z_stack ⇒ preserve Z, one file per z, z_index=int. z_stack is a SHAPE, not a method.
+    materialized_image_paths.py              # 🔧 Step 6 — WHERE one concrete product file lands.
+                                             #   takes built_image_data_dir explicitly; imports no paths.py. (Was stitched/layout.py.)
     frame_inventory_contract.py              # 🔨 Step 2 / move in Step 6 — RECORD contract:
-                                             #   atoms, derived ids, required columns, product row grain
+                                             #   atoms, derived ids, required columns, product row grain. (Was stitched/contracts/.)
+    materialize_well.py                      # 🔧 Step 6 — PRODUCE dispatcher:
+                                             #   chooses backend by microscope; thin, tasks.py-style. (Renamed from stitch_well.)
     scope/
       yx1/
-        stitch_well_yx1.py                   # 🔨 Step 3 / rename in Step 6 — SCOPE BACKEND:
-                                             #   ND2 tensor slice + LoG focus; emits native rows/images
+        materialize_well_yx1.py              # 🔨 Step 3 / rename+reshape in Step 6 — SCOPE BACKEND:
+                                             #   ND2 → AcquiredImageTiles (1 tile) + FrameTilingConfig (clean).
+                                             #   (Was scope/yx1/materialize_yx1_stitched_images.py.)
       keyence/
-        stitch_well_keyence.py               # ⏸ SCOPE BACKEND:
-                                             #   future; consumes resolved Keyence inventory
+        materialize_well_keyence.py          # ⏸ SCOPE BACKEND: TIFF set → AcquiredImageTiles (N tiles, geometry)
+                                             #   + FrameTilingConfig (+ optional legacy-compat struct). Future.
 
-    shared/                                  # ⏳ MOVE LAST (only after stitched pkg is stable)
-      log_focus.py                           #   ⏳ keep in image_building/shared/ until then
-      frame_tiler.py                         #   ⏳ LIVE engine — do NOT move yet
-      image_io.py
+    # frame_tiler / log_focus: ⏳ MOVE LAST (only after this pkg is stable). frame_tiler is the scope-agnostic
+    # XY engine — when it moves here its docstring drops "Keyence" (single-tile = identity; Keyence is one caller).
+    # Generic FrameTilingConfig is CLEAN (alignment_method, fallback_order, qc_thresholds); legacy quirks
+    # (use_legacy_canvas, invert_intensity, transpose_after_stitch, compat_postprocess) live in a backend-owned
+    # compat struct, NOT the generic config — barnacles, not architecture.
 
   schemas/                                   # ⚠️ LEGACY COMPAT ONLY during migration
     frame_contract.py                        #   LEGACY COMPAT; do NOT add target semantics; retire gradually
