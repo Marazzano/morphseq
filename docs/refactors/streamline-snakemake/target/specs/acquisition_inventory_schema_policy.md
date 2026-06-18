@@ -136,6 +136,39 @@ not identity).
 
 ---
 
+## Scope → inventory mapping (the adapter seam — DESIGN, not yet built)
+
+The acquisition inventory's Tier-1 columns are the *converged* names. But each scope SAYS things in its
+own vocabulary, and the step that translates **scope-native facts → the shared core schema** is an
+**adapter** — the front-end twin of the model-backend adapter pattern in
+`specs/detect-seg-track/adapter_seams.md`:
+
+```text
+model backend:  model-native output    → filter (backend policy) → adapt → frame_detections (shared)
+scope backend:  scope-native metadata   → normalize (scope policy) → adapt → acquisition_inventory (core)
+```
+
+The clearest live example is **channel**: the ND2/BZ-X raw channel string (`raw_channel_name`, e.g.
+`"EYES - Dia"`) is mapped to the converged `channel_id` token (`BF`). Today that mapping is inline in
+`_normalize_channel_name` and the *rule* (which raw string → which `channel_id`) is **hardcoded per
+scope**, not tracked as data. The inventory records the OUTPUT triple
+(`channel_index ↔ raw_channel_name ↔ channel_id`) per row, but the MAPPING RULE itself is not a
+first-class artifact.
+
+**Target (deferred, its own pass):**
+- The scope→inventory mapping is **config-specific** and should be **routed through the scope backend**
+  the same way a detector backend routes its config (prompt/thresholds). For channel that means a
+  declared, config-driven `raw_channel_name → channel_id` map per scope/experiment instead of a
+  hardcoded normalizer.
+- The same machinery serves the later **scope → detector channel** mapping (what GroundingDINO expects
+  vs. what the scope provides) — one adapter shape, two uses.
+- The mapping rule must be **tracked** (config + provenance), so a row's `channel_id` is always
+  traceable back to the raw string and the rule that converged it.
+
+This block is design intent. The actual adapter extraction (a scope-channel adapter module + the
+config-driven map, mirroring `adapt_*_detections.py`) is a separate planned refactor — not the time-atom
+/ legacy-cutover work.
+
 ## See also
 
 - `specs/pipeline_file_philosophy.md` — the validator-ownership and section-banner doctrine.

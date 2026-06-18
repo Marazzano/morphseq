@@ -103,7 +103,7 @@ def test_inventory_grain_is_position_z_channel_time():
 def test_inventory_has_tensor_axes_and_channel_mapping():
     df = _make_inventory()
     for col in ("position_index", "z_index", "channel_index", "time_index",
-                "raw_channel_name", "channel", "source_nd2_path", "n_z"):
+                "raw_channel_name", "channel_id", "source_nd2_path", "n_z"):
         assert col in df.columns
     # Z is exploded, not collapsed.
     assert sorted(df["z_index"].unique().tolist()) == [0, 1, 2]

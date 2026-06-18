@@ -27,39 +27,43 @@ from typing import Mapping, Sequence
 import nd2
 import pandas as pd
 
+from data_pipeline.metadata_ingest.scope.acquisition_inventory_contract import (
+    REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
+)
 from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
     assert_channel_mapping_consistent,
     assert_columns_present,
     assert_positive_column,
     assert_unique_on_key,
 )
+from data_pipeline.metadata_ingest.time_helpers import add_elapsed_time_columns
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 # Contract — schema + identity (the columns + the tensor cell key this scope produces)
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
-# The maximal per-coordinate schema (the tensor address + all relevant ND2 facts). Standardized
-# ``*_index`` axis vocabulary — the inventory is a NEW artifact, so it is born with target names
-# (the legacy scope_metadata keeps time_int/z_position until the Scope-2 collapse).
-YX1_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
-    "experiment_id",
+# YX1-specific Tier-2 columns (the tensor address + ND2 facts unique to YX1 — see the schema policy).
+# These are ALLOWED + carried but are NOT the shared core; the shared core is hard-checked for every
+# scope and lives in ``acquisition_inventory_contract.py``. ``acquisition_time_s`` is the YX1 raw time
+# atom kept for audit/re-derivation; the CONVERGED ``elapsed_time_s`` is core (derived from it).
+YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS: tuple[str, ...] = (
     "raw_position_label",       # ND2 P-index as string (PRE-mapping — no well_id at ingest)
-    "position_index",           # tensor P axis (int)
     "z_index",                  # tensor Z axis (0..n_z-1) — exploded, never collapsed
     "channel_index",            # tensor C axis (numeric index into the ND2 channel list)
-    "channel",                  # normalized token (BF/GFP/RFP)
-    "raw_channel_name",         # raw ND2 channel string (e.g. "EYES - Dia")
-    "time_index",               # tensor T axis (standardized; legacy time_int)
-    "acquisition_time_s",       # per-frame ND2 timestamp
+    "acquisition_time_s",       # raw per-frame ND2 timestamp (the atom elapsed_time_s is derived from)
     "x_um",                     # stage position (provenance; enables the join)
     "y_um",
-    "micrometers_per_pixel",    # calibration — validated > 0
-    "image_width_px",
-    "image_height_px",
     "objective_magnification",
-    "microscope_id",
     "n_z",                      # full Z depth of this acquisition (provenance)
     "source_nd2_path",          # the ONE ND2 (no per-plane path)
+)
+
+# The maximal per-coordinate schema = the SHARED Tier-1 core + the YX1 Tier-2 extras. Standardized
+# ``*_index`` axis vocabulary — the inventory is a NEW artifact, born with target names (the legacy
+# scope_metadata keeps time_int/z_position until the Scope-2 collapse).
+YX1_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
+    *REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
+    *YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS,
 )
 
 # The tensor cell key — exactly one raw unit may occupy each cell. YX1 is clean by construction.
@@ -128,14 +132,32 @@ def validate_yx1_acquisition_inventory(df: pd.DataFrame, *, check_sources: bool 
     materialize backend just before it reads the ND2) it ADDITIONALLY asserts each ``source_nd2_path``
     still exists/opens — the moment the "did the raw source survive?" risk actually appears.
     """
+    # Hard-check the shared core first (every scope must satisfy it), then the full YX1 schema.
+    assert_columns_present(df, REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS, scope_label=_SCOPE_LABEL)
     assert_columns_present(df, YX1_ACQUISITION_INVENTORY_COLUMNS, scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "micrometers_per_pixel", scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "image_width_px", scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "image_height_px", scope_label=_SCOPE_LABEL)
-    assert_channel_mapping_consistent(df, scope_label=_SCOPE_LABEL)
+    assert_channel_mapping_consistent(df, normalized_column="channel_id", scope_label=_SCOPE_LABEL)
     assert_unique_on_key(df, YX1_ACQUISITION_CELL_KEY, scope_label=_SCOPE_LABEL)
+    assert_elapsed_time_valid(df, scope_label=_SCOPE_LABEL)
     if check_sources:
         assert_acquisition_sources_readable(df, scope_label=_SCOPE_LABEL)
+
+
+def assert_elapsed_time_valid(df: pd.DataFrame, *, scope_label: str) -> None:
+    """Fail loud unless ``elapsed_time_s`` is finite and non-negative on every row.
+
+    ``elapsed_time_s`` is rebased per position to that position's first frame, so the minimum is 0
+    (not > 0) — a NaN or negative value means the raw ``acquisition_time_s`` was missing/unsorted.
+    """
+    elapsed = pd.to_numeric(df["elapsed_time_s"], errors="coerce")
+    bad = elapsed.isna() | (elapsed < 0)
+    if bad.any():
+        raise ValueError(
+            f"{scope_label}: 'elapsed_time_s' must be finite and non-negative; "
+            f"{int(bad.sum())} row(s) violate this (sample: {elapsed[bad].head(5).tolist()})."
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -187,7 +209,7 @@ def build_yx1_acquisition_inventory_rows(
                             "position_index": int(position_index),
                             "z_index": int(z_index),
                             "channel_index": int(channel_index),
-                            "channel": channel,
+                            "channel_id": channel,
                             "raw_channel_name": raw_channel_name,
                             "time_index": int(time_index),
                             "acquisition_time_s": acquisition_time_s,
@@ -206,9 +228,33 @@ def build_yx1_acquisition_inventory_rows(
     return rows
 
 
+def _derive_elapsed_time_s(df: pd.DataFrame) -> pd.DataFrame:
+    """Add ``elapsed_time_s`` (seconds since each position's first frame) via the shared helper.
+
+    Reuses ``time_helpers.add_elapsed_time_columns`` (the one scope-neutral time derivation) pointed at
+    the YX1 raw atom ``acquisition_time_s`` and grouped per ``position_index`` (YX1 position ≡ well,
+    1:1). The helper sorts on an internal ``time_int`` and also emits min/hr columns; we alias
+    ``time_index`` → ``time_int`` for it and keep only the canonical ``elapsed_time_s``.
+    """
+    work = df.copy()
+    work["time_int"] = work["time_index"]
+    # The helper sorts rows internally but preserves the original index labels, so reindexing back
+    # onto df.index restores row order while carrying each row's derived value.
+    work = add_elapsed_time_columns(
+        work,
+        group_cols=["position_index"],
+        experiment_time_col="acquisition_time_s",
+    )
+    out = df.copy()
+    out["elapsed_time_s"] = work["elapsed_time_s"].reindex(df.index)
+    return out
+
+
 def build_yx1_acquisition_inventory(**kwargs) -> pd.DataFrame:
     """Build + validate the YX1 acquisition inventory DataFrame (the one entry point the stage calls)."""
     rows = build_yx1_acquisition_inventory_rows(**kwargs)
-    df = pd.DataFrame(rows, columns=list(YX1_ACQUISITION_INVENTORY_COLUMNS))
+    df = pd.DataFrame(rows)
+    df = _derive_elapsed_time_s(df)
+    df = df.reindex(columns=list(YX1_ACQUISITION_INVENTORY_COLUMNS))
     validate_yx1_acquisition_inventory(df)
     return df

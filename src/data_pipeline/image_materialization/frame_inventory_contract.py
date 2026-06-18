@@ -39,10 +39,21 @@ REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "well_index",                  # local well label (B01) — atom
     "channel_id",                  # controlled channel token (BF / GFP …) — atom
     "time_index",                  # T dimension, 0-based contiguous — atom
+    "elapsed_time_s",              # seconds since this well's first frame — CARRIED from acquisition
+    "acquisition_time_s",          # raw per-frame timestamp — CARRIED from acquisition (audit)
     "source_image_path",           # TIFF / PNG / JPEG; absolute OR relative to image_root
     "source_micrometers_per_pixel",  # calibration µm/px, required > 0
     "image_width_px",              # declared width (self-check against image header)
     "image_height_px",             # declared height (self-check against image header)
+)
+
+# The carried-through time block — OWNED by the acquisition inventory (derived there from the
+# scope-specific raw atom), CARRIED unchanged by the materializer. Downstream reads ``elapsed_time_s``.
+# See specs/acquisition_inventory_schema_policy.md. NOT part of the per-frame unique key (time is not
+# identity).
+FRAME_INVENTORY_TIME_BLOCK: tuple[str, ...] = (
+    "elapsed_time_s",
+    "acquisition_time_s",
 )
 
 # Composed from atoms by the build step; checked-if-supplied, never trusted blindly.

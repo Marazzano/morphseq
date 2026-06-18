@@ -21,6 +21,8 @@ def _inventory_row(well_id: str, time_index: int) -> dict:
         "well_index": well_index,
         "channel_id": "BF",
         "time_index": time_index,
+        "elapsed_time_s": float(time_index * 120),
+        "acquisition_time_s": float(time_index * 120),
         "z_index": pd.NA,
         "image_product_type": "projection",
         "projection_method": "focus_stack",

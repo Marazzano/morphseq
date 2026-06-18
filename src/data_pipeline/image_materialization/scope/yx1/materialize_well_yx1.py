@@ -60,6 +60,8 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "well_index",
     "channel_id",
     "time_index",
+    "elapsed_time_s",
+    "acquisition_time_s",
     "z_index",
     "image_product_type",
     "projection_method",
@@ -241,6 +243,16 @@ def materialize_yx1_well(
             print(msg, flush=True)
         rows: list[dict] = []
 
+        # Per-time_index time-column lookup, carried through from the acquisition inventory (the
+        # OWNER/deriver of the time block — see specs/acquisition_inventory_schema_policy.md). The
+        # values are constant across z/channel within a time_index, so one row per time_index suffices.
+        time_cols = ["elapsed_time_s", "acquisition_time_s"]
+        time_lookup = (
+            well_acquisition_inventory_df.drop_duplicates("time_index")
+            .set_index("time_index")[time_cols]
+            .to_dict("index")
+        )
+
         # --- Materialization loop: per time_index → focus-stack → write PNG → record one row ---
         for t in time_indices:
             stack = _get_stack(dask_arr, t=t, w=position_index)
@@ -257,11 +269,14 @@ def materialize_yx1_well(
             out_path.parent.mkdir(parents=True, exist_ok=True)
             skio.imsave(str(out_path), ff, check_contrast=False)
 
+            t_times = time_lookup[t]
             rows.append({
                 "experiment_id": experiment_id,
                 "well_index": well_index,
                 "channel_id": "BF",
                 "time_index": t,
+                "elapsed_time_s": t_times["elapsed_time_s"],
+                "acquisition_time_s": t_times["acquisition_time_s"],
                 "z_index": pd.NA,
                 "image_product_type": "projection",
                 "projection_method": "focus_stack",

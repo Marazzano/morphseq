@@ -51,10 +51,12 @@ def _make_inventory(
         "position_index": position_index,
         "z_index": 0,
         "channel_index": 0,
-        "channel": "BF",
+        "channel_id": "BF",
         "raw_channel_name": "EYES - Dia",
         "time_index": list(range(n_times)),
         "acquisition_time_s": [100.0 * t for t in range(n_times)],
+        # elapsed_time_s is rebased per position to its first frame (t=0 → 0.0); single position here.
+        "elapsed_time_s": [100.0 * t for t in range(n_times)],
         "x_um": 10.0,
         "y_um": 20.0,
         "micrometers_per_pixel": 0.65,
