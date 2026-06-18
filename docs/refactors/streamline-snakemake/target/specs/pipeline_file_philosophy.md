@@ -18,9 +18,8 @@ refactor conforms to this.**
 
 The litmus test: paste a single function name or step key into a chat with someone who's never seen
 the repo. If they can tell you roughly what it does and where in the pipeline it runs, the name is
-right. `run_well_ids_for_experiment`, `collect_well_shard_paths`, `scope_metadata_mapped.csv`,
-`join_series_mapping_to_scope_metadata` all pass. `process_data`, `helper2`, `do_well`, `df2`
-all fail.
+right. `run_well_ids_for_experiment`, `collect_well_shard_paths`, `position_well_mapping.csv`,
+`apply_position_to_well_mapping` all pass. `process_data`, `helper2`, `do_well`, `df2` all fail.
 
 ---
 
@@ -68,8 +67,12 @@ already part of `front_end_naming_and_frame_inventory_flow.md`. That's a fixed e
 prefer nouns.
 
 ### Names carry their position in the flow
-- `join_series_mapping_to_scope_metadata` *names the operation* (join mapping onto scope metadata) —
-  not `apply_series_mapping_yx1` (names a mechanism + a microscope that shouldn't be in the name).
+- `apply_position_to_well_mapping` *names the operation* (apply the canonical position→well mapping
+  onto scope metadata) — not `apply_series_mapping_yx1` (uses stale ND2 jargon + a microscope that
+  should not be in the shared stage name).
+- `position_well_mapping.csv` is the canonical bridge from acquisition position to well identity.
+  `series_number` is stale ND2 vocabulary and is not part of that contract; do not add fallbacks or
+  compatibility shims.
 - `scope_metadata_mapped.csv` — the artifact says it is scope metadata, after mapping.
 - `discovered_wells.txt` — not `wells.txt`; says *which* well list (discovered, pre-filter), so it
   never gets confused with `active_wells` / `validated_wells`.

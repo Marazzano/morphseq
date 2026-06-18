@@ -172,8 +172,8 @@ run_wells = discovered_wells ∩ target_wells [ ∩ eligible_wells ]     ← ∩
 |---|---|---|---|
 | `scope_metadata__{scope}.csv` | raw scope metadata normalized for this microscope | `ingest_scope_metadata` | experiment |
 | `acquisition_inventory__{scope}.csv` | raw acquisition units/axes before well fanout | `ingest_scope_metadata` | experiment |
-| `position_well_mapping.csv` | raw position/series → well mapping | `map_positions_to_wells` | experiment |
-| `scope_metadata_mapped.csv` | canonical metadata after `well_id` minting | `join_series_mapping_to_scope_metadata` | experiment |
+| `position_well_mapping.csv` | raw acquisition position → well mapping | `map_positions_to_wells` | experiment |
+| `scope_metadata_mapped.csv` | canonical metadata after `well_id` minting | `apply_position_to_well_mapping` | experiment |
 | `discovered_wells.txt` | physical well identities from canonical metadata | `discover_wells` | experiment fan point |
 | `well_acquisition_summary__{scope}.csv` | per-well acquisition/stitch eligibility | `resolve_acquisitions` / eligibility | experiment |
 | `run_wells` | computed set (not necessarily persisted at first) | well_runner | planning/runtime selection |
@@ -399,24 +399,15 @@ data_pipeline/
 > by helpers, never listed as artifacts.)
 
 **Already correct (no change):** `ingest_scope_metadata` (incl. `acquisition_inventory__{scope}.csv`),
-`map_positions_to_wells`, `join_series_mapping_to_scope_metadata`, `discover_wells`.
+`map_positions_to_wells`, `apply_position_to_well_mapping`, `discover_wells`.
 
-**🔨 NEW rows — `stitch_well_candidate` (Step 3, TEMPORARY) → `stitch_well` (Step 6, promoted):**
-The strangler needs the candidate to write **isolated** paths so it can NEVER collide with live
-output. So register a **temporary candidate row first**, promote to the real row at Step 6, drop the
-candidate row at Step 7.
+**🔨 NEW row — `stitch_well` (Step 6, promoted):**
+Step 3 intentionally did **not** add a `stitch_well_candidate` registry row. The candidate ran as a
+standalone comparison path, and candidate image isolation is owned by `layout.py` via
+`candidate=True`. Step 6 adds the live orchestration artifact/sentinel and calls the accepted
+materializer with `candidate=False`.
 ```python
-# Step 3 — TEMPORARY candidate row (isolated `candidate/` paths; deleted at Step 7 strangle):
-"stitch_well_candidate": {
-    "stage": "built_image_data",
-    "fanout": PER_WELL,
-    "artifacts": {
-        # ISOLATED under candidate/ — cannot collide with the live materialize_stitched_images output.
-        "done": "candidate/{well_id}/.well_{well_id}.candidate.done",
-    },
-},
-
-# Step 6 — PROMOTED live row (added when the candidate is accepted; candidate row then retired):
+# Step 6 — live row (added when the candidate is accepted):
 "stitch_well": {
     "stage": "built_image_data",            # the pixel store root
     "fanout": PER_WELL,                      # per-well (replaces the experiment-grain legacy rule)
@@ -425,9 +416,10 @@ candidate row at Step 7.
     },
 },
 ```
-> Note: the image files themselves stay **off-registry** — `layout.py::stitched_frame_path(...)` owns
-> them (image trees are not tabular artifacts). Only the sentinel is a registry row. The candidate's
-> `candidate/` prefix is the structural guarantee that legacy stays green (Step 4's "isolated paths").
+> Note: the image files themselves stay **off-registry** — `layout.py::materialized_image_path(...)`
+> / `projection_frame_path(...)` owns them (image trees are not tabular artifacts). Only the live
+> sentinel is a registry row. The candidate's `candidate/` prefix is controlled by `layout.py`, not
+> `paths.py`; that separation keeps registry artifacts and image layout from drifting.
 
 **🔧 CHANGED row — `frame_inventory` (de-stale; Step 6):**
 ```python
@@ -990,8 +982,8 @@ downstream per-well migration in Beat 2.
 - **Leave downstream consumers alone**
   - segmentation/features/QC still migrate in Beat 2
 
-- **Promote:** rename `stitch_well_candidate` → `stitch_well`; move candidate paths to the real
-  `built_image_data` location (or repoint `paths.py` from `candidate/` to live).
+- **Promote:** add/wire the live `stitch_well` rule and sentinel; call the accepted materializer with
+  `candidate=False` so `layout.py` writes the real `built_image_data` image tree.
 - **Native per-well frame_inventory:** stop selecting rows from an experiment-grain
   `frame_contract.csv`. The materializer-emitted per-well shard is the native product; validation
   checks it speaks **`time_index`** natively and that its paths resolve.

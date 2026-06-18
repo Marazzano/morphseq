@@ -11,6 +11,12 @@ to THIS doc on front-end detail and the canonical-key decision) and
 **canonical well key** (`well_id`), the post-fan front-end tail (stitch + per-well frame inventory), and the `paths.py` registry rows for these stages. It is the input for building
 `lib/paths.py`'s front end.
 
+> **2026-06-17 vocabulary update:** the live contract uses acquisition-position vocabulary:
+> `map_positions_to_wells` writes `position_well_mapping.csv`, and
+> `apply_position_to_well_mapping` writes `scope_metadata_mapped.csv`. `series_number` is stale ND2
+> vocabulary and is not a fallback contract. Older prose below may mention `series_*` while
+> explaining the original design history; use the position names for new code and docs.
+
 ---
 
 ## 🔑 THE CENTRAL FACT — two independent roots, not one chain
@@ -26,11 +32,11 @@ The front of the pipeline is **two independent metadata lineages** that run in p
   raw scope ──► ingest_scope_metadata ─► scope_metadata__{scope}.csv                │
    file         [the ONLY raw read]              │                                   │
                                                  ▼                                   │
-                map_series_to_wells ─► series_well_mapping.csv  (CSV→CSV, per-scope) │
+                map_positions_to_wells ─► position_well_mapping.csv  (CSV→CSV, per-scope) │
                                                  │                                   │
                           ══ CONVERGENCE LINE (microscope gone) ══                  │
                                                  ▼                                   │
-                join_series_mapping_to_scope_metadata ─► scope_metadata_mapped.csv  │
+                apply_position_to_well_mapping ─► scope_metadata_mapped.csv  │
                                                  │        (well_id minted here)      │
                                                  ▼                                   │
                 discover_wells ─► discovered_wells.txt  (reads mapped; #13)          │
@@ -43,13 +49,13 @@ The front of the pipeline is **two independent metadata lineages** that run in p
 > in the raw microscope file regardless of whether a human filled in the plate spreadsheet.
 > Discovery is purely a function of the **scope/raw lineage**; the plate lineage is an
 > *annotation* you join on afterward (it enriches already-discovered wells; it does not
-> discover them). The scope lineage converges at `join_series_mapping_to_scope_metadata`; the
+> discover them). The scope lineage converges at `apply_position_to_well_mapping`; the
 > plate lineage still converges with scope later at `consolidate_features`.
 
 **Verified in the current Snakefile (2026-06-03):**
 - `normalize_plate_metadata` output (`plate_metadata.csv`) is **not consumed by any front
   stage** — its next reader is `consolidate_features` (Snakefile:702), deep in Zone B/C.
-- `map_series_to_wells_yx1` **today** reads the **raw images dir directly** (Snakefile:177)
+- `map_positions_to_wells_yx1` **today** reads the **raw images dir directly** (Snakefile:177)
   and its docstring states outright: *"Does not depend on plate metadata."* (🟢 TARGET moves
   this to CSV→CSV — it reads stage XY from `scope_metadata` instead of re-opening the ND2; see
   "Why ONE raw read" below.) Either way the mapping comes from stage positions, not the Excel.
@@ -88,15 +94,15 @@ The front of the pipeline is **two independent metadata lineages** that run in p
 |---|---|---|---|
 | `normalize_plate_metadata` | **`ingest_plate_metadata`** | plate (Excel) | n/a |
 | `extract_scope_metadata_yx1` + `_keyence` | **`ingest_scope_metadata`** | scope (raw) | **one rule, config backend** (the only raw read) |
-| `map_series_to_wells_yx1` (+ keyence TODO) | **`map_series_to_wells`** | scope | **per-scope logic, CSV→CSV** (always-present passthrough) |
-| `apply_series_mapping_yx1` | **`join_series_mapping_to_scope_metadata`** | scope | shared (no dispatch) — the join; renamed to name the operation |
+| `map_positions_to_wells_yx1` (+ keyence TODO) | **`map_positions_to_wells`** | scope | **per-scope logic, CSV→CSV** (always-present passthrough) |
+| `apply_series_mapping_yx1` | **`apply_position_to_well_mapping`** | scope | shared (no dispatch) — applies the canonical position→well mapping |
 | `discover_wells` (checkpoint) | `discover_wells` *(reads mapped — #13)* → `discovered_wells.txt` | scope branch | shared |
 
 > Microscope (`yx1`/`keyence`) is a **code-dispatch** detail (chosen by `config["microscope"]`
 > inside one rule — NOT a `_yx1`/`_keyence` rule suffix), not part of the stage name or the
 > path. It applies to **three** per-scope stages: `ingest_scope_metadata` (the only raw read),
-> `map_series_to_wells` (per-scope CSV logic), and `stitch_well` after the fan. It converges out
-> at `join_series_mapping_to_scope_metadata` and only ever appears as a filename token
+> `map_positions_to_wells` (per-scope CSV logic), and `stitch_well` after the fan. It converges out
+> at `apply_position_to_well_mapping` and only ever appears as a filename token
 > (`scope_metadata__{scope}.csv`) handled by `format_vars`. **See "What is split per-microscope"
 > above for the full split, dispatch model, and the Keyence wiring gap.**
 
@@ -106,7 +112,7 @@ The front of the pipeline is **two independent metadata lineages** that run in p
 
 The scope lineage reads the raw metadata **exactly once** in Phase 1 (`ingest_scope_metadata`); everything
 after is CSV→CSV. The **convergence line** (where the microscope stops mattering) sits right
-after `map_series_to_wells`.
+after `map_positions_to_wells`.
 
 ```
 raw file ─► ingest_scope_metadata ─► scope_metadata__{scope}.csv      [the ONLY raw read]
@@ -115,13 +121,13 @@ raw file ─► ingest_scope_metadata ─► scope_metadata__{scope}.csv      [t
                                         · Keyence: well already resolved (folder-derived, inline)
                        │
                        ▼
-            map_series_to_wells ─► series_well_mapping.csv (+ .provenance.json)
+            map_positions_to_wells ─► position_well_mapping.csv (+ .provenance.json)
               [CSV→CSV, per-scope        · YX1: XY nearest-neighbor match vs reference plate
                logic, ALWAYS runs]       · Keyence: passthrough (read already-resolved well)
                        │
   ═══════════════════ CONVERGENCE LINE (microscope gone after here) ═══════════════════
                        │
-            join_series_mapping_to_scope_metadata ─► scope_metadata_mapped.csv (+ .validated)
+            apply_position_to_well_mapping ─► scope_metadata_mapped.csv (+ .validated)
               [SHARED, CSV join]          well_id MINTED HERE (exp + "_" + well_index)
                        │
                        ▼
@@ -130,17 +136,17 @@ raw file ─► ingest_scope_metadata ─► scope_metadata__{scope}.csv      [t
 ```
 
 **Why ONE raw read (verified 2026-06-03):** today `ingest_scope_metadata` and
-`map_series_to_wells` *both* open the raw microscope file independently — duplicated, expensive,
+`map_positions_to_wells` *both* open the raw microscope file independently — duplicated, expensive,
 fragile. The well-determining info is already available to ingest (YX1: stage XY is in the same
 ND2; **Keyence ingest already calls `_extract_well_from_path()`** — it literally parses the well
 from folder names during extraction). So `ingest_scope_metadata` becomes the **sole** raw reader;
-`map_series_to_wells` works from its CSV. ("Raw read" = a stage that opens/parses the original
+`map_positions_to_wells` works from its CSV. ("Raw read" = a stage that opens/parses the original
 ND2/TIFF files — the heavy, format-specific operation. Reading a CSV we produced is not a raw
 read.)
 
-**Why `map_series_to_wells` stays a stage (not dissolved):** it has a **constant interface**
-(`scope_metadata → series_well_mapping`) and **always runs**, so the DAG is **scope-invariant** —
-every scope produces `series_well_mapping.csv` at the same node, and everything downstream
+**Why `map_positions_to_wells` stays a stage (not dissolved):** it has a **constant interface**
+(`scope_metadata → position_well_mapping`) and **always runs**, so the DAG is **scope-invariant** —
+every scope produces `position_well_mapping.csv` at the same node, and everything downstream
 (stitching, the join) wires identically regardless of microscope. What varies is only the
 *logic inside*: YX1 does real XY matching; Keyence is a near-passthrough (the well was already
 resolved at ingest, so this stage just emits it in the standard shape). Adding a new scope =
@@ -149,7 +155,7 @@ skippable** — an always-present passthrough beats a conditionally-absent node 
 asks "did mapping happen?").
 
 **The convergence line is the most important boundary in the front end.** Above it: per-scope
-(`ingest_scope_metadata` reads raw; `map_series_to_wells` does per-scope CSV logic). Below it:
+(`ingest_scope_metadata` reads raw; `map_positions_to_wells` does per-scope CSV logic). Below it:
 fully shared. The rule: **read the raw file OR interpret scope-specific structure → microscope-
 specific; operate only on canonical tables → shared.**
 
@@ -167,15 +173,15 @@ The front end is **7 rules**: 1 plate root + 2 scope-front + 1 join + 1 fan + 2 
 |---|---|---|---|---|
 | `ingest_plate_metadata` | `{exp}_well_metadata.xlsx` | `plate_metadata.csv` | — | the OTHER root; genotype/condition + plate geometry. No front-end consumer. |
 | `ingest_scope_metadata` | **raw ND2/TIFF (ONLY raw read)** | `scope_metadata__{scope}.csv` | **MS** | per-scope extract; emits stage XY (YX1) / resolved well (Keyence). |
-| `map_series_to_wells` | `scope_metadata__{scope}.csv` | `series_well_mapping.csv` (+ `.provenance.json`) | **MS** *(CSV→CSV)* | constant interface, always runs. YX1: XY match; Keyence: passthrough. |
-| `join_series_mapping_to_scope_metadata` | `scope_metadata__{scope}.csv` + `series_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | the join; **`well_id` minted here**. ← microscope convergence line. |
+| `map_positions_to_wells` | `scope_metadata__{scope}.csv` | `position_well_mapping.csv` (+ `.provenance.json`) | **MS** *(CSV→CSV)* | constant interface, always runs. YX1: XY match; Keyence: passthrough. |
+| `apply_position_to_well_mapping` | `scope_metadata__{scope}.csv` + `position_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | applies mapping; **`well_id` minted here**. ← microscope convergence line. |
 | `discover_wells` *(checkpoint)* | `scope_metadata_mapped.csv` (#13) | `discovered_wells.txt` | Shared | reads the `well_id` column; emits ALL discovered well_ids. ⟱ FAN ⟱ |
 | `stitch_well` *(per well_id)* | raw + this well's mapping rows | `stitched_ff_images/{well_id}/{channel}/` + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; keyed on `well_id`. |
 | `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `frame_inventory_handoff_contract.md`. |
 
 **`well_id` is born at the join, read at discovery (matches code, line 68).**
-`map_series_to_wells` produces only the *mapping* (`series`, `raw_position_label` → `well_index`),
-not a per-row table, so it can't mint `well_id`. `join_series_mapping_to_scope_metadata` is the first
+`map_positions_to_wells` produces only the *mapping* (`position_index`, `raw_position_label` → `well_index`),
+not a per-row table, so it can't mint `well_id`. `apply_position_to_well_mapping` is the first
 point where every row reliably has both `experiment_id` and resolved `well_index` →
 `well_id = build_well_id(experiment_id, well_index)`. `discover_wells` then just reads the existing column.
 (See "The canonical well key" for why `well_id` is canonical everywhere after the fan.)
@@ -186,17 +192,17 @@ point where every row reliably has both `experiment_id` and resolved `well_index
 
 The per-microscope split is **two stages** — but only **one of them reads the raw file** — and
 then it **converges and never reappears.** The microscope matters for two reasons: reading the
-raw format (`ingest_scope_metadata`) and interpreting the scope-specific series→well relationship
-(`map_series_to_wells`). Everything downstream of `join_series_mapping_to_scope_metadata` is
+raw format (`ingest_scope_metadata`) and interpreting the scope-specific position→well relationship
+(`map_positions_to_wells`). Everything downstream of `apply_position_to_well_mapping` is
 shared/agnostic.
 
 ```
 yx1 raw ─►     ingest_scope_metadata [yx1]      ─┐  (ONLY raw read)
 keyence ─►     ingest_scope_metadata [keyence]  ─┘
                           │
-               map_series_to_wells [per-scope, CSV→CSV]   yx1: XY match | keyence: passthrough
+               map_positions_to_wells [per-scope, CSV→CSV]   yx1: XY match | keyence: passthrough
                           │
-        ══ CONVERGENCE LINE ══►  join_series_mapping_to_scope_metadata ─► (everything shared)
+        ══ CONVERGENCE LINE ══►  apply_position_to_well_mapping ─► (everything shared)
         ▲ MICROSCOPE-SPECIFIC ZONE (2 stages, 1 raw read)   ▲ CONVERGENCE POINT
                                                               scope token dropped here;
                                                               well_id minted at the join
@@ -204,10 +210,10 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 
 **Verified:**
 - The join's code already lives in `scope/shared/apply_series_mapping.py` (current filename;
-  TARGET renames the *stage* to `join_series_mapping_to_scope_metadata`) — the convergence is
+  TARGET renames the *stage* to `apply_position_to_well_mapping`) — the convergence is
   real, not aspirational.
 - **Keyence ingest already resolves the well** — `extract_keyence_scope_metadata` calls
-  `_extract_well_from_path()` (`XY01a`→`A01`) during extraction, so Keyence's `map_series_to_wells`
+  `_extract_well_from_path()` (`XY01a`→`A01`) during extraction, so Keyence's `map_positions_to_wells`
   is a passthrough and needs no raw read.
 - `build_frame_contract` is a **single** microscope-agnostic rule today (Snakefile:404). *(TARGET
   splits this into per-well `build_frame_inventory_well` + shared `validate_frame_inventory_well`,
@@ -219,14 +225,14 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 | Stage | Microscope-specific? | Why |
 |---|---|---|
 | `ingest_scope_metadata` | **YES** — `{yx1, keyence}` | **reads the raw file format** (ND2 vs TIFF) — the only raw read |
-| `map_series_to_wells` | **YES** — `{yx1, keyence}` | per-scope series→well **logic** (YX1: XY match; Keyence: passthrough) — but **CSV→CSV, no raw** |
-| `join_series_mapping_to_scope_metadata` | **NO** (shared) | pure table join; code in `scope/shared/` |
+| `map_positions_to_wells` | **YES** — `{yx1, keyence}` | per-scope position→well **logic** (YX1: XY match; Keyence: passthrough) — but **CSV→CSV, no raw** |
+| `apply_position_to_well_mapping` | **NO** (shared) | pure table join; code in `scope/shared/` |
 | `discover_wells` | **NO** (shared) | reads the converged `scope_metadata_mapped.csv` |
 | `stitch_well` | **YES** — `{yx1, keyence}` | reads the raw file to build images (format-specific) |
 | `validate_frame_inventory_well` | **NO** (shared) | reads converged metadata + stitched images (TARGET name; was `validate_frame_contract_well`) |
 
 > So there are **two microscope-specific points**: the **metadata front** (`ingest_scope_metadata`
-> + `map_series_to_wells`, on the scope branch before convergence) and the **image build**
+> + `map_positions_to_wells`, on the scope branch before convergence) and the **image build**
 > (`stitch_well`, after the fan). The join is the metadata convergence line: microscope-specific
 > metadata interpretation ends there. Image building has its own native-microscope segment after
 > the fan (`stitch_well`) and converges again at the canonical stitched handoff tree. The common
@@ -235,13 +241,13 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 
 ### TARGET dispatch model (DECISIONS, mdcolon 2026-06-03)
 1. **Keyence is first-class — wire it fully.** Today Keyence is **half-wired**: it has
-   `extract_scope_metadata_keyence`, but the Snakefile has **no** `map_series_to_wells_keyence`
+   `extract_scope_metadata_keyence`, but the Snakefile has **no** `map_positions_to_wells_keyence`
    and **no** `build_stitched_images_keyence` rule — even though the *code* exists
    (`mapping/series_well_mapper_keyence.py`, `image_building/keyence/stitched_ff_builder.py`).
    TARGET treats yx1 and keyence as **symmetric**: every microscope-specific stage dispatches
    both. **Wiring the missing Keyence rules is in scope.** *(⚠️ gap to close — see below.)*
 2. **One stage, backend chosen by config — NOT scope-suffixed rules.** A microscope-specific
-   stage is **one** stage key / `tasks.py` verb (`ingest_scope_metadata`, `map_series_to_wells`,
+   stage is **one** stage key / `tasks.py` verb (`ingest_scope_metadata`, `map_positions_to_wells`,
    `stitch_well`); the backend (`yx1`/`keyence`) is selected **by config inside the one rule**,
    not by duplicating the rule with a `_yx1`/`_keyence` suffix. This is the "microscope =
    code-dispatch, not a path/DAG concern" principle made concrete. The scope only ever appears
@@ -254,13 +260,13 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
    ```
    This replaces today's two scope-suffixed rules. *(Refactor item: collapse
    `extract_scope_metadata_yx1` + `_keyence` into one `ingest_scope_metadata` with config
-   dispatch; same for `map_series_to_wells` and `stitch_well`.)*
+   dispatch; same for `map_positions_to_wells` and `stitch_well`.)*
 
 > **⚠️ KEYENCE WIRING GAP (verified, must close for full symmetry):**
 > | Stage | yx1 rule | keyence rule | keyence code exists? |
 > |---|---|---|---|
 > | `ingest_scope_metadata` | ✅ | ✅ | ✅ |
-> | `map_series_to_wells` | ✅ | ❌ **missing** | ✅ `series_well_mapper_keyence.py` |
+> | `map_positions_to_wells` | ✅ | ❌ **missing** | ✅ `series_well_mapper_keyence.py` |
 > | `stitch_well` | ✅ | ❌ **missing** | ✅ `image_building/keyence/stitched_ff_builder.py` |
 >
 > The code is there; the **rules** aren't. Closing this gap is part of the "one stage, config
@@ -279,17 +285,17 @@ now superseded; see note below).
 ### Where each key lives
 | Key | Form | Where it lives | Lifetime |
 |---|---|---|---|
-| `raw_position_label` | raw microscope token (`P03`, `XY01a`, etc.) | a **column** in the scope-metadata tables (`scope_metadata__{scope}.csv`, `series_well_mapping.csv`) — the microscope emits raw position labels; it has no concept of a local plate well yet | **born at raw ingest; resolved by mapping.** Survives only as a raw column, never as a path/wildcard/key downstream. |
-| `well_index` | local plate well label (`B01`) | a **column** in the scope-metadata tables (`series_well_mapping.csv`, `scope_metadata_mapped.csv`) — mapping resolves the raw position label into a local well label | **born at mapping; promoted to `well_id` at the join.** Survives only as a column, never as a path/wildcard/key downstream. |
+| `raw_position_label` | raw microscope token (`P03`, `XY01a`, etc.) | a **column** in the scope-metadata tables (`scope_metadata__{scope}.csv`, `position_well_mapping.csv`) — the microscope emits raw position labels; it has no concept of a local plate well yet | **born at raw ingest; resolved by mapping.** Survives only as a raw column, never as a path/wildcard/key downstream. |
+| `well_index` | local plate well label (`B01`) | a **column** in the scope-metadata tables (`position_well_mapping.csv`, `scope_metadata_mapped.csv`) — mapping resolves the raw position label into a local well label | **born at mapping; promoted to `well_id` at the join.** Survives only as a column, never as a path/wildcard/key downstream. |
 | `well_id` | global (`20250912_B01`) | the join output column, then **everything after the fan**: `discovered_wells.txt`, the per-well wildcard, the image dir, all sentinels, all shard paths, `target_wells` (normalized) | **canonical from the join onward.** |
 
 ### The promotion is FREE — no extra piping (the key realization)
-`raw_position_label` is the raw token that map_series_to_wells resolves into `well_index`. `well_id` is **not more information** than `well_index` — it is `well_index` plus a value the
+`raw_position_label` is the raw token that map_positions_to_wells resolves into `well_index`. `well_id` is **not more information** than `well_index` — it is `well_index` plus a value the
 pipeline *already has in hand*: the experiment. So the promotion is a pure local construction,
 **one helper call, zero plumbing**:
 
 ```python
-# inside join_series_mapping_to_scope_metadata — exp_id is on every row, well_index is resolved
+# inside apply_position_to_well_mapping — exp_id is on every row, well_index is resolved
 well_id = build_well_id(exp_id, well_index)      # matches current code (apply_series_mapping.py:68)
 ```
 
@@ -297,17 +303,17 @@ No lookup table, no threading a value through earlier stages. **The join is the 
 promotion point** — it is the first stage where every row reliably has both `experiment_id` and
 a resolved `well_index`, so `well_id` is minted there (as the code already does) and lands as a
 column on `scope_metadata_mapped.csv`. `discover_wells` then just **reads that column** — no
-construction at the fan. (`map_series_to_wells` can't mint it: it produces only the
-`series_number → well_index` mapping, not a per-row table.)
+construction at the fan. (`map_positions_to_wells` can't mint it: it produces only the
+`position_index/raw_position_label → well_index` mapping, not a per-row table.)
 
 ```
 raw file ─► emits RAW POSITION labels (raw_position_label)      instrument knows no local well yet
    │
    ▼
 ingest + map ─► raw_position_label is resolved into well_index  ← local is CORRECT here
-   │            (scope_metadata, series_well_mapping)
+   │            (scope_metadata, position_well_mapping)
    ▼
-join_series_mapping_to_scope_metadata                          ← microscope convergence
+apply_position_to_well_mapping                          ← microscope convergence
    │  PROMOTE: well_id = build_well_id(exp_id, well_index)
    │  → scope_metadata_mapped.csv carries well_id column
    ▼
@@ -341,7 +347,7 @@ discover_wells ─► reads well_id column → discovered_wells.txt
   stitching helper (`yx1/stitched_ff_builder.py::compile_yx1_data`) treats the well label as
   an **opaque string**: it's only a dict key (`well_series_mapping`) and the output dir/filename
   component (`output_dir / well_name / "BF" / ...`). It never parses it. So the switch is a
-  **pure substitution** — build the mapping as `{well_id: series_number}` in the task/backend that prepares stitch inputs
+  **pure substitution** — build the mapping as `{well_id: position_index}` in the task/backend that prepares stitch inputs
   (where `well_id = build_well_id(experiment_id, well_index)` is carried through or constructed
   from a table that already has `well_id`), and the dir/filename become `well_id` automatically.
   **Zero logic change in the helper; one helper call in the rule.**
@@ -426,14 +432,14 @@ STAGES = {
             "raw": "scope_metadata__{scope}.csv",   # {scope} → format_vars={"scope":"yx1"|"keyence"}
         },
     },
-    "map_series_to_wells": {
+    "map_positions_to_wells": {
         "stage": "experiment_metadata",
         "fanout": "experiment",
         "artifacts": {
-            "mapping": "series_well_mapping.csv",   # .provenance.json via provenance_path()
+            "mapping": "position_well_mapping.csv",   # .provenance.json via provenance_path()
         },
     },
-    "join_series_mapping_to_scope_metadata": {      # the join; well_id minted here (CONVERGENCE)
+    "apply_position_to_well_mapping": {      # the join; well_id minted here (CONVERGENCE)
         "stage": "experiment_metadata",
         "fanout": "experiment",
         "artifacts": {
@@ -477,14 +483,14 @@ artifact_path(ROOT, "ingest_plate_metadata", "csv", "20250912")
 artifact_path(ROOT, "ingest_scope_metadata", "raw", "20250912", format_vars={"scope": "yx1"})
 #   → {ROOT}/experiment_metadata/20250912/scope_metadata__yx1.csv
 
-artifact_path(ROOT, "map_series_to_wells", "mapping", "20250912")
-#   → {ROOT}/experiment_metadata/20250912/series_well_mapping.csv
-provenance_path(ROOT, "map_series_to_wells", "mapping", "20250912")
-#   → {ROOT}/experiment_metadata/20250912/series_well_mapping.csv.provenance.json
+artifact_path(ROOT, "map_positions_to_wells", "mapping", "20250912")
+#   → {ROOT}/experiment_metadata/20250912/position_well_mapping.csv
+provenance_path(ROOT, "map_positions_to_wells", "mapping", "20250912")
+#   → {ROOT}/experiment_metadata/20250912/position_well_mapping.csv.provenance.json
 
-artifact_path(ROOT, "join_series_mapping_to_scope_metadata", "mapped", "20250912")
+artifact_path(ROOT, "apply_position_to_well_mapping", "mapped", "20250912")
 #   → {ROOT}/experiment_metadata/20250912/scope_metadata_mapped.csv
-validated_path(ROOT, "join_series_mapping_to_scope_metadata", "mapped", "20250912")
+validated_path(ROOT, "apply_position_to_well_mapping", "mapped", "20250912")
 #   → {ROOT}/experiment_metadata/20250912/scope_metadata_mapped.csv.validated
 
 artifact_path(ROOT, "discover_wells", "wells", "20250912")
@@ -509,7 +515,7 @@ artifact_path(ROOT, "frame_inventory", "inventory", "20250912", path_mode="merge
 > `.scope_metadata_mapped.validated` (a **leading-dot** form, Snakefile:202), while the MVP
 > contract assumes `{filename}.validated` (trailing). Resolve before wiring `validated_path`
 > — either normalize on-disk to `{filename}.validated` or give `validated_path` a dotfile
-> option. (Tracked in findings-doc AUDIT TODO.) `series_well_mapping.provenance.json` already
+> option. (Tracked in findings-doc AUDIT TODO.) `position_well_mapping.provenance.json` already
 > matches the trailing-suffix convention.
 
 ---
@@ -527,21 +533,21 @@ artifact_path(ROOT, "frame_inventory", "inventory", "20250912", path_mode="merge
    wildcard, shards, `target_wells`). `raw_position_label` survives only as the raw microscope
    token in the scope tables; `well_index` is the resolved local plate well label column.
    Promotion (`well_id = build_well_id(exp, well_index)`) happens once, at
-   `join_series_mapping_to_scope_metadata`; `discover_wells` only reads it. Image-building
+   `apply_position_to_well_mapping`; `discover_wells` only reads it. Image-building
    change verified small (opaque-string substitution in `stitched_ff_builder.py`).
    **Supersedes findings-doc "image-tree = local."**
 8. **`target_wells` is config-only** (no `selected_wells.txt`); checkpoint emits all
    discovered `well_id`s, well-runner filters. `materialize_selected_wells` dissolves.
 9. **ONE raw read.** `ingest_scope_metadata` is the **sole** stage that opens the raw
-    microscope files in Phase 1; `map_series_to_wells` becomes CSV→CSV. Per-microscope stages =
-    three (`ingest_scope_metadata`, `map_series_to_wells`, `stitch_well`) but only ingest +
+    microscope files in Phase 1; `map_positions_to_wells` becomes CSV→CSV. Per-microscope stages =
+    three (`ingest_scope_metadata`, `map_positions_to_wells`, `stitch_well`) but only ingest +
     stitch touch raw. The microscope-specific scope branch converges at
-    `join_series_mapping_to_scope_metadata`; the plate/scope roots still converge later at
+    `apply_position_to_well_mapping`; the plate/scope roots still converge later at
     `consolidate_features`.
-10. **`map_series_to_wells` stays a stage** with a constant interface (`scope_metadata →
-    series_well_mapping`), **always runs** (scope-invariant DAG). Per-scope logic inside:
+10. **`map_positions_to_wells` stays a stage** with a constant interface (`scope_metadata →
+    position_well_mapping`), **always runs** (scope-invariant DAG). Per-scope logic inside:
     YX1 = XY match, Keyence = passthrough (well already resolved at ingest). Not skippable.
-11. **`well_id` minted at the join** (`join_series_mapping_to_scope_metadata`, matches code),
+11. **`well_id` minted at the join** (`apply_position_to_well_mapping`, matches code),
     read at discovery. Join renamed to name the operation (join mapping onto scope metadata).
 12. **`discovered_wells.txt`** (not `wells.txt`) — names which well-list it is (discovered,
     pre-filter), disambiguating from `active_wells`/`validated_wells`.
@@ -557,7 +563,7 @@ artifact_path(ROOT, "frame_inventory", "inventory", "20250912", path_mode="merge
 - **`<frame-inventory-stage>`** for `frame_inventory`: keep `experiment_metadata/` vs.
   dedicated `frame_inventory/` (findings #5, leaning the dedicated stage). Placeholder in the
   registry row above until decided.
-- *(resolved)* `map_series_to_wells` and `join_series_mapping_to_scope_metadata` are **kept
+- *(resolved)* `map_positions_to_wells` and `apply_position_to_well_mapping` are **kept
   as separate stages** — map is per-scope CSV logic (always-present passthrough), the join is
   the shared convergence point. Not folded.
 
@@ -565,12 +571,12 @@ artifact_path(ROOT, "frame_inventory", "inventory", "20250912", path_mode="merge
 - **One raw read:** `ingest_scope_metadata` must emit the well-determining fact per scope
   (YX1: stage XY columns — currently NOT in the scope_metadata schema, must be added; Keyence:
   the folder-derived well — already computed via `_extract_well_from_path`). Then rewire
-  `map_series_to_wells` from raw-reading to CSV→CSV.
-- **Rename `apply_series_mapping` → `join_series_mapping_to_scope_metadata`** (stage/rule key;
+  `map_positions_to_wells` from raw-reading to CSV→CSV.
+- **Rename `apply_series_mapping` → `apply_position_to_well_mapping`** (stage/rule key;
   the code file `scope/shared/apply_series_mapping.py` can keep its name or follow).
 - **Rename `wells.txt` → `discovered_wells.txt`** (checkpoint output, Snakefile:438;
   `wells_for_experiment()` reader; any `paths.py` row).
-- **Close the Keyence wiring gap:** add the missing `map_series_to_wells` + `stitch_well`
+- **Close the Keyence wiring gap:** add the missing `map_positions_to_wells` + `stitch_well`
   Keyence paths (code exists, rules don't). Falls out for free once stages become
   config-dispatched single rules.
 - **Collapse scope-suffixed rules** (`extract_scope_metadata_yx1`/`_keyence`, etc.) into one

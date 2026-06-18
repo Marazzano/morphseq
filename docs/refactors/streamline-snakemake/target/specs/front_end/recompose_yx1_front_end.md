@@ -5,6 +5,11 @@
 (`recompose_keyence_front_end.md`) — **do not read or import Keyence logic.** The two microscopes
 must not fuse. They meet only at the convergence line (the shared join), which neither doc owns.
 **Terminology guard:** `raw_position_label` means the raw ND2 position token. Do **not** call it `well_index` until it has been resolved to the local plate well label by mapping.
+**2026-06-17 contract update:** the shared mapping artifact is now `position_well_mapping.csv`
+with required `position_index`, not `series_number`. Historical notes below may mention the old
+`map_series_to_wells`/`series_well_mapping` vocabulary while explaining the migration; new code uses
+`map_positions_to_wells`, `apply_position_to_well_mapping`, and fails loudly instead of shimming
+`series_number`.
 **North star (read first, in order):**
 1. `pipeline_file_philosophy.md` — the conventions every change must satisfy (the two hard
    constraints, nouns-for-steps, fail-loud, the conformance checklist). **Judge every file against it.**
@@ -236,8 +241,10 @@ Vocabulary also drove the rename **`map_series_to_wells` → `map_positions_to_w
 ND2 jargon; "position" is the tensor P axis). Full rename: rule + `tasks.py` verb (NO back-compat
 alias — they get messy) + `PIPELINE_STEPS` key + artifact `series_well_mapping.csv` →
 `position_well_mapping.csv` + module `map_yx1_series_to_wells.py` → `map_yx1_positions_to_wells.py`.
-The mapping CSV **keeps the `series_number` column** (the literal 1-based ND2 series, `series =
-P + 1`) — distinct from the 0-based `position_index`; conflating them breaks the join's off-by-one.
+The mapping CSV uses **`position_index`** as the canonical acquisition-position key. `series_number`
+is stale 1-based ND2 vocabulary and is deliberately not part of the shared contract; do not add
+fallbacks or compatibility shims. If a producer still emits only `series_number`, it must migrate and
+fail loudly until it does.
 
 ## The channel mapping lives HERE, once
 Today channel info is re-derived in three places that each lose something: extract normalizes but
