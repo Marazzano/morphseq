@@ -26,6 +26,7 @@ from pathlib import Path
 import pandas as pd
 
 from data_pipeline.shared.identifiers.constructors import build_image_id, build_well_id
+from data_pipeline.shared.identifiers.validators import validate_well_id
 
 # ---------------------------------------------------------------------------
 # Column manifests
@@ -48,6 +49,18 @@ REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
 DERIVED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "well_id",   # {experiment_id}_{well_index}
     "image_id",  # {well_id}_{channel_id}_t{time_index:04d}
+)
+
+# The per-frame unique key, stated as ATOMS. This names WHICH columns identify a frame; the
+# validator does NOT trust this tuple as opaque strings — it routes the atoms through the
+# identifier constructors (build_well_id → build_image_id) so the effective key is the DERIVED
+# image_id. Uniqueness on these atoms ≡ uniqueness on image_id, but anchored to the grammar so
+# the key can never drift from the constructors. See ``frame_inventory_image_ids``.
+UNIQUE_FRAME_INVENTORY_KEY_COLUMNS: tuple[str, ...] = (
+    "experiment_id",
+    "well_index",
+    "channel_id",
+    "time_index",
 )
 
 ALLOWED_IMAGE_SUFFIXES: tuple[str, ...] = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
@@ -116,6 +129,31 @@ def assert_derived_ids_consistent(df: pd.DataFrame, scope_label: str = "frame_in
                 f"[{scope_label}] {n} row(s) have image_id inconsistent with atoms "
                 f"(well_id + channel_id + time_index). First offenders: {sample}"
             )
+
+
+def frame_inventory_image_ids(df: pd.DataFrame, scope_label: str = "frame_inventory") -> pd.Series:
+    """Recompute the DERIVED ``image_id`` for every row by routing the atoms through the grammar.
+
+    This is the identity-anchored unique key. Rather than treating
+    ``(experiment_id, well_index, channel_id, time_index)`` as an opaque column tuple, it composes
+    ``build_image_id(build_well_id(experiment_id, well_index), channel_id, time_index)`` for each row
+    and validates the intermediate ``well_id`` with ``validate_well_id`` (so a leaked bare local
+    label or un-promoted id fails loud HERE, at the boundary). The returned Series IS the effective
+    unique key — duplicate ``image_id``s mean duplicate frames. Anchoring the key to the
+    constructors guarantees it can never drift from the canonical id grammar.
+
+    Raises:
+        ValueError: if any row's composed ``well_id`` is not a valid global well_id.
+    """
+    def _image_id_for_row(row: pd.Series) -> str:
+        well_id = build_well_id(row["experiment_id"], row["well_index"])
+        validate_well_id(well_id)  # fail loud on a leaked local label / un-promoted id
+        return build_image_id(well_id, row["channel_id"], row["time_index"])
+
+    try:
+        return df.apply(_image_id_for_row, axis=1)
+    except ValueError as exc:
+        raise ValueError(f"[{scope_label}] {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

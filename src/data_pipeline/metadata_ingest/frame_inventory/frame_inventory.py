@@ -1,9 +1,14 @@
 """Build, validate, and merge the frame_inventory product.
 
-The current live pipeline still produces frame_contract.csv as the physical frame table.
-This module is a behavior-preserving adapter: it treats that table as the legacy source of the
-new frame_inventory product, splits it into per-well shards, validates those shards, and
-merges shards back into the experiment-level inventory.
+VALIDATION now enforces the LIVE microscope-agnostic contract from
+``image_materialization/frame_inventory_contract.py`` (``REQUIRED_FRAME_INVENTORY_COLUMNS`` +
+the identity-anchored unique key + ``assert_derived_ids_consistent``). The materialize_well branch
+emits that flat shard; ``validate_frame_inventory`` / ``merge_frame_inventory_shards`` consume it.
+
+``build_frame_inventory_for_well`` below is the LEGACY adapter that split the old
+``frame_contract.csv`` into shards (legacy column set). It is off the live front_half path and is a
+Step-7 strangler target — do not extend it. It is kept only until the legacy
+``materialize_stitched_images`` / ``frame_contract`` chain is removed.
 
 AUDIT (2026-06-07): docs/refactors/streamline-snakemake/target/frame_inventory_well_runner_audit.md
 records the open gaps here — validate_frame_inventory is the WEAK schema check (not yet the strict
@@ -22,17 +27,47 @@ from typing import Sequence
 import pandas as pd
 
 from data_pipeline.io.validators import validate_dataframe_schema
-from data_pipeline.schemas.frame_contract import REQUIRED_COLUMNS_FRAME_CONTRACT, UNIQUE_KEY_FRAME_CONTRACT
+from data_pipeline.image_materialization.frame_inventory_contract import (
+    REQUIRED_FRAME_INVENTORY_COLUMNS,
+    UNIQUE_FRAME_INVENTORY_KEY_COLUMNS,
+    assert_derived_ids_consistent,
+    frame_inventory_image_ids,
+)
+from data_pipeline.schemas.frame_contract import (
+    REQUIRED_COLUMNS_FRAME_CONTRACT,
+    UNIQUE_KEY_FRAME_CONTRACT,
+)
 from data_pipeline.shared.identifiers import validate_well_id
 
 
 def _read_frame_inventory_table(path: Path) -> pd.DataFrame:
+    # Validate against the microscope-agnostic frame_inventory contract (the live materialized
+    # shard's schema), NOT the legacy frame_contract columns. ``z_index`` is intentionally absent
+    # from the required atoms (NA on projection rows), so it is never null-checked here.
     df = pd.read_csv(path)
-    validate_dataframe_schema(df, REQUIRED_COLUMNS_FRAME_CONTRACT, "frame_inventory")
+    validate_dataframe_schema(df, list(REQUIRED_FRAME_INVENTORY_COLUMNS), "frame_inventory")
     return df
 
 
 def _validate_unique_keys(df: pd.DataFrame, *, context: str) -> None:
+    # Identity-anchored key: recompose the derived image_id from the atoms via the constructors
+    # (frame_inventory_image_ids also validates the intermediate well_id), then check uniqueness on
+    # that. Routing through the grammar keeps the key from drifting from the identifier code.
+    image_ids = frame_inventory_image_ids(df, scope_label=context)
+    duplicate_mask = image_ids.duplicated(keep=False)
+    if duplicate_mask.any():
+        duplicates = df.loc[duplicate_mask, list(UNIQUE_FRAME_INVENTORY_KEY_COLUMNS)]
+        raise ValueError(
+            f"Duplicate {context} keys detected (by derived image_id): "
+            f"{duplicates.head(10).to_dict(orient='records')}"
+        )
+    # Cross-check any producer-supplied derived ids against the atom-recomputed values.
+    assert_derived_ids_consistent(df, scope_label=context)
+
+
+def _validate_unique_keys_legacy(df: pd.DataFrame, *, context: str) -> None:
+    # LEGACY frame_contract key (well_id, channel_id, time_int). Used only by the strangled
+    # build_frame_inventory_for_well path; the live frame_inventory key is in _validate_unique_keys.
     duplicate_mask = df.duplicated(subset=list(UNIQUE_KEY_FRAME_CONTRACT), keep=False)
     if duplicate_mask.any():
         duplicates = df.loc[duplicate_mask, list(UNIQUE_KEY_FRAME_CONTRACT)]
@@ -55,7 +90,11 @@ def build_frame_inventory_for_well(
     against the frame-contract schema because that is the current physical frame inventory schema.
     """
     global_well_id = validate_well_id(str(well_id))
-    frame_df = _read_frame_inventory_table(Path(frame_contract_csv))
+    # LEGACY path: this reads frame_contract.csv (legacy columns), so it validates against the
+    # legacy frame_contract schema locally — NOT the new frame_inventory contract used by the live
+    # validate/merge above. Self-contained so the live repoint does not resurrect legacy columns.
+    frame_df = pd.read_csv(Path(frame_contract_csv))
+    validate_dataframe_schema(frame_df, REQUIRED_COLUMNS_FRAME_CONTRACT, "frame_contract")
     mask = (
         (frame_df["experiment_id"].astype(str) == str(experiment_id))
         & (frame_df["well_id"].astype(str) == global_well_id)
@@ -69,7 +108,7 @@ def build_frame_inventory_for_well(
             "The source may be a pre-Scope-2 artifact whose well_id is still a local label; "
             "regenerate frame_contract.csv with the global well_id grammar."
         )
-    _validate_unique_keys(shard, context="frame_inventory")
+    _validate_unique_keys_legacy(shard, context="frame_contract")
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     shard.to_csv(output_csv, index=False)
@@ -113,8 +152,8 @@ def merge_frame_inventory_shards(input_csvs: Sequence[Path], output_csv: Path) -
 
     merged = pd.concat(frames, axis=0, ignore_index=True)
     _validate_unique_keys(merged, context="frame_inventory")
-    # TODO(Scope 2): time_int → canonical time_index (audit finding #6).
-    sort_cols = [c for c in ["experiment_id", "well_id", "channel_id", "time_int"] if c in merged.columns]
+    # Sort on the frame_inventory atoms (the canonical per-frame key uses time_index, not time_int).
+    sort_cols = [c for c in list(UNIQUE_FRAME_INVENTORY_KEY_COLUMNS) if c in merged.columns]
     if sort_cols:
         merged = merged.sort_values(sort_cols).reset_index(drop=True)
 
