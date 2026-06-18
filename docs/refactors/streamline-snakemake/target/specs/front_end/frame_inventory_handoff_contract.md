@@ -97,6 +97,33 @@ correctly — it recomputes them from the atoms and fails loud on disagreement. 
 `validate_well_id` fail-loud rule — `well_id_throughline_refactor_plan.md`, Scope 2 — to the whole
 per-frame key.)
 
+### Product-set grain — orchestration stays per-well
+
+`stitch_well[well_id]` is the orchestration unit. It does **not** fan out by channel,
+projection method, or z-slice. Inside that one well job, the materializer writes the configured
+image-product set and records the exact products as rows in `frame_inventory`.
+
+Step 6 promotes the already accepted single-product subset:
+
+| channel_id | image_product_type | projection_method | z_index |
+|---|---|---|---|
+| `BF` | `projection` | `focus_stack` | null |
+
+The frame-inventory schema is allowed to carry the future product dimensions
+(`image_product_type`, `projection_method`, `z_index`) so the manifest can represent:
+
+| Example product | Row grain |
+|---|---|
+| BF focus projection | one row per `well_id × time_index × BF × projection × focus_stack` |
+| fluorescence max projection | one row per `well_id × time_index × channel_id × projection × max_projection` |
+| z-stack slices | one row per `well_id × time_index × channel_id × z_stack × z_index` |
+
+Expansion guardrail: the current composed `image_id` names only `well_id + channel_id + time_index`.
+That is sufficient for the Step 6 single-product subset. Before enabling multiple products that
+share the same well/channel/time, extend the identity/path contract so `image_id` or the path
+distinguishes `image_product_type`, `projection_method`, and/or `z_index`. Until then, no fallback
+or silent overwrite: the product config must stay collision-free.
+
 ---
 
 ## ⭐ NORTH STAR — submission surface vs. operational spine

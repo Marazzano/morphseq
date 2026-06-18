@@ -984,6 +984,16 @@ downstream per-well migration in Beat 2.
 
 - **Promote:** add/wire the live `stitch_well` rule and sentinel; call the accepted materializer with
   `candidate=False` so `layout.py` writes the real `built_image_data` image tree.
+- **Product-set grain:** `stitch_well` remains **one job per well**, not per channel, method, or
+  z-slice. The live sentinel means "the configured image-product set for this well completed." For
+  Step 6, that set is intentionally one accepted product: `channel_id=BF`,
+  `image_product_type=projection`, `projection_method=focus_stack`, `z_index=NULL`. Future products
+  (fluorescence max projections, z-stacks, alternate projection methods) are added as rows in the
+  per-well `frame_inventory`, not as additional Snakemake fanout dimensions.
+- **Product expansion guardrail:** do not enable two products that would share the same current
+  `image_id` (`well_id + channel_id + time_index`) until the identity/path contract is extended to
+  distinguish them. The schema can carry `image_product_type`, `projection_method`, and `z_index`;
+  Step 6 only promotes the single-product subset that is already accepted.
 - **Native per-well frame_inventory:** stop selecting rows from an experiment-grain
   `frame_contract.csv`. The materializer-emitted per-well shard is the native product; validation
   checks it speaks **`time_index`** natively and that its paths resolve.
