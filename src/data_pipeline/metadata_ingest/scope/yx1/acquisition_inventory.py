@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import nd2
 import pandas as pd
 
 from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
@@ -32,6 +33,10 @@ from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
     assert_positive_column,
     assert_unique_on_key,
 )
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Contract — schema + identity (the columns + the tensor cell key this scope produces)
+# ─────────────────────────────────────────────────────────────────────────────────────────────
 
 # The maximal per-coordinate schema (the tensor address + all relevant ND2 facts). Standardized
 # ``*_index`` axis vocabulary — the inventory is a NEW artifact, so it is born with target names
@@ -66,6 +71,76 @@ YX1_ACQUISITION_CELL_KEY: tuple[str, ...] = (
 )
 
 _SCOPE_LABEL = "YX1 acquisition inventory"
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Validation — fail-loud guards over the contract (schema/calibration/cell-key + source readability)
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def assert_acquisition_sources_readable(df: pd.DataFrame, *, scope_label: str) -> None:
+    """Fail loud unless every ``source_nd2_path`` in the inventory still exists AND opens.
+
+    The disk-touching half of the YX1 acquisition contract. ``source_nd2_path`` is a YX1
+    acquisition-inventory field, so the readability check lives here (with the contract), not in the
+    materializer that consumes it. It is intentionally NOT a ``scope/shared/acquisition_checks.py``
+    primitive — those are pure DataFrame functions with no disk knowledge.
+
+    Each UNIQUE path is checked once (cost is O(#ND2s), not O(#rows) — for YX1 that is one file).
+    The check is "exists + ``nd2.ND2File`` opens"; it opens then closes, it does NOT read the tensor.
+    A failure means the inventory CSV is fine but its raw source moved / was deleted / is corrupt
+    since extraction — surfaced HERE as a named contract error instead of a deep backend traceback.
+    """
+    if "source_nd2_path" not in df.columns:
+        raise ValueError(
+            f"{scope_label}: cannot check source readability — column 'source_nd2_path' is missing "
+            f"(present columns: {list(df.columns)})."
+        )
+
+    for raw_path in df["source_nd2_path"].dropna().unique():
+        path = Path(str(raw_path))
+        if not path.exists():
+            raise ValueError(
+                f"{scope_label}: source_nd2_path {str(path)!r} does not exist. The acquisition "
+                "inventory points at a raw ND2 that has moved or been deleted since extraction — "
+                "re-run scope ingest for this experiment, or restore the ND2 at that path."
+            )
+        try:
+            nd2.ND2File(path).close()
+        except Exception as exc:  # noqa: BLE001 — any open failure is a contract violation here
+            raise ValueError(
+                f"{scope_label}: source_nd2_path {str(path)!r} exists but failed to open as an ND2 "
+                f"({type(exc).__name__}: {exc}). The raw source is unreadable/corrupt — restore a "
+                "good ND2 at that path, or re-run scope ingest for this experiment."
+            ) from exc
+
+
+def validate_yx1_acquisition_inventory(df: pd.DataFrame, *, check_sources: bool = False) -> None:
+    """Fail loud unless the YX1 inventory is schema-complete, calibrated, and a clean tensor.
+
+    YX1 declares WHAT to check (its schema + cell key); the shared primitives do HOW. The same
+    primitives back Keyence with its own (colliding) key — here they are a defensive assertion that
+    YX1 is clean by construction.
+
+    One contract, two modes by lifecycle moment. At BUILD time (default ``check_sources=False``) this
+    validates declared facts only — the ND2 was just opened to build the inventory, so re-opening it
+    would be tautological. At the CONSUME boundary (``check_sources=True``, called by the YX1
+    materialize backend just before it reads the ND2) it ADDITIONALLY asserts each ``source_nd2_path``
+    still exists/opens — the moment the "did the raw source survive?" risk actually appears.
+    """
+    assert_columns_present(df, YX1_ACQUISITION_INVENTORY_COLUMNS, scope_label=_SCOPE_LABEL)
+    assert_positive_column(df, "micrometers_per_pixel", scope_label=_SCOPE_LABEL)
+    assert_positive_column(df, "image_width_px", scope_label=_SCOPE_LABEL)
+    assert_positive_column(df, "image_height_px", scope_label=_SCOPE_LABEL)
+    assert_channel_mapping_consistent(df, scope_label=_SCOPE_LABEL)
+    assert_unique_on_key(df, YX1_ACQUISITION_CELL_KEY, scope_label=_SCOPE_LABEL)
+    if check_sources:
+        assert_acquisition_sources_readable(df, scope_label=_SCOPE_LABEL)
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Builder — assemble the inventory from the facts the ONE raw read gathered (pure; no ND2 access)
+# ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
 def build_yx1_acquisition_inventory_rows(
@@ -129,21 +204,6 @@ def build_yx1_acquisition_inventory_rows(
                     )
 
     return rows
-
-
-def validate_yx1_acquisition_inventory(df: pd.DataFrame) -> None:
-    """Fail loud unless the YX1 inventory is schema-complete, calibrated, and a clean tensor.
-
-    YX1 declares WHAT to check (its schema + cell key); the shared primitives do HOW. The same
-    primitives back Keyence with its own (colliding) key — here they are a defensive assertion that
-    YX1 is clean by construction.
-    """
-    assert_columns_present(df, YX1_ACQUISITION_INVENTORY_COLUMNS, scope_label=_SCOPE_LABEL)
-    assert_positive_column(df, "micrometers_per_pixel", scope_label=_SCOPE_LABEL)
-    assert_positive_column(df, "image_width_px", scope_label=_SCOPE_LABEL)
-    assert_positive_column(df, "image_height_px", scope_label=_SCOPE_LABEL)
-    assert_channel_mapping_consistent(df, scope_label=_SCOPE_LABEL)
-    assert_unique_on_key(df, YX1_ACQUISITION_CELL_KEY, scope_label=_SCOPE_LABEL)
 
 
 def build_yx1_acquisition_inventory(**kwargs) -> pd.DataFrame:

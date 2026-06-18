@@ -46,6 +46,9 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
 from data_pipeline.image_materialization.materialization_plan import (
     ResolvedMaterializationPlan,
 )
+from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
+    validate_yx1_acquisition_inventory,
+)
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +153,7 @@ def materialize_yx1_well(
         ValueError: on well_id / well_index / experiment_id inconsistency, empty
             inventory, ambiguous position_index / source_nd2_path, or a non-identity resolved product.
     """
+    # --- Entry guard: executor (identity-only) + well/inventory consistency + source readability -
     # Executor guard — this backend only does identity XY composition. Fail loud otherwise.
     if not resolved_plan.products:
         raise ValueError("resolved_plan has no products to materialize.")
@@ -183,6 +187,12 @@ def materialize_yx1_well(
             f"{sorted(well_acquisition_inventory_df['source_nd2_path'].unique())}."
         )
 
+    # Consume-boundary contract check: re-validate the acquisition inventory in source-checking mode
+    # so a moved/deleted/corrupt ND2 fails loud HERE (named, with the fix) before any tensor read —
+    # not as a raw nd2.ND2File traceback below. The readability logic is OWNED by the acquisition
+    # contract; this backend only calls it. (The nunique()==1 guard above stays as a local tripwire.)
+    validate_yx1_acquisition_inventory(well_acquisition_inventory_df, check_sources=True)
+
     position_index = int(well_acquisition_inventory_df["position_index"].iloc[0])
     um_per_px = float(well_acquisition_inventory_df["micrometers_per_pixel"].iloc[0])
     img_w = int(well_acquisition_inventory_df["image_width_px"].iloc[0])
@@ -195,6 +205,7 @@ def materialize_yx1_well(
         experiment_id, well_id, position_index, nd2_path, device, candidate,
     )
 
+    # --- ND2 source + tensor setup: open the one ND2, pick the BF channel axis ----------------
     nd = nd2.ND2File(nd2_path)
     try:
         dask_arr = nd.to_dask()
@@ -230,6 +241,7 @@ def materialize_yx1_well(
             print(msg, flush=True)
         rows: list[dict] = []
 
+        # --- Materialization loop: per time_index → focus-stack → write PNG → record one row ---
         for t in time_indices:
             stack = _get_stack(dask_arr, t=t, w=position_index)
             ff = materialize_ff_projection(stack, device=device)
@@ -265,6 +277,7 @@ def materialize_yx1_well(
     finally:
         nd.close()
 
+    # --- Inventory assembly: build the frame-inventory shard + final required-columns check ---
     inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
 
     # Sanity check — all required atom columns present.

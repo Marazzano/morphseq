@@ -14,9 +14,11 @@ from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
     assert_positive_column,
     assert_unique_on_key,
 )
+from data_pipeline.metadata_ingest.scope.yx1 import acquisition_inventory as acq_mod
 from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
     YX1_ACQUISITION_CELL_KEY,
     YX1_ACQUISITION_INVENTORY_COLUMNS,
+    assert_acquisition_sources_readable,
     build_yx1_acquisition_inventory,
     build_yx1_acquisition_inventory_rows,
     validate_yx1_acquisition_inventory,
@@ -127,6 +129,76 @@ def test_validate_rejects_bad_calibration():
     df.loc[0, "micrometers_per_pixel"] = 0.0
     with pytest.raises(ValueError, match="micrometers_per_pixel"):
         validate_yx1_acquisition_inventory(df)
+
+
+# ── source readability (check_sources mode) ──────────────────────────────────────────────────
+
+
+class _FakeND2:
+    """Stand-in for nd2.ND2File: opening succeeds, close() is a no-op."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def close(self):
+        pass
+
+
+def test_check_sources_false_is_default_and_skips_file_io(monkeypatch):
+    # _make_inventory points source_nd2_path at a nonexistent file; build-mode must NOT touch it.
+    def _boom(path):  # would fire if the validator opened the file
+        raise AssertionError("ND2File must not be opened when check_sources=False")
+
+    monkeypatch.setattr(acq_mod.nd2, "ND2File", _boom)
+    df = _make_inventory()
+    validate_yx1_acquisition_inventory(df)  # default check_sources=False → no raise, no open
+
+
+def test_check_sources_true_passes_when_nd2_opens(monkeypatch, tmp_path):
+    nd2_file = tmp_path / "exp.nd2"
+    nd2_file.write_bytes(b"")  # exists; open is faked below
+    monkeypatch.setattr(acq_mod.nd2, "ND2File", _FakeND2)
+    df = _make_inventory()
+    df["source_nd2_path"] = str(nd2_file)
+    validate_yx1_acquisition_inventory(df, check_sources=True)  # no raise
+
+
+def test_check_sources_true_fails_when_nd2_missing():
+    df = _make_inventory()  # source_nd2_path = "/data/20250912/exp.nd2" (does not exist)
+    with pytest.raises(ValueError, match=r"does not exist.*/data/20250912/exp\.nd2|/data/20250912/exp\.nd2.*does not exist"):
+        validate_yx1_acquisition_inventory(df, check_sources=True)
+
+
+def test_check_sources_true_fails_when_nd2_unopenable(monkeypatch, tmp_path):
+    nd2_file = tmp_path / "broken.nd2"
+    nd2_file.write_bytes(b"not a real nd2")
+
+    def _raise(path):
+        raise RuntimeError("bad magic bytes")
+
+    monkeypatch.setattr(acq_mod.nd2, "ND2File", _raise)
+    df = _make_inventory()
+    df["source_nd2_path"] = str(nd2_file)
+    with pytest.raises(ValueError, match="failed to open"):
+        validate_yx1_acquisition_inventory(df, check_sources=True)
+
+
+def test_assert_sources_readable_opens_each_unique_path_once(monkeypatch, tmp_path):
+    nd2_file = tmp_path / "shared.nd2"
+    nd2_file.write_bytes(b"")
+    calls: list[str] = []
+
+    def _record(path):
+        calls.append(str(path))
+        return _FakeND2(path)
+
+    monkeypatch.setattr(acq_mod.nd2, "ND2File", _record)
+    # Two positions sharing ONE ND2 → many rows, one unique path → one open.
+    df = _make_inventory()
+    df["source_nd2_path"] = str(nd2_file)
+    assert len(df) > 1
+    assert_acquisition_sources_readable(df, scope_label="test")
+    assert calls == [str(nd2_file)]
 
 
 def test_rows_builder_is_pure_and_orders_positions():

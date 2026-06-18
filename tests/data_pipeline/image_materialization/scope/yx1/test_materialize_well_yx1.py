@@ -37,19 +37,35 @@ IDENTITY_PLAN = ResolvedMaterializationPlan(
 )
 
 
-def _make_inventory(n_times: int = 3, position_index: int = 2) -> pd.DataFrame:
+def _make_inventory(
+    n_times: int = 3,
+    position_index: int = 2,
+    source_nd2_path: str = "/fake/exp.nd2",
+) -> pd.DataFrame:
+    # Schema-complete acquisition shard (the consume-side validator re-checks the full contract).
+    # In production this is the acquisition_inventory CSV merged with position_well_mapping; the test
+    # carries every YX1_ACQUISITION_INVENTORY_COLUMN so the contract validator passes structurally.
     return pd.DataFrame({
         "experiment_id": EXP,
-        "well_index": WELL_INDEX,
+        "raw_position_label": str(position_index),
         "position_index": position_index,
+        "z_index": 0,
+        "channel_index": 0,
+        "channel": "BF",
+        "raw_channel_name": "EYES - Dia",
         "time_index": list(range(n_times)),
-        "source_nd2_path": "/fake/exp.nd2",
+        "acquisition_time_s": [100.0 * t for t in range(n_times)],
+        "x_um": 10.0,
+        "y_um": 20.0,
         "micrometers_per_pixel": 0.65,
         "image_width_px": 512,
         "image_height_px": 512,
-        "channel_index": 0,
-        "z_index": 0,
-        "channel": "BF",
+        "objective_magnification": "4x",
+        "microscope_id": "YX1",
+        "n_z": 1,
+        "source_nd2_path": source_nd2_path,
+        # joined identity columns the materializer also receives:
+        "well_index": WELL_INDEX,
     })
 
 
@@ -85,6 +101,12 @@ class TestMaterializeYX1Well:
         return nd_mock
 
     def _run(self, inventory_df, tmp_path, candidate=True):
+        # The consume-side contract check asserts source_nd2_path EXISTS before the open is faked,
+        # so point the shard at a real (empty) file under tmp_path.
+        nd2_file = tmp_path / "exp.nd2"
+        nd2_file.write_bytes(b"")
+        inventory_df = inventory_df.copy()
+        inventory_df["source_nd2_path"] = str(nd2_file)
         nd_mock = self._make_mock_nd2(n_t=len(inventory_df))
 
         _mod = "data_pipeline.image_materialization.scope.yx1.materialize_well_yx1"
@@ -219,8 +241,28 @@ class TestMaterializeYX1Well:
                 device="cpu",
             )
 
+    def test_missing_source_nd2_fails_loud_before_tensor_read(self, tmp_path):
+        # Inventory points at an ND2 that was moved/deleted since extraction. The consume-side
+        # contract check must fail loud (path named) at the entry guard, before any tensor read.
+        inv = _make_inventory(n_times=2, source_nd2_path="/gone/missing.nd2")
+        _mod = "data_pipeline.image_materialization.scope.yx1.materialize_well_yx1"
+        with patch(f"{_mod}.nd2.ND2File") as mock_open:
+            with pytest.raises(ValueError, match=r"missing\.nd2.*does not exist|does not exist.*missing\.nd2"):
+                materialize_yx1_well(
+                    experiment_id=EXP,
+                    well_id=WELL_ID,
+                    well_index=WELL_INDEX,
+                    well_acquisition_inventory_df=inv,
+                    built_image_data_dir=tmp_path,
+                    resolved_plan=IDENTITY_PLAN,
+                    device="cpu",
+                )
+            mock_open.assert_not_called()  # never reached the tensor read
+
     def test_smoke_cap_limits_time_indices(self, tmp_path):
-        inv = _make_inventory(n_times=10)
+        nd2_file = tmp_path / "exp.nd2"
+        nd2_file.write_bytes(b"")
+        inv = _make_inventory(n_times=10, source_nd2_path=str(nd2_file))
         nd_mock = self._make_mock_nd2(n_t=10)
         _mod = "data_pipeline.image_materialization.scope.yx1.materialize_well_yx1"
         with (

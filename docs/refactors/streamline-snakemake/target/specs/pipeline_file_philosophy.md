@@ -138,6 +138,32 @@ stage. The stable doctrine, in flow order:
 
 ## 🧱 STRUCTURAL CONVENTIONS
 
+### One file reads top-to-bottom in flow order, with section banners marking each concern
+A module with more than one concern marks each with a banner so a reader scans the file by its
+section titles before reading a line of logic — the file-level twin of "the code tells its own
+story." Use a single banner style (a noun naming what the section owns):
+
+```python
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Contract — schema + identity
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+```
+
+The reference implementations already embody it: `paths.py` (Registry → Helpers → Composers),
+`well_runner.py` (Compute → Merge-DAG → Merge-disk → Concat), `acquisition_inventory.py`
+(Contract → Validation → Builder). The sections appear in **dependency/flow order** (constants the
+validators check come before the validators; the builder that calls the validator comes last), so the
+file reads like the pipeline it serves. A genuinely single-concern leaf (e.g. `targets.py`,
+`discovered_wells_contract.py`) needs no banners — banners earn their keep only when there is more
+than one concern to separate.
+
+> **Banners separate; they do not excuse mixing.** If two sections are two *microscopes* (the
+> `if YX1 / elif Keyence` smell) or two *kingdoms* (path math + dataframe algebra in one function),
+> the fix is to SPLIT — separate functions or files — not to paste a banner over the seam. A banner
+> organizes concerns that legitimately co-live; it is not a substitute for the split when the concerns
+> shouldn't share a function at all (the `materialize_stitched_images.py` per-scope split, the
+> `tasks.py` thin-dispatcher rule).
+
 ### Explicit signatures, no haunted globals
 Functions take what they need as parameters (`output_root` is *always* passed, never read from
 `PROJECT_ROOT`). Keyword-only (`*`) for anything that could be confused positionally
@@ -180,6 +206,17 @@ before line 1 of logic. Match that altitude: orient, then implement.
 `.validated` and `.provenance.json` are computed *from* an artifact path by a helper
 (`validated_path`, `provenance_path`) — they are never their own registry rows or hardcoded strings.
 One artifact, its sentinels derived.
+
+### Validators live where the contract lives; call them where the risk appears
+One contract → **one authoritative validator**, owned by the package that owns the data product. When
+a check is cheap-and-tautological at one lifecycle moment but load-bearing at another, give the
+validator an explicit **mode flag** (`check_sources=...`) rather than forking it into two validators
+that can drift — two priests reading from different scrolls is how the contract splits in half. Build
+time validates **declared facts**; the **consume boundary** additionally validates that the declared
+sources are still real. Example: `validate_yx1_acquisition_inventory(df, check_sources=True)`
+re-checks that each `source_nd2_path` still exists/opens, called by the YX1 materialize backend just
+before it reads the ND2 — the readability logic is owned by the acquisition contract; the backend
+only calls it. *One contract, two moments, the louder check at the moment it matters.*
 
 ### Tests pin contracts, not implementation details
 Path tests pin **resolved public paths and failure modes** (the worked examples + the error paths),
@@ -246,6 +283,8 @@ inventing a new path string or a new id format, a constraint was broken.
 - [ ] Every guard fails loud with a message that names the fix.
 - [ ] Module docstring orients (jobs + why + boundaries) before the code.
 - [ ] Sidecars derived via helpers, never hardcoded or registry rows.
+- [ ] One authoritative validator per contract, owned where the product lives; lifecycle differences are a mode flag (e.g. `check_sources=`), not a forked second validator. Source/disk checks fire at the consume boundary.
+- [ ] Multi-concern files use section banners in flow order; banners organize co-living concerns but do NOT paste over a mix that should be split (two microscopes, two kingdoms).
 - [ ] Tests for `src/data_pipeline/...` live in the parallel `tests/data_pipeline/...` tree.
 - [ ] Tests pin resolved paths + failure modes (important words, not exact prose), not impl internals.
 
