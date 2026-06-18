@@ -6,6 +6,66 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 11:18 (session: Step 6 no-GPU SMOKE PASSED + device auto-resolution + frame_inventory validator repoint)
+
+**What shipped (the smoke walk-across — Beat 1 proven end-to-end on real data):**
+- **`snakemake front_half` for `20250912` (wells B01,C01) → `4 of 4 steps (100%) done`.** The live
+  branch ran `…→ materialize_well[B01,C01] → validate_frame_inventory_for_well → front_half` on real
+  ND2 data, no GPU. Both per-well shards + `.validated` sentinels landed under
+  `built_image_data/20250912/per_well/20250912_{B01,C01}/`.
+- **Device auto-resolution wired (the gap the user named).** The new `materialize_well` branch was the
+  one path BYPASSING the project-wide resolver. Fixed in
+  `image_materialization/run_materialize_well.py`: now imports
+  `utils/cuda_diagnostics.resolve_device`, resolves the preference at the sequencer seam, passes a
+  concrete device to the backend, and ANNOUNCES it — `print("AUTO_MODE_CHOSEN: requested='auto' -> CPU")`
+  (also `log.info`). Default flipped `cuda`→`auto`. `config.yaml image_building.device: "auto"` (durable).
+  On this no-GPU box `auto` → `CPU` (confirmed `torch.cuda.is_available()==False`); the run printed
+  `AUTO_MODE_CHOSEN: requested='auto' -> CPU` for both wells.
+- **frame_inventory VALIDATOR repointed to the live contract (real bug the smoke caught).** Commit 2 had
+  repointed the validator's INPUT PATH but not its SCHEMA CHECK — `validate_frame_inventory` still
+  enforced the LEGACY `schemas/frame_contract` columns (`well_id`, `image_id`, `stitched_image_path`,
+  `time_int`, `micrometers_per_pixel`), so the correct new shard was rejected. Now
+  `metadata_ingest/frame_inventory/frame_inventory.py` validates the LIVE microscope-agnostic contract
+  from `image_materialization/frame_inventory_contract.py`:
+  `REQUIRED_FRAME_INVENTORY_COLUMNS` + identity-anchored unique key + `assert_derived_ids_consistent`.
+- **Identity-anchored key (per mdcolon: keep the identifiers in the loop).** Added
+  `UNIQUE_FRAME_INVENTORY_KEY_COLUMNS` + `frame_inventory_image_ids()` to the contract. The validator's
+  uniqueness check does NOT trust the raw atom tuple — it recomposes the derived `image_id` via
+  `build_well_id`→`build_image_id` (routing through `shared/identifiers/`) and validates the intermediate
+  `well_id` with `validate_well_id` (a leaked bare-local label fails loud HERE). Uniqueness is on the
+  derived image_id, so the key can never drift from the constructors.
+- **Legacy `build_frame_inventory_for_well` kept self-consistent (Step-7 strangler debt).** It still reads
+  the legacy `frame_contract.csv`, so it validates the legacy schema LOCALLY (`_validate_unique_keys_legacy`)
+  — NOT resurrected onto the live helper. Marked do-not-extend in the module docstring.
+- Tests: **160 passed** (`tests/data_pipeline/`; +1 new leaked-local-well_id guard test). The 4
+  live validate/merge tests moved to the new-contract fixture; the 2 legacy build tests stay on the
+  legacy fixture.
+
+**Verification (all checklist items PASS, both wells):** csv+`.validated` exist; exactly 3 `time_index`
+(0,1,2) per well (smoke cap honored); `z_index` all-NA on projection rows; every row
+BF/projection/focus_stack; `source_image_path` unique, all under `materialized_images/.../projection/BF/`
+(NO `candidate/`), every PNG exists on disk; input-side `source_nd2_path nunique==1` per well;
+`AUTO_MODE_CHOSEN -> CPU` printed.
+
+**What's broken/half-done:** nothing. Beat 1 is proven end-to-end. NOT yet committed (code + config +
+tests + this doc are staged in the working tree). **`config.yaml` smoke knobs NOT yet reverted** —
+`target_wells: {20250912: [B01,C01]}` and `image_materialization.smoke_max_time_indices: 3` are still in
+config (drop them for a full run; `device: "auto"` is the keeper). The `--rerun-triggers mtime` flag was
+needed (provenance triggers wanted to re-run the expensive ND2 ingest; mtime mode skips it). First run
+with `--cores 2` OOM-killed C01 (two parallel ND2 loads on CPU) — use `--cores 1` for the smoke.
+
+**Next concrete action:** (1) commit this (suggested split: commit A = device auto-resolution +
+AUTO_MODE print + config `device: auto`; commit B = frame_inventory validator repoint + identity-anchored
+key + tests; keep smoke knobs out of the committed config or revert them). (2) THEN the separate
+ND2-exists/opens hardening commit in the acquisition-inventory validator (still deferred — not done here).
+(3) THEN Step 7: strangle legacy `materialize_stitched_images` / `frame_contract` /
+`build_frame_inventory_for_well`.
+
+**Open decisions:** whether to persist the smoke knobs (`target_wells`, `smoke_max_time_indices`) in the
+committed config or strip them before commit (recommend strip; `device: auto` stays).
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-18 (session: Step 6 commit 2 — promote materialize_well to the live spine = BEAT 1 FINISH LINE)
 
 **What shipped (commit 2 — orchestration wiring; the branch is now LIVE up to the validated shard):**
