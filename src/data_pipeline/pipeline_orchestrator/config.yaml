@@ -44,6 +44,22 @@ image_building:
   keyence:
     enabled: false
 
+# Image materialization (per-well frame_inventory branch, Step 6).
+image_materialization:
+  # DEVELOPMENT-ONLY SCAFFOLDING:
+  # smoke_max_time_indices limits materialization to the first N time_index values so the
+  # live front-half spine can be smoke-tested cheaply during pipeline development.
+  #
+  # This is NOT a production frame-selection policy and must not be used as a scientific
+  # sampling mechanism. <=0 (the default below) means INACTIVE / no cap. To run a capped
+  # smoke, do NOT edit this — use the dedicated smoke config:
+  #   snakemake --configfile config_smoke_front_half_20250912.yaml front_half
+  #
+  # TODO(frame_selection): once full materialization is stable, replace this with an explicit
+  # frame_selection contract that derives the time-index subset systematically from the
+  # acquisition inventory / experiment design, or remove it.
+  smoke_max_time_indices: 0
+
 # Segmentation + tracking (GroundingDINO + SAM2).
 segmentation_and_tracking:
   device: "cuda"

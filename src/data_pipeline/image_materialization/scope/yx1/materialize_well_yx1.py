@@ -206,13 +206,28 @@ def materialize_yx1_well(
             dask_arr = dask_arr[:, :, :, bf_idx, :, :]
 
         time_indices = sorted(well_acquisition_inventory_df["time_index"].unique())
-        if smoke_max_time_indices is not None:
-            # TEMPORARY smoke cap — first N time_indices only (no-GPU / fast smoke).
+        if smoke_max_time_indices is not None and smoke_max_time_indices > 0:
+            # ┌─────────────────────────────────────────────────────────────────────────────────┐
+            # │ DEVELOPMENT-ONLY SCAFFOLDING — NOT a frame-selection policy.                       │
+            # │ smoke_max_time_indices limits materialization to the first N time_index values so  │
+            # │ the live front-half spine can be smoke-tested cheaply during pipeline development.  │
+            # │ It takes frames in raw time_index order — it is NOT a scientific sampling           │
+            # │ mechanism and must not be used as one.                                             │
+            # │ TODO(frame_selection): replace with an explicit frame_selection contract that      │
+            # │ derives the time-index subset systematically from the acquisition inventory /      │
+            # │ experiment design (or remove this) once full materialization is stable.            │
+            # └─────────────────────────────────────────────────────────────────────────────────┘
+            n_full = len(time_indices)
             time_indices = time_indices[:smoke_max_time_indices]
-            log.warning(
-                "SMOKE CAP active: materializing only first %d time_indices for well %s.",
-                smoke_max_time_indices, well_id,
+            # Unmistakable signal that this run is capped (so a capped shard is never mistaken
+            # for a full one). Loud on BOTH the log and stdout.
+            msg = (
+                f"SMOKE_FRAME_CAP_ACTIVE: limiting materialization to first "
+                f"{len(time_indices)} of {n_full} time_index values for well {well_id} "
+                f"(development scaffolding — NOT a production frame-selection policy)."
             )
+            log.warning(msg)
+            print(msg, flush=True)
         rows: list[dict] = []
 
         for t in time_indices:
