@@ -15,7 +15,7 @@ THE VOCABULARY (used consistently across the whole refactor — do not blur thes
               REGISTRY KEYS (``PIPELINE_STEPS`` below).
               A step key names a logical output slot, not a Snakemake action.
               Where a step is touched by multiple rules, use a neutral noun-like name rather than
-              a producer verb — e.g. ``build_frame_inventory_for_well`` and
+              a producer verb — e.g. ``materialize_well`` (the live per-well producer) and
               ``validate_frame_inventory_for_well`` both reference the single ``frame_inventory``
               step. Some front-end keys remain verb-shaped because they are locked by
               front_end_naming_and_flow.md.
@@ -180,7 +180,7 @@ PIPELINE_STEPS: dict[str, dict] = {
 
     # ── POST-FAN — frame inventory joins the spine ────────────────────────────
     # "frame_inventory" is the logical product (a noun), kept as ONE step. Snakemake may use
-    # several rules around it: build_frame_inventory_for_well writes the per-well shards,
+    # several rules around it: materialize_well writes the per-well shards,
     # validate_frame_inventory_for_well writes validation sentinels/reports, and a merge writes the
     # experiment-level view (one-file+sentinel model, see stitched_handoff_contract.md). Those are
     # actions (verbs); the registry keeps one noun-like step for the product they all touch. The

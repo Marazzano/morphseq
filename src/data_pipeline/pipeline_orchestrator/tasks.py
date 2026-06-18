@@ -21,7 +21,6 @@ from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_scope_meta
     discover_wells_from_scope_metadata,
 )
 from data_pipeline.metadata_ingest.frame_inventory import (
-    build_frame_inventory_for_well,
     merge_frame_inventory_shards,
     validate_frame_inventory,
 )
@@ -127,15 +126,6 @@ def cmd_materialize_stitched(args: argparse.Namespace) -> None:
         keyence_projection_method=args.keyence_projection_method,
         keyence_ff_filter_res_um=args.keyence_ff_filter_res_um,
         done_flag=args.done_flag,
-    )
-
-
-def cmd_build_frame_inventory_for_well(args: argparse.Namespace) -> None:
-    build_frame_inventory_for_well(
-        frame_contract_csv=args.frame_contract_csv,
-        experiment_id=args.experiment,
-        well_id=args.well_id,
-        output_csv=args.output_csv,
     )
 
 
@@ -324,13 +314,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_discover.add_argument("--mapped-csv", type=Path, required=True)
     p_discover.add_argument("--output-wells", type=Path, required=True)
     p_discover.set_defaults(func=cmd_discover_wells)
-
-    p_fi_build = sub.add_parser("build-frame-inventory-for-well")
-    p_fi_build.add_argument("--frame-contract-csv", type=Path, required=True)
-    p_fi_build.add_argument("--experiment", required=True)
-    p_fi_build.add_argument("--well-id", required=True)
-    p_fi_build.add_argument("--output-csv", type=Path, required=True)
-    p_fi_build.set_defaults(func=cmd_build_frame_inventory_for_well)
 
     p_fi_validate = sub.add_parser("validate-frame-inventory")
     p_fi_validate.add_argument("--input-csv", type=Path, required=True)

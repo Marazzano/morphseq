@@ -1,13 +1,11 @@
-"""Frame inventory adapters around the legacy frame_contract table."""
+"""Validate and merge the live per-well frame_inventory shards emitted by materialize_well."""
 
 from .frame_inventory import (
-    build_frame_inventory_for_well,
     merge_frame_inventory_shards,
     validate_frame_inventory,
 )
 
 __all__ = [
-    "build_frame_inventory_for_well",
     "merge_frame_inventory_shards",
     "validate_frame_inventory",
 ]
