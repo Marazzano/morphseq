@@ -6,6 +6,52 @@ truth; the dated sections further down are earlier verified state, kept for hist
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 13:12 (session: Step 7 — strangle the dead build_frame_inventory_for_well legacy adapter)
+
+**What shipped (commit `e114fbb1`):** the off-DAG legacy `build_frame_inventory_for_well` adapter is
+gone. It was the OLD way of splitting `frame_contract.csv` into per-well shards; Step 6's
+`materialize_well` now emits the shard directly, and NO Snakemake rule ever invoked the adapter (it was
+reachable only by manually naming its CLI command). Removed:
+- `build_frame_inventory_for_well` + `_validate_unique_keys_legacy` + the now-orphaned
+  `schemas/frame_contract` import in `metadata_ingest/frame_inventory/frame_inventory.py` (the live
+  `validate_frame_inventory` / `merge_frame_inventory_shards` + their helpers are UNTOUCHED).
+- the `build-for-well` CLI subcommand (`frame_inventory.py`) and the `build-frame-inventory-for-well`
+  task (`tasks.py`: `cmd_build_frame_inventory_for_well` + its subparser).
+- the package export (`frame_inventory/__init__.py`) and the 2 legacy unit tests + their `_row` /
+  `_write_frame_contract` helpers (`test_frame_inventory.py`).
+- `paths.py` docstrings repointed from the dead verb to the live `materialize_well` producer.
+
+**Scope decision (mdcolon-approved):** dead-adapter ONLY. The roadmap's *full* Step 7 (delete
+`materialize_stitched_images` / `build_frame_contract` / `frame_contract.csv`) is STILL BLOCKED:
+`frame_contract.csv` is live for `rule all` / Beat 2 — 8+ rules consume it (`segment_and_track_*`,
+`snip_processing_well`, `generate_auxiliary_masks_well`, `compute_mask_geometry/curvature/pose/
+fraction_alive/stage_predictions`, `consolidate_features`). Those must repoint onto the per-well shard
+(= **Beat 2**) before the producer chain can be deleted. `schemas/frame_contract.py`,
+`build_frame_contract.py`, `validate_frame_contract.py`, `materialize_stitched_images.py` all LEFT
+INTACT.
+
+**Verification:** **164 passed** (`tests/data_pipeline/`; = prior 181-baseline minus the 2 removed
+legacy tests, plus the count is the live-only suite). Import smoke clean (adapter symbol gone,
+`validate`/`merge` present, `tasks.py` imports). `grep` for `build_frame_inventory_for_well` /
+`build-frame-inventory-for-well` / `_validate_unique_keys_legacy` over `src/`+`tests/` → only the
+strangle docstring + the untracked `tests/improvements/` scratch (not in the suite). `snakemake
+front_half -n` parses through the spine; `snakemake -n` (default `rule all` / Beat 2) still builds its
+17-job DAG unbroken.
+
+**What's broken/half-done:** nothing. Committed. Stray untracked files
+(`specs/front_end/may_need_to_be_domunented!.md`, `tests/improvements/`) left in place by request.
+
+**Next concrete action:** **Beat 2** — repoint the downstream already-agnostic stages
+(segmentation → snips → features → QC, + auxiliary masks) to read the per-well `frame_inventory` shard
+instead of `frame_contract.csv`, via `well_runner.py`. ONLY after that lands does the full Step 7
+deletion (`materialize_stitched_images` + `frame_contract` chain + `schemas/frame_contract.py`) become
+safe. The MEDIUM `file_organization_audit.md` banner cleanups remain opportunistic (apply when touching
+those files).
+
+**Open decisions:** none blocking Beat 2.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-18 12:08 (session: next-batch #1 — ND2-exists/opens hardening at the acquisition-inventory CONSUME boundary)
 
 **What shipped (item #1 of the next batch — the small bridge before Step 7):**
