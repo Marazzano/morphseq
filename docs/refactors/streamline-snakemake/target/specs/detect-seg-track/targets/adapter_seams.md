@@ -91,6 +91,84 @@ cleanup beyond calling validators.
 
 ---
 
+## Detection Router Hypothesis
+
+Detection gets the first concrete router because detector replacement is the immediate pressure.
+The shared file should be a thin sequencer, not a smart detector:
+
+```text
+run_frame_detections.py
+  load validated frame_inventory / frame identity rows
+  load detection config
+  resolve detector backend
+  call backend detection code
+  call backend adapter -> canonical frame_detections rows
+  validate_frame_detections(...)
+  write frame_detections.csv
+  write .frame_detections.validated
+  write .frame_detections.provenance.json
+  optionally write backend raw/debug sidecar
+```
+
+The important boundary is:
+
+```text
+Backend detects.
+Adapter canonicalizes.
+Shared validator judges.
+Router writes.
+```
+
+The router should not know what a GroundingDINO phrase, text logit, or NMS suppression reason means.
+It should only know that the adapted dataframe must satisfy the shared `frame_detections` contract.
+
+### Backend Interface Sketch
+
+The exact Python shape can wait, but the interface should feel like this:
+
+```python
+class DetectorBackend(Protocol):
+    backend_name: str
+
+    def detect(
+        self,
+        *,
+        frames: pd.DataFrame,
+        config: Mapping[str, Any],
+    ) -> Any:
+        """Return backend-native raw detections."""
+```
+
+Each backend then owns its native output and adapter:
+
+```text
+backends/groundingdino/
+  run_groundingdino_detection.py
+  adapt_groundingdino_detections.py
+  config.py
+  raw_output.py?
+```
+
+The adapter translates native output to the canonical table. The shared validator is the strong
+boundary check after translation.
+
+### Provenance
+
+MVP assumes one `frame_detections.csv` artifact comes from one detector backend/config run. The
+router writes artifact-level provenance beside the table:
+
+```text
+frame_detections.csv
+.frame_detections.validated
+.frame_detections.provenance.json
+groundingdino_raw_detections.parquet   # optional debug sidecar
+```
+
+The provenance should record backend/model/config/thresholds/adapter version. It does not need a
+row-level `detection_run_id` unless a future table mixes multiple detector runs.
+
+---
+
 ## Config Shape
 
 Target config should make backend choice explicit:
@@ -137,4 +215,3 @@ A backend adapter must:
 
 Backends may include model-native metadata as optional columns only if the contract validator allows
 them and downstream ignores them.
-

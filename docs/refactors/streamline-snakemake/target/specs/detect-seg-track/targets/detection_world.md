@@ -24,14 +24,21 @@ For detection:
 
 ```text
 frame_inventory[well]
-  -> detector backend adapter
-  -> frame_detections.csv
+  -> frame_detection stage
+  -> frame_detections.csv artifact
   -> kept_frame_detections(...) view
   -> frame_masks
 ```
 
 Backend-specific code diverges before `frame_detections`; all downstream code consumes the shared
 contract.
+
+Naming:
+
+```text
+frame_detection   = stage / action
+frame_detections  = artifact / table
+```
 
 ---
 
@@ -62,6 +69,7 @@ Notes:
 - `z_index` is present even when null for projection/BF MVP rows.
 - These columns come from the validated per-well `frame_inventory`; detection does not reinterpret
   them.
+- Detection carries frame identity through from `frame_inventory`; it does not mint or reinterpret it.
 
 ---
 
@@ -83,7 +91,8 @@ bbox_format
 is_kept
 ```
 
-This is one row per **canonicalized detector candidate**, not only accepted detections.
+This is one row per detector candidate after the backend adapter has translated native model output
+into the shared `frame_detections` table. It is not only accepted detections.
 
 `is_kept` is the shared seam between backend-specific filtering and downstream segmentation:
 
@@ -121,6 +130,47 @@ suppressed_by_detection_id
 
 The shared validator should allow unknown backend-specific columns but only hard-validate the shared
 required blocks.
+
+Backend-specific optional columns may be present, but downstream consumers must not depend on them
+unless they are promoted into the shared contract.
+
+### Empty / No-Detection Frames
+
+An empty `frame_detections.csv` is not the target shape. The artifact should make it obvious that
+the detector processed each frame, even when a frame produced no candidates.
+
+Policy:
+
+```text
+if a frame has no detector candidates:
+  write one placeholder row for that image_id
+  detection_id = {image_id}_det_none
+  is_kept = false
+  frame identity columns populated
+  detector_backend / detector_model_id populated
+  detection-specific value columns may be NA
+```
+
+Rejected candidates are different from no-candidate placeholders:
+
+```text
+candidate exists but rejected:
+  detection_id = {image_id}_det{candidate_index:04d}
+  is_kept = false
+
+no candidates existed:
+  detection_id = {image_id}_det_none
+  is_kept = false
+```
+
+Preferred real-candidate `detection_id` format:
+
+```text
+{image_id}_det{candidate_index:04d}
+```
+
+This is preferred for debugging, not a hard semantic requirement. The hard requirement is uniqueness
+within the well.
 
 ---
 
@@ -175,6 +225,19 @@ is_kept is boolean
 It should allow zero kept detections on some frames. Whether a well can proceed to mask generation is
 a later seed/mask concern, not a detector-schema concern.
 
+Validation is conditional:
+
+```text
+is_kept == true:
+  class_label / confidence / bbox fields must be valid
+
+is_kept == false and detection_id != {image_id}_det_none:
+  rejected candidate row; bbox/confidence should be valid if the backend produced them
+
+is_kept == false and detection_id == {image_id}_det_none:
+  no-candidate placeholder row; class_label / confidence / bbox fields may be NA
+```
+
 ### Kept Detection View
 
 Any downstream stage that acts on detections must consume the kept view through a helper, not hand-roll
@@ -198,28 +261,38 @@ Use the same shape as the front-end scope/router pattern:
 segmentation/detection/
   frame_detections_contract.py        # shared product contract
   validate_frame_detections.py        # shared validators
-  run_frame_detections.py             # router / stage entry
+  kept_frame_detections.py            # shared consumer view: is_kept == true
+  run_frame_detection.py              # router / stage entry
   backends/
     groundingdino/
-      adapter.py
       config.py
+      run_groundingdino_detection.py
+      filter_groundingdino_detections.py
+      adapt_groundingdino_detections.py
       raw_output.py?                  # only if useful
     detectron2/
-      adapter.py
       config.py
+      run_detectron2_detection.py
+      filter_detectron2_detections.py
+      adapt_detectron2_detections.py
       raw_output.py?
 ```
 
-The shared contract owns `frame_detections`. Backend adapters translate native model output into
-that contract:
+The shared contract owns `frame_detections`. Backend adapters translate native model output into the
+shared table:
 
 ```text
-GroundingDINO native output -> backend filtering + canonicalization -> frame_detections rows
-Detectron2/Facebook output  -> backend filtering + canonicalization -> frame_detections rows
+GroundingDINO native output -> backend filtering + shared-table adaptation -> frame_detections rows
+Detectron2/Facebook output  -> backend filtering + shared-table adaptation -> frame_detections rows
 ```
 
 Do not add GroundingDINO-only columns to the shared table unless they are needed by every detector
 backend.
+
+For GroundingDINO, `filter_groundingdino_detections.py` is intentionally separate: it is the seam
+where GroundingDINO config (`box_threshold`, `text_threshold`, confidence/NMS policy, prompt) becomes
+the shared `is_kept` outcome. The shared runner and shared validator require `is_kept`; they do not
+know how GroundingDINO decided it.
 
 Rows describe detections. Provenance describes how detections were made. Raw sidecars preserve
 backend weirdness.
