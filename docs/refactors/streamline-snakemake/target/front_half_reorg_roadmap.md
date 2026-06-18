@@ -22,7 +22,7 @@ Scopes 1–5 spine this roadmap rides), and `specs/schema_layout.md` (the domain
 ## 🎯 OVERALL GOAL — get the pipeline running PER-WELL
 
 The end state is a pipeline where **one well flows end-to-end on its own**
-(`stitch_well[well_id] → segment → features → QC`), so a single well can be rerun, debugged, and
+(`materialize_well[well_id] → segment → features → QC`), so a single well can be rerun, debugged, and
 reasoned about in isolation. That is the destination.
 
 > **What this phase DOES (and the precise line it stops at):** the two beats are split by **where**
@@ -41,7 +41,7 @@ reasoned about in isolation. That is the destination.
 >
 > **🏁 THE FINISH LINE for this roadmap = a validated PER-WELL `frame_inventory` shard.** That is the
 > END of the microscope-aware part: raw data flows `ingest → map → join → discover →
-> stitch_well[well_id]` where the materializer emits a per-well `frame_inventory` shard, then the
+> materialize_well[well_id]` where the materializer emits a per-well `frame_inventory` shard, then the
 > shard is validated.
 > **The handoff is the boundary; Beat 1 builds the producer side (up to and including the shard +
 > its gate). Beat 1 does NOT repoint the consumer side** — segmentation/features/QC keep reading what
@@ -55,7 +55,7 @@ reasoned about in isolation. That is the destination.
 **Two kinds of "per-well" — keep them distinct** (the thing the other docs blur):
 - **per-well IDENTITY** = `well_id` means one global thing. Covered (Scope 1/2).
 - **per-well EXECUTION** = actually run ONE well through a stage. **Beat 1 builds it for the
-  microscope-aware spine** (`stitch_well` emits images + a per-well frame-inventory shard, then
+  microscope-aware spine** (`materialize_well` emits images + a per-well frame-inventory shard, then
   `validate_frame_inventory_for_well` gates it). **Beat 2 extends it across the agnostic back half** via `well_runner.py` —
   `selected_well_ids_for_experiment` and the generic per-well stage template are still the hole there.
 
@@ -68,7 +68,7 @@ are not sequential. Almost every awkward placement question in this refactor dis
 the overlap.
 
 ```
- stage:  ingest → map → join │ discover_wells │ stitch_well │ frame_inventory │ segment → features → QC
+ stage:  ingest → map → join │ discover_wells │ materialize_well │ frame_inventory │ segment → features → QC
  ════════════════════════════════════════════════════════════════════════════════════════════════════►
 
  ┌──────────── MICROSCOPE ZONE (scope-aware production) ───────────┐
@@ -89,7 +89,7 @@ the overlap.
 - **MICROSCOPE ZONE** = scope-aware production (raw → … → stitch backends). YX1 and Keyence
   diverge here. **Exits at the validated per-well `frame_inventory` shard.**
 - **PER-WELL ZONE** = well-SHARDED execution (discover_wells → … → end). **Starts at discover_wells.**
-- **THE STITCH OVERLAP** (`discover_wells → stitch_well → frame_inventory`) = the graph region where
+- **THE STITCH OVERLAP** (`discover_wells → materialize_well → frame_inventory`) = the graph region where
   well-sharded execution begins before microscope-specific production is fully gone. **This
   roadmap's whole job is to build the overlap correctly and exit it cleanly into `frame_inventory`.**
 
@@ -120,7 +120,7 @@ that some validators are scope-aware and some are shared:
 | `scope_metadata_mapped.csv` | canonical metadata validator | shared-ish metadata contract | rows have valid global `well_id`s; `discover_wells` can trust the file. |
 | `acquisition_inventory__{scope}.csv` | acquisition inventory validator | scope backend contract | raw acquisition evidence is well-formed for that microscope. |
 | `resolve_acquisitions` outputs | acquisition resolution validator | scope backend resolver | each well has either one active source or an explicit quarantine reason. |
-| `stitch_well` | producer/runtime checks | scope backend | the backend can materialize frames from resolved input. |
+| `materialize_well` | producer/runtime checks | scope backend | the backend can materialize frames from resolved input. |
 | `frame_inventory.csv` | frame inventory contract validator | shared, microscope-agnostic | manifest atoms/derived IDs/uniqueness/path tiers satisfy the shared handoff. |
 | SAM2 ingest view | consumer layout validator | shared consumer-side view | frames can be presented as ordered `NNNN.ext` per well/channel. |
 
@@ -415,14 +415,14 @@ data_pipeline/
 **Already correct (no change):** `ingest_scope_metadata` (incl. `acquisition_inventory__{scope}.csv`),
 `map_positions_to_wells`, `apply_position_to_well_mapping`, `discover_wells`.
 
-**🔨 NEW row — `stitch_well` (Step 6, promoted):**
+**🔨 NEW row — `materialize_well` (Step 6, promoted):**
 Step 3 intentionally did **not** add a `stitch_well_candidate` registry row. The candidate ran as a
 standalone comparison path, and candidate image isolation is owned by `materialized_image_paths.py` via
 `candidate=True`. Step 6 adds the live orchestration artifact/sentinel and calls the accepted
 materializer with `candidate=False`.
 ```python
 # Step 6 — live row (added when the candidate is accepted):
-"stitch_well": {
+"materialize_well": {
     "stage": "built_image_data",            # the pixel store root
     "fanout": PER_WELL,                      # per-well (replaces the experiment-grain legacy rule)
     "artifacts": {
@@ -705,7 +705,7 @@ merge_frame_inventory[{exp}]         → experiment-level frame_inventory  🏁 
    per-well shards are built by selecting rows from an experiment-grain `frame_contract.csv`.
 2. **The per-well FAN is currently LATE** — at `build_frame_inventory_for_well`, downstream of an
    experiment-grain `frame_contract`. The handoff-contract TARGET is to fan at `discover_wells` and
-   make **stitch itself** per-well (`stitch_well[well_id]`). So "re-grain stitch per-well" = **move
+   make **materialization itself** per-well (`materialize_well[well_id]`). So "re-grain materialization per-well" = **move
    the fan point earlier** (Steps 3+6 via the candidate).
 3. **The frame_inventory branch is DEAD** — `rule all` stops at features; `merge_frame_inventory` is
    never requested; **segmentation still reads `frame_contract.csv` directly.** Reaching the finish
@@ -720,7 +720,7 @@ merge_frame_inventory[{exp}]         → experiment-level frame_inventory  🏁 
 ```
 discover_wells (checkpoint = THE FAN)
         ↓  ⟱ per-well ⟱
-stitch_well[well_id]                  → per-well materialized images (via materialized_image_paths.py)
+materialize_well[well_id]               → per-well materialized images (via materialized_image_paths.py)
                                       → {well_id}_frame_inventory.csv (emitted by materializer)
         ↓
 validate_frame_inventory_for_well[well_id]  (absorbs the old stitched-index file-existence check)
@@ -974,7 +974,7 @@ isolated stitch job.
 **ZONE:** right edge of the STITCH OVERLAP. This is the microscope exit adapter: YX1-specific
 stitch output becomes a shared, validated per-well `frame_inventory` shard.
 
-**FLOW:** `stitch_well[well_id] emits images + frame_inventory[well_id] →
+**FLOW:** `materialize_well[well_id] emits images + frame_inventory[well_id] →
 validate_frame_inventory_for_well[well_id]`.
 
 Now (and only now) cut over: the candidate becomes the real path, and the materializer-emitted
@@ -997,15 +997,15 @@ downstream per-well migration in Beat 2.
   - `src/data_pipeline/image_materialization/materialized_image_paths.py`
     (move generic path grammar out of `stitched/layout.py`; takes `built_image_data_dir`
     explicitly and imports no orchestration paths)
-  - `src/data_pipeline/image_materialization/stitch_well.py`
+  - `src/data_pipeline/image_materialization/materialize_well.py`
     (thin microscope dispatcher after promote)
-  - `src/data_pipeline/image_materialization/scope/yx1/stitch_well_yx1.py`
+  - `src/data_pipeline/image_materialization/scope/yx1/materialize_well_yx1.py`
     (rename/move the accepted YX1 implementation)
   - `src/data_pipeline/image_materialization/frame_inventory_contract.py`
     (move the shared contract beside the stage moments)
 - **Edit**
   - `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py`
-    (`stitch_well` live row; `frame_inventory` path remains per-well then merge)
+    (`materialize_well` live row; `frame_inventory` path remains per-well then merge)
   - `src/data_pipeline/pipeline_orchestrator/rules/frame_inventory.smk`
     (validator consumes the materializer-emitted shard, not a `frame_contract.csv` adapter)
   - `src/data_pipeline/pipeline_orchestrator/Snakefile`
@@ -1015,9 +1015,9 @@ downstream per-well migration in Beat 2.
 - **Leave downstream consumers alone**
   - segmentation/features/QC still migrate in Beat 2
 
-- **Promote:** add/wire the live `stitch_well` rule and sentinel; call the accepted materializer with
+- **Promote:** add/wire the live `materialize_well` rule and sentinel; call the accepted materializer with
   `candidate=False` so `materialized_image_paths.py` writes the real `built_image_data` image tree.
-- **Product-set grain:** `stitch_well` remains **one job per well**, not per channel, method, or
+- **Product-set grain:** `materialize_well` remains **one job per well**, not per channel, method, or
   z-slice. The live sentinel means "the configured image-product set for this well completed." For
   Step 6, that set is intentionally one accepted product: `channel_id=BF`,
   `image_product_type=projection`, `projection_method=focus_stack`, `z_index=NULL`. Future products
@@ -1037,11 +1037,11 @@ downstream per-well migration in Beat 2.
 - **Validator = Level 1 + Level 1.5** (identity + path-existence; absorbs the retired stitched-index
   file-existence check). Level 2 (image-open/dims) deferred.
 - **Verify (the done-for-the-microscope-aware-part check):** for `20250912`, the chain `ingest →
-  map_positions → join → discover → stitch_well[well_id] → validate_frame_inventory_for_well`
+  map_positions → join → discover → materialize_well[well_id] → validate_frame_inventory_for_well`
   runs end-to-end and produces per-well frame inventories that (a) key on `time_index`, (b) have
   derived `well_id`/`image_id` recomputing from atoms, (c) have resolving `source_image_path`s.
   **YX1 has crossed the microscope boundary; Beat 1 is DONE.**
-- **COMMIT:** `feat: promote stitch_well_candidate → stitch_well; per-well frame_inventory is the live handoff (Beat 1 finish line)`
+- **COMMIT:** `feat: promote stitch_well_candidate → materialize_well; per-well frame_inventory is the live handoff (Beat 1 finish line)`
 
 ### Step 7 — STRANGLE the legacy path  ·  🧩 cleanup (remove the old Microscope-Zone chain)
 

@@ -176,7 +176,7 @@ The front end is **7 rules**: 1 plate root + 2 scope-front + 1 join + 1 fan + 2 
 | `map_positions_to_wells` | `scope_metadata__{scope}.csv` | `position_well_mapping.csv` (+ `.provenance.json`) | **MS** *(CSV→CSV)* | constant interface, always runs. YX1: XY match; Keyence: passthrough. |
 | `apply_position_to_well_mapping` | `scope_metadata__{scope}.csv` + `position_well_mapping.csv` | `scope_metadata_mapped.csv` (+ `.validated`) | Shared | applies mapping; **`well_id` minted here**. ← microscope convergence line. |
 | `discover_wells` *(checkpoint)* | `scope_metadata_mapped.csv` (#13) | `discovered_wells.txt` | Shared | reads the `well_id` column; emits ALL discovered well_ids. ⟱ FAN ⟱ |
-| `materialize_well` *(per well_id)* | raw + this well's mapping rows + configured image-product set | materialized images + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; one sentinel per well for the configured product set. Channel/method/z granularity lives as rows in `frame_inventory`, not Snakemake wildcards. **Named for the stage, not one op** — the producer composes XY (stitch) then Z (projection/z_stack); "stitch" is one step, not the whole stage (see `pipeline_file_philosophy.md` → Image materialization). Scope-specific code ends at the canonical `FieldsForTime` bundle; everything after is shared. |
+| `materialize_well` *(per well_id)* | raw + this well's mapping rows + configured image-product set | materialized images + `.well_{well_id}.done` | **MS** | post-fan; off-registry image tree; one sentinel per well for the configured product set. Channel/method/z granularity lives as rows in `frame_inventory`, not Snakemake wildcards. **Named for the stage, not one op** — the producer composes XY (stitch) then Z (projection/z_stack); "stitch" is one step, not the whole stage (see `pipeline_file_philosophy.md` → Image materialization). Scope-specific code ends at canonical acquired image tiles; everything after is shared. |
 | `validate_frame_inventory_well` *(per well_id)* | this well's `{well_id}_frame_inventory.csv` (built) | `…/per_well/{well_id}/{well_id}_frame_inventory.csv.validated` + report | Shared | post-fan per-well validation gate (metadata ∩ images). TARGET name (was `validate_frame_contract_well`); see `frame_inventory_handoff_contract.md`. |
 
 **`well_id` is born at the join, read at discovery (matches code, line 68).**
@@ -267,7 +267,7 @@ keyence ─►     ingest_scope_metadata [keyence]  ─┘
 > |---|---|---|---|
 > | `ingest_scope_metadata` | ✅ | ✅ | ✅ |
 > | `map_positions_to_wells` | ✅ | ❌ **missing** | ✅ `series_well_mapper_keyence.py` |
-> | `materialize_well` | ✅ | ❌ **missing** | ✅ `image_building/keyence/stitched_ff_builder.py` (legacy; becomes the keyence backend behind `FieldsForTime`) |
+> | `materialize_well` | ✅ | ❌ **missing** | ✅ `image_building/keyence/stitched_ff_builder.py` (legacy; becomes the Keyence backend that emits canonical acquired image tiles) |
 >
 > The code is there; the **rules** aren't. Closing this gap is part of the "one stage, config
 > dispatch" refactor — when each stage becomes one config-dispatched rule, Keyence is wired by
