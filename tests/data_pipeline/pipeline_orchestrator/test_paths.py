@@ -66,6 +66,29 @@ class TestResolvedArtifactPaths:
         assert artifact_path(ROOT, "frame_inventory", "inventory", EXP, path_mode="merged") == \
             ROOT / "experiment_metadata" / EXP / f"{EXP}_frame_inventory.csv"
 
+    def test_frame_detections_per_well_names_the_well(self):
+        assert artifact_path(ROOT, "frame_detections", "frame_detections", EXP,
+                             path_mode="per_well", well_id=WELL) == \
+            ROOT / "detection" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_detections.csv"
+
+    def test_frame_detections_merged_names_the_experiment(self):
+        assert artifact_path(ROOT, "frame_detections", "frame_detections", EXP, path_mode="merged") == \
+            ROOT / "detection" / EXP / f"{EXP}_frame_detections.csv"
+
+    def test_frame_masks_per_well_names_the_well(self):
+        assert artifact_path(ROOT, "frame_masks", "frame_masks", EXP,
+                             path_mode="per_well", well_id=WELL) == \
+            ROOT / "segmentation" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_masks.csv"
+
+    def test_frame_masks_merged_names_the_experiment(self):
+        assert artifact_path(ROOT, "frame_masks", "frame_masks", EXP, path_mode="merged") == \
+            ROOT / "segmentation" / EXP / f"{EXP}_frame_masks.csv"
+
+    def test_prompt_seeds_sidecar_is_per_well_only(self):
+        assert artifact_path(ROOT, "frame_masks", "prompt_seeds", EXP,
+                             path_mode="per_well", well_id=WELL) == \
+            ROOT / "segmentation" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_prompt_seeds.csv"
+
 
 class TestDerivedSidecarPaths:
     """validated_/provenance_ are general helpers: artifact_path + a fixed suffix. Test the
@@ -123,6 +146,13 @@ class TestPathModeRules:
         assert "discover_wells" in message
         assert "experiment" in message
         assert "per_well" in message
+
+    def test_prompt_seeds_has_no_merged_view(self):
+        with pytest.raises(ValueError) as excinfo:
+            artifact_path(ROOT, "frame_masks", "prompt_seeds", EXP, path_mode="merged")
+        message = str(excinfo.value)
+        assert "prompt_seeds" in message
+        assert "merged" in message
 
     def test_per_well_requires_well_id(self):
         with pytest.raises(ValueError) as excinfo:
@@ -197,8 +227,12 @@ class TestRegistryIntrospection:
 
     def test_known_steps_and_artifacts(self):
         assert "frame_inventory" in known_steps()
+        assert "frame_detections" in known_steps()
+        assert "frame_masks" in known_steps()
         assert known_steps() == tuple(sorted(known_steps()))
         assert known_artifacts("frame_inventory") == ("inventory",)
+        assert known_artifacts("frame_detections") == ("frame_detections",)
+        assert known_artifacts("frame_masks") == ("frame_masks", "prompt_seeds")
         assert known_artifacts("discover_wells") == ("wells",)
 
     def test_every_step_has_required_keys(self):

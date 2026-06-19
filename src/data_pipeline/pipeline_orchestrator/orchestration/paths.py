@@ -197,6 +197,39 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── DETECTION WORLD — detector candidates and backend filtering outcome ─────────────────
+    # Per-well detection shards feed per-well frame_masks. The merged experiment table is useful
+    # for audit/reporting, but segmentation consumes the per-well shard for the same well.
+    "frame_detections": {
+        "stage": "detection",
+        "fanout": PER_WELL_THEN_MERGE,
+        "artifacts": {
+            "frame_detections": {
+                PATH_MODE_PER_WELL: "{well_id}_frame_detections.csv",
+                PATH_MODE_MERGED: "{experiment_id}_frame_detections.csv",
+            },
+        },
+    },
+
+    # ── SEGMENTATION WORLD — SAM/SAM2 masks plus backend-assigned object identity ─────────
+    # `frame_masks` is the target segmentation product. It fans out per well because SAM2
+    # consumes one well's ordered frame view at a time, then merges to an experiment-level table.
+    # `prompt_seeds` is a per-well audit sidecar for the detection->segmentation handoff; it is not
+    # required as a merged experiment artifact.
+    "frame_masks": {
+        "stage": "segmentation",
+        "fanout": PER_WELL_THEN_MERGE,
+        "artifacts": {
+            "frame_masks": {
+                PATH_MODE_PER_WELL: "{well_id}_frame_masks.csv",
+                PATH_MODE_MERGED: "{experiment_id}_frame_masks.csv",
+            },
+            "prompt_seeds": {
+                PATH_MODE_PER_WELL: "{well_id}_prompt_seeds.csv",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────
