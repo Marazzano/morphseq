@@ -41,6 +41,7 @@ from data_pipeline.image_building.shared.log_focus import LoG_focus_stacker, im_
 from data_pipeline.image_materialization import materialized_image_paths
 from data_pipeline.image_materialization.frame_inventory_contract import (
     REQUIRED_FRAME_INVENTORY_COLUMNS,
+    derive_image_id,
     derive_well_id,
 )
 from data_pipeline.image_materialization.materialization_plan import (
@@ -52,14 +53,16 @@ from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
 
 log = logging.getLogger(__name__)
 
-# Frame-inventory columns emitted by this module (flat schema, decided 2026-06-17).
-# Derived columns (well_id, image_id) are intentionally absent — the contract validator
-# recomputes them from atoms and fails loud on disagreement.
+# Frame-inventory columns emitted by this module (flat schema, decided 2026-06-17). Derived columns
+# are written for consumers but never trusted: the validator recomputes them from atoms and fails
+# loud on disagreement.
 _EMITTED_COLUMNS: tuple[str, ...] = (
     "experiment_id",
     "well_index",
+    "well_id",
     "channel_id",
     "time_index",
+    "image_id",
     "elapsed_time_s",
     "acquisition_time_s",
     "z_index",
@@ -149,7 +152,8 @@ def materialize_yx1_well(
 
     Returns:
         DataFrame with columns ``_EMITTED_COLUMNS`` — one row per materialized frame.
-        ``well_id`` and ``image_id`` are absent; the contract validator derives them.
+        ``well_id`` and ``image_id`` are derived from atoms and written for downstream consumers;
+        the contract validator recomputes them and fails loud on disagreement.
 
     Raises:
         ValueError: on well_id / well_index / experiment_id inconsistency, empty
@@ -270,11 +274,14 @@ def materialize_yx1_well(
             skio.imsave(str(out_path), ff, check_contrast=False)
 
             t_times = time_lookup[t]
+            image_id = derive_image_id(well_id, "BF", int(t))
             rows.append({
                 "experiment_id": experiment_id,
                 "well_index": well_index,
+                "well_id": well_id,
                 "channel_id": "BF",
                 "time_index": t,
+                "image_id": image_id,
                 "elapsed_time_s": t_times["elapsed_time_s"],
                 "acquisition_time_s": t_times["acquisition_time_s"],
                 "z_index": pd.NA,

@@ -1,21 +1,11 @@
 """Frame-inventory product-family rules.
 
-This is the behavior-preserving bridge from the legacy ``frame_contract.csv`` table to the
-``frame_inventory`` product family declared in ``orchestration.paths``. The current live pipeline
-still builds ``frame_contract.csv`` as the physical frame table; these rules split that table into
-per-well inventory shards and merge those shards back to the experiment-level inventory.
+This is the live microscope handoff family. ``materialize_well`` emits one validated per-well
+``{well_id}_frame_inventory.csv`` shard; downstream Beat-2 consumers should depend on that shard
+and its sentinel. The merged experiment-level frame inventory is an aggregate view over those same
+materializer-emitted shards.
 
-Do not split detection/segmentation here. Do not bulk-import stale rule fragments.
-
-⚠️ FORWARD DECLARATION (2026-06-07). These rules are NOT yet on the default DAG: `rule all` does
-not request the per-well shards or the merged inventory, and segmentation still reads
-`frame_contract.csv` directly. They run only when their output is named on the CLI. Scope 5 wires
-them into the spine when segmentation moves onto the per-well shard. Until then this file is a
-parsed-but-dormant forward declaration (mirrors the `paths.py` banner).
-
-AUDIT (2026-06-07): docs/refactors/streamline-snakemake/target/frame_inventory_well_runner_audit.md
-(finding #1 = this dead branch; #3 = the merged-level validate rule double-validates a file the
-merge already checked).
+Do not split detection/segmentation logic here. This file wires the handoff product only.
 """
 
 import importlib.util
@@ -97,29 +87,23 @@ def _frame_inventory_validated(experiment: str, *, path_mode: str, well_id: str 
 
 
 def _frame_inventory_run_wells(wc):
-    # Legacy bridge: the live checkpoint still writes wells.txt and wells_for_experiment reads it.
-    # When discover_wells is moved onto paths.py, this should become run_well_ids_for_experiment().
+    # The run set comes from well_runner via wells_for_experiment(): discovered ∩ config targets.
     return wells_for_experiment(wc)
 
 
 def _frame_inventory_artifacts_for_run(wc):
-    return [
-        _frame_inventory_artifact(
-            wc.experiment,
-            path_mode=paths.PATH_MODE_PER_WELL,
-            well_id=well_id,
-        )
-        for well_id in _frame_inventory_run_wells(wc)
-    ]
+    return run_well_shard_paths(
+        DATA_ROOT,
+        MATERIALIZE_WELL_STEP,
+        "inventory",
+        wc.experiment,
+        _frame_inventory_run_wells(wc),
+    )
 
 
 def _frame_inventory_validated_for_run(wc):
     return [
-        _frame_inventory_validated(
-            wc.experiment,
-            path_mode=paths.PATH_MODE_PER_WELL,
-            well_id=well_id,
-        )
+        _materialize_well_validated(wc.experiment, well_id=well_id)
         for well_id in _frame_inventory_run_wells(wc)
     ]
 
