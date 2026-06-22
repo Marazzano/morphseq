@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from data_pipeline.features.legacy_embeddings.snip_source import (
+from data_pipeline.feature_extraction.legacy_embeddings.snip_source import (
     collect_snip_inputs,
 )
 

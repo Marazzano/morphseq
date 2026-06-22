@@ -20,12 +20,12 @@ the wrong shape. This in-process 3.9 load is its replacement.
 
 HOW to run (prefer the direct executable from env.yaml.runtime.model_python_executable):
 
-    <model_python_executable> -m data_pipeline.features.legacy_embeddings.load_model_smoke \
+    <model_python_executable> -m data_pipeline.feature_extraction.legacy_embeddings.load_model_smoke \
         --models-root <models_root> --model-name 20241107_ds_sweep01_optimum
 
     # fallback, if no direct executable is configured (env.yaml.runtime.model_python_env):
     conda run -n mseq_pipeline_py3.9 --no-capture-output \
-        python -m data_pipeline.features.legacy_embeddings.load_model_smoke \
+        python -m data_pipeline.feature_extraction.legacy_embeddings.load_model_smoke \
         --models-root <models_root> --model-name 20241107_ds_sweep01_optimum
 
 Exit codes: 0 = model loaded + metadata printed; non-zero (with a loud message
@@ -37,7 +37,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from data_pipeline.features.legacy_embeddings.model_paths import resolve_legacy_model_dir
+from data_pipeline.feature_extraction.legacy_embeddings.model_paths import resolve_legacy_model_dir
 
 
 def _model_metadata(lit_model) -> dict:
@@ -71,7 +71,7 @@ def load_smoke(models_root: str, model_name: str, device: str = "cpu") -> int:
             f"3.9-pinned); got {sys.version_info[0]}.{sys.version_info[1]}. Invoke via "
             f"env.yaml.runtime.model_python_executable, or "
             f"`conda run -n mseq_pipeline_py3.9 python -m "
-            f"data_pipeline.features.legacy_embeddings.load_model_smoke ...`.",
+            f"data_pipeline.feature_extraction.legacy_embeddings.load_model_smoke ...`.",
             file=sys.stderr,
         )
         return 2

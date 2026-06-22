@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from data_pipeline.features.legacy_embeddings.model_paths import (
+from data_pipeline.feature_extraction.legacy_embeddings.model_paths import (
     legacy_models_dir,
     resolve_legacy_model_dir,
 )
