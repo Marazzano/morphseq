@@ -11,6 +11,8 @@ import pytest
 import pandas as pd
 
 from data_pipeline.image_materialization.frame_inventory_contract import (
+    DOWNSTREAM_FRAME_IDENTITY_BLOCK,
+    FRAME_IDENTITY_NULLABLE,
     REQUIRED_FRAME_INVENTORY_COLUMNS,
     DERIVED_FRAME_INVENTORY_COLUMNS,
     FrameInventorySpec,
@@ -19,6 +21,7 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
     assert_derived_ids_consistent,
     derive_well_id,
     derive_image_id,
+    validate_frame_identity_block,
 )
 
 
@@ -150,3 +153,90 @@ def test_one_bad_row_in_batch_raises():
     df = pd.DataFrame(rows)
     with pytest.raises(ValueError, match="image_id inconsistent"):
         assert_derived_ids_consistent(df)
+
+
+# ---------------------------------------------------------------------------
+# 4. Downstream frame-identity block + validator
+# ---------------------------------------------------------------------------
+
+_EXP = "20250912"
+_WELL_ID = f"{_EXP}_B01"
+_WIDTH, _HEIGHT = 1024, 768
+
+
+def _ref_inventory(n_frames: int) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "experiment_id": _EXP,
+        "well_index": "B01",
+        "channel_id": "BF",
+        "time_index": t,
+        "source_image_path": f"images/{_WELL_ID}_BF_t{t:04d}.png",
+        "image_width_px": _WIDTH,
+        "image_height_px": _HEIGHT,
+    } for t in range(n_frames)])
+
+
+def _identity_df(n_frames: int, **overrides) -> pd.DataFrame:
+    rows = []
+    for t in range(n_frames):
+        row = {
+            "experiment_id": _EXP,
+            "well_id": _WELL_ID,
+            "image_id": f"{_WELL_ID}_BF_t{t:04d}",
+            "time_index": t,
+            "z_index": pd.NA,
+            "channel_id": "BF",
+            "source_image_path": f"images/{_WELL_ID}_BF_t{t:04d}.png",
+            "image_width_px": _WIDTH,
+            "image_height_px": _HEIGHT,
+        }
+        row.update(overrides)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_identity_block_includes_z_index_as_nullable():
+    assert "z_index" in DOWNSTREAM_FRAME_IDENTITY_BLOCK
+    assert "z_index" in FRAME_IDENTITY_NULLABLE
+
+
+def test_identity_block_is_tuple_with_derived_ids():
+    assert isinstance(DOWNSTREAM_FRAME_IDENTITY_BLOCK, tuple)
+    # The downstream block (unlike the producer atom list) DOES carry the derived ids.
+    assert {"well_id", "image_id"}.issubset(set(DOWNSTREAM_FRAME_IDENTITY_BLOCK))
+
+
+def test_identity_validator_passes_with_na_z_index():
+    df = _identity_df(2)
+    assert df["z_index"].isna().all()
+    validate_frame_identity_block(df, _ref_inventory(2))  # must not raise
+
+
+def test_identity_validator_synthesizes_missing_z_index():
+    df = _identity_df(2).drop(columns=["z_index"])
+    validate_frame_identity_block(df, _ref_inventory(2))  # must not raise
+
+
+def test_identity_validator_unknown_image_id_fails():
+    df = _identity_df(3)
+    with pytest.raises(ValueError, match="not present in reference_frame_inventory"):
+        validate_frame_identity_block(df, _ref_inventory(1))
+
+
+def test_identity_validator_carried_mismatch_fails():
+    df = _identity_df(1, image_height_px=999)
+    with pytest.raises(ValueError, match="disagreeing with reference_frame_inventory"):
+        validate_frame_identity_block(df, _ref_inventory(1))
+
+
+def test_identity_validator_multiple_wells_fails():
+    df = _identity_df(2)
+    df.loc[1, "well_id"] = "20250912_C02"
+    with pytest.raises(ValueError, match="multiple well_id"):
+        validate_frame_identity_block(df, _ref_inventory(2))
+
+
+def test_identity_validator_uses_context_in_error():
+    df = _identity_df(1, source_image_path="images/wrong.png")
+    with pytest.raises(ValueError, match=r"\[my_product\]"):
+        validate_frame_identity_block(df, _ref_inventory(1), context="my_product")

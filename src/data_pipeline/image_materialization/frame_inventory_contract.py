@@ -80,6 +80,46 @@ ALLOWED_IMAGE_SUFFIXES: tuple[str, ...] = (".tif", ".tiff", ".png", ".jpg", ".jp
 REQUIRED_CHANNEL: str = "BF"
 
 # ---------------------------------------------------------------------------
+# Downstream frame-identity block — the shared header every post-inventory
+# frame-level model product (frame_detections, frame_masks, …) carries through.
+# ---------------------------------------------------------------------------
+
+# These columns are the DERIVED, consumer-facing view of a validated frame: the
+# atom-composed ids (well_id / image_id) plus the per-frame context that downstream
+# products copy through unchanged. This is the single source of truth for that header;
+# downstream contracts (e.g. detection/frame_detections_contract.py) IMPORT this rather
+# than re-declaring the column list. See specs/detect-seg-track/targets/detection_world.md
+# "Required Frame Identity Block".
+#
+# ``z_index`` is intentionally INCLUDED here even though it is NOT a frame_inventory atom
+# today (NA on BF / projection rows). ``validate_frame_identity_block`` synthesizes it as NA
+# when absent and treats it as nullable; do not add it to the atom manifest above.
+DOWNSTREAM_FRAME_IDENTITY_BLOCK: tuple[str, ...] = (
+    "experiment_id",
+    "well_id",
+    "image_id",
+    "time_index",
+    "z_index",
+    "channel_id",
+    "source_image_path",
+    "image_width_px",
+    "image_height_px",
+)
+
+# Identity columns that may be null (present-but-NA) on the MVP.
+FRAME_IDENTITY_NULLABLE: frozenset[str] = frozenset({"z_index"})
+
+# The identity columns whose per-frame values a downstream product must carry UNCHANGED
+# from the matching frame_inventory row (checked by validate_frame_identity_block).
+_FRAME_IDENTITY_CARRIED_COLUMNS: tuple[str, ...] = (
+    "time_index",
+    "channel_id",
+    "source_image_path",
+    "image_width_px",
+    "image_height_px",
+)
+
+# ---------------------------------------------------------------------------
 # Derived-id helpers
 # ---------------------------------------------------------------------------
 
@@ -165,6 +205,94 @@ def frame_inventory_image_ids(df: pd.DataFrame, scope_label: str = "frame_invent
         return df.apply(_image_id_for_row, axis=1)
     except ValueError as exc:
         raise ValueError(f"[{scope_label}] {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Downstream frame-identity validator — reusable across frame-level products
+# ---------------------------------------------------------------------------
+
+
+def validate_frame_identity_block(
+    df: pd.DataFrame,
+    reference_frame_inventory: pd.DataFrame,
+    *,
+    context: str = "frame_identity",
+) -> None:
+    """Validate the shared frame-identity header of a downstream frame-level product.
+
+    Reusable for ``frame_detections``, ``frame_masks``, and later frame-level products: it asserts
+    the product's per-row identity is consistent with the trusted ``reference_frame_inventory`` it
+    derives from. ``reference_frame_inventory`` is the validated per-well inventory table (atoms;
+    derived ids optional) passed in as a READ-ONLY DataFrame — this validator does NOT read files.
+
+    Two-layer doctrine (see ``specs/detect-seg-track/targets/detection_world.md`` "Frame Identity
+    Validator"):
+      - *schema layer* ("right bones"): all ``DOWNSTREAM_FRAME_IDENTITY_BLOCK`` columns present
+        (``z_index`` synthesized NA if absent, then treated as nullable); non-nullable identity columns
+        are non-null; rows belong to exactly one ``experiment_id`` and one ``well_id``;
+      - *reference layer* ("bones belong to the right body"): every ``image_id`` exists in
+        ``reference_frame_inventory`` (membership via ``frame_inventory_image_ids``); ``time_index`` /
+        ``channel_id`` / ``source_image_path`` / ``image_width_px`` / ``image_height_px`` agree with the
+        matching inventory row.
+
+    Raises:
+        ValueError: prefixed with ``context`` and an offending-row sample, on any failure.
+    """
+    df = df.copy()
+    # z_index is synthesized as NA when the product did not carry it (BF / projection MVP).
+    if "z_index" not in df.columns:
+        df["z_index"] = pd.NA
+
+    missing = [c for c in DOWNSTREAM_FRAME_IDENTITY_BLOCK if c not in df.columns]
+    if missing:
+        raise ValueError(f"[{context}] missing required frame identity columns: {sorted(missing)}")
+
+    # Required identity columns must be non-null except the explicitly-nullable ones.
+    for col in DOWNSTREAM_FRAME_IDENTITY_BLOCK:
+        if col in FRAME_IDENTITY_NULLABLE:
+            continue
+        if df[col].isna().any():
+            n = int(df[col].isna().sum())
+            raise ValueError(
+                f"[{context}] identity column '{col}' has {n} null value(s); only "
+                f"{sorted(FRAME_IDENTITY_NULLABLE)} may be null"
+            )
+
+    # One experiment / one well per product table.
+    for col in ("experiment_id", "well_id"):
+        vals = sorted(df[col].dropna().unique().tolist())
+        if len(vals) > 1:
+            raise ValueError(
+                f"[{context}] rows span multiple {col} values (expected one): {vals[:5]}"
+            )
+
+    # image_id membership: every product image_id must be a known inventory frame.
+    inventory_image_ids = set(frame_inventory_image_ids(reference_frame_inventory, scope_label=context))
+    unknown = sorted(set(df["image_id"].astype(str)) - inventory_image_ids)
+    if unknown:
+        raise ValueError(
+            f"[{context}] {len(unknown)} image_id(s) not present in reference_frame_inventory. "
+            f"First offenders: {unknown[:3]}"
+        )
+
+    # Per-frame carried-column agreement against the matching inventory row.
+    inv = reference_frame_inventory.copy()
+    inv["image_id"] = frame_inventory_image_ids(inv, scope_label=context).astype(str)
+    inv_by_image = inv.drop_duplicates(subset=["image_id"]).set_index("image_id")
+    for col in _FRAME_IDENTITY_CARRIED_COLUMNS:
+        if col not in inv_by_image.columns:
+            # The inventory does not carry this column to compare against; skip silently.
+            continue
+        expected = df["image_id"].astype(str).map(inv_by_image[col])
+        # Compare as strings to be dtype-robust (CSV round-trips coerce numeric → object).
+        bad = df[col].astype(str) != expected.astype(str)
+        if bad.any():
+            n = int(bad.sum())
+            sample = df.loc[bad, ["image_id", col]].head(3).to_dict(orient="records")
+            raise ValueError(
+                f"[{context}] {n} row(s) have '{col}' disagreeing with reference_frame_inventory. "
+                f"First offenders: {sample}"
+            )
 
 
 # ---------------------------------------------------------------------------
