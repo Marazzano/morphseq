@@ -101,6 +101,14 @@ class TestRowOrderAndCount:
         df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE, batch_size=3)
         assert len(df) == 7
 
+    def test_model_input_channels_passed_through(self, tmp_path):
+        snip_inputs = _make_snip_inputs(2, tmp_path)
+        model = _MockLitModel(LATENT_DIM)
+        # channels=1 (default, grayscale) and channels=3 (RGB) should both produce output
+        df1 = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE, model_input_channels=1)
+        df3 = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE, model_input_channels=3)
+        assert len(df1) == len(df3) == 2
+
 
 class TestZMuColumns:
     def test_emits_z_mu_columns_count_equals_latent_dim(self, tmp_path):

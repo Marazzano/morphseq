@@ -34,23 +34,34 @@ def _write_png(tmp_path, width: int, height: int, mode: str = "RGB"):
 
 
 class TestOutputShape:
-    def test_returns_unbatched_3hw(self, tmp_path):
+    def test_default_channels_is_1_grayscale(self, tmp_path):
+        # The legacy VAE input_dim=(1, 288, 128) — default must be grayscale
         p = _write_png(tmp_path, 64, 32)
         t = snip_to_model_input_tensor(p, model_input_shape=(32, 64))
-        assert t.shape == (3, 32, 64), f"Expected [3, 32, 64], got {tuple(t.shape)}"
+        assert t.shape == (1, 32, 64), f"Expected [1, 32, 64] (grayscale default), got {tuple(t.shape)}"
+
+    def test_returns_unbatched_chw(self, tmp_path):
+        p = _write_png(tmp_path, 64, 32)
+        t = snip_to_model_input_tensor(p, model_input_shape=(32, 64))
+        assert t.ndim == 3, f"Expected 3 dims (C, H, W), got {t.ndim}"
 
     def test_model_input_shape_is_height_width(self, tmp_path):
+        # (288, 128) → height=288, width=128 → tensor [1, 288, 128], NOT [1, 128, 288]
         p = _write_png(tmp_path, 50, 80)
-        # (288, 128) → height=288, width=128 → tensor [3, 288, 128], NOT [3, 128, 288]
         t = snip_to_model_input_tensor(p, model_input_shape=(288, 128))
-        assert t.shape == (3, 288, 128), (
-            f"model_input_shape=(288,128) should give [3,288,128], got {tuple(t.shape)}"
+        assert t.shape == (1, 288, 128), (
+            f"model_input_shape=(288,128) should give [1,288,128], got {tuple(t.shape)}"
         )
 
-    def test_not_batched_no_leading_dim(self, tmp_path):
+    def test_channels_3_gives_rgb_shape(self, tmp_path):
         p = _write_png(tmp_path, 32, 32)
-        t = snip_to_model_input_tensor(p, model_input_shape=(16, 16))
-        assert t.ndim == 3, f"Expected 3 dims (C, H, W), got {t.ndim}"
+        t = snip_to_model_input_tensor(p, model_input_shape=(16, 16), model_input_channels=3)
+        assert t.shape == (3, 16, 16), f"Expected [3, 16, 16] for channels=3, got {tuple(t.shape)}"
+
+    def test_invalid_channels_raises(self, tmp_path):
+        p = _write_png(tmp_path, 32, 32)
+        with pytest.raises(ValueError, match="model_input_channels"):
+            snip_to_model_input_tensor(p, model_input_shape=(16, 16), model_input_channels=2)
 
 
 class TestOutputDtype:
@@ -68,8 +79,18 @@ class TestOutputValues:
         assert float(t.max()) <= 1.0
 
 
-class TestGrayscaleHandling:
-    def test_grayscale_becomes_3_channels(self, tmp_path):
+class TestChannelConversion:
+    def test_rgb_png_to_grayscale(self, tmp_path):
+        p = _write_png(tmp_path, 32, 32, mode="RGB")
+        t = snip_to_model_input_tensor(p, model_input_shape=(16, 16), model_input_channels=1)
+        assert t.shape[0] == 1, f"Expected 1 channel (grayscale), got {t.shape[0]}"
+
+    def test_grayscale_png_to_grayscale(self, tmp_path):
         p = _write_png(tmp_path, 32, 32, mode="L")
-        t = snip_to_model_input_tensor(p, model_input_shape=(16, 16))
-        assert t.shape[0] == 3, f"Expected 3 channels from grayscale PNG, got {t.shape[0]}"
+        t = snip_to_model_input_tensor(p, model_input_shape=(16, 16), model_input_channels=1)
+        assert t.shape[0] == 1
+
+    def test_grayscale_png_to_rgb(self, tmp_path):
+        p = _write_png(tmp_path, 32, 32, mode="L")
+        t = snip_to_model_input_tensor(p, model_input_shape=(16, 16), model_input_channels=3)
+        assert t.shape[0] == 3

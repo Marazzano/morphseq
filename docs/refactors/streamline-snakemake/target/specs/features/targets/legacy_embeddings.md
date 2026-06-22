@@ -120,12 +120,19 @@ features:
   legacy_embeddings:
     model_name: 20241107_ds_sweep01_optimum   # which VAE — a science choice
     model_input_shape: [288, 128]             # [height, width] — NOT [width, height]
+    model_input_channels: 1                  # 1=grayscale (MetricVAEConfig default); 3=RGB
     batch_size: 64
 ```
 
 `model_input_shape` is `[height, width]` following the NumPy/torchvision (H, W) convention.
 Do not interpret it as `[width, height]`. This drives `snip_to_model_input_tensor()` in
 `transforms.py` — the explicit, config-driven replacement for `basic_transform(target_size=(288, 128))`.
+
+`model_input_channels` must match the channel count the model was trained with.
+The production model (`MetricVAEConfig`) defaults to `input_dim=(1, 288, 128)` — grayscale.
+The legacy pipeline used `transforms.Grayscale(num_output_channels=1)` throughout; passing
+`model_input_channels: 3` to a model trained on 1-channel input will silently produce garbage
+embeddings or a shape error at the first conv layer.
 
 `model_name` is a science knob (determines the embedding space). `models_root` is a
 machine path. They live in different files and never swap.

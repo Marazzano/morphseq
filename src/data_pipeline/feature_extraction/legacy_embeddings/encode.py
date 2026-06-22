@@ -53,6 +53,7 @@ def encode_snips(
     lit_model,
     snip_inputs: List[SnipInput],
     model_input_shape: tuple[int, int],
+    model_input_channels: int = 1,
     batch_size: int = 64,
     device: str = "cpu",
 ) -> pd.DataFrame:
@@ -62,6 +63,8 @@ def encode_snips(
         lit_model: Loaded legacy AutoModel, already ``.eval()`` and on ``device``.
         snip_inputs: Ordered list of SnipInputs to encode (order preserved in output).
         model_input_shape: ``(height, width)`` — passed to ``snip_to_model_input_tensor``.
+        model_input_channels: Channel count the model expects. ``1`` = grayscale
+            (default, matching the legacy VAE ``input_dim=(1, 288, 128)``). ``3`` = RGB.
         batch_size: Images per forward pass.
         device: Torch device string (``"cpu"`` or ``"cuda"``).
 
@@ -78,7 +81,7 @@ def encode_snips(
             batch_inputs = snip_inputs[batch_start : batch_start + batch_size]
 
             tensors = [
-                snip_to_model_input_tensor(si.image_path, model_input_shape)
+                snip_to_model_input_tensor(si.image_path, model_input_shape, model_input_channels)
                 for si in batch_inputs
             ]
             x = torch.stack(tensors, dim=0).to(device)  # [B, 3, H, W]

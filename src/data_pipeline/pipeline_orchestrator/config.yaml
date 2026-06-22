@@ -114,6 +114,18 @@ snip_processing:
 feature_extraction:
   stage_predictions: {}
 
+  # Legacy VAE encoder — produces latent embeddings (latent_embeddings step).
+  # model_name:           which trained model to load (science choice; names the weights dir)
+  # model_input_shape:    [height, width] — NumPy/torchvision (H, W) convention, NOT (W, H)
+  # model_input_channels: 1 = grayscale (matches MetricVAEConfig input_dim=(1, 288, 128))
+  #                       3 = RGB (only if a future model is trained on colour input)
+  # batch_size:           snips per encoder forward pass
+  legacy_embeddings:
+    model_name: 20241107_ds_sweep01_optimum
+    model_input_shape: [288, 128]
+    model_input_channels: 1
+    batch_size: 64
+
 # Phase 5: QC (placeholder)
 qc:
   edge_margin_pixels: 2
