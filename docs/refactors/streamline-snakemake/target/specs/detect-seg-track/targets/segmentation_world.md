@@ -1,7 +1,7 @@
 # Segmentation / Frame Masks World
 
-**Status:** target-planning draft. This doc captures the current agreed target model before folder
-layout hardens.
+**Status:** target-planning draft. This doc captures the target contract for the mask-producing
+stage before folder layout hardens.
 
 ---
 
@@ -9,27 +9,31 @@ layout hardens.
 
 Segmentation answers:
 
-> Given trusted frames and kept detection prompts, which pixels belong to each object, and what track
-> identity did the segmenter/backend assign?
+> Given trusted frame detections, which selected detection prompts initialize segmentation, which
+> pixels belong to each propagated object, and what track identity did the backend assign?
 
-For the current SAM2 path, segmentation and tracking are physically coupled. SAM2 propagates masks
-and carries object IDs through time in the same operation. The target contract should not invent a
-second tracking algorithm at this seam.
-
-For the first target pass, this world does not need much more conceptual machinery than that. The
-contract is:
+The target doctrine is:
 
 ```text
-frame_detections
-  -> kept_frame_detections(frame_detections.is_kept == true)
-  -> SAM2 box prompts
-  -> SAM2 mask propagation + object IDs
-  -> frame_masks
+Detections propose.
+Prompts initialize.
+SAM2 propagates.
+Masks record the realized object.
 ```
 
-Everything else in this doc exists to make that handoff auditable: how `detection_id` becomes a
-prompt/seed, how `sam2_obj_id` becomes `track_id`, and how SAM2 frame indices map back to pipeline
-`image_id`.
+Naming:
+
+```text
+segment_and_track  = stage / action
+frame_masks        = artifact / table
+sam2_video         = backend / implementation
+```
+
+Stages name operations. Artifacts name tables. Backends name implementations.
+
+Do not use `segment_masks` as the stage name; masks are the artifact, not the action. Do not use
+`run_sam2_segmentation_and_tracking` as the stage name; SAM2 is the backend implementation, not the
+shared stage.
 
 The target data object is:
 
@@ -39,7 +43,8 @@ frame_masks
 
 A `frame_masks` row means:
 
-> On this `image_id`, here is one mask for one tracked object-like thing.
+> On this `image_id`, here is either one actual mask instance for one propagated object, or one
+> structural placeholder proving the frame was processed and no mask was produced.
 
 Tracking quality is not judged here. Track coverage, jumps, swaps, gaps, and other biological or
 temporal quality checks belong to later mask/track QC.
@@ -48,35 +53,40 @@ temporal quality checks belong to later mask/track QC.
 
 ## Current Target River
 
+The shared pipeline river is:
+
 ```text
 frame_inventory[well]
-  -> model_frame_view[well]
   -> frame_detections[well]
-  -> kept_frame_detections[well]
-  -> prompt_seeds[well]
+  -> kept_frame_detections(frame_detections, frame_inventory)
+  -> SAM2 prompts[well]                      # backend-local table/view
+  -> segment_and_track[well]
   -> frame_masks[well]
   -> mask/track QC later
 ```
 
-`is_kept` is the filtering seam from detections into SAM prompts. Detection can keep all detector
-candidates for audit, but segmentation consumes only `kept_frame_detections(...)`.
-
-`prompt_seeds` may be an in-memory view or a small persisted sidecar. It is not a new filtering
-decision in the MVP; it is the deterministic conversion of kept detection boxes into SAM2 prompts and
-seed IDs.
-
-`frame_masks` includes masks and track identity because SAM gives us both in the same operation. We
-keep track provenance so a future backend can differ.
-
-Naming:
+The SAM2 backend-local river is:
 
 ```text
-segment_masks  = stage / action
-frame_masks    = artifact / table
+frame_detections + frame identity
+  -> kept detections
+  -> prompts
+  -> sam2_frame_view
+  -> SAM2 propagation
+  -> adapted frame_masks
 ```
 
-Do not use `segmentation_tracking` as the source contract for this world. That is the downstream
-legacy table name. The target segmentation-and-tracking product is `frame_masks`.
+`frame_detections[well]` is the required direct input to `segment_and_track`. `frame_inventory[well]`
+is the reference validation input. The stage validates the detection rows against the trusted frame
+inventory, then consumes only the kept detection view.
+
+`model_frame_view` should not be a universal shared product in this world. SAM2 needs a sequential
+frame view, but that view is backend-local and belongs inside the SAM2 backend as `sam2_frame_view`.
+Likewise, prompt selection is a SAM2 backend policy in the first pass, not a shared pipeline
+artifact.
+
+Do not use `segmentation_tracking` as the source contract for this world. The source contract is
+`frame_masks`. Any downstream presentation view can be derived later.
 
 ---
 
@@ -85,13 +95,33 @@ legacy table name. The target segmentation-and-tracking product is `frame_masks`
 Primary inputs:
 
 ```text
-model_frame_view[well]
 frame_detections[well]
+frame_inventory[well]                 # reference validation input
 ```
 
-The stage also consumes backend config/model files. SAM2 may need a temporary model-specific frame
-layout such as sequential `00000.jpg` symlinks. That layout is a consumer view, not a pipeline
-contract.
+Backend inputs:
+
+```text
+segmentation backend config
+segmentation model config/checkpoint files
+```
+
+`frame_detections` already carries the shared frame identity block, including `source_image_path`,
+`image_width_px`, and `image_height_px`. From a data-engineering point of view, that makes it the
+right direct input for this stage. `frame_inventory` remains the source of truth used to validate
+that the frame identity carried through detection has not drifted.
+
+The stage must not hand-roll `df[df["is_kept"]]`. It must consume detections through the shared
+helper:
+
+```python
+def kept_frame_detections(
+    df: pd.DataFrame,
+    reference_frame_inventory: pd.DataFrame,
+) -> pd.DataFrame:
+    validate_frame_detections(df, reference_frame_inventory)
+    return df[df["is_kept"]].copy()
+```
 
 ---
 
@@ -107,12 +137,12 @@ SAM2 requires a directory of sequential image names:
 ```
 
 The pipeline should satisfy that requirement with a backend-local frame view, not by renaming or
-copying the canonical frame artifacts.
+copying canonical frame artifacts and not by creating a fake universal `model_frame_view` product.
 
-Execution policy:
+Execution policy inside the SAM2 backend:
 
 ```text
-model_frame_view sorted by time_index
+validated frame rows sorted by time_index
   -> list[source_image_path]
   -> temporary sam2_frame_view directory of symlinks
   -> predictor.init_state(video_path=sam2_frame_view)
@@ -129,24 +159,21 @@ sam2_frame_index -> time_index
 `frame_masks` rows are built by joining SAM2 output back through that mapping. No downstream product
 should infer frame identity from `00000.jpg` names.
 
-The live pipeline already follows this shape for execution with `sam2_frame_context(...)`: it creates
-a `sam2_frames_*` temp directory, symlinks chronological source frames as `00000.jpg`, `00001.jpg`,
+The live pipeline already follows this execution shape with `sam2_frame_context(...)`: it creates a
+`sam2_frames_*` temp directory, symlinks chronological source frames as `00000.jpg`, `00001.jpg`,
 and so on, passes that directory to SAM2, then cleans it up in a `finally` block.
 
-In the target package layout, this belongs inside the SAM2 backend, for example:
+In the target package layout, this belongs inside the SAM2 backend:
 
 ```text
 segmentation/backends/sam2_video/sam2_frame_view.py
 ```
 
 That module should own arranging the temporary folder, naming symlinks, cleanup, and the
-`sam2_frame_index` mapping. Shared segmentation code should only receive the mapping and adapted
+`sam2_frame_index` mapping. Shared segmentation code should receive the mapping and adapted
 `frame_masks`; it should not know SAM2's folder naming rules.
 
-Current implementation note: the repo still has `segmentation/backends.py`, so the first concrete
-helpers live under `segmentation/sam2_video/` until the backend package name is cleared.
-
-Optional persisted debug/QC views are allowed, for example:
+Optional persisted debug/QC views are allowed:
 
 ```text
 artifacts/raw_frames/{image_id}.jpg
@@ -160,7 +187,8 @@ should not require them.
 
 ## Required Frame Identity Block
 
-`frame_masks` starts with the same frame identity block as `frame_detections`:
+Every frame-level model product starts with the shared frame identity block. `frame_masks` starts
+with the same prefix as `frame_detections`:
 
 ```text
 experiment_id
@@ -180,59 +208,122 @@ Notes:
   package.
 - `time_index` is the target pipeline frame atom. `frame_index` may be carried as a temporary
   compatibility alias while current SAM2 code still indexes frames that way.
-- The segmentation stage joins backend frame output back to `model_frame_view`; it does not
-  reinterpret frame identity.
+- The segmentation stage validates frame identity against `frame_inventory`; it does not reinterpret
+  frame identity.
 
 ---
 
-## Detection Handoff / Prompt Seeds
+## Detection Handoff / SAM2 Prompts
 
-`kept_frame_detections(...)` answers:
-
-> Which detection evidence is allowed to initialize mask propagation?
-
-The shared helper is intentionally simple:
-
-```python
-def kept_frame_detections(df: pd.DataFrame) -> pd.DataFrame:
-    validate_frame_detections(df)
-    return df[df["is_kept"]].copy()
-```
-
-Segmentation then derives SAM2 prompt seeds from those rows. Core prompt-seed fields:
+Prompt selection is a SAM2-backend-local policy for the first pass. It should live here:
 
 ```text
-seed_id
-seed_image_id
-seed_time_index
-detection_id
+src/data_pipeline/segmentation/backends/sam2_video/seed_selection.py
+```
+
+Do not put the first implementation here:
+
+```text
+src/data_pipeline/segmentation/seed_selection.py
+```
+
+The internal seed-selection function should have this shape:
+
+```text
+select_sam2_prompts(
+    kept_detections,
+    reference_frame_inventory,
+    config,
+) -> prompts
+```
+
+`prompts` is an internal SAM2 backend table/view for the first pass. It should be returned from a
+pure function and tested, but it is not yet a required Snakemake artifact. Optional debug export can
+come later as `sam2_prompts.csv`.
+
+`prompt_detection_id` is the prompt provenance column:
+
+```text
+prompt_detection_id = frame_detections.detection_id used to initialize this SAM2 prompt
+```
+
+For the MVP, one kept detection becomes one SAM2 box prompt. Later policies may support:
+
+```text
+one detection -> multiple prompts
+multiple detections -> one prompt
+manual prompt
+example prompt
+re-prompted object
+```
+
+MVP seed-selection policy mirrors current behavior:
+
+```text
+1. group kept detections by image_id
+2. choose the seed frame with the maximum kept detection count
+3. tie-break by earliest time_index
+4. tie-break by image_id lexical order
+5. create one box prompt per kept detection on that seed frame
+6. assign prompt_order as deterministic zero-based order of prompts submitted to SAM2
+```
+
+Seed frame selection and prompt ordering must be deterministic and must not depend on input row
+order. For MVP prompt ordering, sort by `prompt_detection_id` unless legacy code requires a different
+order; if it does, write that rule down and test it.
+
+Do not rank or filter kept detections again in the MVP. Filtering already happened in detection via
+`is_kept`; adding another hidden filter here would create a second detector policy inside SAM2.
+
+Later SAM2 seed-selection modes may include:
+
+```text
+single_seed_frame
+multi_seed_frame
+manual_seed_frame
+best_confidence_frame
+midpoint_seed_frame
+```
+
+Later seed-selection config may include:
+
+```text
+max_seeds_per_frame
+min_prompt_confidence
+deduplicate_iou_threshold
+```
+
+Those are out of scope for the first pass.
+
+Core prompt fields:
+
+```text
+prompt_detection_id
+prompt_image_id
+prompt_time_index
+prompt_order
 prompt_type
-prompt_x_min_px
-prompt_y_min_px
-prompt_x_max_px
-prompt_y_max_px
+prompt_bbox_x_min_px
+prompt_bbox_y_min_px
+prompt_bbox_x_max_px
+prompt_bbox_y_max_px
+prompt_bbox_format
 ```
 
-`seed_id` is the handoff ID from detection into segmentation. It is a pipeline ID for the selected
-prompt/object seed, not a mask ID and not an embryo ID.
-
-Preferred seed ID shape:
-
-```text
-{seed_image_id}_seed{prompt_seed_index:04d}
-```
+Prompt box columns are prefixed with `prompt_bbox_*` because unprefixed `bbox_*` in `frame_masks`
+belongs to realized mask geometry.
 
 For SAM2, the adapter must preserve this mapping:
 
 ```text
-sam2_obj_id -> seed_id
+sam2_object_id -> prompt_detection_id
 ```
 
-That mapping lets every propagated mask row point back to the seed that initialized the SAM object.
+That mapping lets every propagated mask row point back through:
 
-The MVP does not need to invent a second selection contract here. If a later pass adds seed-frame
-choice, de-duplication, or prompt ranking, those policies can extend this section. The current
-contract is simply `frame_detections.is_kept` followed by deterministic prompt conversion.
+```text
+frame_detections.detection_id -> prompt_detection_id -> sam2_object_id -> track_id -> mask_id
+```
 
 ---
 
@@ -243,7 +334,8 @@ Core mask and track fields:
 ```text
 mask_id
 track_id
-seed_id
+prompt_detection_id
+sam2_object_id
 mask_rle
 mask_rle_format
 area_px
@@ -271,22 +363,22 @@ For SAM2:
 ```text
 segmentation_backend = sam2_video
 tracking_backend     = sam2_video
-track_id_source      = sam2_obj_id
-track_id             = stable value derived from SAM2 object id
+track_id_source      = "sam2_object_id"
+track_id             = stable value derived from sam2_object_id
 ```
 
 This is the agreed middle ground:
 
 ```text
-SAM/SAM2 provides object identity.
-The pipeline records that identity as track_id.
+SAM2 provides object identity.
+The pipeline records that raw backend identity as sam2_object_id.
+The pipeline derives track_id from sam2_object_id.
 This stage does not validate track quality or repair track IDs.
 ```
 
 Optional backend audit columns may include:
 
 ```text
-sam2_obj_id
 sam2_frame_index
 propagation_direction
 mask_logit_mean
@@ -295,8 +387,9 @@ empty_mask_reason
 filter_reason
 ```
 
-`sam2_obj_id` can be useful as raw provenance, but it is not required as a first-class shared ID if
-`track_id` and `track_id_source` already preserve the identity source.
+`sam2_object_id` is the raw SAM2 object ID assigned during propagation. Do not normalize it into a
+pipeline-flavored string; `track_id` is the pipeline-derived stable ID. `sam2_object_id` is required
+for actual SAM2 mask rows. Placeholder no-mask rows set it to NA.
 
 ---
 
@@ -305,16 +398,17 @@ filter_reason
 `frame_masks` is derived from three inputs:
 
 ```text
-model_frame_view / frame_inventory
-prompt_seeds derived from kept_frame_detections
+frame_detections validated against frame_inventory
+prompts derived from kept_frame_detections
 SAM2 propagation output
 ```
 
-Each output row represents one valid or placeholder mask for one `image_id` and one `track_id`.
+Each output row represents one actual mask for one `image_id` and one `track_id`, or one structural
+no-mask placeholder row for a processed frame.
 
 ### Frame Identity Columns
 
-These come directly from `model_frame_view` after mapping the backend frame index back to pipeline
+These come from validated detection/frame rows after mapping the backend frame index back to pipeline
 frame identity:
 
 ```text
@@ -331,55 +425,103 @@ image_height_px
 
 They are not recalculated by the SAM adapter.
 
-### `mask_id`
+### Identifier Policy
 
-`mask_id` is a pipeline-generated row ID for one mask on one frame.
+All identifier minting and decomposition must go through shared identifier constructors and parsers.
+The shapes shown in this doc are target shapes for readability, not permission to hand-build strings
+inside stage code.
 
-`image_id` is not enough because one frame can contain multiple masks. Preferred shape:
+Allowed:
 
 ```text
-mask_id = {image_id}_m{local_mask_index:04d}
+build_mask_id(image_id, local_mask_index)
+build_no_mask_id(image_id)
+build_track_id(well_id, local_track_index)
+parse_image_id(image_id)
+parse_mask_id(mask_id)
+parse_track_id(track_id)
+```
+
+Not allowed outside `shared/identifiers`:
+
+```text
+f"{image_id}_m{...}"
+f"{image_id}_mask_none"
+f"{well_id}_track{...}"
+string splits on "_m", "_mask_none", "_track"
+regex parsing of mask_id / track_id
+```
+
+Constructors mint. Parsers reveal. Validators compare. Everyone else treats IDs as opaque.
+
+Target home:
+
+```text
+src/data_pipeline/shared/identifiers/constructors.py
+src/data_pipeline/shared/identifiers/parsers.py
+```
+
+### `mask_id`
+
+`mask_id` is a pipeline-generated row ID for one mask row on one frame.
+
+Actual mask rows are minted with:
+
+```text
+mask_id = build_mask_id(image_id, local_mask_index)
+```
+
+No-mask placeholder rows are minted with:
+
+```text
+mask_id = build_no_mask_id(image_id)
 ```
 
 `local_mask_index` should be deterministic within the frame, for example after sorting by `track_id`.
 
 ### `track_id`
 
-`track_id` is the temporal object identity accepted from the segmentation backend.
+`sam2_object_id` is the backend object identity. `track_id` is the pipeline temporal object identity
+derived from `sam2_object_id`.
 
 For SAM2:
 
 ```text
-track_id = build_track_id(well_id, sam2_obj_id)
+local_track_index = sam2_object_id
+track_id = build_track_id(well_id, local_track_index)
 ```
+
+`local_track_index` is an object-extraction/backend identity and may be zero-based. Physical embryo
+indexing is a snip-world concern and must not be inferred in `frame_masks`.
 
 Example shape:
 
 ```text
-{well_id}_track{sam2_obj_id:04d}
+{well_id}_track{sam2_object_id:04d}
 ```
 
 The raw backend source is recorded separately:
 
 ```text
-track_id_source = sam2_obj_id
+track_id_source = "sam2_object_id"
 tracking_backend = sam2_video
 ```
 
-### `seed_id`
+### `prompt_detection_id`
 
-`seed_id` comes from the prompt seed derived from a kept detection row.
-
-For SAM2, each prompted object should map back to one prompt seed:
+`prompt_detection_id` references the kept detector candidate used to initialize the SAM2 prompt:
 
 ```text
-seed_id = prompt_seeds_by_obj_id[sam2_obj_id]
+prompt_detection_id = frame_detections.detection_id
 ```
 
-The SAM adapter therefore needs an explicit mapping:
+There is no `prompt_id` in the MVP because one kept detection maps to one SAM2 prompt.
+`prompt_detection_id` is the stable prompt provenance key.
+
+For SAM2, each propagated object should map back to one prompt detection in the MVP:
 
 ```text
-sam2_obj_id -> seed_id
+prompt_detection_id = prompt_detections_by_object_id[sam2_object_id]
 ```
 
 ### `mask_rle` / `mask_rle_format`
@@ -393,13 +535,16 @@ mask_rle_format = coco_rle
 
 ### Geometry
 
-These are derived from mask pixels, not from the seed/detection box:
+These are derived from mask pixels, not from the prompt/detection box:
 
 ```text
 area_px = mask.sum()
 bbox_* = bbox_from_mask(mask)
 centroid_* = centroid_from_mask(mask)
 ```
+
+Unprefixed `bbox_*` in `frame_masks` always means realized mask geometry. Prompt boxes use
+`prompt_bbox_*`.
 
 ### `mask_confidence`
 
@@ -408,57 +553,74 @@ Treat this value as an opaque segmenter score, not as a cross-backend calibrated
 
 ### `is_valid_mask`
 
-`is_valid_mask` is structural, not QC.
-
-For normal SAM2 masks:
+`is_valid_mask` is structural, not QC:
 
 ```text
-is_valid_mask = true if mask has positive area and valid RLE
+is_valid_mask = true   -> this row contains an actual mask payload
+is_valid_mask = false  -> structural placeholder / no mask row
 ```
 
-For placeholders or empty backend outputs:
+It does not mean good embryo, biologically plausible, accepted by QC, or trustworthy track.
+
+For valid mask rows:
 
 ```text
-is_valid_mask = false
+mask_rle is non-null
+area_px > 0
+track_id populated
+prompt_detection_id populated
+sam2_object_id populated
+```
+
+For placeholder rows:
+
+```text
+mask_rle is NA
+area_px is NA
+track_id is NA
+prompt_detection_id is NA
+sam2_object_id is NA
 ```
 
 ---
 
 ## Empty / Missing Masks
 
-An empty `frame_masks.csv` is not the target shape when segmentation ran. The artifact should make it
-clear what happened to each prompt seed.
+An empty `frame_masks.csv` is not the target shape when `segment_and_track` ran. The artifact should
+make it clear which frames were processed.
 
 Policy:
 
 ```text
-if a prompt seed produces no mask on any frame:
-  write one placeholder row anchored on seed_image_id
-  frame identity columns populated from the seed frame
-  mask_id = {seed_id}_mask_none
-  track_id populated if the backend object id is known
-  seed_id populated
+if a processed frame has no masks:
+  write one placeholder row for that image_id
+  frame identity columns populated
+  mask_id = build_no_mask_id(image_id)
+  track_id = NA
+  prompt_detection_id = NA
+  sam2_object_id = NA
   is_valid_mask = false
-  geometry/RLE columns may be NA
+  mask/geometry/confidence fields may be NA
 
-if an object propagates but has no valid mask on a particular frame:
-  write a frame-level placeholder row
-  mask_id = {image_id}_m{local_mask_index:04d}
+if a frame has one or more actual masks:
+  write one row per mask
+  frame identity columns populated
+  mask_id = build_mask_id(image_id, local_mask_index)
   track_id populated
-  seed_id populated when known
-  is_valid_mask = false
-  empty_mask_reason populated
-  geometry/RLE columns may be NA
+  prompt_detection_id populated
+  sam2_object_id populated
+  is_valid_mask = true
+  mask/geometry fields populated
 ```
 
-Rejected or empty masks are different from missing execution. A failed segmenter run should fail the
-stage; a completed run with no usable mask should be represented in the table.
+No-mask placeholders are different from failed execution. A failed segmenter run should fail the
+stage; a completed run with no masks on a frame should be represented in the table.
 
 ---
 
 ## Consumer View
 
-Downstream consumers that need usable masks should consume a shared valid view:
+Downstream consumers that need actual mask payloads should consume a shared valid view:
 
 ```python
 def valid_frame_masks(df: pd.DataFrame) -> pd.DataFrame:
@@ -476,23 +638,28 @@ Layer validators rather than writing one SAM2-specific check:
 
 ```text
 validate_frame_identity_block(df, frame_inventory)
-validate_prompt_seeds(prompt_seeds, frame_detections, model_frame_view)
+validate_sam2_prompts(prompts, kept_frame_detections, frame_inventory)
 validate_frame_mask_block(df)
-validate_frame_masks(df, model_frame_view, prompt_seeds)
+validate_frame_masks(df, frame_inventory, prompts)
 ```
 
-### Prompt Seed Validator
+### Prompt Validator
 
-The prompt seed validator checks:
+The prompt validator checks:
 
 ```text
-required seed columns are present
-seed_id is unique within the well
-seed_image_id values exist in model_frame_view
-detection_id values exist in kept_frame_detections
+required prompt columns are present
+prompt_detection_id values exist in kept_frame_detections.detection_id
+prompt_image_id values exist in frame_inventory
+prompt_time_index agrees with frame_inventory
+prompt_order is unique within the selected prompt frame
+prompt_order is zero-based and contiguous
 prompt_type is an allowed value
-box prompts are finite and inside image bounds
-at least one prompt seed exists before segment_masks runs
+prompt_bbox coordinates are finite and inside image bounds
+prompt_bbox_x_min_px < prompt_bbox_x_max_px
+prompt_bbox_y_min_px < prompt_bbox_y_max_px
+prompt_bbox_format is an allowed value
+at least one prompt exists before segment_and_track runs
 ```
 
 ### Frame Masks Validator
@@ -501,23 +668,31 @@ The frame masks validator checks structural coherence only:
 
 ```text
 required frame mask columns are present
-mask_id is unique within the well
-image_id values exist in model_frame_view
-seed_id values exist in prompt seed rows when known
+mask_id is unique within the artifact
+image_id values exist in frame_inventory
+frame identity columns agree with frame_inventory
+prompt_detection_id values exist in SAM2 prompt rows for valid masks
 segmentation_backend is non-empty
 segmentation_model_id is non-empty
 tracking_backend is non-empty
-track_id_source is non-empty
+track_id_source is non-empty for valid masks
 track_id is present for valid masks
+sam2_object_id is present for valid SAM2 mask rows
+for valid SAM2 rows, track_id == build_track_id(well_id, sam2_object_id)
 no duplicate image_id + track_id rows for valid masks
 is_valid_mask is boolean
-valid mask rows have structurally valid RLE
+valid mask rows have non-null, structurally valid RLE
 RLE dimensions match image_width_px / image_height_px
-bbox coordinates are finite and inside image bounds
-bbox_x_min_px < bbox_x_max_px for non-empty masks
-bbox_y_min_px < bbox_y_max_px for non-empty masks
-area_px is finite and non-negative
-centroid coordinates are finite and inside image bounds for non-empty masks
+bbox coordinates are finite and inside image bounds for valid masks
+bbox_x_min_px < bbox_x_max_px for valid masks
+bbox_y_min_px < bbox_y_max_px for valid masks
+area_px > 0 for valid masks
+centroid coordinates are finite and inside image bounds for valid masks
+actual mask rows have mask_id minted by build_mask_id(image_id, local_mask_index)
+placeholder rows have mask_id = build_no_mask_id(image_id)
+placeholder rows have track_id / prompt_detection_id / sam2_object_id as NA
+placeholder rows have mask_rle / geometry / confidence fields as NA
+placeholder rows have is_valid_mask = false
 ```
 
 This validator should not check:
@@ -541,32 +716,37 @@ Target folder layout:
 
 ```text
 src/data_pipeline/
+  shared/
+    identifiers/
+      constructors.py
+      parsers.py
+
   segmentation/
     frame_masks_contract.py
     validate_frame_masks.py
     valid_frame_masks.py
     build_frame_masks.py
-    prompt_seeds.py
 
     masks/
       mask_rle.py
       mask_geometry.py
-      mask_ids.py
 
     backends/
       sam2_video/
         model_loader.py
         run_sam2_video.py
+        seed_selection.py
         adapt_sam2_output.py
         sam2_frame_view.py
 ```
 
-Keep detection outside `segmentation/`. Detection owns `frame_detections`; segmentation consumes
-`frame_detections` to choose prompts and build `frame_masks`.
+Keep detection outside `segmentation/`. Detection owns `frame_detections` and
+`kept_frame_detections(...)`; the SAM2 backend consumes the kept view to build backend-local prompt
+seeds and `frame_masks`.
 
-`prompt_seeds.py` stays directly under `segmentation/` for now. It is the segmentation ingest step
-that turns kept detections into SAM2 prompts. It does not need its own subdirectory unless multiple
-prompt/seed policies grow enough code to justify one.
+`seed_selection.py` stays under `segmentation/backends/sam2_video/` for the first pass because the
+policy is SAM2-specific. Promote prompt selection to a shared `segmentation/` module only after
+another backend needs the same abstraction.
 
 ### Mask Utility Modules
 
@@ -591,27 +771,31 @@ validate_bbox_inside_image(bbox, image_width_px, image_height_px)
 Do not start with separate `mask_bbox.py` and `mask_centroid.py` files. Split them later only if
 `mask_geometry.py` becomes genuinely crowded.
 
-`masks/mask_ids.py` should own mask/track ID helpers:
+Canonical ID constructors and parsers belong in `shared/identifiers`, not under `segmentation/masks/`:
 
 ```text
-build_mask_id(image_id, local_mask_index) -> mask_id
-build_track_id(well_id, backend_obj_id) -> track_id
-validate_mask_id_uniqueness(frame_masks)
+shared/identifiers/constructors.py
+  build_mask_id(image_id, local_mask_index) -> mask_id
+  build_no_mask_id(image_id) -> mask_id
+  build_track_id(well_id, local_track_index) -> track_id
+
+shared/identifiers/parsers.py
+  parse_mask_id(mask_id) -> image_id, local_mask_index | no-mask sentinel
+  parse_track_id(track_id) -> well_id, local_track_index
 ```
 
-`build_seed_id` probably belongs in `prompt_seeds.py`, not `masks/mask_ids.py`, because seed IDs
-are the detection-to-segmentation prompt handoff, not a mask primitive. If a broader shared
-identifier module appears later, seed IDs can move there.
+Prompt ordering belongs with `sam2_video/seed_selection.py`, not `masks/mask_ids.py`, because prompt
+ordering is part of the detection-to-SAM2 handoff, not a mask primitive.
 
 ### Stage Utilities
 
 The stage-level utilities are:
 
 ```text
-kept_frame_detections(frame_detections) -> kept detections
-build_prompt_seeds(kept_frame_detections) -> prompt seeds
-valid_frame_masks(frame_masks) -> structurally valid masks
-map_seed_ids_to_backend_obj_ids(prompt_seeds) -> dict
+kept_frame_detections(frame_detections, frame_inventory) -> kept detections
+select_sam2_prompts(kept_detections, frame_inventory, config) -> prompts
+valid_frame_masks(frame_masks) -> actual mask rows
+map_sam2_object_ids_to_prompts(prompts, sam2_object_ids) -> dict
 adapt_sam2_output_to_frame_masks(...) -> frame_masks
 ```
 
@@ -620,8 +804,9 @@ The most load-bearing utility is:
 ```text
 adapt_sam2_output_to_frame_masks(
     sam2_results,
-    model_frame_view,
-    prompt_seeds,
+    frame_detections,
+    frame_inventory,
+    prompts,
     backend_provenance,
 ) -> frame_masks
 ```
@@ -651,6 +836,9 @@ run_well_ids_for_experiment(...)
   -> run_well_shard_paths(...)
   -> load_sam2_video_model(...) once
   -> for each run well:
+       validate frame_detections against frame_inventory
+       build kept detections
+       select SAM2 prompts
        build SAM2 frame view
        run propagation
        adapt to frame_masks shard
@@ -661,14 +849,51 @@ This preserves the per-well contract/shard model while avoiding repeated model c
 
 ---
 
+## Storage
+
+Keep the first target artifact set simple:
+
+```text
+<well_id>_frame_masks.csv
+<well_id>_frame_masks.csv.validated
+<experiment_id>_frame_masks.csv.validated
+```
+
+Additional provenance/debug sidecars can be added after the contract stabilizes. The first priority
+is a clear per-well `frame_masks` table and a validation marker proving it passed structural checks.
+
+---
+
+## Snip Handoff
+
+Snip processing consumes:
+
+```text
+valid_frame_masks(frame_masks)
+```
+
+That view supplies actual mask payload rows only. Snip processing should resolve track identity into
+the embryo and snip identifiers owned by the snip world. The likely target chain is:
+
+```text
+track_id -> local_embryo_index -> physical_embryo_id -> embryo_id -> snip_id
+```
+
+This doc does not own that full identifier chain. It owns `frame_masks` and the structural guarantee
+that valid rows have mask payloads, `prompt_detection_id`, `sam2_object_id`, and `track_id`.
+
+Track quality is not judged in `frame_masks`.
+
+---
+
 ## SAM2-Specific Note
 
 Current SAM2 code physically does three things in one pass:
 
 ```text
-box prompts from a seed frame
+box prompts from selected SAM2 prompts
 mask propagation forward/backward through a temporary frame directory
-object ID propagation through SAM2 obj_id
+object ID propagation through SAM2 object IDs
 ```
 
 Use SAM2's native video propagation direction controls for this. The current pipeline already seeds
@@ -681,15 +906,15 @@ Do not split that GPU call just to satisfy a conceptual boundary. The first stra
 one fused SAM2 execution and emit:
 
 ```text
-frame_masks sidecar
+frame_masks table
 ```
 
 The important contract move is:
 
 ```text
-seed_id -> sam2_obj_id -> track_id -> mask_id
+frame_detections.detection_id -> prompt_detection_id -> sam2_object_id -> track_id -> mask_id
 ```
 
-SAM2's object ID is accepted as the track identity for this stage, with provenance recorded through
-`tracking_backend` and `track_id_source`. Quality control on whether that track is trustworthy
-happens later.
+SAM2's object ID is accepted as the track identity source for this stage, with provenance recorded
+through `sam2_object_id`, `tracking_backend`, and `track_id_source`. Quality control on whether that
+track is trustworthy happens later.
