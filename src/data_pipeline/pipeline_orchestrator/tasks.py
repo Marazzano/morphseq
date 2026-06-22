@@ -24,7 +24,6 @@ from data_pipeline.metadata_ingest.frame_inventory import (
     merge_frame_inventory_shards,
     validate_frame_inventory,
 )
-from data_pipeline.segmentation_and_tracking.pipelines.segmentation_and_tracking import run_segmentation_and_tracking
 
 
 def _parse_bool(value: str | bool) -> bool:
@@ -62,6 +61,7 @@ def cmd_extract_scope(args: argparse.Namespace) -> None:
             raw_data_dir=args.raw_images_parent,
             experiment_id=experiment_id,
             output_csv=args.output_csv,
+            acquisition_inventory_csv=getattr(args, "acquisition_inventory_csv", None),
         )
     else:
         raise ValueError(f"Unsupported microscope: {args.microscope}")
@@ -210,40 +210,25 @@ def cmd_materialize_well(args: argparse.Namespace) -> None:
     done.touch()
 
 
-def cmd_segmentation_and_tracking(args: argparse.Namespace) -> None:
-    cfg = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
-    run_segmentation_and_tracking(
-        frame_contract_csv=args.frame_contract_csv,
-        experiment_id=args.experiment,
-        well_id=args.well_id,
-        output_root=args.output_root,
-        pipeline_config=cfg,
+def cmd_frame_detections(args: argparse.Namespace) -> None:
+    from data_pipeline.detection import run_frame_detection
+    from data_pipeline.detection.backends.groundingdino.config import GroundingDinoDetectionConfig
+    from data_pipeline.models.groundingdino import load_groundingdino_model
+
+    model = load_groundingdino_model(
+        repo_dir=Path(args.gdino_repo_dir),
+        config_path=Path(args.gdino_config),
+        weights_path=Path(args.gdino_weights),
         device=args.device,
-        run_id=args.run_id,
-        verbose=_parse_bool(args.verbose),
     )
-
-
-def cmd_snip_processing(args: argparse.Namespace) -> None:
-    from data_pipeline.snip_processing.pipelines.snip_processing import run_snip_processing_well
-
-    cfg = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
-
-    output_root = Path(args.output_root)
-    exp = str(args.experiment)
-    well = str(args.well_id)
-
-    frame_contract_csv = Path(args.frame_contract_csv)
-    segmentation_tracking_csv = Path(args.segmentation_tracking_csv)
-
-    run_snip_processing_well(
-        output_root=output_root,
-        experiment_id=exp,
-        well_id=well,
-        frame_contract_csv=frame_contract_csv,
-        segmentation_tracking_csv=segmentation_tracking_csv,
-        pipeline_config=cfg,
-        verbose=_parse_bool(args.verbose),
+    config = GroundingDinoDetectionConfig(device=args.device)
+    run_frame_detection(
+        frame_inventory_csv=args.frame_inventory_csv,
+        output_csv=args.output_csv,
+        backend="groundingdino",
+        model=model,
+        detector_model_id="SwinT_OGC",
+        config=config,
     )
 
 
@@ -345,26 +330,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_mw.add_argument("--device", default="cuda")
     p_mw.set_defaults(func=cmd_materialize_well)
 
-    p_sat = sub.add_parser("segmentation-and-tracking")
-    p_sat.add_argument("--frame-contract-csv", type=Path, required=True)
-    p_sat.add_argument("--experiment", required=True)
-    p_sat.add_argument("--well-id", required=True)
-    p_sat.add_argument("--output-root", type=Path, required=True)
-    p_sat.add_argument("--config-yaml", type=Path, required=True)
-    p_sat.add_argument("--device", default="cuda")
-    p_sat.add_argument("--run-id", default=None)
-    p_sat.add_argument("--verbose", default="false")
-    p_sat.set_defaults(func=cmd_segmentation_and_tracking)
-
-    p_snip = sub.add_parser("snip-processing")
-    p_snip.add_argument("--experiment", required=True)
-    p_snip.add_argument("--well-id", required=True)
-    p_snip.add_argument("--output-root", type=Path, required=True)
-    p_snip.add_argument("--frame-contract-csv", type=Path, required=True)
-    p_snip.add_argument("--segmentation-tracking-csv", type=Path, required=True)
-    p_snip.add_argument("--config-yaml", type=Path, required=True)
-    p_snip.add_argument("--verbose", default="false")
-    p_snip.set_defaults(func=cmd_snip_processing)
+    p_fd = sub.add_parser("frame-detections")
+    p_fd.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_fd.add_argument("--output-csv", type=Path, required=True)
+    p_fd.add_argument("--gdino-repo-dir", type=Path, required=True)
+    p_fd.add_argument("--gdino-config", type=Path, required=True)
+    p_fd.add_argument("--gdino-weights", type=Path, required=True)
+    p_fd.add_argument("--device", default="cuda")
+    p_fd.set_defaults(func=cmd_frame_detections)
 
     return parser
 

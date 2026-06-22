@@ -4,14 +4,12 @@ MorphSeq Pipeline - Snakemake Workflow
 Contract-driven pipeline:
   - Extract physical scope metadata (scope-specific)
   - Build stitched FF images (scope-specific)
-  - Build a single physical frame contract (source of truth)
-  - Segment+track per well from the frame contract (GDINO + SAM2)
-  - Process snips per well from segmentation_tracking only
+  - Materialize per-well frame_inventory (microscope-agnostic handoff)
+  - Detect embryos per well (GroundingDINO → frame_detections)
+  - frame_masks (segmentation) — not yet wired; next stage
 """
 
 from pathlib import Path
-import os
-import json
 import yaml
 
 from data_pipeline.pipeline_orchestrator.orchestration import (
@@ -70,12 +68,6 @@ RAW_IMAGES_DIR = INPUTS_DIR / "raw_image_data"
 # Output directories (layout beneath output_root — code contract, not environment)
 EXPERIMENT_METADATA_DIR = DATA_ROOT / "experiment_metadata"
 BUILT_IMAGE_DATA_DIR = DATA_ROOT / "built_image_data"
-SEGMENTATION_DIR = DATA_ROOT / "segmentation_and_tracking"
-PROCESSED_SNIPS_DIR = DATA_ROOT / "processed_snips"
-AUXILIARY_MASKS_DIR = DATA_ROOT / "auxiliary_masks"
-FEATURES_DIR = DATA_ROOT / "computed_features"
-QUALITY_CONTROL_DIR = DATA_ROOT / "quality_control"
-ANALYSIS_READY_DIR = DATA_ROOT / "analysis_ready"
 
 # Experiment identifiers
 EXPERIMENTS = config.get("experiments", ["20250912"])
@@ -145,12 +137,8 @@ print(f"Microscope:   {MICROSCOPE}")
 # Snakemake wildcards only capture path pieces; semantic validation stays in
 # Python helpers and input functions.
 # Smoke subsets (for example 20240418 -> A01,C01) come from config, not code.
-ruleorder: generate_auxiliary_masks_well > aggregate_auxiliary_masks
-ruleorder: segment_and_track_per_well > merge_segmentation_tracking
-ruleorder: run_snip_processing_per_well > merge_snip_manifests
-
 include: str(WORKFLOW_DIR / "rules" / "frame_inventory.smk")
-include: str(WORKFLOW_DIR / "rules" / "quality_control.smk")
+include: str(WORKFLOW_DIR / "rules" / "frame_detections.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
@@ -219,18 +207,18 @@ rule ingest_scope_metadata:
     input:
         raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}"
     output:
-        # YX1 emits the maximal acquisition inventory from the one raw read (record-only).
-        # Keyence does not yet, so the inventory output is YX1-only.
+        # Both scopes emit the maximal acquisition inventory (record-only): YX1 from its one ND2 read,
+        # Keyence from a raw-plane TIFF scan. The inventory is the never-collapsed system of record.
         **(
             {"scope_csv": SCOPE_METADATA_CSV, "acquisition_inventory_csv": SCOPE_ACQUISITION_INVENTORY_CSV}
-            if MICROSCOPE == "YX1"
+            if MICROSCOPE in ("YX1", "Keyence")
             else {"scope_csv": SCOPE_METADATA_CSV}
         )
     params:
         experiment_id = "{experiment}",
         acquisition_inventory_arg = (
             lambda wc, output: f'--acquisition-inventory-csv "{output.acquisition_inventory_csv}"'
-            if MICROSCOPE == "YX1"
+            if MICROSCOPE in ("YX1", "Keyence")
             else ""
         ),
     shell:
@@ -371,308 +359,6 @@ def wells_for_experiment(wildcards):
 
 
 # ============================================================================
-# Segmentation + tracking (per well)
-# ============================================================================
-
-rule segment_and_track_per_well:
-    input:
-        manifest = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-    output:
-        out_csv = SEGMENTATION_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / "segmentation_tracking.csv",
-        done = SEGMENTATION_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / ".segmentation_tracking.validated",
-    params:
-        device = lambda wc: str(config.get("segmentation_and_tracking", {}).get("device", "cuda")),
-        pipeline_cfg = lambda wc: json.dumps(config),
-    shell:
-        """
-        {RUN} -m data_pipeline.segmentation_and_tracking.entrypoints.run_segmentation_and_tracking \
-          --frame-manifest "{input.manifest}" \
-          --experiment-id "{wildcards.experiment}" \
-          --well-id "{wildcards.well_id}" \
-          --output-root "{DATA_ROOT}" \
-          --device "{params.device}" \
-          --pipeline-cfg-json '{params.pipeline_cfg}'
-        """
-
-
-rule merge_segmentation_tracking:
-    input:
-        lambda wc: [
-            str(SEGMENTATION_DIR / wc.experiment / "per_well" / w / "contracts" / "segmentation_tracking.csv")
-            for w in wells_for_experiment(wc)
-        ]
-    output:
-        merged = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-    shell:
-        """
-        {RUN} -m data_pipeline.segmentation_and_tracking.pipelines.merge_segmentation_and_tracking_contracts           --experiment "{wildcards.experiment}"           --output-root "{DATA_ROOT}"
-        """
-
-
-rule validate_segmentation_tracking:
-    input:
-        merged = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-    output:
-        done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
-    shell:
-        """
-        {RUN} {PROJECT_ROOT}/src/data_pipeline/segmentation_and_tracking/pipelines/validate_segmentation_and_tracking.py           --input-csv "{input.merged}"           --output-flag "{output.done}"
-        """
-
-# ============================================================================
-# Snip processing (per well, consumes segmentation_tracking only)
-# ============================================================================
-
-rule run_snip_processing_per_well:
-    input:
-        seg = SEGMENTATION_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / "segmentation_tracking.csv",
-        seg_done = SEGMENTATION_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / ".segmentation_tracking.validated",
-    output:
-        manifest = PROCESSED_SNIPS_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / "snip_manifest.parquet",
-        done = PROCESSED_SNIPS_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / ".snip_manifest.validated",
-    params:
-        out_h = lambda wc: int(config.get("snip_processing", {}).get("output_shape", [576, 256])[0]),
-        out_w = lambda wc: int(config.get("snip_processing", {}).get("output_shape", [576, 256])[1]),
-        target_um = lambda wc: float(config.get("snip_processing", {}).get("target_pixel_size_um", 7.8)),
-        save_raw = lambda wc: int(bool(config.get("snip_processing", {}).get("save_raw_crops", True))),
-        write_csv = lambda wc: int(bool(config.get("snip_processing", {}).get("write_manifest_csv", True))),
-        bg_n = lambda wc: int(config.get("snip_processing", {}).get("background_n_samples", 100)),
-        bg_seed = lambda wc: int(config.get("snip_processing", {}).get("background_seed", 309)),
-    shell:
-        """
-        {RUN} -m data_pipeline.snip_processing.run_from_segmentation_tracking \
-          --segmentation-tracking "{input.seg}" \
-          --output-root "{DATA_ROOT}" \
-          --output-shape {params.out_h} {params.out_w} \
-          --target-pixel-size-um {params.target_um} \
-          --save-raw-crops {params.save_raw} \
-          --write-manifest-csv {params.write_csv} \
-          --background-n-samples {params.bg_n} \
-          --background-seed {params.bg_seed}
-        """
-
-
-rule merge_snip_manifests:
-    input:
-        lambda wc: [
-            str(PROCESSED_SNIPS_DIR / wc.experiment / "per_well" / w / "contracts" / "snip_manifest.parquet")
-            for w in wells_for_experiment(wc)
-        ]
-    output:
-        merged = PROCESSED_SNIPS_DIR / "{experiment}" / "contracts" / "snip_manifest.parquet",
-    shell:
-        """
-        {RUN} -m data_pipeline.snip_processing.pipelines.merge_snip_manifests           --experiment "{wildcards.experiment}"           --output-root "{DATA_ROOT}"           --write-views 1
-        """
-
-
-rule validate_snip_manifest:
-    input:
-        merged = PROCESSED_SNIPS_DIR / "{experiment}" / "contracts" / "snip_manifest.parquet",
-    output:
-        done = PROCESSED_SNIPS_DIR / "{experiment}" / "contracts" / ".snip_manifest_merged.validated",
-    shell:
-        """
-        {RUN} {PROJECT_ROOT}/src/data_pipeline/snip_processing/pipelines/validate_snip_manifest.py           --input "{input.merged}"           --output-flag "{output.done}"
-        """
-
-# ============================================================================
-# Auxiliary masks (per well, aggregated per experiment)
-# ============================================================================
-
-rule generate_auxiliary_masks_well:
-    input:
-        frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-    output:
-        manifest = AUXILIARY_MASKS_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / "auxiliary_masks.csv",
-        done = AUXILIARY_MASKS_DIR / "{experiment}" / "per_well" / "{well_id}" / "contracts" / ".auxiliary_masks.validated",
-    params:
-        model_root = lambda wc: str(MODELS_DIR / "segmentation"),
-        batch_size = lambda wc: int(config.get("auxiliary_masks", {}).get("batch_size", 64)),
-        num_workers = lambda wc: int(config.get("auxiliary_masks", {}).get("num_workers", 1)),
-        overwrite_flag = lambda wc: "--overwrite" if bool(config.get("auxiliary_masks", {}).get("overwrite", False)) else "",
-    shell:
-        """
-        {RUN} -m data_pipeline.auxiliary_masks.materialize_auxiliary_masks \
-          --frame-contract "{input.frame_contract}" \
-          --output-root "{AUXILIARY_MASKS_DIR}/{wildcards.experiment}/per_well/{wildcards.well_id}" \
-          --output-manifest-csv "{output.manifest}" \
-          --model-root "{params.model_root}" \
-          --well-id "{wildcards.well_id}" \
-          --batch-size {params.batch_size} \
-          --num-workers {params.num_workers} \
-          {params.overwrite_flag}
-        """
-
-rule aggregate_auxiliary_masks:
-    input:
-        manifests=lambda wc: [
-            AUXILIARY_MASKS_DIR / wc.experiment / "per_well" / well_id / "contracts" / "auxiliary_masks.csv"
-            for well_id in wells_for_experiment(wc)
-        ],
-        well_done=lambda wc: [
-            AUXILIARY_MASKS_DIR / wc.experiment / "per_well" / well_id / "contracts" / ".auxiliary_masks.validated"
-            for well_id in wells_for_experiment(wc)
-        ],
-    output:
-        manifest = AUXILIARY_MASKS_DIR / "{experiment}" / "contracts" / "auxiliary_masks.csv",
-        done = AUXILIARY_MASKS_DIR / "{experiment}" / "contracts" / ".auxiliary_masks.validated",
-    shell:
-        """
-        {RUN} -m data_pipeline.auxiliary_masks.merge_auxiliary_masks \
-          --inputs {input.manifests} \
-          --output-manifest-csv "{output.manifest}"
-        """
-
-
-# ============================================================================
-# Feature extraction (per experiment)
-# ============================================================================
-
-rule compute_mask_geometry:
-    input:
-        segmentation_tracking = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-        segmentation_tracking_done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
-        frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-    output:
-        csv = FEATURES_DIR / "{experiment}" / "mask_geometry" / "mask_geometry_metrics.csv",
-        done = FEATURES_DIR / "{experiment}" / "mask_geometry" / "mask_geometry_metrics.csv.validated",
-    shell:
-        """
-        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_mask_geometry \
-          --segmentation-tracking "{input.segmentation_tracking}" \
-          --frame-contract "{input.frame_contract}" \
-          --output-csv "{output.csv}"
-        """
-
-rule compute_curvature_metrics:
-    input:
-        segmentation_tracking = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-        segmentation_tracking_done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
-        frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-    output:
-        csv = FEATURES_DIR / "{experiment}" / "curvature_metrics" / "curvature_metrics.csv",
-        done = FEATURES_DIR / "{experiment}" / "curvature_metrics" / "curvature_metrics.csv.validated",
-    shell:
-        """
-        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_curvature_metrics \
-          --segmentation-tracking "{input.segmentation_tracking}" \
-          --frame-contract "{input.frame_contract}" \
-          --output-csv "{output.csv}"
-        """
-
-rule compute_pose_kinematics:
-    input:
-        segmentation_tracking = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-        segmentation_tracking_done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
-        frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-    output:
-        csv = FEATURES_DIR / "{experiment}" / "pose_kinematics" / "pose_kinematics_metrics.csv",
-        done = FEATURES_DIR / "{experiment}" / "pose_kinematics" / "pose_kinematics_metrics.csv.validated",
-    shell:
-        """
-        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_pose_kinematics \
-          --segmentation-tracking "{input.segmentation_tracking}" \
-          --frame-contract "{input.frame_contract}" \
-          --output-csv "{output.csv}"
-        """
-
-rule compute_fraction_alive:
-    input:
-        segmentation_tracking = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-        segmentation_tracking_done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
-        frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-        auxiliary_masks = AUXILIARY_MASKS_DIR / "{experiment}" / "contracts" / "auxiliary_masks.csv",
-        auxiliary_masks_done = AUXILIARY_MASKS_DIR / "{experiment}" / "contracts" / ".auxiliary_masks.validated",
-    output:
-        csv = FEATURES_DIR / "{experiment}" / "fraction_alive" / "fraction_alive.csv",
-        done = FEATURES_DIR / "{experiment}" / "fraction_alive" / "fraction_alive.csv.validated",
-    shell:
-        """
-        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_fraction_alive \
-          --segmentation-tracking "{input.segmentation_tracking}" \
-          --frame-contract "{input.frame_contract}" \
-          --auxiliary-masks-manifest "{input.auxiliary_masks}" \
-          --output-csv "{output.csv}"
-        """
-
-rule compute_stage_predictions:
-    input:
-        segmentation_tracking = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-        segmentation_tracking_done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
-        frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-        plate_metadata = PLATE_METADATA_CSV,
-        plate_metadata_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".plate_metadata.validated",
-    output:
-        csv = FEATURES_DIR / "{experiment}" / "stage_predictions" / "stage_predictions.csv",
-        done = FEATURES_DIR / "{experiment}" / "stage_predictions" / "stage_predictions.csv.validated",
-    params:
-        stage_cfg = lambda wc: json.dumps(config.get("feature_extraction", {}).get("stage_predictions", {})),
-    shell:
-        """
-        {RUN} -m data_pipeline.feature_extraction.entrypoints.compute_stage_predictions           --segmentation-tracking "{input.segmentation_tracking}"           --frame-contract "{input.frame_contract}"           --plate-metadata "{input.plate_metadata}"           --stage-cfg '{params.stage_cfg}'           --output-csv "{output.csv}"
-        """
-
-
-rule consolidate_features:
-    input:
-        segmentation_tracking = SEGMENTATION_DIR / "{experiment}" / "contracts" / "segmentation_tracking.csv",
-        segmentation_tracking_done = SEGMENTATION_DIR / "{experiment}" / "contracts" / ".segmentation_tracking_merged.validated",
-        frame_contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        frame_contract_done = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-        mask_geometry = FEATURES_DIR / "{experiment}" / "mask_geometry" / "mask_geometry_metrics.csv",
-        mask_geometry_done = FEATURES_DIR / "{experiment}" / "mask_geometry" / "mask_geometry_metrics.csv.validated",
-        curvature = FEATURES_DIR / "{experiment}" / "curvature_metrics" / "curvature_metrics.csv",
-        curvature_done = FEATURES_DIR / "{experiment}" / "curvature_metrics" / "curvature_metrics.csv.validated",
-        pose_kinematics = FEATURES_DIR / "{experiment}" / "pose_kinematics" / "pose_kinematics_metrics.csv",
-        pose_kinematics_done = FEATURES_DIR / "{experiment}" / "pose_kinematics" / "pose_kinematics_metrics.csv.validated",
-        fraction_alive = FEATURES_DIR / "{experiment}" / "fraction_alive" / "fraction_alive.csv",
-        fraction_alive_done = FEATURES_DIR / "{experiment}" / "fraction_alive" / "fraction_alive.csv.validated",
-        stage_predictions = FEATURES_DIR / "{experiment}" / "stage_predictions" / "stage_predictions.csv",
-        stage_predictions_done = FEATURES_DIR / "{experiment}" / "stage_predictions" / "stage_predictions.csv.validated",
-        plate_metadata = PLATE_METADATA_CSV,
-    output:
-        csv = FEATURES_DIR / "{experiment}" / "consolidated" / "consolidated_snip_features.csv",
-        done = FEATURES_DIR / "{experiment}" / "consolidated" / "consolidated_snip_features.csv.validated",
-        schema = FEATURES_DIR / "{experiment}" / "consolidated" / "consolidated_snip_features.schema.json",
-    shell:
-        """
-        {RUN} -m data_pipeline.feature_extraction.entrypoints.consolidate_features \
-          --segmentation-tracking "{input.segmentation_tracking}" \
-          --frame-contract "{input.frame_contract}" \
-          --mask-geometry "{input.mask_geometry}" \
-          --curvature-metrics "{input.curvature}" \
-          --pose-kinematics "{input.pose_kinematics}" \
-          --fraction-alive "{input.fraction_alive}" \
-          --stage-predictions "{input.stage_predictions}" \
-          --plate-metadata "{input.plate_metadata}" \
-          --output-csv "{output.csv}"
-        """
-
-
-rule feature_extraction_complete:
-    input:
-        expand(
-            FEATURES_DIR / "{exp}" / "consolidated" / "consolidated_snip_features.csv.validated",
-            exp=EXPERIMENTS
-        )
-        + expand(
-            FEATURES_DIR / "{exp}" / "stage_predictions" / "stage_predictions.csv.validated",
-            exp=EXPERIMENTS
-        )
-        + expand(
-            AUXILIARY_MASKS_DIR / "{exp}" / "contracts" / ".auxiliary_masks.validated",
-            exp=EXPERIMENTS
-        )
-
-# ============================================================================
 # Workflow Targets
 # ============================================================================
 
@@ -707,18 +393,11 @@ rule front_half:
 rule all:
     default_target: True
     """
-    Default target: build the feature smoke outputs through consolidated features.
+    Default target: build through merged frame_detections for all experiments.
+    Next stage (frame_masks / segmentation) is not yet wired.
     """
     input:
         expand(
-            FEATURES_DIR / "{exp}" / "consolidated" / "consolidated_snip_features.csv.validated",
-            exp=EXPERIMENTS
-        )
-        + expand(
-            FEATURES_DIR / "{exp}" / "stage_predictions" / "stage_predictions.csv.validated",
-            exp=EXPERIMENTS
-        )
-        + expand(
-            AUXILIARY_MASKS_DIR / "{exp}" / "contracts" / ".auxiliary_masks.validated",
+            str(_frame_detections_artifact("{exp}", path_mode=_paths_mod.PATH_MODE_MERGED)),
             exp=EXPERIMENTS
         )

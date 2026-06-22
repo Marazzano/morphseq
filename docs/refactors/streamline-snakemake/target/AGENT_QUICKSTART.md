@@ -94,7 +94,32 @@ These are distilled from `pipeline_file_philosophy.md`. A change that breaks one
                                 ╚═══════════════╝
 ```
 
-The active front-half work (Beat 1) builds the Stitch Overlap and exits into a validated per-well `frame_inventory` shard. Everything past `frame_inventory` is Beat 2.
+Beat 1 builds the Stitch Overlap and exits into a validated per-well `frame_inventory` shard. Everything past `frame_inventory` is Beat 2. For the live current status, trust the top snapshot in `current_state_and_next_steps.md`; do not infer status from this protocol doc.
+
+---
+
+## 🧭 YX1 REMAINING-WORK BOUNDARY
+
+This section is the stable decision rule for YX1 follow-on work; the top snapshot still owns exact status.
+
+**What is already live for YX1:** the per-well path exists. `rule materialize_well` emits a per-well
+`{well_id}_frame_inventory.csv` shard, and `rule front_half` drives those shards through
+`validate_frame_inventory_for_well` for discovered/target wells.
+
+**What remains before the old YX1 producer chain can be deleted:**
+- **Beat 2 first:** repoint downstream consumers off `frame_contract.csv` and onto the per-well
+  `frame_inventory` shard via `well_runner.py`. Start with segmentation, then carry the pattern through
+  snips/features/QC/aux masks.
+- **Legacy strangle second:** only after the downstream cutover, remove the YX1 side of the old
+  producer chain: `materialize_stitched_images` YX1 branches, `build_frame_contract`, the stitched image
+  index validation path, and their Snakefile/task plumbing.
+
+**Do not delete yet:** shared/legacy compatibility pieces that still have importers or Keyence users.
+In particular, `materialize_stitched_images.py` also contains the legacy Keyence stitch path, and
+`schemas/frame_contract.py` remains legacy-compat until no live importer needs it.
+
+**Rule of thumb:** if `rule all` or a downstream rule still reads `frame_contract.csv`, you are in Beat 2.
+Do not perform the full producer deletion until those reads are gone.
 
 ---
 
@@ -110,7 +135,9 @@ The active front-half work (Beat 1) builds the Stitch Overlap and exits into a v
 | "What are the front-end stages?" (ingest lineages, the fan, the convergence line) | `specs/front_end/front_end_naming_and_frame_inventory_flow.md` |
 | "What's the shared frame handoff contract?" | `specs/front_end/frame_inventory_handoff_contract.md` |
 | "What's the YX1-specific build?" (L1→L2→L3 mapping) | `specs/front_end/recompose_yx1_front_end.md` |
+| "What's the Keyence wire-through plan?" (acq inventory, mosaic backend, stitch-map, reacquisition) | `specs/front_end/keyence_wire_through.md` |
 | "What's the Scopes 1–5 identity spine?" | `specs/well_id_throughline_refactor_plan.md` |
+| "What should the output folder tree look like?" (regime doctrine, paths.py interface, migration scope) | `specs/output_tree_doctrine.md` |
 | "Where do domain contracts live?" (schema layout + migration order) | `specs/schema_layout.md` |
 | "What's the per-well NORTH STAR?" (grain model, registry, DAG mechanics) | `specs/per_well_throughline_findings.md` |
 
