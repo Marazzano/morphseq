@@ -4,6 +4,10 @@ Parsing is the inverse of minting: it DECOMPOSES an existing identifier back int
 its parts. This is the only sanctioned place for that — it replaces ad-hoc
 ``.split("_")`` scattered through the call sites.
 
+Identifier strings are opaque outside ``shared/identifiers``. Code outside this
+package must use constructors and parsers — never string splitting, regex matching,
+or f-string minting. Tiny fence, giant moat.
+
 See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
 """
 
@@ -11,12 +15,41 @@ from __future__ import annotations
 
 import re
 
+from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
+
 
 _LOCAL_ID_RE = re.compile(r"(\d+)$")
 
+# image_id grammar: {well_id}_{channel_id}_t{time_index:04d+}
+# channel_id has no underscores (canonical constraint); suffix is _t followed by digits.
+_IMAGE_ID_RE = re.compile(r"^(.+)_([A-Za-z0-9]+)_t(\d{4,})$")
 
-def normalize_embryo_local_track_id(value: object) -> int:
-    """Normalize tracker-native embryo IDs like ``embryo_0`` to an integer local track id."""
+# physical_embryo_id grammar: {well_id}_e{local_embryo_index:02d+}
+# The _e token followed by digits is unambiguous because well_index never ends in _e\d+.
+_PHYSICAL_EMBRYO_ID_RE = re.compile(r"^(.+)_e(\d+)$")
+
+# embryo_id grammar: {physical_embryo_id}_{channel_id}
+# physical_embryo_id ends in _e\d+; channel_id is the final _-delimited token with no underscores.
+_EMBRYO_ID_RE = re.compile(r"^(.+_e\d+)_([A-Za-z0-9]+)$")
+
+# snip_id grammar: {embryo_id}_t{time_index:04d+}
+_SNIP_ID_RE = re.compile(r"^(.+)_t(\d{4,})$")
+
+_WELL_INDEX_RE = re.compile(r"^[A-Za-z]\d{1,3}$")
+
+
+def parse_embryo_local_track_id(value: object) -> int:
+    """Parse tracker-native embryo IDs like ``"embryo_0"`` to a zero-based integer track index.
+
+    Returns a zero-based integer (the raw backend index). Use
+    ``track_index_to_embryo_index`` to convert to one-based before minting
+    ``physical_embryo_id``.
+
+    snip_processing chain:
+        raw_track_index = parse_embryo_local_track_id(track_id)
+        local_embryo_index = track_index_to_embryo_index(raw_track_index)
+        physical_embryo_id = build_physical_embryo_id(well_id, local_embryo_index)
+    """
     if isinstance(value, bool):
         raise ValueError("embryo local track id cannot be boolean")
     if isinstance(value, int):
@@ -30,7 +63,123 @@ def normalize_embryo_local_track_id(value: object) -> int:
     return int(match.group(1))
 
 
-_WELL_INDEX_RE = re.compile(r"^[A-Za-z]\d{1,3}$")
+def normalize_embryo_local_track_id(value: object) -> int:
+    """Deprecated alias for ``parse_embryo_local_track_id``. Use that name instead."""
+    return parse_embryo_local_track_id(value)
+
+
+def track_index_to_embryo_index(raw_track_index: int) -> int:
+    """Convert a zero-based backend/object track index to a one-based local embryo index.
+
+    0 → 1, 1 → 2, etc. Rejects negative values (fail loud).
+    This is the ONE place the zero-to-one conversion lives — not inline arithmetic.
+
+    snip_processing chain:
+        raw_track_index = normalize_embryo_local_track_id(track_id)
+        local_embryo_index = track_index_to_embryo_index(raw_track_index)
+        physical_embryo_id = build_physical_embryo_id(well_id, local_embryo_index)
+    """
+    idx = int(raw_track_index)
+    if idx < 0:
+        raise ValueError(
+            f"track_index_to_embryo_index: raw_track_index must be >= 0, got {raw_track_index!r}. "
+            "Negative track indices are not valid."
+        )
+    return idx + 1
+
+
+def parse_image_id(image_id: str) -> tuple[str, str, int]:
+    """Decompose image_id into (well_id, channel_id, time_index).
+
+    Validates that channel_id is in ``VALID_CHANNEL_NAMES``. Fails loud on malformed input.
+    Example: ``"20250912_B01_BF_t0007"`` → ``("20250912_B01", "BF", 7)``
+    """
+    text = str(image_id).strip()
+    match = _IMAGE_ID_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_image_id: cannot parse {image_id!r}. "
+            "Expected format: {well_id}_{channel_id}_t{time_index:04d} "
+            "(channel_id has no underscores; time suffix is _t followed by ≥4 digits)."
+        )
+    well_id = match.group(1)
+    channel_id = match.group(2)
+    time_index = int(match.group(3))
+    if channel_id not in VALID_CHANNEL_NAMES:
+        raise ValueError(
+            f"parse_image_id: image_id {image_id!r} contains channel_id {channel_id!r} "
+            f"which is not in the canonical vocabulary {sorted(VALID_CHANNEL_NAMES)}. "
+            "A canonical image_id must embed a canonical channel_id."
+        )
+    return well_id, channel_id, time_index
+
+
+def parse_physical_embryo_id(physical_embryo_id: str) -> tuple[str, int]:
+    """Decompose physical_embryo_id into (well_id, local_embryo_index).
+
+    Fails loud on malformed input or local_embryo_index < 1 (one-based; _e00 is rejected).
+    Example: ``"20250912_B01_e01"`` → ``("20250912_B01", 1)``
+    """
+    text = str(physical_embryo_id).strip()
+    match = _PHYSICAL_EMBRYO_ID_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_physical_embryo_id: cannot parse {physical_embryo_id!r}. "
+            "Expected format: {well_id}_e{local_embryo_index:02d+} (e.g. 20250912_B01_e01)."
+        )
+    well_id = match.group(1)
+    local_embryo_index = int(match.group(2))
+    if local_embryo_index < 1:
+        raise ValueError(
+            f"parse_physical_embryo_id: local_embryo_index in {physical_embryo_id!r} is "
+            f"{local_embryo_index}, which is < 1. physical_embryo_id uses a one-based index "
+            "(embryo 1 is the first embryo, not embryo 0). _e00 is not a valid identity."
+        )
+    return well_id, local_embryo_index
+
+
+def parse_embryo_id(embryo_id: str) -> tuple[str, str]:
+    """Decompose embryo_id into (physical_embryo_id, channel_id).
+
+    Validates that channel_id is in ``VALID_CHANNEL_NAMES``. Fails loud on malformed input.
+    Example: ``"20250912_B01_e01_BF"`` → ``("20250912_B01_e01", "BF")``
+    """
+    text = str(embryo_id).strip()
+    match = _EMBRYO_ID_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_embryo_id: cannot parse {embryo_id!r}. "
+            "Expected format: {physical_embryo_id}_{channel_id} "
+            "(physical_embryo_id ends in _e\\d+; channel_id has no underscores)."
+        )
+    physical_embryo_id = match.group(1)
+    channel_id = match.group(2)
+    if channel_id not in VALID_CHANNEL_NAMES:
+        raise ValueError(
+            f"parse_embryo_id: embryo_id {embryo_id!r} contains channel_id {channel_id!r} "
+            f"which is not in the canonical vocabulary {sorted(VALID_CHANNEL_NAMES)}. "
+            "A canonical embryo_id must embed a canonical channel_id."
+        )
+    return physical_embryo_id, channel_id
+
+
+def parse_snip_id(snip_id: str) -> tuple[str, int]:
+    """Decompose snip_id into (embryo_id, time_index).
+
+    Fails loud on malformed input.
+    Example: ``"20250912_B01_e01_BF_t0007"`` → ``("20250912_B01_e01_BF", 7)``
+    """
+    text = str(snip_id).strip()
+    match = _SNIP_ID_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_snip_id: cannot parse {snip_id!r}. "
+            "Expected format: {embryo_id}_t{time_index:04d} "
+            "(time suffix is _t followed by ≥4 digits)."
+        )
+    embryo_id = match.group(1)
+    time_index = int(match.group(2))
+    return embryo_id, time_index
 
 
 def split_well_id(well_id: str) -> tuple[str, str]:

@@ -16,13 +16,15 @@ validated frame_inventory[well]
   -> choose_segmentation_seeds[well]
   -> segment_masks[well]
   -> link_tracks[well]
-  -> build_segmentation_tracking[well]
   -> snip_processing[well]
+  -> snip_inventory[well]
 ```
 
-The final `segmentation_tracking.csv` contract remains the stable handoff to snip processing. The
-new intermediate products make detection, segmentation, and tracking independently inspectable and
-replaceable.
+`snip_processing` is the stage that mints `physical_embryo_id`, `embryo_id`, and `snip_id`
+(see `targets/snip_world.md` for the full identity grammar and contract). The previous
+`build_segmentation_tracking` / `segmentation_tracking.csv` presentation layer is superseded by
+the snip_inventory contract. The new intermediate products make detection, segmentation, and
+tracking independently inspectable and replaceable.
 
 ---
 

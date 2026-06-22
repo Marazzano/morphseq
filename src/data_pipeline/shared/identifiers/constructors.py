@@ -5,28 +5,45 @@ inference and no name mapping (e.g. they do not map ``Brightfield -> BF``).
 Normalization of local tokens (``channel_id`` from ``raw_channel_name``) happens
 upstream in metadata ingest; constructors only assemble the canonical string.
 
+Identifier strings are opaque outside ``shared/identifiers``. Code outside this
+package must use constructors and parsers — never string splitting, regex matching,
+or f-string minting. Tiny fence, giant moat.
+
 See docs/refactors/streamline-snakemake/identifier_and_wildcard_contract.md.
 
 Canonical model (the sign on the door):
-    experiment_id = 20240418            global experiment id
-    well_index    = A01                 LOCAL well label, unique within an experiment
-    well_id       = 20240418_A01        GLOBAL well id = {experiment_id}_{well_index}
-    channel_id    = BF                  local channel token
-    image_id      = {well_id}_{channel_id}_t{time_int:04d}
-    embryo_id     = {well_id}_e{local_embryo_index:02d}
-    snip_id       = {embryo_id}_t{time_int:04d}
+    experiment_id       = 20240418
+    well_index          = A01
+    well_id             = 20240418_A01                    global well id
+    channel_id          = BF                              no underscores in channel_id (canonical constraint)
+    image_id            = {well_id}_{channel_id}_t{time_index:04d}
+    physical_embryo_id  = {well_id}_e{local_embryo_index:02d}  (one-based; ≥ 1)
+    embryo_id           = {physical_embryo_id}_{channel_id}
+    snip_id             = {embryo_id}_t{time_index:04d}
+
+Tiny doctrine:
+    Physical embryo ID names the animal.
+    Embryo ID names the animal in a channel.
+    Snip ID names the animal-channel at a time.
+
+BREAKING CHANGE (snip world update):
+    build_embryo_id(well_id, local_track_id)  →  build_embryo_id(physical_embryo_id, image_id)
+    build_snip_id(embryo_id, time_int)        →  build_snip_id(embryo_id, image_id)
+    NEW: build_physical_embryo_id(well_id, local_embryo_index)
+
+    Production callers using the old signatures fail loudly at import time and must migrate.
+    See docs/refactors/streamline-snakemake/target/specs/detect-seg-track/targets/snip_world.md.
 
 Compositional grammar — every id is ``parent_id + local_token``. ``build_well_id``
 is the ONE join point where ``experiment_id`` and ``well_index`` meet; every id
-downstream is ``well_id``-first and inherits its global, sanitized prefix. See
-target/well_id_throughline_refactor_plan.md and
-target/front_end_naming_and_flow.md (Decision 7: well_id is the canonical key
-everywhere after the fan; well_index survives only as a scope-table column).
+downstream is ``well_id``-first and inherits its global, sanitized prefix.
 """
 
 from __future__ import annotations
 
 import re
+
+from .parsers import parse_embryo_id, parse_image_id, parse_physical_embryo_id
 
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_-]+")
@@ -57,11 +74,66 @@ def build_image_id(well_id: str, channel_id: str, time_int: int) -> str:
     return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
 
 
-def build_embryo_id(well_id: str, local_track_id: int) -> str:
-    """Return the canonical embryo id for one tracked embryo within one well."""
-    return f"{str(well_id)}_e{int(local_track_id):02d}"
+def build_physical_embryo_id(well_id: str, local_embryo_index: int) -> str:
+    """Return the stable animal identity within a well (no image/time/channel context).
+
+    ``local_embryo_index`` must be >= 1 (one-based — biologist-facing).
+    Use ``track_index_to_embryo_index(raw_track_index)`` to convert zero-based backend
+    object IDs before calling this function.
+
+    Example: ``("20250912_B01", 1)`` → ``"20250912_B01_e01"``
+    """
+    idx = int(local_embryo_index)
+    if idx < 1:
+        raise ValueError(
+            f"build_physical_embryo_id: local_embryo_index must be >= 1 (one-based), got {idx!r}. "
+            "Use track_index_to_embryo_index(raw_track_index) to convert zero-based backend IDs. "
+            "Embryo 1 is the first embryo — zero is not a valid identity."
+        )
+    return f"{str(well_id)}_e{idx:02d}"
 
 
-def build_snip_id(embryo_id: str, time_int: int) -> str:
-    """Return the canonical snip id for one embryo at one timepoint."""
-    return f"{str(embryo_id)}_t{int(time_int):04d}"
+def build_embryo_id(physical_embryo_id: str, image_id: str) -> str:
+    """Return the image-channel-contextual embryo identity.
+
+    Parses ``physical_embryo_id`` and ``image_id`` to extract and cross-check their
+    embedded ``well_id``s, then extracts ``channel_id`` from ``image_id``.
+    Fails loud on well_id mismatch.
+
+    Example: ``("20250912_B01_e01", "20250912_B01_BF_t0007")`` → ``"20250912_B01_e01_BF"``
+    """
+    embryo_well_id, _local_idx = parse_physical_embryo_id(physical_embryo_id)
+    image_well_id, channel_id, _time_index = parse_image_id(image_id)
+    if embryo_well_id != image_well_id:
+        raise ValueError(
+            f"build_embryo_id: well_id mismatch — physical_embryo_id encodes well_id "
+            f"{embryo_well_id!r} but image_id encodes well_id {image_well_id!r}. "
+            "Cannot combine an embryo from one well with an image from a different well."
+        )
+    return f"{str(physical_embryo_id)}_{channel_id}"
+
+
+def build_snip_id(embryo_id: str, image_id: str) -> str:
+    """Return the crop artifact identity for one animal-channel at one time.
+
+    Parses ``embryo_id`` and ``image_id``, then asserts well_id AND channel_id agreement
+    (fails loud on mismatch). Extracts ``time_index`` from ``image_id``.
+
+    Example: ``("20250912_B01_e01_BF", "20250912_B01_BF_t0007")`` → ``"20250912_B01_e01_BF_t0007"``
+    """
+    physical_embryo_id, embryo_channel_id = parse_embryo_id(embryo_id)
+    embryo_well_id, _local_idx = parse_physical_embryo_id(physical_embryo_id)
+    image_well_id, image_channel_id, time_index = parse_image_id(image_id)
+
+    if embryo_well_id != image_well_id:
+        raise ValueError(
+            f"build_snip_id: well_id mismatch — embryo_id encodes well_id "
+            f"{embryo_well_id!r} but image_id encodes well_id {image_well_id!r}."
+        )
+    if embryo_channel_id != image_channel_id:
+        raise ValueError(
+            f"build_snip_id: channel_id mismatch — embryo_id encodes channel_id "
+            f"{embryo_channel_id!r} but image_id encodes channel_id {image_channel_id!r}. "
+            "A snip must derive from the same channel as its embryo identity."
+        )
+    return f"{str(embryo_id)}_t{time_index:04d}"
