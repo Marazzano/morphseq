@@ -6,6 +6,40 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 2 registry product)
+
+**What shipped (Stage 2 of 4 — contract + table validator + builder):** the `physical_embryo_registry`
+data product itself, mirroring the `frame_masks_contract.py`/`validate_frame_masks.py` split. Files (all
+under `src/data_pipeline/segmentation/physical_embryo_registry/`):
+- `physical_embryo_registry_contract.py` — `PHYSICAL_EMBRYO_REGISTRY_REQUIRED_COLUMNS` (identity +
+  minimal provenance: physical_embryo_id, experiment_id, well_id, local_embryo_index, track_id,
+  track_id_source), `PHYSICAL_EMBRYO_REGISTRY_UNIQUE_KEY`, `empty_physical_embryo_registry()`.
+- `validate_physical_embryo_registry.py` — table validator: grain uniqueness (one row per animal,
+  ENFORCES global uniqueness on the merged table), one-based index, round-trip via
+  `validate_physical_embryo_id`, no dup (well_id, local_embryo_index)/(well_id, track_id), one track →
+  one animal.
+- `build_physical_embryo_registry.py` — `build_physical_embryo_registry(frame_masks)`: mints ONE row per
+  distinct `(well_id, track_id)` from the DETECTED set (drops NA-track no-mask rows, keeps tracks
+  regardless of is_valid_mask), running the mint chain once per animal; `merge_physical_embryo_registry`
+  concats well shards + re-validates global uniqueness. Both validate before returning.
+- Tests: `tests/data_pipeline/segmentation/physical_embryo_registry/test_physical_embryo_registry.py`.
+
+**Verified:** `pytest tests/data_pipeline/segmentation/physical_embryo_registry/` — **26 passed** (14 new
+Stage-2 + 12 Stage-1 spine tests in the same dir).
+
+**Next concrete action (Stage 3 — orchestration wiring):** (1) add a `physical_embryo_registry`
+`PIPELINE_STEPS` row in `src/data_pipeline/pipeline_orchestrator/orchestration/paths.py` mirroring the
+`frame_masks` row (stage="object_extraction", product_dir="physical_embryo_registry",
+fanout=PER_WELL_THEN_MERGE, execution=EXECUTION_PER_WELL, per_well + merged artifact templates);
+(2) add `build`/`validate`/`merge` task verbs in `pipeline_orchestrator/tasks.py` (pure dispatch to the
+Stage-2 functions); (3) create `rules/physical_embryo_registry.smk` (copy `frame_masks.smk`/`frame_inventory.smk`
+PER_WELL_THEN_MERGE template) and `include:` it in the Snakefile. Verify by running the build task verb
+on a real per-well frame_masks shard (e.g. 20250912_B01) and confirming one row per (well_id, track_id).
+
+**Open decisions:** none for Stage 3.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 1 identity validators)
 
 **What shipped (Stage 1 of 4 — reusable identity validators):** the two reusable validators the rest of
