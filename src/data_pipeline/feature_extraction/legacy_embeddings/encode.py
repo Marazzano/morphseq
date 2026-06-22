@@ -1,26 +1,26 @@
 """Pure encode loop — loaded encoder + SnipInputs → latents DataFrame.
 
-No I/O, no model loading. The caller (``entrypoint.py``) is responsible for loading
-the model and providing SnipInput lists. This function owns only the encode math.
+No I/O, no model loading. The caller is responsible for loading the encoder and
+providing SnipInput lists. This function owns only the encode math.
 
-Encoder output conventions handled:
-- VAE / MetricVAE: ``encoder_output.embedding`` (mu), ``encoder_output.log_covariance``
-- SeqVAE variants:  ``encoder_output.mu``,             ``encoder_output.log_var``
+The encoder is typed as ``EncoderProtocol`` — any object with an ``encode_batch``
+method that returns ``{"mu": tensor, "logvar": tensor_or_None}`` satisfies it.
+``LegacyVaeEncoder`` from ``legacy_vae_inference_loader`` satisfies the protocol;
+so do test fakes. ``encode.py`` does not import the adapter.
 
 Column naming: ``z_mu_00``, ``z_mu_01``, ... (zero-padded to 2 digits).
-``z_sigma_*`` columns are added when ``log_covariance`` / ``log_var`` is present.
+``z_sigma_*`` columns are added when the encoder emits ``"logvar"``.
 
-**Important:** ``z_sigma_*`` values are taken directly from ``log_covariance`` /
-``log_var`` and are **not** transformed to standard deviation. The column name
-preserves the legacy naming convention from ``extract_embeddings_legacy``; the values
-are log-variance, not sigma. Downstream consumers should be aware of this convention.
+**Important:** ``z_sigma_*`` values store ``logvar`` directly — **not** standard
+deviation. The column name preserves the legacy naming convention; the values are
+log-variance. Downstream consumers should be aware of this convention.
 
 Row order in the output DataFrame matches the order of ``snip_inputs`` (shuffle=False).
 """
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Protocol
 
 import pandas as pd
 import torch
@@ -29,39 +29,35 @@ from data_pipeline.feature_extraction.legacy_embeddings.snip_source import SnipI
 from data_pipeline.feature_extraction.legacy_embeddings.transforms import snip_to_model_input_tensor
 
 
-def _extract_mu_logvar(encoder_output) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Return (mu, log_var_or_none) from an encoder output, handling both conventions."""
-    # VAE / MetricVAE convention
-    mu = getattr(encoder_output, "embedding", None)
-    log_var = getattr(encoder_output, "log_covariance", None)
+class EncoderProtocol(Protocol):
+    """Structural interface for any inference encoder used by ``encode_snips``."""
 
-    if mu is None:
-        # SeqVAE / alternate convention
-        mu = getattr(encoder_output, "mu", None)
-        log_var = getattr(encoder_output, "log_var", None)
+    def encode_batch(self, x: torch.Tensor) -> dict[str, torch.Tensor | None]:
+        """Run inference on a batch.
 
-    if mu is None:
-        raise ValueError(
-            "Encoder output has neither '.embedding' nor '.mu' attribute. "
-            f"Available attributes: {[k for k in dir(encoder_output) if not k.startswith('_')]}"
-        )
+        Args:
+            x: ``[B, C, H, W]`` float32 tensor on the encoder's device.
 
-    return mu, log_var
+        Returns:
+            dict with keys ``"mu"`` (required) and ``"logvar"`` (optional, may be None).
+        """
+        ...
 
 
 def encode_snips(
-    lit_model,
     snip_inputs: List[SnipInput],
+    *,
+    encoder: EncoderProtocol,
     model_input_shape: tuple[int, int],
     model_input_channels: int = 1,
     batch_size: int = 64,
     device: str = "cpu",
 ) -> pd.DataFrame:
-    """Encode snip_inputs with the loaded model; return a latents DataFrame.
+    """Encode snip_inputs with the loaded encoder; return a latents DataFrame.
 
     Args:
-        lit_model: Loaded legacy AutoModel, already ``.eval()`` and on ``device``.
         snip_inputs: Ordered list of SnipInputs to encode (order preserved in output).
+        encoder: Any object satisfying ``EncoderProtocol`` (keyword-only).
         model_input_shape: ``(height, width)`` — passed to ``snip_to_model_input_tensor``.
         model_input_channels: Channel count the model expects. ``1`` = grayscale
             (default, matching the legacy VAE ``input_dim=(1, 288, 128)``). ``3`` = RGB.
@@ -70,8 +66,7 @@ def encode_snips(
 
     Returns:
         DataFrame with columns ``snip_id``, ``z_mu_00``, ``z_mu_01``, ..., and
-        optionally ``z_sigma_00``, ``z_sigma_01``, ... (when the encoder emits
-        log-variance; values are log-variance, not standard deviation).
+        optionally ``z_sigma_00``, ``z_sigma_01``, ... (log-variance, not std dev).
         Row order matches ``snip_inputs`` order.
     """
     rows: list[dict] = []
@@ -84,13 +79,12 @@ def encode_snips(
                 snip_to_model_input_tensor(si.image_path, model_input_shape, model_input_channels)
                 for si in batch_inputs
             ]
-            x = torch.stack(tensors, dim=0).to(device)  # [B, 3, H, W]
+            x = torch.stack(tensors, dim=0).to(device)
 
-            encoder_output = lit_model.encoder(x)
-            mu, log_var = _extract_mu_logvar(encoder_output)
-
-            mu_np = mu.cpu().numpy()
-            log_var_np = log_var.cpu().numpy() if log_var is not None else None
+            out = encoder.encode_batch(x)
+            mu_np = out["mu"].numpy()
+            logvar = out.get("logvar")
+            logvar_np = logvar.numpy() if logvar is not None else None
 
             latent_dim = mu_np.shape[1]
 
@@ -98,9 +92,9 @@ def encode_snips(
                 row: dict = {"snip_id": si.snip_id}
                 for j in range(latent_dim):
                     row[f"z_mu_{j:02d}"] = float(mu_np[i, j])
-                if log_var_np is not None:
+                if logvar_np is not None:
                     for j in range(latent_dim):
-                        row[f"z_sigma_{j:02d}"] = float(log_var_np[i, j])
+                        row[f"z_sigma_{j:02d}"] = float(logvar_np[i, j])
                 rows.append(row)
 
     return pd.DataFrame(rows)

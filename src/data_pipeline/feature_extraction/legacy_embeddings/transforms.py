@@ -3,10 +3,10 @@
 Single public function: ``snip_to_model_input_tensor()``. Returns an unbatched
 ``[C, H, W]`` float32 tensor with values in ``[0, 1]``, where C is ``model_input_channels``.
 
-The legacy VAE was trained on **grayscale** input: ``input_dim=(1, 288, 128)``
-(see ``MetricVAEConfig`` defaults). ``model_input_channels`` must be ``1`` for
-the production model — passing ``3`` would silently feed wrong-channel data to
-a model whose first conv layer expects one channel.
+The production model (``20241107_ds_sweep01_optimum``) is a SeqVAE trained on
+**grayscale** input: ``model_config.json`` records ``"input_dim": [1, 288, 128]``.
+``model_input_channels`` must be ``1`` — passing ``3`` would silently feed
+wrong-channel data to an encoder whose first conv expects one channel.
 
 ``encode_snips()`` handles batching — stacking individual tensors into ``[B, C, H, W]``.
 This function is the explicit, config-driven replacement for

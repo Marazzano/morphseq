@@ -40,24 +40,6 @@ import sys
 from data_pipeline.feature_extraction.legacy_embeddings.model_paths import resolve_legacy_model_dir
 
 
-def _model_metadata(lit_model) -> dict:
-    """Best-effort read of the three identity fields, tolerant of model variants.
-
-    ``model_name`` / ``latent_dim`` / ``nuisance_indices`` are present on the
-    ScriptedLegacyModelAdapter and on most AutoModel variants, but not guaranteed —
-    fall back to ``getattr`` with a sentinel so the smoke reports what it can rather
-    than crashing on a missing attribute.
-    """
-    nuisance = getattr(lit_model, "nuisance_indices", None)
-    if hasattr(nuisance, "tolist"):
-        nuisance = nuisance.tolist()
-    return {
-        "model_name": getattr(lit_model, "model_name", None),
-        "latent_dim": getattr(lit_model, "latent_dim", None),
-        "nuisance_indices": nuisance,
-    }
-
-
 def load_smoke(models_root: str, model_name: str, device: str = "cpu") -> int:
     """Resolve + load the legacy model in-process and print its metadata.
 
@@ -80,19 +62,17 @@ def load_smoke(models_root: str, model_name: str, device: str = "cpu") -> int:
     model_dir = resolve_legacy_model_dir(models_root, model_name)
     print(f"Resolved legacy model dir: {model_dir}")
 
-    # Import the loader only now (inside 3.9) — keeps the module importable from 3.10
-    # for the unit tests that exercise resolve_legacy_model_dir without torch present.
-    from src.legacy.vae import AutoModel  # noqa: E402  (3.9-only, lazy on purpose)
+    # All legacy.vae.* imports live inside legacy_vae_inference_loader — that is the
+    # only file in the new pipeline allowed to cross the legacy boundary.
+    from data_pipeline.feature_extraction.legacy_embeddings.legacy_vae_inference_loader import (  # noqa: E402
+        load_legacy_vae_encoder,
+    )
 
-    lit_model = AutoModel.load_from_folder(str(model_dir))
-    lit_model.to(device)
-    lit_model.eval()
-
-    meta = _model_metadata(lit_model)
+    encoder = load_legacy_vae_encoder(model_dir, device=device)
     print("✅ Legacy model loaded in-process (Python 3.9). Metadata:")
-    print(f"    model_name       = {meta['model_name']}")
-    print(f"    latent_dim       = {meta['latent_dim']}")
-    print(f"    nuisance_indices = {meta['nuisance_indices']}")
+    print(f"    model_name       = {encoder.model_name}")
+    print(f"    latent_dim       = {encoder.latent_dim}")
+    print(f"    nuisance_indices = {encoder.nuisance_indices}")
     print("(No model object crosses to Python 3.10 — only files do.)")
     return 0
 

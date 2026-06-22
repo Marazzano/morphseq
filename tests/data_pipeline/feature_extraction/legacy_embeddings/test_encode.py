@@ -1,8 +1,8 @@
 """Tests for legacy_embeddings.encode — pure encode loop.
 
-Uses a synthetic mock encoder — no real model weights needed. The mock returns a
-ModelOutput-like object with configurable embedding / log_covariance attributes so
-both encoder output conventions are exercised.
+Uses a synthetic mock encoder satisfying EncoderProtocol — no real model weights needed.
+The mock returns configurable mu / logvar tensors so both present/absent logvar paths
+are exercised.
 """
 
 from __future__ import annotations
@@ -24,43 +24,18 @@ from data_pipeline.feature_extraction.legacy_embeddings.encode import encode_sni
 LATENT_DIM = 8
 
 
-class _EncoderOutput:
-    """Minimal encoder output stub, matching both naming conventions."""
+class _FakeEncoder:
+    """Minimal EncoderProtocol implementation for tests — no torch.nn.Module needed."""
 
-    def __init__(self, mu: torch.Tensor, log_var: torch.Tensor | None, convention: str):
-        if convention == "embedding":
-            self.embedding = mu
-            self.log_covariance = log_var
-        elif convention == "mu":
-            self.mu = mu
-            self.log_var = log_var
-        else:
-            raise ValueError(f"Unknown convention: {convention}")
-
-
-class _MockEncoder(torch.nn.Module):
-    def __init__(self, latent_dim: int, convention: str = "embedding", emit_logvar: bool = True):
-        super().__init__()
+    def __init__(self, latent_dim: int, emit_logvar: bool = True):
         self.latent_dim = latent_dim
-        self.convention = convention
         self.emit_logvar = emit_logvar
 
-    def forward(self, x: torch.Tensor):
+    def encode_batch(self, x: torch.Tensor) -> dict[str, torch.Tensor | None]:
         B = x.shape[0]
         mu = torch.arange(B * self.latent_dim, dtype=torch.float32).reshape(B, self.latent_dim)
-        log_var = -torch.ones(B, self.latent_dim) if self.emit_logvar else None
-        return _EncoderOutput(mu, log_var, self.convention)
-
-
-class _MockLitModel:
-    def __init__(self, latent_dim: int, convention: str = "embedding", emit_logvar: bool = True):
-        self.encoder = _MockEncoder(latent_dim, convention, emit_logvar)
-
-    def eval(self):
-        return self
-
-    def to(self, device):
-        return self
+        logvar = -torch.ones(B, self.latent_dim) if self.emit_logvar else None
+        return {"mu": mu, "logvar": logvar}
 
 
 def _make_snip_inputs(n: int, tmp_path: Path) -> list[SnipInput]:
@@ -85,72 +60,71 @@ MODEL_INPUT_SHAPE = (16, 8)  # (H, W) matching the 16x8 fixture PNGs
 class TestRowOrderAndCount:
     def test_output_row_count_matches_input(self, tmp_path):
         snip_inputs = _make_snip_inputs(5, tmp_path)
-        model = _MockLitModel(LATENT_DIM)
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(LATENT_DIM)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         assert len(df) == 5
 
     def test_output_row_order_matches_input_order(self, tmp_path):
         snip_inputs = _make_snip_inputs(5, tmp_path)
-        model = _MockLitModel(LATENT_DIM)
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(LATENT_DIM)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         assert list(df["snip_id"]) == [si.snip_id for si in snip_inputs]
 
     def test_batch_size_smaller_than_input_still_produces_all_rows(self, tmp_path):
         snip_inputs = _make_snip_inputs(7, tmp_path)
-        model = _MockLitModel(LATENT_DIM)
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE, batch_size=3)
+        enc = _FakeEncoder(LATENT_DIM)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE, batch_size=3)
         assert len(df) == 7
 
     def test_model_input_channels_passed_through(self, tmp_path):
         snip_inputs = _make_snip_inputs(2, tmp_path)
-        model = _MockLitModel(LATENT_DIM)
-        # channels=1 (default, grayscale) and channels=3 (RGB) should both produce output
-        df1 = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE, model_input_channels=1)
-        df3 = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE, model_input_channels=3)
+        enc = _FakeEncoder(LATENT_DIM)
+        df1 = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE, model_input_channels=1)
+        df3 = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE, model_input_channels=3)
         assert len(df1) == len(df3) == 2
 
 
 class TestZMuColumns:
     def test_emits_z_mu_columns_count_equals_latent_dim(self, tmp_path):
         snip_inputs = _make_snip_inputs(2, tmp_path)
-        model = _MockLitModel(LATENT_DIM)
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(LATENT_DIM)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         z_mu_cols = [c for c in df.columns if c.startswith("z_mu_")]
         assert len(z_mu_cols) == LATENT_DIM
 
     def test_z_mu_column_naming_is_zero_padded(self, tmp_path):
         snip_inputs = _make_snip_inputs(1, tmp_path)
-        model = _MockLitModel(4)
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(4)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         assert "z_mu_00" in df.columns
         assert "z_mu_03" in df.columns
 
 
 class TestEncoderOutputConventions:
-    def test_handles_embedding_log_covariance_convention(self, tmp_path):
+    def test_encode_batch_with_logvar(self, tmp_path):
         snip_inputs = _make_snip_inputs(2, tmp_path)
-        model = _MockLitModel(LATENT_DIM, convention="embedding")
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(LATENT_DIM, emit_logvar=True)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         assert len([c for c in df.columns if c.startswith("z_mu_")]) == LATENT_DIM
 
-    def test_handles_mu_log_var_convention(self, tmp_path):
+    def test_encode_batch_without_logvar(self, tmp_path):
         snip_inputs = _make_snip_inputs(2, tmp_path)
-        model = _MockLitModel(LATENT_DIM, convention="mu")
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(LATENT_DIM, emit_logvar=False)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         assert len([c for c in df.columns if c.startswith("z_mu_")]) == LATENT_DIM
 
 
 class TestZSigmaColumns:
     def test_emits_z_sigma_when_logvar_present(self, tmp_path):
         snip_inputs = _make_snip_inputs(2, tmp_path)
-        model = _MockLitModel(LATENT_DIM, emit_logvar=True)
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(LATENT_DIM, emit_logvar=True)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         z_sigma_cols = [c for c in df.columns if c.startswith("z_sigma_")]
         assert len(z_sigma_cols) == LATENT_DIM
 
     def test_no_z_sigma_when_logvar_absent(self, tmp_path):
         snip_inputs = _make_snip_inputs(2, tmp_path)
-        model = _MockLitModel(LATENT_DIM, emit_logvar=False)
-        df = encode_snips(model, snip_inputs, MODEL_INPUT_SHAPE)
+        enc = _FakeEncoder(LATENT_DIM, emit_logvar=False)
+        df = encode_snips(snip_inputs, encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
         z_sigma_cols = [c for c in df.columns if c.startswith("z_sigma_")]
         assert z_sigma_cols == [], f"Expected no z_sigma columns, got {z_sigma_cols}"
