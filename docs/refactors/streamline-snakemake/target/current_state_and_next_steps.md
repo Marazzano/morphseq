@@ -1,8 +1,376 @@
 # Current State & Next Steps — the STATUS doc
 
-**Status:** the "where are we RIGHT NOW" anchor. The current snapshot below (2026-06-18) is the live
-truth; the dated sections further down are earlier verified state, kept for history. Design lives in
+**Status:** the "where are we RIGHT NOW" anchor. The current snapshot at the top is the live truth;
+the dated sections further down are earlier verified state, kept for history. Design lives in
 `specs/`; the active front-half plan is `front_half_reorg_roadmap.md`. See `README.md` for the map.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: Session B — fake-predictor end-to-end segmentation contract)
+
+**What shipped:** Session B is complete in four stage commits:
+`939252d2` (`segmentation prompts: add SAM2 prompt detection vocabulary and validator`),
+`559c1b7c` (`segmentation adapter: add SAM2 output adapter`),
+`cb2abb69` (`segmentation fake predictor: add deterministic fake SAM2 predictor`),
+`fecad307` (`segmentation session B: fake-predictor end-to-end integration test`).
+
+New package: `src/data_pipeline/segmentation/backends/sam2_video/` containing:
+- `prompt_detections.py` — `PROMPT_DETECTION_COLUMNS`, `validate_sam2_prompts`, `validate_frame_masks_against_sam2_prompts`
+- `adapt_sam2_output.py` — `adapt_sam2_well_output(well_id, sam2_raw_output, model_frame_view, prompt_detections, *, model_id)` converting `dict[int, dict[int, np.ndarray]]` to `FRAME_MASKS_REQUIRED_COLUMNS`; SAM2_BACKEND_LABEL, SAM2_RLE_FORMAT constants
+- `fake_predictor.py` — `FakePredictor(n_objects, mask_fill_fraction)` + `segment_one_well_fake` adapter
+
+One well runs end-to-end through `run_sam2_video_for_wells` with a patched `load_sam2_video_model`
+returning a `FakePredictor`; `validate_frame_masks(frame_masks, frame_inventory)` and
+`validate_frame_masks_against_sam2_prompts(frame_masks, prompt_detections)` both pass. No GPU or
+real SAM2 invoked. `prompt_seeds.py` untouched. Focused segmentation tests: **70 passed**.
+
+**What's broken/half-done:** nothing within Session B. Session C remains deferred. No real SAM2 GPU
+invocation, model/checkpoint path plumbing, `seed_selection.py`, `Sam2WellInput` rename, or
+`prompt_seeds.py` cleanup was implemented.
+
+**Next concrete action:** Start Session C by drafting a staged plan before coding. Session C scope:
+real SAM2 backend invocation under `segmentation/backends/sam2_video/`, tiny frame-capped one-well
+GPU smoke, model/config/checkpoint path handling, real-output validation, cleanup/retirement decision
+for `prompt_seeds.py`, and `Sam2WellInput` rename/move if still desired.
+
+**Open decisions:** none blocking Session C planning.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-21 23:06
+
+**What shipped:** Session A implementation is complete in `morphseq-docs` through four stage commits:
+`001adaf7` (`segmentation identifiers: add shared mask and track ID helpers`), `ab0e5a85`
+(`segmentation masks: add RLE utility`), `e0fc7470` (`segmentation masks: add geometry utility`),
+and `c2e4bafc` (`frame masks: migrate contract to canonical mask vocabulary`). A5 was intentionally
+skipped: `src/data_pipeline/segmentation/prompt_seeds.py` was not edited. Focused segmentation
+verification passed:
+`/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python -m pytest tests/data_pipeline/segmentation`
+reported `31 passed`.
+**What's broken/half-done:** nothing within Session A. Session B/C remain deferred. No seed-selection
+migration, SAM2 output adapter, fake predictor integration, real GPU SAM2 run, or prompt-seed cleanup
+was implemented. The pre-existing `src/data_pipeline/segmentation/sam2_video/` package was not moved
+or expanded in Session A.
+**Next concrete action:** Start Session B by drafting a staged fake-predictor plan before coding.
+First implementation target should be the deterministic fake-predictor end-to-end segmentation
+contract: `seed_selection.py`, SAM2 prompt validator separation, `adapt_sam2_output.py`,
+`segment_one_well`, and a fake predictor integration test that produces valid `frame_masks` through
+the generic `validate_frame_masks(df, frame_inventory)` path.
+**Open decisions:** none blocking Session B planning. Keep real GPU SAM2 smoke and prompt-seed
+retirement for Session C.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-21 22:56
+
+**What shipped:** Stage A4 is implemented in `morphseq-docs` commit `c2e4bafc`
+(`frame masks: migrate contract to canonical mask vocabulary`). The frame-mask contract now uses
+`prompt_detection_id`, `sam2_object_id`, constructor-minted `mask_id`, and constructor-minted
+zero-based-compatible `track_id`; `seed_id` was removed from the generic frame-mask contract.
+`adapt_legacy_mask_rle_to_frame_masks` now uses `build_mask_id` and `build_track_id` instead of
+inline ID minting. Added `no_mask_frame_mask_row(...)` for explicit no-mask placeholders using
+`build_no_mask_id(image_id)` and NA `track_id`. Generic validators are
+`validate_frame_mask_block(df)`, `validate_frame_masks(df, frame_inventory)`, and
+`valid_frame_masks(df)`. Prompt cross-checking is separated into
+`validate_frame_masks_against_prompt_detections(...)` and is not required by generic validation.
+Focused tests passed:
+`/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python -m pytest tests/data_pipeline/segmentation`
+reported `31 passed`.
+**What's broken/half-done:** Stage A4 is complete. Session-B work remains deferred: no seed
+selection migration, no SAM2 output adapter, no fake predictor integration, and no real SAM2 runner
+changes. The pre-existing `src/data_pipeline/segmentation/sam2_video/` package was not introduced or
+moved in this stage.
+**Next concrete action:** Stage A5 from `segmentation_world_plan.md` — leave
+`src/data_pipeline/segmentation/prompt_seeds.py` untouched by default, verify focused segmentation
+tests/imports still pass, confirm no accidental new `segmentation/sam2_video/` migration work, and
+record Session A as complete with Session B as the next staged plan.
+**Open decisions:** none for A5. Session B still needs its own fake-predictor plan before coding.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-21 22:52
+
+**What shipped:** Stage A3 is implemented in `morphseq-docs` commit `e0fc7470`
+(`segmentation masks: add geometry utility`). Added
+`src/data_pipeline/segmentation/masks/mask_geometry.py` with `mask_area_px`,
+`mask_bounding_box_xyxy_px`, `mask_centroid_xy_px`, and `mask_geometry`, exported from
+`src/data_pipeline/segmentation/masks/__init__.py`. Geometry reuses the A2 `validate_binary_mask`
+guard, returns half-open pixel bounding boxes, and uses pixel-center centroid coordinates. Focused
+tests passed:
+`/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python -m pytest tests/data_pipeline/segmentation/masks/test_mask_geometry.py tests/data_pipeline/segmentation/masks/test_mask_rle.py`
+reported `18 passed`.
+**What's broken/half-done:** Stage A3 is complete. No frame-mask schema, generic validators, SAM2
+prompt migration, seed selection, or output adaptation was touched. Stage A4-A5 remain deferred.
+**Next concrete action:** Stage A4 from `segmentation_world_plan.md` — edit
+`src/data_pipeline/segmentation/frame_masks_contract.py`,
+`src/data_pipeline/segmentation/validate_frame_masks.py`, and the matching tests to enforce
+constructor-minted `mask_id`/`track_id`, no-mask placeholders, duplicate `mask_id` rejection, and
+generic `validate_frame_masks(df, frame_inventory)` behavior that does not require SAM2 prompt
+inputs. Verify with the focused frame-mask pytest file, then commit as
+`frame masks: migrate contract to canonical mask vocabulary`.
+**Open decisions:** none for required generic A4 work. SAM2 prompt validators remain optional only
+if the existing code can be migrated without introducing Session-B scope.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-21 22:50
+
+**What shipped:** Stage A2 is implemented in `morphseq-docs` commit `ab0e5a85`
+(`segmentation masks: add RLE utility`). Added `src/data_pipeline/segmentation/masks/mask_rle.py`
+with `validate_binary_mask`, `encode_binary_mask_rle`, and `decode_binary_mask_rle`, exported from
+`src/data_pipeline/segmentation/masks/__init__.py`. The RLE behavior is row-major, starts with the
+background/False run, stores `{"shape": [height, width], "counts": [...]}`, decodes to bool masks,
+accepts bool or integer 0/1 masks, and fails loud for non-2D masks, non-binary values, non-integer
+dtypes, malformed shapes, negative counts, and counts that underfill/overflow the declared shape.
+Focused tests passed:
+`/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python -m pytest tests/data_pipeline/segmentation/masks/test_mask_rle.py`
+reported `12 passed`.
+**What's broken/half-done:** Stage A2 is complete. No frame-mask schema, generic validators, SAM2
+prompt migration, seed selection, or output adaptation was touched. Stage A3-A5 remain deferred.
+**Next concrete action:** Stage A3 from `segmentation_world_plan.md` — create
+`src/data_pipeline/segmentation/masks/mask_geometry.py` and
+`tests/data_pipeline/segmentation/masks/test_mask_geometry.py`, reuse the A2 binary-mask validation,
+and test area/bounding-box/centroid semantics plus invalid-mask failure paths. Verify with the
+focused mask geometry pytest file, then commit as `segmentation masks: add geometry utility`.
+**Open decisions:** none for Stage A3.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-21 22:38
+
+**What shipped:** Stage A1 is implemented in `morphseq-docs` commit `001adaf7`
+(`segmentation identifiers: add shared mask and track ID helpers`). The shared identifier API now
+lives under `src/data_pipeline/shared/identifiers/` with `build_mask_id`, `build_no_mask_id`,
+`build_track_id`, `parse_mask_id`, and `parse_track_id` exported from the package. Mask IDs use
+constructor-minted `<image_id>_m####` values, no-mask placeholders use `<image_id>_mask_none`, and
+`parse_mask_id(mask_id)` returns exactly `(image_id, local_mask_index, is_no_mask)` with
+`local_mask_index is None` for placeholders. Track IDs remain zero-based-compatible:
+`build_track_id("WELL", 0) == "WELL_track0000"`. Focused identifier tests passed:
+`/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python -m pytest tests/data_pipeline/shared/identifiers/test_identifiers.py`
+reported `52 passed`.
+**What's broken/half-done:** Stage A1 is complete. Session A2-A5 remain deferred; no mask RLE,
+geometry, frame-mask contract, SAM2 prompt, seed-selection, or runner code was touched. The working
+tree had pre-existing unrelated dirty files; the Stage A1 commit included only the shared identifier
+files/tests.
+**Next concrete action:** Stage A2 from `segmentation_world_plan.md` — create
+`src/data_pipeline/segmentation/masks/mask_rle.py` and
+`tests/data_pipeline/segmentation/masks/test_mask_rle.py`, covering empty masks, single-pixel masks,
+multi-component masks, encode/decode round trip, and dtype/shape validation failure paths. Verify
+with the focused mask RLE pytest file, then commit as `segmentation masks: add RLE utility`.
+**Open decisions:** none for Stage A2.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: segmentation Session A plan approved with path pins)
+
+**What shipped (docs only):**
+- Rewrote `specs/detect-seg-track/targets/segmentation_world_plan.md` from a one-shot scope note
+  into a staged Session-A implementation contract.
+- Session A is explicitly limited to shared mask/track ID helpers, segmentation mask utilities,
+  generic frame-mask contract/validator vocabulary migration, and intentional retention of
+  `prompt_seeds.py` for Session B.
+- Identifier helpers are pinned to `src/data_pipeline/shared/identifiers/{constructors.py,
+  parsers.py, __init__.py}` plus README updates as needed. Do not add identifier grammar under
+  `segmentation/`.
+- Mask utilities are pinned to `src/data_pipeline/segmentation/masks/mask_rle.py` and
+  `src/data_pipeline/segmentation/masks/mask_geometry.py`.
+- Each stage now has a functional artifact, focused synthetic tests, a commit boundary, and a
+  required end-of-stage update back to this status doc.
+- The plan pins the decisions that `parse_mask_id(mask_id)` returns
+  `(image_id, local_mask_index, is_no_mask)`, no-mask placeholders use `local_mask_index is None`,
+  `build_track_id("WELL", 0)` remains `WELL_track0000`, and negative `track_index` values are
+  rejected.
+- A4 is generic-first: required work is `frame_masks_contract.py`, `validate_frame_masks.py`, and
+  `valid_frame_masks.py`; SAM2 prompt validators are optional only if existing tests/code can be
+  migrated without introducing Session-B seed selection or output adaptation.
+- Session-A actual-mask validation checks parseability and uniqueness. Placeholder rows must equal
+  `build_no_mask_id(image_id)` and have NA `track_id`. Valid mask rows must have parseable
+  `track_id`. Deterministic actual-mask `local_mask_index` assignment and SAM2-specific
+  `track_id == build_track_id(...)` checks belong to the Session-B adapter/SAM2 validation unless
+  already trivial and tested.
+- `pipeline_file_philosophy.md` is now explicit implementation doctrine for Session A: no inline ID
+  minting/parsing outside `shared/identifiers`, use named constants/helpers for grammar, keep
+  explicit signatures/no haunted globals, put tests in the parallel `tests/data_pipeline/...` tree,
+  keep validators authoritative beside their contracts, make validation errors name the fix, and review
+  every file after editing for first-read clarity and organization.
+- The downstream arc is now explicit: Session B is the fake-predictor end-to-end segmentation
+  contract (`seed_selection.py`, SAM2 prompt validators, `adapt_sam2_output.py`, `segment_one_well`,
+  fake predictor integration), while Session C is the real GPU SAM2 smoke plus prompt-seed cleanup /
+  `Sam2WellInput` rename if still needed.
+
+**What's broken/half-done:** no code changed. The implementation still needs to begin at Stage A1;
+Session B/C remain deferred. Session B must stay deterministic and fake-predictor-backed even if GPU
+is available; real SAM2 belongs to Session C. The next agent can assume GPU access when needed for
+Session C and should try to carry the plan through the real SAM2 smoke, validation, and cleanup end
+state rather than stopping at scaffolding.
+
+**Next concrete action:** Stage A1 from `segmentation_world_plan.md` — edit
+`src/data_pipeline/shared/identifiers/constructors.py`,
+`src/data_pipeline/shared/identifiers/parsers.py`, and
+`src/data_pipeline/shared/identifiers/__init__.py` to add `build_mask_id`, `build_no_mask_id`,
+`build_track_id`, `parse_mask_id`, and `parse_track_id`, with synthetic round-trip and zero-based
+track-ID tests. End the stage with its own commit and a new status-doc snapshot.
+
+**Open decisions:** none for Stage A1. Stage A5 defaults to skip: do not touch `prompt_seeds.py`
+unless imports force it; record that it is intentionally retained for Session B.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-21 (session: output tree doctrine flag-day rename)
+
+**What shipped (commit 8c590559, 244 tests green):**
+- `orchestration/paths.py`: all `PIPELINE_STEPS` stage values renamed to doctrine regimes
+  (`experiment_metadata`→`acquisition`, `built_image_data`→`acquisition`,
+  `detection`→`object_extraction`, `segmentation`→`object_extraction`).
+- `product_dir` field added to `_experiment_step_dir` (new level between `<exp>/` and `per_well/`):
+  `materialize_well` → `materialized_images/`, `frame_inventory` → `frame_inventory/`,
+  `frame_detections` → `frame_detections/`, `frame_masks` → `frame_masks/`.
+- Doctrine clarification landed in code: `materialize_well` owns only the `done` sentinel;
+  `frame_inventory` owns the CSV contract path. `_materialize_well_inventory()` removed; all callers
+  use `_frame_inventory_artifact()`.
+- `Snakefile`: five doctrine-native constants (`ACQUISITION_DIR`, `OBJECT_EXTRACTION_DIR`, etc.);
+  legacy names kept as transitional aliases with warning comments.
+- `test_paths.py`: 39 tests (all green); new `TestOutputTreeDoctrine` class with 6 regime-pinning
+  tests; `test_materialize_well_done_under_materialized_images` added.
+
+**What's broken/half-done:** nothing. On-disk data still uses legacy folder names — wipe-and-rerun
+or manual rename needed before running against live data on a machine that has existing outputs.
+
+**Next concrete action:** Stage B from `keyence_wire_through.md` —
+`image_materialization/scope/keyence/materialize_well_keyence.py` (per-well mosaic backend) +
+route `_resolve_keyence*` in `scope_resolver_for_materialization_plan.py` + 2-way dispatch in
+`run_materialize_well.py`. The acquisition inventory it consumes is live (Stage A). Open decisions
+§8.1/§8.2 (Stage C stitch-map home, per-well-vs-batch) still need mdcolon's call before B/C land.
+
+**Open decisions:** none new this session. Audit note: verify that `materialize_well` task writes
+the frame inventory CSV to the path passed via `--frame-inventory-csv` (not internally derived
+from `built_image_data_dir`). The `--built-image-data-dir` CLI arg name is a lie now (value is
+`acquisition/`) — rename follow-up deferred to the tasks.py CLI cleanup session.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 18:45 (session: Stage A Keyence acquisition inventory BUILT + verified on real data; NEXT = Stage B mosaic backend)
+
+**What shipped (code, all tests green):**
+- NEW `metadata_ingest/scope/keyence/raw_plane_parsing.py` — the ONE Keyence filename grammar.
+  Lifted `_extract_keyence_well_and_tile` / `_parse_keyence_time_and_z` / `_infer_keyence_stack_lookup`
+  / `_well_from_w_index` out of the legacy materializer; ADDED `_parse_keyence_time_z_channel` which
+  also captures the `CH#` integer (legacy regex matched `_CH\d+` but DROPPED it + hardcoded channel 0).
+  Legacy `materialize_stitched_images.py` now imports these (no local redefs) → one grammar.
+- NEW `metadata_ingest/scope/keyence/acquisition_inventory.py` — the Keyence twin of YX1's. One row
+  per raw plane `(well, tile, z_index, channel_index, time_index)`, never collapsed; `source_tiff_path`
+  PER ROW. Contract → Validation → Builder banners. Cell key
+  `(well_id, position_index, z_index, channel_index, time_index_claimed)` with `position_index`
+  TILE-UNIQUE (global enum over (well,tile)) so multi-tile wells don't falsely collide; uniqueness is
+  FAIL-LOUD (overrode spec §8.4 warn-only per mdcolon — re-acquired wells fail here until Stage E).
+  `assert_keyence_acquisition_sources_readable` is the TIFF twin of YX1's ND2 check, gated by
+  `check_sources`. `x_um/y_um` were DROPPED (all-NaN placeholders fail the shared non-null check).
+- **Channel decision (mdcolon, evolved over the session, web-confirmed):** Keyence XML is proprietary /
+  channel NAME unreliable; the filename `CH#` index is the only reliable signal. So channel is anchored
+  on the index via a SINGLE `KEYENCE_CHANNEL_INDEX_MAP` (`{1: "BF"}` today) — **MAP, fail-loud on
+  unmapped, never default**. The old name-keyed `KEYENCE_CHANNEL_MAP` was DELETED and the legacy FF
+  extractor's `_to_channel_id` rewired to also resolve channel_id from the `CH#` index → one mechanism
+  everywhere. `raw_channel_name` falls back to the `CH#` token when no name scraped.
+- Wired: `extract_scope_metadata.py` (+`acquisition_inventory_csv` param, builds from a RAW-PLANE scan
+  not the collapsed FF rows), `tasks.py::cmd_extract_scope` (Keyence passes the arg), `Snakefile`
+  `rule ingest_scope_metadata` (gate widened `YX1` → `("YX1","Keyence")`). Registry path already
+  `{scope}`-templated → no `paths.py` edit.
+- NEW `tests/data_pipeline/metadata_ingest/scope/keyence/test_acquisition_inventory.py`; updated the
+  stale `tests/test_keyence_parsing_semantics.py` imports + `test_canonical_mapping.py`.
+
+**Verification:** `195 passed, 1 pre-existing skimage warning` (`tests/data_pipeline/` +
+`scope/tests/`). `snakemake -n` (Keyence config) declares `acquisition_inventory__keyence.csv` as an
+output of `ingest_scope_metadata` with the `--acquisition-inventory-csv` arg. **Real-data run** on
+`20230525` W057/P00001/T0027 (26-plane Z stack): rows==planes, cell key unique (26-Z stack NOT a
+collision), channel_id=BF via CH1, real µm/px=5.66>0, elapsed finite/non-neg, all source_tiff_path
+exist, `validate(check_sources=True)` PASS. Grep gates clean.
+
+**Next concrete action:** Stage B — `image_materialization/scope/keyence/materialize_well_keyence.py`
+(per-well mosaic backend, asserts `xy_composition=='mosaic'`) + route `_resolve_keyence*` in
+`scope_resolver_for_materialization_plan.py` + make `run_materialize_well.py` a 2-way dispatch. The
+inventory it consumes is now live. See `keyence_wire_through.md` Stage B. Open decisions §8.1/§8.2
+(Stage C stitch-map home, per-well-vs-batch acceptability) still need mdcolon before B/C land.
+
+**Note:** `materialize_stitched_images.py` is the LEGACY producer, mis-named per philosophy (named for
+one op, not the stage; multi-microscope god-file). On the deletion path (strangle AFTER Stage D), so it
+was NOT renamed — only had the Keyence parsers extracted.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 18:30 (session: YX1 front-half smoke green; frame_inventory shard + well_runner merge completed)
+
+**What shipped:** front-end / microscope-boundary only. The YX1 materializer now writes derived
+`well_id` and `image_id` columns into the per-well `frame_inventory` shard for downstream readability;
+validation still recomputes them from atoms and fails loud on disagreement. `merge_frame_inventory`
+now merges the materializer-emitted per-well shards rather than the old dead adapter path, and its
+DAG-time artifact inputs are resolved through `well_runner.run_well_shard_paths(...)`. No
+segmentation, feature, QC, or auxiliary-mask consumer code is part of the shipped change in this
+snapshot; those remain beyond the front-half boundary.
+
+**Verification:** interpreter sanity check used
+`/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python`.
+Focused tests: **80 passed** (`test_paths.py`, `test_well_runner.py`, `test_tasks_parser.py`,
+`test_frame_inventory.py`, `test_frame_inventory_contract.py`). `git diff --check` clean. Actual
+two-well YX1 front-half smoke: `snakemake front_half --configfile
+config_smoke_front_half_20250912.yaml --cores 2 --rerun-triggers mtime --forcerun
+materialize_well` completed **5/5 (100%)** for B01/C01 on CPU with `SMOKE_FRAME_CAP_ACTIVE` at 3
+timepoints. Rewritten shards include atom columns plus derived `well_id`/`image_id`.
+`snakemake .../experiment_metadata/20250912/20250912_frame_inventory.csv --configfile
+config_smoke_front_half_20250912.yaml --cores 1 --rerun-triggers mtime` completed **1/1 (100%)**;
+the merged view row-stacks the two validated materializer-emitted shards (6 rows total).
+
+**What's broken/half-done:** nothing new in the YX1 front-half smoke. Downstream Beat 2 consumers
+still read `frame_contract.csv` by design in this front-half-bounded session: segmentation,
+auxiliary masks, feature extraction, focus/motion QC, and consolidation paths.
+
+**Next concrete action:** stay in the front-end boundary and continue Step 7 producer cleanup:
+remove the remaining YX1 legacy producer path (`materialize_stitched_images` →
+`stitched_image_index.csv` → `build_frame_contract`) from the YX1 front-half DAG while preserving
+legacy compatibility for downstream readers. Do not edit segmentation/features/QC. Verify with
+`snakemake front_half --configfile config_smoke_front_half_20250912.yaml --cores 2 --rerun-triggers
+mtime`, the merged frame-inventory target, and focused frame-inventory/path/well-runner tests.
+
+**Open decisions:** none blocking the front-half producer cleanup. Beat 2 consumer migration remains
+separate.
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-18 (session: Keyence wire-through spec + §8.3 resolved; NEXT = build Stage A acquisition inventory)
+
+**What shipped (docs only, no code):**
+- NEW spec `specs/front_end/keyence_wire_through.md` — the staged Keyence plan onto the per-well
+  materialize interface (Stages A–E + 6 open decisions + reuse-vs-new file map). Indexed in
+  `README.md` + `AGENT_QUICKSTART.md` pointer tables.
+- **Decision §8.3 RESOLVED by inspection (raw Z, not pre-fused).** Raw Keyence data on disk is
+  per-Z-plane/per-channel/per-tile TIFFs (`...XY##_NNNNN_Z###_CH#.tif`). Legacy materializer already
+  discovers + focus-stacks them on the fly (LoG, same primitive as YX1). "Pre-fused FF tiles" was a
+  misread of the legacy intermediate. Cascade: new backend focus-stacks raw Z; Stage-A inventory
+  explodes one row per (well, tile, z_index, channel_index, time_index); reacquisition cell key is
+  fully realizable.
+
+**Verified state for context (NOT changed this session):** the YX1 per-well materialize interface
+is BUILT + LIVE (`rule materialize_well` in `rules/frame_inventory.smk` → `image_materialization/`
+backend → per-well frame_inventory shard; `rule front_half` drives it through validation). Beat 1
+Step 6 effectively landed. Still in-flight: Beat 2 (segmentation/features/QC still read
+`frame_contract.csv` — `rule segment_and_track_per_well`) + Step 7 strangle. The
+`frame_inventory_contract.py` seam Keyence EMITS is frozen, so Keyence producer work does NOT chase
+Beat 2.
+
+**Next concrete action: build Stage A — Keyence acquisition inventory.** Mirror
+`metadata_ingest/scope/yx1/acquisition_inventory.py`. CREATE
+`metadata_ingest/scope/keyence/acquisition_inventory.py` (+ likely a shared
+`scope/keyence/raw_plane_parsing.py`). DO NOT feed it from the current `extract_scope_metadata.py`
+(it collapses to z_position=0); lift the parsing nucleus from the legacy materializer
+(`_infer_keyence_stack_lookup`, `_parse_keyence_time_and_z`, `_extract_keyence_well_and_tile` in
+`metadata_ingest/stitched_index/materialize_stitched_images.py`). Reuse the **canonical mapper
+pattern** (`scope/shared/canonical_mapper.apply_canonical_mapping`) for scope-dialect→canonical
+columns exactly as the extractor does for `channel` (via `KEYENCE_CHANNEL_MAP` + `VALID_CHANNEL_NAMES`)
+— same glue, different dict+vocabulary; the applier is generic by design. Tier-1 core =
+`metadata_ingest/scope/acquisition_inventory_contract.py`; reuse `scope/shared/acquisition_checks.py`
+mechanics. Verify: `snakemake -n` declares `acquisition_inventory__keyence.csv`; clean experiment →
+rows == #raw planes, multi-Z well NOT flagged a collision, every `source_tiff_path` exists.
+
+**Open decisions still live (Stages B/C/E only, NOT blocking A):** §8.1 stitch-map home, §8.2
+per-well-vs-batch acceptability, §8.4 warn-vs-fail collisions, §8.5 eligibility timing, §8.6
+Snakefile scope-gating style. See `keyence_wire_through.md` §8.
 
 ---
 
