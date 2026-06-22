@@ -10,9 +10,15 @@ from data_pipeline.viz.render_well import (
     render_detection_video,
     render_segmentation_video,
 )
+from data_pipeline.viz.render_snip import (
+    render_snip_auxiliary_masks,
+    render_snip_auxiliary_masks_contact_sheet,
+)
 
 __all__ = [
     "render_combined_video",
     "render_detection_video",
     "render_segmentation_video",
+    "render_snip_auxiliary_masks",
+    "render_snip_auxiliary_masks_contact_sheet",
 ]

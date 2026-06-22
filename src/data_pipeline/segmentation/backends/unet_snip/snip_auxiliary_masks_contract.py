@@ -9,6 +9,8 @@ Consumed by: QC, feature extraction (join back to physical embryo via snip_inven
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 SNIP_AUXILIARY_MASKS_REQUIRED_COLUMNS = [
@@ -125,3 +127,15 @@ def validate_snip_auxiliary_masks_against_snip_inventory(
                 f"snip_auxiliary_masks: column '{col}' disagrees with snip_inventory "
                 f"for {mismatch.sum()} rows"
             )
+
+
+def load_snip_auxiliary_masks(csv_path: Path) -> pd.DataFrame:
+    """Read a snip_auxiliary_masks CSV shard and return a validated DataFrame.
+
+    Enforces bool dtype on is_valid_auxiliary_mask and runs the contract validator.
+    Raises ValueError if the file fails validation.
+    """
+    df = pd.read_csv(csv_path)
+    df["is_valid_auxiliary_mask"] = df["is_valid_auxiliary_mask"].astype(bool)
+    validate_snip_auxiliary_masks(df)
+    return df
