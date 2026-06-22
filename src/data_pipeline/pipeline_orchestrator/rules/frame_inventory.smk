@@ -24,18 +24,8 @@ FRAME_INVENTORY_ARTIFACT = "inventory"
 MATERIALIZE_WELL_STEP = "materialize_well"
 
 
-def _materialize_well_inventory(experiment: str, *, well_id: str):
-    return paths.artifact_path(
-        DATA_ROOT,
-        MATERIALIZE_WELL_STEP,
-        "inventory",
-        experiment,
-        path_mode=paths.PATH_MODE_PER_WELL,
-        well_id=well_id,
-    )
-
-
 def _materialize_well_done(experiment: str, *, well_id: str):
+    # materialize_well owns only the done sentinel (pixel materialization state).
     return paths.artifact_path(
         DATA_ROOT,
         MATERIALIZE_WELL_STEP,
@@ -47,10 +37,11 @@ def _materialize_well_done(experiment: str, *, well_id: str):
 
 
 def _materialize_well_validated(experiment: str, *, well_id: str):
+    # frame_inventory owns the contract path — validated sentinel lives there too.
     return paths.validated_path(
         DATA_ROOT,
-        MATERIALIZE_WELL_STEP,
-        "inventory",
+        FRAME_INVENTORY_STEP,
+        FRAME_INVENTORY_ARTIFACT,
         experiment,
         path_mode=paths.PATH_MODE_PER_WELL,
         well_id=well_id,
@@ -113,15 +104,21 @@ rule materialize_well:
 
     Fanned over discovered_wells.txt (one well per job). Reads the experiment's acquisition
     inventory + position→well mapping, materializes the configured product set (Step 6: BF /
-    projection / focus_stack), writes pixel files into the live built_image_data tree
+    projection / focus_stack), writes pixel files into the live acquisition tree
     (candidate=False), and emits the per-well frame-inventory shard the validator consumes.
     The ND2 source travels inside the acquisition inventory (source_nd2_path) — not a CLI arg.
+
+    DOCTRINE: the inventory CSV path is owned by the frame_inventory registry step. The action
+    (materialize_well) writes the file; the product (frame_inventory) owns the contract path.
+    The done sentinel is owned by materialize_well under materialized_images/.
     """
     input:
         acquisition_inventory_csv=SCOPE_ACQUISITION_INVENTORY_CSV,
         position_well_mapping_csv=POSITION_WELL_MAPPING_CSV,
     output:
-        inventory=str(_materialize_well_inventory("{experiment}", well_id="{well_id}")),
+        inventory=str(_frame_inventory_artifact(
+            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
         done=str(_materialize_well_done("{experiment}", well_id="{well_id}")),
     params:
         device=lambda wc: str(config.get("image_building", {}).get("device", "cuda")),
@@ -148,8 +145,10 @@ rule materialize_well:
 
 rule validate_frame_inventory_for_well:
     input:
-        # Step 6: consume the materializer-emitted shard (NOT the frame_contract.csv adapter).
-        inventory=str(_materialize_well_inventory("{experiment}", well_id="{well_id}")),
+        # Consume the materializer-emitted shard via the frame_inventory contract path.
+        inventory=str(_frame_inventory_artifact(
+            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
         done=str(_materialize_well_done("{experiment}", well_id="{well_id}")),
     output:
         validated=str(_materialize_well_validated("{experiment}", well_id="{well_id}")),

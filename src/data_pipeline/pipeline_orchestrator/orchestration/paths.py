@@ -7,7 +7,7 @@ here, so rule-output paths and code-output paths are guaranteed identical.
 THE VOCABULARY (used consistently across the whole refactor — do not blur these):
 
     stage     a PHASE of the pipeline, and the top-level FOLDER under output_root.
-              e.g. ``experiment_metadata``, ``computed_features``, ``quality_control``.
+              e.g. ``acquisition``, ``object_extraction``, ``quality_control``.
               This is "where am I in the pipeline" from a user's seat. MANY steps share a stage.
 
     step      one unit of work WITHIN a stage — a function / ``tasks.py`` verb's OUTPUT SLOT.
@@ -27,10 +27,15 @@ THE VOCABULARY (used consistently across the whole refactor — do not blur thes
 
 So the layout is::
 
-    output_root / {stage} / {experiment} / [per_well/{well_id}/] {artifact}
-       │             │           │                  │                 │
-      root         STAGE      experiment      per-well shape       a step's
-    (env.yaml)  (folder)     (caller)        (step's fanout)        FILE
+    output_root / {stage} / {experiment} / [{product_dir}/] [per_well/{well_id}/] {artifact}
+       │             │           │               │                  │                 │
+      root         STAGE      experiment    PRODUCT DIR       per-well shape       a step's
+    (env.yaml)  (regime)     (caller)      (step's folder)   (step's fanout)        FILE
+
+``product_dir`` is optional. When present it is the named product folder directly under
+``{stage}/{experiment}/``, separating distinct product families within a regime (e.g.
+``frame_inventory/`` and ``materialized_images/`` both live inside ``acquisition/``).
+When absent, artifacts land directly under ``{stage}/{experiment}/``.
 
 ⛔ NO-LEAKAGE BOUNDARY (the hard rule for this file). ``paths.py`` only ever **SUBSTITUTES**
 caller-provided identity tokens (``experiment_id``, ``well_id``) into filename templates. It
@@ -121,14 +126,16 @@ _ALLOWED_PATH_MODES: dict[str, tuple[str, ...]] = {
 PIPELINE_STEPS: dict[str, dict] = {
     # ── PLATE LINEAGE (Excel — authored design + plate geometry) ──────────────
     "ingest_plate_metadata": {
-        "stage": "experiment_metadata",
+        "stage": "acquisition",
         "fanout": EXPERIMENT,
         "artifacts": {"csv": "plate_metadata.csv"},
     },
 
     # ── SCOPE LINEAGE (raw microscope file — acquisition facts) ───────────────
+    # ingest_scope_metadata emits two product families (scope_metadata/ and acquisition_inventory/)
+    # but lives flat under acquisition/<exp>/ until artifact-level product_dir is added.
     "ingest_scope_metadata": {
-        "stage": "experiment_metadata",
+        "stage": "acquisition",
         "fanout": EXPERIMENT,
         # {scope} -> format_vars={"scope": "yx1" | "keyence"}; the ONLY raw read.
         # acquisition_inventory: the maximal per-coordinate record emitted from that one read
@@ -139,13 +146,13 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
     "map_positions_to_wells": {
-        "stage": "experiment_metadata",
+        "stage": "acquisition",
         "fanout": EXPERIMENT,
         # .provenance.json via provenance_path().
         "artifacts": {"mapping": "position_well_mapping.csv"},
     },
     "apply_position_to_well_mapping": {  # CONVERGENCE LINE; well_id comes from the position map.
-        "stage": "experiment_metadata",
+        "stage": "acquisition",
         "fanout": EXPERIMENT,
         # .validated via validated_path().
         "artifacts": {"mapped": "scope_metadata_mapped.csv"},
@@ -153,25 +160,21 @@ PIPELINE_STEPS: dict[str, dict] = {
 
     # ── FAN POINT (well discovery — checkpoint) ───────────────────────────────
     "discover_wells": {
-        "stage": "experiment_metadata",
+        "stage": "acquisition",
         "fanout": EXPERIMENT,
         "artifacts": {"wells": "discovered_wells.txt"},  # one well_id per line
     },
 
-    # ── PER-WELL MATERIALIZATION (the scope backend; emits images + the inventory shard) ──
-    # materialize_well[well_id] is the live promotion of the accepted candidate (Step 6). It runs
-    # ONE well at a time (fanned over discovered_wells.txt), writes pixel files through
-    # materialized_image_paths.py (candidate/ vs live owned THERE, not the registry), and emits the
-    # per-well frame-inventory shard that validate_frame_inventory_for_well consumes. The done
-    # sentinel means "the configured image-product set for this well finished."
+    # ── PER-WELL MATERIALIZATION (pixel action — done sentinel only) ──────────
+    # materialize_well[well_id] writes pixel files and the per-well frame-inventory shard.
+    # DOCTRINE: materialize_well owns pixel materialization state (done sentinel under
+    # materialized_images/). The frame-inventory CSV path is owned by the frame_inventory step —
+    # the action may create the file, but the product owns the contract path.
     "materialize_well": {
-        "stage": "built_image_data",
+        "stage": "acquisition",
+        "product_dir": "materialized_images",
         "fanout": PER_WELL_THEN_MERGE,
         "artifacts": {
-            "inventory": {
-                PATH_MODE_PER_WELL: "{well_id}_frame_inventory.csv",
-                PATH_MODE_MERGED: "{experiment_id}_frame_inventory.csv",
-            },
             "done": {
                 PATH_MODE_PER_WELL: "{well_id}.materialize_well.done",
             },
@@ -179,16 +182,14 @@ PIPELINE_STEPS: dict[str, dict] = {
     },
 
     # ── POST-FAN — frame inventory joins the spine ────────────────────────────
-    # "frame_inventory" is the logical product (a noun), kept as ONE step. Snakemake may use
-    # several rules around it: materialize_well writes the per-well shards,
-    # validate_frame_inventory_for_well writes validation sentinels/reports, and a merge writes the
-    # experiment-level view (one-file+sentinel model, see stitched_handoff_contract.md). Those are
-    # actions (verbs); the registry keeps one noun-like step for the product they all touch. The
-    # per_well shard names the WELL; the merged view names the EXPERIMENT — two honest templates,
-    # so paths.py never has to fabricate a {well_id} value for the merged file.
+    # "frame_inventory" is the product contract (a noun), not a Snakemake action. Several rules
+    # touch it: materialize_well WRITES the per-well shard, validate_frame_inventory_for_well
+    # writes sentinels, and merge_frame_inventory builds the experiment-level view. The registry
+    # keeps ONE noun-like step for the product; actions (verbs) are rules, not registry rows.
+    # The per_well shard names the WELL; the merged view names the EXPERIMENT.
     "frame_inventory": {
-        "stage": "experiment_metadata",  # OPEN (findings #5 leans a dedicated frame_inventory/
-                                         # stage); placeholder until that is decided.
+        "stage": "acquisition",
+        "product_dir": "frame_inventory",
         "fanout": PER_WELL_THEN_MERGE,
         "artifacts": {
             "inventory": {
@@ -198,11 +199,12 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
-    # ── DETECTION WORLD — detector candidates and backend filtering outcome ─────────────────
+    # ── OBJECT EXTRACTION — detections ────────────────────────────────────────
     # Per-well detection shards feed per-well frame_masks. The merged experiment table is useful
     # for audit/reporting, but segmentation consumes the per-well shard for the same well.
     "frame_detections": {
-        "stage": "detection",
+        "stage": "object_extraction",
+        "product_dir": "frame_detections",
         "fanout": PER_WELL_THEN_MERGE,
         "artifacts": {
             "frame_detections": {
@@ -212,13 +214,14 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
-    # ── SEGMENTATION WORLD — SAM/SAM2 masks plus backend-assigned object identity ─────────
+    # ── OBJECT EXTRACTION — masks ─────────────────────────────────────────────
     # `frame_masks` is the target segmentation product. It fans out per well because SAM2
     # consumes one well's ordered frame view at a time, then merges to an experiment-level table.
     # `prompt_seeds` is a per-well audit sidecar for the detection->segmentation handoff; it is not
     # required as a merged experiment artifact.
     "frame_masks": {
-        "stage": "segmentation",
+        "stage": "object_extraction",
+        "product_dir": "frame_masks",
         "fanout": PER_WELL_THEN_MERGE,
         "artifacts": {
             "frame_masks": {
@@ -241,25 +244,25 @@ PIPELINE_STEPS: dict[str, dict] = {
 # Four public functions build paths from them (root + experiment come from the caller):
 #   step_dir        -> the FOLDER, no filename
 #       step_dir(ROOT, "discover_wells", "20250912")
-#           -> {ROOT}/experiment_metadata/20250912
+#           -> {ROOT}/acquisition/20250912
 #       step_dir(ROOT, "frame_inventory", "20250912", path_mode="per_well",
 #                well_id="20250912_B01")
-#           -> {ROOT}/experiment_metadata/20250912/per_well/20250912_B01
+#           -> {ROOT}/acquisition/20250912/frame_inventory/per_well/20250912_B01
 #
 #   artifact_path   -> FOLDER + filename  (the one you'll call most)
 #       artifact_path(ROOT, "discover_wells", "wells", "20250912")
-#           -> {ROOT}/experiment_metadata/20250912/discovered_wells.txt
+#           -> {ROOT}/acquisition/20250912/discovered_wells.txt
 #       artifact_path(ROOT, "frame_inventory", "inventory", "20250912",
 #                     path_mode="per_well", well_id="20250912_B01")
-#           -> {ROOT}/.../per_well/20250912_B01/20250912_B01_frame_inventory.csv
+#           -> {ROOT}/acquisition/20250912/frame_inventory/per_well/20250912_B01/20250912_B01_frame_inventory.csv
 #
 #   validated_path  -> artifact_path + ".validated"        (the sentinel beside it)
 #       validated_path(ROOT, "apply_position_to_well_mapping", "mapped", "20250912")
-#           -> {ROOT}/experiment_metadata/20250912/scope_metadata_mapped.csv.validated
+#           -> {ROOT}/acquisition/20250912/scope_metadata_mapped.csv.validated
 #
 #   provenance_path -> artifact_path + ".provenance.json"  (the sidecar beside it)
 #       provenance_path(ROOT, "map_positions_to_wells", "mapping", "20250912")
-#           -> {ROOT}/experiment_metadata/20250912/position_well_mapping.csv.provenance.json
+#           -> {ROOT}/acquisition/20250912/position_well_mapping.csv.provenance.json
 
 
 def known_steps() -> tuple[str, ...]:
@@ -369,9 +372,17 @@ def _resolve_filename(
 
 
 def _experiment_step_dir(root: PathLike, step: str, experiment_id: str) -> Path:
-    """The experiment-level directory for a step: ``{stage}/{exp}``. The ONE place this is built."""
+    """The experiment-level directory for a step: ``{stage}/{exp}[/{product_dir}]``.
+
+    The ONE place the base directory is built. When the step has a ``product_dir`` key, it is
+    appended after the experiment id (``{stage}/{exp}/{product_dir}``), giving each product family
+    its own named folder within a regime. When absent, artifacts land directly under
+    ``{stage}/{exp}/``.
+    """
     spec = _lookup_step(step)
-    return Path(root) / spec["stage"] / str(experiment_id)
+    base = Path(root) / spec["stage"] / str(experiment_id)
+    product_dir = spec.get("product_dir")
+    return base / product_dir if product_dir else base
 
 
 def _per_well_step_dir(root: PathLike, step: str, experiment_id: str) -> Path:
@@ -443,15 +454,15 @@ def artifact_path(
 
         artifact_path(ROOT, "ingest_scope_metadata", "raw", "20250912",
                       format_vars={"scope": "yx1"})
-        #   -> {ROOT}/experiment_metadata/20250912/scope_metadata__yx1.csv
+        #   -> {ROOT}/acquisition/20250912/scope_metadata__yx1.csv
 
         artifact_path(ROOT, "frame_inventory", "inventory", "20250912",
                       path_mode="per_well", well_id="20250912_B01")
-        #   -> {ROOT}/experiment_metadata/20250912/per_well/20250912_B01/20250912_B01_frame_inventory.csv
+        #   -> {ROOT}/acquisition/20250912/frame_inventory/per_well/20250912_B01/20250912_B01_frame_inventory.csv
 
         artifact_path(ROOT, "frame_inventory", "inventory", "20250912",
                       path_mode="merged")
-        #   -> {ROOT}/experiment_metadata/20250912/20250912_frame_inventory.csv
+        #   -> {ROOT}/acquisition/20250912/frame_inventory/20250912_frame_inventory.csv
     """
     mode = _normalize_path_mode(step, path_mode)
     directory = step_dir(root, step, experiment_id, path_mode=mode, well_id=well_id)

@@ -45,8 +45,12 @@ rule frame_detections_per_well:
     merge_frame_detections.
     """
     input:
-        frame_inventory=str(_materialize_well_inventory("{experiment}", well_id="{well_id}")),
-        frame_inventory_validated=str(_materialize_well_validated("{experiment}", well_id="{well_id}")),
+        frame_inventory=str(_frame_inventory_artifact(
+            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+        frame_inventory_validated=str(_frame_inventory_validated(
+            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
     output:
         detections=str(_frame_detections_artifact(
             "{experiment}",

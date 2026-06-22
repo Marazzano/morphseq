@@ -65,9 +65,16 @@ MODELS_DIR = Path(env["paths"]["models_root"])
 PLATE_METADATA_DIR = INPUTS_DIR / "plate_metadata"
 RAW_IMAGES_DIR = INPUTS_DIR / "raw_image_data"
 
-# Output directories (layout beneath output_root — code contract, not environment)
-EXPERIMENT_METADATA_DIR = DATA_ROOT / "experiment_metadata"
-BUILT_IMAGE_DATA_DIR = DATA_ROOT / "built_image_data"
+# Doctrine-native output directory constants (output_tree_doctrine.md)
+ACQUISITION_DIR       = DATA_ROOT / "acquisition"
+OBJECT_EXTRACTION_DIR = DATA_ROOT / "object_extraction"
+FEATURES_DIR          = DATA_ROOT / "features"
+QUALITY_CONTROL_DIR   = DATA_ROOT / "quality_control"
+ANALYSIS_READY_DIR    = DATA_ROOT / "analysis_ready"
+
+# Transitional aliases — legacy rules only. Do not use for new rules.
+EXPERIMENT_METADATA_DIR = ACQUISITION_DIR
+BUILT_IMAGE_DATA_DIR    = ACQUISITION_DIR
 
 # Experiment identifiers
 EXPERIMENTS = config.get("experiments", ["20250912"])

@@ -25,6 +25,14 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
     validated_path,
 )
 
+# Doctrine-allowed regime names and forbidden legacy names (output_tree_doctrine.md)
+_ALLOWED_STAGES = frozenset({
+    "acquisition", "object_extraction", "features", "quality_control", "analysis_ready"
+})
+_FORBIDDEN_STAGE_NAMES = frozenset({
+    "experiment_metadata", "built_image_data", "detection", "segmentation"
+})
+
 ROOT = Path("/ROOT")
 EXP = "20250912"
 WELL = "20250912_B01"
@@ -35,59 +43,65 @@ class TestResolvedArtifactPaths:
 
     def test_ingest_plate_metadata(self):
         assert artifact_path(ROOT, "ingest_plate_metadata", "csv", EXP) == \
-            ROOT / "experiment_metadata" / EXP / "plate_metadata.csv"
+            ROOT / "acquisition" / EXP / "plate_metadata.csv"
 
     def test_ingest_scope_metadata_scope_token(self):
         # `scope` is a format token supplied via format_vars.
         assert artifact_path(ROOT, "ingest_scope_metadata", "raw", EXP,
                              format_vars={"scope": "yx1"}) == \
-            ROOT / "experiment_metadata" / EXP / "scope_metadata__yx1.csv"
+            ROOT / "acquisition" / EXP / "scope_metadata__yx1.csv"
 
     def test_map_positions_to_wells(self):
         assert artifact_path(ROOT, "map_positions_to_wells", "mapping", EXP) == \
-            ROOT / "experiment_metadata" / EXP / "position_well_mapping.csv"
+            ROOT / "acquisition" / EXP / "position_well_mapping.csv"
 
     def test_apply_position_to_well_mapping(self):
         assert artifact_path(ROOT, "apply_position_to_well_mapping", "mapped", EXP) == \
-            ROOT / "experiment_metadata" / EXP / "scope_metadata_mapped.csv"
+            ROOT / "acquisition" / EXP / "scope_metadata_mapped.csv"
 
     def test_discover_wells(self):
         assert artifact_path(ROOT, "discover_wells", "wells", EXP) == \
-            ROOT / "experiment_metadata" / EXP / "discovered_wells.txt"
+            ROOT / "acquisition" / EXP / "discovered_wells.txt"
 
     def test_frame_inventory_per_well_names_the_well(self):
-        # per-well shard uses {well_id}.
+        # per-well shard: acquisition/<exp>/frame_inventory/per_well/<well_id>/...
         assert artifact_path(ROOT, "frame_inventory", "inventory", EXP,
                              path_mode="per_well", well_id=WELL) == \
-            ROOT / "experiment_metadata" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_inventory.csv"
+            ROOT / "acquisition" / EXP / "frame_inventory" / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_inventory.csv"
 
     def test_frame_inventory_merged_names_the_experiment(self):
         # merged view uses {experiment_id}, NOT a fabricated well_id.
         assert artifact_path(ROOT, "frame_inventory", "inventory", EXP, path_mode="merged") == \
-            ROOT / "experiment_metadata" / EXP / f"{EXP}_frame_inventory.csv"
+            ROOT / "acquisition" / EXP / "frame_inventory" / f"{EXP}_frame_inventory.csv"
+
+    def test_materialize_well_done_under_materialized_images(self):
+        # done sentinel: acquisition/<exp>/materialized_images/per_well/<well_id>/...
+        assert artifact_path(ROOT, "materialize_well", "done", EXP,
+                             path_mode="per_well", well_id=WELL) == \
+            ROOT / "acquisition" / EXP / "materialized_images" / PER_WELL_DIRNAME / WELL / f"{WELL}.materialize_well.done"
 
     def test_frame_detections_per_well_names_the_well(self):
         assert artifact_path(ROOT, "frame_detections", "frame_detections", EXP,
                              path_mode="per_well", well_id=WELL) == \
-            ROOT / "detection" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_detections.csv"
+            ROOT / "object_extraction" / EXP / "frame_detections" / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_detections.csv"
 
     def test_frame_detections_merged_names_the_experiment(self):
         assert artifact_path(ROOT, "frame_detections", "frame_detections", EXP, path_mode="merged") == \
-            ROOT / "detection" / EXP / f"{EXP}_frame_detections.csv"
+            ROOT / "object_extraction" / EXP / "frame_detections" / f"{EXP}_frame_detections.csv"
 
     def test_frame_masks_per_well_names_the_well(self):
         assert artifact_path(ROOT, "frame_masks", "frame_masks", EXP,
                              path_mode="per_well", well_id=WELL) == \
-            ROOT / "segmentation" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_masks.csv"
+            ROOT / "object_extraction" / EXP / "frame_masks" / PER_WELL_DIRNAME / WELL / f"{WELL}_frame_masks.csv"
 
     def test_frame_masks_merged_names_the_experiment(self):
         assert artifact_path(ROOT, "frame_masks", "frame_masks", EXP, path_mode="merged") == \
-            ROOT / "segmentation" / EXP / f"{EXP}_frame_masks.csv"
+            ROOT / "object_extraction" / EXP / "frame_masks" / f"{EXP}_frame_masks.csv"
 
     def test_prompt_seeds_sidecar_is_per_well_only(self):
         assert artifact_path(ROOT, "frame_masks", "prompt_seeds", EXP,
                              path_mode="per_well", well_id=WELL) == \
-            ROOT / "segmentation" / EXP / PER_WELL_DIRNAME / WELL / f"{WELL}_prompt_seeds.csv"
+            ROOT / "object_extraction" / EXP / "frame_masks" / PER_WELL_DIRNAME / WELL / f"{WELL}_prompt_seeds.csv"
 
 
 class TestDerivedSidecarPaths:
@@ -119,7 +133,7 @@ class TestPathModeRules:
     def test_experiment_step_defaults_to_experiment_mode(self):
         # path_mode=None on an experiment-grain step resolves to the one legal mode.
         assert step_dir(ROOT, "discover_wells", EXP) == \
-            ROOT / "experiment_metadata" / EXP
+            ROOT / "acquisition" / EXP
 
     def test_frame_inventory_requires_explicit_path_mode(self):
         with pytest.raises(ValueError) as excinfo:
@@ -170,8 +184,9 @@ class TestPerWellStepDir:
     It composes with step_dir so a specific shard dir is always per_well_step_dir(...) / well_id."""
 
     def test_per_well_step_dir_returns_directory_containing_shards(self):
+        # frame_inventory has product_dir="frame_inventory" → per_well sits inside it.
         assert per_well_step_dir(ROOT, "frame_inventory", EXP) == \
-            ROOT / "experiment_metadata" / EXP / PER_WELL_DIRNAME
+            ROOT / "acquisition" / EXP / "frame_inventory" / PER_WELL_DIRNAME
 
     def test_step_dir_per_well_is_per_well_step_dir_plus_well_id(self):
         # The composition rule: a specific well's shard dir is the per-well dir + the well_id.
@@ -252,3 +267,42 @@ class TestRegistryIntrospection:
                     for mode, mode_template in template.items():
                         assert mode in valid_modes, f"{step}/{artifact} bad mode {mode!r}"
                         assert isinstance(mode_template, str), f"{step}/{artifact}/{mode} not str"
+
+
+class TestOutputTreeDoctrine:
+    """Pin the output_tree_doctrine.md regime rules against the live registry."""
+
+    def test_all_stages_are_doctrine_regimes(self):
+        for step, spec in PIPELINE_STEPS.items():
+            assert spec["stage"] in _ALLOWED_STAGES, (
+                f"{step!r} has non-doctrine stage {spec['stage']!r}. "
+                f"Allowed: {sorted(_ALLOWED_STAGES)}"
+            )
+
+    def test_no_legacy_regime_names_in_product_dir(self):
+        for step, spec in PIPELINE_STEPS.items():
+            product_dir = spec.get("product_dir")
+            assert product_dir not in _FORBIDDEN_STAGE_NAMES, (
+                f"{step!r} has legacy product_dir {product_dir!r}. "
+                f"Forbidden: {sorted(_FORBIDDEN_STAGE_NAMES)}"
+            )
+
+    def test_frame_inventory_lands_under_acquisition_frame_inventory(self):
+        p = artifact_path(ROOT, "frame_inventory", "inventory", EXP,
+                          path_mode="per_well", well_id=WELL)
+        assert str(p).startswith(str(ROOT / "acquisition" / EXP / "frame_inventory"))
+
+    def test_materialize_well_done_lands_under_acquisition_materialized_images(self):
+        p = artifact_path(ROOT, "materialize_well", "done", EXP,
+                          path_mode="per_well", well_id=WELL)
+        assert str(p).startswith(str(ROOT / "acquisition" / EXP / "materialized_images"))
+
+    def test_frame_detections_lands_under_object_extraction(self):
+        p = artifact_path(ROOT, "frame_detections", "frame_detections", EXP,
+                          path_mode="per_well", well_id=WELL)
+        assert str(p).startswith(str(ROOT / "object_extraction" / EXP / "frame_detections"))
+
+    def test_frame_masks_lands_under_object_extraction(self):
+        p = artifact_path(ROOT, "frame_masks", "frame_masks", EXP,
+                          path_mode="per_well", well_id=WELL)
+        assert str(p).startswith(str(ROOT / "object_extraction" / EXP / "frame_masks"))
