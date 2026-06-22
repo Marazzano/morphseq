@@ -1,12 +1,18 @@
 # Model Input Handoff Contract
 
-**Status:** Design / plan only (no code yet)
-**Date:** 2026-06-05
+**Status:** Design + initial loading foundation laid (see §9, 2026-06-22). The
+historical body (§1–§8, 2026-06-05) is kept for context; where it conflicts with
+§9, **§9 wins** (it was written after `config.yaml`/`env.yaml` existed and after
+snips went live).
+**Date:** 2026-06-05 (body) · 2026-06-22 (§9 model-loading & pipeline fit)
 **Scope:** How processed snips are passed from the data pipeline into the
 representation model. **This pass targets INFERENCE only** (encode snips →
 latents), mirroring what the original pipeline's Build06 step does. Training-time
 metadata (`pert_id`, `metric_array`, splits) is documented for context but is
 out of scope here.
+
+> **Read §9 first if you only read one section.** It supersedes the stale
+> premises in §5–§6 about where the model env lives and how the model is loaded.
 
 ---
 
@@ -372,4 +378,131 @@ categorical maps for `pert_id`/`e_id`.
 5. **Train/eval split** source and grain (per-embryo vs per-snip).
 6. **Age source** — `predicted_stage_hpf` vs clock-based.
 7. **Cross-experiment** merge vs list-of-tables for the loader.
+
+---
+
+## 9. Model loading & pipeline fit (2026-06-22) — supersedes §5–§6 where they conflict
+
+This section is the live truth for **how the model is loaded and how the
+embeddings stage fits the per-well pipeline**. It corrects stale 2026-06-05
+premises and locks the loading boundary.
+
+### 9.0 Three doctrine lines (the whole design in one breath)
+
+> **Snakemake drives the train. The rule chooses the engine car. Files are the couplers.**
+> **Spec names the border. Smoke proves the engine. Rules come when the product exists.**
+> **Config says what. Env says where. The Python executable is where.**
+
+### 9.1 Corrected upstream facts (what changed since §2–§6)
+
+- `env.yaml` **and** `config.yaml` now exist
+  (`src/data_pipeline/pipeline_orchestrator/`). The §6.5 "interim, before Scope 3
+  `env.yaml`" hedge is **obsolete** — the model interpreter is a machine knob and
+  goes straight into `env.yaml.runtime`. **Never `config.yaml`** (a machine path
+  baked into committed config is nonsense confetti on another machine).
+- The live snip stage uses step key **`snip_inventory`** (not the §2
+  `snip_manifest`), stage `object_extraction`, product_dir `snips`, fanout
+  `per_well_then_merge`. Processed snips are **PNG** under
+  `object_extraction/<exp>/snips/per_well/<well_id>/snips/<embryo>/<snip_id>.png`
+  (the §2/§3 "`.jpg` flat tree" is legacy).
+- **Image source seam:** the new embeddings step reads snip image paths from the
+  per-well `snip_inventory` (`processed_snip_path`), **not** the §3.1
+  `bf_embryo_snips/<exp>/*.jpg` glob and **not** the broken `src.core.data.*`
+  imports in `gen_embeddings.py`. The §5 Decision-1 "symlink view" is now
+  optional/legacy-compat only — in the new tree the manifest is already the source
+  of truth.
+
+### 9.2 The loading boundary — LOCKED: only FILES cross, never model objects
+
+The legacy VAE is Python-3.9-pinned (custom encoder/decoder pickles don't survive
+3.9→3.10). The boundary decision:
+
+- **Snakemake / orchestrator process stays Python 3.10.** It schedules the
+  embeddings job and validates the output artifact. It **never imports the model.**
+- **The (future) embeddings rule's whole command body runs in Python 3.9.** That
+  3.9 process loads the legacy VAE, encodes the snips, writes the latents shard,
+  then dies.
+- **No model object crosses the 3.10/3.9 line.** Only the input `snip_inventory` +
+  processed snip files go in; only the `latents` parquet comes out.
+
+This **deletes** the fragile machinery §6.5 inherited from
+`services/legacy_model_utils.py::load_legacy_model_safe` (serialize-to-temp-`.pt`
+→ `torch.load` back in 3.10 → TorchScript reconstruction). That existed only to
+move a *model object* across the version line. Consequently:
+
+> **`load_model_subprocess.py` is NOT to be implemented.** It is referenced (but
+> never written) at `legacy_model_utils.py:201` and belongs to the abandoned
+> object-transfer design. The replacement is an in-process 3.9 load (smoke now,
+> encode later) that transfers no model object. Do not "helpfully" create it.
+
+### 9.3 How the 3.9 interpreter is addressed (`env.yaml.runtime`)
+
+Two keys, executable preferred:
+
+```yaml
+# env.yaml — gitignored, per-machine. Documented in env.example.yaml (committed).
+runtime:
+  model_python_executable: /abs/path/to/envs/mseq_pipeline_py3.9/bin/python  # PREFERRED — direct, no conda-run layer
+  model_python_env: mseq_pipeline_py3.9   # FALLBACK — `conda run -n <env> …` if executable absent
+```
+
+Resolution rule for any model-step invocation: **prefer
+`model_python_executable` if present**, else
+`conda run -n {model_python_env} --no-capture-output python …`. The direct
+executable skips the conda-shell layer (faster, fewer moving parts).
+
+Model weights live under `models_root/legacy/<model_name>/` (the legacy layout
+`AutoModel.load_from_folder` expects: `model_config.json` + `model.pt` +
+optional `encoder.pkl`/`decoder.pkl`; a nested `final_model/` is tolerated).
+
+### 9.4 Foundation laid THIS pass (Option A — no active-orchestration mutation)
+
+Proven with a bare command; touches no live `Snakefile`, no `tasks.py`, no
+`orchestration/paths.py`:
+
+- **`env.example.yaml`** documents `runtime.model_python_executable` +
+  `runtime.model_python_env` + the `models_root/legacy/<model_name>/` convention.
+- **`src/data_pipeline/features/legacy_embeddings/model_paths.py`** — a path-pure
+  resolver `resolve_legacy_model_dir(models_root, model_name)` →
+  `models_root/legacy/<model_name>` (nested `final_model/` handled, fail-loud on
+  missing dir naming the path). Model-domain code; imports no orchestration.
+- **`src/data_pipeline/features/legacy_embeddings/load_model_smoke.py`** — a
+  standalone script run wholly in 3.9 (`<model_python_executable> -m
+  data_pipeline.features.legacy_embeddings.load_model_smoke --models-root …
+  --model-name …`). Resolves the dir, loads the legacy VAE in-process, prints
+  `model_name`/`latent_dim`/`nuisance_indices`, or fails loud. Transfers no model
+  object.
+- **`tests/data_pipeline/features/legacy_embeddings/test_model_paths.py`** — pins
+  resolution + the missing-dir fail-loud message.
+
+### 9.5 Deferred to the NEXT pass (when the embeddings PRODUCT exists)
+
+Per the second doctrine line — **rules come when the product exists** — these are
+*named here as intent* but NOT built yet, to avoid minting a product verb before
+the product exists:
+
+- the `embeddings` `PIPELINE_STEPS` row (stage `embeddings`, fanout
+  `per_well_then_merge`, artifact `latents`: `per_well/<well_id>/<well_id>_latents.parquet`
+  + merged `<exp>_latents.parquet`; `.validated` sidecar derived);
+- a `MODEL_RUN` prefix in the `Snakefile` (built from `env.yaml.runtime` like
+  `RUN` is, but resolving the 3.9 executable/env);
+- a thin `tasks.py` `compute-embeddings` verb delegating to a 3.9 encode
+  entrypoint (port the encode loop from `extract_embeddings_legacy` /
+  `generate_embeddings_py39.py`, sourcing images from `snip_inventory`);
+- the per-well / validate / merge embeddings rule trio;
+- the `assemble_analysis_ready` join on `snip_id` + `embedding_calculated=True`
+  flip (recall §6.0: embeddings **feeds** analysis_ready, so the `use_snip` gate
+  must NOT come from analysis_ready — default is "encode all, gate downstream").
+
+A later, optional refinement: convert the rule to Snakemake-native `conda:` +
+`--use-conda`. `conda run`/direct-executable first because it's explicit and
+matches today's setup.
+
+### 9.6 Still-open (not blocking the foundation)
+
+- **`model_name` default** — legacy default is `20241107_ds_sweep01_optimum`. No
+  `legacy/` dir exists under `models_root` yet, so the load-smoke fails loud
+  naming the missing dir until weights land (the honest current state).
+- **`use_snip` gating** — default "encode all snips, gate downstream in
+  analysis_ready" (resolved §6.0 / §8 Q2; restated, not relitigated).
 ```

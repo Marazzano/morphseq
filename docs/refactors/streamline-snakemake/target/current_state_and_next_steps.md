@@ -6,6 +6,66 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: model world — legacy VAE loading foundation)
+
+**What shipped:** The model-loading *foundation* for the embeddings stage (Option A — no active
+orchestration touched). Files:
+- `specs/model_input_handoff_contract.md` — appended **§9 "Model loading & pipeline fit (2026-06-22)"**
+  that supersedes the stale §5–§6 premises. Locks the boundary doctrine: **only files cross the
+  3.9/3.10 env line, never model objects**; the embeddings command runs wholly in Python 3.9;
+  `load_model_subprocess.py` is explicitly NOT to be built. The 3.9 interpreter is addressed by
+  `env.yaml.runtime.model_python_executable` (preferred, direct path) with `model_python_env`
+  (`conda run`) as fallback — never `config.yaml`.
+- `env.example.yaml` (+ local `env.yaml`) — added `runtime.model_python_executable` +
+  `runtime.model_python_env` + the `models_root/legacy/<model_name>/` convention note.
+- `src/data_pipeline/features/legacy_embeddings/model_paths.py` — `resolve_legacy_model_dir(models_root,
+  model_name)` (path-pure, nested `final_model/` tolerated, fail-loud naming the missing dir + fix).
+- `src/data_pipeline/features/legacy_embeddings/load_model_smoke.py` — standalone 3.9 in-process
+  load+report script (no model object crosses to 3.10).
+- `tests/data_pipeline/features/legacy_embeddings/test_model_paths.py` — **4 passed**.
+
+**Verified:** resolver test 4 passed under the main env; load-smoke under
+`mseq_pipeline_py3.9` (Python 3.9.23) fails loud naming the missing
+`…/models/legacy/20241107_ds_sweep01_optimum` (honest state — no legacy weights staged yet); the
+non-3.9 guard refuses with exit 2 when run under 3.10. Note: test-tree dirs intentionally have **no**
+`__init__.py` (matches sibling convention; pytest `prepend` import mode + `data_pipeline` namespace pkg).
+
+**What's broken/half-done:** nothing within this pass. Deliberately deferred (the embeddings *product*
+doesn't exist yet): `MODEL_RUN` Snakefile prefix, `tasks.py compute-embeddings` verb, the `embeddings`
+`PIPELINE_STEPS` row, per-well/validate/merge embeddings rules, the encode-loop port (source images
+from `snip_inventory.processed_snip_path`, not the broken `src.core.data` glob), and the
+`analysis_ready` `embedding_calculated` flip.
+
+**Next concrete action:** when staging the legacy VAE weights, drop them at
+`models_root/legacy/20241107_ds_sweep01_optimum/` and re-run the load-smoke to confirm a real in-3.9
+load + metadata print. Then start the NEXT pass: add the `embeddings` `PIPELINE_STEPS` row + `MODEL_RUN`
+prefix + `compute-embeddings` verb + rule trio (spec §9.5). Doctrine: *rules come when the product exists.*
+
+**Open decisions:** `model_name` default (legacy `20241107_ds_sweep01_optimum`); `use_snip` gating
+default = "encode all, gate downstream in analysis_ready" (spec §9.6). Neither blocks the next pass.
+
+---
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: unet_snip backend — snip_auxiliary_masks Steps 1+2+viz)
+
+**What shipped:**
+- `src/data_pipeline/segmentation/backends/unet_snip/` — new backend package:
+  - `snip_auxiliary_masks_contract.py` — contract, validator, `load_snip_auxiliary_masks()` reader
+  - `run_unet_snip.py` — `AuxiliaryMaskPredictor` interface + `run_unet_for_snip_inventory()` runner
+  - `model_loader.py` — `UNetSnipModelConfig`, `FishModelSnipPredictor`, `load_unet_snip_predictors()`
+- `src/data_pipeline/models/unet.py` — `load_fish_unet_model()` (plain state dict + Lightning format)
+- `src/data_pipeline/viz/render_snip.py` — `render_snip_auxiliary_masks()` + `render_snip_auxiliary_masks_contact_sheet()`
+- 24 tests passing (17 unet + 7 viz). GPU smoke on real `20250912_B01_e01` snips: foreground and yolk firing correctly, via/focus/bubble silent on healthy in-focus embryos — visually confirmed.
+- Commits: `a3ab55b4` (Steps 1+2), `caa6afd4` (loader + viz)
+
+**What's broken/half-done:** nothing. `tests/improvements/snip_processing_smoke/output_real/snips/20250912_B01_e01/unet_auxiliary_masks_contact_sheet.jpg` is an untracked smoke artifact (not committed, intentionally).
+
+**Next concrete action:** Step 3 — wire into the DAG. Add `tasks.py` dispatch entry (`snip-auxiliary-masks` subcommand) and `rules/snip_auxiliary_masks.smk` rule that calls `load_unet_snip_predictors(cfg)` + `run_unet_for_snip_inventory()`, consuming `snip_inventory` shard and emitting `<well_id>_snip_auxiliary_masks.csv`. Checkpoint paths come from `env.yaml` under a new `unet_snip` block pointing at `data_pipeline_output/models/segmentation/`.
+
+**Open decisions:** none blocking Step 3.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 18:00 (session: viz package — contract-native overlay rendering)
 
 **What shipped:** New `src/data_pipeline/viz/` package with 4 files:
