@@ -209,6 +209,23 @@ Required identity columns:
 - `time_index`
 - `channel_id`
 
+These required identity columns are **not optional provenance** — they are the
+**identity spine** governed by the pipeline-wide Identity-Carrying Contract owned by
+`../../detect-seg-track/targets/physical_embryo_registry_world.md` (§ "Identity-Carrying Contract").
+This doc **does not restate that law** (one law, many citations). Every feature/QC product contract
+**calls the shared spine validator first**, then validates its own columns:
+
+```python
+validate_snip_grain_identity_columns(df, grain="snip", physical_embryo_registry_df=registry_df)
+# ... then product-specific feature/QC columns
+```
+
+The spine guarantees `physical_embryo_id` is carried explicitly and that
+`physical_embryo_id`↔`embryo_id`↔`snip_id` agree. **No feature or QC product may parse `snip_id` or
+`embryo_id` to rediscover the animal** — it consumes the explicit `physical_embryo_id` column. A
+product at a non-`snip_id` grain (e.g. one row per `physical_embryo_id`) calls the validator with the
+matching `grain="embryo"`.
+
 Most feature and QC products either compute directly at `snip_id` grain or compute at an upstream
 object/mask grain and then explicitly project to `snip_id` grain through validated `snip_inventory`. No
 feature or QC product may silently change the universe. Missing, duplicate, or extra `snip_id` rows

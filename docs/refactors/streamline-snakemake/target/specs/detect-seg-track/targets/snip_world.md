@@ -15,10 +15,19 @@ The target doctrine is:
 
 ```
 frame_masks carry track identity.
-snip_processing mints physical_embryo_id, embryo_id, and snip_id.
+physical_embryo_registry mints physical_embryo_id (the animal) — see physical_embryo_registry_world.md.
+snip_processing RECEIVES physical_embryo_id (joined on (well_id, track_id)); it mints only
+  embryo_id + snip_id — the per-channel/per-time PROJECTION of an already-registered animal.
 Crops record the per-embryo, per-channel, per-time view.
-snip_inventory is the stable downstream join key.
+snip_inventory is the stable downstream join key, and carries physical_embryo_id explicitly.
 ```
+
+> **physical_embryo_id names the animal. snip_id names the crop. snip_inventory carries both. The
+> contract proves they agree.** snip_processing never originates *who an animal is* — the
+> `track_id → physical_embryo_id` resolution happens once, in `physical_embryo_registry`. The
+> per-frame constructors snip_processing calls (`build_embryo_id`, `build_snip_id`) are **crop/product
+> naming**, not identity origination: they project a registered animal onto a frame, performing no
+> `track_id → animal` resolution.
 
 Naming:
 
@@ -97,29 +106,44 @@ frame_masks[well]           validated, per_well shard (input)
   → snip pixels[well]       image files
 ```
 
-No discrete `tracks` stage for MVP. A `tracks.csv` artifact (for gap/swap QC) can be promoted
-later; at that point `track_id → physical_embryo_id` resolution moves there and snip_processing
-becomes a consumer of tracks.
+`track_id → physical_embryo_id` resolution now lives in `physical_embryo_registry` (see
+`physical_embryo_registry_world.md`), so snip_processing is already a **consumer** of registered
+identity — it joins `physical_embryo_id` from the registry rather than minting it.
+
+No discrete `tracks` stage for MVP. A `tracks.csv` artifact (for gap/swap/coherence QC) is a
+*different grain and concern* (track quality, not entity declaration) and can be promoted later; if
+it is, it would feed `physical_embryo_registry`, not replace it.
 
 ---
 
-## embryo_id minting boundary
+## Identity boundary — snip_processing receives the animal, projects the crop
 
 `frame_masks` carries `track_id` (pipeline track identity — not raw SAM2 `sam2_object_id`, which
 is recoverable via `mask_id → frame_masks`).
 
-snip_processing minting chain — named functions, no arithmetic inline:
+**`physical_embryo_id` is NOT minted here.** The `track_id → physical_embryo_id` resolution happens
+exactly once, upstream, in `physical_embryo_registry` (see `physical_embryo_registry_world.md`).
+snip_processing **joins** it in:
 
 ```python
-raw_track_index    = parse_embryo_local_track_id(track_id)   # "embryo_0" → 0
-local_embryo_index = track_index_to_embryo_index(raw_track_index)   # 0 → 1
-physical_embryo_id = build_physical_embryo_id(well_id, local_embryo_index)
-embryo_id          = build_embryo_id(physical_embryo_id, image_id)
-snip_id            = build_snip_id(embryo_id, image_id)
+# JOIN, not mint — physical_embryo_id comes from the validated registry.
+#   frame_masks[well] ⋈ physical_embryo_registry[well]  on (well_id, track_id)
+physical_embryo_id = registry_lookup[(well_id, track_id)]
 ```
 
-Fail loud if `track_id` is unparseable on a valid mask row. `track_id` is carried in
-`snip_inventory` as provenance only — not a join key.
+Then snip_processing **projects** that registered animal onto the frame it is cropping — named
+functions, no `track_id` arithmetic inline:
+
+```python
+embryo_id = build_embryo_id(physical_embryo_id, image_id)   # animal → animal-in-channel
+snip_id   = build_snip_id(embryo_id, image_id)              # → the crop/product id
+```
+
+`build_embryo_id` / `build_snip_id` are **crop/product naming**, not identity origination: they
+compose an already-registered `physical_embryo_id` with an `image_id`; they perform no
+`track_id → animal` resolution. Fail loud if a valid mask row's `(well_id, track_id)` has no registry
+match (a real embryo with no registered identity is a hard error, not a silent skip). `track_id` is
+carried in `snip_inventory` as provenance only — not a join key.
 
 ---
 
@@ -175,13 +199,29 @@ processing config hash, pipeline_version → deferred to `snip_qc.csv` under `qu
 - `channel_id` in `VALID_CHANNEL_NAMES`
 - `is_valid_snip` boolean; `processed_snip_path` non-null iff `is_valid_snip=True`
 - `time_index` non-negative integer
-- **Deterministic cross-checks** (using public parsers/constructors from `shared/identifiers`):
-  - `channel_id` == `parse_image_id(image_id).channel_id`
-  - `time_index` == `parse_image_id(image_id).time_index`
-  - `embryo_id == build_embryo_id(physical_embryo_id, image_id)`
-  - `snip_id == build_snip_id(embryo_id, image_id)`
-  - `mask_id` present in valid frame_masks rows (reference validation at build time)
-- `check_sources=True` (consume boundary): assert each `processed_snip_path` exists on disk
+- **Identity spine** — `snip_inventory` is a **snip-grain** table and must satisfy the pipeline-wide
+  **Identity-Carrying Contract** owned by `physical_embryo_registry_world.md` (§ "Identity-Carrying
+  Contract — the snip/embryo-grain identity spine"). **This doc does not restate that law** (one law,
+  many citations — restating it lets it drift). `snip_inventory`'s validator **calls the shared spine
+  validator** at snip grain, then adds its snip-specific checks:
+
+  ```python
+  validate_snip_grain_identity_columns(
+      df, grain="snip",
+      physical_embryo_registry_df=registry_df,   # consume boundary → check_sources=True
+      scope_label="snip_inventory",
+  )
+  ```
+
+  The spine guarantees the grain-aware identity columns + agreement
+  (`physical_embryo_id`↔`embryo_id`↔`snip_id`, no parsing-to-rediscover, registry membership). The
+  snip-specific additions layered on top:
+  - `channel_id` == `parse_image_id(image_id).channel_id`; `time_index` ==
+    `parse_image_id(image_id).time_index` (frame-derived columns agree with `image_id`);
+  - `mask_id` present in valid frame_masks rows (reference validation at build time);
+  - `track_id` maps to the **same** `physical_embryo_id` via the registry (provenance consistency).
+- `check_sources=True` (consume boundary): assert each `processed_snip_path` exists on disk (and the
+  spine's registry-membership check fires at this same boundary).
 
 ---
 
@@ -245,8 +285,8 @@ tracks stage and snip_processing becomes a pure consumer.
 
 | File | Role |
 |---|---|
-| `src/data_pipeline/snip_processing/snip_inventory_contract.py` | Schema + validator (`validate_snip_inventory`) |
-| `src/data_pipeline/snip_processing/build_snip_inventory.py` | Builder (consumes frame_masks, mints IDs, extracts crops) |
+| `src/data_pipeline/snip_processing/snip_inventory_contract.py` | Schema + validator (`validate_snip_inventory`) — incl. the identity-consistency contract (physical_embryo_id carried + agreement-validated) |
+| `src/data_pipeline/snip_processing/build_snip_inventory.py` | Builder (consumes frame_masks **+ physical_embryo_registry**; JOINS physical_embryo_id, projects embryo_id/snip_id, extracts crops — does NOT mint physical_embryo_id) |
 | `tests/data_pipeline/snip_processing/test_snip_inventory.py` | Validator + builder tests |
 | Registry entry in `orchestration/paths.py` | `snip_inventory` step under `object_extraction` |
 | `Snakefile` rule `snip_processing[well]` | Per-well rule consuming frame_masks shard |
