@@ -6,6 +6,24 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 18:00 (session: viz package — contract-native overlay rendering)
+
+**What shipped:** New `src/data_pipeline/viz/` package with 4 files:
+- `config.py` — `RenderConfig` dataclass, `COLORBLIND_PALETTE`, `OVERLAY_COLORS`
+- `overlay.py` — `draw_boxes()`, `draw_masks()`, `draw_banner()`, `color_for_key()` primitives (cv2, reads contract DataFrames per frame)
+- `render_well.py` — `render_detection_video()`, `render_segmentation_video()`, `render_combined_video()` (iterate frame_inventory, write MP4)
+- `__init__.py` — re-exports the three render functions
+
+Test: `tests/data_pipeline/viz/test_render_well.py` — 4 tests, all pass. No GPU, synthetic frames.
+
+**What's broken/half-done:** nothing. `segmentation/video_generation/` left untouched (legacy JSON-based eval videos). No Snakemake rule added yet (deliberate — this is a utility layer for now).
+
+**Next concrete action:** Start Session C (real SAM2 backend invocation). See the previous snapshot below for the Session C scope. After Session C lands, consider wiring `render_combined_video` into a Snakemake QC rule so per-well overlay videos are emitted as DAG artifacts.
+
+**Open decisions:** none blocking Session C.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: Session B — fake-predictor end-to-end segmentation contract)
 
 **What shipped:** Session B is complete in four stage commits:
