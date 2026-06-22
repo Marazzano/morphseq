@@ -103,6 +103,22 @@ _ALLOWED_PATH_MODES: dict[str, tuple[str, ...]] = {
     PER_WELL_THEN_MERGE: (PATH_MODE_PER_WELL, PATH_MODE_MERGED),
 }
 
+# Execution model — how many processes compute a step's per-well shards.
+# This is metadata for the Snakemake rule author; it does not affect path construction.
+#
+#   EXECUTION_PER_WELL  — one job per well shard (the default; most steps). The rule uses
+#                         expand() over run wells; each invocation writes one well's shard.
+#   EXECUTION_RUN_BATCH — one job for the whole run set, writes ALL well shards before
+#                         exiting. The rule is a batch rule whose inputs are the full run set
+#                         and whose outputs are all run-well shards. Used when job-startup cost
+#                         (model load, GPU init) dominates per-well encode cost — e.g. SAM2
+#                         segmentation, legacy VAE embeddings.
+#
+# Only PER_WELL_THEN_MERGE steps may use EXECUTION_RUN_BATCH (a batch step that does not
+# produce per-well shards is incoherent). EXPERIMENT-grain steps always use EXECUTION_PER_WELL.
+EXECUTION_PER_WELL  = "per_well"
+EXECUTION_RUN_BATCH = "run_batch"
+
 
 # ──────────────────────────────────────────────────────────────────────────────────────────
 # THE REGISTRY (front-end steps — TARGET names)
@@ -128,6 +144,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     "ingest_plate_metadata": {
         "stage": "acquisition",
         "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
         "artifacts": {"csv": "plate_metadata.csv"},
     },
 
@@ -137,6 +154,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     "ingest_scope_metadata": {
         "stage": "acquisition",
         "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
         # {scope} -> format_vars={"scope": "yx1" | "keyence"}; the ONLY raw read.
         # acquisition_inventory: the maximal per-coordinate record emitted from that one read
         # (YX1: record-only, scope-shaped — see target/acquisition_inventory_flow.md).
@@ -148,12 +166,14 @@ PIPELINE_STEPS: dict[str, dict] = {
     "map_positions_to_wells": {
         "stage": "acquisition",
         "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
         # .provenance.json via provenance_path().
         "artifacts": {"mapping": "position_well_mapping.csv"},
     },
     "apply_position_to_well_mapping": {  # CONVERGENCE LINE; well_id comes from the position map.
         "stage": "acquisition",
         "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
         # .validated via validated_path().
         "artifacts": {"mapped": "scope_metadata_mapped.csv"},
     },
@@ -162,6 +182,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     "discover_wells": {
         "stage": "acquisition",
         "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
         "artifacts": {"wells": "discovered_wells.txt"},  # one well_id per line
     },
 
@@ -174,6 +195,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         "stage": "acquisition",
         "product_dir": "materialized_images",
         "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
         "artifacts": {
             "done": {
                 PATH_MODE_PER_WELL: "{well_id}.materialize_well.done",
@@ -191,6 +213,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         "stage": "acquisition",
         "product_dir": "frame_inventory",
         "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
         "artifacts": {
             "inventory": {
                 PATH_MODE_PER_WELL: "{well_id}_frame_inventory.csv",
@@ -206,6 +229,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         "stage": "object_extraction",
         "product_dir": "frame_detections",
         "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
         "artifacts": {
             "frame_detections": {
                 PATH_MODE_PER_WELL: "{well_id}_frame_detections.csv",
@@ -219,10 +243,12 @@ PIPELINE_STEPS: dict[str, dict] = {
     # consumes one well's ordered frame view at a time, then merges to an experiment-level table.
     # `prompt_seeds` is a per-well audit sidecar for the detection->segmentation handoff; it is not
     # required as a merged experiment artifact.
+    # execution=RUN_BATCH: SAM2 loads its model once and processes all run wells before exiting.
     "frame_masks": {
         "stage": "object_extraction",
         "product_dir": "frame_masks",
         "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_RUN_BATCH,
         "artifacts": {
             "frame_masks": {
                 PATH_MODE_PER_WELL: "{well_id}_frame_masks.csv",
@@ -242,6 +268,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         "stage": "object_extraction",
         "product_dir": "snips",
         "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
         "artifacts": {
             "snip_inventory": {
                 PATH_MODE_PER_WELL: "{well_id}_snip_inventory.csv",
@@ -289,6 +316,17 @@ def known_steps() -> tuple[str, ...]:
 def known_artifacts(step: str) -> tuple[str, ...]:
     """Return a step's registered artifact keys (sorted)."""
     return tuple(sorted(_lookup_step(step)["artifacts"]))
+
+
+def execution_mode(step: str) -> str:
+    """Return the execution model for a step: EXECUTION_PER_WELL or EXECUTION_RUN_BATCH.
+
+    This is metadata for Snakemake rule authors — it does not affect path construction.
+    EXECUTION_PER_WELL means one job per well shard (use expand() over run wells).
+    EXECUTION_RUN_BATCH means one job for the whole run set, writing all well shards before
+    exiting (model-load cost dominates per-well encode cost — e.g. SAM2, legacy VAE).
+    """
+    return _lookup_step(step)["execution"]
 
 
 def _lookup_step(step: str) -> dict:

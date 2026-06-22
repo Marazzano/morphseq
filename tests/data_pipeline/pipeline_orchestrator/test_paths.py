@@ -14,9 +14,13 @@ from pathlib import Path
 import pytest
 
 from data_pipeline.pipeline_orchestrator.orchestration import (
+    EXECUTION_PER_WELL,
+    EXECUTION_RUN_BATCH,
     PER_WELL_DIRNAME,
+    PER_WELL_THEN_MERGE,
     PIPELINE_STEPS,
     artifact_path,
+    execution_mode,
     known_artifacts,
     known_steps,
     per_well_step_dir,
@@ -251,10 +255,31 @@ class TestRegistryIntrospection:
         assert known_artifacts("discover_wells") == ("wells",)
 
     def test_every_step_has_required_keys(self):
+        valid_executions = (EXECUTION_PER_WELL, EXECUTION_RUN_BATCH)
         for step, spec in PIPELINE_STEPS.items():
             assert "stage" in spec, f"{step} missing stage"
             assert spec["fanout"] in ("experiment", "per_well_then_merge"), f"{step} bad fanout"
+            assert "execution" in spec, f"{step} missing execution"
+            assert spec["execution"] in valid_executions, (
+                f"{step} has unknown execution {spec['execution']!r}; "
+                f"must be one of {valid_executions}"
+            )
             assert spec["artifacts"], f"{step} has no artifacts"
+
+    def test_execution_mode_helper_returns_correct_value(self):
+        # per-well step: snip_inventory is one job per well
+        assert execution_mode("snip_inventory") == EXECUTION_PER_WELL
+        # run-batch step: frame_masks loads SAM2 once for all run wells
+        assert execution_mode("frame_masks") == EXECUTION_RUN_BATCH
+
+    def test_run_batch_steps_are_per_well_then_merge(self):
+        # A batch execution step that doesn't produce per-well shards is incoherent.
+        for step, spec in PIPELINE_STEPS.items():
+            if spec["execution"] == EXECUTION_RUN_BATCH:
+                assert spec["fanout"] == PER_WELL_THEN_MERGE, (
+                    f"{step} has execution=run_batch but fanout={spec['fanout']!r}; "
+                    f"run_batch steps must fan out per_well_then_merge"
+                )
 
     def test_every_artifact_template_is_string_or_mode_dict(self):
         # The registry's shape convention: a template is a string, or a {path_mode: string} dict.
