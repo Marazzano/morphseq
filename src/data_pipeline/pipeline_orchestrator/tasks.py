@@ -232,6 +232,105 @@ def cmd_frame_detections(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_frame_masks(args: argparse.Namespace) -> None:
+    import json
+    import tempfile
+
+    import numpy as np
+    import pandas as pd
+    from PIL import Image
+
+    from data_pipeline.models.sam2 import load_sam2_video_predictor
+    from data_pipeline.segmentation.backends.sam2_video.adapt_sam2_output import (
+        adapt_sam2_well_output,
+    )
+    from data_pipeline.segmentation.backends.sam2_video.prompt_detections import (
+        validate_sam2_prompts,
+    )
+    from data_pipeline.segmentation.validate_frame_masks import validate_frame_masks
+
+    def _to_rgb_jpeg(src: Path, dst: Path) -> None:
+        Image.open(src).convert("RGB").save(dst, format="JPEG", quality=95)
+
+    frame_inventory = pd.read_csv(args.frame_inventory_csv)
+    frame_detections = pd.read_csv(args.frame_detections_csv)
+    well_id = str(frame_inventory["well_id"].iloc[0])
+
+    # Build prompt detections from kept frame_detections rows.
+    # prompt_detection_id = detection_id; bbox columns are already in the right vocabulary.
+    kept = frame_detections[frame_detections["is_kept"].astype(bool)].copy()
+    prompt_detections = kept.rename(columns={"detection_id": "prompt_detection_id"})[
+        [
+            "prompt_detection_id", "image_id", "time_index",
+            "bbox_x_min_px", "bbox_y_min_px", "bbox_x_max_px", "bbox_y_max_px",
+            "is_kept",
+        ]
+    ]
+    validate_sam2_prompts(prompt_detections, frame_inventory)
+
+    predictor = load_sam2_video_predictor(
+        sam2_models_root=Path(args.sam2_models_root),
+        config_path=Path(args.sam2_config),
+        checkpoint_path=Path(args.sam2_checkpoint),
+        device=args.device,
+    )
+
+    ordered = (
+        frame_inventory.sort_values(["time_index", "image_id"], kind="mergesort")
+        .reset_index(drop=True)
+    )
+    model_frame_view = ordered.copy()
+    model_frame_view["sam2_frame_index"] = model_frame_view.index
+
+    with tempfile.TemporaryDirectory(prefix="sam2_frames_") as tmpdir:
+        rgb_dir = Path(tmpdir)
+        for _, row in ordered.iterrows():
+            dst = rgb_dir / f"{int(row['time_index']):05d}.jpg"
+            _to_rgb_jpeg(Path(str(row["source_image_path"])), dst)
+
+        # Seed frame: earliest time_index that has kept detections.
+        seed_time = int(prompt_detections["time_index"].min())
+        seed_sam2_idx = int(
+            model_frame_view[model_frame_view["time_index"] == seed_time]["sam2_frame_index"].iloc[0]
+        )
+
+        inference_state = predictor.init_state(video_path=str(rgb_dir))
+        seed_prompts = prompt_detections[prompt_detections["time_index"] == seed_time].reset_index(drop=True)
+        for i, (_, row) in enumerate(seed_prompts.iterrows()):
+            box = np.array([
+                row["bbox_x_min_px"], row["bbox_y_min_px"],
+                row["bbox_x_max_px"], row["bbox_y_max_px"],
+            ], dtype=np.float32)
+            predictor.add_new_points_or_box(
+                inference_state=inference_state,
+                frame_idx=seed_sam2_idx,
+                obj_id=i,
+                box=box,
+            )
+
+        sam2_raw_output: dict[int, dict[int, np.ndarray]] = {}
+        for frame_idx, obj_ids, mask_logits in predictor.propagate_in_video(inference_state):
+            masks: dict[int, np.ndarray] = {}
+            for obj_id, logit in zip(obj_ids, mask_logits):
+                arr = logit.squeeze().cpu().numpy() if hasattr(logit, "cpu") else np.squeeze(np.asarray(logit))
+                masks[int(obj_id)] = (arr > 0).astype(bool)
+            sam2_raw_output[int(frame_idx)] = masks
+
+    frame_masks = adapt_sam2_well_output(
+        well_id,
+        sam2_raw_output,
+        model_frame_view,
+        prompt_detections,
+        model_id=str(args.sam2_model_id),
+    )
+    validate_frame_masks(frame_masks, frame_inventory)
+
+    args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+    frame_masks.to_csv(args.output_csv, index=False)
+
+    prompt_detections.to_csv(args.prompt_seeds_csv, index=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -338,6 +437,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_fd.add_argument("--gdino-weights", type=Path, required=True)
     p_fd.add_argument("--device", default="cuda")
     p_fd.set_defaults(func=cmd_frame_detections)
+
+    p_fm = sub.add_parser("frame-masks")
+    p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_fm.add_argument("--frame-detections-csv", type=Path, required=True)
+    p_fm.add_argument("--output-csv", type=Path, required=True)
+    p_fm.add_argument("--prompt-seeds-csv", type=Path, required=True)
+    # SAM2 model paths — pass relative paths exactly as stored in config.yaml / env.yaml;
+    # load_sam2_video_predictor resolves them against the models root (see models/sam2.py).
+    p_fm.add_argument("--sam2-models-root", type=Path, required=True)
+    p_fm.add_argument("--sam2-config", type=Path, required=True)
+    p_fm.add_argument("--sam2-checkpoint", type=Path, required=True)
+    p_fm.add_argument("--sam2-model-id", default="sam2_video")
+    p_fm.add_argument("--device", default="cuda")
+    p_fm.set_defaults(func=cmd_frame_masks)
 
     return parser
 

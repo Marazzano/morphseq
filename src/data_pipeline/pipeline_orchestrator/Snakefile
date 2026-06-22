@@ -6,7 +6,7 @@ Contract-driven pipeline:
   - Build stitched FF images (scope-specific)
   - Materialize per-well frame_inventory (microscope-agnostic handoff)
   - Detect embryos per well (GroundingDINO → frame_detections)
-  - frame_masks (segmentation) — not yet wired; next stage
+  - frame_masks (segmentation) — SAM2 video per-well segmentation + merge
 """
 
 from pathlib import Path
@@ -146,6 +146,7 @@ print(f"Microscope:   {MICROSCOPE}")
 # Smoke subsets (for example 20240418 -> A01,C01) come from config, not code.
 include: str(WORKFLOW_DIR / "rules" / "frame_inventory.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_detections.smk")
+include: str(WORKFLOW_DIR / "rules" / "frame_masks.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
@@ -399,12 +400,9 @@ rule front_half:
 
 rule all:
     default_target: True
-    """
-    Default target: build through merged frame_detections for all experiments.
-    Next stage (frame_masks / segmentation) is not yet wired.
-    """
+    """Default target: build through merged frame_masks for all experiments."""
     input:
         expand(
-            str(_frame_detections_artifact("{exp}", path_mode=_paths_mod.PATH_MODE_MERGED)),
+            str(_frame_masks_artifact("{exp}", "frame_masks", path_mode=_paths_mod.PATH_MODE_MERGED)),
             exp=EXPERIMENTS
         )

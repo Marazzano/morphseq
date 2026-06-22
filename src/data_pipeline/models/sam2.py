@@ -1,11 +1,43 @@
 """SAM2 loader wrapper.
 
-We do not assume `sam2` is pip-installed. Instead, we support loading from a
-checked-out models root directory that contains a `sam2/` package directory.
+## Why this is finicky — read before editing
 
-SAM2 import is a little sensitive to working directory in some environments, so we
-mirror the known-good approach: add models root to sys.path and temporarily chdir
-into the `sam2` package directory before importing/building the predictor.
+SAM2 uses Hydra for config resolution. Hydra searches `pkg://sam2` (the installed
+package's config directory) when looking up config names. In production we do NOT
+pip-install sam2; instead we rely on a repo checkout at `<models_root>/sam2/`.
+
+The only reliable way to make Hydra find the configs without a pip install is:
+  1. `sys.path` must include the *parent* of the `sam2/` package dir (so `import sam2`
+     works at all).
+  2. The *working directory must be the `sam2/` package dir itself* when
+     `build_sam2_video_predictor` is called — Hydra's `pkg://sam2` search resolves
+     relative to the package found via that cwd/sys.path combination.
+  3. The config name passed to `build_sam2_video_predictor` must be a path *relative
+     to the package dir*, e.g. `"configs/sam2.1/sam2.1_hiera_s.yaml"` — NOT an
+     absolute path and NOT just a bare name like `"sam2.1_hiera_s"`.
+
+## What the caller must pass
+
+  - `sam2_models_root`: the directory that *contains* the `sam2/` package subdir.
+    In the pipeline this is `MODELS_DIR / "sam2"` from `env.yaml` — which on disk is
+    typically a symlink to the checkout. Pass the symlink as-is; do not resolve it
+    before passing (resolved absolute paths do not change Hydra behaviour either way,
+    but the symlink path is what you'll have from the config).
+  - `config_path`: pass as a *relative* path like
+    `Path("configs/sam2.1/sam2.1_hiera_s.yaml")`. This loader resolves it to
+    `sam2_pkg_dir / config_path` for the exists-check, then strips back to the relative
+    form for Hydra.
+  - `checkpoint_path`: pass as a relative path like
+    `Path("checkpoints/sam2.1_hiera_small.pt")`. Resolved against `sam2_models_root`.
+
+## Verified working pattern (Session C smoke, 2026-06-22)
+
+    predictor = load_sam2_video_predictor(
+        sam2_models_root=MODELS_DIR / "sam2",          # symlink ok
+        config_path=Path("configs/sam2.1/sam2.1_hiera_s.yaml"),   # relative
+        checkpoint_path=Path("checkpoints/sam2.1_hiera_small.pt"), # relative
+        device="cuda",
+    )
 """
 
 from __future__ import annotations
