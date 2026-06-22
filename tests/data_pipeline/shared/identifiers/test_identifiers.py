@@ -12,15 +12,20 @@ import pytest
 from data_pipeline.shared.identifiers import (
     build_embryo_id,
     build_image_id,
+    build_mask_id,
+    build_no_mask_id,
     build_physical_embryo_id,
     build_snip_id,
+    build_track_id,
     build_well_id,
     normalize_embryo_local_track_id,
     parse_embryo_id,
     parse_embryo_local_track_id,
     parse_image_id,
+    parse_mask_id,
     parse_physical_embryo_id,
     parse_snip_id,
+    parse_track_id,
     sanitize_experiment_id,
     split_well_id,
     track_index_to_embryo_index,
@@ -49,6 +54,9 @@ def test_reexport_from_legacy_flat_path():
     for name in (
         "build_well_id",
         "build_image_id",
+        "build_mask_id",
+        "build_no_mask_id",
+        "build_track_id",
         "build_physical_embryo_id",
         "build_embryo_id",
         "build_snip_id",
@@ -56,6 +64,8 @@ def test_reexport_from_legacy_flat_path():
         "parse_embryo_local_track_id",
         "normalize_embryo_local_track_id",
         "parse_image_id",
+        "parse_mask_id",
+        "parse_track_id",
         "parse_physical_embryo_id",
         "parse_embryo_id",
         "parse_snip_id",
@@ -177,6 +187,65 @@ def test_parse_image_id_rejects_malformed():
 def test_parse_image_id_rejects_non_canonical_channel():
     with pytest.raises(ValueError):
         parse_image_id(f"{WELL}_Cy5_t0007")  # Cy5 not in VALID_CHANNEL_NAMES
+
+
+# ── mask_id and track_id ──────────────────────────────────────────────────────
+
+
+def test_mask_id_round_trip():
+    assert parse_mask_id(build_mask_id(IMAGE, 1)) == (IMAGE, 1, False)
+
+
+def test_no_mask_id_round_trip():
+    assert parse_mask_id(build_no_mask_id(IMAGE)) == (IMAGE, None, True)
+
+
+def test_parse_mask_id_allows_underscores_in_image_id():
+    assert parse_mask_id("20250912_B01_BF_t0007_m0001") == (
+        "20250912_B01_BF_t0007",
+        1,
+        False,
+    )
+    assert parse_mask_id("20250912_B01_BF_t0007_mask_none") == (
+        "20250912_B01_BF_t0007",
+        None,
+        True,
+    )
+
+
+def test_track_id_round_trip_and_zero_based_compatibility():
+    assert build_track_id("WELL", 0) == "WELL_track0000"
+    assert parse_track_id("WELL_track0000") == ("WELL", 0)
+    assert build_track_id("20250912_B01", 0) == "20250912_B01_track0000"
+    assert parse_track_id("20250912_B01_track0000") == ("20250912_B01", 0)
+
+
+def test_build_mask_id_rejects_negative_index():
+    with pytest.raises(ValueError, match="local_mask_index must be zero or greater"):
+        build_mask_id(IMAGE, -1)
+
+
+def test_build_track_id_rejects_negative_index():
+    with pytest.raises(ValueError, match="track_index must be zero or greater"):
+        build_track_id(WELL, -1)
+
+
+@pytest.mark.parametrize(
+    "mask_id",
+    ["", "m0001", "image_mask", "image_m1", "image_mabc", "image_m"],
+)
+def test_parse_mask_id_rejects_malformed(mask_id):
+    with pytest.raises(ValueError):
+        parse_mask_id(mask_id)
+
+
+@pytest.mark.parametrize(
+    "track_id",
+    ["", "track0000", "WELL_track1", "WELL_track", "WELL_trackabc", "WELL-trace0000"],
+)
+def test_parse_track_id_rejects_malformed(track_id):
+    with pytest.raises(ValueError):
+        parse_track_id(track_id)
 
 
 # ── build_embryo_id ───────────────────────────────────────────────────────────

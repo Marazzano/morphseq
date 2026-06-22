@@ -16,6 +16,9 @@ well_index          = A01
 well_id             = 20240418_A01                       global well id
 channel_id          = BF                                 no underscores in channel_id
 image_id            = {well_id}_{channel_id}_t{time_index:04d}
+mask_id             = {image_id}_m{local_mask_index:04d}
+no-mask mask_id     = {image_id}_mask_none
+track_id            = {well_id}_track{track_index:04d}       zero-based track index
 physical_embryo_id  = {well_id}_e{local_embryo_index:02d}   one-based (≥ 1)
 embryo_id           = {physical_embryo_id}_{channel_id}
 snip_id             = {embryo_id}_t{time_index:04d}
@@ -32,8 +35,8 @@ Snip ID names the animal-channel at a time.
 
 | Module | Verb | Functions |
 |---|---|---|
-| `constructors.py` | **mint** (assemble) | `build_well_id`, `build_image_id`, `build_physical_embryo_id`, `build_embryo_id`, `build_snip_id`, `sanitize_experiment_id` |
-| `parsers.py` | **decompose** (inverse of mint) + **transform** | `parse_image_id`, `parse_physical_embryo_id`, `parse_embryo_id`, `parse_snip_id`, `parse_embryo_local_track_id`, `track_index_to_embryo_index`, `split_well_id` |
+| `constructors.py` | **mint** (assemble) | `build_well_id`, `build_image_id`, `build_mask_id`, `build_no_mask_id`, `build_track_id`, `build_physical_embryo_id`, `build_embryo_id`, `build_snip_id`, `sanitize_experiment_id` |
+| `parsers.py` | **decompose** (inverse of mint) + **transform** | `parse_image_id`, `parse_mask_id`, `parse_track_id`, `parse_physical_embryo_id`, `parse_embryo_id`, `parse_snip_id`, `parse_embryo_local_track_id`, `track_index_to_embryo_index`, `split_well_id` |
 | `validators.py` | **guard** (fail loudly) | `validate_well_id` |
 
 `__init__.py` re-exports every public name, so

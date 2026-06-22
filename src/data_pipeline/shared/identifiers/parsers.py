@@ -35,6 +35,13 @@ _EMBRYO_ID_RE = re.compile(r"^(.+_e\d+)_([A-Za-z0-9]+)$")
 # snip_id grammar: {embryo_id}_t{time_index:04d+}
 _SNIP_ID_RE = re.compile(r"^(.+)_t(\d{4,})$")
 
+# mask_id grammar: {image_id}_m{local_mask_index:04d+} or {image_id}_mask_none
+_MASK_ID_RE = re.compile(r"^(.+)_m(\d{4,})$")
+_NO_MASK_SUFFIX = "_mask_none"
+
+# track_id grammar: {well_id}_track{track_index:04d+}
+_TRACK_ID_RE = re.compile(r"^(.+)_track(\d{4,})$")
+
 _WELL_INDEX_RE = re.compile(r"^[A-Za-z]\d{1,3}$")
 
 
@@ -112,6 +119,49 @@ def parse_image_id(image_id: str) -> tuple[str, str, int]:
             "A canonical image_id must embed a canonical channel_id."
         )
     return well_id, channel_id, time_index
+
+
+def parse_mask_id(mask_id: str) -> tuple[str, int | None, bool]:
+    """Decompose mask_id into (image_id, local_mask_index, is_no_mask).
+
+    Actual masks use ``{image_id}_m{local_mask_index:04d+}``. Explicit no-mask
+    placeholders use ``{image_id}_mask_none`` and return ``local_mask_index is None``.
+    """
+    text = str(mask_id).strip()
+    if not text:
+        raise ValueError("parse_mask_id: mask_id must be a non-empty string.")
+
+    if text.endswith(_NO_MASK_SUFFIX):
+        image_id = text[: -len(_NO_MASK_SUFFIX)]
+        if not image_id:
+            raise ValueError(
+                "parse_mask_id: no-mask placeholder must include a non-empty image_id "
+                "before '_mask_none'."
+            )
+        return image_id, None, True
+
+    match = _MASK_ID_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_mask_id: cannot parse {mask_id!r}. Expected constructor-minted "
+            "{image_id}_m{local_mask_index:04d} or {image_id}_mask_none."
+        )
+    return match.group(1), int(match.group(2)), False
+
+
+def parse_track_id(track_id: str) -> tuple[str, int]:
+    """Decompose zero-based track_id into (well_id, track_index)."""
+    text = str(track_id).strip()
+    if not text:
+        raise ValueError("parse_track_id: track_id must be a non-empty string.")
+
+    match = _TRACK_ID_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_track_id: cannot parse {track_id!r}. Expected constructor-minted "
+            "{well_id}_track{track_index:04d}."
+        )
+    return match.group(1), int(match.group(2))
 
 
 def parse_physical_embryo_id(physical_embryo_id: str) -> tuple[str, int]:

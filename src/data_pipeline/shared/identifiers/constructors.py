@@ -48,6 +48,11 @@ from .parsers import parse_embryo_id, parse_image_id, parse_physical_embryo_id
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_-]+")
 _SEP_RE = re.compile(r"[_-]{2,}")
+_MASK_INDEX_PREFIX = "m"
+_NO_MASK_SUFFIX = "mask_none"
+_TRACK_SUFFIX_SEPARATOR = "_track"
+_MASK_INDEX_WIDTH = 4
+_TRACK_INDEX_WIDTH = 4
 
 
 def sanitize_experiment_id(value: str) -> str:
@@ -72,6 +77,29 @@ def build_well_id(experiment_id: str, well_index: str) -> str:
 def build_image_id(well_id: str, channel_id: str, time_int: int) -> str:
     """Return the canonical image id for one channel at one timepoint."""
     return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
+
+
+def build_mask_id(image_id: str, local_mask_index: int) -> str:
+    """Return the canonical mask id for one image-local mask.
+
+    Example: ``("20250912_B01_BF_t0007", 1)`` -> ``"20250912_B01_BF_t0007_m0001"``
+    """
+    _require_non_empty_text(image_id, field_name="image_id")
+    _require_non_negative_int(local_mask_index, field_name="local_mask_index")
+    return f"{image_id}_{_MASK_INDEX_PREFIX}{local_mask_index:0{_MASK_INDEX_WIDTH}d}"
+
+
+def build_no_mask_id(image_id: str) -> str:
+    """Return the explicit placeholder mask id for an image with no masks."""
+    _require_non_empty_text(image_id, field_name="image_id")
+    return f"{image_id}_{_NO_MASK_SUFFIX}"
+
+
+def build_track_id(well_id: str, track_index: int) -> str:
+    """Return the canonical zero-based track id for one well-local track."""
+    _require_non_empty_text(well_id, field_name="well_id")
+    _require_non_negative_int(track_index, field_name="track_index")
+    return f"{well_id}{_TRACK_SUFFIX_SEPARATOR}{track_index:0{_TRACK_INDEX_WIDTH}d}"
 
 
 def build_physical_embryo_id(well_id: str, local_embryo_index: int) -> str:
@@ -137,3 +165,15 @@ def build_snip_id(embryo_id: str, image_id: str) -> str:
             "A snip must derive from the same channel as its embryo identity."
         )
     return f"{str(embryo_id)}_t{time_index:04d}"
+
+
+def _require_non_empty_text(value: str, *, field_name: str) -> None:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{field_name} must be a non-empty string.")
+
+
+def _require_non_negative_int(value: int, *, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer.")
+    if value < 0:
+        raise ValueError(f"{field_name} must be zero or greater.")
