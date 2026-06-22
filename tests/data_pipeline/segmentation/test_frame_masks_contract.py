@@ -6,13 +6,16 @@ import pytest
 from data_pipeline.segmentation.frame_masks_contract import (
     FRAME_MASKS_REQUIRED_COLUMNS,
     adapt_legacy_mask_rle_to_frame_masks,
+    no_mask_frame_mask_row,
 )
 from data_pipeline.segmentation.prompt_seeds import (
     build_prompt_seeds,
     kept_frame_detections,
     validate_prompt_seeds,
 )
-from data_pipeline.segmentation.validate_frame_masks import validate_frame_masks
+from data_pipeline.segmentation.valid_frame_masks import valid_frame_masks
+from data_pipeline.segmentation.validate_frame_masks import validate_frame_mask_block, validate_frame_masks
+from data_pipeline.shared.identifiers import build_no_mask_id, build_track_id
 
 
 def _model_frame_view() -> pd.DataFrame:
@@ -118,14 +121,72 @@ def test_adapt_legacy_mask_rle_to_frame_masks_validates() -> None:
         "20250912_B01_BF_t0001_m0000",
         "20250912_B01_BF_t0002_m0000",
     ]
-    assert frame_masks["track_id"].tolist() == ["embryo_0", "embryo_0", "embryo_0"]
+    assert frame_masks["track_id"].tolist() == [
+        "20250912_B01_track0000",
+        "20250912_B01_track0000",
+        "20250912_B01_track0000",
+    ]
+    assert frame_masks["sam2_object_id"].tolist() == [0, 0, 0]
     validate_frame_masks(frame_masks, _model_frame_view())
+    assert valid_frame_masks(frame_masks)
 
 
 def test_validate_frame_masks_rejects_duplicate_image_track() -> None:
     frame_masks = adapt_legacy_mask_rle_to_frame_masks(_legacy_mask_rle())
     duplicate = frame_masks.iloc[[0]].copy()
-    duplicate.loc[:, "mask_id"] = "extra_mask"
+    duplicate.loc[:, "mask_id"] = "20250912_B01_BF_t0000_m0001"
     frame_masks = pd.concat([frame_masks, duplicate], ignore_index=True)
     with pytest.raises(ValueError, match="image_id \\+ track_id"):
         validate_frame_masks(frame_masks, _model_frame_view())
+
+
+def test_validate_frame_masks_rejects_duplicate_mask_id() -> None:
+    frame_masks = adapt_legacy_mask_rle_to_frame_masks(_legacy_mask_rle())
+    duplicate = frame_masks.iloc[[0]].copy()
+    frame_masks = pd.concat([frame_masks, duplicate], ignore_index=True)
+
+    with pytest.raises(ValueError, match="mask_id values must be unique"):
+        validate_frame_masks(frame_masks, _model_frame_view())
+
+
+def test_validate_frame_masks_rejects_malformed_mask_id() -> None:
+    frame_masks = adapt_legacy_mask_rle_to_frame_masks(_legacy_mask_rle())
+    frame_masks.loc[0, "mask_id"] = "handwritten-mask"
+
+    with pytest.raises(ValueError, match="use build_mask_id/build_no_mask_id"):
+        validate_frame_masks(frame_masks, _model_frame_view())
+    assert not valid_frame_masks(frame_masks)
+
+
+def test_validate_frame_masks_rejects_malformed_track_id_for_valid_masks() -> None:
+    frame_masks = adapt_legacy_mask_rle_to_frame_masks(_legacy_mask_rle())
+    frame_masks.loc[0, "track_id"] = "embryo_0"
+
+    with pytest.raises(ValueError, match="use build_track_id"):
+        validate_frame_masks(frame_masks, _model_frame_view())
+
+
+def test_validate_frame_masks_accepts_no_mask_placeholder_without_prompt_inputs() -> None:
+    placeholder = pd.DataFrame([no_mask_frame_mask_row(_model_frame_view().iloc[0])])
+
+    assert placeholder.loc[0, "mask_id"] == build_no_mask_id("20250912_B01_BF_t0000")
+    assert pd.isna(placeholder.loc[0, "track_id"])
+    validate_frame_masks(placeholder, _model_frame_view())
+    validate_frame_mask_block(placeholder)
+    assert valid_frame_masks(placeholder)
+
+
+def test_validate_frame_masks_rejects_bad_no_mask_placeholder_track_id() -> None:
+    placeholder = pd.DataFrame([no_mask_frame_mask_row(_model_frame_view().iloc[0])])
+    placeholder.loc[0, "track_id"] = build_track_id("20250912_B01", 0)
+
+    with pytest.raises(ValueError, match="no-mask placeholder track_id must be NA"):
+        validate_frame_masks(placeholder, _model_frame_view())
+
+
+def test_validate_frame_masks_rejects_no_mask_placeholder_not_built_from_image_id() -> None:
+    placeholder = pd.DataFrame([no_mask_frame_mask_row(_model_frame_view().iloc[0])])
+    placeholder.loc[0, "mask_id"] = build_no_mask_id("20250912_B01_BF_t9999")
+
+    with pytest.raises(ValueError, match="row image_id"):
+        validate_frame_masks(placeholder, _model_frame_view())
