@@ -6,6 +6,40 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 1 identity validators)
+
+**What shipped (Stage 1 of 4 — reusable identity validators):** the two reusable validators the rest of
+the identity pipeline will lean on, per `physical_embryo_registry_world.md`. Files:
+- `src/data_pipeline/shared/identifiers/validators.py` — ADDED `validate_physical_embryo_id(physical_embryo_id, *, well_id=None)`:
+  the reusable STRING validator (next to `validate_well_id`). Delegates to `parse_physical_embryo_id`
+  (already rejects `_e00`/index < 1) + `validate_well_id` on the embedded well; cross-checks the
+  supplied `well_id` when given. Exported from `shared/identifiers/__init__.py`.
+- `src/data_pipeline/segmentation/physical_embryo_registry/__init__.py` + `snip_identity_contract.py` —
+  NEW package (home is **`segmentation/`**, beside the real `frame_masks` product — decision locked with
+  mdcolon, NOT the spec's literal `segmentation_and_tracking/`). `snip_identity_contract.py` authors the
+  grain-aware spine validator `validate_snip_grain_identity_columns(df, *, grain, physical_embryo_registry_df, check_sources, scope_label)`
+  — the table-level enforcement of the LOCKED 5-clause identity-carrying law (a syntactically valid
+  snip_id is NOT enough; IDs must agree). `check_sources` mirrors `validate_yx1_acquisition_inventory`.
+- Tests: `tests/data_pipeline/shared/identifiers/test_validate_physical_embryo_id.py` (7) +
+  `tests/data_pipeline/segmentation/physical_embryo_registry/test_snip_identity_contract.py` (12).
+
+**Verified:** `pytest` over both new test files — **19 passed** under `segmentation_grounded_sam`. Package
+imports clean (`PYTHONPATH=src`).
+
+**Next concrete action (Stage 2):** in `src/data_pipeline/segmentation/physical_embryo_registry/`, mirror
+the `frame_masks_contract.py`/`validate_frame_masks.py` split — create
+`physical_embryo_registry_contract.py` (`*_REQUIRED_COLUMNS`, `*_UNIQUE_KEY`, `empty_*`),
+`validate_physical_embryo_registry.py` (table validator, delegates row-wise to
+`validate_physical_embryo_id`), and `build_physical_embryo_registry.py` (distinct `(well_id, track_id)`
+from `frame_masks` — the DETECTED set, drop NA-track no-mask rows — → mint chain once per track). Add
+`tests/data_pipeline/segmentation/physical_embryo_registry/test_physical_embryo_registry.py`. Verify:
+`pytest tests/data_pipeline/segmentation/physical_embryo_registry/`.
+
+**Open decisions:** none for Stage 2. (Staged build per mdcolon: verify + snapshot + commit at the end of
+every stage; do not roll stages into one commit.)
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: model world — legacy VAE loading foundation)
 
 **What shipped:** The model-loading *foundation* for the embeddings stage (Option A — no active
