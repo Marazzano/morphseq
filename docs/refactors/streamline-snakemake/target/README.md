@@ -1,6 +1,6 @@
 # `target/` — streamline-snakemake refactor docs (INDEX)
 
-**The map for this folder.** 29 markdown docs live here now; this index says *which one to open for
+**The map for this folder.** Markdown docs live here now; this index says *which one to open for
 what*, and which are live vs reference vs history. Reorganized 2026-06-17 from an 18-doc flat folder
 into role-based folders.
 
@@ -46,6 +46,16 @@ and the adapter seams that let model backends change without changing downstream
 | `targets/tracking_world.md` | What is the temporal identity product contract and validator? |
 | `working/open_questions.md` | Where do unresolved decisions live while mdcolon and agents iterate? |
 | `working/current_audit_notes.md` | What did the current code audit find about the fused runner? |
+
+## 📁 `specs/features/` — downstream TARGET specs (validated objects → computed features)
+
+The architecture for computed features after object extraction. QC uses the same per-well stage
+pattern but should live in a sibling QC world, not inside this section.
+
+| Doc | The one question it answers |
+|---|---|
+| `README.md` | What is feature world, and what is out of scope? |
+| `targets/feature_world.md` | Which computed features can start, what do they depend on, and what proves each one is ready? |
 
 ## 📁 `specs/` — CROSS-CUTTING + downstream TARGET specs (whole-pipeline)
 
