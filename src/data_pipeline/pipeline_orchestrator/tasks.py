@@ -261,6 +261,7 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
         target_pixel_size_um=args.target_pixel_size_um,
         output_height_px=args.output_height_px,
         output_width_px=args.output_width_px,
+        background_noise_scale=args.background_noise_scale,
     )
 
 
@@ -484,6 +485,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--target-pixel-size-um", type=float, default=7.8)
     p_sp.add_argument("--output-height-px", type=int, default=576)
     p_sp.add_argument("--output-width-px", type=int, default=256)
+    p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
     p_sp.set_defaults(func=cmd_snip_processing)
 
     p_fm = sub.add_parser("frame-masks")

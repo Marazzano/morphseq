@@ -104,6 +104,11 @@ snip_processing:
   write_manifest_csv: true
   background_n_samples: 100
   background_seed: 309
+  # Background noise injected outside the embryo mask is scaled down from the
+  # real image background intensity. 0.1 matches legacy build03B doctrine —
+  # produces a visually dark background that contrasts with the CLAHE-brightened
+  # embryo interior. Increase toward 1.0 to match real background brightness.
+  background_noise_scale: 0.1
 
 # Feature extraction stage defaults.
 feature_extraction:

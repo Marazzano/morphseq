@@ -84,6 +84,7 @@ def run_snip_processing(
     target_pixel_size_um: float = 7.8,
     output_height_px: int = 576,
     output_width_px: int = 256,
+    background_noise_scale: float = 0.1,
 ) -> None:
     frame_masks = pd.read_csv(frame_masks_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
@@ -95,10 +96,9 @@ def run_snip_processing(
     snips_dir = Path(snips_dir)
     output_root = Path(output_root)
 
-    # Legacy doctrine (build03B line 357): noise is injected at 10% of real background intensity.
     _bg_mean, _bg_std = _estimate_background(valid_masks, inventory_index)
-    background_mean = 0.1 * _bg_mean
-    background_std = 0.1 * _bg_std
+    background_mean = background_noise_scale * _bg_mean
+    background_std = background_noise_scale * _bg_std
 
     rows: list[dict[str, Any]] = []
 

@@ -91,13 +91,16 @@ rule snip_processing_per_well:
     params:
         snips_dir=lambda wc: _snip_inventory_snips_dir(wc.experiment, wc.well_id),
         target_pixel_size_um=lambda wc: float(
-            config.get("snip_processing", {}).get("target_pixel_size_um", 2.17)
+            config.get("snip_processing", {}).get("target_pixel_size_um", 7.8)
         ),
         output_height_px=lambda wc: int(
-            config.get("snip_processing", {}).get("output_height_px", 512)
+            config.get("snip_processing", {}).get("output_shape", [576, 256])[0]
         ),
         output_width_px=lambda wc: int(
-            config.get("snip_processing", {}).get("output_width_px", 512)
+            config.get("snip_processing", {}).get("output_shape", [576, 256])[1]
+        ),
+        background_noise_scale=lambda wc: float(
+            config.get("snip_processing", {}).get("background_noise_scale", 0.1)
         ),
     shell:
         """
@@ -109,7 +112,8 @@ rule snip_processing_per_well:
           --output-root "{DATA_ROOT}" \
           --target-pixel-size-um "{params.target_pixel_size_um}" \
           --output-height-px "{params.output_height_px}" \
-          --output-width-px "{params.output_width_px}"
+          --output-width-px "{params.output_width_px}" \
+          --background-noise-scale "{params.background_noise_scale}"
         """
 
 
