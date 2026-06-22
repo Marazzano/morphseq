@@ -233,6 +233,22 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── OBJECT EXTRACTION — snip inventory ───────────────────────────────────
+    # `snip_inventory` is the per-embryo crop table. Fans out per well (one snip_processing job
+    # per well), merges to an experiment-level table. Pixel files live beside the per-well shard
+    # under the same well directory but are not tracked as registry artifacts.
+    "snip_inventory": {
+        "stage": "object_extraction",
+        "product_dir": "snips",
+        "fanout": PER_WELL_THEN_MERGE,
+        "artifacts": {
+            "snip_inventory": {
+                PATH_MODE_PER_WELL: "{well_id}_snip_inventory.csv",
+                PATH_MODE_MERGED: "{experiment_id}_snip_inventory.csv",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────

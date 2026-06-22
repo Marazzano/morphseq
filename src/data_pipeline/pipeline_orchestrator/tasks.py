@@ -232,6 +232,38 @@ def cmd_frame_detections(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_validate_snip_inventory(args: argparse.Namespace) -> None:
+    import pandas as pd
+    df = pd.read_csv(args.input_csv)
+    required = [
+        "snip_id", "embryo_id", "physical_embryo_id", "experiment_id", "well_id",
+        "image_id", "time_index", "channel_id", "mask_id", "track_id",
+        "source_image_path", "processed_snip_path", "is_valid_snip", "error_message",
+    ]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"snip_inventory missing required columns: {missing}")
+    if df["snip_id"].duplicated().any():
+        raise ValueError("snip_inventory has duplicate snip_id values")
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_snip_processing(args: argparse.Namespace) -> None:
+    from data_pipeline.snip_processing.entrypoints.run_snip_processing import run_snip_processing
+
+    run_snip_processing(
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        output_csv=args.output_csv,
+        snips_dir=args.snips_dir,
+        output_root=args.output_root,
+        target_pixel_size_um=args.target_pixel_size_um,
+        output_height_px=args.output_height_px,
+        output_width_px=args.output_width_px,
+    )
+
+
 def cmd_frame_masks(args: argparse.Namespace) -> None:
     import json
     import tempfile
@@ -437,6 +469,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_fd.add_argument("--gdino-weights", type=Path, required=True)
     p_fd.add_argument("--device", default="cuda")
     p_fd.set_defaults(func=cmd_frame_detections)
+
+    p_si_validate = sub.add_parser("validate-snip-inventory")
+    p_si_validate.add_argument("--input-csv", type=Path, required=True)
+    p_si_validate.add_argument("--output-flag", type=Path, required=True)
+    p_si_validate.set_defaults(func=cmd_validate_snip_inventory)
+
+    p_sp = sub.add_parser("snip-processing")
+    p_sp.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_sp.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_sp.add_argument("--output-csv", type=Path, required=True)
+    p_sp.add_argument("--snips-dir", type=Path, required=True)
+    p_sp.add_argument("--output-root", type=Path, required=True)
+    p_sp.add_argument("--target-pixel-size-um", type=float, default=7.8)
+    p_sp.add_argument("--output-height-px", type=int, default=576)
+    p_sp.add_argument("--output-width-px", type=int, default=256)
+    p_sp.set_defaults(func=cmd_snip_processing)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)

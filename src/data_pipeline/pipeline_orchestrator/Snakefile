@@ -147,6 +147,7 @@ print(f"Microscope:   {MICROSCOPE}")
 include: str(WORKFLOW_DIR / "rules" / "frame_inventory.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_detections.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_masks.smk")
+include: str(WORKFLOW_DIR / "rules" / "snip_processing.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
