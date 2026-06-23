@@ -19,6 +19,34 @@ _paths_spec.loader.exec_module(_paths_mod)
 
 SNIP_INVENTORY_STEP = "snip_inventory"
 
+# Upstream identity source: physical_embryo_registry owns the track_id -> physical_embryo_id
+# resolution. snip_processing JOINS the PER-WELL shard (not the merged table) — the crop loop is
+# per-well and joins on (well_id, track_id), so it depends only on this well's registry; depending
+# on the merged table would force every well to finish before any well could crop.
+PHYSICAL_EMBRYO_REGISTRY_STEP = "physical_embryo_registry"
+
+
+def _physical_embryo_registry_per_well(experiment: str, *, well_id: str):
+    return _paths_mod.artifact_path(
+        DATA_ROOT,
+        PHYSICAL_EMBRYO_REGISTRY_STEP,
+        "physical_embryo_registry",
+        experiment,
+        path_mode=_paths_mod.PATH_MODE_PER_WELL,
+        well_id=well_id,
+    )
+
+
+def _physical_embryo_registry_per_well_validated(experiment: str, *, well_id: str):
+    return _paths_mod.validated_path(
+        DATA_ROOT,
+        PHYSICAL_EMBRYO_REGISTRY_STEP,
+        "physical_embryo_registry",
+        experiment,
+        path_mode=_paths_mod.PATH_MODE_PER_WELL,
+        well_id=well_id,
+    )
+
 
 def _snip_inventory_artifact(experiment: str, artifact: str, *, path_mode: str, well_id: str | None = None):
     return _paths_mod.artifact_path(
@@ -42,15 +70,14 @@ def _snip_inventory_validated(experiment: str, *, path_mode: str, well_id: str |
     )
 
 
-def _snip_inventory_for_run(wc):
-    return [
-        str(_snip_inventory_artifact(
-            wc.experiment, "snip_inventory",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
-            well_id=w,
-        ))
-        for w in wells_for_experiment(wc)
-    ]
+def _snip_inventory_artifacts_for_run(wc):
+    return run_well_shard_paths(
+        DATA_ROOT,
+        SNIP_INVENTORY_STEP,
+        "snip_inventory",
+        wc.experiment,
+        wells_for_experiment(wc),
+    )
 
 
 def _snip_inventory_snips_dir(experiment: str, well_id: str) -> str:
@@ -65,10 +92,12 @@ def _snip_inventory_snips_dir(experiment: str, well_id: str) -> str:
 rule snip_processing_per_well:
     """Extract per-embryo crops from validated frame_masks for one well.
 
-    Reads frame_masks + frame_inventory shards, mints physical_embryo_id /
-    embryo_id / snip_id via shared/identifiers, runs the extraction/rotation/
-    augmentation stack, and emits the per-well snip_inventory shard + pixel
-    files. Yolk masks are optional; rotation degrades gracefully without them.
+    Reads frame_masks + frame_inventory shards, JOINS physical_embryo_id from
+    the per-well physical_embryo_registry shard (identity is no longer minted
+    here), builds embryo_id / snip_id via shared/identifiers, runs the
+    extraction/rotation/augmentation stack, and emits the per-well
+    snip_inventory shard + pixel files. Yolk masks are optional; rotation
+    degrades gracefully without them.
     """
     input:
         frame_masks=str(_frame_masks_artifact(
@@ -81,6 +110,12 @@ rule snip_processing_per_well:
         )),
         frame_inventory_validated=str(_frame_inventory_validated(
             "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+        physical_embryo_registry=str(_physical_embryo_registry_per_well(
+            "{experiment}", well_id="{well_id}"
+        )),
+        physical_embryo_registry_validated=str(_physical_embryo_registry_per_well_validated(
+            "{experiment}", well_id="{well_id}"
         )),
     output:
         snip_inventory=str(_snip_inventory_artifact(
@@ -107,6 +142,7 @@ rule snip_processing_per_well:
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-processing \
           --frame-masks-csv "{input.frame_masks}" \
           --frame-inventory-csv "{input.frame_inventory}" \
+          --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
           --output-csv "{output.snip_inventory}" \
           --snips-dir "{params.snips_dir}" \
           --output-root "{DATA_ROOT}" \
@@ -140,7 +176,7 @@ rule validate_snip_inventory_for_well:
 rule merge_snip_inventory:
     """Row-stack per-well snip_inventory shards into the experiment-level merged table."""
     input:
-        per_well=_snip_inventory_for_run,
+        per_well=_snip_inventory_artifacts_for_run,
     output:
         merged=str(_snip_inventory_artifact(
             "{experiment}", "snip_inventory",
