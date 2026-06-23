@@ -88,17 +88,50 @@ segmentation_and_tracking:
     config_path: ""
     checkpoint_path: ""
 
-# Auxiliary masks (UNet-derived QC masks).
-auxiliary_masks:
-  model_root: "models/segmentation"
-  batch_size: 64
-  num_workers: 1
-  overwrite: false
+# ── THE SNIP COORDINATE SPACE — single source of truth ───────────────────────────────────────
+# One (height, width) governs every "snip-resolution" consumer: the snip_processing crop output,
+# the cropped embryo mask saved beside each snip, and the per-snip UNet auxiliary masks. It is a
+# NAMED YAML ANCHOR (&snip_frame_shape) so every consumer POINTS at it (*snip_frame_shape) — the
+# equality is declared out loud, never copy-pasted as a bare [576, 256] (which would drift).
+# Resolved by data_pipeline.snip_processing.snip_frame_shape.resolve_snip_frame_shape(config).
+snip_frame_shape: &snip_frame_shape [576, 256]
+
+# Per-snip auxiliary masks (UNet-derived). Runs on the snip crop AFTER snip_processing, so masks
+# are native snip resolution and co-keyed by snip_id (replaces the retired full-frame
+# auxiliary_masks step). NO foreground family — the embryo mask for fraction_alive is the cropped
+# frame_masks RLE saved by snip_processing (embryo_mask_snip_path), not a UNet prediction.
+#
+# SHAPE OWNERSHIP (full table lives in segmentation/backends/unet_snip/model_loader.py):
+#   snip_frame_shape    — the configured law (above). Persists to disk.
+#   artifact_shape      — derived = snip_frame_shape; what masks are WRITTEN at. NOT a key here.
+#   model_input_shape   — per-model transient doorway the U-Net runs inference on (below).
+#   model_output_shape  — runtime-observed model emission; never configured.
+# Each model declares its OWN model_input_shape: point it at *snip_frame_shape to say "this model
+# runs on the canonical snip grid" (the via mask then needs no resampling). Override with an explicit
+# [height, width] only if a checkpoint REQUIRES its true training size; the predictor resizes to it,
+# then brings the mask home to artifact_shape. model_input_shape is transient and never persists.
+# NOTE: checkpoint filenames carried over from the old full-frame path — confirm/adjust per family.
+unet_snip:
+  models_root: "models/auxiliary_masks"
+  device: "cuda"
+  models:
+    via:
+      checkpoint: "via_v1_0100"
+      model_input_shape: *snip_frame_shape
+    yolk:
+      checkpoint: "yolk_v1_0050"
+      model_input_shape: *snip_frame_shape
+    focus:
+      checkpoint: "focus_v0_0100"
+      model_input_shape: *snip_frame_shape
+    bubble:
+      checkpoint: "bubble_v0_0100"
+      model_input_shape: *snip_frame_shape
 
 # Snip processing (crop + rotate + augment).
 snip_processing:
-  # Legacy downstream models expect (H, W) = (576, 256).
-  output_shape: [576, 256]
+  # Crop output (H, W) IS the canonical snip grid — point at the same anchor, never a bare copy.
+  output_shape: *snip_frame_shape
   target_pixel_size_um: 7.8
   save_raw_crops: true
   write_manifest_csv: true
@@ -119,8 +152,9 @@ feature_extraction:
   mask_geometry: {}
   curvature_metrics: {}
   pose_kinematics: {}
-  # fraction_alive is implemented but not wired into the proof run (VIA/embryo mask resolution
-  # mismatch); add its config block when it is enabled.
+  # fraction_alive reads the per-snip foreground + via masks from snip_auxiliary_masks (snip-native
+  # resolution). missing_via_policy: "fail" (default) | "null".
+  fraction_alive: {}
   consolidated_features: {}
 
   # Legacy VAE encoder — produces latent embeddings (latent_embeddings step).

@@ -261,6 +261,32 @@ product folder = `snips/`, table name = `snip_inventory`.
 
 ---
 
+## Shape ownership
+
+Four grids touch a snip-resolution artifact. Each has exactly one owner, one home, and a clear
+answer to "does it persist to disk?". A reader should not have to reverse-engineer this from the
+YAML + entrypoint + predictor. The code mirror of this table lives in the module docstring of
+`src/data_pipeline/segmentation/backends/unet_snip/model_loader.py`.
+
+| Shape | Home | Persists? | Meaning | Consumed by |
+|---|---|---|---|---|
+| `snip_frame_shape` | `config.yaml` top-level; resolved by `snip_processing/snip_frame_shape.py::resolve_snip_frame_shape` | **YES** — snip image, embryo mask, auxiliary masks all live here | the configured law: the canonical snip artifact grid `[H, W]` | snip_processing, snip_auxiliary_masks, fraction_alive |
+| `artifact_shape` | **not a YAML key** — derived `= snip_frame_shape` (renamed at the `parse_unet_snip_model_config(..., artifact_shape=snip_frame_shape)` boundary) | **YES** — every auxiliary mask PNG is written at this shape | the derived promise: what masks come home to | fraction_alive |
+| `model_input_shape` | `config.yaml` `unet_snip.models.<type>.model_input_shape` (defaults to `artifact_shape`) | **NO** | the transient model doorway: shape fed into the U-Net for inference | `FishModelSnipPredictor` only |
+| `model_output_shape` | runtime-observed, **never configured** | **NO** | the model emission: shape returned before the resize home | the predictor, internally |
+
+**Doctrine.** `snip_frame_shape` names the world. `artifact_shape` names the product promise.
+`model_input_shape` names the doorway. `model_output_shape` names what came back through it.
+Only the promise gets written. A snip arriving off `artifact_shape` is a shard-wide upstream
+contract violation, so `run_unet_for_snip_inventory` asserts the input grid **before** the per-mask
+try/except — it raises and kills the shard rather than scattering per-mask `is_valid=False` noise.
+
+`model_input_shape` may differ from `snip_frame_shape` only when a checkpoint requires its true
+training size; the predictor then resizes the image in, observes the model output, and brings the
+mask home to `artifact_shape`. No downstream artifact ever stores or depends on a `model_*` shape.
+
+---
+
 ## Reused utilities
 
 | Utility | File |

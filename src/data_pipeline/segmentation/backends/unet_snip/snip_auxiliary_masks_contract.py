@@ -42,8 +42,10 @@ SNIP_AUXILIARY_MASKS_REQUIRED_COLUMNS = [
     "error_message",
 ]
 
-# "foreground" = whole embryo/body mask; legacy UNet checkpoint key may be "mask"
-ALLOWED_AUXILIARY_MASK_TYPES = ("foreground", "via", "yolk", "focus", "bubble")
+# The UNet auxiliary-mask families. NO "foreground": the whole-embryo mask is created by
+# snip_processing (the cropped frame_masks RLE, embryo_mask_snip_path), not predicted here —
+# fraction_alive reads foreground from snip_processing and only `via` from this product.
+ALLOWED_AUXILIARY_MASK_TYPES = ("via", "yolk", "focus", "bubble")
 
 
 def validate_snip_auxiliary_masks(df: pd.DataFrame) -> None:

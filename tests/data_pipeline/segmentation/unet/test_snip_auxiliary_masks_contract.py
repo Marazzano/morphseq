@@ -11,7 +11,7 @@ from data_pipeline.segmentation.backends.unet_snip.snip_auxiliary_masks_contract
 
 
 def _make_valid_df(n: int = 2) -> pd.DataFrame:
-    mask_types = ["foreground", "via", "yolk", "focus", "bubble"]
+    mask_types = ["via", "yolk", "focus", "bubble"]
     rows = []
     for i in range(n):
         snip_id = f"20250912_B0{i+1}_e01_BF_t0007"
@@ -56,7 +56,7 @@ def test_missing_column_raises():
 
 def test_invalid_mask_type_raises():
     df = _make_valid_df(1)
-    df.loc[df["auxiliary_mask_type"] == "foreground", "auxiliary_mask_type"] = "unknown"
+    df.loc[df["auxiliary_mask_type"] == "via", "auxiliary_mask_type"] = "unknown"
     with pytest.raises(ValueError, match="unknown auxiliary_mask_type"):
         validate_snip_auxiliary_masks(df)
 

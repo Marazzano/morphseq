@@ -18,10 +18,12 @@ from data_pipeline.segmentation.backends.unet_snip.snip_auxiliary_masks_contract
     ALLOWED_AUXILIARY_MASK_TYPES,
     validate_snip_auxiliary_masks,
 )
+from data_pipeline.snip_processing.snip_frame_masks import assert_on_snip_frame
 
 # Predictor contract:
-#   input  — H×W uint8 grayscale snip image (original snip dimensions)
-#   output — H×W bool mask (same spatial dimensions as input)
+#   input  — H×W uint8 grayscale snip on artifact_shape (asserted by the runner before the
+#            per-mask try/except, so an off-grid snip kills the shard rather than scattering)
+#   output — H×W bool mask on artifact_shape (the promise, not the input's incidental shape)
 AuxiliaryMaskPredictor = Callable[[np.ndarray], np.ndarray]
 
 UNET_SNIP_BACKEND_LABEL = "unet_snip"
@@ -67,13 +69,21 @@ def run_unet_for_snip_inventory(
     model_id: str,
     model_backend: str,
     checkpoint_paths: Mapping[str, str],
+    artifact_shape: tuple[int, int],
 ) -> pd.DataFrame:
     """Run UNet auxiliary mask predictors over all valid snips.
 
     Only processes rows where is_valid_snip == True and processed_snip_path exists.
     Invalid snip → no row in output.
     Valid snip + predictor failure → row with is_valid_auxiliary_mask=False.
+
+    ``artifact_shape`` (= snip_frame_shape) is the law: each snip image is asserted to be ON it
+    BEFORE the per-mask try/except. An off-grid snip is a systemic upstream contract violation
+    affecting every snip in the well identically, so it raises out of this runner and kills the
+    shard — never laundered into scattered per-mask is_valid=False noise.
     """
+    artifact_shape = (int(artifact_shape[0]), int(artifact_shape[1]))
+
     valid_snips = snip_inventory[
         snip_inventory["is_valid_snip"].astype(bool)
         & snip_inventory["processed_snip_path"].notnull()
@@ -91,6 +101,9 @@ def run_unet_for_snip_inventory(
         snip_image = skio.imread(str(snip_path))
         if snip_image.ndim == 3:
             snip_image = snip_image[:, :, 0]
+        # Guard the input grid BEFORE the per-mask try/except: a wrong-grid snip is a shard-wide
+        # bug, so let it raise rather than be swallowed as a per-mask failure.
+        assert_on_snip_frame(snip_image, artifact_shape, label=f"snip {snip_id}")
         snip_h, snip_w = snip_image.shape
 
         for mask_type in ALLOWED_AUXILIARY_MASK_TYPES:
