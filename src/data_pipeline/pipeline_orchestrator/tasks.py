@@ -249,6 +249,24 @@ def cmd_validate_snip_inventory(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_validate_frame_masks(args: argparse.Namespace) -> None:
+    """Validate a per-well frame_masks shard against its frame_inventory and write the .validated sentinel.
+
+    Thin dispatcher: the full contract (validate_frame_masks) cross-checks each mask row against
+    frame identity, so it needs BOTH the frame_masks shard and the matching frame_inventory shard.
+    """
+    import pandas as pd
+
+    from data_pipeline.segmentation.validate_frame_masks import validate_frame_masks
+
+    validate_frame_masks(
+        pd.read_csv(args.input_csv),
+        pd.read_csv(args.frame_inventory_csv),
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_snip_processing(args: argparse.Namespace) -> None:
     from data_pipeline.snip_processing.entrypoints.run_snip_processing import run_snip_processing
 
@@ -551,6 +569,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_fm.add_argument("--sam2-model-id", default="sam2_video")
     p_fm.add_argument("--device", default="cuda")
     p_fm.set_defaults(func=cmd_frame_masks)
+
+    p_fm_validate = sub.add_parser("validate-frame-masks")
+    p_fm_validate.add_argument("--input-csv", type=Path, required=True)
+    p_fm_validate.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_fm_validate.add_argument("--output-flag", type=Path, required=True)
+    p_fm_validate.set_defaults(func=cmd_validate_frame_masks)
 
     p_per_build = sub.add_parser("build-physical-embryo-registry")
     p_per_build.add_argument("--frame-masks-csv", type=Path, required=True)

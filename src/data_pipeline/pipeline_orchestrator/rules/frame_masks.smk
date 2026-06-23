@@ -38,6 +38,17 @@ def _frame_masks_artifact(experiment: str, artifact: str, *, path_mode: str, wel
     )
 
 
+def _frame_masks_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
+    return _paths_mod.validated_path(
+        DATA_ROOT,
+        FRAME_MASKS_STEP,
+        "frame_masks",
+        experiment,
+        path_mode=path_mode,
+        well_id=well_id,
+    )
+
+
 def _frame_masks_artifacts_for_run(wc):
     return run_well_shard_paths(
         DATA_ROOT,
@@ -46,6 +57,15 @@ def _frame_masks_artifacts_for_run(wc):
         wc.experiment,
         wells_for_experiment(wc),
     )
+
+
+def _frame_masks_validated_for_run(wc):
+    return [
+        str(_frame_masks_validated(
+            wc.experiment, path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id=w
+        ))
+        for w in wells_for_experiment(wc)
+    ]
 
 
 rule frame_masks_per_well:
@@ -103,10 +123,44 @@ rule frame_masks_per_well:
         """
 
 
+rule validate_frame_masks_for_well:
+    """Validate the per-well frame_masks shard against its frame_inventory; write the .validated sentinel.
+
+    The merge (collect_well_shard_paths) only picks up shards that carry a .validated sentinel, so
+    this rule is what makes a built frame_masks shard eligible for the merged table — and what lets
+    downstream consumers (e.g. physical_embryo_registry, snip_processing) depend on a *validated*
+    frame_masks shard rather than a raw one.
+    """
+    input:
+        frame_masks=str(_frame_masks_artifact(
+            "{experiment}", "frame_masks",
+            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            well_id="{well_id}",
+        )),
+        frame_inventory=str(_frame_inventory_artifact(
+            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+        frame_inventory_validated=str(_frame_inventory_validated(
+            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+    output:
+        validated=str(_frame_masks_validated(
+            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-frame-masks \
+          --input-csv "{input.frame_masks}" \
+          --frame-inventory-csv "{input.frame_inventory}" \
+          --output-flag "{output.validated}"
+        """
+
+
 rule merge_frame_masks:
     """Row-stack per-well frame_masks shards into the experiment-level merged table."""
     input:
         per_well=_frame_masks_artifacts_for_run,
+        per_well_validated=_frame_masks_validated_for_run,
     output:
         merged=str(_frame_masks_artifact(
             "{experiment}", "frame_masks",

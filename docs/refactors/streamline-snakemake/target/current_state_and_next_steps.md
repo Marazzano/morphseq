@@ -6,6 +6,44 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: frame_masks validate rule — fix cross-agent merge break + finish TODO)
+
+**Why:** A parallel agent's frame_masks conformance commit (`a4f284d9`) switched `merge_frame_masks` to
+`collect_well_shard_paths` (which only returns shards that carry a `.validated` sentinel) but never added a
+frame_masks validate rule — so NO sentinel was ever written, the merge would `collect` → `[]` → fail on empty
+input. frame_masks was also the only product in the detect→seg→snip chain WITHOUT per-well validation
+(frame_inventory/registry/snip_inventory all validate). This pass fixes both and resolves the
+`# TODO(frame_masks-validate)` left in the registry rule.
+
+**What shipped:**
+- `pipeline_orchestrator/tasks.py` — NEW `cmd_validate_frame_masks` + `validate-frame-masks` subparser. The
+  full contract `validate_frame_masks(frame_masks, frame_inventory)` cross-checks masks against frame
+  identity, so the verb takes BOTH `--input-csv` and `--frame-inventory-csv` (+ `--output-flag`).
+- `rules/frame_masks.smk` — NEW `rule validate_frame_masks_for_well` (writes the per-well `.validated`
+  sentinel from the frame_masks shard + its frame_inventory); `_frame_masks_validated` +
+  `_frame_masks_validated_for_run` helpers; `merge_frame_masks` now also depends on the per-well
+  `.validated` sentinels (so `collect_well_shard_paths` finds validated shards — the empty-merge bug is fixed).
+- `rules/physical_embryo_registry.smk` — resolved the TODO: `build_physical_embryo_registry_for_well` now
+  depends on the frame_masks per-well `.validated` sentinel (not the raw CSV).
+- `rules/snip_processing.smk` — `snip_processing_per_well` now also depends on the frame_masks `.validated`
+  sentinel (consistency: every frame_masks consumer waits on a validated shard).
+
+**Verified:**
+- `validate-frame-masks` verb on real 20250912_B01 (frame_masks + its frame_inventory) → passes, writes
+  sentinel.
+- `snakemake -n` snip target chains materialize → validate_frame_inventory → frame_detections → frame_masks
+  → **validate_frame_masks** → build/validate registry → snip, no errors. Merged frame_masks target plans
+  95× `validate_frame_masks_for_well` feeding `merge_frame_masks` (was previously a guaranteed empty-merge).
+- `pytest` snip + registry suites → 29 passed.
+
+**Now consistent:** every per-well product in the chain (frame_inventory, frame_masks,
+physical_embryo_registry, snip_inventory) builds → validates (per-well `.validated`) → merges, and every
+consumer depends on the VALIDATED upstream shard.
+
+**Open decisions:** none.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 4 snip_processing cutover)
 
 **What shipped (Stage 4 of 4 — the LAST stage; snip_processing now JOINS identity instead of minting it):**

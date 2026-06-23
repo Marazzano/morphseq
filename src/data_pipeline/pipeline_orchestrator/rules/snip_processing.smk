@@ -105,6 +105,9 @@ rule snip_processing_per_well:
             path_mode=_paths_mod.PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
+        frame_masks_validated=str(_frame_masks_validated(
+            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
         frame_inventory=str(_frame_inventory_artifact(
             "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
         )),

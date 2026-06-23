@@ -45,6 +45,17 @@ def _frame_masks_per_well_csv(experiment: str, *, well_id: str):
     )
 
 
+def _frame_masks_per_well_validated(experiment: str, *, well_id: str):
+    return paths.validated_path(
+        DATA_ROOT,
+        FRAME_MASKS_STEP,
+        "frame_masks",
+        experiment,
+        path_mode=paths.PATH_MODE_PER_WELL,
+        well_id=well_id,
+    )
+
+
 def _registry_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
     return paths.artifact_path(
         DATA_ROOT,
@@ -94,13 +105,12 @@ rule build_physical_embryo_registry_for_well:
     The task verb validates the shard before writing.
     """
     input:
-        # frame_masks has no per-well .validated sentinel today (its merge is an inline-shell
-        # concat with no validate rule). Depend on the CSV only — do NOT add a frame_masks
-        # .validated input that does not exist yet (it would break the DAG at planning time).
-        # TODO(frame_masks-validate): add the frame_masks per-well .validated input once a separate
-        # pass adds the frame_masks validate rule (mirroring frame_masks_per_well's dependence on
-        # frame_inventory + its validated sentinel).
+        # Depend on the VALIDATED per-well frame_masks shard (mirroring frame_masks_per_well's
+        # dependence on frame_inventory + its validated sentinel). The frame_masks validate rule
+        # writes this sentinel; the registry is built only from a frame_masks shard that passed
+        # its contract.
         frame_masks=str(_frame_masks_per_well_csv("{experiment}", well_id="{well_id}")),
+        frame_masks_validated=str(_frame_masks_per_well_validated("{experiment}", well_id="{well_id}")),
     output:
         registry=str(_registry_artifact(
             "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
