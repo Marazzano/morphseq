@@ -6,6 +6,50 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 4 snip_processing cutover)
+
+**What shipped (Stage 4 of 4 — the LAST stage; snip_processing now JOINS identity instead of minting it):**
+The `physical_embryo_registry` is now the sole identity-origination boundary. `snip_processing` consumes it.
+- `snip_processing/entrypoints/run_snip_processing.py` — DELETED the per-mask mint chain
+  (`parse_embryo_local_track_id` / `track_index_to_embryo_index` / `build_physical_embryo_id`) and its
+  imports. Added a `physical_embryo_registry_csv` param + `_physical_embryo_id_by_track` lookup; the crop
+  loop now JOINS `physical_embryo_id` on `(well_id, track_id)` and **fails loud** (`ValueError`, message
+  names the fix) if a valid mask's track has no registry row. KEPT `build_embryo_id` / `build_snip_id`
+  (crop-product naming legitimately stays here).
+- `pipeline_orchestrator/tasks.py` — `cmd_snip_processing` threads the new arg; `--physical-embryo-registry-csv`
+  added to the `snip-processing` subparser (required).
+- `pipeline_orchestrator/rules/snip_processing.smk` — `snip_processing_per_well` now depends on the
+  **per-well** `physical_embryo_registry` shard + its `.validated` sentinel (LOCKED: per-well, NOT merged —
+  the crop loop is per-well, so depending on the merged table would serialize all wells). Passes the CSV to
+  the task verb; docstring updated (join, not mint). (A linter independently upgraded `merge_snip_inventory`
+  to use well_runner's `collect_well_shard_paths`/`concat_well_shards_to_file` — kept.)
+- Tests: `tests/data_pipeline/snip_processing/test_run_snip_processing.py` — updated the e2e to build +
+  pass a registry (via the real Stage-2 builder) and added two cases: join reproduces the registry's
+  physical_embryo_id, and fail-loud-on-missing-registry-match. Also patched the untracked smoke caller.
+
+**Verified:**
+- `pytest tests/data_pipeline/snip_processing/ tests/data_pipeline/segmentation/physical_embryo_registry/`
+  → **29 passed** (3 snip + 26 registry).
+- **Identical-to-pre-cutover gate (the required Stage-4 proof):** on real 20250912_B01 data, the
+  registry-join `physical_embryo_id` for every valid mask is IDENTICAL to the old per-mask mint chain
+  (3 valid masks → 1 animal `20250912_B01_e01`).
+- `snakemake -n` for the B01 snip target plans `build_physical_embryo_registry_for_well` →
+  `validate_physical_embryo_registry_for_well` → `snip_processing_per_well` cleanly — the new per-well
+  registry dependency wires into the DAG with no errors.
+
+**physical_embryo_registry is now COMPLETE (all 4 stages shipped + verified).** The mint chain lives in
+exactly one place (the registry builder); snip_processing, and any future identity-carrying consumer, joins.
+
+**Next concrete action:** none for this product. Deferred-per-spec items remain out of scope (channel-free
+`physical_embryo_occurrence` table; auditability columns `n_detected_masks`/`first|last_time_index`; a
+discrete `tracks` gap/swap QC stage) — add only when a consumer needs them. Separately tracked: the
+frame_masks conformance pass (its own agent) that will add the per-well frame_masks `.validated` sentinel,
+at which point the `# TODO(frame_masks-validate)` in `rules/physical_embryo_registry.smk` should be resolved.
+
+**Open decisions:** none.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 3 orchestration wiring)
 
 **What shipped (Stage 3 of 4 — wire the proven product into orchestration; meaning of no existing stage

@@ -1,8 +1,11 @@
 """Per-well snip processing entrypoint.
 
-Reads a validated frame_masks shard and the matching frame_inventory shard,
-mints snip identifiers, runs the extraction/rotation/augmentation stack, and
-writes the per-well snip_inventory CSV + pixel PNG files.
+Reads a validated frame_masks shard, the matching frame_inventory shard, and the
+per-well physical_embryo_registry shard; JOINS physical_embryo_id onto each valid
+mask (it is NOT minted here anymore — the registry is the identity-origination
+boundary), builds the crop-level snip identifiers, runs the
+extraction/rotation/augmentation stack, and writes the per-well snip_inventory
+CSV + pixel PNG files.
 
 Masks are stored as RLE in frame_masks — decoded to numpy here before passing
 to the core stack. Yolk masks are not yet wired; rotation falls back to the
@@ -22,17 +25,26 @@ import skimage.io as skio
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.shared.identifiers.constructors import (
     build_embryo_id,
-    build_physical_embryo_id,
     build_snip_id,
 )
-from data_pipeline.shared.identifiers.parsers import (
-    parse_embryo_local_track_id,
-    parse_image_id,
-    track_index_to_embryo_index,
-)
+from data_pipeline.shared.identifiers.parsers import parse_image_id
 from data_pipeline.snip_processing.augmentation import augment_snip
 from data_pipeline.snip_processing.extraction import crop_to_embryo_bounds, extract_embryo_crop
 from data_pipeline.snip_processing.rotation import apply_rotation_to_snip
+
+
+def _physical_embryo_id_by_track(
+    physical_embryo_registry: pd.DataFrame,
+) -> dict[tuple[str, str], str]:
+    """Build the ``(well_id, track_id) -> physical_embryo_id`` lookup from the registry.
+
+    The registry is the single source of identity; snip_processing JOINS against it rather than
+    re-minting. Returns an exact-match dict keyed by the join columns.
+    """
+    return {
+        (str(row["well_id"]), str(row["track_id"])): str(row["physical_embryo_id"])
+        for _, row in physical_embryo_registry.iterrows()
+    }
 
 
 def _estimate_background(
@@ -78,6 +90,7 @@ def run_snip_processing(
     *,
     frame_masks_csv: Path,
     frame_inventory_csv: Path,
+    physical_embryo_registry_csv: Path,
     output_csv: Path,
     snips_dir: Path,
     output_root: Path,
@@ -88,9 +101,15 @@ def run_snip_processing(
 ) -> None:
     frame_masks = pd.read_csv(frame_masks_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
+    physical_embryo_registry = pd.read_csv(physical_embryo_registry_csv)
 
     valid_masks = frame_masks[frame_masks["is_valid_mask"].astype(bool)].copy()
     inventory_index = frame_inventory.set_index("image_id")
+
+    # Identity is JOINED from the registry, never minted here. A valid mask whose track has no
+    # registry row is a contract violation (the registry is built from frame_masks, so it must
+    # cover every detected track) — fail loud rather than silently drop a real embryo.
+    physical_embryo_id_by_track = _physical_embryo_id_by_track(physical_embryo_registry)
 
     output_shape = (output_height_px, output_width_px)
     snips_dir = Path(snips_dir)
@@ -111,9 +130,15 @@ def run_snip_processing(
         _, channel_id, time_index = parse_image_id(image_id)
         experiment_id = str(mask_row.get("experiment_id", ""))
 
-        raw_track_index = parse_embryo_local_track_id(track_id)
-        local_embryo_index = track_index_to_embryo_index(raw_track_index)
-        physical_embryo_id = build_physical_embryo_id(well_id, local_embryo_index)
+        physical_embryo_id = physical_embryo_id_by_track.get((well_id, track_id))
+        if physical_embryo_id is None:
+            raise ValueError(
+                f"No physical_embryo_registry entry for (well_id={well_id!r}, "
+                f"track_id={track_id!r}) — every valid frame_masks track must be registered. "
+                f"Rebuild the physical_embryo_registry shard for {well_id!r} from the SAME "
+                f"frame_masks shard before running snip_processing."
+            )
+        # embryo_id / snip_id are crop-product naming and legitimately stay here.
         embryo_id = build_embryo_id(physical_embryo_id, image_id)
         snip_id = build_snip_id(embryo_id, image_id)
 

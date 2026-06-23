@@ -255,6 +255,7 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
     run_snip_processing(
         frame_masks_csv=args.frame_masks_csv,
         frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_csv=args.output_csv,
         snips_dir=args.snips_dir,
         output_root=args.output_root,
@@ -527,6 +528,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp = sub.add_parser("snip-processing")
     p_sp.add_argument("--frame-masks-csv", type=Path, required=True)
     p_sp.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_sp.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_sp.add_argument("--output-csv", type=Path, required=True)
     p_sp.add_argument("--snips-dir", type=Path, required=True)
     p_sp.add_argument("--output-root", type=Path, required=True)

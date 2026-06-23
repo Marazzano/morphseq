@@ -24,6 +24,9 @@ from data_pipeline.segmentation.sam2_video.run_sam2_video import (
     Sam2WellInput,
     run_sam2_video_for_wells,
 )
+from data_pipeline.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
+    build_physical_embryo_registry,
+)
 from data_pipeline.shared.identifiers import build_image_id, build_well_id
 from data_pipeline.snip_processing.entrypoints.run_snip_processing import run_snip_processing
 
@@ -80,7 +83,13 @@ def _make_frame_masks(frame_inventory: pd.DataFrame) -> pd.DataFrame:
     return results[0].frame_masks
 
 
-def test_run_snip_processing_produces_inventory(tmp_path):
+def _write_inputs(tmp_path, *, include_registry=True):
+    """Write frame_inventory, frame_masks, and (optionally) the registry shard to tmp_path.
+
+    Returns (frame_masks, frame_masks_csv, frame_inventory_csv, registry_csv). The registry is
+    built from the SAME frame_masks via the real Stage-2 builder — exactly how the pipeline does
+    it — so the join reproduces the identity the old mint chain produced.
+    """
     tmp_images = tmp_path / "images"
     tmp_images.mkdir()
 
@@ -89,14 +98,24 @@ def test_run_snip_processing_produces_inventory(tmp_path):
 
     frame_masks_csv = tmp_path / "frame_masks.csv"
     frame_inventory_csv = tmp_path / "frame_inventory.csv"
-    output_csv = tmp_path / "snip_inventory.csv"
-    snips_dir = tmp_path / "snips"
+    registry_csv = tmp_path / "physical_embryo_registry.csv"
     frame_masks.to_csv(frame_masks_csv, index=False)
     frame_inventory.to_csv(frame_inventory_csv, index=False)
+    if include_registry:
+        build_physical_embryo_registry(frame_masks).to_csv(registry_csv, index=False)
+
+    return frame_masks, frame_masks_csv, frame_inventory_csv, registry_csv
+
+
+def test_run_snip_processing_produces_inventory(tmp_path):
+    frame_masks, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    output_csv = tmp_path / "snip_inventory.csv"
+    snips_dir = tmp_path / "snips"
 
     run_snip_processing(
         frame_masks_csv=frame_masks_csv,
         frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
         output_csv=output_csv,
         snips_dir=snips_dir,
         output_root=tmp_path,
@@ -132,3 +151,54 @@ def test_run_snip_processing_produces_inventory(tmp_path):
     for _, row in df.iterrows():
         png = tmp_path / str(row["processed_snip_path"])
         assert png.exists(), f"pixel file missing: {png}"
+
+
+def test_run_snip_processing_joins_registry_physical_embryo_id(tmp_path):
+    """The joined physical_embryo_id equals what the registry resolves for each (well, track)."""
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    output_csv = tmp_path / "snip_inventory.csv"
+
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        output_csv=output_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+    )
+
+    snips = pd.read_csv(output_csv)
+    registry = pd.read_csv(registry_csv)
+    expected = {
+        (str(r["well_id"]), str(r["track_id"])): str(r["physical_embryo_id"])
+        for _, r in registry.iterrows()
+    }
+    for _, row in snips.iterrows():
+        key = (str(row["well_id"]), str(row["track_id"]))
+        assert str(row["physical_embryo_id"]) == expected[key], (
+            f"snip physical_embryo_id for {key} did not match the registry"
+        )
+
+
+def test_run_snip_processing_fails_loud_on_missing_registry_match(tmp_path):
+    """A valid mask whose track is absent from the registry raises (contract violation)."""
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+
+    # Drop every registry row -> no track resolves -> the first valid mask must fail loud.
+    pd.read_csv(registry_csv).iloc[0:0].to_csv(registry_csv, index=False)
+
+    with pytest.raises(ValueError, match="No physical_embryo_registry entry"):
+        run_snip_processing(
+            frame_masks_csv=frame_masks_csv,
+            frame_inventory_csv=frame_inventory_csv,
+            physical_embryo_registry_csv=registry_csv,
+            output_csv=tmp_path / "snip_inventory.csv",
+            snips_dir=tmp_path / "snips",
+            output_root=tmp_path,
+            target_pixel_size_um=2.17,
+            output_height_px=64,
+            output_width_px=64,
+        )
