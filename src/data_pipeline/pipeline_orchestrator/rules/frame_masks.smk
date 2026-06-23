@@ -38,15 +38,14 @@ def _frame_masks_artifact(experiment: str, artifact: str, *, path_mode: str, wel
     )
 
 
-def _frame_masks_for_run(wc):
-    return [
-        str(_frame_masks_artifact(
-            wc.experiment, "frame_masks",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
-            well_id=w,
-        ))
-        for w in wells_for_experiment(wc)
-    ]
+def _frame_masks_artifacts_for_run(wc):
+    return run_well_shard_paths(
+        DATA_ROOT,
+        FRAME_MASKS_STEP,
+        "frame_masks",
+        wc.experiment,
+        wells_for_experiment(wc),
+    )
 
 
 rule frame_masks_per_well:
@@ -107,7 +106,7 @@ rule frame_masks_per_well:
 rule merge_frame_masks:
     """Row-stack per-well frame_masks shards into the experiment-level merged table."""
     input:
-        per_well=_frame_masks_for_run,
+        per_well=_frame_masks_artifacts_for_run,
     output:
         merged=str(_frame_masks_artifact(
             "{experiment}", "frame_masks",
@@ -116,8 +115,11 @@ rule merge_frame_masks:
     shell:
         """
         {RUN} -c "
-import pandas as pd
-frames = [pd.read_csv(p) for p in {input.per_well!r}]
-pd.concat(frames, ignore_index=True).to_csv('{output.merged}', index=False)
+from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
+    collect_well_shard_paths, concat_well_shards_to_file,
+)
+from data_pipeline.segmentation.frame_masks_contract import FRAME_MASKS_REQUIRED_COLUMNS
+shards = collect_well_shard_paths('{DATA_ROOT}', 'frame_masks', 'frame_masks', '{wildcards.experiment}')
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=list(FRAME_MASKS_REQUIRED_COLUMNS), sort_columns=['experiment_id', 'well_id', 'time_index'])
 "
         """

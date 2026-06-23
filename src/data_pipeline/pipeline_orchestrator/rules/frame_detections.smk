@@ -30,11 +30,14 @@ def _frame_detections_artifact(experiment: str, *, path_mode: str, well_id: str 
     )
 
 
-def _frame_detections_for_run(wc):
-    return [
-        str(_frame_detections_artifact(wc.experiment, path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id=w))
-        for w in wells_for_experiment(wc)
-    ]
+def _frame_detections_artifacts_for_run(wc):
+    return run_well_shard_paths(
+        DATA_ROOT,
+        FRAME_DETECTIONS_STEP,
+        FRAME_DETECTIONS_ARTIFACT,
+        wc.experiment,
+        wells_for_experiment(wc),
+    )
 
 
 rule frame_detections_per_well:
@@ -77,7 +80,7 @@ rule frame_detections_per_well:
 rule merge_frame_detections:
     """Row-stack per-well frame_detections shards into the experiment-level merged table."""
     input:
-        per_well=_frame_detections_for_run,
+        per_well=_frame_detections_artifacts_for_run,
     output:
         merged=str(_frame_detections_artifact(
             "{experiment}",
@@ -86,8 +89,11 @@ rule merge_frame_detections:
     shell:
         """
         {RUN} -c "
-import pandas as pd, sys
-frames = [pd.read_csv(p) for p in {input.per_well!r}]
-pd.concat(frames, ignore_index=True).to_csv('{output.merged}', index=False)
+from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
+    collect_well_shard_paths, concat_well_shards_to_file,
+)
+from data_pipeline.detection.frame_detections_contract import REQUIRED_FRAME_DETECTIONS_COLUMNS
+shards = collect_well_shard_paths('{DATA_ROOT}', 'frame_detections', 'frame_detections', '{wildcards.experiment}')
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=list(REQUIRED_FRAME_DETECTIONS_COLUMNS), sort_columns=['experiment_id', 'well_id', 'time_index'])
 "
         """
