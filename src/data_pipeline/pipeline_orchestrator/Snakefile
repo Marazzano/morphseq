@@ -106,6 +106,9 @@ SCOPE_TOKEN = _scope_token(MICROSCOPE)
 PLATE_METADATA_CSV = artifact_path(
     DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
 )
+PLATE_METADATA_VALIDATED = validated_path(
+    DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
+)
 SCOPE_METADATA_CSV = artifact_path(
     DATA_ROOT,
     "ingest_scope_metadata",
@@ -165,11 +168,15 @@ include: str(WORKFLOW_DIR / "rules" / "frame_detections.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_masks.smk")
 include: str(WORKFLOW_DIR / "rules" / "physical_embryo_registry.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_processing.smk")
+# Auxiliary masks now run per-snip AFTER snip_processing (snip_auxiliary_masks), replacing the
+# retired full-frame auxiliary_masks step.
+include: str(WORKFLOW_DIR / "rules" / "snip_auxiliary_masks.smk")
 include: str(WORKFLOW_DIR / "rules" / "latent_embeddings.smk")
 include: str(WORKFLOW_DIR / "rules" / "mask_geometry.smk")
 include: str(WORKFLOW_DIR / "rules" / "curvature_metrics.smk")
 include: str(WORKFLOW_DIR / "rules" / "pose_kinematics.smk")
 include: str(WORKFLOW_DIR / "rules" / "stage_predictions.smk")
+include: str(WORKFLOW_DIR / "rules" / "fraction_alive.smk")
 include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
@@ -210,7 +217,7 @@ rule ingest_plate_metadata:
         plate_file = PLATE_METADATA_DIR / "{experiment}_well_metadata.xlsx"
     output:
         normalized_csv = PLATE_METADATA_CSV,
-        validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".plate_metadata.validated"
+        validated = PLATE_METADATA_VALIDATED,
     params:
         experiment_id = "{experiment}"
     shell:
@@ -218,8 +225,8 @@ rule ingest_plate_metadata:
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-plate-metadata \
           --input-file "{input.plate_file}" \
           --experiment "{params.experiment_id}" \
-          --output-csv "{output.normalized_csv}"
-        printf 'ok\n' > "{output.validated}"
+          --output-csv "{output.normalized_csv}" \
+          --output-flag "{output.validated}"
         """
 
 
@@ -308,8 +315,8 @@ rule apply_position_to_well_mapping:
           --experiment "{wildcards.experiment}" \
           --scope-csv "{input.scope_csv}" \
           --mapping-csv "{input.mapping_csv}" \
-          --output-csv "{output.mapped_csv}"
-        printf 'ok\n' > "{output.validated}"
+          --output-csv "{output.mapped_csv}" \
+          --output-flag "{output.validated}"
         """
 
 # ============================================================================
@@ -349,23 +356,29 @@ rule materialize_stitched_images:
         """
 
 
-rule build_frame_contract:
-    input:
-        stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
-        mapped_scope = SCOPE_METADATA_MAPPED_CSV,
-    output:
-        contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-        validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-    params:
-        channel_id = lambda wildcards: str(config.get("segmentation_and_tracking", {}).get("channel_id", "BF")),
-    shell:
-        """
-                {RUN} -m data_pipeline.metadata_ingest.frame_contract.build_frame_contract \
-                    --stitched-index-csv "{input.stitched_index}" \
-                    --scope-metadata-csv "{input.mapped_scope}" \
-                    --output-csv "{output.contract}"
-                echo "ok" > "{output.validated}"
-        """
+# DEPRECATED: build_frame_contract is superseded by the per-well frame_inventory rules in
+# rules/frame_inventory.smk (build_frame_inventory_well + validate_frame_inventory_for_well).
+# This rule produced a whole-experiment frame_contract.csv with a fake echo "ok" validator.
+# The replacement produces per-well {well_id}_frame_inventory.csv shards with real validation
+# and a .validated sentinel. Delete this rule once frame_inventory.smk is the active seam.
+#
+# rule build_frame_contract:
+#     input:
+#         stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
+#         mapped_scope = SCOPE_METADATA_MAPPED_CSV,
+#     output:
+#         contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
+#         validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
+#     params:
+#         channel_id = lambda wildcards: str(config.get("segmentation_and_tracking", {}).get("channel_id", "BF")),
+#     shell:
+#         """
+#                 {RUN} -m data_pipeline.metadata_ingest.frame_contract.build_frame_contract \
+#                     --stitched-index-csv "{input.stitched_index}" \
+#                     --scope-metadata-csv "{input.mapped_scope}" \
+#                     --output-csv "{output.contract}"
+#                 echo "ok" > "{output.validated}"
+#         """
 
 
 checkpoint discover_wells:

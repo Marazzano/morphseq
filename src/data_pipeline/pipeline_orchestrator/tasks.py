@@ -8,6 +8,7 @@ from pathlib import Path
 
 from data_pipeline.metadata_ingest.experiment_identity import resolve_experiment_id
 from data_pipeline.metadata_ingest.plate.plate_processing import process_plate_layout
+from data_pipeline.metadata_ingest.plate.validate_plate_metadata import validate_plate_metadata_csv
 from data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata import extract_keyence_scope_metadata
 from data_pipeline.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import extract_yx1_scope_metadata
 from data_pipeline.metadata_ingest.scope.keyence.map_keyence_positions_to_wells import map_positions_to_wells_keyence
@@ -44,6 +45,7 @@ def cmd_normalize_plate(args: argparse.Namespace) -> None:
         experiment_id=args.experiment,
         output_csv=args.output_csv,
     )
+    validate_plate_metadata_csv(input_csv=args.output_csv, output_flag=args.output_flag)
 
 
 def cmd_extract_scope(args: argparse.Namespace) -> None:
@@ -108,6 +110,8 @@ def cmd_apply_position_to_well_mapping(args: argparse.Namespace) -> None:
         experiment_id=args.experiment,
         selected_wells=_parse_selected_wells(args.selected_wells),
     )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
 
 
 def cmd_materialize_stitched(args: argparse.Namespace) -> None:
@@ -403,8 +407,7 @@ def cmd_fraction_alive(args: argparse.Namespace) -> None:
 
     run_fraction_alive(
         snip_inventory_csv=args.snip_inventory_csv,
-        frame_masks_csv=args.frame_masks_csv,
-        via_mask_dir=args.via_mask_dir,
+        snip_auxiliary_masks_csv=args.snip_auxiliary_masks_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_csv=args.output_csv,
         missing_via_policy=args.missing_via_policy,
@@ -423,6 +426,42 @@ def cmd_validate_fraction_alive(args: argparse.Namespace) -> None:
         physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
         check_sources=True,
     )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_snip_auxiliary_masks(args: argparse.Namespace) -> None:
+    """Run per-snip UNet auxiliary-mask inference for one well. Thin dispatcher."""
+    import yaml
+
+    from data_pipeline.segmentation.backends.unet_snip.entrypoint import (
+        run_snip_auxiliary_masks,
+    )
+
+    config = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
+    unet_snip_config = config.get("unet_snip") or config.get("auxiliary_masks", {}).get("unet_snip", {})
+
+    run_snip_auxiliary_masks(
+        snip_inventory_csv=args.snip_inventory_csv,
+        output_root=args.output_root,
+        output_csv=args.output_csv,
+        unet_snip_config=unet_snip_config,
+    )
+
+
+def cmd_validate_snip_auxiliary_masks(args: argparse.Namespace) -> None:
+    """Validate a per-well snip_auxiliary_masks shard (contract + cross-check) and write .validated."""
+    import pandas as pd
+
+    from data_pipeline.segmentation.backends.unet_snip.snip_auxiliary_masks_contract import (
+        validate_snip_auxiliary_masks,
+        validate_snip_auxiliary_masks_against_snip_inventory,
+    )
+
+    df = pd.read_csv(args.input_csv)
+    df["is_valid_auxiliary_mask"] = df["is_valid_auxiliary_mask"].astype(bool)
+    validate_snip_auxiliary_masks(df)
+    validate_snip_auxiliary_masks_against_snip_inventory(df, pd.read_csv(args.snip_inventory_csv))
     args.output_flag.parent.mkdir(parents=True, exist_ok=True)
     args.output_flag.write_text("ok\n")
 
@@ -643,6 +682,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_norm.add_argument("--input-file", type=Path, required=True)
     p_norm.add_argument("--experiment", required=True)
     p_norm.add_argument("--output-csv", type=Path, required=True)
+    p_norm.add_argument("--output-flag", type=Path, required=True)
     p_norm.set_defaults(func=cmd_normalize_plate)
 
     p_scope = sub.add_parser("ingest-scope-metadata", aliases=["extract-scope"])
@@ -678,6 +718,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--scope-csv", type=Path, required=True)
     p_apply.add_argument("--mapping-csv", type=Path, required=True)
     p_apply.add_argument("--output-csv", type=Path, required=True)
+    p_apply.add_argument("--output-flag", type=Path, required=True)
     p_apply.add_argument("--selected-wells", default="")
     p_apply.set_defaults(func=cmd_apply_position_to_well_mapping)
 
@@ -807,12 +848,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_fa = sub.add_parser("fraction-alive")
     p_fa.add_argument("--snip-inventory-csv", type=Path, required=True)
-    p_fa.add_argument("--frame-masks-csv", type=Path, required=True)
-    p_fa.add_argument("--via-mask-dir", type=Path, required=True)
+    p_fa.add_argument("--snip-auxiliary-masks-csv", type=Path, required=True)
     p_fa.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_fa.add_argument("--output-csv", type=Path, required=True)
     p_fa.add_argument("--missing-via-policy", default="fail", choices=["fail", "null"])
     p_fa.set_defaults(func=cmd_fraction_alive)
+
+    p_sam = sub.add_parser("snip-auxiliary-masks")
+    p_sam.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_sam.add_argument("--output-root", type=Path, required=True)
+    p_sam.add_argument("--output-csv", type=Path, required=True)
+    p_sam.add_argument("--config-yaml", type=Path, required=True)
+    p_sam.set_defaults(func=cmd_snip_auxiliary_masks)
+
+    p_sam_validate = sub.add_parser("validate-snip-auxiliary-masks")
+    p_sam_validate.add_argument("--input-csv", type=Path, required=True)
+    p_sam_validate.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_sam_validate.add_argument("--output-flag", type=Path, required=True)
+    p_sam_validate.set_defaults(func=cmd_validate_snip_auxiliary_masks)
 
     p_cf = sub.add_parser("consolidated-features")
     p_cf.add_argument("--output-root", type=Path, required=True)
