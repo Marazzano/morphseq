@@ -6,6 +6,57 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: legacy embeddings — wire `latent_embeddings` into orchestration)
+
+**What shipped (the producer side — encode → validate → merge fully wired):** the pure encode code was
+already built + tested; this pass runs it in the pipeline.
+- `feature_extraction/legacy_embeddings/entrypoint.py` (NEW) — the Python-3.9 batch body. Glue only:
+  resolve_legacy_model_dir → load_legacy_vae_encoder (loaded ONCE per invocation) → collect_snip_inputs →
+  encode_snips → stamp `embedding_model_name` → validate_latent_embeddings → write parquet. Takes paired
+  `--snip-inventory-csv`/`--output-parquet` lists (the rule passes one pair per well).
+- `feature_extraction/legacy_embeddings/contract.py` — resolved its own TODO: `embedding_model_name` is now
+  a REQUIRED, non-null column (latents without model provenance are unlabeled vials); validator enforces it.
+- `orchestration/paths.py` — NEW `latent_embeddings` `PIPELINE_STEPS` row (FIRST `stage="features"` step;
+  product_dir=`latent_embeddings`, fanout=PER_WELL_THEN_MERGE, execution=RUN_BATCH; latents parquet artifacts).
+  Resolves to `features/<exp>/latent_embeddings/per_well/<well>/<well>_latents.parquet` (+ merged + sentinels).
+- `pipeline_orchestrator/tasks.py` — `validate-latent-embeddings` + `merge-latent-embeddings` verbs (run under
+  the normal 3.10 RUN env — they only read/validate parquet).
+- `Snakefile` — NEW `MODEL_RUN` prefix: prefers `env.yaml.runtime.model_python_executable` (direct 3.9 path),
+  falls back to `conda run -n {model_python_env}`; `None` if neither set. `include`s `latent_embeddings.smk`.
+- `rules/latent_embeddings.smk` (NEW) — `encode_latent_embeddings_for_well` (runs under MODEL_RUN/3.9) +
+  per-well validate + merge + merged validate. Encode depends on the VALIDATED snip_inventory shard.
+
+**Verified:**
+- `pytest tests/data_pipeline/feature_extraction/legacy_embeddings/` — 59 passed (incl. NEW
+  `test_entrypoint.py`: mocked encoder, 2 wells, asserts model loads ONCE, one validated provenance-stamped
+  parquet per well, row order preserved, count-mismatch fails loud).
+- `snakemake -n` merged-latents target plans 95 encode + 95 validate + 1 merge, no errors; all 4 rules
+  register; both task verbs registered.
+
+**Deliberately deferred (NOT done — these are real, separate efforts):**
+1. **Real-weights end-to-end smoke.** The legacy VAE weights are still NOT staged on disk
+   (`models_root/legacy/20241107_ds_sweep01_optimum`). Everything is verified with a mocked encoder; the
+   real-load gate (`load_model_smoke.py` exit 0; a real encode) waits for weights to be staged.
+2. **`analysis_ready` join.** Spec "Done When" wants `analysis_ready` to gain `latents.parquet`, join on
+   `snip_id`, set `embedding_calculated=True`. BUT the existing `analysis_ready/` module is an OLDER
+   standalone surface (uses `z0/z1` columns + `time_int`/`well_index` vocabulary) and is NOT wired into the
+   pipeline at all (no PIPELINE_STEPS row, no .smk). Wiring it — and reconciling `z_mu_*` vs `z0` and the
+   stale vocabulary — is its own stage-by-stage effort, not part of "wire the embeddings producer."
+
+**RUN_BATCH note:** the registry row says execution=RUN_BATCH (load once across wells), but the rule is
+declared per-well (one `{well_id}` job) — identical to frame_masks (also RUN_BATCH). A true
+single-process-all-wells batch needs Snakemake's `--batch` mechanism, which no rule here uses yet; the
+`execution` field documents intent, the optimization is deferred. Model currently loads per well.
+
+**Next concrete action:** stage the legacy VAE weights, run `load_model_smoke.py` (must exit 0), then run
+`encode_latent_embeddings_for_well` on one real well and confirm a non-trivial `<well>_latents.parquet`.
+Then (separate effort) wire `analysis_ready` as a real pipeline step and add the latents join.
+
+**Open decisions:** the analysis_ready column/vocabulary reconciliation (`z_mu_*` vs `z0`) — defer to the
+analysis_ready wiring effort.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: frame_masks validate rule — fix cross-agent merge break + finish TODO)
 
 **Why:** A parallel agent's frame_masks conformance commit (`a4f284d9`) switched `merge_frame_masks` to

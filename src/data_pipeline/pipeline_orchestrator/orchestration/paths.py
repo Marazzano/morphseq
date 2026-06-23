@@ -296,6 +296,26 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── FEATURES — latent embeddings ─────────────────────────────────────────
+    # `latent_embeddings` is the per-snip morphological embedding table (one row per snip_id,
+    # z_mu_* / z_sigma_* columns). The PRODUCT name names the artifact, not the backend:
+    # `latent_embeddings`, not `legacy_vae` (method provenance is config/code, not paths).
+    # execution=RUN_BATCH: the legacy VAE loads once (in the Python-3.9 model env) and writes
+    # ALL run-well shards before exiting — model load dominates per-well encode cost. The encode
+    # body runs under the model interpreter (MODEL_RUN), not the normal RUN env.
+    "latent_embeddings": {
+        "stage": "features",
+        "product_dir": "latent_embeddings",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_RUN_BATCH,
+        "artifacts": {
+            "latents": {
+                PATH_MODE_PER_WELL: "{well_id}_latents.parquet",
+                PATH_MODE_MERGED: "{experiment_id}_latents.parquet",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────

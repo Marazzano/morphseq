@@ -431,6 +431,37 @@ def cmd_merge_physical_embryo_registry(args: argparse.Namespace) -> None:
     merged.to_csv(args.output_csv, index=False)
 
 
+def cmd_validate_latent_embeddings(args: argparse.Namespace) -> None:
+    """Validate a latents parquet (per-well or merged) and write its .validated sentinel."""
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.legacy_embeddings.contract import (
+        validate_latent_embeddings,
+    )
+
+    validate_latent_embeddings(pd.read_parquet(args.input_parquet), source=str(args.input_parquet))
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_merge_latent_embeddings(args: argparse.Namespace) -> None:
+    """Concat per-well latents shards into the experiment-level parquet, then validate the result.
+
+    pd.concat unions columns, so a shard with a different latent_dim would surface as NaN; the
+    latents validator (z_mu_* non-null) catches that — fail loud rather than emit a ragged table.
+    """
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.legacy_embeddings.contract import (
+        validate_latent_embeddings,
+    )
+
+    merged = pd.concat([pd.read_parquet(p) for p in args.inputs], ignore_index=True)
+    validate_latent_embeddings(merged, source=str(args.output_parquet))
+    args.output_parquet.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_parquet(args.output_parquet, index=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -590,6 +621,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_per_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
     p_per_merge.add_argument("--output-csv", type=Path, required=True)
     p_per_merge.set_defaults(func=cmd_merge_physical_embryo_registry)
+
+    p_le_validate = sub.add_parser("validate-latent-embeddings")
+    p_le_validate.add_argument("--input-parquet", type=Path, required=True)
+    p_le_validate.add_argument("--output-flag", type=Path, required=True)
+    p_le_validate.set_defaults(func=cmd_validate_latent_embeddings)
+
+    p_le_merge = sub.add_parser("merge-latent-embeddings")
+    p_le_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
+    p_le_merge.add_argument("--output-parquet", type=Path, required=True)
+    p_le_merge.set_defaults(func=cmd_merge_latent_embeddings)
 
     return parser
 

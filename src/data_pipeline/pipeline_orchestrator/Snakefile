@@ -57,6 +57,22 @@ RUN = (
     f'env PYTHONPATH="{SRC_ROOT}" python'
 )
 
+# MODEL_RUN — the Python-3.9 interpreter for model steps whose pickles do not survive 3.10
+# (the legacy VAE encode; see model_input_handoff_contract.md §9). Only FILES cross this line.
+# Prefer a DIRECT executable path (no conda-run shell layer); fall back to `conda run -n <env>`.
+# Either way PYTHONPATH carries src/ so the entrypoint module imports resolve.
+_MODEL_PY_EXE = str(env["runtime"].get("model_python_executable", "") or "")
+_MODEL_PY_ENV = str(env["runtime"].get("model_python_env", "") or "")
+if _MODEL_PY_EXE:
+    MODEL_RUN = f'env PYTHONPATH="{SRC_ROOT}" "{_MODEL_PY_EXE}"'
+elif _MODEL_PY_ENV:
+    MODEL_RUN = (
+        f"{CONDA_BIN} run -n {_MODEL_PY_ENV} --no-capture-output "
+        f'env PYTHONPATH="{SRC_ROOT}" python'
+    )
+else:
+    MODEL_RUN = None  # no model interpreter configured; model rules fail loud when invoked
+
 # Roots are first-class ABSOLUTE paths from env.yaml — data location is no longer welded to code
 # location. The LAYOUT beneath each root stays in code (the pipeline path contract).
 DATA_ROOT = Path(env["paths"]["output_root"])
@@ -149,6 +165,7 @@ include: str(WORKFLOW_DIR / "rules" / "frame_detections.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_masks.smk")
 include: str(WORKFLOW_DIR / "rules" / "physical_embryo_registry.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_processing.smk")
+include: str(WORKFLOW_DIR / "rules" / "latent_embeddings.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):

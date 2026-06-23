@@ -5,13 +5,14 @@ import pandas as pd
 import pytest
 
 from data_pipeline.feature_extraction.legacy_embeddings.contract import (
+    EMBEDDING_MODEL_NAME_COL,
     validate_latent_embeddings,
 )
 
 
 def _make_df(n: int = 3, latent_dim: int = 4, include_sigma: bool = False) -> pd.DataFrame:
     snip_ids = [f"snip_{i:03d}" for i in range(n)]
-    data = {"snip_id": snip_ids}
+    data = {"snip_id": snip_ids, EMBEDDING_MODEL_NAME_COL: ["test_model"] * n}
     for j in range(latent_dim):
         data[f"z_mu_{j:02d}"] = np.random.randn(n).astype(np.float32)
     if include_sigma:
@@ -53,9 +54,22 @@ class TestSnipIdViolations:
             validate_latent_embeddings(df)
 
 
+class TestProvenanceViolations:
+    def test_missing_model_name_raises(self):
+        df = _make_df().drop(columns=[EMBEDDING_MODEL_NAME_COL])
+        with pytest.raises(ValueError, match=EMBEDDING_MODEL_NAME_COL):
+            validate_latent_embeddings(df)
+
+    def test_empty_model_name_raises(self):
+        df = _make_df()
+        df.loc[0, EMBEDDING_MODEL_NAME_COL] = ""
+        with pytest.raises(ValueError, match=EMBEDDING_MODEL_NAME_COL):
+            validate_latent_embeddings(df)
+
+
 class TestZMuViolations:
     def test_no_z_mu_columns_raises(self):
-        df = pd.DataFrame({"snip_id": ["a", "b"]})
+        df = pd.DataFrame({"snip_id": ["a", "b"], EMBEDDING_MODEL_NAME_COL: ["m", "m"]})
         with pytest.raises(ValueError, match="z_mu_"):
             validate_latent_embeddings(df)
 

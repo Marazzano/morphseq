@@ -7,18 +7,19 @@ The latents parquet produced by the encode step carries:
   Values are taken directly from ``log_covariance`` / ``log_var`` and are **not** transformed
   to standard deviation — the column name preserves legacy naming convention.
 
-No biological metadata is expected here; identity is carried entirely by ``snip_id``.
+- ``embedding_model_name``: provenance — which trained model produced these vectors. Required,
+  non-null. Latents without a model name are unlabeled vials; the encode entrypoint stamps it from
+  the resolved ``model_name`` before validating.
 
-# TODO (entrypoint pass): add ``embedding_model_name`` as a required column and enforce it
-# in validate_latent_embeddings(). Latents without model provenance are unlabeled vials.
-# Provenance enforcement is deferred to the wiring pass where the model name is available.
+No biological metadata is expected here; identity is carried entirely by ``snip_id``.
 """
 
 from __future__ import annotations
 
 import pandas as pd
 
-REQUIRED_COLUMNS: list[str] = ["snip_id"]
+EMBEDDING_MODEL_NAME_COL = "embedding_model_name"
+REQUIRED_COLUMNS: list[str] = ["snip_id", EMBEDDING_MODEL_NAME_COL]
 
 
 def validate_latent_embeddings(df: pd.DataFrame, *, source: str = "") -> None:
@@ -46,6 +47,21 @@ def validate_latent_embeddings(df: pd.DataFrame, *, source: str = "") -> None:
         raise ValueError(
             f"Latents table{loc} has duplicate snip_id values: {dups[:5]}"
             + (" ..." if len(dups) > 5 else "")
+        )
+
+    # ── embedding_model_name (provenance) ─────────────────────────────────────
+    if EMBEDDING_MODEL_NAME_COL not in df.columns:
+        raise ValueError(
+            f"Latents table{loc} is missing required column '{EMBEDDING_MODEL_NAME_COL}'. "
+            f"The encode entrypoint stamps it from the resolved model_name. "
+            f"Got columns: {sorted(df.columns.tolist())}."
+        )
+    if df[EMBEDDING_MODEL_NAME_COL].isna().any() or (
+        df[EMBEDDING_MODEL_NAME_COL].astype(str).str.len() == 0
+    ).any():
+        raise ValueError(
+            f"Latents table{loc} has null/empty '{EMBEDDING_MODEL_NAME_COL}' — every latent row "
+            f"must name the model that produced it."
         )
 
     # ── z_mu_* columns ────────────────────────────────────────────────────────
