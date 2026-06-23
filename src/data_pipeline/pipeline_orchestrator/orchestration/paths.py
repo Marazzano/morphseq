@@ -280,6 +280,24 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── OBJECT EXTRACTION — auxiliary masks ──────────────────────────────────
+    # UNet-derived auxiliary masks live under object_extraction/auxiliary_masks/. The current
+    # product layout keeps the manifest under contracts/ and the PNG families (via/yolk/focus/
+    # bubble) beside it at the product root. The .validated sentinel is still a legacy dotfile
+    # sidecar under contracts/ and is not yet modeled as a derived registry sidecar.
+    "auxiliary_masks": {
+        "stage": "object_extraction",
+        "product_dir": "auxiliary_masks",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "manifest": {
+                PATH_MODE_PER_WELL: "contracts/auxiliary_masks.csv",
+                PATH_MODE_MERGED: "contracts/auxiliary_masks.csv",
+            },
+        },
+    },
+
     # ── OBJECT EXTRACTION — snip inventory ───────────────────────────────────
     # `snip_inventory` is the per-embryo crop table. Fans out per well (one snip_processing job
     # per well), merges to an experiment-level table. Pixel files live beside the per-well shard
@@ -332,6 +350,82 @@ PIPELINE_STEPS: dict[str, dict] = {
             "mask_geometry": {
                 PATH_MODE_PER_WELL: "{well_id}_mask_geometry.csv",
                 PATH_MODE_MERGED: "{experiment_id}_mask_geometry.csv",
+            },
+        },
+    },
+
+    # ── FEATURES — curvature metrics ─────────────────────────────────────────
+    # Centerline length + curvature summaries per snip, from the same canonical frame_masks RLE.
+    "curvature_metrics": {
+        "stage": "features",
+        "product_dir": "curvature_metrics",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "curvature_metrics": {
+                PATH_MODE_PER_WELL: "{well_id}_curvature_metrics.csv",
+                PATH_MODE_MERGED: "{experiment_id}_curvature_metrics.csv",
+            },
+        },
+    },
+
+    # ── FEATURES — pose & kinematics ─────────────────────────────────────────
+    # Orientation/bbox per mask + displacement/speed within each track (frame timing from
+    # frame_inventory). One row per snip; first frame per track has null kinematics.
+    "pose_kinematics": {
+        "stage": "features",
+        "product_dir": "pose_kinematics",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "pose_kinematics": {
+                PATH_MODE_PER_WELL: "{well_id}_pose_kinematics.csv",
+                PATH_MODE_MERGED: "{experiment_id}_pose_kinematics.csv",
+            },
+        },
+    },
+
+    # ── FEATURES — stage predictions ─────────────────────────────────────────
+    # Kimmel1995 developmental stage (hpf) per snip from plate_metadata + frame timing. No masks.
+    "stage_predictions": {
+        "stage": "features",
+        "product_dir": "stage_predictions",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "stage_predictions": {
+                PATH_MODE_PER_WELL: "{well_id}_stage_predictions.csv",
+                PATH_MODE_MERGED: "{experiment_id}_stage_predictions.csv",
+            },
+        },
+    },
+
+    # ── FEATURES — fraction alive ────────────────────────────────────────────
+    # Continuous viability fraction per snip from the embryo mask (RLE) vs a per-snip VIA mask.
+    "fraction_alive": {
+        "stage": "features",
+        "product_dir": "fraction_alive",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "fraction_alive": {
+                PATH_MODE_PER_WELL: "{well_id}_fraction_alive.csv",
+                PATH_MODE_MERGED: "{experiment_id}_fraction_alive.csv",
+            },
+        },
+    },
+
+    # ── FEATURES — consolidated features ─────────────────────────────────────
+    # The chosen per-snip feature table: merges the feature products one-to-one on snip_id.
+    "consolidated_features": {
+        "stage": "features",
+        "product_dir": "consolidated_features",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "consolidated_features": {
+                PATH_MODE_PER_WELL: "{well_id}_consolidated_features.csv",
+                PATH_MODE_MERGED: "{experiment_id}_consolidated_features.csv",
             },
         },
     },

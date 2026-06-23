@@ -117,6 +117,11 @@ feature_extraction:
   # mask_geometry has no run-level knobs yet: pixel size comes from frame_inventory, and the
   # product emits one row per snip regardless of validity (QC excludes, not feature extraction).
   mask_geometry: {}
+  curvature_metrics: {}
+  pose_kinematics: {}
+  # fraction_alive is implemented but not wired into the proof run (VIA/embryo mask resolution
+  # mismatch); add its config block when it is enabled.
+  consolidated_features: {}
 
   # Legacy VAE encoder — produces latent embeddings (latent_embeddings step).
   # model_name:           which trained model to load (science choice; names the weights dir)

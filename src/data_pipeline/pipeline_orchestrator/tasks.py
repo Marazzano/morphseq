@@ -314,6 +314,149 @@ def cmd_validate_mask_geometry(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_curvature_metrics(args: argparse.Namespace) -> None:
+    from data_pipeline.feature_extraction.curvature_metrics.entrypoint import run_curvature_metrics
+
+    run_curvature_metrics(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_curvature_metrics(args: argparse.Namespace) -> None:
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.curvature_metrics.contract import (
+        validate_curvature_features,
+    )
+
+    validate_curvature_features(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_pose_kinematics(args: argparse.Namespace) -> None:
+    from data_pipeline.feature_extraction.pose_kinematics.entrypoint import run_pose_kinematics
+
+    run_pose_kinematics(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_pose_kinematics(args: argparse.Namespace) -> None:
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.pose_kinematics.contract import (
+        validate_pose_kinematics_features,
+    )
+
+    validate_pose_kinematics_features(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_stage_predictions(args: argparse.Namespace) -> None:
+    from data_pipeline.feature_extraction.stage_predictions.entrypoint import run_stage_predictions
+
+    run_stage_predictions(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        plate_metadata_csv=args.plate_metadata_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_stage_predictions(args: argparse.Namespace) -> None:
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.stage_predictions.contract import (
+        validate_stage_prediction_features,
+    )
+
+    validate_stage_prediction_features(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_fraction_alive(args: argparse.Namespace) -> None:
+    from data_pipeline.feature_extraction.fraction_alive.entrypoint import run_fraction_alive
+
+    run_fraction_alive(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        via_mask_dir=args.via_mask_dir,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+        missing_via_policy=args.missing_via_policy,
+    )
+
+
+def cmd_validate_fraction_alive(args: argparse.Namespace) -> None:
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.fraction_alive.contract import (
+        validate_fraction_alive_features,
+    )
+
+    validate_fraction_alive_features(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_consolidated_features(args: argparse.Namespace) -> None:
+    from data_pipeline.feature_extraction.consolidated_features.entrypoint import (
+        run_consolidated_features,
+    )
+
+    run_consolidated_features(
+        output_root=args.output_root,
+        experiment_id=args.experiment,
+        well_id=args.well_id,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_consolidated_features(args: argparse.Namespace) -> None:
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.consolidated_features.contract import (
+        validate_consolidated_features,
+    )
+
+    validate_consolidated_features(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_frame_masks(args: argparse.Namespace) -> None:
     import json
     import tempfile
@@ -630,6 +773,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_mg_validate.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_mg_validate.add_argument("--output-flag", type=Path, required=True)
     p_mg_validate.set_defaults(func=cmd_validate_mask_geometry)
+
+    # ── feature products that share the mask-derived shape (snip_inventory + frame_masks + ...) ──
+    for verb, fn in (("curvature-metrics", cmd_curvature_metrics), ("pose-kinematics", cmd_pose_kinematics)):
+        p = sub.add_parser(verb)
+        p.add_argument("--snip-inventory-csv", type=Path, required=True)
+        p.add_argument("--frame-masks-csv", type=Path, required=True)
+        p.add_argument("--frame-inventory-csv", type=Path, required=True)
+        p.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+        p.add_argument("--output-csv", type=Path, required=True)
+        p.set_defaults(func=fn)
+
+    for verb, fn in (
+        ("validate-curvature-metrics", cmd_validate_curvature_metrics),
+        ("validate-pose-kinematics", cmd_validate_pose_kinematics),
+        ("validate-stage-predictions", cmd_validate_stage_predictions),
+        ("validate-fraction-alive", cmd_validate_fraction_alive),
+        ("validate-consolidated-features", cmd_validate_consolidated_features),
+    ):
+        p = sub.add_parser(verb)
+        p.add_argument("--input-csv", type=Path, required=True)
+        p.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+        p.add_argument("--output-flag", type=Path, required=True)
+        p.set_defaults(func=fn)
+
+    p_stage = sub.add_parser("stage-predictions")
+    p_stage.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_stage.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_stage.add_argument("--plate-metadata-csv", type=Path, required=True)
+    p_stage.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_stage.add_argument("--output-csv", type=Path, required=True)
+    p_stage.set_defaults(func=cmd_stage_predictions)
+
+    p_fa = sub.add_parser("fraction-alive")
+    p_fa.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_fa.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_fa.add_argument("--via-mask-dir", type=Path, required=True)
+    p_fa.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_fa.add_argument("--output-csv", type=Path, required=True)
+    p_fa.add_argument("--missing-via-policy", default="fail", choices=["fail", "null"])
+    p_fa.set_defaults(func=cmd_fraction_alive)
+
+    p_cf = sub.add_parser("consolidated-features")
+    p_cf.add_argument("--output-root", type=Path, required=True)
+    p_cf.add_argument("--experiment", required=True)
+    p_cf.add_argument("--well-id", required=True)
+    p_cf.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_cf.add_argument("--output-csv", type=Path, required=True)
+    p_cf.set_defaults(func=cmd_consolidated_features)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)

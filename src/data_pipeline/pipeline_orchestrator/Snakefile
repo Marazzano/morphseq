@@ -167,6 +167,10 @@ include: str(WORKFLOW_DIR / "rules" / "physical_embryo_registry.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_processing.smk")
 include: str(WORKFLOW_DIR / "rules" / "latent_embeddings.smk")
 include: str(WORKFLOW_DIR / "rules" / "mask_geometry.smk")
+include: str(WORKFLOW_DIR / "rules" / "curvature_metrics.smk")
+include: str(WORKFLOW_DIR / "rules" / "pose_kinematics.smk")
+include: str(WORKFLOW_DIR / "rules" / "stage_predictions.smk")
+include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
