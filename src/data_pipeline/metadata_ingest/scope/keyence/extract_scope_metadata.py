@@ -14,7 +14,13 @@ import re
 
 from data_pipeline.schemas.scope_metadata import REQUIRED_COLUMNS_SCOPE_METADATA
 from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
-from data_pipeline.metadata_ingest.scope.keyence.mappings import KEYENCE_CHANNEL_MAP
+from data_pipeline.metadata_ingest.scope.keyence.mappings import KEYENCE_CHANNEL_INDEX_MAP
+from data_pipeline.metadata_ingest.scope.keyence.acquisition_inventory import (
+    build_keyence_acquisition_inventory,
+)
+from data_pipeline.metadata_ingest.scope.keyence.raw_plane_parsing import (
+    _parse_keyence_time_z_channel,
+)
 from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
 from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.shared.identifiers import build_image_id
@@ -108,11 +114,55 @@ def _scrape_keyence_metadata(tiff_path: Path) -> Dict[str, Any]:
     return meta_dict
 
 
-def _to_channel_id(raw_channel: str) -> str:
-    """Map a raw Keyence channel string to its canonical channel_id (exact-match; fail loud if unknown)."""
+def _scrape_keyence_plane_metadata(tiff_path: Path) -> Dict[str, Any]:
+    """Adapt ``_scrape_keyence_metadata`` to the acquisition-inventory scraper contract.
+
+    The acquisition inventory wants canonical field names + a derived ``micrometers_per_pixel``; the
+    raw scraper returns Keyence-labelled keys (``'Width (um)'``, ``'Time (s)'``, ...). This adapter is
+    the seam ``build_keyence_acquisition_inventory`` calls per plane (and that tests stub). The channel
+    NAME is included only when the proprietary XML actually carried one — the inventory anchors channel
+    identity on the filename ``CH#`` index, not this name.
+    """
+    meta = _scrape_keyence_metadata(tiff_path)
+    width_px = meta.get("Width (px)", 1)
+    width_um = meta.get("Width (um)", 0)
+    micrometers_per_pixel = (width_um / width_px) if width_px else 0.0
+    raw_channel_name = meta.get("Channel")
+    return {
+        "micrometers_per_pixel": micrometers_per_pixel,
+        "image_width_px": meta.get("Width (px)", 0),
+        "image_height_px": meta.get("Height (px)", 0),
+        "objective_magnification": meta.get("Objective", "unknown"),
+        "acquisition_time_s": meta.get("Time (s)", 0.0),
+        "raw_channel_name": raw_channel_name,
+    }
+
+
+def _channel_index_from_path(tiff_path: Path) -> int:
+    """Return the reliable on-disk ``CH#`` channel index for a Keyence plane filename.
+
+    Keyence channel NAME metadata is proprietary/unreliable, so the filename ``CH#`` index is the
+    single trustworthy channel signal. Fail loud if a ``*CH*.tif`` lacks a parseable ``CH#`` token.
+    """
+    parsed = _parse_keyence_time_z_channel(tiff_path)
+    if parsed is None:
+        raise ValueError(
+            f"Keyence: cannot parse a 'CH#' channel index from {tiff_path.name!r}. "
+            "Expected a filename like '...XY##_NNNNN_Z###_CH#.tif'."
+        )
+    _time_index, _z_index, channel_index = parsed
+    return channel_index
+
+
+def _to_channel_id(channel_index: int) -> str:
+    """Map a Keyence ``CH#`` channel index to its canonical channel_id (exact-match; fail loud).
+
+    Anchored on the reliable filename index (not the proprietary scraped name) via the single
+    ``KEYENCE_CHANNEL_INDEX_MAP``. An unmapped index raises — add the real channel, never default.
+    """
     return apply_canonical_mapping(
-        raw_channel,
-        KEYENCE_CHANNEL_MAP,
+        channel_index,
+        KEYENCE_CHANNEL_INDEX_MAP,
         vocabulary=VALID_CHANNEL_NAMES,
         field="channel_id",
         scope_name="Keyence",
@@ -222,7 +272,8 @@ def _extract_position_label_within_well(file_path: Path) -> str:
 def extract_keyence_scope_metadata(
     raw_data_dir: Path,
     experiment_id: str,
-    output_csv: Path
+    output_csv: Path,
+    acquisition_inventory_csv: Path | None = None,
 ) -> pd.DataFrame:
     """
     Extract Keyence scope metadata from raw TIFF files.
@@ -234,6 +285,11 @@ def extract_keyence_scope_metadata(
         raw_data_dir: Root directory containing raw Keyence data
         experiment_id: Experiment identifier
         output_csv: Path to write validated scope_series_metadata_raw.csv
+        acquisition_inventory_csv: Optional output path for the maximal per-coordinate
+            ``acquisition_inventory__keyence.csv`` (one row per raw plane —
+            (well, tile, z_index, channel_index, time_index)). Built from a RAW-PLANE scan, NOT from
+            the collapsed FF rows this function emits — the inventory is the never-collapsed system of
+            record. Nothing downstream consumes it yet (Stage A).
 
     Returns:
         Validated DataFrame with scope metadata
@@ -266,9 +322,10 @@ def extract_keyence_scope_metadata(
             position_key = (well_index, _extract_position_label_within_well(tiff_path))
             position_index = position_index_by_key[position_key]
 
-            # Map the raw scope channel label to the canonical channel_id.
-            raw_channel = meta.get('Channel', 'unknown')
-            normalized_channel = _to_channel_id(raw_channel)
+            # Resolve channel_id from the reliable filename CH# index (proprietary names unreliable).
+            channel_index = _channel_index_from_path(tiff_path)
+            normalized_channel = _to_channel_id(channel_index)
+            raw_channel = meta.get('Channel') or f"CH{channel_index}"
 
             # Compute micrometers per pixel
             width_um = meta.get('Width (um)', 0)
@@ -360,6 +417,24 @@ def extract_keyence_scope_metadata(
     df.to_csv(output_csv, index=False)
     log.info(f"Wrote Keyence scope metadata to {output_csv}")
 
+    # Emit the maximal acquisition inventory from a RAW-PLANE scan (record-only; Stage A).
+    # One row per raw TIFF plane (well, tile, z, channel, time) — never collapsed. This deliberately
+    # re-scans the raw tree (not the FF-collapsed `df` above) because the inventory must keep per-Z
+    # grain that the FF rows discard.
+    if acquisition_inventory_csv is not None:
+        inventory_df = build_keyence_acquisition_inventory(
+            experiment_id=experiment_id,
+            raw_data_dir=raw_data_dir / experiment_id,
+            scrape_plane_metadata=_scrape_keyence_plane_metadata,
+        )
+        acquisition_inventory_csv = Path(acquisition_inventory_csv)
+        acquisition_inventory_csv.parent.mkdir(parents=True, exist_ok=True)
+        inventory_df.to_csv(acquisition_inventory_csv, index=False)
+        log.info(
+            f"Wrote Keyence acquisition inventory ({len(inventory_df)} rows) to "
+            f"{acquisition_inventory_csv}"
+        )
+
     return df
 
 
@@ -369,6 +444,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--raw-keyence-experiment-dir", type=Path, required=True)
     p.add_argument("--experiment-id", required=True)
     p.add_argument("--output-csv", type=Path, required=True)
+    p.add_argument(
+        "--acquisition-inventory-csv",
+        type=Path,
+        default=None,
+        help="Optional output path for acquisition_inventory__keyence.csv (record-only).",
+    )
     return p.parse_args()
 
 
@@ -378,6 +459,7 @@ def main() -> None:
         raw_data_dir=args.raw_keyence_experiment_dir,
         experiment_id=args.experiment_id,
         output_csv=args.output_csv,
+        acquisition_inventory_csv=args.acquisition_inventory_csv,
     )
 
 

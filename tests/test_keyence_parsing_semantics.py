@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.data_pipeline.metadata_ingest.scope.keyence_scope_metadata import _extract_time_int_from_path
-from src.data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import (
-    _keyence_canvas_shape,
-    _infer_keyence_stack_lookup,
-)
+from data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata import _extract_time_int_from_path
+from data_pipeline.metadata_ingest.scope.keyence.raw_plane_parsing import _infer_keyence_stack_lookup
+from data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import _keyence_canvas_shape
 
 
 def _touch(path: Path) -> None:

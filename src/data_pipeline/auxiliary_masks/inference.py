@@ -142,6 +142,7 @@ def run_auxiliary_mask_inference(
     model_root: Path,
     output_root: Path,
     output_manifest_csv: Path,
+    output_sentinel: Path,
     well_id: str | None = None,
     batch_size: int = 64,
     num_workers: int = 1,
@@ -210,5 +211,6 @@ def run_auxiliary_mask_inference(
     validate_dataframe_schema(manifest_df, REQUIRED_COLUMNS_AUXILIARY_MASKS, "auxiliary_masks.csv")
     output_manifest_csv.parent.mkdir(parents=True, exist_ok=True)
     manifest_df.to_csv(output_manifest_csv, index=False)
-    (output_root / "contracts" / ".auxiliary_masks.validated").write_text("ok\n")
+    output_sentinel.parent.mkdir(parents=True, exist_ok=True)
+    output_sentinel.write_text("ok\n")
     return manifest_df

@@ -1,21 +1,14 @@
+"""Legacy re-export shim for plate metadata schema constants.
+
+New code should import from:
+    data_pipeline.metadata_ingest.plate.plate_metadata_contract
+
+This module is kept so existing ``from data_pipeline.schemas.plate_metadata import
+REQUIRED_COLUMNS_PLATE_METADATA`` call sites continue to work unchanged.
 """
-Schema definition for plate metadata.
 
-This module defines required columns for the plate layout metadata table,
-which contains biological and experimental annotations for each well.
-"""
+from data_pipeline.metadata_ingest.plate.plate_metadata_contract import (
+    REQUIRED_PLATE_METADATA_COLUMNS as REQUIRED_COLUMNS_PLATE_METADATA,
+)
 
-REQUIRED_COLUMNS_PLATE_METADATA = [
-    # Core identifiers
-    'experiment_id',
-    'well_id',
-    'well_index',
-
-    # Biological metadata
-    'genotype',
-    'start_age_hpf',
-
-    # Experimental conditions
-    'temperature',          # Critical for developmental timing normalization
-    'medium',
-]
+__all__ = ["REQUIRED_COLUMNS_PLATE_METADATA"]

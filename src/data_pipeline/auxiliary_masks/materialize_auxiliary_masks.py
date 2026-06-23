@@ -1,11 +1,4 @@
-"""
-Auxiliary mask materialization harness.
-
-This stage owns the auxiliary-mask output contract for now. Long term, the
-implementation should move into the main `data_pipeline/segmentation` layer so
-the pipeline stays fully self-contained, while this wrapper keeps the run
-interface thin and explicit.
-"""
+"""Auxiliary mask materialization harness (per-well entrypoint)."""
 
 from __future__ import annotations
 
@@ -19,6 +12,7 @@ def main() -> None:
     ap.add_argument("--frame-contract", type=Path, required=True)
     ap.add_argument("--output-root", type=Path, required=True)
     ap.add_argument("--output-manifest-csv", type=Path, required=True)
+    ap.add_argument("--output-sentinel", type=Path, required=True)
     ap.add_argument("--model-root", type=Path, required=True)
     ap.add_argument("--well-id", type=str, default=None)
     ap.add_argument("--batch-size", type=int, default=64)
@@ -32,6 +26,7 @@ def main() -> None:
         model_root=args.model_root,
         output_root=args.output_root,
         output_manifest_csv=args.output_manifest_csv,
+        output_sentinel=args.output_sentinel,
         well_id=args.well_id,
         batch_size=args.batch_size,
         num_workers=args.num_workers,

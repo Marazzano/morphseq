@@ -1,0 +1,6 @@
+experiment_id,well_id,image_id,time_index,z_index,channel_id,source_image_path,image_width_px,image_height_px,micrometers_per_pixel
+20250912,20250912_B01,20250912_B01_BF_t0000,0,,BF,/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/tests/improvements/snip_processing_smoke/output/images/20250912_B01_BF_t0000.png,128,128,2.17
+20250912,20250912_B01,20250912_B01_BF_t0001,1,,BF,/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/tests/improvements/snip_processing_smoke/output/images/20250912_B01_BF_t0001.png,128,128,2.17
+20250912,20250912_B01,20250912_B01_BF_t0002,2,,BF,/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/tests/improvements/snip_processing_smoke/output/images/20250912_B01_BF_t0002.png,128,128,2.17
+20250912,20250912_B01,20250912_B01_BF_t0003,3,,BF,/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/tests/improvements/snip_processing_smoke/output/images/20250912_B01_BF_t0003.png,128,128,2.17
+20250912,20250912_B01,20250912_B01_BF_t0004,4,,BF,/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/tests/improvements/snip_processing_smoke/output/images/20250912_B01_BF_t0004.png,128,128,2.17

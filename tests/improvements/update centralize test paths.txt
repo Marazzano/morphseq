@@ -1,0 +1,867 @@
+
+
+
+The best kind of tests for your pipeline
+
+You probably want several layers:
+Unit tests:
+  product grammar, resolver behavior, path construction
+
+Contract tests:
+  frame_inventory columns, source_nd2_path requirements, z_index rules
+
+Integration tests:
+  one tiny well / few timepoints through materialize_well
+
+DAG tests:
+  dry-run Snakemake target resolves the expected rules
+
+Regression tests:
+  old known experiment produces same manifest shape / same key counts
+Design decisions go in docs.
+Critical design decisions go in tests.
+If breaking it would corrupt the pipeline, test it.
+
+Can this stage lie to the next stage?
+Can two sources of truth disagree?
+Can stale files make the pipeline look successful?
+Can a partial output masquerade as complete?
+Can a schema drift silently?
+The obvious tests check local correctness.
+
+The powerful tests check pipeline promises.
+
+That is the difference.
+
+A novice often tests:
+
+Does this function return the value I expected?
+
+A strong data engineer tests:
+
+Can this stage lie to the next stage?
+Can two sources of truth disagree?
+Can stale files make the pipeline look successful?
+Can a partial output masquerade as complete?
+Can a schema drift silently?
+
+Obvious tests people usually do
+
+These are still good.
+
+1. Happy-path unit tests
+
+Given valid config, load_image_materialization_plan returns the expected plan.
+
+Example:
+
+plan = load_image_materialization_plan(config)
+assert plan.products[0].channel_id == "BF"
+
+Useful, but limited. It says the sunny path works.
+
+2. Basic invalid-input tests
+
+GFP fails for YX1.
+projection without projection_method fails.
+z_stack with projection_method fails.
+
+Good. These make your grammar explicit.
+
+3. Shape/schema tests
+
+frame_inventory has required columns.
+path helper returns expected path string.
+resolver returns ResolvedMaterializationPlan.
+
+Good, especially for data pipelines.
+
+4. Smoke tests
+
+Run 1 well × 3 timepoints and make sure it doesn't crash.
+
+Very useful, but not enough.
+
+Smoke tests answer:
+
+Can the machine turn on?
+
+They do not prove:
+
+Is it producing trustworthy data?
+
+Powerful tests novices often miss
+
+These are the tests that catch the creepy bugs.
+
+1. Negative contract tests
+
+Test that forbidden things fail loudly.
+
+Not just:
+
+valid plan passes
+
+but:
+
+request vocabulary never reaches backend
+auto never reaches materialize_yx1_well
+projection rows never have z_index
+z_stack rows always have z_index
+
+For your pipeline:
+
+bad_plan = ResolvedMaterializationPlan(
+    products=(ResolvedImageProduct(
+        channel_id="BF",
+        image_product_type="projection",
+        projection_method="focus_stack",
+        xy_composition="auto",  # illegal in resolved world
+    ),)
+)
+with pytest.raises(ValueError):
+    materialize_yx1_well(..., resolved_plan=bad_plan)
+
+This tests the boundary:
+
+Backend accepts only resolved commitments.
+
+That is powerful.
+
+2. “Two sources of truth disagree” tests
+
+Novices often test the normal case where duplicated facts agree. Better: test the disagreement.
+
+Your example:
+
+source_nd2_path in acquisition inventory
+vs
+separate --nd2-path CLI arg
+
+You correctly removed the side channel.
+
+But in general, test things like:
+
+well_id column disagrees with well_id argument
+experiment_id in rows disagrees with experiment_id argument
+source_nd2_path has two unique values for one well
+channel_id in inventory disagrees with requested product channel
+
+Example:
+
+df["source_nd2_path"] = ["a.nd2", "b.nd2"]
+with pytest.raises(ValueError, match="exactly one source_nd2_path"):
+    materialize_yx1_well(..., well_acquisition_inventory_df=df)
+
+These are huge because pipelines often corrupt themselves through duplicated context.
+
+Motto:
+
+Whenever a fact appears in two places, test disagreement.
+
+Better yet, remove the duplication.
+
+3. Explicit empty vs missing config tests
+
+Novices often treat these the same:
+
+# missing key
+image_materialization: absent
+
+versus:
+
+image_materialization:
+  products: []
+
+But they mean different things.
+
+Powerful test:
+
+missing products -> default
+empty products -> error
+
+This catches “silent defaulting” bugs.
+
+assert load_image_materialization_plan({}) == default_plan
+with pytest.raises(UnsupportedMaterializationRequest):
+    load_image_materialization_plan({"image_materialization": {"products": []}})
+
+That is a data-engineering instinct: absence and explicit emptiness are not the same object.
+
+4. Idempotence tests
+
+Pipelines are rerun constantly. A step should behave predictably if run twice.
+
+Test:
+
+Run materialize_well twice.
+Does it produce the same frame_inventory rows?
+Does it overwrite cleanly?
+Does it duplicate rows?
+Does it leave stale files?
+
+This is very important.
+
+Example property:
+
+materialize_well(input) run twice = same manifest, no duplicate output rows
+
+In mathematical language:
+
+f(f_state(input)) = f_state(input)
+
+or more practically:
+
+rerun should be stable
+
+5. Stale artifact tests
+
+This is a pipeline classic.
+
+Imagine:
+
+old output file exists
+new input changed
+rule accidentally does not regenerate output
+validator sees old output and passes
+
+Novices rarely test stale-file behavior.
+
+Powerful test:
+
+Put an old frame_inventory shard on disk with wrong rows.
+Run the step.
+Assert it is replaced or validation fails.
+
+Or:
+
+Delete one expected image file but leave frame_inventory row.
+Validation must fail.
+
+This tests whether your pipeline proves current reality or just trusts files lying around like sleepy crocodiles.
+
+6. Completeness tests
+
+A smoke test may pass with 3 frames. But production expects all frames.
+
+Powerful tests ask:
+
+For every expected time_index in acquisition inventory, is there an output row?
+For every output row, is there an input row?
+For every requested product, did every well/time get produced?
+
+This is essentially a set equality test:
+
+expected keys == observed keys
+
+Example:
+
+expected = set(zip(df.well_id, df.channel_id, df.time_index))
+observed = set(zip(inv.well_id, inv.channel_id, inv.time_index))
+assert observed == expected
+
+This catches partial outputs masquerading as complete.
+
+For your smoke cap, this is why you must keep smoke outputs isolated or clearly marked. Otherwise partial completeness can pretend to be real completeness.
+
+7. No-extra-rows tests
+
+People test “all expected rows exist.” They forget to test “no unexpected rows exist.”
+
+Both matter.
+
+expected ⊆ observed
+
+is weaker than:
+
+expected == observed
+
+Extra rows can be stale artifacts, duplicate runs, wrong channels, wrong wells, or ghosts from a previous experiment.
+
+Powerful test:
+
+observed keys exactly equal expected keys
+
+Not “at least.”
+
+8. Grain tests
+
+Every data table has a grain:
+
+one row per well × channel × time × product × z_index?
+
+Novices test columns. Experts test uniqueness at the grain.
+
+For frame inventory:
+
+grain_cols = [
+    "experiment_id",
+    "well_id",
+    "channel_id",
+    "time_index",
+    "image_product_type",
+    "projection_method",
+    "z_index",
+]
+assert not df.duplicated(grain_cols).any()
+
+This catches accidental many-to-many joins and duplicate emissions.
+
+Data engineers ask constantly:
+
+What does one row mean?
+Is that grain unique?
+
+9. Round-trip / derived-ID tests
+
+If you derive IDs from components, test both directions where possible.
+
+For example:
+
+well_id = build_well_id(experiment_id, well_index)
+
+Then test:
+
+frame_inventory well_id equals recomputed well_id
+image_id equals recomputed image_id
+path basename agrees with image_id/time/channel
+
+This catches string drift.
+
+Powerful version:
+
+Do not trust stored derived IDs.
+Recompute and compare.
+
+That is exactly what validators should do.
+
+10. Cross-contract consistency tests
+
+This is where pipelines get spicy.
+
+Test that independent contracts agree:
+
+ResolvedPlan says projection/focus_stack
+Path says projection/BF/...
+FrameInventory says image_product_type=projection, projection_method=focus_stack
+File exists at that path
+
+Any mismatch fails.
+
+This is a commutative diagram test:
+
+plan -> path
+plan -> inventory -> path
+
+Both routes should agree.
+
+Novices test each piece separately. Powerful tests test the seams.
+
+11. Ordering-insensitivity tests
+
+Pipelines often accidentally depend on row order.
+
+Powerful test:
+
+Shuffle acquisition inventory rows.
+Materialized frame_inventory should be identical after sorting by grain.
+
+This catches hidden assumptions like “first row is the right channel” or “input rows are sorted by time.”
+
+Example:
+
+df_shuffled = df.sample(frac=1, random_state=0)
+out1 = materialize(df)
+out2 = materialize(df_shuffled)
+assert_frame_equal(
+    out1.sort_values(grain_cols).reset_index(drop=True),
+    out2.sort_values(grain_cols).reset_index(drop=True),
+)
+
+Data pipelines should usually be functions of sets/relations, not accidental list order.
+
+12. Partition/fanout tests
+
+Your pipeline fans over wells.
+
+Powerful tests:
+
+discover_wells returns A01, A02
+materialize_well creates exactly A01 shard and A02 shard
+merge consumes exactly those shards
+missing shard causes hard failure
+extra shard does not silently merge unless explicitly allowed
+
+Novices test one shard. Experts test the fanout boundary.
+
+This matters in Snakemake because dynamic/checkpoint fanout can get subtle.
+
+13. DAG dry-run tests
+
+Snakemake-specific powerful test:
+
+snakemake -n front_end_frame_inventory
+
+Assert the dry-run includes:
+
+materialize_well
+validate_frame_inventory_for_well
+
+and does not include the legacy branch accidentally.
+
+This tests the graph, not just Python.
+
+A Python unit test can say your functions work. A DAG test says the pipeline actually wires them together.
+
+14. Legacy-path strangler tests
+
+When replacing old paths, test that the new target does not call the old rule.
+
+For your case:
+
+front_end_frame_inventory target should consume materializer-emitted shards,
+not frame_contract.csv splitter shards.
+
+Powerful test:
+
+dry-run front_end_frame_inventory
+assert build_frame_inventory_for_well is not in the planned jobs
+
+This catches accidental dependency regressions.
+
+15. Provenance tests
+
+Novices test output values. Experts test output memory.
+
+Frame inventory should record:
+
+source_nd2_path
+channel_id
+time_index
+z_index
+product type
+projection method
+candidate/live flag maybe
+stitch/xy composition info later
+
+Powerful test:
+
+Every output row has enough source provenance to trace back to acquisition inventory.
+
+For example:
+
+source_nd2_path in output inventory matches acquisition inventory source_nd2_path
+
+Provenance tests are boring until the day they save three months.
+
+16. Candidate/live isolation tests
+
+You have candidate=True/False.
+
+Powerful test:
+
+candidate=True writes only under candidate/
+candidate=False writes only under live path
+candidate and live paths cannot collide
+
+This catches dangerous accidental promotion.
+
+Novices often test that a file exists. Experts test where it exists.
+
+17. Error-message tests
+
+This sounds petty, but it matters.
+
+When something fails at 2 AM on a cluster, the error message is the UI.
+
+Powerful tests check that failure explains the contract:
+
+with pytest.raises(UnsupportedMaterializationRequest, match="projection.*requires.*projection_method"):
+    load_image_materialization_plan(bad_config)
+
+This turns error messages into part of the contract.
+
+18. Small golden-manifest tests
+
+Instead of golden images, which can be huge and brittle, use golden manifests.
+
+For a tiny fixture:
+
+input acquisition inventory with 2 timepoints
+expected frame_inventory rows exactly
+
+Then compare the manifest, not every pixel.
+
+This is great for image pipelines because pixel outputs are heavy, but manifests are compact.
+
+19. Property-style tests
+
+You do not always need Hypothesis, but the thinking is useful.
+
+Properties:
+
+For any projection product, z_index is null.
+For any z_stack product, z_index is non-null.
+For any resolved plan, xy_composition is never auto.
+For any valid frame_inventory, grain keys are unique.
+For any materialized path, the parent directory encodes product type/channel.
+
+These are deeper than examples.
+
+20. “No side channel” tests
+
+This is advanced and exactly relevant to your ND2 realization.
+
+Test that the materialization rule does not accept/pass --nd2-path.
+
+Why? Because source_nd2_path should come from acquisition inventory.
+
+This can be as simple as a CLI test:
+
+cmd_materialize_well parser has no --nd2-path argument
+
+or a rule test:
+
+shell command for materialize_well does not include --nd2-path or --raw-images-dir
+
+This protects the architecture from regression.
+
+The hierarchy I’d use
+
+For your pipeline, I’d think in test layers:
+
+Level 1: local unit tests
+  grammar, resolver, path helpers
+Level 2: contract tests
+  schema columns, grain uniqueness, product-shape rules
+Level 3: seam tests
+  request->resolved, inventory->source path, plan->path->inventory consistency
+Level 4: runner tests
+  tiny well through run_materialize_well with mocked backend or smoke cap
+Level 5: DAG tests
+  Snakemake dry-run target includes/excludes expected rules
+Level 6: end-to-end smoke
+  1-2 wells, few timepoints, real files if feasible
+
+Novices often stop at Level 1 and Level 6:
+
+unit tests + one smoke test
+
+Powerful pipeline testing lives in Levels 2-5.
+
+The most important tests for your current Step 6
+
+I’d prioritize these:
+
+1. Plan grammar:
+   projection requires projection_method
+   z_stack forbids projection_method
+   missing config -> default
+   explicit [] -> error
+2. Resolver:
+   yx1 auto -> identity
+   yx1 mosaic -> identity + warning
+   yx1 rejects unsupported axes
+   resolved plan never contains auto
+3. Backend boundary:
+   yx1 backend rejects non-identity resolved xy_composition
+   source_nd2_path must be present and unique in inventory
+4. Frame inventory contract:
+   required columns present
+   grain keys unique
+   projection rows have z_index null
+   paths exist
+5. Snakemake DAG:
+   front_end_frame_inventory target runs materialize_well and validation
+   front_end_frame_inventory does not use legacy frame_contract splitter
+6. Side-channel regression:
+   materialize_well command does not pass --nd2-path
+   ND2 comes from source_nd2_path in acquisition inventory
+
+Those are architecture-preserving tests.
+
+Tiny cheat sheet
+
+Obvious tests:
+
+happy path
+bad input raises
+expected columns exist
+function returns expected value
+small smoke run
+
+Powerful tests:
+
+no silent defaults
+no duplicate sources of truth
+expected keys == observed keys
+no extra rows
+grain uniqueness
+rerun idempotence
+stale artifact failure
+cross-contract consistency
+order independence
+candidate/live isolation
+DAG includes/excludes expected rules
+provenance completeness
+error messages explain the contract
+
+The deepest test-design question is:
+
+What bad state would look plausible?
+
+Test that.
+
+Because in pipelines, the scariest bugs are not explosions. They are polite little lies wearing clean CSV headers.
+--------------
+
+Yes, your instinct is right again: **do not make every test invent its own way of finding repo files**. That becomes test spaghetti with little path noodles everywhere.
+
+But I also agree with the correction: **importing `tests.conftest` is sloppy**. `conftest.py` is pytest plumbing, not a library module.
+
+## For this specific test
+
+This version is actually cleaner:
+
+```python
+import inspect
+from data_pipeline.pipeline_orchestrator import tasks
+
+body = inspect.getsource(tasks.cmd_discover_wells)
+```
+
+because the test is asking:
+
+```text
+Does cmd_discover_wells contain pandas / inline business logic?
+```
+
+So inspect the actual imported function. That avoids path resolution completely. Nice.
+
+I would use this pattern for **structural tests about a function**.
+
+## But in general, yes: centralize test paths
+
+For tests that need repo paths, fixtures, or data files, centralize them in one place. I’d do:
+
+```text
+tests/
+  conftest.py
+  helpers/
+    paths.py
+  fixtures/
+    ...
+```
+
+### `tests/helpers/paths.py`
+
+```python
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC_ROOT = REPO_ROOT / "src"
+TESTS_ROOT = REPO_ROOT / "tests"
+FIXTURES_ROOT = TESTS_ROOT / "fixtures"
+```
+
+Then tests import from the helper, not from `conftest`:
+
+```python
+from tests.helpers.paths import SRC_ROOT
+
+def test_something():
+    tasks_path = SRC_ROOT / "data_pipeline" / "pipeline_orchestrator" / "tasks.py"
+```
+
+That is clean because `tests.helpers.paths` is a real test utility module. `conftest.py` is not.
+
+## What belongs in `conftest.py`
+
+Use `conftest.py` for pytest fixtures:
+
+```python
+import pytest
+from tests.helpers.paths import REPO_ROOT, SRC_ROOT, FIXTURES_ROOT
+
+@pytest.fixture
+def repo_root():
+    return REPO_ROOT
+
+@pytest.fixture
+def src_root():
+    return SRC_ROOT
+
+@pytest.fixture
+def fixtures_root():
+    return FIXTURES_ROOT
+```
+
+Then tests can use:
+
+```python
+def test_load_fixture(fixtures_root):
+    path = fixtures_root / "well_discovery" / "scope_metadata_mapped.csv"
+```
+
+That is also fine.
+
+## The rule I’d use
+
+```text
+Do not import tests.conftest.
+Do centralize shared paths in tests/helpers/paths.py.
+Use conftest.py only to expose pytest fixtures.
+Use inspect.getsource() when testing imported function structure.
+```
+
+So for this particular guard, I’d keep Claude’s `inspect.getsource()` solution.
+
+For general file/fixture paths, I’d make:
+
+```text
+tests/helpers/paths.py
+```
+
+and use that everywhere. That gives you a tidy little test-path command center instead of hard-coded `parents[5]` sorcery.
+This smells like **test package/import discovery confusion**, not a real `src/` package problem.
+
+The important clue is:
+
+```bash
+PYTHONPATH=src:$PYTHONPATH python -c "import data_pipeline.image_materialization..."
+# OK
+```
+
+So the production package is importable. Good.
+
+The pytest weirdness is probably because the **test tree is partially package-shaped**. Some directories under `tests/data_pipeline/...` likely have `__init__.py`, and the new path maybe doesn’t. That can make pytest import test modules under different names depending on import mode.
+
+## What I would do
+
+I would **not** add random `__init__.py` files reactively until you decide the convention.
+
+Pick one of these two conventions:
+
+### Option A: tests are not packages
+
+This is common and usually simpler.
+
+```text
+tests/
+  conftest.py
+  data_pipeline/
+    metadata_ingest/
+      test_well_discovery.py
+    image_materialization/
+      stitched/
+        contracts/
+          test_frame_inventory_contract.py
+```
+
+No `__init__.py` files under `tests/`.
+
+Then run with:
+
+```bash
+PYTHONPATH=src:$PYTHONPATH conda run -n segmentation_grounded_sam --no-capture-output \
+  python -m pytest tests/data_pipeline/image_materialization/stitched/contracts/test_frame_inventory_contract.py -v
+```
+
+If existing directories have `__init__.py`, either leave them if harmless, or gradually remove them so the test tree is consistently non-package.
+
+### Option B: tests mirror packages as real packages
+
+Then every intermediate test directory needs `__init__.py`:
+
+```text
+tests/
+  __init__.py
+  data_pipeline/
+    __init__.py
+    image_materialization/
+      __init__.py
+      stitched/
+        __init__.py
+        contracts/
+          __init__.py
+          test_frame_inventory_contract.py
+```
+
+This is more ceremony. I usually don’t prefer it unless the repo already fully commits to it.
+
+## My recommendation for your repo
+
+Use **Option A**:
+
+```text
+src/ is package code
+tests/ is test files, not a package
+```
+
+Then make `tests/conftest.py` put `src/` on `sys.path`, and don’t depend on `tests` being importable.
+
+The clean `conftest.py` pattern:
+
+```python
+from pathlib import Path
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+```
+
+Then tests import production code normally:
+
+```python
+from data_pipeline.image_materialization.stitched.contracts.frame_inventory_contract import (
+    FRAME_INVENTORY_IDENTITY_ATOMS,
+)
+```
+
+No:
+
+```python
+from tests.conftest import REPO_ROOT
+```
+
+No path-parent spelunking.
+
+## About `--import-mode=importlib`
+
+`--import-mode=importlib` can fix some pytest import-name collisions, but I would not treat it as the main fix unless the repo standardizes on it. It’s a useful crowbar, not the foundation.
+
+If tests only pass with:
+
+```bash
+python -m pytest --import-mode=importlib ...
+```
+
+but fail without it, that suggests inconsistent test package structure or name collision.
+
+## What Claude should check next
+
+Run:
+
+```bash
+find tests -name "__init__.py" -print
+```
+
+If only some branches have `__init__.py`, that’s the likely weirdness.
+
+Then choose:
+
+```text
+either remove test-tree __init__.py files
+or add them consistently
+```
+
+I’d choose removing them, unless existing repo convention clearly uses test packages.
+
+## The key point
+
+Do **not** infer from this that `src/data_pipeline/__init__.py` must exist. Your direct import already proved the namespace package works.
+
+This is about pytest collecting tests, not Python finding production code.

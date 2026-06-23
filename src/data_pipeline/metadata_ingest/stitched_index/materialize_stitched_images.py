@@ -23,6 +23,11 @@ from data_pipeline.image_building.utils.frame_tiler import legacy_canvas_shape
 from data_pipeline.image_building.utils.frame_tiler import stitch_frame_tiles
 from data_pipeline.image_building.shared.log_focus import LoG_focus_stacker
 from data_pipeline.image_building.shared.log_focus import im_rescale
+from data_pipeline.metadata_ingest.scope.keyence.raw_plane_parsing import (
+    _extract_keyence_well_and_tile,
+    _infer_keyence_stack_lookup,
+    _parse_keyence_time_and_z,
+)
 from data_pipeline.metadata_ingest.time_helpers import add_elapsed_time_columns
 from data_pipeline.metadata_ingest.time_helpers import add_frame_interval_unit_columns
 from data_pipeline.metadata_ingest.time_helpers import ensure_time_int_column
@@ -150,100 +155,6 @@ def _materialize_yx1_image(
     ff_np = ff.detach().cpu().numpy() if torch.is_tensor(ff) else np.asarray(ff)
     ff_u16 = np.clip(ff_np, 0, 65535).astype(np.uint16)
     return skutil.img_as_ubyte(ff_u16)
-
-
-def _well_from_w_index(raw: int) -> str:
-    row = (raw - 1) // 12
-    col = (raw - 1) % 12 + 1
-    return f"{chr(65 + row)}{col:02d}"
-
-
-def _extract_keyence_well_and_tile(path: Path) -> tuple[str | None, int]:
-    tile_id: int | None = None
-
-    for part in path.parts:
-        p_match = re.fullmatch(r"P(\d+)", part, flags=re.IGNORECASE)
-        if p_match:
-            tile_id = int(p_match.group(1))
-            break
-
-    for part in path.parts:
-        xy_match = re.fullmatch(r"XY(\d+)([A-Za-z]?)", part, flags=re.IGNORECASE)
-        if xy_match:
-            xy_raw = int(xy_match.group(1))
-            suffix = xy_match.group(2)
-            if suffix:
-                well_index = f"{suffix.upper()}{xy_raw:02d}"
-                if tile_id is None:
-                    tile_id = max(ord(suffix.lower()) - 96, 1)
-            else:
-                well_index = _well_from_w_index(xy_raw)
-                if tile_id is None:
-                    # Legacy XY layout without P*/T* encodes sub-position in filename,
-                    # e.g. embryo__XY16_00003_Z001_CH1.tif -> tile 3 at time 0.
-                    legacy_token = part[-4:]
-                    if legacy_token in path.name:
-                        suffix_str = path.name.split(legacy_token, 1)[1]
-                        tile_match = re.match(r"_(\d+)", suffix_str)
-                        if tile_match:
-                            tile_id = int(tile_match.group(1))
-            return well_index, tile_id or 1
-
-    for part in path.parts:
-        w_match = re.fullmatch(r"W0?(\d+)", part, flags=re.IGNORECASE)
-        if w_match:
-            return _well_from_w_index(int(w_match.group(1))), tile_id or 1
-
-    name_match = re.search(r"([A-H](?:0[1-9]|1[0-2]))", path.name)
-    if name_match:
-        return name_match.group(1), tile_id or 1
-
-    return None, tile_id or 1
-
-
-def _parse_keyence_time_and_z(path: Path) -> tuple[int, int] | None:
-    z_match = re.search(r"_Z(\d+)_CH\d+", path.name, flags=re.IGNORECASE)
-    if not z_match:
-        return None
-
-    time_int = 0
-    # Prefer directory timepoint (legacy Keyence layout: .../T0034/...).
-    for part in path.parts:
-        t_match = re.fullmatch(r"T(\d+)", part, flags=re.IGNORECASE)
-        if t_match:
-            time_int = max(int(t_match.group(1)) - 1, 0)
-            break
-
-    # Fallback for layouts that encode explicit T in filename.
-    if time_int == 0:
-        t_name_match = re.search(r"_T(\d+)_Z\d+_CH\d+", path.name, flags=re.IGNORECASE)
-        if t_name_match:
-            time_int = max(int(t_name_match.group(1)) - 1, 0)
-
-    z_index = int(z_match.group(1))
-    return time_int, z_index
-
-
-def _infer_keyence_stack_lookup(raw_images_dir: Path) -> dict[tuple[str, int], dict[int, list[Path]]]:
-    lookup: dict[tuple[str, int], dict[int, list[tuple[int, Path]]]] = {}
-    for path in raw_images_dir.rglob("*CH*.tif"):
-        well_index, tile_id = _extract_keyence_well_and_tile(path)
-        if well_index is None:
-            continue
-
-        parsed = _parse_keyence_time_and_z(path)
-        if parsed is None:
-            continue
-        time_int, z_index = parsed
-        key = (well_index, time_int)
-        lookup.setdefault(key, {}).setdefault(tile_id, []).append((z_index, path))
-
-    out: dict[tuple[str, int], dict[int, list[Path]]] = {}
-    for key, tile_dict in lookup.items():
-        out[key] = {}
-        for tile_id, z_pairs in tile_dict.items():
-            out[key][tile_id] = [path for _, path in sorted(z_pairs, key=lambda pair: pair[0])]
-    return out
 
 
 def _materialize_keyence_tile_projection(stack_paths: list[Path]) -> np.ndarray:

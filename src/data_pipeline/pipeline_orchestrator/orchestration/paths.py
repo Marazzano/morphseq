@@ -282,9 +282,9 @@ PIPELINE_STEPS: dict[str, dict] = {
 
     # ── OBJECT EXTRACTION — auxiliary masks ──────────────────────────────────
     # UNet-derived auxiliary masks live under object_extraction/auxiliary_masks/. The current
-    # product layout keeps the manifest under contracts/ and the PNG families (via/yolk/focus/
-    # bubble) beside it at the product root. The .validated sentinel is still a legacy dotfile
-    # sidecar under contracts/ and is not yet modeled as a derived registry sidecar.
+    # PNG mask families (via/yolk/focus/bubble) live beside the per-well shard at the product root.
+    # The manifest and its .validated sentinel follow the standard well-keyed naming convention
+    # so validated_path() derives the sentinel without a bespoke helper.
     "auxiliary_masks": {
         "stage": "object_extraction",
         "product_dir": "auxiliary_masks",
@@ -292,8 +292,8 @@ PIPELINE_STEPS: dict[str, dict] = {
         "execution": EXECUTION_PER_WELL,
         "artifacts": {
             "manifest": {
-                PATH_MODE_PER_WELL: "contracts/auxiliary_masks.csv",
-                PATH_MODE_MERGED: "contracts/auxiliary_masks.csv",
+                PATH_MODE_PER_WELL: "{well_id}_auxiliary_masks.csv",
+                PATH_MODE_MERGED: "{experiment_id}_auxiliary_masks.csv",
             },
         },
     },
@@ -311,6 +311,25 @@ PIPELINE_STEPS: dict[str, dict] = {
             "snip_inventory": {
                 PATH_MODE_PER_WELL: "{well_id}_snip_inventory.csv",
                 PATH_MODE_MERGED: "{experiment_id}_snip_inventory.csv",
+            },
+        },
+    },
+
+    # ── OBJECT EXTRACTION — snip auxiliary masks ─────────────────────────────
+    # `snip_auxiliary_masks` runs the UNet auxiliary-mask families (via/yolk/focus/bubble/
+    # foreground) per snip crop, AFTER physical_embryo_registry/snip_processing. One row per
+    # (snip_id, auxiliary_mask_type); masks are native snip resolution (co-keyed + co-resolution
+    # with the embryo crop), replacing the retired full-frame `auxiliary_masks` step. PNG masks
+    # live beside the per-well shard; only the manifest CSV is a tracked artifact.
+    "snip_auxiliary_masks": {
+        "stage": "object_extraction",
+        "product_dir": "snip_auxiliary_masks",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "manifest": {
+                PATH_MODE_PER_WELL: "{well_id}_snip_auxiliary_masks.csv",
+                PATH_MODE_MERGED: "{experiment_id}_snip_auxiliary_masks.csv",
             },
         },
     },

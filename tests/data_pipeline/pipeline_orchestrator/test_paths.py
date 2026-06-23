@@ -102,6 +102,14 @@ class TestResolvedArtifactPaths:
         assert artifact_path(ROOT, "frame_masks", "frame_masks", EXP, path_mode="merged") == \
             ROOT / "object_extraction" / EXP / "frame_masks" / f"{EXP}_frame_masks.csv"
 
+    def test_auxiliary_masks_manifest_lands_under_object_extraction(self):
+        assert artifact_path(ROOT, "auxiliary_masks", "manifest", EXP, path_mode="merged") == \
+            ROOT / "object_extraction" / EXP / "auxiliary_masks" / f"{EXP}_auxiliary_masks.csv"
+
+    def test_auxiliary_masks_per_well_manifest_lands_under_per_well(self):
+        assert artifact_path(ROOT, "auxiliary_masks", "manifest", EXP, path_mode="per_well", well_id=WELL) == \
+            ROOT / "object_extraction" / EXP / "auxiliary_masks" / PER_WELL_DIRNAME / WELL / f"{WELL}_auxiliary_masks.csv"
+
     def test_prompt_seeds_sidecar_is_per_well_only(self):
         assert artifact_path(ROOT, "frame_masks", "prompt_seeds", EXP,
                              path_mode="per_well", well_id=WELL) == \
@@ -248,10 +256,12 @@ class TestRegistryIntrospection:
         assert "frame_inventory" in known_steps()
         assert "frame_detections" in known_steps()
         assert "frame_masks" in known_steps()
+        assert "auxiliary_masks" in known_steps()
         assert known_steps() == tuple(sorted(known_steps()))
         assert known_artifacts("frame_inventory") == ("inventory",)
         assert known_artifacts("frame_detections") == ("frame_detections",)
         assert known_artifacts("frame_masks") == ("frame_masks", "prompt_seeds")
+        assert known_artifacts("auxiliary_masks") == ("manifest",)
         assert known_artifacts("discover_wells") == ("wells",)
 
     def test_every_step_has_required_keys(self):

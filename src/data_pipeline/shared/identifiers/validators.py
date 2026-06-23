@@ -17,6 +17,67 @@ from .parsers import parse_physical_embryo_id
 # well_id must NOT be — it means an un-promoted local label leaked downstream.
 _WELL_INDEX_RE = re.compile(r"^[A-Za-z]\d{1,3}$")
 
+# Canonical well_index: exactly one letter A–H + exactly two digits 01–12.
+_WELL_INDEX_CANONICAL_RE = re.compile(r"^([A-Ha-h])(\d{2})$")
+_VALID_ROWS = frozenset("ABCDEFGHabcdefgh")
+_VALID_COLS = frozenset(range(1, 13))
+
+
+def normalize_well_index(row: str, col: int) -> str:
+    """Return the canonical ``well_index`` string (e.g. ``"A01"``) for a grid cell.
+
+    Validates the cell is inside the 8×12 plate range (rows A–H, columns 1–12)
+    and returns the zero-padded canonical form.  Raises ``ValueError`` for any
+    cell outside that range so callers never silently mint out-of-range labels.
+
+    Args:
+        row: Plate row letter — must be A–H (case-insensitive).
+        col: Plate column number — must be 1–12 (inclusive).
+    """
+    row_upper = str(row).strip().upper()
+    if row_upper not in _VALID_ROWS:
+        raise ValueError(
+            f"normalize_well_index: row {row!r} is out of range. "
+            "Plate rows must be A–H (case-insensitive). "
+            "Check whether the sheet has non-standard row labels."
+        )
+    col_int = int(col)
+    if col_int not in _VALID_COLS:
+        raise ValueError(
+            f"normalize_well_index: column {col!r} is out of range. "
+            "Plate columns must be 1–12. "
+            "Check whether the sheet has non-standard column numbers."
+        )
+    return f"{row_upper}{col_int:02d}"
+
+
+def validate_well_index(label: str) -> str:
+    """Assert ``label`` is a canonical well_index (e.g. ``"A01"``); return it unchanged.
+
+    A canonical well_index is exactly one letter A–H (upper-case) followed by a
+    two-digit column 01–12.  Raises ``ValueError`` for anything outside this grammar
+    so malformed labels are caught at the ingest boundary.
+    """
+    text = str(label).strip()
+    m = _WELL_INDEX_CANONICAL_RE.match(text)
+    if not m:
+        raise ValueError(
+            f"validate_well_index: {label!r} is not a canonical well_index. "
+            "Expected format is one letter A–H (upper-case) followed by two digits, e.g. 'A01'. "
+            "Use normalize_well_index(row, col) to mint a canonical label."
+        )
+    row_upper = m.group(1).upper()
+    col_int = int(m.group(2))
+    if row_upper not in _VALID_ROWS:
+        raise ValueError(
+            f"validate_well_index: row {row_upper!r} in {label!r} is outside A–H."
+        )
+    if col_int not in _VALID_COLS:
+        raise ValueError(
+            f"validate_well_index: column {col_int} in {label!r} is outside 1–12."
+        )
+    return f"{row_upper}{col_int:02d}"
+
 
 def validate_well_id(well_id: str) -> str:
     """Assert ``well_id`` is a well-formed GLOBAL well id; return it unchanged.
