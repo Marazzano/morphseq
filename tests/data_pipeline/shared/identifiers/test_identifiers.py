@@ -196,6 +196,15 @@ def test_mask_id_round_trip():
     assert parse_mask_id(build_mask_id(IMAGE, 1)) == (IMAGE, 1, False)
 
 
+def test_mask_id_accepts_snip_id_base():
+    # A snip-scoped mask (e.g. an auxiliary/VIA mask paired with one snip) uses the
+    # snip_id as its base. Same constructor, same {parent}_m{index} grammar; parse_mask_id
+    # round-trips the snip_id parent verbatim.
+    snip_mask_id = build_mask_id(SNIP, 1)
+    assert snip_mask_id == f"{SNIP}_m0001"
+    assert parse_mask_id(snip_mask_id) == (SNIP, 1, False)
+
+
 def test_no_mask_id_round_trip():
     assert parse_mask_id(build_no_mask_id(IMAGE)) == (IMAGE, None, True)
 

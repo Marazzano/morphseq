@@ -79,14 +79,22 @@ def build_image_id(well_id: str, channel_id: str, time_int: int) -> str:
     return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
 
 
-def build_mask_id(image_id: str, local_mask_index: int) -> str:
-    """Return the canonical mask id for one image-local mask.
+def build_mask_id(base_id: str, local_mask_index: int) -> str:
+    """Return the canonical mask id for one local mask under a parent id.
 
-    Example: ``("20250912_B01_BF_t0007", 1)`` -> ``"20250912_B01_BF_t0007_m0001"``
+    ``base_id`` is the parent identity the mask belongs to. A frame-object mask is
+    scoped to an ``image_id`` (``{image_id}_m{NNNN}``); a snip-scoped mask (e.g. an
+    auxiliary/VIA mask paired with one snip) is scoped to a ``snip_id``
+    (``{snip_id}_m{NNNN}``). One constructor, both grammars — the mask id always reads
+    ``{parent}_m{index}`` and ``parse_mask_id`` round-trips either parent verbatim.
+
+    Examples:
+        ``("20250912_B01_BF_t0007", 1)``           -> ``"20250912_B01_BF_t0007_m0001"``
+        ``("20250912_B01_e01_BF_t0007", 1)``       -> ``"20250912_B01_e01_BF_t0007_m0001"``
     """
-    _require_non_empty_text(image_id, field_name="image_id")
+    _require_non_empty_text(base_id, field_name="base_id")
     _require_non_negative_int(local_mask_index, field_name="local_mask_index")
-    return f"{image_id}_{_MASK_INDEX_PREFIX}{local_mask_index:0{_MASK_INDEX_WIDTH}d}"
+    return f"{base_id}_{_MASK_INDEX_PREFIX}{local_mask_index:0{_MASK_INDEX_WIDTH}d}"
 
 
 def build_no_mask_id(image_id: str) -> str:
