@@ -16,14 +16,6 @@ from .core import (
     infer_stage_from_area,
     compute_stage_predictions_batch,
 )
-from .io.paths import (
-    analysis_ready_path,
-    consolidated_features_path,
-    feature_output_dir,
-    feature_output_path,
-    experiment_features_root,
-)
-
 __all__ = [
     "consolidate_snip_features",
     "validate_feature_schema",
@@ -35,11 +27,6 @@ __all__ = [
     "extract_fraction_alive_batch",
     "compute_mask_geometry",
     "extract_geometry_metrics_batch",
-    "analysis_ready_path",
-    "consolidated_features_path",
-    "feature_output_dir",
-    "feature_output_path",
-    "experiment_features_root",
     "compute_pose_features",
     "compute_kinematics",
     "extract_pose_kinematics_batch",

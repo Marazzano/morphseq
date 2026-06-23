@@ -7,12 +7,19 @@ import pandas as pd
 
 from data_pipeline.io.savers import save_csv
 from data_pipeline.schemas.features import REQUIRED_COLUMNS_FEATURES
-from .paths import feature_sentinel_path, schema_sidecar_path
+
+
+def _sentinel_path(p: Path) -> Path:
+    return p.with_suffix(p.suffix + ".validated")
+
+
+def _schema_sidecar_path(p: Path) -> Path:
+    return p.with_suffix("").with_suffix(".schema.json")
 
 
 def write_feature_table(df: pd.DataFrame, output_csv: Path) -> None:
     save_csv(df, output_csv)
-    feature_sentinel_path(output_csv).write_text("ok\n")
+    _sentinel_path(output_csv).write_text("ok\n")
 
 
 def write_consolidated_features_contract(
@@ -22,8 +29,8 @@ def write_consolidated_features_contract(
     schema_version: int = 1,
 ) -> None:
     save_csv(df, output_csv)
-    feature_sentinel_path(output_csv).write_text("ok\n")
-    schema_sidecar_path(output_csv).write_text(
+    _sentinel_path(output_csv).write_text("ok\n")
+    _schema_sidecar_path(output_csv).write_text(
         json.dumps(
             {
                 "schema_name": "consolidated_snip_features",
