@@ -1,0 +1,158 @@
+"""Physical-embryo-registry product-family rules.
+
+The identity-origination boundary: the one place track_id -> physical_embryo_id is resolved.
+Consumes the per-well ``frame_masks`` shard (the DETECTED set, upstream of the valid/invalid QC
+split) and mints ONE registry row per distinct ``(well_id, track_id)``. PER_WELL_THEN_MERGE: a
+per-well shard is built + validated, then the shards are concatenated into the experiment-level
+table whose validator enforces GLOBAL physical_embryo_id uniqueness.
+
+Validation fires at BOTH grains (per-well and merged), each emitting its own ``.validated``
+sentinel — mirroring frame_inventory's build+validate+merge template (the conformant pattern),
+not frame_masks' leaner inline-shell merge.
+
+DOCTRINE: no raw artifact-path strings (all via paths.py); the merge input set is resolved by the
+planning-time, disk-blind ``run_well_shard_paths`` (well_runner); the merge concat-with-uniqueness
+lives in the product's own Stage-2 ``merge_physical_embryo_registry`` (called by the task verb),
+which is where the global-uniqueness law belongs.
+"""
+
+import importlib.util
+
+_paths_spec = importlib.util.spec_from_file_location(
+    "_pipeline_orchestrator_paths",
+    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
+)
+paths = importlib.util.module_from_spec(_paths_spec)
+_paths_spec.loader.exec_module(paths)
+
+PHYSICAL_EMBRYO_REGISTRY_STEP = "physical_embryo_registry"
+PHYSICAL_EMBRYO_REGISTRY_ARTIFACT = "physical_embryo_registry"
+
+# The upstream source: frame_masks owns this product/path. We name the per-well shard locally
+# (rather than reaching into frame_masks.smk's helper) so this file's dependency on the upstream
+# location reads in one place.
+FRAME_MASKS_STEP = "frame_masks"
+
+
+def _frame_masks_per_well_csv(experiment: str, *, well_id: str):
+    return paths.artifact_path(
+        DATA_ROOT,
+        FRAME_MASKS_STEP,
+        "frame_masks",
+        experiment,
+        path_mode=paths.PATH_MODE_PER_WELL,
+        well_id=well_id,
+    )
+
+
+def _registry_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
+    return paths.artifact_path(
+        DATA_ROOT,
+        PHYSICAL_EMBRYO_REGISTRY_STEP,
+        PHYSICAL_EMBRYO_REGISTRY_ARTIFACT,
+        experiment,
+        path_mode=path_mode,
+        well_id=well_id,
+    )
+
+
+def _registry_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
+    return paths.validated_path(
+        DATA_ROOT,
+        PHYSICAL_EMBRYO_REGISTRY_STEP,
+        PHYSICAL_EMBRYO_REGISTRY_ARTIFACT,
+        experiment,
+        path_mode=path_mode,
+        well_id=well_id,
+    )
+
+
+def _registry_shards_for_run(wc):
+    # Planning-time, disk-blind: the merge declares its deps on the RUN wells' shard paths.
+    return run_well_shard_paths(
+        DATA_ROOT,
+        PHYSICAL_EMBRYO_REGISTRY_STEP,
+        PHYSICAL_EMBRYO_REGISTRY_ARTIFACT,
+        wc.experiment,
+        wells_for_experiment(wc),
+    )
+
+
+def _registry_validated_for_run(wc):
+    return [
+        str(_registry_validated(
+            wc.experiment, path_mode=paths.PATH_MODE_PER_WELL, well_id=well_id
+        ))
+        for well_id in wells_for_experiment(wc)
+    ]
+
+
+rule build_physical_embryo_registry_for_well:
+    """Mint one per-well registry shard from the per-well frame_masks shard.
+
+    One job per well (cheap CPU: drop-duplicates + the track_id -> physical_embryo_id mint chain).
+    The task verb validates the shard before writing.
+    """
+    input:
+        # frame_masks has no per-well .validated sentinel today (its merge is an inline-shell
+        # concat with no validate rule). Depend on the CSV only — do NOT add a frame_masks
+        # .validated input that does not exist yet (it would break the DAG at planning time).
+        # TODO(frame_masks-validate): add the frame_masks per-well .validated input once a separate
+        # pass adds the frame_masks validate rule (mirroring frame_masks_per_well's dependence on
+        # frame_inventory + its validated sentinel).
+        frame_masks=str(_frame_masks_per_well_csv("{experiment}", well_id="{well_id}")),
+    output:
+        registry=str(_registry_artifact(
+            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks build-physical-embryo-registry \
+          --frame-masks-csv "{input.frame_masks}" \
+          --output-csv "{output.registry}"
+        """
+
+
+rule validate_physical_embryo_registry_for_well:
+    input:
+        registry=str(_registry_artifact(
+            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+    output:
+        validated=str(_registry_validated(
+            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-physical-embryo-registry \
+          --input-csv "{input.registry}" \
+          --output-flag "{output.validated}"
+        """
+
+
+rule merge_physical_embryo_registry:
+    """Concat the validated per-well shards; the task verb re-validates GLOBAL uniqueness."""
+    input:
+        per_well=_registry_shards_for_run,
+        per_well_validated=_registry_validated_for_run,
+    output:
+        merged=str(_registry_artifact("{experiment}", path_mode=paths.PATH_MODE_MERGED)),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks merge-physical-embryo-registry \
+          --inputs {input.per_well} \
+          --output-csv "{output.merged}"
+        """
+
+
+rule validate_physical_embryo_registry:
+    input:
+        merged=str(_registry_artifact("{experiment}", path_mode=paths.PATH_MODE_MERGED)),
+    output:
+        validated=str(_registry_validated("{experiment}", path_mode=paths.PATH_MODE_MERGED)),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-physical-embryo-registry \
+          --input-csv "{input.merged}" \
+          --output-flag "{output.validated}"
+        """

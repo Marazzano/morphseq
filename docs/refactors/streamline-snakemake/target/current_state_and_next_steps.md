@@ -6,6 +6,49 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 3 orchestration wiring)
+
+**What shipped (Stage 3 of 4 — wire the proven product into orchestration; meaning of no existing stage
+changed):**
+- `pipeline_orchestrator/orchestration/paths.py` — added the `physical_embryo_registry` `PIPELINE_STEPS`
+  row (stage=`object_extraction`, fanout=`PER_WELL_THEN_MERGE`, execution=`EXECUTION_PER_WELL` — cheap CPU,
+  deliberately NOT `RUN_BATCH` like frame_masks). Per-well + merged artifact templates. Placed between the
+  `frame_masks` (its input) and `snip_inventory` rows.
+- `pipeline_orchestrator/tasks.py` — three thin dispatcher verbs + subparsers:
+  `build-physical-embryo-registry` (frame_masks CSV → Stage-2 builder → CSV),
+  `validate-physical-embryo-registry` (CSV → Stage-2 validator → `.validated` sentinel),
+  `merge-physical-embryo-registry` (per-well CSVs → Stage-2 `merge_physical_embryo_registry` which
+  re-validates GLOBAL uniqueness → merged CSV). Zero domain logic in tasks.py.
+- `pipeline_orchestrator/rules/physical_embryo_registry.smk` (NEW) — build+validate(per-well)+merge+
+  validate(merged), mirroring the conformant `frame_inventory.smk` template. Merge input set resolved by
+  the planning-time, disk-blind `run_well_shard_paths` (well_runner); merge waits on per-well `.validated`
+  sentinels. `include:`d in the Snakefile between frame_masks and snip_processing.
+- Upstream dep is the per-well frame_masks **CSV only** (frame_masks has no per-well `.validated` yet); a
+  `# TODO(frame_masks-validate)` marks where to add the sentinel input once a SEPARATE agent's frame_masks
+  conformance pass lands (that agent is fixing frame_masks' inline-shell merge + adding its validate rules).
+
+**Verified:**
+- Task verbs on real 20250912 data: B01 build → 1 row `20250912_B01_e01` (one-based `local_embryo_index=1`);
+  validate writes sentinel; C01 build; merge → 2 rows, passes global-uniqueness validation.
+- **Cross-check vs old mint (the Stage-4 gate):** for B01 the registry `physical_embryo_id` per
+  `(well_id, track_id)` is IDENTICAL to the current snip_processing mint chain over its valid masks — proves
+  Stage 4's join will reproduce old IDs exactly.
+- Stage-2 suite still green: `pytest tests/data_pipeline/segmentation/physical_embryo_registry/` → 26 passed.
+- **snakemake IS on the env** (blocker did not apply): `snakemake -n --list` registers all four new rules;
+  a dry-run of the merged target for 20250912 plans 95 build + 95 validate + 1 merge with no errors and
+  correct PER_WELL_THEN_MERGE paths.
+
+**Next concrete action (Stage 4 — MANUALLY GATED, do NOT auto-run):** cut `snip_processing` over to JOIN the
+per-well registry instead of minting. Delete the mint chain in `run_snip_processing.py:114–116`, add a
+`physical_embryo_registry_csv` param + left-join on `(well_id, track_id)` (fail loud on missing match), thread
+the arg through the snip task verb + `rules/snip_processing.smk`. LOCKED: per-well snip depends on the
+**per-well** registry shard + its `.validated` (NOT the merged table; merged is for experiment-level QC).
+Start only after a human reviews the Stage-3 outputs above. Plan: `.claude/plans/handoff-physical-embryo-registry-zazzy-waffle.md` §"Stage 4".
+
+**Open decisions:** none. (frame_masks conformance is a separate agent's task, tracked via the TODO marker.)
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: physical_embryo_registry — Stage 2 registry product)
 
 **What shipped (Stage 2 of 4 — contract + table validator + builder):** the `physical_embryo_registry`

@@ -364,6 +364,54 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
     prompt_detections.to_csv(args.prompt_seeds_csv, index=False)
 
 
+def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
+    """Mint the per-well physical_embryo_registry shard from a per-well frame_masks shard.
+
+    Thin dispatcher: read frame_masks CSV -> Stage-2 builder (which validates before returning)
+    -> write the registry CSV. No domain logic here.
+    """
+    import pandas as pd
+
+    from data_pipeline.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
+        build_physical_embryo_registry,
+    )
+
+    registry = build_physical_embryo_registry(pd.read_csv(args.frame_masks_csv))
+    args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+    registry.to_csv(args.output_csv, index=False)
+
+
+def cmd_validate_physical_embryo_registry(args: argparse.Namespace) -> None:
+    """Validate a physical_embryo_registry CSV (per-well or merged) and write its .validated sentinel."""
+    import pandas as pd
+
+    from data_pipeline.segmentation.physical_embryo_registry.validate_physical_embryo_registry import (
+        validate_physical_embryo_registry,
+    )
+
+    validate_physical_embryo_registry(pd.read_csv(args.input_csv))  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("")
+
+
+def cmd_merge_physical_embryo_registry(args: argparse.Namespace) -> None:
+    """Concat per-well registry shards into the experiment-level table, re-validating GLOBAL uniqueness.
+
+    Uses the Stage-2 merge (not the generic concat helper) because the registry product owns the
+    global physical_embryo_id uniqueness law — its post-concat validator is what turns the
+    by-construction invariant into an enforced promise.
+    """
+    import pandas as pd
+
+    from data_pipeline.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
+        merge_physical_embryo_registry,
+    )
+
+    merged = merge_physical_embryo_registry([pd.read_csv(p) for p in args.inputs])
+    args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(args.output_csv, index=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -501,6 +549,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_fm.add_argument("--sam2-model-id", default="sam2_video")
     p_fm.add_argument("--device", default="cuda")
     p_fm.set_defaults(func=cmd_frame_masks)
+
+    p_per_build = sub.add_parser("build-physical-embryo-registry")
+    p_per_build.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_per_build.add_argument("--output-csv", type=Path, required=True)
+    p_per_build.set_defaults(func=cmd_build_physical_embryo_registry)
+
+    p_per_validate = sub.add_parser("validate-physical-embryo-registry")
+    p_per_validate.add_argument("--input-csv", type=Path, required=True)
+    p_per_validate.add_argument("--output-flag", type=Path, required=True)
+    p_per_validate.set_defaults(func=cmd_validate_physical_embryo_registry)
+
+    p_per_merge = sub.add_parser("merge-physical-embryo-registry")
+    p_per_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
+    p_per_merge.add_argument("--output-csv", type=Path, required=True)
+    p_per_merge.set_defaults(func=cmd_merge_physical_embryo_registry)
 
     return parser
 

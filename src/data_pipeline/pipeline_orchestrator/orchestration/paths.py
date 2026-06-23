@@ -260,6 +260,26 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── OBJECT EXTRACTION — physical embryo registry ─────────────────────────
+    # `physical_embryo_registry` is the identity-origination boundary: the one place track_id ->
+    # physical_embryo_id is resolved. It mints one row per distinct (well_id, track_id) from
+    # `frame_masks` (the DETECTED set, upstream of the valid/invalid QC split), fans out per well,
+    # then merges to an experiment-level table whose validator enforces GLOBAL physical_embryo_id
+    # uniqueness. execution=PER_WELL: cheap CPU per well (a dataframe drop-duplicates + mint chain),
+    # not a batch model — no per-job startup cost to amortize.
+    "physical_embryo_registry": {
+        "stage": "object_extraction",
+        "product_dir": "physical_embryo_registry",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "physical_embryo_registry": {
+                PATH_MODE_PER_WELL: "{well_id}_physical_embryo_registry.csv",
+                PATH_MODE_MERGED: "{experiment_id}_physical_embryo_registry.csv",
+            },
+        },
+    },
+
     # ── OBJECT EXTRACTION — snip inventory ───────────────────────────────────
     # `snip_inventory` is the per-embryo crop table. Fans out per well (one snip_processing job
     # per well), merges to an experiment-level table. Pixel files live beside the per-well shard
