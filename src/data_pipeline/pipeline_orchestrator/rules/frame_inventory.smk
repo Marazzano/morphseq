@@ -8,15 +8,6 @@ materializer-emitted shards.
 Do not split detection/segmentation logic here. This file wires the handoff product only.
 """
 
-import importlib.util
-
-_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-paths = importlib.util.module_from_spec(_paths_spec)
-_paths_spec.loader.exec_module(paths)
-
 FRAME_INVENTORY_STEP = "frame_inventory"
 FRAME_INVENTORY_ARTIFACT = "inventory"
 
@@ -26,55 +17,20 @@ MATERIALIZE_WELL_STEP = "materialize_well"
 
 def _materialize_well_done(experiment: str, *, well_id: str):
     # materialize_well owns only the done sentinel (pixel materialization state).
-    return paths.artifact_path(
-        DATA_ROOT,
-        MATERIALIZE_WELL_STEP,
-        "done",
-        experiment,
-        path_mode=paths.PATH_MODE_PER_WELL,
-        well_id=well_id,
-    )
-
+    return rule_artifact(MATERIALIZE_WELL_STEP, "done", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _materialize_well_validated(experiment: str, *, well_id: str):
     # frame_inventory owns the contract path — validated sentinel lives there too.
-    return paths.validated_path(
-        DATA_ROOT,
-        FRAME_INVENTORY_STEP,
-        FRAME_INVENTORY_ARTIFACT,
-        experiment,
-        path_mode=paths.PATH_MODE_PER_WELL,
-        well_id=well_id,
-    )
-
+    return rule_validated(FRAME_INVENTORY_STEP, FRAME_INVENTORY_ARTIFACT, experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _materialize_well_validated_for_run(wc):
-    return [
-        str(_materialize_well_validated(wc.experiment, well_id=well_id))
-        for well_id in _frame_inventory_run_wells(wc)
-    ]
-
+    return [_materialize_well_validated(wc.experiment, well_id=well_id) for well_id in _frame_inventory_run_wells(wc)]
 
 def _frame_inventory_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return paths.artifact_path(
-        DATA_ROOT,
-        FRAME_INVENTORY_STEP,
-        FRAME_INVENTORY_ARTIFACT,
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_artifact(FRAME_INVENTORY_STEP, FRAME_INVENTORY_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
 
 def _frame_inventory_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return paths.validated_path(
-        DATA_ROOT,
-        FRAME_INVENTORY_STEP,
-        FRAME_INVENTORY_ARTIFACT,
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
+    return rule_validated(FRAME_INVENTORY_STEP, FRAME_INVENTORY_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
 
 
 def _frame_inventory_run_wells(wc):
@@ -117,7 +73,7 @@ rule materialize_well:
         position_well_mapping_csv=POSITION_WELL_MAPPING_CSV,
     output:
         inventory=str(_frame_inventory_artifact(
-            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         done=str(_materialize_well_done("{experiment}", well_id="{well_id}")),
     params:
@@ -147,7 +103,7 @@ rule validate_frame_inventory_for_well:
     input:
         # Consume the materializer-emitted shard via the frame_inventory contract path.
         inventory=str(_frame_inventory_artifact(
-            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         done=str(_materialize_well_done("{experiment}", well_id="{well_id}")),
     output:
@@ -167,7 +123,7 @@ rule merge_frame_inventory:
     output:
         inventory=str(_frame_inventory_artifact(
             "{experiment}",
-            path_mode=paths.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
     shell:
         """
@@ -181,12 +137,12 @@ rule validate_frame_inventory:
     input:
         inventory=str(_frame_inventory_artifact(
             "{experiment}",
-            path_mode=paths.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
     output:
         validated=str(_frame_inventory_validated(
             "{experiment}",
-            path_mode=paths.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
     shell:
         """

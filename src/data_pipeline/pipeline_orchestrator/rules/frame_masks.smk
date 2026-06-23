@@ -15,57 +15,20 @@ SAM2 path contract — see models/sam2.py for the full explanation. The short ve
   requires the relative form.
 """
 
-import importlib.util
-
-_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-_paths_mod = importlib.util.module_from_spec(_paths_spec)
-_paths_spec.loader.exec_module(_paths_mod)
-
 FRAME_MASKS_STEP = "frame_masks"
 
 
 def _frame_masks_artifact(experiment: str, artifact: str, *, path_mode: str, well_id: str | None = None):
-    return _paths_mod.artifact_path(
-        DATA_ROOT,
-        FRAME_MASKS_STEP,
-        artifact,
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_artifact(FRAME_MASKS_STEP, artifact, experiment, path_mode=path_mode, well_id=well_id)
 
 def _frame_masks_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return _paths_mod.validated_path(
-        DATA_ROOT,
-        FRAME_MASKS_STEP,
-        "frame_masks",
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_validated(FRAME_MASKS_STEP, "frame_masks", experiment, path_mode=path_mode, well_id=well_id)
 
 def _frame_masks_artifacts_for_run(wc):
-    return run_well_shard_paths(
-        DATA_ROOT,
-        FRAME_MASKS_STEP,
-        "frame_masks",
-        wc.experiment,
-        wells_for_experiment(wc),
-    )
-
+    return run_well_shard_paths(DATA_ROOT, FRAME_MASKS_STEP, "frame_masks", wc.experiment, wells_for_experiment(wc))
 
 def _frame_masks_validated_for_run(wc):
-    return [
-        str(_frame_masks_validated(
-            wc.experiment, path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id=w
-        ))
-        for w in wells_for_experiment(wc)
-    ]
+    return [_frame_masks_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w) for w in wells_for_experiment(wc)]
 
 
 rule frame_masks_per_well:
@@ -77,23 +40,23 @@ rule frame_masks_per_well:
     """
     input:
         frame_inventory=str(_frame_inventory_artifact(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         frame_inventory_validated=str(_frame_inventory_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         frame_detections=str(_frame_detections_artifact(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     output:
         frame_masks=str(_frame_masks_artifact(
             "{experiment}", "frame_masks",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
         prompt_seeds=str(_frame_masks_artifact(
             "{experiment}", "prompt_seeds",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
     params:
@@ -134,18 +97,18 @@ rule validate_frame_masks_for_well:
     input:
         frame_masks=str(_frame_masks_artifact(
             "{experiment}", "frame_masks",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
         frame_inventory=str(_frame_inventory_artifact(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         frame_inventory_validated=str(_frame_inventory_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     output:
         validated=str(_frame_masks_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -164,7 +127,7 @@ rule merge_frame_masks:
     output:
         merged=str(_frame_masks_artifact(
             "{experiment}", "frame_masks",
-            path_mode=_paths_mod.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
     shell:
         """

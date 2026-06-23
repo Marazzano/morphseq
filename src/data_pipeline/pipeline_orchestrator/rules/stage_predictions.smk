@@ -4,65 +4,29 @@ Kimmel1995 developmental stage (hpf) per snip from plate_metadata (start_age_hpf
 and frame timing. No mask reading. Per-well build -> validate -> merge.
 """
 
-import importlib.util
-
-_stage_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths_stage_predictions",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-_stage_paths = importlib.util.module_from_spec(_stage_paths_spec)
-_stage_paths_spec.loader.exec_module(_stage_paths)
-
 STAGE_PREDICTIONS_STEP = "stage_predictions"
 
 
 def _stage_artifact(experiment, *, path_mode, well_id=None):
-    return _stage_paths.artifact_path(
-        DATA_ROOT, STAGE_PREDICTIONS_STEP, "stage_predictions", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_artifact(STAGE_PREDICTIONS_STEP, "stage_predictions", experiment, path_mode=path_mode, well_id=well_id)
 
 def _stage_validated(experiment, *, path_mode, well_id=None):
-    return _stage_paths.validated_path(
-        DATA_ROOT, STAGE_PREDICTIONS_STEP, "stage_predictions", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_validated(STAGE_PREDICTIONS_STEP, "stage_predictions", experiment, path_mode=path_mode, well_id=well_id)
 
 def _stage_snip_inventory(experiment, *, well_id):
-    return _stage_paths.artifact_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_snip_inventory_validated(experiment, *, well_id):
-    return _stage_paths.validated_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_frame_inventory(experiment, *, well_id):
-    return _stage_paths.artifact_path(
-        DATA_ROOT, "frame_inventory", "inventory", experiment,
-        path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_registry(experiment, *, well_id):
-    return _stage_paths.artifact_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_registry_validated(experiment, *, well_id):
-    return _stage_paths.validated_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
+    return rule_validated("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 
 def _stage_artifacts_for_run(wc):
@@ -82,7 +46,7 @@ rule build_stage_predictions_for_well:
         physical_embryo_registry_validated=str(_stage_registry_validated("{experiment}", well_id="{well_id}")),
     output:
         stage_predictions=str(_stage_artifact(
-            "{experiment}", path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -99,12 +63,12 @@ rule validate_stage_predictions_for_well:
     """Validate the per-well stage_predictions shard (spine + features, registry verifier)."""
     input:
         stage_predictions=str(_stage_artifact(
-            "{experiment}", path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         physical_embryo_registry=str(_stage_registry("{experiment}", well_id="{well_id}")),
     output:
         validated=str(_stage_validated(
-            "{experiment}", path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -120,11 +84,11 @@ rule merge_stage_predictions:
     input:
         per_well=_stage_artifacts_for_run,
         per_well_validated=lambda wc: [
-            str(_stage_validated(wc.experiment, path_mode=_stage_paths.PATH_MODE_PER_WELL, well_id=w))
+            str(_stage_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w))
             for w in wells_for_experiment(wc)
         ],
     output:
-        merged=str(_stage_artifact("{experiment}", path_mode=_stage_paths.PATH_MODE_MERGED)),
+        merged=str(_stage_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
     shell:
         """
         {RUN} -c "

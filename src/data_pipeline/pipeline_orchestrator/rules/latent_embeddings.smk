@@ -16,15 +16,6 @@ Three things make this step unlike the geometry features (spec: legacy_embedding
 The validate + merge rules run under the normal RUN env (3.10) — they only read/validate parquet.
 """
 
-import importlib.util
-
-_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-paths = importlib.util.module_from_spec(_paths_spec)
-_paths_spec.loader.exec_module(paths)
-
 LATENT_EMBEDDINGS_STEP = "latent_embeddings"
 LATENTS_ARTIFACT = "latents"
 
@@ -36,45 +27,22 @@ _LE_CFG = config.get("features", {}).get("legacy_embeddings", {})
 
 
 def _latents_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return paths.artifact_path(
-        DATA_ROOT, LATENT_EMBEDDINGS_STEP, LATENTS_ARTIFACT, experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_artifact(LATENT_EMBEDDINGS_STEP, LATENTS_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
 
 def _latents_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return paths.validated_path(
-        DATA_ROOT, LATENT_EMBEDDINGS_STEP, LATENTS_ARTIFACT, experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_validated(LATENT_EMBEDDINGS_STEP, LATENTS_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
 
 def _snip_inventory_per_well(experiment: str, *, well_id: str):
-    return paths.artifact_path(
-        DATA_ROOT, SNIP_INVENTORY_STEP, "snip_inventory", experiment,
-        path_mode=paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _snip_inventory_per_well_validated(experiment: str, *, well_id: str):
-    return paths.validated_path(
-        DATA_ROOT, SNIP_INVENTORY_STEP, "snip_inventory", experiment,
-        path_mode=paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_validated(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _latents_shards_for_run(wc):
-    return run_well_shard_paths(
-        DATA_ROOT, LATENT_EMBEDDINGS_STEP, LATENTS_ARTIFACT, wc.experiment,
-        wells_for_experiment(wc),
-    )
-
+    return run_well_shard_paths(DATA_ROOT, LATENT_EMBEDDINGS_STEP, LATENTS_ARTIFACT, wc.experiment, wells_for_experiment(wc))
 
 def _latents_validated_for_run(wc):
-    return [
-        str(_latents_validated(wc.experiment, path_mode=paths.PATH_MODE_PER_WELL, well_id=w))
-        for w in wells_for_experiment(wc)
-    ]
+    return [_latents_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w) for w in wells_for_experiment(wc)]
 
 
 if MODEL_RUN is None:
@@ -110,7 +78,7 @@ rule encode_latent_embeddings_for_well:
         ),
     output:
         latents=str(_latents_artifact(
-            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     params:
         model_run=_MODEL_RUN_OR_FAIL,
@@ -140,11 +108,11 @@ rule validate_latent_embeddings_for_well:
     """Validate a per-well latents shard against the contract; write the .validated sentinel."""
     input:
         latents=str(_latents_artifact(
-            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     output:
         validated=str(_latents_validated(
-            "{experiment}", path_mode=paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -160,7 +128,7 @@ rule merge_latent_embeddings:
         per_well=_latents_shards_for_run,
         per_well_validated=_latents_validated_for_run,
     output:
-        merged=str(_latents_artifact("{experiment}", path_mode=paths.PATH_MODE_MERGED)),
+        merged=str(_latents_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks merge-latent-embeddings \
@@ -171,9 +139,9 @@ rule merge_latent_embeddings:
 
 rule validate_latent_embeddings:
     input:
-        merged=str(_latents_artifact("{experiment}", path_mode=paths.PATH_MODE_MERGED)),
+        merged=str(_latents_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
     output:
-        validated=str(_latents_validated("{experiment}", path_mode=paths.PATH_MODE_MERGED)),
+        validated=str(_latents_validated("{experiment}", path_mode=PATH_MODE_MERGED)),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-latent-embeddings \

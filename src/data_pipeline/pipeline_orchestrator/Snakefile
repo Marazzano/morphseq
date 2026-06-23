@@ -18,6 +18,10 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
     run_well_ids_for_experiment,
     run_well_shard_paths,
     validated_path,
+    PATH_MODE_EXPERIMENT,
+    PATH_MODE_PER_WELL,
+    PATH_MODE_MERGED,
+    step_dir,
 )
 
 # Configuration — two kingdoms, two files (Scope 3 of the well-id throughline refactor):
@@ -78,6 +82,18 @@ else:
 DATA_ROOT = Path(env["paths"]["output_root"])
 INPUTS_DIR = Path(env["paths"]["input_root"])
 MODELS_DIR = Path(env["paths"]["models_root"])
+
+# Snakemake-facing path helpers — thin string-returning facade over paths.py.
+# These close over DATA_ROOT so included .smk files get readable one-liners.
+# Rule direction (input vs output) is decided by the rule block, not here.
+def rule_artifact(step, artifact, experiment, *, path_mode, well_id=None):
+    return str(artifact_path(DATA_ROOT, step, artifact, experiment, path_mode=path_mode, well_id=well_id))
+
+def rule_validated(step, artifact, experiment, *, path_mode, well_id=None):
+    return str(validated_path(DATA_ROOT, step, artifact, experiment, path_mode=path_mode, well_id=well_id))
+
+def rule_step_dir(step, experiment, *, path_mode, well_id=None):
+    return str(step_dir(DATA_ROOT, step, experiment, path_mode=path_mode, well_id=well_id))
 PLATE_METADATA_DIR = INPUTS_DIR / "plate_metadata"
 RAW_IMAGES_DIR = INPUTS_DIR / "raw_image_data"
 

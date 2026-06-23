@@ -6,38 +6,15 @@ is an aggregate view for audit/reporting; downstream per-well consumers (frame_m
 wired) depend on the per-well shard directly.
 """
 
-import importlib.util
-
-_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-_paths_mod = importlib.util.module_from_spec(_paths_spec)
-_paths_spec.loader.exec_module(_paths_mod)
-
 FRAME_DETECTIONS_STEP = "frame_detections"
 FRAME_DETECTIONS_ARTIFACT = "frame_detections"
 
 
 def _frame_detections_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return _paths_mod.artifact_path(
-        DATA_ROOT,
-        FRAME_DETECTIONS_STEP,
-        FRAME_DETECTIONS_ARTIFACT,
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_artifact(FRAME_DETECTIONS_STEP, FRAME_DETECTIONS_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
 
 def _frame_detections_artifacts_for_run(wc):
-    return run_well_shard_paths(
-        DATA_ROOT,
-        FRAME_DETECTIONS_STEP,
-        FRAME_DETECTIONS_ARTIFACT,
-        wc.experiment,
-        wells_for_experiment(wc),
-    )
+    return run_well_shard_paths(DATA_ROOT, FRAME_DETECTIONS_STEP, FRAME_DETECTIONS_ARTIFACT, wc.experiment, wells_for_experiment(wc))
 
 
 rule frame_detections_per_well:
@@ -49,15 +26,15 @@ rule frame_detections_per_well:
     """
     input:
         frame_inventory=str(_frame_inventory_artifact(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         frame_inventory_validated=str(_frame_inventory_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     output:
         detections=str(_frame_detections_artifact(
             "{experiment}",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
     params:
@@ -84,7 +61,7 @@ rule merge_frame_detections:
     output:
         merged=str(_frame_detections_artifact(
             "{experiment}",
-            path_mode=_paths_mod.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
     shell:
         """

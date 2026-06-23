@@ -8,14 +8,9 @@ Yolk masks are optional: when absent the rotation step falls back to a
 mass-distribution heuristic and extraction uses a zero yolk mask.
 """
 
-import importlib.util
-
-_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
+from data_pipeline.snip_processing.snip_frame_shape import (
+    resolve_snip_frame_shape as _resolve_snip_frame_shape,
 )
-_paths_mod = importlib.util.module_from_spec(_paths_spec)
-_paths_spec.loader.exec_module(_paths_mod)
 
 SNIP_INVENTORY_STEP = "snip_inventory"
 
@@ -27,66 +22,23 @@ PHYSICAL_EMBRYO_REGISTRY_STEP = "physical_embryo_registry"
 
 
 def _physical_embryo_registry_per_well(experiment: str, *, well_id: str):
-    return _paths_mod.artifact_path(
-        DATA_ROOT,
-        PHYSICAL_EMBRYO_REGISTRY_STEP,
-        "physical_embryo_registry",
-        experiment,
-        path_mode=_paths_mod.PATH_MODE_PER_WELL,
-        well_id=well_id,
-    )
-
+    return rule_artifact(PHYSICAL_EMBRYO_REGISTRY_STEP, "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _physical_embryo_registry_per_well_validated(experiment: str, *, well_id: str):
-    return _paths_mod.validated_path(
-        DATA_ROOT,
-        PHYSICAL_EMBRYO_REGISTRY_STEP,
-        "physical_embryo_registry",
-        experiment,
-        path_mode=_paths_mod.PATH_MODE_PER_WELL,
-        well_id=well_id,
-    )
-
+    return rule_validated(PHYSICAL_EMBRYO_REGISTRY_STEP, "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _snip_inventory_artifact(experiment: str, artifact: str, *, path_mode: str, well_id: str | None = None):
-    return _paths_mod.artifact_path(
-        DATA_ROOT,
-        SNIP_INVENTORY_STEP,
-        artifact,
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_artifact(SNIP_INVENTORY_STEP, artifact, experiment, path_mode=path_mode, well_id=well_id)
 
 def _snip_inventory_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return _paths_mod.validated_path(
-        DATA_ROOT,
-        SNIP_INVENTORY_STEP,
-        "snip_inventory",
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_validated(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=path_mode, well_id=well_id)
 
 def _snip_inventory_artifacts_for_run(wc):
-    return run_well_shard_paths(
-        DATA_ROOT,
-        SNIP_INVENTORY_STEP,
-        "snip_inventory",
-        wc.experiment,
-        wells_for_experiment(wc),
-    )
-
+    return run_well_shard_paths(DATA_ROOT, SNIP_INVENTORY_STEP, "snip_inventory", wc.experiment, wells_for_experiment(wc))
 
 def _snip_inventory_snips_dir(experiment: str, well_id: str) -> str:
     """Per-well pixel directory: sits beside the shard CSV under per_well/{well_id}/."""
-    shard_dir = _paths_mod.step_dir(
-        DATA_ROOT, SNIP_INVENTORY_STEP, experiment,
-        path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-    return str(shard_dir / "snips")
+    return rule_step_dir(SNIP_INVENTORY_STEP, experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id) + "/snips"
 
 
 rule snip_processing_per_well:
@@ -102,17 +54,17 @@ rule snip_processing_per_well:
     input:
         frame_masks=str(_frame_masks_artifact(
             "{experiment}", "frame_masks",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
         frame_masks_validated=str(_frame_masks_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         frame_inventory=str(_frame_inventory_artifact(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         frame_inventory_validated=str(_frame_inventory_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         physical_embryo_registry=str(_physical_embryo_registry_per_well(
             "{experiment}", well_id="{well_id}"
@@ -123,7 +75,7 @@ rule snip_processing_per_well:
     output:
         snip_inventory=str(_snip_inventory_artifact(
             "{experiment}", "snip_inventory",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
     params:
@@ -131,12 +83,10 @@ rule snip_processing_per_well:
         target_pixel_size_um=lambda wc: float(
             config.get("snip_processing", {}).get("target_pixel_size_um", 7.8)
         ),
-        output_height_px=lambda wc: int(
-            config.get("snip_processing", {}).get("output_shape", [576, 256])[0]
-        ),
-        output_width_px=lambda wc: int(
-            config.get("snip_processing", {}).get("output_shape", [576, 256])[1]
-        ),
+        # Crop output (H, W) comes from the single snip_frame_shape source of truth so the snip
+        # image, the saved embryo mask, and the per-snip via mask all share one grid.
+        output_height_px=lambda wc: int(_resolve_snip_frame_shape(config)[0]),
+        output_width_px=lambda wc: int(_resolve_snip_frame_shape(config)[1]),
         background_noise_scale=lambda wc: float(
             config.get("snip_processing", {}).get("background_noise_scale", 0.1)
         ),
@@ -161,12 +111,12 @@ rule validate_snip_inventory_for_well:
     input:
         snip_inventory=str(_snip_inventory_artifact(
             "{experiment}", "snip_inventory",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
     output:
         validated=str(_snip_inventory_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -183,7 +133,7 @@ rule merge_snip_inventory:
     output:
         merged=str(_snip_inventory_artifact(
             "{experiment}", "snip_inventory",
-            path_mode=_paths_mod.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
     shell:
         """

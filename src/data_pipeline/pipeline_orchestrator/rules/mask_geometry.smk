@@ -7,78 +7,38 @@ the per-well physical_embryo_registry shard (identity verifier). Per-well build 
 merge, mirroring the snip_processing template.
 """
 
-import importlib.util
-
-_mg_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths_mask_geometry",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-_mg_paths = importlib.util.module_from_spec(_mg_paths_spec)
-_mg_paths_spec.loader.exec_module(_mg_paths)
-
 MASK_GEOMETRY_STEP = "mask_geometry"
 
 
 def _mg_artifact(experiment, *, path_mode, well_id=None):
-    return _mg_paths.artifact_path(
-        DATA_ROOT, MASK_GEOMETRY_STEP, "mask_geometry", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_artifact(MASK_GEOMETRY_STEP, "mask_geometry", experiment, path_mode=path_mode, well_id=well_id)
 
 def _mg_validated(experiment, *, path_mode, well_id=None):
-    return _mg_paths.validated_path(
-        DATA_ROOT, MASK_GEOMETRY_STEP, "mask_geometry", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_validated(MASK_GEOMETRY_STEP, "mask_geometry", experiment, path_mode=path_mode, well_id=well_id)
 
 def _mg_snip_inventory(experiment, *, well_id):
-    return _mg_paths.artifact_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_snip_inventory_validated(experiment, *, well_id):
-    return _mg_paths.validated_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_frame_masks(experiment, *, well_id):
-    return _mg_paths.artifact_path(
-        DATA_ROOT, "frame_masks", "frame_masks", experiment,
-        path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("frame_masks", "frame_masks", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_frame_inventory(experiment, *, well_id):
-    return _mg_paths.artifact_path(
-        DATA_ROOT, "frame_inventory", "inventory", experiment,
-        path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
+    return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
+def _mg_frame_inventory_validated(experiment, *, well_id):
+    return rule_validated("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_registry(experiment, *, well_id):
-    return _mg_paths.artifact_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_registry_validated(experiment, *, well_id):
-    return _mg_paths.validated_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_validated("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _mg_artifacts_for_run(wc):
-    return run_well_shard_paths(
-        DATA_ROOT, MASK_GEOMETRY_STEP, "mask_geometry", wc.experiment, wells_for_experiment(wc),
-    )
+    return run_well_shard_paths(DATA_ROOT, MASK_GEOMETRY_STEP, "mask_geometry", wc.experiment, wells_for_experiment(wc))
 
 
 rule build_mask_geometry_for_well:
@@ -88,15 +48,12 @@ rule build_mask_geometry_for_well:
         snip_inventory_validated=str(_mg_snip_inventory_validated("{experiment}", well_id="{well_id}")),
         frame_masks=str(_mg_frame_masks("{experiment}", well_id="{well_id}")),
         frame_inventory=str(_mg_frame_inventory("{experiment}", well_id="{well_id}")),
-        frame_inventory_validated=str(_mg_paths.validated_path(
-            DATA_ROOT, "frame_inventory", "inventory", "{experiment}",
-            path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id="{well_id}",
-        )),
+        frame_inventory_validated=_mg_frame_inventory_validated("{experiment}", well_id="{well_id}"),
         physical_embryo_registry=str(_mg_registry("{experiment}", well_id="{well_id}")),
         physical_embryo_registry_validated=str(_mg_registry_validated("{experiment}", well_id="{well_id}")),
     output:
         mask_geometry=str(_mg_artifact(
-            "{experiment}", path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -113,12 +70,12 @@ rule validate_mask_geometry_for_well:
     """Validate the per-well mask_geometry shard (spine + features, registry as verifier) and write .validated."""
     input:
         mask_geometry=str(_mg_artifact(
-            "{experiment}", path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         physical_embryo_registry=str(_mg_registry("{experiment}", well_id="{well_id}")),
     output:
         validated=str(_mg_validated(
-            "{experiment}", path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -134,11 +91,11 @@ rule merge_mask_geometry:
     input:
         per_well=_mg_artifacts_for_run,
         per_well_validated=lambda wc: [
-            str(_mg_validated(wc.experiment, path_mode=_mg_paths.PATH_MODE_PER_WELL, well_id=w))
+            str(_mg_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w))
             for w in wells_for_experiment(wc)
         ],
     output:
-        merged=str(_mg_artifact("{experiment}", path_mode=_mg_paths.PATH_MODE_MERGED)),
+        merged=str(_mg_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
     shell:
         """
         {RUN} -c "

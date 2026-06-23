@@ -7,72 +7,35 @@ the per-well physical_embryo_registry shard (identity verifier). Per-well build 
 merge, mirroring the snip_processing template.
 """
 
-import importlib.util
-
-_curvature_metrics_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths_curvature_metrics",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-_curvature_metrics_paths = importlib.util.module_from_spec(_curvature_metrics_paths_spec)
-_curvature_metrics_paths_spec.loader.exec_module(_curvature_metrics_paths)
-
 CURVATURE_METRICS_STEP = "curvature_metrics"
 
 
 def _curvature_metrics_artifact(experiment, *, path_mode, well_id=None):
-    return _curvature_metrics_paths.artifact_path(
-        DATA_ROOT, CURVATURE_METRICS_STEP, "curvature_metrics", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_artifact(CURVATURE_METRICS_STEP, "curvature_metrics", experiment, path_mode=path_mode, well_id=well_id)
 
 def _curvature_metrics_validated(experiment, *, path_mode, well_id=None):
-    return _curvature_metrics_paths.validated_path(
-        DATA_ROOT, CURVATURE_METRICS_STEP, "curvature_metrics", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_validated(CURVATURE_METRICS_STEP, "curvature_metrics", experiment, path_mode=path_mode, well_id=well_id)
 
 def _curvature_metrics_snip_inventory(experiment, *, well_id):
-    return _curvature_metrics_paths.artifact_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _curvature_metrics_snip_inventory_validated(experiment, *, well_id):
-    return _curvature_metrics_paths.validated_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _curvature_metrics_frame_masks(experiment, *, well_id):
-    return _curvature_metrics_paths.artifact_path(
-        DATA_ROOT, "frame_masks", "frame_masks", experiment,
-        path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("frame_masks", "frame_masks", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _curvature_metrics_frame_inventory(experiment, *, well_id):
-    return _curvature_metrics_paths.artifact_path(
-        DATA_ROOT, "frame_inventory", "inventory", experiment,
-        path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
+    return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
+def _curvature_metrics_frame_inventory_validated(experiment, *, well_id):
+    return rule_validated("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _curvature_metrics_registry(experiment, *, well_id):
-    return _curvature_metrics_paths.artifact_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _curvature_metrics_registry_validated(experiment, *, well_id):
-    return _curvature_metrics_paths.validated_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
+    return rule_validated("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 
 def _curvature_metrics_artifacts_for_run(wc):
@@ -88,15 +51,12 @@ rule build_curvature_metrics_for_well:
         snip_inventory_validated=str(_curvature_metrics_snip_inventory_validated("{experiment}", well_id="{well_id}")),
         frame_masks=str(_curvature_metrics_frame_masks("{experiment}", well_id="{well_id}")),
         frame_inventory=str(_curvature_metrics_frame_inventory("{experiment}", well_id="{well_id}")),
-        frame_inventory_validated=str(_curvature_metrics_paths.validated_path(
-            DATA_ROOT, "frame_inventory", "inventory", "{experiment}",
-            path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id="{well_id}",
-        )),
+        frame_inventory_validated=_curvature_metrics_frame_inventory_validated("{experiment}", well_id="{well_id}"),
         physical_embryo_registry=str(_curvature_metrics_registry("{experiment}", well_id="{well_id}")),
         physical_embryo_registry_validated=str(_curvature_metrics_registry_validated("{experiment}", well_id="{well_id}")),
     output:
         curvature_metrics=str(_curvature_metrics_artifact(
-            "{experiment}", path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -113,12 +73,12 @@ rule validate_curvature_metrics_for_well:
     """Validate the per-well curvature_metrics shard (spine + features, registry as verifier) and write .validated."""
     input:
         curvature_metrics=str(_curvature_metrics_artifact(
-            "{experiment}", path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         physical_embryo_registry=str(_curvature_metrics_registry("{experiment}", well_id="{well_id}")),
     output:
         validated=str(_curvature_metrics_validated(
-            "{experiment}", path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -134,11 +94,11 @@ rule merge_curvature_metrics:
     input:
         per_well=_curvature_metrics_artifacts_for_run,
         per_well_validated=lambda wc: [
-            str(_curvature_metrics_validated(wc.experiment, path_mode=_curvature_metrics_paths.PATH_MODE_PER_WELL, well_id=w))
+            str(_curvature_metrics_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w))
             for w in wells_for_experiment(wc)
         ],
     output:
-        merged=str(_curvature_metrics_artifact("{experiment}", path_mode=_curvature_metrics_paths.PATH_MODE_MERGED)),
+        merged=str(_curvature_metrics_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
     shell:
         """
         {RUN} -c "

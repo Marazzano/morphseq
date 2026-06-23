@@ -7,72 +7,35 @@ the per-well physical_embryo_registry shard (identity verifier). Per-well build 
 merge, mirroring the snip_processing template.
 """
 
-import importlib.util
-
-_pose_kinematics_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths_pose_kinematics",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-_pose_kinematics_paths = importlib.util.module_from_spec(_pose_kinematics_paths_spec)
-_pose_kinematics_paths_spec.loader.exec_module(_pose_kinematics_paths)
-
 POSE_KINEMATICS_STEP = "pose_kinematics"
 
 
 def _pose_kinematics_artifact(experiment, *, path_mode, well_id=None):
-    return _pose_kinematics_paths.artifact_path(
-        DATA_ROOT, POSE_KINEMATICS_STEP, "pose_kinematics", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_artifact(POSE_KINEMATICS_STEP, "pose_kinematics", experiment, path_mode=path_mode, well_id=well_id)
 
 def _pose_kinematics_validated(experiment, *, path_mode, well_id=None):
-    return _pose_kinematics_paths.validated_path(
-        DATA_ROOT, POSE_KINEMATICS_STEP, "pose_kinematics", experiment,
-        path_mode=path_mode, well_id=well_id,
-    )
-
+    return rule_validated(POSE_KINEMATICS_STEP, "pose_kinematics", experiment, path_mode=path_mode, well_id=well_id)
 
 def _pose_kinematics_snip_inventory(experiment, *, well_id):
-    return _pose_kinematics_paths.artifact_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _pose_kinematics_snip_inventory_validated(experiment, *, well_id):
-    return _pose_kinematics_paths.validated_path(
-        DATA_ROOT, "snip_inventory", "snip_inventory", experiment,
-        path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _pose_kinematics_frame_masks(experiment, *, well_id):
-    return _pose_kinematics_paths.artifact_path(
-        DATA_ROOT, "frame_masks", "frame_masks", experiment,
-        path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("frame_masks", "frame_masks", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _pose_kinematics_frame_inventory(experiment, *, well_id):
-    return _pose_kinematics_paths.artifact_path(
-        DATA_ROOT, "frame_inventory", "inventory", experiment,
-        path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
+    return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
+def _pose_kinematics_frame_inventory_validated(experiment, *, well_id):
+    return rule_validated("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _pose_kinematics_registry(experiment, *, well_id):
-    return _pose_kinematics_paths.artifact_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
+    return rule_artifact("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _pose_kinematics_registry_validated(experiment, *, well_id):
-    return _pose_kinematics_paths.validated_path(
-        DATA_ROOT, "physical_embryo_registry", "physical_embryo_registry", experiment,
-        path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id=well_id,
-    )
+    return rule_validated("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 
 def _pose_kinematics_artifacts_for_run(wc):
@@ -88,15 +51,12 @@ rule build_pose_kinematics_for_well:
         snip_inventory_validated=str(_pose_kinematics_snip_inventory_validated("{experiment}", well_id="{well_id}")),
         frame_masks=str(_pose_kinematics_frame_masks("{experiment}", well_id="{well_id}")),
         frame_inventory=str(_pose_kinematics_frame_inventory("{experiment}", well_id="{well_id}")),
-        frame_inventory_validated=str(_pose_kinematics_paths.validated_path(
-            DATA_ROOT, "frame_inventory", "inventory", "{experiment}",
-            path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id="{well_id}",
-        )),
+        frame_inventory_validated=_pose_kinematics_frame_inventory_validated("{experiment}", well_id="{well_id}"),
         physical_embryo_registry=str(_pose_kinematics_registry("{experiment}", well_id="{well_id}")),
         physical_embryo_registry_validated=str(_pose_kinematics_registry_validated("{experiment}", well_id="{well_id}")),
     output:
         pose_kinematics=str(_pose_kinematics_artifact(
-            "{experiment}", path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -113,12 +73,12 @@ rule validate_pose_kinematics_for_well:
     """Validate the per-well pose_kinematics shard (spine + features, registry as verifier) and write .validated."""
     input:
         pose_kinematics=str(_pose_kinematics_artifact(
-            "{experiment}", path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         physical_embryo_registry=str(_pose_kinematics_registry("{experiment}", well_id="{well_id}")),
     output:
         validated=str(_pose_kinematics_validated(
-            "{experiment}", path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     shell:
         """
@@ -134,11 +94,11 @@ rule merge_pose_kinematics:
     input:
         per_well=_pose_kinematics_artifacts_for_run,
         per_well_validated=lambda wc: [
-            str(_pose_kinematics_validated(wc.experiment, path_mode=_pose_kinematics_paths.PATH_MODE_PER_WELL, well_id=w))
+            str(_pose_kinematics_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w))
             for w in wells_for_experiment(wc)
         ],
     output:
-        merged=str(_pose_kinematics_artifact("{experiment}", path_mode=_pose_kinematics_paths.PATH_MODE_MERGED)),
+        merged=str(_pose_kinematics_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
     shell:
         """
         {RUN} -c "

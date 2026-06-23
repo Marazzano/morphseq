@@ -17,55 +17,20 @@ Merged output layout (under object_extraction/{experiment}/auxiliary_masks/):
     {experiment_id}_auxiliary_masks.csv.validated -- merged sentinel
 """
 
-import importlib.util
-
-_paths_spec = importlib.util.spec_from_file_location(
-    "_pipeline_orchestrator_paths",
-    PROJECT_ROOT / "src" / "data_pipeline" / "pipeline_orchestrator" / "orchestration" / "paths.py",
-)
-_paths_mod = importlib.util.module_from_spec(_paths_spec)
-_paths_spec.loader.exec_module(_paths_mod)
-
 AUXILIARY_MASKS_STEP = "auxiliary_masks"
 
 
 def _aux_masks_artifact(experiment: str, artifact: str, *, path_mode: str, well_id: str | None = None):
-    return _paths_mod.artifact_path(
-        DATA_ROOT,
-        AUXILIARY_MASKS_STEP,
-        artifact,
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_artifact(AUXILIARY_MASKS_STEP, artifact, experiment, path_mode=path_mode, well_id=well_id)
 
 def _aux_masks_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return _paths_mod.validated_path(
-        DATA_ROOT,
-        AUXILIARY_MASKS_STEP,
-        "manifest",
-        experiment,
-        path_mode=path_mode,
-        well_id=well_id,
-    )
-
+    return rule_validated(AUXILIARY_MASKS_STEP, "manifest", experiment, path_mode=path_mode, well_id=well_id)
 
 def _aux_masks_manifests_for_run(wc):
-    return run_well_shard_paths(
-        DATA_ROOT,
-        AUXILIARY_MASKS_STEP,
-        "manifest",
-        wc.experiment,
-        wells_for_experiment(wc),
-    )
-
+    return run_well_shard_paths(DATA_ROOT, AUXILIARY_MASKS_STEP, "manifest", wc.experiment, wells_for_experiment(wc))
 
 def _aux_masks_validated_for_run(wc):
-    return [
-        str(_aux_masks_validated(wc.experiment, path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id=w))
-        for w in wells_for_experiment(wc)
-    ]
+    return [_aux_masks_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w) for w in wells_for_experiment(wc)]
 
 
 rule auxiliary_masks_per_well:
@@ -76,29 +41,24 @@ rule auxiliary_masks_per_well:
     """
     input:
         frame_inventory=str(_frame_inventory_artifact(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
         frame_inventory_validated=str(_frame_inventory_validated(
-            "{experiment}", path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     output:
         manifest=str(_aux_masks_artifact(
             "{experiment}", "manifest",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
         sentinel=str(_aux_masks_validated(
             "{experiment}",
-            path_mode=_paths_mod.PATH_MODE_PER_WELL,
+            path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
         )),
     params:
-        output_root=lambda wc: str(
-            _paths_mod.step_dir(
-                DATA_ROOT, AUXILIARY_MASKS_STEP, wc.experiment,
-                path_mode=_paths_mod.PATH_MODE_PER_WELL, well_id=wc.well_id,
-            )
-        ),
+        output_root=lambda wc: rule_step_dir(AUXILIARY_MASKS_STEP, wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=wc.well_id),
         model_root=lambda wc: str(MODELS_DIR / "auxiliary_masks"),
         batch_size=lambda wc: int(config.get("auxiliary_masks", {}).get("batch_size", 64)),
         num_workers=lambda wc: int(config.get("auxiliary_masks", {}).get("num_workers", 1)),
@@ -124,11 +84,11 @@ rule merge_auxiliary_masks:
     output:
         merged=str(_aux_masks_artifact(
             "{experiment}", "manifest",
-            path_mode=_paths_mod.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
         sentinel=str(_aux_masks_validated(
             "{experiment}",
-            path_mode=_paths_mod.PATH_MODE_MERGED,
+            path_mode=PATH_MODE_MERGED,
         )),
     shell:
         """
