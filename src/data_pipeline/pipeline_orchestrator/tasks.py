@@ -284,6 +284,36 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_mask_geometry(args: argparse.Namespace) -> None:
+    """Compute the per-well mask_geometry feature shard. Thin dispatcher; logic lives in the product."""
+    from data_pipeline.feature_extraction.mask_geometry.entrypoint import run_mask_geometry
+
+    run_mask_geometry(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_mask_geometry(args: argparse.Namespace) -> None:
+    """Validate a per-well mask_geometry shard (spine + features, registry as verifier) and write .validated."""
+    import pandas as pd
+
+    from data_pipeline.feature_extraction.mask_geometry.contract import (
+        validate_mask_geometry_features,
+    )
+
+    validate_mask_geometry_features(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_frame_masks(args: argparse.Namespace) -> None:
     import json
     import tempfile
@@ -586,6 +616,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--output-width-px", type=int, default=256)
     p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
     p_sp.set_defaults(func=cmd_snip_processing)
+
+    p_mg = sub.add_parser("mask-geometry")
+    p_mg.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_mg.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_mg.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_mg.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_mg.add_argument("--output-csv", type=Path, required=True)
+    p_mg.set_defaults(func=cmd_mask_geometry)
+
+    p_mg_validate = sub.add_parser("validate-mask-geometry")
+    p_mg_validate.add_argument("--input-csv", type=Path, required=True)
+    p_mg_validate.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_mg_validate.add_argument("--output-flag", type=Path, required=True)
+    p_mg_validate.set_defaults(func=cmd_validate_mask_geometry)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)

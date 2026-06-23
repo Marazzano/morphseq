@@ -316,6 +316,25 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── FEATURES — mask geometry ─────────────────────────────────────────────
+    # `mask_geometry` is the first computed-feature product: one row per snip_id with micron-aware
+    # geometry (area/perimeter/length/width/centroid), decoded from the canonical frame_masks RLE.
+    # The PRODUCT name names the artifact, not the method (`mask_geometry`, not `sam2_geometry`).
+    # execution=PER_WELL: cheap CPU per well (decode + measure a handful of masks) — no batch model
+    # to amortize. Code lives under feature_extraction/; the on-disk stage is features/.
+    "mask_geometry": {
+        "stage": "features",
+        "product_dir": "mask_geometry",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "mask_geometry": {
+                PATH_MODE_PER_WELL: "{well_id}_mask_geometry.csv",
+                PATH_MODE_MERGED: "{experiment_id}_mask_geometry.csv",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────

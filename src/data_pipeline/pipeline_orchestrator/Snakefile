@@ -166,6 +166,7 @@ include: str(WORKFLOW_DIR / "rules" / "frame_masks.smk")
 include: str(WORKFLOW_DIR / "rules" / "physical_embryo_registry.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_processing.smk")
 include: str(WORKFLOW_DIR / "rules" / "latent_embeddings.smk")
+include: str(WORKFLOW_DIR / "rules" / "mask_geometry.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):

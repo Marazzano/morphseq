@@ -114,16 +114,28 @@ snip_processing:
 feature_extraction:
   stage_predictions: {}
 
+  # mask_geometry has no run-level knobs yet: pixel size comes from frame_inventory, and the
+  # product emits one row per snip regardless of validity (QC excludes, not feature extraction).
+  mask_geometry: {}
+
   # Legacy VAE encoder — produces latent embeddings (latent_embeddings step).
   # model_name:           which trained model to load (science choice; names the weights dir)
-  # model_input_shape:    [height, width] — NumPy/torchvision (H, W) convention, NOT (W, H)
-  # model_input_channels: 1 = grayscale (matches MetricVAEConfig input_dim=(1, 288, 128))
-  #                       3 = RGB (only if a future model is trained on colour input)
+  # model_input_shape:    [height, width] — PyTorch/torchvision (H, W) convention, NOT (W, H).
+  #                       288 = height (tall embryo axis), 128 = width. Matches the snip output
+  #                       shape from snip_processing (output_shape: [576, 256] downsampled 2×).
+  # model_input_channels: channel count the encoder expects. Confirmed by model_config.json:
+  #                       "input_dim": [1, 288, 128] (SeqVAEConfig). All legacy dataset
+  #                       transforms used Grayscale(num_output_channels=1). 1 = grayscale;
+  #                       3 = RGB only if a future model is trained on colour input.
   # batch_size:           snips per encoder forward pass
   legacy_embeddings:
     model_name: 20241107_ds_sweep01_optimum
-    model_input_shape: [288, 128]
-    model_input_channels: 1
+    # models_root_override: null  # set to an absolute path to override env.yaml.paths.models_root
+    #   e.g. "/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/models"
+    #   Useful when weights live in a legacy playground dir rather than the pipeline output tree.
+    #   Resolved by entrypoint: override wins if non-null, else falls back to env.yaml.paths.models_root.
+    model_input_shape: [288, 128]   # [height, width] per PyTorch convention; 288=tall axis
+    model_input_channels: 1         # grayscale; confirmed by model_config.json input_dim=[1,288,128]
     batch_size: 64
 
 # Phase 5: QC (placeholder)
