@@ -1,8 +1,11 @@
 # External Dataset Handoff — the outside-world → frame_inventory target (🟢 TARGET)
 
-**Status:** target spec, mdcolon 2026-06-23. The locked design for how an **external researcher with
-their own organized data** enters the pipeline and runs it from segmentation onward. Spec only — no
-implementation in this pass.
+**Status:** target spec with partial implementation in progress, mdcolon 2026-06-24. The locked
+design for how an **external researcher with their own organized data** enters the pipeline and runs
+it from segmentation onward. This doc stays the (mostly timeless) **target design**; live
+implementation status — what is built/tested vs. deferred — lives in `current_state_and_next_steps.md`.
+The drop-in code modules (validator, long ingester, discover/split/scaffold twins) are built and
+tested; the DAG wiring is deferred to a producer-selection refactor (§7).
 
 **Companion to:**
 - `frame_inventory_handoff_contract.md` — the drop-in seam (the immutable frame key, the one-file +
@@ -19,12 +22,16 @@ with the rejected alternatives and the scar tissue. This spec is its clean disti
 > ## One pipeline. Many entrances. Same contracts at the gate.
 
 The external handoff does **not** create a second pipeline. It creates a **stricter entrance into the
-same pipeline.** There is no "external mode" — after the entrance, no stage can tell which producer
-ran. The doctrine, in one breath:
+same pipeline.** **There is no external mode downstream of the front-end seam** — after the entrance,
+no stage can tell which producer ran. There IS a **front-end producer-selection mode** (native vs.
+drop-in) that exists ONLY before the canonical artifacts: *producer mode ends at the gate; canonical
+artifacts cross the gate; downstream sees only the contract.* The doctrine, in one breath:
 
 > **The metadata says what the biology means. The manifest says what images exist. The strict
 > validator makes the image claims touch disk. `paths.py` owns where pipeline artifacts live. The
 > consumers enforce biological completeness only when they need it.**
+
+> **The constitution, in one line: _Validate an invariant where it lives. Trust it downstream._**
 
 ---
 
@@ -64,7 +71,7 @@ Two independent roots, joined late — never fused at the door.
 | Input | Shape | Required? |
 |---|---|---|
 | **frame inventory manifest** | one `dropin_frame_inventory.csv`, all wells (§4) | ✅ always |
-| **biology metadata** | long CSV/sheet OR plate `.xlsx` → well-grain long table (§3) | ✅ for any biology-aware stage; not for bare segmentation |
+| **biology metadata** | long CSV/sheet OR plate `.xlsx` → well-grain long table (§3) | ✅ for biology-aware *outputs*; not for bare segmentation. **Ingest does NOT fail on missing biology values** — it emits canonical nullable columns; the *consumer* gates (stage prediction, L3 completeness) decide whether a missing value is allowed. |
 | **`image_root`** | a directory for resolving *relative* `source_image_path` | ⬚ optional (only if the manifest uses relative paths) |
 
 ---
@@ -302,11 +309,39 @@ package; no class; no `validation/` subpackage (see §9).
 - `metadata_ingest/frame_inventory/scaffold_dropin_inventory.py` — image dir → starter manifest.
 - `metadata_ingest/well_discovery/discover_wells_from_handoff.py` — drop-in twin of
   `discover_wells_from_scope_metadata.py` (one experiment_id, derive well_id, reuse the discovered-wells contract).
-- `metadata_ingest/well_discovery/split_dropin_inventory.py` — `split_dropin_inventory_by_well()`.
-- `pipeline_orchestrator/rules/dropin_handoff.smk` — external-entry orchestration rules. **The main
-  Snakefile / orchestration include list must `include:` this file** — otherwise it is a decorative
-  canoe that no workflow can reach.
+- `metadata_ingest/well_discovery/split_dropin_inventory.py` — `select_dropin_well_shard()` (the
+  race-free per-well DAG producer — writes ONLY its declared shard) + `split_dropin_inventory_by_well()`
+  (bulk helper for one-shot/tests).
+- `pipeline_orchestrator/rules/dropin_handoff.smk` — external-entry orchestration rules.
 - mirror tests under `tests/data_pipeline/...` for each.
+
+> **🔌 Ingress path ownership (LOCKED).** `dropin_frame_inventory.csv` + `image_root` are
+> **config/CLI-supplied INGRESS, NOT `PIPELINE_STEPS` artifacts.** The canonical pipeline artifacts begin
+> at the per-well frame_inventory shards (post-split); the ingress manifest is read only by discovery +
+> split, never by a well-local compute stage. No registry row for the ingress manifest unless a future
+> need materializes/copies it as a pipeline artifact.
+
+> **🚧 DAG integration is DEFERRED to a named "producer selection" refactor (Step 8).** The drop-in
+> code (discover/split/scaffold twins + the strict gate) is **built and tested**, and the full
+> walkthrough runs end-to-end via the CLI verbs. But `dropin_handoff.smk` ships as an **un-included
+> draft**: its rules intentionally write the SAME canonical artifacts (`discovered_wells.txt`, the
+> per-well shards, the `.validated` sentinels) the native producers write, so including it alongside
+> the native rules is a Snakemake output collision. Final integration needs a mode-exclusive selector:
+>
+> ```yaml
+> front_end:
+>   mode: native      # native | dropin
+> dropin:
+>   enabled: true
+>   frame_inventory_csv: /path/to/dropin_frame_inventory.csv
+>   image_root: /path/to/images
+> ```
+>
+> Native mode registers the native discover/materialize producers; dropin mode registers the dropin
+> discover/split producers; **both target the same canonical artifacts**; unknown mode fails loud; a
+> dry-run matrix (native + dropin) gates the refactor. *Build the new producer; do not connect it to
+> the throne until the succession law exists.* The split producer is per-well and race-free (it writes
+> exactly its declared shard via `--well-id`, never the whole directory) so it slots in cleanly.
 
 **CHANGE**
 - `metadata_ingest/frame_inventory/frame_inventory.py` — product/table ops only (keeps
@@ -338,7 +373,9 @@ package; no class; no `validation/` subpackage (see §9).
   infrastructure.
 - **No user-configurable layout** — the canonical tree is fixed; no `LayoutSpec` class.
 - **No separate folder-contract object** — L4 source checks are the folder contract.
-- **No second pipeline / "external mode"** — one stricter entrance into the same pipeline.
+- **No second pipeline / no external mode downstream of the seam** — one stricter entrance into the
+  same pipeline. (Front-end *producer selection* native|dropin exists only before the canonical
+  artifacts; it is not a downstream pipeline mode.)
 
 ---
 
@@ -367,7 +404,9 @@ package; no class; no `validation/` subpackage (see §9).
 8. Strict `validate_frame_inventory` **behavior is preserved/grown** as the public gate (ordered L0–L4,
    **non-mutating** — sentinel/errors only), but the **implementation moves** out of `frame_inventory.py`
    into `frame_inventory_validation.py`.
-9. **`check_sources` mode flag:** default `True` (drop-in); merged node explicitly `False`.
+9. **`check_sources` mode flag:** **Python default `False`** (conservative — no caller silently
+   inherits disk-touching strictness); strict per-well nodes (native + drop-in) pass `True`
+   explicitly; the merged node passes `False` explicitly. Every call site is explicit.
 10. **Path policy:** absolute validated directly (not forced under `image_root`); relative resolved against
     `image_root` (fail loud if absent under `check_sources`), no `..` escape; CSV never rewritten.
 11. L4 source checks ARE the image/folder contract — no separate folder-contract object.

@@ -9,6 +9,7 @@ from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_handoff im
     discover_wells_from_handoff,
 )
 from data_pipeline.metadata_ingest.well_discovery.split_dropin_inventory import (
+    select_dropin_well_shard,
     split_dropin_inventory_by_well,
 )
 from data_pipeline.metadata_ingest.well_discovery.discovered_wells_contract import (
@@ -80,3 +81,31 @@ def test_split_rejects_mixed_experiments(tmp_path):
     _manifest([_row("20250912", "A01", 0), _row("20250101", "B01", 0)]).to_csv(manifest, index=False)
     with pytest.raises(ValueError, match="exactly one experiment_id"):
         split_dropin_inventory_by_well(manifest, tmp_path / "per_well")
+
+
+# --- select_dropin_well_shard (the race-free per-well DAG producer) --------------------------
+
+def test_select_writes_only_the_requested_well(tmp_path):
+    manifest = tmp_path / "dropin_frame_inventory.csv"
+    _manifest([_row("20250912", "A01", 0), _row("20250912", "A01", 1),
+               _row("20250912", "B01", 0)]).to_csv(manifest, index=False)
+    a01 = build_well_id("20250912", "A01")
+    out = tmp_path / f"{a01}_frame_inventory.csv"
+    select_dropin_well_shard(manifest, a01, out)
+    written = pd.read_csv(out)
+    assert len(written) == 2  # only A01's two rows — NOT the whole village
+    assert set(written["well_index"]) == {"A01"}
+
+
+def test_select_unknown_well_fails(tmp_path):
+    manifest = tmp_path / "m.csv"
+    _manifest([_row("20250912", "A01", 0)]).to_csv(manifest, index=False)
+    with pytest.raises(ValueError, match="resolve to well_id"):
+        select_dropin_well_shard(manifest, build_well_id("20250912", "H12"), tmp_path / "out.csv")
+
+
+def test_select_rejects_mixed_experiments(tmp_path):
+    manifest = tmp_path / "m.csv"
+    _manifest([_row("20250912", "A01", 0), _row("20250101", "B01", 0)]).to_csv(manifest, index=False)
+    with pytest.raises(ValueError, match="exactly one experiment_id"):
+        select_dropin_well_shard(manifest, build_well_id("20250912", "A01"), tmp_path / "out.csv")
