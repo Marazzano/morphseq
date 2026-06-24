@@ -1,70 +1,28 @@
-"""External drop-in entrance — DRAFT rule file (NOT yet included in the Snakefile).
+"""External drop-in entrance — the dropin PRODUCER family (registered ONLY in dropin mode).
 
-╔══════════════════════════════════════════════════════════════════════════════════════════════╗
-║  ⚠️  DRAFT ONLY — DO NOT add to the Snakefile `include:` list yet.                              ║
-║                                                                                                ║
-║  These rules INTENTIONALLY write the CANONICAL artifacts — `DISCOVERED_WELLS_TXT`, the per-well ║
-║  frame_inventory shards, and the `.validated` sentinels. If included ALONGSIDE the native       ║
-║  producers they WILL collide (Snakemake forbids two rules producing the same output), even with ║
-║  the draft-distinct rule names below. This file is safe ONLY while un-included.                 ║
-╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+Selected by ``front_end.mode: dropin`` (Snakefile) — mode-exclusive with the native producers
+(`materialize_well_native.smk`). It lands a user's ``dropin_frame_inventory.csv`` on the SAME
+canonical spine the native path uses and hands off to the SAME strict gate, so nothing downstream
+of the seam can tell which producer ran:
 
-   Final integration needs a mode-exclusive producer-selection refactor (Step 8) that registers
-   exactly one producer family:
+    dropin_frame_inventory.csv (ingress; config-supplied, NOT a registry artifact)
+      → discover_wells (checkpoint)         → discovered_wells.txt        [canonical]
+      → split_dropin_inventory (per well)   → {well_id}_frame_inventory.csv shard  [canonical]
+      → validate_frame_inventory_for_well   → {well_id}_frame_inventory.csv.validated [canonical]
+      → segment_and_track_per_well …
 
-       front_end:
-         mode: native   # native | dropin
-       dropin:
-         enabled: true
-         frame_inventory_csv: /path/to/dropin_frame_inventory.csv
-         image_root: /path/to/images
+No stitch step (the user already has images). The rule NAMES are the canonical ones
+(``discover_wells``, ``validate_frame_inventory_for_well``) so the well-runner fan + merge rules in
+frame_inventory.smk consume drop-in shards transparently. This file reuses frame_inventory.smk's path
+helpers (``_frame_inventory_artifact``, ``_materialize_well_validated``), so it MUST be included after it.
 
-   - native mode registers the native discover/materialize producers;
-   - dropin mode registers the dropin discover/split producers below;
-   - BOTH target the same canonical discovered_wells + frame_inventory artifacts;
-   - unknown mode fails loud; a dry-run matrix (native + dropin) gates that refactor.
-
-This file is the reviewable, code-level entrance. The drop-in twins it drives
-(discover_wells_from_handoff, split_dropin_inventory_by_well) and the strict gate are all built and
-tested; only the DAG wiring is deferred.
-
-> **Ingress path ownership (locked).** ``dropin_frame_inventory.csv`` + ``image_root`` are
-> config/CLI-supplied INGRESS, NOT ``PIPELINE_STEPS`` artifacts. The canonical pipeline artifacts begin
-> at the per-well frame_inventory shards (post-split). The ingress manifest is read only by discovery +
-> split — never by a well-local compute stage. There is no stitch step (the user already has images).
-
-The rule NAMES below are draft-distinct (``*_dropin``) to make the collision explicit; under producer
-selection they collapse onto the native names (``discover_wells`` checkpoint, the per-well shard
-producer, ``validate_frame_inventory_for_well``) so downstream consumes drop-in shards transparently.
+Ingress (``DROPIN_MANIFEST_CSV`` + ``DROPIN_IMAGE_ROOT``) is owned by the Snakefile's `front_end`/`dropin`
+config block — one blessed path source, never a raw string scattered in rules.
 """
 
-DROPIN_CONFIG = config.get("dropin", {})
 
-# Ingress (config/CLI; one blessed path source — never a raw string scattered in rules).
-DROPIN_MANIFEST_CSV = str(DROPIN_CONFIG.get("frame_inventory_csv", ""))
-DROPIN_IMAGE_ROOT = str(DROPIN_CONFIG.get("image_root", ""))
-
-DROPIN_FRAME_INVENTORY_STEP = "frame_inventory"
-DROPIN_FRAME_INVENTORY_ARTIFACT = "inventory"
-
-
-def _dropin_shard(experiment, *, well_id):
-    return rule_artifact(
-        DROPIN_FRAME_INVENTORY_STEP, DROPIN_FRAME_INVENTORY_ARTIFACT, experiment,
-        path_mode=PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
-
-def _dropin_validated(experiment, *, well_id):
-    return rule_validated(
-        DROPIN_FRAME_INVENTORY_STEP, DROPIN_FRAME_INVENTORY_ARTIFACT, experiment,
-        path_mode=PATH_MODE_PER_WELL, well_id=well_id,
-    )
-
-
-# 1) Discover wells from the ingress manifest → the SAME discovered_wells.txt contract.
-#    (Under producer selection this becomes the `discover_wells` checkpoint, replacing the native one.)
-checkpoint discover_wells_dropin:
+# 1) Discover wells from the ingress manifest → the canonical discovered_wells.txt.
+checkpoint discover_wells:
     input:
         manifest = DROPIN_MANIFEST_CSV,
     output:
@@ -77,15 +35,15 @@ checkpoint discover_wells_dropin:
         """
 
 
-# 2) Select THIS well's rows from the ingress manifest → exactly its declared shard.
-#    Per-well + race-free: the rule writes ONLY {well_id}'s shard (Option B), never the whole
-#    directory — a rule writes what it promises. Fanned over the discovery checkpoint's well list.
-#    (One experiment per submission; DISCOVERED_WELLS_TXT is the single-experiment front-end target.)
+# 2) Select THIS well's rows from the ingress manifest → exactly its canonical shard.
+#    Per-well + race-free (Option B): writes ONLY {well_id}'s shard, never the whole directory.
 rule split_dropin_inventory:
     input:
         manifest = DROPIN_MANIFEST_CSV,
     output:
-        shard = str(_dropin_shard("{experiment}", well_id="{well_id}")),
+        shard = str(_frame_inventory_artifact(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks split-dropin-inventory \
@@ -95,18 +53,21 @@ rule split_dropin_inventory:
         """
 
 
-# 3) Validate each shard through the SAME strict gate (check_sources=True, per_well).
-rule validate_dropin_frame_inventory_for_well:
+# 3) Validate each shard through the SAME strict gate (check_sources=True, per_well). Same rule name
+#    + same canonical .validated sentinel the native producer writes → merge stays producer-agnostic.
+rule validate_frame_inventory_for_well:
     input:
-        shard = str(_dropin_shard("{experiment}", well_id="{well_id}")),
+        inventory = str(_frame_inventory_artifact(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
     output:
-        validated = str(_dropin_validated("{experiment}", well_id="{well_id}")),
+        validated = str(_materialize_well_validated("{experiment}", well_id="{well_id}")),
     params:
         image_root = DROPIN_IMAGE_ROOT,
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory \
-          --input-csv "{input.shard}" \
+          --input-csv "{input.inventory}" \
           --output-flag "{output.validated}" \
           --image-root "{params.image_root}" \
           --check-sources "true" \

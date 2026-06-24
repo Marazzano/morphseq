@@ -321,27 +321,33 @@ package; no class; no `validation/` subpackage (see §9).
 > split, never by a well-local compute stage. No registry row for the ingress manifest unless a future
 > need materializes/copies it as a pipeline artifact.
 
-> **🚧 DAG integration is DEFERRED to a named "producer selection" refactor (Step 8).** The drop-in
-> code (discover/split/scaffold twins + the strict gate) is **built and tested**, and the full
-> walkthrough runs end-to-end via the CLI verbs. But `dropin_handoff.smk` ships as an **un-included
-> draft**: its rules intentionally write the SAME canonical artifacts (`discovered_wells.txt`, the
-> per-well shards, the `.validated` sentinels) the native producers write, so including it alongside
-> the native rules is a Snakemake output collision. Final integration needs a mode-exclusive selector:
+> **✅ DAG integration is WIRED via front-end producer selection (mode-exclusive).** The selector is a
+> Snakefile-level config switch; exactly one producer family registers, both writing the SAME canonical
+> artifacts (`discovered_wells.txt`, the per-well shards, the `.validated` sentinels), so everything
+> downstream of the gate is producer-agnostic:
 >
 > ```yaml
 > front_end:
->   mode: native      # native | dropin
-> dropin:
+>   mode: native      # native | dropin   (unknown → fail loud)
+> dropin:             # used ONLY in dropin mode; config/CLI ingress, NOT a registry artifact
 >   enabled: true
->   frame_inventory_csv: /path/to/dropin_frame_inventory.csv
->   image_root: /path/to/images
+>   frame_inventory_csv: /abs/path/to/dropin_frame_inventory.csv
+>   image_root: /abs/path/to/images
 > ```
 >
-> Native mode registers the native discover/materialize producers; dropin mode registers the dropin
-> discover/split producers; **both target the same canonical artifacts**; unknown mode fails loud; a
-> dry-run matrix (native + dropin) gates the refactor. *Build the new producer; do not connect it to
-> the throne until the succession law exists.* The split producer is per-well and race-free (it writes
-> exactly its declared shard via `--well-id`, never the whole directory) so it slots in cleanly.
+> - native mode includes `materialize_well_native.smk` (the microscope producers, extracted from
+>   `frame_inventory.smk` so they can be conditionally included);
+> - dropin mode includes `dropin_handoff.smk` — its rules use the CANONICAL names (`discover_wells`
+>   checkpoint, `validate_frame_inventory_for_well`) and write the canonical paths, so the well-runner
+>   fan and the merge rules consume drop-in shards transparently;
+> - the merge rules in `frame_inventory.smk` are producer-agnostic (they consume shards + sentinels by
+>   PATH, not by rule name), so they are untouched.
+>
+> **Verified by a dry-run matrix:** `snakemake -n` builds a clean DAG in BOTH native and dropin modes;
+> unknown mode and dropin-without-manifest both fail loud with the named fix. *Producer mode ends at the
+> gate; canonical artifacts cross the gate; downstream sees only the contract.* The split producer is
+> per-well and race-free (it writes exactly its declared shard via `--well-id`, never the whole
+> directory).
 
 **CHANGE**
 - `metadata_ingest/frame_inventory/frame_inventory.py` — product/table ops only (keeps

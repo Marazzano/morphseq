@@ -16,6 +16,20 @@ experiment_wells:
 #   20250912: "YX1"
 microscope: "YX1"
 
+# Front-end producer selection (mode-EXCLUSIVE). 'native' = microscope ingest/materialize producers;
+# 'dropin' = an external dataset's own frame_inventory manifest (no microscope). Both produce the SAME
+# canonical artifacts (discovered_wells.txt, per-well frame_inventory shards, .validated sentinels) —
+# exactly one family is registered. Unknown mode fails loud.
+front_end:
+  mode: native            # native | dropin
+
+# Drop-in ingress (used ONLY when front_end.mode == dropin). These are config/CLI INPUT paths, NOT
+# pipeline artifacts — the canonical pipeline begins at the per-well frame_inventory shards.
+# dropin:
+#   enabled: true
+#   frame_inventory_csv: /abs/path/to/dropin_frame_inventory.csv
+#   image_root: /abs/path/to/images        # resolves relative source_image_path
+
 # Plate metadata is optional for build/segment/snips, but kept for later biology/QC/analysis.
 plate_metadata:
   enabled: true
