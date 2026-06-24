@@ -112,6 +112,26 @@ BUILT_IMAGE_DATA_DIR    = ACQUISITION_DIR
 EXPERIMENTS = config.get("experiments", ["20250912"])
 MICROSCOPE = str(config.get("microscope", "YX1"))
 
+# --- Front-end producer selection (mode-EXCLUSIVE) --------------------------------------------
+# native = the microscope ingest/materialize producers; dropin = an external dataset's manifest.
+# Both produce the SAME canonical artifacts (discovered_wells.txt, the per-well frame_inventory
+# shards, the .validated sentinels), so EXACTLY ONE producer family is registered. The selector
+# is the only thing that knows which; everything downstream of the gate is producer-agnostic.
+# (Producer mode ends at the gate; canonical artifacts cross the gate; downstream sees the contract.)
+FRONT_END_MODE = str(config.get("front_end", {}).get("mode", "native")).strip().lower()
+if FRONT_END_MODE not in ("native", "dropin"):
+    raise ValueError(
+        f"config front_end.mode must be 'native' or 'dropin', got {FRONT_END_MODE!r}."
+    )
+# Drop-in ingress (config/CLI; NOT a PIPELINE_STEPS artifact). Required only in dropin mode.
+_DROPIN_CONFIG = config.get("dropin", {})
+DROPIN_MANIFEST_CSV = str(_DROPIN_CONFIG.get("frame_inventory_csv", ""))
+DROPIN_IMAGE_ROOT = str(_DROPIN_CONFIG.get("image_root", ""))
+if FRONT_END_MODE == "dropin" and not DROPIN_MANIFEST_CSV:
+    raise ValueError(
+        "front_end.mode='dropin' requires dropin.frame_inventory_csv (the ingress manifest path)."
+    )
+
 
 def _scope_token(microscope: str) -> str:
     return str(microscope).strip().lower()
@@ -180,6 +200,13 @@ print(f"Microscope:   {MICROSCOPE}")
 # Python helpers and input functions.
 # Smoke subsets (for example 20240418 -> A01,C01) come from config, not code.
 include: str(WORKFLOW_DIR / "rules" / "frame_inventory.smk")
+# Mode-exclusive per-well PRODUCERS (both reuse frame_inventory.smk's helpers; must follow it).
+# Exactly one family registers, writing the SAME canonical shard + .validated sentinel:
+#   native → the microscope materializer; dropin → the external manifest split + strict gate.
+if FRONT_END_MODE == "native":
+    include: str(WORKFLOW_DIR / "rules" / "materialize_well_native.smk")
+elif FRONT_END_MODE == "dropin":
+    include: str(WORKFLOW_DIR / "rules" / "dropin_handoff.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_detections.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_masks.smk")
 include: str(WORKFLOW_DIR / "rules" / "physical_embryo_registry.smk")
@@ -197,6 +224,7 @@ include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
 include: str(WORKFLOW_DIR / "rules" / "surface_area_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "mask_quality_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "death_detection.smk")
+include: str(WORKFLOW_DIR / "rules" / "snip_qc.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
@@ -400,18 +428,23 @@ rule materialize_stitched_images:
 #         """
 
 
-checkpoint discover_wells:
-    input:
-        mapped_csv = SCOPE_METADATA_MAPPED_CSV,
-        validated = SCOPE_METADATA_MAPPED_VALIDATED,
-    output:
-        wells = DISCOVERED_WELLS_TXT,
-    shell:
-        """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks discover-wells \
-          --mapped-csv "{input.mapped_csv}" \
-          --output-wells "{output.wells}"
-        """
+# Native discovery checkpoint — registered ONLY in native mode. In dropin mode the
+# dropin_handoff.smk twin defines `discover_wells` writing the SAME DISCOVERED_WELLS_TXT, so exactly
+# one checkpoint named `discover_wells` exists and `checkpoints.discover_wells.get(...)` resolves in
+# both modes (the well-runner fan is producer-agnostic).
+if FRONT_END_MODE == "native":
+    checkpoint discover_wells:
+        input:
+            mapped_csv = SCOPE_METADATA_MAPPED_CSV,
+            validated = SCOPE_METADATA_MAPPED_VALIDATED,
+        output:
+            wells = DISCOVERED_WELLS_TXT,
+        shell:
+            """
+            {RUN} -m data_pipeline.pipeline_orchestrator.tasks discover-wells \
+              --mapped-csv "{input.mapped_csv}" \
+              --output-wells "{output.wells}"
+            """
 
 def wells_for_experiment(wildcards):
     checkpoints.discover_wells.get(experiment=wildcards.experiment)

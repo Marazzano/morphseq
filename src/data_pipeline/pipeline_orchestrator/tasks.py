@@ -645,6 +645,37 @@ def cmd_validate_death_event(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_snip_qc(args: argparse.Namespace) -> None:
+    """Build the per-well snip_qc verdict. Thin dispatcher; logic lives in the product."""
+    from data_pipeline.quality_control.snip_qc.entrypoint import run_snip_qc
+
+    run_snip_qc(
+        output_root=args.output_root,
+        experiment_id=args.experiment,
+        well_id=args.well_id,
+        snip_inventory_csv=args.snip_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_snip_qc(args: argparse.Namespace) -> None:
+    """Validate a per-well snip_qc verdict shard (spine + verdict, registry verifier) and write .validated."""
+    import pandas as pd
+
+    from data_pipeline.quality_control.snip_qc.contract import validate_snip_qc
+
+    input_path = args.input_csv
+    df = pd.read_parquet(input_path) if input_path.suffix == ".parquet" else pd.read_csv(input_path)
+    validate_snip_qc(
+        df,
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_frame_masks(args: argparse.Namespace) -> None:
     import json
     import tempfile
@@ -1081,12 +1112,22 @@ def build_parser() -> argparse.ArgumentParser:
     for verb, fn in (
         ("validate-death-detection-qc", cmd_validate_death_detection_qc),
         ("validate-death-event", cmd_validate_death_event),
+        ("validate-snip-qc", cmd_validate_snip_qc),
     ):
         p = sub.add_parser(verb)
         p.add_argument("--input-csv", type=Path, required=True)
         p.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
         p.add_argument("--output-flag", type=Path, required=True)
         p.set_defaults(func=fn)
+
+    p_snipqc = sub.add_parser("snip-qc")
+    p_snipqc.add_argument("--output-root", type=Path, required=True)
+    p_snipqc.add_argument("--experiment", required=True)
+    p_snipqc.add_argument("--well-id", required=True)
+    p_snipqc.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_snipqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_snipqc.add_argument("--output-csv", type=Path, required=True)
+    p_snipqc.set_defaults(func=cmd_snip_qc)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)

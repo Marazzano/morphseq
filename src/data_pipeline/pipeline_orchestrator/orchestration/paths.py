@@ -496,6 +496,22 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── QUALITY CONTROL — snip QC verdict ─────────────────────────────────────
+    # The final per-snip operational verdict: use_snip + qc_fail_reasons, ORed from the MVP
+    # exclusion flags (death_detection_qc, surface_area_qc, mask_quality_qc).
+    "snip_qc": {
+        "stage": "quality_control",
+        "product_dir": "snip_qc",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "verdict": {
+                PATH_MODE_PER_WELL: "{well_id}_snip_qc.parquet",
+                PATH_MODE_MERGED: "{experiment_id}_snip_qc.parquet",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────
