@@ -430,6 +430,22 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── QUALITY CONTROL — surface area QC ─────────────────────────────────────
+    # Stage-binned two-sided area outlier flag per snip (area_um2 from mask_geometry vs a
+    # packaged wildtype p5/p95 reference interpolated at predicted_stage_hpf).
+    "surface_area_qc": {
+        "stage": "quality_control",
+        "product_dir": "surface_area_qc",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "surface_area_qc": {
+                PATH_MODE_PER_WELL: "{well_id}_surface_area_qc.csv",
+                PATH_MODE_MERGED: "{experiment_id}_surface_area_qc.csv",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────

@@ -194,6 +194,7 @@ include: str(WORKFLOW_DIR / "rules" / "pose_kinematics.smk")
 include: str(WORKFLOW_DIR / "rules" / "stage_predictions.smk")
 include: str(WORKFLOW_DIR / "rules" / "fraction_alive.smk")
 include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
+include: str(WORKFLOW_DIR / "rules" / "surface_area_qc.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
@@ -456,6 +457,6 @@ rule all:
     """Default target: build through merged frame_masks for all experiments."""
     input:
         expand(
-            str(_frame_masks_artifact("{exp}", "frame_masks", path_mode=_paths_mod.PATH_MODE_MERGED)),
+            str(_frame_masks_artifact("{exp}", "frame_masks", path_mode=PATH_MODE_MERGED)),
             exp=EXPERIMENTS
         )
