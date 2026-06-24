@@ -8,7 +8,9 @@ adds the missing gate that catches "a real embryo with no metadata."
 **Companion to:** `front_end_naming_and_frame_inventory_flow.md` (the plate lineage is the *other root* —
 ingested early, joined late at `consolidate_features`), `pipeline_file_philosophy.md` (how the loader's
 functions must read), `output_tree_doctrine.md` (the `acquisition/` regime + `PIPELINE_STEPS` registry),
-and `../features/targets/feature_world.md` (the `snip_id` feature universe L3 judges over).
+`../features/targets/feature_world.md` (the `snip_id` feature universe L3 judges over), and
+`external_dataset_handoff_target.md` (the **external no-plate path** — the long ingester is also that
+on-ramp; L2 stays grain/format-agnostic for it).
 
 **Scope of THIS doc:** the plate-metadata ingest design (loader + contract), and the **specification** of
 the deferred entity-completeness QC gate. **Phase-1 (loader + contract) is described here; the L3 QC
@@ -112,6 +114,14 @@ describe the row).
 > so it is **specified now and slotted into the same dispatch, built later**. Designing the dispatch + the
 > per-page provenance now is what makes that drop-in clean. In MVP, long-shaped pages are **rejected** with
 > a clear reason.
+
+> **Alignment note (external handoff):** the **long ingester is also the external no-plate path** — the
+> on-ramp a researcher without a 96-well plate uses. `external_dataset_handoff_target.md` is the spec
+> that promotes this from deferred to built (it is the linchpin there). Its contract for this ingester:
+> accept well-key aliases (`well_index`/`well`/`well_name` → `well_index`) and age aliases
+> (`start_age_hpf`/`age_hpf` → canonical `start_age_hpf`), and **emit the canonical biology columns even
+> when the user omitted them** (all-NA). That keeps the L2 column *shape* stable regardless of which
+> fields arrived — nothing below changes.
 
 ### Public surface
 
@@ -224,6 +234,13 @@ workbook** (`pd.read_excel(..., sheet_name="series_number_map")`), not the side-
 Nothing fancy. Mirrors `position_well_mapping_contract.py` in shape, co-located with the data product (per
 `schema_layout.md`). The **required semantic fields** may come from grid sheets now or long-format columns
 later — hence `FIELDS`, not `PAGES`.
+
+> **L2 is grain/format-agnostic — and stays that way for the external path.** The contract requires the
+> canonical columns *exist* (by name) + identity consistency + no duplicate keys, and **allows null
+> biological values**. It does not care whether the rows came from a grid sheet, a long page, or an
+> external drop-in long table — same skeleton check either way. **Consumer / L3 completeness gates**
+> enforce the biological requirements later, conditional on a registered entity. External/drop-in
+> biology simply arrives sparser; nothing in L2 special-cases it.
 
 ```python
 REQUIRED_PLATE_METADATA_FIELDS = ("genotype", "start_age_hpf", "temperature", "medium")

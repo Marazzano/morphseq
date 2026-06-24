@@ -26,10 +26,13 @@ The architecture for the front half — discovery, run-well state, the inventori
 | Doc | The one question it answers |
 |---|---|
 | `front_end_naming_and_frame_inventory_flow.md` | What ARE the front-end stages? (ingest lineages, the fan, the convergence line) |
+| `plate_metadata_ingest_and_entity_qc.md` | How is plate metadata ingested + validated, and when is it injected? (the 3-layer loader/contract/entity-QC doctrine) |
 | `acquisition_inventory_flow.md` | The UPSTREAM, scope-specific record — "what was physically acquired" (per scope) |
 | `frame_inventory_handoff_contract.md` | The DOWNSTREAM, agnostic seam — the per-frame table segmentation reads (the finish line) |
 | `run_well_schema.md` | discovered vs eligible vs runnable well-state; Keyence reacquisition test plan |
 | `recompose_yx1_front_end.md` | The YX1-only build (microscope-scoped; the L1→L2→L3 mapping) |
+| `keyence_wire_through.md` | The Keyence-only build — staged plan to bring Keyence onto the per-well materialize interface (acq inventory, mosaic backend, stitch-map quirk, reacquisition) |
+| `external_dataset_handoff_target.md` | The **outside-world → frame_inventory entrance spec** — how an OUTSIDE researcher with their own data enters the pipeline (the stricter-entrance seam: biology long-ingest, the drop-in manifest, the strict per-well validator, the file plan). Decision provenance in `_WIP_external_handoff_decisions.md`. |
 
 ## 📁 `specs/detect-seg-track/` — downstream TARGET specs (validated frames → tracked masks)
 
@@ -44,8 +47,13 @@ and the adapter seams that let model backends change without changing downstream
 | `targets/detection_world.md` | What is the detector product contract and validator? |
 | `targets/segmentation_world.md` | What is the mask/segmentation product contract and validator? |
 | `targets/tracking_world.md` | What is the temporal identity product contract and validator? |
+| `working/current_state_and_next_steps.md` | Where is detect-seg-track RIGHT NOW? (its own living status log) |
 | `working/open_questions.md` | Where do unresolved decisions live while mdcolon and agents iterate? |
 | `working/current_audit_notes.md` | What did the current code audit find about the fused runner? |
+
+> **Two status logs, don't confuse them:** the top-level `current_state_and_next_steps.md` tracks the
+> **front-half** work; `specs/detect-seg-track/working/current_state_and_next_steps.md` tracks the
+> **detect-seg-track** work. Each is appended newest-first within its own scope.
 
 ## 📁 `specs/features/` — downstream TARGET specs (validated objects → computed features)
 

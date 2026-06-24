@@ -5,8 +5,10 @@ stitched-image handoff so an external dataset can be organized and pushed throug
 from segmentation onward — the way any standard image-processing pipeline declares its input
 format.
 **Companion to:** `front_end_naming_and_frame_inventory_flow.md` (the front-end ingest + fan spec — this doc is
-its post-fan "drop-in here" counterpart) and `per_well_throughline_findings.md` (the north-star
-findings doc; the stitched image tree is **off-registry** there).
+its post-fan "drop-in here" counterpart); `per_well_throughline_findings.md` (the north-star
+findings doc; the stitched image tree is **off-registry** there); and
+`external_dataset_handoff_target.md` (**how arbitrary external data reaches this seam** — the
+biology + manifest on-ramp and the strict per-well gate).
 **Upstream counterpart:** `acquisition_inventory_flow.md` — the **pre-stitch, microscope-specific**
 record of *what was physically acquired* (per `raw_acquisition_unit`, scope-shaped). The
 **acquisition inventory** is a different kind of information from the **frame inventory**: the
@@ -241,8 +243,17 @@ the drop-in file the *same table* the native pipeline builds internally.
 | `source_micrometers_per_pixel` | calibration (µm/px) — **required, > 0** | ✅ | from scope metadata calibration |
 | `image_width_px` | declared width | ✅ | from the image header |
 | `image_height_px` | declared height | ✅ | from the image header |
+| `elapsed_time_s` | the time block — **drop-in conditional** (see below) | ✅ (multi-timepoint) | from scope metadata timing |
+| `acquisition_time_s` | raw/source timing provenance — **not** the timing contract | ⬚ optional | from scope metadata timing |
 | `well_id` *(derived)* | `{experiment_id}_{well_index}` | ⛔ **do not author** | composed + written by the build step |
 | `image_id` *(derived)* | `{well_id}_{channel_id}_t{time_index:04d}` | ⛔ **do not author** | composed + written by the build step |
+
+> **The time block is drop-in conditional.** A well with **more than one distinct `time_index`**
+> (multi-timepoint) **requires `elapsed_time_s`** — you cannot order or Δ frames without it. A
+> **single-timepoint well may omit it.** The rule is temporal, not a frame/`image_id` count (BF +
+> fluorescence at one timepoint is still single-timepoint). `acquisition_time_s`, when present, is raw
+> source-timing provenance and is **not** the downstream timing contract. See the
+> `external_dataset_handoff_target.md` companion for the per-well grain rule that enforces this.
 
 > **`well_id` and `image_id` are derived AND written, never authored.** The build step composes both
 > from the atoms and writes them into the shard. **If the user *does* supply one** (e.g. pastes a
