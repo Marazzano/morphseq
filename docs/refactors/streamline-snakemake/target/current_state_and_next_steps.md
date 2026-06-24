@@ -6,6 +6,55 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-24 (session: QC half of feature_world.md — all 4 MVP QC products)
+
+**What shipped (the QC half of `feature_world.md`, built product-by-product, one commit each):**
+The `quality_control/` domain now matches `feature_extraction/` in shape + wiring. Four MVP QC
+products in the target per-product layout, each: contract (spine-first, imported from the minting
+site) + compute + config + entrypoint, a `PIPELINE_STEPS` row, thin `tasks.py` verbs, a per-well
+build→validate→merge `.smk` included in the Snakefile, and tests in the parallel tree.
+- `surface_area_qc` (ffd47280) — stage-binned `sa_outlier_flag`; packaged
+  `references/surface_area_reference_v1.csv` (no paths.py row); canonical k=1.4/0.7 (legacy 1.2/0.9
+  dropped); self-documenting band statement. 22 tests.
+- `mask_quality_qc` (89e3b3fa) — `edge`/`discontinuous_mask`/`overlapping_mask` flags, re-pointed
+  off raw SAM2 `mask_rle` onto canonical `frame_masks` via `decode_binary_mask_rle`; overlap per
+  `image_id` within well between DISTINCT `physical_embryo_id`s; iou=0.10. No composite. 14 tests.
+- `death_detection` (fd729289) — FULL re-architecture: group `physical_embryo_id`, sort
+  `time_index`, hours-based lead-time via `frame_inventory.elapsed_time_s`, TWO output grains
+  (`death_detection_qc` per snip + `death_event` per animal, no `embryo_id`). Files: compute /
+  persistence / death_event / grain_reconciliation / contract / config / entrypoint. 17 tests incl.
+  the two-grain integration test + non-uniform-interval lead-time test. Spec synced (file renames).
+- `snip_qc` (91a05ad6) — final `use_snip` + `qc_fail_reasons` verdict (parquet), ORed from the three
+  flag families via the registry-resolved `inputs.py`; pure `build.py`. 13 tests.
+
+**Verified:** `pytest tests/data_pipeline/quality_control/` → 66 passed; full feature+QC → 150 passed.
+`snakemake -n` for the **merged `snip_qc` target** plans the ENTIRE QC DAG end-to-end
+(mask_geometry / stage_predictions / fraction_alive / frame_masks / snip_processing →
+surface_area_qc + mask_quality_qc + death_detection → snip_qc), 43 jobs, all registry-resolved, no
+raw-path errors. Also fixed a pre-existing `rule all` NameError (`_paths_mod` → `PATH_MODE_MERGED`).
+
+**Legacy retired (conservative — grep-confirmed no live importers before each delete; never `-A`):**
+`core/` and `entrypoints/` are empty; `consolidation/`, `segmentation_qc/`, `morphology_qc/` deleted;
+the orphaned raw-path `rules/quality_control.smk` deleted. No `QUALITY_CONTROL_DIR` rule paths remain.
+**HELD (live external importers — do NOT delete this pass):**
+- top-level `quality_control/death_detection.py` + `surface_area_outlier_detection.py` —
+  `src/build/build04_perform_embryo_qc.py` still imports `compute_dead_flag2_persistence` /
+  `compute_sa_outlier_flag`;
+- `schemas/quality_control.py` + `quality_control/validators.py` + `quality_control/io/` —
+  `analysis_ready/io/loaders.py` still imports `REQUIRED_COLUMNS_QC`. This cluster retires with the
+  (deferred) `analysis_ready` wiring effort, not here. `quality_control/reporting/` is a pre-existing
+  empty stub, left as-is.
+
+**Next concrete action:** none required for the QC products (complete + verified). When
+`analysis_ready` is wired as a real pipeline step, it should consume `snip_qc`'s `verdict` parquet
+(per-snip `use_snip`/`qc_fail_reasons`) and `death_event`, then the held
+`schemas/quality_control.py` + `validators.py` + `quality_control/io/` cluster can be retired and
+`build04`'s two top-level legacy imports migrated.
+
+**Open decisions:** none.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-22 (session: legacy embeddings — wire `latent_embeddings` into orchestration)
 
 **What shipped (the producer side — encode → validate → merge fully wired):** the pure encode code was
