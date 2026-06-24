@@ -1,11 +1,13 @@
 # External Dataset Handoff — the outside-world → frame_inventory target (🟢 TARGET)
 
-**Status:** target spec with partial implementation in progress, mdcolon 2026-06-24. The locked
-design for how an **external researcher with their own organized data** enters the pipeline and runs
-it from segmentation onward. This doc stays the (mostly timeless) **target design**; live
-implementation status — what is built/tested vs. deferred — lives in `current_state_and_next_steps.md`.
-The drop-in code modules (validator, long ingester, discover/split/scaffold twins) are built and
-tested; the DAG wiring is deferred to a producer-selection refactor (§7).
+**Status:** implemented target, mdcolon 2026-06-24. Native and drop-in front-end producer modes are
+wired through producer selection (`front_end.mode: native | dropin`) — exactly one producer family
+registers, both reaching the SAME canonical `frame_inventory` gate. The locked design for how an
+**external researcher with their own organized data** enters the pipeline and runs it from
+segmentation onward. This doc stays the (mostly timeless) **target design**; live implementation
+status lives in `current_state_and_next_steps.md`. Built + tested: the validator, long ingester,
+discover/split/scaffold twins, and the producer-selection wiring (§7), verified by a dry-run matrix
+(native + dropin DAGs clean; unknown mode and dropin-without-manifest fail loud).
 
 **Companion to:**
 - `frame_inventory_handoff_contract.md` — the drop-in seam (the immutable frame key, the one-file +
