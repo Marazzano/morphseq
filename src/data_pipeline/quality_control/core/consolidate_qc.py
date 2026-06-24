@@ -21,7 +21,6 @@ def consolidate_qc_flags(
     viability_qc_df: pd.DataFrame,
     death_detection_df: pd.DataFrame,
     surface_area_qc_df: pd.DataFrame,
-    auxiliary_mask_qc_df: pd.DataFrame,
     focus_qc_df: pd.DataFrame,
     motion_qc_df: pd.DataFrame,
 ) -> pd.DataFrame:
@@ -41,11 +40,6 @@ def consolidate_qc_flags(
             "death_detection",
         ),
         "surface_area_qc": _exact_columns(surface_area_qc_df, ["snip_id", "sa_outlier_flag"], "surface_area_qc"),
-        "auxiliary_mask_qc": _exact_columns(
-            auxiliary_mask_qc_df,
-            ["snip_id", "yolk_flag", "bubble_flag"],
-            "auxiliary_mask_qc",
-        ),
         "focus_qc": _exact_columns(focus_qc_df, ["snip_id", "focus_flag"], "focus_qc"),
         "motion_qc": _exact_columns(motion_qc_df, ["snip_id", "motion_flag"], "motion_qc"),
     }

@@ -35,10 +35,6 @@ def load_surface_area_qc_flags(path: Path) -> pd.DataFrame:
     return load_table(path)
 
 
-def load_auxiliary_masks(path: Path) -> pd.DataFrame:
-    return load_table(path)
-
-
 def load_focus_qc_flags(path: Path) -> pd.DataFrame:
     return load_table(path)
 

@@ -280,24 +280,6 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
-    # ── OBJECT EXTRACTION — auxiliary masks ──────────────────────────────────
-    # UNet-derived auxiliary masks live under object_extraction/auxiliary_masks/. The current
-    # PNG mask families (via/yolk/focus/bubble) live beside the per-well shard at the product root.
-    # The manifest and its .validated sentinel follow the standard well-keyed naming convention
-    # so validated_path() derives the sentinel without a bespoke helper.
-    "auxiliary_masks": {
-        "stage": "object_extraction",
-        "product_dir": "auxiliary_masks",
-        "fanout": PER_WELL_THEN_MERGE,
-        "execution": EXECUTION_PER_WELL,
-        "artifacts": {
-            "manifest": {
-                PATH_MODE_PER_WELL: "{well_id}_auxiliary_masks.csv",
-                PATH_MODE_MERGED: "{experiment_id}_auxiliary_masks.csv",
-            },
-        },
-    },
-
     # ── OBJECT EXTRACTION — snip inventory ───────────────────────────────────
     # `snip_inventory` is the per-embryo crop table. Fans out per well (one snip_processing job
     # per well), merges to an experiment-level table. Pixel files live beside the per-well shard

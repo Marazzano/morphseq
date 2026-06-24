@@ -103,14 +103,6 @@ def validate_surface_area_qc_flags(df: pd.DataFrame) -> None:
     _validate_boolean_columns(df, ["sa_outlier_flag"], "surface_area_qc_flags.csv")
 
 
-def validate_auxiliary_mask_qc_flags(df: pd.DataFrame) -> None:
-    expected = ["snip_id", "yolk_flag", "bubble_flag"]
-    validate_dataframe_schema(df, expected, "auxiliary_mask_qc_flags.csv")
-    _assert_exact_columns(df, expected, "auxiliary_mask_qc_flags.csv")
-    assert_unique_snip_id(df)
-    _validate_boolean_columns(df, ["yolk_flag", "bubble_flag"], "auxiliary_mask_qc_flags.csv")
-
-
 def validate_focus_qc_flags(df: pd.DataFrame) -> None:
     expected = ["snip_id", "focus_flag"]
     validate_dataframe_schema(df, expected, "focus_qc_flags.csv")

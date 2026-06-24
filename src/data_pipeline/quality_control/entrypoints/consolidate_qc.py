@@ -5,7 +5,6 @@ from pathlib import Path
 
 from data_pipeline.quality_control.core.consolidate_qc import consolidate_qc_flags
 from data_pipeline.quality_control.io.loaders import (
-    load_auxiliary_masks,
     load_death_detection_flags,
     load_features_table,
     load_focus_qc_flags,
@@ -24,7 +23,6 @@ def main() -> None:
     parser.add_argument("--viability-qc-csv", type=Path, required=True)
     parser.add_argument("--death-detection-csv", type=Path, required=True)
     parser.add_argument("--surface-area-qc-csv", type=Path, required=True)
-    parser.add_argument("--auxiliary-mask-qc-csv", type=Path, required=True)
     parser.add_argument("--focus-qc-csv", type=Path, required=True)
     parser.add_argument("--motion-qc-csv", type=Path, required=True)
     parser.add_argument("--output-csv", type=Path, required=True)
@@ -35,7 +33,6 @@ def main() -> None:
     viability_qc_df = load_viability_qc_flags(args.viability_qc_csv)
     death_detection_df = load_death_detection_flags(args.death_detection_csv)
     surface_area_qc_df = load_surface_area_qc_flags(args.surface_area_qc_csv)
-    auxiliary_mask_qc_df = load_auxiliary_masks(args.auxiliary_mask_qc_csv)
     focus_qc_df = load_focus_qc_flags(args.focus_qc_csv)
     motion_qc_df = load_motion_qc_flags(args.motion_qc_csv)
 
@@ -45,7 +42,6 @@ def main() -> None:
         viability_qc_df,
         death_detection_df,
         surface_area_qc_df,
-        auxiliary_mask_qc_df,
         focus_qc_df,
         motion_qc_df,
     )

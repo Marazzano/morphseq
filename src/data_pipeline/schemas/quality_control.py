@@ -13,10 +13,11 @@ SNIP_EXCLUSION_FLAGS = [
     "motion_flag",
 ]
 
-SNIP_INFORMATIONAL_FLAGS = [
-    "yolk_flag",
-    "bubble_flag",
-]
+# Informational (non-exclusion) flags. The yolk/bubble auxiliary-mask flags were retired with the
+# full-frame auxiliary-mask path: they were an unimplemented stub (always False) and never fed
+# use_snip. None currently defined; the list is kept so consolidate_qc's `*SNIP_INFORMATIONAL_FLAGS`
+# splices remain valid (empty) and a future informational flag has an obvious home.
+SNIP_INFORMATIONAL_FLAGS: list[str] = []
 
 QC_FAIL_FLAGS = SNIP_EXCLUSION_FLAGS
 

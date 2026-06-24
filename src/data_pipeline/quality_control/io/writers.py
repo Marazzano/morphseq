@@ -7,7 +7,6 @@ import pandas as pd
 from data_pipeline.io.savers import save_csv
 from data_pipeline.quality_control.io.paths import qc_sentinel_path
 from data_pipeline.quality_control.validators import (
-    validate_auxiliary_mask_qc_flags,
     validate_death_detection_flags,
     validate_focus_qc_flags,
     validate_motion_qc_flags,

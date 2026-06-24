@@ -25,7 +25,6 @@ DEFAULT_QC_CONFIG = {
         "k_upper": 1.4,
         "k_lower": 0.7,
     },
-    "auxiliary_mask_qc": {},
     "focus_qc": {},
     "motion_qc": {
         "ncc_min_threshold": 0.85,
