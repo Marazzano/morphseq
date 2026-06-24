@@ -80,11 +80,16 @@ it is what a researcher without a 96-well plate uses):
   well_metadata.csv (long)      ──► long ingester (NEW)  ────┘
 ```
 
-**Accepted well-key column names** (normalize to canonical `well_index` via `normalize_well_index`,
+**Accepted well-key column names** (normalize to canonical `well_index` via the identifier grammar,
 e.g. `A1`→`A01`): `well_index`, `well`, `well_name`. Fail loud only if NONE is present.
 
 **Accepted age aliases:** `start_age_hpf`, `age_hpf`. **Canonical output column is `start_age_hpf`**
 (keeps the staging formula honest: `predicted_stage_hpf = start_age_hpf + elapsed_h · rate(temperature)`).
+
+> **Long-ingest collision policy (locked, built).** `age_hpf` and `start_age_hpf` may both appear
+> ONLY if they agree (else fail loud); a user-supplied `well_id` is **dropped, never trusted** (identity
+> is minted downstream from `experiment_id` + `well_index` and checked at L2); after normalization, no
+> two passthrough value columns may collide (fail loud).
 
 **Canonical output columns — always emitted, even when the user omitted them:**
 `experiment_id`, `well_id`, `well_index`, `genotype`, `start_age_hpf`, `temperature`, `medium`.

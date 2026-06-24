@@ -28,12 +28,17 @@ Design decisions (locked 2026-06-22):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
 from data_pipeline.shared.identifiers import normalize_well_index
+
+# A free-form well label: a row letter (A–H, case-insensitive) + a 1- or 2-digit column.
+# normalize_well_index enforces the actual A–H × 1–12 range; this only splits the label.
+_WELL_LABEL_RE = re.compile(r"^([A-Za-z])\s*0*(\d{1,2})$")
 
 
 # ---------------------------------------------------------------------------
@@ -45,11 +50,15 @@ _PLATE_COLS: tuple[int, ...] = tuple(range(1, 13))
 _N_ROWS = len(_PLATE_ROWS)
 _N_COLS = len(_PLATE_COLS)
 
-_LONG_INGEST_NOT_IMPLEMENTED_REASON = (
-    "long-table ingest is not implemented in MVP. "
-    "To ingest this page, reformat it as a standard 8×12 grid "
-    "(rows A–H as the first column, columns 1–12 as subsequent columns)."
-)
+# Accepted well-key column names in a long table → normalized to canonical ``well_index``.
+_WELL_KEY_ALIASES: tuple[str, ...] = ("well_index", "well", "well_name")
+
+# Accepted age aliases → canonical output column ``start_age_hpf`` (keeps the staging formula honest).
+_AGE_ALIASES: tuple[str, ...] = ("start_age_hpf", "age_hpf")
+_AGE_CANONICAL = "start_age_hpf"
+
+# Identity columns the long ingester computes/checks itself — never passed through as a value column.
+_LONG_IDENTITY_COLUMNS: frozenset[str] = frozenset({*_WELL_KEY_ALIASES, "experiment_id", "well_id"})
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +128,13 @@ def load_plate_metadata_pages(input_file: Path) -> PlatePages:
                 page_frames.append(long_df.rename(columns={sheet_name: col_name}))
 
             elif page_class == "long":
-                rejected.append((sheet_name, _LONG_INGEST_NOT_IMPLEMENTED_REASON))
+                long_df = ingest_long_well_table(raw_df, page_name=sheet_name)
+                value_cols = [c for c in long_df.columns if c != "well_index"]
+                for col_name in value_cols:
+                    _assert_no_column_collision(col_name, accepted, sheet_name)
+                    accepted.append(col_name)
+                    page_methods[col_name] = "long"
+                page_frames.append(long_df)
 
             else:
                 rejected.append((sheet_name, reason or "not a recognized plate page"))
@@ -234,6 +249,125 @@ def ingest_plate_grid_sheet_to_long(raw_df: pd.DataFrame, *, page_name: str) -> 
         )
 
     return long_df
+
+
+# ---------------------------------------------------------------------------
+# Long ingester (the no-plate / external path)
+# ---------------------------------------------------------------------------
+
+def ingest_long_well_table(source, *, page_name: str = "long") -> pd.DataFrame:
+    """Ingest a long-format well table → canonical ``well_index``-keyed long DataFrame.
+
+    ``source`` may be an already-read sheet ``DataFrame`` OR a path to a CSV. Passes through all
+    non-identity value columns; requires a derivable, unique, in-range ``well_index`` and ≥1 value
+    column. This is the external researcher's no-plate on-ramp.
+
+    Collision policy (locked):
+      - the well key comes from one of ``well_index`` / ``well`` / ``well_name`` (fail loud if NONE);
+      - ``age_hpf`` and ``start_age_hpf`` may both appear ONLY if they agree (else fail loud); the
+        canonical output column is ``start_age_hpf``;
+      - a user-supplied ``well_id`` is dropped here (identity is minted downstream from
+        ``experiment_id`` + ``well_index`` and checked at L2 — never trusted as authored);
+      - after normalization, no two passthrough value columns may collide (fail loud).
+
+    Returns a DataFrame with ``well_index`` plus one column per passed-through value field.
+    """
+    df = source if isinstance(source, pd.DataFrame) else pd.read_csv(Path(source))
+    df = df.copy()
+
+    well_index = _extract_long_well_index(df, page_name=page_name)
+
+    value_df = _normalize_long_value_columns(df, page_name=page_name)
+    if value_df.shape[1] == 0:
+        raise ValueError(
+            f"[plate_metadata_loader] long page '{page_name}' has a well key but no value columns. "
+            "A long table must carry at least one non-identity field (e.g. genotype)."
+        )
+
+    out = pd.concat([well_index.rename("well_index"), value_df], axis=1)
+
+    dup_mask = out.duplicated(subset=["well_index"], keep=False)
+    if dup_mask.any():
+        dups = sorted(out.loc[dup_mask, "well_index"].unique().tolist())
+        raise ValueError(
+            f"[plate_metadata_loader] long page '{page_name}' has duplicate well_index values: "
+            f"{dups}. Each well must appear at most once."
+        )
+    return out.reset_index(drop=True)
+
+
+def _extract_long_well_index(df: pd.DataFrame, *, page_name: str) -> pd.Series:
+    """Find the well-key column (alias-aware) and normalize every value to canonical well_index."""
+    lower_to_actual = {str(c).strip().lower(): c for c in df.columns}
+    key_col = next((lower_to_actual[a] for a in _WELL_KEY_ALIASES if a in lower_to_actual), None)
+    if key_col is None:
+        raise ValueError(
+            f"[plate_metadata_loader] long page '{page_name}' has no well-key column. "
+            f"Provide one of {_WELL_KEY_ALIASES} (e.g. 'A1' → 'A01')."
+        )
+    # Normalize each free-form label (A1 / a01 / A01) to canonical well_index via the identifier
+    # grammar — fail loud on anything outside A–H × 1–12.
+    return df[key_col].map(_normalize_well_label)
+
+
+def _normalize_well_label(value: str) -> str:
+    """Split a free-form well label (e.g. 'A1', 'a01') into row+col and mint via the grammar.
+
+    Routes through ``shared/identifiers.normalize_well_index`` so the canonical ``well_index`` is
+    byte-identical to one minted by the grid ingester or parsed out of a ``well_id`` downstream.
+    Already-canonical labels are validated via ``validate_well_index``.
+    """
+    text = str(value).strip()
+    match = _WELL_LABEL_RE.match(text)
+    if match is None:
+        raise ValueError(
+            f"[plate_metadata_loader] well label {value!r} is not a recognizable well "
+            "(expected a letter A–H followed by a column number, e.g. 'A1' or 'A01')."
+        )
+    row_letter, col_digits = match.group(1), match.group(2)
+    return normalize_well_index(row_letter, int(col_digits))
+
+
+def _normalize_long_value_columns(df: pd.DataFrame, *, page_name: str) -> pd.DataFrame:
+    """Resolve age aliases, drop identity columns, normalize names, and guard collisions."""
+    lower_to_actual = {str(c).strip().lower(): c for c in df.columns}
+
+    # Age-alias collision policy: if both age_hpf and start_age_hpf are present they must agree.
+    age_present = [a for a in _AGE_ALIASES if a in lower_to_actual]
+    if len(age_present) == 2:
+        left = df[lower_to_actual["start_age_hpf"]]
+        right = df[lower_to_actual["age_hpf"]]
+        if not left.fillna(_NULL_SENTINEL).equals(right.fillna(_NULL_SENTINEL)):
+            raise ValueError(
+                f"[plate_metadata_loader] long page '{page_name}' supplies both 'start_age_hpf' and "
+                "'age_hpf' with disagreeing values. Provide only one, or make them identical "
+                f"(canonical output column is '{_AGE_CANONICAL}')."
+            )
+
+    out: dict[str, pd.Series] = {}
+    age_emitted = False
+    for lower, actual in lower_to_actual.items():
+        if lower in _LONG_IDENTITY_COLUMNS:
+            continue  # well key handled separately; experiment_id/well_id minted+checked downstream.
+        if lower in _AGE_ALIASES:
+            # Both aliases (if present) already proven to agree above → emit canonical once.
+            if age_emitted:
+                continue
+            out[_AGE_CANONICAL] = df[actual].reset_index(drop=True)
+            age_emitted = True
+            continue
+        out_name = _normalize_page_name(actual)
+        if out_name in out or out_name == _AGE_CANONICAL:
+            raise ValueError(
+                f"[plate_metadata_loader] long page '{page_name}': column {actual!r} normalizes to "
+                f"'{out_name}', which collides with another value column. Rename one of them."
+            )
+        out[out_name] = df[actual].reset_index(drop=True)
+    return pd.DataFrame(out)
+
+
+# A sentinel for NA-aware equality comparison of the two age columns (NA == NA should pass).
+_NULL_SENTINEL = object()
 
 
 # ---------------------------------------------------------------------------

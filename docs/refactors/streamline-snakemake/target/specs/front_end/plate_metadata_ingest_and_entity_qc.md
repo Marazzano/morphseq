@@ -160,11 +160,24 @@ the **normalized page name**. **Fail loud on a grid that is not sensibly laid ou
 - the full A–H × 1–12 **span** must be present;
 - every cell maps deterministically to exactly one `well_index`; **no duplicate `well_index`**.
 
-### Long ingester (deferred — spec only)
+### Long ingester (BUILT — the external no-plate path)
 
-`ingest_long_well_table(source) -> long DataFrame` — `source` may be an xlsx sheet frame OR a CSV path;
-passes through **all** non-identity value columns. Requires a derivable, unique, in-range `well_index` and
-≥1 value column. Documented now so the dispatch contract is complete and the future build is a drop-in.
+`ingest_long_well_table(source, *, page_name) -> long DataFrame` — `source` may be an xlsx sheet frame
+OR a CSV path; passes through **all** non-identity value columns. Requires a derivable, unique, in-range
+`well_index` and ≥1 value column. (Promoted from deferred to built by `external_dataset_handoff_target.md`,
+where it is the linchpin.)
+
+**Collision policy (locked):**
+- the well key comes from one of `well_index` / `well` / `well_name` (a free-form label like `A1` is
+  normalized to canonical `A01` through the identifier grammar; fail loud if NONE present);
+- `age_hpf` and `start_age_hpf` may both appear ONLY if they agree (else **fail loud**); the canonical
+  output column is `start_age_hpf`;
+- a user-supplied `well_id` is **dropped** here — identity is minted downstream from
+  `experiment_id` + `well_index` and checked at L2, **never trusted as authored**;
+- after name normalization, no two passthrough value columns may collide (**fail loud**).
+
+The canonical biology columns are emitted **even when omitted** (all-NA) at the `process_plate_layout`
+boundary, so the L2 column shape is stable regardless of which fields arrived — this is what unblocks L3.
 
 ### `well_index` comes from `shared/identifiers/`, NOT reinvented in the loader
 

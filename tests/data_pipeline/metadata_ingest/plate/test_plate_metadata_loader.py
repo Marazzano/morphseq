@@ -171,12 +171,13 @@ class TestLoadPlateMetadataPages:
         pages = self._run({"genotype": _make_grid_df()}, tmp_path)
         assert "ingest_format" not in pages.table.columns
 
-    def test_long_page_rejected_with_reason(self, tmp_path):
+    def test_long_page_accepted_and_passes_values_through(self, tmp_path):
         pages = self._run({"well_data": _make_long_df()}, tmp_path)
-        rejected_names = [r[0] for r in pages.rejected]
-        assert "well_data" in rejected_names
-        reason = dict(pages.rejected)["well_data"]
-        assert "not implemented" in reason.lower()
+        # The long ingester is now BUILT — the page's value columns are accepted, not rejected.
+        assert "well_data" not in [r[0] for r in pages.rejected]
+        assert "genotype" in pages.accepted
+        assert "genotype" in pages.table.columns
+        assert pages.page_methods.get("genotype") == "long"
 
     def test_extra_grid_page_sequenced_flows_through(self, tmp_path):
         pages = self._run(
