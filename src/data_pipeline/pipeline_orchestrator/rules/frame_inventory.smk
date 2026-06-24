@@ -109,10 +109,17 @@ rule validate_frame_inventory_for_well:
     output:
         validated=str(_materialize_well_validated("{experiment}", well_id="{well_id}")),
     shell:
+        # Per-well node = STRICT: open every image, self-check dims/µm-px, one well. The native YX1
+        # shard writes a real absolute source_image_path + dims + µm/px, so check_sources=True is
+        # meaningful here (catches a corrupt/missing materialized image). image_root is passed for
+        # consistency; native paths are absolute so it is not consulted for resolution.
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory \
           --input-csv "{input.inventory}" \
-          --output-flag "{output.validated}"
+          --output-flag "{output.validated}" \
+          --image-root "{BUILT_IMAGE_DATA_DIR}" \
+          --check-sources "true" \
+          --validation-scope "per_well"
         """
 
 
@@ -145,8 +152,13 @@ rule validate_frame_inventory:
             path_mode=PATH_MODE_MERGED,
         )),
     shell:
+        # Merged node = aggregate view over already-strict per-well shards: skip L4 (re-opening every
+        # image is wasteful) but run L0–L3 grouped by well. validation_scope=merged allows MANY wells
+        # and applies the per-well temporal checks within each well_id group.
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory \
           --input-csv "{input.inventory}" \
-          --output-flag "{output.validated}"
+          --output-flag "{output.validated}" \
+          --check-sources "false" \
+          --validation-scope "merged"
         """

@@ -134,7 +134,13 @@ def cmd_materialize_stitched(args: argparse.Namespace) -> None:
 
 
 def cmd_validate_frame_inventory(args: argparse.Namespace) -> None:
-    validate_frame_inventory(input_csv=args.input_csv, output_flag=args.output_flag)
+    validate_frame_inventory(
+        input_csv=args.input_csv,
+        output_flag=args.output_flag,
+        image_root=args.image_root,
+        check_sources=_parse_bool(args.check_sources),
+        validation_scope=args.validation_scope,
+    )
 
 
 def cmd_merge_frame_inventory(args: argparse.Namespace) -> None:
@@ -404,12 +410,17 @@ def cmd_validate_stage_predictions(args: argparse.Namespace) -> None:
 
 def cmd_fraction_alive(args: argparse.Namespace) -> None:
     from data_pipeline.feature_extraction.fraction_alive.entrypoint import run_fraction_alive
+    from data_pipeline.snip_processing.snip_frame_shape import resolve_snip_frame_shape
+
+    config = yaml.safe_load(Path(args.config_yaml).read_text()) or {} if args.config_yaml else {}
 
     run_fraction_alive(
         snip_inventory_csv=args.snip_inventory_csv,
         snip_auxiliary_masks_csv=args.snip_auxiliary_masks_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_csv=args.output_csv,
+        snip_frame_shape=resolve_snip_frame_shape(config),
+        output_root=args.output_root,
         missing_via_policy=args.missing_via_policy,
     )
 
@@ -437,6 +448,7 @@ def cmd_snip_auxiliary_masks(args: argparse.Namespace) -> None:
     from data_pipeline.segmentation.backends.unet_snip.entrypoint import (
         run_snip_auxiliary_masks,
     )
+    from data_pipeline.snip_processing.snip_frame_shape import resolve_snip_frame_shape
 
     config = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
     unet_snip_config = config.get("unet_snip") or config.get("auxiliary_masks", {}).get("unet_snip", {})
@@ -446,6 +458,7 @@ def cmd_snip_auxiliary_masks(args: argparse.Namespace) -> None:
         output_root=args.output_root,
         output_csv=args.output_csv,
         unet_snip_config=unet_snip_config,
+        snip_frame_shape=resolve_snip_frame_shape(config),
     )
 
 
@@ -492,6 +505,34 @@ def cmd_validate_consolidated_features(args: argparse.Namespace) -> None:
         physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
         check_sources=True,
     )
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_surface_area_qc(args: argparse.Namespace) -> None:
+    """Compute the per-well surface_area_qc shard. Thin dispatcher; logic lives in the product."""
+    from data_pipeline.quality_control.surface_area_qc.entrypoint import run_surface_area_qc
+
+    run_surface_area_qc(
+        mask_geometry_csv=args.mask_geometry_csv,
+        stage_predictions_csv=args.stage_predictions_csv,
+        snip_inventory_csv=args.snip_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_surface_area_qc(args: argparse.Namespace) -> None:
+    """Validate a per-well surface_area_qc shard (spine + flag, registry as verifier) and write .validated."""
+    import pandas as pd
+
+    from data_pipeline.quality_control.surface_area_qc.contract import validate_surface_area_qc
+
+    validate_surface_area_qc(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
     args.output_flag.parent.mkdir(parents=True, exist_ok=True)
     args.output_flag.write_text("ok\n")
 
@@ -747,6 +788,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_fi_validate = sub.add_parser("validate-frame-inventory")
     p_fi_validate.add_argument("--input-csv", type=Path, required=True)
     p_fi_validate.add_argument("--output-flag", type=Path, required=True)
+    # Strict-gate mode flags — every call site passes these EXPLICITLY (no silent default).
+    p_fi_validate.add_argument("--image-root", type=Path, default=None)
+    p_fi_validate.add_argument("--check-sources", default="false")
+    p_fi_validate.add_argument(
+        "--validation-scope", choices=["per_well", "merged"], default="per_well"
+    )
     p_fi_validate.set_defaults(func=cmd_validate_frame_inventory)
 
     p_fi_merge = sub.add_parser("merge-frame-inventory")
@@ -831,6 +878,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("validate-stage-predictions", cmd_validate_stage_predictions),
         ("validate-fraction-alive", cmd_validate_fraction_alive),
         ("validate-consolidated-features", cmd_validate_consolidated_features),
+        ("validate-surface-area-qc", cmd_validate_surface_area_qc),
     ):
         p = sub.add_parser(verb)
         p.add_argument("--input-csv", type=Path, required=True)
@@ -851,6 +899,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_fa.add_argument("--snip-auxiliary-masks-csv", type=Path, required=True)
     p_fa.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_fa.add_argument("--output-csv", type=Path, required=True)
+    p_fa.add_argument("--output-root", type=Path, default=None)
+    p_fa.add_argument("--config-yaml", type=Path, default=None)
     p_fa.add_argument("--missing-via-policy", default="fail", choices=["fail", "null"])
     p_fa.set_defaults(func=cmd_fraction_alive)
 
@@ -874,6 +924,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_cf.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_cf.add_argument("--output-csv", type=Path, required=True)
     p_cf.set_defaults(func=cmd_consolidated_features)
+
+    p_saqc = sub.add_parser("surface-area-qc")
+    p_saqc.add_argument("--mask-geometry-csv", type=Path, required=True)
+    p_saqc.add_argument("--stage-predictions-csv", type=Path, required=True)
+    p_saqc.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_saqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_saqc.add_argument("--output-csv", type=Path, required=True)
+    p_saqc.set_defaults(func=cmd_surface_area_qc)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)
