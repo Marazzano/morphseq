@@ -1,18 +1,18 @@
-"""Validate and merge the frame_inventory product.
+"""Merge the frame_inventory product (table ops only).
 
-VALIDATION enforces the LIVE microscope-agnostic contract from
-``image_materialization/frame_inventory_contract.py`` (``REQUIRED_FRAME_INVENTORY_COLUMNS`` +
-the identity-anchored unique key + ``assert_derived_ids_consistent``). The materialize_well branch
-emits that flat shard; ``validate_frame_inventory`` / ``merge_frame_inventory_shards`` consume it.
+The materialize_well branch emits the flat per-well shard; ``merge_frame_inventory_shards`` builds
+the experiment-level aggregate view over those shards. The **validator moved out** into
+``frame_inventory_validation.py`` (the public gate) — this module now owns only product/table ops.
+``validate_frame_inventory`` is re-exported here for back-compat with existing importers.
 
 The legacy ``build_frame_inventory_for_well`` adapter (which split the old ``frame_contract.csv``
 into per-well shards) was strangled in Step 7 — it was off-DAG and superseded by the live
 ``materialize_well`` producer, which emits the per-well shard directly.
 
 AUDIT (2026-06-07): docs/refactors/streamline-snakemake/target/frame_inventory_well_runner_audit.md
-records the open gaps here — validate_frame_inventory is the WEAK schema check (not yet the strict
-file-level gate the stitched-handoff contract specifies; finding #2), and merge_frame_inventory_shards
-duplicates well_runner.concat_well_shards_to_file (finding #4).
+records the open gaps — finding #4: merge_frame_inventory_shards duplicates
+well_runner.concat_well_shards_to_file. (Finding #2 — the weak validator — is being resolved by the
+strict-gate growth in frame_inventory_validation.py.)
 """
 
 from __future__ import annotations
@@ -23,54 +23,19 @@ from typing import Sequence
 
 import pandas as pd
 
-from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.image_materialization.frame_inventory_contract import (
-    REQUIRED_FRAME_INVENTORY_COLUMNS,
     UNIQUE_FRAME_INVENTORY_KEY_COLUMNS,
-    assert_derived_ids_consistent,
-    frame_inventory_image_ids,
+)
+from data_pipeline.metadata_ingest.frame_inventory.frame_inventory_validation import (
+    _read_frame_inventory_table,
+    _validate_unique_keys,
+    validate_frame_inventory,
 )
 
-
-def _read_frame_inventory_table(path: Path) -> pd.DataFrame:
-    # Validate against the microscope-agnostic frame_inventory contract (the live materialized
-    # shard's schema), NOT the legacy frame_contract columns. ``z_index`` is intentionally absent
-    # from the required atoms (NA on projection rows), so it is never null-checked here.
-    df = pd.read_csv(path)
-    validate_dataframe_schema(df, list(REQUIRED_FRAME_INVENTORY_COLUMNS), "frame_inventory")
-    return df
-
-
-def _validate_unique_keys(df: pd.DataFrame, *, context: str) -> None:
-    # Identity-anchored key: recompose the derived image_id from the atoms via the constructors
-    # (frame_inventory_image_ids also validates the intermediate well_id), then check uniqueness on
-    # that. Routing through the grammar keeps the key from drifting from the identifier code.
-    image_ids = frame_inventory_image_ids(df, scope_label=context)
-    duplicate_mask = image_ids.duplicated(keep=False)
-    if duplicate_mask.any():
-        duplicates = df.loc[duplicate_mask, list(UNIQUE_FRAME_INVENTORY_KEY_COLUMNS)]
-        raise ValueError(
-            f"Duplicate {context} keys detected (by derived image_id): "
-            f"{duplicates.head(10).to_dict(orient='records')}"
-        )
-    # Cross-check any producer-supplied derived ids against the atom-recomputed values.
-    assert_derived_ids_consistent(df, scope_label=context)
-
-
-def validate_frame_inventory(input_csv: Path, output_flag: Path) -> pd.DataFrame:
-    """Validate one frame_inventory table and write its sentinel.
-
-    TODO(Scope 2): this is the WEAK interim check (schema columns + nulls + unique key only). The
-    stitched_handoff_contract.md gate is strict + file-level: paths exist, images open, real dims
-    == declared, micrometers_per_pixel > 0, BF contiguous, channels rectangular, derived ids
-    recomputed from atoms. Promote this then (audit finding #2).
-    """
-    df = _read_frame_inventory_table(Path(input_csv))
-    _validate_unique_keys(df, context="frame_inventory")
-    output_flag = Path(output_flag)
-    output_flag.parent.mkdir(parents=True, exist_ok=True)
-    output_flag.write_text("validated\n", encoding="utf-8")
-    return df
+__all__ = [
+    "merge_frame_inventory_shards",
+    "validate_frame_inventory",
+]
 
 
 def merge_frame_inventory_shards(input_csvs: Sequence[Path], output_csv: Path) -> pd.DataFrame:
