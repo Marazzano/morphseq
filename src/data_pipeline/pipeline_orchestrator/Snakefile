@@ -112,6 +112,12 @@ BUILT_IMAGE_DATA_DIR    = ACQUISITION_DIR
 EXPERIMENTS = config.get("experiments", ["20250912"])
 MICROSCOPE = str(config.get("microscope", "YX1"))
 
+# External drop-in mode (mode-EXCLUSIVE with the native front half). When enabled, the dropin_handoff
+# rules own discover_wells + the per-well frame_inventory shards (the user already has images, so no
+# native discover/materialize runs). See rules/dropin_handoff.smk. Ingress (manifest + image_root) is
+# config-supplied, NOT a registry artifact.
+DROPIN_ENABLED = bool(config.get("dropin", {}).get("enabled", False))
+
 
 def _scope_token(microscope: str) -> str:
     return str(microscope).strip().lower()
@@ -195,6 +201,7 @@ include: str(WORKFLOW_DIR / "rules" / "stage_predictions.smk")
 include: str(WORKFLOW_DIR / "rules" / "fraction_alive.smk")
 include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
 include: str(WORKFLOW_DIR / "rules" / "surface_area_qc.smk")
+include: str(WORKFLOW_DIR / "rules" / "mask_quality_qc.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
@@ -398,18 +405,22 @@ rule materialize_stitched_images:
 #         """
 
 
-checkpoint discover_wells:
-    input:
-        mapped_csv = SCOPE_METADATA_MAPPED_CSV,
-        validated = SCOPE_METADATA_MAPPED_VALIDATED,
-    output:
-        wells = DISCOVERED_WELLS_TXT,
-    shell:
-        """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks discover-wells \
-          --mapped-csv "{input.mapped_csv}" \
-          --output-wells "{output.wells}"
-        """
+# Native discovery. In drop-in mode the dropin_handoff.smk twin owns the `discover_wells` checkpoint
+# (same DISCOVERED_WELLS_TXT output), so this native producer is registered only when NOT in drop-in
+# mode — the two are mode-exclusive and would otherwise collide on the same output.
+if not DROPIN_ENABLED:
+    checkpoint discover_wells:
+        input:
+            mapped_csv = SCOPE_METADATA_MAPPED_CSV,
+            validated = SCOPE_METADATA_MAPPED_VALIDATED,
+        output:
+            wells = DISCOVERED_WELLS_TXT,
+        shell:
+            """
+            {RUN} -m data_pipeline.pipeline_orchestrator.tasks discover-wells \
+              --mapped-csv "{input.mapped_csv}" \
+              --output-wells "{output.wells}"
+            """
 
 def wells_for_experiment(wildcards):
     checkpoints.discover_wells.get(experiment=wildcards.experiment)

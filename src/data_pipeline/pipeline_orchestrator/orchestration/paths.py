@@ -446,6 +446,23 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── QUALITY CONTROL — mask quality QC ─────────────────────────────────────
+    # Structural mask-trustworthiness flags per snip (edge / discontinuous / overlapping),
+    # decoded from canonical frame_masks. Overlap is computed per image between distinct
+    # physical embryos; no persisted composite flag.
+    "mask_quality_qc": {
+        "stage": "quality_control",
+        "product_dir": "mask_quality_qc",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "mask_quality_qc": {
+                PATH_MODE_PER_WELL: "{well_id}_mask_quality_qc.csv",
+                PATH_MODE_MERGED: "{experiment_id}_mask_quality_qc.csv",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────

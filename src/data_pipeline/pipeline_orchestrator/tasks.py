@@ -154,6 +154,40 @@ def cmd_discover_wells(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_discover_wells_from_handoff(args: argparse.Namespace) -> None:
+    from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_handoff import (
+        discover_wells_from_handoff,
+    )
+
+    discover_wells_from_handoff(
+        manifest_csv=Path(args.manifest_csv),
+        output_wells=Path(args.output_wells),
+    )
+
+
+def cmd_split_dropin_inventory(args: argparse.Namespace) -> None:
+    from data_pipeline.metadata_ingest.well_discovery.split_dropin_inventory import (
+        split_dropin_inventory_by_well,
+    )
+
+    split_dropin_inventory_by_well(
+        manifest_csv=Path(args.manifest_csv),
+        output_dir=Path(args.output_dir),
+    )
+
+
+def cmd_scaffold_dropin_inventory(args: argparse.Namespace) -> None:
+    from data_pipeline.metadata_ingest.frame_inventory.scaffold_dropin_inventory import (
+        scaffold_dropin_inventory,
+    )
+
+    scaffold_dropin_inventory(
+        image_dir=Path(args.image_dir),
+        output_csv=Path(args.output_csv),
+        image_root=Path(args.image_root) if args.image_root else None,
+    )
+
+
 def cmd_materialize_well(args: argparse.Namespace) -> None:
     """CLI adapter: read inputs, delegate the domain work, write outputs.
 
@@ -537,6 +571,33 @@ def cmd_validate_surface_area_qc(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_mask_quality_qc(args: argparse.Namespace) -> None:
+    """Compute the per-well mask_quality_qc shard. Thin dispatcher; logic lives in the product."""
+    from data_pipeline.quality_control.mask_quality_qc.entrypoint import run_mask_quality_qc
+
+    run_mask_quality_qc(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_mask_quality_qc(args: argparse.Namespace) -> None:
+    """Validate a per-well mask_quality_qc shard (spine + flags, registry as verifier) and write .validated."""
+    import pandas as pd
+
+    from data_pipeline.quality_control.mask_quality_qc.contract import validate_mask_quality_qc
+
+    validate_mask_quality_qc(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_frame_masks(args: argparse.Namespace) -> None:
     import json
     import tempfile
@@ -801,6 +862,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_fi_merge.add_argument("--output-csv", type=Path, required=True)
     p_fi_merge.set_defaults(func=cmd_merge_frame_inventory)
 
+    # --- external drop-in entrance (config/CLI ingress; not a registry artifact) ---
+    p_dwh = sub.add_parser("discover-wells-from-handoff")
+    p_dwh.add_argument("--manifest-csv", type=Path, required=True)
+    p_dwh.add_argument("--output-wells", type=Path, required=True)
+    p_dwh.set_defaults(func=cmd_discover_wells_from_handoff)
+
+    p_split = sub.add_parser("split-dropin-inventory")
+    p_split.add_argument("--manifest-csv", type=Path, required=True)
+    p_split.add_argument("--output-dir", type=Path, required=True)
+    p_split.set_defaults(func=cmd_split_dropin_inventory)
+
+    p_scaffold = sub.add_parser("scaffold-dropin-inventory")
+    p_scaffold.add_argument("--image-dir", type=Path, required=True)
+    p_scaffold.add_argument("--output-csv", type=Path, required=True)
+    p_scaffold.add_argument("--image-root", type=Path, default=None)
+    p_scaffold.set_defaults(func=cmd_scaffold_dropin_inventory)
+
     p_mw = sub.add_parser(
         "materialize-well", aliases=["materialize-yx1-well-candidate"]
     )
@@ -879,6 +957,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("validate-fraction-alive", cmd_validate_fraction_alive),
         ("validate-consolidated-features", cmd_validate_consolidated_features),
         ("validate-surface-area-qc", cmd_validate_surface_area_qc),
+        ("validate-mask-quality-qc", cmd_validate_mask_quality_qc),
     ):
         p = sub.add_parser(verb)
         p.add_argument("--input-csv", type=Path, required=True)
@@ -932,6 +1011,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_saqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_saqc.add_argument("--output-csv", type=Path, required=True)
     p_saqc.set_defaults(func=cmd_surface_area_qc)
+
+    p_mqqc = sub.add_parser("mask-quality-qc")
+    p_mqqc.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_mqqc.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_mqqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_mqqc.add_argument("--output-csv", type=Path, required=True)
+    p_mqqc.set_defaults(func=cmd_mask_quality_qc)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)
