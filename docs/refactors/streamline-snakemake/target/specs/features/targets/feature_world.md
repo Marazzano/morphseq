@@ -1744,23 +1744,41 @@ distribution of residuals; **flag-exact** = boolean equality required; **flag-di
 deliberate algorithm change, so report a confusion matrix + every disagreeing `snip_id`, and a human
 signs off that the new behavior is the intended one (not silent drift).
 
-**Target plan — one comparison harness, one report per product.** This is **tooling, not a pipeline
-step** (it reads the legacy file by an absolute playground path, like
-`generate_references/build_sa_reference.py`): it gets **no `paths.py` row** and lives in a
-`tools/`-style location (e.g. `tools/legacy_drift/`), never under a product folder. Shape:
+**Target plan — a benchmark in the test tree, NOT a unit test, NOT a pipeline step.** This is a
+real-data drift **benchmark**: it reads a large legacy artifact from the playground by absolute path
+and takes minutes, and for flag-directional products it *reports for human sign-off* rather than
+asserting pass/fail. It is therefore **not** a `paths.py` pipeline step (no registry row) and **not**
+an ordinary unit test that runs in the default suite. It lives in the parallel test tree (the repo's
+"tests live under `tests/data_pipeline/...`" convention; this is where the existing non-unit checks
+like `test_build04_bootstrap.py` / `test_qc_restoration.py` already live) but is **quarantined from
+the default run**:
 
-- `tools/legacy_drift/load_legacy_qc_staged.py::load_legacy_pilot(experiment_id="20250912")` —
-  reads `qc_staged_<exp>.csv`, returns it keyed by `snip_id` with the legacy columns normalized
-  (token-string → booleans, `time_int`→`time_index` alignment noted). One loader, reused by every
-  product comparison.
-- `tools/legacy_drift/compare_<product>.py::compare_<product>(new_merged_csv, legacy_df)` — one per
-  product. Inner-joins on `snip_id`, asserts the join covers the expected universe (report snips
-  present in one side only — a coverage gap is itself drift), then applies the product's tolerance
-  class and emits a report: pass/fail per column, residual stats for numeric, confusion matrix +
-  disagreeing-`snip_id` list for flags.
-- a thin `tools/legacy_drift/run_all.py` that runs each product comparison against the merged
-  pipeline outputs for `20250912` and prints a one-screen summary (per product: PASS / INVESTIGATE /
-  FAIL).
+- **Location:** `tests/data_pipeline/quality_control/_legacy_drift/` — parallel to the unit tests,
+  but its own subtree so it is obvious this is benchmarking, not unit testing. (`features/` products'
+  comparisons live under `tests/data_pipeline/feature_extraction/_legacy_drift/` by the same rule.)
+- **Quarantine:** every benchmark is marked `@pytest.mark.legacy_drift` and the default invocation
+  **deselects it** (e.g. `addopts = -m "not legacy_drift"`, or run it explicitly with
+  `-m legacy_drift`). The normal `pytest tests/` unit run must stay fast and must NOT hard-fail on a
+  flag-directional product whose divergence is expected-pending-review. The benchmark is **opt-in**.
+- **Why in `tests/` and not a fabricated `tools/`:** there is no `tools/` convention in this repo;
+  the parallel test tree is where checks against `src/data_pipeline/...` already go, and a marked,
+  deselected benchmark gets pytest's discovery/fixtures/reporting for free without polluting the
+  unit run. It is a *benchmark expressed as a marked test*, not a unit test.
+
+Shape (under `_legacy_drift/`):
+
+- `load_legacy_qc_staged.py::load_legacy_pilot(experiment_id="20250912")` — reads
+  `qc_staged_<exp>.csv` (absolute playground path; skip the benchmark with a clear message if the
+  file is absent, so a checkout without the playground doesn't error), returns it keyed by `snip_id`
+  with the legacy columns normalized (token-string → booleans, `time_int`→`time_index` alignment
+  noted). One loader, reused by every product comparison.
+- `test_<product>_legacy_drift.py` — one per product, marked `@pytest.mark.legacy_drift`.
+  Inner-joins the merged pipeline output on `snip_id`, asserts the join covers the expected universe
+  (report snips present on one side only — a coverage gap is itself drift), applies the product's
+  tolerance class, and emits a report: residual stats for numeric, confusion matrix + disagreeing
+  `snip_id` list for flags. Numeric-tight / flag-exact products **assert**; flag-directional
+  products **report and require recorded human sign-off** (the test passes by checking the sign-off
+  artifact exists for the current outputs, not by asserting flag equality).
 
 **How to produce the new side.** Run the merged QC targets for `20250912` (the `.smk` rules already
 plan end-to-end — see each product's Done When), then point the harness at the merged artifacts
@@ -1776,8 +1794,11 @@ resolved through `artifact_path(...)`:
 - flag-exact columns match bit-for-bit;
 - flag-directional columns ship a confusion matrix + the disagreeing-`snip_id` list, and a human has
   signed off that each disagreement is the **intended** re-architecture behavior, not silent drift;
-- the comparison report is saved beside the harness (or attached to the product's PR) so the
-  pilot-continuity check is auditable, not a one-off console run.
+- the comparison report (and, for flag-directional products, the recorded human sign-off) is saved
+  under `_legacy_drift/reports/` (or attached to the product's PR) so the pilot-continuity check is
+  auditable, not a one-off console run;
+- the benchmark stays **deselected from the default `pytest tests/` run** (marker `legacy_drift`),
+  invoked explicitly when validating a product against the pilot.
 
 > Note the held legacy modules this comparison transitively exercises: the top-level
 > `quality_control/death_detection.py` (`compute_dead_flag2_persistence`) and
