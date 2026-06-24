@@ -82,8 +82,8 @@ src/data_pipeline/quality_control/
     contract.py
     compute.py
     persistence.py
-    alignment.py
-    stage_at_death.py
+    death_event.py
+    grain_reconciliation.py
     entrypoint.py
     __init__.py
   surface_area_qc/
@@ -155,7 +155,7 @@ separate cleanup pass.
 
 | Old module | Replaced by |
 |---|---|
-| `quality_control/core/death_detection.py` | `quality_control/death_detection/compute.py` + `persistence.py` + `alignment.py` |
+| `quality_control/core/death_detection.py` | `quality_control/death_detection/compute.py` + `persistence.py` + `grain_reconciliation.py` |
 | `quality_control/core/surface_area_outlier_detection.py` | `quality_control/surface_area_qc/compute.py` + `reference.py` |
 | `quality_control/core/motion_qc.py` | **dropped** — motion QC is not used; delete the module, no folder |
 | `quality_control/core/focus_qc.py` | **STUB** — a 3-line `focus_flag = False` placeholder, never implemented. Real focus QC is in development (z-stack ingest); do not migrate this stub. Delete it; the future `focus_qc/` lands when that work finishes. |
@@ -908,11 +908,20 @@ feature-table alignment rules.
 - `persistence.py::find_inflection_candidates(physical_embryo_fraction_alive_df, *, thresholds)`
 - `persistence.py::validate_death_persistence(physical_embryo_fraction_alive_df, inflection_time_index, *, thresholds)`
 - `persistence.py::broadcast_persistence_dead_flag(physical_embryo_fraction_alive_df, called_death_time_index)`
-- `stage_at_death.py::compute_death_event(persistence_deaths_df, frame_timing_df, stage_predictions_df, *, lead_time_hr)`
+- `death_event.py::compute_death_event(persistence_deaths_df, frame_timing_df, stage_predictions_df, *, lead_time_hr)`
   — returns the per-`physical_embryo_id` `death_event` table (`physical_embryo_id`, `experiment_id`,
   `well_id`, `death_event_time_index`, `death_event_stage_hpf`)
-- `alignment.py::align_death_flags_to_snip_universe(death_flags_df, snip_universe_df)`
+- `grain_reconciliation.py::reconcile_death_flags_to_snip_grain(death_flags_df, snip_universe_df)`
+- `grain_reconciliation.py::reconcile_death_events_to_physical_embryo_grain(death_events_df, physical_embryo_universe_df)`
 - `entrypoint.py::main()`
+
+> **File-layout doctrine — two output grains, named by the seam.** death_detection emits two
+> validated output grains (the per-`snip_id` flag table and the per-`physical_embryo_id`
+> `death_event` table), so the landing file is named after that seam, not after the snip
+> universe. *The algorithm finds death (`persistence.py`); the event code names when it
+> happened (`death_event.py`); the reconciliation code lands results on the two promised grains
+> (`grain_reconciliation.py`).* This supersedes the earlier `stage_at_death.py` /
+> `alignment.py::align_death_flags_to_snip_universe` naming.
 
 **Direct dependencies:** `fraction_alive` feature rows, feature universe keyed by `snip_id`,
 per-embryo temporal ordering, **frame timing** (elapsed hours per `time_index`, from
@@ -969,8 +978,8 @@ per-embryo death-review plots), not in the persisted contract. Keep `*_flag` tab
 an explicit contract migration, not opportunistically.
 
 **Two outputs, two grains:** this product emits **two** tables. The primary table is the per-`snip_id`
-death flag table. The secondary table is the per-`physical_embryo_id` stage-at-death table produced by
-`stage_at_death.py`. They have different grains and different contracts; they are not merged into one.
+death flag table. The secondary table is the per-`physical_embryo_id` `death_event` table produced by
+`death_event.py`. They have different grains and different contracts; they are not merged into one.
 
 **Depends on:**
 
@@ -1068,7 +1077,7 @@ DEATH_EVENT_REQUIRED_COLUMNS = list(
 ```
 
 One row per **persistence-dead** `physical_embryo_id`. Both event annotations are auto-computed by
-`stage_at_death.py` and both carry the **lead-time adjustment**:
+`death_event.py` and both carry the **lead-time adjustment**:
 
 - `death_event_time_index` — the lead-time-adjusted death frame (`D` in the broadcast rule above).
   This is the **single** persisted death-time output; the raw pre-adjustment inflection frame is an

@@ -166,13 +166,15 @@ def cmd_discover_wells_from_handoff(args: argparse.Namespace) -> None:
 
 
 def cmd_split_dropin_inventory(args: argparse.Namespace) -> None:
+    # Per-well producer (race-free): writes EXACTLY the declared shard for --well-id.
     from data_pipeline.metadata_ingest.well_discovery.split_dropin_inventory import (
-        split_dropin_inventory_by_well,
+        select_dropin_well_shard,
     )
 
-    split_dropin_inventory_by_well(
+    select_dropin_well_shard(
         manifest_csv=Path(args.manifest_csv),
-        output_dir=Path(args.output_dir),
+        well_id=str(args.well_id),
+        output_csv=Path(args.output_csv),
     )
 
 
@@ -598,6 +600,51 @@ def cmd_validate_mask_quality_qc(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_death_detection(args: argparse.Namespace) -> None:
+    """Compute BOTH death_detection outputs (per-snip QC + per-animal death_event). Thin dispatcher."""
+    from data_pipeline.quality_control.death_detection.entrypoint import run_death_detection
+
+    run_death_detection(
+        fraction_alive_csv=args.fraction_alive_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        stage_predictions_csv=args.stage_predictions_csv,
+        snip_inventory_csv=args.snip_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_qc_csv=args.output_qc_csv,
+        output_death_event_csv=args.output_death_event_csv,
+    )
+
+
+def cmd_validate_death_detection_qc(args: argparse.Namespace) -> None:
+    """Validate a per-well death_detection_qc shard (snip grain + flags, registry verifier)."""
+    import pandas as pd
+
+    from data_pipeline.quality_control.death_detection.contract import validate_death_detection_qc
+
+    validate_death_detection_qc(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_validate_death_event(args: argparse.Namespace) -> None:
+    """Validate a per-well death_event shard (physical-embryo grain, no embryo_id, registry verifier)."""
+    import pandas as pd
+
+    from data_pipeline.quality_control.death_detection.contract import validate_death_event
+
+    validate_death_event(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_frame_masks(args: argparse.Namespace) -> None:
     import json
     import tempfile
@@ -868,9 +915,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_dwh.add_argument("--output-wells", type=Path, required=True)
     p_dwh.set_defaults(func=cmd_discover_wells_from_handoff)
 
+    # Per-well producer (race-free): writes EXACTLY one well's shard for --well-id.
     p_split = sub.add_parser("split-dropin-inventory")
     p_split.add_argument("--manifest-csv", type=Path, required=True)
-    p_split.add_argument("--output-dir", type=Path, required=True)
+    p_split.add_argument("--well-id", required=True)
+    p_split.add_argument("--output-csv", type=Path, required=True)
     p_split.set_defaults(func=cmd_split_dropin_inventory)
 
     p_scaffold = sub.add_parser("scaffold-dropin-inventory")
@@ -1018,6 +1067,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_mqqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_mqqc.add_argument("--output-csv", type=Path, required=True)
     p_mqqc.set_defaults(func=cmd_mask_quality_qc)
+
+    p_dd = sub.add_parser("death-detection")
+    p_dd.add_argument("--fraction-alive-csv", type=Path, required=True)
+    p_dd.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_dd.add_argument("--stage-predictions-csv", type=Path, required=True)
+    p_dd.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_dd.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_dd.add_argument("--output-qc-csv", type=Path, required=True)
+    p_dd.add_argument("--output-death-event-csv", type=Path, required=True)
+    p_dd.set_defaults(func=cmd_death_detection)
+
+    for verb, fn in (
+        ("validate-death-detection-qc", cmd_validate_death_detection_qc),
+        ("validate-death-event", cmd_validate_death_event),
+    ):
+        p = sub.add_parser(verb)
+        p.add_argument("--input-csv", type=Path, required=True)
+        p.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+        p.add_argument("--output-flag", type=Path, required=True)
+        p.set_defaults(func=fn)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)

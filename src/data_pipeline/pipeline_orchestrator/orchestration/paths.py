@@ -463,6 +463,39 @@ PIPELINE_STEPS: dict[str, dict] = {
             },
         },
     },
+
+    # ── QUALITY CONTROL — death detection (per-snip flags) ────────────────────
+    # Two-mode death QC per snip: viability_dead_flag (per frame) + persistence_dead_flag
+    # (per animal, broadcast time_index >= D). Consumes fraction_alive + frame timing.
+    "death_detection_qc": {
+        "stage": "quality_control",
+        "product_dir": "death_detection",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "death_detection_qc": {
+                PATH_MODE_PER_WELL: "{well_id}_death_detection_qc.csv",
+                PATH_MODE_MERGED: "{experiment_id}_death_detection_qc.csv",
+            },
+        },
+    },
+
+    # ── QUALITY CONTROL — death event (per physical embryo) ───────────────────
+    # Animal-level event table (one row per persistence-dead physical_embryo_id): the
+    # lead-time-adjusted death_event_time_index + death_event_stage_hpf. Same product_dir as
+    # death_detection (one product, two grains); distinct artifact filenames.
+    "death_event": {
+        "stage": "quality_control",
+        "product_dir": "death_detection",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "death_event": {
+                PATH_MODE_PER_WELL: "{well_id}_death_event.csv",
+                PATH_MODE_MERGED: "{experiment_id}_death_event.csv",
+            },
+        },
+    },
 }
 
 # ── HELPERS: step name -> artifact path ──────────────────────────────────────────────────────
