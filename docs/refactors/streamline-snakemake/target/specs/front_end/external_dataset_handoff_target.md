@@ -158,29 +158,50 @@ ordered sequence of contract rules; it is **non-mutating** — it writes only th
 on pass, or an errors report + raises on fail (the one-file model). It never rewrites the manifest.
 
 ```
-validate_frame_inventory(input_csv, output_flag, *, image_root=None, check_sources=True)
+validate_frame_inventory(input_csv, output_flag, *,
+                         image_root=None, check_sources=False, validation_scope="per_well")
   L0  schema          required columns present, dtypes        (io/validators.validate_dataframe_schema)
   L1  uniqueness      identity-anchored image_id key unique    (existing)
   L2  derived ids     well_id / image_id recompute from atoms  (existing assert_derived_ids_consistent)
-  L3  grain  (ALWAYS) one experiment_id + one well_index; BF contiguous 0..N-1;
-                      all present channels rectangular (same time_index set);
+  L3  grain  (ALWAYS, SCOPE-AWARE) one experiment_id (both scopes);
+                      per_well: one well_index;
+                      merged:  many wells allowed, per-well checks applied grouped by well_id;
+                      BF contiguous 0..N-1; channels rectangular (same time_index set);
                       multi-timepoint ⇒ elapsed_time_s required
 
   (BF is the required reference segmentation channel — `REQUIRED_CHANNEL = "BF"` in the contract.
    Wells without a BF channel are not accepted by this entrance; the contiguity rule is anchored to it.)
   L4  sources (check_sources) — the image/folder contract (below)
-  → PASS: write .validated sentinel    → FAIL: write {well_id}_frame_inventory.errors.md + raise
+  → PASS: write .validated sentinel
+  → FAIL: write errors report + raise (per_well → {well_id}_frame_inventory.errors.md;
+          merged → {experiment_id}_frame_inventory.errors.md;
+          fallback frame_inventory.errors.md when the id can't be derived / table unreadable)
 ```
 
-**`check_sources` is a mode flag (one validator, two modes):**
-`validate_frame_inventory(..., check_sources=True)` **defaults to strict** source validation — the
-drop-in entrance uses the default, because proving the claimed images are real is the whole point.
-The **merged Snakemake node explicitly passes `check_sources=False`** (it validates the aggregate view;
-re-opening every image for the merge would be wasteful — L0–L3 still run). L3 grain checks always run.
+> **`grain` names the row; `validation_scope` names the gate.** The L3 scope argument is
+> `validation_scope` (`"per_well"` | `"merged"`), NEVER `grain` — `grain` is reserved across the
+> feature/QC specs for row identity grain (`snip_id`, `physical_embryo_id`, `well_id`).
+
+> **The merged node CANNOT run the per-well "one well_index" rule.** A merged experiment-level table
+> has one `experiment_id` but MANY wells; `validation_scope="merged"` allows many wells and applies
+> the BF-contiguity / rectangularity / multi-timepoint-⇒-`elapsed_time_s` checks **grouped by
+> `well_id`**. `validation_scope="per_well"` asserts exactly one well. Both assert one experiment.
+
+**`check_sources` is a mode flag (one validator, two modes):** the **Python default is conservative
+(`check_sources=False`)** so no caller silently inherits strict L4 during the refactor; the
+"drop-in strict" stance is enforced by each call site passing `--check-sources` explicitly, not by
+the default. Proving the claimed images are real is the point of the drop-in (and native per-well)
+entrance, so those nodes pass `check_sources=True`. The **merged node explicitly passes
+`check_sources=False`** (re-opening every image for the aggregate view is wasteful — L0–L3 still run,
+grouped). L3 grain checks always run, at the node's scope.
 
 The validator is wired at two `frame_inventory.smk` nodes: the per-well node
-`validate_frame_inventory_for_well` (`check_sources=True` + `image_root`) and the merged node
-`validate_frame_inventory` (`check_sources=False`).
+`validate_frame_inventory_for_well` (`check_sources=True`, `validation_scope=per_well`, `image_root`)
+and the merged node `validate_frame_inventory` (`check_sources=False`, `validation_scope=merged`).
+**Native per-well L4 is justified by audit:** the native YX1 per-well shard already writes a real
+`source_image_path` + dims + µm/px, so `check_sources=True` there is meaningful (it catches a
+corrupt/missing materialized image). Keyence per-well L4 is gated on the same per-scope confirmation
+when Keyence materialization lands.
 
 ### L4 — the image / folder contract (gated by `check_sources=True`)
 For each row: `source_image_path` resolves (policy below) → file **exists** → image **opens**
