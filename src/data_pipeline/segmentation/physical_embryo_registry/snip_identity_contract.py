@@ -45,19 +45,18 @@ from data_pipeline.shared.identifiers import (
 # Grain-aware identity spine: own level + all parents. Frame-derived columns
 # (image_id/time_index/channel_id) are cross-checked only when present — they are
 # not required spine for an embryo-grain (time/channel-aggregated) table.
-_SNIP_SPINE_COLUMNS: tuple[str, ...] = (
-    "experiment_id",
-    "well_id",
-    "physical_embryo_id",
-    "embryo_id",
-    "snip_id",
-)
-_EMBRYO_SPINE_COLUMNS: tuple[str, ...] = (
+#
+# Three public, additive constants — each extends its parent by exactly one ID.
+# Import from here; never re-declare these literals elsewhere.
+PHYSICAL_EMBRYO_ID_SPINE_COLUMNS: tuple[str, ...] = (
     "experiment_id",
     "well_id",
     "physical_embryo_id",
 )
-_VALID_GRAINS = ("snip", "embryo")
+EMBRYO_ID_SPINE_COLUMNS: tuple[str, ...] = PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + ("embryo_id",)
+SNIP_ID_SPINE_COLUMNS: tuple[str, ...] = EMBRYO_ID_SPINE_COLUMNS + ("snip_id",)
+
+_VALID_GRAINS = ("physical_embryo_id", "embryo_id", "snip_id")
 
 
 def _require_spine_columns(df: pd.DataFrame, required: tuple[str, ...], scope_label: str) -> None:
@@ -79,17 +78,19 @@ def _require_spine_columns(df: pd.DataFrame, required: tuple[str, ...], scope_la
 def validate_snip_grain_identity_columns(
     df: pd.DataFrame,
     *,
-    grain: str = "snip",
+    grain: str = "snip_id",
     physical_embryo_registry_df: pd.DataFrame | None = None,
     check_sources: bool = False,
     scope_label: str = "snip_grain_table",
 ) -> None:
     """Fail loud unless a snip/embryo-grain table's identity columns AGREE with each other.
 
-    ``grain`` selects the required spine ("snip" = own level + all parents incl.
-    ``embryo_id``/``snip_id``; "embryo" = the coarser time/channel-aggregated grain,
-    which carries no ``snip_id``/``embryo_id``). Grain is the CALLER's assertion,
-    never guessed.
+    ``grain`` selects the required spine using the ID-suffixed grain token:
+      "snip_id"              = snip_id + embryo_id + physical_embryo_id + well_id + experiment_id
+      "embryo_id"            = embryo_id + physical_embryo_id + well_id + experiment_id
+      "physical_embryo_id"   = physical_embryo_id + well_id + experiment_id
+
+    Grain is the CALLER's assertion, never guessed.
 
     One contract, two modes by lifecycle moment (mirrors
     ``validate_yx1_acquisition_inventory(check_sources=...)``). At BUILD time
@@ -108,7 +109,12 @@ def validate_snip_grain_identity_columns(
             f"{scope_label}: unknown grain {grain!r}; expected one of {_VALID_GRAINS}."
         )
 
-    required = _SNIP_SPINE_COLUMNS if grain == "snip" else _EMBRYO_SPINE_COLUMNS
+    _grain_to_spine = {
+        "physical_embryo_id": PHYSICAL_EMBRYO_ID_SPINE_COLUMNS,
+        "embryo_id": EMBRYO_ID_SPINE_COLUMNS,
+        "snip_id": SNIP_ID_SPINE_COLUMNS,
+    }
+    required = _grain_to_spine[grain]
     _require_spine_columns(df, required, scope_label)
 
     # physical_embryo_id (parent identity) round-trips against the well_id column.
@@ -134,7 +140,7 @@ def validate_snip_grain_identity_columns(
                 f"{physical_embryo_id!r}."
             )
 
-        if grain == "snip":
+        if grain == "snip_id":
             embryo_id = str(row["embryo_id"])
             snip_id = str(row["snip_id"])
             embryo_parent, embryo_channel_id = parse_embryo_id(embryo_id)
@@ -183,7 +189,7 @@ def validate_snip_grain_identity_columns(
                     )
 
     # Uniqueness is the caller's assertion of one-row-per-grain, never guessed.
-    unique_key = "snip_id" if grain == "snip" else "physical_embryo_id"
+    unique_key = grain
     if df[unique_key].duplicated().any():
         dupes = df.loc[df[unique_key].duplicated(keep=False), unique_key].head(5).tolist()
         raise ValueError(

@@ -17,20 +17,17 @@ import pandas as pd
 
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+    SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
 )
 
-# The 8-column snip-grain identity spine. Carried verbatim from snip_inventory by every product.
-SNIP_SPINE_COLUMNS: tuple[str, ...] = (
-    "snip_id",
-    "embryo_id",
-    "physical_embryo_id",
-    "experiment_id",
-    "well_id",
-    "image_id",
-    "time_index",
-    "channel_id",
-)
+# Frame-derived columns carried alongside the identity spine in per-snip feature tables.
+# These are cross-checked when present (not required spine); listed here for row-building only.
+_FRAME_DERIVED_COLUMNS: tuple[str, ...] = ("image_id", "time_index", "channel_id")
+
+# Identity spine + frame-derived convenience columns carried by per-snip feature tables.
+# Use for building output rows from snip_inventory. Not the identity spine — do not validate with it.
+SNIP_FEATURE_TABLE_ID_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + _FRAME_DERIVED_COLUMNS
 
 # Micron calibration source on a frame_inventory row (target name first, legacy fallback).
 _PIXEL_SIZE_COLUMNS: tuple[str, ...] = ("source_micrometers_per_pixel", "micrometers_per_pixel")
@@ -59,7 +56,7 @@ def validate_feature_table(
     """
     validate_snip_grain_identity_columns(
         df,
-        grain="snip",
+        grain="snip_id",
         physical_embryo_registry_df=physical_embryo_registry_df,
         check_sources=check_sources,
         scope_label=scope_label,
@@ -166,7 +163,7 @@ def compute_per_snip_mask_features(
         pixel_size_um = pixel_size_for_image(frame_inventory_by_image, image_id, snip_id)
         metrics = per_mask_fn(mask, pixel_size_um)
 
-        row = {col: snip[col] for col in SNIP_SPINE_COLUMNS}
+        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_ID_COLUMNS}
         for col in feature_columns:
             row[col] = metrics[col]
         rows.append(row)

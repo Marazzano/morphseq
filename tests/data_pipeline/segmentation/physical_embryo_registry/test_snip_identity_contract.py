@@ -6,6 +6,9 @@ import pandas as pd
 import pytest
 
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+    EMBRYO_ID_SPINE_COLUMNS,
+    PHYSICAL_EMBRYO_ID_SPINE_COLUMNS,
+    SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
 )
 from data_pipeline.shared.identifiers import (
@@ -39,8 +42,32 @@ def _snip_df(n=2):
     return pd.DataFrame([_snip_row(local_embryo_index=1, time_index=t) for t in range(n)])
 
 
+def test_spine_constants_are_additive():
+    assert PHYSICAL_EMBRYO_ID_SPINE_COLUMNS == ("experiment_id", "well_id", "physical_embryo_id")
+    assert EMBRYO_ID_SPINE_COLUMNS == PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + ("embryo_id",)
+    assert SNIP_ID_SPINE_COLUMNS == EMBRYO_ID_SPINE_COLUMNS + ("snip_id",)
+
+
 def test_valid_snip_grain_passes():
-    validate_snip_grain_identity_columns(_snip_df(3), grain="snip")
+    validate_snip_grain_identity_columns(_snip_df(3), grain="snip_id")
+
+
+def test_valid_embryo_id_grain_passes():
+    df = pd.DataFrame([
+        {
+            "experiment_id": "20250912",
+            "well_id": "20250912_B01",
+            "physical_embryo_id": "20250912_B01_e01",
+            "embryo_id": "20250912_B01_e01__BF",
+        },
+        {
+            "experiment_id": "20250912",
+            "well_id": "20250912_B01",
+            "physical_embryo_id": "20250912_B01_e02",
+            "embryo_id": "20250912_B01_e02__BF",
+        },
+    ])
+    validate_snip_grain_identity_columns(df, grain="embryo_id")
 
 
 def test_valid_embryo_grain_passes():
@@ -56,7 +83,7 @@ def test_valid_embryo_grain_passes():
             "physical_embryo_id": "20250912_B01_e02",
         },
     ])
-    validate_snip_grain_identity_columns(df, grain="embryo")
+    validate_snip_grain_identity_columns(df, grain="physical_embryo_id")
 
 
 def test_unknown_grain_raises():
@@ -67,14 +94,14 @@ def test_unknown_grain_raises():
 def test_missing_spine_column_raises():
     df = _snip_df(2).drop(columns=["physical_embryo_id"])
     with pytest.raises(ValueError, match="missing required identity-spine column"):
-        validate_snip_grain_identity_columns(df, grain="snip")
+        validate_snip_grain_identity_columns(df, grain="snip_id")
 
 
 def test_null_spine_value_raises():
     df = _snip_df(2)
     df.loc[0, "physical_embryo_id"] = None
     with pytest.raises(ValueError, match="null"):
-        validate_snip_grain_identity_columns(df, grain="snip")
+        validate_snip_grain_identity_columns(df, grain="snip_id")
 
 
 def test_embryo_id_disagrees_with_physical_embryo_id_raises():
@@ -83,7 +110,7 @@ def test_embryo_id_disagrees_with_physical_embryo_id_raises():
     other = _snip_row(local_embryo_index=2)
     df.loc[0, "embryo_id"] = other["embryo_id"]
     with pytest.raises(ValueError, match="embryo_id .*encodes physical_embryo_id|not enough"):
-        validate_snip_grain_identity_columns(df, grain="snip")
+        validate_snip_grain_identity_columns(df, grain="snip_id")
 
 
 def test_snip_id_disagrees_with_embryo_id_raises():
@@ -91,27 +118,27 @@ def test_snip_id_disagrees_with_embryo_id_raises():
     other = _snip_row(local_embryo_index=2)
     df.loc[0, "snip_id"] = other["snip_id"]
     with pytest.raises(ValueError, match="snip_id .*encodes embryo_id|not enough"):
-        validate_snip_grain_identity_columns(df, grain="snip")
+        validate_snip_grain_identity_columns(df, grain="snip_id")
 
 
 def test_channel_id_disagrees_with_image_id_raises():
     df = _snip_df(1)
     df.loc[0, "channel_id"] = "DAPI"
     with pytest.raises(ValueError, match="channel_id column .*disagrees"):
-        validate_snip_grain_identity_columns(df, grain="snip")
+        validate_snip_grain_identity_columns(df, grain="snip_id")
 
 
 def test_duplicate_snip_id_raises():
     df = pd.concat([_snip_df(1), _snip_df(1)], ignore_index=True)
     with pytest.raises(ValueError, match="must be unique"):
-        validate_snip_grain_identity_columns(df, grain="snip")
+        validate_snip_grain_identity_columns(df, grain="snip_id")
 
 
 def test_check_sources_passes_when_registered():
     df = _snip_df(2)
     registry = pd.DataFrame({"physical_embryo_id": ["20250912_B01_e01"]})
     validate_snip_grain_identity_columns(
-        df, grain="snip", physical_embryo_registry_df=registry, check_sources=True
+        df, grain="snip_id", physical_embryo_registry_df=registry, check_sources=True
     )
 
 
@@ -120,10 +147,10 @@ def test_check_sources_fails_when_unregistered():
     registry = pd.DataFrame({"physical_embryo_id": ["20250912_C04_e09"]})
     with pytest.raises(ValueError, match="not in the physical_embryo_registry"):
         validate_snip_grain_identity_columns(
-            df, grain="snip", physical_embryo_registry_df=registry, check_sources=True
+            df, grain="snip_id", physical_embryo_registry_df=registry, check_sources=True
         )
 
 
 def test_check_sources_requires_registry_df():
     with pytest.raises(ValueError, match="requires physical_embryo_registry_df"):
-        validate_snip_grain_identity_columns(_snip_df(1), grain="snip", check_sources=True)
+        validate_snip_grain_identity_columns(_snip_df(1), grain="snip_id", check_sources=True)

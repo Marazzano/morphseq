@@ -9,14 +9,14 @@ from __future__ import annotations
 import pandas as pd
 
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
-    SNIP_SPINE_COLUMNS,
+    SNIP_FEATURE_TABLE_ID_COLUMNS,
     validate_feature_table,
 )
 
 _FEATURE_COLUMNS: tuple[str, ...] = ("fraction_alive",)
 _NULLABLE_FEATURE_COLUMNS: tuple[str, ...] = ("fraction_alive",)
 
-FRACTION_ALIVE_FEATURES_REQUIRED_COLUMNS: list[str] = list(SNIP_SPINE_COLUMNS + _FEATURE_COLUMNS)
+FRACTION_ALIVE_FEATURES_REQUIRED_COLUMNS: list[str] = list(SNIP_FEATURE_TABLE_ID_COLUMNS + _FEATURE_COLUMNS)
 
 
 def validate_fraction_alive_features(

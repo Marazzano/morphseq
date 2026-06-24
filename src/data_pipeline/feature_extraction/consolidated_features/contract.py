@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_SPINE_COLUMNS
+from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_ID_COLUMNS
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
     validate_snip_grain_identity_columns,
 )
@@ -26,7 +26,7 @@ _CORE_FEATURE_COLUMNS: tuple[str, ...] = (
     "centroid_y_um",
 )
 
-CONSOLIDATED_FEATURES_REQUIRED_COLUMNS: list[str] = list(SNIP_SPINE_COLUMNS + _CORE_FEATURE_COLUMNS)
+CONSOLIDATED_FEATURES_REQUIRED_COLUMNS: list[str] = list(SNIP_FEATURE_TABLE_ID_COLUMNS + _CORE_FEATURE_COLUMNS)
 
 
 def validate_consolidated_features(
@@ -39,7 +39,7 @@ def validate_consolidated_features(
     """Fail loud unless ``df`` is a valid consolidated_features table (spine + core columns)."""
     validate_snip_grain_identity_columns(
         df,
-        grain="snip",
+        grain="snip_id",
         physical_embryo_registry_df=physical_embryo_registry_df,
         check_sources=check_sources,
         scope_label=scope_label,

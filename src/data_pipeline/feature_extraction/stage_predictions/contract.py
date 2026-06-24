@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
-    SNIP_SPINE_COLUMNS,
+    SNIP_FEATURE_TABLE_ID_COLUMNS,
     validate_feature_table,
 )
 
@@ -17,7 +17,7 @@ _FEATURE_COLUMNS: tuple[str, ...] = ("predicted_stage_hpf",)
 _PROVENANCE_COLUMNS: tuple[str, ...] = ("model_version",)
 
 STAGE_PREDICTION_FEATURES_REQUIRED_COLUMNS: list[str] = list(
-    SNIP_SPINE_COLUMNS + _FEATURE_COLUMNS + _PROVENANCE_COLUMNS
+    SNIP_FEATURE_TABLE_ID_COLUMNS + _FEATURE_COLUMNS + _PROVENANCE_COLUMNS
 )
 
 

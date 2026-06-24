@@ -19,7 +19,7 @@ from data_pipeline.feature_extraction.pose_kinematics_metrics import (
     compute_pose_features,
 )
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
-    SNIP_SPINE_COLUMNS,
+    SNIP_FEATURE_TABLE_ID_COLUMNS,
     pixel_size_for_image,
 )
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
@@ -80,7 +80,7 @@ def compute_pose_kinematics_features(
         else:
             kin = compute_kinematics(centroid, prev["centroid"], current_time, prev["time"])
 
-        row = {col: snip[col] for col in SNIP_SPINE_COLUMNS}
+        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_ID_COLUMNS}
         row["orientation_angle"] = pose["orientation_angle"]
         # bbox naming follows the consolidated feature contract: width/height come from the PCA
         # length/width of the mask (long axis = height), matching the legacy batch.

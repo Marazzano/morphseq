@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+    SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
 )
 
@@ -21,18 +22,11 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
 # Contract — identity spine (validated by the shared spine validator) + measured feature columns
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
-# Identity spine (snip grain). These are NOT optional provenance — they are the identity-carrying
-# contract, checked by validate_snip_grain_identity_columns.
-_SPINE_COLUMNS: tuple[str, ...] = (
-    "snip_id",
-    "embryo_id",
-    "physical_embryo_id",
-    "experiment_id",
-    "well_id",
-    "image_id",
-    "time_index",
-    "channel_id",
-)
+# Frame-derived columns carried alongside the identity spine in per-snip feature tables.
+_FRAME_DERIVED_COLUMNS: tuple[str, ...] = ("image_id", "time_index", "channel_id")
+
+# Full output column set: identity spine + frame-derived convenience columns.
+_SPINE_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + _FRAME_DERIVED_COLUMNS
 
 # Measured, micron-aware geometry. Continuous values; no booleans, no ``_flag`` columns.
 _FEATURE_COLUMNS: tuple[str, ...] = (
@@ -63,7 +57,7 @@ def validate_mask_geometry_features(
     # 1. Identity spine — own level + all parents agree; optionally verified against the registry.
     validate_snip_grain_identity_columns(
         df,
-        grain="snip",
+        grain="snip_id",
         physical_embryo_registry_df=physical_embryo_registry_df,
         check_sources=check_sources,
         scope_label=scope_label,

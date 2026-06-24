@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_SPINE_COLUMNS
+from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_ID_COLUMNS
 
-_SPINE = set(SNIP_SPINE_COLUMNS)
+_SPINE = set(SNIP_FEATURE_TABLE_ID_COLUMNS)
 
 
 def assert_feature_table_compatible(df: pd.DataFrame, *, key: str, feature_name: str) -> None:
