@@ -1682,6 +1682,112 @@ guards meaning.
 
 ---
 
+## Legacy Drift Comparison (acceptance: match the old pipeline on the pilot)
+
+**Why.** Unit tests prove each product is internally correct on synthetic fixtures; they do **not**
+prove the rebuilt product reproduces the *science* the lab already trusts. The legacy build pipeline
+has run the pilot experiment **`20250912`** to completion, so we have a row-for-row ground-truth
+output for every value these products compute. Before any product is declared trustworthy on real
+data, its per-`snip_id` values must be compared against the legacy output to **detect drift** — a
+silent change in numbers or flags between the old and new code paths. This is a real-data acceptance
+gate, separate from (and in addition to) the synthetic unit tests in each product's Done When.
+
+> Doctrine: synthetic fixtures pin *correctness*; the legacy drift comparison pins *continuity*. A
+> product is not "processed correctly on real data" until both pass.
+
+**Legacy artifacts (pilot `20250912`).** The legacy build writes one wide per-snip table plus a
+curvature-arrays table:
+
+- `morphseq_playground/metadata/build04_output/qc_staged_20250912.csv` — the wide per-snip table
+  (95 wells, ~11,978 snips). Produced by `src/build/build04_perform_embryo_qc.py`
+  (`out_dir/qc_staged_<exp>.csv`), which calls the legacy `compute_dead_flag2_persistence`,
+  `compute_sa_outlier_flag`, and `determine_use_embryo_flag`; geometry/stage/`fraction_alive` are
+  computed upstream in build03 and carried in. This file carries the ground-truth for **all four QC
+  products plus mask_geometry, stage_predictions, and fraction_alive**.
+- `morphseq_playground/metadata/body_axis/arrays/curvature_arrays_20250912.csv` — the per-snip
+  curvature/centerline arrays (ground-truth for `curvature_metrics` when that comparison is run).
+
+**The join key is `snip_id`** (legacy format `20250912_A01_e01_t0001` — same grammar as the new
+pipeline; join on it directly, not on `well_id`). Three known representational differences the
+comparison harness must normalize, NOT silently paper over:
+
+- **`well_id` grain differs:** legacy `well_id` is the LOCAL slug (`A01`); the new pipeline's
+  `well_id` is global (`20250912_A01`). Both `snip_id`s are global, so join on `snip_id`.
+- **time axis offset:** legacy `time_int` is 1-based; new `time_index` is 0-based. The `snip_id`
+  `t####` suffix is the shared anchor — align on it, expect the index column to differ by one.
+- **flag vocabulary differs:** legacy `sam2_qc_flags` is a comma-joined string of tokens
+  (`DISCONTINUOUS_MASK`, `HIGH_SEGMENTATION_VAR_SNIP`, `SMALL_MASK`, …); the new mask_quality flags
+  are three booleans. Map tokens to booleans in the harness; do not expect column-name identity.
+
+**Per-product comparison map + tolerance class.** Each row says: which legacy column(s) hold the
+ground truth, which new product column to compare, and how exact the match must be.
+
+| New product / column | Legacy column(s) in `qc_staged_20250912.csv` | Tolerance class |
+|---|---|---|
+| `mask_geometry.area_um2` | `area_um2` | **numeric-tight** (rel ≤ 1e-3) — same mask, same formula |
+| `mask_geometry.perimeter_um` | `perimeter_um` | numeric-tight |
+| `mask_geometry.centroid_x_um` / `centroid_y_um` | `centroid_x_um` / `centroid_y_um` | numeric-tight |
+| `mask_geometry.length_um` / `width_um` | `height_um` / `width_um` (note legacy "height"=length axis) | numeric-loose (rel ≤ 1e-2) — confirm axis convention first |
+| `stage_predictions.predicted_stage_hpf` | `predicted_stage_hpf` | numeric-tight — same Kimmel formula + timing |
+| `fraction_alive.fraction_alive` | `fraction_alive` | numeric-loose (rel ≤ 1e-2) — VIA mask resolution moved to snip-native |
+| `surface_area_qc.sa_outlier_flag` | `sa_outlier_flag` | **flag-exact** IF k matches; legacy ran k=1.4/0.7 → expect exact. Report confusion matrix |
+| `mask_quality_qc.{edge,discontinuous_mask,overlapping_mask}_flag` | `sam2_qc_flags` tokens (+ `frame_flag`) | **flag-directional** — input moved raw SAM2 → canonical `frame_masks`; expect high agreement, *investigate* every disagreement, do not require bit-exact |
+| `death_detection_qc.persistence_dead_flag` | `dead_flag2` | **flag-directional** — re-architected (physical_embryo grouping, hours lead-time); expect close, *investigate* divergence |
+| `death_detection_qc.viability_dead_flag` | `dead_flag` (per-frame component) | flag-directional |
+| `death_event.death_event_time_index` | `dead_inflection_time_int` (legacy, pre-lead-time-in-frames) | **directional only** — semantics changed (hours vs frames); compare for sanity, not equality |
+| `snip_qc.use_snip` | `use_embryo_flag` (legacy bool) | **flag-directional** — the verdict reasons changed; expect high agreement on the migrated reasons, investigate flips |
+| `curvature_metrics.*` | `curvature_arrays_20250912.csv` + `total_length_um` / `baseline_deviation_um` | numeric-loose (run when curvature comparison is scheduled) |
+
+Tolerance classes: **numeric-tight** = same object + same formula, must agree to rel 1e-3 (a miss is
+a real bug); **numeric-loose** = a known method/resolution change, agree to rel 1e-2 and report the
+distribution of residuals; **flag-exact** = boolean equality required; **flag-directional** = a
+deliberate algorithm change, so report a confusion matrix + every disagreeing `snip_id`, and a human
+signs off that the new behavior is the intended one (not silent drift).
+
+**Target plan — one comparison harness, one report per product.** This is **tooling, not a pipeline
+step** (it reads the legacy file by an absolute playground path, like
+`generate_references/build_sa_reference.py`): it gets **no `paths.py` row** and lives in a
+`tools/`-style location (e.g. `tools/legacy_drift/`), never under a product folder. Shape:
+
+- `tools/legacy_drift/load_legacy_qc_staged.py::load_legacy_pilot(experiment_id="20250912")` —
+  reads `qc_staged_<exp>.csv`, returns it keyed by `snip_id` with the legacy columns normalized
+  (token-string → booleans, `time_int`→`time_index` alignment noted). One loader, reused by every
+  product comparison.
+- `tools/legacy_drift/compare_<product>.py::compare_<product>(new_merged_csv, legacy_df)` — one per
+  product. Inner-joins on `snip_id`, asserts the join covers the expected universe (report snips
+  present in one side only — a coverage gap is itself drift), then applies the product's tolerance
+  class and emits a report: pass/fail per column, residual stats for numeric, confusion matrix +
+  disagreeing-`snip_id` list for flags.
+- a thin `tools/legacy_drift/run_all.py` that runs each product comparison against the merged
+  pipeline outputs for `20250912` and prints a one-screen summary (per product: PASS / INVESTIGATE /
+  FAIL).
+
+**How to produce the new side.** Run the merged QC targets for `20250912` (the `.smk` rules already
+plan end-to-end — see each product's Done When), then point the harness at the merged artifacts
+resolved through `artifact_path(...)`:
+`features/20250912/{mask_geometry,stage_predictions,fraction_alive}/20250912_*.csv` and
+`quality_control/20250912/{surface_area_qc,mask_quality_qc,death_detection,snip_qc}/20250912_*.{csv,parquet}`.
+
+**Done when (drift gate per product):**
+
+- the `snip_id` join covers the legacy pilot universe (coverage gaps reported and explained);
+- numeric-tight columns agree to rel ≤ 1e-3; numeric-loose to rel ≤ 1e-2 with the residual
+  distribution reported;
+- flag-exact columns match bit-for-bit;
+- flag-directional columns ship a confusion matrix + the disagreeing-`snip_id` list, and a human has
+  signed off that each disagreement is the **intended** re-architecture behavior, not silent drift;
+- the comparison report is saved beside the harness (or attached to the product's PR) so the
+  pilot-continuity check is auditable, not a one-off console run.
+
+> Note the held legacy modules this comparison transitively exercises: the top-level
+> `quality_control/death_detection.py` (`compute_dead_flag2_persistence`) and
+> `surface_area_outlier_detection.py` (`compute_sa_outlier_flag`) are the exact code that produced
+> the legacy `dead_flag2` / `sa_outlier_flag` columns — they stay live (per the retirement plan)
+> until this drift gate has signed off and any remaining external consumer (`src/build/build04`) is
+> migrated.
+
+---
+
 ## Not This World
 
 - Detection, segmentation, tracking, and prompt adaptation live in detect/seg/track specs.
