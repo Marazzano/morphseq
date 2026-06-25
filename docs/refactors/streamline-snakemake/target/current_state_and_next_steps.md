@@ -6,6 +6,52 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-24 22:53
+
+**What shipped:** Commit 5 is complete and committed (`5246407b`). Native product materialization now
+feeds canonical `frame_inventory` through:
+validated `frame_inventory_products` shard → `discover_product_shards_for_well` →
+`assemble_well_frame_inventory` → existing strict `validate_frame_inventory_for_well`. Product
+discovery scans the on-disk product-shard directory and includes only CSVs with `.csv.validated`
+sidecars; config product keys are DAG triggers, not the discovery universe. The old native
+`materialize_well` Snakemake writer is no longer the canonical path producer. Also committed
+`e44e5a4a`, which writes the merged Snakemake runtime config to
+`data_pipeline_output/_snakemake_runtime/merged_config.yaml` and passes that to task entrypoints, so
+`--configfile` overlays and `IMAGE_PRODUCT_KEYS` cannot diverge.
+
+**Verified:** targeted Python suite passed:
+`PYTHONPATH=src "$PYTHON" -m pytest tests/data_pipeline/image_materialization/test_image_product_keys.py
+tests/data_pipeline/image_materialization/test_product_shard_assembly.py
+tests/data_pipeline/pipeline_orchestrator/test_tasks_parser.py
+tests/data_pipeline/pipeline_orchestrator/test_paths.py
+tests/data_pipeline/metadata_ingest/test_frame_inventory.py
+tests/data_pipeline/metadata_ingest/test_frame_inventory_strict_gate.py` → 87 passed. Forced B01
+dry-run for canonical validation plans the intended chain:
+`write_resolved_product_plan_for_well` → `materialize_image_product_for_well` →
+`validate_frame_inventory_product_for_well` → `discover_product_shards_for_well` →
+`assemble_well_frame_inventory` → `validate_frame_inventory_for_well`. Real CUDA z-stack smoke on
+20250912_B01 with one timepoint completed 6/6: A100 visible, `AUTO_MODE_CHOSEN: requested='cuda' ->
+CUDA`, product shard `20250912_B01_BF__z_stack_frame_inventory.csv` has 15 rows for `time_index=0`
+and `z_index=0..14`, 15 PNGs were written under
+`materialized_images/20250912_B01/z_stack/BF/`, discovery listed `BF__z_stack`, canonical
+`20250912_B01_frame_inventory.csv` assembled to the same 15 z-stack rows, and both product/canonical
+`.validated` sentinels exist.
+
+**What's broken/half-done:** no known code blocker in the product-shard/assembly path. The real
+z-stack smoke intentionally overwrote the canonical B01 smoke inventory with a one-timepoint
+z-stack-only assembled manifest; rerun projection or projection+z_stack overlays before using B01
+canonical outputs for downstream projection-only work.
+
+**Next concrete action:** Commit 6 — run the additive assembly proof. Use a temporary overlay with
+both products (`BF__projection__focus_stack` and `BF__z_stack`) for 20250912_B01 with
+`smoke_max_time_indices: 1`, force assembly, and verify the discovered manifest lists both product
+keys and the assembled canonical `frame_inventory` contains projection row(s) plus all z-stack plane
+rows. If that passes, update this snapshot and commit only the status doc.
+
+**Open decisions:** none.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-24 22:33
 
 **What shipped:** product-grain materialization fanout is committed (`b4d99350`). Added
