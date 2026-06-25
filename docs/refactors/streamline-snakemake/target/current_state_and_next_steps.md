@@ -6,6 +6,48 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-24 22:33
+
+**What shipped:** product-grain materialization fanout is committed (`b4d99350`). Added
+`resolved_product_plans.py`, which writes/loads one schema-versioned resolved product plan JSON per
+`(well_id, product_key)` and validates that `product_key` matches the resolved product fields. Added
+task verbs `write-resolved-product-plan-for-well` and `materialize-image-product-for-well`. The
+Snakefile now derives `IMAGE_PRODUCT_KEYS` through the real config→plan→scope-resolver path, not a
+hardcoded list, and exposes a `front_half_products` target that stops at validated product
+frame-inventory shards.
+
+**Verified:** product-shard dry-run for
+`.../frame_inventory_products/per_well/20250912_B01/20250912_B01_BF__projection__focus_stack_frame_inventory.csv.validated`
+plans the intended chain:
+`write_resolved_product_plan_for_well` → `materialize_image_product_for_well` →
+`validate_frame_inventory_product_for_well`. `front_half_products -n` parses and reaches the
+discovery checkpoint. Pytest slice
+`tests/data_pipeline/image_materialization/test_image_product_keys.py
+tests/data_pipeline/image_materialization/test_resolved_product_plans.py
+tests/data_pipeline/image_materialization/test_materialized_image_paths.py
+tests/data_pipeline/image_materialization/test_scope_resolver_for_materialization_plan.py
+tests/data_pipeline/image_materialization/scope/yx1/test_materialize_well_yx1.py
+tests/data_pipeline/pipeline_orchestrator/test_tasks_parser.py
+tests/data_pipeline/pipeline_orchestrator/test_paths.py` → 107 passed, 1 existing projection dtype
+warning.
+
+**What's broken/half-done:** canonical per-well `frame_inventory` is still not assembled from product
+shards. The old `materialize_well`/`front_half` canonical path remains in place as the existing
+pre-assembly path; the new product-grain path is exposed separately as `front_half_products` and
+direct product-shard targets.
+
+**Next concrete action:** Commit 5 — add `discovered_product_shards` discovery and
+`assemble_well_frame_inventory`. Discovery should list active validated product shard CSVs for one
+well; assembly should concatenate those product shards into the old canonical
+`frame_inventory/per_well/{well_id}/{well_id}_frame_inventory.csv`, then the existing strict
+`validate_frame_inventory_for_well` gate can validate the assembled canonical shard. Verify
+projection-only assembly reproduces the old canonical per-well frame inventory.
+
+**Open decisions:** none for product fanout. Keep materialization writing product shards only;
+canonical writes start in the assembly rule.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-24 22:21
 
 **What shipped:** product-shard path contract is now committed (`c8bd4f2d`). Added
