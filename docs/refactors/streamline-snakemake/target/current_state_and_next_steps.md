@@ -6,6 +6,43 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-24 21:50
+
+**What shipped:** z-stack materialization is wired through the contract and YX1 single-product
+executor in two commits:
+- `0f5a613d` — `build_image_id(..., z_index=None)` preserves projection IDs byte-for-byte and emits
+  z-aware IDs for planes; `frame_inventory` now requires-present nullable `z_index`, derives
+  z-aware `image_id`s, and checks uniqueness through derived `image_id` so projection `NA` rows still
+  collide while distinct z planes pass.
+- `960a7667` — YX1 resolver accepts BF `z_stack`; `z_stack_frame_path` is live; the YX1 materializer
+  has a product-grain helper that writes inventory-declared Z planes without projection and emits
+  z-aware frame-inventory rows. Projection behavior remains covered.
+
+**Verified:** `PYTHONPATH=src "$PYTHON" -m pytest tests/data_pipeline/shared/identifiers/test_identifiers.py
+tests/data_pipeline/image_materialization/ tests/data_pipeline/metadata_ingest/test_frame_inventory.py
+tests/data_pipeline/metadata_ingest/test_frame_inventory_strict_gate.py` → 166 passed, 1 existing
+projection dtype warning.
+
+**What's broken/half-done:** Snakemake/orchestration product fanout is not wired yet. The live
+`materialize_well` rule is still well-grain and writes one per-well `frame_inventory` shard; the
+compatibility wrapper now fails loud if a resolved plan contains more than one product. A config with
+only BF `z_stack` can reach the YX1 executor path, but a config requesting both projection and
+z_stack still needs product-key fanout before it can run as separate product jobs.
+
+**Next concrete action:** wire product fanout at the orchestration seam: add a product key/selection
+path through `src/data_pipeline/pipeline_orchestrator/rules/materialize_well_native.smk`,
+`src/data_pipeline/pipeline_orchestrator/tasks.py::cmd_materialize_well`, and
+`src/data_pipeline/image_materialization/run_materialize_well.py` so each job passes exactly one
+resolved `ResolvedImageProduct` into `materialize_yx1_product_for_well`; then verify a `snakemake -n`
+for config products `{projection, z_stack}` fans out cleanly and the targeted pytest slice still
+passes.
+
+**Open decisions:** decide the on-disk contract for product-specific frame-inventory shards in
+`PIPELINE_STEPS`/rules before wiring fanout, because today there is only one per-well
+`frame_inventory` artifact path.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-24 (session: QC half of feature_world.md — all 4 MVP QC products)
 
 **What shipped (the QC half of `feature_world.md`, built product-by-product, one commit each):**
