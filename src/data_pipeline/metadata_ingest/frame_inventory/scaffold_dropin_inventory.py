@@ -75,6 +75,11 @@ def scaffold_row_for_image(image_path: Path, *, image_root: Path | None = None) 
     row["source_image_path"] = source_image_path
     row["image_width_px"] = width
     row["image_height_px"] = height
+    # A dropped-in image is a single materialized frame, i.e. a projection product (NOT a z-plane).
+    # z_index stays NA; projection_method is the dropin default. The user may retarget if needed.
+    row["image_product_type"] = "projection"
+    row["projection_method"] = "focus_stack"
+    row["z_index"] = pd.NA
     return row
 
 

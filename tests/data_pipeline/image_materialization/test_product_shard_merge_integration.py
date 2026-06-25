@@ -176,5 +176,5 @@ def test_merge_rejects_duplicate_z_plane_across_shards(tmp_path):
     pd.DataFrame([_z_stack_row(B01, 0, 0)]).to_csv(s1, index=False)
     pd.DataFrame([_z_stack_row(B01, 0, 0)]).to_csv(s2, index=False)
 
-    with pytest.raises(ValueError, match="Duplicate frame_inventory keys"):
+    with pytest.raises(ValueError, match="(?i)duplicate"):
         merge_frame_inventory_shards([s1, s2], tmp_path / "m.csv")

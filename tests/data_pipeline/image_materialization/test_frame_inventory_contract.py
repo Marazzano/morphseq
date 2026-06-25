@@ -19,10 +19,14 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
     StitchedHandoffSpec,
     WellHandoff,
     assert_derived_ids_consistent,
+    assert_product_columns_consistent,
     derive_well_id,
     derive_image_id,
     frame_inventory_image_ids,
+    frame_inventory_product_aware_keys,
+    frame_inventory_product_keys,
     validate_frame_identity_block,
+    validate_frame_inventory_identity_contract,
 )
 
 
@@ -255,3 +259,81 @@ def test_identity_validator_uses_context_in_error():
     df = _identity_df(1, source_image_path="images/wrong.png")
     with pytest.raises(ValueError, match=r"\[my_product\]"):
         validate_frame_identity_block(df, _ref_inventory(1), context="my_product")
+
+
+# ---------------------------------------------------------------------------
+# 4. The identity-contract gate — product-aware frame identity, enforced once
+# ---------------------------------------------------------------------------
+
+def _product_row(*, time_index=0, z_index=pd.NA, image_product_type="projection",
+                 projection_method="focus_stack", well_index="B01") -> dict:
+    return {
+        "experiment_id": "20250912",
+        "well_index": well_index,
+        "channel_id": "BF",
+        "time_index": time_index,
+        "z_index": z_index,
+        "image_product_type": image_product_type,
+        "projection_method": projection_method,
+    }
+
+
+def _z_row(**kw) -> dict:
+    kw.setdefault("z_index", 0)
+    kw.setdefault("image_product_type", "z_stack")
+    kw.setdefault("projection_method", pd.NA)
+    return _product_row(**kw)
+
+
+def test_product_keys_compose_projection_and_z_stack():
+    df = pd.DataFrame([_product_row(), _z_row()])
+    keys = list(frame_inventory_product_keys(df))
+    assert keys == ["BF__projection__focus_stack", "BF__z_stack"]
+
+
+def test_two_projection_products_same_time_are_distinct_frames():
+    # The whole point: focus_stack vs max_intensity at the same well/channel/time share an image_id
+    # but are DIFFERENT frames — the product-aware key must NOT collide them.
+    df = pd.DataFrame([
+        _product_row(projection_method="focus_stack"),
+        _product_row(projection_method="max_intensity"),
+    ])
+    keys = frame_inventory_product_aware_keys(df)
+    assert keys.nunique() == 2
+    validate_frame_inventory_identity_contract(df)  # must not raise
+
+
+def test_identity_contract_rejects_true_duplicate_product_frame():
+    df = pd.DataFrame([_product_row(), _product_row()])  # same product, same time
+    with pytest.raises(ValueError, match="(?i)duplicate"):
+        validate_frame_inventory_identity_contract(df)
+
+
+def test_identity_contract_distinct_z_planes_pass():
+    df = pd.DataFrame([_z_row(z_index=0), _z_row(z_index=1)])
+    validate_frame_inventory_identity_contract(df)  # planes differ → not duplicate
+
+
+def test_product_consistency_projection_requires_method():
+    df = pd.DataFrame([_product_row(projection_method=pd.NA)])
+    with pytest.raises(ValueError, match="projection"):
+        assert_product_columns_consistent(df)
+
+
+def test_product_consistency_z_stack_rejects_method():
+    df = pd.DataFrame([_z_row(projection_method="focus_stack")])
+    with pytest.raises(ValueError, match="z_stack"):
+        assert_product_columns_consistent(df)
+
+
+def test_product_consistency_projection_rejects_z_index():
+    df = pd.DataFrame([_product_row(z_index=0)])  # projection must have null z_index
+    with pytest.raises(ValueError, match="projection"):
+        assert_product_columns_consistent(df)
+
+
+def test_identity_contract_runs_product_consistency():
+    # The gate composes the product-consistency check — a contradictory row fails through the gate.
+    df = pd.DataFrame([_z_row(projection_method="focus_stack")])
+    with pytest.raises(ValueError, match="z_stack"):
+        validate_frame_inventory_identity_contract(df)

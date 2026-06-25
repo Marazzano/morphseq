@@ -65,7 +65,37 @@ def test_per_well_ragged_channel_fails(tmp_path):
         _row(A01, "GFP", 0, src="a.png"),  # GFP missing time 1 → ragged
     ])
     with pytest.raises(ValueError, match="rectangular|time_index set"):
-        validate_frame_inventory(shard, tmp_path / "f.validated")
+        validate_frame_inventory(shard, tmp_path / "f.validated")  # default policy = "fail"
+
+
+def test_ragged_channel_warn_policy_accepts(tmp_path, caplog):
+    # Same ragged GFP, but ragged_channel_policy="warn" → validates (logs a warning) instead of raising.
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
+        _row(A01, "BF", 0, src="a.png"),
+        _row(A01, "BF", 1, src="a.png"),
+        _row(A01, "GFP", 0, src="a.png"),
+    ])
+    flag = tmp_path / "f.validated"
+    import logging
+    with caplog.at_level(logging.WARNING):
+        validate_frame_inventory(
+            shard, flag, check_sources=False, ragged_channel_policy="warn"
+        )
+    assert flag.exists()
+    assert any("rectangular" in r.message or "time_index set" in r.message for r in caplog.records)
+
+
+def test_ragged_channel_warn_still_hard_fails_ragged_BF(tmp_path):
+    # "warn" only softens the cross-CHANNEL check; a ragged BF *product stream* (non-contiguous time)
+    # is still a hard failure regardless of policy.
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
+        _row(A01, "BF", 0, src="a.png"),
+        _row(A01, "BF", 2, src="a.png"),  # BF skips time 1 → non-contiguous stream
+    ])
+    with pytest.raises(ValueError, match="contiguous"):
+        validate_frame_inventory(
+            shard, tmp_path / "f.validated", ragged_channel_policy="warn"
+        )
 
 
 def test_multi_timepoint_missing_elapsed_fails(tmp_path):

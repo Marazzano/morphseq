@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from data_pipeline.image_materialization.image_product_keys import image_product_key_for_frame_row
 from data_pipeline.shared.identifiers.constructors import build_image_id, build_well_id
 from data_pipeline.shared.identifiers.validators import validate_well_id
 
@@ -42,6 +43,8 @@ REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "channel_id",                  # controlled channel token (BF / GFP …) — atom
     "time_index",                  # T dimension, 0-based contiguous — atom
     "z_index",                     # nullable Z dimension atom: NA projection, integer z_stack
+    "image_product_type",          # product family: "projection" | "z_stack" — part of frame identity
+    "projection_method",           # method WITHIN projection ("focus_stack" …); NA for z_stack
     "elapsed_time_s",              # seconds since this well's first frame — CARRIED from acquisition
     "acquisition_time_s",          # raw per-frame timestamp — CARRIED from acquisition (audit)
     "source_image_path",           # TIFF / PNG / JPEG; absolute OR relative to image_root
@@ -67,15 +70,26 @@ DERIVED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
 
 # The per-frame unique key, stated as ATOMS. This names WHICH columns identify a frame; the
 # validator does NOT trust this tuple as opaque strings — it routes the atoms through the
-# identifier constructors (build_well_id → build_image_id) so the effective key is the DERIVED
-# image_id. Uniqueness on these atoms ≡ uniqueness on image_id, but anchored to the grammar so
-# the key can never drift from the constructors. See ``frame_inventory_image_ids``.
+# constructors so the effective key is a DERIVED pair: (image_id, product_key). Two frames are the
+# SAME frame only if BOTH match.
+#
+# Why product_key is part of identity (NOT just image_id): `image_id` addresses a frame within ONE
+# product family ({well}_{channel}_t{t}[_z{z}]). But "projection" is a family, not a single product
+# — `BF__projection__focus_stack` and `BF__projection__max_intensity` are DIFFERENT frames that share
+# the same image_id. Anchoring uniqueness to image_id ALONE would falsely collide them. So the
+# effective key is (image_id, product_key); see ``frame_inventory_product_aware_keys``.
+#
+# Enforcement uses that derived pair, NOT df.duplicated(UNIQUE_FRAME_INVENTORY_KEY_COLUMNS) — the
+# atom tuple is the honest column list, but z_index is nullable and Pandas drops/compares NA keys
+# inconsistently (the NA landmine). Route through the helper; never simplify back to the raw tuple.
 UNIQUE_FRAME_INVENTORY_KEY_COLUMNS: tuple[str, ...] = (
     "experiment_id",
     "well_index",
     "channel_id",
     "time_index",
     "z_index",
+    "image_product_type",
+    "projection_method",
 )
 
 ALLOWED_IMAGE_SUFFIXES: tuple[str, ...] = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
@@ -151,8 +165,53 @@ def _row_z_index_or_none(row: pd.Series) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Derived-id consistency guard
+# Product-column + derived-id consistency guards
 # ---------------------------------------------------------------------------
+
+
+def assert_product_columns_consistent(df: pd.DataFrame, scope_label: str = "frame_inventory") -> None:
+    """Fail loud if the product atoms (``image_product_type`` / ``projection_method``) disagree.
+
+    The two columns are atoms but they constrain each other — composing ``product_key`` from them via
+    ``build_image_product_key`` (in ``frame_inventory_product_keys``) is what would surface a
+    contradiction, so this guard makes that explicit and names the fix per row:
+
+      - ``projection`` rows REQUIRE a non-null ``projection_method`` and a null ``z_index``;
+      - ``z_stack``   rows REQUIRE a null ``projection_method`` and a non-null ``z_index``.
+
+    Without this guard a row like ``image_product_type=z_stack, projection_method=focus_stack`` would
+    be rejected only deep inside ``build_image_product_key`` with a less locatable message.
+    """
+    for col in ("image_product_type", "projection_method"):
+        if col not in df.columns:
+            raise ValueError(
+                f"[{scope_label}] required product column {col!r} is absent. Every frame_inventory "
+                "row carries image_product_type and projection_method (atoms of the product_key)."
+            )
+
+    ptype = df["image_product_type"].astype(str)
+    method_null = df["projection_method"].isna()
+    z_null = df["z_index"].isna() if "z_index" in df.columns else pd.Series(True, index=df.index)
+
+    is_projection = ptype == "projection"
+    bad_proj = is_projection & (method_null | ~z_null)
+    if bad_proj.any():
+        sample = df.loc[bad_proj, ["image_product_type", "projection_method", "z_index"]].head(3)
+        raise ValueError(
+            f"[{scope_label}] {int(bad_proj.sum())} projection row(s) are inconsistent: a projection "
+            "frame REQUIRES a non-null projection_method and a null z_index. "
+            f"First offenders: {sample.to_dict(orient='records')}"
+        )
+
+    is_zstack = ptype == "z_stack"
+    bad_z = is_zstack & (~method_null | z_null)
+    if bad_z.any():
+        sample = df.loc[bad_z, ["image_product_type", "projection_method", "z_index"]].head(3)
+        raise ValueError(
+            f"[{scope_label}] {int(bad_z.sum())} z_stack row(s) are inconsistent: a z_stack frame "
+            "REQUIRES a null projection_method and a non-null z_index. "
+            f"First offenders: {sample.to_dict(orient='records')}"
+        )
 
 
 def assert_derived_ids_consistent(df: pd.DataFrame, scope_label: str = "frame_inventory") -> None:
@@ -206,13 +265,15 @@ def assert_derived_ids_consistent(df: pd.DataFrame, scope_label: str = "frame_in
 def frame_inventory_image_ids(df: pd.DataFrame, scope_label: str = "frame_inventory") -> pd.Series:
     """Recompute the DERIVED ``image_id`` for every row by routing the atoms through the grammar.
 
-    This is the identity-anchored unique key. Rather than treating
-    ``(experiment_id, well_index, channel_id, time_index)`` as an opaque column tuple, it composes
-    ``build_image_id(build_well_id(experiment_id, well_index), channel_id, time_index, z_index=...)`` for each row
-    and validates the intermediate ``well_id`` with ``validate_well_id`` (so a leaked bare local
-    label or un-promoted id fails loud HERE, at the boundary). The returned Series IS the effective
-    unique key — duplicate ``image_id``s mean duplicate frames. Anchoring the key to the
-    constructors guarantees it can never drift from the canonical id grammar.
+    ``image_id`` addresses a frame WITHIN one product family
+    (``{well}_{channel}_t{t}`` for projection, ``{well}_{channel}_z{z}_t{t}`` for z_stack). It is ONE
+    of the two axes of frame identity — the other is ``product_key`` (see
+    ``frame_inventory_product_aware_keys``), because "projection" is a family and two projection
+    methods share an image_id. This helper composes
+    ``build_image_id(build_well_id(experiment_id, well_index), channel_id, time_index, z_index=...)``
+    for each row and validates the intermediate ``well_id`` with ``validate_well_id`` (so a leaked
+    bare local label or un-promoted id fails loud HERE). Anchoring to the constructors guarantees the
+    key can never drift from the canonical id grammar.
 
     Raises:
         ValueError: if any row's composed ``well_id`` is not a valid global well_id.
@@ -231,6 +292,90 @@ def frame_inventory_image_ids(df: pd.DataFrame, scope_label: str = "frame_invent
         return df.apply(_image_id_for_row, axis=1)
     except ValueError as exc:
         raise ValueError(f"[{scope_label}] {exc}") from exc
+
+
+def frame_inventory_product_keys(df: pd.DataFrame, scope_label: str = "frame_inventory") -> pd.Series:
+    """Compose the ``product_key`` for every row from its product columns.
+
+    The product family axis of frame identity: ``channel_id + image_product_type + [projection_method]``
+    (e.g. ``BF__projection__focus_stack``, ``BF__z_stack``). Routes through the same
+    ``build_image_product_key`` grammar the executor and resolver use, so the manifest's product_key
+    can never drift from the canonical product-key vocabulary.
+    """
+    def _product_key_for_row(row: pd.Series) -> str:
+        return image_product_key_for_frame_row(
+            channel_id=row["channel_id"],
+            image_product_type=row["image_product_type"],
+            projection_method=row["projection_method"],
+        )
+
+    try:
+        return df.apply(_product_key_for_row, axis=1)
+    except ValueError as exc:
+        raise ValueError(f"[{scope_label}] {exc}") from exc
+
+
+def frame_inventory_product_aware_keys(
+    df: pd.DataFrame, scope_label: str = "frame_inventory"
+) -> pd.Series:
+    """The effective unique key: the per-row pair ``(image_id, product_key)`` as one string.
+
+    Two rows are the SAME frame only if BOTH their image_id AND their product_key match. This is what
+    duplicate detection runs on — it prevents the false collision between two projection products that
+    share an image_id (``BF__projection__focus_stack`` vs ``BF__projection__max_intensity`` at the
+    same well/channel/time), while still catching a true duplicate (same product, same plane). Both
+    components are derived strings (never the raw nullable z_index tuple), so the key collides
+    correctly by construction — no Pandas NA-key landmine.
+    """
+    image_ids = frame_inventory_image_ids(df, scope_label=scope_label)
+    product_keys = frame_inventory_product_keys(df, scope_label=scope_label)
+    return image_ids.astype(str) + " @ " + product_keys.astype(str)
+
+
+# ---------------------------------------------------------------------------
+# THE identity-contract gate — one named entrypoint, composed of the checks above
+# ---------------------------------------------------------------------------
+
+
+def validate_frame_inventory_identity_contract(
+    df: pd.DataFrame, scope_label: str = "frame_inventory"
+) -> None:
+    """The single gate that answers: "are these rows valid, unique frame identities?"
+
+    This is THE foundational identity check. Every path that admits frame_inventory rows into the
+    trusted set — the strict validator, the per-well assembler, the experiment merge — calls THIS,
+    not the individual helpers. Composing the checks behind one named gate is what keeps frame
+    identity enforced *once*, consistently, instead of as ad-hoc tripwires scattered per caller.
+
+    It enforces, in order:
+      1. the product atoms are internally coherent (projection⇔method present + z null;
+         z_stack⇔method null + z non-null) — ``assert_product_columns_consistent``;
+      2. the effective frame key — the derived ``(image_id, product_key)`` pair — is UNIQUE
+         (``frame_inventory_product_aware_keys``), so two projection products that share an image_id
+         don't falsely collide, and a true duplicate (same product, same plane) is caught;
+      3. any producer-supplied ``well_id`` / ``image_id`` agree with the atom-recomputed values
+         (``assert_derived_ids_consistent``).
+
+    It does NOT check table shape (required columns, suffixes — that is the schema layer) or
+    well/temporal grain (``validate_well_temporal_grain``, which runs AFTER this and assumes identity
+    already passed). Identity first; shape and temporal rules compose on top.
+
+    Raises:
+        ValueError: fix-named, on the first failing layer.
+    """
+    assert_product_columns_consistent(df, scope_label=scope_label)
+
+    frame_keys = frame_inventory_product_aware_keys(df, scope_label=scope_label)
+    duplicate_mask = frame_keys.duplicated(keep=False)
+    if duplicate_mask.any():
+        key_cols = [c for c in UNIQUE_FRAME_INVENTORY_KEY_COLUMNS if c in df.columns]
+        duplicates = df.loc[duplicate_mask, key_cols]
+        raise ValueError(
+            f"[{scope_label}] duplicate frame identities detected (by derived image_id + product_key): "
+            f"{duplicates.head(10).to_dict(orient='records')}"
+        )
+
+    assert_derived_ids_consistent(df, scope_label=scope_label)
 
 
 # ---------------------------------------------------------------------------

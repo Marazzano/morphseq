@@ -13,11 +13,11 @@ import pandas as pd
 
 from data_pipeline.image_materialization.frame_inventory_contract import (
     UNIQUE_FRAME_INVENTORY_KEY_COLUMNS,
+    validate_frame_inventory_identity_contract,
 )
 from data_pipeline.image_materialization.image_product_keys import parse_image_product_key
 from data_pipeline.metadata_ingest.frame_inventory.frame_inventory_validation import (
     _read_frame_inventory_table,
-    _validate_unique_keys,
 )
 
 # Manifest contract: one row per active validated product inventory available for assembly.
@@ -148,7 +148,8 @@ def assemble_well_frame_inventory(
         frames.append(frame)
 
     assembled = pd.concat(frames, axis=0, ignore_index=True)
-    _validate_unique_keys(assembled, context="frame_inventory")
+    # Same identity gate the strict validator and merge use — frame identity enforced once.
+    validate_frame_inventory_identity_contract(assembled, scope_label="frame_inventory")
     sort_cols = [c for c in list(UNIQUE_FRAME_INVENTORY_KEY_COLUMNS) if c in assembled.columns]
     if sort_cols:
         assembled = assembled.sort_values(sort_cols).reset_index(drop=True)

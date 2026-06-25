@@ -39,6 +39,37 @@ def parse_image_product_key(product_key: str) -> tuple[str, str, str | None]:
     return channel_id, image_product_type, projection_method
 
 
+def image_product_key_for_frame_row(
+    *,
+    channel_id: str,
+    image_product_type: str,
+    projection_method: object,
+) -> str:
+    """Return the product_key for one frame_inventory ROW.
+
+    A frame_inventory row carries the product as three required columns (``channel_id``,
+    ``image_product_type``, ``projection_method``); this composes them into the canonical
+    ``product_key``. The one row-level normalization is that a CSV round-trip turns a null
+    ``projection_method`` (z_stack rows) into ``NaN``/``"" `` — map that back to ``None`` so the
+    grammar sees a true absent method. ``image_product_type`` is required and trusted as-is (no
+    back-compat synthesis: every row in this target carries it by contract).
+
+    Row-level sibling of ``image_product_key_for_resolved_product`` — one grammar, two callers.
+    """
+    method = projection_method
+    if isinstance(method, float) and method != method:  # NaN from a CSV round-trip
+        method = None
+    if method is not None:
+        method_text = str(method).strip()
+        method = None if method_text == "" or method_text.lower() in ("nan", "<na>") else method_text
+
+    return build_image_product_key(
+        channel_id=str(channel_id),
+        image_product_type=str(image_product_type),
+        projection_method=method,
+    )
+
+
 def build_image_product_key(
     *,
     channel_id: str,

@@ -67,7 +67,7 @@ def test_validate_frame_inventory_fails_on_duplicate_key(tmp_path):
     shard = tmp_path / f"{A01}_frame_inventory.csv"
     _write_inventory(shard, [_inventory_row(A01, 0), _inventory_row(A01, 0)])
 
-    with pytest.raises(ValueError, match="Duplicate frame_inventory keys"):
+    with pytest.raises(ValueError, match="(?i)duplicate"):
         validate_frame_inventory(shard, tmp_path / "bad.validated")
 
 
@@ -84,7 +84,7 @@ def test_validate_frame_inventory_rejects_duplicate_z_stack_plane(tmp_path):
     shard = tmp_path / f"{A01}_frame_inventory.csv"
     _write_inventory(shard, [_z_stack_inventory_row(A01, 0, 0), _z_stack_inventory_row(A01, 0, 0)])
 
-    with pytest.raises(ValueError, match="Duplicate frame_inventory keys"):
+    with pytest.raises(ValueError, match="(?i)duplicate"):
         validate_frame_inventory(shard, tmp_path / "bad.validated")
 
 
@@ -119,10 +119,12 @@ def test_merge_frame_inventory_shards_rejects_column_drift(tmp_path):
     a = tmp_path / f"{A01}_frame_inventory.csv"
     b = tmp_path / f"{B01}_frame_inventory.csv"
     _write_inventory(a, [_inventory_row(A01, 0)])
-    # Drop a NON-required column so we hit the merge's column-drift guard, not the required-schema
-    # check (projection_method is present in the contract shard but not a required atom).
-    bad = pd.DataFrame([_inventory_row(B01, 0)]).drop(columns=["projection_method"])
-    bad.to_csv(b, index=False)
+    # Both shards must pass the required-schema check, but differ in column SET, so we hit the merge's
+    # column-drift guard (not the required-schema check). Add an EXTRA non-contract column to one
+    # shard — all required columns are still present, but the column lists no longer match.
+    extra = pd.DataFrame([_inventory_row(B01, 0)])
+    extra["unexpected_extra_column"] = "x"
+    extra.to_csv(b, index=False)
 
     with pytest.raises(ValueError, match="expected"):
         merge_frame_inventory_shards([a, b], tmp_path / "merged.csv")

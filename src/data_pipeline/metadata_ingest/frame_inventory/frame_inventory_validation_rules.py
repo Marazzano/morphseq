@@ -15,6 +15,7 @@ checks applied grouped by ``well_id``).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -22,21 +23,38 @@ import pandas as pd
 from data_pipeline.image_materialization.frame_inventory_contract import (
     ALLOWED_IMAGE_SUFFIXES,
     REQUIRED_CHANNEL,
+    frame_inventory_product_keys,
 )
 from data_pipeline.shared.identifiers import build_well_id
 
+log = logging.getLogger(__name__)
+
 VALIDATION_SCOPES = ("per_well", "merged")
+
+# Policy for a ragged secondary channel (a channel whose time set differs from BF's). "fail" is the
+# default fail-loud contract behavior; "warn" accepts it (a secondary-channel gap does not corrupt
+# the BF segmentation timeline). BF contiguity + per-product-stream contiguity are ALWAYS hard fails.
+RAGGED_CHANNEL_FAIL = "fail"
+RAGGED_CHANNEL_WARN = "warn"
+RAGGED_CHANNEL_POLICIES = (RAGGED_CHANNEL_FAIL, RAGGED_CHANNEL_WARN)
 
 
 # ---------------------------------------------------------------------------
 # L3 — grain rules (scope-aware)
 # ---------------------------------------------------------------------------
 
-def validate_grain(df: pd.DataFrame, *, validation_scope: str, scope_label: str) -> None:
+def validate_grain(
+    df: pd.DataFrame,
+    *,
+    validation_scope: str,
+    scope_label: str,
+    ragged_channel_policy: str = RAGGED_CHANNEL_FAIL,
+) -> None:
     """Validate the per-well temporal grain, at the requested validation scope.
 
     Both scopes require exactly one ``experiment_id``. ``per_well`` additionally requires exactly one
     well; ``merged`` allows many wells and applies the per-well temporal checks grouped by ``well_id``.
+    ``ragged_channel_policy`` ("fail" default | "warn") is forwarded to the channel-rectangular check.
     """
     if validation_scope not in VALIDATION_SCOPES:
         raise ValueError(
@@ -48,13 +66,19 @@ def validate_grain(df: pd.DataFrame, *, validation_scope: str, scope_label: str)
 
     if validation_scope == "per_well":
         _assert_single_well(df, scope_label=scope_label)
-        _validate_well_temporal_grain(df, scope_label=scope_label)
+        _validate_well_temporal_grain(
+            df, scope_label=scope_label, ragged_channel_policy=ragged_channel_policy
+        )
         return
 
     # merged: many wells allowed — apply the per-well temporal checks within each well_id group.
     well_ids = _derive_well_ids(df)
     for well_id, group in df.groupby(well_ids, sort=False):
-        _validate_well_temporal_grain(group, scope_label=f"{scope_label}:{well_id}")
+        _validate_well_temporal_grain(
+            group,
+            scope_label=f"{scope_label}:{well_id}",
+            ragged_channel_policy=ragged_channel_policy,
+        )
 
 
 def _assert_single_experiment(df: pd.DataFrame, *, scope_label: str) -> None:
@@ -82,42 +106,107 @@ def _derive_well_ids(df: pd.DataFrame) -> pd.Series:
     )
 
 
-def _validate_well_temporal_grain(df: pd.DataFrame, *, scope_label: str) -> None:
-    """Within ONE well: BF present + contiguous; channels rectangular; multi-timepoint ⇒ elapsed_time_s."""
-    channels = sorted(df["channel_id"].dropna().astype(str).unique())
+def _validate_well_temporal_grain(
+    df: pd.DataFrame, *, scope_label: str, ragged_channel_policy: str = RAGGED_CHANNEL_FAIL
+) -> None:
+    """Within ONE well: each PRODUCT STREAM is time-contiguous; BF channel present; elapsed_time_s.
 
-    # BF is the required reference channel and defines the segmentation timeline.
+    A frame's identity is ``well + channel + product_key + time + z``; a materialized well is just a
+    set of product streams. The temporal guarantee is therefore PER STREAM — each
+    ``(channel_id, product_key)`` stream must have contiguous time_index 0..N-1 on its OWN axis
+    (a z_stack stream collapses its planes to distinct timepoints first — N planes at t0 is one
+    timepoint, not N). Streams are NOT cross-checked against each other: a well may legitimately
+    carry a projection across t0..t9 but a z_stack only at t0; that is a product choice, not a
+    dropped frame, so there is no cross-stream "rectangular" requirement.
+
+    Well-level invariants (all predate products; channel/row level, NOT product level):
+      - the BF channel must be present (it anchors the segmentation timeline);
+      - all CHANNELS are rectangular — every channel shares the BF channel's time set (a ragged
+        channel, e.g. GFP missing a BF timepoint, is a dropped frame). This is across CHANNELS, not
+        across products: products within a channel are independent (z_stack only at t0 while the
+        projection spans t0..t9 is a product choice, not a defect);
+      - a multi-timepoint well requires non-null elapsed_time_s on every row.
+    """
+    df = df.copy()
+    df["product_key"] = frame_inventory_product_keys(df, scope_label=scope_label)
+    df["channel_id"] = df["channel_id"].astype(str)
+
+    _assert_each_product_stream_contiguous(df, scope_label=scope_label)
+    _assert_required_channel_present(df, scope_label=scope_label)
+    _assert_channels_rectangular(
+        df, scope_label=scope_label, ragged_channel_policy=ragged_channel_policy
+    )
+    _assert_multitimepoint_has_elapsed_time(df, scope_label=scope_label)
+
+
+def _distinct_times(group: pd.DataFrame) -> list[int]:
+    """Distinct timepoints in a row group — a z_stack's N planes at one time_index count once."""
+    return sorted(int(t) for t in group["time_index"].dropna().unique())
+
+
+def _assert_each_product_stream_contiguous(df: pd.DataFrame, *, scope_label: str) -> None:
+    """Each ``(channel, product_key)`` stream is contiguous 0..N-1 on its OWN axis.
+
+    Per stream, never across products — a well may carry a projection across t0..t9 but a z_stack
+    only at t0; that is a product choice, not a dropped frame.
+    """
+    for product_key, stream in df.groupby("product_key", sort=True):
+        stream_times = _distinct_times(stream)
+        expected = list(range(len(stream_times)))
+        if stream_times != expected:
+            raise ValueError(
+                f"[{scope_label}] product stream {product_key!r} time_index must be contiguous "
+                f"0..N-1; found {stream_times} (expected {expected}). Renumber or fill the missing "
+                "frames for that product."
+            )
+
+
+def _assert_required_channel_present(df: pd.DataFrame, *, scope_label: str) -> None:
+    """The BF channel must be present — it anchors the segmentation timeline."""
+    channels = sorted(df["channel_id"].unique())
     if REQUIRED_CHANNEL not in channels:
         raise ValueError(
             f"[{scope_label}] required channel {REQUIRED_CHANNEL!r} is absent (present: {channels}). "
             f"Every well must have a {REQUIRED_CHANNEL} channel — it anchors the segmentation timeline."
         )
 
-    # BF time_index must be contiguous 0..N-1.
-    bf_times = sorted(
-        int(t) for t in df.loc[df["channel_id"].astype(str) == REQUIRED_CHANNEL, "time_index"].unique()
-    )
-    expected = list(range(len(bf_times)))
-    if bf_times != expected:
+
+def _assert_channels_rectangular(
+    df: pd.DataFrame, *, scope_label: str, ragged_channel_policy: str = RAGGED_CHANNEL_FAIL
+) -> None:
+    """Every CHANNEL shares the BF channel's time set (a ragged channel is a dropped frame).
+
+    Across channels, NOT across products — channels of one well are one acquisition (GFP missing a BF
+    timepoint is a real defect); products within a channel are independent choices.
+
+    ``ragged_channel_policy`` controls the response to a ragged channel:
+      - ``"fail"`` (default): raise — fail-loud contract boundary;
+      - ``"warn"``: log a warning and accept (a secondary-channel gap does not corrupt the BF
+        segmentation timeline). BF contiguity and per-product-stream contiguity are ALWAYS hard
+        failures regardless of this policy.
+    """
+    if ragged_channel_policy not in RAGGED_CHANNEL_POLICIES:
         raise ValueError(
-            f"[{scope_label}] {REQUIRED_CHANNEL} time_index must be contiguous 0..N-1; "
-            f"found {bf_times} (expected {expected}). Renumber or fill the missing frames."
+            f"[{scope_label}] unknown ragged_channel_policy {ragged_channel_policy!r}; "
+            f"expected one of {RAGGED_CHANNEL_POLICIES}."
         )
-
-    # All present channels must share the SAME time_index set (rectangular).
-    bf_time_set = set(bf_times)
-    for channel in channels:
-        ch_times = {
-            int(t) for t in df.loc[df["channel_id"].astype(str) == channel, "time_index"].unique()
-        }
-        if ch_times != bf_time_set:
-            raise ValueError(
-                f"[{scope_label}] channel {channel!r} has time_index set {sorted(ch_times)} "
-                f"but {REQUIRED_CHANNEL} has {sorted(bf_time_set)}. All present channels must share the "
-                "same time_index set (rectangular) — a ragged channel is almost always a dropped frame."
+    bf_times = _distinct_times(df[df["channel_id"] == REQUIRED_CHANNEL])
+    for channel in sorted(df["channel_id"].unique()):
+        ch_times = _distinct_times(df[df["channel_id"] == channel])
+        if ch_times != bf_times:
+            message = (
+                f"[{scope_label}] channel {channel!r} has time_index set {ch_times} but "
+                f"{REQUIRED_CHANNEL} has {bf_times}. All channels must share the same time_index set "
+                "(rectangular) — a ragged channel is almost always a dropped frame."
             )
+            if ragged_channel_policy == RAGGED_CHANNEL_WARN:
+                log.warning(message)
+            else:
+                raise ValueError(message)
 
-    # Temporal rule: a well with >1 distinct time_index requires elapsed_time_s on every row.
+
+def _assert_multitimepoint_has_elapsed_time(df: pd.DataFrame, *, scope_label: str) -> None:
+    """A well with >1 distinct time_index requires non-null elapsed_time_s on every row."""
     distinct_times = df["time_index"].dropna().astype(int).nunique()
     if distinct_times > 1:
         if "elapsed_time_s" not in df.columns or df["elapsed_time_s"].isna().any():
