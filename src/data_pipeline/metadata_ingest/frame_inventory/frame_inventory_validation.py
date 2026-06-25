@@ -44,10 +44,15 @@ from data_pipeline.shared.identifiers import build_well_id
 
 def _read_frame_inventory_table(path: Path) -> pd.DataFrame:
     # Validate against the microscope-agnostic frame_inventory contract (the live materialized
-    # shard's schema), NOT the legacy frame_contract columns. ``z_index`` is intentionally absent
-    # from the required atoms (NA on projection rows), so it is never null-checked here.
+    # shard's schema), NOT the legacy frame_contract columns. ``z_index`` is required-present but
+    # nullable: NA on projection rows, real integer on z_stack rows.
     df = pd.read_csv(path)
-    validate_dataframe_schema(df, list(REQUIRED_FRAME_INVENTORY_COLUMNS), "frame_inventory")
+    validate_dataframe_schema(
+        df,
+        list(REQUIRED_FRAME_INVENTORY_COLUMNS),
+        "frame_inventory",
+        nullable_columns=["z_index"],
+    )
     return df
 
 

@@ -21,6 +21,7 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
     assert_derived_ids_consistent,
     derive_well_id,
     derive_image_id,
+    frame_inventory_image_ids,
     validate_frame_identity_block,
 )
 
@@ -48,11 +49,11 @@ def test_dataclasses_importable():
 
 _FORBIDDEN_IN_REQUIRED = {"well_id", "image_id"}
 
-_FOUR_FRAME_KEY_ATOMS = {"experiment_id", "well_index", "channel_id", "time_index"}
+_FRAME_KEY_ATOMS = {"experiment_id", "well_index", "channel_id", "time_index", "z_index"}
 
 
 def test_required_columns_contain_atoms():
-    assert _FOUR_FRAME_KEY_ATOMS.issubset(set(REQUIRED_FRAME_INVENTORY_COLUMNS))
+    assert _FRAME_KEY_ATOMS.issubset(set(REQUIRED_FRAME_INVENTORY_COLUMNS))
 
 
 def test_derived_ids_not_in_required():
@@ -87,6 +88,7 @@ def _make_df(**overrides) -> pd.DataFrame:
         "well_index": "B01",
         "channel_id": "BF",
         "time_index": 0,
+        "z_index": pd.NA,
         "well_id": "20250912_B01",
         "image_id": "20250912_B01_BF_t0000",
     }
@@ -129,12 +131,13 @@ def test_derive_well_id():
 def test_derive_image_id():
     assert derive_image_id("20250912_B01", "BF", 0) == "20250912_B01_BF_t0000"
     assert derive_image_id("20250912_B01", "GFP", 12) == "20250912_B01_GFP_t0012"
+    assert derive_image_id("20250912_B01", "BF", 0, z_index=3) == "20250912_B01_BF_z0003_t0000"
 
 
 def test_multiple_rows_all_consistent():
     rows = [
         {"experiment_id": "20250912", "well_index": "B01", "channel_id": "BF", "time_index": i,
-         "well_id": "20250912_B01", "image_id": f"20250912_B01_BF_t{i:04d}"}
+         "z_index": pd.NA, "well_id": "20250912_B01", "image_id": f"20250912_B01_BF_t{i:04d}"}
         for i in range(5)
     ]
     df = pd.DataFrame(rows)
@@ -144,13 +147,25 @@ def test_multiple_rows_all_consistent():
 def test_one_bad_row_in_batch_raises():
     rows = [
         {"experiment_id": "20250912", "well_index": "B01", "channel_id": "BF", "time_index": i,
-         "well_id": "20250912_B01", "image_id": f"20250912_B01_BF_t{i:04d}"}
+         "z_index": pd.NA, "well_id": "20250912_B01", "image_id": f"20250912_B01_BF_t{i:04d}"}
         for i in range(4)
     ]
     # Corrupt the last row's image_id
     rows.append({"experiment_id": "20250912", "well_index": "B01", "channel_id": "BF", "time_index": 4,
-                 "well_id": "20250912_B01", "image_id": "WRONG"})
+                 "z_index": pd.NA, "well_id": "20250912_B01", "image_id": "WRONG"})
     df = pd.DataFrame(rows)
+    with pytest.raises(ValueError, match="image_id inconsistent"):
+        assert_derived_ids_consistent(df)
+
+
+def test_z_stack_image_id_is_consistent_with_z_index_atom():
+    df = _make_df(z_index=3, image_id="20250912_B01_BF_z0003_t0000")
+    assert_derived_ids_consistent(df)
+    assert frame_inventory_image_ids(df).tolist() == ["20250912_B01_BF_z0003_t0000"]
+
+
+def test_bad_z_stack_image_id_fails_loud():
+    df = _make_df(z_index=3, image_id="20250912_B01_BF_z0002_t0000")
     with pytest.raises(ValueError, match="image_id inconsistent"):
         assert_derived_ids_consistent(df)
 

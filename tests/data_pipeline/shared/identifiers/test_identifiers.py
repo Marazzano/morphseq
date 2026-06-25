@@ -99,6 +99,22 @@ def test_build_image_id_is_well_id_first():
     assert build_image_id(well_id, "BF", 3) == "20240418_A01_BF_t0003"
 
 
+def test_build_image_id_projection_grammar_unchanged_with_none_z_index():
+    well_id = build_well_id("20240418", "A01")
+    assert build_image_id(well_id, "BF", 3, z_index=None) == "20240418_A01_BF_t0003"
+
+
+def test_build_image_id_with_z_index_names_plane_before_time():
+    well_id = build_well_id("20240418", "A01")
+    assert build_image_id(well_id, "BF", 3, z_index=7) == "20240418_A01_BF_z0007_t0003"
+
+
+def test_build_image_id_rejects_negative_z_index():
+    well_id = build_well_id("20240418", "A01")
+    with pytest.raises(ValueError, match="z_index"):
+        build_image_id(well_id, "BF", 3, z_index=-1)
+
+
 # ── sanitize_experiment_id ────────────────────────────────────────────────────
 
 

@@ -17,6 +17,7 @@ Canonical model (the sign on the door):
     well_id             = 20240418_A01                    global well id
     channel_id          = BF                              no underscores in channel_id (canonical constraint)
     image_id            = {well_id}_{channel_id}_t{time_index:04d}
+                          or {well_id}_{channel_id}_z{z_index:04d}_t{time_index:04d}
     physical_embryo_id  = {well_id}_e{local_embryo_index:02d}  (one-based; ≥ 1)
     embryo_id           = {physical_embryo_id}_{channel_id}
     snip_id             = {embryo_id}_t{time_index:04d}
@@ -74,9 +75,29 @@ def build_well_id(experiment_id: str, well_index: str) -> str:
     return f"{sanitize_experiment_id(experiment_id)}_{str(well_index).strip()}"
 
 
-def build_image_id(well_id: str, channel_id: str, time_int: int) -> str:
-    """Return the canonical image id for one channel at one timepoint."""
-    return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
+def build_image_id(
+    well_id: str,
+    channel_id: str,
+    time_int: int,
+    *,
+    z_index: int | None = None,
+) -> str:
+    """Return the canonical image id for one channel at one timepoint.
+
+    ``z_index=None`` preserves the historical projection grammar byte-for-byte.
+    A real ``z_index`` identifies one materialized z-stack plane.
+    """
+    if z_index is None:
+        return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
+    if isinstance(z_index, bool):
+        raise ValueError("z_index must be an integer or None.")
+    try:
+        z = int(z_index)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("z_index must be an integer or None.") from exc
+    if z < 0:
+        raise ValueError("z_index must be zero or greater.")
+    return f"{str(well_id)}_{str(channel_id)}_z{z:04d}_t{int(time_int):04d}"
 
 
 def build_mask_id(base_id: str, local_mask_index: int) -> str:

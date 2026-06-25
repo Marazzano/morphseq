@@ -59,7 +59,7 @@ def merge_frame_inventory_shards(input_csvs: Sequence[Path], output_csv: Path) -
 
     merged = pd.concat(frames, axis=0, ignore_index=True)
     _validate_unique_keys(merged, context="frame_inventory")
-    # Sort on the frame_inventory atoms (the canonical per-frame key uses time_index, not time_int).
+    # Sort on the frame_inventory atoms (projection rows have z_index=NA; z_stack rows sort by plane).
     sort_cols = [c for c in list(UNIQUE_FRAME_INVENTORY_KEY_COLUMNS) if c in merged.columns]
     if sort_cols:
         merged = merged.sort_values(sort_cols).reset_index(drop=True)

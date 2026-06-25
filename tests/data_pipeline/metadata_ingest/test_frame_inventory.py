@@ -36,6 +36,18 @@ def _inventory_row(well_id: str, time_index: int) -> dict:
     }
 
 
+def _z_stack_inventory_row(well_id: str, time_index: int, z_index: int) -> dict:
+    row = _inventory_row(well_id, time_index)
+    row["z_index"] = z_index
+    row["image_product_type"] = "z_stack"
+    row["projection_method"] = pd.NA
+    row["source_image_path"] = (
+        f"built_image_data/{EXP}/materialized_images/{well_id}/z_stack/BF/"
+        f"{well_id}_BF_z{z_index:04d}_t{time_index:04d}.png"
+    )
+    return row
+
+
 def _write_inventory(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(path, index=False)
@@ -54,6 +66,23 @@ def test_validate_frame_inventory_writes_sentinel(tmp_path):
 def test_validate_frame_inventory_fails_on_duplicate_key(tmp_path):
     shard = tmp_path / f"{A01}_frame_inventory.csv"
     _write_inventory(shard, [_inventory_row(A01, 0), _inventory_row(A01, 0)])
+
+    with pytest.raises(ValueError, match="Duplicate frame_inventory keys"):
+        validate_frame_inventory(shard, tmp_path / "bad.validated")
+
+
+def test_validate_frame_inventory_allows_distinct_z_stack_planes(tmp_path):
+    shard = tmp_path / f"{A01}_frame_inventory.csv"
+    _write_inventory(shard, [_z_stack_inventory_row(A01, 0, 0), _z_stack_inventory_row(A01, 0, 1)])
+
+    validate_frame_inventory(shard, tmp_path / "z.validated")
+
+    assert (tmp_path / "z.validated").exists()
+
+
+def test_validate_frame_inventory_rejects_duplicate_z_stack_plane(tmp_path):
+    shard = tmp_path / f"{A01}_frame_inventory.csv"
+    _write_inventory(shard, [_z_stack_inventory_row(A01, 0, 0), _z_stack_inventory_row(A01, 0, 0)])
 
     with pytest.raises(ValueError, match="Duplicate frame_inventory keys"):
         validate_frame_inventory(shard, tmp_path / "bad.validated")

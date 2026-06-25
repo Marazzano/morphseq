@@ -9,7 +9,9 @@ downstream stages (segmentation onward) consume.  This module owns:
   - small frozen dataclasses: ``StitchedHandoffSpec``, ``FrameInventorySpec``, ``WellHandoff``.
 
 Key design rules (see ``specs/front_end/frame_inventory_handoff_contract.md``):
-  - Unique key = the FOUR RAW ATOMS: ``(experiment_id, well_index, channel_id, time_index)``.
+  - Unique key = RAW ATOMS:
+    ``(experiment_id, well_index, channel_id, time_index, z_index)``.
+    ``z_index`` is nullable: NA for projection rows, real integer for z-stack planes.
   - ``well_id`` and ``image_id`` are DERIVED compositions of those atoms, never authored by producers.
   - The validator recomputes derived ids from atoms and fails loud on any disagreement.
   - This module is microscope-agnostic: it does not import YX1 / Keyence logic.
@@ -39,6 +41,7 @@ REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "well_index",                  # local well label (B01) — atom
     "channel_id",                  # controlled channel token (BF / GFP …) — atom
     "time_index",                  # T dimension, 0-based contiguous — atom
+    "z_index",                     # nullable Z dimension atom: NA projection, integer z_stack
     "elapsed_time_s",              # seconds since this well's first frame — CARRIED from acquisition
     "acquisition_time_s",          # raw per-frame timestamp — CARRIED from acquisition (audit)
     "source_image_path",           # TIFF / PNG / JPEG; absolute OR relative to image_root
@@ -72,6 +75,7 @@ UNIQUE_FRAME_INVENTORY_KEY_COLUMNS: tuple[str, ...] = (
     "well_index",
     "channel_id",
     "time_index",
+    "z_index",
 )
 
 ALLOWED_IMAGE_SUFFIXES: tuple[str, ...] = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
@@ -91,9 +95,9 @@ REQUIRED_CHANNEL: str = "BF"
 # than re-declaring the column list. See specs/detect-seg-track/targets/detection_world.md
 # "Required Frame Identity Block".
 #
-# ``z_index`` is intentionally INCLUDED here even though it is NOT a frame_inventory atom
-# today (NA on BF / projection rows). ``validate_frame_identity_block`` synthesizes it as NA
-# when absent and treats it as nullable; do not add it to the atom manifest above.
+# ``z_index`` is intentionally INCLUDED here and is nullable: projection rows carry NA,
+# z_stack rows carry the materialized plane index. ``validate_frame_identity_block``
+# synthesizes it as NA when older downstream products did not carry it.
 DOWNSTREAM_FRAME_IDENTITY_BLOCK: tuple[str, ...] = (
     "experiment_id",
     "well_id",
@@ -129,9 +133,21 @@ def derive_well_id(experiment_id: str, well_index: str) -> str:
     return build_well_id(experiment_id, well_index)
 
 
-def derive_image_id(well_id: str, channel_id: str, time_index: int) -> str:
+def derive_image_id(
+    well_id: str,
+    channel_id: str,
+    time_index: int,
+    *,
+    z_index: int | None = None,
+) -> str:
     """Compose the image id from the per-frame key atoms (well_id already derived)."""
-    return build_image_id(well_id, channel_id, time_index)
+    return build_image_id(well_id, channel_id, time_index, z_index=z_index)
+
+
+def _row_z_index_or_none(row: pd.Series) -> int | None:
+    if "z_index" not in row.index or pd.isna(row["z_index"]):
+        return None
+    return int(row["z_index"])
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +183,12 @@ def assert_derived_ids_consistent(df: pd.DataFrame, scope_label: str = "frame_in
             else df.apply(lambda r: derive_well_id(r["experiment_id"], r["well_index"]), axis=1)
         )
         expected_image_id = df.apply(
-            lambda r: derive_image_id(well_id_col[r.name], r["channel_id"], r["time_index"]),
+            lambda r: derive_image_id(
+                well_id_col[r.name],
+                r["channel_id"],
+                r["time_index"],
+                z_index=_row_z_index_or_none(r),
+            ),
             axis=1,
         )
         bad = df["image_id"] != expected_image_id
@@ -178,7 +199,7 @@ def assert_derived_ids_consistent(df: pd.DataFrame, scope_label: str = "frame_in
             )
             raise ValueError(
                 f"[{scope_label}] {n} row(s) have image_id inconsistent with atoms "
-                f"(well_id + channel_id + time_index). First offenders: {sample}"
+                f"(well_id + channel_id + time_index + z_index). First offenders: {sample}"
             )
 
 
@@ -187,7 +208,7 @@ def frame_inventory_image_ids(df: pd.DataFrame, scope_label: str = "frame_invent
 
     This is the identity-anchored unique key. Rather than treating
     ``(experiment_id, well_index, channel_id, time_index)`` as an opaque column tuple, it composes
-    ``build_image_id(build_well_id(experiment_id, well_index), channel_id, time_index)`` for each row
+    ``build_image_id(build_well_id(experiment_id, well_index), channel_id, time_index, z_index=...)`` for each row
     and validates the intermediate ``well_id`` with ``validate_well_id`` (so a leaked bare local
     label or un-promoted id fails loud HERE, at the boundary). The returned Series IS the effective
     unique key — duplicate ``image_id``s mean duplicate frames. Anchoring the key to the
@@ -199,7 +220,12 @@ def frame_inventory_image_ids(df: pd.DataFrame, scope_label: str = "frame_invent
     def _image_id_for_row(row: pd.Series) -> str:
         well_id = build_well_id(row["experiment_id"], row["well_index"])
         validate_well_id(well_id)  # fail loud on a leaked local label / un-promoted id
-        return build_image_id(well_id, row["channel_id"], row["time_index"])
+        return build_image_id(
+            well_id,
+            row["channel_id"],
+            row["time_index"],
+            z_index=_row_z_index_or_none(row),
+        )
 
     try:
         return df.apply(_image_id_for_row, axis=1)
