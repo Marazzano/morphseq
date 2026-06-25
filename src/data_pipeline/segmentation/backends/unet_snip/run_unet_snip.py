@@ -46,16 +46,19 @@ def write_auxiliary_mask_png(mask: np.ndarray, output_path: Path) -> None:
 def _mask_output_path(
     output_dir: Path,
     experiment_id: str,
+    well_id: str,
     physical_embryo_id: str,
     snip_id: str,
     auxiliary_mask_type: str,
 ) -> Path:
+    # well_id is the GLOBAL well_id (e.g. 20250912_B01), passed from the snip row — never
+    # re-derived by splitting snip_id (that yielded the LOCAL slug B01 and broke the grain).
     return (
         output_dir
         / experiment_id
         / "snip_auxiliary_masks"
         / "per_well"
-        / snip_id.split("_")[1]  # well_id = second token of snip_id (e.g. B01 from 20250912_B01_...)
+        / well_id
         / physical_embryo_id
         / snip_id
         / f"{auxiliary_mask_type}.{AUXILIARY_MASK_FORMAT}"
@@ -139,7 +142,12 @@ def run_unet_for_snip_inventory(
             try:
                 mask = predictors[mask_type](snip_image)
                 out_path = _mask_output_path(
-                    output_dir, experiment_id, physical_embryo_id, snip_id, mask_type
+                    output_dir,
+                    experiment_id,
+                    snip_row["well_id"],
+                    physical_embryo_id,
+                    snip_id,
+                    mask_type,
                 )
                 write_auxiliary_mask_png(mask, out_path)
                 rows.append({

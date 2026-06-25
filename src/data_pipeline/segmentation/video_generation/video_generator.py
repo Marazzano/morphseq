@@ -204,4 +204,11 @@ class VideoGenerator:
 
     @staticmethod
     def generate_image_id(video_id: str, frame_number: int) -> str:
-        return f"{video_id}_t{str(frame_number).zfill(4)}"
+        # Compose via the canonical constructor, never an inline f-string with a literal _t suffix
+        # (Hard Constraint 1: ids are built by shared/identifiers). video_id is a
+        # {well_id}_{channel_id} stem; split off the trailing channel token and rebuild so the
+        # t-index grammar/width lives in exactly one place.
+        from data_pipeline.shared.identifiers.constructors import build_image_id
+
+        well_id, channel_id = video_id.rsplit("_", 1)
+        return build_image_id(well_id, channel_id, frame_number)

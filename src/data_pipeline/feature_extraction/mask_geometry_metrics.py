@@ -17,7 +17,6 @@ import skimage.io as io
 from skimage.measure import find_contours
 
 from data_pipeline.segmentation_and_tracking.utils.mask_processing import clean_embryo_mask
-from data_pipeline.shared.path_contracts import require_existing_path
 
 
 def compute_mask_geometry(
@@ -82,13 +81,19 @@ def extract_geometry_metrics_batch(
     results = []
     for _, row in tracking_df.iterrows():
         snip_id = row['snip_id']
-        mask_path = require_existing_path(
-            row.get(mask_path_col),
-            context='mask_geometry',
-            field_name=mask_path_col,
-            row_id=str(snip_id),
-        )
-        mask = io.imread(mask_path)
+        # Legacy batch path. Resolve the mask path directly and fail loud if absent — the retired
+        # path_contracts.require_existing_path raised on call, so it is not used here.
+        mask_path = row.get(mask_path_col)
+        if mask_path is None or (isinstance(mask_path, float) and pd.isna(mask_path)):
+            raise ValueError(
+                f"mask_geometry: snip_id={snip_id} has no {mask_path_col!r}."
+            )
+        mask_path = Path(str(mask_path))
+        if not mask_path.exists():
+            raise FileNotFoundError(
+                f"mask_geometry: mask file for snip_id={snip_id} not found at {mask_path}."
+            )
+        mask = io.imread(str(mask_path))
 
         if pixel_size_col not in row.index or pd.isna(row[pixel_size_col]):
             raise ValueError(f"mask_geometry: missing required pixel size column '{pixel_size_col}' for snip_id={snip_id}")

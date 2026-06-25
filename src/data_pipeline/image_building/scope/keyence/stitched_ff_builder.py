@@ -22,8 +22,8 @@ from tqdm import tqdm
 import skimage.io as skio
 from stitch2d import StructuredMosaic
 
-# Import shared utilities
-from src.build.export_utils import trim_to_shape
+# Import shared utilities (canonical trim primitive — NOT the retired src.build.export_utils)
+from data_pipeline.image_building.utils.frame_tiler import trim_to_shape
 
 logging.basicConfig(
     level=logging.INFO,

@@ -11,13 +11,14 @@ shapes defensively as a cheap safety net.) Empty embryo mask -> null (documented
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import skimage.io as io
 
 from data_pipeline.feature_extraction.fraction_alive._legacy_compute import compute_fraction_alive
 from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_ID_COLUMNS
-from data_pipeline.shared.path_contracts import resolve_data_root_relative_path
 
 from .contract import FRACTION_ALIVE_FEATURES_REQUIRED_COLUMNS
 
@@ -48,11 +49,13 @@ def compute_fraction_alive_features(
     via_by_snip = _via_path_by_snip(snip_auxiliary_masks_df)
 
     def _resolve(path: str) -> str:
-        resolved = resolve_data_root_relative_path(path)
-        resolved = path if resolved is None else resolved
-        from pathlib import Path
+        """Resolve a stored snip-mask path: relative paths root at ``output_root``.
 
-        p = Path(str(resolved))
+        ``embryo_mask_snip_path`` / auxiliary-mask paths are stored relative to ``output_root`` by
+        snip_processing; an already-absolute path is used as-is. No hidden global root (the retired
+        ``path_contracts`` helper that used to live here raised on call).
+        """
+        p = Path(str(path))
         if output_root is not None and not p.is_absolute():
             p = Path(output_root) / p
         return str(p)

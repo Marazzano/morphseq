@@ -22,6 +22,13 @@ Algorithm:
 
 Authors: Death Persistence Analysis Team
 Date: 2025-09-26
+
+RETIRED — legacy benchmark module. The canonical persistence-death logic now lives in
+``quality_control/death_detection/`` (``persistence.py`` / ``compute.py`` / ``contract.py``).
+This top-level module is kept LIVE only because ``src/build/build04_perform_embryo_qc.py`` still
+calls ``compute_dead_flag2_persistence`` to produce the legacy ``dead_flag2`` ground truth the
+feature_extraction legacy-drift gate compares against. Do NOT import it from new pipeline rules;
+delete it once build04 is migrated to the ``death_detection/`` package and the drift gate signs off.
 """
 
 import pandas as pd
@@ -30,7 +37,7 @@ from scipy.signal import savgol_filter
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 
-from src.data_pipeline.quality_control.config import QC_DEFAULTS
+from data_pipeline.quality_control.config import QC_DEFAULTS
 
 
 def validate_death_persistence(embryo_data: pd.DataFrame, inflection_time: float, threshold: float = 0.80) -> Tuple[bool, Dict[str, Any]]:
@@ -169,9 +176,9 @@ def detect_persistent_death_inflection(embryo_data: pd.DataFrame,
     """
     # Use defaults from config if not specified
     if persistence_threshold is None:
-        persistence_threshold = QC_DEFAULTS['persistence_threshold']
+        persistence_threshold = QC_DEFAULTS['death_detection']['persistence_threshold']
     if min_decline_rate is None:
-        min_decline_rate = QC_DEFAULTS['min_decline_rate']
+        min_decline_rate = QC_DEFAULTS['death_detection']['decline_rate_threshold']
 
     candidates_tested = []
     current_data = embryo_data.copy()
@@ -248,7 +255,7 @@ def compute_dead_flag2_persistence(df: pd.DataFrame, dead_lead_time: float = Non
     """
     # Use default from config if not specified
     if dead_lead_time is None:
-        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+        dead_lead_time = QC_DEFAULTS['death_detection']['lead_time_hr']
 
     df = df.copy()
 

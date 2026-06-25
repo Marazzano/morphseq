@@ -374,7 +374,9 @@ def _run_tiling_qc(
     )
 
 
-def _trim_to_shape(image: np.ndarray, target: tuple[int, int]) -> np.ndarray:
+def trim_to_shape(image: np.ndarray, target: tuple[int, int]) -> np.ndarray:
+    """Center-crop (or center-pad) ``image`` to ``target`` (Y, X). The canonical trim primitive —
+    use this instead of the retired ``src.build.export_utils.trim_to_shape``."""
     target_y, target_x = target
     image_y, image_x = image.shape[:2]
 
@@ -412,7 +414,7 @@ def _finalize_image(
             tile_shape=tile_shape,
         )
         if target != (0, 0):
-            out = _trim_to_shape(out, target)
+            out = trim_to_shape(out, target)
 
     if config.compat_postprocess and config.invert_intensity:
         out = np.iinfo(out.dtype).max - out
