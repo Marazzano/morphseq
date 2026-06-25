@@ -95,8 +95,8 @@ class TestResolvedArtifactPaths:
             well_id=WELL,
             format_vars={"product_key": PRODUCT_KEY},
         ) == (
-            ROOT / "acquisition" / EXP / "resolved_product_plans" / PER_WELL_DIRNAME
-            / WELL / f"{PRODUCT_KEY}_resolved_product_plan.json"
+            ROOT / "acquisition" / EXP / "frame_inventory" / "resolved_product_plans"
+            / PER_WELL_DIRNAME / WELL / f"{PRODUCT_KEY}_resolved_product_plan.json"
         )
 
     def test_frame_inventory_product_shard_uses_well_and_product_key_filename(self):
@@ -109,8 +109,8 @@ class TestResolvedArtifactPaths:
             well_id=WELL,
             format_vars={"product_key": PRODUCT_KEY},
         ) == (
-            ROOT / "acquisition" / EXP / "frame_inventory_products" / PER_WELL_DIRNAME
-            / WELL / f"{WELL}_{PRODUCT_KEY}_frame_inventory.csv"
+            ROOT / "acquisition" / EXP / "frame_inventory" / "product_inventories"
+            / PER_WELL_DIRNAME / WELL / f"{WELL}_{PRODUCT_KEY}_frame_inventory.csv"
         )
 
     def test_discovered_product_shards_names_the_well(self):
@@ -122,8 +122,8 @@ class TestResolvedArtifactPaths:
             path_mode="per_well",
             well_id=WELL,
         ) == (
-            ROOT / "acquisition" / EXP / "discovered_product_shards" / PER_WELL_DIRNAME
-            / WELL / f"{WELL}_discovered_product_shards.csv"
+            ROOT / "acquisition" / EXP / "frame_inventory" / "available_products"
+            / PER_WELL_DIRNAME / WELL / f"{WELL}_available_products.csv"
         )
 
     def test_frame_detections_per_well_names_the_well(self):

@@ -147,8 +147,8 @@ def test_assemble_well_frame_inventory_rejects_unvalidated_manifest_row(tmp_path
                 "experiment_id": EXP,
                 "well_id": WELL,
                 "product_key": "BF__projection__focus_stack",
-                "frame_inventory_product_csv": str(projection),
-                "frame_inventory_product_validated": str(projection) + ".missing",
+                "product_inventory_csv": str(projection),
+                "product_inventory_validated": str(projection) + ".missing",
             }
         ]
     )

@@ -20,12 +20,16 @@ from data_pipeline.metadata_ingest.frame_inventory.frame_inventory_validation im
     _validate_unique_keys,
 )
 
+# Manifest contract: one row per active validated product inventory available for assembly.
+# Column names use the semantic "product_inventory" vocabulary (a per-product frame_inventory shard),
+# matching the available_products/ folder. (The discovery FUNCTION name is renamed in a later
+# code-vocabulary commit; this is the manifest contract, renamed here with the path/layout move.)
 DISCOVERED_PRODUCT_SHARDS_COLUMNS: tuple[str, ...] = (
     "experiment_id",
     "well_id",
     "product_key",
-    "frame_inventory_product_csv",
-    "frame_inventory_product_validated",
+    "product_inventory_csv",
+    "product_inventory_validated",
 )
 
 _PRODUCT_SHARD_SUFFIX = "_frame_inventory.csv"
@@ -84,8 +88,8 @@ def discover_product_shards_for_well(
             "experiment_id": str(experiment_id),
             "well_id": str(well_id),
             "product_key": product_key,
-            "frame_inventory_product_csv": str(csv_path),
-            "frame_inventory_product_validated": str(sentinel),
+            "product_inventory_csv": str(csv_path),
+            "product_inventory_validated": str(sentinel),
         })
 
     if not rows:
@@ -125,8 +129,8 @@ def assemble_well_frame_inventory(
     frames: list[pd.DataFrame] = []
     expected_columns: list[str] | None = None
     for row in manifest.to_dict(orient="records"):
-        csv_path = Path(row["frame_inventory_product_csv"])
-        sentinel = Path(row["frame_inventory_product_validated"])
+        csv_path = Path(row["product_inventory_csv"])
+        sentinel = Path(row["product_inventory_validated"])
         if not csv_path.exists():
             raise ValueError(f"Product frame_inventory shard does not exist: {csv_path}")
         if not sentinel.exists():

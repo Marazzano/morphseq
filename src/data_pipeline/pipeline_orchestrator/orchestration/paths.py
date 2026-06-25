@@ -204,10 +204,12 @@ PIPELINE_STEPS: dict[str, dict] = {
     },
 
     # Resolved per-product execution commitments. The product key is a filename-level token
-    # supplied by the caller; no new path mode is needed.
+    # supplied by the caller; no new path mode is needed. Nests under frame_inventory/ because these
+    # are scaffolding for building the canonical frame_inventory, not an independently-consumed
+    # product. (Step KEY stays `resolved_product_plans`; only the on-disk folder is grouped.)
     "resolved_product_plans": {
         "stage": "acquisition",
-        "product_dir": "resolved_product_plans",
+        "product_dir": "frame_inventory/resolved_product_plans",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {
@@ -217,11 +219,13 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
-    # Product-grain frame-inventory shards. These are not the canonical per-well frame_inventory;
-    # assembly writes the canonical shard at the existing frame_inventory path.
+    # Product-grain frame-inventory shards (one per image product). These are NOT the canonical
+    # per-well frame_inventory; assembly unions them into the canonical shard. They live under
+    # frame_inventory/product_inventories/ — "product_inventories" because each file is an inventory
+    # FOR one image product, not a pixel/product output. (Step KEY stays `frame_inventory_products`.)
     "frame_inventory_products": {
         "stage": "acquisition",
-        "product_dir": "frame_inventory_products",
+        "product_dir": "frame_inventory/product_inventories",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {
@@ -231,16 +235,19 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
-    # Per-well manifest of validated product shards that should assemble into the canonical
-    # frame_inventory shard for that well.
+    # Per-well manifest of the active validated product inventories available for assembly into the
+    # canonical frame_inventory shard. Folder/filename use the semantic name `available_products`
+    # (what the manifest MEANS) rather than the implementation-flavored "discovered_product_shards"
+    # (the action that produced it). (Step KEY stays `discovered_product_shards` until the later
+    # code-vocabulary commit.)
     "discovered_product_shards": {
         "stage": "acquisition",
-        "product_dir": "discovered_product_shards",
+        "product_dir": "frame_inventory/available_products",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {
             "csv": {
-                PATH_MODE_PER_WELL: "{well_id}_discovered_product_shards.csv",
+                PATH_MODE_PER_WELL: "{well_id}_available_products.csv",
             },
         },
     },
