@@ -6,6 +6,38 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-24 22:21
+
+**What shipped:** product-shard path contract is now committed (`c8bd4f2d`). Added
+`image_materialization/image_product_keys.py` with `build_image_product_key`
+(`BF__projection__focus_stack`, `BF__z_stack`), plus `PIPELINE_STEPS` rows for
+`resolved_product_plans`, `frame_inventory_products`, and `discovered_product_shards`. Product keys
+are filename-level `format_vars`, not a new path mode. Product frame-inventory shard sentinels use
+the existing `validated_path(...)` trailing sidecar convention (`.csv.validated`).
+
+**Verified:** `PYTHONPATH=src "$PYTHON" -m pytest tests/data_pipeline/image_materialization/test_image_product_keys.py
+tests/data_pipeline/pipeline_orchestrator/test_paths.py` → 52 passed. While touching the path tests,
+the stale `auxiliary_masks` assertions were aligned to the already-registered `snip_auxiliary_masks`
+step.
+
+**What's broken/half-done:** no DAG behavior is wired yet by design. Product shard paths now exist,
+but no rule emits resolved product plan JSONs, no product materialization rule writes
+`frame_inventory_products`, and canonical per-well `frame_inventory` is not assembled from product
+shards yet.
+
+**Next concrete action:** Commit 4 — add the product-resolution/fanout layer. Implement a resolver
+entrypoint that writes one `resolved_product_plans/per_well/{well_id}/{product_key}_resolved_product_plan.json`
+per `(well_id, product_key)`, then update `run_materialize_well.py` / `tasks.py` / `materialize_well_native.smk`
+so materialization consumes exactly one resolved product plan and writes only
+`frame_inventory_products/per_well/{well_id}/{well_id}_{product_key}_frame_inventory.csv`. Verify
+projection-only still works through product-shard materialization.
+
+**Open decisions:** none for path layout. Assembly semantics are decided: the old canonical
+`frame_inventory/per_well/{well_id}/{well_id}_frame_inventory.csv` is written only by the later
+assembly step, not by product materialization.
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-24 21:50
 
 **What shipped:** z-stack materialization is wired through the contract and YX1 single-product
