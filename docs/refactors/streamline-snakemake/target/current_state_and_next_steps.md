@@ -6,7 +6,54 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-25 (multi-well mixed-product merge seam proven)
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (product-aware frame identity behind one gate)
+
+**What shipped (commit `8e7a02f2`):** made `product_key` part of frame identity, enforced through a
+SINGLE named contract gate. Closes the latent false-collision: `image_id` addresses a frame within
+ONE product family, but "projection" is a family — `BF__projection__focus_stack` and
+`BF__projection__max_intensity` at the same well/channel/time share an image_id yet are different
+frames. The effective unique key is now the derived pair **`(image_id, product_key)`**.
+
+**Contract changes:**
+- `image_product_type` + `projection_method` promoted to REQUIRED columns (`projection_method`
+  nullable: NA for z_stack). They are the ATOMS of `product_key`; `product_key` is DERIVED, never
+  stored (same doctrine as `image_id`/`well_id`).
+- New helpers (in `frame_inventory_contract.py` / `image_product_keys.py`):
+  `image_product_key_for_frame_row`, `frame_inventory_product_keys`,
+  `frame_inventory_product_aware_keys`, `assert_product_columns_consistent`, and **the gate**
+  `validate_frame_inventory_identity_contract`.
+
+**The anti-scatter move (the important structural win):** assembly, merge, AND the strict validator
+all now call the ONE gate `validate_frame_inventory_identity_contract` instead of cherry-picking the
+old private `_validate_unique_keys` across module boundaries (deleted). Frame identity is enforced
+once, consistently. The gate lives in the contract module so assembly/merge import DOWN into the
+contract, not sideways into the validation module's privates.
+
+**Temporal grain** is now product-stream aware and split into named asserts
+(`_assert_each_product_stream_contiguous`, `_assert_required_channel_present`,
+`_assert_channels_rectangular`, `_assert_multitimepoint_has_elapsed_time`):
+- each `(channel, product_key)` stream contiguous on its OWN axis — a projection over t0..t9 plus a
+  z_stack only at t0 is a valid product choice, NOT a dropped frame (no cross-PRODUCT rectangular req);
+- channels stay rectangular vs BF (ragged GFP = dropped frame) — this cross-CHANNEL check is now
+  **configurable** via `ragged_channel_policy` ("fail" default | "warn");
+- z_stack-only wells validate (a BF stream of SOME product anchors).
+
+**Design decisions made this session:** two atom columns (not a stored product_key column) — cheap
+filters + per-field validation, product_key derived on demand; ragged-channel = configurable
+(default fail); product-completeness (projection⇔z_stack coverage) is NOT enforced (a non-goal).
+
+**Verified:** 221 (`image_materialization`+`metadata_ingest`) + 358 downstream tests green.
+
+**Next concrete action:** committed smoke-overlay config (`config_smoke_zstack.yaml`), then the
+deferred code-vocabulary rename (`discover_product_shards_for_well` → `list_available_products_for_well`,
+etc.). Order unchanged: prove → crystallize → rename.
+
+**Open decisions:** when the code-vocabulary rename happens; whether product-completeness ever
+becomes an enforced invariant (currently a non-goal).
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-25 (multi-well mixed-product merge seam proven)
 
 **What shipped (commit `f6e4abe3`):** discovered that the "Commit 5" product-shard behavior
 (discover → assemble → merge → validate) is **already fully built and wired** — `product_shard_assembly.py`
