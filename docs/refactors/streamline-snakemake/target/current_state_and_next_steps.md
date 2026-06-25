@@ -6,7 +6,55 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-25 (frame_inventory path grouping)
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (ingest acquisition path grouping)
+
+**What shipped (commit `cb9343ee`):** gave the five experiment-grain acquisition-ingest steps a
+`product_dir` so the front-of-pipeline tables stop laying flat under `acquisition/{exp}/`.
+
+| Step (key UNCHANGED) | folder now |
+|---|---|
+| `ingest_plate_metadata` | `ingest_metadata/` |
+| `ingest_scope_metadata` (BOTH artifacts) | `ingest_metadata/` |
+| `apply_position_to_well_mapping` | `ingest_metadata/` |
+| `map_positions_to_wells` | `well_identities/` |
+| `discover_wells` | `well_identities/` |
+
+Resulting acquisition tree:
+```
+acquisition/{exp}/
+  ingest_metadata/   plate_metadata.csv, scope_metadata__{scope}.csv,
+                     acquisition_inventory__{scope}.csv, scope_metadata_mapped.csv (+.validated)
+  well_identities/   position_well_mapping.csv (+.provenance.json), discovered_wells.txt
+  materialized_images/ ...
+  frame_inventory/   (commit 6e879632)
+```
+
+**Key design move:** putting BOTH `ingest_scope_metadata` artifacts (`scope_metadata__` +
+`acquisition_inventory__`) under one `ingest_metadata/` folder dissolved the need for artifact-level
+`product_dir` — the one real machinery question. `ingest_metadata/` (not `acquisition_metadata/`)
+because the parent regime is already `acquisition/`; the qualifier says "tables emitted by ingest."
+`well_identities/` (not `wells/`) names exactly what that layer owns: position→well identity
+resolution. The mapped scope table stays in `ingest_metadata/` (noun is "scope metadata," mapping is
+an adjective; `well_identities/` owns identity resolution, not its consumers).
+
+**Scope discipline:** only `PIPELINE_STEPS` `product_dir` values + path tests changed. Step keys,
+function/verb/rule names, CLI args unchanged. All Snakefile path constants resolve through
+`artifact_path(STEP, ...)`, so the move is automatic — verified nothing hardcodes these paths.
+
+**Verified:** 186 tests pass (`tests/data_pipeline/{pipeline_orchestrator,metadata_ingest}`,
+importlib); resolved-path probe confirms the target tree.
+
+**Next concrete action:** the deferred **code-vocabulary rename** (folder↔function drift from both
+grouping commits) — `discover_product_shards_for_well` → `list_available_products_for_well`,
+`frame_inventory_product*` → `product_inventory*`, etc. Best folded into the Commit-5 behavior work
+or done as a dedicated vocabulary-only pass. Also still uncommitted: the z-stack audit gap fixes
+(detection projection filter, `parse_image_id_with_z_index`) — see snapshot below.
+
+**Open decisions:** when/how to do the code-vocabulary rename.
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-25 (frame_inventory path grouping)
 
 **What shipped (commit `6e879632`):** grouped the product-shard frame_inventory lineage under
 `frame_inventory/` so the on-disk folder names tell the build story. Pure path-contract change.
