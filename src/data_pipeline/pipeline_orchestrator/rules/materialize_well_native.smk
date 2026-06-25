@@ -10,6 +10,82 @@ Reuses the shared helpers defined in frame_inventory.smk (included before this f
 """
 
 
+rule write_resolved_product_plan_for_well:
+    """Write one resolved product commitment for one well/product_key."""
+    input:
+        discovered_wells=DISCOVERED_WELLS_TXT,
+    output:
+        resolved_product_plan=str(_resolved_product_plan(
+            "{experiment}", well_id="{well_id}", product_key="{product_key}"
+        )),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks write-resolved-product-plan-for-well \
+          --experiment "{wildcards.experiment}" \
+          --well-id "{wildcards.well_id}" \
+          --scope "yx1" \
+          --product-key "{wildcards.product_key}" \
+          --output-json "{output.resolved_product_plan}" \
+          --config-yaml "{CONFIG_YAML}"
+        """
+
+
+rule materialize_image_product_for_well:
+    """Materialize exactly one resolved image product into a product frame-inventory shard."""
+    input:
+        acquisition_inventory_csv=SCOPE_ACQUISITION_INVENTORY_CSV,
+        position_well_mapping_csv=POSITION_WELL_MAPPING_CSV,
+        resolved_product_plan=str(_resolved_product_plan(
+            "{experiment}", well_id="{well_id}", product_key="{product_key}"
+        )),
+    output:
+        inventory=str(_frame_inventory_product_artifact(
+            "{experiment}", well_id="{well_id}", product_key="{product_key}"
+        )),
+    params:
+        device=lambda wc: str(config.get("image_building", {}).get("device", "cuda")),
+        smoke_max=lambda wc: int(
+            config.get("image_materialization", {}).get("smoke_max_time_indices", 0)
+        ),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-image-product-for-well \
+          --experiment "{wildcards.experiment}" \
+          --well-id "{wildcards.well_id}" \
+          --scope "yx1" \
+          --product-key "{wildcards.product_key}" \
+          --resolved-product-plan-json "{input.resolved_product_plan}" \
+          --acquisition-inventory-csv "{input.acquisition_inventory_csv}" \
+          --position-well-mapping-csv "{input.position_well_mapping_csv}" \
+          --built-image-data-dir "{BUILT_IMAGE_DATA_DIR}" \
+          --frame-inventory-product-csv "{output.inventory}" \
+          --candidate "false" \
+          --device "{params.device}" \
+          --smoke-max-time-indices "{params.smoke_max}"
+        """
+
+
+rule validate_frame_inventory_product_for_well:
+    """Strictly validate one product frame-inventory shard."""
+    input:
+        inventory=str(_frame_inventory_product_artifact(
+            "{experiment}", well_id="{well_id}", product_key="{product_key}"
+        )),
+    output:
+        validated=str(_frame_inventory_product_validated(
+            "{experiment}", well_id="{well_id}", product_key="{product_key}"
+        )),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory \
+          --input-csv "{input.inventory}" \
+          --output-flag "{output.validated}" \
+          --image-root "{BUILT_IMAGE_DATA_DIR}" \
+          --check-sources "true" \
+          --validation-scope "per_well"
+        """
+
+
 rule materialize_well:
     """Step 6 — the LIVE per-well YX1 materializer.
 

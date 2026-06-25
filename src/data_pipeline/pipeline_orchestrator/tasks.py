@@ -198,34 +198,9 @@ def cmd_materialize_well(args: argparse.Namespace) -> None:
     materialization workflow is ``run_materialize_well`` (the sequencer). This function holds no
     dataframe algebra and no scope/plan knowledge.
     """
-    import pandas as pd
     from data_pipeline.image_materialization.run_materialize_well import run_materialize_well
-    from data_pipeline.image_materialization.select_well_acquisition_rows import (
-        select_well_acquisition_rows,
-    )
-    from data_pipeline.shared.identifiers.parsers import split_well_id
 
-    # Read static inputs (file boundary) + validate the mapping here, at the file boundary.
-    acq_df = pd.read_csv(args.acquisition_inventory_csv)
-    mapping_df = pd.read_csv(args.position_well_mapping_csv)
-    validate_position_well_mapping(mapping_df, scope_label=str(args.position_well_mapping_csv))
-
-    # Domain join + per-well row selection (no dataframe algebra in the dispatcher).
-    well_rows = select_well_acquisition_rows(
-        acq_df,
-        mapping_df,
-        experiment_id=str(args.experiment),
-        well_id=str(args.well_id),
-    )
-
-    # well_index comes from the well_id via the identity parser — never split by hand. If the CLI
-    # also supplied --well-index, cross-check it against the parsed value (catch a wiring typo).
-    _, well_index = split_well_id(str(args.well_id))
-    if getattr(args, "well_index", None) and str(args.well_index) != well_index:
-        raise ValueError(
-            f"--well-index={args.well_index!r} disagrees with well_id {args.well_id!r} "
-            f"(parses to well_index={well_index!r})."
-        )
+    well_rows, well_index = _selected_well_acquisition_rows_for_materialization(args)
 
     config = None
     if getattr(args, "config_yaml", None):
@@ -254,6 +229,83 @@ def cmd_materialize_well(args: argparse.Namespace) -> None:
     done.parent.mkdir(parents=True, exist_ok=True)
     inv_df.to_csv(out_csv, index=False)
     done.touch()
+
+
+def _selected_well_acquisition_rows_for_materialization(args: argparse.Namespace):
+    """Read acquisition + mapping inputs and return the selected well rows plus well_index."""
+    import pandas as pd
+    from data_pipeline.image_materialization.select_well_acquisition_rows import (
+        select_well_acquisition_rows,
+    )
+    from data_pipeline.shared.identifiers.parsers import split_well_id
+
+    acq_df = pd.read_csv(args.acquisition_inventory_csv)
+    mapping_df = pd.read_csv(args.position_well_mapping_csv)
+    validate_position_well_mapping(mapping_df, scope_label=str(args.position_well_mapping_csv))
+
+    well_rows = select_well_acquisition_rows(
+        acq_df,
+        mapping_df,
+        experiment_id=str(args.experiment),
+        well_id=str(args.well_id),
+    )
+    _, well_index = split_well_id(str(args.well_id))
+    if getattr(args, "well_index", None) and str(args.well_index) != well_index:
+        raise ValueError(
+            f"--well-index={args.well_index!r} disagrees with well_id {args.well_id!r} "
+            f"(parses to well_index={well_index!r})."
+        )
+    return well_rows, well_index
+
+
+def cmd_write_resolved_product_plan_for_well(args: argparse.Namespace) -> None:
+    """Write one resolved product plan JSON for one ``(well_id, product_key)``."""
+    from data_pipeline.image_materialization.resolved_product_plans import (
+        write_resolved_product_plan_for_well,
+    )
+
+    config = None
+    if getattr(args, "config_yaml", None):
+        config = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
+
+    write_resolved_product_plan_for_well(
+        experiment_id=str(args.experiment),
+        well_id=str(args.well_id),
+        scope_name=str(args.scope),
+        config=config,
+        product_key=str(args.product_key),
+        output_json=Path(args.output_json),
+    )
+
+
+def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
+    """Materialize one resolved image product and write its product frame-inventory shard."""
+    from data_pipeline.image_materialization.run_materialize_well import (
+        run_materialize_image_product_for_well,
+    )
+
+    well_rows, well_index = _selected_well_acquisition_rows_for_materialization(args)
+
+    smoke_cap = getattr(args, "smoke_max_time_indices", None)
+    if smoke_cap is not None and smoke_cap <= 0:
+        smoke_cap = None
+
+    inv_df = run_materialize_image_product_for_well(
+        experiment_id=str(args.experiment),
+        well_id=str(args.well_id),
+        well_index=well_index,
+        scope_name=str(args.scope),
+        well_acquisition_inventory_df=well_rows,
+        built_image_data_dir=Path(args.built_image_data_dir),
+        resolved_product_plan_json=Path(args.resolved_product_plan_json),
+        product_key=str(args.product_key),
+        device=getattr(args, "device", "cuda"),
+        candidate=_parse_bool(getattr(args, "candidate", "false")),
+        smoke_max_time_indices=smoke_cap,
+    )
+    out_csv = Path(args.frame_inventory_product_csv)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    inv_df.to_csv(out_csv, index=False)
 
 
 def cmd_frame_detections(args: argparse.Namespace) -> None:
@@ -978,6 +1030,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_mw.add_argument("--smoke-max-time-indices", type=int, default=None)
     p_mw.add_argument("--device", default="cuda")
     p_mw.set_defaults(func=cmd_materialize_well)
+
+    p_rpp = sub.add_parser("write-resolved-product-plan-for-well")
+    p_rpp.add_argument("--experiment", required=True)
+    p_rpp.add_argument("--well-id", required=True)
+    p_rpp.add_argument("--scope", default="yx1")
+    p_rpp.add_argument("--product-key", required=True)
+    p_rpp.add_argument("--output-json", type=Path, required=True)
+    p_rpp.add_argument("--config-yaml", type=Path, default=None)
+    p_rpp.set_defaults(func=cmd_write_resolved_product_plan_for_well)
+
+    p_mip = sub.add_parser("materialize-image-product-for-well")
+    p_mip.add_argument("--experiment", required=True)
+    p_mip.add_argument("--well-id", required=True)
+    p_mip.add_argument("--well-index", default=None)
+    p_mip.add_argument("--scope", default="yx1")
+    p_mip.add_argument("--product-key", required=True)
+    p_mip.add_argument("--resolved-product-plan-json", type=Path, required=True)
+    p_mip.add_argument("--acquisition-inventory-csv", type=Path, required=True)
+    p_mip.add_argument("--position-well-mapping-csv", type=Path, required=True)
+    p_mip.add_argument("--built-image-data-dir", type=Path, required=True)
+    p_mip.add_argument("--frame-inventory-product-csv", type=Path, required=True)
+    p_mip.add_argument("--candidate", default="false")
+    p_mip.add_argument("--smoke-max-time-indices", type=int, default=None)
+    p_mip.add_argument("--device", default="cuda")
+    p_mip.set_defaults(func=cmd_materialize_image_product_for_well)
 
     p_fd = sub.add_parser("frame-detections")
     p_fd.add_argument("--frame-inventory-csv", type=Path, required=True)

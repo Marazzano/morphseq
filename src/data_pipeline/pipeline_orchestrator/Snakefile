@@ -23,6 +23,13 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
     PATH_MODE_MERGED,
     step_dir,
 )
+from data_pipeline.image_materialization.resolved_product_plans import (
+    image_product_key_for_resolved_product,
+)
+from data_pipeline.image_materialization.materialization_plan import load_image_materialization_plan
+from data_pipeline.image_materialization.scope.scope_resolver_for_materialization_plan import (
+    resolve_materialization_plan,
+)
 
 # Configuration — two kingdoms, two files (Scope 3 of the well-id throughline refactor):
 #   config.yaml : the SCIENCE (what to run)      — committed, loaded as Snakemake `config`
@@ -33,6 +40,7 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
 configfile: str(Path(workflow.basedir) / "config.yaml")
 
 WORKFLOW_DIR = Path(workflow.basedir)
+CONFIG_YAML = WORKFLOW_DIR / "config.yaml"
 # project_root is still DERIVED from the Snakefile location (zero per-machine setup needed);
 # only the data/input/model ROOTS are made explicit/environment-driven below.
 PROJECT_ROOT = WORKFLOW_DIR.parent.parent.parent
@@ -86,11 +94,27 @@ MODELS_DIR = Path(env["paths"]["models_root"])
 # Snakemake-facing path helpers — thin string-returning facade over paths.py.
 # These close over DATA_ROOT so included .smk files get readable one-liners.
 # Rule direction (input vs output) is decided by the rule block, not here.
-def rule_artifact(step, artifact, experiment, *, path_mode, well_id=None):
-    return str(artifact_path(DATA_ROOT, step, artifact, experiment, path_mode=path_mode, well_id=well_id))
+def rule_artifact(step, artifact, experiment, *, path_mode, well_id=None, format_vars=None):
+    return str(artifact_path(
+        DATA_ROOT,
+        step,
+        artifact,
+        experiment,
+        path_mode=path_mode,
+        well_id=well_id,
+        format_vars=format_vars,
+    ))
 
-def rule_validated(step, artifact, experiment, *, path_mode, well_id=None):
-    return str(validated_path(DATA_ROOT, step, artifact, experiment, path_mode=path_mode, well_id=well_id))
+def rule_validated(step, artifact, experiment, *, path_mode, well_id=None, format_vars=None):
+    return str(validated_path(
+        DATA_ROOT,
+        step,
+        artifact,
+        experiment,
+        path_mode=path_mode,
+        well_id=well_id,
+        format_vars=format_vars,
+    ))
 
 def rule_step_dir(step, experiment, *, path_mode, well_id=None):
     return str(step_dir(DATA_ROOT, step, experiment, path_mode=path_mode, well_id=well_id))
@@ -139,6 +163,19 @@ def _scope_token(microscope: str) -> str:
 
 FRONT_END_EXPERIMENT = "{experiment}"
 SCOPE_TOKEN = _scope_token(MICROSCOPE)
+
+
+def _configured_image_product_keys() -> tuple[str, ...]:
+    requested_plan = load_image_materialization_plan(config)
+    resolved_plan = resolve_materialization_plan(
+        scope_name=SCOPE_TOKEN,
+        requested_plan=requested_plan,
+    )
+    return tuple(image_product_key_for_resolved_product(p) for p in resolved_plan.products)
+
+
+IMAGE_PRODUCT_KEYS = _configured_image_product_keys()
+
 PLATE_METADATA_CSV = artifact_path(
     DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
 )
@@ -469,6 +506,19 @@ def _front_half_targets(wc=None):
     return targets
 
 
+def _front_half_product_targets(wc=None):
+    # Commit-4 product-grain target: resolved product plan -> product frame-inventory shard ->
+    # product shard validation. Canonical per-well frame_inventory assembly is Commit 5.
+    targets = []
+    for exp in EXPERIMENTS:
+        for well_id in wells_for_experiment(_NS(experiment=exp)):
+            for product_key in IMAGE_PRODUCT_KEYS:
+                targets.append(str(_frame_inventory_product_validated(
+                    exp, well_id=well_id, product_key=product_key
+                )))
+    return targets
+
+
 class _NS:
     # tiny wildcards stand-in so wells_for_experiment (which reads wildcards.experiment) can be
     # called outside a rule context for the front_half aggregate target.
@@ -485,6 +535,12 @@ rule front_half:
     """
     input:
         _front_half_targets
+
+
+rule front_half_products:
+    """Product-grain materialization target; stops before canonical frame_inventory assembly."""
+    input:
+        _front_half_product_targets
 
 
 rule all:

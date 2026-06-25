@@ -10,6 +10,12 @@ Do not split detection/segmentation logic here. This file wires the handoff prod
 
 FRAME_INVENTORY_STEP = "frame_inventory"
 FRAME_INVENTORY_ARTIFACT = "inventory"
+RESOLVED_PRODUCT_PLANS_STEP = "resolved_product_plans"
+RESOLVED_PRODUCT_PLAN_ARTIFACT = "json"
+FRAME_INVENTORY_PRODUCTS_STEP = "frame_inventory_products"
+FRAME_INVENTORY_PRODUCT_ARTIFACT = "inventory"
+DISCOVERED_PRODUCT_SHARDS_STEP = "discovered_product_shards"
+DISCOVERED_PRODUCT_SHARDS_ARTIFACT = "csv"
 
 # Step 6 — the live per-well materializer + its emitted frame-inventory shard.
 MATERIALIZE_WELL_STEP = "materialize_well"
@@ -31,6 +37,39 @@ def _frame_inventory_artifact(experiment: str, *, path_mode: str, well_id: str |
 
 def _frame_inventory_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
     return rule_validated(FRAME_INVENTORY_STEP, FRAME_INVENTORY_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
+
+
+def _resolved_product_plan(experiment: str, *, well_id: str, product_key: str):
+    return rule_artifact(
+        RESOLVED_PRODUCT_PLANS_STEP,
+        RESOLVED_PRODUCT_PLAN_ARTIFACT,
+        experiment,
+        path_mode=PATH_MODE_PER_WELL,
+        well_id=well_id,
+        format_vars={"product_key": product_key},
+    )
+
+
+def _frame_inventory_product_artifact(experiment: str, *, well_id: str, product_key: str):
+    return rule_artifact(
+        FRAME_INVENTORY_PRODUCTS_STEP,
+        FRAME_INVENTORY_PRODUCT_ARTIFACT,
+        experiment,
+        path_mode=PATH_MODE_PER_WELL,
+        well_id=well_id,
+        format_vars={"product_key": product_key},
+    )
+
+
+def _frame_inventory_product_validated(experiment: str, *, well_id: str, product_key: str):
+    return rule_validated(
+        FRAME_INVENTORY_PRODUCTS_STEP,
+        FRAME_INVENTORY_PRODUCT_ARTIFACT,
+        experiment,
+        path_mode=PATH_MODE_PER_WELL,
+        well_id=well_id,
+        format_vars={"product_key": product_key},
+    )
 
 
 def _frame_inventory_run_wells(wc):
