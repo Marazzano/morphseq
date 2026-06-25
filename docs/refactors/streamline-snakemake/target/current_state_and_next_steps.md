@@ -35,18 +35,21 @@ CUDA`, product shard `20250912_B01_BF__z_stack_frame_inventory.csv` has 15 rows 
 and `z_index=0..14`, 15 PNGs were written under
 `materialized_images/20250912_B01/z_stack/BF/`, discovery listed `BF__z_stack`, canonical
 `20250912_B01_frame_inventory.csv` assembled to the same 15 z-stack rows, and both product/canonical
-`.validated` sentinels exist.
+`.validated` sentinels exist. Additive proof also completed 6/6 on real 20250912_B01 with one
+timepoint: projection materialization produced 1 product-shard row, discovery listed both
+`BF__projection__focus_stack` and `BF__z_stack`, canonical assembly produced 16 rows
+(`projection: 1`, `z_stack: 15`), projection `z_index` is NA, z-stack `z_index` spans `0..14`, and
+strict canonical validation passed.
 
 **What's broken/half-done:** no known code blocker in the product-shard/assembly path. The real
-z-stack smoke intentionally overwrote the canonical B01 smoke inventory with a one-timepoint
-z-stack-only assembled manifest; rerun projection or projection+z_stack overlays before using B01
-canonical outputs for downstream projection-only work.
+additive smoke intentionally overwrote the canonical B01 smoke inventory with a one-timepoint
+projection+z_stack assembled manifest; rerun the desired product overlay before using B01 canonical
+outputs for downstream projection-only work.
 
-**Next concrete action:** Commit 6 — run the additive assembly proof. Use a temporary overlay with
-both products (`BF__projection__focus_stack` and `BF__z_stack`) for 20250912_B01 with
-`smoke_max_time_indices: 1`, force assembly, and verify the discovered manifest lists both product
-keys and the assembled canonical `frame_inventory` contains projection row(s) plus all z-stack plane
-rows. If that passes, update this snapshot and commit only the status doc.
+**Next concrete action:** choose the next scale gate. Recommended: run a two-well additive smoke
+(`20250912_B01`, `20250912_C01`, `smoke_max_time_indices: 1`) through `front_half` with forced
+discovery/assembly, then decide whether to add a committed smoke overlay for product/additive tests
+or keep these as ad hoc operator proofs.
 
 **Open decisions:** none.
 
