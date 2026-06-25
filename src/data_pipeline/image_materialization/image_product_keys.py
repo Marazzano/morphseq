@@ -8,6 +8,37 @@ in ``shared/identifiers``.
 from __future__ import annotations
 
 
+def parse_image_product_key(product_key: str) -> tuple[str, str, str | None]:
+    """Parse ``{channel_id}__{image_product_type}[__{projection_method}]``."""
+    parts = str(product_key).split("__")
+    if len(parts) == 2:
+        channel_id, image_product_type = parts
+        projection_method = None
+    elif len(parts) == 3:
+        channel_id, image_product_type, projection_method = parts
+    else:
+        raise ValueError(
+            f"parse_image_product_key: cannot parse product_key {product_key!r}. "
+            "Expected {channel_id}__{image_product_type}[__{projection_method}]."
+        )
+    try:
+        expected = build_image_product_key(
+            channel_id=channel_id,
+            image_product_type=image_product_type,
+            projection_method=projection_method,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"parse_image_product_key: product_key {product_key!r} is not canonical. {exc}"
+        ) from exc
+    if str(product_key) != expected:
+        raise ValueError(
+            f"parse_image_product_key: product_key {product_key!r} is not canonical "
+            f"(expected {expected!r})."
+        )
+    return channel_id, image_product_type, projection_method
+
+
 def build_image_product_key(
     *,
     channel_id: str,

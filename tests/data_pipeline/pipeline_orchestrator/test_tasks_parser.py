@@ -200,3 +200,45 @@ def test_materialize_image_product_for_well_joins_position_mapping(tmp_path):
         tasks.cmd_materialize_image_product_for_well(args)
 
     assert product_csv.exists()
+
+
+def test_product_shard_discovery_command_parses():
+    parser = tasks.build_parser()
+
+    args = parser.parse_args([
+        "discover-product-shards-for-well",
+        "--experiment",
+        "20250912",
+        "--well-id",
+        "20250912_B01",
+        "--frame-inventory-products-dir",
+        "frame_inventory_products/per_well/20250912_B01",
+        "--output-csv",
+        "discovered_product_shards/per_well/20250912_B01/20250912_B01_discovered_product_shards.csv",
+    ])
+
+    assert args.func is tasks.cmd_discover_product_shards_for_well
+    assert args.frame_inventory_products_dir == Path("frame_inventory_products/per_well/20250912_B01")
+    assert args.output_csv == Path(
+        "discovered_product_shards/per_well/20250912_B01/20250912_B01_discovered_product_shards.csv"
+    )
+
+
+def test_assemble_well_frame_inventory_command_parses():
+    parser = tasks.build_parser()
+
+    args = parser.parse_args([
+        "assemble-well-frame-inventory",
+        "--discovered-product-shards-csv",
+        "discovered_product_shards/per_well/20250912_B01/20250912_B01_discovered_product_shards.csv",
+        "--output-csv",
+        "frame_inventory/per_well/20250912_B01/20250912_B01_frame_inventory.csv",
+    ])
+
+    assert args.func is tasks.cmd_assemble_well_frame_inventory
+    assert args.discovered_product_shards_csv == Path(
+        "discovered_product_shards/per_well/20250912_B01/20250912_B01_discovered_product_shards.csv"
+    )
+    assert args.output_csv == Path(
+        "frame_inventory/per_well/20250912_B01/20250912_B01_frame_inventory.csv"
+    )

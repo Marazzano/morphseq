@@ -1,9 +1,9 @@
 """Frame-inventory product-family rules.
 
-This is the live microscope handoff family. ``materialize_well`` emits one validated per-well
-``{well_id}_frame_inventory.csv`` shard; downstream Beat-2 consumers should depend on that shard
-and its sentinel. The merged experiment-level frame inventory is an aggregate view over those same
-materializer-emitted shards.
+This is the live microscope handoff family. Native product materialization emits validated
+product-grain shards; discovery + assembly write the canonical per-well
+``{well_id}_frame_inventory.csv`` shard. Drop-in mode writes that same canonical shard directly.
+Downstream Beat-2 consumers should depend on the canonical shard and its sentinel.
 
 Do not split detection/segmentation logic here. This file wires the handoff product only.
 """
@@ -72,6 +72,16 @@ def _frame_inventory_product_validated(experiment: str, *, well_id: str, product
     )
 
 
+def _discovered_product_shards_artifact(experiment: str, *, well_id: str):
+    return rule_artifact(
+        DISCOVERED_PRODUCT_SHARDS_STEP,
+        DISCOVERED_PRODUCT_SHARDS_ARTIFACT,
+        experiment,
+        path_mode=PATH_MODE_PER_WELL,
+        well_id=well_id,
+    )
+
+
 def _frame_inventory_run_wells(wc):
     # The run set comes from well_runner via wells_for_experiment(): discovered ∩ config targets.
     return wells_for_experiment(wc)
@@ -80,8 +90,8 @@ def _frame_inventory_run_wells(wc):
 def _frame_inventory_artifacts_for_run(wc):
     return run_well_shard_paths(
         DATA_ROOT,
-        MATERIALIZE_WELL_STEP,
-        "inventory",
+        FRAME_INVENTORY_STEP,
+        FRAME_INVENTORY_ARTIFACT,
         wc.experiment,
         _frame_inventory_run_wells(wc),
     )
@@ -94,13 +104,11 @@ def _frame_inventory_validated_for_run(wc):
     ]
 
 
-# The NATIVE per-well producers (materialize_well + validate_frame_inventory_for_well) live in
-# rules/materialize_well_native.smk and are included ONLY in native mode by the Snakefile. In dropin
-# mode the dropin_handoff.smk producers write the SAME canonical shard + validated sentinel instead.
-# The merge rules below are producer-AGNOSTIC: they consume shards + sentinels by PATH, so they work
-# unchanged under either producer family. The shared helpers above (_frame_inventory_artifact,
-# _materialize_well_validated, _materialize_well_done, _frame_inventory_run_wells, …) are reused by
-# both producer files.
+# The NATIVE per-well producers (product materialization -> discovery -> assembly ->
+# validate_frame_inventory_for_well) live in rules/materialize_well_native.smk and are included ONLY
+# in native mode by the Snakefile. In dropin mode the dropin_handoff.smk producers write the SAME
+# canonical shard + validated sentinel instead. The merge rules below are producer-AGNOSTIC: they
+# consume shards + sentinels by PATH, so they work unchanged under either producer family.
 
 
 rule merge_frame_inventory:

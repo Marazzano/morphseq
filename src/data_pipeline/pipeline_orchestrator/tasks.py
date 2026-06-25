@@ -308,6 +308,32 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
     inv_df.to_csv(out_csv, index=False)
 
 
+def cmd_discover_product_shards_for_well(args: argparse.Namespace) -> None:
+    """Discover validated product frame-inventory shards for one well."""
+    from data_pipeline.image_materialization.product_shard_assembly import (
+        discover_product_shards_for_well,
+    )
+
+    discover_product_shards_for_well(
+        experiment_id=str(args.experiment),
+        well_id=str(args.well_id),
+        frame_inventory_products_dir=Path(args.frame_inventory_products_dir),
+        output_csv=Path(args.output_csv),
+    )
+
+
+def cmd_assemble_well_frame_inventory(args: argparse.Namespace) -> None:
+    """Assemble validated product shards into the canonical per-well frame_inventory."""
+    from data_pipeline.image_materialization.product_shard_assembly import (
+        assemble_well_frame_inventory,
+    )
+
+    assemble_well_frame_inventory(
+        discovered_product_shards_csv=Path(args.discovered_product_shards_csv),
+        output_csv=Path(args.output_csv),
+    )
+
+
 def cmd_frame_detections(args: argparse.Namespace) -> None:
     from data_pipeline.detection import run_frame_detection
     from data_pipeline.detection.backends.groundingdino.config import GroundingDinoDetectionConfig
@@ -1055,6 +1081,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_mip.add_argument("--smoke-max-time-indices", type=int, default=None)
     p_mip.add_argument("--device", default="cuda")
     p_mip.set_defaults(func=cmd_materialize_image_product_for_well)
+
+    p_dps = sub.add_parser("discover-product-shards-for-well")
+    p_dps.add_argument("--experiment", required=True)
+    p_dps.add_argument("--well-id", required=True)
+    p_dps.add_argument("--frame-inventory-products-dir", type=Path, required=True)
+    p_dps.add_argument("--output-csv", type=Path, required=True)
+    p_dps.set_defaults(func=cmd_discover_product_shards_for_well)
+
+    p_awfi = sub.add_parser("assemble-well-frame-inventory")
+    p_awfi.add_argument("--discovered-product-shards-csv", type=Path, required=True)
+    p_awfi.add_argument("--output-csv", type=Path, required=True)
+    p_awfi.set_defaults(func=cmd_assemble_well_frame_inventory)
 
     p_fd = sub.add_parser("frame-detections")
     p_fd.add_argument("--frame-inventory-csv", type=Path, required=True)
