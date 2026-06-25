@@ -6,7 +6,49 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-25 (product-aware frame identity behind one gate)
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (schema-constant consolidation + composition grammar)
+
+**What shipped:** consolidated the snip/embryo-grain validation surface and gave the column-constant
+vocabulary a composition-revealing grammar. Full census + plan in
+`schema_constants_consolidation.md`.
+
+- `396409e2` — **snip_inventory validation behind one gate.** New `validate_snip_inventory_contract`
+  composes snip-grain identity spine + frame provenance + payload presence; `cmd_validate_snip_inventory`
+  is now a thin doorbell (no inline column lists). `SNIP_FRAME_DERIVED_COLUMNS` deduped (was copy-pasted
+  in mask_geometry + feature_table_utils). `track_id` documented present-but-nullable (provenance, not
+  identity — pre-allows a future untracked-snip path).
+- `03ee4296` — **composition-revealing naming grammar** across World A (modern feature + QC contracts):
+  `*_SPINE_COLUMNS` (identity, additive) / `*_PROVENANCE_COLUMNS` (carried context) / `*_PAYLOAD_COLUMNS`
+  (this table's delta — role, not domain) / `*_TABLE_COLUMNS` (the assembled whole). Renamed
+  `SNIP_FRAME_DERIVED→PROVENANCE`, `SNIP_FEATURE_TABLE_ID→SPINE`, every `_FEATURE_COLUMNS`/`_QC_FLAG`/
+  `_VERDICT`→`<PRODUCT>_PAYLOAD_COLUMNS`, every `*_REQUIRED_COLUMNS`→`<PRODUCT>_TABLE_COLUMNS`. Names
+  now say which layer they are; "PAYLOAD" kills the ambiguous "FEATURE" suffix.
+
+**Census finding:** World A (modern spine) was already healthy/compositional — the snip grain learned
+the frame grain's lessons early (one shared spine, every product composes it, `check_sources` mode
+flag). The real redundancy is **World B: the legacy `schemas/` directory** — parallel flat column
+lists, several still live-imported by the back half.
+
+**What's PENDING / handed off:**
+- ⏳ **Dead-schema deletion → a demo agent will do this.** `schemas/auxiliary_masks.py` and
+  `schemas/stage_predictions.py` have 0 live importers (verify no test-only use, then delete). NOT
+  done here by request.
+- 🔜 Tier-2 legacy migration (`features.py`, frame_detections) and tier-3 (back-half / Scope 5:
+  `frame_contract.py`, `analysis_ready.py`, tracking/mask_rle, legacy snip_manifest) — deferred; the
+  back-half ones have no modern composed home until Scope 5. `channel_normalization.py` is canonical,
+  KEEP. See `schema_constants_consolidation.md` for the per-constant fate table.
+
+**Verified:** 201 feature + QC + physical_embryo_registry + snip_processing tests green; all renamed
+contract modules import clean.
+
+**Next concrete action:** (a demo agent) delete the 2 dead schemas; then committed smoke-overlay
+config + the deferred frame-grain product-shard code-vocabulary rename remain from prior snapshots.
+
+**Open decisions:** tier-2/tier-3 legacy migration timing (tied to Scope 5 back-half work).
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-25 (product-aware frame identity behind one gate)
 
 **What shipped (commit `8e7a02f2`):** made `product_key` part of frame identity, enforced through a
 SINGLE named contract gate. Closes the latent false-collision: `image_id` addresses a frame within
