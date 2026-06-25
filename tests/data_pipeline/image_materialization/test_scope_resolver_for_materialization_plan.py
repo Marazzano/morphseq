@@ -60,16 +60,27 @@ class TestYX1RequiredAxes:
         with pytest.raises(UnsupportedMaterializationRequest, match="channel_id='BF'"):
             resolve_materialization_plan(scope_name="yx1", requested_plan=_plan(channel_id="GFP"))
 
-    def test_non_projection_rejected(self):
-        with pytest.raises(UnsupportedMaterializationRequest, match="image_product_type='projection'"):
-            resolve_materialization_plan(
-                scope_name="yx1", requested_plan=_plan(image_product_type="z_stack")
-            )
+    def test_z_stack_resolves_for_bf_with_no_projection_method(self):
+        out = resolve_materialization_plan(
+            scope_name="yx1",
+            requested_plan=_plan(image_product_type="z_stack", projection_method=None),
+        )
+        product = out.products[0]
+        assert product.image_product_type == "z_stack"
+        assert product.projection_method is None
+        assert product.xy_composition == "identity"
 
     def test_non_focus_stack_rejected(self):
         with pytest.raises(UnsupportedMaterializationRequest, match="projection_method='focus_stack'"):
             resolve_materialization_plan(
                 scope_name="yx1", requested_plan=_plan(projection_method="max")
+            )
+
+    def test_non_bf_z_stack_rejected(self):
+        with pytest.raises(UnsupportedMaterializationRequest, match="channel_id='BF'"):
+            resolve_materialization_plan(
+                scope_name="yx1",
+                requested_plan=_plan(channel_id="GFP", image_product_type="z_stack", projection_method=None),
             )
 
 

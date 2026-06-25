@@ -8,6 +8,7 @@ from data_pipeline.image_materialization.materialized_image_paths import (
     ALLOWED_IMAGE_PRODUCT_TYPES,
     materialized_image_path,
     projection_frame_path,
+    z_stack_frame_path,
 )
 
 ROOT = Path("/data/built_image_data")
@@ -55,6 +56,31 @@ class TestProjectionFramePath:
         p = projection_frame_path(ROOT, experiment_id=EXP, well_id=WELL,
                                   channel_id=CHANNEL, time_index=T, ext="tif")
         assert p.suffix == ".tif"
+
+
+class TestZStackFramePath:
+    def test_z_stack_wrapper_path_contains_product_channel_and_z_index(self):
+        p = z_stack_frame_path(
+            ROOT,
+            experiment_id=EXP,
+            well_id=WELL,
+            channel_id=CHANNEL,
+            time_index=T,
+            z_index=5,
+        )
+        assert "z_stack" in p.parts
+        assert CHANNEL in p.parts
+        assert p.name == f"{WELL}_{CHANNEL}_z0005_t{T:04d}.png"
+
+    def test_z_stack_wrapper_requires_z_index(self):
+        with pytest.raises(TypeError):
+            z_stack_frame_path(
+                ROOT,
+                experiment_id=EXP,
+                well_id=WELL,
+                channel_id=CHANNEL,
+                time_index=T,
+            )
 
 
 class TestMaterializedImagePathValidation:

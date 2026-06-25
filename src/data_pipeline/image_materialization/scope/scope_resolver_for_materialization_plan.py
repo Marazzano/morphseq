@@ -76,20 +76,24 @@ def _resolve_yx1(plan: ImageMaterializationPlan) -> ResolvedMaterializationPlan:
 
 
 def _resolve_yx1_product(request: ImageProductRequest) -> ResolvedImageProduct:
-    # Required axes — Step 6 supports exactly the one accepted YX1 product.
+    # Required axes — YX1 supports BF projection frames and BF z-stack planes.
     if request.channel_id != "BF":
         raise UnsupportedMaterializationRequest(
             f"YX1 Step 6 supports channel_id='BF' only; got {request.channel_id!r}."
         )
-    if request.image_product_type != "projection":
+    if request.image_product_type not in ("projection", "z_stack"):
         raise UnsupportedMaterializationRequest(
-            f"YX1 Step 6 supports image_product_type='projection' only; "
+            f"YX1 Step 6 supports image_product_type='projection' or 'z_stack' only; "
             f"got {request.image_product_type!r}."
         )
-    if request.projection_method != "focus_stack":
+    if request.image_product_type == "projection" and request.projection_method != "focus_stack":
         raise UnsupportedMaterializationRequest(
             f"YX1 Step 6 supports projection_method='focus_stack' only; "
             f"got {request.projection_method!r}."
+        )
+    if request.image_product_type == "z_stack" and request.projection_method is not None:
+        raise UnsupportedMaterializationRequest(
+            "YX1 z_stack products must not set projection_method; z_stack preserves Z planes."
         )
 
     xy = _resolve_yx1_xy_composition(request.xy_composition)

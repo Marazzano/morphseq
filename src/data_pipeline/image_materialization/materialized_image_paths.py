@@ -121,7 +121,8 @@ def materialized_image_path(
             raise ValueError(
                 "image_product_type='z_stack' requires an integer z_index; got z_index=None."
             )
-        filename = f"{well_id}_{channel_id}_z{z_index:04d}_t{time_index:04d}{dot_ext}"
+        image_id = build_image_id(well_id, channel_id, time_index, z_index=z_index)
+        filename = f"{image_id}{dot_ext}"
 
     well_subdir = (
         Path(_CANDIDATE_SUBDIR) / well_id if candidate else Path(well_id)
@@ -170,4 +171,31 @@ def projection_frame_path(
         candidate=candidate,
     )
 
-# z_stack_frame_path is deferred — add when z_index enters the identity grammar.
+
+def z_stack_frame_path(
+    built_image_data_dir: Path,
+    *,
+    experiment_id: str,
+    well_id: str,
+    channel_id: str,
+    time_index: int,
+    z_index: int,
+    ext: str = "png",
+    candidate: bool = False,
+) -> Path:
+    """Resolve the pixel-file path for one z-stack plane (convenience wrapper).
+
+    Equivalent to ``materialized_image_path(..., image_product_type="z_stack",
+    z_index=z_index, ...)``.
+    """
+    return materialized_image_path(
+        built_image_data_dir,
+        experiment_id=experiment_id,
+        well_id=well_id,
+        channel_id=channel_id,
+        time_index=time_index,
+        image_product_type="z_stack",
+        z_index=z_index,
+        ext=ext,
+        candidate=candidate,
+    )

@@ -9,10 +9,14 @@ import pytest
 
 from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
     materialize_ff_projection,
+    materialize_yx1_product_for_well,
     materialize_yx1_well,
     _EMITTED_COLUMNS,
 )
-from data_pipeline.image_materialization.materialized_image_paths import projection_frame_path
+from data_pipeline.image_materialization.materialized_image_paths import (
+    projection_frame_path,
+    z_stack_frame_path,
+)
 from data_pipeline.image_materialization.materialization_plan import (
     ResolvedImageProduct,
     ResolvedMaterializationPlan,
@@ -31,6 +35,16 @@ IDENTITY_PLAN = ResolvedMaterializationPlan(
             channel_id="BF",
             image_product_type="projection",
             projection_method="focus_stack",
+            xy_composition="identity",
+        ),
+    )
+)
+Z_STACK_PLAN = ResolvedMaterializationPlan(
+    products=(
+        ResolvedImageProduct(
+            channel_id="BF",
+            image_product_type="z_stack",
+            projection_method=None,
             xy_composition="identity",
         ),
     )
@@ -71,6 +85,40 @@ def _make_inventory(
     })
 
 
+def _make_z_inventory(
+    n_times: int = 2,
+    z_indices: tuple[int, ...] = (0, 2),
+    position_index: int = 2,
+    source_nd2_path: str = "/fake/exp.nd2",
+) -> pd.DataFrame:
+    rows = []
+    for t in range(n_times):
+        for z in z_indices:
+            rows.append({
+                "experiment_id": EXP,
+                "raw_position_label": str(position_index),
+                "position_index": position_index,
+                "z_index": z,
+                "channel_index": 0,
+                "channel_id": "BF",
+                "raw_channel_name": "EYES - Dia",
+                "time_index": t,
+                "acquisition_time_s": 100.0 * t,
+                "elapsed_time_s": 100.0 * t,
+                "x_um": 10.0,
+                "y_um": 20.0,
+                "micrometers_per_pixel": 0.65,
+                "image_width_px": 512,
+                "image_height_px": 512,
+                "objective_magnification": "4x",
+                "microscope_id": "YX1",
+                "n_z": 4,
+                "source_nd2_path": source_nd2_path,
+                "well_index": WELL_INDEX,
+            })
+    return pd.DataFrame(rows)
+
+
 class TestMaterializeFFProjection:
     def test_returns_2d_uint8(self):
         stack = np.random.randint(0, 1000, size=(5, 64, 64), dtype=np.uint16)
@@ -102,7 +150,7 @@ class TestMaterializeYX1Well:
         nd_mock.frame_metadata.return_value.channels = [channel_mock]
         return nd_mock
 
-    def _run(self, inventory_df, tmp_path, candidate=True):
+    def _run(self, inventory_df, tmp_path, candidate=True, resolved_plan=IDENTITY_PLAN):
         # The consume-side contract check asserts source_nd2_path EXISTS before the open is faked,
         # so point the shard at a real (empty) file under tmp_path.
         nd2_file = tmp_path / "exp.nd2"
@@ -127,7 +175,7 @@ class TestMaterializeYX1Well:
                 well_index=WELL_INDEX,
                 well_acquisition_inventory_df=inventory_df,
                 built_image_data_dir=tmp_path,
-                resolved_plan=IDENTITY_PLAN,
+                resolved_plan=resolved_plan,
                 device="cpu",
                 candidate=candidate,
             )
@@ -147,7 +195,7 @@ class TestMaterializeYX1Well:
     def test_no_duplicate_rows_on_key(self, tmp_path):
         inv = _make_inventory(n_times=5)
         df = self._run(inv, tmp_path)
-        key = ["experiment_id", "well_index", "channel_id", "time_index"]
+        key = ["experiment_id", "well_index", "channel_id", "time_index", "z_index"]
         assert not df.duplicated(subset=key).any()
 
     def test_source_image_path_matches_layout(self, tmp_path):
@@ -168,6 +216,74 @@ class TestMaterializeYX1Well:
         inv = _make_inventory(n_times=2)
         df = self._run(inv, tmp_path)
         assert df["z_index"].isna().all()
+
+    def test_z_stack_emits_inventory_planes_not_array_shape(self, tmp_path):
+        nd2_file = tmp_path / "exp.nd2"
+        nd2_file.write_bytes(b"")
+        inv = _make_z_inventory(n_times=2, z_indices=(0, 2), source_nd2_path=str(nd2_file))
+        nd_mock = self._make_mock_nd2(n_t=2, n_z=4)
+
+        _mod = "data_pipeline.image_materialization.scope.yx1.materialize_well_yx1"
+        with (
+            patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
+            patch(f"{_mod}.materialize_ff_projection") as mock_proj,
+            patch(f"{_mod}.skio.imsave") as mock_imsave,
+            patch(f"{_mod}._get_stack",
+                  return_value=np.arange(4 * 8 * 8, dtype=np.uint16).reshape(4, 8, 8)) as mock_get_stack,
+        ):
+            df = materialize_yx1_well(
+                experiment_id=EXP,
+                well_id=WELL_ID,
+                well_index=WELL_INDEX,
+                well_acquisition_inventory_df=inv,
+                built_image_data_dir=tmp_path,
+                resolved_plan=Z_STACK_PLAN,
+                device="cpu",
+                candidate=True,
+            )
+
+        assert len(df) == 4
+        assert sorted(df["z_index"].unique().tolist()) == [0, 2]
+        assert (df["image_product_type"] == "z_stack").all()
+        assert df["projection_method"].isna().all()
+        assert set(df["image_id"]) == {
+            f"{WELL_ID}_BF_z0000_t0000",
+            f"{WELL_ID}_BF_z0002_t0000",
+            f"{WELL_ID}_BF_z0000_t0001",
+            f"{WELL_ID}_BF_z0002_t0001",
+        }
+        expected_path = z_stack_frame_path(
+            tmp_path,
+            experiment_id=EXP,
+            well_id=WELL_ID,
+            channel_id="BF",
+            time_index=1,
+            z_index=2,
+            candidate=True,
+        )
+        assert str(expected_path) in set(df["source_image_path"])
+        assert mock_get_stack.call_count == 2
+        assert mock_imsave.call_count == 4
+        mock_proj.assert_not_called()
+
+    def test_product_grain_helper_accepts_one_resolved_product(self, tmp_path):
+        inv = _make_inventory(n_times=1)
+        df = self._run(inv, tmp_path)
+        assert len(df) == 1
+
+    def test_materialize_yx1_well_rejects_multi_product_plan(self, tmp_path):
+        inv = _make_inventory(n_times=1)
+        multi = ResolvedMaterializationPlan(products=IDENTITY_PLAN.products + Z_STACK_PLAN.products)
+        with pytest.raises(ValueError, match="exactly one resolved product"):
+            materialize_yx1_well(
+                experiment_id=EXP,
+                well_id=WELL_ID,
+                well_index=WELL_INDEX,
+                well_acquisition_inventory_df=inv,
+                built_image_data_dir=tmp_path,
+                resolved_plan=multi,
+                device="cpu",
+            )
 
     def test_image_product_type_is_projection(self, tmp_path):
         inv = _make_inventory(n_times=2)
