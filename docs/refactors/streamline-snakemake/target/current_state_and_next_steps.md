@@ -6,7 +6,45 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-25 (z-stack audit gap fixes banked)
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (multi-well mixed-product merge seam proven)
+
+**What shipped (commit `f6e4abe3`):** discovered that the "Commit 5" product-shard behavior
+(discover → assemble → merge → validate) is **already fully built and wired** — `product_shard_assembly.py`
++ `cmd_*` thin dispatchers + the complete DAG in `materialize_well_native.smk`/`frame_inventory.smk`,
+proven single-well on real B01. So the real remaining work was not construction but proving the one
+**untested seam**: multi-well merge with **uneven product availability**. Added an integration test
+(`test_product_shard_merge_integration.py`) driving the real functions end-to-end:
+
+  - B01 = BF projection + BF z_stack (1 + 15 planes), C01 = BF projection only
+  - assemble each well → merge experiment inventory → strict grouped validation
+  - merged = 17 rows (B01 16, C01 1); z_stack rows keep `z_index` 0..14; projection rows NA
+  - merged validation (grouped by well, `check_sources` off) passes with z_stack present
+  - merge is order-independent; a duplicate z-plane across shards is rejected at merge scope
+    (z-aware derived `image_id` collides — the NA-landmine fix holds across merge, not just per well)
+
+**Finding (by design, recorded so it isn't rediscovered as a "bug"):** the temporal-grain check is
+at **channel × time** granularity, not **product × time**. Because projection and z_stack are both
+channel BF, the grain check sees the UNION of their time_index sets. It therefore does NOT enforce
+"every projection timepoint also has a z_stack" (or vice versa) — a z_stack at a timepoint with no
+projection still passes as long as the BF time axis stays contiguous. This matches the spec boundary
+guard (a z_stack plane is a genuinely distinct frame at its time); product-completeness is not a
+grain invariant. Duplicate detection (the load-bearing merge guard) DOES have teeth, verified.
+
+**Verified:** 211 tests pass (`tests/data_pipeline/{image_materialization,metadata_ingest}`).
+
+**Next concrete action:** (1) committed smoke-overlay config (`config_smoke_zstack.yaml`, B01/C01,
+`smoke_max_time_indices: 1`, projection+z_stack) to make the z_stack smoke reproducible rather than
+ad hoc; then (2) the deferred **code-vocabulary rename** as a dedicated cleanup pass
+(`discover_product_shards_for_well` → `list_available_products_for_well`, `frame_inventory_product*`
+→ `product_inventory*`, the `DISCOVERED_PRODUCT_SHARDS_*` constant/step-key family). Order:
+prove → crystallize → rename. Don't repaint labels before the smoke config crystallizes the proof.
+
+**Open decisions:** whether product-completeness (projection⇔z_stack coverage) should EVER be an
+enforced invariant, or stay a non-goal (currently a non-goal, correctly).
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-25 (z-stack audit gap fixes banked)
 
 **What shipped (commit `05ba0ce0`):** banked the two correctness fixes the z-stack audit surfaced,
 BEFORE Commit 5 starts mixing projection + z_stack rows into the canonical inventory (safety rail
