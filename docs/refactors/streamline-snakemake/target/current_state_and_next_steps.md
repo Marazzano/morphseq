@@ -6,7 +6,34 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-25 (ingest acquisition path grouping)
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (z-stack audit gap fixes banked)
+
+**What shipped (commit `05ba0ce0`):** banked the two correctness fixes the z-stack audit surfaced,
+BEFORE Commit 5 starts mixing projection + z_stack rows into the canonical inventory (safety rail
+before traffic returns).
+
+1. **Detection projection filter** (spec §10) — `detection/run_frame_detection.py` selects via
+   `_projection_bf_rows`: `channel_id == "BF" AND image_product_type == "projection"`, with a
+   column-absent back-compat branch. Stops z_stack BF planes from ever reaching SAM/detection/tracking.
+2. **Z-aware parser** (spec §1) — `parse_image_id_with_z_index` added + exported; `parse_image_id`
+   now rejects z-stack ids loudly (no silent z-drop).
+
+**Verified:** 68 targeted (identifiers + detection) + 46 downstream consumer tests green.
+
+**Next concrete action:** **Commit 5 — discovery + assembly behavior.** Discovery/assembly modules
+exist (`product_shard_assembly.py`) and the DAG is wired (`materialize_well_native.smk`); the open
+work is whatever remains to make the discover→assemble→validate chain fully exercised on real
+mixed (projection + z_stack) inventories end-to-end. The folder layout (commits `6e879632`,
+`cb9343ee`) and the detection guardrail (`05ba0ce0`) are now in place for that.
+
+**Deferred:** broad code-vocabulary rename (folder↔function drift) — fold into Commit 5 if it touches
+the discovery/assembly functions anyway, else a dedicated pass.
+
+**Open decisions:** when/how the code-vocabulary rename happens.
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-25 (ingest acquisition path grouping)
 
 **What shipped (commit `cb9343ee`):** gave the five experiment-grain acquisition-ingest steps a
 `product_dir` so the front-of-pipeline tables stop laying flat under `acquisition/{exp}/`.
@@ -47,8 +74,9 @@ importlib); resolved-path probe confirms the target tree.
 **Next concrete action:** the deferred **code-vocabulary rename** (folder↔function drift from both
 grouping commits) — `discover_product_shards_for_well` → `list_available_products_for_well`,
 `frame_inventory_product*` → `product_inventory*`, etc. Best folded into the Commit-5 behavior work
-or done as a dedicated vocabulary-only pass. Also still uncommitted: the z-stack audit gap fixes
-(detection projection filter, `parse_image_id_with_z_index`) — see snapshot below.
+or done as a dedicated vocabulary-only pass. (The z-stack audit gap fixes — detection projection
+filter, `parse_image_id_with_z_index` — were banked AFTER this snapshot as `05ba0ce0`; see snapshot
+below.)
 
 **Open decisions:** when/how to do the code-vocabulary rename.
 
@@ -83,16 +111,16 @@ one-folder-per-CSV; needs per-artifact `product_dir` since `ingest_scope_metadat
 importlib). Resolved-path probe confirms the target tree and that executor-write / discovery-scan /
 validate-input dirs all move together through the registry (no hardcoded path can drift).
 
-**Next concrete action:** decide Commit 2 (ingest-stage folder grouping) separately. Do NOT start it
-implicitly. The audit's gap #1/#2 fixes (detection projection filter, `parse_image_id_with_z_index`)
-remain uncommitted in the working tree as a distinct change — see the snapshot below.
+**Next concrete action (as of this snapshot):** decide Commit 2 (ingest-stage folder grouping)
+separately. [HISTORICAL: Commit 2 later landed as `cb9343ee`; the audit gap #1/#2 fixes later landed
+as `05ba0ce0` — both were pending when this snapshot was written.]
 
 **Open decisions:** Commit 2 ingest layout (per-artifact `product_dir` mechanism); when to do the
 deferred code-vocabulary rename.
 
 ---
 
-## ⭐ SNAPSHOT — 2026-06-25 (z-stack audit gap closures, uncommitted)
+## ⭐ SNAPSHOT — 2026-06-25 (z-stack audit gap closures, committed `05ba0ce0`)
 
 **What shipped:** closed the two remaining z-stack wire-through gaps the audit surfaced — both were
 spec deliverables that were never landed in the Commit-0–5 run.
