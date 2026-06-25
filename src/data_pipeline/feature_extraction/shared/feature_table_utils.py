@@ -17,17 +17,15 @@ import pandas as pd
 
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+    SNIP_FRAME_DERIVED_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
 )
 
-# Frame-derived columns carried alongside the identity spine in per-snip feature tables.
-# These are cross-checked when present (not required spine); listed here for row-building only.
-_FRAME_DERIVED_COLUMNS: tuple[str, ...] = ("image_id", "time_index", "channel_id")
-
-# Identity spine + frame-derived convenience columns carried by per-snip feature tables.
-# Use for building output rows from snip_inventory. Not the identity spine — do not validate with it.
-SNIP_FEATURE_TABLE_ID_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + _FRAME_DERIVED_COLUMNS
+# Identity spine + frame-derived provenance columns carried by per-snip feature tables (both defined
+# once in snip_identity_contract). Use for building output rows from snip_inventory. Not the identity
+# spine — do not validate with it.
+SNIP_FEATURE_TABLE_ID_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_DERIVED_COLUMNS
 
 # Micron calibration source on a frame_inventory row (target name first, legacy fallback).
 _PIXEL_SIZE_COLUMNS: tuple[str, ...] = ("source_micrometers_per_pixel", "micrometers_per_pixel")

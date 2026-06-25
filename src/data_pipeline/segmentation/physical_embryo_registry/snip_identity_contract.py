@@ -56,6 +56,13 @@ PHYSICAL_EMBRYO_ID_SPINE_COLUMNS: tuple[str, ...] = (
 EMBRYO_ID_SPINE_COLUMNS: tuple[str, ...] = PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + ("embryo_id",)
 SNIP_ID_SPINE_COLUMNS: tuple[str, ...] = EMBRYO_ID_SPINE_COLUMNS + ("snip_id",)
 
+# Frame-of-origin columns a snip-grain table carries THROUGH from its source frame (a snip is one
+# embryo cropped from one frame). These are NOT spine identity — they are provenance back to the
+# frame — but every snip-grain feature table carries the same set, so it is defined ONCE here and
+# composed onto SNIP_ID_SPINE_COLUMNS by each product (mirrors how the frame grain defines
+# DOWNSTREAM_FRAME_IDENTITY_BLOCK once). Import; never re-declare the literal.
+SNIP_FRAME_DERIVED_COLUMNS: tuple[str, ...] = ("image_id", "time_index", "channel_id")
+
 _VALID_GRAINS = ("physical_embryo_id", "embryo_id", "snip_id")
 
 
@@ -210,3 +217,47 @@ def validate_snip_grain_identity_columns(
                 f"physical_embryo_registry; examples: {unregistered[:5]}. Every derived row must "
                 "root in a registered animal."
             )
+
+
+# The non-identity columns a validated snip_inventory shard must carry, beyond the snip-grain spine
+# and the frame-derived provenance block. Presence-only (identity coherence is the spine gate's job).
+# Named "non_identity" rather than "product" — "product" is reserved for image-materialization
+# product_key vocabulary; these are snip_inventory payload columns, not image-product identity.
+#
+# Nullability is DELIBERATE: these columns are required-PRESENT but may be null. In particular
+# ``track_id`` is tracking-algorithm PROVENANCE, not identity (identity is embryo_id/snip_id in the
+# spine) — today every snip is tracker-derived so it is non-null in practice, but the contract stays
+# present-but-nullable to pre-allow a future manual/drop-in/untracked snip path WITHOUT a contract
+# change. Do not "tighten" to non-null without retiring that allowance.
+_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS: tuple[str, ...] = (
+    "mask_id",
+    "track_id",
+    "source_image_path",
+    "processed_snip_path",
+    "is_valid_snip",
+    "error_message",
+)
+
+
+def validate_snip_inventory_contract(df: pd.DataFrame, *, scope_label: str = "snip_inventory") -> None:
+    """The ONE public gate for a snip_inventory shard — identity + provenance + product columns.
+
+    Composes the shared snip-grain checks so callers (the ``validate-snip-inventory`` task verb) stay
+    thin doorbells: read CSV, call this, write the sentinel. The dispatcher must NOT know there are
+    layers — this gate owns the composition:
+
+      1. snip-grain identity spine present + internally consistent + snip_id unique
+         (``validate_snip_grain_identity_columns`` at build mode);
+      2. frame-derived provenance columns present (``SNIP_FRAME_DERIVED_COLUMNS``);
+      3. snip_inventory non-identity payload columns present
+         (``_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS``).
+
+    Build mode only (no ``check_sources``): a snip_inventory shard is validated for internal
+    coherence at write time; the physical_embryo_registry membership check fires at the consume
+    boundaries that already pass ``check_sources=True``.
+    """
+    validate_snip_grain_identity_columns(df, grain="snip_id", scope_label=scope_label)
+    expected = (*SNIP_FRAME_DERIVED_COLUMNS, *_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS)
+    missing = [c for c in expected if c not in df.columns]
+    if missing:
+        raise ValueError(f"{scope_label}: missing required columns: {missing}")

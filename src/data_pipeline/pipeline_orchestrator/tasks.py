@@ -358,17 +358,13 @@ def cmd_frame_detections(args: argparse.Namespace) -> None:
 
 def cmd_validate_snip_inventory(args: argparse.Namespace) -> None:
     import pandas as pd
+
+    from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+        validate_snip_inventory_contract,
+    )
+
     df = pd.read_csv(args.input_csv)
-    required = [
-        "snip_id", "embryo_id", "physical_embryo_id", "experiment_id", "well_id",
-        "image_id", "time_index", "channel_id", "mask_id", "track_id",
-        "source_image_path", "processed_snip_path", "is_valid_snip", "error_message",
-    ]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"snip_inventory missing required columns: {missing}")
-    if df["snip_id"].duplicated().any():
-        raise ValueError("snip_inventory has duplicate snip_id values")
+    validate_snip_inventory_contract(df, scope_label=str(args.input_csv))
     args.output_flag.parent.mkdir(parents=True, exist_ok=True)
     args.output_flag.write_text("ok\n")
 

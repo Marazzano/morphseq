@@ -8,8 +8,10 @@ import pytest
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
     EMBRYO_ID_SPINE_COLUMNS,
     PHYSICAL_EMBRYO_ID_SPINE_COLUMNS,
+    SNIP_FRAME_DERIVED_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
+    validate_snip_inventory_contract,
 )
 from data_pipeline.shared.identifiers import (
     build_embryo_id,
@@ -154,3 +156,50 @@ def test_check_sources_fails_when_unregistered():
 def test_check_sources_requires_registry_df():
     with pytest.raises(ValueError, match="requires physical_embryo_registry_df"):
         validate_snip_grain_identity_columns(_snip_df(1), grain="snip_id", check_sources=True)
+
+
+# ── validate_snip_inventory_contract — the one public gate the task verb calls ─────────────────
+
+def _snip_inventory_row(**kw):
+    """A snip_row extended with the snip_inventory product columns."""
+    row = _snip_row(**kw)
+    row.update({
+        "mask_id": f"{row['image_id']}_m0001",
+        "track_id": f"{row['well_id']}_track0000",
+        "source_image_path": "images/src.png",
+        "processed_snip_path": "snips/out.png",
+        "is_valid_snip": True,
+        "error_message": "",
+    })
+    return row
+
+
+def test_snip_inventory_contract_passes_on_complete_shard():
+    df = pd.DataFrame([_snip_inventory_row(time_index=t) for t in range(3)])
+    validate_snip_inventory_contract(df)  # must not raise
+
+
+def test_snip_inventory_contract_rejects_missing_product_column():
+    df = pd.DataFrame([_snip_inventory_row()]).drop(columns=["mask_id"])
+    with pytest.raises(ValueError, match="missing required columns"):
+        validate_snip_inventory_contract(df)
+
+
+def test_snip_inventory_contract_rejects_missing_frame_derived_column():
+    df = pd.DataFrame([_snip_inventory_row()]).drop(columns=["image_id"])
+    with pytest.raises(ValueError, match="missing required columns|identity-spine"):
+        validate_snip_inventory_contract(df)
+
+
+def test_snip_inventory_contract_rejects_identity_disagreement():
+    # A snip_id that doesn't agree with its embryo_id must fail through the composed gate.
+    df = pd.DataFrame([_snip_inventory_row()])
+    df.loc[0, "snip_id"] = "20250912_B01_e02_BF_t0007"  # embryo e02 ≠ row's e01
+    with pytest.raises(ValueError):
+        validate_snip_inventory_contract(df)
+
+
+def test_snip_inventory_contract_rejects_duplicate_snip_id():
+    df = pd.DataFrame([_snip_inventory_row(time_index=0), _snip_inventory_row(time_index=0)])
+    with pytest.raises(ValueError, match="unique"):
+        validate_snip_inventory_contract(df)
