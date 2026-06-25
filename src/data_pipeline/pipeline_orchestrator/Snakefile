@@ -40,7 +40,6 @@ from data_pipeline.image_materialization.scope.scope_resolver_for_materializatio
 configfile: str(Path(workflow.basedir) / "config.yaml")
 
 WORKFLOW_DIR = Path(workflow.basedir)
-CONFIG_YAML = WORKFLOW_DIR / "config.yaml"
 # project_root is still DERIVED from the Snakefile location (zero per-machine setup needed);
 # only the data/input/model ROOTS are made explicit/environment-driven below.
 PROJECT_ROOT = WORKFLOW_DIR.parent.parent.parent
@@ -90,6 +89,15 @@ else:
 DATA_ROOT = Path(env["paths"]["output_root"])
 INPUTS_DIR = Path(env["paths"]["input_root"])
 MODELS_DIR = Path(env["paths"]["models_root"])
+
+# Task entrypoints need the same config Snakemake used to build wildcards. Persist the merged
+# runtime config (base config.yaml plus any --configfile overlays) and pass that to tasks instead of
+# the base config file, otherwise a product overlay can plan BF__z_stack while the task re-loads the
+# default projection-only config.
+RUNTIME_CONFIG_DIR = DATA_ROOT / "_snakemake_runtime"
+RUNTIME_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+CONFIG_YAML = RUNTIME_CONFIG_DIR / "merged_config.yaml"
+CONFIG_YAML.write_text(yaml.safe_dump(dict(config), sort_keys=True), encoding="utf-8")
 
 # Snakemake-facing path helpers — thin string-returning facade over paths.py.
 # These close over DATA_ROOT so included .smk files get readable one-liners.
