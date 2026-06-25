@@ -141,18 +141,24 @@ EXECUTION_RUN_BATCH = "run_batch"
 #               (.validated, .provenance.json) are DERIVED by the helpers, not listed here.
 PIPELINE_STEPS: dict[str, dict] = {
     # ── PLATE LINEAGE (Excel — authored design + plate geometry) ──────────────
+    # ingest_metadata/ groups the non-pixel acquisition-side ingest tables (plate + scope metadata,
+    # the mapped scope table, and the per-coordinate acquisition_inventory). "ingest_metadata"
+    # (not "acquisition_metadata") because the parent regime is already acquisition/ — the qualifier
+    # adds info: these are the tables EMITTED BY ingest.
     "ingest_plate_metadata": {
         "stage": "acquisition",
+        "product_dir": "ingest_metadata",
         "fanout": EXPERIMENT,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {"csv": "plate_metadata.csv"},
     },
 
     # ── SCOPE LINEAGE (raw microscope file — acquisition facts) ───────────────
-    # ingest_scope_metadata emits two product families (scope_metadata/ and acquisition_inventory/)
-    # but lives flat under acquisition/<exp>/ until artifact-level product_dir is added.
+    # ingest_scope_metadata emits two artifacts from ONE raw read; both ride one step-level
+    # product_dir because both belong under ingest_metadata/ (no artifact-level override needed).
     "ingest_scope_metadata": {
         "stage": "acquisition",
+        "product_dir": "ingest_metadata",
         "fanout": EXPERIMENT,
         "execution": EXECUTION_PER_WELL,
         # {scope} -> format_vars={"scope": "yx1" | "keyence"}; the ONLY raw read.
@@ -163,8 +169,12 @@ PIPELINE_STEPS: dict[str, dict] = {
             "acquisition_inventory": "acquisition_inventory__{scope}.csv",
         },
     },
+    # well_identities/ owns position->well identity resolution (the map) and its output (the well
+    # list). The MAPPED scope table is a consumer of that identity, not a member — it stays in
+    # ingest_metadata/ with the other scope-metadata tables.
     "map_positions_to_wells": {
         "stage": "acquisition",
+        "product_dir": "well_identities",
         "fanout": EXPERIMENT,
         "execution": EXECUTION_PER_WELL,
         # .provenance.json via provenance_path().
@@ -172,6 +182,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     },
     "apply_position_to_well_mapping": {  # CONVERGENCE LINE; well_id comes from the position map.
         "stage": "acquisition",
+        "product_dir": "ingest_metadata",
         "fanout": EXPERIMENT,
         "execution": EXECUTION_PER_WELL,
         # .validated via validated_path().
@@ -181,6 +192,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     # ── FAN POINT (well discovery — checkpoint) ───────────────────────────────
     "discover_wells": {
         "stage": "acquisition",
+        "product_dir": "well_identities",
         "fanout": EXPERIMENT,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {"wells": "discovered_wells.txt"},  # one well_id per line

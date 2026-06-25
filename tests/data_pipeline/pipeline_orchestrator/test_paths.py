@@ -48,25 +48,32 @@ class TestResolvedArtifactPaths:
 
     def test_ingest_plate_metadata(self):
         assert artifact_path(ROOT, "ingest_plate_metadata", "csv", EXP) == \
-            ROOT / "acquisition" / EXP / "plate_metadata.csv"
+            ROOT / "acquisition" / EXP / "ingest_metadata" / "plate_metadata.csv"
 
     def test_ingest_scope_metadata_scope_token(self):
         # `scope` is a format token supplied via format_vars.
         assert artifact_path(ROOT, "ingest_scope_metadata", "raw", EXP,
                              format_vars={"scope": "yx1"}) == \
-            ROOT / "acquisition" / EXP / "scope_metadata__yx1.csv"
+            ROOT / "acquisition" / EXP / "ingest_metadata" / "scope_metadata__yx1.csv"
+
+    def test_ingest_scope_metadata_acquisition_inventory_shares_product_dir(self):
+        # The second artifact of the same step rides the same step-level product_dir (no
+        # artifact-level override) — both ingest_scope_metadata families land in ingest_metadata/.
+        assert artifact_path(ROOT, "ingest_scope_metadata", "acquisition_inventory", EXP,
+                             format_vars={"scope": "yx1"}) == \
+            ROOT / "acquisition" / EXP / "ingest_metadata" / "acquisition_inventory__yx1.csv"
 
     def test_map_positions_to_wells(self):
         assert artifact_path(ROOT, "map_positions_to_wells", "mapping", EXP) == \
-            ROOT / "acquisition" / EXP / "position_well_mapping.csv"
+            ROOT / "acquisition" / EXP / "well_identities" / "position_well_mapping.csv"
 
     def test_apply_position_to_well_mapping(self):
         assert artifact_path(ROOT, "apply_position_to_well_mapping", "mapped", EXP) == \
-            ROOT / "acquisition" / EXP / "scope_metadata_mapped.csv"
+            ROOT / "acquisition" / EXP / "ingest_metadata" / "scope_metadata_mapped.csv"
 
     def test_discover_wells(self):
         assert artifact_path(ROOT, "discover_wells", "wells", EXP) == \
-            ROOT / "acquisition" / EXP / "discovered_wells.txt"
+            ROOT / "acquisition" / EXP / "well_identities" / "discovered_wells.txt"
 
     def test_frame_inventory_per_well_names_the_well(self):
         # per-well shard: acquisition/<exp>/frame_inventory/per_well/<well_id>/...
@@ -205,9 +212,10 @@ class TestPathModeRules:
     accept only `per_well` or `merged`. These prove that rule in both directions."""
 
     def test_experiment_step_defaults_to_experiment_mode(self):
-        # path_mode=None on an experiment-grain step resolves to the one legal mode.
+        # path_mode=None on an experiment-grain step resolves to the one legal mode (no per_well
+        # segment). The step's product_dir (well_identities/) is part of that resolved dir.
         assert step_dir(ROOT, "discover_wells", EXP) == \
-            ROOT / "acquisition" / EXP
+            ROOT / "acquisition" / EXP / "well_identities"
 
     def test_frame_inventory_requires_explicit_path_mode(self):
         with pytest.raises(ValueError) as excinfo:
