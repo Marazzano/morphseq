@@ -8,7 +8,7 @@ import pytest
 from data_pipeline.quality_control.snip_qc.build import build_snip_qc_verdict
 from data_pipeline.quality_control.snip_qc.contract import (
     SNIP_QC_EXCLUSION_REASONS,
-    SNIP_QC_REQUIRED_COLUMNS,
+    SNIP_QC_TABLE_COLUMNS,
     validate_snip_qc,
 )
 from data_pipeline.shared.identifiers import (
@@ -68,7 +68,7 @@ def test_pass_when_no_flags():
     out = build_snip_qc_verdict(uni, flags, exclusion_reasons=SNIP_QC_EXCLUSION_REASONS)
     assert out["use_snip"].tolist() == [True]
     assert out["qc_fail_reasons"].tolist() == [""]
-    assert list(out.columns) == SNIP_QC_REQUIRED_COLUMNS
+    assert list(out.columns) == SNIP_QC_TABLE_COLUMNS
     validate_snip_qc(out)
 
 

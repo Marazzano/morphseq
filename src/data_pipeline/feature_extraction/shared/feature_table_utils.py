@@ -17,7 +17,7 @@ import pandas as pd
 
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
-    SNIP_FRAME_DERIVED_COLUMNS,
+    SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
 )
@@ -25,7 +25,7 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
 # Identity spine + frame-derived provenance columns carried by per-snip feature tables (both defined
 # once in snip_identity_contract). Use for building output rows from snip_inventory. Not the identity
 # spine — do not validate with it.
-SNIP_FEATURE_TABLE_ID_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_DERIVED_COLUMNS
+SNIP_FEATURE_TABLE_SPINE_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_PROVENANCE_COLUMNS
 
 # Micron calibration source on a frame_inventory row (target name first, legacy fallback).
 _PIXEL_SIZE_COLUMNS: tuple[str, ...] = ("source_micrometers_per_pixel", "micrometers_per_pixel")
@@ -161,7 +161,7 @@ def compute_per_snip_mask_features(
         pixel_size_um = pixel_size_for_image(frame_inventory_by_image, image_id, snip_id)
         metrics = per_mask_fn(mask, pixel_size_um)
 
-        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_ID_COLUMNS}
+        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_SPINE_COLUMNS}
         for col in feature_columns:
             row[col] = metrics[col]
         rows.append(row)

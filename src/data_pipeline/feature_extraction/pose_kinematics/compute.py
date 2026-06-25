@@ -19,12 +19,12 @@ from data_pipeline.feature_extraction.pose_kinematics_metrics import (
     compute_pose_features,
 )
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
-    SNIP_FEATURE_TABLE_ID_COLUMNS,
+    SNIP_FEATURE_TABLE_SPINE_COLUMNS,
     pixel_size_for_image,
 )
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
 
-from .contract import POSE_KINEMATICS_FEATURES_REQUIRED_COLUMNS
+from .contract import POSE_KINEMATICS_TABLE_COLUMNS
 
 # Frame timing source on a frame_inventory row (target name first, legacy fallbacks).
 _TIME_COLUMNS: tuple[str, ...] = ("elapsed_time_s", "experiment_time_s", "time_s")
@@ -80,7 +80,7 @@ def compute_pose_kinematics_features(
         else:
             kin = compute_kinematics(centroid, prev["centroid"], current_time, prev["time"])
 
-        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_ID_COLUMNS}
+        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_SPINE_COLUMNS}
         row["orientation_angle"] = pose["orientation_angle"]
         # bbox naming follows the consolidated feature contract: width/height come from the PCA
         # length/width of the mask (long axis = height), matching the legacy batch.
@@ -95,4 +95,4 @@ def compute_pose_kinematics_features(
 
         prev_by_track[track_id] = {"centroid": centroid, "time": current_time}
 
-    return pd.DataFrame(rows, columns=POSE_KINEMATICS_FEATURES_REQUIRED_COLUMNS)
+    return pd.DataFrame(rows, columns=POSE_KINEMATICS_TABLE_COLUMNS)

@@ -8,7 +8,7 @@ import pytest
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
     EMBRYO_ID_SPINE_COLUMNS,
     PHYSICAL_EMBRYO_ID_SPINE_COLUMNS,
-    SNIP_FRAME_DERIVED_COLUMNS,
+    SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
     validate_snip_inventory_contract,

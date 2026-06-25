@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
-    SNIP_FRAME_DERIVED_COLUMNS,
+    SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,
 )
@@ -23,12 +23,9 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
 # Contract — identity spine (validated by the shared spine validator) + measured feature columns
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
-# Full output column set: identity spine + frame-derived provenance columns (both defined once in
-# snip_identity_contract; never re-declare the literals here).
-_SPINE_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_DERIVED_COLUMNS
-
-# Measured, micron-aware geometry. Continuous values; no booleans, no ``_flag`` columns.
-_FEATURE_COLUMNS: tuple[str, ...] = (
+# Measured, micron-aware geometry — this table's PAYLOAD (its own delta). Continuous values; no
+# booleans, no ``_flag`` columns.
+MASK_GEOMETRY_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "area_um2",
     "perimeter_um",
     "length_um",
@@ -37,7 +34,10 @@ _FEATURE_COLUMNS: tuple[str, ...] = (
     "centroid_y_um",
 )
 
-MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS: list[str] = list(_SPINE_COLUMNS + _FEATURE_COLUMNS)
+# The assembled contract: spine + frame provenance + this table's payload.
+MASK_GEOMETRY_TABLE_COLUMNS: list[str] = list(
+    SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_PROVENANCE_COLUMNS + MASK_GEOMETRY_PAYLOAD_COLUMNS
+)
 
 
 def validate_mask_geometry_features(
@@ -63,14 +63,14 @@ def validate_mask_geometry_features(
     )
 
     # 2. Feature columns — present, non-null, finite. (snip_id uniqueness is enforced by the spine.)
-    missing = [c for c in MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS if c not in df.columns]
+    missing = [c for c in MASK_GEOMETRY_TABLE_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(
             f"{scope_label}: missing required column(s): {', '.join(missing)}. "
-            f"Expected {MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS}."
+            f"Expected {MASK_GEOMETRY_TABLE_COLUMNS}."
         )
 
-    for col in _FEATURE_COLUMNS:
+    for col in MASK_GEOMETRY_PAYLOAD_COLUMNS:
         values = pd.to_numeric(df[col], errors="coerce")
         if values.isna().any():
             bad = df.loc[values.isna(), "snip_id"].head(5).tolist()

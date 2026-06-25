@@ -13,8 +13,8 @@ import pandas as pd
 import pytest
 
 from data_pipeline.quality_control.death_detection.contract import (
-    DEATH_DETECTION_QC_REQUIRED_COLUMNS,
-    DEATH_EVENT_REQUIRED_COLUMNS,
+    DEATH_DETECTION_QC_TABLE_COLUMNS,
+    DEATH_EVENT_TABLE_COLUMNS,
     validate_death_detection_qc,
     validate_death_event,
 )
@@ -109,7 +109,7 @@ def test_both_grains_emitted_correctly(tmp_path):
 
     # ── snip-grain QC table ──
     qc = pd.read_csv(out_qc)
-    assert list(qc.columns) == DEATH_DETECTION_QC_REQUIRED_COLUMNS
+    assert list(qc.columns) == DEATH_DETECTION_QC_TABLE_COLUMNS
     assert qc["snip_id"].is_unique and len(qc) == 12  # 2 animals x 6 frames
     assert qc["viability_dead_flag"].dtype == bool and qc["persistence_dead_flag"].dtype == bool
     # the validator (registry verifier) must pass
@@ -122,7 +122,7 @@ def test_both_grains_emitted_correctly(tmp_path):
 
     # ── physical-embryo-grain death_event table ──
     event = pd.read_csv(out_event)
-    assert list(event.columns) == DEATH_EVENT_REQUIRED_COLUMNS
+    assert list(event.columns) == DEATH_EVENT_TABLE_COLUMNS
     assert "embryo_id" not in event.columns          # animal-level: must NOT carry channel id
     assert len(event) == 1                            # only the persistence-dead animal
     assert event["physical_embryo_id"].iloc[0] == dead_phys

@@ -61,7 +61,7 @@ SNIP_ID_SPINE_COLUMNS: tuple[str, ...] = EMBRYO_ID_SPINE_COLUMNS + ("snip_id",)
 # frame — but every snip-grain feature table carries the same set, so it is defined ONCE here and
 # composed onto SNIP_ID_SPINE_COLUMNS by each product (mirrors how the frame grain defines
 # DOWNSTREAM_FRAME_IDENTITY_BLOCK once). Import; never re-declare the literal.
-SNIP_FRAME_DERIVED_COLUMNS: tuple[str, ...] = ("image_id", "time_index", "channel_id")
+SNIP_FRAME_PROVENANCE_COLUMNS: tuple[str, ...] = ("image_id", "time_index", "channel_id")
 
 _VALID_GRAINS = ("physical_embryo_id", "embryo_id", "snip_id")
 
@@ -248,7 +248,7 @@ def validate_snip_inventory_contract(df: pd.DataFrame, *, scope_label: str = "sn
 
       1. snip-grain identity spine present + internally consistent + snip_id unique
          (``validate_snip_grain_identity_columns`` at build mode);
-      2. frame-derived provenance columns present (``SNIP_FRAME_DERIVED_COLUMNS``);
+      2. frame-derived provenance columns present (``SNIP_FRAME_PROVENANCE_COLUMNS``);
       3. snip_inventory non-identity payload columns present
          (``_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS``).
 
@@ -257,7 +257,7 @@ def validate_snip_inventory_contract(df: pd.DataFrame, *, scope_label: str = "sn
     boundaries that already pass ``check_sources=True``.
     """
     validate_snip_grain_identity_columns(df, grain="snip_id", scope_label=scope_label)
-    expected = (*SNIP_FRAME_DERIVED_COLUMNS, *_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS)
+    expected = (*SNIP_FRAME_PROVENANCE_COLUMNS, *_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS)
     missing = [c for c in expected if c not in df.columns]
     if missing:
         raise ValueError(f"{scope_label}: missing required columns: {missing}")

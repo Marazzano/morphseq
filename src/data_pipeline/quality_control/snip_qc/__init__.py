@@ -3,14 +3,14 @@
 from .build import build_snip_qc_verdict
 from .contract import (
     SNIP_QC_EXCLUSION_REASONS,
-    SNIP_QC_REQUIRED_COLUMNS,
+    SNIP_QC_TABLE_COLUMNS,
     validate_snip_qc,
 )
 from .entrypoint import run_snip_qc
 
 __all__ = [
     "SNIP_QC_EXCLUSION_REASONS",
-    "SNIP_QC_REQUIRED_COLUMNS",
+    "SNIP_QC_TABLE_COLUMNS",
     "validate_snip_qc",
     "build_snip_qc_verdict",
     "run_snip_qc",

@@ -2,12 +2,12 @@
 
 from .compute import compute_curvature_features, compute_curvature_for_mask
 from .contract import (
-    CURVATURE_FEATURES_REQUIRED_COLUMNS,
+    CURVATURE_TABLE_COLUMNS,
     validate_curvature_features,
 )
 
 __all__ = [
-    "CURVATURE_FEATURES_REQUIRED_COLUMNS",
+    "CURVATURE_TABLE_COLUMNS",
     "validate_curvature_features",
     "compute_curvature_features",
     "compute_curvature_for_mask",

@@ -8,7 +8,7 @@ from data_pipeline.feature_extraction.pose_kinematics.compute import (
     compute_pose_kinematics_features,
 )
 from data_pipeline.feature_extraction.pose_kinematics.contract import (
-    POSE_KINEMATICS_FEATURES_REQUIRED_COLUMNS,
+    POSE_KINEMATICS_TABLE_COLUMNS,
     validate_pose_kinematics_features,
 )
 from tests.data_pipeline.feature_extraction._feature_fixtures import make_inputs
@@ -18,7 +18,7 @@ def test_compute_one_row_per_snip_and_validates():
     snip, masks, inv, reg = make_inputs()
     df = compute_pose_kinematics_features(snip, masks, inv)
     assert len(df) == len(snip)
-    assert list(df.columns) == POSE_KINEMATICS_FEATURES_REQUIRED_COLUMNS
+    assert list(df.columns) == POSE_KINEMATICS_TABLE_COLUMNS
     validate_pose_kinematics_features(df, physical_embryo_registry_df=reg, check_sources=True)
 
 

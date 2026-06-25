@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_ID_COLUMNS
+from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_SPINE_COLUMNS
 from data_pipeline.feature_extraction.stage_inference import predict_stage_hpf
 
-from .contract import STAGE_PREDICTION_FEATURES_REQUIRED_COLUMNS
+from .contract import STAGE_PREDICTION_TABLE_COLUMNS
 
 MODEL_VERSION = "kimmel1995_temp_rate_v1"
 
@@ -63,9 +63,9 @@ def compute_stage_prediction_features(
             float(plate["start_age_hpf"]), elapsed, float(plate["temperature"])
         )
 
-        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_ID_COLUMNS}
+        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_SPINE_COLUMNS}
         row["predicted_stage_hpf"] = predicted
         row["model_version"] = model_version
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=STAGE_PREDICTION_FEATURES_REQUIRED_COLUMNS)
+    return pd.DataFrame(rows, columns=STAGE_PREDICTION_TABLE_COLUMNS)

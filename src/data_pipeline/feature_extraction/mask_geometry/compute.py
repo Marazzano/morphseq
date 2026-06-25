@@ -21,7 +21,10 @@ import pandas as pd
 from data_pipeline.feature_extraction.mask_geometry_metrics import compute_mask_geometry
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
 
-from .contract import MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS, _FEATURE_COLUMNS, _SPINE_COLUMNS
+from data_pipeline.feature_extraction.shared.feature_table_utils import (
+    SNIP_FEATURE_TABLE_SPINE_COLUMNS,
+)
+from .contract import MASK_GEOMETRY_PAYLOAD_COLUMNS, MASK_GEOMETRY_TABLE_COLUMNS
 
 # Micron calibration source on a frame_inventory row. Target name first, legacy name as fallback;
 # fail loud if neither is present (a micron-aware feature cannot guess pixel size).
@@ -103,9 +106,9 @@ def compute_mask_geometry_features(
         pixel_size_um = _pixel_size_for_image(frame_inventory_by_image, image_id, snip_id)
         metrics = compute_mask_geometry_for_mask(mask, pixel_size_um)
 
-        row = {col: snip[col] for col in _SPINE_COLUMNS}
-        for col in _FEATURE_COLUMNS:
+        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_SPINE_COLUMNS}
+        for col in MASK_GEOMETRY_PAYLOAD_COLUMNS:
             row[col] = float(metrics[col])
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS)
+    return pd.DataFrame(rows, columns=MASK_GEOMETRY_TABLE_COLUMNS)

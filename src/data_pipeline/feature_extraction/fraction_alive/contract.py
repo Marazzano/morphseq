@@ -9,14 +9,14 @@ from __future__ import annotations
 import pandas as pd
 
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
-    SNIP_FEATURE_TABLE_ID_COLUMNS,
+    SNIP_FEATURE_TABLE_SPINE_COLUMNS,
     validate_feature_table,
 )
 
-_FEATURE_COLUMNS: tuple[str, ...] = ("fraction_alive",)
-_NULLABLE_FEATURE_COLUMNS: tuple[str, ...] = ("fraction_alive",)
+FRACTION_ALIVE_PAYLOAD_COLUMNS: tuple[str, ...] = ("fraction_alive",)
+_NULLABLE_PAYLOAD_COLUMNS: tuple[str, ...] = ("fraction_alive",)
 
-FRACTION_ALIVE_FEATURES_REQUIRED_COLUMNS: list[str] = list(SNIP_FEATURE_TABLE_ID_COLUMNS + _FEATURE_COLUMNS)
+FRACTION_ALIVE_TABLE_COLUMNS: list[str] = list(SNIP_FEATURE_TABLE_SPINE_COLUMNS + FRACTION_ALIVE_PAYLOAD_COLUMNS)
 
 
 def validate_fraction_alive_features(
@@ -29,9 +29,9 @@ def validate_fraction_alive_features(
     """Fail loud unless ``df`` is a valid fraction_alive_features table (spine first)."""
     validate_feature_table(
         df,
-        required_columns=FRACTION_ALIVE_FEATURES_REQUIRED_COLUMNS,
-        feature_columns=_FEATURE_COLUMNS,
-        nullable_feature_columns=_NULLABLE_FEATURE_COLUMNS,
+        required_columns=FRACTION_ALIVE_TABLE_COLUMNS,
+        feature_columns=FRACTION_ALIVE_PAYLOAD_COLUMNS,
+        nullable_feature_columns=_NULLABLE_PAYLOAD_COLUMNS,
         scope_label=scope_label,
         physical_embryo_registry_df=physical_embryo_registry_df,
         check_sources=check_sources,

@@ -9,15 +9,15 @@ from __future__ import annotations
 import pandas as pd
 
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
-    SNIP_FEATURE_TABLE_ID_COLUMNS,
+    SNIP_FEATURE_TABLE_SPINE_COLUMNS,
     validate_feature_table,
 )
 
-_FEATURE_COLUMNS: tuple[str, ...] = ("predicted_stage_hpf",)
-_PROVENANCE_COLUMNS: tuple[str, ...] = ("model_version",)
+STAGE_PREDICTION_PAYLOAD_COLUMNS: tuple[str, ...] = ("predicted_stage_hpf",)
+STAGE_PREDICTION_PROVENANCE_COLUMNS: tuple[str, ...] = ("model_version",)
 
-STAGE_PREDICTION_FEATURES_REQUIRED_COLUMNS: list[str] = list(
-    SNIP_FEATURE_TABLE_ID_COLUMNS + _FEATURE_COLUMNS + _PROVENANCE_COLUMNS
+STAGE_PREDICTION_TABLE_COLUMNS: list[str] = list(
+    SNIP_FEATURE_TABLE_SPINE_COLUMNS + STAGE_PREDICTION_PAYLOAD_COLUMNS + STAGE_PREDICTION_PROVENANCE_COLUMNS
 )
 
 
@@ -31,8 +31,8 @@ def validate_stage_prediction_features(
     """Fail loud unless ``df`` is a valid stage_prediction_features table (spine first)."""
     validate_feature_table(
         df,
-        required_columns=STAGE_PREDICTION_FEATURES_REQUIRED_COLUMNS,
-        feature_columns=_FEATURE_COLUMNS,
+        required_columns=STAGE_PREDICTION_TABLE_COLUMNS,
+        feature_columns=STAGE_PREDICTION_PAYLOAD_COLUMNS,
         scope_label=scope_label,
         physical_embryo_registry_df=physical_embryo_registry_df,
         check_sources=check_sources,

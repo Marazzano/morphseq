@@ -3,7 +3,7 @@
 Consumes ``snip_universe_df`` (the full snip spine) and an already-assembled ``qc_flags_df``
 (snip_id + the flag columns named by the exclusion map). For each snip, ``qc_fail_reasons`` is the
 pipe-delimited list of reasons whose flag is true (in the map's declared order), and
-``use_snip = (qc_fail_reasons == "")``. Returns exactly SNIP_QC_REQUIRED_COLUMNS.
+``use_snip = (qc_fail_reasons == "")``. Returns exactly SNIP_QC_TABLE_COLUMNS.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
     SNIP_ID_SPINE_COLUMNS,
 )
 
-from .contract import SNIP_QC_REQUIRED_COLUMNS
+from .contract import SNIP_QC_TABLE_COLUMNS
 
 
 def build_snip_qc_verdict(
@@ -55,7 +55,7 @@ def build_snip_qc_verdict(
 
     out["qc_fail_reasons"] = reasons_out
     out["use_snip"] = pd.array([r == "" for r in reasons_out], dtype=bool)
-    return out[SNIP_QC_REQUIRED_COLUMNS]
+    return out[SNIP_QC_TABLE_COLUMNS]
 
 
 def _require_unique(df: pd.DataFrame, key: str, label: str) -> None:

@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from data_pipeline.quality_control.surface_area_qc.contract import (
-    SURFACE_AREA_QC_REQUIRED_COLUMNS,
+    SURFACE_AREA_QC_TABLE_COLUMNS,
     validate_surface_area_qc,
 )
 from data_pipeline.shared.identifiers import (
@@ -39,7 +39,7 @@ def _valid_df(n=2, flag=False):
                 "sa_outlier_flag": flag,
             }
         )
-    df = pd.DataFrame(rows, columns=SURFACE_AREA_QC_REQUIRED_COLUMNS)
+    df = pd.DataFrame(rows, columns=SURFACE_AREA_QC_TABLE_COLUMNS)
     df["sa_outlier_flag"] = df["sa_outlier_flag"].astype(bool)
     return df
 

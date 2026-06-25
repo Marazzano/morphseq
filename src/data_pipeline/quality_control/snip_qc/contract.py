@@ -19,8 +19,8 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
     validate_snip_grain_identity_columns,
 )
 
-_SNIP_QC_VERDICT_COLUMNS: tuple[str, ...] = ("use_snip", "qc_fail_reasons")
-SNIP_QC_REQUIRED_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + _SNIP_QC_VERDICT_COLUMNS)
+SNIP_QC_PAYLOAD_COLUMNS: tuple[str, ...] = ("use_snip", "qc_fail_reasons")
+SNIP_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + SNIP_QC_PAYLOAD_COLUMNS)
 
 # reason name -> source flag column. MVP only (see module docstring).
 SNIP_QC_EXCLUSION_REASONS: dict[str, str] = {
@@ -55,10 +55,10 @@ def validate_snip_qc(
         scope_label=label,
     )
 
-    missing = [c for c in SNIP_QC_REQUIRED_COLUMNS if c not in df.columns]
+    missing = [c for c in SNIP_QC_TABLE_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(
-            f"{label}: missing required column(s): {', '.join(missing)}. Expected {SNIP_QC_REQUIRED_COLUMNS}."
+            f"{label}: missing required column(s): {', '.join(missing)}. Expected {SNIP_QC_TABLE_COLUMNS}."
         )
 
     if df["use_snip"].isna().any():

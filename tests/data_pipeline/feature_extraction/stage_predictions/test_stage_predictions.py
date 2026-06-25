@@ -8,7 +8,7 @@ from data_pipeline.feature_extraction.stage_predictions.compute import (
     compute_stage_prediction_features,
 )
 from data_pipeline.feature_extraction.stage_predictions.contract import (
-    STAGE_PREDICTION_FEATURES_REQUIRED_COLUMNS,
+    STAGE_PREDICTION_TABLE_COLUMNS,
     validate_stage_prediction_features,
 )
 from tests.data_pipeline.feature_extraction._feature_fixtures import make_inputs, make_plate_metadata
@@ -18,7 +18,7 @@ def test_compute_kimmel_formula_and_validates():
     snip, _, inv, reg = make_inputs()
     plate = make_plate_metadata()
     df = compute_stage_prediction_features(snip, inv, plate)
-    assert list(df.columns) == STAGE_PREDICTION_FEATURES_REQUIRED_COLUMNS
+    assert list(df.columns) == STAGE_PREDICTION_TABLE_COLUMNS
     # t=0 -> elapsed 0 -> predicted == start_age_hpf (11.0).
     first = df.sort_values("time_index").iloc[0]
     assert abs(first["predicted_stage_hpf"] - 11.0) < 1e-9

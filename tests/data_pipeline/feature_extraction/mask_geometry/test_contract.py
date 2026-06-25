@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from data_pipeline.feature_extraction.mask_geometry.contract import (
-    MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS,
+    MASK_GEOMETRY_TABLE_COLUMNS,
     validate_mask_geometry_features,
 )
 from data_pipeline.shared.identifiers import (
@@ -48,7 +48,7 @@ def _valid_df(n=2):
                 "centroid_y_um": 5.0,
             }
         )
-    return pd.DataFrame(rows, columns=MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS)
+    return pd.DataFrame(rows, columns=MASK_GEOMETRY_TABLE_COLUMNS)
 
 
 def test_valid_df_passes():

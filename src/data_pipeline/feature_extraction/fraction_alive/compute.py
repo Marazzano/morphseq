@@ -18,9 +18,9 @@ import pandas as pd
 import skimage.io as io
 
 from data_pipeline.feature_extraction.fraction_alive._legacy_compute import compute_fraction_alive
-from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_ID_COLUMNS
+from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_SPINE_COLUMNS
 
-from .contract import FRACTION_ALIVE_FEATURES_REQUIRED_COLUMNS
+from .contract import FRACTION_ALIVE_TABLE_COLUMNS
 
 MISSING_VIA_FAIL = "fail"
 MISSING_VIA_NULL = "null"
@@ -88,8 +88,8 @@ def compute_fraction_alive_features(
                 embryo_mask, via_mask, snip_frame_shape=snip_frame_shape
             )
 
-        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_ID_COLUMNS}
+        row = {col: snip[col] for col in SNIP_FEATURE_TABLE_SPINE_COLUMNS}
         row["fraction_alive"] = fraction
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=FRACTION_ALIVE_FEATURES_REQUIRED_COLUMNS)
+    return pd.DataFrame(rows, columns=FRACTION_ALIVE_TABLE_COLUMNS)

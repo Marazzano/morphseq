@@ -17,7 +17,7 @@ from data_pipeline.feature_extraction.shared.feature_table_utils import (
 )
 from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
 
-from .contract import CURVATURE_FEATURES_REQUIRED_COLUMNS, _FEATURE_COLUMNS
+from .contract import CURVATURE_PAYLOAD_COLUMNS, CURVATURE_TABLE_COLUMNS
 
 
 def compute_curvature_for_mask(mask: np.ndarray, pixel_size_um: float) -> dict:
@@ -38,7 +38,7 @@ def compute_curvature_features(
         frame_masks_df,
         frame_inventory_df,
         per_mask_fn=compute_curvature_for_mask,
-        feature_columns=_FEATURE_COLUMNS,
-        output_columns=CURVATURE_FEATURES_REQUIRED_COLUMNS,
+        feature_columns=CURVATURE_PAYLOAD_COLUMNS,
+        output_columns=CURVATURE_TABLE_COLUMNS,
         mask_decoder=mask_decoder,
     )

@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_ID_COLUMNS
+from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_SPINE_COLUMNS
 from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
     validate_snip_grain_identity_columns,
 )
 
 # The minimum core features the consolidated table must carry (mask_geometry MVP). Curvature,
 # pose/kinematics, fraction_alive, and stage columns join in when their products are merged.
-_CORE_FEATURE_COLUMNS: tuple[str, ...] = (
+CONSOLIDATED_FEATURES_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "area_um2",
     "perimeter_um",
     "length_um",
@@ -26,7 +26,7 @@ _CORE_FEATURE_COLUMNS: tuple[str, ...] = (
     "centroid_y_um",
 )
 
-CONSOLIDATED_FEATURES_REQUIRED_COLUMNS: list[str] = list(SNIP_FEATURE_TABLE_ID_COLUMNS + _CORE_FEATURE_COLUMNS)
+CONSOLIDATED_FEATURES_TABLE_COLUMNS: list[str] = list(SNIP_FEATURE_TABLE_SPINE_COLUMNS + CONSOLIDATED_FEATURES_PAYLOAD_COLUMNS)
 
 
 def validate_consolidated_features(
@@ -44,9 +44,9 @@ def validate_consolidated_features(
         check_sources=check_sources,
         scope_label=scope_label,
     )
-    missing = [c for c in CONSOLIDATED_FEATURES_REQUIRED_COLUMNS if c not in df.columns]
+    missing = [c for c in CONSOLIDATED_FEATURES_TABLE_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(
             f"{scope_label}: missing required column(s): {', '.join(missing)}. "
-            f"Core consolidated columns are {CONSOLIDATED_FEATURES_REQUIRED_COLUMNS}."
+            f"Core consolidated columns are {CONSOLIDATED_FEATURES_TABLE_COLUMNS}."
         )

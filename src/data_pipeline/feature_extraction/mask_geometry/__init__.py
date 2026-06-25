@@ -6,12 +6,12 @@ Public surface: the contract (required columns + validator), the compute functio
 
 from .compute import compute_mask_geometry_features, compute_mask_geometry_for_mask
 from .contract import (
-    MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS,
+    MASK_GEOMETRY_TABLE_COLUMNS,
     validate_mask_geometry_features,
 )
 
 __all__ = [
-    "MASK_GEOMETRY_FEATURES_REQUIRED_COLUMNS",
+    "MASK_GEOMETRY_TABLE_COLUMNS",
     "validate_mask_geometry_features",
     "compute_mask_geometry_features",
     "compute_mask_geometry_for_mask",

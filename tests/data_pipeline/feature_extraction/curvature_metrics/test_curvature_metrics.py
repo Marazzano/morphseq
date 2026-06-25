@@ -6,7 +6,7 @@ import pandas as pd
 
 from data_pipeline.feature_extraction.curvature_metrics.compute import compute_curvature_features
 from data_pipeline.feature_extraction.curvature_metrics.contract import (
-    CURVATURE_FEATURES_REQUIRED_COLUMNS,
+    CURVATURE_TABLE_COLUMNS,
     validate_curvature_features,
 )
 from tests.data_pipeline.feature_extraction._feature_fixtures import make_inputs
@@ -16,7 +16,7 @@ def test_compute_one_row_per_snip_and_validates():
     snip, masks, inv, reg = make_inputs()
     df = compute_curvature_features(snip, masks, inv)
     assert len(df) == len(snip)
-    assert list(df.columns) == CURVATURE_FEATURES_REQUIRED_COLUMNS
+    assert list(df.columns) == CURVATURE_TABLE_COLUMNS
     validate_curvature_features(df, physical_embryo_registry_df=reg, check_sources=True)
 
 

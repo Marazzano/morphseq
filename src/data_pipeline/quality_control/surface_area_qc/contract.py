@@ -15,9 +15,9 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
     validate_snip_grain_identity_columns,
 )
 
-_QC_FLAG_COLUMNS: tuple[str, ...] = ("sa_outlier_flag",)
+SURFACE_AREA_QC_PAYLOAD_COLUMNS: tuple[str, ...] = ("sa_outlier_flag",)
 
-SURFACE_AREA_QC_REQUIRED_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + _QC_FLAG_COLUMNS)
+SURFACE_AREA_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + SURFACE_AREA_QC_PAYLOAD_COLUMNS)
 
 
 def validate_surface_area_qc(
@@ -38,14 +38,14 @@ def validate_surface_area_qc(
     )
 
     # 2. QC flag columns — present, non-null, boolean dtype.
-    missing = [c for c in SURFACE_AREA_QC_REQUIRED_COLUMNS if c not in df.columns]
+    missing = [c for c in SURFACE_AREA_QC_TABLE_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(
             f"{scope_label}: missing required column(s): {', '.join(missing)}. "
-            f"Expected {SURFACE_AREA_QC_REQUIRED_COLUMNS}."
+            f"Expected {SURFACE_AREA_QC_TABLE_COLUMNS}."
         )
 
-    for col in _QC_FLAG_COLUMNS:
+    for col in SURFACE_AREA_QC_PAYLOAD_COLUMNS:
         if df[col].isna().any():
             bad = df.loc[df[col].isna(), "snip_id"].head(5).tolist()
             raise ValueError(

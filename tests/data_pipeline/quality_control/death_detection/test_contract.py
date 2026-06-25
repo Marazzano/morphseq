@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 
 from data_pipeline.quality_control.death_detection.contract import (
-    DEATH_DETECTION_QC_REQUIRED_COLUMNS,
-    DEATH_EVENT_REQUIRED_COLUMNS,
+    DEATH_DETECTION_QC_TABLE_COLUMNS,
+    DEATH_EVENT_TABLE_COLUMNS,
     validate_death_detection_qc,
     validate_death_event,
 )
@@ -41,7 +41,7 @@ def _qc_df():
                 "persistence_dead_flag": True,
             }
         ],
-        columns=DEATH_DETECTION_QC_REQUIRED_COLUMNS,
+        columns=DEATH_DETECTION_QC_TABLE_COLUMNS,
     )
     for f in ("viability_dead_flag", "persistence_dead_flag"):
         df[f] = df[f].astype(bool)
@@ -59,7 +59,7 @@ def _event_df():
                 "death_event_stage_hpf": 27.0,
             }
         ],
-        columns=DEATH_EVENT_REQUIRED_COLUMNS,
+        columns=DEATH_EVENT_TABLE_COLUMNS,
     )
 
 
@@ -93,5 +93,5 @@ def test_event_null_annotation_fails():
 
 
 def test_event_spine_has_no_embryo_id():
-    assert "embryo_id" not in DEATH_EVENT_REQUIRED_COLUMNS
-    assert "snip_id" not in DEATH_EVENT_REQUIRED_COLUMNS
+    assert "embryo_id" not in DEATH_EVENT_TABLE_COLUMNS
+    assert "snip_id" not in DEATH_EVENT_TABLE_COLUMNS

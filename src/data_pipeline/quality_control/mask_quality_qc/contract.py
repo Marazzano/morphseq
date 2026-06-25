@@ -14,13 +14,13 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
     validate_snip_grain_identity_columns,
 )
 
-_QC_FLAG_COLUMNS: tuple[str, ...] = (
+MASK_QUALITY_QC_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "edge_flag",
     "discontinuous_mask_flag",
     "overlapping_mask_flag",
 )
 
-MASK_QUALITY_QC_REQUIRED_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + _QC_FLAG_COLUMNS)
+MASK_QUALITY_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + MASK_QUALITY_QC_PAYLOAD_COLUMNS)
 
 
 def validate_mask_quality_qc(
@@ -39,14 +39,14 @@ def validate_mask_quality_qc(
         scope_label=scope_label,
     )
 
-    missing = [c for c in MASK_QUALITY_QC_REQUIRED_COLUMNS if c not in df.columns]
+    missing = [c for c in MASK_QUALITY_QC_TABLE_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(
             f"{scope_label}: missing required column(s): {', '.join(missing)}. "
-            f"Expected {MASK_QUALITY_QC_REQUIRED_COLUMNS}."
+            f"Expected {MASK_QUALITY_QC_TABLE_COLUMNS}."
         )
 
-    for col in _QC_FLAG_COLUMNS:
+    for col in MASK_QUALITY_QC_PAYLOAD_COLUMNS:
         if df[col].isna().any():
             bad = df.loc[df[col].isna(), "snip_id"].head(5).tolist()
             raise ValueError(

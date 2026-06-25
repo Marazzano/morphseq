@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from data_pipeline.quality_control.mask_quality_qc.contract import (
-    MASK_QUALITY_QC_REQUIRED_COLUMNS,
+    MASK_QUALITY_QC_TABLE_COLUMNS,
     validate_mask_quality_qc,
 )
 from data_pipeline.shared.identifiers import (
@@ -42,7 +42,7 @@ def _valid_df(n=2):
                 "overlapping_mask_flag": False,
             }
         )
-    df = pd.DataFrame(rows, columns=MASK_QUALITY_QC_REQUIRED_COLUMNS)
+    df = pd.DataFrame(rows, columns=MASK_QUALITY_QC_TABLE_COLUMNS)
     for f in _FLAGS:
         df[f] = df[f].astype(bool)
     return df
@@ -77,4 +77,4 @@ def test_non_boolean_flag_fails():
 
 
 def test_no_composite_flag_in_contract():
-    assert "mask_quality_flag" not in MASK_QUALITY_QC_REQUIRED_COLUMNS
+    assert "mask_quality_flag" not in MASK_QUALITY_QC_TABLE_COLUMNS

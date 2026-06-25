@@ -21,12 +21,12 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
 )
 
 # ── per-snip death flag table ────────────────────────────────────────────────────────────────
-_DEATH_FLAG_COLUMNS: tuple[str, ...] = ("viability_dead_flag", "persistence_dead_flag")
-DEATH_DETECTION_QC_REQUIRED_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + _DEATH_FLAG_COLUMNS)
+DEATH_DETECTION_QC_PAYLOAD_COLUMNS: tuple[str, ...] = ("viability_dead_flag", "persistence_dead_flag")
+DEATH_DETECTION_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + DEATH_DETECTION_QC_PAYLOAD_COLUMNS)
 
 # ── per-physical_embryo death_event table ──────────────────────────────────────────────────────
-_DEATH_EVENT_COLUMNS: tuple[str, ...] = ("death_event_time_index", "death_event_stage_hpf")
-DEATH_EVENT_REQUIRED_COLUMNS: list[str] = list(PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + _DEATH_EVENT_COLUMNS)
+DEATH_EVENT_PAYLOAD_COLUMNS: tuple[str, ...] = ("death_event_time_index", "death_event_stage_hpf")
+DEATH_EVENT_TABLE_COLUMNS: list[str] = list(PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + DEATH_EVENT_PAYLOAD_COLUMNS)
 
 
 def validate_death_detection_qc(
@@ -44,8 +44,8 @@ def validate_death_detection_qc(
         check_sources=check_sources,
         scope_label=scope_label,
     )
-    _require_columns(df, DEATH_DETECTION_QC_REQUIRED_COLUMNS, scope_label)
-    for col in _DEATH_FLAG_COLUMNS:
+    _require_columns(df, DEATH_DETECTION_QC_TABLE_COLUMNS, scope_label)
+    for col in DEATH_DETECTION_QC_PAYLOAD_COLUMNS:
         _require_non_null_bool(df, col, scope_label)
 
 
@@ -64,13 +64,13 @@ def validate_death_event(
         check_sources=check_sources,
         scope_label=scope_label,
     )
-    _require_columns(df, DEATH_EVENT_REQUIRED_COLUMNS, scope_label)
+    _require_columns(df, DEATH_EVENT_TABLE_COLUMNS, scope_label)
     if "embryo_id" in df.columns:
         raise ValueError(
             f"{scope_label}: death_event is an animal-level table and must NOT carry embryo_id "
             "(that would over-specify it to a channel the animal does not have)."
         )
-    for col in _DEATH_EVENT_COLUMNS:
+    for col in DEATH_EVENT_PAYLOAD_COLUMNS:
         values = pd.to_numeric(df[col], errors="coerce")
         if values.isna().any():
             raise ValueError(f"{scope_label}: {col!r} has null/non-numeric value(s).")
