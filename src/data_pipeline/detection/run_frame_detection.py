@@ -43,11 +43,29 @@ def _resolve_backend(backend: str):
     return BACKENDS[key]
 
 
+def _projection_bf_rows(frame_inventory: pd.DataFrame) -> pd.DataFrame:
+    """Select the BF *projection* frames detection runs on — never a raw z-stack plane.
+
+    Detection / SAM / tracking consume the single focus-stacked BF frame per timepoint, not the
+    individual z_stack planes that may also live in the inventory (a z_stack plane is a distinct
+    materialized pixel file with its own row). Filtering here keeps a plane from ever reaching a
+    detector that assumes one projected frame per timepoint.
+
+    Back-compat: an inventory written before z_stack existed has no ``image_product_type`` column;
+    every BF row in that world IS a projection, so the column-absent case keeps all BF rows.
+    """
+    bf = frame_inventory[frame_inventory["channel_id"].astype(str) == REQUIRED_CHANNEL]
+    if "image_product_type" not in bf.columns:
+        return bf
+    return bf[bf["image_product_type"].astype(str) == "projection"]
+
+
 def _identity_row_for(inv_row: pd.Series, image_id: str) -> dict:
     """Build the shared frame-identity header for one inventory frame.
 
-    ``z_index`` is synthesized as NA (not a frame_inventory atom on the BF / projection MVP).
-    ``well_id`` is derived from atoms (the inventory carries atoms; ids are derived).
+    ``z_index`` is NA because detection only ever runs on projection rows (see
+    ``_projection_bf_rows``), and a projection frame's z_index IS NA — this is the true value, not a
+    lossy synthesis. ``well_id`` is derived from atoms (the inventory carries atoms; ids are derived).
     """
     well_id = derive_well_id(inv_row["experiment_id"], inv_row["well_index"])
     return {
@@ -83,8 +101,8 @@ def run_frame_detection_df(
     inv = reference_frame_inventory.copy()
     inv["image_id"] = frame_inventory_image_ids(inv, scope_label="frame_detection").astype(str)
 
-    # Detection runs on the segmentation-timeline channel only.
-    bf = inv[inv["channel_id"].astype(str) == REQUIRED_CHANNEL]
+    # Detection runs on the BF projection frames only — never a raw z_stack plane.
+    bf = _projection_bf_rows(inv)
 
     rows: list[dict] = []
     for _, inv_row in bf.iterrows():

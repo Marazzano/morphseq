@@ -11,6 +11,7 @@ import pytest
 import data_pipeline.detection.backends.groundingdino.run_groundingdino_detection as gd
 from data_pipeline.detection.kept_frame_detections import read_frame_detections_csv
 from data_pipeline.detection.run_frame_detection import (
+    _projection_bf_rows,
     run_frame_detection,
     run_frame_detection_df,
 )
@@ -37,6 +38,54 @@ def _make_inventory(n: int, channel: str = "BF") -> pd.DataFrame:
         "image_width_px": WIDTH,
         "image_height_px": HEIGHT,
     } for t in range(n)])
+
+
+def _projection_row(t: int) -> dict:
+    row = _make_inventory(1).iloc[0].to_dict()
+    row["time_index"] = t
+    row["source_image_path"] = f"images/{WELL_ID}_BF_t{t:04d}.png"
+    row["z_index"] = pd.NA
+    row["image_product_type"] = "projection"
+    return row
+
+
+def _z_stack_row(t: int, z: int) -> dict:
+    row = _make_inventory(1).iloc[0].to_dict()
+    row["time_index"] = t
+    row["source_image_path"] = f"images/{WELL_ID}_BF_z{z:04d}_t{t:04d}.png"
+    row["z_index"] = z
+    row["image_product_type"] = "z_stack"
+    return row
+
+
+def test_projection_bf_rows_excludes_z_stack_planes():
+    # A mixed inventory (one projection + two z planes for the same timepoint) must yield only the
+    # projection row — a z plane must never reach a detector.
+    inv = pd.DataFrame([_projection_row(0), _z_stack_row(0, 0), _z_stack_row(0, 1)])
+    selected = _projection_bf_rows(inv)
+    assert len(selected) == 1
+    assert set(selected["image_product_type"]) == {"projection"}
+
+
+def test_projection_bf_rows_keeps_all_bf_when_column_absent():
+    # Back-compat: an inventory written before z_stack existed has no image_product_type column;
+    # every BF row in that world IS a projection, so all BF rows are kept.
+    inv = _make_inventory(2)  # no image_product_type column
+    assert "image_product_type" not in inv.columns
+    selected = _projection_bf_rows(inv)
+    assert len(selected) == 2
+
+
+def test_router_skips_z_stack_planes(monkeypatch):
+    _stub_inference(monkeypatch)
+    # Inventory carries the projection frame (t0000) AND its z planes; detection must run only on
+    # the projection frame, so the flag-not-drop result is identical to the projection-only inventory.
+    inv = pd.DataFrame([_projection_row(0), _z_stack_row(0, 0), _z_stack_row(0, 1)])
+    df = run_frame_detection_df(
+        inv, backend="groundingdino", model=object(), detector_model_id="SwinT_OGC",
+    )
+    assert set(df["image_id"]) == {_image_id(0)}
+    assert df["is_kept"].sum() == 1
 
 
 def _stub_inference(monkeypatch):

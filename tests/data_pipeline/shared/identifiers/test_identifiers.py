@@ -22,6 +22,7 @@ from data_pipeline.shared.identifiers import (
     parse_embryo_id,
     parse_embryo_local_track_id,
     parse_image_id,
+    parse_image_id_with_z_index,
     parse_mask_id,
     parse_physical_embryo_id,
     parse_snip_id,
@@ -203,6 +204,31 @@ def test_parse_image_id_rejects_malformed():
 def test_parse_image_id_rejects_non_canonical_channel():
     with pytest.raises(ValueError):
         parse_image_id(f"{WELL}_Cy5_t0007")  # Cy5 not in VALID_CHANNEL_NAMES
+
+
+def test_parse_image_id_rejects_z_stack_id_loudly():
+    # A z-stack id carries a plane index parse_image_id's 3-tuple cannot hold; it must refuse and
+    # name the z-aware sibling rather than silently dropping z.
+    z_image = build_image_id(WELL, CHANNEL, T, z_index=3)
+    with pytest.raises(ValueError, match="parse_image_id_with_z_index"):
+        parse_image_id(z_image)
+
+
+# ── parse_image_id_with_z_index ───────────────────────────────────────────────
+
+
+def test_parse_image_id_with_z_index_projection_returns_none_z():
+    assert parse_image_id_with_z_index(IMAGE) == (WELL, CHANNEL, T, None)
+
+
+def test_parse_image_id_with_z_index_round_trips_z_stack():
+    z_image = build_image_id(WELL, CHANNEL, T, z_index=3)
+    assert parse_image_id_with_z_index(z_image) == (WELL, CHANNEL, T, 3)
+
+
+def test_parse_image_id_with_z_index_rejects_non_canonical_channel():
+    with pytest.raises(ValueError):
+        parse_image_id_with_z_index(f"{WELL}_Cy5_z0003_t0007")
 
 
 # ── mask_id and track_id ──────────────────────────────────────────────────────

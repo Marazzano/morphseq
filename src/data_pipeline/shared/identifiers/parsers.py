@@ -20,9 +20,13 @@ from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
 
 _LOCAL_ID_RE = re.compile(r"(\d+)$")
 
-# image_id grammar: {well_id}_{channel_id}_t{time_index:04d+}
+# image_id grammar (projection): {well_id}_{channel_id}_t{time_index:04d+}
 # channel_id has no underscores (canonical constraint); suffix is _t followed by digits.
 _IMAGE_ID_RE = re.compile(r"^(.+)_([A-Za-z0-9]+)_t(\d{4,})$")
+
+# image_id grammar (z_stack): {well_id}_{channel_id}_z{z_index:04d+}_t{time_index:04d+}
+# A z-stack image_id names one materialized Z plane; the _z token disambiguates it from projection.
+_Z_STACK_IMAGE_ID_RE = re.compile(r"^(.+)_([A-Za-z0-9]+)_z(\d{4,})_t(\d{4,})$")
 
 # physical_embryo_id grammar: {well_id}_e{local_embryo_index:02d+}
 # The _e token followed by digits is unambiguous because well_index never ends in _e\d+.
@@ -96,12 +100,21 @@ def track_index_to_embryo_index(raw_track_index: int) -> int:
 
 
 def parse_image_id(image_id: str) -> tuple[str, str, int]:
-    """Decompose image_id into (well_id, channel_id, time_index).
+    """Decompose a PROJECTION image_id into (well_id, channel_id, time_index).
 
     Validates that channel_id is in ``VALID_CHANNEL_NAMES``. Fails loud on malformed input.
     Example: ``"20250912_B01_BF_t0007"`` → ``("20250912_B01", "BF", 7)``
+
+    A z-stack image_id (``..._z{z:04d}_t{t:04d}``) is REJECTED loud rather than silently dropping
+    its ``z_index`` — use ``parse_image_id_with_z_index`` for ids that may carry a plane index.
     """
     text = str(image_id).strip()
+    if _Z_STACK_IMAGE_ID_RE.match(text):
+        raise ValueError(
+            f"parse_image_id: {image_id!r} is a z-stack image_id (carries a _z plane index). "
+            "parse_image_id returns a 3-tuple and would silently drop the z_index — call "
+            "parse_image_id_with_z_index instead."
+        )
     match = _IMAGE_ID_RE.match(text)
     if not match:
         raise ValueError(
@@ -119,6 +132,35 @@ def parse_image_id(image_id: str) -> tuple[str, str, int]:
             "A canonical image_id must embed a canonical channel_id."
         )
     return well_id, channel_id, time_index
+
+
+def parse_image_id_with_z_index(image_id: str) -> tuple[str, str, int, int | None]:
+    """Decompose any image_id into (well_id, channel_id, time_index, z_index).
+
+    The z-aware inverse of ``build_image_id``: it accepts BOTH grammars and never drops the plane
+    index. ``z_index`` is ``None`` for a projection id and the integer plane for a z-stack id.
+    Validates that channel_id is in ``VALID_CHANNEL_NAMES``. Fails loud on malformed input.
+
+    Examples:
+        ``"20250912_B01_BF_t0007"``        → ``("20250912_B01", "BF", 7, None)``
+        ``"20250912_B01_BF_z0003_t0007"``  → ``("20250912_B01", "BF", 7, 3)``
+    """
+    text = str(image_id).strip()
+    z_match = _Z_STACK_IMAGE_ID_RE.match(text)
+    if z_match:
+        well_id = z_match.group(1)
+        channel_id = z_match.group(2)
+        z_index = int(z_match.group(3))
+        time_index = int(z_match.group(4))
+        if channel_id not in VALID_CHANNEL_NAMES:
+            raise ValueError(
+                f"parse_image_id_with_z_index: image_id {image_id!r} contains channel_id "
+                f"{channel_id!r} which is not in the canonical vocabulary "
+                f"{sorted(VALID_CHANNEL_NAMES)}. A canonical image_id must embed a canonical channel_id."
+            )
+        return well_id, channel_id, time_index, z_index
+    well_id, channel_id, time_index = parse_image_id(text)
+    return well_id, channel_id, time_index, None
 
 
 def parse_mask_id(mask_id: str) -> tuple[str, int | None, bool]:

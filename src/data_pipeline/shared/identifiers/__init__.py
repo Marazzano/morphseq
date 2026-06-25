@@ -27,6 +27,7 @@ from .parsers import normalize_embryo_local_track_id  # deprecated alias for par
 from .parsers import parse_embryo_id
 from .parsers import parse_embryo_local_track_id
 from .parsers import parse_image_id
+from .parsers import parse_image_id_with_z_index
 from .parsers import parse_mask_id
 from .parsers import parse_physical_embryo_id
 from .parsers import parse_snip_id
@@ -54,6 +55,7 @@ __all__ = [
     "parse_embryo_id",
     "parse_embryo_local_track_id",
     "parse_image_id",
+    "parse_image_id_with_z_index",
     "parse_mask_id",
     "parse_physical_embryo_id",
     "parse_snip_id",
