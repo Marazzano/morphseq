@@ -6,7 +6,84 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-24 22:53
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (frame_inventory path grouping)
+
+**What shipped (commit `6e879632`):** grouped the product-shard frame_inventory lineage under
+`frame_inventory/` so the on-disk folder names tell the build story. Pure path-contract change.
+
+| Step key (UNCHANGED) | folder before | folder now |
+|---|---|---|
+| `resolved_product_plans` | `resolved_product_plans/` | `frame_inventory/resolved_product_plans/` |
+| `frame_inventory_products` | `frame_inventory_products/` | `frame_inventory/product_inventories/` |
+| `discovered_product_shards` | `discovered_product_shards/` | `frame_inventory/available_products/` |
+
+Plus the availability manifest renamed at the contract level:
+`{well_id}_available_products.csv` (was `…_discovered_product_shards.csv`); manifest columns
+`product_inventory_{csv,validated}` (were `frame_inventory_product_{csv,validated}`). Canonical
+merged inventory stays at `frame_inventory/{experiment_id}_frame_inventory.csv` (shared
+`PATH_MODE_MERGED` convention — deliberately NOT moved to a `merged/` subdir).
+
+**Scope discipline:** only `PIPELINE_STEPS` `product_dir` values + the manifest filename/columns +
+path tests changed. Step keys, function/verb names (`discover_product_shards_for_well`,
+`frame_inventory_product*` CLI args), and rule names are intentionally unchanged — the
+**code-vocabulary rename is deferred** to the behavior commit (prefer `list_available_products_for_well`,
+`product_inventories`, `product_inventory_csv` there). **Ingest-stage cleanup is deferred** (future:
+group flat acquisition CSVs into `metadata/`, `acquisition_inventory/`, `well_identities/` — NOT
+one-folder-per-CSV; needs per-artifact `product_dir` since `ingest_scope_metadata` emits two families).
+
+**Verified:** 193 tests pass (`tests/data_pipeline/{pipeline_orchestrator,image_materialization}`,
+importlib). Resolved-path probe confirms the target tree and that executor-write / discovery-scan /
+validate-input dirs all move together through the registry (no hardcoded path can drift).
+
+**Next concrete action:** decide Commit 2 (ingest-stage folder grouping) separately. Do NOT start it
+implicitly. The audit's gap #1/#2 fixes (detection projection filter, `parse_image_id_with_z_index`)
+remain uncommitted in the working tree as a distinct change — see the snapshot below.
+
+**Open decisions:** Commit 2 ingest layout (per-artifact `product_dir` mechanism); when to do the
+deferred code-vocabulary rename.
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-25 (z-stack audit gap closures, uncommitted)
+
+**What shipped:** closed the two remaining z-stack wire-through gaps the audit surfaced — both were
+spec deliverables that were never landed in the Commit-0–5 run.
+
+1. **Detection consumer safety (spec §10 / plan A4b).** `detection/run_frame_detection.py` now
+   selects frames via a named `_projection_bf_rows(frame_inventory)` helper:
+   `channel_id == "BF" AND image_product_type == "projection"`, with a column-absent back-compat
+   branch (pre-z_stack inventories keep all BF rows). Previously the router filtered on `channel_id`
+   alone, so any assembled inventory carrying a `BF__z_stack` shard would have pushed every Z plane
+   into SAM/detection/tracking. Tests: mixed inventory → projection-only; column-absent → all BF;
+   router skips planes.
+2. **Z-aware parser (spec §1 identity layer).** `shared/identifiers/parsers.py` gains
+   `parse_image_id_with_z_index` (the z-aware inverse of `build_image_id`; `z_index=None` for
+   projection, integer plane for z_stack), exported from the package `__init__`. `parse_image_id`
+   now **rejects** a z-stack id loudly and names the sibling, instead of mis-parsing the `_z` token
+   as a channel — closing the "silent z drop" hole. All existing `parse_image_id` callers
+   (`build_embryo_id`, `build_snip_id`, snip_processing, snip_identity_contract) operate on
+   projection frames, so the new guard adds protection without regression.
+
+**Verified:** `PYTHONPATH=src "$PYTHON" -m pytest` (importlib) over
+`tests/data_pipeline/{detection,image_materialization,shared}/`,
+`tests/data_pipeline/metadata_ingest/test_frame_inventory.py`,
+`tests/data_pipeline/segmentation/physical_embryo_registry/`,
+`tests/data_pipeline/snip_processing/` → all green (228 + 46 + 68 across runs). No real-data run
+needed: both edits are pure inventory/identity logic with mocked-backend coverage.
+
+**What's broken/half-done:** nothing new. Prior note still holds — the real additive smoke
+overwrote the B01 canonical smoke inventory; rerun the desired product overlay before using B01
+canonical outputs downstream.
+
+**Next concrete action:** unchanged — choose the next scale gate (recommended two-well additive
+smoke `20250912_B01`/`20250912_C01`, `smoke_max_time_indices: 1` through `front_half`), then decide
+on a committed smoke overlay vs. ad hoc operator proofs.
+
+**Open decisions:** none.
+
+---
+
+## ⭐ EARLIER SNAPSHOT — 2026-06-24 22:53
 
 **What shipped:** Commit 5 is complete and committed (`5246407b`). Native product materialization now
 feeds canonical `frame_inventory` through:
