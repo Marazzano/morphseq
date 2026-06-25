@@ -203,6 +203,48 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # Resolved per-product execution commitments. The product key is a filename-level token
+    # supplied by the caller; no new path mode is needed.
+    "resolved_product_plans": {
+        "stage": "acquisition",
+        "product_dir": "resolved_product_plans",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "json": {
+                PATH_MODE_PER_WELL: "{product_key}_resolved_product_plan.json",
+            },
+        },
+    },
+
+    # Product-grain frame-inventory shards. These are not the canonical per-well frame_inventory;
+    # assembly writes the canonical shard at the existing frame_inventory path.
+    "frame_inventory_products": {
+        "stage": "acquisition",
+        "product_dir": "frame_inventory_products",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "inventory": {
+                PATH_MODE_PER_WELL: "{well_id}_{product_key}_frame_inventory.csv",
+            },
+        },
+    },
+
+    # Per-well manifest of validated product shards that should assemble into the canonical
+    # frame_inventory shard for that well.
+    "discovered_product_shards": {
+        "stage": "acquisition",
+        "product_dir": "discovered_product_shards",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "csv": {
+                PATH_MODE_PER_WELL: "{well_id}_discovered_product_shards.csv",
+            },
+        },
+    },
+
     # ── POST-FAN — frame inventory joins the spine ────────────────────────────
     # "frame_inventory" is the product contract (a noun), not a Snakemake action. Several rules
     # touch it: materialize_well WRITES the per-well shard, validate_frame_inventory_for_well

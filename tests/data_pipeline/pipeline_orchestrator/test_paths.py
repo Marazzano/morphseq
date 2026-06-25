@@ -40,6 +40,7 @@ _FORBIDDEN_STAGE_NAMES = frozenset({
 ROOT = Path("/ROOT")
 EXP = "20250912"
 WELL = "20250912_B01"
+PRODUCT_KEY = "BF__z_stack"
 
 
 class TestResolvedArtifactPaths:
@@ -84,6 +85,47 @@ class TestResolvedArtifactPaths:
                              path_mode="per_well", well_id=WELL) == \
             ROOT / "acquisition" / EXP / "materialized_images" / PER_WELL_DIRNAME / WELL / f"{WELL}.materialize_well.done"
 
+    def test_resolved_product_plan_uses_product_key_filename(self):
+        assert artifact_path(
+            ROOT,
+            "resolved_product_plans",
+            "json",
+            EXP,
+            path_mode="per_well",
+            well_id=WELL,
+            format_vars={"product_key": PRODUCT_KEY},
+        ) == (
+            ROOT / "acquisition" / EXP / "resolved_product_plans" / PER_WELL_DIRNAME
+            / WELL / f"{PRODUCT_KEY}_resolved_product_plan.json"
+        )
+
+    def test_frame_inventory_product_shard_uses_well_and_product_key_filename(self):
+        assert artifact_path(
+            ROOT,
+            "frame_inventory_products",
+            "inventory",
+            EXP,
+            path_mode="per_well",
+            well_id=WELL,
+            format_vars={"product_key": PRODUCT_KEY},
+        ) == (
+            ROOT / "acquisition" / EXP / "frame_inventory_products" / PER_WELL_DIRNAME
+            / WELL / f"{WELL}_{PRODUCT_KEY}_frame_inventory.csv"
+        )
+
+    def test_discovered_product_shards_names_the_well(self):
+        assert artifact_path(
+            ROOT,
+            "discovered_product_shards",
+            "csv",
+            EXP,
+            path_mode="per_well",
+            well_id=WELL,
+        ) == (
+            ROOT / "acquisition" / EXP / "discovered_product_shards" / PER_WELL_DIRNAME
+            / WELL / f"{WELL}_discovered_product_shards.csv"
+        )
+
     def test_frame_detections_per_well_names_the_well(self):
         assert artifact_path(ROOT, "frame_detections", "frame_detections", EXP,
                              path_mode="per_well", well_id=WELL) == \
@@ -102,13 +144,13 @@ class TestResolvedArtifactPaths:
         assert artifact_path(ROOT, "frame_masks", "frame_masks", EXP, path_mode="merged") == \
             ROOT / "object_extraction" / EXP / "frame_masks" / f"{EXP}_frame_masks.csv"
 
-    def test_auxiliary_masks_manifest_lands_under_object_extraction(self):
-        assert artifact_path(ROOT, "auxiliary_masks", "manifest", EXP, path_mode="merged") == \
-            ROOT / "object_extraction" / EXP / "auxiliary_masks" / f"{EXP}_auxiliary_masks.csv"
+    def test_snip_auxiliary_masks_manifest_lands_under_object_extraction(self):
+        assert artifact_path(ROOT, "snip_auxiliary_masks", "manifest", EXP, path_mode="merged") == \
+            ROOT / "object_extraction" / EXP / "snip_auxiliary_masks" / f"{EXP}_snip_auxiliary_masks.csv"
 
-    def test_auxiliary_masks_per_well_manifest_lands_under_per_well(self):
-        assert artifact_path(ROOT, "auxiliary_masks", "manifest", EXP, path_mode="per_well", well_id=WELL) == \
-            ROOT / "object_extraction" / EXP / "auxiliary_masks" / PER_WELL_DIRNAME / WELL / f"{WELL}_auxiliary_masks.csv"
+    def test_snip_auxiliary_masks_per_well_manifest_lands_under_per_well(self):
+        assert artifact_path(ROOT, "snip_auxiliary_masks", "manifest", EXP, path_mode="per_well", well_id=WELL) == \
+            ROOT / "object_extraction" / EXP / "snip_auxiliary_masks" / PER_WELL_DIRNAME / WELL / f"{WELL}_snip_auxiliary_masks.csv"
 
     def test_prompt_seeds_sidecar_is_per_well_only(self):
         assert artifact_path(ROOT, "frame_masks", "prompt_seeds", EXP,
@@ -131,6 +173,26 @@ class TestDerivedSidecarPaths:
         assert validated_path(ROOT, "frame_inventory", "inventory", EXP,
                               path_mode="per_well", well_id=WELL) == \
             base.with_name(base.name + ".validated")
+
+    def test_validated_path_appends_suffix_to_product_frame_inventory_shard(self):
+        base = artifact_path(
+            ROOT,
+            "frame_inventory_products",
+            "inventory",
+            EXP,
+            path_mode="per_well",
+            well_id=WELL,
+            format_vars={"product_key": PRODUCT_KEY},
+        )
+        assert validated_path(
+            ROOT,
+            "frame_inventory_products",
+            "inventory",
+            EXP,
+            path_mode="per_well",
+            well_id=WELL,
+            format_vars={"product_key": PRODUCT_KEY},
+        ) == base.with_name(base.name + ".validated")
 
     def test_provenance_path_appends_suffix_to_artifact(self):
         base = artifact_path(ROOT, "map_positions_to_wells", "mapping", EXP)
@@ -235,6 +297,20 @@ class TestTemplateAndIdentityRules:
         assert "scope" in message
         assert "scope_metadata__{scope}.csv" in message
 
+    def test_missing_product_key_format_var_fails_loud(self):
+        with pytest.raises(ValueError) as excinfo:
+            artifact_path(
+                ROOT,
+                "resolved_product_plans",
+                "json",
+                EXP,
+                path_mode="per_well",
+                well_id=WELL,
+            )
+        message = str(excinfo.value)
+        assert "product_key" in message
+        assert "{product_key}_resolved_product_plan.json" in message
+
 
 class TestErrorPaths:
     """Unknown keys fail loudly."""
@@ -256,12 +332,15 @@ class TestRegistryIntrospection:
         assert "frame_inventory" in known_steps()
         assert "frame_detections" in known_steps()
         assert "frame_masks" in known_steps()
-        assert "auxiliary_masks" in known_steps()
+        assert "snip_auxiliary_masks" in known_steps()
         assert known_steps() == tuple(sorted(known_steps()))
         assert known_artifacts("frame_inventory") == ("inventory",)
+        assert known_artifacts("resolved_product_plans") == ("json",)
+        assert known_artifacts("frame_inventory_products") == ("inventory",)
+        assert known_artifacts("discovered_product_shards") == ("csv",)
         assert known_artifacts("frame_detections") == ("frame_detections",)
         assert known_artifacts("frame_masks") == ("frame_masks", "prompt_seeds")
-        assert known_artifacts("auxiliary_masks") == ("manifest",)
+        assert known_artifacts("snip_auxiliary_masks") == ("manifest",)
         assert known_artifacts("discover_wells") == ("wells",)
 
     def test_every_step_has_required_keys(self):
