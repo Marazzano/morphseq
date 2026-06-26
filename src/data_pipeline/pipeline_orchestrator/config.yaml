@@ -126,7 +126,7 @@ snip_frame_shape: &snip_frame_shape [576, 256]
 # then brings the mask home to artifact_shape. model_input_shape is transient and never persists.
 # NOTE: checkpoint filenames carried over from the old full-frame path — confirm/adjust per family.
 unet_snip:
-  models_root: "models/auxiliary_masks"
+  models_root: "models/segmentation"
   device: "cuda"
   models:
     via:

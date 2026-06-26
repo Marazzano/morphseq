@@ -39,8 +39,8 @@ rule build_snip_auxiliary_masks_for_well:
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
         )),
     params:
-        output_root=lambda wc: rule_step_dir(SNIP_AUX_STEP, wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=wc.well_id),
-        config_yaml=str(WORKFLOW_DIR / "config.yaml"),
+        output_root=str(DATA_ROOT),
+        config_yaml=str(CONFIG_YAML),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-auxiliary-masks \

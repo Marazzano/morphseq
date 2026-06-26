@@ -55,12 +55,12 @@ def _mask_output_path(
     # re-derived by splitting snip_id (that yielded the LOCAL slug B01 and broke the grain).
     return (
         output_dir
-        / experiment_id
+        / str(experiment_id)
         / "snip_auxiliary_masks"
         / "per_well"
-        / well_id
-        / physical_embryo_id
-        / snip_id
+        / str(well_id)
+        / str(physical_embryo_id)
+        / str(snip_id)
         / f"{auxiliary_mask_type}.{AUXILIARY_MASK_FORMAT}"
     )
 

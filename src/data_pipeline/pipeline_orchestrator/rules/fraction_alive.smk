@@ -56,7 +56,7 @@ rule build_fraction_alive_for_well:
         )),
     params:
         output_root=str(DATA_ROOT),
-        config_yaml=str(WORKFLOW_DIR / "config.yaml"),
+        config_yaml=str(CONFIG_YAML),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks fraction-alive \

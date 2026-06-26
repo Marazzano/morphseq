@@ -67,7 +67,7 @@ def run_snip_auxiliary_masks(
 
     resolved_inventory = _resolve_snip_paths(snip_inventory, output_root)
 
-    masks_dir = Path(output_csv).parent.parent  # contracts/ -> per-well step root
+    masks_dir = output_root / "object_extraction"
     df = run_unet_for_snip_inventory(
         resolved_inventory,
         predictors,
