@@ -13,10 +13,9 @@ what we compute transiently**.
 ## 🪨 The one-sentence answer
 
 The z_stack PNGs (already specced) are the only durable pixel artifact we need; we add **one small
-z-depth provenance extension** to the acquisition inventory plus **one materialization-derived sidecar
-— the focus-stacker's per-pixel chosen-Z map (`focus_index_map`), which it already computes during the
-FF projection pass and currently discards** — so slices can be chosen later; and **focus QC and
-motion-blur QC recompute
+z-depth provenance extension** to the acquisition inventory plus **the focus-stacker's per-pixel
+chosen-Z map (`focus_index_map`) — projection construction provenance it already computes and
+currently discards** — so slices can be chosen later; and **focus QC and motion-blur QC recompute
 their grids transiently from the inventory-addressed PNGs and persist the per-snip metric summary +
 flag**, plugging into the `snip_qc` hooks (`focus` reserved; `motion_blur` added).
 
@@ -171,10 +170,11 @@ written as a per-well shard. (See `mask_quality_qc/contract.py` and `entrypoint.
 discarded. Persisting `idx` beside the FF is the whole materialization-side change.
 
 ```text
-[MATERIALIZATION — one focus-stack call, FF + z_stack generated TOGETHER (MVP constraint)]
-   z_stack PNGs (per image_id, per Z)        ── primary pixels      ┐ same LoG_focus_stacker call
-   FF projection PNG (per image_id)          ── primary pixels      │ (idx is already computed there)
-   focus_index_map (per image_id pixel→Z)    ── DURABLE sidecar     ┘
+[MATERIALIZATION]
+   z_stack PNGs (per image_id, per Z)        ── primary pixels  (own independent leaf/read, as today)
+   PROJECTION job (one focus-stack call):
+     FF projection PNG (per image_id)        ── primary pixels      ┐ ONE LoG_focus_stacker call
+     focus_index_map (per image_id pixel→Z)  ── DURABLE provenance  ┘ (idx falls out of the same call)
         │
         │   …… segmentation boundary (frame_masks / snip_inventory) ……
         ▼
@@ -191,9 +191,10 @@ and computes its own grid in that same job). The ONE thing that is genuinely exp
 forever if not captured in the FF projection pass is the focus-stacker's `idx` — so that, and only
 that, is persisted. Grids stay transient *because the pixels they derive from are durable and inventory-addressable.*
 
-> **MVP constraint (LOCKED):** FF projection and z_stack must be materialized **together** (one
-> focus-stack pass), so the focus-index map is emitted in the same call that produces both. Do not
-> build a separate pass that re-reads the ND2 just to recover `idx`.
+> **MVP constraint (LOCKED):** the focus_index_map is emitted by the **projection** job's single
+> focus-stack call (the same call that produces the FF — `idx` and `ff` come out together). Do NOT
+> build a separate pass that re-reads the ND2 or re-runs the focus-stack just to recover `idx`.
+> (z_stack is unrelated here — it is its own independent leaf with its own read, as today.)
 
 > **Two DISTINCT QC modules** (not one): `focus_qc` (within-image sharpness / in-focus) and
 > `motion_blur_qc` (inter-slice motion blur, NCC). Each is its own per-well shard with its own flag.
@@ -275,18 +276,18 @@ so it does not emit a `*_flag` and does not gate `use_snip`.
 
 ---
 
-## Part D — Wiring into the DAG (no grid stage; just a materialization sidecar + ordinary QC)
+## Part D — Wiring into the DAG (no grid stage; projection construction-provenance + ordinary QC)
 
 Because there is **no persisted grid product**, the awkward "pre-seg, frame-grain product threaded
 through snip-grain QC plumbing" problem disappears. Only two DAG facts remain:
 
-**1. Acquisition emits one more output: the focus_index_map (per `image_id`).** It rides the LOCKED
-z_stack/projection materialization — same `materialize_yx1_product_for_well` call, same per-well
-product shard. The focus-stacker already computes `idx`; the executor just writes it beside the FF as
-**`.npz`** (`…/focus_index_map/BF/{well_id}_BF_t{:04d}.npz`, each pixel → its Z index) and records it
-in the product frame_inventory shard (a `focus_index_map_path` column on the projection row, since it
-pairs with the FF). **FF + z_stack + focus_index_map all come from the one focus-stack pass** — this
-is why the MVP requires them generated together.
+**1. The projection job emits one more output: the focus_index_map (per projection `image_id`).** It
+is **construction provenance of the focus_stack projection** (Part E §1) — the `idx` the focus-stacker
+already computes. The projection materialization job (`materialize_yx1_product_for_well`, projection
+branch) writes it beside the FF as **`.npz`** under `projection/focus_index_map/` and sets the nullable
+`focus_index_map_path` column on the projection frame_inventory row. **No new job, no new product_key,
+no new shard, no separate inventory** — it rides the projection product entirely. (z_stack stays its
+own independent product/leaf as today; the focus_index_map is NOT coupled to z_stack.)
 
 **2. focus_qc / motion_blur_qc are ORDINARY post-seg per-well QC modules** — clone `mask_quality_qc.smk`
 verbatim (build→validate→merge, `PATH_MODE_PER_WELL`, registry as verifier). They consume exactly
@@ -296,8 +297,9 @@ no checkpoint — the segmentation-boundary ordering is already carried by depen
 `snip_inventory`/`frame_masks`, exactly like every existing QC module.
 
 ```text
-[ACQUISITION, per well — LOCKED z_stack/projection pass + ONE new output]
-materialize_yx1_product_for_well → FF + z_stack PNGs + focus_index_map   (one focus-stack call)
+[MATERIALIZATION, per well — projection job gains ONE new output]
+materialize_yx1_product_for_well (projection) → FF PNG + focus_index_map   (one focus-stack call)
+materialize_yx1_product_for_well (z_stack)    → z_stack PNGs               (own independent leaf)
         ▼
         …… segmentation / snip_inventory / frame_masks (the existing boundary) ……
         ▼
@@ -309,11 +311,9 @@ build_focus_qc_for_well / build_motion_blur_qc_for_well
 
 This is why "it doesn't sing" was a symptom of the wrong design: a persisted frame-grain grid forced
 a new product grain into snip-grain plumbing. Removing the grid removes the mismatch. The single
-genuinely new artifact (focus_index_map) is **frame-grain by nature and lives where frame-grain pixels
-already live — the materialization product shard** — so it never touches the snip-grain QC template at
-all. The only schema decision left: the focus_index_map is a per-`image_id` companion to the FF, so
-record it on the **projection** frame_inventory row (a `focus_index_map_path` column), not as a new
-row grain.
+genuinely new artifact (focus_index_map) is **projection construction provenance** — stored under
+`projection/`, recorded as a nullable column on the projection row, validated with projection (Part E
+§1) — so it never touches the snip-grain QC template at all.
 
 ---
 
@@ -323,139 +323,132 @@ Nothing here invents a path. Two existing machineries own the two artifact kinds
 them. `DATA_ROOT` itself is machine-specific (`env.yaml` / `output_root`), so paths are always
 RELATIVE to it — never hardcode `DATA_ROOT`.
 
-### 1. focus_index_map — a PIXEL-adjacent artifact (materialized-images tree)
+### 1. focus_index_map — projection construction provenance (MVP model, LOCKED)
 
-The focus_index_map is written by the materialize executor beside the FF, so it lives in the **pixel
-tree**, NOT under `quality_control/`. The locked materialized-images layout
-(`image_materialization/materialized_image_paths.py`, layout LOCKED 2026-06-17) is:
+> **This supersedes earlier drafts** (companion-column-as-sidecar-folder; separate `derived_map`
+> inventory family; `well_materialization_inventory/` parent layer). Those were chased to ground and
+> rejected — see "The taxonomy we walked through" below for *why*, because the reasoning is the
+> guardrail. The MVP is the scalpel: **focus_index_map is projection construction provenance, stored
+> under `projection/`, recorded as a nullable column, validated with projection.**
+
+**What it is.** The focus-stacker (`LoG_focus_stacker`, `image_building/shared/log_focus.py:76-77`)
+computes `idx = abs_log.max(dim=1)` — the per-pixel argmax-over-Z — *to build the FF*, then discards
+it. `idx` is **construction provenance of the focus_stack projection**: it explains how that one FF
+pixel was chosen. It is strictly 1:1 with the projection `image_id`, only exists from a focus_stack
+projection, and is not independently requestable.
+
+**Path — nested under `projection/` (LOCKED).** Because it is born with, named by, and meaningless
+without the projection, it lives *under* the projection product, not as a top-level sibling:
 
 ```text
 built_image_data/{experiment_id}/materialized_images/{well_id}/
-    projection/{channel_id}/{image_id}.png          ← FF (LOCKED, image_product_type)
-    z_stack/{channel_id}/{well_id}_{channel_id}_z{z:04d}_t{t:04d}.png   ← z-planes (LOCKED, image_product_type)
-    focus_index_map/{channel_id}/{image_id}.npz     ← NEW: SIDECAR folder (NOT an image_product_type)
+    projection/
+      {channel_id}/{image_id}.png                ← FF (LOCKED)
+      focus_index_map/{channel_id}/{image_id}.npz  ← construction provenance of the FF
+    z_stack/
+      {channel_id}/{well_id}_{channel_id}_z{z:04d}_t{t:04d}.png   ← z-planes (LOCKED)
 ```
 
-**SIBLING, not nested (LOCKED).** `focus_index_map/` is a **top-level sibling** under
-`materialized_images/{well_id}/`, NOT nested under `projection/`. The reason is an ontology rule:
-**the first folder level is the `image_product_type` (product SHAPE), not product ownership.**
-`projection/` and `z_stack/` are image product shapes; `focus_index_map` is neither — it is a
-materialization sidecar. Nesting it as `projection/focus_index_map/...` would make `projection/` mean
-two things (the FF image product AND a sidecar explaining its construction) — a semantically leaky
-path grammar. Keep product-shape folders clean; express ownership in the table, not the tree.
+The tree now *says the true thing*: `focus_index_map/` belongs to `projection/` but is not itself the
+FF PNG. Add a `focus_index_map_path(...)` wrapper in `materialized_image_paths.py` that builds this
+nested path; it is NOT a new `image_product_type` (do not add it to `ALLOWED_IMAGE_PRODUCT_TYPES`) and
+gets NO `product_key`. It inherits the LOCKED `candidate/` isolation for free (same path constructor).
 
-Explicit contract for `focus_index_map/`:
+**Frame inventory — a nullable column, with an invariant shift.** Add `focus_index_map_path` to the
+frame_inventory schema as a **nullable** column:
+
 ```text
-focus_index_map/ is a MATERIALIZATION SIDECAR folder, not an image_product_type.
-  • It does NOT get a product_key.
-  • It does NOT get its own frame_inventory row.
-  • It does NOT get its own .validated sentinel.
-  • Ownership is expressed by focus_index_map_path on the projection frame_inventory row.
-  • Lifecycle/staleness is guarded by the projection product validator (Part F, Option A).
+projection (focus_stack) row : focus_index_map_path = projection/focus_index_map/BF/{image_id}.npz
+projection (other method) row: focus_index_map_path = NA
+z_stack row                  : focus_index_map_path = NA
 ```
 
-- Same one-per-`image_id` grain as `projection/`. Add a `focus_index_map_path(...)` wrapper in
-  `materialized_image_paths.py` mirroring `projection_frame_path` — but it is a SIDECAR path builder,
-  NOT a new `image_product_type` (do not add it to `ALLOWED_IMAGE_PRODUCT_TYPES`).
-- It inherits the LOCKED `candidate/` isolation (candidate runs can't overwrite the live tree) for
-  free, since it's the same path constructor.
-- The frame_inventory's projection row gains a `focus_index_map_path` column pointing here (the path
-  is recorded in the table; downstream reads the column, never globs the tree).
+This shifts the invariant — *honestly, and on purpose*:
 
-> **Doctrine:** *Ownership lives in the table. Shape lives in the path. The validator ties them
-> together.* A sidecar rides with projection — it is not a new kingdom beside it.
+```text
+OLD (implicit):  one frame_inventory row = exactly one file path
+NEW (explicit):  one frame_inventory row = one materialized image IDENTITY (image_id)
+                 a row may carry that image's construction-provenance paths alongside it
+```
 
-#### focus_index_map and the `product_key` scheme (LOCKED: companion, NOT its own product)
+The row still has exactly one identity (`image_id`) and one *image* file (`source_image_path`); the
+`.npz` is that image's construction provenance, not a second image. No new row, no new shard, no new
+`product_key`, no new inventory family, no new sentinel. The projection product's existing shard /
+`.validated` / discovery / assembly / retirement cover it for free (rerun projection → FF + `.npz`
+rewrite together; retire projection → both go).
 
-The image-materialization layer keys each product on a `product_key`
-(`image_materialization/image_product_keys.py`, grammar
-`{channel_id}__{image_product_type}[__{projection_method}]`; today only `projection` and `z_stack`).
-Product **shards** (per-well frame_inventory) are minted one-per-`product_key`.
+#### 🚧 The anti-junk-drawer guardrail (the load-bearing rule — make it a contract, not a vibe)
 
-**The focus_index_map does NOT get its own `product_key`.** It is a **companion of the projection
-product** (`BF__projection__focus_stack`) — born in the *same* `LoG_focus_stacker` call that makes the
-FF (`idx` and `ff` come out together). So:
+The column is safe **only** behind a brutally narrow admission rule. Write it into the
+frame_inventory contract as an explicit allowlist test, not a social convention:
 
-- **No new `image_product_type`, no grammar change** to `build_image_product_key` — it stays
-  `{projection, z_stack}`. The focus_index_map rides the existing projection product.
-- It is recorded as a **`focus_index_map_path` column on the projection frame_inventory row**, NOT as
-  a new row and NOT as a new shard. "One frame_inventory row = one materialized pixel file" still
-  holds: the projection row's pixel file is the FF; the `.npz` is a sibling FIELD of that row (like a
-  per-row provenance path), not a second pixel-file row.
-- Therefore the focus_index_map shares the projection product's lifecycle for free: same shard, same
-  `.validated`, same discovery/assembly, same retirement. Rerunning the projection product rewrites
-  the FF *and* the focus_index_map together (correct — they're one computation).
+```text
+A path may be a frame_inventory column ONLY IF it is CONSTRUCTION PROVENANCE:
+  1. strictly 1:1 with image_id
+  2. emitted by the SAME materialization job as the image
+  3. required to interpret or reuse that image product
+  4. L4-validator-checked
+  5. NA on rows where it does not apply
 
-> Why not `BF__focus_index_map` as its own product_key? That would expand the materialization grammar
-> (a third `image_product_type`), add a shard + discovery entry, and falsely frame an inseparable
-> by-product of focus-stacking as an independent product. The companion-column model keeps the grammar
-> at two product types and ties the map to the exact computation that creates it.
+EXPLICITLY FORBIDDEN as frame_inventory columns (these are NOT construction provenance):
+  QC grids (laplacian/NCC), debug overlays, thumbnails, entropy maps,
+  selection outputs, analysis features.
+  → those stay transient, or earn their own product/inventory LATER.
+```
+
+`focus_index_map_path` passes all five. The forbidden list is what stops the avalanche: the next
+person who wants to bolt `entropy_grid_path` onto a row hits this rule and is sent to build a real
+product instead. **Architecture-enforced, not vibes.**
+
+#### Validator — extend L4 source check (the one real code gate)
+
+`--check-sources=true` → L4 (`validate_sources`, `frame_inventory_validation_rules.py:224`) today
+checks only `source_image_path`. Extend it: on a **projection focus_stack** row with a non-null
+`focus_index_map_path`, also —
+
+```text
+resolve focus_index_map_path  (reuse _resolve_source_path — same image_root + no-`..` guard)
+assert the file exists
+assert the .npz loads
+assert it contains the focus_index_map array (+ z_indices metadata)
+assert focus_index_map.shape == (image_height_px, image_width_px)
+assert values are valid z-indices
+```
+
+z_stack and non-focus_stack rows have `focus_index_map_path = NA` → skipped. This is also the
+**staleness guard**: the `.npz` is not a Snakemake-tracked output (the rule's output is the shard
+CSV), so a deleted/corrupt `.npz` would otherwise slip through — the L4 check fails the projection
+shard's `.csv.validated`, which re-fires the DAG. **HARD GATE: ship the L4 extension in the SAME
+change that adds the column — never let the column exist before the validator polices it** (mirrors
+the z_stack contract's "never let pixels outrun the contract").
+
+#### The taxonomy we walked through (recorded so the reasoning is the guardrail)
+
+This MVP is the end of a long disentanglement. The dead ends and *why they died* are the real
+protection against re-litigating this — keep them:
+
+| Model considered | Why rejected for MVP |
+|---|---|
+| `focus_index_map` as its own `image_product_type` | not an image to segment; would pollute the `projection`/`z_stack` shape grammar |
+| its own `product_key` (`BF__focus_index_map`) | not independently requestable — can't be produced without projection; a key that can't stand alone |
+| `by-product` / `sidecar` concept | "downstream-ness" is not the producthood test (everything is downstream of something); conceptual fog |
+| separate `derived_map` inventory family | a table of `(image_id, path)` with no identity beyond `image_id` is an *annotation*, not an inventory; extra rail for a 1:1 path |
+| `well_materialization_inventory/` parent layer | re-paths frame_inventory (most-consumed table) for a speculative future zoo of maps; not earned by one tenant |
+| **projection construction-provenance column (CHOSEN)** | smallest honest change; 1:1 with image_id; co-produced; guardrail-bounded |
+
+**The disentanglement test (the durable principle):** *Can it be produced as an honest independent
+leaf?* — `z_stack` **yes** (re-read ND2, slice planes) → its own product_key, fanout, frame_inventory
+rows. `focus_index_map` **no** (only falls out of the focus_stack that makes the FF) → construction
+provenance of projection, stored with it, validated with it. **Independent leaves get product_keys;
+construction provenance rides its producer.**
+
+When a SECOND map-like artifact actually arrives (confidence_map, depth_map, …), THAT is the moment
+to promote to a `derived_map` inventory family — earned by a real second tenant, not built for an
+imagined one.
 
 > **Note — QC products have NO `product_key`.** `product_key` is image-materialization-internal
 > vocabulary. `focus_qc`/`motion_blur_qc` are keyed by the `PIPELINE_STEPS` `step`/`product_dir`
 > (below), the same as every other QC product — they never touch the `product_key` grammar.
-
-#### ⚠️ focus_index_map in the DAG — staleness & validation (THE LIKELY BREAK) [Part F]
-
-"Rides the projection product" is precise about ownership but hides two DAG hazards. Both must be
-closed or the `.npz` rots silently. The projection product's real DAG (verified in
-`rules/materialize_well_native.smk` + `frame_inventory.smk`) is:
-
-```text
-write_resolved_product_plan_for_well       → {product_key}_resolved_product_plan.json
-materialize_image_product_for_well         → {well}_{product_key}_frame_inventory.csv   (the SHARD)
-validate_frame_inventory_product_for_well  → {…}.csv.validated   (runs --check-sources=true)
-discover_product_shards_for_well           → discovered_product_shards.csv
-assemble_well_frame_inventory              → canonical {well}_frame_inventory.csv
-validate_frame_inventory_for_well          → {well}.materialize_well.validated
-```
-
-The focus_index_map is born inside `materialize_image_product_for_well` (the `idx` from the same
-focus-stack call) and recorded as a `focus_index_map_path` column on the projection shard row. It does
-**NOT** get its own `.validated` — it rides the projection shard's existing two sentinels. That is the
-intent, but it only works if BOTH of these change:
-
-**HAZARD 1 — Snakemake does not track the `.npz` as an output (staleness break).**
-`materialize_image_product_for_well` declares ONE output: the shard CSV. The `.npz` is a *second file*
-the rule writes that Snakemake doesn't know about. If the CSV survives but the `.npz` is deleted/
-corrupted, Snakemake sees the shard up-to-date and **will not rerun** → a dangling
-`focus_index_map_path`.
-- **Fix (LOCKED — Option A, validator-as-guard).** The `.npz` is NOT declared as a Snakemake output.
-  Declaring N per-`image_id` `.npz` files as outputs would fight the product-shard model (the rule's
-  grain is the shard, not the image, and the file set is dynamic). Instead, **HAZARD-2's source check
-  IS the staleness guard**: a missing/corrupt `.npz` fails `validate_frame_inventory_product_for_well`,
-  so its `.csv.validated` is never (re)written, and the downstream DAG re-fires. Staleness is enforced
-  by the *validated sentinel*, exactly like every other source-file guarantee in this pipeline ("the
-  inventory is truth; downstream trusts validated, never globs"). This is WHY Hazard 2's validator
-  extension is mandatory — under Option A it is the only thing protecting the `.npz`.
-  - *(Rejected — Option B: a tracked per-well `.npz` manifest as an extra rule output. It would add a
-    Snakemake-tracked file but duplicate what the shard column already says, and add a second source of
-    truth for the same fact. Not pursued.)*
-
-**HAZARD 2 — the source validator only checks `source_image_path` (silent-missing break).**
-`--check-sources=true` → L4 (`frame_inventory_validation_rules.py:227`) loops rows and validates ONLY
-`source_image_path` (resolve + open + dims + µm/px). It knows nothing about `focus_index_map_path`. So
-a missing/corrupt `.npz` **passes validation today** → the `.validated` sentinel lies.
-- **Fix:** extend the L4 source check so that, on a **projection** row that carries a non-null
-  `focus_index_map_path`, it ALSO resolves that path and asserts the `.npz` exists + loads (and, ideal,
-  that its `idx` array shape matches the FF's `image_height_px × image_width_px`). z_stack rows have no
-  such column → skipped. This is the change that makes the projection `.validated` honestly cover the
-  companion file, which is the *entire* justification for not giving the `.npz` its own sentinel.
-
-**Staleness/update semantics once both fixes land (inherited from the projection product, for free):**
-- Rerun the projection product (`materialize_image_product_for_well`) → FF **and** `.npz` rewrite
-  together (one computation), shard CSV rewrites, its `.csv.validated` is re-earned (now also checking
-  the `.npz`), discovery + assembly + per-well validate re-fire downstream. Correct.
-- Retire the projection product (remove its `.csv.validated`) → the `.npz` retires with it (no separate
-  sentinel to orphan). Correct.
-- A stale `.npz` with no CSV row is inert (downstream reads the column, never globs) — same MVP
-  stale-file tolerance as stray PNGs.
-
-> **Net:** the companion model is sound ONLY with the L4 validator extension (Hazard 2). Without it,
-> "rides the projection `.validated`" is a false promise. Make the L4 `.npz` check a HARD GATE of this
-> work, shipped in the SAME change that adds the `focus_index_map_path` column — never let the column
-> exist before the validator polices it (mirrors the z_stack contract's "never let pixels outrun the
-> contract").
 
 ### 2. focus_qc / motion_blur_qc — CSV products (quality_control stage, registry rows)
 
@@ -522,11 +515,12 @@ nobody files it under QC by reflex.
 1. Acquisition z-depth provenance  (Part A1, YX1): voxel_size()[2] → z_step_um;
    per-plane stage.z → z_position_um; +2 inventory columns +contract.   ← durable, do first
 2. [z_stack pixels + z-aware frame_inventory ship via the LOCKED wire-through doc]
-3. focus_index_map (Part D + Part F): persist the focus-stacker `idx` beside the FF in the SAME
-   materialize pass (FF + z_stack + idx together — MVP); record `focus_index_map_path` on the
-   projection frame_inventory row. No separate stage/sentinel. **HARD GATE (Part F Hazard 2): extend
-   the L4 source validator to check `focus_index_map_path` exists+loads+shape on projection rows IN
-   THE SAME change — the column must not exist before the validator polices it.**
+3. focus_index_map (Part E §1): the projection job writes the focus-stacker `idx` as `.npz` under
+   `projection/focus_index_map/`; add nullable `focus_index_map_path` column (populated on projection
+   focus_stack rows, NA elsewhere) + the construction-provenance guardrail to the frame_inventory
+   contract. No separate stage/product_key/inventory/sentinel. **HARD GATE: extend the L4 source
+   validator (`validate_sources`) to check `focus_index_map_path` exists+loads+shape on projection
+   focus_stack rows IN THE SAME change — the column must not exist before the validator polices it.**
 4. focus_qc module  (clone mask_quality_qc + frame_inventory input): load z_stack via inventory,
    grid in-memory, reduce in-mask → focus_flag (uses reserved `focus` hook).
 5. motion_blur_qc module (same shape): NCC grid in-memory, reduce in-mask → motion_blur_flag.
@@ -540,7 +534,7 @@ nobody files it under QC by reflex.
 | Artifact | On-disk location (relative to DATA_ROOT) | Written by | Read by |
 |---|---|---|---|
 | z_stack PNGs + FF PNG | `built_image_data/{exp}/materialized_images/{well}/{projection,z_stack}/...` (LOCKED) | materialize executor | focus_qc, motion_blur_qc, selection (via frame_inventory) |
-| **focus_index_map** (`.npz`) | `built_image_data/{exp}/materialized_images/{well}/focus_index_map/{channel}/{image_id}.npz` | materialize executor (the `idx` it already computes) | z-slice selection |
+| **focus_index_map** (`.npz`, projection construction provenance) | `built_image_data/{exp}/materialized_images/{well}/projection/focus_index_map/{channel}/{image_id}.npz` (+ `focus_index_map_path` column on projection row) | projection job (the `idx` it already computes) | z-slice selection |
 | `z_position_um`/`z_step_um` | COLUMNS on the acquisition inventory CSV (no new path) | YX1/Keyence acquisition extractor | selection (via inventory join) |
 | laplacian/entropy/NCC **grids** | — (transient, recomputed in QC from pixels; not stored) | focus_qc/motion_blur_qc in-memory | (debug/cache mode OPTIONAL) |
 | `focus_qc` summary | `quality_control/{exp}/focus_qc/per_well/{well}/{well}_focus_qc.csv` (+ merged + `.validated`) | `focus_qc` entrypoint | `snip_qc`, debugging |
@@ -558,23 +552,31 @@ nobody files it under QC by reflex.
    (non-canonical QC-evidence), and promoted to `feature_extraction/` only if a real analysis need
    earns it a contract — but the default and the MVP store nothing. *A grid becomes a product only
    when reuse earns it a contract; here QC reuse does not, because recompute-from-pixels is cheap.*
-3. **The focus-index map is the ONE durable materialization-derived sidecar artifact.** It is
+3. **The focus-index map is projection CONSTRUCTION PROVENANCE — stored under `projection/`, recorded
+   as a nullable column, validated with projection (MVP model, LOCKED — Part E §1).** It is
    algorithm-derived during the FF projection pass — NOT an acquisition fact (contrast `z_position_um`/
-   `z_step_um`, which ARE acquisition facts). The focus-stacker already computes the per-pixel
-   argmax-over-Z (`idx`); persist it beside the FF in the same materialize pass and record
-   `focus_index_map_path` on the projection frame_inventory row.
-   **MVP: FF + z_stack + focus_index_map are generated together** (one focus-stack call; no second ND2
-   read). This is what makes z-slice selection possible without a grid.
-3a. **focus_index_map integration = companion of the projection product, guarded by the VALIDATOR
-   (LOCKED Option A).** It is NOT a Snakemake-tracked output and gets NO own `.validated`. The `.npz`
-   is policed by extending the L4 source check (`validate_sources` in
-   `frame_inventory_validation_rules.py:224`) to resolve + load + shape-check `focus_index_map_path` on
-   projection rows — so the projection shard's existing `.csv.validated` honestly covers it, and a
-   missing `.npz` re-fires the DAG. **HARD GATE: ship the validator extension in the SAME change that
-   adds the column.** Touch points: executor (`materialize_image_product_for_well` writes `.npz` +
-   sets column), `materialized_image_paths.py` (`focus_index_map_path()` wrapper),
-   `frame_inventory_contract.py` (nullable column), `frame_inventory_validation_rules.py` (L4 check).
-   See Part F.
+   `z_step_um`, which ARE). It fails the independence test (only born from focus_stack), is strictly
+   1:1 with projection `image_id`, and is not independently requestable — so it is NOT an
+   `image_product_type`, gets NO `product_key`, NO separate inventory family, NO own sentinel. Path:
+   `materialized_images/{well}/projection/focus_index_map/{channel}/{image_id}.npz`. Recorded as a
+   nullable `focus_index_map_path` column (projection focus_stack rows only; NA elsewhere). **Invariant
+   shift (on purpose): one frame_inventory row = one materialized image IDENTITY, which may carry that
+   image's construction-provenance paths** — not "exactly one file."
+3a. **Anti-junk-drawer guardrail is a CONTRACT, not a vibe.** A path may be a frame_inventory column
+   ONLY if it is construction provenance: (1) strictly 1:1 with image_id, (2) co-produced by the same
+   materialization job, (3) required to interpret/reuse the image, (4) L4-validated, (5) NA where
+   inapplicable. QC grids / overlays / thumbnails / selection outputs / analysis features are
+   EXPLICITLY FORBIDDEN as columns. **HARD GATE: extend the L4 source validator (`validate_sources`,
+   `frame_inventory_validation_rules.py:224`) to resolve+load+shape-check `focus_index_map_path` on
+   projection focus_stack rows, in the SAME change that adds the column** — this is also the staleness
+   guard (the `.npz` is not a Snakemake-tracked output; a missing one fails the projection
+   `.csv.validated` and re-fires the DAG). Touch points: projection executor (writes `.npz` + sets
+   column), `materialized_image_paths.py` (`focus_index_map_path()` wrapper, nested under projection),
+   `frame_inventory_contract.py` (nullable column + guardrail allowlist), `frame_inventory_validation_rules.py` (L4 check).
+   *(Earlier drafts — own product_key / by-product / separate `derived_map` inventory /
+   `well_materialization_inventory/` parent — were chased to ground and rejected; the taxonomy table in
+   Part E §1 records why. Promote to a `derived_map` inventory family only when a SECOND map-like
+   artifact actually arrives.)*
 4. **z-depth provenance is added** to the acquisition inventory (`z_position_um` per plane,
    `z_step_um` per acquisition). YX1 FIRST (verified free from `voxel_size()` + `stagePositionUm.z`);
    Keyence SECOND, with graceful degradation to `z_index`-ordering if the BZ-X XML lacks Z depth.
