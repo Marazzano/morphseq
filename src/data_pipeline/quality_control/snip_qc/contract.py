@@ -4,7 +4,7 @@ Grain: one row per ``snip_id``. The verdict carries the FULL snip spine (importe
 site, never re-typed) plus ``use_snip`` and ``qc_fail_reasons``. snip_qc is the final operational QC
 table and must not be weaker than its inputs — it is not a minimal-key exception.
 
-``SNIP_QC_EXCLUSION_REASONS`` maps each verdict reason to the source flag column it reads. The MVP
+``DEFAULT_SNIP_QC_EXCLUSION_REASONS`` maps each verdict reason to the source flag column it reads. The MVP
 map covers the three migrated/specced exclusion families: death (two modes), surface area, and mask
 quality (three flags). Future hooks (focus/blur/metadata) are NOT added until their products exist
 and emit the named flag column — else snip_qc fails loud on a missing column.
