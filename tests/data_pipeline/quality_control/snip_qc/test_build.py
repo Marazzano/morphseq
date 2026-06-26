@@ -98,6 +98,35 @@ def test_both_death_modes_surface_as_two_reasons():
     assert out["qc_fail_reasons"].tolist() == ["dead_viability|dead_persistence"]
 
 
+def test_accepts_pandas_nullable_boolean_flags():
+    """REGRESSION (Tier-1 through-line, 2026-06-26): inputs.py — the canonical producer of
+    qc_flags_df — coerces every flag to pandas nullable ``boolean`` (dtype="boolean"), NOT numpy
+    bool. build.py's old ``dtype != bool`` check rejected exactly that, so the real
+    inputs.py → build.py seam broke on real data while every unit test (which used .astype(bool))
+    passed. This test feeds build.py the nullable dtype inputs.py actually emits.
+    """
+    uni = _universe(2)
+    flags = _flags(uni, [[], ["edge_flag"]])
+    for col in _FLAG_COLS:
+        flags[col] = flags[col].astype("boolean")  # pandas nullable BooleanDtype, no NA
+        assert flags[col].dtype != bool  # guard: this is NOT numpy bool — the exact seam dtype
+
+    out = build_snip_qc_verdict(uni, flags, exclusion_reasons=DEFAULT_SNIP_QC_EXCLUSION_REASONS)
+    assert out["use_snip"].tolist() == [True, False]
+    assert out["qc_fail_reasons"].tolist() == ["", "edge"]
+    validate_snip_qc(out)
+
+
+def test_nonboolean_flag_dtype_still_fails_loud():
+    """The dtype gate must still REJECT genuinely non-boolean flag columns (e.g. int 0/1 or
+    object strings) — accepting nullable boolean must not loosen into accepting anything."""
+    uni = _universe(1)
+    flags = _flags(uni, [["edge_flag"]])
+    flags["edge_flag"] = flags["edge_flag"].astype("int64")  # 0/1 ints, not boolean
+    with pytest.raises(ValueError, match="edge_flag.*boolean dtype"):
+        build_snip_qc_verdict(uni, flags, exclusion_reasons=DEFAULT_SNIP_QC_EXCLUSION_REASONS)
+
+
 def test_missing_flag_column_fails_loud():
     uni = _universe(1)
     flags = _flags(uni, [[]]).drop(columns=["edge_flag"])

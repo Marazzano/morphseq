@@ -242,3 +242,63 @@ def test_assemble_well_frame_inventory_command_parses():
     assert args.output_csv == Path(
         "frame_inventory/per_well/20250912_B01/20250912_B01_frame_inventory.csv"
     )
+
+
+def test_snip_auxiliary_masks_models_root_is_environment(tmp_path):
+    """REGRESSION (Tier-1 through-line, 2026-06-26): model route is ENVIRONMENT, not data layout.
+
+    The env --models-root (env.yaml.paths.models_root) is authoritative and REPLACES any config
+    unet_snip.models_root; the per-family ``checkpoint`` key (carrying e.g. "segmentation/<family>")
+    is the only model path the science config owns. The original bug clobbered the config models_root
+    AND dropped the family segment, yielding <env_root>/<family> (checkpoint-not-found) instead of
+    <env_root>/segmentation/<family>. This pins env-authoritative resolution without any
+    data-relative-path rebasing onto output_root (explicitly rejected).
+    """
+    import yaml
+
+    config = {
+        "unet_snip": {
+            "models_root": "models",  # placeholder — env --models-root must REPLACE this
+            "device": "cpu",
+            "models": {
+                "bubble": {"checkpoint": "segmentation/bubble_v0_0100"},
+            },
+        },
+    }
+    config_yaml = tmp_path / "merged_config.yaml"
+    config_yaml.write_text(yaml.safe_dump(config))
+
+    env_models_root = tmp_path / "env" / "weights_anywhere"  # NOT under output_root
+
+    captured = {}
+
+    def _capture(**kwargs):
+        captured.update(kwargs)
+
+    args = Namespace(
+        config_yaml=config_yaml,
+        snip_inventory_csv=tmp_path / "snip_inventory.csv",
+        output_root=tmp_path / "data_out",
+        output_csv=tmp_path / "out.csv",
+        models_root=env_models_root,
+    )
+
+    with patch(
+        "data_pipeline.segmentation.backends.unet_snip.entrypoint.run_snip_auxiliary_masks",
+        new=_capture,
+    ), patch(
+        "data_pipeline.snip_processing.snip_frame_shape.resolve_snip_frame_shape",
+        return_value=(288, 128),
+    ):
+        tasks.cmd_snip_auxiliary_masks(args)
+
+    passed = captured["unet_snip_config"]
+    # The env root REPLACED the config "models" placeholder (env-authoritative) ...
+    assert passed["models_root"] == str(env_models_root)
+    # ... and is NOT rebased under output_root (no data-relative-path pollution).
+    assert str(args.output_root) not in passed["models_root"]
+    # The family segment still lives in the checkpoint key, so the resolved path is
+    # <env_root>/segmentation/bubble_v0_0100 — the very path the bug failed to build.
+    from pathlib import Path as _P
+    resolved = _P(passed["models_root"]) / passed["models"]["bubble"]["checkpoint"]
+    assert resolved == env_models_root / "segmentation" / "bubble_v0_0100"
