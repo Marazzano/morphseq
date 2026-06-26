@@ -741,17 +741,54 @@ def cmd_validate_death_event(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
-def cmd_snip_qc(args: argparse.Namespace) -> None:
-    """Build the per-well snip_qc verdict. Thin dispatcher; logic lives in the product."""
-    from data_pipeline.quality_control.snip_qc.entrypoint import run_snip_qc
+def cmd_write_snip_qc_resolved_sources(args: argparse.Namespace) -> None:
+    """Serialize the snip_qc resolver output for one well as a tracked JSON artifact.
 
-    run_snip_qc(
+    Thin dispatcher: parses exclusion_reasons from JSON, calls the resolver (pure — no disk
+    reads), and writes both exclusion_reasons and resolved sources to the output JSON so the
+    build rule receives the exact same plan the DAG was declared with.
+    """
+    import json
+
+    from data_pipeline.quality_control.snip_qc.flag_input_resolver import (
+        resolve_snip_qc_flag_sources,
+    )
+
+    exclusion_reasons: dict[str, str] = json.loads(args.exclusion_reasons_json)
+    resolved = resolve_snip_qc_flag_sources(
+        exclusion_reasons,
         output_root=args.output_root,
         experiment_id=args.experiment,
         well_id=args.well_id,
+    )
+    payload = {
+        "exclusion_reasons": exclusion_reasons,
+        "resolved_sources": [src.to_dict() for src in resolved],
+    }
+    output_path = Path(args.output_json)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2))
+
+
+def cmd_snip_qc(args: argparse.Namespace) -> None:
+    """Build the per-well snip_qc verdict. Thin dispatcher; logic lives in the product."""
+    import json
+
+    from data_pipeline.quality_control.snip_qc.entrypoint import run_snip_qc
+    from data_pipeline.quality_control.snip_qc.flag_input_resolver import ResolvedFlagSource
+
+    payload = json.loads(Path(args.resolved_sources_json_path).read_text())
+    exclusion_reasons: dict[str, str] = payload["exclusion_reasons"]
+    resolved_sources = tuple(
+        ResolvedFlagSource.from_dict(d) for d in payload["resolved_sources"]
+    )
+
+    run_snip_qc(
         snip_inventory_csv=args.snip_inventory_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_csv=args.output_csv,
+        resolved_sources=resolved_sources,
+        exclusion_reasons=exclusion_reasons,
     )
 
 
@@ -1267,10 +1304,16 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--output-flag", type=Path, required=True)
         p.set_defaults(func=fn)
 
+    p_snipqc_write = sub.add_parser("write-snip-qc-resolved-sources")
+    p_snipqc_write.add_argument("--output-root", type=Path, required=True)
+    p_snipqc_write.add_argument("--experiment", required=True)
+    p_snipqc_write.add_argument("--well-id", required=True)
+    p_snipqc_write.add_argument("--exclusion-reasons-json", required=True)
+    p_snipqc_write.add_argument("--output-json", type=Path, required=True)
+    p_snipqc_write.set_defaults(func=cmd_write_snip_qc_resolved_sources)
+
     p_snipqc = sub.add_parser("snip-qc")
-    p_snipqc.add_argument("--output-root", type=Path, required=True)
-    p_snipqc.add_argument("--experiment", required=True)
-    p_snipqc.add_argument("--well-id", required=True)
+    p_snipqc.add_argument("--resolved-sources-json-path", type=Path, required=True)
     p_snipqc.add_argument("--snip-inventory-csv", type=Path, required=True)
     p_snipqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_snipqc.add_argument("--output-csv", type=Path, required=True)

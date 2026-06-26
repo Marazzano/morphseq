@@ -1,9 +1,15 @@
-"""snip_qc inputs — small, explicit in-memory assembly of the QC flag columns to judge.
+"""snip_qc inputs — load and verify the resolved QC flag sources.
 
-Resolves each source product's per-well artifact path through the public path registry (no second
-QC source registry, no raw path strings), reads ONLY the requested flag columns, and merges them
-one-to-one on ``snip_id``. Missing registry rows, missing artifacts, missing flag columns, duplicate
-snip_id, null flags, and non-boolean flags all FAIL LOUD — MVP never treats a missing flag as a pass.
+Pure load + verify: no path resolution, no orchestration imports. Receives
+ResolvedFlagSource objects (already resolved by flag_input_resolver.py and
+deserialized from the tracked resolved_sources JSON artifact). For each source:
+  - checks the CSV exists
+  - checks snip_id is present and unique
+  - checks each promised flag column is present and boolean-like
+  - coerces to pandas nullable boolean (fails loud on NA or unknown value)
+Then merges all sources one-to-one on snip_id.
+
+See: docs/refactors/streamline-snakemake/target/specs/quality_control/snip_qc_verdict_and_flag_resolver.md
 """
 
 from __future__ import annotations
@@ -12,95 +18,108 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_pipeline.pipeline_orchestrator.orchestration.paths import (
-    PATH_MODE_PER_WELL,
-    artifact_path,
-    known_artifacts,
-)
+from .flag_input_resolver import ResolvedFlagSource
+
+# Accepted string representations of boolean values (after strip + lowercase).
+_BOOL_MAP: dict[str, bool] = {"true": True, "false": False, "1": True, "0": False}
 
 
 def load_snip_qc_flag_inputs(
-    *,
-    output_root: Path,
-    experiment_id: str,
-    well_id: str,
-    sources: list[tuple[str, str]],
-    flag_columns: list[str],
+    resolved_sources: tuple[ResolvedFlagSource, ...],
 ) -> pd.DataFrame:
-    """Return one row per snip_id with ``snip_id`` + the requested ``flag_columns``.
+    """Return one row per snip_id with snip_id + all requested flag columns.
 
-    ``sources`` is a list of (step, artifact) pairs. ``artifact`` may be ``None`` to infer the
-    single registered artifact for a step (fails loud if the step has more than one). Each source's
-    per-well shard is read; the union of their flag columns must cover ``flag_columns`` exactly.
+    Validates each source CSV and coerces flag columns to nullable boolean.
+    All errors are fatal — a missing flag is not a pass.
     """
     merged: pd.DataFrame | None = None
-    seen_flags: set[str] = set()
 
-    for step, artifact in sources:
-        artifact_key = artifact or _sole_artifact(step)
-        path = artifact_path(
-            output_root, step, artifact_key, experiment_id,
-            path_mode=PATH_MODE_PER_WELL, well_id=well_id,
-        )
-        if not Path(path).exists():
-            raise FileNotFoundError(
-                f"snip_qc: source artifact for step {step!r} not found at {path}. "
-                "Every MVP exclusion flag source must be built before snip_qc."
-            )
-        df = pd.read_csv(path)
-        if "snip_id" not in df.columns:
-            raise ValueError(f"snip_qc: source {step!r} ({path}) has no snip_id column.")
-
-        wanted = [c for c in flag_columns if c in df.columns]
-        for col in wanted:
-            if col in seen_flags:
-                raise ValueError(f"snip_qc: flag column {col!r} supplied by more than one source.")
-            seen_flags.add(col)
-        cols = ["snip_id", *wanted]
-        piece = _validate_flag_piece(df[cols], step, wanted)
-
-        merged = piece if merged is None else _one_to_one_merge(merged, piece, step)
+    for source in resolved_sources:
+        piece = _load_and_verify_source(source)
+        merged = piece if merged is None else _one_to_one_merge(merged, piece, source.step)
 
     if merged is None:
-        raise ValueError("snip_qc: no sources supplied.")
+        raise ValueError("snip_qc inputs: no resolved sources supplied.")
 
-    missing = [c for c in flag_columns if c not in seen_flags]
-    if missing:
-        raise ValueError(
-            f"snip_qc: requested flag column(s) {missing} not provided by any source {sources}. "
-            "A missing flag is NOT a pass — add the source product or remove the reason."
+    return merged
+
+
+def _load_and_verify_source(source: ResolvedFlagSource) -> pd.DataFrame:
+    """Load one source CSV and verify snip_id + promised flag columns."""
+    if not source.path.exists():
+        raise FileNotFoundError(
+            f"snip_qc inputs: source {source.step!r} not found at {source.path}. "
+            "Every flag source must be built and validated before snip_qc runs."
         )
-    return merged[["snip_id", *flag_columns]]
 
+    df = pd.read_csv(source.path)
 
-def _sole_artifact(step: str) -> str:
-    arts = known_artifacts(step)
-    if len(arts) != 1:
+    if "snip_id" not in df.columns:
         raise ValueError(
-            f"snip_qc: step {step!r} has {len(arts)} registered artifacts {arts}; "
-            "pass an explicit artifact key."
+            f"snip_qc inputs: source {source.step!r} ({source.path}) has no snip_id column."
         )
-    return arts[0]
+    if df["snip_id"].duplicated().any():
+        dupes = df["snip_id"][df["snip_id"].duplicated()].unique().tolist()
+        raise ValueError(
+            f"snip_qc inputs: source {source.step!r} has duplicate snip_id(s) {dupes[:5]}."
+        )
 
+    missing_cols = [c for c in source.flag_columns if c not in df.columns]
+    if missing_cols:
+        raise ValueError(
+            f"snip_qc inputs: source {source.step!r} is missing promised flag column(s) "
+            f"{missing_cols}. The resolver promised these columns but the CSV does not have them. "
+            f"Columns present: {sorted(df.columns)}."
+        )
 
-def _validate_flag_piece(piece: pd.DataFrame, step: str, flag_cols: list[str]) -> pd.DataFrame:
-    if piece["snip_id"].duplicated().any():
-        dupes = piece["snip_id"][piece["snip_id"].duplicated()].unique().tolist()
-        raise ValueError(f"snip_qc: source {step!r} has duplicate snip_id(s) {dupes[:5]}.")
-    for col in flag_cols:
-        if piece[col].isna().any():
-            raise ValueError(f"snip_qc: source {step!r} flag {col!r} has null value(s).")
-        if piece[col].dtype != bool:
-            raise ValueError(
-                f"snip_qc: source {step!r} flag {col!r} must be boolean, got {piece[col].dtype}."
-            )
+    cols = ["snip_id", *source.flag_columns]
+    piece = df[cols].copy()
+    for col in source.flag_columns:
+        piece[col] = _coerce_boolean_flag(piece[col], step=source.step, col=col)
+
     return piece
 
 
-def _one_to_one_merge(left: pd.DataFrame, right: pd.DataFrame, step: str) -> pd.DataFrame:
-    if set(left["snip_id"]) != set(right["snip_id"]):
+def _coerce_boolean_flag(series: pd.Series, *, step: str, col: str) -> pd.array:
+    """Coerce a series to pandas nullable boolean. Fails loud on NA or unknown value."""
+    result: list[bool | None] = []
+    for val in series:
+        if pd.isna(val):
+            raise ValueError(
+                f"snip_qc inputs: source {step!r} flag {col!r} has null value(s). "
+                "Every exclusion flag must be a non-null boolean decision."
+            )
+        if isinstance(val, bool) or (isinstance(val, int) and val in (0, 1)):
+            result.append(bool(val))
+        elif isinstance(val, str):
+            normalized = val.strip().lower()
+            if normalized not in _BOOL_MAP:
+                raise ValueError(
+                    f"snip_qc inputs: source {step!r} flag {col!r} has unrecognized value "
+                    f"{val!r}. Accepted: true/false/1/0 (case-insensitive)."
+                )
+            result.append(_BOOL_MAP[normalized])
+        else:
+            raise ValueError(
+                f"snip_qc inputs: source {step!r} flag {col!r} has unrecognized value "
+                f"{val!r} (type {type(val).__name__}). Accepted: bool, int 0/1, str true/false/1/0."
+            )
+    return pd.array(result, dtype="boolean")
+
+
+def _one_to_one_merge(
+    left: pd.DataFrame,
+    right: pd.DataFrame,
+    step: str,
+) -> pd.DataFrame:
+    left_ids = set(left["snip_id"].astype(str))
+    right_ids = set(right["snip_id"].astype(str))
+    if left_ids != right_ids:
+        only_left = sorted(left_ids - right_ids)[:5]
+        only_right = sorted(right_ids - left_ids)[:5]
         raise ValueError(
-            f"snip_qc: source {step!r} snip_id set differs from earlier sources; all flag sources "
-            "must cover the same snip universe one-to-one."
+            f"snip_qc inputs: source {step!r} snip_id set differs from earlier sources. "
+            "All flag sources must cover the same snip universe one-to-one. "
+            f"Only in earlier: {only_left}. Only in {step!r}: {only_right}."
         )
     return left.merge(right, on="snip_id", how="inner", validate="one_to_one")

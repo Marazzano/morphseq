@@ -1,93 +1,169 @@
-"""snip_qc inputs tests — registry-resolved flag assembly, fail-loud on missing source/column."""
+"""snip_qc inputs tests — load + verify resolved flag sources."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from data_pipeline.pipeline_orchestrator.orchestration.paths import (
-    PATH_MODE_PER_WELL,
-    artifact_path,
-)
+from data_pipeline.quality_control.snip_qc.flag_input_resolver import ResolvedFlagSource
 from data_pipeline.quality_control.snip_qc.inputs import load_snip_qc_flag_inputs
 
-EXP = "20250912"
-WELL = "20250912_B01"
-_SOURCES = [
-    ("death_detection_qc", "death_detection_qc"),
-    ("surface_area_qc", "surface_area_qc"),
-    ("mask_quality_qc", "mask_quality_qc"),
-]
-_FLAG_COLS = [
-    "viability_dead_flag",
-    "persistence_dead_flag",
-    "sa_outlier_flag",
-    "edge_flag",
-    "discontinuous_mask_flag",
-    "overlapping_mask_flag",
-]
 
-
-def _write_source(root, step, artifact, snip_ids, flag_cols):
-    path = artifact_path(root, step, artifact, EXP, path_mode=PATH_MODE_PER_WELL, well_id=WELL)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame({"snip_id": snip_ids})
-    for col in flag_cols:
-        df[col] = pd.array([False] * len(snip_ids), dtype=bool)
-    df.to_csv(path, index=False)
-    return path
-
-
-def _seed_all(root, snip_ids):
-    _write_source(root, "death_detection_qc", "death_detection_qc", snip_ids,
-                  ["viability_dead_flag", "persistence_dead_flag"])
-    _write_source(root, "surface_area_qc", "surface_area_qc", snip_ids, ["sa_outlier_flag"])
-    _write_source(root, "mask_quality_qc", "mask_quality_qc", snip_ids,
-                  ["edge_flag", "discontinuous_mask_flag", "overlapping_mask_flag"])
-
-
-def test_assembles_all_flag_columns(tmp_path):
-    snip_ids = ["s1", "s2"]
-    _seed_all(tmp_path, snip_ids)
-    out = load_snip_qc_flag_inputs(
-        output_root=tmp_path, experiment_id=EXP, well_id=WELL, sources=_SOURCES, flag_columns=_FLAG_COLS
+def _make_source(tmp_path: Path, step: str, flag_cols: tuple[str, ...], rows: list[dict]) -> ResolvedFlagSource:
+    df = pd.DataFrame(rows)
+    csv_path = tmp_path / f"{step}.csv"
+    df.to_csv(csv_path, index=False)
+    return ResolvedFlagSource(
+        step=step,
+        artifact_key=step,
+        flag_columns=flag_cols,
+        path=csv_path,
     )
-    assert list(out.columns) == ["snip_id", *_FLAG_COLS]
-    assert sorted(out["snip_id"]) == snip_ids
-    assert all(out[c].dtype == bool for c in _FLAG_COLS)
 
 
-def test_missing_source_artifact_fails_loud(tmp_path):
-    # only seed two of three sources
-    _write_source(tmp_path, "death_detection_qc", "death_detection_qc", ["s1"],
-                  ["viability_dead_flag", "persistence_dead_flag"])
-    _write_source(tmp_path, "surface_area_qc", "surface_area_qc", ["s1"], ["sa_outlier_flag"])
-    with pytest.raises(FileNotFoundError, match="mask_quality_qc"):
-        load_snip_qc_flag_inputs(
-            output_root=tmp_path, experiment_id=EXP, well_id=WELL, sources=_SOURCES, flag_columns=_FLAG_COLS
-        )
+def _snip_ids():
+    return ["snip_01", "snip_02", "snip_03"]
 
 
-def test_missing_flag_column_fails_loud(tmp_path):
-    snip_ids = ["s1"]
-    # death source missing persistence_dead_flag
-    _write_source(tmp_path, "death_detection_qc", "death_detection_qc", snip_ids, ["viability_dead_flag"])
-    _write_source(tmp_path, "surface_area_qc", "surface_area_qc", snip_ids, ["sa_outlier_flag"])
-    _write_source(tmp_path, "mask_quality_qc", "mask_quality_qc", snip_ids,
-                  ["edge_flag", "discontinuous_mask_flag", "overlapping_mask_flag"])
-    with pytest.raises(ValueError, match="persistence_dead_flag"):
-        load_snip_qc_flag_inputs(
-            output_root=tmp_path, experiment_id=EXP, well_id=WELL, sources=_SOURCES, flag_columns=_FLAG_COLS
-        )
+# ─────────────────────────────────────────────────────────────────────────────
+# Happy path
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_loads_and_merges_two_sources(tmp_path):
+    src_a = _make_source(tmp_path, "step_a", ("flag_a",), [
+        {"snip_id": "snip_01", "flag_a": True},
+        {"snip_id": "snip_02", "flag_a": False},
+    ])
+    src_b = _make_source(tmp_path, "step_b", ("flag_b",), [
+        {"snip_id": "snip_01", "flag_b": False},
+        {"snip_id": "snip_02", "flag_b": True},
+    ])
+    result = load_snip_qc_flag_inputs((src_a, src_b))
+    assert set(result.columns) == {"snip_id", "flag_a", "flag_b"}
+    assert len(result) == 2
 
 
-def test_mismatched_snip_universe_across_sources_fails_loud(tmp_path):
-    _write_source(tmp_path, "death_detection_qc", "death_detection_qc", ["s1", "s2"],
-                  ["viability_dead_flag", "persistence_dead_flag"])
-    _write_source(tmp_path, "surface_area_qc", "surface_area_qc", ["s1"], ["sa_outlier_flag"])  # missing s2
-    _write_source(tmp_path, "mask_quality_qc", "mask_quality_qc", ["s1", "s2"],
-                  ["edge_flag", "discontinuous_mask_flag", "overlapping_mask_flag"])
+# ─────────────────────────────────────────────────────────────────────────────
+# Missing file
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_fails_if_csv_missing(tmp_path):
+    src = ResolvedFlagSource(
+        step="ghost_step", artifact_key="ghost_step",
+        flag_columns=("some_flag",),
+        path=tmp_path / "nonexistent.csv",
+    )
+    with pytest.raises(FileNotFoundError, match="ghost_step"):
+        load_snip_qc_flag_inputs((src,))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Missing promised column
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_fails_if_csv_missing_promised_column(tmp_path):
+    src = _make_source(tmp_path, "step_a", ("missing_flag",), [
+        {"snip_id": "snip_01", "other_col": True},
+    ])
+    with pytest.raises(ValueError, match="missing_flag"):
+        load_snip_qc_flag_inputs((src,))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Duplicate snip_id
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_fails_on_duplicate_snip_id(tmp_path):
+    src = _make_source(tmp_path, "step_a", ("flag_a",), [
+        {"snip_id": "snip_01", "flag_a": True},
+        {"snip_id": "snip_01", "flag_a": False},
+    ])
+    with pytest.raises(ValueError, match="duplicate snip_id"):
+        load_snip_qc_flag_inputs((src,))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Boolean coercion
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("value,expected", [
+    (True, True), (False, False),
+    (1, True), (0, False),
+    ("True", True), ("False", False),
+    ("true", True), ("false", False),
+    ("1", True), ("0", False),
+    ("TRUE", True), ("FALSE", False),
+    (" true ", True), (" false ", False),
+])
+def test_coerces_boolean_like_values(tmp_path, value, expected):
+    src = _make_source(tmp_path, "step_a", ("flag_a",), [
+        {"snip_id": "snip_01", "flag_a": value},
+    ])
+    result = load_snip_qc_flag_inputs((src,))
+    assert bool(result["flag_a"].iloc[0]) == expected
+
+
+def test_fails_on_na_flag(tmp_path):
+    src = _make_source(tmp_path, "step_a", ("flag_a",), [
+        {"snip_id": "snip_01", "flag_a": None},
+    ])
+    with pytest.raises(ValueError, match="null"):
+        load_snip_qc_flag_inputs((src,))
+
+
+def test_fails_on_unknown_boolean_value(tmp_path):
+    src = _make_source(tmp_path, "step_a", ("flag_a",), [
+        {"snip_id": "snip_01", "flag_a": "maybe"},
+    ])
+    with pytest.raises(ValueError, match="unrecognized value"):
+        load_snip_qc_flag_inputs((src,))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Snip universe mismatch
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_fails_on_snip_id_mismatch_between_sources(tmp_path):
+    src_a = _make_source(tmp_path, "step_a", ("flag_a",), [
+        {"snip_id": "snip_01", "flag_a": True},
+        {"snip_id": "snip_02", "flag_a": False},
+    ])
+    src_b = _make_source(tmp_path, "step_b", ("flag_b",), [
+        {"snip_id": "snip_01", "flag_b": True},
+        {"snip_id": "snip_03", "flag_b": False},  # different set
+    ])
     with pytest.raises(ValueError, match="snip_id set differs"):
-        load_snip_qc_flag_inputs(
-            output_root=tmp_path, experiment_id=EXP, well_id=WELL, sources=_SOURCES, flag_columns=_FLAG_COLS
-        )
+        load_snip_qc_flag_inputs((src_a, src_b))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Policy/runtime consistency
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_cmd_snip_qc_uses_exclusion_reasons_from_json_not_defaults(tmp_path):
+    """Verify the JSON payload carries exclusion_reasons so runtime and planning never split-brain."""
+    import json
+    from data_pipeline.quality_control.snip_qc.flag_input_resolver import resolve_snip_qc_flag_sources
+
+    reasons = {"edge": "edge_flag"}
+    resolved = resolve_snip_qc_flag_sources(
+        reasons,
+        output_root=tmp_path,
+        experiment_id="exp01",
+        well_id="A01",
+    )
+    payload = {
+        "exclusion_reasons": reasons,
+        "resolved_sources": [src.to_dict() for src in resolved],
+    }
+    json_path = tmp_path / "plan.json"
+    json_path.write_text(json.dumps(payload))
+
+    loaded = json.loads(json_path.read_text())
+    assert loaded["exclusion_reasons"] == reasons
+    assert len(loaded["resolved_sources"]) == 1
+    assert loaded["resolved_sources"][0]["step"] == "mask_quality_qc"
+    # Only edge_flag — not the full DEFAULT_SNIP_QC_EXCLUSION_REASONS set
+    assert loaded["resolved_sources"][0]["flag_columns"] == ["edge_flag"]

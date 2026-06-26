@@ -22,8 +22,10 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
 SNIP_QC_PAYLOAD_COLUMNS: tuple[str, ...] = ("use_snip", "qc_fail_reasons")
 SNIP_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + SNIP_QC_PAYLOAD_COLUMNS)
 
-# reason name -> source flag column. MVP only (see module docstring).
-SNIP_QC_EXCLUSION_REASONS: dict[str, str] = {
+# Default reason -> flag column map. This is the MVP semantic contract.
+# Config may override it for permissive/strict QC runs; both planning and runtime
+# must use the same resolved policy (see flag_input_resolver.py).
+DEFAULT_SNIP_QC_EXCLUSION_REASONS: dict[str, str] = {
     "dead_viability": "viability_dead_flag",
     "dead_persistence": "persistence_dead_flag",
     "surface_area_outlier": "sa_outlier_flag",
@@ -72,7 +74,7 @@ def validate_snip_qc(
     if reasons.dtype != object:
         raise ValueError(f"{label}: qc_fail_reasons must be a string column.")
 
-    known = set(SNIP_QC_EXCLUSION_REASONS)
+    known = set(DEFAULT_SNIP_QC_EXCLUSION_REASONS)
     for value in reasons:
         if value == "":
             continue
