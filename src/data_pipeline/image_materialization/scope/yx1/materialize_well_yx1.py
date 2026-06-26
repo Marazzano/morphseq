@@ -71,6 +71,7 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "image_product_type",
     "projection_method",
     "source_image_path",
+    "focus_index_map_path",
     "source_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
@@ -82,16 +83,37 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-def materialize_ff_projection(stack_zyx: np.ndarray, *, device: str) -> np.ndarray:
+def materialize_ff_projection(
+    stack_zyx: np.ndarray, *, device: str
+) -> tuple[np.ndarray, np.ndarray]:
     """Focus-stack a Z-stack into one 2D frame (BF / brightfield projection method).
 
-    Returns a uint8 2D array.  This is the ``projection_method='focus_stack'`` primitive.
-    Does not know about well_id, time_index, or paths — pure image math.
+    This is the ``projection_method='focus_stack'`` primitive. Pure image math — does not know
+    about well_id, time_index, or paths.
+
+    Args:
+        stack_zyx: a single ``(Z, Y, X)`` brightfield z-stack for one (well, channel, time).
+        device: torch device for the LoG convolutions (``"cpu"`` or ``"cuda"``).
+
+    Returns:
+        ``(projection_u8, focus_index_map)``:
+          - ``projection_u8``: the focus-stacked 2D frame, ``uint8 (Y, X)``.
+          - ``focus_index_map``: per-pixel STACK-AXIS OFFSET ``int32 (Y, X)`` — for pixel ``(y, x)``
+            the value ``k`` is the Z plane (0-based axis offset into ``stack_zyx``) with the sharpest
+            LoG response. It is NOT an acquisition ``z_index`` label; the caller pairs it with an
+            ordered ``z_indices`` array to recover the labels.
     """
     norm, _, _ = im_rescale(stack_zyx)
-    ff, _ = LoG_focus_stacker(norm.astype(np.float32), filter_size=3, device=device)
+    # LoG_focus_stacker returns (ff, abs_log); abs_log is the per-plane LoG response magnitude with
+    # shape (Z, Y, X). The focus index is argmax over the Z AXIS (axis 0) — the exact same selection
+    # the stacker makes internally to gather ff.
+    ff, abs_log = LoG_focus_stacker(norm.astype(np.float32), filter_size=3, device=device)
     arr = ff.cpu().numpy() if torch.is_tensor(ff) else np.asarray(ff)
-    return skimage.util.img_as_ubyte(np.clip(arr, 0, 65535).astype(np.uint16))
+    projection_u8 = skimage.util.img_as_ubyte(np.clip(arr, 0, 65535).astype(np.uint16))
+
+    abs_log_np = abs_log.cpu().numpy() if torch.is_tensor(abs_log) else np.asarray(abs_log)
+    focus_index_map = np.argmax(abs_log_np, axis=0).astype(np.int32)
+    return projection_u8, focus_index_map
 
 
 def materialize_max_projection(stack_zyx: np.ndarray) -> np.ndarray:
@@ -318,7 +340,7 @@ def materialize_yx1_product_for_well(
             stack = _get_stack(dask_arr, t=t, w=position_index)
             t_times = time_lookup[t]
             if resolved_product.image_product_type == "projection":
-                ff = materialize_ff_projection(stack, device=device)
+                ff, focus_index_map = materialize_ff_projection(stack, device=device)
 
                 out_path = materialized_image_paths.projection_frame_path(
                     built_image_data_dir,
@@ -326,10 +348,37 @@ def materialize_yx1_product_for_well(
                     well_id=well_id,
                     channel_id="BF",
                     time_index=t,
+                    projection_method="focus_stack",
                     candidate=candidate,
                 )
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 skio.imsave(str(out_path), ff, check_contrast=False)
+
+                # --- Construction provenance: the focus_index_map .npz (focus_stack only) ----------
+                # focus_index_map values are STACK-AXIS OFFSETS into `stack` (axis 0). z_indices is
+                # the ordered list of acquisition z_index labels for those offsets — built from the
+                # SAME inventory rows / order used to load `stack`. For YX1 the stack is loaded in
+                # z_index order (range(n_z)), so sorted(z_lookup[t]) is exactly the axis order.
+                z_indices = np.asarray(z_lookup.get(t, []), dtype=np.int32)
+                if focus_index_map.shape[0] != stack.shape[1] or focus_index_map.shape[1] != stack.shape[2]:
+                    raise ValueError(
+                        f"focus_index_map shape {focus_index_map.shape} does not match the "
+                        f"(Y, X) of stack {stack.shape} for well {well_id} time_index={t}."
+                    )
+                fim_path = materialized_image_paths.focus_index_map_path(
+                    built_image_data_dir,
+                    experiment_id=experiment_id,
+                    well_id=well_id,
+                    channel_id="BF",
+                    time_index=t,
+                    candidate=candidate,
+                )
+                fim_path.parent.mkdir(parents=True, exist_ok=True)
+                np.savez(
+                    fim_path,
+                    focus_index_map=focus_index_map.astype(np.int32),
+                    z_indices=z_indices,
+                )
 
                 image_id = derive_image_id(well_id, "BF", int(t))
                 rows.append(_frame_inventory_row(
@@ -344,6 +393,7 @@ def materialize_yx1_product_for_well(
                     image_product_type="projection",
                     projection_method="focus_stack",
                     source_image_path=out_path,
+                    focus_index_map_path=fim_path,
                     source_micrometers_per_pixel=um_per_px,
                     image_width_px=img_w,
                     image_height_px=img_h,
@@ -381,6 +431,7 @@ def materialize_yx1_product_for_well(
                         image_product_type="z_stack",
                         projection_method=pd.NA,
                         source_image_path=out_path,
+                        focus_index_map_path=None,  # z_stack rows carry no focus provenance
                         source_micrometers_per_pixel=um_per_px,
                         image_width_px=img_w,
                         image_height_px=img_h,
@@ -423,6 +474,7 @@ def _frame_inventory_row(
     image_product_type: str,
     projection_method: object,
     source_image_path: Path,
+    focus_index_map_path: object,
     source_micrometers_per_pixel: float,
     image_width_px: int,
     image_height_px: int,
@@ -440,6 +492,12 @@ def _frame_inventory_row(
         "image_product_type": image_product_type,
         "projection_method": projection_method,
         "source_image_path": str(source_image_path),
+        # Construction-provenance path (NOT a primary image): the focus_stack focus_index_map .npz,
+        # populated for projection/focus_stack rows, NA otherwise.
+        "focus_index_map_path": (
+            pd.NA if focus_index_map_path is None or focus_index_map_path is pd.NA
+            else str(focus_index_map_path)
+        ),
         "source_micrometers_per_pixel": source_micrometers_per_pixel,
         "image_width_px": image_width_px,
         "image_height_px": image_height_px,

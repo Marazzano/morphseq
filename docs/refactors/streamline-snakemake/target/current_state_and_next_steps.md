@@ -6,7 +6,45 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-25 (schema-constant consolidation + composition grammar)
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (z_stack wire-through reconciliation: channel-first paths + focus_index_map provenance)
+
+**What shipped:** the z_stack materialization wire-through was verified ALREADY-IMPLEMENTED (identity,
+contract, resolver, executor, product-shard DAG — see `z_stack_materialization_wire_through.md`
+SHIPPED banner). This session closed the two remaining gaps:
+
+- **Channel-first path grammar (code flipped to match the locked doc).**
+  `materialized_image_paths.py:materialized_image_path` now emits
+  `{well_id}/{channel_id}/{product}/...` (was product-first). `projection_method` is REQUIRED in the
+  generic constructor; the `projection_frame_path` wrapper keeps the legacy `focus_stack` default.
+- **focus_index_map construction-provenance.** `materialize_ff_projection` now returns
+  `(projection_u8, focus_index_map)` (surfaced the previously-discarded argmax-over-Z). The executor
+  writes a sibling `.npz` (`focus_index_map` stack-axis offsets + ordered `z_indices` labels, both
+  int32) per focus_stack projection via the new `focus_index_map_path` helper, gated by a SEPARATE
+  `ALLOWED_PROVENANCE_SUFFIXES` (`.npz` is never a primary-image suffix). New nullable column
+  `focus_index_map_path` on every product shard (populated for projection/focus_stack, NA for
+  z_stack); declared in `CONSTRUCTION_PROVENANCE_COLUMNS`.
+- **L4b provenance validation BEFORE the product `.validated` sentinel** — in `validate_sources`
+  (`frame_inventory_validation_rules.py`): present/load/schema/range for focus_stack projection, NA
+  for z_stack/non-focus_stack. The inventory-aware `z_indices == ordered acquisition labels` check is
+  a SEPARATE function (`validate_focus_index_map_against_inventory`) so the shard validator never
+  requires context it doesn't receive.
+
+**Verified:** 238 image_materialization+metadata_ingest tests green (was 221) + 55 detection/product-shard
+tests green. Includes a deterministic Z-axis-correctness toy test proving `focus_index_map` indexes
+the Z axis (sharp z=1 plane → map selects offset 1).
+
+**What's broken/half-done:** nothing. No real-ND2 smoke run yet (no GPU on this node; z_stack itself
+needs no GPU but the focus_stack projection leg does).
+
+**Next concrete action:** author/commit the `config_smoke_zstack.yaml` overlay (B01/C01,
+`smoke_max_time_indices`, products incl. z_stack) and run the z_stack smoke (CPU) to confirm on-disk
+channel-first PNGs + sibling `.npz`; run the projection leg via GPU submission.
+
+**Open decisions:** none blocking.
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-25 (schema-constant consolidation + composition grammar)
 
 **What shipped:** consolidated the snip/embryo-grain validation surface and gave the column-constant
 vocabulary a composition-revealing grammar. Full census + plan in

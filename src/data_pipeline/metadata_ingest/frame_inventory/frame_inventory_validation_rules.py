@@ -268,6 +268,144 @@ def validate_sources(
                 f"row {idx} has {um_per_px}."
             )
 
+    # L4b — construction-provenance: the focus_index_map .npz (focus_stack projection only).
+    _validate_focus_index_map_provenance(df, image_root=image_root, scope_label=scope_label)
+
+
+def _row_is_focus_stack_projection(row: pd.Series) -> bool:
+    """Legacy-tolerant: a row is focus_stack projection if it is projection/focus_stack.
+
+    If ``image_product_type`` is absent, treat the row as legacy projection; if
+    ``projection_method`` is absent on a projection row, treat it as focus_stack.
+    """
+    ipt = str(row["image_product_type"]) if "image_product_type" in row.index and not pd.isna(
+        row.get("image_product_type")
+    ) else "projection"
+    if ipt != "projection":
+        return False
+    pm = row.get("projection_method") if "projection_method" in row.index else None
+    if pm is None or pd.isna(pm):
+        return True  # legacy projection rows are focus_stack
+    return str(pm) == "focus_stack"
+
+
+def _validate_focus_index_map_provenance(
+    df: pd.DataFrame, *, image_root: Path | None, scope_label: str
+) -> None:
+    """L4b — validate the focus_index_map construction-provenance .npz.
+
+    Context available here is the shard rows + the .npz files (NOT the acquisition inventory), so the
+    inventory-aware ``z_indices == ordered acquisition labels`` check is intentionally NOT performed
+    here — see ``validate_focus_index_map_against_inventory`` for that (called only where the
+    acquisition inventory is in hand). Here we check, per row:
+
+      - projection/focus_stack rows: ``focus_index_map_path`` present; the ``.npz`` resolves + loads;
+        it carries ``focus_index_map`` + ``z_indices``; ``focus_index_map.min() >= 0`` and
+        ``focus_index_map.max() < len(z_indices)``.
+      - z_stack and non-focus_stack projection rows: ``focus_index_map_path`` must be NA (provenance
+        is not an image and rides only with the focus_stack projection it explains).
+
+    If the column is entirely absent (legacy shards), the check is skipped (back-compat).
+    """
+    import numpy as np
+
+    if "focus_index_map_path" not in df.columns:
+        return
+
+    for idx, row in df.iterrows():
+        raw = row.get("focus_index_map_path")
+        has_path = not (raw is None or pd.isna(raw) or str(raw).strip() == "")
+        if not _row_is_focus_stack_projection(row):
+            if has_path:
+                raise ValueError(
+                    f"[{scope_label}] row {idx} is not projection/focus_stack but carries a "
+                    f"focus_index_map_path ({raw!r}). Provenance rides only with the focus_stack "
+                    "projection it explains; z_stack / non-focus_stack rows must leave it NA."
+                )
+            continue
+
+        if not has_path:
+            raise ValueError(
+                f"[{scope_label}] projection/focus_stack row {idx} is missing focus_index_map_path. "
+                "Every focus_stack projection must carry its focus_index_map provenance .npz."
+            )
+        resolved = _resolve_source_path(str(raw), image_root=image_root, scope_label=scope_label)
+        if resolved.suffix.lower() != ".npz":
+            raise ValueError(
+                f"[{scope_label}] focus_index_map_path must be a .npz; row {idx} has {resolved}."
+            )
+        if not resolved.exists():
+            raise ValueError(
+                f"[{scope_label}] focus_index_map_path does not exist: {resolved} (row {idx})."
+            )
+        try:
+            with np.load(resolved) as data:
+                if "focus_index_map" not in data or "z_indices" not in data:
+                    raise ValueError(
+                        f"[{scope_label}] focus_index_map .npz {resolved} must contain both "
+                        f"'focus_index_map' and 'z_indices'; has {list(data.keys())}."
+                    )
+                fim = data["focus_index_map"]
+                z_indices = data["z_indices"]
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — surface the underlying load error by name.
+            raise ValueError(
+                f"[{scope_label}] focus_index_map .npz {resolved} could not be loaded: {exc}"
+            ) from exc
+
+        if len(z_indices) == 0:
+            raise ValueError(
+                f"[{scope_label}] focus_index_map .npz {resolved} has empty z_indices (row {idx})."
+            )
+        if int(fim.min()) < 0 or int(fim.max()) >= len(z_indices):
+            raise ValueError(
+                f"[{scope_label}] focus_index_map values must be stack-axis offsets in "
+                f"[0, {len(z_indices)}); row {idx} has range "
+                f"[{int(fim.min())}, {int(fim.max())}] at {resolved}."
+            )
+
+
+def validate_focus_index_map_against_inventory(
+    df: pd.DataFrame,
+    *,
+    well_acquisition_inventory_df: pd.DataFrame,
+    image_root: Path | None = None,
+    scope_label: str = "frame_inventory",
+) -> None:
+    """OPTIONAL inventory-aware check: z_indices == ordered acquisition z_index labels.
+
+    This is the context-dependent half of focus_index_map validation, intentionally SEPARATE from
+    the shard-only ``_validate_focus_index_map_provenance`` so the shard validator never requires
+    context (the acquisition inventory) it does not receive. Call this only where the acquisition
+    inventory is in hand. For each projection/focus_stack row it asserts the .npz ``z_indices``
+    equals the ordered (sorted) acquisition ``z_index`` labels for that (channel_id, time_index).
+    """
+    import numpy as np
+
+    if "focus_index_map_path" not in df.columns:
+        return
+    for idx, row in df.iterrows():
+        if not _row_is_focus_stack_projection(row):
+            continue
+        raw = row.get("focus_index_map_path")
+        if raw is None or pd.isna(raw):
+            continue
+        resolved = _resolve_source_path(str(raw), image_root=image_root, scope_label=scope_label)
+        with np.load(resolved) as data:
+            z_indices = list(int(z) for z in data["z_indices"])
+        sel = well_acquisition_inventory_df[
+            (well_acquisition_inventory_df["channel_id"].astype(str) == str(row["channel_id"]))
+            & (well_acquisition_inventory_df["time_index"].astype(int) == int(row["time_index"]))
+        ]
+        expected = sorted(int(z) for z in sel["z_index"].dropna().unique())
+        if z_indices != expected:
+            raise ValueError(
+                f"[{scope_label}] focus_index_map z_indices {z_indices} for row {idx} do not match "
+                f"the ordered acquisition z_index labels {expected} for "
+                f"(channel={row['channel_id']}, time_index={row['time_index']})."
+            )
+
 
 def _resolve_source_path(
     raw_path: str, *, image_root: Path | None, scope_label: str

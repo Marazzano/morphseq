@@ -120,16 +120,45 @@ def _make_z_inventory(
 
 
 class TestMaterializeFFProjection:
-    def test_returns_2d_uint8(self):
+    def test_returns_2d_uint8_and_focus_index_map(self):
         stack = np.random.randint(0, 1000, size=(5, 64, 64), dtype=np.uint16)
         with patch(
             "data_pipeline.image_materialization.scope.yx1"
             ".materialize_well_yx1.LoG_focus_stacker"
         ) as mock_log:
-            mock_log.return_value = (np.ones((64, 64), dtype=np.float32) * 100, None)
-            result = materialize_ff_projection(stack, device="cpu")
-        assert result.ndim == 2
-        assert result.dtype == np.uint8
+            # LoG_focus_stacker returns (ff, abs_log); abs_log has shape (Z, Y, X).
+            abs_log = np.ones((5, 64, 64), dtype=np.float32)
+            mock_log.return_value = (np.ones((64, 64), dtype=np.float32) * 100, abs_log)
+            projection_u8, focus_index_map = materialize_ff_projection(stack, device="cpu")
+        assert projection_u8.ndim == 2
+        assert projection_u8.dtype == np.uint8
+        assert focus_index_map.shape == (64, 64)
+        assert focus_index_map.dtype == np.int32
+
+    def test_focus_index_map_indexes_the_Z_axis(self):
+        """The treason-cube guard: argmax must run over the Z axis (axis 0 of (Z, Y, X)).
+
+        Build a real (no-mock) stack where ONE known Z plane (z=1) is in sharpest focus at a known
+        region, and assert focus_index_map selects that stack-axis offset there.
+        """
+        # A small high-contrast feature is sharp ONLY on z=1; z=0 and z=2 are flat/blurred.
+        z0 = np.full((16, 16), 100, dtype=np.uint16)
+        z2 = np.full((16, 16), 100, dtype=np.uint16)
+        z1 = np.full((16, 16), 100, dtype=np.uint16)
+        # A sharp edge/checkerboard region drives a large LoG response on z=1.
+        z1[6:10, 6:10] = 4000
+        z1[7, 7] = 100
+        z1[8, 8] = 100
+        stack = np.stack([z0, z1, z2], axis=0)  # shape (Z=3, Y=16, X=16)
+
+        projection_u8, focus_index_map = materialize_ff_projection(stack, device="cpu")
+
+        z_indices = np.array([0, 1, 2], dtype=np.int32)  # the would-be acquisition labels
+        assert focus_index_map.min() >= 0
+        assert focus_index_map.max() < len(z_indices)
+        # The sharp feature on z=1 must make the map select stack-axis offset 1 in that region.
+        assert int(focus_index_map[7, 7]) == 1
+        assert int(focus_index_map[6, 6]) == 1
 
 
 class TestMaterializeYX1Well:
@@ -163,7 +192,8 @@ class TestMaterializeYX1Well:
         with (
             patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
             patch(f"{_mod}.materialize_ff_projection",
-                  return_value=np.zeros((8, 8), dtype=np.uint8)) as mock_proj,
+                  return_value=(np.zeros((8, 8), dtype=np.uint8),
+                                np.zeros((8, 8), dtype=np.int32))) as mock_proj,
             patch(f"{_mod}.skio.imsave") as mock_imsave,
             patch(f"{_mod}._get_stack",
                   return_value=np.ones((4, 8, 8), dtype=np.uint16)) as mock_get_stack,
@@ -217,6 +247,35 @@ class TestMaterializeYX1Well:
         df = self._run(inv, tmp_path)
         assert df["z_index"].isna().all()
 
+    def test_projection_rows_carry_focus_index_map_path_1to1(self, tmp_path):
+        from data_pipeline.image_materialization.materialized_image_paths import (
+            focus_index_map_path,
+        )
+        inv = _make_inventory(n_times=2)
+        df = self._run(inv, tmp_path, candidate=True)
+        # every projection row carries a populated focus_index_map_path, 1:1 with its image_id
+        assert df["focus_index_map_path"].notna().all()
+        for _, row in df.iterrows():
+            expected = focus_index_map_path(
+                tmp_path, experiment_id=row["experiment_id"], well_id=WELL_ID,
+                channel_id=row["channel_id"], time_index=row["time_index"], candidate=True,
+            )
+            assert row["focus_index_map_path"] == str(expected)
+            # the .npz was actually written (np.savez is NOT mocked in _run) and is loadable
+            data = np.load(expected)
+            assert "focus_index_map" in data
+            assert "z_indices" in data
+
+    def test_focus_index_map_npz_has_offsets_bounded_by_z_indices(self, tmp_path):
+        inv = _make_inventory(n_times=1)
+        df = self._run(inv, tmp_path, candidate=True)
+        npz_path = df.iloc[0]["focus_index_map_path"]
+        data = np.load(npz_path)
+        fim = data["focus_index_map"]
+        z_indices = data["z_indices"]
+        assert fim.min() >= 0
+        assert fim.max() < len(z_indices)
+
     def test_z_stack_emits_inventory_planes_not_array_shape(self, tmp_path):
         nd2_file = tmp_path / "exp.nd2"
         nd2_file.write_bytes(b"")
@@ -246,6 +305,8 @@ class TestMaterializeYX1Well:
         assert sorted(df["z_index"].unique().tolist()) == [0, 2]
         assert (df["image_product_type"] == "z_stack").all()
         assert df["projection_method"].isna().all()
+        # z_stack rows carry NO focus-stack provenance.
+        assert df["focus_index_map_path"].isna().all()
         assert set(df["image_id"]) == {
             f"{WELL_ID}_BF_z0000_t0000",
             f"{WELL_ID}_BF_z0002_t0000",
@@ -386,7 +447,8 @@ class TestMaterializeYX1Well:
         with (
             patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
             patch(f"{_mod}.materialize_ff_projection",
-                  return_value=np.zeros((8, 8), dtype=np.uint8)),
+                  return_value=(np.zeros((8, 8), dtype=np.uint8),
+                                np.zeros((8, 8), dtype=np.int32))),
             patch(f"{_mod}.skio.imsave"),
             patch(f"{_mod}._get_stack",
                   return_value=np.ones((4, 8, 8), dtype=np.uint16)),

@@ -68,6 +68,18 @@ DERIVED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "image_id",  # {well_id}_{channel_id}_t{time_index:04d}
 )
 
+# CONSTRUCTION-PROVENANCE columns: nullable, contract-DECLARED paths that explain HOW the image in
+# the same row was produced. They are 1:1 with image_id, co-produced by the same materialization job,
+# and L4-validated alongside the image. A provenance path is NOT an image (it never appears in
+# source_image_path), NOT a product, and NOT a second image identity. Declared here so the assembler
+# treats them as known nullable columns rather than schema drift.
+#
+#   focus_index_map_path — the focus_stack focus_index_map .npz (focus_index_map + z_indices arrays):
+#     populated for projection/focus_stack rows; NA for z_stack and non-focus_stack projection rows.
+CONSTRUCTION_PROVENANCE_COLUMNS: tuple[str, ...] = (
+    "focus_index_map_path",
+)
+
 # The per-frame unique key, stated as ATOMS. This names WHICH columns identify a frame; the
 # validator does NOT trust this tuple as opaque strings — it routes the atoms through the
 # constructors so the effective key is a DERIVED pair: (image_id, product_key). Two frames are the

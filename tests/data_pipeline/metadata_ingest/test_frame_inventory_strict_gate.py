@@ -2,12 +2,16 @@
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from PIL import Image
 
 from data_pipeline.metadata_ingest.frame_inventory.frame_inventory_validation import (
     validate_frame_inventory,
+)
+from data_pipeline.metadata_ingest.frame_inventory.frame_inventory_validation_rules import (
+    validate_focus_index_map_against_inventory,
 )
 
 EXP = "20250912"
@@ -173,6 +177,82 @@ def test_relative_path_resolves_under_image_root(tmp_path):
     shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [_row(A01, "BF", 0, src="imgs/a.png")])
     validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True, image_root=root)
     assert (tmp_path / "f.validated").exists()
+
+
+# --- L4b focus_index_map construction-provenance --------------------------------------------
+
+def _npz(path: Path, *, n_z: int = 3, w: int = 16, h: int = 16, bad_range: bool = False) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fim = np.zeros((h, w), dtype=np.int32)
+    if bad_range:
+        fim[0, 0] = n_z  # out of [0, n_z): an offset that overruns z_indices
+    z_indices = np.arange(n_z, dtype=np.int32)
+    np.savez(path, focus_index_map=fim, z_indices=z_indices)
+    return str(path)
+
+
+def _proj_row_with_provenance(well_id, time_index, *, src, fim_path):
+    r = _row(well_id, "BF", time_index, src=src)
+    r["focus_index_map_path"] = fim_path
+    return r
+
+
+def test_focus_index_map_provenance_passes(tmp_path):
+    img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
+    fim = _npz(tmp_path / "prov" / "a.npz")
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
+        _proj_row_with_provenance(A01, 0, src=img, fim_path=fim),
+    ])
+    validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+    assert (tmp_path / "f.validated").exists()
+
+
+def test_focus_stack_projection_missing_provenance_fails(tmp_path):
+    img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
+        _proj_row_with_provenance(A01, 0, src=img, fim_path=pd.NA),  # column present but NA
+    ])
+    with pytest.raises(ValueError, match="missing focus_index_map_path"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
+def test_focus_index_map_out_of_range_fails(tmp_path):
+    img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
+    fim = _npz(tmp_path / "prov" / "a.npz", bad_range=True)
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
+        _proj_row_with_provenance(A01, 0, src=img, fim_path=fim),
+    ])
+    with pytest.raises(ValueError, match="stack-axis offsets"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
+def test_zstack_row_with_provenance_fails(tmp_path):
+    img = _png(tmp_path / "imgs" / "z.png", w=16, h=16)
+    fim = _npz(tmp_path / "prov" / "z.npz")
+    r = _row(A01, "BF", 0, src=img)
+    r["z_index"] = 0
+    r["image_product_type"] = "z_stack"
+    r["projection_method"] = pd.NA
+    r["focus_index_map_path"] = fim  # z_stack must NOT carry provenance
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [r])
+    with pytest.raises(ValueError, match="not projection/focus_stack but carries"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
+def test_inventory_aware_zindices_match(tmp_path):
+    fim = _npz(tmp_path / "prov" / "a.npz", n_z=3)
+    df = pd.DataFrame([_proj_row_with_provenance(A01, 0, src="a.png", fim_path=fim)])
+    acq = pd.DataFrame([
+        {"channel_id": "BF", "time_index": 0, "z_index": 0},
+        {"channel_id": "BF", "time_index": 0, "z_index": 1},
+        {"channel_id": "BF", "time_index": 0, "z_index": 2},
+    ])
+    # matching labels → no raise
+    validate_focus_index_map_against_inventory(df, well_acquisition_inventory_df=acq)
+    # mismatched labels → raise
+    acq_bad = acq.iloc[:2]  # only z 0,1 in inventory but npz has 0,1,2
+    with pytest.raises(ValueError, match="do not match the ordered acquisition"):
+        validate_focus_index_map_against_inventory(df, well_acquisition_inventory_df=acq_bad)
 
 
 # --- errors report naming -------------------------------------------------------------------
