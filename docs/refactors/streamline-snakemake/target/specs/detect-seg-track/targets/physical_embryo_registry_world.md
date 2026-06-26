@@ -34,6 +34,15 @@ physical_embryo_registry   = stage / action AND artifact / table (same noun — 
 physical_embryo_id         = the entity key the registry mints
 ```
 
+> **Trust boundary — temporal/frame completeness is NOT owned here.** `physical_embryo_registry`
+> consumes masks/tracks downstream of the **validated** per-well frame_inventory shard. It **assumes
+> frame-grain temporal coherence has already been proven** by the frame_inventory validator: contiguous
+> BF timepoints, rectangular channel time-index sets, and `elapsed_time_s` presence for multi-timepoint
+> wells (see `../../front_end/external_dataset_handoff_target.md` §"Downstream trust boundary").
+> This world owns **identity coherence, not frame completeness** — do NOT add a second
+> temporal/contiguity check at registration (that would duplicate contract enforcement the gate
+> already owns).
+
 ---
 
 ## 🪨 WHY THIS WORLD EXISTS

@@ -129,7 +129,8 @@ Do not interpret it as `[width, height]`. This drives `snip_to_model_input_tenso
 `transforms.py` — the explicit, config-driven replacement for `basic_transform(target_size=(288, 128))`.
 
 `model_input_channels` must match the channel count the model was trained with.
-The production model (`MetricVAEConfig`) defaults to `input_dim=(1, 288, 128)` — grayscale.
+The production model (`20241107_ds_sweep01_optimum`) is a SeqVAE; its saved
+`model_config.json` records `"input_dim": [1, 288, 128]` — grayscale.
 The legacy pipeline used `transforms.Grayscale(num_output_channels=1)` throughout; passing
 `model_input_channels: 3` to a model trained on 1-channel input will silently produce garbage
 embeddings or a shape error at the first conv layer.

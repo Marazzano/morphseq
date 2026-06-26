@@ -339,11 +339,62 @@ RELATIVE to it — never hardcode `DATA_ROOT`.
 > the POINTER is a nullable PROVENANCE column `focus_index_map_path` on the projection frame_inventory
 > row, guardrail-bounded and validated by the projection shard's existing `.validated`.**
 
-**What it is.** The focus-stacker (`LoG_focus_stacker`, `image_building/shared/log_focus.py:76-77`)
-computes `idx = abs_log.max(dim=1)` — the per-pixel argmax-over-Z — *to build the FF*, then discards
-it. `idx` is **construction provenance of the focus_stack projection**: it explains how that one FF
-pixel was chosen. It is strictly 1:1 with the projection `image_id`, only exists from a focus_stack
-projection, and is not independently requestable.
+**What it is.** The focus-stacker (`LoG_focus_stacker`, `image_building/shared/log_focus.py`) computes
+the per-pixel argmax-over-Z needed to build the FF projection, but the current public return value is
+only `(ff, abs_log)`. The implementation change is deliberately small: teach `LoG_focus_stacker` to
+optionally return that already-computed index map when the caller asks for it. The index map is
+**construction provenance of the focus_stack projection**: it explains how that one FF pixel was
+chosen. It is strictly 1:1 with the projection `image_id`, only exists from a focus_stack projection,
+and is not independently requestable.
+
+**Minimal `LoG_focus_stacker` improvement (implementation contract).**
+
+Do not create a second focus-stacking implementation and do not re-run focus stacking just to recover
+the map. Extend the existing shared helper with an opt-in return:
+
+```python
+LoG_focus_stacker(data_zyx, filter_size, device="cpu", *, return_index=False)
+```
+
+Return contract:
+
+```text
+return_index=False  -> (ff, abs_log)                    # existing behavior, unchanged
+return_index=True   -> (ff, abs_log, focus_axis_index)   # new opt-in behavior
+```
+
+Shape contract:
+
+```text
+input (Z, Y, X)       -> focus_axis_index shape (Y, X)
+input (N, Z, Y, X)    -> focus_axis_index shape (N, Y, X)
+```
+
+`focus_axis_index` is the axis index selected by `abs_log.max(dim=1)` — integers in `0..Z-1`, not yet
+the acquisition `z_index` labels. Existing callers and tests that unpack two values keep working
+because the default remains two returns. The BF projection materializer is the only MVP caller that
+opts into the third return.
+
+The YX1 materializer persists the axis-index map directly and stores the ordered inventory `z_index`
+labels beside it:
+
+```text
+z_indices = sorted(inventory rows for this time_index)
+focus_index_map = focus_axis_index                         # stack-axis offsets
+```
+
+For current YX1 full-stack projection, `z_indices` is usually `0..Z-1`. Keeping the map as axis offsets
+prevents the algorithm output from being confused with acquisition labels. If `len(z_indices)` does not
+match the stack Z dimension, fail loud before writing the projection row.
+
+The saved `.npz` contains:
+
+```text
+focus_index_map : int array, shape (image_height_px, image_width_px), values are stack-axis offsets
+z_indices       : int array, ordered acquisition z_index labels corresponding to stack-axis offsets
+```
+
+Optional debug arrays like `abs_log` are not persisted in the MVP.
 
 **Path — under `{channel}/projection/focus_stack/` (PROPOSED layout change — see below).** The
 focus_index_map is provenance of *one specific projection method*, so it nests under that method:
@@ -358,7 +409,7 @@ built_image_data/{experiment_id}/materialized_images/{well_id}/
           {image_id}.png                          ← FF
           focus_index_map/
             {image_id}.npz                        ← construction provenance of THIS FF
-        max/                                       ← (future) other methods sit beside, no conflict
+        max/                                       ← (future) other methods sit beside on disk
           {image_id}.png
 ```
 
@@ -379,12 +430,13 @@ materialized_images/20250912_B01/BF/z_stack/20250912_B01_BF_z0003_t0000.png
 >    (`channel_id` first → `BF__projection__focus_stack`).
 > 2. **Method enters the path** (`projection/focus_stack/`). The locked doc deliberately kept method
 >    OUT of the path ("method lives in the CSV, not the path"). The change: method becomes a path level
->    so (a) future `max`/`mean` projections of the same channel coexist without collision, and (b) the
+>    so (a) future `max`/`mean` projection files of the same channel have non-colliding paths, and (b) the
 >    focus_index_map has an honest home as provenance of *the focus_stack method specifically*. The CSV
 >    still carries `projection_method` as the source of truth; the path now agrees with it.
 >
-> Do NOT silently encode "one projection method per channel" — the `{projection_method}/` level lets
-> multiple methods per channel coexist (e.g. `BF/projection/focus_stack/` + `GFP/projection/max/`).
+> The `{projection_method}/` level future-proofs the file tree. MVP image identity still excludes
+> `projection_method`, so multiple projection methods for the same well/channel/time may coexist on disk
+> but not in the canonical frame_inventory; accidental assembly must fail on duplicate `image_id`.
 
 The tree now *says the true thing*: `focus_index_map/` belongs to that channel's focus_stack
 projection but is not the FF PNG. Add a `focus_index_map_path(...)` wrapper in
@@ -398,10 +450,14 @@ strictly 1:1 with the projection `image_id` and has no identity of its own, so i
 nullable column, NOT a separate table:
 
 ```text
-projection (focus_stack) row : focus_index_map_path = projection/focus_index_map/BF/{image_id}.npz
+projection (focus_stack) row : focus_index_map_path = {channel}/projection/focus_stack/focus_index_map/{image_id}.npz
 projection (other method) row: focus_index_map_path = NA
 z_stack row                  : focus_index_map_path = NA
 ```
+
+MVP rule: every `projection_method == "focus_stack"` projection persists the focus-index map and
+requires `focus_index_map_path`; the column is nullable only because z_stack and non-focus_stack rows
+set it to NA.
 
 > **Why the column and not a separate `focus_index_map_inventory` table (decided after stress-testing
 > both).** A separate table is the long-term-purest option (frame_inventory stays strictly pixel-only),
@@ -461,8 +517,25 @@ belong on the row. That question is what stops the avalanche, not the enumerated
 #### Production: the projection job sets the column + writes the `.npz` (one focus-stack call)
 
 No new job, no standalone build. The projection materialization job already runs `LoG_focus_stacker`;
-it now also writes the `.npz` under `projection/focus_index_map/` and sets `focus_index_map_path` on the
-projection row it already emits into its frame_inventory product shard. (z_stack rows: `NA`.)
+it now calls `LoG_focus_stacker(..., return_index=True)`, writes the `.npz` under
+`{channel}/projection/focus_stack/focus_index_map/`, and sets `focus_index_map_path` on the projection
+row it already emits into its frame_inventory product shard. (z_stack rows: `NA`.)
+
+Implementation sketch inside the existing BF projection branch:
+
+```text
+stack_zyx = _get_stack(...)
+ff, _abs_log, focus_axis_index = LoG_focus_stacker(..., return_index=True)
+z_indices = ordered inventory z_index labels for this time_index
+focus_index_map = focus_axis_index
+write projection PNG via projection_frame_path(..., projection_method="focus_stack")
+write focus map NPZ via focus_index_map_path(..., projection_method="focus_stack")
+emit one projection frame_inventory row:
+  source_image_path = projection PNG
+  focus_index_map_path = focus map NPZ
+```
+
+The helper that validates focus-axis indices against `z_indices` should be tiny and unit-tested. It should only check shape/range and the `len(z_indices)` contract; it should not know about ND2, paths, product keys, or frame_inventory.
 
 #### Validator — extend L4 source check (the one real code gate + the staleness guard)
 
@@ -474,7 +547,8 @@ resolve focus_index_map_path (reuse _resolve_source_path — image_root, no `..`
 assert the file exists + the .npz loads
 assert it contains the focus_index_map array (+ z_indices metadata)
 assert focus_index_map.shape == (image_height_px, image_width_px)
-assert values are valid z-indices
+assert focus_index_map values are integer stack-axis offsets
+assert focus_index_map.min >= 0 and focus_index_map.max < len(z_indices)
 ```
 z_stack / non-focus_stack rows (`focus_index_map_path = NA`) → skipped. **HARD GATE: ship the L4
 extension in the SAME change that adds the column — never let the column exist before the validator
@@ -608,7 +682,7 @@ nobody files it under QC by reflex.
 1. Acquisition z-depth provenance  (Part A1, YX1): voxel_size()[2] → z_step_um;
    per-plane stage.z → z_position_um; +2 inventory columns +contract.   ← durable, do first
 2. [z_stack pixels + z-aware frame_inventory ship via the LOCKED wire-through doc]
-3. focus_index_map (Part E §1): the projection job writes the focus-stacker `idx` as `.npz` under
+3. focus_index_map (Part E §1): first extend `LoG_focus_stacker(..., return_index=True)` to expose the already-computed chosen-Z axis-offset map; then the projection job writes that map as `.npz` under
    `{channel}/projection/focus_stack/focus_index_map/`; add nullable `focus_index_map_path` PROVENANCE
    column (populated on projection focus_stack rows, NA elsewhere) + the provenance guardrail to the
    frame_inventory contract. No separate stage/product_key/inventory/sentinel. **Also lands the
@@ -662,7 +736,7 @@ nobody files it under QC by reflex.
 3a. **The PROVENANCE guardrail is a CONTRACT, not a vibe.** A path may be a frame_inventory column ONLY
    if it is **construction provenance of the image row** — it describes HOW THAT IMAGE WAS MADE (like
    `source_image_path` = where it came from, `projection_method` = how it was projected;
-   `focus_index_map_path` = which Z plane fed each pixel). Test: (0) describes how this image row itself
+   `focus_index_map_path` = which stack-axis plane fed each pixel, with `z_indices` mapping offsets to acquisition labels). Test: (0) describes how this image row itself
    was constructed, (1) 1:1 with image_id, (2) co-produced by the same materialization job, (3) needed
    to interpret/reuse the image, (4) L4-validated, (5) NA where inapplicable. Downstream artifacts
    ABOUT the image (QC grids/metrics, overlays, thumbnails, selection outputs, analysis features) are

@@ -53,11 +53,6 @@ src/data_pipeline/segmentation/
     mask_instances_contract.py
     track_instances_contract.py
     segmentation_tracking_contract.py
-  detection/
-    detect_embryos.py                  # shared stage/router
-    backends/
-      groundingdino.py                 # current adapter
-      facebook_detector.py             # future adapter
   segmentation_masks/
     segment_masks.py                   # shared stage/router
     backends/
