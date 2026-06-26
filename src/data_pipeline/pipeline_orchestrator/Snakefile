@@ -538,6 +538,12 @@ def wells_for_experiment(wildcards):
 
 # ============================================================================
 # Workflow Targets
+#
+# Tiered data-flow proof (depth → width → agnostic-seam, terminal = snip_qc):
+#   docs/refactors/streamline-snakemake/target/specs/data_flow_test_plan.md
+# `front_half` is the front-half finish line. The snip_qc rules are already wired
+# (snip_qc.smk); `through_line` (added there) is the named target that REQUESTS
+# snip_qc end-to-end — `rule all` deliberately stops at merged frame_masks.
 # ============================================================================
 
 def _front_half_targets(wc=None):
