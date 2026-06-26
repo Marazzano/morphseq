@@ -10,15 +10,17 @@ from .compute import consolidate_feature_tables
 from .contract import validate_consolidated_features
 from .inputs import load_feature_shards
 
-# MVP source feature products to consolidate. mask_geometry seeds the spine + core columns; the
-# rest contribute their non-spine feature columns. Order matters only for which table seeds.
-# fraction_alive is intentionally excluded until its VIA/embryo mask resolution mismatch is
-# resolved; this list must match rules/consolidated_features.smk::_CF_SOURCE_STEPS.
+# Source feature products to consolidate. mask_geometry seeds the spine + core columns; the rest
+# contribute their non-spine feature columns. Order matters only for which table seeds.
+# fraction_alive joined once its masks moved to snip-native resolution (snip_auxiliary_masks),
+# resolving the old VIA/embryo mask resolution mismatch; this list must match
+# rules/consolidated_features.smk::_CF_SOURCE_STEPS.
 DEFAULT_FEATURE_STEPS = [
     "mask_geometry",
     "curvature_metrics",
     "pose_kinematics",
     "stage_predictions",
+    "fraction_alive",
 ]
 
 

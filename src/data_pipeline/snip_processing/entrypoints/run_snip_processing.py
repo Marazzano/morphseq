@@ -155,6 +155,7 @@ def run_snip_processing(
             "track_id": track_id,
             "source_image_path": None,
             "processed_snip_path": None,
+            "embryo_mask_snip_path": None,
             "crop_x_min_px": None,
             "crop_y_min_px": None,
             "crop_x_max_px": None,
@@ -202,11 +203,20 @@ def run_snip_processing(
             processed_path = embryo_snips_dir / f"{snip_id}.png"
             skio.imsave(str(processed_path), augmented, check_contrast=False)
 
+            # Persist the cropped embryo mask in the SAME snip coordinate space as the snip image
+            # (same crop transform, so they are pixel-aligned by construction). This is the embryo
+            # mask fraction_alive ANDs against the per-snip via mask — no model, no re-prediction.
+            embryo_mask_path = embryo_snips_dir / f"{snip_id}_embryo.png"
+            skio.imsave(str(embryo_mask_path), (mask_cropped > 0).astype(np.uint8) * 255, check_contrast=False)
+
             try:
-                rel = processed_path.relative_to(output_root)
-                out["processed_snip_path"] = rel.as_posix()
+                out["processed_snip_path"] = processed_path.relative_to(output_root).as_posix()
             except ValueError:
                 out["processed_snip_path"] = str(processed_path)
+            try:
+                out["embryo_mask_snip_path"] = embryo_mask_path.relative_to(output_root).as_posix()
+            except ValueError:
+                out["embryo_mask_snip_path"] = str(embryo_mask_path)
 
             out["is_valid_snip"] = True
 

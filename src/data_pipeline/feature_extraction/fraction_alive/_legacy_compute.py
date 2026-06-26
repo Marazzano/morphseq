@@ -14,23 +14,40 @@ import numpy as np
 import pandas as pd
 import skimage.io as io
 
+from data_pipeline.segmentation.masks.mask_resize import align_binary_masks
 from data_pipeline.segmentation_and_tracking.utils.mask_processing import clean_embryo_mask
 from data_pipeline.shared.path_contracts import require_existing_path
+from data_pipeline.snip_processing.snip_frame_masks import align_pair_to_snip_frame
 
 
 def compute_fraction_alive(
     embryo_mask: np.ndarray,
     via_mask: Optional[np.ndarray],
+    *,
+    snip_frame_shape=None,
 ) -> float:
-    """Compute fraction of embryo that is alive (not dead tissue)."""
-    embryo_binary = clean_embryo_mask(embryo_mask).astype(np.uint8)
+    """Compute fraction of embryo that is alive (not dead tissue).
+
+    The embryo mask and the VIA dead-tissue mask should already share the snip grid (both are
+    snip-native). When ``snip_frame_shape`` is given, the two are aligned onto that grid and
+    shape-checked via the single ``align_pair_to_snip_frame`` seam before the AND; otherwise the
+    generic ``align_binary_masks`` is used as a defensive fallback. Either way the elementwise AND
+    can never hit a shape mismatch.
+    """
+    if via_mask is None:
+        raise ValueError('fraction_alive: via mask is required by contract but was missing')
+    embryo_clean = clean_embryo_mask(embryo_mask).astype(np.uint8)
+    via_clean = clean_embryo_mask(via_mask).astype(np.uint8)
+    if snip_frame_shape is not None:
+        embryo_binary, via_binary = align_pair_to_snip_frame(
+            embryo_clean, via_clean, snip_frame_shape, a_label="embryo_mask", b_label="via_mask"
+        )
+    else:
+        embryo_binary, via_binary = align_binary_masks(embryo_clean, via_clean)
     embryo_area = np.sum(embryo_binary)
     if embryo_area == 0:
         return np.nan
-    if via_mask is None:
-        raise ValueError('fraction_alive: via mask is required by contract but was missing')
-    via_binary = clean_embryo_mask(via_mask).astype(np.uint8)
-    dead_tissue = np.logical_and(embryo_binary, via_binary).astype(np.uint8)
+    dead_tissue = np.logical_and(embryo_binary, via_binary)
     dead_area = np.sum(dead_tissue)
     fraction_alive = 1.0 - (dead_area / embryo_area)
     return float(np.clip(fraction_alive, 0.0, 1.0))

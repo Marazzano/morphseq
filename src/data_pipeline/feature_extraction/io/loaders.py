@@ -5,7 +5,6 @@ from pathlib import Path
 import pandas as pd
 
 from data_pipeline.io.validators import validate_dataframe_schema
-from data_pipeline.schemas.auxiliary_masks import REQUIRED_COLUMNS_AUXILIARY_MASKS
 from data_pipeline.schemas.frame_contract import REQUIRED_COLUMNS_FRAME_CONTRACT
 from data_pipeline.schemas.plate_metadata import REQUIRED_COLUMNS_PLATE_METADATA
 from data_pipeline.schemas.segmentation import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
@@ -74,17 +73,10 @@ def load_plate_metadata(path: Path) -> pd.DataFrame:
     return df
 
 
-def load_auxiliary_masks_manifest(path: Path) -> pd.DataFrame:
-    df = load_table(path)
-    if "time_int" not in df.columns and "frame_index" in df.columns:
-        df["time_int"] = pd.to_numeric(df["frame_index"], errors="raise").astype(int)
-    df = _resolve_path_columns(df, ("source_image_path", "via_mask_path", "yolk_mask_path", "focus_mask_path", "bubble_mask_path"))
-    validate_dataframe_schema(df, REQUIRED_COLUMNS_AUXILIARY_MASKS, "auxiliary_masks.csv")
-    for _, row in df.iterrows():
-        row_id = str(row.get("image_id", ""))
-        require_existing_path(row.get("source_image_path"), context="auxiliary_masks", field_name="source_image_path", row_id=row_id)
-        require_existing_path(row.get("via_mask_path"), context="auxiliary_masks", field_name="via_mask_path", row_id=row_id)
-    return df
+# NOTE: load_auxiliary_masks_manifest (the full-frame image_id-keyed manifest) was retired when
+# auxiliary masks moved to per-snip grain. The replacement is load_snip_auxiliary_masks in
+# data_pipeline.segmentation.backends.unet_snip.snip_auxiliary_masks_contract, whose paths are
+# resolved through the snip_auxiliary_masks registry step in orchestration/paths.py.
 
 
 def merge_tracking_with_frame_contract(
