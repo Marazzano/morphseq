@@ -226,6 +226,38 @@ def test_focus_index_map_out_of_range_fails(tmp_path):
         validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 
+def test_focus_index_map_wrong_shape_fails(tmp_path):
+    img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
+    fim_path = tmp_path / "prov" / "wrong_shape.npz"
+    fim_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        fim_path,
+        focus_index_map=np.zeros((8, 16), dtype=np.int32),
+        z_indices=np.arange(3, dtype=np.int32),
+    )
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
+        _proj_row_with_provenance(A01, 0, src=img, fim_path=str(fim_path)),
+    ])
+    with pytest.raises(ValueError, match="shape mismatch"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
+def test_focus_index_map_float_dtype_fails(tmp_path):
+    img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
+    fim_path = tmp_path / "prov" / "float_map.npz"
+    fim_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        fim_path,
+        focus_index_map=np.zeros((16, 16), dtype=np.float32),
+        z_indices=np.arange(3, dtype=np.int32),
+    )
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [
+        _proj_row_with_provenance(A01, 0, src=img, fim_path=str(fim_path)),
+    ])
+    with pytest.raises(ValueError, match="integer stack-axis offsets"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
 def test_zstack_row_with_provenance_fails(tmp_path):
     img = _png(tmp_path / "imgs" / "z.png", w=16, h=16)
     fim = _npz(tmp_path / "prov" / "z.npz")

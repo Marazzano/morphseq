@@ -30,11 +30,13 @@ class TestScopeRouting:
         with pytest.raises(UnsupportedScopeError, match="No live materialization resolver"):
             resolve_materialization_plan(scope_name="zeiss", requested_plan=_plan())
 
-    def test_keyence_not_routed_in_step6(self):
-        # Keyence resolver logic exists as a reserved sketch but must NOT be reachable until
-        # the backend is wired — the router rejects it.
-        with pytest.raises(UnsupportedScopeError, match="not wired"):
-            resolve_materialization_plan(scope_name="keyence", requested_plan=_plan())
+    def test_keyence_routes_and_resolves_to_mosaic(self):
+        out = resolve_materialization_plan(scope_name="keyence", requested_plan=_plan(xy_composition="auto"))
+        assert out.products[0].xy_composition == "mosaic"
+
+    def test_keyence_identity_raises(self):
+        with pytest.raises(UnsupportedMaterializationRequest, match="mosaic"):
+            resolve_materialization_plan(scope_name="keyence", requested_plan=_plan(xy_composition="identity"))
 
 
 class TestYX1XYComposition:

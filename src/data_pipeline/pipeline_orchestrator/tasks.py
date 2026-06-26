@@ -278,6 +278,20 @@ def cmd_write_resolved_product_plan_for_well(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_build_keyence_stitch_map(args: argparse.Namespace) -> None:
+    """Build the experiment-grain Keyence stitch map (master_params JSON)."""
+    import pandas as pd
+    from data_pipeline.image_materialization.scope.keyence.build_keyence_stitch_map import (
+        build_keyence_stitch_map,
+    )
+
+    build_keyence_stitch_map(
+        acquisition_inventory_df=pd.read_csv(args.acquisition_inventory_csv),
+        n_samples=int(getattr(args, "n_samples", 50)),
+        out_path=Path(args.output_json),
+    )
+
+
 def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
     """Materialize one resolved image product and write its product frame-inventory shard."""
     from data_pipeline.image_materialization.run_materialize_well import (
@@ -289,6 +303,9 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
     smoke_cap = getattr(args, "smoke_max_time_indices", None)
     if smoke_cap is not None and smoke_cap <= 0:
         smoke_cap = None
+
+    master_params_raw = getattr(args, "master_params_path", None)
+    master_params_path = Path(master_params_raw) if master_params_raw else None
 
     inv_df = run_materialize_image_product_for_well(
         experiment_id=str(args.experiment),
@@ -302,6 +319,7 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
         device=getattr(args, "device", "cuda"),
         candidate=_parse_bool(getattr(args, "candidate", "false")),
         smoke_max_time_indices=smoke_cap,
+        master_params_path=master_params_path,
     )
     out_csv = Path(args.frame_inventory_product_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -563,11 +581,9 @@ def cmd_snip_auxiliary_masks(args: argparse.Namespace) -> None:
     config_yaml = Path(args.config_yaml)
     config = yaml.safe_load(config_yaml.read_text()) or {}
     unet_snip_config = config.get("unet_snip") or config.get("auxiliary_masks", {}).get("unet_snip", {})
-    if unet_snip_config.get("models_root"):
-        models_root = Path(str(unet_snip_config["models_root"]))
-        if not models_root.is_absolute() and config_yaml.parent.name == "_snakemake_runtime":
-            unet_snip_config = dict(unet_snip_config)
-            unet_snip_config["models_root"] = str(config_yaml.parent.parent / models_root)
+    if args.models_root:
+        unet_snip_config = dict(unet_snip_config)
+        unet_snip_config["models_root"] = str(args.models_root)
 
     run_snip_auxiliary_masks(
         snip_inventory_csv=args.snip_inventory_csv,
@@ -757,9 +773,7 @@ def cmd_validate_snip_qc(args: argparse.Namespace) -> None:
 
 
 def cmd_frame_masks(args: argparse.Namespace) -> None:
-    # TODO(pipeline-orchestrator): move the projection-frame selection and SAM2 view assembly out
-    # of tasks.py. This dispatcher should stay thin; it currently carries product-routing logic
-    # because the mixed projection+z_stack smoke exposed the downstream contract boundary.
+    """Run SAM2 video segmentation for one well. Thin dispatcher."""
     import json
     import tempfile
 
@@ -772,6 +786,7 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
         adapt_sam2_well_output,
     )
     from data_pipeline.segmentation.backends.sam2_video.prompt_detections import (
+        select_segmentation_frame_view,
         validate_sam2_prompts,
     )
     from data_pipeline.segmentation.validate_frame_masks import validate_frame_masks
@@ -779,43 +794,10 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
     def _to_rgb_jpeg(src: Path, dst: Path) -> None:
         Image.open(src).convert("RGB").save(dst, format="JPEG", quality=95)
 
-    def _segmentation_frame_inventory(
-        frame_inventory: pd.DataFrame,
-        frame_detections: pd.DataFrame,
-    ) -> pd.DataFrame:
-        """Return the projected frame rows SAM2 should see.
-
-        The canonical per-well frame_inventory may include multiple image products for the same
-        timepoint (for example z_stack planes plus a focus_stack projection). Detection runs on
-        projected BF frames only; segmentation must use that same model view so propagated masks
-        cannot be assigned to z-stack image_ids.
-        """
-        model_rows = frame_inventory.copy()
-        if "image_product_type" in model_rows.columns:
-            model_rows = model_rows[
-                model_rows["image_product_type"].astype(str) == "projection"
-            ].copy()
-
-        if "channel_id" in model_rows.columns and "channel_id" in frame_detections.columns:
-            channels = set(frame_detections["channel_id"].dropna().astype(str))
-            if channels:
-                model_rows = model_rows[model_rows["channel_id"].astype(str).isin(channels)].copy()
-
-        detection_image_ids = set(frame_detections["image_id"].astype(str))
-        missing = sorted(detection_image_ids - set(model_rows["image_id"].astype(str)))
-        if missing:
-            raise ValueError(
-                "frame_detections reference image_id values outside the SAM2 projection "
-                f"frame view: {missing[:5]}"
-            )
-        if model_rows.empty:
-            raise ValueError("SAM2 projection frame view is empty after frame_inventory filtering.")
-        return model_rows
-
     frame_inventory = pd.read_csv(args.frame_inventory_csv)
     frame_detections = pd.read_csv(args.frame_detections_csv)
     well_id = str(frame_inventory["well_id"].iloc[0])
-    model_inventory = _segmentation_frame_inventory(frame_inventory, frame_detections)
+    model_inventory = select_segmentation_frame_view(frame_inventory, frame_detections)
 
     # Build prompt detections from kept frame_detections rows.
     # prompt_detection_id = detection_id; bbox columns are already in the right vocabulary.
@@ -1001,6 +983,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--scope-csv", type=Path, required=True)
     p_map.add_argument("--output-mapping-csv", type=Path, required=True)
     p_map.add_argument("--output-provenance-json", type=Path, required=True)
+    p_map.add_argument("--raw-images-parent", type=Path, default=None,
+                       help="Parent of the raw-images dir (i.e. .../raw_image_data/Keyence). "
+                            "Required for Keyence; not used for YX1.")
     p_map.add_argument("--ref-xy-csv", type=Path, default=None)
     p_map.add_argument("--max-distance-um", type=float, default=4500.0)
     p_map.add_argument("--allow-unmapped-wells", default="false")
@@ -1119,7 +1104,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_mip.add_argument("--candidate", default="false")
     p_mip.add_argument("--smoke-max-time-indices", type=int, default=None)
     p_mip.add_argument("--device", default="cuda")
+    p_mip.add_argument("--master-params-path", type=Path, default=None)
     p_mip.set_defaults(func=cmd_materialize_image_product_for_well)
+
+    p_bksm = sub.add_parser("build-keyence-stitch-map")
+    p_bksm.add_argument("--acquisition-inventory-csv", type=Path, required=True)
+    p_bksm.add_argument("--output-json", type=Path, required=True)
+    p_bksm.add_argument("--n-samples", type=int, default=50)
+    p_bksm.set_defaults(func=cmd_build_keyence_stitch_map)
 
     p_dps = sub.add_parser("discover-product-shards-for-well")
     p_dps.add_argument("--experiment", required=True)
@@ -1222,6 +1214,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sam.add_argument("--output-root", type=Path, required=True)
     p_sam.add_argument("--output-csv", type=Path, required=True)
     p_sam.add_argument("--config-yaml", type=Path, required=True)
+    p_sam.add_argument("--models-root", type=Path, default=None)
     p_sam.set_defaults(func=cmd_snip_auxiliary_masks)
 
     p_sam_validate = sub.add_parser("validate-snip-auxiliary-masks")

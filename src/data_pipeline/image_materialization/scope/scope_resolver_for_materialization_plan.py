@@ -52,15 +52,17 @@ def resolve_materialization_plan(
     Routes to the per-scope resolver, which maps each ``ImageProductRequest`` to a
     ``ResolvedImageProduct`` (required axes strict, xy_composition normalized).
 
-    Step 6 is YX1-only live. Keyence resolution logic exists below (``_resolve_keyence``) as a
-    reserved sketch, but is deliberately NOT routed here — the resolver must not claim Keyence is
-    known while the backend cannot execute it. Keyence gets a route + backend together later.
+    Both YX1 and Keyence are live. Keyence routes to ``_resolve_keyence`` (auto→mosaic, identity
+    raises). The backend executor (``scope/keyence/materialize_well_keyence.py``) is wired in
+    ``run_materialize_well.py``.
     """
     if scope_name == "yx1":
         return _resolve_yx1(requested_plan)
+    if scope_name == "keyence":
+        return _resolve_keyence(requested_plan)
     raise UnsupportedScopeError(
         f"No live materialization resolver for scope {scope_name!r}. "
-        "Step 6 supports only 'yx1'. Keyence is planned but not wired."
+        "Supported scopes: 'yx1', 'keyence'."
     )
 
 
@@ -122,10 +124,7 @@ def _resolve_yx1_xy_composition(requested: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Keyence — RESERVED SKETCH, intentionally NOT routed by resolve_materialization_plan.
-# Multi-tile scope; auto resolves to mosaic. This captures the intended rule so the next
-# migration has a starting point, but it stays unreachable until a Keyence backend exists
-# (no cardboard doorway opening into a wall). Wire route + backend together when Keyence is real.
+# Keyence — multi-tile scope; auto resolves to mosaic. Backend: materialize_well_keyence.py.
 # ---------------------------------------------------------------------------
 
 

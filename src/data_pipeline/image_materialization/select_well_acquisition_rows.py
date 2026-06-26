@@ -63,6 +63,12 @@ def select_well_acquisition_rows(
 
     acquisition_inventory_df = acquisition_inventory_df.copy()
     acquisition_inventory_df["experiment_id"] = acquisition_inventory_df["experiment_id"].astype(str)
+    # Drop identity columns that will be authoritatively provided by the mapping join.
+    # Some scope inventories (e.g. Keyence) already carry well_index / well_id minted at ingest;
+    # keeping them causes pandas to emit _x/_y suffixes, breaking the downstream filter.
+    for _col in ("well_index", "well_id"):
+        if _col in acquisition_inventory_df.columns:
+            acquisition_inventory_df = acquisition_inventory_df.drop(columns=[_col])
 
     mapping = position_well_mapping_df.copy()
     mapping["experiment_id"] = mapping["experiment_id"].astype(str)

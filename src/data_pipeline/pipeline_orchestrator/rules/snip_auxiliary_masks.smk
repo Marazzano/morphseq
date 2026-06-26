@@ -41,13 +41,15 @@ rule build_snip_auxiliary_masks_for_well:
     params:
         output_root=str(DATA_ROOT),
         config_yaml=str(CONFIG_YAML),
+        models_root=str(MODELS_DIR),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-auxiliary-masks \
           --snip-inventory-csv "{input.snip_inventory}" \
           --output-root "{params.output_root}" \
           --output-csv "{output.manifest}" \
-          --config-yaml "{params.config_yaml}"
+          --config-yaml "{params.config_yaml}" \
+          --models-root "{params.models_root}"
         """
 
 

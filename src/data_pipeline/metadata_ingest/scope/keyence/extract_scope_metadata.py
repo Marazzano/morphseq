@@ -405,11 +405,14 @@ def extract_keyence_scope_metadata(
     min_time = df['experiment_time_s'].min()
     df['experiment_time_s'] = df['experiment_time_s'] - min_time
 
-    # Validate against schema
+    # Validate against schema.
+    # x_um / y_um are NaN on Keyence (BZ-X stage coordinates not exposed in TIFF XML);
+    # they are declared in the shared schema for parity and populated in Stage E (if needed).
     validate_dataframe_schema(
         df,
         REQUIRED_COLUMNS_SCOPE_METADATA,
-        stage_name="Keyence scope metadata extraction"
+        stage_name="Keyence scope metadata extraction",
+        nullable_columns=["x_um", "y_um"],
     )
 
     # Write output CSV

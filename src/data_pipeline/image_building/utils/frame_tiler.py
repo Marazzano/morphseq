@@ -53,9 +53,20 @@ class FrameTilingConfig:
 
 
 @dataclass(frozen=True)
-class FallbackParams:
+class PreComputeStitchParams:
+    """Pre-computed stitch coordinates consumed per-well (experiment-grain, generated once).
+
+    ``master_params_path``: path to the experiment-grain ``master_params.json`` produced by
+    ``build_keyence_stitch_map``. When set, tile coords are read from this file and alignment
+    is skipped (``run_align=False``). ``None`` = align every frame from scratch via stitch2d.
+    ``per_frame_params_path``: optional per-frame override coords (rarely used; kept for legacy compat).
+    """
     master_params_path: Path | None = None
     per_frame_params_path: Path | None = None
+
+
+# Legacy alias — remove once materialize_stitched_images.py is strangled.
+FallbackParams = PreComputeStitchParams
 
 
 @dataclass(frozen=True)

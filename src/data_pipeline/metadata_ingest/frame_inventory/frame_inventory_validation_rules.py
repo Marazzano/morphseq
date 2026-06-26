@@ -300,8 +300,9 @@ def _validate_focus_index_map_provenance(
     acquisition inventory is in hand). Here we check, per row:
 
       - projection/focus_stack rows: ``focus_index_map_path`` present; the ``.npz`` resolves + loads;
-        it carries ``focus_index_map`` + ``z_indices``; ``focus_index_map.min() >= 0`` and
-        ``focus_index_map.max() < len(z_indices)``.
+        it carries ``focus_index_map`` + ``z_indices``; ``focus_index_map`` is an integer-valued
+        2D array with shape ``(image_height_px, image_width_px)``; ``focus_index_map.min() >= 0``
+        and ``focus_index_map.max() < len(z_indices)``.
       - z_stack and non-focus_stack projection rows: ``focus_index_map_path`` must be NA (provenance
         is not an image and rides only with the focus_stack projection it explains).
 
@@ -357,6 +358,23 @@ def _validate_focus_index_map_provenance(
         if len(z_indices) == 0:
             raise ValueError(
                 f"[{scope_label}] focus_index_map .npz {resolved} has empty z_indices (row {idx})."
+            )
+        expected_shape = (int(row["image_height_px"]), int(row["image_width_px"]))
+        if fim.ndim != 2:
+            raise ValueError(
+                f"[{scope_label}] focus_index_map must be a 2D array with shape "
+                f"{expected_shape}; row {idx} has ndim={fim.ndim} at {resolved}."
+            )
+        if tuple(fim.shape) != expected_shape:
+            raise ValueError(
+                f"[{scope_label}] focus_index_map shape mismatch for row {idx}: "
+                f"expected {expected_shape} from image_height_px/image_width_px, "
+                f"got {tuple(fim.shape)} at {resolved}."
+            )
+        if not np.issubdtype(fim.dtype, np.integer):
+            raise ValueError(
+                f"[{scope_label}] focus_index_map values must be integer stack-axis offsets; "
+                f"row {idx} has dtype {fim.dtype} at {resolved}."
             )
         if int(fim.min()) < 0 or int(fim.max()) >= len(z_indices):
             raise ValueError(

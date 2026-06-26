@@ -24,7 +24,7 @@ rule write_resolved_product_plan_for_well:
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks write-resolved-product-plan-for-well \
           --experiment "{wildcards.experiment}" \
           --well-id "{wildcards.well_id}" \
-          --scope "yx1" \
+          --scope "{SCOPE_TOKEN}" \
           --product-key "{wildcards.product_key}" \
           --output-json "{output.resolved_product_plan}" \
           --config-yaml "{CONFIG_YAML}"
@@ -39,6 +39,11 @@ rule materialize_image_product_for_well:
         resolved_product_plan=str(_resolved_product_plan(
             "{experiment}", well_id="{well_id}", product_key="{product_key}"
         )),
+        **(
+            {"master_params_json": str(KEYENCE_STITCH_MAP_JSON)}
+            if MICROSCOPE == "Keyence"
+            else {}
+        ),
     output:
         inventory=str(_frame_inventory_product_artifact(
             "{experiment}", well_id="{well_id}", product_key="{product_key}"
@@ -48,12 +53,17 @@ rule materialize_image_product_for_well:
         smoke_max=lambda wc: int(
             config.get("image_materialization", {}).get("smoke_max_time_indices", 0)
         ),
+        master_params_arg=(
+            lambda wc, input: f'--master-params-path "{input.master_params_json}"'
+            if MICROSCOPE == "Keyence"
+            else ""
+        ),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-image-product-for-well \
           --experiment "{wildcards.experiment}" \
           --well-id "{wildcards.well_id}" \
-          --scope "yx1" \
+          --scope "{SCOPE_TOKEN}" \
           --product-key "{wildcards.product_key}" \
           --resolved-product-plan-json "{input.resolved_product_plan}" \
           --acquisition-inventory-csv "{input.acquisition_inventory_csv}" \
@@ -62,7 +72,8 @@ rule materialize_image_product_for_well:
           --frame-inventory-product-csv "{output.inventory}" \
           --candidate "false" \
           --device "{params.device}" \
-          --smoke-max-time-indices "{params.smoke_max}"
+          --smoke-max-time-indices "{params.smoke_max}" \
+          {params.master_params_arg}
         """
 
 

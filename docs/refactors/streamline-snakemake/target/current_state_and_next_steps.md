@@ -6,6 +6,94 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
+## ⭐ CURRENT SNAPSHOT — 2026-06-26 (Keyence Stage C: stitch-map builder + Snakefile wired; 146 tests green)
+
+**What shipped:**
+- **`orchestration/paths.py`** — new `"keyence_stitch_map"` registry entry (stage=acquisition,
+  product_dir=ingest_metadata, fanout=EXPERIMENT, artifact key=`master_params`,
+  template=`keyence_stitch_map__{scope}.json`). Resolved via `artifact_path(..., format_vars={"scope": SCOPE_TOKEN})`.
+- **`image_materialization/scope/keyence/build_keyence_stitch_map.py`** — experiment-grain builder.
+  Samples up to `n_samples` `(well_id, time_index)` pairs (fixed seed=42 → deterministic), focus-stacks
+  per tile via shared `materialize_ff_projection` (DRY), aligns via `stitch_frame_tiles`, takes
+  **median** per-tile `(dx_px, dy_px)`, writes `{"coords": {tile_id: [x, y]}}` JSON. Raises
+  `RuntimeError` if no sample aligns. Orientation from `acquisition_inventory_df["orientation"].mode()`.
+- **`tasks.py`** — new `cmd_build_keyence_stitch_map` + `"build-keyence-stitch-map"` sub-command;
+  `--master-params-path` arg added to `materialize-image-product-for-well` parser;
+  `cmd_materialize_image_product_for_well` threads it through.
+- **`run_materialize_well.py`** — `master_params_path: Path | None = None` added to both
+  `run_materialize_well` and `run_materialize_image_product_for_well`; threaded to Keyence backend.
+- **`materialize_well_native.smk`** — two hardcoded `--scope "yx1"` strings fixed to `{SCOPE_TOKEN}`;
+  `rule materialize_image_product_for_well` gains conditional `master_params_json` input + arg
+  (Keyence only, via `params.master_params_arg` lambda).
+- **`Snakefile`** — `KEYENCE_STITCH_MAP_JSON` path variable (None on non-Keyence); new
+  `rule build_keyence_stitch_map` (gated `if MICROSCOPE == "Keyence"`).
+- **`tests/…/scope/keyence/test_build_keyence_stitch_map.py`** — 5 new tests; all pass.
+
+**Verified:** 5 new Stage C tests green. Full `tests/data_pipeline/image_materialization/` suite
+green (137 passed). End-to-end smoke NOT yet run — no Keyence experiment config exists yet.
+
+**What's broken/half-done:** End-to-end Keyence smoke not yet run. `focus_index_map_path` remains
+NA on Keyence projection rows (stitched-canvas provenance deferred).
+
+**Next concrete action — BEFORE committing Stage C:**
+1. Create a Keyence smoke config (`config_smoke_keyence_{exp}.yaml`) pointing at a real Keyence
+   experiment (1–2 wells, CPU-safe time-point cap).
+2. Run: `snakemake --configfile config_smoke_keyence_{exp}.yaml front_half --rerun-triggers mtime --cores 1`
+3. Confirm: `master_params.json` exists at the registry path; at least one frame log shows
+   `fallback_used == "master"`; per-well frame inventory shards pass the shared validator.
+4. Only then commit Stage C (all the files changed in this session).
+
+**Open decisions:** Stage D acceptance bar — byte-identity ideal vs numeric-diff gate. mdcolon must
+decide the tolerance threshold before the legacy Keyence stitch is strangled.
+
+## ⭐ CURRENT SNAPSHOT — 2026-06-25 (Keyence Stage B: mosaic backend + resolver + sequencer wired; 141 tests green)
+
+**What shipped:**
+- **`config_smoke_zstack_20250912.yaml`** — new dedicated smoke config (B01/C01, 3 time points,
+  both products: z_stack + projection/focus_stack). Confirmed channel-first folder grammar on disk:
+  `materialized_images/20250912_B01/BF/z_stack/20250912_B01_BF_z0000_t0000.png` ✅
+  New path subdirs (`ingest_metadata/`, `well_identities/`) verified working. z_stack product
+  shards + validated for B01 and C01. focus_stack for C01 OOM-killed (CPU, needs GPU node).
+- **Keyence Stage A** — confirmed already 100% wired (`cmd_extract_scope`, `cmd_map_positions`,
+  `_normalize_paths`, Snakefile gates all correct). No code change needed.
+- **Keyence Stage B (new code):**
+  - CREATE `src/data_pipeline/image_materialization/scope/keyence/__init__.py`
+  - CREATE `src/data_pipeline/image_materialization/scope/keyence/materialize_well_keyence.py`
+    — mosaic executor; asserts `xy_composition=='mosaic'`; per-tile focus-stack via shared
+    `materialize_ff_projection` (DRY — imported from YX1, not copied); stitches via
+    `stitch_frame_tiles`; `master_params_path=None` (Stage C wires stitch map); `focus_index_map_path`
+    is NA for now (stitched-canvas provenance deferred to Stage C).
+  - EDIT `scope_resolver_for_materialization_plan.py` — route `_resolve_keyence` (was "reserved
+    sketch, not routed"); update docstring/comment.
+  - EDIT `run_materialize_well.py` — 2-way dispatch (yx1 / keyence) in both
+    `run_materialize_well` and `run_materialize_image_product_for_well`.
+  - EDIT `tests/…/test_scope_resolver_for_materialization_plan.py` — replace "not routed" guard
+    test with `auto→mosaic` + `identity raises` tests.
+
+**Verified:** 141 tests green (Keyence inventory + all image_materialization tests). YX1 unregressed.
+
+- RENAME `FallbackParams` → `PreComputeStitchParams` in `frame_tiler.py` (legacy alias kept for
+  `materialize_stitched_images.py` until Stage D strangle). `materialize_well_keyence.py` updated
+  to use the new name. 135 tests green after rename.
+- Stage C spec rewritten in `keyence_wire_through.md` with locked DAG shape, concrete file list,
+  function signatures, and VERIFY steps — ready for a cold-start agent.
+
+**What's broken/half-done:** focus_stack for C01 OOM (needs GPU node to finish the smoke).
+`focus_index_map_path` is NA on Keyence projection rows (stitched-canvas provenance deferred to Stage C).
+Keyence `z_stack` product raises `NotImplementedError` (deferred — no stitch needed but tile grouping
+is slightly different; add when requested).
+
+**Next concrete action:** Stage C — `build_keyence_stitch_map.py` + registry entry in `paths.py`
++ `rule build_keyence_stitch_map` in Snakefile, then wire `master_params_path` into
+`materialize_keyence_product_for_well`. Run a Keyence experiment end-to-end smoke (CPU, 1-2 wells)
+to confirm mosaic frames land in the channel-first tree. Verify command:
+`snakemake --configfile config_smoke_keyence_{exp}.yaml front_half --rerun-triggers mtime --cores 1`
+
+**Open decisions:** none blocking Stage C. Stage C design is locked (experiment-grain pre-step,
+registry JSON, consumed per-well via `FallbackParams(master_params_path=...)`).
+
+---
+
 ## ⭐ CURRENT SNAPSHOT — 2026-06-25 (z_stack wire-through reconciliation: channel-first paths + focus_index_map provenance)
 
 **What shipped:** the z_stack materialization wire-through was verified ALREADY-IMPLEMENTED (identity,

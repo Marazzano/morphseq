@@ -117,6 +117,41 @@ def validate_sam2_prompts(
             )
 
 
+def select_segmentation_frame_view(
+    frame_inventory: pd.DataFrame,
+    frame_detections: pd.DataFrame,
+) -> pd.DataFrame:
+    """Return the projected frame rows SAM2 should see.
+
+    The canonical per-well frame_inventory may include multiple image products for the same
+    timepoint (e.g. z_stack planes plus a focus_stack projection). Detection runs on projected BF
+    frames only; segmentation must use that same model view so propagated masks cannot be assigned
+    to z-stack image_ids.
+
+    Filters to projection rows first, then to channels observed in frame_detections. Raises if any
+    detection image_id falls outside the resulting view, or if the view is empty.
+    """
+    model_rows = frame_inventory.copy()
+    if "image_product_type" in model_rows.columns:
+        model_rows = model_rows[
+            model_rows["image_product_type"].astype(str) == "projection"
+        ].copy()
+    if "channel_id" in model_rows.columns and "channel_id" in frame_detections.columns:
+        channels = set(frame_detections["channel_id"].dropna().astype(str))
+        if channels:
+            model_rows = model_rows[model_rows["channel_id"].astype(str).isin(channels)].copy()
+    detection_image_ids = set(frame_detections["image_id"].astype(str))
+    missing = sorted(detection_image_ids - set(model_rows["image_id"].astype(str)))
+    if missing:
+        raise ValueError(
+            "frame_detections reference image_id values outside the SAM2 projection "
+            f"frame view: {missing[:5]}"
+        )
+    if model_rows.empty:
+        raise ValueError("SAM2 projection frame view is empty after frame_inventory filtering.")
+    return model_rows
+
+
 def validate_frame_masks_against_sam2_prompts(
     frame_masks: pd.DataFrame,
     prompt_detections: pd.DataFrame,

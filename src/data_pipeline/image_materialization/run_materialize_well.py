@@ -62,6 +62,7 @@ def run_materialize_well(
     device: str = "auto",
     candidate: bool = False,
     smoke_max_time_indices: int | None = None,
+    master_params_path: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize the configured image-product set for ONE well; return frame-inventory rows.
 
@@ -93,11 +94,6 @@ def run_materialize_well(
         UnsupportedScopeError on a non-yx1 scope; UnsupportedMaterializationRequest on a bad plan.
     """
     scope_name = str(scope_name).strip().lower()
-    if scope_name != "yx1":
-        raise UnsupportedScopeError(
-            f"No live materialization backend for scope {scope_name!r}. "
-            "Step 6 supports only 'yx1'. Keyence is planned but not wired."
-        )
 
     requested_plan = load_image_materialization_plan(config)
     resolved_plan = resolve_materialization_plan(
@@ -116,20 +112,45 @@ def run_materialize_well(
         experiment_id, well_id, scope_name, len(resolved_plan.products), resolved_device, candidate,
     )
 
-    from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
-        materialize_yx1_well,
-    )
-
-    return materialize_yx1_well(
-        experiment_id=experiment_id,
-        well_id=well_id,
-        well_index=well_index,
-        well_acquisition_inventory_df=well_acquisition_inventory_df,
-        built_image_data_dir=built_image_data_dir,
-        resolved_plan=resolved_plan,
-        device=resolved_device,
-        candidate=candidate,
-        smoke_max_time_indices=smoke_max_time_indices,
+    if scope_name == "yx1":
+        from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
+            materialize_yx1_well,
+        )
+        return materialize_yx1_well(
+            experiment_id=experiment_id,
+            well_id=well_id,
+            well_index=well_index,
+            well_acquisition_inventory_df=well_acquisition_inventory_df,
+            built_image_data_dir=built_image_data_dir,
+            resolved_plan=resolved_plan,
+            device=resolved_device,
+            candidate=candidate,
+            smoke_max_time_indices=smoke_max_time_indices,
+        )
+    if scope_name == "keyence":
+        from data_pipeline.image_materialization.scope.keyence.materialize_well_keyence import (
+            materialize_keyence_product_for_well,
+        )
+        if len(resolved_plan.products) != 1:
+            raise ValueError(
+                "run_materialize_well Keyence path expects exactly one resolved product; "
+                f"got {len(resolved_plan.products)}. Fan out before calling."
+            )
+        return materialize_keyence_product_for_well(
+            experiment_id=experiment_id,
+            well_id=well_id,
+            well_index=well_index,
+            well_acquisition_inventory_df=well_acquisition_inventory_df,
+            built_image_data_dir=built_image_data_dir,
+            resolved_product=resolved_plan.products[0],
+            device=resolved_device,
+            candidate=candidate,
+            smoke_max_time_indices=smoke_max_time_indices,
+            master_params_path=master_params_path,
+        )
+    raise UnsupportedScopeError(
+        f"No live materialization backend for scope {scope_name!r}. "
+        "Supported scopes: 'yx1', 'keyence'."
     )
 
 
@@ -146,6 +167,7 @@ def run_materialize_image_product_for_well(
     device: str = "auto",
     candidate: bool = False,
     smoke_max_time_indices: int | None = None,
+    master_params_path: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize one resolved image product for one well; return its product frame-inventory."""
     scope_name = str(scope_name).strip().lower()
@@ -160,28 +182,43 @@ def run_materialize_image_product_for_well(
             f"resolved_product_plan scope_name={plan.scope_name!r} disagrees with requested "
             f"scope_name={scope_name!r}."
         )
-    if scope_name != "yx1":
-        raise UnsupportedScopeError(
-            f"No live materialization backend for scope {scope_name!r}. "
-            "Step 6 supports only 'yx1'. Keyence is planned but not wired."
-        )
 
     resolved_device = resolve_device(device)
     log.info("AUTO_MODE_CHOSEN: requested=%s -> %s", device, resolved_device.upper())
     print(f"AUTO_MODE_CHOSEN: requested={device!r} -> {resolved_device.upper()}", flush=True)
 
-    from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
-        materialize_yx1_product_for_well,
-    )
-
-    return materialize_yx1_product_for_well(
-        experiment_id=experiment_id,
-        well_id=well_id,
-        well_index=well_index,
-        well_acquisition_inventory_df=well_acquisition_inventory_df,
-        built_image_data_dir=built_image_data_dir,
-        resolved_product=plan.product,
-        device=resolved_device,
-        candidate=candidate,
-        smoke_max_time_indices=smoke_max_time_indices,
+    if scope_name == "yx1":
+        from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
+            materialize_yx1_product_for_well,
+        )
+        return materialize_yx1_product_for_well(
+            experiment_id=experiment_id,
+            well_id=well_id,
+            well_index=well_index,
+            well_acquisition_inventory_df=well_acquisition_inventory_df,
+            built_image_data_dir=built_image_data_dir,
+            resolved_product=plan.product,
+            device=resolved_device,
+            candidate=candidate,
+            smoke_max_time_indices=smoke_max_time_indices,
+        )
+    if scope_name == "keyence":
+        from data_pipeline.image_materialization.scope.keyence.materialize_well_keyence import (
+            materialize_keyence_product_for_well,
+        )
+        return materialize_keyence_product_for_well(
+            experiment_id=experiment_id,
+            well_id=well_id,
+            well_index=well_index,
+            well_acquisition_inventory_df=well_acquisition_inventory_df,
+            built_image_data_dir=built_image_data_dir,
+            resolved_product=plan.product,
+            device=resolved_device,
+            candidate=candidate,
+            smoke_max_time_indices=smoke_max_time_indices,
+            master_params_path=master_params_path,
+        )
+    raise UnsupportedScopeError(
+        f"No live materialization backend for scope {scope_name!r}. "
+        "Supported scopes: 'yx1', 'keyence'."
     )

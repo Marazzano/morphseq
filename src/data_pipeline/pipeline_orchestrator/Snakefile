@@ -231,6 +231,20 @@ DISCOVERED_WELLS_TXT = artifact_path(
 _YX1_REF_XY_CSV = config.get("scope_metadata", {}).get("yx1", {}).get("ref_xy_csv", "")
 YX1_REF_XY_CSV = Path(_YX1_REF_XY_CSV) if _YX1_REF_XY_CSV else None
 
+# Keyence experiment-grain stitch map (Stage C). None on non-Keyence runs — the variable must
+# exist for materialize_well_native.smk to reference it at parse time.
+KEYENCE_STITCH_MAP_JSON = (
+    artifact_path(
+        DATA_ROOT,
+        "keyence_stitch_map",
+        "master_params",
+        FRONT_END_EXPERIMENT,
+        format_vars={"scope": SCOPE_TOKEN},
+    )
+    if MICROSCOPE == "Keyence"
+    else None
+)
+
 print(f"Project root: {PROJECT_ROOT}")
 print(f"Output root:  {DATA_ROOT}")
 print(f"Inputs root:  {INPUTS_DIR}")
@@ -252,6 +266,26 @@ if FRONT_END_MODE == "native":
     include: str(WORKFLOW_DIR / "rules" / "materialize_well_native.smk")
 elif FRONT_END_MODE == "dropin":
     include: str(WORKFLOW_DIR / "rules" / "dropin_handoff.smk")
+
+if MICROSCOPE == "Keyence":
+    rule build_keyence_stitch_map:
+        """Sample ~n_samples well/time pairs, align, take median tile coords, write master_params JSON.
+
+        Runs ONCE per experiment (experiment-grain output). All per-well materialize_image_product_for_well
+        jobs list this output as input, so Snakemake builds the map before any well job starts.
+        """
+        input:
+            acquisition_inventory_csv=SCOPE_ACQUISITION_INVENTORY_CSV,
+        output:
+            master_params=str(KEYENCE_STITCH_MAP_JSON),
+        shell:
+            """
+            {RUN} -m data_pipeline.pipeline_orchestrator.tasks build-keyence-stitch-map \
+              --acquisition-inventory-csv "{input.acquisition_inventory_csv}" \
+              --output-json "{output.master_params}" \
+              --n-samples 50
+            """
+
 include: str(WORKFLOW_DIR / "rules" / "frame_detections.smk")
 include: str(WORKFLOW_DIR / "rules" / "frame_masks.smk")
 include: str(WORKFLOW_DIR / "rules" / "physical_embryo_registry.smk")
@@ -369,7 +403,7 @@ rule map_positions_to_wells:
 
     YX1: reads stage XY from scope_metadata CSV (no second ND2 open).
          Requires scope_metadata.yx1.ref_xy_csv in config.yaml.
-    Keyence: near-passthrough (well already resolved at ingest).
+    Keyence: discovers XY## dirs from raw_images_parent; near-passthrough (well resolved at ingest).
     """
     input:
         scope_csv = SCOPE_METADATA_CSV,
@@ -379,6 +413,7 @@ rule map_positions_to_wells:
     params:
         experiment_id = "{experiment}",
         ref_xy_csv = str(YX1_REF_XY_CSV) if YX1_REF_XY_CSV else "",
+        raw_images_parent = str(RAW_IMAGES_DIR / MICROSCOPE),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-positions-to-wells \
@@ -386,6 +421,7 @@ rule map_positions_to_wells:
           --microscope "{MICROSCOPE}" \
           --scope-csv "{input.scope_csv}" \
           --ref-xy-csv "{params.ref_xy_csv}" \
+          --raw-images-parent "{params.raw_images_parent}" \
           --output-mapping-csv "{output.mapping_csv}" \
           --output-provenance-json "{output.provenance_json}"
         """

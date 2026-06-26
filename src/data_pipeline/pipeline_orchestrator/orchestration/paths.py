@@ -198,6 +198,19 @@ PIPELINE_STEPS: dict[str, dict] = {
         "artifacts": {"wells": "discovered_wells.txt"},  # one well_id per line
     },
 
+    # ── KEYENCE EXPERIMENT-GRAIN PRE-STEP (stitch map, generated once) ──────
+    # Experiment-grain pre-step that samples ~50 well/time pairs, aligns each, takes the median
+    # tile coords, and writes the master_params JSON. Consumed per-well by materialize_well via
+    # PreComputeStitchParams(master_params_path=...) — no re-alignment needed per frame.
+    # {scope} -> format_vars={"scope": SCOPE_TOKEN} (always "keyence" when this step is used).
+    "keyence_stitch_map": {
+        "stage": "acquisition",
+        "product_dir": "ingest_metadata",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {"master_params": "keyence_stitch_map__{scope}.json"},
+    },
+
     # ── PER-WELL MATERIALIZATION (pixel action — done sentinel only) ──────────
     # materialize_well[well_id] writes pixel files and the per-well frame-inventory shard.
     # DOCTRINE: materialize_well owns pixel materialization state (done sentinel under
