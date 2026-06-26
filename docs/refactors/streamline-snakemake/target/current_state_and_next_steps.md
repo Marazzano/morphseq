@@ -6,45 +6,38 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-26 (Keyence Stage C: stitch-map builder + Snakefile wired; 146 tests green)
+## ⭐ CURRENT SNAPSHOT — 2026-06-26 (Keyence Stage C: COMPLETE — smoke 13/13, committed 5184e2b2)
 
-**What shipped:**
-- **`orchestration/paths.py`** — new `"keyence_stitch_map"` registry entry (stage=acquisition,
-  product_dir=ingest_metadata, fanout=EXPERIMENT, artifact key=`master_params`,
-  template=`keyence_stitch_map__{scope}.json`). Resolved via `artifact_path(..., format_vars={"scope": SCOPE_TOKEN})`.
-- **`image_materialization/scope/keyence/build_keyence_stitch_map.py`** — experiment-grain builder.
-  Samples up to `n_samples` `(well_id, time_index)` pairs (fixed seed=42 → deterministic), focus-stacks
-  per tile via shared `materialize_ff_projection` (DRY), aligns via `stitch_frame_tiles`, takes
-  **median** per-tile `(dx_px, dy_px)`, writes `{"coords": {tile_id: [x, y]}}` JSON. Raises
-  `RuntimeError` if no sample aligns. Orientation from `acquisition_inventory_df["orientation"].mode()`.
-- **`tasks.py`** — new `cmd_build_keyence_stitch_map` + `"build-keyence-stitch-map"` sub-command;
-  `--master-params-path` arg added to `materialize-image-product-for-well` parser;
-  `cmd_materialize_image_product_for_well` threads it through.
-- **`run_materialize_well.py`** — `master_params_path: Path | None = None` added to both
-  `run_materialize_well` and `run_materialize_image_product_for_well`; threaded to Keyence backend.
-- **`materialize_well_native.smk`** — two hardcoded `--scope "yx1"` strings fixed to `{SCOPE_TOKEN}`;
-  `rule materialize_image_product_for_well` gains conditional `master_params_json` input + arg
-  (Keyence only, via `params.master_params_arg` lambda).
-- **`Snakefile`** — `KEYENCE_STITCH_MAP_JSON` path variable (None on non-Keyence); new
-  `rule build_keyence_stitch_map` (gated `if MICROSCOPE == "Keyence"`).
-- **`tests/…/scope/keyence/test_build_keyence_stitch_map.py`** — 5 new tests; all pass.
+**What shipped (committed in 5184e2b2):**
+- **`orchestration/paths.py`** — `"keyence_stitch_map"` registry entry (experiment-grain, ingest_metadata).
+- **`scope/keyence/build_keyence_stitch_map.py`** — experiment-grain stitch map builder; samples 50
+  `(well, time)` pairs, median tile coords, writes `keyence_stitch_map__{scope}.json`.
+- **`scope/keyence/materialize_well_keyence.py`** — full materializer: per-tile focus-stack,
+  stitch via `PreComputeStitchParams(master_params_path)`, canvas `focus_index_map` written as
+  `.npz` (tile_fims painted at (dy_px, dx_px) from `result.tile_transforms`). Same contract as YX1.
+- **`Snakefile`** — `build_keyence_stitch_map` rule + `KEYENCE_STITCH_MAP_JSON` as input to per-well
+  materialize; `map_positions_to_wells` passes `--raw-images-parent`.
+- **`materialize_well_native.smk`** — Keyence branch in `materialize_image_product_for_well`.
+- **`run_materialize_well.py`** — routes Keyence to `materialize_keyence_product_for_well`.
+- **`select_well_acquisition_rows.py`** — drop `well_id`/`well_index` before merge (Keyence
+  inventory carries them pre-minted; avoids pandas `_x/_y` suffix collision).
+- **`extract_scope_metadata.py`** — `nullable_columns=["x_um", "y_um"]` (BZ-X has no stage XY).
+- **`frame_inventory_validation_rules.py`** — L4b validates canvas focus_index_map `.npz`.
+- **`tasks.py`** — `build-keyence-stitch-map` subcommand + `--raw-images-parent` on `map-positions-to-wells`.
+- **`frame_tiler.py`** — `PreComputeStitchParams` renamed from `FallbackParams`.
+- **`config_smoke_keyence_20250612_24hpf.yaml`** — smoke config (A01+A02, 1 timepoint, CPU).
 
-**Verified:** 5 new Stage C tests green. Full `tests/data_pipeline/image_materialization/` suite
-green (137 passed). End-to-end smoke NOT yet run — no Keyence experiment config exists yet.
+**Smoke verified (2026-06-26):** 13/13 steps green on `20250612_24hpf_ctrl_atf6` A01+A02.
+- `keyence_stitch_map__keyence.json` ✅ exists with 3-tile vertical coords `{1:[0,0], 2:[0,1440], 3:[0,2880]}`
+- Both wells consumed `master_params=.../keyence_stitch_map__keyence.json` ✅
+- Both per-well `.validated` sentinels written ✅
+- `focus_index_map_path` populated (canvas `.npz` written per frame) ✅
+- 109 `metadata_ingest` tests pass ✅
 
-**What's broken/half-done:** End-to-end Keyence smoke not yet run. `focus_index_map_path` remains
-NA on Keyence projection rows (stitched-canvas provenance deferred).
-
-**Next concrete action — BEFORE committing Stage C:**
-1. Create a Keyence smoke config (`config_smoke_keyence_{exp}.yaml`) pointing at a real Keyence
-   experiment (1–2 wells, CPU-safe time-point cap).
-2. Run: `snakemake --configfile config_smoke_keyence_{exp}.yaml front_half --rerun-triggers mtime --cores 1`
-3. Confirm: `master_params.json` exists at the registry path; at least one frame log shows
-   `fallback_used == "master"`; per-well frame inventory shards pass the shared validator.
-4. Only then commit Stage C (all the files changed in this session).
-
-**Open decisions:** Stage D acceptance bar — byte-identity ideal vs numeric-diff gate. mdcolon must
-decide the tolerance threshold before the legacy Keyence stitch is strangled.
+**What's next — Stage D:**
+Stage D = byte-identity / numeric regression gate vs legacy Keyence stitch. Before starting:
+mdcolon must decide the tolerance threshold (byte-identity ideal vs numeric-diff). Then wire a
+comparison rule that runs both old and new paths on a reference set and checks the diff.
 
 ## ⭐ CURRENT SNAPSHOT — 2026-06-25 (Keyence Stage B: mosaic backend + resolver + sequencer wired; 141 tests green)
 
