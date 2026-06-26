@@ -43,8 +43,15 @@ def build_snip_qc_verdict(
             )
         if qc_flags_df[col].isna().any():
             raise ValueError(f"snip_qc build: flag column {col!r} has null value(s).")
-        if qc_flags_df[col].dtype != bool:
-            raise ValueError(f"snip_qc build: flag column {col!r} must be boolean dtype.")
+        # Accept BOTH numpy bool and pandas nullable BooleanDtype — inputs.py (the canonical
+        # producer of qc_flags_df) coerces every flag to nullable "boolean" and guarantees no NA
+        # (it raises on null above and at its own boundary). is_bool_dtype() is the dtype-agnostic
+        # check; a bare `dtype != bool` wrongly rejected the nullable boolean inputs.py emits.
+        if not pd.api.types.is_bool_dtype(qc_flags_df[col]):
+            raise ValueError(
+                f"snip_qc build: flag column {col!r} must be boolean dtype, "
+                f"got {qc_flags_df[col].dtype}."
+            )
 
     flags_by_snip = qc_flags_df.set_index(qc_flags_df["snip_id"].astype(str))
     reasons_out: list[str] = []

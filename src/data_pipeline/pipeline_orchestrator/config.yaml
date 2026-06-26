@@ -126,20 +126,27 @@ snip_frame_shape: &snip_frame_shape [576, 256]
 # then brings the mask home to artifact_shape. model_input_shape is transient and never persists.
 # NOTE: checkpoint filenames carried over from the old full-frame path — confirm/adjust per family.
 unet_snip:
-  models_root: "models/segmentation"
+  # models_root is ENVIRONMENT, not data layout. The orchestrator passes --models-root from
+  # env.yaml.paths.models_root (the gitignored per-machine ENVIRONMENT) and that value REPLACES the
+  # one below — model weights may live anywhere on a given machine, not under the data/output tree.
+  # The placeholder below only keeps this config block self-consistent when read in isolation
+  # (the loader requires a models_root key); the env always wins at run time.
+  # The per-family `checkpoint` key is the only model PATH the science config owns; it carries the
+  # family sub-route (e.g. "segmentation/<family>") resolved UNDER the env models_root.
+  models_root: "models"
   device: "cuda"
   models:
     via:
-      checkpoint: "via_v1_0100"
+      checkpoint: "segmentation/via_v1_0100"
       model_input_shape: *snip_frame_shape
     yolk:
-      checkpoint: "yolk_v1_0050"
+      checkpoint: "segmentation/yolk_v1_0050"
       model_input_shape: *snip_frame_shape
     focus:
-      checkpoint: "focus_v0_0100"
+      checkpoint: "segmentation/focus_v0_0100"
       model_input_shape: *snip_frame_shape
     bubble:
-      checkpoint: "bubble_v0_0100"
+      checkpoint: "segmentation/bubble_v0_0100"
       model_input_shape: *snip_frame_shape
 
 # Snip processing (crop + rotate + augment).

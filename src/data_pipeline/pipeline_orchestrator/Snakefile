@@ -542,8 +542,8 @@ def wells_for_experiment(wildcards):
 # Tiered data-flow proof (depth → width → agnostic-seam, terminal = snip_qc):
 #   docs/refactors/streamline-snakemake/target/specs/data_flow_test_plan.md
 # `front_half` is the front-half finish line. The snip_qc rules are already wired
-# (snip_qc.smk); `through_line` (added there) is the named target that REQUESTS
-# snip_qc end-to-end — `rule all` deliberately stops at merged frame_masks.
+# (snip_qc.smk); `through_line` (below) is the named target that REQUESTS snip_qc
+# end-to-end per discovered well — `rule all` deliberately stops at merged frame_masks.
 # ============================================================================
 
 def _front_half_targets(wc=None):
@@ -569,6 +569,25 @@ def _front_half_product_targets(wc=None):
     return targets
 
 
+def _through_line_targets(wc=None):
+    # Data-flow through-line terminal (data_flow_test_plan.md): the validated per-well snip_qc
+    # verdict shard for every discovered well. snip_qc is the terminal of the depth/width proof
+    # (everything past it — embeddings, analysis_ready — is out of scope). Requesting the per-well
+    # `.validated` sentinel drives the WHOLE spine raw -> snip_qc per well: materialize_well ->
+    # frame_inventory -> frame_detections -> frame_masks -> physical_embryo_registry -> snip
+    # processing/aux masks -> {mask_geometry, pose_kinematics, fraction_alive, stage_predictions} ->
+    # consolidated_features -> {surface_area, mask_quality, death} -> snip_qc. Tier 1 (config pins
+    # ONE well) is the depth proof; pointing the same target at all discovered wells is Tier 2.
+    # _snipqc_validated lives in rules/snip_qc.smk (included above), so it is in scope here.
+    targets = []
+    for exp in EXPERIMENTS:
+        for well_id in wells_for_experiment(_NS(experiment=exp)):
+            targets.append(str(_snipqc_validated(
+                exp, path_mode=PATH_MODE_PER_WELL, well_id=well_id
+            )))
+    return targets
+
+
 class _NS:
     # tiny wildcards stand-in so wells_for_experiment (which reads wildcards.experiment) can be
     # called outside a rule context for the front_half aggregate target.
@@ -591,6 +610,25 @@ rule front_half_products:
     """Product-grain materialization target; stops before canonical frame_inventory assembly."""
     input:
         _front_half_product_targets
+
+
+rule through_line:
+    """Data-flow through-line target — raw ND2 -> the per-snip snip_qc verdict, end-to-end.
+
+    The named REQUEST for snip_qc (the snip_qc rules are already wired in snip_qc.smk; nothing
+    asked for them — `rule all` deliberately stops at merged frame_masks). Mirrors `front_half`:
+    aggregates the validated per-well snip_qc shards for every discovered well, so the requested
+    well-set is decided by config (`target_wells`), not by this rule.
+
+      - Tier 1 (DEPTH): overlay a one-well config (config_smoke_through_line_20250912_B01.yaml) ->
+        this builds ONE well raw -> snip_qc, proving every inter-stage seam once. CPU.
+      - Tier 2 (WIDTH): no well filter -> this builds all discovered wells; add the merged snip_qc
+        artifact as the target to also exercise the merge seam. GPU (after the GPU gate).
+
+    See: docs/refactors/streamline-snakemake/target/specs/data_flow_test_plan.md
+    """
+    input:
+        _through_line_targets
 
 
 rule all:

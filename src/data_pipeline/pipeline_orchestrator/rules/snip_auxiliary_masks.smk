@@ -30,7 +30,14 @@ def _sam_artifacts_for_run(wc):
 
 
 rule build_snip_auxiliary_masks_for_well:
-    """Run per-snip UNet auxiliary-mask inference for one well from the validated snip_inventory."""
+    """Run per-snip UNet auxiliary-mask inference for one well from the validated snip_inventory.
+
+    --models-root is the ENVIRONMENT model root (env.yaml.paths.models_root); it is authoritative and
+    replaces any config unet_snip.models_root — model weights may live anywhere on a machine, not
+    under the data tree. The per-family `checkpoint` key (config) carries the family sub-route. This
+    seam first ran continuously raw->snip_qc in the Tier-1 through-line proof; see
+    docs/refactors/streamline-snakemake/target/specs/data_flow_test_plan.md (Tier 1).
+    """
     input:
         snip_inventory=str(_sam_snip_inventory("{experiment}", well_id="{well_id}")),
         snip_inventory_validated=str(_sam_snip_inventory_validated("{experiment}", well_id="{well_id}")),

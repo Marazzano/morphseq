@@ -581,8 +581,12 @@ def cmd_snip_auxiliary_masks(args: argparse.Namespace) -> None:
     config_yaml = Path(args.config_yaml)
     config = yaml.safe_load(config_yaml.read_text()) or {}
     unet_snip_config = config.get("unet_snip") or config.get("auxiliary_masks", {}).get("unet_snip", {})
+    # models_root is ENVIRONMENT, not data layout: aux-mask checkpoints may live anywhere on a given
+    # machine (env.yaml.paths.models_root, passed as --models-root) — NOT under the data/output tree.
+    # The env root is authoritative and replaces any config models_root. The per-family checkpoint
+    # key (unet_snip.models.<family>.checkpoint) is the only path the science config owns.
+    unet_snip_config = dict(unet_snip_config)
     if args.models_root:
-        unet_snip_config = dict(unet_snip_config)
         unet_snip_config["models_root"] = str(args.models_root)
 
     run_snip_auxiliary_masks(

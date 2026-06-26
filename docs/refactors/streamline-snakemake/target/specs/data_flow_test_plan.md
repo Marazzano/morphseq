@@ -50,6 +50,11 @@ Before any new run, produce ONE consolidated table: for every rule in the spine
 (experiment, well count, timepoint count, scope, CPU/GPU, commit). Most of this is already scattered
 across the dated snapshots in `current_state_and_next_steps.md` — consolidate, do not re-derive.
 
+> **✅ DONE (2026-06-26):** the consolidated table lives in **`data_flow_baseline_ledger.md`**. It
+> confirms all three known gaps below against disk, and surfaces a concrete on-disk inconsistency
+> (B01 shards laid down by different earlier smokes — `frame_inventory` 48 rows vs.
+> detections/masks/snips 3 rows) — which is *why* Tier 1 runs as a continuous from-raw rebuild.
+
 Columns: `step_key | rule(s) | last real-data proof (commit/date) | scale (exp/wells/timepoints) |
 scope(s) proven | CPU/GPU | gap`.
 
@@ -70,11 +75,17 @@ catches that the prior tier could not), **how to run**, and **success criteria**
 artifacts + checks). A tier is DONE only when its success criteria are observed on disk, not when a
 dry-run plans.
 
-### Tier 1 — DEPTH: one well, raw → `snip_qc` (the through-line proof)
+### Tier 1 — DEPTH: one well, raw → `snip_qc` (the through-line proof) — 🟢 GREEN (2026-06-26)
+
+> **✅ DONE (2026-06-26):** B01 / 1 tp / CPU, continuous from-raw → `snip_qc` verdict. All §3
+> criteria observed on disk. Three seam fixes were required (target wiring; `unet_snip` model-route =
+> environment; snip_qc nullable-BooleanDtype) — full result + §5 change log in
+> **`tier1_through_line_findings.md`**. **STOPPED at the GPU gate for mdcolon review.**
 
 - **Goal:** one YX1 embryo's data crosses *every* seam from raw ND2 to the `snip_qc` verdict.
 - **Fixture + scale:** `20250912`, **one well** (start `B01` — it has both products proven), **1
-  timepoint**. CPU where possible; GPU node for detection/segmentation/projection legs.
+  timepoint**. **Tier 1 is a CPU run** — one well / one timepoint is small enough that the
+  detection/segmentation/projection legs run on CPU. No GPU node required for the depth proof.
 - **Uniquely proves:** every inter-stage **contract handoff** end-to-end, once:
   `materialize_well → frame_inventory(assembled) → frame_detections → frame_masks →
   physical_embryo_registry → snip_processing → snip_auxiliary_masks → {mask_geometry,
@@ -110,11 +121,20 @@ dry-run plans.
     Mismatch between the resolver's declared sources and the DAG's real inputs is a failure — this is
     the real-data proof of the flag-resolver doctrine.
 
+> ### ⛔ GPU GATE — STOP between Tier 1 and Tier 2
+> Tier 1 runs on CPU (above). **Tier 2 is the first run that needs a GPU node** (all wells in
+> parallel makes the detection/segmentation legs GPU-bound). Do **not** proceed from Tier 1 to
+> Tier 2 autonomously. When Tier 1 is green, **PAUSE and hand back to mdcolon to verify the
+> through-line result + the change log** before any GPU is requested. mdcolon explicitly approves
+> crossing this gate. Spending GPU on a width run before the depth seams are human-verified is the
+> exact waste this ladder exists to prevent.
+
 ### Tier 2 — WIDTH: one experiment, full fan, raw → `snip_qc`
 
 - **Goal:** the *whole* YX1 experiment fans out per-well and merges, end-to-end to `snip_qc`.
 - **Fixture + scale:** `20250912`, **all discovered wells**, **1 timepoint** (hold timepoints at 1
-  to isolate width from temporal volume).
+  to isolate width from temporal volume). **GPU node required** (the per-well detection/segmentation
+  legs run in parallel) — only after the Tier-1 → Tier-2 GPU gate above is cleared by mdcolon.
 - **Uniquely proves:** the parts depth structurally cannot — the `discover_wells` **checkpoint fan**,
   per-well parallel execution, the **merge seams** (every `merge_*` rule; verify a subset run does
   not shrink a previously-broader merged table — the "merge never shrinks" 🟢 behavior, F6 in
@@ -166,11 +186,15 @@ dry-run plans.
 
 ```
 Tier 0 (ledger, no runs)
-   └─► Tier 1 (YX1, 1 well, 1 tp → snip_qc)       ← find seam bugs cheap
-          └─► Tier 2 (YX1, all wells, 1 tp → snip_qc)   ← find fan/merge/GPU bugs
-                 └─► Tier 3 (Keyence, A01+A02, 1 tp → snip_qc)  ← prove agnostic seam
+   └─► Tier 1 (YX1, 1 well, 1 tp → snip_qc)  [CPU]      ← find seam bugs cheap
+          ══ ⛔ GPU GATE — STOP, mdcolon verifies Tier-1 result + change log ══
+          └─► Tier 2 (YX1, all wells, 1 tp → snip_qc)  [GPU]   ← find fan/merge/GPU bugs
+                 └─► Tier 3 (Keyence, A01+A02, 1 tp → snip_qc)  [GPU]  ← prove agnostic seam
                         └─► Tier 4 (scale + embeddings)  [deferred]
 ```
+
+Tier 1 is CPU-only and runs unattended. The **GPU gate** between Tier 1 and Tier 2 is a hard
+human-in-the-loop pause: the depth result is verified by mdcolon before any GPU is spent on width.
 
 A whole experiment first moves end-to-end at **Tier 2**. The Keyence + YX1 pairing is **Tier 3** —
 on purpose *after* depth, because a broken seam costs minutes to debug at 1 well, hours at 95.

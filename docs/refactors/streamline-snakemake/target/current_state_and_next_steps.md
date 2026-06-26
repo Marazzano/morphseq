@@ -6,7 +6,34 @@ the dated sections further down are earlier verified state, kept for history. De
 
 ---
 
-## ⭐ CURRENT SNAPSHOT — 2026-06-26 (Keyence Stage C: COMPLETE — smoke 13/13, committed 5184e2b2)
+## ⭐ CURRENT SNAPSHOT — 2026-06-26 (Tier 1 DEPTH through-line GREEN — raw ND2 → snip_qc, CPU, B01)
+
+**What shipped:** the first **continuous real-data run** of the entire spine past merged frame_masks.
+`20250912_B01`, 1 timepoint, CPU, raw ND2 → the `snip_qc` verdict (`use_snip=True`,
+`qc_fail_reasons=''`). This is Tier 1 of `specs/data_flow_test_plan.md`; full result + change log in
+`specs/tier1_through_line_findings.md`, and the Tier-0 baseline ledger in
+`specs/data_flow_baseline_ledger.md`.
+
+**Changes that made data flow (3 — see findings doc for the full §5 log):**
+1. **`through_line` named target** (Snakefile) + `config_smoke_through_line_20250912_B01.yaml` — the
+   missing REQUEST for snip_qc (`rule all` still stops at merged frame_masks).
+2. **`unet_snip` model route = ENVIRONMENT** — env `--models-root` is authoritative; the `segmentation/`
+   family segment moved into each config `checkpoint` key. Fixed checkpoint-not-found. (config + tasks.py)
+3. **snip_qc accepts pandas nullable BooleanDtype** (`build.py`) — producer/consumer dtype seam with
+   `inputs.py`. Fixed `viability_dead_flag must be boolean dtype`.
+
+**Verified on disk:** snip_qc verdict + `.validated`; full per-well `.validated` sentinel chain
+(13 stages); no 0-row stages; PKs unique; resolver-doctrine proof (resolved_sources JSON sources ==
+DAG inputs). 96 QC + unet/tasks tests green.
+
+**⛔ STOPPED at the GPU GATE.** Tier 2 (WIDTH, all wells) is the first GPU run and is a hard
+human-in-the-loop pause — mdcolon verifies this Tier-1 result + change log before any GPU is spent.
+**Next action: mdcolon review, then approve crossing the gate.** (Optional pre-Tier-2 tidy: clean
+re-materialize so B01's z_stack stream is also 1-tp; cosmetic, the projection through-line is already 1 tp.)
+
+---
+
+## ⭐ SNAPSHOT — 2026-06-26 (Keyence Stage C: COMPLETE — smoke 13/13, committed 5184e2b2)
 
 **What shipped (committed in 5184e2b2):**
 - **`orchestration/paths.py`** — `"keyence_stitch_map"` registry entry (experiment-grain, ingest_metadata).
