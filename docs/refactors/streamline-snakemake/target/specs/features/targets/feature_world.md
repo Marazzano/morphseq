@@ -114,13 +114,13 @@ src/data_pipeline/quality_control/
     qc_table_utils.py
   # STUBS — in development, not built this pass (z-stack ingest):
   #   focus_qc/   -> focus_flag
-  #   blur_qc/    -> blur_flag
+  #   motion_blur_qc/ -> motion_blur_flag
 ```
 
 The four MVP QC product folders above are `death_detection/`, `surface_area_qc/`, `mask_quality_qc/`,
-and `snip_qc/`. `focus_qc/` and `blur_qc/` are **stubs** (deferred; see their sections). `motion_qc/`
-and `viability_qc/` are **not** target products — they are dropped (see Legacy Domain Retirement) and
-must not appear under `quality_control/`.
+and `snip_qc/`. `focus_qc/` and `motion_blur_qc/` are **stubs** (deferred; see their sections).
+Legacy `motion_qc/` and `viability_qc/` are **not** target products — they are dropped (see Legacy
+Domain Retirement) and must not appear under `quality_control/`.
 
 Per product folder:
 
@@ -174,7 +174,7 @@ separate cleanup pass.
 | `quality_control/entrypoints/consolidate_qc.py` | `quality_control/snip_qc/entrypoint.py` |
 | `quality_control/io/paths.py` | deleted; paths come from orchestration registry |
 | `quality_control/io/loaders.py` | loaders move product-local or into `quality_control/io/loaders.py` scoped to shared mechanics only |
-| `schemas/quality_control.py` (`SNIP_EXCLUSION_FLAGS`, `REQUIRED_COLUMNS_QC`) | each product owns its contract; `snip_qc/contract.py` owns `SNIP_QC_EXCLUSION_REASONS`; delete the domain-level schema module once per-product contracts cover all callers |
+| `schemas/quality_control.py` (`SNIP_EXCLUSION_FLAGS`, `REQUIRED_COLUMNS_QC`) | each product owns its contract; `snip_qc/contract.py` owns `SNIP_QC_EXCLUSION_FLAGS`; delete the domain-level schema module once per-product contracts cover all callers |
 
 The `quality_control/core/` and `quality_control/consolidation/` and `quality_control/entrypoints/`
 directories must be empty (or deleted) after the MVP products are implemented. Leaving dead modules
@@ -299,10 +299,70 @@ time-independent) carries `PHYSICAL_EMBRYO_ID_SPINE_COLUMNS` and **must not** ca
 > downstream (death detection, fraction_alive projection, pose, consolidated features): if the fact is
 > about *the animal*, the group key is `physical_embryo_id`.
 
-So a per-snip product declares `list(SNIP_ID_SPINE_COLUMNS + product_columns)` and a physical-embryo-grain
-event table declares `list(PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + event_columns)`, both importing the spine
-from the contract module — the snip-grain checker that the feature columns already use is the same one,
-reused, not re-implemented.
+So a per-snip product declares `SNIP_ID_SPINE_COLUMNS + <PRODUCT>_PAYLOAD_COLUMNS` and a
+physical-embryo-grain event table declares
+`PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + <PRODUCT>_PAYLOAD_COLUMNS`, both importing the spine from the
+contract module — the snip-grain checker that the feature columns already use is the same one, reused,
+not re-implemented.
+
+**Column-family naming pattern.** Every product contract should expose column constants by role, not
+by vague "required" buckets:
+
+```python
+from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+    SNIP_ID_SPINE_COLUMNS,
+)
+
+FOCUS_QC_PAYLOAD_COLUMNS = (
+    "interior_strong_edge_fraction",
+    "interior_n_px",
+    "focus_flag",
+)
+FOCUS_QC_TABLE_COLUMNS = SNIP_ID_SPINE_COLUMNS + FOCUS_QC_PAYLOAD_COLUMNS
+```
+
+Use these roles consistently:
+
+| Family | Meaning | Ownership |
+|---|---|---|
+| `*_SPINE_COLUMNS` | identity columns that define row grain | imported from the identity minting site |
+| `*_PROVENANCE_COLUMNS` | source/context columns this product contract intentionally carries | owned by the product or imported from the upstream handoff if shared |
+| `*_PAYLOAD_COLUMNS` | columns this product creates | owned by the product |
+| `*_TABLE_COLUMNS` | full emitted table, in order | composed in the product's `contract.py` |
+
+For most QC summary products, the contract is just:
+
+```python
+<PRODUCT>_TABLE_COLUMNS = SNIP_ID_SPINE_COLUMNS + <PRODUCT>_PAYLOAD_COLUMNS
+```
+
+They may read frame provenance from `snip_inventory` to find pixels, but they should not emit those
+source-frame columns unless the QC product explicitly owns them as output provenance. For example,
+`focus_qc` and `motion_blur_qc` use `image_id` / `time_index` / `channel_id` operationally, but their
+QC CSVs remain spine + payload.
+
+For tables whose own contract carries source context, add a named provenance block:
+
+```python
+SNIP_INVENTORY_TABLE_COLUMNS = (
+    SNIP_ID_SPINE_COLUMNS
+    + SNIP_FRAME_PROVENANCE_COLUMNS
+    + SNIP_INVENTORY_PAYLOAD_COLUMNS
+)
+```
+
+Migration rule: retire product-local `_FEATURE_COLUMNS`, `_QC_FLAG_COLUMNS`,
+`*_REQUIRED_COLUMNS`, and generic `REQUIRED_COLUMNS` exports in favor of product-named
+`*_PAYLOAD_COLUMNS` and `*_TABLE_COLUMNS`. During migration, an alias may exist briefly for
+compatibility, but new code should import the family-named constants.
+
+Do not use optional "extra" columns as a debug junk drawer. If a feature/QC step wants to emit
+calibration detail, per-object traces, review-only scores, or other exploratory content that no
+pipeline consumer uses, write it as a separate debug/report artifact outside the canonical table
+contract. It can be lighter-weight and omitted from the normal DAG while exploratory. Once it is
+needed to explain the product, feed another stage, or support reproducible review, promote it into a
+declared payload/provenance column or a separately contracted product. Until then, ask: **why is this a
+column if it is not used?**
 
 **Required change at the minting site (prerequisite).** Today `snip_identity_contract.py` defines the
 spine sets as **private, independent literals** (`_SNIP_SPINE_COLUMNS`, `_EMBRYO_SPINE_COLUMNS`) — they
@@ -330,8 +390,9 @@ This keeps identity owned where it is minted and lets every feature/QC contract 
 snip-grain checker used by the feature columns — share exactly one definition.
 
 > Doctrine in one line: every output gets a grain/identity + column schema check before write; the
-> spine is imported from its minting site (never re-typed), and the per-snip grain checker is exactly
-> what would have caught earlier spine/column gaps, so it runs on every table, every time.
+> spine is imported from its minting site (never re-typed); payload is the product's own delta; and the
+> per-snip grain checker is exactly what would have caught earlier spine/column gaps, so it runs on
+> every table, every time.
 
 **WellRunner compatibility:** every feature and QC stage should produce per-well shards first, then
 merge. The stage contract must identify whether the shard is per-well or merged, and the registry row
@@ -420,8 +481,8 @@ tables judge it; `snip_qc` summarizes the verdict; `analysis_ready` applies the 
 | `surface_area_qc` | `quality_control` | `snip_id` | `mask_geometry` + `stage_predictions` + feature universe + packaged reference | `surface_area_qc` |
 | `mask_quality_qc` | `quality_control` | `snip_id` (overlap computed per `image_id`) | validated `snip_inventory` + canonical `frame_masks` | `mask_quality_qc` |
 | `death_detection` | `quality_control` | `snip_id` flags; `physical_embryo_id` `death_event` | `fraction_alive` + feature universe + frame timing (+ `stage_predictions` for `death_event`) | `death_detection_qc` + `death_event` |
-| `focus_qc` | `quality_control` | `snip_id` (from z-stack) | z-stack focus metric + feature universe | `focus_qc` (**STUB** — z-stack, in dev) |
-| `blur_qc` | `quality_control` | `snip_id` (from z-stack) | z-stack blur metric + feature universe | `blur_qc` (**STUB** — z-stack, in dev) |
+| `focus_qc` | `quality_control` | `snip_id` | projection image + canonical mask + `frame_inventory` | `focus_qc` (**STUB** — in dev) |
+| `motion_blur_qc` | `quality_control` | `snip_id` | z-stack planes + canonical mask + `frame_inventory` | `motion_blur_qc` (**STUB** — in dev) |
 | `metadata_completeness_qc` | `quality_control` | `snip_id` | validated `snip_inventory` + required metadata contracts | `metadata_completeness_qc` (deferred) |
 | `snip_qc` | `quality_control` | `snip_id` | feature universe + selected QC flag inputs | `snip_qc` |
 
@@ -447,7 +508,7 @@ or **stub** does not belong under `quality_control/` and should be deleted, not 
 | Product | Future flag | Status |
 |---|---|---|
 | `focus_qc` | `focus_flag` | stub; reserved `snip_qc` hook |
-| `blur_qc` | `blur_flag` | stub; reserved `snip_qc` hook |
+| `motion_blur_qc` | `motion_blur_flag` | stub; reserved `snip_qc` hook |
 | `metadata_completeness_qc` | `metadata_missing_flag` | deferred; reserved `snip_qc` hook |
 
 **Dropped (not target products — delete legacy, do not create folders):**
@@ -575,8 +636,8 @@ No caller ever types a raw path string. Every path is resolved through `artifact
 > **DAG rule:** the priority order is a real dependency order, not a wishlist. No item may depend on a
 > later item. (This is why stage_predictions moved ahead of surface_area_qc.)
 
-**Deferred / stub (not scheduled this pass):** `focus_qc` and `blur_qc` (z-stack ingest, in
-development; future `focus_flag` / `blur_flag` are reserved `snip_qc` hooks); `metadata_completeness_qc`
+**Deferred / stub (not scheduled this pass):** `focus_qc` and `motion_blur_qc` (image/z-stack ingest,
+in development; future `focus_flag` / `motion_blur_flag` are reserved `snip_qc` hooks); `metadata_completeness_qc`
 (may later feed `snip_qc` as `missing_metadata`). **Dropped:** `motion_qc` (not used), `viability_qc`.
 
 ---
@@ -1319,21 +1380,28 @@ MVP and never flags.
 > the flag logic but **re-points the input** from backend-native SAM2 output to canonical masks. This
 > is the integration cost — the checks are simple, the input swap is the work.
 
-**What it decides:** whether a snip's mask is structurally untrustworthy — cut off at the frame edge,
-broken into disconnected pieces, or overlapping another embryo. These are **segmentation-quality**
-judgments, distinct from morphology features and from viability/death.
+**What it decides:** whether a snip's mask or the image evidence behind that mask is untrustworthy —
+cut off at the frame edge, broken into disconnected pieces, overlapping another embryo, or eventually
+unusable because the image is saturated/crushed. These are **segmentation/image-quality** judgments,
+distinct from morphology features and from viability/death.
 
-**Three per-snip flags (no persisted composite):**
+**Saturation ownership:** saturation / crushed-brightness QC belongs here, in the general
+mask/image-quality product, not in `focus_qc`. Focus QC should only decide focus; if saturation becomes
+a hard exclusion, `mask_quality_qc` emits `saturation_flag` and `snip_qc` consumes that flag from this
+product.
+
+**Per-snip flags (no persisted composite):**
 
 | Flag | Fires when | Detects |
 |---|---|---|
 | `edge_flag` | mask touches the image boundary within `margin_pixels` | incomplete embryo cut off at frame edge |
 | `discontinuous_mask_flag` | more than one significant connected component (> `min_component_fraction` of the largest) | tracking/segmentation split the mask |
 | `overlapping_mask_flag` | IoU with another embryo's mask in the same image exceeds `iou_threshold` | embryo ID confusion |
+| `saturation_flag` *(planned extension)* | bright-tail spread falls below the configured cutoff, e.g. `top_spread_p99_p90 < 4` | saturated/crushed image evidence, not a focus failure |
 
 **No `mask_quality_flag` composite in MVP.** A persisted composite is contract bloat and a double-count
-foot-gun: the verdict builder already ORs reasons, so a stored composite alongside its components risks
-someone later mapping both into `SNIP_QC_EXCLUSION_REASONS` and producing duplicate verdict semantics.
+foot-gun: the verdict builder already ORs the flags, so a stored composite alongside its components
+risks someone later adding both into `SNIP_QC_EXCLUSION_FLAGS` and producing duplicate verdict semantics.
 `snip_qc` consumes the **three component flags** and does the OR itself. If a future dashboard needs a
 single convenience column it can derive it on read — it is not part of the persisted contract, and
 `snip_qc` must never consume a composite alongside the components.
@@ -1348,6 +1416,9 @@ single convenience column it can derive it on read — it is not part of the per
 - `compute.py::compute_overlap_flags_for_image(image_masks_by_physical_embryo, *, iou_threshold)`
   — pairwise IoU only between distinct `physical_embryo_id`s in one image; flags both snips of an
   over-threshold pair
+- `compute.py::compute_saturation_qc(...)` *(planned extension)* — loads the projection image through
+  `frame_inventory`, reduces brightness-tail metrics inside the snip mask, and emits the metric plus
+  `saturation_flag`
 - `entrypoint.py::main()`
 
 **Direct dependencies:** validated `snip_inventory` (the snip→mask handoff, carrying the
@@ -1356,12 +1427,17 @@ mask decoder, and configured thresholds. The overlap check uses the explicit `ph
 column — it does not parse `snip_id`. It does **not** read `segmentation_tracking.csv` or decode RLE
 inline.
 
+When saturation QC is enabled, this product also consumes `frame_inventory` to load the projection
+image addressed by the snip's frame provenance. It should not infer image suffixes or persist encoding
+fields; encoding/downsample metadata remain `frame_inventory` facts.
+
 **Config surface:** `quality_control.mask_quality_qc`
 
 - `margin_pixels`: edge-contact margin, current default 2;
 - `min_component_fraction`: minimum component size relative to the largest to count as significant,
   current default 0.05;
 - `iou_threshold`: pairwise IoU cutoff for overlap, current default 0.10;
+- `saturation_top_spread_min`: planned bright-tail spread cutoff, current target 4;
 - `missing_mask_policy`: fail loud or documented flag behavior for snips with no decodable mask.
 
 **Grain — overlap is the special case:** `edge_flag` and `discontinuous_mask_flag` are pure per-snip
@@ -1394,9 +1470,11 @@ internal compute step, named in the contract like the death-persistence broadcas
 - `edge_flag`
 - `discontinuous_mask_flag`
 - `overlapping_mask_flag`
+- `top_spread_p99_p90` and `saturation_flag` when the planned saturation extension ships
 
-All three flags are required non-null booleans (all end in `_flag` per the Stage Table Pattern). No
-composite column is persisted.
+All emitted flags are required non-null booleans (all end in `_flag` per the Stage Table Pattern). No
+composite column is persisted. Saturation should ship with its supporting metric; a
+`saturation_flag` without `top_spread_p99_p90` is a black box.
 
 **Done when:**
 
@@ -1415,88 +1493,123 @@ composite column is persisted.
 ## Focus QC (STUB — in development, not MVP)
 
 > **STUB.** Focus QC is **not** part of MVP and is not migrated this pass. It is in active development
-> in `results/mcolon` (the `20260423_focus_artifact_detection` bundle) and is a special case because
-> it **ingests z-stacks** — it needs wiring specifically for that input, unlike the snip-table QC
-> products. The design below is a placeholder for when it lands; do not implement against it yet. Its
-> future flag is `focus_flag`, and `snip_qc` reserves a future hook for it (see Snip QC).
+> in `results/mcolon` (latest decision bundle:
+> `20260625_cross_experiment_focus_motion_qc`). It is a special case because it loads durable
+> projection pixels through `frame_inventory`, rather than judging only existing feature tables. The
+> target contract is detailed in
+> `quality_control/z_stack_focus_motion_blur_qc_and_slice_selection.md`. Its future flag is
+> `focus_flag`, and `snip_qc` reserves a future hook for it (see Snip QC).
 
 **Product folder:** `src/data_pipeline/quality_control/focus_qc/`
 
 **Key functions:**
 
-- `contract.py::FOCUS_QC_REQUIRED_COLUMNS`
+- `contract.py::FOCUS_QC_PAYLOAD_COLUMNS`
+- `contract.py::FOCUS_QC_TABLE_COLUMNS`
 - `contract.py::validate_focus_qc(df)`
-- `compute.py::compute_focus_qc_flags(focus_feature_df, snip_universe_df, *, thresholds)`
-- `compute.py::compute_focus_flag(focus_metric, *, thresholds)`
+- `compute.py::compute_focus_qc(snip_inventory_df, frame_masks_df, frame_inventory_df, *, config)`
+- `compute.py::compute_interior_strong_edge_fraction(projection_image, mask, *, config)`
 - `entrypoint.py::main()`
 
-**Direct dependencies:** a named focus/input-quality feature table or image-quality contract,
-feature universe keyed by `snip_id`, and configured thresholds.
+**Direct dependencies:** validated `snip_inventory`, canonical `frame_masks`, per-well
+`frame_inventory`, `physical_embryo_registry`, and configured thresholds. The stage runs per well and
+emits one row per `snip_id`.
 
 **Config surface:** `quality_control.focus_qc`
 
-- `focus_metric_product`: named upstream product that owns the focus metric;
-- `focus_metric_column`: metric column to threshold;
-- `focus_min_threshold` or `focus_max_threshold`: configured cutoff, depending on metric direction;
-- `inheritance_grain`: whether focus is per snip, per image, or inherited from frame-level QC;
-- `missing_focus_policy`: fail loud or documented neutral flag behavior.
+- `projection_product_key`: inventory product key to load for the projection image;
+- `interior_erosion_pixels`: current target 12, with smaller fallback for tiny interiors;
+- `normalization_mode`: current target `local_context` (mask plus dilated local context band);
+- `strong_edge_sobel_threshold`: current target 0.02;
+- `interior_strong_edge_fraction_threshold`: current target 0.50;
+- `min_interior_pixels`: current target 200 before erosion fallback;
+- `missing_projection_policy`: fail loud unless a documented policy says otherwise;
+- `missing_mask_policy`: fail loud unless a documented policy says otherwise.
 
-**What it decides:** whether a snip should be flagged for focus or image-quality failure.
+**What it decides:** whether the raw/projection image has enough internal embryo structure to trust
+the snip. It targets the ghost/structureless failure mode: bright, well-masked embryos that lack
+internal texture because they are badly out of focus.
+
+The current fine-tuned gate is intentionally conservative: `local_context`, Sobel `grad > 0.02`, and
+`interior_strong_edge_fraction < 0.50`. This is a low-information exclusion as much as a strict focus
+exclusion. The accepted compromise is that some bright/dorsal embryos with little internal structure
+will be removed, because keeping low-information snips is worse for downstream analysis than
+over-preserving borderline cases.
 
 **Depends on:**
 
-- a prior contract that defines the focus metric input;
-- one row per `snip_id` in the feature universe;
-- QC thresholds from config.
+- the snip row's frame provenance to locate the projection row in `frame_inventory`;
+- the unaugmented projection image at `frame_inventory.source_image_path`;
+- the snip mask from `frame_masks`.
 
-**Needs before coding:**
+Do **not** consume processed snip images if they have been CLAHE/noise augmented. A snip-shaped raw
+crop is acceptable evidence because the metric is interior-local, but it must be pixel-equivalent to
+the projection row named by `frame_inventory`, unaugmented, and paired with the same mask coordinate
+transform. Default implementation is still to load the projection through `frame_inventory` and make
+the crop transiently inside `focus_qc`; a durable raw-crop product can be used only after it is
+contracted as inventory-addressed image evidence.
 
-- name the input focus metric product and its schema;
-- decide whether focus is computed per image, per object/snip, or inherited from a frame-level
-  quality product;
-- avoid reading raw images from this QC stage unless the focus metric contract explicitly says so.
+Saturation / crushed-brightness QC is not owned here. It belongs to `mask_quality_qc` or its general
+image-quality successor.
 
 **Output contract:**
 
 - `SNIP_ID_SPINE_COLUMNS`
+- `interior_strong_edge_fraction`
+- `interior_n_px`
 - `focus_flag`
 
-`focus_flag` is a required non-null boolean.
+`focus_flag` is a required non-null boolean. The supporting metric is required; a flag without
+`interior_strong_edge_fraction` is a black box. Review-only companions such as `interior_std`,
+`interior_grad_p90`, or banded partial-defocus summaries should remain debug/report artifacts until
+they earn a consumer or a persisted verdict.
 
 **Done when:**
 
-- the input focus metric contract exists;
-- fixture rows cover good focus, bad focus, missing focus, and duplicate keys;
-- output aligns to the feature universe.
+- the product follows the shared `SNIP_ID_SPINE_COLUMNS + FOCUS_QC_PAYLOAD_COLUMNS` pattern;
+- the validator checks the snip spine against `physical_embryo_registry` with `check_sources=True`;
+- fixtures cover good focus, ghost/structureless focus failure, tiny-mask erosion fallback, missing
+  projection, missing mask, and duplicate keys;
+- output aligns one-to-one with the snip universe in the well shard.
 
 ---
 
-## Blur QC (STUB — in development, not MVP)
+## Motion-Blur QC (STUB — in development, not MVP)
 
-> **STUB.** Blur QC is **not** part of MVP and is not migrated this pass — it has no legacy module to
-> migrate; it is net-new and in active development. Like Focus QC, it **ingests z-stacks** and needs
-> input wiring specific to that, so it is not a simple snip-table QC product. This section reserves
-> the slot so the deck and `snip_qc` know it is coming.
+> **STUB.** Motion-blur QC is **not** part of MVP and is not migrated this pass — it has no legacy
+> module to migrate; it is net-new and in active development. It loads materialized z-stack planes
+> through the per-well `frame_inventory` and computes embryo-restricted adjacent-plane NCC. This
+> section reserves the slot so the deck and `snip_qc` know it is coming.
 
-**Product folder:** `src/data_pipeline/quality_control/blur_qc/` (future)
+**Product folder:** `src/data_pipeline/quality_control/motion_blur_qc/` (future)
 
-**What it decides:** whether a snip should be flagged for blur / out-of-focus image degradation,
-distinct from Focus QC's metric. (The exact metric and the focus-vs-blur boundary are part of the
-in-development design and are not pinned here.)
+**What it decides:** whether adjacent z planes disagree inside the embryo mask strongly enough to
+indicate inter-slice motion blur.
 
 **Output contract (future):**
 
 - `SNIP_ID_SPINE_COLUMNS`
-- `blur_flag`
+- `mask_pixel_ncc_mean`
+- `mask_pixel_ncc_min`
+- `mask_pixel_ncc_p05`
+- `mask_pixel_bad_pair_frac`
+- `mask_pixel_longest_bad_run`
+- `n_z_pairs`
+- `n_valid_z_pairs`
+- `n_flat_z_pairs`
+- `n_mask_pixels`
+- `motion_blur_flag`
 
-`blur_flag` will be a required non-null boolean when the product lands. `snip_qc` reserves a future
-hook for it (see Snip QC).
+`motion_blur_flag` will be a required non-null boolean when the product lands. `snip_qc` reserves a
+future hook for it (see Snip QC).
 
 **Needs before coding:**
 
-- the z-stack input contract and how blur is measured across the stack;
-- the per-snip projection from the z-stack-grained metric;
-- the focus-vs-blur boundary so the two flags are not redundant.
+- confirm the per-well `frame_inventory` contract exposes the required `BF__z_stack` rows;
+- keep z-stack lookup inventory-driven, not filesystem-path inferred;
+- validate missing/ambiguous z planes loudly;
+- keep grid/tile diagnostics out of the canonical table unless they are promoted as a contracted
+  payload or separate debug/report artifact.
 
 ---
 
@@ -1545,10 +1658,10 @@ exception. The spine is owned by `SNIP_ID_SPINE_COLUMNS` and enforced by
 **Key functions and constants:**
 
 - `contract.py::SNIP_QC_REQUIRED_COLUMNS`
-- `contract.py::SNIP_QC_EXCLUSION_REASONS`
+- `contract.py::SNIP_QC_EXCLUSION_FLAGS`
 - `contract.py::validate_snip_qc(df, *, source="")`
 - `inputs.py::load_snip_qc_flag_inputs(...)`
-- `build.py::build_snip_qc_verdict(snip_universe_df, qc_flags_df, *, exclusion_reasons)`
+- `build.py::build_snip_qc_verdict(snip_universe_df, qc_flags_df, *, exclusion_flags)`
 - `entrypoint.py::main()`
 
 **Contract policy:**
@@ -1567,30 +1680,32 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
 _SNIP_QC_VERDICT_COLUMNS = ("use_snip", "qc_fail_reasons")
 SNIP_QC_REQUIRED_COLUMNS = list(SNIP_ID_SPINE_COLUMNS + _SNIP_QC_VERDICT_COLUMNS)
 
-SNIP_QC_EXCLUSION_REASONS = {
-    "dead_viability": "viability_dead_flag",
-    "dead_persistence": "persistence_dead_flag",
-    "surface_area_outlier": "sa_outlier_flag",
-    "edge": "edge_flag",
-    "discontinuous_mask": "discontinuous_mask_flag",
-    "overlapping_mask": "overlapping_mask_flag",
-}
+SNIP_QC_EXCLUSION_FLAGS = (
+    "viability_dead_flag",
+    "persistence_dead_flag",
+    "sa_outlier_flag",
+    "edge_flag",
+    "discontinuous_mask_flag",
+    "overlapping_mask_flag",
+)
 
-# Future hooks — NOT in the MVP map. Add only when the source product lands and its
+# Future hooks — NOT in the list yet. Add only when the source product lands and its
 # flag column actually exists, else snip_qc fails loud on a missing column:
-#   "missing_metadata" -> "metadata_missing_flag"   (after metadata_completeness_qc)
-#   "focus"            -> "focus_flag"               (after focus_qc; z-stack, in dev)
-#   "blur"             -> "blur_flag"                (after blur_qc; z-stack, in dev)
+#   "metadata_missing_flag"   (after metadata_completeness_qc)
+#   "motion_blur_flag"        (after motion_blur_qc lands AND z_stack materialization is proven live —
+#                               do NOT add until then, it would make motion_blur_qc a hard DAG gate)
 ```
 
-The `snip_qc` contract owns the verdict policy: reason name maps to source flag column. The MVP map
-covers the three migrated/specced exclusion families: death (two modes), surface area, and mask
-quality (three flags). The two death modes surface as **two distinct reasons** (`dead_viability`,
-`dead_persistence`) rather than a single `dead`, and the three mask-quality checks surface as `edge`,
-`discontinuous_mask`, and `overlapping_mask` — so the verdict prose records exactly which fact
-excluded the snip, consistent with keeping the flags separate upstream. A snip can carry several. For
-MVP, do not add a source-product registry to the contract, and do **not** add the future-hook reasons
-until their products exist and emit the named flag column.
+The `snip_qc` contract owns the verdict policy as a flat list: each entry is a source flag column, and
+the flag-column name itself IS the token recorded in `qc_fail_reasons` — there is no reason→flag_column
+rename layer. The MVP list covers the four migrated/specced exclusion families: death (two modes),
+surface area, mask quality (three flags), and focus. The two death modes surface as **two distinct
+flags** (`viability_dead_flag`, `persistence_dead_flag`) rather than a single combined flag, and the
+three mask-quality checks surface as `edge_flag`, `discontinuous_mask_flag`, and
+`overlapping_mask_flag` — so the verdict prose records exactly which fact excluded the snip, consistent
+with keeping the flags separate upstream. A snip can carry several. For MVP, do not add a
+source-product registry to the contract, and do **not** add the future-hook flags until their products
+exist and emit the named flag column.
 
 **Input assembly:**
 
@@ -1632,9 +1747,9 @@ files. It consumes `snip_universe_df` and an already-assembled `qc_flags_df`.
   it started from `[["snip_id"]]` the final table could never satisfy `SNIP_QC_REQUIRED_COLUMNS`);
 - require `snip_universe_df` has one row per `snip_id`;
 - require `qc_flags_df` has one row per `snip_id` for the relevant universe;
-- require every flag column named by `SNIP_QC_EXCLUSION_REASONS` is present in `qc_flags_df`;
+- require every flag column named by `SNIP_QC_EXCLUSION_FLAGS` is present in `qc_flags_df`;
 - require those flag columns are non-null boolean;
-- for each snip, build `qc_fail_reasons` from reasons whose flag column is true;
+- for each snip, build `qc_fail_reasons` from the flag-column names that are true;
 - set `use_snip = qc_fail_reasons == ""`;
 - return exactly `SNIP_QC_REQUIRED_COLUMNS` (spine + `use_snip` + `qc_fail_reasons`).
 
@@ -1644,8 +1759,8 @@ files. It consumes `snip_universe_df` and an already-assembled `qc_flags_df`.
 - `use_snip` is present and non-null boolean;
 - `qc_fail_reasons` is present, non-null string;
 - empty `qc_fail_reasons` means the snip passed QC;
-- non-empty `qc_fail_reasons` is a pipe-delimited list of known reason keys;
-- all reasons are known keys in `SNIP_QC_EXCLUSION_REASONS`;
+- non-empty `qc_fail_reasons` is a pipe-delimited list of known flag-column names;
+- all tokens are known names in `SNIP_QC_EXCLUSION_FLAGS`;
 - `use_snip` is true iff `qc_fail_reasons == ""`;
 - `use_snip` is false iff `qc_fail_reasons != ""`.
 

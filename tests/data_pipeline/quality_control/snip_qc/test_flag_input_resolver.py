@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from data_pipeline.quality_control.snip_qc.contract import DEFAULT_SNIP_QC_EXCLUSION_REASONS
+from data_pipeline.quality_control.snip_qc.contract import SNIP_QC_EXCLUSION_FLAGS
 from data_pipeline.quality_control.snip_qc.flag_input_resolver import (
     ResolvedFlagSource,
     _SOURCE_PAYLOADS,
@@ -25,28 +25,28 @@ from data_pipeline.quality_control.snip_qc.flag_input_resolver import (
 # Index building
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_default_reasons_resolve_cleanly():
-    index = _build_flag_column_index(DEFAULT_SNIP_QC_EXCLUSION_REASONS)
-    assert set(index) == set(DEFAULT_SNIP_QC_EXCLUSION_REASONS.values())
+def test_default_flags_resolve_cleanly():
+    index = _build_flag_column_index(SNIP_QC_EXCLUSION_FLAGS)
+    assert set(index) == set(SNIP_QC_EXCLUSION_FLAGS)
     assert all(step in _SOURCE_PAYLOADS for step in index.values())
 
 
 def test_only_needed_steps_returned():
-    reasons = {"edge": "edge_flag"}
-    index = _build_flag_column_index(reasons)
+    flags = ("edge_flag",)
+    index = _build_flag_column_index(flags)
     assert index == {"edge_flag": "mask_quality_qc"}
 
 
 def test_unknown_flag_fails_loud_with_flag_name():
-    reasons = {"unknown_reason": "nonexistent_flag"}
+    flags = ("nonexistent_flag",)
     with pytest.raises(ValueError, match="nonexistent_flag"):
-        _build_flag_column_index(reasons)
+        _build_flag_column_index(flags)
 
 
 def test_unknown_flag_error_names_eligible_steps():
-    reasons = {"x": "no_such_flag"}
+    flags = ("no_such_flag",)
     with pytest.raises(ValueError, match="eligible steps"):
-        _build_flag_column_index(reasons)
+        _build_flag_column_index(flags)
 
 
 def test_ambiguous_flag_lists_all_claimants():
@@ -56,13 +56,13 @@ def test_ambiguous_flag_lists_all_claimants():
     }
     with patch("data_pipeline.quality_control.snip_qc.flag_input_resolver._SOURCE_PAYLOADS", fake_payloads):
         with pytest.raises(ValueError, match="ambiguous"):
-            _build_flag_column_index({"r": "shared_flag"})
+            _build_flag_column_index(("shared_flag",))
 
 
 def test_multiple_errors_reported_together():
-    reasons = {"r1": "missing_1", "r2": "missing_2"}
+    flags = ("missing_1", "missing_2")
     with pytest.raises(ValueError) as exc_info:
-        _build_flag_column_index(reasons)
+        _build_flag_column_index(flags)
     msg = str(exc_info.value)
     assert "missing_1" in msg
     assert "missing_2" in msg
@@ -73,9 +73,9 @@ def test_multiple_errors_reported_together():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_resolve_returns_one_source_per_step():
-    reasons = {"edge": "edge_flag", "disc": "discontinuous_mask_flag"}
+    flags = ("edge_flag", "discontinuous_mask_flag")
     resolved = resolve_snip_qc_flag_sources(
-        reasons,
+        flags,
         output_root=Path("/data"),
         experiment_id="exp01",
         well_id="A01",
@@ -87,7 +87,7 @@ def test_resolve_returns_one_source_per_step():
 
 def test_resolve_groups_flags_by_step():
     resolved = resolve_snip_qc_flag_sources(
-        DEFAULT_SNIP_QC_EXCLUSION_REASONS,
+        SNIP_QC_EXCLUSION_FLAGS,
         output_root=Path("/data"),
         experiment_id="exp01",
         well_id="A01",
@@ -101,7 +101,7 @@ def test_unregistered_step_fails_loud():
     with patch("data_pipeline.quality_control.snip_qc.flag_input_resolver._SOURCE_PAYLOADS", fake_payloads):
         with pytest.raises(ValueError, match="not_a_real_step"):
             resolve_snip_qc_flag_sources(
-                {"r": "some_flag"},
+                ("some_flag",),
                 output_root=Path("/data"),
                 experiment_id="exp01",
                 well_id="A01",
@@ -123,9 +123,9 @@ def test_resolved_flag_source_roundtrip():
 
 
 def test_resolved_sources_json_reflects_exclusion_policy():
-    reasons = {"edge": "edge_flag"}
+    flags = ("edge_flag",)
     resolved = resolve_snip_qc_flag_sources(
-        reasons,
+        flags,
         output_root=Path("/data"),
         experiment_id="exp01",
         well_id="A01",

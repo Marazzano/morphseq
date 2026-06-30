@@ -116,7 +116,7 @@ dry-run plans.
     `frame_masks`, `snip_processing`, or `snip_qc` is a **failure**, not an edge case.
   - every intermediate per-well `.validated` sentinel along the chain exists.
   - **Resolver doctrine proof:** the per-well snip_qc `resolved_sources` JSON exists, and its
-    `resolved_sources` source paths + `exclusion_reasons` (a) point at files that exist and (b) name
+    `resolved_sources` source paths + `exclusion_flags` (a) point at files that exist and (b) name
     the **same** source QC CSVs/sentinels Snakemake actually used as inputs to `build_snip_qc_for_well`.
     Mismatch between the resolver's declared sources and the DAG's real inputs is a failure — this is
     the real-data proof of the flag-resolver doctrine.
@@ -166,10 +166,11 @@ dry-run plans.
   config overlay).
 - **Success criteria:** Keyence `snip_qc` verdict exists + `.validated`; the back-half rule set
   invoked is **identical** to YX1's (diff the executed rule list). Any microscope-conditional rule or
-  branch **past assembled `frame_inventory`** is a doctrine violation to be reported per §5 — *unless*
-  it is explicitly documented as microscope-agnostic compatibility handling (e.g. harmless metadata
-  normalization that carries no microscope logic downstream). The boundary is protected; benign
-  normalization that is named and documented as such is allowed.
+  branch **past assembled `frame_inventory`** is a doctrine violation to be reported per §5. If a
+  Keyence/YX1 compatibility normalization is needed, it belongs before the boundary: in the
+  microscope producer, the frame-inventory builder, or the shared frame-inventory validator/gate. Past
+  the validated `frame_inventory` seam, downstream code may depend only on the frame-inventory
+  contract, never on which microscope produced it.
 
 ### Tier 4 — SCALE + EMBEDDINGS (production dress rehearsal) — OUT OF PRIMARY SCOPE
 
@@ -220,8 +221,11 @@ If pushing data through reveals a real break, the fix MUST conform:
 - **Banners organize co-living concerns; they do NOT paste over a mix that should split** (two
   microscopes / two kingdoms in one function → split, per the agnostic-seam invariant Tier 3 guards).
 - **The "add a stage" recipe** (one `PIPELINE_STEPS` row + one compute fn + one thin `tasks.py` verb
-  + one templated rule) applies to any new wiring (e.g. a `snip_qc` aggregate target).
-- Sentinel convention is the **dot-prefixed hidden** `.{filename}.validated` (OVERALL_PLAN F2).
+  + one templated rule) applies to any new artifact-producing stage. A named aggregate target such as
+  `through_line` is not a stage: it should request existing registered artifacts through the path
+  helpers, without inventing a new artifact path or registry row.
+- Sentinels are derived from artifacts via `validated_path(...)`; the current resolved convention is
+  the **dot-prefixed hidden** `.{filename}.validated` (OVERALL_PLAN F2).
 
 **Reporting contract for the Agent:** for every change made to get data flowing, record in a
 findings section: (1) the seam that broke + the symptom, (2) the root cause, (3) the fix and which

@@ -2,7 +2,7 @@
 
 Builds use_snip + qc_fail_reasons by ORing the MVP exclusion flags. The eligible source
 steps and their flag columns are declared in flag_input_resolver._SOURCE_PAYLOADS; the
-policy (which flags matter) comes from DEFAULT_SNIP_QC_EXCLUSION_REASONS or a config
+policy (which flags matter) comes from SNIP_QC_EXCLUSION_FLAGS or a config
 override. The resolver joins those two truths at parse time to determine which source
 artifacts are needed — no hardcoded source step list here.
 
@@ -21,18 +21,18 @@ See: docs/refactors/streamline-snakemake/target/specs/quality_control/snip_qc_ve
 import json as _json
 import shlex as _shlex
 
-from data_pipeline.quality_control.snip_qc.contract import DEFAULT_SNIP_QC_EXCLUSION_REASONS
+from data_pipeline.quality_control.snip_qc.contract import SNIP_QC_EXCLUSION_FLAGS
 from data_pipeline.quality_control.snip_qc.flag_input_resolver import (
     ResolvedFlagSource,
     resolve_snip_qc_flag_sources,
 )
 
 # Resolve config override vs default at parse time — both planning and runtime use this.
-_SNIP_QC_EXCLUSION_REASONS: dict[str, str] = (
-    config.get("snip_qc", {}).get("exclusion_reasons") or DEFAULT_SNIP_QC_EXCLUSION_REASONS
+_SNIP_QC_EXCLUSION_FLAGS: tuple = tuple(
+    config.get("snip_qc", {}).get("exclusion_flags") or SNIP_QC_EXCLUSION_FLAGS
 )
 # Shell-safe JSON string for passing to the writer rule's shell command.
-_EXCLUSION_REASONS_JSON_QUOTED = _shlex.quote(_json.dumps(_SNIP_QC_EXCLUSION_REASONS))
+_EXCLUSION_FLAGS_JSON_QUOTED = _shlex.quote(_json.dumps(list(_SNIP_QC_EXCLUSION_FLAGS)))
 
 SNIP_QC_STEP = "snip_qc"
 
@@ -73,7 +73,7 @@ def _snipqc_source_shards(experiment, well_id):
     does not read these files; it only resolves their paths.
     """
     resolved = resolve_snip_qc_flag_sources(
-        _SNIP_QC_EXCLUSION_REASONS,
+        _SNIP_QC_EXCLUSION_FLAGS,
         output_root=DATA_ROOT,
         experiment_id=experiment,
         well_id=well_id,
@@ -102,7 +102,7 @@ rule write_snip_qc_resolved_sources_for_well:
     run this rule until all upstream QC products are built and validated. The resolver
     itself is pure (no disk reads); it derives source paths from paths.py alone.
 
-    Output contains both exclusion_reasons and resolved_sources so build_snip_qc_for_well
+    Output contains both exclusion_flags and resolved_sources so build_snip_qc_for_well
     receives the exact same plan the DAG was declared with — no split-brain between
     planning and runtime.
     """
@@ -111,14 +111,14 @@ rule write_snip_qc_resolved_sources_for_well:
     output:
         resolved_sources=str(_snipqc_resolved_sources("{experiment}", well_id="{well_id}")),
     params:
-        exclusion_reasons_json=_EXCLUSION_REASONS_JSON_QUOTED,
+        exclusion_flags_json=_EXCLUSION_FLAGS_JSON_QUOTED,
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks write-snip-qc-resolved-sources \
           --output-root "{DATA_ROOT}" \
           --experiment "{wildcards.experiment}" \
           --well-id "{wildcards.well_id}" \
-          --exclusion-reasons-json {params.exclusion_reasons_json} \
+          --exclusion-flags-json {params.exclusion_flags_json} \
           --output-json "{output.resolved_sources}"
         """
 

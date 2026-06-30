@@ -4,10 +4,11 @@ Grain: one row per ``snip_id``. The verdict carries the FULL snip spine (importe
 site, never re-typed) plus ``use_snip`` and ``qc_fail_reasons``. snip_qc is the final operational QC
 table and must not be weaker than its inputs — it is not a minimal-key exception.
 
-``DEFAULT_SNIP_QC_EXCLUSION_REASONS`` maps each verdict reason to the source flag column it reads. The MVP
-map covers the three migrated/specced exclusion families: death (two modes), surface area, and mask
-quality (three flags). Future hooks (focus/blur/metadata) are NOT added until their products exist
-and emit the named flag column — else snip_qc fails loud on a missing column.
+``SNIP_QC_EXCLUSION_FLAGS`` is the flat list of source flag columns that count as exclusions. The flag
+column names ARE the vocabulary — ``qc_fail_reasons`` stores the pipe-joined exclusion flag-column
+names that fired (e.g. ``"edge_flag|focus_flag"``); empty string means the snip passed. There is no
+rename layer: a flag column is added here only when its source product exists and emits that column —
+else snip_qc fails loud on a missing column.
 """
 
 from __future__ import annotations
@@ -22,21 +23,20 @@ from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract 
 SNIP_QC_PAYLOAD_COLUMNS: tuple[str, ...] = ("use_snip", "qc_fail_reasons")
 SNIP_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + SNIP_QC_PAYLOAD_COLUMNS)
 
-# Default reason -> flag column map. This is the MVP semantic contract.
-# Config may override it for permissive/strict QC runs; both planning and runtime
-# must use the same resolved policy (see flag_input_resolver.py).
-DEFAULT_SNIP_QC_EXCLUSION_REASONS: dict[str, str] = {
-    "dead_viability": "viability_dead_flag",
-    "dead_persistence": "persistence_dead_flag",
-    "surface_area_outlier": "sa_outlier_flag",
-    "edge": "edge_flag",
-    "discontinuous_mask": "discontinuous_mask_flag",
-    "overlapping_mask": "overlapping_mask_flag",
-}
-# Future hooks — add ONLY when the source product lands and emits the named flag column:
-#   "missing_metadata" -> "metadata_missing_flag"   (after metadata_completeness_qc)
-#   "focus"            -> "focus_flag"               (after focus_qc; z-stack, in dev)
-#   "blur"             -> "blur_flag"                (after blur_qc; z-stack, in dev)
+# Default exclusion flag columns. This is the MVP semantic contract: the flag names themselves
+# are the qc_fail_reasons vocabulary. Config may override it for permissive/strict QC runs; both
+# planning and runtime must use the same resolved policy (see flag_input_resolver.py).
+SNIP_QC_EXCLUSION_FLAGS: tuple[str, ...] = (
+    "viability_dead_flag",
+    "persistence_dead_flag",
+    "sa_outlier_flag",
+    "edge_flag",
+    "discontinuous_mask_flag",
+    "overlapping_mask_flag",
+)
+# TODO motion_blur_flag — wire in only after z_stack materialization + a real-data validated
+# motion_blur_qc product (see docs/.../quality_control/z_stack_focus_motion_blur_qc_and_slice_selection.md).
+# Do NOT append it here until then: it would make motion_blur_qc a hard DAG gate for every snip_qc run.
 
 
 def validate_snip_qc(
@@ -74,15 +74,15 @@ def validate_snip_qc(
     if reasons.dtype != object:
         raise ValueError(f"{label}: qc_fail_reasons must be a string column.")
 
-    known = set(DEFAULT_SNIP_QC_EXCLUSION_REASONS)
+    known = set(SNIP_QC_EXCLUSION_FLAGS)
     for value in reasons:
         if value == "":
             continue
         bad = [r for r in str(value).split("|") if r not in known]
         if bad:
             raise ValueError(
-                f"{label}: qc_fail_reasons contains unknown reason(s) {bad}. "
-                f"Known reasons: {sorted(known)}."
+                f"{label}: qc_fail_reasons contains unknown flag(s) {bad}. "
+                f"Known exclusion flags: {sorted(known)}."
             )
 
     # use_snip is true IFF there are no fail reasons.

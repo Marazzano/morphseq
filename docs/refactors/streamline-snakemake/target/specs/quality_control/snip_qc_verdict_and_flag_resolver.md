@@ -49,18 +49,21 @@ column names or path patterns — it imports the existing declarations and joins
 
 | Concern | Lives in | What it says |
 |---|---|---|
-| Which flags matter | `DEFAULT_SNIP_QC_EXCLUSION_REASONS` in `contract.py` (config may override) | reason name → flag column |
+| Which flags matter | `SNIP_QC_EXCLUSION_FLAGS` in `contract.py` (config may override) | flat list of flag columns |
 | Which steps may supply flags | `_SOURCE_PAYLOADS` in `flag_input_resolver.py` | step → `*_PAYLOAD_COLUMNS` import |
 | Which columns each step emits | `*_PAYLOAD_COLUMNS` in source contracts | authoritative, never duplicated |
 
 The resolver joins all three. Nothing else does.
+
+There is no rename layer: a flag column's name in `SNIP_QC_EXCLUSION_FLAGS` IS the token recorded in
+`qc_fail_reasons`. No reason→flag_column map, no aliasing.
 
 ### Rule 3 — The contract is self-reinforcing
 
 Adding a new QC exclusion flag requires **all three** of the following, or the resolver fails
 loud at startup:
 
-1. Add the `"reason_name": "new_flag_column"` entry to `DEFAULT_SNIP_QC_EXCLUSION_REASONS`
+1. Add the `"new_flag_column"` entry to `SNIP_QC_EXCLUSION_FLAGS`
    (or a config override)
 2. Import the source step's `*_PAYLOAD_COLUMNS` constant in `flag_input_resolver.py`
 3. Add the step to `_SOURCE_PAYLOADS` in `flag_input_resolver.py`
@@ -70,7 +73,7 @@ If you add the flag to policy but forget the source, the resolver raises:
 snip_qc resolver: could not resolve all requested flag columns:
   'new_flag_column': not found in any eligible source payload
     (eligible steps: ['death_detection_qc', 'mask_quality_qc', 'surface_area_qc'])
-Fix _SOURCE_PAYLOADS or the exclusion_reasons config.
+Fix _SOURCE_PAYLOADS or the exclusion_flags config.
 ```
 The contract teaches you what to do.
 
@@ -94,13 +97,13 @@ readers are not confused.
 
 ### Rule 5 — Planning and runtime use the same policy; never split-brain
 
-Whatever `exclusion_reasons` the `.smk` uses to declare DAG inputs is the same policy the
+Whatever `exclusion_flags` the `.smk` uses to declare DAG inputs is the same policy the
 runtime task uses to build the verdict. This is guaranteed by:
 
-- The `.smk` resolves `_SNIP_QC_EXCLUSION_REASONS` once at parse time (config override or
-  `DEFAULT_SNIP_QC_EXCLUSION_REASONS`)
-- The writer rule serializes **both** `exclusion_reasons` and `resolved_sources` into the JSON
-- `cmd_snip_qc` reads `exclusion_reasons` from that JSON — never from `DEFAULT_SNIP_QC_EXCLUSION_REASONS`
+- The `.smk` resolves `_SNIP_QC_EXCLUSION_FLAGS` once at parse time (config override or
+  `SNIP_QC_EXCLUSION_FLAGS`)
+- The writer rule serializes **both** `exclusion_flags` and `resolved_sources` into the JSON
+- `cmd_snip_qc` reads `exclusion_flags` from that JSON — never from `SNIP_QC_EXCLUSION_FLAGS`
 
 If planning said "load three source files using this policy", runtime must use that exact policy.
 
@@ -109,11 +112,11 @@ If planning said "load three source files using this policy", runtime must use t
 ## 📐 Wire-through map (DAG to verdict)
 
 ```
-config.yaml (optional)                  DEFAULT_SNIP_QC_EXCLUSION_REASONS
+config.yaml (optional)                  SNIP_QC_EXCLUSION_FLAGS
       │                                          │
       └─────────── .smk parse time ─────────────┘
                           │
-                 _SNIP_QC_EXCLUSION_REASONS (resolved policy)
+                 _SNIP_QC_EXCLUSION_FLAGS (resolved policy)
                           │
               ┌───────────┴──────────────────────────────────┐
               │  flag_input_resolver.py                       │
@@ -129,7 +132,7 @@ config.yaml (optional)                  DEFAULT_SNIP_QC_EXCLUSION_REASONS
     gate execution order)                             │
                                      build_snip_qc_for_well
                                        │   reads JSON → ResolvedFlagSource list
-                                       │   reads exclusion_reasons from JSON
+                                       │   reads exclusion_flags from JSON
                                        │
                                    inputs.py
                                    open each source CSV
@@ -138,7 +141,7 @@ config.yaml (optional)                  DEFAULT_SNIP_QC_EXCLUSION_REASONS
                                        │
                                    build.py
                                    build_snip_qc_verdict(snip_universe, qc_flags_df,
-                                                         exclusion_reasons)
+                                                         exclusion_flags)
                                        │
                                    contract.py
                                    validate_snip_qc(verdict, registry)
@@ -154,7 +157,7 @@ config.yaml (optional)                  DEFAULT_SNIP_QC_EXCLUSION_REASONS
 |---|---|---|
 | `flag_input_resolver.py` | **Yes — explicit exception** | Adapter/wiring: bridges payload contracts to paths.py |
 | `inputs.py` | No | Pure load + verify: receives resolved paths, checks CSV reality |
-| `entrypoint.py` | No | Thin adapter: receives resolved sources + exclusion_reasons from JSON |
+| `entrypoint.py` | No | Thin adapter: receives resolved sources + exclusion_flags from JSON |
 | `build.py` | No | Pure computation: snip_universe + qc_flags_df → verdict |
 | `contract.py` | No | Default policy + schema + validator |
 
@@ -188,14 +191,14 @@ only approved steps can contribute flags to the snip_qc verdict.
 
 ## ➕ How to add a new QC exclusion flag
 
-Example: adding `focus_flag` from a future `focus_qc` stage.
+Example: adding `focus_flag` from the `focus_qc` stage.
 
 **1. Add to policy** (in `contract.py` or config override):
 ```python
-DEFAULT_SNIP_QC_EXCLUSION_REASONS = {
+SNIP_QC_EXCLUSION_FLAGS = (
     ...existing...,
-    "focus": "focus_flag",          # ← new reason
-}
+    "focus_flag",          # ← new flag
+)
 ```
 
 **2. Register the source** (in `flag_input_resolver.py`):
@@ -226,10 +229,11 @@ If any step is missing, the resolver fails loud at startup with a clear message.
 - [ ] `flag_input_resolver.py` is the only `snip_qc` module importing `paths.py` — verified by test
 - [ ] `_SOURCE_PAYLOADS` imports `*_PAYLOAD_COLUMNS` from source contracts — no column strings typed manually
 - [ ] `resolve_snip_qc_flag_sources` is pure: no disk reads, no side effects
-- [ ] `resolved_sources` JSON contains both `exclusion_reasons` and `resolved_sources` keys
-- [ ] `cmd_snip_qc` reads `exclusion_reasons` from the JSON, not from `DEFAULT_SNIP_QC_EXCLUSION_REASONS`
+- [ ] `resolved_sources` JSON contains both `exclusion_flags` and `resolved_sources` keys
+- [ ] `cmd_snip_qc` reads `exclusion_flags` from the JSON, not from `SNIP_QC_EXCLUSION_FLAGS`
 - [ ] `write_snip_qc_resolved_sources_for_well` rule docstring states: source inputs gate DAG execution, not resolver inputs
 - [ ] `resolved_sources` artifact is NOT in `PATH_MODE_MERGED` — per-well only
 - [ ] Boolean flags coerced explicitly at load time; NA or unknown values fail loud
 - [ ] Resolver error messages name the specific unresolved flags and list eligible steps
-- [ ] `DEFAULT_SNIP_QC_EXCLUSION_REASONS` in `contract.py`; config may override; both planning and runtime use same resolved policy
+- [ ] `SNIP_QC_EXCLUSION_FLAGS` in `contract.py`; config may override; both planning and runtime use same resolved policy
+- [ ] No reason→flag_column rename layer: `qc_fail_reasons` tokens ARE flag-column names

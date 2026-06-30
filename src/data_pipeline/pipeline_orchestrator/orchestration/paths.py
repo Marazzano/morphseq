@@ -584,7 +584,7 @@ PIPELINE_STEPS: dict[str, dict] = {
                 PATH_MODE_PER_WELL: "{well_id}_snip_qc.parquet",
                 PATH_MODE_MERGED: "{experiment_id}_snip_qc.parquet",
             },
-            # Auxiliary per-well planning artifact: the resolver output (exclusion_reasons +
+            # Auxiliary per-well planning artifact: the resolver output (exclusion_flags +
             # ResolvedFlagSource list) serialized as JSON so build_snip_qc_for_well receives
             # the exact same source plan the DAG was declared with. NOT merged across wells
             # and NOT the snip_qc verdict product.

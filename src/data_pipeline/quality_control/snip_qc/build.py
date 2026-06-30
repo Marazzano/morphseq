@@ -1,8 +1,8 @@
 """snip_qc build — pure verdict logic. No path/IO imports, no product artifact names.
 
 Consumes ``snip_universe_df`` (the full snip spine) and an already-assembled ``qc_flags_df``
-(snip_id + the flag columns named by the exclusion map). For each snip, ``qc_fail_reasons`` is the
-pipe-delimited list of reasons whose flag is true (in the map's declared order), and
+(snip_id + the exclusion flag columns). For each snip, ``qc_fail_reasons`` is the pipe-delimited
+list of flag-column names that are true (in the declared order), and
 ``use_snip = (qc_fail_reasons == "")``. Returns exactly SNIP_QC_TABLE_COLUMNS.
 """
 
@@ -21,7 +21,7 @@ def build_snip_qc_verdict(
     snip_universe_df: pd.DataFrame,
     qc_flags_df: pd.DataFrame,
     *,
-    exclusion_reasons: dict[str, str],
+    exclusion_flags: tuple[str, ...],
 ) -> pd.DataFrame:
     """Return the per-snip verdict table (full spine + use_snip + qc_fail_reasons)."""
     # Start from the FULL spine — never from [["snip_id"]] (the result must satisfy the contract).
@@ -35,10 +35,10 @@ def build_snip_qc_verdict(
     if set(out["snip_id"].astype(str)) != set(qc_flags_df["snip_id"].astype(str)):
         raise ValueError("snip_qc build: qc_flags_df snip_id set must match the universe exactly.")
 
-    for col in exclusion_reasons.values():
+    for col in exclusion_flags:
         if col not in qc_flags_df.columns:
             raise ValueError(
-                f"snip_qc build: flag column {col!r} (named by an exclusion reason) is not in "
+                f"snip_qc build: exclusion flag column {col!r} is not in "
                 f"qc_flags_df. Columns present: {sorted(qc_flags_df.columns)}."
             )
         if qc_flags_df[col].isna().any():
@@ -57,7 +57,7 @@ def build_snip_qc_verdict(
     reasons_out: list[str] = []
     for snip_id in out["snip_id"].astype(str):
         row = flags_by_snip.loc[snip_id]
-        fired = [reason for reason, col in exclusion_reasons.items() if bool(row[col])]
+        fired = [col for col in exclusion_flags if bool(row[col])]
         reasons_out.append("|".join(fired))
 
     out["qc_fail_reasons"] = reasons_out

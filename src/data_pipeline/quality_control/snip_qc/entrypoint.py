@@ -1,6 +1,6 @@
 """snip_qc entrypoint — thin filesystem adapter that builds the final per-snip verdict.
 
-Receives the pre-resolved source plan (resolved_sources + exclusion_reasons) deserialized
+Receives the pre-resolved source plan (resolved_sources + exclusion_flags) deserialized
 from the tracked resolved_sources JSON artifact. Does not resolve paths itself — that was
 done at DAG planning time by flag_input_resolver.py and persisted to JSON.
 
@@ -28,7 +28,7 @@ def run_snip_qc(
     physical_embryo_registry_csv: Path,
     output_csv: Path,
     resolved_sources: tuple[ResolvedFlagSource, ...],
-    exclusion_reasons: dict[str, str],
+    exclusion_flags: tuple[str, ...],
 ) -> None:
     snip_universe = pd.read_csv(snip_inventory_csv)
     registry = pd.read_csv(physical_embryo_registry_csv)
@@ -36,7 +36,7 @@ def run_snip_qc(
     qc_flags = load_snip_qc_flag_inputs(resolved_sources)
 
     verdict = build_snip_qc_verdict(
-        snip_universe, qc_flags, exclusion_reasons=exclusion_reasons
+        snip_universe, qc_flags, exclusion_flags=exclusion_flags
     )
 
     validate_snip_qc(verdict, physical_embryo_registry_df=registry, check_sources=True)

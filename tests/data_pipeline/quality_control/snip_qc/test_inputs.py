@@ -142,28 +142,28 @@ def test_fails_on_snip_id_mismatch_between_sources(tmp_path):
 # Policy/runtime consistency
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_cmd_snip_qc_uses_exclusion_reasons_from_json_not_defaults(tmp_path):
-    """Verify the JSON payload carries exclusion_reasons so runtime and planning never split-brain."""
+def test_cmd_snip_qc_uses_exclusion_flags_from_json_not_defaults(tmp_path):
+    """Verify the JSON payload carries exclusion_flags so runtime and planning never split-brain."""
     import json
     from data_pipeline.quality_control.snip_qc.flag_input_resolver import resolve_snip_qc_flag_sources
 
-    reasons = {"edge": "edge_flag"}
+    flags = ("edge_flag",)
     resolved = resolve_snip_qc_flag_sources(
-        reasons,
+        flags,
         output_root=tmp_path,
         experiment_id="exp01",
         well_id="A01",
     )
     payload = {
-        "exclusion_reasons": reasons,
+        "exclusion_flags": list(flags),
         "resolved_sources": [src.to_dict() for src in resolved],
     }
     json_path = tmp_path / "plan.json"
     json_path.write_text(json.dumps(payload))
 
     loaded = json.loads(json_path.read_text())
-    assert loaded["exclusion_reasons"] == reasons
+    assert loaded["exclusion_flags"] == list(flags)
     assert len(loaded["resolved_sources"]) == 1
     assert loaded["resolved_sources"][0]["step"] == "mask_quality_qc"
-    # Only edge_flag — not the full DEFAULT_SNIP_QC_EXCLUSION_REASONS set
+    # Only edge_flag — not the full SNIP_QC_EXCLUSION_FLAGS set
     assert loaded["resolved_sources"][0]["flag_columns"] == ["edge_flag"]

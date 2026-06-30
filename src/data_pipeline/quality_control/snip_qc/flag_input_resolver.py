@@ -8,7 +8,7 @@ Joins two existing registries:
   1. _SOURCE_PAYLOADS: eligible source steps + their payload columns (imported from source contracts)
   2. PIPELINE_STEPS / artifact_path: step/artifact -> filesystem path
 
-Given requested flag columns (from exclusion_reasons), returns ResolvedFlagSource objects
+Given requested flag columns (SNIP_QC_EXCLUSION_FLAGS or a config override), returns ResolvedFlagSource objects
 with concrete per-well artifact paths. Used at DAG planning time to declare Snakemake inputs
 and serialized as JSON so the runtime task receives the exact same plan.
 
@@ -33,7 +33,7 @@ from data_pipeline.quality_control.surface_area_qc.contract import SURFACE_AREA_
 # may contribute exclusion flags. Adding a new source requires:
 #   1. Importing its *_PAYLOAD_COLUMNS constant above
 #   2. Adding it here
-#   3. Adding the reason->flag entry to DEFAULT_SNIP_QC_EXCLUSION_REASONS (or config)
+#   3. Adding the flag column to SNIP_QC_EXCLUSION_FLAGS (or config)
 # The resolver enforces all three are consistent.
 _SOURCE_PAYLOADS: dict[str, tuple[str, ...]] = {
     "death_detection_qc": DEATH_DETECTION_QC_PAYLOAD_COLUMNS,
@@ -70,7 +70,7 @@ class ResolvedFlagSource:
 
 
 def resolve_snip_qc_flag_sources(
-    exclusion_reasons: dict[str, str],
+    exclusion_flags: tuple[str, ...],
     *,
     output_root: Path,
     experiment_id: str,
@@ -81,7 +81,7 @@ def resolve_snip_qc_flag_sources(
     Pure: no disk reads, no side effects. Safe to call at DAG planning time.
     Raises ValueError if any requested flag cannot be resolved unambiguously.
     """
-    flag_to_step = _build_flag_column_index(exclusion_reasons)
+    flag_to_step = _build_flag_column_index(exclusion_flags)
 
     step_to_flags: dict[str, list[str]] = {}
     for flag, step in flag_to_step.items():
@@ -103,7 +103,7 @@ def resolve_snip_qc_flag_sources(
     return tuple(resolved)
 
 
-def _build_flag_column_index(exclusion_reasons: dict[str, str]) -> dict[str, str]:
+def _build_flag_column_index(exclusion_flags: tuple[str, ...]) -> dict[str, str]:
     """Return flag_column -> source_step for all requested flags.
 
     Optimistic: scans _SOURCE_PAYLOADS and collects all candidate steps per flag.
@@ -111,7 +111,7 @@ def _build_flag_column_index(exclusion_reasons: dict[str, str]) -> dict[str, str
       - zero candidates -> flag not in any eligible source payload
       - multiple candidates -> ambiguous; lists all claiming steps
     """
-    requested = set(exclusion_reasons.values())
+    requested = set(exclusion_flags)
 
     candidates: dict[str, list[str]] = {col: [] for col in requested}
     for step, payload_cols in _SOURCE_PAYLOADS.items():
@@ -139,7 +139,7 @@ def _build_flag_column_index(exclusion_reasons: dict[str, str]) -> dict[str, str
         raise ValueError(
             "snip_qc resolver: could not resolve all requested flag columns:\n"
             + "\n".join(errors)
-            + "\nFix _SOURCE_PAYLOADS or the exclusion_reasons config."
+            + "\nFix _SOURCE_PAYLOADS or the exclusion_flags config."
         )
     return index
 
