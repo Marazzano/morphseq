@@ -26,6 +26,7 @@ from data_pipeline.pipeline_orchestrator.orchestration.paths import (
     artifact_path,
 )
 from data_pipeline.quality_control.death_detection.contract import DEATH_DETECTION_QC_PAYLOAD_COLUMNS
+from data_pipeline.quality_control.focus_qc.contract import FOCUS_QC_PAYLOAD_COLUMNS
 from data_pipeline.quality_control.mask_quality_qc.contract import MASK_QUALITY_QC_PAYLOAD_COLUMNS
 from data_pipeline.quality_control.surface_area_qc.contract import SURFACE_AREA_QC_PAYLOAD_COLUMNS
 
@@ -39,6 +40,7 @@ _SOURCE_PAYLOADS: dict[str, tuple[str, ...]] = {
     "death_detection_qc": DEATH_DETECTION_QC_PAYLOAD_COLUMNS,
     "surface_area_qc":    SURFACE_AREA_QC_PAYLOAD_COLUMNS,
     "mask_quality_qc":    MASK_QUALITY_QC_PAYLOAD_COLUMNS,
+    "focus_qc":           FOCUS_QC_PAYLOAD_COLUMNS,
 }
 
 

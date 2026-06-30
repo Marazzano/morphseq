@@ -93,7 +93,7 @@ def test_resolve_groups_flags_by_step():
         well_id="A01",
     )
     steps = {src.step for src in resolved}
-    assert steps == {"death_detection_qc", "surface_area_qc", "mask_quality_qc"}
+    assert steps == {"death_detection_qc", "surface_area_qc", "mask_quality_qc", "focus_qc"}
 
 
 def test_unregistered_step_fails_loud():

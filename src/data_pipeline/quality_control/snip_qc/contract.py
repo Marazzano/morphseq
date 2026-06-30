@@ -33,6 +33,7 @@ SNIP_QC_EXCLUSION_FLAGS: tuple[str, ...] = (
     "edge_flag",
     "discontinuous_mask_flag",
     "overlapping_mask_flag",
+    "focus_flag",
 )
 # TODO motion_blur_flag — wire in only after z_stack materialization + a real-data validated
 # motion_blur_qc product (see docs/.../quality_control/z_stack_focus_motion_blur_qc_and_slice_selection.md).
