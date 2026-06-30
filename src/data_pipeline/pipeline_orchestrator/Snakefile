@@ -302,6 +302,7 @@ include: str(WORKFLOW_DIR / "rules" / "fraction_alive.smk")
 include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
 include: str(WORKFLOW_DIR / "rules" / "surface_area_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "mask_quality_qc.smk")
+include: str(WORKFLOW_DIR / "rules" / "focus_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "death_detection.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_qc.smk")
 
@@ -570,21 +571,23 @@ def _front_half_product_targets(wc=None):
 
 
 def _through_line_targets(wc=None):
-    # Data-flow through-line terminal (data_flow_test_plan.md): the validated per-well snip_qc
-    # verdict shard for every discovered well. snip_qc is the terminal of the depth/width proof
-    # (everything past it — embeddings, analysis_ready — is out of scope). Requesting the per-well
-    # `.validated` sentinel drives the WHOLE spine raw -> snip_qc per well: materialize_well ->
-    # frame_inventory -> frame_detections -> frame_masks -> physical_embryo_registry -> snip
-    # processing/aux masks -> {mask_geometry, pose_kinematics, fraction_alive, stage_predictions} ->
-    # consolidated_features -> {surface_area, mask_quality, death} -> snip_qc. Tier 1 (config pins
-    # ONE well) is the depth proof; pointing the same target at all discovered wells is Tier 2.
-    # _snipqc_validated lives in rules/snip_qc.smk (included above), so it is in scope here.
+    # Data-flow through-line terminal (data_flow_test_plan.md): the experiment-level MERGED snip_qc
+    # verdict for every experiment. snip_qc is the terminal of the depth/width proof (everything
+    # past it — embeddings, analysis_ready — is out of scope). Requesting the MERGED artifact drives
+    # the WHOLE spine raw -> snip_qc per well AND the merge seam: merge_snip_qc depends on every
+    # per-well snip_qc shard + its `.validated` sentinel (rules/snip_qc.smk), so naming the merged
+    # output transitively requires the entire per-well fan — materialize_well -> frame_inventory ->
+    # frame_detections -> frame_masks -> physical_embryo_registry -> snip processing/aux masks ->
+    # {mask_geometry, pose_kinematics, fraction_alive, stage_predictions} -> consolidated_features ->
+    # {surface_area, mask_quality, death} -> snip_qc -> merge_snip_qc.
+    #   - Tier 1 (DEPTH): config pins ONE well -> merge is a degenerate 1-shard stack (still exercises
+    #     the merge rule end-to-end on a single well).
+    #   - Tier 2 (WIDTH): no well filter -> merge fans over all discovered wells AND exercises the
+    #     "merge never shrinks" seam the per-well-only target could not.
+    # _snipqc_artifact lives in rules/snip_qc.smk (included above), so it is in scope here.
     targets = []
     for exp in EXPERIMENTS:
-        for well_id in wells_for_experiment(_NS(experiment=exp)):
-            targets.append(str(_snipqc_validated(
-                exp, path_mode=PATH_MODE_PER_WELL, well_id=well_id
-            )))
+        targets.append(str(_snipqc_artifact(exp, path_mode=PATH_MODE_MERGED)))
     return targets
 
 
@@ -620,10 +623,13 @@ rule through_line:
     aggregates the validated per-well snip_qc shards for every discovered well, so the requested
     well-set is decided by config (`target_wells`), not by this rule.
 
+    Requests the experiment-level MERGED snip_qc, which transitively pulls every per-well shard
+    AND the merge_snip_qc rule, so the merge seam is exercised too.
+
       - Tier 1 (DEPTH): overlay a one-well config (config_smoke_through_line_20250912_B01.yaml) ->
-        this builds ONE well raw -> snip_qc, proving every inter-stage seam once. CPU.
-      - Tier 2 (WIDTH): no well filter -> this builds all discovered wells; add the merged snip_qc
-        artifact as the target to also exercise the merge seam. GPU (after the GPU gate).
+        this builds ONE well raw -> snip_qc (merge is a degenerate 1-shard stack). CPU.
+      - Tier 2 (WIDTH): no well filter -> this builds all discovered wells and merges them. GPU
+        (after the GPU gate).
 
     See: docs/refactors/streamline-snakemake/target/specs/data_flow_test_plan.md
     """

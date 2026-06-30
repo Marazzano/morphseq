@@ -538,6 +538,23 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── QUALITY CONTROL — focus QC ─────────────────────────────────────────────
+    # Interior structural-edge-content heuristic per snip (ghost/structureless embryo
+    # detection). Reads pixels via frame_inventory (materialized_image_readers), masks via
+    # canonical frame_masks.
+    "focus_qc": {
+        "stage": "quality_control",
+        "product_dir": "focus_qc",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "focus_qc": {
+                PATH_MODE_PER_WELL: "{well_id}_focus_qc.csv",
+                PATH_MODE_MERGED: "{experiment_id}_focus_qc.csv",
+            },
+        },
+    },
+
     # ── QUALITY CONTROL — death detection (per-snip flags) ────────────────────
     # Two-mode death QC per snip: viability_dead_flag (per frame) + persistence_dead_flag
     # (per animal, broadcast time_index >= D). Consumes fraction_alive + frame timing.

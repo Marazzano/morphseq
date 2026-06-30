@@ -700,6 +700,34 @@ def cmd_validate_mask_quality_qc(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_focus_qc(args: argparse.Namespace) -> None:
+    """Compute the per-well focus_qc shard. Thin dispatcher; logic lives in the product."""
+    from data_pipeline.quality_control.focus_qc.entrypoint import run_focus_qc
+
+    run_focus_qc(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
+def cmd_validate_focus_qc(args: argparse.Namespace) -> None:
+    """Validate a per-well focus_qc shard (spine + metric + flag, registry as verifier) and write .validated."""
+    import pandas as pd
+
+    from data_pipeline.quality_control.focus_qc.contract import validate_focus_qc
+
+    validate_focus_qc(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_death_detection(args: argparse.Namespace) -> None:
     """Compute BOTH death_detection outputs (per-snip QC + per-animal death_event). Thin dispatcher."""
     from data_pipeline.quality_control.death_detection.entrypoint import run_death_detection
@@ -1225,6 +1253,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("validate-consolidated-features", cmd_validate_consolidated_features),
         ("validate-surface-area-qc", cmd_validate_surface_area_qc),
         ("validate-mask-quality-qc", cmd_validate_mask_quality_qc),
+        ("validate-focus-qc", cmd_validate_focus_qc),
     ):
         p = sub.add_parser(verb)
         p.add_argument("--input-csv", type=Path, required=True)
@@ -1286,6 +1315,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_mqqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_mqqc.add_argument("--output-csv", type=Path, required=True)
     p_mqqc.set_defaults(func=cmd_mask_quality_qc)
+
+    p_fqc = sub.add_parser("focus-qc")
+    p_fqc.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_fqc.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_fqc.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_fqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_fqc.add_argument("--output-csv", type=Path, required=True)
+    p_fqc.set_defaults(func=cmd_focus_qc)
 
     p_dd = sub.add_parser("death-detection")
     p_dd.add_argument("--fraction-alive-csv", type=Path, required=True)
