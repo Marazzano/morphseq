@@ -13,9 +13,16 @@ from typing import Optional
 #   predictions_full = X_full.values @ beta
 import statsmodels.api as sm
 from src.build.build_utils import bootstrap_perturbation_key_from_df01
+# LEGACY-RETIREMENT DEBT: this imports compute_dead_flag2_persistence from the old
+# quality_control/death_detection.py module, which was deleted in the config.py cleanup.
+# It was already unreachable before that: the death_detection/ PACKAGE shadows the file, so
+# this import has been raising ImportError. src/build/ + legacy death_detection are named
+# retirement targets in feature_world.md; the fix is to retire build04's death-detection path
+# onto the refactored death_detection product (persistence.py, spine-axis API — NOT a 1:1 swap),
+# which belongs to that retirement, not the config cleanup.
 from src.data_pipeline.quality_control.death_detection import compute_dead_flag2_persistence
 from src.data_pipeline.quality_control.surface_area_outlier_detection import compute_sa_outlier_flag
-from src.data_pipeline.quality_control.config import QC_DEFAULTS
+from src.data_pipeline.quality_control.death_detection.config import DEATH_DETECTION_DEFAULTS
 from src.build.utils.curvature_utils import compute_embryo_curvature
 from segmentation_sandbox.scripts.utils.mask_cleaning import clean_embryo_mask
 import skimage.io as io
@@ -232,7 +239,7 @@ def build04_stage_per_experiment(
         SA reference curves CSV. If None, uses root/metadata/sa_reference_curves.csv
     dead_lead_time : float, optional
         Hours before death to retroactively flag embryos.
-        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
+        If None, uses DEATH_DETECTION_DEFAULTS['lead_time_hr'] (default 4.0)
     sg_window : Optional[int], default 5
         Savitzky-Golay window length for smoothing. If None or insufficient data, skip smoothing
     sg_poly : int, default 2
@@ -245,7 +252,7 @@ def build04_stage_per_experiment(
     """
     # Use default from config if not specified
     if dead_lead_time is None:
-        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+        dead_lead_time = DEATH_DETECTION_DEFAULTS['lead_time_hr']
 
     # Convert to Path objects
     root = Path(root)
@@ -740,7 +747,7 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=None, sg_window=5, sg_poly=2
         Path to stage reference CSV file
     dead_lead_time : float, optional
         Hours before death to retroactively flag.
-        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
+        If None, uses DEATH_DETECTION_DEFAULTS['lead_time_hr'] (default 4.0)
     sg_window : int
         Savitzky-Golay window length
     sg_poly : int
@@ -755,7 +762,7 @@ def _compute_qc_flags(df, stage_ref, dead_lead_time=None, sg_window=5, sg_poly=2
     """
     # Use default from config if not specified
     if dead_lead_time is None:
-        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+        dead_lead_time = DEATH_DETECTION_DEFAULTS['lead_time_hr']
 
     df = df.copy()
 
@@ -1125,7 +1132,7 @@ def perform_embryo_qc(
         Data root directory
     dead_lead_time : float, optional
         Hours before death to retroactively flag embryos.
-        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
+        If None, uses DEATH_DETECTION_DEFAULTS['lead_time_hr'] (default 4.0)
     pert_key_path : str, optional
         Path to perturbation key file
     auto_augment_pert_key : bool, default True
@@ -1138,7 +1145,7 @@ def perform_embryo_qc(
     """
     # Use default from config if not specified
     if dead_lead_time is None:
-        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+        dead_lead_time = DEATH_DETECTION_DEFAULTS['lead_time_hr']
 
     # read in metadata
     metadata_path = os.path.join(root, 'metadata', "combined_metadata_files", '')

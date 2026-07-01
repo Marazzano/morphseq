@@ -17,7 +17,7 @@ from pathlib import Path
 # Add project root to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.build.build04_perform_embryo_qc import build04_stage_per_experiment
-from src.data_pipeline.quality_control.config import QC_DEFAULTS
+from src.data_pipeline.quality_control.death_detection.config import DEATH_DETECTION_DEFAULTS
 
 
 def _parse_args() -> argparse.Namespace:
@@ -32,7 +32,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--out-csv", help="Output Build04 CSV path (overrides default)")
     parser.add_argument("--out-dir", help="Output directory (overrides default)")
     parser.add_argument("--stage-ref", help="Stage reference CSV path")
-    parser.add_argument("--dead-lead-time", type=float, default=QC_DEFAULTS['dead_lead_time_hours'], help="Hours before death to retroactively flag")
+    parser.add_argument("--dead-lead-time", type=float, default=DEATH_DETECTION_DEFAULTS['lead_time_hr'], help="Hours before death to retroactively flag")
     parser.add_argument("--sg-window", type=int, default=5, help="Savitzky-Golay window length")
     parser.add_argument("--sg-poly", type=int, default=2, help="Savitzky-Golay polynomial order")
     parser.add_argument("--verbose", action="store_true", help="Verbose logging")
@@ -156,7 +156,7 @@ def run_build04(
         Stage reference CSV path
     dead_lead_time : float, optional
         Hours before death to retroactively flag.
-        If None, uses QC_DEFAULTS['dead_lead_time_hours'] (default 4.0)
+        If None, uses DEATH_DETECTION_DEFAULTS['lead_time_hr'] (default 4.0)
     sg_window : int, default 5
         Savitzky-Golay window length
     sg_poly : int, default 2
@@ -164,7 +164,7 @@ def run_build04(
     """
     # Use default from config if not specified
     if dead_lead_time is None:
-        dead_lead_time = QC_DEFAULTS['dead_lead_time_hours']
+        dead_lead_time = DEATH_DETECTION_DEFAULTS['lead_time_hr']
     root_p = Path(root)
     if in_csv and out_csv:
         in_p = Path(in_csv)

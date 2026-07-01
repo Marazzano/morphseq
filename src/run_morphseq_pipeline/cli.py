@@ -67,7 +67,7 @@ from .steps.run_build06 import run_build06
 from .services.gen_embeddings import build_df03_with_embeddings
 # Import centralized embedding generation utilities
 from ..analyze.gen_embeddings import ensure_embeddings_for_experiments
-from ..data_pipeline.quality_control.config import QC_DEFAULTS
+from ..data_pipeline.quality_control.death_detection.config import DEATH_DETECTION_DEFAULTS
 
 
 MISCROSCOPE_CHOICES = ["Keyence", "YX1"]
@@ -157,7 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     p04.add_argument("--data-root", required=True)
     # Accept --exp for interface consistency with other steps; currently unused by build04
     p04.add_argument("--exp", required=False, help="Experiment name (accepted for consistency; ignored by build04)")
-    p04.add_argument("--dead-lead-time", type=float, default=QC_DEFAULTS['dead_lead_time_hours'], help="Hours before death to retroactively flag embryos")
+    p04.add_argument("--dead-lead-time", type=float, default=DEATH_DETECTION_DEFAULTS['lead_time_hr'], help="Hours before death to retroactively flag embryos")
     p04.add_argument("--pert-key", help="Path to perturbation_name_key.csv (overrides default datroot/metadata path)")
     p04.add_argument("--no-auto-augment-pert-key", dest="auto_augment_pert_key", action="store_false",
                      help="Disable auto-adding missing perturbations to key with unknown defaults")
