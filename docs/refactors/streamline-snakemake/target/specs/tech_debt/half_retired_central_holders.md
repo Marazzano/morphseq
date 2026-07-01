@@ -41,8 +41,24 @@ two failures:
 | `segmentation/backends.py` (flat module) | `backends/` package | **moved** into `backends/selection.py` + re-exported; this was a **live ImportError** at `segmentation_and_tracking.py:13` (commit `5bb3462b`) |
 | `feature_extraction/core/curvature_metrics.py` + `curvature_skeletonization.py` | `curvature_metrics/skeletonization.py` (product-local) | **migrated**; dropped uncalled `extract_curvature_metrics_batch` + dead re-exports (commit `5bb3462b`) |
 | empty husk dirs: `quality_control/core/`, `quality_control/entrypoints/`, `quality_control/segmentation_qc/`, `quality_control/auxiliary_mask_qc/` | n/a (source migrated elsewhere) | **removed** (source-empty, unimported) |
+| `schemas/stage_predictions.py` (`REQUIRED_COLUMNS_STAGE_PREDICTIONS`, `UNIQUE_KEY_STAGE_PREDICTIONS`) | `feature_extraction/stage_predictions/contract.py` (`STAGE_PREDICTION_TABLE_COLUMNS`) | **deleted** — 0 importers; legacy vocab (`time_int`, `pipeline_version`) superseded by co-located contract |
+| `schemas/auxiliary_masks.py` (`REQUIRED_COLUMNS_AUXILIARY_MASKS`) | `segmentation/backends/unet_snip/snip_auxiliary_masks_contract.py` (`SNIP_AUXILIARY_MASKS_REQUIRED_COLUMNS`) | **deleted** — 0 importers; legacy full-frame vocab superseded by per-snip contract |
 
 ### STILL OUTSTANDING (not import-forced — retire deliberately, not mid-sweep)
+
+**#5 — `schemas/` is itself a surviving central holder (the biggest one).**
+- The two deletions above were the *dead* members. The rest of `schemas/` is a shared bucket of
+  `REQUIRED_COLUMNS_*` contracts — a direct violation of the `feature_world.md` doctrine that each
+  product owns its own `contract.py`. `schemas/__init__.py` is inert (no re-exports), so members
+  retire one file at a time.
+- **Live but mis-homed** (co-locate into the product's `contract.py` the way curvature moved, *then*
+  delete the schema member): `schemas.segmentation` (8 importers), `schemas.channel_normalization` (8),
+  `schemas.features` (4), `schemas.frame_contract` (3), `schemas.plate_metadata` (3),
+  `schemas.snip_processing` (2), `schemas.scope_metadata` (2), `schemas.stitched_image_index` (1).
+- **Parked** (retire with the analysis_ready unit — see #4): `schemas.quality_control` (3),
+  `schemas.analysis_ready` (5). Every importer of these two lives inside the parked chain.
+- **To pay down:** treat `schemas/` as the last central holder. Migrate the live members product by
+  product; delete the parked members with the analysis_ready subsystem; the goal is an empty `schemas/`.
 
 **#4 — `schemas/quality_control.py` (legacy `qc_flags` vocabulary).**
 - Co-located replacement exists: `quality_control/snip_qc/contract.py::SNIP_QC_EXCLUSION_FLAGS`. The
@@ -69,7 +85,8 @@ two failures:
 
 ## Where to look when paying the outstanding debt
 
-- Legacy QC schema: `schemas/quality_control.py` (+ its `analysis_ready` chain).
+- The last central holder: `schemas/` (drive it toward empty — see #5). Legacy QC schema
+  `schemas/quality_control.py` (+ its `analysis_ready` chain) is the parked slice.
 - Live QC contract to converge on: `quality_control/snip_qc/contract.py`.
 - Legacy feature layer: `feature_extraction/core/` + `feature_extraction/__init__.py` re-export facade.
 - The doctrine being enforced: `feature_world.md` (Legacy Domain Retirement; Config/Stage-table
@@ -80,6 +97,12 @@ two failures:
 - Grep for a flat `X.py` sitting next to a same-named `X/` package — that is a shadow (silent
   ImportError waiting to happen). Import `X` and check `X.__file__` resolves to the package, not the
   file, and that every name callers pull from `X` is re-exported by the package.
+- **Higher yield:** grep for a `schemas/<product>.py` (or any shared-holder module) when a co-located
+  `<product>/…/contract.py` already exists — that pairing *is* the two-sources-of-truth smell, and it
+  is not import-forced so nothing crashes to flag it. Count importers of the schema member: zero →
+  delete now; nonzero → migrate the live consumers onto the co-located contract, then delete. The two
+  `schemas/{stage_predictions,auxiliary_masks}.py` deletions were exactly this (0 importers, contract
+  already present).
 - Grep for the same constant/threshold/flag list defined in more than one module. The co-located
   home is authoritative; the other is drift.
 - When adding a product folder, confirm the corresponding central-holder entry is deleted in the same
