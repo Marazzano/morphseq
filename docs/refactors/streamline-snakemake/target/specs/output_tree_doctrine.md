@@ -8,7 +8,7 @@ Migration from legacy names (`experiment_metadata/`, `built_image_data/`, `detec
 ## The regime river
 
 ```
-acquisition → object_extraction → features → quality_control → analysis_ready
+acquisition → object_extraction → feature_extraction → quality_control → analysis_ready
 ```
 
 1. Acquire frames and establish canonical frame truth

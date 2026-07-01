@@ -60,8 +60,8 @@ The registry remains the **contract those scopes converge onto**; wire each rema
 registry as it is reconstructed.
 
 Coverage: **front-end steps only** for now (the two metadata ingest lineages, well discovery,
-and the post-fan frame-inventory tail). Back-half steps (segmentation, snips, aux, features,
-QC, analysis_ready) get rows when Scope 5 specifies their stage/grain. Spec:
+and the post-fan frame-inventory tail). Back-half steps (segmentation, snips, aux,
+feature_extraction, QC, analysis_ready) get rows when Scope 5 specifies their stage/grain. Spec:
 target/front_end_naming_and_flow.md (§ PATHS.PY REGISTRY ROWS).
 Audit: target/frame_inventory_well_runner_audit.md (review of the registry + the frame_inventory
 adapter + well-runner that consume it).
