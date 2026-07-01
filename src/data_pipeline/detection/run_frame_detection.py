@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_pipeline.image_materialization.frame_inventory_contract import (
+from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     REQUIRED_CHANNEL,
     derive_well_id,
     frame_inventory_image_ids,

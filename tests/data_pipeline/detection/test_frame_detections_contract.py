@@ -11,7 +11,7 @@ from data_pipeline.detection.frame_detections_contract import (
     is_no_candidate_id,
     no_candidate_detection_id,
 )
-from data_pipeline.image_materialization.frame_inventory_contract import (
+from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     DOWNSTREAM_FRAME_IDENTITY_BLOCK,
 )
 

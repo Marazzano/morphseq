@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.metadata_ingest.scope.shared.validate_physical_well_mapping import (
+from data_pipeline.acquisition.metadata_ingest.scope.shared.validate_physical_well_mapping import (
     validate_physical_well_mapping,
 )
 

@@ -19,7 +19,7 @@ so the artifact proves every frame was processed.
 
 from __future__ import annotations
 
-from data_pipeline.image_materialization.frame_inventory_contract import (
+from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     DOWNSTREAM_FRAME_IDENTITY_BLOCK,
 )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.metadata_ingest.scope.yx1.validate_xy_reference_grid import (
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.validate_xy_reference_grid import (
     validate_xy_reference_grid_df,
 )
 

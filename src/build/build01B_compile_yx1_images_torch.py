@@ -32,7 +32,7 @@ import skimage.io as skio
 import skimage
 from stitch2d import StructuredMosaic
 from src.build.export_utils import (LoG_focus_stacker, im_rescale, _write_ff, build_experiment_metadata)
-from src.data_pipeline.metadata_ingest.mapping.series_well_mapper_yx1 import map_nd2_to_wells_by_xy
+from src.data_pipeline.acquisition.metadata_ingest.mapping.series_well_mapper_yx1 import map_nd2_to_wells_by_xy
 
 logging.basicConfig(
     level=logging.INFO,

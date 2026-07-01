@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data_pipeline.image_materialization.materialized_image_readers import (
+from data_pipeline.acquisition.image_materialization.materialized_image_readers import (
     load_z_stack_images_from_image_id,
 )
 from data_pipeline.segmentation.masks.mask_resize import resize_binary_mask_to_shape

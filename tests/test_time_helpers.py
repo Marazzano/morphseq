@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.metadata_ingest.time_helpers import add_elapsed_time_columns
-from data_pipeline.metadata_ingest.time_helpers import add_experiment_time_cols
-from data_pipeline.metadata_ingest.time_helpers import ensure_frame_time_alias
+from data_pipeline.acquisition.metadata_ingest.time_helpers import add_elapsed_time_columns
+from data_pipeline.acquisition.metadata_ingest.time_helpers import add_experiment_time_cols
+from data_pipeline.acquisition.metadata_ingest.time_helpers import ensure_frame_time_alias
 
 
 def test_ensure_frame_time_alias_backfills_and_int_casts() -> None:

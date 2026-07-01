@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from data_pipeline.image_building.shared.log_focus import LoG_focus_stacker, im_rescale
+from data_pipeline.acquisition.image_building.shared.log_focus import LoG_focus_stacker, im_rescale
 from src.build.export_utils import LoG_focus_stacker as legacy_log_focus_stacker
 from src.build.export_utils import im_rescale as legacy_im_rescale
 

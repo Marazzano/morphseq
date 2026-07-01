@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from data_pipeline.pipeline_orchestrator import tasks
-from data_pipeline.image_materialization.resolved_product_plans import (
+from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
     write_resolved_product_plan_for_well,
 )
 
@@ -100,7 +100,7 @@ def test_materialize_well_joins_position_mapping(tmp_path):
     )
 
     with patch(
-        "data_pipeline.image_materialization.scope.yx1"
+        "data_pipeline.acquisition.image_materialization.scope.yx1"
         ".materialize_well_yx1.materialize_yx1_well",
         side_effect=_fake_materialize_yx1_well,
     ):
@@ -193,7 +193,7 @@ def test_materialize_image_product_for_well_joins_position_mapping(tmp_path):
     )
 
     with patch(
-        "data_pipeline.image_materialization.scope.yx1"
+        "data_pipeline.acquisition.image_materialization.scope.yx1"
         ".materialize_well_yx1.materialize_yx1_product_for_well",
         side_effect=_fake_materialize_yx1_product_for_well,
     ):

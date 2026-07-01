@@ -26,7 +26,7 @@ import math
 
 import pandas as pd
 
-from data_pipeline.image_materialization.frame_inventory_contract import (
+from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     validate_frame_identity_block,
 )
 

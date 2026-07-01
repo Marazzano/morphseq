@@ -6,22 +6,22 @@ import argparse
 import yaml
 from pathlib import Path
 
-from data_pipeline.metadata_ingest.experiment_identity import resolve_experiment_id
-from data_pipeline.metadata_ingest.plate.plate_processing import process_plate_layout
-from data_pipeline.metadata_ingest.plate.validate_plate_metadata import validate_plate_metadata_csv
-from data_pipeline.metadata_ingest.scope.keyence.extract_scope_metadata import extract_keyence_scope_metadata
-from data_pipeline.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import extract_yx1_scope_metadata
-from data_pipeline.metadata_ingest.scope.keyence.map_keyence_positions_to_wells import map_positions_to_wells_keyence
-from data_pipeline.metadata_ingest.scope.yx1.map_yx1_positions_to_wells import map_positions_to_wells_yx1
-from data_pipeline.metadata_ingest.scope.shared.apply_position_to_well_mapping import (
+from data_pipeline.acquisition.metadata_ingest.experiment_identity import resolve_experiment_id
+from data_pipeline.acquisition.metadata_ingest.plate.plate_processing import process_plate_layout
+from data_pipeline.acquisition.metadata_ingest.plate.validate_plate_metadata import validate_plate_metadata_csv
+from data_pipeline.acquisition.metadata_ingest.scope.keyence.extract_scope_metadata import extract_keyence_scope_metadata
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import extract_yx1_scope_metadata
+from data_pipeline.acquisition.metadata_ingest.scope.keyence.map_keyence_positions_to_wells import map_positions_to_wells_keyence
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.map_yx1_positions_to_wells import map_positions_to_wells_yx1
+from data_pipeline.acquisition.metadata_ingest.scope.shared.apply_position_to_well_mapping import (
     apply_position_to_well_mapping,
 )
-from data_pipeline.metadata_ingest.position_well_mapping import validate_position_well_mapping
-from data_pipeline.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
-from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_scope_metadata import (
+from data_pipeline.acquisition.metadata_ingest.position_well_mapping import validate_position_well_mapping
+from data_pipeline.acquisition.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
+from data_pipeline.acquisition.metadata_ingest.well_discovery.discover_wells_from_scope_metadata import (
     discover_wells_from_scope_metadata,
 )
-from data_pipeline.metadata_ingest.frame_inventory import (
+from data_pipeline.acquisition.metadata_ingest.frame_inventory import (
     merge_frame_inventory_shards,
     validate_frame_inventory,
 )
@@ -155,7 +155,7 @@ def cmd_discover_wells(args: argparse.Namespace) -> None:
 
 
 def cmd_discover_wells_from_handoff(args: argparse.Namespace) -> None:
-    from data_pipeline.metadata_ingest.well_discovery.discover_wells_from_handoff import (
+    from data_pipeline.acquisition.metadata_ingest.well_discovery.discover_wells_from_handoff import (
         discover_wells_from_handoff,
     )
 
@@ -167,7 +167,7 @@ def cmd_discover_wells_from_handoff(args: argparse.Namespace) -> None:
 
 def cmd_split_dropin_inventory(args: argparse.Namespace) -> None:
     # Per-well producer (race-free): writes EXACTLY the declared shard for --well-id.
-    from data_pipeline.metadata_ingest.well_discovery.split_dropin_inventory import (
+    from data_pipeline.acquisition.metadata_ingest.well_discovery.split_dropin_inventory import (
         select_dropin_well_shard,
     )
 
@@ -179,7 +179,7 @@ def cmd_split_dropin_inventory(args: argparse.Namespace) -> None:
 
 
 def cmd_scaffold_dropin_inventory(args: argparse.Namespace) -> None:
-    from data_pipeline.metadata_ingest.frame_inventory.scaffold_dropin_inventory import (
+    from data_pipeline.acquisition.metadata_ingest.frame_inventory.scaffold_dropin_inventory import (
         scaffold_dropin_inventory,
     )
 
@@ -198,7 +198,7 @@ def cmd_materialize_well(args: argparse.Namespace) -> None:
     materialization workflow is ``run_materialize_well`` (the sequencer). This function holds no
     dataframe algebra and no scope/plan knowledge.
     """
-    from data_pipeline.image_materialization.run_materialize_well import run_materialize_well
+    from data_pipeline.acquisition.image_materialization.run_materialize_well import run_materialize_well
 
     well_rows, well_index = _selected_well_acquisition_rows_for_materialization(args)
 
@@ -234,7 +234,7 @@ def cmd_materialize_well(args: argparse.Namespace) -> None:
 def _selected_well_acquisition_rows_for_materialization(args: argparse.Namespace):
     """Read acquisition + mapping inputs and return the selected well rows plus well_index."""
     import pandas as pd
-    from data_pipeline.image_materialization.select_well_acquisition_rows import (
+    from data_pipeline.acquisition.image_materialization.select_well_acquisition_rows import (
         select_well_acquisition_rows,
     )
     from data_pipeline.shared.identifiers.parsers import split_well_id
@@ -260,7 +260,7 @@ def _selected_well_acquisition_rows_for_materialization(args: argparse.Namespace
 
 def cmd_write_resolved_product_plan_for_well(args: argparse.Namespace) -> None:
     """Write one resolved product plan JSON for one ``(well_id, product_key)``."""
-    from data_pipeline.image_materialization.resolved_product_plans import (
+    from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
         write_resolved_product_plan_for_well,
     )
 
@@ -281,7 +281,7 @@ def cmd_write_resolved_product_plan_for_well(args: argparse.Namespace) -> None:
 def cmd_build_keyence_stitch_map(args: argparse.Namespace) -> None:
     """Build the experiment-grain Keyence stitch map (master_params JSON)."""
     import pandas as pd
-    from data_pipeline.image_materialization.scope.keyence.build_keyence_stitch_map import (
+    from data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map import (
         build_keyence_stitch_map,
     )
 
@@ -294,7 +294,7 @@ def cmd_build_keyence_stitch_map(args: argparse.Namespace) -> None:
 
 def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
     """Materialize one resolved image product and write its product frame-inventory shard."""
-    from data_pipeline.image_materialization.run_materialize_well import (
+    from data_pipeline.acquisition.image_materialization.run_materialize_well import (
         run_materialize_image_product_for_well,
     )
 
@@ -333,7 +333,7 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
 
 def cmd_discover_product_shards_for_well(args: argparse.Namespace) -> None:
     """Discover validated product frame-inventory shards for one well."""
-    from data_pipeline.image_materialization.product_shard_assembly import (
+    from data_pipeline.acquisition.image_materialization.product_shard_assembly import (
         discover_product_shards_for_well,
     )
 
@@ -347,7 +347,7 @@ def cmd_discover_product_shards_for_well(args: argparse.Namespace) -> None:
 
 def cmd_assemble_well_frame_inventory(args: argparse.Namespace) -> None:
     """Assemble validated product shards into the canonical per-well frame_inventory."""
-    from data_pipeline.image_materialization.product_shard_assembly import (
+    from data_pipeline.acquisition.image_materialization.product_shard_assembly import (
         assemble_well_frame_inventory,
     )
 

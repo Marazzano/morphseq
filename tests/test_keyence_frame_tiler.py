@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.data_pipeline.image_building.utils.frame_tiler import FrameTilingConfig
-from src.data_pipeline.image_building.utils.frame_tiler import TileSpec
-from src.data_pipeline.image_building.utils.frame_tiler import legacy_canvas_shape
-from src.data_pipeline.image_building.utils.frame_tiler import stitch_frame_tiles
+from src.data_pipeline.acquisition.image_building.utils.frame_tiler import FrameTilingConfig
+from src.data_pipeline.acquisition.image_building.utils.frame_tiler import TileSpec
+from src.data_pipeline.acquisition.image_building.utils.frame_tiler import legacy_canvas_shape
+from src.data_pipeline.acquisition.image_building.utils.frame_tiler import stitch_frame_tiles
 
 
 def test_single_tile_short_circuit_preserves_shape_and_inverts() -> None:
