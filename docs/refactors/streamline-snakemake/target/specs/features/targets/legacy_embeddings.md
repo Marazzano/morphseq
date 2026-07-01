@@ -69,7 +69,7 @@ src/data_pipeline/feature_extraction/legacy_embeddings/
 
 ```python
 "latent_embeddings": {
-    "stage": "features",
+    "stage": "feature_extraction",
     "product_dir": "latent_embeddings",
     "fanout": PER_WELL_THEN_MERGE,
     "artifacts": {
@@ -83,10 +83,10 @@ src/data_pipeline/feature_extraction/legacy_embeddings/
 
 On disk (all paths resolved via `artifact_path()` / `validated_path()` — never typed raw):
 ```
-features/<exp>/latent_embeddings/per_well/<well_id>/<well_id>_latents.parquet
-features/<exp>/latent_embeddings/per_well/<well_id>/<well_id>_latents.parquet.validated
-features/<exp>/latent_embeddings/<exp>_latents.parquet
-features/<exp>/latent_embeddings/<exp>_latents.parquet.validated
+feature_extraction/<exp>/latent_embeddings/per_well/<well_id>/<well_id>_latents.parquet
+feature_extraction/<exp>/latent_embeddings/per_well/<well_id>/<well_id>_latents.parquet.validated
+feature_extraction/<exp>/latent_embeddings/<exp>_latents.parquet
+feature_extraction/<exp>/latent_embeddings/<exp>_latents.parquet.validated
 ```
 
 The `product_dir` names the artifact type, not the backend. `latent_embeddings` not

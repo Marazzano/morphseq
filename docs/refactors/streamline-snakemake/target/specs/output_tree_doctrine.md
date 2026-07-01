@@ -119,12 +119,15 @@ data_pipeline_output/
           <well_id>/
             <well_id>_tracks.csv
 
-  features/
+  feature_extraction/
     <experiment_id>/
-      frame_features/
-      embryo_features/
-      well_features/
-      embeddings/
+      latent_embeddings/
+      mask_geometry/
+      curvature_metrics/
+      pose_kinematics/
+      stage_predictions/
+      fraction_alive/
+      consolidated_features/
 
   quality_control/
     <experiment_id>/
@@ -150,7 +153,7 @@ data_pipeline_output/
 |---|---|---|
 | `acquisition/` | Canonical acquisition/frame truth: scope metadata, acquisition inventory, materialized pixel files, frame inventory | Anything derived from a model; QC judgments |
 | `object_extraction/` | Object-level products from model inference: detections, masks, physical embryo registry, snips, snip auxiliary masks, tracks | Raw features; QC tables; embeddings |
-| `features/` | Measured or learned representations derived from objects/frames/embryos: geometry, kinematics, embeddings | Raw model outputs; QC; final joined tables |
+| `feature_extraction/` | Measured or learned representations derived from objects/frames/embryos: geometry, kinematics, embeddings | Raw model outputs; QC; final joined tables |
 | `quality_control/` | Trust and evaluation artifacts across all regimes: QC tables, plots, reports | Pipeline products; analysis outputs |
 | `analysis_ready/` | Final joined products for downstream analysis. Terminal — no subfolders should accumulate here | Intermediate products of any kind |
 
@@ -221,7 +224,7 @@ but never writes. They stay outside the experiment-scoped output tree entirely.
 
 The `PIPELINE_STEPS` registry in `orchestration/paths.py` is the code mirror of this doctrine.
 Each step's `"stage"` key is the top-level regime folder. All steps already use the target
-names (`"acquisition"`, `"object_extraction"`, `"features"`, `"quality_control"`).
+names (`"acquisition"`, `"object_extraction"`, `"feature_extraction"`, `"quality_control"`).
 
 ---
 

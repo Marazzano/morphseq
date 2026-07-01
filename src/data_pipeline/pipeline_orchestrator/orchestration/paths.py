@@ -398,7 +398,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     # ALL run-well shards before exiting — model load dominates per-well encode cost. The encode
     # body runs under the model interpreter (MODEL_RUN), not the normal RUN env.
     "latent_embeddings": {
-        "stage": "features",
+        "stage": "feature_extraction",
         "product_dir": "latent_embeddings",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_RUN_BATCH,
@@ -415,9 +415,9 @@ PIPELINE_STEPS: dict[str, dict] = {
     # geometry (area/perimeter/length/width/centroid), decoded from the canonical frame_masks RLE.
     # The PRODUCT name names the artifact, not the method (`mask_geometry`, not `sam2_geometry`).
     # execution=PER_WELL: cheap CPU per well (decode + measure a handful of masks) — no batch model
-    # to amortize. Code lives under feature_extraction/; the on-disk stage is features/.
+    # to amortize. Code lives under feature_extraction/; the on-disk stage matches it.
     "mask_geometry": {
-        "stage": "features",
+        "stage": "feature_extraction",
         "product_dir": "mask_geometry",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
@@ -432,7 +432,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     # ── FEATURES — curvature metrics ─────────────────────────────────────────
     # Centerline length + curvature summaries per snip, from the same canonical frame_masks RLE.
     "curvature_metrics": {
-        "stage": "features",
+        "stage": "feature_extraction",
         "product_dir": "curvature_metrics",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
@@ -448,7 +448,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     # Orientation/bbox per mask + displacement/speed within each track (frame timing from
     # frame_inventory). One row per snip; first frame per track has null kinematics.
     "pose_kinematics": {
-        "stage": "features",
+        "stage": "feature_extraction",
         "product_dir": "pose_kinematics",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
@@ -463,7 +463,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     # ── FEATURES — stage predictions ─────────────────────────────────────────
     # Kimmel1995 developmental stage (hpf) per snip from plate_metadata + frame timing. No masks.
     "stage_predictions": {
-        "stage": "features",
+        "stage": "feature_extraction",
         "product_dir": "stage_predictions",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
@@ -478,7 +478,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     # ── FEATURES — fraction alive ────────────────────────────────────────────
     # Continuous viability fraction per snip from the embryo mask (RLE) vs a per-snip VIA mask.
     "fraction_alive": {
-        "stage": "features",
+        "stage": "feature_extraction",
         "product_dir": "fraction_alive",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
@@ -493,7 +493,7 @@ PIPELINE_STEPS: dict[str, dict] = {
     # ── FEATURES — consolidated features ─────────────────────────────────────
     # The chosen per-snip feature table: merges the feature products one-to-one on snip_id.
     "consolidated_features": {
-        "stage": "features",
+        "stage": "feature_extraction",
         "product_dir": "consolidated_features",
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,

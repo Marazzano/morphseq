@@ -31,7 +31,7 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
 
 # Doctrine-allowed regime names and forbidden legacy names (output_tree_doctrine.md)
 _ALLOWED_STAGES = frozenset({
-    "acquisition", "object_extraction", "features", "quality_control", "analysis_ready"
+    "acquisition", "object_extraction", "feature_extraction", "quality_control", "analysis_ready"
 })
 _FORBIDDEN_STAGE_NAMES = frozenset({
     "experiment_metadata", "built_image_data", "detection", "segmentation"
@@ -428,3 +428,15 @@ class TestOutputTreeDoctrine:
         p = artifact_path(ROOT, "frame_masks", "frame_masks", EXP,
                           path_mode="per_well", well_id=WELL)
         assert str(p).startswith(str(ROOT / "object_extraction" / EXP / "frame_masks"))
+
+    def test_feature_products_land_under_feature_extraction(self):
+        feature_products = (
+            ("latent_embeddings", "latents"),
+            ("mask_geometry", "mask_geometry"),
+            ("stage_predictions", "stage_predictions"),
+            ("fraction_alive", "fraction_alive"),
+            ("consolidated_features", "consolidated_features"),
+        )
+        for step, artifact in feature_products:
+            p = artifact_path(ROOT, step, artifact, EXP, path_mode="per_well", well_id=WELL)
+            assert str(p).startswith(str(ROOT / "feature_extraction" / EXP / step))

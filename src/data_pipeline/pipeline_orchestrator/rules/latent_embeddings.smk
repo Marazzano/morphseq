@@ -23,7 +23,7 @@ LATENTS_ARTIFACT = "latents"
 # processed_snip_path). The encoder consumes the VALIDATED shard.
 SNIP_INVENTORY_STEP = "snip_inventory"
 
-_LE_CFG = config.get("features", {}).get("legacy_embeddings", {})
+_LE_CFG = config.get("feature_extraction", {}).get("legacy_embeddings", {})
 
 
 def _latents_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):

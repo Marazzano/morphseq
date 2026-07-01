@@ -139,8 +139,8 @@ may remain as temporary wrappers that import the product-local `entrypoint.main`
 Doctrine: domain package names the world; product folder names the table; `contract.py` defines it;
 `compute.py` makes it; `entrypoint.py` touches the filesystem. No `stages/` inside stages.
 
-Code package and output stage intentionally differ: source code lives under `feature_extraction/`,
-while feature artifacts land under the `features/` output stage. Do not add a new
+Code package and output stage intentionally align: source code lives under `feature_extraction/`,
+and feature artifacts land under the `feature_extraction/` output stage. Do not add a new
 `data_pipeline.features` package for future feature work.
 
 ---
@@ -577,13 +577,13 @@ where a future agent has to guess.
 
 ## Output Location Pattern
 
-All feature steps land under the `features/` stage on disk. Each step gets its own `product_dir`
+All feature steps land under the `feature_extraction/` stage on disk. Each step gets its own `product_dir`
 — the named product family within the stage. This is how `PIPELINE_STEPS` in `orchestration/paths.py`
 constructs the path:
 
 ```python
 "latent_embeddings": {
-    "stage": "features",          # top-level folder
+    "stage": "feature_extraction", # top-level folder
     "product_dir": "latent_embeddings",  # product family within it
     "fanout": PER_WELL_THEN_MERGE,
     "artifacts": { ... }
@@ -593,9 +593,9 @@ constructs the path:
 Which gives you, for free via `artifact_path(...)`:
 
 ```
-features/<exp>/latent_embeddings/per_well/<well_id>/<well_id>_latents.parquet
-features/<exp>/mask_geometry/per_well/<well_id>/<well_id>_mask_geometry.parquet
-features/<exp>/consolidated/per_well/<well_id>/<well_id>_consolidated_features.parquet
+feature_extraction/<exp>/latent_embeddings/per_well/<well_id>/<well_id>_latents.parquet
+feature_extraction/<exp>/mask_geometry/per_well/<well_id>/<well_id>_mask_geometry.parquet
+feature_extraction/<exp>/consolidated_features/per_well/<well_id>/<well_id>_consolidated_features.parquet
 ```
 
 The output tree is declarative: stage names the phase; `product_dir` names what the artifact is.
@@ -646,10 +646,9 @@ in development; future `focus_flag` / `motion_blur_flag` are reserved `snip_qc` 
 
 **Product folder:** `src/data_pipeline/feature_extraction/mask_geometry/`
 
-> Note: the source code package is `feature_extraction/`; the on-disk output stage is `features/`.
-> These are intentionally different — the code package name describes what the code does; the output
-> stage name describes what the artifact is. All paths come from the registry, so no caller conflates
-> the two.
+> Note: the source code package is `feature_extraction/`; the on-disk output stage is also `feature_extraction/`.
+> They intentionally share the same namespace. All paths come from the registry, so callers do not
+> type this stage name directly.
 
 **Key functions:**
 
@@ -1869,7 +1868,7 @@ like `test_build04_bootstrap.py` / `test_qc_restoration.py` already live) but is
 the default run**:
 
 - **Location:** `tests/data_pipeline/quality_control/_legacy_drift/` — parallel to the unit tests,
-  but its own subtree so it is obvious this is benchmarking, not unit testing. (`features/` products'
+  but its own subtree so it is obvious this is benchmarking, not unit testing. (`feature_extraction/` products'
   comparisons live under `tests/data_pipeline/feature_extraction/_legacy_drift/` by the same rule.)
 - **Quarantine:** every benchmark is marked `@pytest.mark.legacy_drift` and the default invocation
   **deselects it** (e.g. `addopts = -m "not legacy_drift"`, or run it explicitly with
@@ -1898,7 +1897,7 @@ Shape (under `_legacy_drift/`):
 **How to produce the new side.** Run the merged QC targets for `20250912` (the `.smk` rules already
 plan end-to-end — see each product's Done When), then point the harness at the merged artifacts
 resolved through `artifact_path(...)`:
-`features/20250912/{mask_geometry,stage_predictions,fraction_alive}/20250912_*.csv` and
+`feature_extraction/20250912/{mask_geometry,stage_predictions,fraction_alive}/20250912_*.csv` and
 `quality_control/20250912/{surface_area_qc,mask_quality_qc,death_detection,snip_qc}/20250912_*.{csv,parquet}`.
 
 **Done when (drift gate per product):**

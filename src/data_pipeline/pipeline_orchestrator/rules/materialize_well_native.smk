@@ -15,6 +15,7 @@ rule write_resolved_product_plan_for_well:
     """Write one resolved product commitment for one well/product_key."""
     input:
         discovered_wells=DISCOVERED_WELLS_TXT,
+        config_yaml=str(CONFIG_YAML),
     output:
         resolved_product_plan=str(_resolved_product_plan(
             "{experiment}", well_id="{well_id}", product_key="{product_key}"
@@ -27,7 +28,7 @@ rule write_resolved_product_plan_for_well:
           --scope "{SCOPE_TOKEN}" \
           --product-key "{wildcards.product_key}" \
           --output-json "{output.resolved_product_plan}" \
-          --config-yaml "{CONFIG_YAML}"
+          --config-yaml "{input.config_yaml}"
         """
 
 
