@@ -487,31 +487,6 @@ rule materialize_stitched_images:
         """
 
 
-# DEPRECATED: build_frame_contract is superseded by the per-well frame_inventory rules in
-# rules/frame_inventory.smk (build_frame_inventory_well + validate_frame_inventory_for_well).
-# This rule produced a whole-experiment frame_contract.csv with a fake echo "ok" validator.
-# The replacement produces per-well {well_id}_frame_inventory.csv shards with real validation
-# and a .validated sentinel. Delete this rule once frame_inventory.smk is the active seam.
-#
-# rule build_frame_contract:
-#     input:
-#         stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
-#         mapped_scope = SCOPE_METADATA_MAPPED_CSV,
-#     output:
-#         contract = EXPERIMENT_METADATA_DIR / "{experiment}" / "frame_contract.csv",
-#         validated = EXPERIMENT_METADATA_DIR / "{experiment}" / ".frame_contract.validated",
-#     params:
-#         channel_id = lambda wildcards: str(config.get("segmentation_and_tracking", {}).get("channel_id", "BF")),
-#     shell:
-#         """
-#                 {RUN} -m data_pipeline.metadata_ingest.frame_contract.build_frame_contract \
-#                     --stitched-index-csv "{input.stitched_index}" \
-#                     --scope-metadata-csv "{input.mapped_scope}" \
-#                     --output-csv "{output.contract}"
-#                 echo "ok" > "{output.validated}"
-#         """
-
-
 # Native discovery checkpoint — registered ONLY in native mode. In dropin mode the
 # dropin_handoff.smk twin defines `discover_wells` writing the SAME DISCOVERED_WELLS_TXT, so exactly
 # one checkpoint named `discover_wells` exists and `checkpoints.discover_wells.get(...)` resolves in
