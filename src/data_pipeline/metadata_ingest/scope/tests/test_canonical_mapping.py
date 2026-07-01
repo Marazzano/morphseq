@@ -1,54 +1,45 @@
-"""Tests for scope dialect -> canonical channel mapping."""
+"""Tests for scope dialect -> canonical channel mapping.
+
+ScopeChannelMap owns its own validation (it self-checks at construction and fails loud
+in ``to_canonical``). These tests verify that guard EXISTS and behaves correctly — they
+do not recompute the check themselves. Mirrors how snip_qc tests check the verdict, not
+reimplement it.
+"""
 
 from __future__ import annotations
 
 import pytest
 
-from data_pipeline.metadata_ingest.scope.keyence.mappings import KEYENCE_CHANNEL_INDEX_MAP
-from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
-from data_pipeline.metadata_ingest.scope.yx1.mappings import YX1_CHANNEL_MAP
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES, validate_channel_id
+from data_pipeline.metadata_ingest.scope.keyence.channel_map import KEYENCE_CHANNEL_INDEX_MAP
+from data_pipeline.metadata_ingest.scope.shared.channel_map_contract import ScopeChannelMap
+from data_pipeline.metadata_ingest.scope.yx1.channel_map import YX1_CHANNEL_MAP
+from data_pipeline.shared.channel_vocabulary import validate_channel_id
 
 
-def test_apply_canonical_mapping_returns_expected_value():
-    assert (
-        apply_canonical_mapping(
-            "EYES - Dia",
-            YX1_CHANNEL_MAP,
-            vocabulary=VALID_CHANNEL_NAMES,
-            field="channel_id",
-            scope_name="YX1",
-        )
-        == "BF"
-    )
+def test_to_canonical_returns_expected_value():
+    assert YX1_CHANNEL_MAP.to_canonical("EYES - Dia") == "BF"
 
 
-def test_apply_canonical_mapping_rejects_unmapped_raw_value():
-    with pytest.raises(ValueError, match="YX1 has no channel_id mapping"):
-        apply_canonical_mapping(
-            "EYES - Cy5",
-            YX1_CHANNEL_MAP,
-            vocabulary=VALID_CHANNEL_NAMES,
-            field="channel_id",
-            scope_name="YX1",
-        )
+def test_to_canonical_rejects_unmapped_raw_value():
+    with pytest.raises(ValueError, match="No mapping for raw channel"):
+        YX1_CHANNEL_MAP.to_canonical("EYES - Cy5")
 
 
-def test_apply_canonical_mapping_rejects_non_canonical_target():
-    with pytest.raises(ValueError, match="not in the canonical channel_id vocabulary"):
-        apply_canonical_mapping(
-            "EYES - Cy5",
-            {"EYES - Cy5": "Cy5"},
-            vocabulary=VALID_CHANNEL_NAMES,
-            field="channel_id",
-            scope_name="YX1",
-        )
+def test_construction_rejects_non_canonical_target():
+    # The map rejects a bad target at construction — not the test.
+    with pytest.raises(ValueError, match="not a canonical channel_id"):
+        ScopeChannelMap("YX1", {"EYES - Cy5": "Cy5"})
 
 
-@pytest.mark.parametrize("mapping", [YX1_CHANNEL_MAP, KEYENCE_CHANNEL_INDEX_MAP])
-def test_scope_channel_maps_target_valid_channel_ids(mapping):
-    invalid_targets = sorted(set(mapping.values()) - set(VALID_CHANNEL_NAMES))
-    assert invalid_targets == []
+@pytest.mark.parametrize("channel_map", [YX1_CHANNEL_MAP, KEYENCE_CHANNEL_INDEX_MAP])
+def test_scope_channel_maps_are_already_valid(channel_map):
+    # If construction succeeded, every target is canonical by definition. This just
+    # confirms both real scope maps are live ScopeChannelMap instances (the guard ran).
+    assert isinstance(channel_map, ScopeChannelMap)
+
+
+def test_keyence_channel_map_is_keyed_on_integer_index():
+    assert KEYENCE_CHANNEL_INDEX_MAP.to_canonical(1) == "BF"
 
 
 def test_validate_channel_id_accepts_known_channel_id():

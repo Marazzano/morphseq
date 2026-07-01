@@ -1,10 +1,13 @@
 """The canonical channel vocabulary — the pipeline's channel "language".
 
-Scope-native channel dialect (e.g. YX1 ``"EYES - Dia"``, Keyence ``"Brightfield"``) is translated to
-this canonical vocabulary by the scope adapters (``scope/<scope>/mappings.py`` +
+Scope-native channel dialect (e.g. YX1 ``"EYES - Dia"``, Keyence ``CH1``) is translated to this
+canonical vocabulary by the scope adapters (``scope/<scope>/channel_map.py`` +
 ``scope/shared/canonical_mapper.py``). This module owns ONLY the canonical language + its validator;
 the per-scope dialect maps live with their scope. Doctrine: *mappings translate dialect, vocabularies
 define language, validators guard contracts* (``specs/acquisition_inventory_schema_policy.md``).
+
+This module is cross-cutting (imported by every scope adapter AND by ``shared/identifiers/parsers.py``)
+so it lives in ``shared/``, not inside any one stage.
 """
 
 from __future__ import annotations

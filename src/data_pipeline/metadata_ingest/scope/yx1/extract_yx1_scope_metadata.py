@@ -12,9 +12,7 @@ import pandas as pd
 import nd2
 
 from data_pipeline.metadata_ingest.scope.scope_metadata_contract import REQUIRED_COLUMNS_SCOPE_METADATA
-from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
-from data_pipeline.metadata_ingest.scope.yx1.mappings import YX1_CHANNEL_MAP
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
+from data_pipeline.metadata_ingest.scope.yx1.channel_map import YX1_CHANNEL_MAP
 from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
     build_yx1_acquisition_inventory,
@@ -111,13 +109,7 @@ def _extract_timestamps(nd: nd2.ND2File, n_t: int, n_w: int, n_z: int, n_c: int 
 
 def _to_channel_id(raw_name: str) -> str:
     """Map a raw ND2 channel string to its canonical channel_id (exact-match; fail loud if unknown)."""
-    return apply_canonical_mapping(
-        raw_name,
-        YX1_CHANNEL_MAP,
-        vocabulary=VALID_CHANNEL_NAMES,
-        field="channel_id",
-        scope_name="YX1",
-    )
+    return YX1_CHANNEL_MAP.to_canonical(raw_name)
 
 
 def extract_yx1_scope_metadata(

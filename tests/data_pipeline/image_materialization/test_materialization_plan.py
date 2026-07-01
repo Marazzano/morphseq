@@ -9,12 +9,12 @@ from data_pipeline.image_materialization.materialization_plan import (
     UnsupportedMaterializationRequest,
     load_image_materialization_plan,
 )
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
+from data_pipeline.shared.channel_vocabulary import VALID_CHANNEL_NAMES
 
 
 class TestVocabulary:
     def test_channels_imported_not_redefined(self):
-        # The channel vocabulary IS schemas/channel_normalization — one source of truth.
+        # The channel vocabulary IS shared/channel_vocabulary — one source of truth.
         assert SUPPORTED_CHANNELS == frozenset(VALID_CHANNEL_NAMES)
 
 

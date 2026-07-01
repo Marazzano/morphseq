@@ -13,15 +13,13 @@ import logging
 import re
 
 from data_pipeline.metadata_ingest.scope.scope_metadata_contract import REQUIRED_COLUMNS_SCOPE_METADATA
-from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
-from data_pipeline.metadata_ingest.scope.keyence.mappings import KEYENCE_CHANNEL_INDEX_MAP
+from data_pipeline.metadata_ingest.scope.keyence.channel_map import KEYENCE_CHANNEL_INDEX_MAP
 from data_pipeline.metadata_ingest.scope.keyence.acquisition_inventory import (
     build_keyence_acquisition_inventory,
 )
 from data_pipeline.metadata_ingest.scope.keyence.raw_plane_parsing import (
     _parse_keyence_time_z_channel,
 )
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
 from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.shared.identifiers import build_image_id
 from data_pipeline.shared.identifiers import build_well_id
@@ -160,13 +158,7 @@ def _to_channel_id(channel_index: int) -> str:
     Anchored on the reliable filename index (not the proprietary scraped name) via the single
     ``KEYENCE_CHANNEL_INDEX_MAP``. An unmapped index raises — add the real channel, never default.
     """
-    return apply_canonical_mapping(
-        channel_index,
-        KEYENCE_CHANNEL_INDEX_MAP,
-        vocabulary=VALID_CHANNEL_NAMES,
-        field="channel_id",
-        scope_name="Keyence",
-    )
+    return KEYENCE_CHANNEL_INDEX_MAP.to_canonical(channel_index)
 
 
 def _discover_keyence_files(raw_data_dir: Path, experiment_id: str) -> List[Path]:

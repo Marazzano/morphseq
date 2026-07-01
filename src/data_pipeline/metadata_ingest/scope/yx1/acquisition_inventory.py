@@ -30,7 +30,7 @@ import pandas as pd
 from data_pipeline.metadata_ingest.scope.acquisition_inventory_contract import (
     REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
 )
-from data_pipeline.schemas.channel_normalization import validate_channel_id
+from data_pipeline.shared.channel_vocabulary import validate_channel_id
 from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
     assert_channel_mapping_consistent,
     assert_columns_present,

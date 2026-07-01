@@ -103,7 +103,7 @@ def test_unmapped_channel_index_fails_loud(tmp_path):
     raw_dir = tmp_path / _EXPERIMENT
     # CH2 is not in KEYENCE_CHANNEL_INDEX_MAP (BF-only today) -> fail loud, no silent default.
     _make_well_tree(raw_dir, "XY16", tiles=(1,), zs=(1,), channels=(2,), times=(1,))
-    with pytest.raises(ValueError, match="no channel_id mapping for raw value 2"):
+    with pytest.raises(ValueError, match="No mapping for raw channel"):
         build_keyence_acquisition_inventory(
             experiment_id=_EXPERIMENT, raw_data_dir=raw_dir, scrape_plane_metadata=_stub_scrape
         )

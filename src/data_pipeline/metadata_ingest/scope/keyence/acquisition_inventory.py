@@ -37,7 +37,7 @@ import pandas as pd
 from data_pipeline.metadata_ingest.scope.acquisition_inventory_contract import (
     REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
 )
-from data_pipeline.metadata_ingest.scope.keyence.mappings import KEYENCE_CHANNEL_INDEX_MAP
+from data_pipeline.metadata_ingest.scope.keyence.channel_map import KEYENCE_CHANNEL_INDEX_MAP
 from data_pipeline.metadata_ingest.scope.keyence.raw_plane_parsing import (
     _extract_keyence_well_and_tile,
     _parse_keyence_time_z_channel,
@@ -48,9 +48,8 @@ from data_pipeline.metadata_ingest.scope.shared.acquisition_checks import (
     assert_positive_column,
     assert_unique_on_key,
 )
-from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
 from data_pipeline.metadata_ingest.time_helpers import add_elapsed_time_columns
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES, validate_channel_id
+from data_pipeline.shared.channel_vocabulary import validate_channel_id
 from data_pipeline.shared.identifiers import build_well_id
 
 log = logging.getLogger(__name__)
@@ -215,13 +214,7 @@ def _channel_id_for_index(channel_index: int) -> str:
     anchor. An unmapped index raises (naming the index) via the shared applier — the fix is to add the
     real channel to ``KEYENCE_CHANNEL_INDEX_MAP``, never to default it to BF.
     """
-    return apply_canonical_mapping(
-        channel_index,
-        KEYENCE_CHANNEL_INDEX_MAP,
-        vocabulary=VALID_CHANNEL_NAMES,
-        field="channel_id",
-        scope_name="Keyence",
-    )
+    return KEYENCE_CHANNEL_INDEX_MAP.to_canonical(channel_index)
 
 
 def build_keyence_acquisition_inventory_rows(

@@ -10,7 +10,7 @@ Scope-specific narrowing lives in ``scope_resolver_for_materialization_plan.py``
 accept only a ``ResolvedMaterializationPlan``.
 
 This module enforces GLOBAL product grammar (channel/type/method vocab + product-shape rules)
-but no scope-specific rules. Channels are imported from ``schemas/channel_normalization`` (the
+but no scope-specific rules. Channels are imported from ``shared/channel_vocabulary`` (the
 one canonical list — never redefined here). It MUST NOT import scope backends, orchestration,
 tasks, or Snakemake rules.
 """
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
+from data_pipeline.shared.channel_vocabulary import VALID_CHANNEL_NAMES
 
 # ---------------------------------------------------------------------------
 # Global vocabulary — the universe of what the CODEBASE can express.
@@ -27,7 +27,7 @@ from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
 # that subset (and the reasoning behind it) lives in the resolver, not here.
 # ---------------------------------------------------------------------------
 
-# Channels are imported, never redefined — schemas/channel_normalization.py is the one source.
+# Channels are imported, never redefined — shared/channel_vocabulary.py is the one source.
 SUPPORTED_CHANNELS: frozenset[str] = frozenset(VALID_CHANNEL_NAMES)
 
 # Image product SHAPE (encoded in the path tree); method lives in frame_inventory, not the path.

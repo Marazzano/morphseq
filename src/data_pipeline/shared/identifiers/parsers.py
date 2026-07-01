@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 
-from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES
+from data_pipeline.shared.channel_vocabulary import VALID_CHANNEL_NAMES
 
 
 _LOCAL_ID_RE = re.compile(r"(\d+)$")
