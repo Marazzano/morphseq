@@ -1,7 +1,7 @@
 """curvature_metrics compute — centerline length + curvature per snip, RLE-native.
 
-Reuses the legacy pure ``compute_curvature_metrics`` (centerline via skeletonization). Low-info
-masks return documented null metrics (NaN) per the contract — still one row per snip.
+Curvature math lives in the product-local ``skeletonization.py`` (centerline via skeletonization).
+Low-info masks return documented null metrics (NaN) per the contract — still one row per snip.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from data_pipeline.feature_extraction.core.curvature_metrics import compute_curvature_metrics
+from .skeletonization import compute_curvature_metrics
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
     compute_per_snip_mask_features,
 )

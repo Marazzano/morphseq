@@ -1,4 +1,8 @@
-"""Segmentation backend selection helpers for detector/tracker swapability."""
+"""Segmentation backend selection helpers for detector/tracker swapability.
+
+Config-only: parses which detector/tracker backend a run selects. The backend
+implementations themselves live in sibling packages (``sam2_video``, ``unet_snip``).
+"""
 
 from __future__ import annotations
 

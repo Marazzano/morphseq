@@ -1,15 +1,71 @@
+"""curvature_metrics skeletonization + pure curvature math.
+
+Product-local home for the centerline/curvature computation (migrated off the legacy
+``feature_extraction/core/`` layer). ``compute.py`` is the only caller; the pure
+``compute_curvature_metrics`` takes a decoded mask and returns per-snip metrics — no disk I/O.
+"""
+
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Dict
 
 import numpy as np
-import pandas as pd
-import skimage.io as io
+from scipy import ndimage
+from skimage.morphology import skeletonize
 
-from data_pipeline.shared.path_contracts import require_existing_path
+from data_pipeline.segmentation_and_tracking.utils.mask_processing import clean_embryo_mask
 
-from .curvature_skeletonization import extract_centerline_points
+
+def _largest_component(mask: np.ndarray) -> np.ndarray:
+    labeled, n_components = ndimage.label(np.asarray(mask, dtype=bool))
+    if n_components <= 1:
+        return np.asarray(mask, dtype=bool)
+    sizes = np.bincount(labeled.ravel())
+    if sizes.size <= 1:
+        return np.asarray(mask, dtype=bool)
+    sizes[0] = 0
+    largest_label = int(np.argmax(sizes))
+    return labeled == largest_label
+
+
+def skeletonize_embryo_mask(
+    mask: np.ndarray,
+    *,
+    min_component_size: int = 32,
+) -> np.ndarray:
+    """Return the cleaned skeleton of an embryo mask."""
+    clean = clean_embryo_mask(mask, min_component_size=min_component_size)
+    skel = skeletonize(clean)
+    if not np.any(skel):
+        return np.zeros_like(clean, dtype=bool)
+    return _largest_component(skel)
+
+
+def extract_centerline_points(
+    mask: np.ndarray,
+    *,
+    min_component_size: int = 32,
+) -> np.ndarray:
+    """Return ordered centerline points in x/y pixel coordinates."""
+    skel = skeletonize_embryo_mask(mask, min_component_size=min_component_size)
+    coords_yx = np.argwhere(skel)
+    if coords_yx.shape[0] < 3:
+        return np.empty((0, 2), dtype=np.float64)
+
+    coords_xy = coords_yx[:, ::-1].astype(np.float64)
+    centered = coords_xy - coords_xy.mean(axis=0, keepdims=True)
+    if coords_xy.shape[0] > 3:
+        _, _, vt = np.linalg.svd(centered, full_matrices=False)
+        axis = vt[0]
+        order = np.argsort(centered @ axis)
+        coords_xy = coords_xy[order]
+
+    # Remove repeated points that can break arc-length derivatives.
+    keep = np.ones(len(coords_xy), dtype=bool)
+    if len(coords_xy) > 1:
+        deltas = np.diff(coords_xy, axis=0)
+        keep[1:] = np.any(np.abs(deltas) > 0, axis=1)
+    return coords_xy[keep]
 
 
 def _smooth_series(values: np.ndarray, window: int = 5) -> np.ndarray:
@@ -77,31 +133,3 @@ def compute_curvature_metrics(mask: np.ndarray, pixel_size_um: float) -> Dict[st
         "centerline_length_um": float(s[-1]),
         "centerline_point_count": int(centerline_xy_px.shape[0]),
     }
-
-
-def extract_curvature_metrics_batch(
-    tracking_df: pd.DataFrame,
-    mask_dir: Path | None = None,
-    pixel_size_col: str = "micrometers_per_pixel",
-    mask_path_col: str = "exported_mask_path",
-) -> pd.DataFrame:
-    """Extract curvature metrics for a batch of tracked snips."""
-    results = []
-    for _, row in tracking_df.iterrows():
-        snip_id = row["snip_id"]
-        mask_path = require_existing_path(
-            row.get(mask_path_col),
-            context="curvature_metrics",
-            field_name=mask_path_col,
-            row_id=str(snip_id),
-        )
-        mask = io.imread(mask_path)
-        if pixel_size_col not in row.index or pd.isna(row[pixel_size_col]):
-            raise ValueError(f"curvature_metrics: missing required pixel size column '{pixel_size_col}' for snip_id={snip_id}")
-        pixel_size = float(row[pixel_size_col])
-        if not np.isfinite(pixel_size) or pixel_size <= 0:
-            raise ValueError(f"curvature_metrics: invalid pixel size {pixel_size!r} for snip_id={snip_id}")
-        metrics = compute_curvature_metrics(mask, pixel_size)
-        metrics["snip_id"] = snip_id
-        results.append(metrics)
-    return pd.DataFrame(results)

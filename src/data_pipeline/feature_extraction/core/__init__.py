@@ -1,7 +1,7 @@
 """Pure feature computation exports."""
 
 from .mask_geometry import compute_mask_geometry, extract_geometry_metrics_batch
-from .curvature_metrics import compute_curvature_metrics, extract_curvature_metrics_batch
+# curvature_metrics migrated to feature_extraction/curvature_metrics/skeletonization.py (product-local)
 from .pose_kinematics import (
     compute_pose_features,
     compute_kinematics,

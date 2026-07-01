@@ -1,4 +1,14 @@
-"""Schema definition for quality control flags."""
+"""Schema definition for quality control flags.
+
+LEGACY-RETIREMENT DEBT (feature_world.md): this is the OLD qc_flags.csv vocabulary
+(viability_flag/dead_flag/motion_flag/death_inflection_time_int) for the parked
+analysis_ready path. It is NOT the refactored snip_qc contract — the live snip_qc
+verdict lives in quality_control/snip_qc/contract.py::SNIP_QC_EXCLUSION_FLAGS and does
+NOT read this module. This schema only feeds the legacy quality_control/validators.py,
+quality_control/io/{loaders,writers}.py, and schemas/analysis_ready.py -> analysis_ready/*
+chain, none of which is wired into the live DAG. Delete this module (and that chain)
+as part of the analysis_ready retirement, not the config/backends cleanup.
+"""
 
 from __future__ import annotations
 
