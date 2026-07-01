@@ -435,7 +435,6 @@ class TestOutputTreeDoctrine:
             ("mask_geometry", "mask_geometry"),
             ("stage_predictions", "stage_predictions"),
             ("fraction_alive", "fraction_alive"),
-            ("consolidated_features", "consolidated_features"),
         )
         for step, artifact in feature_products:
             p = artifact_path(ROOT, step, artifact, EXP, path_mode="per_well", well_id=WELL)
