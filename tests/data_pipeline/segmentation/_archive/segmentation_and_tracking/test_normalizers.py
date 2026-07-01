@@ -5,8 +5,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from data_pipeline.segmentation_and_tracking.raw_types import RawDetection, RawMask, RawTrack, SeedSelection
-from data_pipeline.segmentation_and_tracking.normalizers import (
+from data_pipeline.segmentation._archive.segmentation_and_tracking.raw_types import RawDetection, RawMask, RawTrack, SeedSelection
+from data_pipeline.segmentation._archive.segmentation_and_tracking.normalizers import (
     normalize_frame_detections,
     normalize_seed_selection,
     normalize_track_instances,

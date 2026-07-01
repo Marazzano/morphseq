@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from data_pipeline.io.validators import validate_dataframe_schema
-from data_pipeline.segmentation_and_tracking.contract import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+from data_pipeline.segmentation._archive.segmentation_and_tracking.contract import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
 
 
 UNIQUE_KEY_SEGMENTATION_TRACKING = ["experiment_id", "well_id", "snip_id"]

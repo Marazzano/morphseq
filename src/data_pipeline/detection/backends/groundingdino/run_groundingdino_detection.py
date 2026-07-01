@@ -2,8 +2,8 @@
 
 This is the seam where GroundingDINO config (``box_threshold``, ``text_threshold``, confidence / NMS
 policy, prompt) becomes the shared ``is_kept`` outcome. Inference is REUSED verbatim from
-``segmentation/grounded_sam2/gdino_detection.py`` (``detect_embryos`` / ``filter_detections``) — this
-module does not re-implement model inference.
+``detection/backends/groundingdino/gdino_detection.py`` (``detect_embryos`` / ``filter_detections``) —
+this module does not re-implement model inference.
 
 The critical contract behavior is **flag-not-drop**: the old ingestor dropped rejected and empty
 frames. Here every raw candidate becomes a row (``is_kept`` marks whether it survived filtering), and
@@ -19,7 +19,7 @@ from data_pipeline.detection.frame_detections_contract import (
     detection_id as make_detection_id,
     no_candidate_detection_id,
 )
-from data_pipeline.segmentation.grounded_sam2.gdino_detection import (
+from data_pipeline.detection.backends.groundingdino.gdino_detection import (
     detect_embryos,
     filter_detections,
 )
@@ -36,7 +36,8 @@ def _clamp(val: float, lo: float, hi: float) -> float:
 def _norm_to_abs_xyxy(box_xyxy_norm, *, width: int, height: int) -> list[float]:
     """Normalized [0,1] xyxy → absolute pixel xyxy, clamped to image bounds.
 
-    Mirrors ``segmentation_and_tracking/ingestors/gdino_ingestor.py::_norm_to_abs_xyxy``.
+    Mirrors ``segmentation/_archive/segmentation_and_tracking/ingestors/gdino_ingestor.py::_norm_to_abs_xyxy``
+    (archived — pre-disentanglement draft; kept here as the live detector's own copy).
     """
     x0, y0, x1, y1 = [float(v) for v in box_xyxy_norm]
     return [

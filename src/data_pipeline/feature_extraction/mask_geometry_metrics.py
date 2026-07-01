@@ -16,7 +16,7 @@ from sklearn.decomposition import PCA
 import skimage.io as io
 from skimage.measure import find_contours
 
-from data_pipeline.segmentation_and_tracking.utils.mask_processing import clean_embryo_mask
+from data_pipeline.segmentation.shared.mask_processing import clean_embryo_mask
 
 
 def compute_mask_geometry(

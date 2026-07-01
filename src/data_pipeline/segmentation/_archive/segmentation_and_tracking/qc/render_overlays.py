@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 
-from data_pipeline.segmentation.video_generation.video_config import COLORBLIND_PALETTE, VideoConfig
+from data_pipeline.segmentation._archive.video_generation.video_config import COLORBLIND_PALETTE, VideoConfig
 
 
 def _resolve(root: Path, path_str: str) -> Path:

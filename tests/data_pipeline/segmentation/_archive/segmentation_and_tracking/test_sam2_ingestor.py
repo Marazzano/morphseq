@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from data_pipeline.segmentation_and_tracking.ingestors.sam2_ingestor import (
+from data_pipeline.segmentation._archive.segmentation_and_tracking.ingestors.sam2_ingestor import (
     ingest_propagation,
     tracks_to_raw_masks,
 )

@@ -15,7 +15,7 @@ import pandas as pd
 import skimage.io as io
 
 from data_pipeline.segmentation.masks.mask_resize import align_binary_masks
-from data_pipeline.segmentation_and_tracking.utils.mask_processing import clean_embryo_mask
+from data_pipeline.segmentation.shared.mask_processing import clean_embryo_mask
 from data_pipeline.shared.path_contracts import require_existing_path
 from data_pipeline.snip_processing.snip_frame_masks import align_pair_to_snip_frame
 

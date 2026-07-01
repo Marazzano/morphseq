@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.segmentation_and_tracking.contract import (
+from data_pipeline.segmentation._archive.segmentation_and_tracking.contract import (
     REQUIRED_COLUMNS_FRAME_DETECTIONS,
     UNIQUE_KEY_FRAME_DETECTIONS,
 )

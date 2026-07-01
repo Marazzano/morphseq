@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from data_pipeline.segmentation.grounded_sam2.propagation import encode_mask_to_rle
+from data_pipeline.segmentation._archive.grounded_sam2.propagation import encode_mask_to_rle
 from data_pipeline.shared.identifiers import build_embryo_id
 from data_pipeline.shared.identifiers import build_snip_id
 from data_pipeline.shared.identifiers import normalize_embryo_local_track_id

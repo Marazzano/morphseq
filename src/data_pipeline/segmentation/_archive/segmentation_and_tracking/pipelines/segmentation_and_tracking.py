@@ -11,9 +11,9 @@ from data_pipeline.models.paths import resolve_segmentation_and_tracking_model_p
 from data_pipeline.models.groundingdino import load_groundingdino_model as load_gdino_model
 from data_pipeline.models.sam2 import load_sam2_video_predictor
 from data_pipeline.segmentation.backends import load_segmentation_backends_config
-from data_pipeline.segmentation.grounded_sam2.gdino_detection import convert_boxes_to_sam2_format
-from data_pipeline.segmentation.grounded_sam2.propagation import propagate_bidirectional
-from data_pipeline.segmentation.grounded_sam2.frame_organization_for_sam2 import sam2_frame_context
+from data_pipeline.detection.backends.groundingdino.gdino_detection import convert_boxes_to_sam2_format
+from data_pipeline.segmentation._archive.grounded_sam2.propagation import propagate_bidirectional
+from data_pipeline.segmentation._archive.grounded_sam2.frame_organization_for_sam2 import sam2_frame_context
 from data_pipeline.shared.identifiers import split_well_id
 
 from ..normalize_context import NormalizeContext
@@ -25,7 +25,7 @@ from ..normalizers import (
     normalize_mask_rle,
     build_segmentation_tracking_contract,
 )
-from data_pipeline.segmentation.video_generation.video_config import VideoConfig
+from data_pipeline.segmentation._archive.video_generation.video_config import VideoConfig
 from ..qc.render_overlays import render_overlays_from_segmentation_tracking
 from ..qc.materialize_raw_frames import materialize_raw_frames
 from ..qc.render_raw_video import render_raw_video, RawVideoConfig

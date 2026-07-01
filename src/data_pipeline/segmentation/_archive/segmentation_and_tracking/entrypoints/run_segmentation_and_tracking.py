@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from data_pipeline.segmentation_and_tracking.pipelines.segmentation_and_tracking import (
+from data_pipeline.segmentation._archive.segmentation_and_tracking.pipelines.segmentation_and_tracking import (
     run_segmentation_and_tracking,
 )
 

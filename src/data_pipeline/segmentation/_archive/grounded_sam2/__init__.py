@@ -7,10 +7,14 @@ Primary embryo segmentation pipeline combining:
 
 Modules:
     - frame_organization_for_sam2: Organize frames for SAM2 video processing
-    - gdino_detection: GroundingDINO embryo detection
     - propagation: SAM2 mask propagation (forward/bidirectional)
     - mask_export: Export masks as labeled PNG images
     - csv_formatter: Flatten JSON results to CSV format
+
+Note: gdino_detection.py moved OUT of this archived package to
+``detection/backends/groundingdino/gdino_detection.py`` — it is still live (the real
+frame_detections GroundingDINO adapter reuses its inference verbatim). Re-exported
+here for backward compatibility with this package's own __all__.
 """
 
 from .frame_organization_for_sam2 import (
@@ -22,7 +26,7 @@ from .frame_organization_for_sam2 import (
     merge_bidirectional_results,
 )
 
-from .gdino_detection import (
+from data_pipeline.detection.backends.groundingdino.gdino_detection import (
     load_groundingdino_model,
     detect_embryos,
     filter_detections,

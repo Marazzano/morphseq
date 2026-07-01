@@ -13,7 +13,7 @@ import numpy as np
 from scipy import ndimage
 from skimage.morphology import skeletonize
 
-from data_pipeline.segmentation_and_tracking.utils.mask_processing import clean_embryo_mask
+from data_pipeline.segmentation.shared.mask_processing import clean_embryo_mask
 
 
 def _largest_component(mask: np.ndarray) -> np.ndarray:

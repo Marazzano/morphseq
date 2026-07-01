@@ -15,8 +15,8 @@ def _import_module(path: str) -> ModuleType:
 def get_detector_ingestor(backend: str) -> ModuleType:
     backend = str(backend).strip().lower()
     mod_path = {
-        "groundingdino": "data_pipeline.segmentation_and_tracking.ingestors.gdino_ingestor",
-        "detectron2": "data_pipeline.segmentation_and_tracking.ingestors.detectron2_ingestor",
+        "groundingdino": "data_pipeline.segmentation._archive.segmentation_and_tracking.ingestors.gdino_ingestor",
+        "detectron2": "data_pipeline.segmentation._archive.segmentation_and_tracking.ingestors.detectron2_ingestor",
     }.get(backend)
     if not mod_path:
         raise ValueError(f"Unsupported detector backend: {backend}")
@@ -30,8 +30,8 @@ def get_detector_ingestor(backend: str) -> ModuleType:
 def get_tracker_ingestor(backend: str) -> ModuleType:
     backend = str(backend).strip().lower()
     mod_path = {
-        "sam2": "data_pipeline.segmentation_and_tracking.ingestors.sam2_ingestor",
-        "sam3": "data_pipeline.segmentation_and_tracking.ingestors.sam3_ingestor",
+        "sam2": "data_pipeline.segmentation._archive.segmentation_and_tracking.ingestors.sam2_ingestor",
+        "sam3": "data_pipeline.segmentation._archive.segmentation_and_tracking.ingestors.sam3_ingestor",
     }.get(backend)
     if not mod_path:
         raise ValueError(f"Unsupported tracker backend: {backend}")

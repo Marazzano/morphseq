@@ -15,7 +15,7 @@ import pandas as pd
 import skimage.io as io
 from skimage.measure import regionprops
 
-from data_pipeline.segmentation_and_tracking.utils.mask_processing import clean_embryo_mask
+from data_pipeline.segmentation.shared.mask_processing import clean_embryo_mask
 from data_pipeline.shared.path_contracts import require_existing_path
 
 from .mask_geometry_metrics import compute_mask_geometry

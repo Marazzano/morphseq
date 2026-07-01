@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from data_pipeline.segmentation.grounded_sam2.gdino_detection import (
+from data_pipeline.detection.backends.groundingdino.gdino_detection import (
     detect_embryos,
     filter_detections,
     select_seed_frame,
