@@ -301,7 +301,6 @@ include: str(WORKFLOW_DIR / "rules" / "curvature_metrics.smk")
 include: str(WORKFLOW_DIR / "rules" / "pose_kinematics.smk")
 include: str(WORKFLOW_DIR / "rules" / "stage_predictions.smk")
 include: str(WORKFLOW_DIR / "rules" / "fraction_alive.smk")
-include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
 include: str(WORKFLOW_DIR / "rules" / "surface_area_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "mask_quality_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "focus_qc.smk")
@@ -581,8 +580,9 @@ def _through_line_targets(wc=None):
     # per-well snip_qc shard + its `.validated` sentinel (rules/snip_qc.smk), so naming the merged
     # output transitively requires the entire per-well fan — materialize_well -> frame_inventory ->
     # frame_detections -> frame_masks -> physical_embryo_registry -> snip processing/aux masks ->
-    # {mask_geometry, pose_kinematics, fraction_alive, stage_predictions} -> consolidated_features ->
+    # {mask_geometry, pose_kinematics, fraction_alive, stage_predictions, curvature_metrics} ->
     # {surface_area, mask_quality, death} -> snip_qc -> merge_snip_qc.
+    # (The QC products read the per-product feature shards directly; there is no consolidation hop.)
     #   - Tier 1 (DEPTH): config pins ONE well -> merge is a degenerate 1-shard stack (still exercises
     #     the merge rule end-to-end on a single well).
     #   - Tier 2 (WIDTH): no well filter -> merge fans over all discovered wells AND exercises the

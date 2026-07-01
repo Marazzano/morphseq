@@ -490,21 +490,6 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
-    # ── FEATURES — consolidated features ─────────────────────────────────────
-    # The chosen per-snip feature table: merges the feature products one-to-one on snip_id.
-    "consolidated_features": {
-        "stage": "feature_extraction",
-        "product_dir": "consolidated_features",
-        "fanout": PER_WELL_THEN_MERGE,
-        "execution": EXECUTION_PER_WELL,
-        "artifacts": {
-            "consolidated_features": {
-                PATH_MODE_PER_WELL: "{well_id}_consolidated_features.csv",
-                PATH_MODE_MERGED: "{experiment_id}_consolidated_features.csv",
-            },
-        },
-    },
-
     # ── QUALITY CONTROL — surface area QC ─────────────────────────────────────
     # Stage-binned two-sided area outlier flag per snip (area_um2 from mask_geometry vs a
     # packaged wildtype p5/p95 reference interpolated at predicted_stage_hpf).

@@ -620,36 +620,6 @@ def cmd_validate_snip_auxiliary_masks(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
-def cmd_consolidated_features(args: argparse.Namespace) -> None:
-    from data_pipeline.feature_extraction.consolidated_features.entrypoint import (
-        run_consolidated_features,
-    )
-
-    run_consolidated_features(
-        output_root=args.output_root,
-        experiment_id=args.experiment,
-        well_id=args.well_id,
-        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
-        output_csv=args.output_csv,
-    )
-
-
-def cmd_validate_consolidated_features(args: argparse.Namespace) -> None:
-    import pandas as pd
-
-    from data_pipeline.feature_extraction.consolidated_features.contract import (
-        validate_consolidated_features,
-    )
-
-    validate_consolidated_features(
-        pd.read_csv(args.input_csv),
-        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
-        check_sources=True,
-    )
-    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
-    args.output_flag.write_text("ok\n")
-
-
 def cmd_surface_area_qc(args: argparse.Namespace) -> None:
     """Compute the per-well surface_area_qc shard. Thin dispatcher; logic lives in the product."""
     from data_pipeline.quality_control.surface_area_qc.entrypoint import run_surface_area_qc
@@ -1284,7 +1254,6 @@ def build_parser() -> argparse.ArgumentParser:
         ("validate-pose-kinematics", cmd_validate_pose_kinematics),
         ("validate-stage-predictions", cmd_validate_stage_predictions),
         ("validate-fraction-alive", cmd_validate_fraction_alive),
-        ("validate-consolidated-features", cmd_validate_consolidated_features),
         ("validate-surface-area-qc", cmd_validate_surface_area_qc),
         ("validate-mask-quality-qc", cmd_validate_mask_quality_qc),
         ("validate-focus-qc", cmd_validate_focus_qc),
@@ -1327,14 +1296,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_sam_validate.add_argument("--snip-inventory-csv", type=Path, required=True)
     p_sam_validate.add_argument("--output-flag", type=Path, required=True)
     p_sam_validate.set_defaults(func=cmd_validate_snip_auxiliary_masks)
-
-    p_cf = sub.add_parser("consolidated-features")
-    p_cf.add_argument("--output-root", type=Path, required=True)
-    p_cf.add_argument("--experiment", required=True)
-    p_cf.add_argument("--well-id", required=True)
-    p_cf.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
-    p_cf.add_argument("--output-csv", type=Path, required=True)
-    p_cf.set_defaults(func=cmd_consolidated_features)
 
     p_saqc = sub.add_parser("surface-area-qc")
     p_saqc.add_argument("--mask-geometry-csv", type=Path, required=True)
