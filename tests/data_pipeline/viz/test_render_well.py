@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data_pipeline.segmentation.masks.mask_rle import encode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import encode_binary_mask_rle
 from data_pipeline.shared.identifiers import build_image_id, build_mask_id, build_track_id, build_well_id
 from data_pipeline.viz import render_combined_video, render_detection_video, render_segmentation_video
 

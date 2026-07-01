@@ -18,7 +18,7 @@ from data_pipeline.quality_control.focus_qc.compute import (
 )
 from data_pipeline.quality_control.focus_qc.config import resolve_config
 from data_pipeline.quality_control.focus_qc.contract import validate_focus_qc
-from data_pipeline.segmentation.masks.mask_rle import encode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import encode_binary_mask_rle
 from data_pipeline.shared.identifiers import (
     build_embryo_id,
     build_image_id,

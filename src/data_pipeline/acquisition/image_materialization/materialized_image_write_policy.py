@@ -168,7 +168,7 @@ def downsample_image(image: np.ndarray, policy: ImageWritePolicy) -> np.ndarray:
         arr.shape[1], arr.shape[0], factor, policy.downsample_method
     )
     if policy.downsample_method == "area_resize":
-        from data_pipeline.segmentation.masks.mask_resize import resize_image_to_shape
+        from data_pipeline.object_extraction.segmentation.masks.mask_resize import resize_image_to_shape
 
         return resize_image_to_shape(arr, (out_h, out_w))
     h, w = arr.shape

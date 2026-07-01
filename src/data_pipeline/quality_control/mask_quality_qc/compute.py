@@ -21,8 +21,8 @@ import numpy as np
 import pandas as pd
 from skimage.measure import label
 
-from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
-from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_ID_SPINE_COLUMNS,
 )
 

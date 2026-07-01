@@ -117,7 +117,7 @@ segmentation_and_tracking:
 # the cropped embryo mask saved beside each snip, and the per-snip UNet auxiliary masks. It is a
 # NAMED YAML ANCHOR (&snip_frame_shape) so every consumer POINTS at it (*snip_frame_shape) — the
 # equality is declared out loud, never copy-pasted as a bare [576, 256] (which would drift).
-# Resolved by data_pipeline.snip_processing.snip_frame_shape.resolve_snip_frame_shape(config).
+# Resolved by data_pipeline.object_extraction.snip_processing.snip_frame_shape.resolve_snip_frame_shape(config).
 snip_frame_shape: &snip_frame_shape [576, 256]
 
 # Per-snip auxiliary masks (UNet-derived). Runs on the snip crop AFTER snip_processing, so masks
@@ -125,7 +125,7 @@ snip_frame_shape: &snip_frame_shape [576, 256]
 # auxiliary_masks step). NO foreground family — the embryo mask for fraction_alive is the cropped
 # frame_masks RLE saved by snip_processing (embryo_mask_snip_path), not a UNet prediction.
 #
-# SHAPE OWNERSHIP (full table lives in segmentation/backends/unet_snip/model_loader.py):
+# SHAPE OWNERSHIP (full table lives in object_extraction/segmentation/backends/unet_snip/model_loader.py):
 #   snip_frame_shape    — the configured law (above). Persists to disk.
 #   artifact_shape      — derived = snip_frame_shape; what masks are WRITTEN at. NOT a key here.
 #   model_input_shape   — per-model transient doorway the U-Net runs inference on (below).

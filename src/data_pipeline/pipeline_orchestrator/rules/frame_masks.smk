@@ -135,7 +135,7 @@ rule merge_frame_masks:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
-from data_pipeline.segmentation.frame_masks_contract import FRAME_MASKS_REQUIRED_COLUMNS
+from data_pipeline.object_extraction.segmentation.frame_masks_contract import FRAME_MASKS_REQUIRED_COLUMNS
 shards = collect_well_shard_paths('{DATA_ROOT}', 'frame_masks', 'frame_masks', '{wildcards.experiment}')
 concat_well_shards_to_file(shards, '{output.merged}', required_columns=list(FRAME_MASKS_REQUIRED_COLUMNS), sort_columns=['experiment_id', 'well_id', 'time_index'])
 "

@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from data_pipeline.feature_extraction.mask_geometry_metrics import compute_mask_geometry
-from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
 
 from data_pipeline.feature_extraction.shared.feature_table_utils import (
     SNIP_FEATURE_TABLE_SPINE_COLUMNS,

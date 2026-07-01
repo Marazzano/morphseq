@@ -8,7 +8,7 @@ Yolk masks are optional: when absent the rotation step falls back to a
 mass-distribution heuristic and extraction uses a zero yolk mask.
 """
 
-from data_pipeline.snip_processing.snip_frame_shape import (
+from data_pipeline.object_extraction.snip_processing.snip_frame_shape import (
     resolve_snip_frame_shape as _resolve_snip_frame_shape,
 )
 

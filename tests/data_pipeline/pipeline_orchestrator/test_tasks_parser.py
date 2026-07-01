@@ -284,10 +284,10 @@ def test_snip_auxiliary_masks_models_root_is_environment(tmp_path):
     )
 
     with patch(
-        "data_pipeline.segmentation.backends.unet_snip.entrypoint.run_snip_auxiliary_masks",
+        "data_pipeline.object_extraction.segmentation.backends.unet_snip.entrypoint.run_snip_auxiliary_masks",
         new=_capture,
     ), patch(
-        "data_pipeline.snip_processing.snip_frame_shape.resolve_snip_frame_shape",
+        "data_pipeline.object_extraction.snip_processing.snip_frame_shape.resolve_snip_frame_shape",
         return_value=(288, 128),
     ):
         tasks.cmd_snip_auxiliary_masks(args)

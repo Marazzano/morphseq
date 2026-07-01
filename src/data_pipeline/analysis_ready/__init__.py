@@ -25,7 +25,7 @@ inline a column list.
 from __future__ import annotations
 
 from data_pipeline.quality_control.snip_qc.contract import SNIP_QC_PAYLOAD_COLUMNS
-from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
 )

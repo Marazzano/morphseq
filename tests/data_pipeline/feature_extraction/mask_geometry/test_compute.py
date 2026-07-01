@@ -14,7 +14,7 @@ from data_pipeline.feature_extraction.mask_geometry.compute import (
 from data_pipeline.feature_extraction.mask_geometry.contract import (
     validate_mask_geometry_features,
 )
-from data_pipeline.segmentation.masks.mask_rle import encode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import encode_binary_mask_rle
 from data_pipeline.shared.identifiers import (
     build_embryo_id,
     build_image_id,

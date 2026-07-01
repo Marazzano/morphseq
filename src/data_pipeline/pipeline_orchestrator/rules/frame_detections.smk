@@ -69,7 +69,7 @@ rule merge_frame_detections:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
-from data_pipeline.detection.frame_detections_contract import REQUIRED_FRAME_DETECTIONS_COLUMNS
+from data_pipeline.object_extraction.detection.frame_detections_contract import REQUIRED_FRAME_DETECTIONS_COLUMNS
 shards = collect_well_shard_paths('{DATA_ROOT}', 'frame_detections', 'frame_detections', '{wildcards.experiment}')
 concat_well_shards_to_file(shards, '{output.merged}', required_columns=list(REQUIRED_FRAME_DETECTIONS_COLUMNS), sort_columns=['experiment_id', 'well_id', 'time_index'])
 "

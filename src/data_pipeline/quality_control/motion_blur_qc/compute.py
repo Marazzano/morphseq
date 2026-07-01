@@ -17,9 +17,9 @@ import pandas as pd
 from data_pipeline.acquisition.image_materialization.materialized_image_readers import (
     load_z_stack_images_from_image_id,
 )
-from data_pipeline.segmentation.masks.mask_resize import resize_binary_mask_to_shape
-from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
-from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+from data_pipeline.object_extraction.segmentation.masks.mask_resize import resize_binary_mask_to_shape
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
 )

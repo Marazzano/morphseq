@@ -358,8 +358,8 @@ def cmd_assemble_well_frame_inventory(args: argparse.Namespace) -> None:
 
 
 def cmd_frame_detections(args: argparse.Namespace) -> None:
-    from data_pipeline.detection import run_frame_detection
-    from data_pipeline.detection.backends.groundingdino.config import GroundingDinoDetectionConfig
+    from data_pipeline.object_extraction.detection import run_frame_detection
+    from data_pipeline.object_extraction.detection.backends.groundingdino.config import GroundingDinoDetectionConfig
     from data_pipeline.models.groundingdino import load_groundingdino_model
 
     model = load_groundingdino_model(
@@ -382,7 +382,7 @@ def cmd_frame_detections(args: argparse.Namespace) -> None:
 def cmd_validate_snip_inventory(args: argparse.Namespace) -> None:
     import pandas as pd
 
-    from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+    from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
         validate_snip_inventory_contract,
     )
 
@@ -400,7 +400,7 @@ def cmd_validate_frame_masks(args: argparse.Namespace) -> None:
     """
     import pandas as pd
 
-    from data_pipeline.segmentation.validate_frame_masks import validate_frame_masks
+    from data_pipeline.object_extraction.segmentation.validate_frame_masks import validate_frame_masks
 
     validate_frame_masks(
         pd.read_csv(args.input_csv),
@@ -411,7 +411,7 @@ def cmd_validate_frame_masks(args: argparse.Namespace) -> None:
 
 
 def cmd_snip_processing(args: argparse.Namespace) -> None:
-    from data_pipeline.snip_processing.entrypoints.run_snip_processing import run_snip_processing
+    from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import run_snip_processing
 
     run_snip_processing(
         frame_masks_csv=args.frame_masks_csv,
@@ -543,7 +543,7 @@ def cmd_validate_stage_predictions(args: argparse.Namespace) -> None:
 
 def cmd_fraction_alive(args: argparse.Namespace) -> None:
     from data_pipeline.feature_extraction.fraction_alive.entrypoint import run_fraction_alive
-    from data_pipeline.snip_processing.snip_frame_shape import resolve_snip_frame_shape
+    from data_pipeline.object_extraction.snip_processing.snip_frame_shape import resolve_snip_frame_shape
 
     config = yaml.safe_load(Path(args.config_yaml).read_text()) or {} if args.config_yaml else {}
 
@@ -578,10 +578,10 @@ def cmd_snip_auxiliary_masks(args: argparse.Namespace) -> None:
     """Run per-snip UNet auxiliary-mask inference for one well. Thin dispatcher."""
     import yaml
 
-    from data_pipeline.segmentation.backends.unet_snip.entrypoint import (
+    from data_pipeline.object_extraction.segmentation.backends.unet_snip.entrypoint import (
         run_snip_auxiliary_masks,
     )
-    from data_pipeline.snip_processing.snip_frame_shape import resolve_snip_frame_shape
+    from data_pipeline.object_extraction.snip_processing.snip_frame_shape import resolve_snip_frame_shape
 
     config_yaml = Path(args.config_yaml)
     config = yaml.safe_load(config_yaml.read_text()) or {}
@@ -607,7 +607,7 @@ def cmd_validate_snip_auxiliary_masks(args: argparse.Namespace) -> None:
     """Validate a per-well snip_auxiliary_masks shard (contract + cross-check) and write .validated."""
     import pandas as pd
 
-    from data_pipeline.segmentation.backends.unet_snip.snip_auxiliary_masks_contract import (
+    from data_pipeline.object_extraction.segmentation.backends.unet_snip.snip_auxiliary_masks_contract import (
         validate_snip_auxiliary_masks,
         validate_snip_auxiliary_masks_against_snip_inventory,
     )
@@ -854,14 +854,14 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
     from PIL import Image
 
     from data_pipeline.models.sam2 import load_sam2_video_predictor
-    from data_pipeline.segmentation.backends.sam2_video.adapt_sam2_output import (
+    from data_pipeline.object_extraction.segmentation.backends.sam2_video.adapt_sam2_output import (
         adapt_sam2_well_output,
     )
-    from data_pipeline.segmentation.backends.sam2_video.prompt_detections import (
+    from data_pipeline.object_extraction.segmentation.backends.sam2_video.prompt_detections import (
         select_segmentation_frame_view,
         validate_sam2_prompts,
     )
-    from data_pipeline.segmentation.validate_frame_masks import validate_frame_masks
+    from data_pipeline.object_extraction.segmentation.validate_frame_masks import validate_frame_masks
 
     def _to_rgb_jpeg(src: Path, dst: Path) -> None:
         Image.open(src).convert("RGB").save(dst, format="JPEG", quality=95)
@@ -954,7 +954,7 @@ def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
     """
     import pandas as pd
 
-    from data_pipeline.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
+    from data_pipeline.object_extraction.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
         build_physical_embryo_registry,
     )
 
@@ -967,7 +967,7 @@ def cmd_validate_physical_embryo_registry(args: argparse.Namespace) -> None:
     """Validate a physical_embryo_registry CSV (per-well or merged) and write its .validated sentinel."""
     import pandas as pd
 
-    from data_pipeline.segmentation.physical_embryo_registry.validate_physical_embryo_registry import (
+    from data_pipeline.object_extraction.segmentation.physical_embryo_registry.validate_physical_embryo_registry import (
         validate_physical_embryo_registry,
     )
 
@@ -985,7 +985,7 @@ def cmd_merge_physical_embryo_registry(args: argparse.Namespace) -> None:
     """
     import pandas as pd
 
-    from data_pipeline.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
+    from data_pipeline.object_extraction.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
         merge_physical_embryo_registry,
     )
 

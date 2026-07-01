@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from data_pipeline.segmentation.backends.unet_snip.snip_auxiliary_masks_contract import (
+from data_pipeline.object_extraction.segmentation.backends.unet_snip.snip_auxiliary_masks_contract import (
     ALLOWED_AUXILIARY_MASK_TYPES,
 )
 from data_pipeline.viz.config import COLORBLIND_PALETTE, RenderConfig

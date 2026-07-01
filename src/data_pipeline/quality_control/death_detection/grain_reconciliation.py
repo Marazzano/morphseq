@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     PHYSICAL_EMBRYO_ID_SPINE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
 )

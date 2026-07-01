@@ -10,7 +10,7 @@ import pandas as pd
 import os
 
 from segmentation_sandbox.scripts.utils.mask_utils import decode_mask_rle
-from data_pipeline.segmentation._archive.grounded_sam2.mask_export import (
+from data_pipeline.object_extraction.segmentation._archive.grounded_sam2.mask_export import (
     load_labeled_mask,
     extract_individual_masks,
 )

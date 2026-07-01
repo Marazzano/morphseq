@@ -15,8 +15,8 @@ from typing import Callable, Sequence
 import numpy as np
 import pandas as pd
 
-from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
-from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
     validate_snip_grain_identity_columns,

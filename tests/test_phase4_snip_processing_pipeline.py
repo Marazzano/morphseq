@@ -71,7 +71,7 @@ def test_phase4_snip_processing_well_smoke(tmp_path: Path) -> None:
     ).to_csv(frame_contract_csv, index=False)
 
     # Act
-    from data_pipeline.snip_processing.pipelines.snip_processing import run_snip_processing_well
+    from data_pipeline.object_extraction.snip_processing.pipelines.snip_processing import run_snip_processing_well
 
     cfg = {
         "snip_processing": {

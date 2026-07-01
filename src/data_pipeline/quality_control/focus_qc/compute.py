@@ -22,8 +22,8 @@ from scipy.ndimage import binary_erosion, gaussian_filter
 from skimage.filters import sobel
 
 from data_pipeline.acquisition.image_materialization.materialized_image_readers import load_projection_image
-from data_pipeline.segmentation.masks.mask_rle import decode_binary_mask_rle
-from data_pipeline.segmentation.physical_embryo_registry.snip_identity_contract import (
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
 )

@@ -7,7 +7,7 @@ import json
 import numpy as np
 import pandas as pd
 
-from data_pipeline.segmentation.masks.mask_rle import encode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import encode_binary_mask_rle
 from data_pipeline.shared.identifiers import (
     build_embryo_id,
     build_image_id,

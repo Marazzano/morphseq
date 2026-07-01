@@ -8,11 +8,11 @@ import pandas as pd
 import skimage.io as skio
 from unittest.mock import patch
 
-from data_pipeline.segmentation.backends.sam2_video.fake_predictor import FakePredictor, segment_one_well_fake
-from data_pipeline.segmentation.sam2_video.model_loader import Sam2VideoModelConfig
-from data_pipeline.segmentation.sam2_video.run_sam2_video import Sam2WellInput, run_sam2_video_for_wells
+from data_pipeline.object_extraction.segmentation.backends.sam2_video.fake_predictor import FakePredictor, segment_one_well_fake
+from data_pipeline.object_extraction.segmentation.sam2_video.model_loader import Sam2VideoModelConfig
+from data_pipeline.object_extraction.segmentation.sam2_video.run_sam2_video import Sam2WellInput, run_sam2_video_for_wells
 from data_pipeline.shared.identifiers import build_image_id, build_well_id
-from data_pipeline.snip_processing.entrypoints.run_snip_processing import run_snip_processing
+from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import run_snip_processing
 
 OUT = Path(__file__).parent / "output"
 OUT.mkdir(exist_ok=True)
@@ -62,7 +62,7 @@ config = Sam2VideoModelConfig(
     models_root=Path("/fake"), config_path=Path("/fake/c.yaml"),
     checkpoint_path=Path("/fake/cp.pt"), device="cpu", model_id="fake:v1",
 )
-with patch("data_pipeline.segmentation.sam2_video.run_sam2_video.load_sam2_video_model", return_value=fake_pred):
+with patch("data_pipeline.object_extraction.segmentation.sam2_video.run_sam2_video.load_sam2_video_model", return_value=fake_pred):
     results = run_sam2_video_for_wells([well], model_config=config, segment_one_well=segment_one_well_fake)
 
 frame_masks = results[0].frame_masks
@@ -72,7 +72,7 @@ frame_masks.to_csv(OUT / "frame_masks.csv", index=False)
 frame_inventory.to_csv(OUT / "frame_inventory.csv", index=False)
 
 # Build the physical_embryo_registry shard (identity is JOINED, not minted, in snip_processing).
-from data_pipeline.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
     build_physical_embryo_registry,
 )
 build_physical_embryo_registry(frame_masks).to_csv(
