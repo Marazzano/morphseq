@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 
 from data_pipeline.io.validators import validate_dataframe_schema
-from data_pipeline.schemas.snip_processing import (
+from data_pipeline.snip_processing.contract import (
     NULLABLE_COLUMNS_SNIP_MANIFEST,
     REQUIRED_COLUMNS_SNIP_MANIFEST,
 )

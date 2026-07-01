@@ -9,7 +9,7 @@ import pandas as pd
 
 from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.metadata_ingest.time_helpers import ensure_time_int_column
-from data_pipeline.schemas.stitched_image_index import (
+from data_pipeline.metadata_ingest.stitched_index.contract import (
     REQUIRED_COLUMNS_STITCHED_IMAGE_INDEX,
     UNIQUE_KEY_STITCHED_IMAGE_INDEX,
 )

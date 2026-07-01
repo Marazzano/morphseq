@@ -11,7 +11,9 @@ from typing import Optional
 import warnings
 
 from ..schemas.features import REQUIRED_COLUMNS_FEATURES
-from ..schemas.plate_metadata import REQUIRED_COLUMNS_PLATE_METADATA
+from ..metadata_ingest.plate.plate_metadata_contract import (
+    REQUIRED_PLATE_METADATA_COLUMNS as REQUIRED_COLUMNS_PLATE_METADATA,
+)
 from .io.loaders import load_frame_contract, load_segmentation_tracking, merge_tracking_with_frame_contract
 from ..io.validators import validate_dataframe_schema
 

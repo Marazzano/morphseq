@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import nd2
 
-from data_pipeline.schemas.scope_metadata import REQUIRED_COLUMNS_SCOPE_METADATA
+from data_pipeline.metadata_ingest.scope.scope_metadata_contract import REQUIRED_COLUMNS_SCOPE_METADATA
 from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
 from data_pipeline.metadata_ingest.scope.yx1.mappings import YX1_CHANNEL_MAP
 from data_pipeline.schemas.channel_normalization import VALID_CHANNEL_NAMES

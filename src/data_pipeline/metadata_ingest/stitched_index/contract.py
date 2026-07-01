@@ -1,4 +1,8 @@
-"""Schema definition for stitched image index contract."""
+"""Schema definition for the stitched image index contract.
+
+Co-located with the stitched-index product; this is its authoritative
+schema home.
+"""
 
 REQUIRED_COLUMNS_STITCHED_IMAGE_INDEX = [
     "experiment_id",
@@ -7,7 +11,6 @@ REQUIRED_COLUMNS_STITCHED_IMAGE_INDEX = [
     "time_int",
     "channel_id",
     "image_id",
-    "time_int",
     "microscope_id",
     "stitched_image_path",
     "materialization_status",

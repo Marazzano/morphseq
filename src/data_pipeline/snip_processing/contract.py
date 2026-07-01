@@ -1,8 +1,9 @@
 """
-Schema definition for Phase 4 snip processing manifest.
+Schema definition for the snip processing manifest.
 
 The snip manifest is the authoritative inventory of exported embryo crops ("snips"),
 including enough provenance to reproduce processing and join downstream tables.
+Co-located with the snip_processing product; this is its authoritative schema home.
 """
 
 REQUIRED_COLUMNS_SNIP_MANIFEST = [

@@ -1,8 +1,14 @@
 """
 Schema definition for scope (microscope) metadata.
 
-This module defines required columns for microscope-extracted metadata,
-including spatial and temporal calibration parameters.
+Required columns for microscope-extracted metadata, including spatial and
+temporal calibration parameters. Co-located with the scope-extraction product
+(``scope/<scope>/extract_*_scope_metadata.py``); this is its authoritative
+schema home.
+
+Distinct from ``acquisition_inventory_contract.py``: that guards the tiered
+acquisition inventory; this guards the raw per-series scope-metadata table
+consumed at the well-mapping join.
 """
 
 REQUIRED_COLUMNS_SCOPE_METADATA = [

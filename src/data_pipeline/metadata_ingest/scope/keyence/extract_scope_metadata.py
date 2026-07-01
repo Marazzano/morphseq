@@ -12,7 +12,7 @@ from typing import Union, List, Dict, Any
 import logging
 import re
 
-from data_pipeline.schemas.scope_metadata import REQUIRED_COLUMNS_SCOPE_METADATA
+from data_pipeline.metadata_ingest.scope.scope_metadata_contract import REQUIRED_COLUMNS_SCOPE_METADATA
 from data_pipeline.metadata_ingest.scope.shared.canonical_mapper import apply_canonical_mapping
 from data_pipeline.metadata_ingest.scope.keyence.mappings import KEYENCE_CHANNEL_INDEX_MAP
 from data_pipeline.metadata_ingest.scope.keyence.acquisition_inventory import (

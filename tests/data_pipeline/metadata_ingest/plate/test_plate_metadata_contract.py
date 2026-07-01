@@ -131,10 +131,21 @@ def test_duplicate_experiment_id_well_id_raises():
 
 
 # ---------------------------------------------------------------------------
-# Legacy schema re-export
+# Co-located contract is the one home (legacy schemas/ shim retired)
 # ---------------------------------------------------------------------------
 
-def test_legacy_schema_import_still_works():
-    from data_pipeline.schemas.plate_metadata import REQUIRED_COLUMNS_PLATE_METADATA
-    assert "genotype" in REQUIRED_COLUMNS_PLATE_METADATA
-    assert "temperature" in REQUIRED_COLUMNS_PLATE_METADATA
+def test_contract_is_co_located_home():
+    from data_pipeline.metadata_ingest.plate.plate_metadata_contract import (
+        REQUIRED_PLATE_METADATA_COLUMNS,
+    )
+    assert "genotype" in REQUIRED_PLATE_METADATA_COLUMNS
+    assert "temperature" in REQUIRED_PLATE_METADATA_COLUMNS
+
+
+def test_legacy_schema_shim_is_gone():
+    # Doctrine (feature_world.md): retirement is part of done. The old central
+    # holder must NOT be reintroduced as a shim beside the co-located contract.
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("data_pipeline.schemas.plate_metadata")
