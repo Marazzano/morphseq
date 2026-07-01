@@ -44,9 +44,33 @@ two failures:
 | `schemas/stage_predictions.py` (`REQUIRED_COLUMNS_STAGE_PREDICTIONS`, `UNIQUE_KEY_STAGE_PREDICTIONS`) | `feature_extraction/stage_predictions/contract.py` (`STAGE_PREDICTION_TABLE_COLUMNS`) | **deleted** — 0 importers; legacy vocab (`time_int`, `pipeline_version`) superseded by co-located contract |
 | `schemas/auxiliary_masks.py` (`REQUIRED_COLUMNS_AUXILIARY_MASKS`) | `segmentation/backends/unet_snip/snip_auxiliary_masks_contract.py` (`SNIP_AUXILIARY_MASKS_REQUIRED_COLUMNS`) | **deleted** — 0 importers; legacy full-frame vocab superseded by per-snip contract |
 
-### STILL OUTSTANDING (not import-forced — retire deliberately, not mid-sweep)
+### PAID DOWN 2026-07-01 (the off-DAG island — #3 remainder, #4, #5)
 
-**#5 — `schemas/` is itself a surviving central holder (the biggest one).**
+Items #3 (remainder), #4, and #5 below were **one connected off-DAG island**, retired together
+(commits `fc5d5f83`…`cfef9bc8`). The live DAG never imported any of it. Summary of what changed:
+
+- `schemas/{features,quality_control,analysis_ready,frame_contract}.py` — **deleted**. `schemas/`
+  now holds only `channel_normalization` (the doctrine-correct keeper).
+- `analysis_ready/` legacy subsystem — **deleted**, replaced by a stub `__init__.py` that imports
+  spine + snip_qc payload from their mint sites (re-declares nothing). Optional future product;
+  `snip_qc` stays the through-line terminal.
+- `feature_extraction/core/` + the 0-importer `__init__.py` facade + the dead `feature_extraction/io/`
+  dir + `consolidate_features.py` — **deleted** (every feature family already has a live product
+  folder + per-well DAG rule).
+- `metadata_ingest/frame_contract/` + `load_frame_contract` + the commented Snakefile build rule —
+  **deleted** (superseded by per-well `frame_inventory`).
+- `quality_control/io/` + `quality_control/validators.py` — **deleted** (fed only the retired chain;
+  zero importers).
+- **Also removed: the `consolidated_features` product** (folder + 3 rules + path-registry entry +
+  tasks.py commands) — a redundant no-op join with zero live readers. The `features` schema was
+  never a live reconciliation blocker; all its importers were parked. See
+  `schemas_retirement_plan.md` Tier 3 for the full reasoning.
+
+The full detail of each below is retained for history; treat #3-remainder / #4 / #5 as PAID.
+
+---
+
+**#5 — `schemas/` is itself a surviving central holder (the biggest one).** — **PAID (see above).**
 - The two deletions above were the *dead* members. The rest of `schemas/` is a shared bucket of
   `REQUIRED_COLUMNS_*` contracts — a direct violation of the `feature_world.md` doctrine that each
   product owns its own `contract.py`. `schemas/__init__.py` is inert (no re-exports), so members
@@ -60,7 +84,7 @@ two failures:
 - **To pay down:** treat `schemas/` as the last central holder. Migrate the live members product by
   product; delete the parked members with the analysis_ready subsystem; the goal is an empty `schemas/`.
 
-**#4 — `schemas/quality_control.py` (legacy `qc_flags` vocabulary).**
+**#4 — `schemas/quality_control.py` (legacy `qc_flags` vocabulary).** — **PAID (see above).**
 - Co-located replacement exists: `quality_control/snip_qc/contract.py::SNIP_QC_EXCLUSION_FLAGS`. The
   live `snip_qc` does **not** read the schema module.
 - The old schema (`SNIP_EXCLUSION_FLAGS`, `REQUIRED_COLUMNS_QC`, `QC_OUTPUT_COLUMNS`) carries an
@@ -72,7 +96,9 @@ two failures:
 - **To pay down:** retire the analysis_ready / qc_flags legacy subsystem as one unit, then delete
   `schemas/quality_control.py`. An inline retirement note is on the file.
 
-**#3 remainder — the rest of `feature_extraction/core/`.**
+**#3 remainder — the rest of `feature_extraction/core/`.** — **PAID (see above): `core/` +
+`consolidate_features.py` + the `__init__.py` facade + the dead `io/` dir all deleted; each feature
+family already had a live product folder.**
 - `mask_geometry.py`, `pose_kinematics.py`, `fraction_alive.py`, `stage_inference.py`,
   `consolidate_features.py` still live under `core/`, re-exported through
   `feature_extraction/__init__.py` (a legacy public-API facade with **zero live importers**).

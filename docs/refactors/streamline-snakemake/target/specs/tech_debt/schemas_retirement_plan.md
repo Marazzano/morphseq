@@ -74,35 +74,40 @@ Gotcha logged: `csv_formatter.py` used a relative `...schemas.segmentation`; the
 (wrong parent). Switched to an absolute `data_pipeline.segmentation_and_tracking.contract` import.
 When repointing **relative** imports across sibling packages, prefer the absolute path.
 
-## Tier 3 — parked cluster: retire as one unit (do NOT piecemeal-move)
+## Tier 3 — DONE (retired as one off-DAG island, mdcolon 2026-07-01)
 
-`features`, `quality_control`, `analysis_ready` are **entangled**, not independent moves:
+The four remaining members (`features`, `quality_control`, `analysis_ready`, `frame_contract`) were
+NOT four independent problems — they were **one connected off-DAG island**. The live DAG runs
+exclusively through the per-product feature folders (`mask_geometry`, `fraction_alive`,
+`pose_kinematics`, `curvature_metrics`, `stage_predictions`) and the QC products (`snip_qc`,
+`death_detection`, …). Nothing on the DAG imported any of the four. Retired together in commits
+`fc5d5f83`…`cfef9bc8`; through-line DAG dry-run + affected test subsets (374 tests) green.
 
-- **`analysis_ready` (4) + `quality_control` (3)** — every importer lives inside the parked
-  `analysis_ready/` subsystem (`validators.py`, `io/{loaders,writers}.py`, `core/assemble.py`,
-  `assemble_features_qc_embeddings.py`). Confirmed **not wired into the DAG** (Snakefile has only
-  `ANALYSIS_READY_DIR` var + an "out of scope" comment; no rule). Retire the whole `analysis_ready/`
-  tree together, deleting `schemas/{analysis_ready,quality_control}.py` with it.
-- **`features` (4)** — `schemas/features.py` carries a flat legacy `REQUIRED_COLUMNS_FEATURES`.
-  A modern co-located contract (`feature_extraction/consolidated_features/contract.py`) already
-  exists but uses a **different** spine-based vocabulary (`CONSOLIDATED_FEATURES_TABLE_COLUMNS`),
-  so this is a *reconciliation*, not a move. Two of the 4 importers are the parked QC/analysis_ready
-  loaders; the live ones are `feature_extraction/io/writers.py` + `consolidate_features.py`.
-  **Decision (mdcolon):** feature outputs should flow *through* analysis_ready rather than force the
-  flat list onto the spine contract. So `features` retirement is **coupled to the analysis_ready
-  redesign** — resolve it when that subsystem is rebuilt/retired, not before.
+**Key correction to the earlier framing:** `features` was believed to be a *live reconciliation
+blocker* coupled to an "analysis_ready redesign." It was not. All 4 importers of
+`REQUIRED_COLUMNS_FEATURES` were parked (`feature_extraction/io/writers.py` stamped it into an
+unused sidecar; `consolidate_features.py` + the two QC/analysis_ready loaders were all off-DAG). The
+live consolidation path (`consolidated_features/`) never imported it — and that path was itself
+removed (see below).
 
-  > Also part of this cluster: `feature_extraction/core/` remainder (`mask_geometry`,
-  > `pose_kinematics`, `fraction_alive`, `stage_inference`, `consolidate_features`) + the
-  > `feature_extraction/__init__.py` re-export facade (0 external importers) — see
-  > `half_retired_central_holders.md` #3. Migrate those into their product folders in the same arc.
-
-- **`frame_contract` (schema + product) — deprecated, retire whole.** `schemas/frame_contract.py`,
-  `metadata_ingest/frame_contract/{build,validate}_frame_contract.py`, and the old
-  `feature_extraction/io/loaders.py::load_frame_contract` all belong to the superseded whole-experiment
-  frame_contract path (replaced by per-well `frame_inventory`). None is on the live DAG. Delete the
-  cluster together; the old `consolidate_features.py` path that calls `load_frame_contract` retires
-  with the `core/`/facade work above.
+- **`consolidated_features` removed entirely (redundant op).** First-principles finding: it minted
+  nothing — a pure 1:1 join of feature shards that already share the spine — its "contract" only
+  re-declared `mask_geometry`'s columns, and it had **zero live readers** (the QC products read the
+  per-product shards directly; no rule consumed the merged table; not a through-line target). Deleted
+  folder + 3 rules + path-registry entry + tasks.py commands.
+- **`analysis_ready` + `quality_control`** — the whole off-DAG `analysis_ready/` chain
+  (validators, io, core/assemble, entrypoints) + `quality_control/io/` + `quality_control/validators.py`
+  deleted. `analysis_ready/` left as a **stub** `__init__.py` that imports spine + snip_qc payload
+  from their mint sites (re-declaring nothing); its intended role is an optional downstream product
+  (`snip_qc` stays the through-line terminal). Legacy `schemas/{analysis_ready,quality_control}.py`
+  deleted with the chain.
+- **`feature_extraction/core/` + facade** — `mask_geometry`, `pose_kinematics`, `fraction_alive`,
+  `stage_inference`, `consolidate_features` under `core/` + the 0-importer `__init__.py` re-export
+  facade + the dead `feature_extraction/io/` dir: all deleted (every family has a live product folder
+  + per-well DAG rule). See `half_retired_central_holders.md` #3.
+- **`frame_contract` (schema + product)** — `schemas/frame_contract.py`,
+  `metadata_ingest/frame_contract/`, `load_frame_contract`, and the commented-out Snakefile build
+  rule: all deleted (superseded by per-well `frame_inventory`).
 
 ## Keep (already doctrine-correct — do not move)
 
@@ -118,7 +123,12 @@ When repointing **relative** imports across sibling packages, prefer the absolut
   detection, image_materialization, metadata_ingest. It is a central *but correctly-placed* contract
   for the materialized-frame inventory. Leave it.
 
-## After the last member
+## After the last member — DONE
 
-Delete `schemas/__init__.py` and the empty `schemas/` dir; grep the tree for any surviving
-`data_pipeline.schemas` import (should be zero); update `half_retired_central_holders.md` #5 to PAID.
+The four island members are deleted; the tree has **zero** surviving
+`data_pipeline.schemas.{features,quality_control,analysis_ready,frame_contract}` imports.
+`schemas/` is NOT empty and NOT deleted — `channel_normalization` remains as the doctrine-correct
+keeper (a cross-scope vocabulary, not a per-product artifact schema), so `schemas/__init__.py` + the
+dir stay. Its docstring now says so and warns against re-adding per-product column contracts. A
+future cosmetic pass may relocate `channel_normalization` and then drop the dir; that is out of scope.
+`half_retired_central_holders.md` #5 → PAID.
