@@ -23,11 +23,11 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
     PATH_MODE_MERGED,
     step_dir,
 )
-from data_pipeline.image_materialization.resolved_product_plans import (
+from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
     image_product_key_for_resolved_product,
 )
-from data_pipeline.image_materialization.materialization_plan import load_image_materialization_plan
-from data_pipeline.image_materialization.scope.scope_resolver_for_materialization_plan import (
+from data_pipeline.acquisition.image_materialization.materialization_plan import load_image_materialization_plan
+from data_pipeline.acquisition.image_materialization.scope.scope_resolver_for_materialization_plan import (
     resolve_materialization_plan,
 )
 
