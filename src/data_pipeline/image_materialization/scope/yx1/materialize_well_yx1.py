@@ -30,7 +30,6 @@ from pathlib import Path
 import nd2
 import numpy as np
 import pandas as pd
-import skimage.io as skio
 import skimage.util
 import torch
 
@@ -48,6 +47,17 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
 from data_pipeline.image_materialization.materialization_plan import (
     ResolvedImageProduct,
     ResolvedMaterializationPlan,
+)
+from data_pipeline.image_materialization.resolved_product_plans import (
+    image_product_key_for_resolved_product,
+)
+from data_pipeline.image_materialization.materialized_image_write_policy import (
+    ImageWritePolicy,
+    MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+    expected_downsampled_dims,
+    resolve_image_write_policy,
+    suffix_for_policy,
+    write_image,
 )
 from data_pipeline.metadata_ingest.scope.yx1.acquisition_inventory import (
     validate_yx1_acquisition_inventory,
@@ -75,6 +85,7 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "source_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
+    *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
 )
 
 
@@ -141,6 +152,7 @@ def materialize_yx1_well(
     device: str = "cuda",
     candidate: bool = True,
     smoke_max_time_indices: int | None = None,
+    config: dict | None = None,
 ) -> pd.DataFrame:
     """Materialize exactly one resolved product for ONE YX1 well.
 
@@ -162,6 +174,7 @@ def materialize_yx1_well(
         device=device,
         candidate=candidate,
         smoke_max_time_indices=smoke_max_time_indices,
+        config=config,
     )
 
 
@@ -176,6 +189,7 @@ def materialize_yx1_product_for_well(
     device: str = "cuda",
     candidate: bool = True,
     smoke_max_time_indices: int | None = None,
+    config: dict | None = None,
 ) -> pd.DataFrame:
     """Materialize ONE YX1 image product for ONE well and return frame-inventory rows.
 
@@ -208,6 +222,8 @@ def materialize_yx1_product_for_well(
             can never collide with the live tree.
         smoke_max_time_indices: TEMPORARY smoke cap — if set, only the first N time_indices are
             materialized (no-GPU / fast smoke). ``None`` = full well (production).
+        config: pipeline config dict; only ``image_materialization.write_policies`` is consumed
+            here, keyed by canonical product_key.
 
     Returns:
         DataFrame with columns ``_EMITTED_COLUMNS`` — one row per materialized frame.
@@ -242,6 +258,9 @@ def materialize_yx1_product_for_well(
         raise ValueError(
             f"Unsupported YX1 image_product_type {resolved_product.image_product_type!r}."
         )
+    product_key = image_product_key_for_resolved_product(resolved_product)
+    write_policy = resolve_image_write_policy(config, product_key)
+    ext = suffix_for_policy(write_policy)
 
     # Entry guard — fail loud before any disk work.
     expected_well_id = derive_well_id(experiment_id, well_index)
@@ -349,10 +368,13 @@ def materialize_yx1_product_for_well(
                     channel_id="BF",
                     time_index=t,
                     projection_method="focus_stack",
+                    ext=ext,
                     candidate=candidate,
                 )
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                skio.imsave(str(out_path), ff, check_contrast=False)
+                write_image(ff, out_path, write_policy)
+                out_w, out_h = expected_downsampled_dims(
+                    img_w, img_h, write_policy.downsample_factor, write_policy.downsample_method
+                )
 
                 # --- Construction provenance: the focus_index_map .npz (focus_stack only) ----------
                 # focus_index_map values are STACK-AXIS OFFSETS into `stack` (axis 0). z_indices is
@@ -395,8 +417,11 @@ def materialize_yx1_product_for_well(
                     source_image_path=out_path,
                     focus_index_map_path=fim_path,
                     source_micrometers_per_pixel=um_per_px,
-                    image_width_px=img_w,
-                    image_height_px=img_h,
+                    source_image_width_px=img_w,
+                    source_image_height_px=img_h,
+                    image_width_px=out_w,
+                    image_height_px=out_h,
+                    write_policy=write_policy,
                 ))
             else:
                 for z_index in z_lookup.get(t, []):
@@ -413,10 +438,13 @@ def materialize_yx1_product_for_well(
                         channel_id="BF",
                         time_index=t,
                         z_index=z_index,
+                        ext=ext,
                         candidate=candidate,
                     )
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-                    skio.imsave(str(out_path), stack[z_index], check_contrast=False)
+                    write_image(stack[z_index], out_path, write_policy)
+                    out_w, out_h = expected_downsampled_dims(
+                        img_w, img_h, write_policy.downsample_factor, write_policy.downsample_method
+                    )
 
                     image_id = derive_image_id(well_id, "BF", int(t), z_index=z_index)
                     rows.append(_frame_inventory_row(
@@ -433,8 +461,11 @@ def materialize_yx1_product_for_well(
                         source_image_path=out_path,
                         focus_index_map_path=None,  # z_stack rows carry no focus provenance
                         source_micrometers_per_pixel=um_per_px,
-                        image_width_px=img_w,
-                        image_height_px=img_h,
+                        source_image_width_px=img_w,
+                        source_image_height_px=img_h,
+                        image_width_px=out_w,
+                        image_height_px=out_h,
+                        write_policy=write_policy,
                     ))
 
             if (len(rows) % 10) == 0:
@@ -476,8 +507,11 @@ def _frame_inventory_row(
     source_image_path: Path,
     focus_index_map_path: object,
     source_micrometers_per_pixel: float,
+    source_image_width_px: int,
+    source_image_height_px: int,
     image_width_px: int,
     image_height_px: int,
+    write_policy: ImageWritePolicy,
 ) -> dict:
     return {
         "experiment_id": experiment_id,
@@ -499,6 +533,13 @@ def _frame_inventory_row(
             else str(focus_index_map_path)
         ),
         "source_micrometers_per_pixel": source_micrometers_per_pixel,
+        "source_image_width_px": source_image_width_px,
+        "source_image_height_px": source_image_height_px,
         "image_width_px": image_width_px,
         "image_height_px": image_height_px,
+        "image_file_format": write_policy.file_format,
+        "pixel_dtype": write_policy.pixel_dtype,
+        "downsample_factor": write_policy.downsample_factor,
+        "downsample_method": write_policy.downsample_method,
+        "jpeg_quality": write_policy.jpeg_quality,
     }

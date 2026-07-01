@@ -52,6 +52,9 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
     derive_well_id,
 )
 from data_pipeline.image_materialization.materialization_plan import ResolvedImageProduct
+from data_pipeline.image_materialization.materialized_image_write_policy import (
+    MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+)
 from data_pipeline.image_materialization.scope.yx1.materialize_well_yx1 import (
     materialize_ff_projection,
 )
@@ -79,6 +82,7 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "source_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
+    *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
 )
 
 
@@ -284,8 +288,15 @@ def materialize_keyence_product_for_well(
             "source_image_path": str(out_path),
             "focus_index_map_path": str(fim_path),
             "source_micrometers_per_pixel": um_per_px,
+            "source_image_width_px": mosaic.shape[1],
+            "source_image_height_px": mosaic.shape[0],
             "image_width_px": mosaic.shape[1],
             "image_height_px": mosaic.shape[0],
+            "image_file_format": "png",
+            "pixel_dtype": "uint8",
+            "downsample_factor": 1,
+            "downsample_method": "none",
+            "jpeg_quality": pd.NA,
         })
 
         if (len(rows) % 10) == 0:

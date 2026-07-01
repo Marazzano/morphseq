@@ -218,6 +218,44 @@ re-checks that each `source_nd2_path` still exists/opens, called by the YX1 mate
 before it reads the ND2 — the readability logic is owned by the acquisition contract; the backend
 only calls it. *One contract, two moments, the louder check at the moment it matters.*
 
+### Contract columns are composed from named families
+Every table contract should make its column families explicit. This is the schema-level version of
+"one concept, built in exactly one place":
+
+```text
+*_SPINE_COLUMNS       identity columns imported from the identity minting site
+*_PROVENANCE_COLUMNS  source/context columns the product needs to locate or explain inputs
+*_PAYLOAD_COLUMNS     columns owned by this product, and only this product
+*_TABLE_COLUMNS       the full emitted table = SPINE + PROVENANCE? + PAYLOAD
+```
+
+Use the smallest full-table name that says what the artifact is, for example
+`FOCUS_QC_TABLE_COLUMNS`, `SNIP_INVENTORY_TABLE_COLUMNS`, or `DEATH_EVENT_TABLE_COLUMNS`. Avoid new
+generic exports like `REQUIRED_COLUMNS`; they hide which product owns the contract and make imports
+ambiguous.
+
+The rule of thumb:
+
+- **spine** answers "who is this row about?" and is imported, never retyped;
+- **provenance** answers "where did the row come from / what source context is needed?";
+- **payload** answers "what does this product add?";
+- **table** is the validator's required column order.
+
+If a provenance column is only needed to compute the payload and is already available from an input
+table, do not automatically emit it. Emit provenance only when it is part of this product's contract;
+otherwise use it inside `compute.py` and keep the output product-pure.
+
+The review question for any proposed extra column is: **why is this a column if no consumer uses it?**
+If the answer is "debugging", "calibration", or "maybe useful later", keep it out of the canonical
+table contract. It may be written as a clearly named debug/report artifact behind an explicit debug
+mode, but it should not be added to `PIPELINE_STEPS`, required by downstream DAG targets, or validated
+as part of the stable product until it earns that status. Debug artifacts may have lighter checking
+while they are exploratory, but that is exactly why they are not canonical pipeline outputs.
+
+When an exploratory debug output becomes useful to more than one consumer, or becomes necessary to
+explain a persisted verdict/feature, promote it deliberately: give it a contract, validator, path
+policy, tests, and a real DAG edge. Do not let "extra columns" accrete silently in a stable table.
+
 ### Tests pin contracts, not implementation details
 Path tests pin **resolved public paths and failure modes** (the worked examples + the error paths),
 not registry internals — except light shape invariants (e.g. every step has a `stage`/`fanout`).
@@ -284,6 +322,7 @@ inventing a new path string or a new id format, a constraint was broken.
 - [ ] Module docstring orients (jobs + why + boundaries) before the code.
 - [ ] Sidecars derived via helpers, never hardcoded or registry rows.
 - [ ] One authoritative validator per contract, owned where the product lives; lifecycle differences are a mode flag (e.g. `check_sources=`), not a forked second validator. Source/disk checks fire at the consume boundary.
+- [ ] Table contracts are composed from named families: `*_SPINE_COLUMNS`, optional `*_PROVENANCE_COLUMNS`, `*_PAYLOAD_COLUMNS`, and `*_TABLE_COLUMNS`.
 - [ ] Multi-concern files use section banners in flow order; banners organize co-living concerns but do NOT paste over a mix that should be split (two microscopes, two kingdoms).
 - [ ] Tests for `src/data_pipeline/...` live in the parallel `tests/data_pipeline/...` tree.
 - [ ] Tests pin resolved paths + failure modes (important words, not exact prose), not impl internals.

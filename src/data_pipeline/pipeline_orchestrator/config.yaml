@@ -73,6 +73,16 @@ image_materialization:
   # frame_selection contract that derives the time-index subset systematically from the
   # acquisition inventory / experiment design, or remove it.
   smoke_max_time_indices: 0
+  # Product write policy: product selection stays in image_materialization.products; this map only
+  # declares how active products are encoded/written. BF__z_stack is JPEG q85 at ds4 to keep the
+  # persisted z planes small enough for post-segmentation QC.
+  write_policies:
+    BF__z_stack:
+      file_format: jpg
+      jpeg_quality: 85
+      downsample_factor: 4
+      downsample_method: area_resize
+      pixel_dtype: uint8
 
 # Segmentation + tracking (GroundingDINO + SAM2).
 segmentation_and_tracking:

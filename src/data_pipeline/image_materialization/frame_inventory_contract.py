@@ -28,6 +28,10 @@ from pathlib import Path
 import pandas as pd
 
 from data_pipeline.image_materialization.image_product_keys import image_product_key_for_frame_row
+from data_pipeline.image_materialization.materialized_image_write_policy import (
+    MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+    MATERIALIZED_IMAGE_WRITE_POLICY_NULLABLE_COLUMNS,
+)
 from data_pipeline.shared.identifiers.constructors import build_image_id, build_well_id
 from data_pipeline.shared.identifiers.validators import validate_well_id
 
@@ -49,8 +53,9 @@ REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "acquisition_time_s",          # raw per-frame timestamp — CARRIED from acquisition (audit)
     "source_image_path",           # TIFF / PNG / JPEG; absolute OR relative to image_root
     "source_micrometers_per_pixel",  # calibration µm/px, required > 0
-    "image_width_px",              # declared width (self-check against image header)
-    "image_height_px",             # declared height (self-check against image header)
+    "image_width_px",              # on-disk/post-downsample width (self-check against image header)
+    "image_height_px",             # on-disk/post-downsample height (self-check against image header)
+    *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,  # writer-owned bytes-on-disk policy fields
 )
 
 # The carried-through time block — OWNED by the acquisition inventory (derived there from the
@@ -78,6 +83,14 @@ DERIVED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
 #     populated for projection/focus_stack rows; NA for z_stack and non-focus_stack projection rows.
 CONSTRUCTION_PROVENANCE_COLUMNS: tuple[str, ...] = (
     "focus_index_map_path",
+)
+
+# Required-to-exist columns whose values may be null by product/format. ``jpeg_quality`` is present
+# for every row but only populated for lossy JPEG-encoded images.
+FRAME_INVENTORY_NULLABLE_COLUMNS: tuple[str, ...] = (
+    "z_index",
+    "projection_method",
+    *MATERIALIZED_IMAGE_WRITE_POLICY_NULLABLE_COLUMNS,
 )
 
 # The per-frame unique key, stated as ATOMS. This names WHICH columns identify a frame; the

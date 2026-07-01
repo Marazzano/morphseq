@@ -126,6 +126,7 @@ def run_materialize_well(
             device=resolved_device,
             candidate=candidate,
             smoke_max_time_indices=smoke_max_time_indices,
+            config=config,
         )
     if scope_name == "keyence":
         from data_pipeline.image_materialization.scope.keyence.materialize_well_keyence import (
@@ -164,6 +165,7 @@ def run_materialize_image_product_for_well(
     built_image_data_dir: Path,
     resolved_product_plan_json: Path,
     product_key: str,
+    config: dict | None = None,
     device: str = "auto",
     candidate: bool = False,
     smoke_max_time_indices: int | None = None,
@@ -201,6 +203,7 @@ def run_materialize_image_product_for_well(
             device=resolved_device,
             candidate=candidate,
             smoke_max_time_indices=smoke_max_time_indices,
+            config=config,
         )
     if scope_name == "keyence":
         from data_pipeline.image_materialization.scope.keyence.materialize_well_keyence import (

@@ -194,7 +194,7 @@ class TestMaterializeYX1Well:
             patch(f"{_mod}.materialize_ff_projection",
                   return_value=(np.zeros((8, 8), dtype=np.uint8),
                                 np.zeros((8, 8), dtype=np.int32))) as mock_proj,
-            patch(f"{_mod}.skio.imsave") as mock_imsave,
+            patch(f"{_mod}.write_image") as mock_write,
             patch(f"{_mod}._get_stack",
                   return_value=np.ones((4, 8, 8), dtype=np.uint16)) as mock_get_stack,
         ):
@@ -286,7 +286,7 @@ class TestMaterializeYX1Well:
         with (
             patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
             patch(f"{_mod}.materialize_ff_projection") as mock_proj,
-            patch(f"{_mod}.skio.imsave") as mock_imsave,
+            patch(f"{_mod}.write_image") as mock_write,
             patch(f"{_mod}._get_stack",
                   return_value=np.arange(4 * 8 * 8, dtype=np.uint16).reshape(4, 8, 8)) as mock_get_stack,
         ):
@@ -320,11 +320,21 @@ class TestMaterializeYX1Well:
             channel_id="BF",
             time_index=1,
             z_index=2,
+            ext="jpg",
             candidate=True,
         )
         assert str(expected_path) in set(df["source_image_path"])
+        assert (df["image_file_format"] == "jpg").all()
+        assert (df["pixel_dtype"] == "uint8").all()
+        assert (df["downsample_factor"] == 4).all()
+        assert (df["downsample_method"] == "area_resize").all()
+        assert (df["jpeg_quality"] == 85).all()
+        assert (df["source_image_width_px"] == 512).all()
+        assert (df["source_image_height_px"] == 512).all()
+        assert (df["image_width_px"] == 128).all()
+        assert (df["image_height_px"] == 128).all()
         assert mock_get_stack.call_count == 2
-        assert mock_imsave.call_count == 4
+        assert mock_write.call_count == 4
         mock_proj.assert_not_called()
 
     def test_product_grain_helper_accepts_one_resolved_product(self, tmp_path):
@@ -449,7 +459,7 @@ class TestMaterializeYX1Well:
             patch(f"{_mod}.materialize_ff_projection",
                   return_value=(np.zeros((8, 8), dtype=np.uint8),
                                 np.zeros((8, 8), dtype=np.int32))),
-            patch(f"{_mod}.skio.imsave"),
+            patch(f"{_mod}.write_image"),
             patch(f"{_mod}._get_stack",
                   return_value=np.ones((4, 8, 8), dtype=np.uint16)),
         ):

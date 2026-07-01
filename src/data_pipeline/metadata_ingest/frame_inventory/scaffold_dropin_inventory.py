@@ -73,8 +73,16 @@ def scaffold_row_for_image(image_path: Path, *, image_root: Path | None = None) 
     row["channel_id"] = channel_id
     row["time_index"] = time_index
     row["source_image_path"] = source_image_path
+    row["source_image_width_px"] = width
+    row["source_image_height_px"] = height
     row["image_width_px"] = width
     row["image_height_px"] = height
+    fmt = image_path.suffix.lower().lstrip(".")
+    row["image_file_format"] = {"jpeg": "jpg", "tiff": "tif"}.get(fmt, fmt)
+    row["pixel_dtype"] = "uint8"
+    row["downsample_factor"] = 1
+    row["downsample_method"] = "none"
+    row["jpeg_quality"] = pd.NA
     # A dropped-in image is a single materialized frame, i.e. a projection product (NOT a z-plane).
     # z_index stays NA; projection_method is the dropin default. The user may retarget if needed.
     row["image_product_type"] = "projection"

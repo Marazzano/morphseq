@@ -25,6 +25,9 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
     REQUIRED_CHANNEL,
     frame_inventory_product_keys,
 )
+from data_pipeline.image_materialization.materialized_image_write_policy import (
+    expected_downsampled_dims,
+)
 from data_pipeline.shared.identifiers import build_well_id
 
 log = logging.getLogger(__name__)
@@ -244,6 +247,36 @@ def validate_sources(
                 f"[{scope_label}] unsupported image suffix {resolved.suffix!r} for {resolved}; "
                 f"allowed: {ALLOWED_IMAGE_SUFFIXES}."
             )
+        declared_format = str(row["image_file_format"]).lower().lstrip(".")
+        if declared_format == "jpeg":
+            declared_format = "jpg"
+        if declared_format == "tiff":
+            declared_format = "tif"
+        suffix = resolved.suffix.lower().lstrip(".")
+        if suffix == "jpeg":
+            suffix = "jpg"
+        if suffix == "tiff":
+            suffix = "tif"
+        if suffix != declared_format:
+            raise ValueError(
+                f"[{scope_label}] image_file_format mismatch for {resolved}: path suffix "
+                f"{resolved.suffix!r} implies {suffix!r}, row declares {declared_format!r}."
+            )
+        downsample_factor = int(row["downsample_factor"])
+        if downsample_factor < 1:
+            raise ValueError(
+                f"[{scope_label}] downsample_factor must be >= 1; row {idx} has "
+                f"{downsample_factor}."
+            )
+        if declared_format == "jpg" and _is_nullish(row["jpeg_quality"]):
+            raise ValueError(
+                f"[{scope_label}] jpg row {idx} requires non-null jpeg_quality."
+            )
+        if declared_format != "jpg" and not _is_nullish(row["jpeg_quality"]):
+            raise ValueError(
+                f"[{scope_label}] non-jpg row {idx} must leave jpeg_quality null; "
+                f"got {row['jpeg_quality']!r}."
+            )
         try:
             with Image.open(resolved) as im:
                 real_w, real_h = im.size
@@ -254,6 +287,18 @@ def validate_sources(
 
         declared_w = int(row["image_width_px"])
         declared_h = int(row["image_height_px"])
+        source_w = int(row["source_image_width_px"])
+        source_h = int(row["source_image_height_px"])
+        expected_w, expected_h = expected_downsampled_dims(
+            source_w, source_h, downsample_factor, str(row["downsample_method"])
+        )
+        if (declared_w, declared_h) != (expected_w, expected_h):
+            raise ValueError(
+                f"[{scope_label}] image dims disagree with write policy for {resolved}: "
+                f"source dims {source_w}x{source_h} with downsample_factor={downsample_factor} "
+                f"and downsample_method={row['downsample_method']!r} imply "
+                f"{expected_w}x{expected_h}, but the manifest declares {declared_w}x{declared_h}."
+            )
         if (real_w, real_h) != (declared_w, declared_h):
             raise ValueError(
                 f"[{scope_label}] image dims mismatch for {resolved}: header says "
@@ -270,6 +315,17 @@ def validate_sources(
 
     # L4b — construction-provenance: the focus_index_map .npz (focus_stack projection only).
     _validate_focus_index_map_provenance(df, image_root=image_root, scope_label=scope_label)
+
+
+def _is_nullish(value: object) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except TypeError:
+        pass
+    return str(value).strip() == ""
 
 
 def _row_is_focus_stack_projection(row: pd.Series) -> bool:

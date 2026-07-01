@@ -28,6 +28,7 @@ from data_pipeline.pipeline_orchestrator.orchestration.paths import (
 from data_pipeline.quality_control.death_detection.contract import DEATH_DETECTION_QC_PAYLOAD_COLUMNS
 from data_pipeline.quality_control.focus_qc.contract import FOCUS_QC_PAYLOAD_COLUMNS
 from data_pipeline.quality_control.mask_quality_qc.contract import MASK_QUALITY_QC_PAYLOAD_COLUMNS
+from data_pipeline.quality_control.motion_blur_qc.contract import MOTION_BLUR_QC_PAYLOAD_COLUMNS
 from data_pipeline.quality_control.surface_area_qc.contract import SURFACE_AREA_QC_PAYLOAD_COLUMNS
 
 # Explicit eligible source universe — snip_qc's decision about which upstream QC products
@@ -41,6 +42,7 @@ _SOURCE_PAYLOADS: dict[str, tuple[str, ...]] = {
     "surface_area_qc":    SURFACE_AREA_QC_PAYLOAD_COLUMNS,
     "mask_quality_qc":    MASK_QUALITY_QC_PAYLOAD_COLUMNS,
     "focus_qc":           FOCUS_QC_PAYLOAD_COLUMNS,
+    "motion_blur_qc":     MOTION_BLUR_QC_PAYLOAD_COLUMNS,
 }
 
 

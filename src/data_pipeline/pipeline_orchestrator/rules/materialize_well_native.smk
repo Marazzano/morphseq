@@ -70,6 +70,7 @@ rule materialize_image_product_for_well:
           --position-well-mapping-csv "{input.position_well_mapping_csv}" \
           --built-image-data-dir "{BUILT_IMAGE_DATA_DIR}" \
           --frame-inventory-product-csv "{output.inventory}" \
+          --config-yaml "{CONFIG_YAML}" \
           --candidate "false" \
           --device "{params.device}" \
           --smoke-max-time-indices "{params.smoke_max}" \

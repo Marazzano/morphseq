@@ -1,0 +1,41 @@
+#!/bin/bash
+# SGE submission for Pass-1 z-stack materialization smoke.
+#
+# Submit from src/data_pipeline/pipeline_orchestrator:
+#   qsub submit_zstack_materialization.sge
+#
+# This target is intentionally front_half only: write + transform materialized image products and
+# validate frame_inventory rows. It does not run downstream QC or snip_qc.
+#$ -N zstack_materialization
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=12G
+#$ -pe serial 8
+#$ -o zstack_materialization.$JOB_ID.out
+#$ -e zstack_materialization.$JOB_ID.err
+
+set -euo pipefail
+
+CONDA_ENV_DIR="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam"
+SNAKEMAKE="${CONDA_ENV_DIR}/bin/snakemake"
+SRC_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/src"
+CORES=8
+
+echo "=== z_stack materialization smoke - $(date) on $(hostname) ==="
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L || echo "WARNING: nvidia-smi -L failed - no GPU visible on this node"
+
+# The Snakefile imports data_pipeline at parse time, so src/ must be on PYTHONPATH for Snakemake
+# itself as well as for rule shells.
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+
+"${SNAKEMAKE}" \
+  --configfile config.yaml config_smoke_zstack_20250912.yaml \
+  --cores "${CORES}" \
+  --rerun-triggers mtime \
+  --keep-going \
+  --printshellcmds \
+  front_half
+
+echo "=== z_stack materialization smoke FINISHED - $(date) - exit $? ==="

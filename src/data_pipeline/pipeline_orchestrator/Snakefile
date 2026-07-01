@@ -303,6 +303,7 @@ include: str(WORKFLOW_DIR / "rules" / "consolidated_features.smk")
 include: str(WORKFLOW_DIR / "rules" / "surface_area_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "mask_quality_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "focus_qc.smk")
+include: str(WORKFLOW_DIR / "rules" / "motion_blur_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "death_detection.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_qc.smk")
 

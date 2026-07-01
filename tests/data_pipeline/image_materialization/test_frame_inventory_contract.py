@@ -28,6 +28,9 @@ from data_pipeline.image_materialization.frame_inventory_contract import (
     validate_frame_identity_block,
     validate_frame_inventory_identity_contract,
 )
+from data_pipeline.image_materialization.materialized_image_write_policy import (
+    MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +61,12 @@ _FRAME_KEY_ATOMS = {"experiment_id", "well_index", "channel_id", "time_index", "
 
 def test_required_columns_contain_atoms():
     assert _FRAME_KEY_ATOMS.issubset(set(REQUIRED_FRAME_INVENTORY_COLUMNS))
+
+
+def test_required_columns_include_writer_policy_column_family():
+    assert set(MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS).issubset(
+        set(REQUIRED_FRAME_INVENTORY_COLUMNS)
+    )
 
 
 def test_derived_ids_not_in_required():

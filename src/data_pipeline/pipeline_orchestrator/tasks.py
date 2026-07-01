@@ -300,6 +300,10 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
 
     well_rows, well_index = _selected_well_acquisition_rows_for_materialization(args)
 
+    config = None
+    if getattr(args, "config_yaml", None):
+        config = yaml.safe_load(Path(args.config_yaml).read_text()) or {}
+
     smoke_cap = getattr(args, "smoke_max_time_indices", None)
     if smoke_cap is not None and smoke_cap <= 0:
         smoke_cap = None
@@ -316,6 +320,7 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
         built_image_data_dir=Path(args.built_image_data_dir),
         resolved_product_plan_json=Path(args.resolved_product_plan_json),
         product_key=str(args.product_key),
+        config=config,
         device=getattr(args, "device", "cuda"),
         candidate=_parse_bool(getattr(args, "candidate", "false")),
         smoke_max_time_indices=smoke_cap,
@@ -713,6 +718,19 @@ def cmd_focus_qc(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_motion_blur_qc(args: argparse.Namespace) -> None:
+    """Compute the per-well motion_blur_qc shard. Thin dispatcher; logic lives in the product."""
+    from data_pipeline.quality_control.motion_blur_qc.entrypoint import run_motion_blur_qc
+
+    run_motion_blur_qc(
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_csv=args.output_csv,
+    )
+
+
 def cmd_validate_focus_qc(args: argparse.Namespace) -> None:
     """Validate a per-well focus_qc shard (spine + metric + flag, registry as verifier) and write .validated."""
     import pandas as pd
@@ -720,6 +738,21 @@ def cmd_validate_focus_qc(args: argparse.Namespace) -> None:
     from data_pipeline.quality_control.focus_qc.contract import validate_focus_qc
 
     validate_focus_qc(
+        pd.read_csv(args.input_csv),
+        physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
+        check_sources=True,
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
+def cmd_validate_motion_blur_qc(args: argparse.Namespace) -> None:
+    """Validate a per-well motion_blur_qc shard (spine + metrics + flag, registry as verifier)."""
+    import pandas as pd
+
+    from data_pipeline.quality_control.motion_blur_qc.contract import validate_motion_blur_qc
+
+    validate_motion_blur_qc(
         pd.read_csv(args.input_csv),
         physical_embryo_registry_df=pd.read_csv(args.physical_embryo_registry_csv),
         check_sources=True,
@@ -1170,6 +1203,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mip.add_argument("--position-well-mapping-csv", type=Path, required=True)
     p_mip.add_argument("--built-image-data-dir", type=Path, required=True)
     p_mip.add_argument("--frame-inventory-product-csv", type=Path, required=True)
+    p_mip.add_argument("--config-yaml", type=Path, default=None)
     p_mip.add_argument("--candidate", default="false")
     p_mip.add_argument("--smoke-max-time-indices", type=int, default=None)
     p_mip.add_argument("--device", default="cuda")
@@ -1254,6 +1288,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("validate-surface-area-qc", cmd_validate_surface_area_qc),
         ("validate-mask-quality-qc", cmd_validate_mask_quality_qc),
         ("validate-focus-qc", cmd_validate_focus_qc),
+        ("validate-motion-blur-qc", cmd_validate_motion_blur_qc),
     ):
         p = sub.add_parser(verb)
         p.add_argument("--input-csv", type=Path, required=True)
@@ -1323,6 +1358,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_fqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_fqc.add_argument("--output-csv", type=Path, required=True)
     p_fqc.set_defaults(func=cmd_focus_qc)
+
+    p_mbqc = sub.add_parser("motion-blur-qc")
+    p_mbqc.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_mbqc.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_mbqc.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_mbqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_mbqc.add_argument("--output-csv", type=Path, required=True)
+    p_mbqc.set_defaults(func=cmd_motion_blur_qc)
 
     p_dd = sub.add_parser("death-detection")
     p_dd.add_argument("--fraction-alive-csv", type=Path, required=True)

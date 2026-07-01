@@ -1,0 +1,165 @@
+# Materialized Image Write Policy (TARGET)
+
+**Status:** target spec, mdcolon 2026-06-30. This locks the MVP write-policy shape for materialized
+image products, especially `BF__z_stack`, where full-resolution PNG storage would explode the output
+budget.
+
+**Companion to:** `z_stack_materialization_wire_through.md`, `frame_inventory_handoff_contract.md`,
+and `quality_control/z_stack_focus_motion_blur_qc_and_slice_selection.md`.
+
+---
+
+## Decision
+
+Materialized image products use a **per-product write policy**. Product selection stays in
+`image_materialization.products`; encoding/writing details live in the sibling map
+`image_materialization.write_policies`, keyed by canonical product key.
+
+Policy says format, scale, dtype. The shared writer handles the route. `frame_inventory` records the
+derived bytes that actually landed on disk, and downstream consumers read the recorded
+`source_image_path`.
+
+---
+
+## Config Shape
+
+```yaml
+image_materialization:
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+    - channel_id: BF
+      image_product_type: z_stack
+
+  write_policies:
+    BF__z_stack:
+      file_format: jpg
+      jpeg_quality: 85
+      downsample_factor: 4
+      downsample_method: area_resize
+      pixel_dtype: uint8
+```
+
+`products` answers **which products** are built. `write_policies` answers **how active products are
+encoded/written**.
+
+---
+
+## Policy Shape
+
+Live module:
+
+```text
+src/data_pipeline/image_materialization/materialized_image_write_policy.py
+```
+
+Five-field dataclass:
+
+```python
+@dataclass(frozen=True)
+class ImageWritePolicy:
+    file_format: Literal["png", "jpg", "tif"]
+    downsample_factor: int
+    downsample_method: Literal["none", "block_mean", "area_resize"]
+    pixel_dtype: Literal["uint8", "uint16"]
+    jpeg_quality: int | None = None
+```
+
+Defaults:
+
+```yaml
+default:
+  file_format: png
+  downsample_factor: 1
+  downsample_method: none
+  pixel_dtype: uint8
+  jpeg_quality: null
+
+BF__z_stack:
+  file_format: jpg
+  jpeg_quality: 85
+  downsample_factor: 4
+  downsample_method: area_resize
+  pixel_dtype: uint8
+
+BF__projection__focus_stack:
+  file_format: png
+  downsample_factor: 1
+  downsample_method: none
+  pixel_dtype: uint8
+  jpeg_quality: null
+```
+
+Rules:
+
+- `jpg` requires `pixel_dtype: uint8` and non-null `jpeg_quality`.
+- `png` and `tif` require `jpeg_quality: null`.
+- `downsample_method: none` or factor `1` is identity.
+- `downsample_method: block_mean` requires native width/height divisible by `downsample_factor`.
+- `downsample_method: area_resize` uses the shared image-resize seam for non-divisible native
+  dimensions; the target dimensions are `round(source / downsample_factor)`.
+- Write order is downsample, then fixed dtype conversion, then route-specific write.
+- `uint16 -> uint8` conversion is fixed full-range conversion, with no per-image or per-plane
+  min/max normalization.
+- `pixel_dtype` means encoder/read-back dtype, not raw acquisition dtype.
+
+---
+
+## Frame Inventory Contract
+
+Plain dimension columns record on-disk reality. `source_` dimension columns record native/provenance
+dimensions before the write transform.
+
+Required write-policy columns:
+
+```text
+source_image_width_px
+source_image_height_px
+image_width_px
+image_height_px
+image_file_format
+pixel_dtype
+downsample_factor
+downsample_method
+jpeg_quality
+```
+
+L4 validation:
+
+- `source_image_path` suffix must match `image_file_format`.
+- JPEG rows require non-null `jpeg_quality`.
+- Non-JPEG rows require null `jpeg_quality`.
+- `image_width_px` / `image_height_px` must match the file header.
+- `image_width_px` / `image_height_px` must equal
+  `expected_downsampled_dims(source_image_width_px, source_image_height_px, downsample_factor,
+  downsample_method)`.
+- `downsample_factor >= 1`.
+
+---
+
+## Storage Rationale
+
+Real probes on the 2025 experiments showed:
+
+```text
+PNG z-stack planes:       ~619 GB across 20250305 + 20251125 + 20260206
+JPEG q90 z-stack planes:  ~140 GB
+JPEG q85 z-stack planes:   ~94 GB
+JPEG q75 z-stack planes:   ~56 GB
+```
+
+The `BF__z_stack` default also downscales by factor 4, reducing pixel count about 16x before JPEG
+encoding. YX1 smoke frames are `2189x2189`, so the default method is `area_resize`, not strict
+`block_mean`; the written ds4 shape is `547x547`. That is the real storage lever for keeping z-stack
+persistence practical while preserving the full field of view.
+
+---
+
+## Downstream Consumer Rule
+
+`motion_blur_qc` and later consumers query `frame_inventory` for `BF__z_stack` rows and read the
+recorded `source_image_path`. They must not reconstruct paths or infer encoding from config.
+
+At `downsample_factor != 1`, mask-to-z-plane alignment belongs in the consumer: use nearest-neighbor
+mask resampling onto the validated loaded z-plane dimensions.

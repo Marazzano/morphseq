@@ -31,8 +31,15 @@ def _inventory_row(well_id: str, time_index: int) -> dict:
             f"{well_id}_BF_t{time_index:04d}.png"
         ),
         "source_micrometers_per_pixel": 0.75,
+        "source_image_width_px": 1024,
+        "source_image_height_px": 768,
         "image_width_px": 1024,
         "image_height_px": 768,
+        "image_file_format": "png",
+        "pixel_dtype": "uint8",
+        "downsample_factor": 1,
+        "downsample_method": "none",
+        "jpeg_quality": pd.NA,
     }
 
 

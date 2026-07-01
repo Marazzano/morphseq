@@ -15,7 +15,7 @@
 #     focus_stack product will call resolve_device -> "cpu" (via image_building.device: "auto").
 #   - Expected channel-first output tree:
 #       built_image_data/20250912/materialized_images/
-#         20250912_B01/BF/z_stack/20250912_B01_BF_z0000_t0000.png
+#         20250912_B01/BF/z_stack/20250912_B01_BF_z0000_t0000.jpg
 #         20250912_B01/BF/projection/focus_stack/20250912_B01_BF_t0000.png
 #         20250912_B01/BF/projection/focus_stack/focus_index_map/20250912_B01_BF_t0000.npz
 #         20250912_C01/BF/z_stack/...
@@ -34,6 +34,13 @@ image_materialization:
       projection_method: focus_stack
     - channel_id: BF
       image_product_type: z_stack
+  write_policies:
+    BF__z_stack:
+      file_format: jpg
+      jpeg_quality: 85
+      downsample_factor: 4
+      downsample_method: area_resize
+      pixel_dtype: uint8
 
 unet_snip:
   device: cpu

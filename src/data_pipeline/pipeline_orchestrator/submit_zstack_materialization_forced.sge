@@ -1,0 +1,45 @@
+#!/bin/bash
+# Forced SGE submission for Pass-1 z-stack materialization smoke.
+#
+# This is the same B01/C01 product-grain smoke as submit_zstack_materialization.sge, but forces the
+# materialize/validate product jobs so pre-existing old PNG shards cannot satisfy the target.
+#$ -N zstack_materialization_forced
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=12G
+#$ -pe serial 8
+#$ -o zstack_materialization_forced.$JOB_ID.out
+#$ -e zstack_materialization_forced.$JOB_ID.err
+
+set -euo pipefail
+
+CONDA_ENV_DIR="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam"
+SNAKEMAKE="${CONDA_ENV_DIR}/bin/snakemake"
+SRC_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/src"
+CORES=8
+
+echo "=== forced z_stack materialization smoke - $(date) on $(hostname) ==="
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L || echo "WARNING: nvidia-smi -L failed - no GPU visible on this node"
+
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+
+TARGETS=(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/data_pipeline_output/acquisition/20250912/frame_inventory/product_inventories/per_well/20250912_B01/20250912_B01_BF__projection__focus_stack_frame_inventory.csv.validated"
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/data_pipeline_output/acquisition/20250912/frame_inventory/product_inventories/per_well/20250912_B01/20250912_B01_BF__z_stack_frame_inventory.csv.validated"
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/data_pipeline_output/acquisition/20250912/frame_inventory/product_inventories/per_well/20250912_C01/20250912_C01_BF__projection__focus_stack_frame_inventory.csv.validated"
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/data_pipeline_output/acquisition/20250912/frame_inventory/product_inventories/per_well/20250912_C01/20250912_C01_BF__z_stack_frame_inventory.csv.validated"
+)
+
+"${SNAKEMAKE}" \
+  --configfile config.yaml config_smoke_zstack_20250912.yaml \
+  --cores "${CORES}" \
+  --rerun-triggers mtime \
+  --keep-going \
+  --printshellcmds \
+  --forcerun materialize_image_product_for_well \
+  --forcerun validate_frame_inventory_product_for_well \
+  "${TARGETS[@]}"
+
+echo "=== forced z_stack materialization smoke FINISHED - $(date) - exit $? ==="

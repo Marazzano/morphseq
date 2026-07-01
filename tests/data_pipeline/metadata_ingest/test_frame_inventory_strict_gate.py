@@ -33,8 +33,15 @@ def _row(well_id: str, channel: str, time_index: int, *, src: str, w: int = 16, 
         "projection_method": "focus_stack",
         "source_image_path": src,
         "source_micrometers_per_pixel": 0.75,
+        "source_image_width_px": w,
+        "source_image_height_px": h,
         "image_width_px": w,
         "image_height_px": h,
+        "image_file_format": "png",
+        "pixel_dtype": "uint8",
+        "downsample_factor": 1,
+        "downsample_method": "none",
+        "jpeg_quality": pd.NA,
     }
 
 
@@ -45,6 +52,12 @@ def _write(path: Path, rows: list[dict]) -> Path:
 
 
 def _png(path: Path, w: int = 16, h: int = 16) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("L", (w, h)).save(path)
+    return str(path)
+
+
+def _jpg(path: Path, w: int = 16, h: int = 16) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("L", (w, h)).save(path)
     return str(path)
@@ -168,6 +181,55 @@ def test_dims_mismatch_fails(tmp_path):
     img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
     shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [_row(A01, "BF", 0, src=img, w=32, h=32)])
     with pytest.raises(ValueError, match="dims mismatch"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
+def test_file_format_mismatch_fails(tmp_path):
+    img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
+    row = _row(A01, "BF", 0, src=img)
+    row["image_file_format"] = "jpg"
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [row])
+    with pytest.raises(ValueError, match="image_file_format mismatch"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
+def test_jpg_requires_quality(tmp_path):
+    img = _jpg(tmp_path / "imgs" / "a.jpg", w=16, h=16)
+    row = _row(A01, "BF", 0, src=img)
+    row["image_file_format"] = "jpg"
+    row["jpeg_quality"] = pd.NA
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [row])
+    with pytest.raises(ValueError, match="jpeg_quality"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+
+
+def test_downsampled_dims_validate_against_source_dims(tmp_path):
+    img = _jpg(tmp_path / "imgs" / "a.jpg", w=4, h=4)
+    row = _row(A01, "BF", 0, src=img, w=4, h=4)
+    row["source_image_width_px"] = 16
+    row["source_image_height_px"] = 16
+    row["image_file_format"] = "jpg"
+    row["downsample_factor"] = 4
+    row["downsample_method"] = "block_mean"
+    row["jpeg_quality"] = 85
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [row])
+
+    validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
+    assert (tmp_path / "f.validated").exists()
+
+
+def test_downsampled_dims_mismatch_fails_before_header_check(tmp_path):
+    img = _jpg(tmp_path / "imgs" / "a.jpg", w=4, h=4)
+    row = _row(A01, "BF", 0, src=img, w=8, h=4)
+    row["source_image_width_px"] = 16
+    row["source_image_height_px"] = 16
+    row["image_file_format"] = "jpg"
+    row["downsample_factor"] = 4
+    row["downsample_method"] = "block_mean"
+    row["jpeg_quality"] = 85
+    shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [row])
+
+    with pytest.raises(ValueError, match="write policy"):
         validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 

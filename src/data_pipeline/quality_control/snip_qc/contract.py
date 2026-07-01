@@ -34,10 +34,8 @@ SNIP_QC_EXCLUSION_FLAGS: tuple[str, ...] = (
     "discontinuous_mask_flag",
     "overlapping_mask_flag",
     "focus_flag",
+    "motion_blur_flag",
 )
-# TODO motion_blur_flag — wire in only after z_stack materialization + a real-data validated
-# motion_blur_qc product (see docs/.../quality_control/z_stack_focus_motion_blur_qc_and_slice_selection.md).
-# Do NOT append it here until then: it would make motion_blur_qc a hard DAG gate for every snip_qc run.
 
 
 def validate_snip_qc(

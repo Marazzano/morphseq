@@ -32,6 +32,7 @@ The architecture for the front half — discovery, run-well state, the inventori
 | `run_well_schema.md` | discovered vs eligible vs runnable well-state; Keyence reacquisition test plan |
 | `recompose_yx1_front_end.md` | The YX1-only build (microscope-scoped; the L1→L2→L3 mapping) |
 | `keyence_wire_through.md` | The Keyence-only build — staged plan to bring Keyence onto the per-well materialize interface (acq inventory, mosaic backend, stitch-map quirk, reacquisition) |
+| `image_encoding_materialization_config.md` | How materialized image products choose on-disk encoding (`jpg`/`png`/`tif`), JPEG quality, downsampling, suffixes, and frame-inventory encoding metadata |
 | `external_dataset_handoff_target.md` | The **outside-world → frame_inventory entrance spec** — how an OUTSIDE researcher with their own data enters the pipeline (the stricter-entrance seam: biology long-ingest, the drop-in manifest, the strict per-well validator, the file plan). Decision provenance in `_WIP_external_handoff_decisions.md`. |
 
 ## 📁 `specs/detect-seg-track/` — downstream TARGET specs (validated frames → tracked masks)

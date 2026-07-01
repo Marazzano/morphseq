@@ -34,6 +34,7 @@ import pandas as pd
 
 from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.image_materialization.frame_inventory_contract import (
+    FRAME_INVENTORY_NULLABLE_COLUMNS,
     REQUIRED_FRAME_INVENTORY_COLUMNS,
     validate_frame_inventory_identity_contract,
 )
@@ -56,7 +57,7 @@ def _read_frame_inventory_table(path: Path) -> pd.DataFrame:
         df,
         list(REQUIRED_FRAME_INVENTORY_COLUMNS),
         "frame_inventory",
-        nullable_columns=["z_index", "projection_method"],
+        nullable_columns=FRAME_INVENTORY_NULLABLE_COLUMNS,
     )
     return df
 

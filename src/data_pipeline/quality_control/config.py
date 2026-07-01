@@ -27,7 +27,11 @@ DEFAULT_QC_CONFIG = {
     },
     "focus_qc": {},
     "motion_qc": {
-        "ncc_min_threshold": 0.85,
+        "ncc_min_threshold": 0.90,
+        "bad_pair_frac_threshold": 0.10,
+    },
+    "motion_blur_qc": {
+        "bad_z_pair_ncc_threshold": 0.90,
         "bad_pair_frac_threshold": 0.10,
     },
 }
