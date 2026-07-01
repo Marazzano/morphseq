@@ -63,7 +63,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 # Import centralized schema
-from ...schemas.segmentation import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+from data_pipeline.segmentation_and_tracking.contract import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
 
 # Use centralized schema (more authoritative than local copy)
 REQUIRED_CSV_COLUMNS = REQUIRED_COLUMNS_SEGMENTATION_TRACKING

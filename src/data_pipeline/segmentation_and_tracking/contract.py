@@ -1,8 +1,11 @@
 """
-Schema definition for SAM2 segmentation tracking output.
+Schema definitions for the segmentation_and_tracking product.
 
-This module defines required columns for the segmentation tracking table,
-which contains embryo masks, tracking metadata, and SAM2-specific fields.
+Co-located contract home for the Phase-3 segmentation/tracking sub-contracts:
+the final segmentation_tracking table plus its upstream stages
+(frame_detections, seed_selection, track_instances, mask_rle). Each stage's
+normalizer imports its own ``REQUIRED_COLUMNS_*`` / ``UNIQUE_KEY_*`` pair from
+here.
 """
 
 REQUIRED_COLUMNS_SEGMENTATION_TRACKING = [

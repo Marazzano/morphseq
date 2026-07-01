@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from data_pipeline.schemas.segmentation import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+from data_pipeline.segmentation_and_tracking.contract import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
 from ._shared import validate_schema
 
 

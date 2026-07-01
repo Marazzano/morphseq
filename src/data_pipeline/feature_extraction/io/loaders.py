@@ -9,7 +9,7 @@ from data_pipeline.schemas.frame_contract import REQUIRED_COLUMNS_FRAME_CONTRACT
 from data_pipeline.metadata_ingest.plate.plate_metadata_contract import (
     REQUIRED_PLATE_METADATA_COLUMNS as REQUIRED_COLUMNS_PLATE_METADATA,
 )
-from data_pipeline.schemas.segmentation import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
+from data_pipeline.segmentation_and_tracking.contract import REQUIRED_COLUMNS_SEGMENTATION_TRACKING
 from data_pipeline.snip_processing.contract import REQUIRED_COLUMNS_SNIP_MANIFEST
 from data_pipeline.shared.path_contracts import require_existing_path
 from data_pipeline.shared.path_contracts import resolve_data_root_relative_path

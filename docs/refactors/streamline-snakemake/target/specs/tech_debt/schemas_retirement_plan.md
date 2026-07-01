@@ -59,14 +59,20 @@ All three migrated + verified live-in-DAG + tests green (42 passed).
 > `core/` + old-`consolidate_features.py` deprecation arc), not as a mechanical move. **Do not give a
 > dead product a fresh co-located contract.**
 
-## Tier 2 — `segmentation` (create home, migrate 8)
+## Tier 2 — `segmentation` (create home, migrate 8) — DONE
 
 | Member | Importers | Home |
 |---|---|---|
-| `segmentation` | 8 (segmentation_and_tracking/normalizers ×5, csv_formatter, validate_seg_and_tracking, feature_extraction/io) | `segmentation_and_tracking/` has no `contract.py` — create `segmentation_and_tracking/contract.py`, move `REQUIRED_COLUMNS_SEGMENTATION_TRACKING`, repoint 8 |
+| `segmentation` | 8 (segmentation_and_tracking/normalizers ×5, csv_formatter, validate_seg_and_tracking, feature_extraction/io) | **moved** `schemas/segmentation.py` → `segmentation_and_tracking/contract.py` (holds all 6 sub-contracts: segmentation_tracking, frame_detections, seed_selection, track_instances, mask_rle, V2). 8 importers repointed. |
 
-Larger blast radius but still a pure move — the vocabulary has one spelling and one authoritative
-home. Do it as its own commit so the 8-site repoint is reviewable in isolation.
+Pure move — one spelling, one home. Verified behavior-neutral: import-checked all 9 touched
+modules; the Phase-3 normalizer/ingestor suite shows the **same 5 failures before and after** the
+change (pre-existing `video_id`/`SeedSelection` drift, unrelated to schemas — flag separately).
+
+Gotcha logged: `csv_formatter.py` used a relative `...schemas.segmentation`; the naive
+`..segmentation_and_tracking.contract` rewrite resolved to `segmentation.segmentation_and_tracking`
+(wrong parent). Switched to an absolute `data_pipeline.segmentation_and_tracking.contract` import.
+When repointing **relative** imports across sibling packages, prefer the absolute path.
 
 ## Tier 3 — parked cluster: retire as one unit (do NOT piecemeal-move)
 
