@@ -213,58 +213,67 @@ tqdm = ">=4.67"
 # installed and proven working in `segmentation_grounded_sam` today.
 stitch2d = "==1.2"
 
-# --- SAM3.1 model backend (GPU, cu128 + FlashAttention-3) ---------------------------------
-# The heavy SAM3.1 runtime. Like `materialization`, CUDA is bound to this FEATURE (not the env)
-# via the `linux-64-cuda` rich platform.
+# --- SAM3 model backend (stable non-FA3 runtime/router) -----------------------------------
+# The stable SAM3 runtime. Like `materialization`, CUDA is bound to this FEATURE (not the env) via
+# the `linux-64-cuda` rich platform. This is the biologist-facing MVP environment: it can route
+# CPU/dev to native `version="sam3"` and GPU production to native `version="sam3.1"`, with
+# `use_fa3=False`.
 #
 # DECISIVE FACT (audited 2026-07-01): the facebook/sam3.1 HF repo ships ONLY a raw checkpoint
 # (`sam3.1_multiplex.pt`) and its README states verbatim "there is no Hugging Face Transformers
 # integration." So SAM3.1 loads through Meta's NATIVE `facebookresearch/sam3` package
 # (`build_sam3_multiplex_video_predictor` + `download_ckpt_from_hf(version="sam3.1")`), NOT via
-# transformers. transformers is still carried for the CPU path (see below).
+# transformers.
 #
-# DUAL-STACK by device (a deliberate deviation, proven on the L40S 2026-07-01):
-#   device="cuda" -> NATIVE facebookresearch/sam3, SAM3.1 multiplex, FlashAttention-3 (the fast path)
-#   device="cpu"  -> transformers Sam3VideoModel on plain facebook/sam3 (no CUDA probe; CPU-loadable)
-# These are DIFFERENT loaders AND different weights (3.1-multiplex .pt vs 3.0 safetensors). The
-# loader records which variant ran; CPU is a nice-to-have (dev/smoke), and an output-equivalence
-# check gates that the two agree closely enough on the same image before CPU is trusted.
+# SINGLE-STACK, native only (superseded the earlier transformers-CPU dual-stack 2026-07-01 — see
+# sam3_phase0_report.md addendum). The vendored native package exposes ONE unified entry point,
+# `build_sam3_predictor(version="sam3"|"sam3.1")`, and BOTH versions share the identical
+# `handle_request`/`handle_stream_request` API (model_builder.py:1275). `version="sam3"` (3.0) has
+# no module-level CUDA probe and honors `device="cuda" if torch.cuda.is_available() else "cpu"` —
+# it is CPU-safe out of the box. Only `version="sam3.1"` (multiplex) hits the import-time
+# `torch.cuda.get_device_properties(0)` probe in `sam3_multiplex_base.py:36`, so 3.1 stays GPU-only.
+# device="cuda" -> version="sam3.1" (multiplex, canonical correctness path, non-FA3)
+# device="cpu"  -> version="sam3" (3.0, native, same handle_request API) for dev/smoke/router
+# transformers is DROPPED — it added a second inference API (`.from_pretrained` + processor
+# `postprocess_outputs`) and a second weight family for zero benefit once the native package's own
+# CPU-safe sam3.0 path was found. The still-open output-equivalence question (does sam3.0 agree with
+# sam3.1?) is now a pure model-version question, not model-version-plus-two-different-frameworks.
 #
-# GPU floor: cu128 / torch 2.10 (upstream sam3 + flash-attn-3 target this). PROVEN on this node's
-# L40S (driver 560.35 / CUDA 12.6): cu128 torch reports cuda_available=True and runs a real GPU
-# matmul via forward-compat, and flash-attn-3 3.0.0 imports + loads the 3.1 multiplex predictor
-# (use_fa3=True) in ~43s. The native `sam3` package is a gitignored vendored checkout at
+# GPU floor: this cluster's L40S node has driver 560.35 / CUDA 12.6. The base `sam3` env uses a
+# driver-compatible CUDA wheel family for correctness/load verification. FlashAttention-3/cu128 is
+# deliberately split into a separate `sam3-fa3` performance lane below so the MVP does not depend on
+# FA3 or its fp16/bf16 kernel constraints. The native `sam3` package is a gitignored vendored checkout at
 # $HOME/.cache/morphseq/vendor/sam3, reached via PYTHONPATH (editable installs don't survive a pixi
 # re-resolve). Weights land in the HF hub cache; install_model.py steers via HF_HUB_CACHE (§2.1).
 [feature.sam3-backend]
 platforms = ["linux-64-cuda"]
 # Override the workspace channels for THIS feature only: drop `pytorch`/`nvidia` so the conda solve
-# cannot place a conda torchvision/pytorch candidate that would conflict with the pip cu128 wheels
-# below (found empirically 2026-07-01: with the global `pytorch` channel present, conda pinned
-# torchvision==0.22.0 and clashed with pip torch 2.10/cu128). conda-forge still provides python +
-# the non-torch pieces. Other envs (materialization) keep the global channels + their conda torch.
+# cannot place a conda torchvision/pytorch candidate that would conflict with the pip CUDA wheels
+# below. conda-forge still provides python + the non-torch pieces. Other envs (materialization) keep
+# the global channels + their conda torch.
 channels = ["conda-forge"]
 
-# cu128 torch/torchvision + flash-attn-3 are PyPI-only (pytorch's cu128 index), so the whole heavy
-# stack lives under pip. conda-forge's newer torch targets cuda129, not the cu128 upstream wants.
+# CUDA torch/torchvision live under pip so we can pin the exact CUDA wheel index. The base runtime
+# uses cu126 because it is compatible with the node driver. FA3/cu128 is intentionally not part of
+# this base feature.
 [feature.sam3-backend.pypi-options]
-extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
-# torch/torchvision/flash-attn-3 are pinned to the cu128 index (per-dep `index=` below); the rest
-# (timm, iopath, ftfy, …) live on regular PyPI. uv's default "first index wins" would search ONLY
-# cu128 for those and fail (found 2026-07-01: `iopath ... not at the requested version` on cu128).
+# torch/torchvision are pinned to the cu126 index (per-dep `index=` below); the rest (timm, iopath,
+# ftfy, …) live on regular PyPI. uv's default "first index wins" would search ONLY cu126 for those
+# and fail.
 # unsafe-best-match lets uv consider all indexes — safe here: both indexes are trusted (pytorch.org
 # + PyPI), and the torch family is still explicitly index-pinned so it can't be substituted.
+extra-index-urls = ["https://download.pytorch.org/whl/cu126"]
 index-strategy = "unsafe-best-match"
 
 [feature.sam3-backend.pypi-dependencies]
-# The fast CUDA stack. cu128 build proven torch.cuda True on the 12.6-driver L40S 2026-07-01.
-torch = { version = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" }
-torchvision = { version = "==0.25.0", index = "https://download.pytorch.org/whl/cu128" }
-# FlashAttention-3 (prebuilt wheel on the cu128 index). Powers SAM3.1's ~7x multi-object speedup.
-# use_fa3=True proven to import + load the multiplex predictor on the L40S 2026-07-01.
-"flash-attn-3" = { version = "==3.0.0", index = "https://download.pytorch.org/whl/cu128" }
-# transformers 5.x = the CPU-loadable path (plain facebook/sam3 via Sam3VideoModel; no CUDA probe).
-transformers = ">=5.0"
+# Driver-compatible CUDA stack for correctness/load verification on the L40S driver 560.35 node.
+torch = { version = "==2.7.1", index = "https://download.pytorch.org/whl/cu126" }
+torchvision = { version = "==0.22.1", index = "https://download.pytorch.org/whl/cu126" }
+# FlashAttention-3 is deliberately excluded from the base env. It lives in the reserved `sam3-fa3`
+# lane below and requires its own production smoke.
+# transformers is NOT a dependency of this env (dropped 2026-07-01) — the native package's own
+# CPU-safe version="sam3" path covers CPU/dev without a second inference framework. See feature
+# comment above.
 "huggingface-hub" = ">=0.30"
 # Native facebookresearch/sam3 runtime deps (audited from its pyproject + found empirically at import
 # 2026-07-01). einops/pycocotools/psutil are imported UNCONDITIONALLY by sam3 despite upstream listing
@@ -279,6 +288,43 @@ einops = ">=0.7"
 pycocotools = "*"
 psutil = "*"
 setuptools = "<81"
+
+# --- SAM3-FA3 model backend (reserved performance lane; NOT MVP) --------------------------
+# This is intentionally a stub for now. The cu128/FlashAttention-3 stack was resolved and exercised
+# during Phase-0 experiments, but it is NOT currently the biologist-facing install path and has not
+# been re-verified after the `sam3` / `sam3-fa3` split. Keep the recipe here as the maintainer-owned
+# performance lane to revisit after `sam3` correctness is boring.
+#
+# Target behavior when enabled:
+#   device="cuda" -> version="sam3.1", use_fa3=True, bf16/fp16 autocast required
+#   failure       -> fall back to the stable `sam3` env with use_fa3=False
+#
+# Do not compose this into the default `sam3` env. Uncomment/resolve as a separate environment only
+# when actively working on FA3 performance.
+#
+# [feature.sam3-fa3-backend]
+# platforms = ["linux-64-cuda"]
+# channels = ["conda-forge"]
+#
+# [feature.sam3-fa3-backend.pypi-options]
+# extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
+# index-strategy = "unsafe-best-match"
+#
+# [feature.sam3-fa3-backend.pypi-dependencies]
+# torch = { version = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" }
+# torchvision = { version = "==0.25.0", index = "https://download.pytorch.org/whl/cu128" }
+# "flash-attn-3" = { version = "==3.0.0", index = "https://download.pytorch.org/whl/cu128" }
+# "huggingface-hub" = ">=0.30"
+# timm = ">=1.0.17"
+# numpy = "<2"
+# ftfy = "==6.1.1"
+# regex = "*"
+# iopath = ">=0.1.10"
+# tqdm = ">=4.67"
+# einops = ">=0.7"
+# pycocotools = "*"
+# psutil = "*"
+# setuptools = "<81"
 
 # QC grids, confidence plots, embryo portfolios. Split out because backends DON'T need it — a
 # backend writes a canonical mask CSV, it doesn't plot — but both pipeline and analysis do.

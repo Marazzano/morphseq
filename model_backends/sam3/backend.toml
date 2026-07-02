@@ -1,0 +1,26 @@
+[backend]
+name = "sam3"
+env = "sam3"
+runtime_kind = "native_facebookresearch_sam3"
+default_version = "sam3.1"
+cpu_dev_version = "sam3"
+default_use_fa3 = false
+default_use_rope_real = true
+
+[runtime]
+upstream_repo = "https://github.com/facebookresearch/sam3.git"
+upstream_commit = "5dd401d"
+default_vendor_root = "~/.cache/morphseq/vendor"
+vendor_dir_name = "sam3"
+
+[artifacts]
+model_id = "facebook/sam3.1"
+revision = "main"
+checkpoint_filename = "sam3.1_multiplex.pt"
+default_model_cache = "~/.cache/morphseq/models"
+hf_cache_subdir = "hf"
+
+[reports]
+setup_report = "data_pipeline_output/backend_setup/sam3/setup_report.json"
+vendor_manifest = "metadata/vendor_manifest.json"
+checkpoint_manifest = "metadata/checkpoint_manifest.json"
