@@ -129,6 +129,10 @@ def adapt_sam2_well_output(
             prompt_det_id = _prompt_detection_id_for_object(
                 object_id, image_id, prompt_detections
             )
+            # SAM2 can lose a track mid-propagation and return an all-background mask for
+            # this object on this frame. mask_geometry then returns the degenerate (0,0,0,0)
+            # sentinel, which is only a valid bbox for an explicitly-invalid mask row.
+            is_valid_mask = bool(geom["area_px"] > 0)
             rows.append(
                 {
                     "experiment_id": str(frame_row["experiment_id"]),
@@ -153,8 +157,8 @@ def adapt_sam2_well_output(
                     "bbox_y_max_px": float(geom["bbox_y_max_px"]),
                     "centroid_x_px": float(geom["centroid_x_px"]),
                     "centroid_y_px": float(geom["centroid_y_px"]),
-                    "mask_confidence": 1.0,
-                    "is_valid_mask": True,
+                    "mask_confidence": 1.0 if is_valid_mask else 0.0,
+                    "is_valid_mask": is_valid_mask,
                     "segmentation_backend": SAM2_BACKEND_LABEL,
                     "segmentation_model_id": model_id,
                     "tracking_backend": SAM2_BACKEND_LABEL,

@@ -173,6 +173,35 @@ def test_adapt_empty_model_frame_view_returns_empty():
     assert result.empty
 
 
+def test_adapt_empty_object_mask_marked_invalid():
+    """An object present for a frame but with an all-background mask (SAM2 lost the track
+    mid-propagation) must be marked is_valid_mask=False, not True with a degenerate (0,0,0,0)
+    bbox — the latter fails validate_frame_mask_block's non-degenerate-bbox check for valid rows.
+    """
+    well_id = _well_id()
+    mfv = _model_frame_view(n_frames=1)
+    empty_mask = np.zeros((80, 100), dtype=bool)
+    result = adapt_sam2_well_output(well_id, {0: {0: empty_mask}}, mfv)
+    assert len(result) == 1
+    row = result.iloc[0]
+    assert bool(row["is_valid_mask"]) is False
+    assert row["area_px"] == 0.0
+    assert row["mask_confidence"] == 0.0
+    validate_frame_mask_block(result)  # must not raise
+
+
+def test_adapt_mixed_empty_and_nonempty_masks_same_frame():
+    """One object loses its track while another stays valid in the same frame."""
+    well_id = _well_id()
+    mfv = _model_frame_view(n_frames=1)
+    empty_mask = np.zeros((80, 100), dtype=bool)
+    result = adapt_sam2_well_output(well_id, {0: {0: empty_mask, 1: _rect_mask()}}, mfv)
+    assert len(result) == 2
+    valid_flags = sorted(result["is_valid_mask"].astype(bool).tolist())
+    assert valid_flags == [False, True]
+    validate_frame_mask_block(result)  # must not raise
+
+
 def test_adapt_with_prompt_detections_resolves_prompt_id():
     well_id = _well_id()
     mfv = _model_frame_view(n_frames=1)
