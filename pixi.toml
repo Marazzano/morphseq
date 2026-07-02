@@ -1,0 +1,356 @@
+# MorphSeq pixi workspace target sketch.
+#
+# This is intentionally a spec to work toward, not an implemented environment lock. Keep it small:
+# features describe reusable dependency classes, and environments compose those features. Backend
+# model stacks are omitted until code moves into `external_backends/` and each env has a verify task.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────
+# READING THIS FILE
+# A *feature* is a named bundle of deps. An *environment* is a composition of features.
+# Features exist so multiple envs can share a bundle without repeating it. Today only the
+# `pipeline` env is live, so the feature split looks over-engineered — it earns its keep in the
+# eventual world (analysis + per-backend envs), where each feature encodes a "who is allowed to
+# import this" boundary from the backend-split doctrine. Each feature below is either exclusive
+# to one side (proving a boundary) or deliberately shared (the verified-bounded adapter surface).
+# Full rationale: docs/refactors/streamline-snakemake/target/specs/mophseq_env_pixi_orchestrator.md
+# ─────────────────────────────────────────────────────────────────────────────────────────
+
+[workspace]
+name = "morphseq"
+# conda-forge is the base scientific stack. pytorch + nvidia are here ONLY because the heavy
+# backend envs (sam2/unet/legacy-vae) need CUDA torch. Channels are workspace-global, so the
+# light envs (pipeline/analysis) simply never resolve anything from pytorch/nvidia — a declared
+# channel that nothing pulls from costs nothing.
+channels = ["conda-forge", "pytorch", "nvidia"]
+# We only run on the Trapnell cluster (Linux). Declaring one platform keeps the lockfile from
+# solving for Mac/Windows, which would be dead weight and could fail on CUDA-specific packages.
+#
+# `linux-64-cuda` is a NAMED rich platform variant (pixi 0.71.1 "Rich platforms") — same OS/arch as
+# `linux-64`, plus a `cuda` virtual-package floor. It exists so `materialization` (and later
+# sam2/unet/sam3) can bind their CUDA requirement to a FEATURE via `[feature.X].platforms`, instead
+# of the deprecated `[feature.X.system-requirements]` table. See the `materialization` feature below
+# for the tested mechanism and why the workspace-level `[environments]` table can't do this binding
+# itself (`platforms` is not a valid `[environments]` key — confirmed 2026-07-01 on pixi 0.72.0).
+platforms = ["linux-64", { name = "linux-64-cuda", platform = "linux-64", cuda = "12" }]
+
+# Auto-exported on every `pixi run`. This replaces the manual `env PYTHONPATH=...` that every
+# conda invocation carries today (the repo has no setup.py/pyproject.toml, so `data_pipeline.*`
+# and `src.analyze.*` only resolve via PYTHONPATH). Baking it in here is one concrete win of the
+# migration: task strings no longer re-declare it.
+[activation.env]
+PYTHONPATH = "$PIXI_PROJECT_ROOT:$PIXI_PROJECT_ROOT/src"
+
+# --- Reusable base features ---------------------------------------------------------------
+
+# Two python pins, and both are real — not speculative. Everything runs 3.10 EXCEPT the legacy-VAE
+# backend, whose model pickles were written under 3.9 and must load under 3.9 (detached backend,
+# spec §5). Confirmed in-tree: legacy_embeddings/load_model_smoke.py and env.example.yaml both pin
+# `mseq_pipeline_py3.9`. The two features are the concrete expression of "the 3.9 pickle boundary
+# is real."
+[feature.py310.dependencies]
+python = "3.10.*"
+
+[feature.py39.dependencies]
+python = "3.9.*"
+
+# The native facebookresearch/sam3 package requires python >=3.12 (its pyproject / install docs) —
+# this is the SAM3.1 floor, proven on the L40S 2026-07-01. Third real python pin (3.9 legacy-VAE,
+# 3.10 pipeline, 3.12 sam3), each expressing a real boundary.
+[feature.py312.dependencies]
+python = "3.12.*"
+
+# The orchestration layer: snakemake drives the DAG; pulp is the ILP solver its scheduler uses;
+# pyyaml loads config; tqdm is progress. ONLY the `pipeline` env composes this. Backends never see
+# snakemake — that's a FORBIDDEN dependency class (spec §2: backends must not import orchestration).
+# Isolating it in its own feature is what makes that boundary structural rather than by-convention:
+# a backend env simply never composes `pipeline_sm`. The `_sm` suffix marks the engine (snakemake);
+# a future Nextflow port would be a sibling `pipeline_nf` feature.
+#
+# snakemake is PyPI, not conda-forge (audited 2026-07-01: `snakemake` has no conda-forge package;
+# it currently only ships via bioconda, which requires adding that channel and pulls in its very
+# large index). pulp/pyyaml/tqdm all DO exist on conda-forge and stay there — this is a forced,
+# single-package exception, not a general PyPI preference. Pinned to 7.32.4 (exact) because that's
+# what's actually running in prod today (`segmentation_grounded_sam`, pip-installed). A bump to
+# snakemake 8/9.x is a deliberate, separately-gated follow-up: 9.x requires python>=3.11 (a Python
+# bump for the whole pipeline env) and 8.x restructured executors into a plugin system — both are
+# real behavior changes that don't belong in the zero-behavioral-change Phase 0 beachhead.
+[feature.pipeline_sm.dependencies]
+pulp = "<2.8"
+pyyaml = ">=6"
+tqdm = ">=4.67"
+
+[feature.pipeline_sm.pypi-dependencies]
+snakemake = "==7.32.4"
+
+# RESERVED — Nextflow engine variant. Same role as pipeline_sm (drive the DAG), different engine.
+# The `_sm`/`_nf` suffix is the disambiguator: an env composes exactly ONE of them. Everything else
+# in the DAG-driving env (contracts, image-io, plotting) is engine-agnostic and shared across both,
+# so the port is a feature swap, NOT a second workspace. Uncomment + audit deps when the Nextflow
+# port is real (nextflow ships via conda-forge/bioconda; pin at that time). See spec §1.
+# [feature.pipeline_nf.dependencies]
+# nextflow = ">=24"
+# pyyaml = ">=6"
+# tqdm = ">=4.67"
+
+# The table/math surface every contract and validator speaks. Every CSV inventory, every
+# validate-frame-inventory call, every parquet sidecar rides on these. It's a feature (not inlined)
+# because it's the ONE bundle shared by almost every env — pipeline, analysis, AND integrated
+# backends (their in-process adapters build contract rows in pandas). Factoring it out means one
+# place to bump the pandas pin. openpyxl is here because genotype ground-truth is Excel (.xlsx).
+#
+# PINS MATCH THE CURRENTLY-RESOLVED conda env (`segmentation_grounded_sam`, audited 2026-07-01),
+# NOT aspirational versions. Phase 0's job is proving pixi reproduces the green run with ZERO
+# behavioral change — a numpy 1.x -> 2.x jump is a real API-break risk and is deliberately OUT of
+# scope here. Bump deps (numpy 2.x included) as a separate, gated follow-up once pixi itself is
+# proven. See docs/refactors/streamline-snakemake/target/specs/mophseq_env_pixi_orchestrator.md
+# Phase 0.
+[feature.contracts.dependencies]
+pandas = "2.3.*"
+numpy = "1.26.*"
+scipy = ">=1.15,<1.16"
+pyarrow = ">=16"
+openpyxl = ">=3.1"
+
+# Bounded image I/O + mask geometry/resize. nd2 is non-negotiable — it's the raw microscope format
+# the whole acquisition stage reads. opencv is the one spec §4 singles out: mask_resize.py needs
+# cv2. Shared by pipeline, analysis, AND integrated backends — because the "verified-bounded adapter
+# surface" (spec §2) explicitly ALLOWS opencv/skimage/PIL/imageio for adapter-side mask resizing and
+# image I/O. So this feature IS the bounded I/O that backends are permitted to import.
+#
+# Package triage (audited 2026-07-01, via grep for actual imports across src/): cv2 (46 files),
+# skimage (61 files), PIL (18 files), nd2 (13 files) are all heavily used — kept, all direct.
+#
+# tifffile/imageio are NOT directly imported anywhere in src/ (imageio's only 2 raw hits are in
+# `_archive`/`_Archive` dead-code trees) but are NOT droppable: `scikit-image`'s conda-forge
+# package hard-requires imageio>=2.33 and tifffile>=2022.8.12 (confirmed via
+# importlib.metadata.requires) as the plugin backend behind skimage.io.imread/imsave — the same
+# API 61 files call directly. First attempt dropped them from this file entirely; the resolved env
+# still contained both (pulled in transitively via scikit-image), so the toml was silently lying
+# about what's actually present. Declared explicitly instead, same principle already applied to
+# pyarrow/openpyxl below (implicit-but-real pandas engines) — if a package is actually in every
+# resolve, name it, don't let it hide behind a transitive pull.
+#
+# This DOES reintroduce the original conflict class (old-tifffile pulls old `imagecodecs` -> old
+# jpeg, clashing with pillow>=11's libjpeg-turbo) — resolved the same way as opencv below: let
+# tifffile/imageio float to whatever conda-forge's current index resolves jointly with pillow>=11,
+# rather than pinning either to the exact old today-version. tifffile/imageio's own I/O surface is
+# never called directly by our code (only via skimage.io), so version drift here is low-risk.
+#
+# opencv pinned to what conda-forge can jointly resolve with pillow>=11 today, not the literal
+# old point-release (4.6.0) that's installed in the conda env — that exact build depends on old
+# libjpeg and no longer coexists with modern pillow in one resolve. cv2 usage here (mask_resize.py:
+# resize/interpolation) is stable across the 4.x line, so floating within 4.x carries low risk.
+[feature.image-io.dependencies]
+scikit-image = ">=0.24"
+opencv = ">=4.8"
+pillow = ">=11"
+tifffile = ">=2022.8.12"
+imageio = ">=2.33,!=2.35.0"
+nd2 = ">=0.10"
+
+# MATERIALIZATION — GPU compute zone discovered during Phase 0 (2026-07-01), NOT part of
+# `pipeline`. ND2 read -> stitch -> LoG focus-stack (`LoG_focus_stacker`, log_focus.py) runs a
+# DELIBERATE torch conv2d over each Z-stack; this is real GPU compute, not an incidental import
+# to clean up. Discovered live: running the tier-1 smoke DAG's `materialize_image_product_for_well`
+# rule under the torch-free `pipeline` env failed with a genuine
+# `ModuleNotFoundError: No module named 'torch'` from `cuda_diagnostics.py` and
+# `materialize_stitched_images.py` (both import torch at module level). Working backward from why
+# `pipeline` wants to be torch-free (fast/portable resolve, laptop/CI-runnable orchestration, a
+# clean backend-import boundary) — none of those reasons require MATERIALIZATION specifically to be
+# torch-free; they require the CONTRACT/ORCHESTRATION layer to be. Materialization is structurally
+# the same shape as a backend (GPU compute -> canonical artifact), just not "a model" in the ML
+# sense — same treatment as sam2/unet: own env, no pipeline_sm, no plotting/dev.
+# See spec §1 "materialization is a THIRD compute zone" for the full writeup.
+#
+# torch MUST be build-pinned, not just version-pinned (empirically tested 2026-07-01 on the actual
+# A100 GPU node): `pytorch = "2.7.1.*"` unpinned-build resolves conda-forge's `cpu_generic`/
+# `cpu_mkl` variant by default — silently CPU-only, `torch.cuda.is_available()` False, no error.
+# `build = "cuda126*"` forces the CUDA 12.6 variant; confirmed working via a real
+# `torch.cuda.is_available()` + GPU matmul + `F.conv2d` (the exact op LoG_focus_stacker uses) smoke
+# test on this cluster's A100 (driver 560.35, supports up to CUDA 12.6). Version 2.7.1 matches
+# what's actually installed in `segmentation_grounded_sam` today (there it's a pip build,
+# `2.7.1+cu118`; conda-forge's `2.7.1` CUDA 12.6 build is a newer CUDA runtime on the same driver —
+# tested compatible, not just assumed).
+[feature.materialization]
+# CUDA is a model-backend environment property, not a MorphSeq workspace property. `pipeline` and
+# `analysis` must stay CPU-safe and resolvable without any GPU assumption; `materialization` (and
+# later sam2/unet/sam3) are the features allowed to declare a CUDA requirement.
+#
+# Binds this FEATURE to the `linux-64-cuda` named rich platform declared in `[workspace].platforms`
+# above (pixi 0.71.1 "Rich platforms"). This is the tested, working replacement for the deprecated
+# `[feature.X.system-requirements] cuda = "..."` table — confirmed directly on pixi 0.72.0
+# (2026-07-01): `[feature.materialization].platforms = ["linux-64-cuda"]` resolves with ZERO
+# deprecation warnings, correctly pulls CUDA-enabled torch, and a sibling torch-free feature in the
+# same file stays torch-free. (An EARLIER attempt tried putting `platforms` on the environment
+# instead — `materialization = { features = [...], platforms = [...] }` in `[environments]` — pixi
+# rejected that outright: "'platforms' was not expected here... Did you mean 'features'?". The
+# `[environments]` table only accepts `features` / `solve-group` / `no-default-feature`; there is no
+# per-environment platform selector. The fix is binding the platform to the FEATURE, not the env.)
+#
+# Confirmed live on this cluster's A100: the full materialize_image_product_for_well rule (ND2 read
+# -> stitch -> real GPU LoG focus-stack via conv2d) ran end-to-end through this env in a real
+# Snakemake-driven run, 5/5 steps green (2026-07-01).
+platforms = ["linux-64-cuda"]
+
+[feature.materialization.dependencies]
+pytorch = { version = "2.7.1.*", build = "cuda126*" }
+# stitch2d's own PyPI deps (joblib, numpy, opencv-python, scikit-image) overlap with `contracts`/
+# `image-io` above. joblib is the only NEW one — sourced from conda-forge here (not pip) so
+# stitch2d stays the ONLY pypi-dependency in this feature, avoiding an opencv (conda) vs
+# opencv-python (pip) double-install.
+joblib = ">=1.4"
+# Found by a live run, not by grep triage: stitched_ff_builder.py (both YX1 and Keyence scopes)
+# imports tqdm directly for progress bars. tqdm lives in `pipeline_sm` (it's the orchestration
+# feature's dep, for snakemake's own progress use), which `materialization` deliberately does NOT
+# compose (no orchestration in a compute env). Confirmed via ModuleNotFoundError on this cluster's
+# A100 running the real materialize_image_product_for_well rule end-to-end under pixi (2026-07-01)
+# — this file's tqdm need is independent of orchestration, so it's declared here too rather than
+# smuggled in by composing pipeline_sm.
+tqdm = ">=4.67"
+
+[feature.materialization.pypi-dependencies]
+# PyPI-only (audited 2026-07-01: no conda-forge package). Pinned exact to match what's actually
+# installed and proven working in `segmentation_grounded_sam` today.
+stitch2d = "==1.2"
+
+# --- SAM3.1 model backend (GPU, cu128 + FlashAttention-3) ---------------------------------
+# The heavy SAM3.1 runtime. Like `materialization`, CUDA is bound to this FEATURE (not the env)
+# via the `linux-64-cuda` rich platform.
+#
+# DECISIVE FACT (audited 2026-07-01): the facebook/sam3.1 HF repo ships ONLY a raw checkpoint
+# (`sam3.1_multiplex.pt`) and its README states verbatim "there is no Hugging Face Transformers
+# integration." So SAM3.1 loads through Meta's NATIVE `facebookresearch/sam3` package
+# (`build_sam3_multiplex_video_predictor` + `download_ckpt_from_hf(version="sam3.1")`), NOT via
+# transformers. transformers is still carried for the CPU path (see below).
+#
+# DUAL-STACK by device (a deliberate deviation, proven on the L40S 2026-07-01):
+#   device="cuda" -> NATIVE facebookresearch/sam3, SAM3.1 multiplex, FlashAttention-3 (the fast path)
+#   device="cpu"  -> transformers Sam3VideoModel on plain facebook/sam3 (no CUDA probe; CPU-loadable)
+# These are DIFFERENT loaders AND different weights (3.1-multiplex .pt vs 3.0 safetensors). The
+# loader records which variant ran; CPU is a nice-to-have (dev/smoke), and an output-equivalence
+# check gates that the two agree closely enough on the same image before CPU is trusted.
+#
+# GPU floor: cu128 / torch 2.10 (upstream sam3 + flash-attn-3 target this). PROVEN on this node's
+# L40S (driver 560.35 / CUDA 12.6): cu128 torch reports cuda_available=True and runs a real GPU
+# matmul via forward-compat, and flash-attn-3 3.0.0 imports + loads the 3.1 multiplex predictor
+# (use_fa3=True) in ~43s. The native `sam3` package is a gitignored vendored checkout at
+# $HOME/.cache/morphseq/vendor/sam3, reached via PYTHONPATH (editable installs don't survive a pixi
+# re-resolve). Weights land in the HF hub cache; install_model.py steers via HF_HUB_CACHE (§2.1).
+[feature.sam3-backend]
+platforms = ["linux-64-cuda"]
+# Override the workspace channels for THIS feature only: drop `pytorch`/`nvidia` so the conda solve
+# cannot place a conda torchvision/pytorch candidate that would conflict with the pip cu128 wheels
+# below (found empirically 2026-07-01: with the global `pytorch` channel present, conda pinned
+# torchvision==0.22.0 and clashed with pip torch 2.10/cu128). conda-forge still provides python +
+# the non-torch pieces. Other envs (materialization) keep the global channels + their conda torch.
+channels = ["conda-forge"]
+
+# cu128 torch/torchvision + flash-attn-3 are PyPI-only (pytorch's cu128 index), so the whole heavy
+# stack lives under pip. conda-forge's newer torch targets cuda129, not the cu128 upstream wants.
+[feature.sam3-backend.pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cu128"]
+# torch/torchvision/flash-attn-3 are pinned to the cu128 index (per-dep `index=` below); the rest
+# (timm, iopath, ftfy, …) live on regular PyPI. uv's default "first index wins" would search ONLY
+# cu128 for those and fail (found 2026-07-01: `iopath ... not at the requested version` on cu128).
+# unsafe-best-match lets uv consider all indexes — safe here: both indexes are trusted (pytorch.org
+# + PyPI), and the torch family is still explicitly index-pinned so it can't be substituted.
+index-strategy = "unsafe-best-match"
+
+[feature.sam3-backend.pypi-dependencies]
+# The fast CUDA stack. cu128 build proven torch.cuda True on the 12.6-driver L40S 2026-07-01.
+torch = { version = "==2.10.0", index = "https://download.pytorch.org/whl/cu128" }
+torchvision = { version = "==0.25.0", index = "https://download.pytorch.org/whl/cu128" }
+# FlashAttention-3 (prebuilt wheel on the cu128 index). Powers SAM3.1's ~7x multi-object speedup.
+# use_fa3=True proven to import + load the multiplex predictor on the L40S 2026-07-01.
+"flash-attn-3" = { version = "==3.0.0", index = "https://download.pytorch.org/whl/cu128" }
+# transformers 5.x = the CPU-loadable path (plain facebook/sam3 via Sam3VideoModel; no CUDA probe).
+transformers = ">=5.0"
+"huggingface-hub" = ">=0.30"
+# Native facebookresearch/sam3 runtime deps (audited from its pyproject + found empirically at import
+# 2026-07-01). einops/pycocotools/psutil are imported UNCONDITIONALLY by sam3 despite upstream listing
+# them optional; setuptools<81 restores pkg_resources (removed in v81+) without patching vendored code.
+timm = ">=1.0.17"
+numpy = "<2"
+ftfy = "==6.1.1"
+regex = "*"
+iopath = ">=0.1.10"
+tqdm = ">=4.67"
+einops = ">=0.7"
+pycocotools = "*"
+psutil = "*"
+setuptools = "<81"
+
+# QC grids, confidence plots, embryo portfolios. Split out because backends DON'T need it — a
+# backend writes a canonical mask CSV, it doesn't plot — but both pipeline and analysis do.
+# Isolating it keeps the heavy backend envs leaner.
+[feature.plotting.dependencies]
+matplotlib = ">=3.10"
+plotly = ">=6"
+
+# Testing surface. Its own feature so it can compose into any env you want to run tests in, without
+# forcing pytest into a production backend image. Expected to grow (ruff/mypy/etc.) — hence the
+# open-ended name `dev`, not `pytest`.
+[feature.dev.dependencies]
+pytest = ">=8"
+
+# --- Named environments -------------------------------------------------------------------
+#
+# Read each env as a sentence. The point of the feature split is that composition = policy:
+#   - `pipeline_sm` present  => drives the DAG (only the pipeline env).
+#   - `pipeline_sm` absent   => cannot import orchestration (every backend).
+#   - `contracts` + `image-io` => the verified-bounded adapter surface both sides may share.
+#   - `plotting`/`dev` absent from backends => leaner heavy envs.
+
+[environments]
+
+# Target steady-state pipeline env: 3.10 + orchestration + tables + image I/O + plotting. NO torch.
+# This is the headline invariant (spec §1): the pipeline env never imports a heavyweight model
+# stack. It drives snakemake and runs in-process adapters; model INFERENCE happens in a subprocess
+# in a backend env.
+pipeline = [
+  "py310",
+  "pipeline_sm",
+  "contracts",
+  "image-io",
+  "plotting",
+  "dev",
+]
+
+# GPU compute env for materialize_image_product_for_well (ND2 read -> stitch -> LoG focus-stack).
+# Composes contracts+image-io (the verified-bounded surface — this task builds contract rows and
+# does mask-adjacent image I/O in-process, same as an integrated backend) + materialization (torch).
+# Deliberately NO pipeline_sm (doesn't drive the DAG) and NO plotting/dev (leaner heavy env, same
+# isolation logic as sam2/unet). Live and resolving (2026-07-01) — confirmed torch.cuda.is_available()
+# True on the cluster's A100.
+materialization = [
+  "py310",
+  "contracts",
+  "image-io",
+  "materialization",
+]
+
+# Future env examples, intentionally commented until the corresponding backend packages exist and
+# their audited dependency features are added. Each reads as a sentence per the composition=policy
+# rule above:
+#
+# analysis    = ["py310", "contracts", "image-io", "plotting", "dev"]  # pipeline minus orchestration:
+#                                                                      # reads outputs + plots, no DAG.
+#                                                                      # keeps image-io to import the
+#                                                                      # bounded masks.* leaf (spec §4).
+# sam2        = ["py310", "contracts", "image-io", "sam2-backend"]     # TODO: add feature.sam2-backend.
+#                                                                      # integrated: in-process adapter
+#                                                                      # needs contracts+image-io; NO
+#                                                                      # pipeline_sm/plotting (boundary).
+# unet        = ["py310", "contracts", "image-io", "unet-backend"]     # TODO: add feature.unet-backend.
+# legacy-vae  = ["py39",  "contracts", "legacy-vae-backend"]           # TODO: add feature.legacy-vae-backend.
+#                                                                      # 3.9 detached encoder: writes
+#                                                                      # parquet (contracts), no image-io.
+# sam3 backend env: py3.12 (native facebookresearch/sam3 requires >=3.12) + the verified-bounded
+# adapter surface (contracts+image-io) + the heavy sam3-backend feature. NO pipeline_sm/plotting
+# (boundary). SAM3.1 loads via the vendored native package on PYTHONPATH (see feature comment).
+sam3 = ["py312", "contracts", "image-io", "sam3-backend"]
+# pipeline-nf = ["py310", "pipeline_nf", "contracts", "image-io", "plotting", "dev"]
+#                                                                      # reserved; Nextflow-engine twin of
+#                                                                      # `pipeline`. Swaps pipeline_sm ->
+#                                                                      # pipeline_nf; rest is identical
+#                                                                      # (engine-agnostic). See spec §1.
