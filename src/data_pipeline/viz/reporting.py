@@ -66,25 +66,25 @@ def plot_metric_histogram(
     output_path: Path,
     xlabel: str | None = None,
 ) -> Path:
-    """Histogram of the raw metric, with a vertical line at the actual cutoff value and each BAR
-    colored by which side of the cutoff its bin falls on (fail-colored only if the whole bin is
-    on the fail side, so a bin straddling the cutoff — e.g. mostly-passing values in a bin whose
-    edge touches the cutoff — never reads as "failing" from a semi-transparent background wash).
+    """Histogram of the raw metric, with a vertical line at the actual cutoff value. Each bin is
+    split into pass/fail sub-counts by the ACTUAL values inside it (not by which side of the
+    cutoff the bin's edges fall on), so a bin straddling the cutoff — e.g. a wide auto-sized bin
+    containing both a pile of exactly-passing zeros and a few genuinely-failing near-zero values —
+    renders as a correctly proportioned pass/fail stack instead of being colored as one verdict.
     """
     values = metric.to_numpy(dtype=float)
     values = values[np.isfinite(values)]
+    fail_values = _fail_mask(pd.Series(values), cutoff, fail_direction).to_numpy()
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    counts, edges = np.histogram(values, bins="auto")
-    bin_lefts, bin_rights = edges[:-1], edges[1:]
+    _, edges = np.histogram(values, bins="auto")
+    pass_counts, _ = np.histogram(values[~fail_values], bins=edges)
+    fail_counts, _ = np.histogram(values[fail_values], bins=edges)
+    bin_lefts, widths = edges[:-1], np.diff(edges)
 
-    if fail_direction == "below":
-        bin_is_fail = bin_rights <= cutoff
-    else:
-        bin_is_fail = bin_lefts >= cutoff
-    colors = np.where(bin_is_fail, FAIL_COLOR, PASS_COLOR)
-
-    ax.bar(bin_lefts, counts, width=np.diff(edges), align="edge", color=colors, edgecolor="white")
+    ax.bar(bin_lefts, pass_counts, width=widths, align="edge", color=PASS_COLOR, edgecolor="white")
+    ax.bar(bin_lefts, fail_counts, width=widths, align="edge", bottom=pass_counts,
+           color=FAIL_COLOR, edgecolor="white")
     ax.axvline(cutoff, color=FAIL_COLOR, linestyle="--", linewidth=1.5, label=f"cutoff = {cutoff:g}")
 
     fail = _fail_mask(pd.Series(values), cutoff, fail_direction)
