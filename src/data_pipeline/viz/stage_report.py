@@ -79,9 +79,13 @@ def build_stage_rollup_report(
     ``[html_path, pdf_path]`` (see :meth:`HtmlReport.write`).
     """
     report = HtmlReport(f"{stage} — report", subtitle=str(experiment_id))
+    any_image = False
     for product, pngs in stage_report_pngs(data_root, stage, experiment_id):
         if pngs:
             report.add_images(pngs, section=stage, subsection=product)
+            any_image = True
         else:
             report.add_note("no report artifacts", section=stage, subsection=product)
-    return report.write(Path(output_html))
+    # PDF is an image contact sheet; a stage whose per-step reports produced no PNG yet
+    # (the stub case) has no pages, so emit HTML-only rather than crash.
+    return report.write(Path(output_html), pdf=any_image)
