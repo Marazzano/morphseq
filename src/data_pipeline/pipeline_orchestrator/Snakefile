@@ -14,6 +14,7 @@ import yaml
 
 from data_pipeline.pipeline_orchestrator.orchestration import (
     artifact_path,
+    known_artifacts,
     provenance_path,
     run_well_ids_for_experiment,
     run_well_shard_paths,
@@ -21,6 +22,7 @@ from data_pipeline.pipeline_orchestrator.orchestration import (
     PATH_MODE_EXPERIMENT,
     PATH_MODE_PER_WELL,
     PATH_MODE_MERGED,
+    PIPELINE_STEPS,
     step_dir,
 )
 from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
@@ -307,6 +309,7 @@ include: str(WORKFLOW_DIR / "rules" / "focus_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "motion_blur_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "death_detection.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_qc.smk")
+include: str(WORKFLOW_DIR / "rules" / "stage_reports.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
@@ -569,6 +572,34 @@ def _through_line_targets(wc=None):
     return targets
 
 
+def _reports_targets(wc=None):
+    # Every registered `*_report` step's artifacts, for every experiment. Reports are DAG LEAVES
+    # (nothing consumes them; see viz/report_world.md § DAG Wiring) — but being a leaf is about
+    # graph shape, not about who REQUESTS the leaf. The `reports` target requests all of them;
+    # `rule all` additionally requests the stage rollups (below) so a default run also refreshes
+    # the review pages. A failing report never corrupts upstream data — it is the end of the line.
+    report_steps = [step for step in PIPELINE_STEPS if step.endswith("_report")]
+    targets = []
+    for exp in EXPERIMENTS:
+        for step in report_steps:
+            for artifact in PIPELINE_STEPS[step]["artifacts"]:
+                targets.append(rule_artifact(step, artifact, exp, path_mode=PATH_MODE_EXPERIMENT))
+    return targets
+
+
+def _stage_rollup_report_targets(wc=None):
+    # Just the 3 stage rollup pages, for every experiment. Requesting a rollup transitively pulls
+    # its stage's per-step reports (the rollup rule lists them as inputs), so this one list drags
+    # the whole report tier in without enumerating every per-step artifact. Used by `rule all`.
+    targets = []
+    for exp in EXPERIMENTS:
+        for step in PIPELINE_STEPS:
+            if step.endswith("_rollup_report"):
+                for artifact in PIPELINE_STEPS[step]["artifacts"]:
+                    targets.append(rule_artifact(step, artifact, exp, path_mode=PATH_MODE_EXPERIMENT))
+    return targets
+
+
 class _NS:
     # tiny wildcards stand-in so wells_for_experiment (which reads wildcards.experiment) can be
     # called outside a rule context for the front_half aggregate target.
@@ -615,11 +646,26 @@ rule through_line:
         _through_line_targets
 
 
+rule reports:
+    """TERMINAL aggregate target — every registered `*_report` step's artifacts, for every
+    experiment. Never part of `rule all` or any other rule's input: a report is a DAG leaf
+    (viz/report_world.md); this is the only rule that requests one. Run explicitly:
+    `snakemake reports`, or request a single report by its step name, e.g.
+    `snakemake death_detection_report`.
+    """
+    input:
+        _reports_targets
+
+
 rule all:
     default_target: True
-    """Default target: build through merged frame_masks for all experiments."""
+    """Default target: build through merged frame_masks for all experiments, plus the stage
+    rollup review pages. The rollups are DAG leaves (they gate nothing), so if one fails the
+    core data products are already built and the graph is preserved; run with --keep-going to
+    let the rest finish. To build the pipeline WITHOUT reports, request the data target directly."""
     input:
         expand(
             str(_frame_masks_artifact("{exp}", "frame_masks", path_mode=PATH_MODE_MERGED)),
             exp=EXPERIMENTS
-        )
+        ),
+        _stage_rollup_report_targets,

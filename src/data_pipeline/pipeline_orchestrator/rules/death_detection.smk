@@ -159,3 +159,24 @@ shards = collect_well_shard_paths('{DATA_ROOT}', 'death_event', 'death_event', '
 concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'physical_embryo_id'])
 "
         """
+
+
+rule death_detection_report:
+    """TERMINAL: mortality report (survival curve + curtain + death-time histogram). Consumed by
+    nothing — only the `reports` aggregate target requests this. See viz/report_world.md."""
+    input:
+        qc=str(_dd_qc_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
+        fraction_alive=str(rule_artifact("fraction_alive", "fraction_alive", "{experiment}", path_mode=PATH_MODE_MERGED)),
+    output:
+        experiment_png=str(rule_artifact("death_detection_report", "experiment_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        curtain_png=str(rule_artifact("death_detection_report", "curtain_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        death_time_png=str(rule_artifact("death_detection_report", "death_time_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks death-detection-report \
+          --death-detection-qc-csv "{input.qc}" \
+          --fraction-alive-csv "{input.fraction_alive}" \
+          --output-experiment-png "{output.experiment_png}" \
+          --output-curtain-png "{output.curtain_png}" \
+          --output-death-time-png "{output.death_time_png}"
+        """

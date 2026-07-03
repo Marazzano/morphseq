@@ -178,3 +178,19 @@ shards = collect_well_shard_paths('{DATA_ROOT}', 'snip_qc', 'verdict', '{wildcar
 concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
+
+
+rule snip_qc_report:
+    """TERMINAL: exclusion-reason fraction over time, all snips + not-dead-only as side-by-side
+    panels in ONE PNG (shared y-axis + legend, for direct comparison). Consumed by nothing — only
+    the `reports` aggregate target requests this. See viz/report_world.md."""
+    input:
+        snip_qc=str(_snipqc_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
+    output:
+        exclusion_reasons_png=str(rule_artifact("snip_qc_report", "exclusion_reasons_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-qc-report \
+          --snip-qc-path "{input.snip_qc}" \
+          --output-exclusion-reasons-png "{output.exclusion_reasons_png}"
+        """

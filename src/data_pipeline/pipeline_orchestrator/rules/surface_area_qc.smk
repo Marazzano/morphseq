@@ -111,3 +111,27 @@ shards = collect_well_shard_paths('{DATA_ROOT}', 'surface_area_qc', 'surface_are
 concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
+
+
+rule surface_area_qc_report:
+    """TERMINAL: area-vs-stage scatter against the reference band + stage-banded quartile gallery.
+    Consumed by nothing — only the `reports` aggregate target requests this. See viz/report_world.md."""
+    input:
+        surface_area_qc=str(_saqc_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
+        mask_geometry=str(rule_artifact("mask_geometry", "mask_geometry", "{experiment}", path_mode=PATH_MODE_MERGED)),
+        stage_predictions=str(rule_artifact("stage_predictions", "stage_predictions", "{experiment}", path_mode=PATH_MODE_MERGED)),
+        snip_inventory=str(rule_artifact("snip_inventory", "snip_inventory", "{experiment}", path_mode=PATH_MODE_MERGED)),
+    output:
+        vs_stage_png=str(rule_artifact("surface_area_qc_report", "vs_stage_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        gallery_png=str(rule_artifact("surface_area_qc_report", "gallery_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks surface-area-qc-report \
+          --surface-area-qc-csv "{input.surface_area_qc}" \
+          --mask-geometry-csv "{input.mask_geometry}" \
+          --stage-predictions-csv "{input.stage_predictions}" \
+          --snip-inventory-csv "{input.snip_inventory}" \
+          --output-root "{DATA_ROOT}" \
+          --output-vs-stage-png "{output.vs_stage_png}" \
+          --output-gallery-png "{output.gallery_png}"
+        """

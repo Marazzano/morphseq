@@ -106,3 +106,23 @@ shards = collect_well_shard_paths('{DATA_ROOT}', 'mask_geometry', 'mask_geometry
 concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
+
+
+rule mask_geometry_report:
+    """TERMINAL: feature histogram grid + area_um2 quartile gallery. Consumed by nothing — only the
+    `reports` aggregate target requests this. See viz/report_world.md."""
+    input:
+        mask_geometry=str(_mg_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
+        snip_inventory=str(rule_artifact("snip_inventory", "snip_inventory", "{experiment}", path_mode=PATH_MODE_MERGED)),
+    output:
+        geometry_feature_grid_png=str(rule_artifact("mask_geometry_report", "geometry_feature_grid_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        area_um2_quartile_gallery_png=str(rule_artifact("mask_geometry_report", "area_um2_quartile_gallery_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks mask-geometry-report \
+          --mask-geometry-csv "{input.mask_geometry}" \
+          --snip-inventory-csv "{input.snip_inventory}" \
+          --output-root "{DATA_ROOT}" \
+          --output-geometry-feature-grid-png "{output.geometry_feature_grid_png}" \
+          --output-area-um2-quartile-gallery-png "{output.area_um2_quartile_gallery_png}"
+        """

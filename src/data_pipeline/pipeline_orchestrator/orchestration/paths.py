@@ -354,6 +354,36 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── OBJECT EXTRACTION — physical_embryo_registry report (TERMINAL) ────────
+    # Embryos-per-well distribution + plate-layout heatmap, over the registry's own merged output.
+    # Consumed by nothing; only the `reports` aggregate target requests it (viz/report_world.md).
+    "physical_embryo_registry_report": {
+        "stage": "object_extraction",
+        "product_dir": "physical_embryo_registry/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,  # EXPERIMENT-grain steps always use this (see comment above EXECUTION_PER_WELL)
+        "artifacts": {
+            "embryos_per_well_png": "{experiment_id}_embryos_per_well.png",
+            "embryos_per_well_plate_png": "{experiment_id}_embryos_per_well_plate.png",
+        },
+    },
+
+    # ── OBJECT EXTRACTION — stage rollup report (TERMINAL) ────────────────────
+    # One HTML+PDF page gathering every object_extraction per-step report PNG (discovered from
+    # the registry by stage; see viz/stage_report.py). Consumed by nothing; requested only by
+    # the `reports` aggregate target. A rollup embeds the leaf reports' PNGs — it renders
+    # nothing itself, so it is a DAG leaf that depends on those leaves.
+    "object_extraction_rollup_report": {
+        "stage": "object_extraction",
+        "product_dir": "report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "index_html": "{experiment_id}_object_extraction_report.html",
+            "index_pdf": "{experiment_id}_object_extraction_report.pdf",
+        },
+    },
+
     # ── OBJECT EXTRACTION — snip inventory ───────────────────────────────────
     # `snip_inventory` is the per-embryo crop table. Fans out per well (one snip_processing job
     # per well), merges to an experiment-level table. Pixel files live beside the per-well shard
@@ -426,6 +456,34 @@ PIPELINE_STEPS: dict[str, dict] = {
                 PATH_MODE_PER_WELL: "{well_id}_mask_geometry.csv",
                 PATH_MODE_MERGED: "{experiment_id}_mask_geometry.csv",
             },
+        },
+    },
+
+    # ── FEATURES — mask_geometry report (TERMINAL) ────────────────────────────
+    # Feature histogram grid (renderer D) + area_um2 value-quartile gallery, over mask_geometry's
+    # own merged output. Consumed by nothing; see viz/report_world.md.
+    "mask_geometry_report": {
+        "stage": "feature_extraction",
+        "product_dir": "mask_geometry/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,  # EXPERIMENT-grain steps always use this (see comment above EXECUTION_PER_WELL)
+        "artifacts": {
+            "geometry_feature_grid_png": "{experiment_id}_geometry_feature_grid.png",
+            "area_um2_quartile_gallery_png": "{experiment_id}_area_um2_quartile_gallery.png",
+        },
+    },
+
+    # ── FEATURES — stage rollup report (TERMINAL) ────────────────────────────
+    # One HTML+PDF page gathering every feature_extraction per-step report PNG. See the
+    # object_extraction_rollup_report comment + viz/stage_report.py.
+    "feature_extraction_rollup_report": {
+        "stage": "feature_extraction",
+        "product_dir": "report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "index_html": "{experiment_id}_feature_extraction_report.html",
+            "index_pdf": "{experiment_id}_feature_extraction_report.pdf",
         },
     },
 
@@ -503,6 +561,20 @@ PIPELINE_STEPS: dict[str, dict] = {
                 PATH_MODE_PER_WELL: "{well_id}_surface_area_qc.csv",
                 PATH_MODE_MERGED: "{experiment_id}_surface_area_qc.csv",
             },
+        },
+    },
+
+    # ── QUALITY CONTROL — surface_area_qc report (TERMINAL) ───────────────────
+    # Area-vs-stage scatter against the reference band (renderer F) + stage-banded quartile
+    # gallery (renderer E). Consumed by nothing; see viz/report_world.md.
+    "surface_area_qc_report": {
+        "stage": "quality_control",
+        "product_dir": "surface_area_qc/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,  # EXPERIMENT-grain steps always use this (see comment above EXECUTION_PER_WELL)
+        "artifacts": {
+            "vs_stage_png": "{experiment_id}_surface_area_qc_vs_stage.png",
+            "gallery_png": "{experiment_id}_surface_area_qc_gallery.png",
         },
     },
 
@@ -589,6 +661,37 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── QUALITY CONTROL — death_detection report (TERMINAL) ───────────────────
+    # Three artifacts, all recomputed from death_detection's own merged inputs
+    # (death_detection_qc flags + fraction_alive trace): whole-experiment survival curve, per-embryo
+    # mortality curtain, called-death time histogram. Consumed by nothing; the worked example in
+    # viz/report_world.md.
+    "death_detection_report": {
+        "stage": "quality_control",
+        "product_dir": "death_detection/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,  # EXPERIMENT-grain steps always use this (see comment above EXECUTION_PER_WELL)
+        "artifacts": {
+            "experiment_png": "{experiment_id}_alive_embryos_experiment.png",
+            "curtain_png": "{experiment_id}_mortality_curtain.png",
+            "death_time_png": "{experiment_id}_death_time_histogram.png",
+        },
+    },
+
+    # ── QUALITY CONTROL — stage rollup report (TERMINAL) ─────────────────────
+    # One HTML+PDF page gathering every quality_control per-step report PNG. See the
+    # object_extraction_rollup_report comment + viz/stage_report.py.
+    "quality_control_rollup_report": {
+        "stage": "quality_control",
+        "product_dir": "report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "index_html": "{experiment_id}_quality_control_report.html",
+            "index_pdf": "{experiment_id}_quality_control_report.pdf",
+        },
+    },
+
     # ── QUALITY CONTROL — snip QC verdict ─────────────────────────────────────
     # The final per-snip operational verdict: use_snip + qc_fail_reasons, ORed from the MVP
     # exclusion flags (death_detection_qc, surface_area_qc, mask_quality_qc).
@@ -609,6 +712,21 @@ PIPELINE_STEPS: dict[str, dict] = {
             "resolved_sources": {
                 PATH_MODE_PER_WELL: "{well_id}_snip_qc_resolved_sources.json",
             },
+        },
+    },
+
+    # ── QUALITY CONTROL — snip_qc report (TERMINAL) ───────────────────────────
+    # Exclusion-reason fraction over time_index, two views (all snips; not-dead snips only) — the
+    # whole-experiment health view. Consumed by nothing; see viz/report_world.md.
+    "snip_qc_report": {
+        "stage": "quality_control",
+        "product_dir": "snip_qc/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,  # EXPERIMENT-grain steps always use this (see comment above EXECUTION_PER_WELL)
+        "artifacts": {
+            # ONE artifact: all-snips + not-dead-only as side-by-side panels sharing a y-axis and
+            # legend, not two separate PNGs — the point is reading both at a glance for comparison.
+            "exclusion_reasons_png": "{experiment_id}_exclusion_reasons_over_time.png",
         },
     },
 }

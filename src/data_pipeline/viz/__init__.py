@@ -5,6 +5,7 @@ For legacy evaluation video rendering (GroundedSAM2 / COCO JSON input), see
 ``segmentation.video_generation``.
 """
 
+from data_pipeline.viz.html_report import HtmlReport
 from data_pipeline.viz.render_well import (
     render_combined_video,
     render_detection_video,
@@ -16,6 +17,7 @@ from data_pipeline.viz.render_snip import (
 )
 
 __all__ = [
+    "HtmlReport",
     "render_combined_video",
     "render_detection_video",
     "render_segmentation_video",

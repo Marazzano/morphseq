@@ -115,6 +115,18 @@ def cmd_apply_position_to_well_mapping(args: argparse.Namespace) -> None:
 
 
 def cmd_materialize_stitched(args: argparse.Namespace) -> None:
+    # Function-local: materialize_stitched_images.py imports torch at module level. This is a
+    # DELIBERATE GPU compute dependency, not incidental — LoG focus-stacking (log_focus.py) runs
+    # a real conv2d over the Z-stack and is intentionally torch-accelerated; that isn't going away.
+    # Deferred purely so `tasks.py` (imported once, module-wide, by every Snakemake rule) stays
+    # importable in envs that don't need this specific command — orchestration/contract code has
+    # no business requiring torch just to dispatch. This command itself still runs on the model
+    # side once the pipeline/backend split (spec Phases 2-3) gives it a proper backend env; it does
+    # not become torch-free.
+    from data_pipeline.acquisition.metadata_ingest.stitched_index.materialize_stitched_images import (
+        materialize_stitched_images,
+    )
+
     materialize_stitched_images(
         experiment=args.experiment,
         microscope=args.microscope,
@@ -457,6 +469,19 @@ def cmd_validate_mask_geometry(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_mask_geometry_report(args: argparse.Namespace) -> None:
+    """Build the mask_geometry TERMINAL report (feature histogram grid + area quartile gallery)."""
+    from data_pipeline.feature_extraction.mask_geometry.report import build_mask_geometry_report
+
+    build_mask_geometry_report(
+        mask_geometry_csv=args.mask_geometry_csv,
+        snip_inventory_csv=args.snip_inventory_csv,
+        output_root=args.output_root,
+        output_geometry_feature_grid_png=args.output_geometry_feature_grid_png,
+        output_area_um2_quartile_gallery_png=args.output_area_um2_quartile_gallery_png,
+    )
+
+
 def cmd_curvature_metrics(args: argparse.Namespace) -> None:
     from data_pipeline.feature_extraction.curvature_metrics.entrypoint import run_curvature_metrics
 
@@ -648,6 +673,21 @@ def cmd_validate_surface_area_qc(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_surface_area_qc_report(args: argparse.Namespace) -> None:
+    """Build the surface_area_qc TERMINAL report (area-vs-stage scatter + stage-banded gallery)."""
+    from data_pipeline.quality_control.surface_area_qc.report import build_surface_area_qc_report
+
+    build_surface_area_qc_report(
+        surface_area_qc_csv=args.surface_area_qc_csv,
+        mask_geometry_csv=args.mask_geometry_csv,
+        stage_predictions_csv=args.stage_predictions_csv,
+        snip_inventory_csv=args.snip_inventory_csv,
+        output_root=args.output_root,
+        output_vs_stage_png=args.output_vs_stage_png,
+        output_gallery_png=args.output_gallery_png,
+    )
+
+
 def cmd_mask_quality_qc(args: argparse.Namespace) -> None:
     """Compute the per-well mask_quality_qc shard. Thin dispatcher; logic lives in the product."""
     from data_pipeline.quality_control.mask_quality_qc.entrypoint import run_mask_quality_qc
@@ -746,6 +786,19 @@ def cmd_death_detection(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_death_detection_report(args: argparse.Namespace) -> None:
+    """Build the death_detection TERMINAL report (survival curve + mortality curtain + death-time hist)."""
+    from data_pipeline.quality_control.death_detection.report import build_death_detection_report
+
+    build_death_detection_report(
+        death_detection_qc_csv=args.death_detection_qc_csv,
+        fraction_alive_csv=args.fraction_alive_csv,
+        output_experiment_png=args.output_experiment_png,
+        output_curtain_png=args.output_curtain_png,
+        output_death_time_png=args.output_death_time_png,
+    )
+
+
 def cmd_validate_death_detection_qc(args: argparse.Namespace) -> None:
     """Validate a per-well death_detection_qc shard (snip grain + flags, registry verifier)."""
     import pandas as pd
@@ -824,6 +877,16 @@ def cmd_snip_qc(args: argparse.Namespace) -> None:
         output_csv=args.output_csv,
         resolved_sources=resolved_sources,
         exclusion_flags=exclusion_flags,
+    )
+
+
+def cmd_snip_qc_report(args: argparse.Namespace) -> None:
+    """Build the snip_qc TERMINAL report (exclusion reasons over time, all + not-dead side by side)."""
+    from data_pipeline.quality_control.snip_qc.report import build_snip_qc_report
+
+    build_snip_qc_report(
+        snip_qc_path=args.snip_qc_path,
+        output_exclusion_reasons_png=args.output_exclusion_reasons_png,
     )
 
 
@@ -992,6 +1055,33 @@ def cmd_merge_physical_embryo_registry(args: argparse.Namespace) -> None:
     merged = merge_physical_embryo_registry([pd.read_csv(p) for p in args.inputs])
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(args.output_csv, index=False)
+
+
+def cmd_physical_embryo_registry_report(args: argparse.Namespace) -> None:
+    """Build the physical_embryo_registry TERMINAL report (embryos-per-well dist + plate heatmap)."""
+    from data_pipeline.object_extraction.segmentation.physical_embryo_registry.report import (
+        build_physical_embryo_registry_report,
+    )
+
+    build_physical_embryo_registry_report(
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_embryos_per_well_png=args.output_embryos_per_well_png,
+        output_embryos_per_well_plate_png=args.output_embryos_per_well_plate_png,
+    )
+
+
+def cmd_stage_rollup_report(args: argparse.Namespace) -> None:
+    """Build one stage's TERMINAL rollup page (all that stage's per-step report PNGs, one
+    HTML+PDF). Self-resolves the PNG inputs from the registry (see viz/stage_report.py), so the
+    rule only passes the stage, data root, experiment, and the output HTML path."""
+    from data_pipeline.viz.stage_report import build_stage_rollup_report
+
+    build_stage_rollup_report(
+        args.data_root,
+        args.stage,
+        args.experiment,
+        output_html=args.output_html,
+    )
 
 
 def cmd_validate_latent_embeddings(args: argparse.Namespace) -> None:
@@ -1239,6 +1329,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_mg_validate.add_argument("--output-flag", type=Path, required=True)
     p_mg_validate.set_defaults(func=cmd_validate_mask_geometry)
 
+    p_mg_report = sub.add_parser("mask-geometry-report")
+    p_mg_report.add_argument("--mask-geometry-csv", type=Path, required=True)
+    p_mg_report.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_mg_report.add_argument("--output-root", type=Path, required=True)
+    p_mg_report.add_argument("--output-geometry-feature-grid-png", type=Path, required=True)
+    p_mg_report.add_argument("--output-area-um2-quartile-gallery-png", type=Path, required=True)
+    p_mg_report.set_defaults(func=cmd_mask_geometry_report)
+
     # ── feature products that share the mask-derived shape (snip_inventory + frame_masks + ...) ──
     for verb, fn in (("curvature-metrics", cmd_curvature_metrics), ("pose-kinematics", cmd_pose_kinematics)):
         p = sub.add_parser(verb)
@@ -1305,6 +1403,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_saqc.add_argument("--output-csv", type=Path, required=True)
     p_saqc.set_defaults(func=cmd_surface_area_qc)
 
+    p_saqc_report = sub.add_parser("surface-area-qc-report")
+    p_saqc_report.add_argument("--surface-area-qc-csv", type=Path, required=True)
+    p_saqc_report.add_argument("--mask-geometry-csv", type=Path, required=True)
+    p_saqc_report.add_argument("--stage-predictions-csv", type=Path, required=True)
+    p_saqc_report.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_saqc_report.add_argument("--output-root", type=Path, required=True)
+    p_saqc_report.add_argument("--output-vs-stage-png", type=Path, required=True)
+    p_saqc_report.add_argument("--output-gallery-png", type=Path, required=True)
+    p_saqc_report.set_defaults(func=cmd_surface_area_qc_report)
+
     p_mqqc = sub.add_parser("mask-quality-qc")
     p_mqqc.add_argument("--snip-inventory-csv", type=Path, required=True)
     p_mqqc.add_argument("--frame-masks-csv", type=Path, required=True)
@@ -1338,6 +1446,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_dd.add_argument("--output-death-event-csv", type=Path, required=True)
     p_dd.set_defaults(func=cmd_death_detection)
 
+    p_dd_report = sub.add_parser("death-detection-report")
+    p_dd_report.add_argument("--death-detection-qc-csv", type=Path, required=True)
+    p_dd_report.add_argument("--fraction-alive-csv", type=Path, required=True)
+    p_dd_report.add_argument("--output-experiment-png", type=Path, required=True)
+    p_dd_report.add_argument("--output-curtain-png", type=Path, required=True)
+    p_dd_report.add_argument("--output-death-time-png", type=Path, required=True)
+    p_dd_report.set_defaults(func=cmd_death_detection_report)
+
     for verb, fn in (
         ("validate-death-detection-qc", cmd_validate_death_detection_qc),
         ("validate-death-event", cmd_validate_death_event),
@@ -1363,6 +1479,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_snipqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_snipqc.add_argument("--output-csv", type=Path, required=True)
     p_snipqc.set_defaults(func=cmd_snip_qc)
+
+    p_snipqc_report = sub.add_parser("snip-qc-report")
+    p_snipqc_report.add_argument("--snip-qc-path", type=Path, required=True)
+    p_snipqc_report.add_argument("--output-exclusion-reasons-png", type=Path, required=True)
+    p_snipqc_report.set_defaults(func=cmd_snip_qc_report)
 
     p_fm = sub.add_parser("frame-masks")
     p_fm.add_argument("--frame-inventory-csv", type=Path, required=True)
@@ -1398,6 +1519,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_per_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
     p_per_merge.add_argument("--output-csv", type=Path, required=True)
     p_per_merge.set_defaults(func=cmd_merge_physical_embryo_registry)
+
+    p_per_report = sub.add_parser("physical-embryo-registry-report")
+    p_per_report.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_per_report.add_argument("--output-embryos-per-well-png", type=Path, required=True)
+    p_per_report.add_argument("--output-embryos-per-well-plate-png", type=Path, required=True)
+    p_per_report.set_defaults(func=cmd_physical_embryo_registry_report)
+
+    p_stage_rollup = sub.add_parser("stage-rollup-report")
+    p_stage_rollup.add_argument("--stage", required=True)
+    p_stage_rollup.add_argument("--data-root", type=Path, required=True)
+    p_stage_rollup.add_argument("--experiment", required=True)
+    p_stage_rollup.add_argument("--output-html", type=Path, required=True)
+    p_stage_rollup.set_defaults(func=cmd_stage_rollup_report)
 
     p_le_validate = sub.add_parser("validate-latent-embeddings")
     p_le_validate.add_argument("--input-parquet", type=Path, required=True)
