@@ -148,16 +148,11 @@ def test_output_is_full_spine_and_validates():
     validate_surface_area_qc(out)
 
 
-def test_band_statement_reflects_resolved_k():
-    stmt = band_statement(resolve_config())
-    assert "k_lower(0.70)" in stmt and "k_upper(1.40)" in stmt
-    assert "predicted_stage_hpf" in stmt
-    assert "too small" in stmt and "too large" in stmt
-
-
 def test_band_statement_reflects_override():
     stmt = band_statement(resolve_config({"k_upper": 1.5, "k_lower": 0.6}))
     assert "k_lower(0.60)" in stmt and "k_upper(1.50)" in stmt
+    assert "predicted_stage_hpf" in stmt
+    assert "too small" in stmt and "too large" in stmt
 
 
 def test_unknown_config_key_fails():

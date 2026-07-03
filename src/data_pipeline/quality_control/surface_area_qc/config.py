@@ -1,9 +1,16 @@
 """surface_area_qc config — defaults, run-override resolution, and the self-documenting band.
 
-Canonical thresholds are ``k_upper=1.4`` / ``k_lower=0.7`` (what actually runs). The legacy
+Canonical thresholds are ``k_upper=1.4`` / ``k_lower=0.9`` (what actually runs). The legacy
 1.2/0.9 signature defaults were stale and are NOT carried forward. On resolution the product
 prints a plain-language statement of the active band so its meaning is never reverse-engineered
 from code (see feature_world.md surface_area_qc; a test asserts the statement).
+
+``k_lower`` was raised 0.7 -> 0.8 -> 0.9 on 2026-07-02: area alone cannot separate bad (yolk-only)
+SAM2 masks from real, small/thin embryos, so this is a deliberate, imperfect tradeoff, not a full
+fix. Chosen to clear the round-blob population out of the passing bands (verified empirically),
+at the explicit cost of also losing real thin/dorsal-pose embryos (accepted: less information
+content than a bad mask, per product call). See
+docs/refactors/streamline-snakemake/target/specs/tech_debt/surface_area_qc_pose_confound.md.
 """
 
 from __future__ import annotations
@@ -16,7 +23,7 @@ SURFACE_AREA_QC_DEFAULTS: dict = {
     "area_column": "area_um2",
     "stage_column": "predicted_stage_hpf",
     "k_upper": 1.4,  # flag when area_um2 > k_upper * p95 (too large)
-    "k_lower": 0.7,  # flag when area_um2 < k_lower * p5  (too small)
+    "k_lower": 0.9,  # flag when area_um2 < k_lower * p5  (too small)
     "missing_reference_policy": "fail",  # fail | (future) documented fallback
     "missing_area_policy": "fail",       # fail | (future) documented flag behavior
     "missing_stage_policy": "fail",      # fail loud — no stage-free band in MVP
