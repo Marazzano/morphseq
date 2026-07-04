@@ -7,7 +7,8 @@ Provides seed detections for SAM2 mask propagation.
 Key Functions:
     - load_groundingdino_model: Initialize model from config
     - detect_embryos: Run detection on a single image
-    - filter_detections: Apply confidence and IoU thresholding
+    - filter_detections: Remove duplicate detections via NMS (IoU thresholding only;
+      confidence gating happens at detect_embryos via box_threshold)
     - select_seed_frame: Choose best frame for SAM2 initialization
 
 Example Usage:
@@ -31,10 +32,9 @@ Example Usage:
         text_threshold=0.25
     )
 
-    # Filter high-quality detections
+    # Remove duplicates (confidence already gated by box_threshold above)
     filtered = filter_detections(
         detections,
-        confidence_threshold=0.45,
         iou_threshold=0.5
     )
     ```
@@ -240,19 +240,20 @@ def calculate_iou(box1: List[float], box2: List[float]) -> float:
 
 def filter_detections(
     detections: List[Dict],
-    confidence_threshold: float = 0.45,
     iou_threshold: float = 0.5
 ) -> List[Dict]:
     """
-    Filter detections by confidence and remove duplicates via NMS.
+    Remove duplicate detections via NMS.
 
-    Applies:
-    1. Confidence thresholding
-    2. Non-Maximum Suppression (NMS) based on IoU
+    Confidence gating already happened at detection time (``box_threshold`` in
+    ``detect_embryos``); re-applying a second, stricter confidence cutoff here would
+    silently drop real detections that already cleared the detector's own bar (this
+    used to happen with a 0.45 filter on top of a 0.35 ``box_threshold`` gate — see
+    the SAM3 exemplar review's F05 recovery investigation). ``is_kept`` should reflect
+    NMS dedup only; confidence policy lives in one place, ``config.box_threshold``.
 
     Args:
-        detections: List of detection dicts
-        confidence_threshold: Minimum confidence to keep
+        detections: List of detection dicts (already confidence-gated by box_threshold)
         iou_threshold: IoU threshold for duplicate removal
 
     Returns:
@@ -264,18 +265,15 @@ def filter_detections(
         ...     {"box_xyxy": [0.21, 0.21, 0.41, 0.41], "confidence": 0.8, "phrase": "embryo"},
         ...     {"box_xyxy": [0.6, 0.6, 0.8, 0.8], "confidence": 0.85, "phrase": "embryo"},
         ... ]
-        >>> filtered = filter_detections(detections, confidence_threshold=0.7, iou_threshold=0.5)
+        >>> filtered = filter_detections(detections, iou_threshold=0.5)
         >>> len(filtered)  # Should remove the duplicate
         2
     """
-    # Filter by confidence
-    filtered = [d for d in detections if d["confidence"] >= confidence_threshold]
-
-    if not filtered:
+    if not detections:
         return []
 
     # Sort by confidence (descending)
-    filtered = sorted(filtered, key=lambda x: x["confidence"], reverse=True)
+    filtered = sorted(detections, key=lambda x: x["confidence"], reverse=True)
 
     # Non-Maximum Suppression
     keep = []

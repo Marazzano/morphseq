@@ -23,7 +23,7 @@ def test_adapter_marks_kept_and_rejected(monkeypatch):
         {"box_xyxy": [0.1, 0.1, 0.3, 0.3], "confidence": 0.95, "phrase": "embryo"},
         {"box_xyxy": [0.5, 0.5, 0.7, 0.7], "confidence": 0.20, "phrase": "embryo"},
     ]
-    kept = [raw[0]]  # only the high-confidence one survives
+    kept = [raw[0]]  # only one survives filter_detections (stubbed; real fn does IoU/NMS dedup)
 
     monkeypatch.setattr(gd, "detect_embryos", lambda **kw: raw)
     monkeypatch.setattr(gd, "filter_detections", lambda dets, **kw: kept)

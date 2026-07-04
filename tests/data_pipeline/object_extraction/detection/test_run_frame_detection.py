@@ -89,17 +89,23 @@ def test_router_skips_z_stack_planes(monkeypatch):
 
 
 def _stub_inference(monkeypatch):
-    """Frame t0000 has two candidates (one kept, one rejected); t0001 has none."""
+    """Frame t0000 has two candidates (one kept, one rejected as an NMS duplicate); t0001 has none.
+
+    Confidence gating already happened at detect_embryos (box_threshold); filter_detections only
+    does IoU/NMS dedup, so the "rejected" candidate here overlaps the kept one rather than being
+    below some confidence cutoff.
+    """
     def fake_detect_embryos(*, image_path, **kw):
         if str(image_path).endswith("t0000.png"):
             return [
                 {"box_xyxy": [0.1, 0.1, 0.3, 0.3], "confidence": 0.95, "phrase": "embryo"},
-                {"box_xyxy": [0.5, 0.5, 0.7, 0.7], "confidence": 0.20, "phrase": "embryo"},
+                {"box_xyxy": [0.12, 0.12, 0.31, 0.31], "confidence": 0.60, "phrase": "embryo"},
             ]
         return []
 
     def fake_filter(dets, **kw):
-        return [d for d in dets if d["confidence"] >= 0.45]
+        # highest-confidence detection only; the second is an NMS-suppressed duplicate
+        return sorted(dets, key=lambda d: d["confidence"], reverse=True)[:1]
 
     monkeypatch.setattr(gd, "detect_embryos", fake_detect_embryos)
     monkeypatch.setattr(gd, "filter_detections", fake_filter)

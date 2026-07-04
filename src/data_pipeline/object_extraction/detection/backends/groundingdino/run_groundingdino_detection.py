@@ -1,7 +1,9 @@
 """GroundingDINO backend adapter — native model output → shared frame_detections rows.
 
-This is the seam where GroundingDINO config (``box_threshold``, ``text_threshold``, confidence / NMS
-policy, prompt) becomes the shared ``is_kept`` outcome. Inference is REUSED verbatim from
+This is the seam where GroundingDINO config (``box_threshold``, ``text_threshold``, NMS policy,
+prompt) becomes the shared ``is_kept`` outcome. Confidence gating happens once, at ``box_threshold``
+in ``detect_embryos``; ``filter_detections`` only does IoU/NMS dedup. Inference is REUSED verbatim
+from
 ``detection/backends/groundingdino/gdino_detection.py`` (``detect_embryos`` / ``filter_detections``) —
 this module does not re-implement model inference.
 
@@ -85,7 +87,6 @@ def detect_frame(
     )
     kept = filter_detections(
         raw,
-        confidence_threshold=config.confidence_threshold,
         iou_threshold=config.iou_threshold,
     )
 
