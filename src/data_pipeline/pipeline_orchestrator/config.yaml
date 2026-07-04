@@ -104,7 +104,6 @@ segmentation_and_tracking:
     text_prompt: "individual embryo"
     box_threshold: 0.35
     text_threshold: 0.25
-    confidence_threshold: 0.45
     iou_threshold: 0.5
     config_path: ""
     weights_path: ""

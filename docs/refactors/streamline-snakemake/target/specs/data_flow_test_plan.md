@@ -271,3 +271,34 @@ snapshot), since that doc is the live "where are we now" anchor.
   ladder.
 - **Numeric-regression gate (Keyence Stage D):** out of scope for this plan (byte/numeric diff vs.
   legacy stitch is a separate effort, per `current_state_and_next_steps.md`).
+
+---
+
+## 7. Current full-experiment GPU check follow-up
+
+The first all-wells/all-timepoints Tier 2 GPU run for experiment `20250912` is intentionally a
+real-data pressure test, not just a throughput check. Before marking this check green, record the
+final Snakemake outcome and the complete failed-well/timepoint list from job `21967281`.
+
+Known issue discovered during the run:
+
+- `frame_masks_per_well` can fail after CUDA SAM2 propagation with:
+  `ValueError: frame_masks bbox x bounds outside image`.
+- Initial observed examples include `20250912_D05_BF_t0079_m0000`,
+  `20250912_A05_BF_t0083_m0000`, `20250912_B06_BF_t0098_m0000`,
+  `20250912_D04_BF_t0025_m0000`, `20250912_F06_BF_t0079_m0000`,
+  `20250912_D10_BF_t0095_m0000`, and `20250912_F05_BF_t0105_m0000`.
+- Memory was high but not the observed failure mode: cgroup fail counts were still zero when checked,
+  while the bbox validation failures repeated across wells.
+
+Required follow-up for this check:
+
+1. Let the `--keep-going` run finish far enough to collect the complete set of
+   `frame_masks_per_well` failures.
+2. Diagnose whether the out-of-bounds boxes originate in detection coordinates, image-shape metadata,
+   SAM2 mask bounding-box extraction, or post-mask validation.
+3. Fix the coordinate/bbox handling at the owning stage instead of relaxing validation silently.
+4. Re-run at least the failed wells/timepoints on GPU, then re-run the Tier 2 aggregate target far
+   enough to prove those failures are cleared.
+5. Record the fix in the findings/change log using the reporting contract above before marking the
+   full-experiment GPU check green.
