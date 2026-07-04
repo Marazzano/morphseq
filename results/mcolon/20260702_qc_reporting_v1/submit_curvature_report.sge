@@ -1,0 +1,34 @@
+#!/bin/bash
+# SGE submission for the QC/feature review index build (20250912).
+#
+# The curvature_metrics report recomputes a geodesic centerline + B-spline curvature per snip across
+# the whole experiment — CPU-bound (Dijkstra + spline fit per mask), so we fan it across 50 slots.
+# CURVATURE_REPORT_WORKERS tells the report's process pool how many workers to spawn.
+#
+# Submit from results/mcolon/20260702_qc_reporting_v1:
+#   qsub submit_curvature_report.sge
+#$ -N curvature_report
+#$ -cwd
+#$ -q trapnell-short.q
+#$ -l mfree=4G
+#$ -pe serial 50
+#$ -o curvature_report.$JOB_ID.out
+#$ -e curvature_report.$JOB_ID.err
+
+set -euo pipefail
+
+CONDA_ENV_DIR="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam"
+PYTHON="${CONDA_ENV_DIR}/bin/python"
+REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs"
+
+export PYTHONPATH="${REPO_ROOT}/src:${PYTHONPATH:-}"
+export CURVATURE_REPORT_WORKERS="${NSLOTS:-50}"
+# Keep each worker single-threaded so the process pool — not nested BLAS threads — uses the slots.
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+
+echo "=== curvature review index build - $(date) on $(hostname) ==="
+echo "NSLOTS=${NSLOTS:-<unset>}  CURVATURE_REPORT_WORKERS=${CURVATURE_REPORT_WORKERS}"
+
+"${PYTHON}" "${REPO_ROOT}/results/mcolon/20260702_qc_reporting_v1/build_review_index.py"
+
+echo "=== curvature review index build FINISHED - $(date) - exit $? ==="

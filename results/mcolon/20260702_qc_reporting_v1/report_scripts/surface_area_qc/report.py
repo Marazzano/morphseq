@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from data_pipeline.quality_control.reporting import SURFACE_AREA_QC_REPORT_SPEC
+from data_pipeline.quality_control.surface_area_qc.config import resolve_config
 from data_pipeline.quality_control.surface_area_qc.reference import (
     interpolate_reference_band,
     load_packaged_surface_area_reference,
@@ -21,8 +22,8 @@ from data_pipeline.viz.reporting import plot_metric_vs_reference, render_quartil
 
 from .._loaders import merged, snip_image_paths
 
-# Must match src/data_pipeline/quality_control/surface_area_qc/config.py SURFACE_AREA_QC_DEFAULTS.
-SA_K_LOWER, SA_K_UPPER = 0.9, 1.4
+_SA_CONFIG = resolve_config()
+SA_K_LOWER, SA_K_UPPER = _SA_CONFIG.k_lower, _SA_CONFIG.k_upper
 
 
 def _metrics() -> pd.DataFrame:
