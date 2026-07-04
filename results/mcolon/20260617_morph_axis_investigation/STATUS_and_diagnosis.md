@@ -6,6 +6,26 @@ over developmental time.
 
 ---
 
+## 0. Open questions (require further investigation)
+
+- **The 30 hpf continuity dip.** b9d2 reads discrete at 24 hpf and 48 hpf but
+  **continuous at 30 hpf under EVERY knob setting** — including "valley alone".
+  At 30 hpf `valley_p = 1.0`, i.e. the density gap detector finds *no gap at all*,
+  so this is not the rule suppressing a visible gap; the gap genuinely isn't there
+  in that bin. Two competing readings, unresolved:
+    1. **Transient biology** — CE/HTA morphology momentarily converges mid-transition
+       (~30 hpf) before re-separating by 48 hpf. A fate split need not be monotonic.
+    2. **Bin artifact** — the 30 hpf bin may be underpowered (small n), mis-staged
+       (embryos really 24/34 smeared in), or the 4-hpf bin edge lands badly.
+  Not yet distinguished. To settle: compare n_group at 30 hpf vs other bins, test
+  bin-edge shifts / a rolling window, and eyeball the 30 hpf scatter directly.
+
+- **Stage 1 "differs from WT" has NO plots yet.** See §3 — the foundational question
+  (is a feature even different from wildtype?) is computed but never visualized. This
+  should be generated before trusting any downstream discrete/continuous call.
+
+---
+
 ## 1. Implementation state (what is built, on disk, in this directory)
 
 The six-module framework from the design spec is **built and the synthetic gate
@@ -59,6 +79,17 @@ Per hpf: the pooled mutant cloud, **MAD-whitened** (`normalize_shape`), colored 
 phenotype label, with a `continuous`/`DISCRETE` badge and `valley / p / n`.
 
 ### What it does NOT show (the honest gaps)
+0. **Stage 1 "differs from WT" has NO plot at all — the biggest missing piece.**
+   `distribution_shift.py` has zero plotting code. The foundational question of the
+   whole tree — *is a given feature even different from wildtype?* — surfaces only as
+   a p-value in a CSV (`shift_wasserstein_p`, `shift_js_p`) and a coarse
+   "wildtype-like" badge. There is **no figure** showing, per feature, how the mutant
+   distribution sits against the WT distribution (and its matched-N null band). Every
+   downstream discrete/continuous call gates on this step, yet a human cannot eyeball
+   whether the gate fired correctly. **This must be generated before trusting any
+   downstream result.** Minimum: per (gene × feature × hpf), overlaid mutant vs WT
+   distributions with the shift statistic + null band annotated; ideally a
+   feature-vs-hpf trajectory of the shift p-value with the "differs" threshold marked.
 1. **The Stage-2 statistics over time are not plotted.** valley_depth, MST, and
    Fiedler each drive the call, but only `valley` appears (as one number). You
    cannot currently see MST or Fiedler, or their WT-null bands, across hpf.
