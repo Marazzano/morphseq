@@ -32,6 +32,7 @@ from .parsers import parse_mask_id
 from .parsers import parse_physical_embryo_id
 from .parsers import parse_snip_id
 from .parsers import parse_track_id
+from .parsers import parse_well_row_col
 from .parsers import split_well_id
 from .parsers import track_index_to_embryo_index
 from .validators import normalize_well_index
@@ -60,6 +61,7 @@ __all__ = [
     "parse_physical_embryo_id",
     "parse_snip_id",
     "parse_track_id",
+    "parse_well_row_col",
     "split_well_id",
     "track_index_to_embryo_index",
     # validators

@@ -293,3 +293,21 @@ def split_well_id(well_id: str) -> tuple[str, str]:
     if not experiment_id or not well_index:
         raise ValueError(f"Could not split well_id {well_id!r} into (experiment_id, well_index)")
     return experiment_id, well_index
+
+
+def parse_well_row_col(well_id: str) -> tuple[int, int]:
+    """Decompose a GLOBAL ``well_id`` into zero-based plate ``(row, col)`` grid indices.
+
+    ``"20250912_B11" -> (1, 10)``: row A–H maps to 0–7, column 1–12 maps to 0–11. Composes the
+    other well parsers so grammar lives in exactly one place — ``split_well_id`` strips the
+    experiment prefix and ``validate_well_index`` canonicalizes + range-checks the local label
+    (fails loud on anything outside the 8×12 plate). Callers that need physical plate geometry
+    (e.g. a 96-well heatmap) use this instead of re-parsing the label with ``ord()``.
+    """
+    from data_pipeline.shared.identifiers.validators import validate_well_index
+
+    _, well_index = split_well_id(well_id)
+    canonical = validate_well_index(well_index)  # 'B11' -> validated 'B11'
+    row = ord(canonical[0]) - ord("A")
+    col = int(canonical[1:]) - 1
+    return row, col

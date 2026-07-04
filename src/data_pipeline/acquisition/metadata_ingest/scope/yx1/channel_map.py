@@ -14,6 +14,7 @@ YX1_CHANNEL_MAP = ScopeChannelMap(
     raw_key_to_channel_id={
         "Empty":       "BF",
         "EYES - Dia":  "BF",
+        "BF":          "BF",
         "EYES - GFP":  "GFP",
         "EYES - RFP":  "RFP",
     },
