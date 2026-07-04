@@ -421,12 +421,21 @@ def plot_metric_vs_reference(
     ylabel: str | None = None,
     pass_alpha: float = 0.25,
     fail_alpha: float = 0.45,
+    y_clip_quantile: float | None = 0.975,
+    y_clip_headroom: float = 1.15,
 ) -> Path:
     """Scatter ``metric_col`` vs. a covariate (``x_col``, e.g. stage), with the reference band
     (``reference_lower_col``..``reference_upper_col`` over ``reference_x_col``) drawn as a shaded
     curve. For metrics whose pass/fail threshold is itself a function of another column — a
     single histogram with one fixed cutoff line is misleading for these; this plot shows the
     real time/covariate-dependent judgment instead.
+
+    Extreme outliers (e.g. yolk-only / full-frame SAM2 mask blowups orders of magnitude above the
+    real distribution) otherwise stretch the y-axis and squash the meaningful band into a thin
+    strip. ``y_clip_quantile`` caps the y-axis at that quantile of ``metric_col`` (×
+    ``y_clip_headroom`` for breathing room); points above the cap are NOT dropped — they are pinned
+    to the top edge as upward-pointing markers so they stay visibly "off the chart, way over," and
+    the cap + over-cap count are annotated. Set ``y_clip_quantile=None`` to disable clipping.
     """
     fig, ax = plt.subplots(figsize=(9, 6))
 
@@ -437,10 +446,43 @@ def plot_metric_vs_reference(
     ax.plot(ref[reference_x_col], ref[reference_upper_col], color=PASS_COLOR, linewidth=1, linestyle="--")
 
     fail = df[fail_col].astype(bool)
-    ax.scatter(df.loc[~fail, x_col], df.loc[~fail, metric_col], s=8, color=PASS_COLOR, alpha=pass_alpha, label="pass")
-    ax.scatter(df.loc[fail, x_col], df.loc[fail, metric_col], s=10, color=FAIL_COLOR, alpha=fail_alpha, label="fail")
 
-    ax.set_title(f"{title}\n(n_fail={int(fail.sum())}, n_pass={int((~fail).sum())}, n_total={len(df)})")
+    # Data-driven y-cap so a handful of blowup masks don't flatten the real distribution. Cap on the
+    # metric's own high quantile (across all rows), never below the reference band's top.
+    y_cap = None
+    n_over_cap = 0
+    if y_clip_quantile is not None:
+        metric_vals = pd.to_numeric(df[metric_col], errors="coerce").dropna()
+        if len(metric_vals):
+            band_top = float(pd.to_numeric(ref[reference_upper_col], errors="coerce").max())
+            q_cap = float(metric_vals.quantile(y_clip_quantile)) * y_clip_headroom
+            y_cap = max(q_cap, band_top * y_clip_headroom)
+            n_over_cap = int((metric_vals > y_cap).sum())
+
+    def _draw(mask, *, color, alpha, size, label):
+        x = df.loc[mask, x_col]
+        y = pd.to_numeric(df.loc[mask, metric_col], errors="coerce")
+        ax.scatter(x, y, s=size, color=color, alpha=alpha, label=label)
+        if y_cap is not None:
+            over = y > y_cap
+            if over.any():
+                # Pin over-cap points to the ceiling with an up-arrow so they read as "clipped".
+                ax.scatter(x[over], [y_cap] * int(over.sum()), s=size + 12, color=color,
+                           alpha=min(1.0, alpha + 0.35), marker="^")
+
+    _draw(~fail, color=PASS_COLOR, alpha=pass_alpha, size=8, label="pass")
+    _draw(fail, color=FAIL_COLOR, alpha=fail_alpha, size=10, label="fail")
+
+    if y_cap is not None:
+        # Pin the bottom at (a hair below) the data floor so autoscale doesn't leave dead negative
+        # space — these metrics (areas, counts) are non-negative.
+        metric_min = float(pd.to_numeric(df[metric_col], errors="coerce").min())
+        ax.set_ylim(bottom=min(0.0, metric_min), top=y_cap)
+
+    subtitle = f"n_fail={int(fail.sum())}, n_pass={int((~fail).sum())}, n_total={len(df)}"
+    if n_over_cap:
+        subtitle += f"; {n_over_cap} over-cap (▲ at y={y_cap:.2g})"
+    ax.set_title(f"{title}\n({subtitle})")
     ax.set_xlabel(xlabel or x_col)
     ax.set_ylabel(ylabel or metric_col)
     ax.legend()
@@ -944,6 +986,304 @@ def plot_plate_heatmap(
     fig.colorbar(im, ax=ax, label=cbar_label or value_col, shrink=0.8)
     fig.tight_layout()
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    return output_path
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────────
+# Renderer F2 — well × time survival heatmap (SHARED across three reports)
+# ──────────────────────────────────────────────────────────────────────────────────────────
+def _well_time_survival_grid(
+    df: pd.DataFrame,
+    *,
+    well_col: str,
+    time_col: str,
+    value_col: str,
+) -> "tuple[list[str], np.ndarray, np.ndarray]":
+    """Pivot a long (well, time, value) frame into a dense well × time matrix.
+
+    Returns (well order [sorted], time axis values [sorted], value grid [n_wells x n_times]).
+    Absent (well, time) cells are NaN (drawn as empty), so a well that vanishes mid-run reads as a
+    gap rather than being silently dropped — the honest survival floor, same discipline as
+    death_detection._alive_counts.
+    """
+    wells = sorted(df[well_col].astype(str).unique())
+    times = np.sort(df[time_col].dropna().unique())
+    well_ix = {w: i for i, w in enumerate(wells)}
+    time_ix = {t: j for j, t in enumerate(times)}
+    grid = np.full((len(wells), len(times)), np.nan)
+    for _, r in df.iterrows():
+        t = r[time_col]
+        if pd.isna(t):
+            continue
+        grid[well_ix[str(r[well_col])], time_ix[t]] = r[value_col]
+    return wells, times, grid
+
+
+def _draw_well_survival_axes(
+    ax_lead,
+    ax_heat,
+    *,
+    wells: list[str],
+    times: np.ndarray,
+    grid: np.ndarray,
+    time_label: str,
+    value_label: str,
+    cmap: str,
+    vmin: float | None,
+    vmax: float | None,
+) -> "matplotlib.image.AxesImage":
+    """Draw the two leading annotation columns (starting cohort size + final value) and the
+    well × time heatmap into a pre-made (ax_lead, ax_heat) pair. Returns the heatmap image (for a
+    shared colorbar). Shared by both the global and per-genotype-facet code paths.
+
+    Leading columns are derived from the grid itself so they never disagree with the heatmap:
+      - starting cohort = first non-NaN value along each well's row (baseline the value is measured
+        against — for a count grid this is the starting embryo count; for a fraction grid, 1.0);
+      - final value      = last non-NaN value along each well's row (where the well ended up).
+    """
+    def _first_last(row: np.ndarray) -> "tuple[float, float]":
+        valid = np.where(np.isfinite(row))[0]
+        if valid.size == 0:
+            return (np.nan, np.nan)
+        return (row[valid[0]], row[valid[-1]])
+
+    starts, finals = zip(*(_first_last(grid[i]) for i in range(len(wells)))) if wells else ((), ())
+    lead = np.array([starts, finals], dtype=float).T  # n_wells x 2
+
+    lead_masked = np.ma.masked_invalid(lead)
+    cmap_obj = plt.get_cmap(cmap).copy()
+    cmap_obj.set_bad("#dddddd")
+    ax_lead.imshow(lead_masked, cmap=cmap_obj, aspect="auto", vmin=vmin, vmax=vmax)
+    ax_lead.set_xticks([0, 1], labels=["start", "final"], fontsize=8)
+    ax_lead.set_yticks(range(len(wells)), labels=wells, fontsize=7)
+    for i in range(len(wells)):
+        for j, v in enumerate(lead[i]):
+            if np.isfinite(v):
+                txt = f"{v:g}" if v == int(v) else f"{v:.2g}"
+                ax_lead.text(j, i, txt, ha="center", va="center", fontsize=6, color="white")
+
+    heat_masked = np.ma.masked_invalid(grid)
+    im = ax_heat.imshow(heat_masked, cmap=cmap_obj, aspect="auto", vmin=vmin, vmax=vmax)
+    # Thin the x tick labels so a long time axis stays legible.
+    step = max(1, len(times) // 20)
+    xt = list(range(0, len(times), step))
+    ax_heat.set_xticks(xt, labels=[f"{times[k]:g}" for k in xt], fontsize=7, rotation=90)
+    ax_heat.set_yticks([])  # wells labeled on the leading-column axis
+    ax_heat.set_xlabel(time_label)
+    return im
+
+
+def plot_well_survival_over_time(
+    df: pd.DataFrame,
+    *,
+    time_col: str,
+    value_col: str,
+    title: str,
+    output_path: Path,
+    well_col: str = "well_id",
+    value_label: str | None = None,
+    genotype_col: str | None = None,
+    cmap: str = "viridis",
+    vmin: float | None = None,
+    vmax: float | None = None,
+) -> Path:
+    """Well × time survival heatmap with two leading annotation columns (starting cohort size +
+    final value). SHARED by three reports (DRY): the plot is identical; only what is fed to it
+    differs.
+
+      - physical_embryo_registry_report: value = embryo count per well (death PROXY), time = time_index;
+      - death_detection_report:          value = fraction alive (~persistence_dead_flag), time = time_index;
+      - analysis_ready_report:           value = fraction alive, time = predicted_stage_hpf, faceted by genotype.
+
+    ``df`` is long: one row per (well_col, time_col[, genotype_col]) carrying ``value_col``. When
+    ``genotype_col`` is given, renders a GLOBAL panel (all wells) followed by one panel per genotype
+    (small-multiple facets), mirroring plot_grouped_survival_panel. Otherwise a single global panel.
+
+    ``vmin``/``vmax`` fix the color scale across facets so genotype panels are comparable (pass
+    vmin=0, vmax=1 for a fraction; leave None for a count to autoscale per figure).
+    """
+    value_label = value_label or value_col
+    time_label = time_col
+
+    # Facet groups: the global "(all)" panel always first, then one per genotype if requested.
+    if genotype_col is not None and genotype_col in df.columns:
+        genos = sorted(df[genotype_col].dropna().astype(str).unique())
+        panels: list["tuple[str, pd.DataFrame]"] = [("all genotypes", df)]
+        panels += [(g, df[df[genotype_col].astype(str) == g]) for g in genos]
+    else:
+        panels = [("all wells", df)]
+
+    grids = [
+        (label, *_well_time_survival_grid(sub, well_col=well_col, time_col=time_col, value_col=value_col))
+        for label, sub in panels
+    ]
+    grids = [(label, wells, times, grid) for (label, wells, times, grid) in grids if wells]
+    if not grids:
+        raise ValueError(f"plot_well_survival_over_time: no wells to plot for {value_col!r}.")
+
+    # One row per panel; each row is [leading columns | heatmap] via a nested gridspec. Row height
+    # tracks well count so panels with more wells get more vertical room.
+    total_wells = sum(len(wells) for _, wells, _, _ in grids)
+    fig_h = max(3.0, 0.22 * total_wells + 1.2 * len(grids))
+    fig = plt.figure(figsize=(13, fig_h))
+    outer = fig.add_gridspec(
+        len(grids), 1, height_ratios=[max(1, len(wells)) for _, wells, _, _ in grids], hspace=0.5
+    )
+
+    last_im = None
+    for i, (label, wells, times, grid) in enumerate(grids):
+        inner = outer[i].subgridspec(1, 2, width_ratios=[1, 14], wspace=0.02)
+        ax_lead = fig.add_subplot(inner[0])
+        ax_heat = fig.add_subplot(inner[1])
+        ax_lead.set_title(label, fontsize=10, loc="left")
+        last_im = _draw_well_survival_axes(
+            ax_lead, ax_heat,
+            wells=wells, times=times, grid=grid,
+            time_label=time_label, value_label=value_label,
+            cmap=cmap, vmin=vmin, vmax=vmax,
+        )
+
+    if last_im is not None:
+        fig.colorbar(last_im, ax=fig.axes, label=value_label, shrink=0.6, pad=0.02)
+    fig.suptitle(title, y=0.995)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────────
+# Renderer G — latent 2D projection, dual-colored (analysis_ready)
+# ──────────────────────────────────────────────────────────────────────────────────────────
+def plot_latent_projection_dual(
+    df: pd.DataFrame,
+    latent_cols: list[str],
+    *,
+    continuous_col: str,
+    categorical_col: str,
+    title: str,
+    output_path: Path,
+    categorical_colors: dict[str, str] | None = None,
+    pca_components: int = 30,
+    random_state: int = 0,
+) -> Path:
+    """PCA→UMAP the ``latent_cols`` block once, then draw the SAME 2D embedding twice side by side:
+    left colored by a continuous column (e.g. predicted_stage_hpf), right by a categorical column
+    (e.g. genotype). One shared embedding so the two panels are directly comparable.
+
+    umap/sklearn are imported lazily (heavy deps, and this is a terminal report path).
+    """
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+    import umap
+
+    work = df.dropna(subset=latent_cols).copy()
+    if len(work) < 3:
+        raise ValueError(
+            f"plot_latent_projection_dual: only {len(work)} rows with complete latents "
+            f"({len(latent_cols)} cols) — too few to project."
+        )
+
+    X = StandardScaler().fit_transform(work[latent_cols].to_numpy(dtype=float))
+    n_comp = min(pca_components, X.shape[1], X.shape[0] - 1)
+    X = PCA(n_components=n_comp, random_state=random_state).fit_transform(X)
+    n_neighbors = min(15, len(work) - 1)
+    emb = umap.UMAP(n_neighbors=n_neighbors, random_state=random_state).fit_transform(X)
+    work["_umap_x"], work["_umap_y"] = emb[:, 0], emb[:, 1]
+
+    fig, (ax_c, ax_g) = plt.subplots(1, 2, figsize=(15, 6.5))
+
+    # Left — continuous.
+    sc = ax_c.scatter(
+        work["_umap_x"], work["_umap_y"], c=work[continuous_col].to_numpy(dtype=float),
+        cmap="viridis", s=10, alpha=0.8,
+    )
+    ax_c.set_title(f"colored by {continuous_col}")
+    fig.colorbar(sc, ax=ax_c, label=continuous_col, shrink=0.85)
+
+    # Right — categorical.
+    cats = [c for c in work[categorical_col].astype(str).unique()]
+    for cat in sorted(cats):
+        m = work[categorical_col].astype(str) == cat
+        color = (categorical_colors or {}).get(cat)
+        ax_g.scatter(
+            work.loc[m, "_umap_x"], work.loc[m, "_umap_y"],
+            s=10, alpha=0.8, label=cat, color=color,
+        )
+    ax_g.set_title(f"colored by {categorical_col}")
+    ax_g.legend(markerscale=2, fontsize=8, loc="best", framealpha=0.9)
+
+    for ax in (ax_c, ax_g):
+        ax.set_xlabel("UMAP-1")
+        ax.set_ylabel("UMAP-2")
+
+    fig.suptitle(f"{title}\n(n={len(work)} snips, latents={len(latent_cols)}, PCA={n_comp}→UMAP)")
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    return output_path
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────────
+# Renderer H — grouped survival panel (overlay header + per-group small-multiples)
+# ──────────────────────────────────────────────────────────────────────────────────────────
+def plot_grouped_survival_panel(
+    curves: dict[str, "tuple[np.ndarray, np.ndarray]"],
+    *,
+    title: str,
+    output_path: Path,
+    xlabel: str,
+    ylabel: str,
+    group_colors: dict[str, str] | None = None,
+    n_cols: int = 3,
+) -> Path:
+    """One figure: a TOP overlay row with every group's survival curve layered on shared axes, then
+    a small-multiples GALLERY below — one cell per group, same curve. ``curves`` maps group label ->
+    (x, y). Layout: n_cols columns (default 3); a single group collapses the gallery to one column.
+
+    x is whatever the caller binned on (here predicted_stage_hpf), y is total alive count.
+    """
+    groups = sorted(curves)
+    n = len(groups)
+    gallery_cols = 1 if n <= 1 else n_cols
+    gallery_rows = math.ceil(n / gallery_cols)
+
+    def _color(g: str) -> str | None:
+        return (group_colors or {}).get(g)
+
+    # Row 0 spans full width (the overlay); the gallery grid sits below it.
+    fig = plt.figure(figsize=(5 * gallery_cols, 4 * (gallery_rows + 1)))
+    gs = fig.add_gridspec(gallery_rows + 1, gallery_cols)
+
+    ax_overlay = fig.add_subplot(gs[0, :])
+    for g in groups:
+        x, y = curves[g]
+        ax_overlay.plot(x, y, marker="o", markersize=2, linewidth=1.8, label=g, color=_color(g))
+    ax_overlay.set_title("all genotypes overlaid")
+    ax_overlay.set_xlabel(xlabel)
+    ax_overlay.set_ylabel(ylabel)
+    ax_overlay.set_ylim(bottom=0)
+    ax_overlay.legend(fontsize=8, loc="best", framealpha=0.9)
+
+    for i, g in enumerate(groups):
+        r, c = divmod(i, gallery_cols)
+        ax = fig.add_subplot(gs[r + 1, c])
+        x, y = curves[g]
+        color = _color(g)
+        ax.plot(x, y, marker="o", markersize=2, linewidth=1.8, color=color)
+        ax.fill_between(x, y, alpha=0.12, color=color)
+        ax.set_title(g, fontsize=10)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.set_ylim(bottom=0)
+
+    fig.suptitle(f"{title}\n(n_genotypes={n})", y=0.995)
+    fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
