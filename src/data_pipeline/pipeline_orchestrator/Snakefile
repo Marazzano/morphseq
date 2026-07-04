@@ -56,19 +56,55 @@ if not _ENV_PATH.exists():
     )
 env = yaml.safe_load(_ENV_PATH.read_text())
 
-# Interpreter: pinned by conda ENV NAME and resolved via `conda run -n` (portable; obeys the
-# repo rule "never bare python / conda activate"). RUN is the ONE shell-prefix used by every
-# rule: it activates the env and puts src/ on PYTHONPATH, then you append `-m <module> ...` or
-# a script path. This replaces the per-rule `PYTHONPATH="..." "{PYTHON}"` boilerplate (Win 1).
-CONDA_ENV = str(env["runtime"]["conda_env"])
-CONDA_BASE = str(env["runtime"].get("conda_base", ""))
-CONDA_BIN = f"{CONDA_BASE}/bin/conda" if CONDA_BASE else "conda"
+# Interpreter: RUN is the ONE shell-prefix used by every rule to activate the pipeline (3.10) env
+# and put src/ on PYTHONPATH, then you append `-m <module> ...` or a script path. This replaces
+# the per-rule `PYTHONPATH="..." "{PYTHON}"` boilerplate (Win 1).
+#
+# Two branches, toggled by runtime.runner in env.yaml (default "conda" = today's unchanged
+# behavior). Both coexist during the pixi migration so any machine can revert by editing one key.
+# See docs/refactors/streamline-snakemake/target/specs/mophseq_env_pixi_orchestrator.md, Phase 0.
+RUNNER = str(env["runtime"].get("runner", "conda") or "conda")
 DEVICE = str(env["runtime"].get("device", "cuda"))
 SRC_ROOT = f"{PROJECT_ROOT}:{PROJECT_ROOT}/src"
-RUN = (
-    f"{CONDA_BIN} run -n {CONDA_ENV} --no-capture-output "
-    f'env PYTHONPATH="{SRC_ROOT}" python'
-)
+
+# CONDA_ENV/CONDA_BIN are computed unconditionally (not just when RUNNER == "conda") because
+# MODEL_RUN below ALWAYS uses conda for the legacy-VAE fallback path regardless of which runner
+# schedules the main pipeline stages — the pixi migration's Phase 0 scope is the pipeline env
+# only; legacy-VAE stays conda-run until Phase 3.
+CONDA_ENV = str(env["runtime"].get("conda_env", "") or "")
+CONDA_BASE = str(env["runtime"].get("conda_base", ""))
+CONDA_BIN = f"{CONDA_BASE}/bin/conda" if CONDA_BASE else "conda"
+
+if RUNNER == "pixi":
+    # PYTHONPATH is injected by pixi.toml's [activation.env] (mirrors SRC_ROOT), so it is NOT
+    # repeated here. --manifest-path makes this robust to whatever cwd Snakemake's `shell:` runs
+    # from. Only the torch-free `pipeline` env — GPU stages stay on runner == "conda" until
+    # backends move to their own pixi envs (Phases 2-3); MODEL_RUN below is untouched by this
+    # branch (Phase 3 concern).
+    _PIXI_BIN = str(env["runtime"].get("pixi_bin", "") or "pixi")
+    _PIXI_MANIFEST = str(PROJECT_ROOT / "pixi.toml")
+    RUN = f'{_PIXI_BIN} run --manifest-path "{_PIXI_MANIFEST}" -e pipeline python'
+    # MATERIALIZATION_RUN — the GPU/torch env for materialize_image_product_for_well (ND2 read ->
+    # stitch -> LoG focus-stack). Discovered Phase 0: this rule genuinely needs torch (a deliberate
+    # conv2d, not an incidental import), so it does NOT belong in the torch-free `pipeline` env —
+    # same reasoning as MODEL_RUN below, just resolved via pixi instead of a bare conda env. See
+    # spec §1 "materialization is a THIRD compute zone".
+    MATERIALIZATION_RUN = f'{_PIXI_BIN} run --manifest-path "{_PIXI_MANIFEST}" -e materialization python'
+elif RUNNER == "conda":
+    # Pinned by conda ENV NAME and resolved via `conda run -n` (portable; obeys the repo rule
+    # "never bare python / conda activate").
+    if not CONDA_ENV:
+        raise ValueError('env.yaml runtime.conda_env is required when runtime.runner == "conda"')
+    RUN = (
+        f"{CONDA_BIN} run -n {CONDA_ENV} --no-capture-output "
+        f'env PYTHONPATH="{SRC_ROOT}" python'
+    )
+    # Materialization has no separate conda env of its own today — it lives inside the same
+    # monolithic `segmentation_grounded_sam` env as everything else, so under runner == "conda"
+    # MATERIALIZATION_RUN is just RUN. Only pixi actually splits it into its own env.
+    MATERIALIZATION_RUN = RUN
+else:
+    raise ValueError(f'env.yaml runtime.runner must be "conda" or "pixi", got {RUNNER!r}')
 
 # MODEL_RUN — the Python-3.9 interpreter for model steps whose pickles do not survive 3.10
 # (the legacy VAE encode; see model_input_handoff_contract.md §9). Only FILES cross this line.
@@ -253,7 +289,7 @@ print(f"Project root: {PROJECT_ROOT}")
 print(f"Output root:  {DATA_ROOT}")
 print(f"Inputs root:  {INPUTS_DIR}")
 print(f"Models root:  {MODELS_DIR}")
-print(f"Conda env:    {CONDA_ENV}")
+print(f"Runner:       {RUNNER}" + (f" (conda env: {CONDA_ENV})" if RUNNER == "conda" else ""))
 print(f"Experiments:  {EXPERIMENTS}")
 print(f"Microscope:   {MICROSCOPE}")
 
@@ -310,6 +346,7 @@ include: str(WORKFLOW_DIR / "rules" / "motion_blur_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "death_detection.smk")
 include: str(WORKFLOW_DIR / "rules" / "snip_qc.smk")
 include: str(WORKFLOW_DIR / "rules" / "stage_reports.smk")
+include: str(WORKFLOW_DIR / "rules" / "analysis_ready.smk")
 
 def _configured_wells_for_experiment(experiment: str) -> list[str]:
     for config_key in ("target_wells", "experiment_wells"):
@@ -587,14 +624,16 @@ def _reports_targets(wc=None):
     return targets
 
 
-def _stage_rollup_report_targets(wc=None):
-    # Just the 3 stage rollup pages, for every experiment. Requesting a rollup transitively pulls
-    # its stage's per-step reports (the rollup rule lists them as inputs), so this one list drags
-    # the whole report tier in without enumerating every per-step artifact. Used by `rule all`.
+def _stage_rollup_report_targets(wc=None, *, stages=None):
+    # Stage rollup pages, for every experiment. Requesting a rollup transitively pulls its stage's
+    # per-step reports (the rollup rule lists them as inputs), so this one list drags the whole
+    # report tier in without enumerating every per-step artifact. `stages=None` means every
+    # registered `*_rollup_report` step (used by `rule all`); pass an explicit stage set to scope
+    # it (e.g. the `analysis_ready` target only wants its own rollup, not the whole-pipeline set).
     targets = []
     for exp in EXPERIMENTS:
         for step in PIPELINE_STEPS:
-            if step.endswith("_rollup_report"):
+            if step.endswith("_rollup_report") and (stages is None or PIPELINE_STEPS[step]["stage"] in stages):
                 for artifact in PIPELINE_STEPS[step]["artifacts"]:
                     targets.append(rule_artifact(step, artifact, exp, path_mode=PATH_MODE_EXPERIMENT))
     return targets
@@ -646,12 +685,28 @@ rule through_line:
         _through_line_targets
 
 
+rule analysis_ready:
+    """The pipeline's final data product — the merged analysis_ready parquet for every discovered
+    experiment (identity spine + every per-snip feature payload + the snip_qc verdict + the
+    per-well plate_metadata broadcast), plus its stage rollup page. Requesting this transitively
+    pulls the entire upstream fan (raw -> ... -> snip_qc -> every feature/QC product), so it is
+    the true end-to-end data target — `rule all` builds through this. See
+    docs/refactors/streamline-snakemake/target/specs/analysis_ready_assemble_plan.md.
+    """
+    input:
+        [
+            str(rule_artifact("analysis_ready", "analysis_ready", exp, path_mode=PATH_MODE_EXPERIMENT))
+            for exp in EXPERIMENTS
+        ],
+        lambda wc: _stage_rollup_report_targets(stages={"analysis_ready"}),
+
+
 rule reports:
-    """TERMINAL aggregate target — every registered `*_report` step's artifacts, for every
-    experiment. Never part of `rule all` or any other rule's input: a report is a DAG leaf
-    (viz/report_world.md); this is the only rule that requests one. Run explicitly:
-    `snakemake reports`, or request a single report by its step name, e.g.
-    `snakemake death_detection_report`.
+    """TERMINAL aggregate target — every registered `*_report` step's artifacts (including every
+    stage rollup, analysis_ready's included), for every experiment. A report is a DAG leaf
+    (viz/report_world.md); this is the only rule that requests one directly, though `rule all`
+    also pulls it in as part of the end-to-end target. Request a single report by its step name,
+    e.g. `snakemake death_detection_report`.
     """
     input:
         _reports_targets
@@ -659,13 +714,14 @@ rule reports:
 
 rule all:
     default_target: True
-    """Default target: build through merged frame_masks for all experiments, plus the stage
-    rollup review pages. The rollups are DAG leaves (they gate nothing), so if one fails the
-    core data products are already built and the graph is preserved; run with --keep-going to
-    let the rest finish. To build the pipeline WITHOUT reports, request the data target directly."""
+    """Default target: the full pipeline end-to-end — every experiment's analysis_ready parquet
+    (which transitively requires every upstream feature/QC product) plus every report and stage
+    rollup page. The rollups/reports are DAG leaves (they gate nothing), so if one fails the core
+    data products are already built and the graph is preserved; run with --keep-going to let the
+    rest finish."""
     input:
-        expand(
-            str(_frame_masks_artifact("{exp}", "frame_masks", path_mode=PATH_MODE_MERGED)),
-            exp=EXPERIMENTS
-        ),
-        _stage_rollup_report_targets,
+        [
+            str(rule_artifact("analysis_ready", "analysis_ready", exp, path_mode=PATH_MODE_EXPERIMENT))
+            for exp in EXPERIMENTS
+        ],
+        _reports_targets,

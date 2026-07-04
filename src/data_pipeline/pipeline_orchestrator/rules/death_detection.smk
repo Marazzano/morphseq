@@ -171,6 +171,7 @@ rule death_detection_report:
         experiment_png=str(rule_artifact("death_detection_report", "experiment_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
         curtain_png=str(rule_artifact("death_detection_report", "curtain_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
         death_time_png=str(rule_artifact("death_detection_report", "death_time_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        well_survival_png=str(rule_artifact("death_detection_report", "well_survival_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks death-detection-report \
@@ -178,5 +179,6 @@ rule death_detection_report:
           --fraction-alive-csv "{input.fraction_alive}" \
           --output-experiment-png "{output.experiment_png}" \
           --output-curtain-png "{output.curtain_png}" \
-          --output-death-time-png "{output.death_time_png}"
+          --output-death-time-png "{output.death_time_png}" \
+          --output-well-survival-png "{output.well_survival_png}"
         """

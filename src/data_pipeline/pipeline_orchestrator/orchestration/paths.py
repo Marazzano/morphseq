@@ -365,6 +365,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         "artifacts": {
             "embryos_per_well_png": "{experiment_id}_embryos_per_well.png",
             "embryos_per_well_plate_png": "{experiment_id}_embryos_per_well_plate.png",
+            "embryos_per_well_over_time_png": "{experiment_id}_embryos_per_well_over_time.png",
         },
     },
 
@@ -499,6 +500,21 @@ PIPELINE_STEPS: dict[str, dict] = {
                 PATH_MODE_PER_WELL: "{well_id}_curvature_metrics.csv",
                 PATH_MODE_MERGED: "{experiment_id}_curvature_metrics.csv",
             },
+        },
+    },
+
+    # ── FEATURES — curvature_metrics report (TERMINAL) ────────────────────────
+    # Feature histogram grid (renderer D) + baseline_deviation_normalized value-quartile gallery
+    # with the geodesic spine overlaid (renderer E+overlay). Consumed by nothing; see
+    # viz/report_world.md.
+    "curvature_metrics_report": {
+        "stage": "feature_extraction",
+        "product_dir": "curvature_metrics/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,  # EXPERIMENT-grain steps always use this (see comment above EXECUTION_PER_WELL)
+        "artifacts": {
+            "feature_grid_png": "{experiment_id}_curvature_feature_grid.png",
+            "gallery_png": "{experiment_id}_curvature_centerline_gallery.png",
         },
     },
 
@@ -675,6 +691,7 @@ PIPELINE_STEPS: dict[str, dict] = {
             "experiment_png": "{experiment_id}_alive_embryos_experiment.png",
             "curtain_png": "{experiment_id}_mortality_curtain.png",
             "death_time_png": "{experiment_id}_death_time_histogram.png",
+            "well_survival_png": "{experiment_id}_well_survival_over_time.png",
         },
     },
 
@@ -727,6 +744,54 @@ PIPELINE_STEPS: dict[str, dict] = {
             # ONE artifact: all-snips + not-dead-only as side-by-side panels sharing a y-axis and
             # legend, not two separate PNGs — the point is reading both at a glance for comparison.
             "exclusion_reasons_png": "{experiment_id}_exclusion_reasons_over_time.png",
+        },
+    },
+
+    # ── ANALYSIS READY — the final merged analysis table ──────────────────────
+    # OPTIONAL downstream product (snip_qc stays the proven through-line terminal). One row per
+    # snip_id: the identity spine + every per-snip feature payload + the snip_qc verdict + the
+    # per-well plate_metadata broadcast by well_id. Merged-level fan-in join, no per-well shard.
+    "analysis_ready": {
+        "stage": "analysis_ready",
+        "product_dir": "analysis_ready",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,  # EXPERIMENT-grain steps always use this sentinel
+        "artifacts": {
+            "analysis_ready": {
+                PATH_MODE_EXPERIMENT: "{experiment_id}_analysis_ready.parquet",
+            },
+        },
+    },
+
+    # ── ANALYSIS READY — report (TERMINAL) ────────────────────────────────────
+    # The ONE step whose input surface is the whole joined DAG (embeddings + plate_metadata +
+    # predicted_stage_hpf + genotype), so genotype/stage-colored PCA belongs here. Consumed by
+    # nothing; see viz/report_world.md. Three artifacts: side-by-side latent PCA/UMAP, the
+    # experiment survival curve over predicted_stage_hpf, and the per-genotype survival panel.
+    "analysis_ready_report": {
+        "stage": "analysis_ready",
+        "product_dir": "analysis_ready/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "latent_projection_png": "{experiment_id}_latent_projection.png",
+            "survival_over_stage_png": "{experiment_id}_survival_over_stage.png",
+            "genotype_survival_panel_png": "{experiment_id}_genotype_survival_panel.png",
+            "well_survival_over_stage_png": "{experiment_id}_well_survival_over_stage.png",
+        },
+    },
+
+    # ── ANALYSIS READY — stage rollup (TERMINAL) ──────────────────────────────
+    # One HTML+PDF page gathering every analysis_ready per-step report PNG (today just
+    # analysis_ready_report's 4 artifacts) — same pattern as the other 3 stage rollups.
+    "analysis_ready_rollup_report": {
+        "stage": "analysis_ready",
+        "product_dir": "report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "index_html": "{experiment_id}_analysis_ready_report.html",
+            "index_pdf": "{experiment_id}_analysis_ready_report.pdf",
         },
     },
 }

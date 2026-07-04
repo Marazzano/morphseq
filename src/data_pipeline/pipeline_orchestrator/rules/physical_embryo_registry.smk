@@ -116,17 +116,24 @@ rule validate_physical_embryo_registry:
 
 
 rule physical_embryo_registry_report:
-    """TERMINAL: embryos-per-well distribution + plate heatmap. Consumed by nothing — only the
-    `reports` aggregate target requests this. See viz/report_world.md."""
+    """TERMINAL: embryos-per-well distribution + plate heatmap + embryos-per-well OVER TIME (death
+    proxy). Consumed by nothing — only the `reports` aggregate target requests this. Reads the
+    merged frame_masks (sibling object_extraction artifact) for the per-frame presence that the
+    animal-grain registry table lacks; both inputs are object_extraction, so this stays a stage-local
+    leaf. See viz/report_world.md."""
     input:
         registry=str(_registry_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
+        frame_masks=str(_frame_masks_artifact("{experiment}", "frame_masks", path_mode=PATH_MODE_MERGED)),
     output:
         embryos_per_well_png=str(rule_artifact("physical_embryo_registry_report", "embryos_per_well_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
         embryos_per_well_plate_png=str(rule_artifact("physical_embryo_registry_report", "embryos_per_well_plate_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        embryos_per_well_over_time_png=str(rule_artifact("physical_embryo_registry_report", "embryos_per_well_over_time_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks physical-embryo-registry-report \
           --physical-embryo-registry-csv "{input.registry}" \
+          --frame-masks-csv "{input.frame_masks}" \
           --output-embryos-per-well-png "{output.embryos_per_well_png}" \
-          --output-embryos-per-well-plate-png "{output.embryos_per_well_plate_png}"
+          --output-embryos-per-well-plate-png "{output.embryos_per_well_plate_png}" \
+          --output-embryos-per-well-over-time-png "{output.embryos_per_well_over_time_png}"
         """

@@ -17,7 +17,6 @@ from data_pipeline.acquisition.metadata_ingest.scope.shared.apply_position_to_we
     apply_position_to_well_mapping,
 )
 from data_pipeline.acquisition.metadata_ingest.position_well_mapping import validate_position_well_mapping
-from data_pipeline.acquisition.metadata_ingest.stitched_index.materialize_stitched_images import materialize_stitched_images
 from data_pipeline.acquisition.metadata_ingest.well_discovery.discover_wells_from_scope_metadata import (
     discover_wells_from_scope_metadata,
 )
@@ -510,6 +509,20 @@ def cmd_validate_curvature_metrics(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_curvature_metrics_report(args: argparse.Namespace) -> None:
+    """Build the curvature_metrics TERMINAL report (feature histogram grid + spine-overlay gallery)."""
+    from data_pipeline.feature_extraction.curvature_metrics.report import build_curvature_metrics_report
+
+    build_curvature_metrics_report(
+        curvature_metrics_csv=args.curvature_metrics_csv,
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        output_root=args.output_root,
+        output_feature_grid_png=args.output_feature_grid_png,
+        output_gallery_png=args.output_gallery_png,
+    )
+
+
 def cmd_pose_kinematics(args: argparse.Namespace) -> None:
     from data_pipeline.feature_extraction.pose_kinematics.entrypoint import run_pose_kinematics
 
@@ -796,6 +809,38 @@ def cmd_death_detection_report(args: argparse.Namespace) -> None:
         output_experiment_png=args.output_experiment_png,
         output_curtain_png=args.output_curtain_png,
         output_death_time_png=args.output_death_time_png,
+        output_well_survival_png=args.output_well_survival_png,
+    )
+
+
+def cmd_analysis_ready(args: argparse.Namespace) -> None:
+    """Build the analysis_ready merged-level fan-in join (OPTIONAL downstream product)."""
+    from data_pipeline.analysis_ready.entrypoint import run_analysis_ready
+
+    run_analysis_ready(
+        curvature_csv=args.curvature_metrics_csv,
+        stage_predictions_csv=args.stage_predictions_csv,
+        mask_geometry_csv=args.mask_geometry_csv,
+        pose_kinematics_csv=args.pose_kinematics_csv,
+        fraction_alive_csv=args.fraction_alive_csv,
+        latents_parquet=args.latents_parquet,
+        snip_qc_parquet=args.snip_qc_parquet,
+        plate_metadata_csv=args.plate_metadata_csv,
+        output_parquet=args.output_parquet,
+    )
+
+
+def cmd_analysis_ready_report(args: argparse.Namespace) -> None:
+    """Build the analysis_ready TERMINAL report (latent projection + survival-over-stage panels)."""
+    from data_pipeline.analysis_ready.report import build_analysis_ready_report
+
+    build_analysis_ready_report(
+        analysis_ready_parquet=args.analysis_ready_parquet,
+        death_event_csv=args.death_event_csv,
+        output_latent_projection_png=args.output_latent_projection_png,
+        output_survival_over_stage_png=args.output_survival_over_stage_png,
+        output_genotype_survival_panel_png=args.output_genotype_survival_panel_png,
+        output_well_survival_over_stage_png=args.output_well_survival_over_stage_png,
     )
 
 
@@ -1058,15 +1103,18 @@ def cmd_merge_physical_embryo_registry(args: argparse.Namespace) -> None:
 
 
 def cmd_physical_embryo_registry_report(args: argparse.Namespace) -> None:
-    """Build the physical_embryo_registry TERMINAL report (embryos-per-well dist + plate heatmap)."""
+    """Build the physical_embryo_registry TERMINAL report (embryos-per-well dist + plate heatmap +
+    embryos-per-well over time death proxy)."""
     from data_pipeline.object_extraction.segmentation.physical_embryo_registry.report import (
         build_physical_embryo_registry_report,
     )
 
     build_physical_embryo_registry_report(
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        frame_masks_csv=args.frame_masks_csv,
         output_embryos_per_well_png=args.output_embryos_per_well_png,
         output_embryos_per_well_plate_png=args.output_embryos_per_well_plate_png,
+        output_embryos_per_well_over_time_png=args.output_embryos_per_well_over_time_png,
     )
 
 
@@ -1363,6 +1411,15 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--output-flag", type=Path, required=True)
         p.set_defaults(func=fn)
 
+    p_cm_report = sub.add_parser("curvature-metrics-report")
+    p_cm_report.add_argument("--curvature-metrics-csv", type=Path, required=True)
+    p_cm_report.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_cm_report.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_cm_report.add_argument("--output-root", type=Path, required=True)
+    p_cm_report.add_argument("--output-feature-grid-png", type=Path, required=True)
+    p_cm_report.add_argument("--output-gallery-png", type=Path, required=True)
+    p_cm_report.set_defaults(func=cmd_curvature_metrics_report)
+
     p_stage = sub.add_parser("stage-predictions")
     p_stage.add_argument("--snip-inventory-csv", type=Path, required=True)
     p_stage.add_argument("--frame-inventory-csv", type=Path, required=True)
@@ -1452,7 +1509,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_dd_report.add_argument("--output-experiment-png", type=Path, required=True)
     p_dd_report.add_argument("--output-curtain-png", type=Path, required=True)
     p_dd_report.add_argument("--output-death-time-png", type=Path, required=True)
+    p_dd_report.add_argument("--output-well-survival-png", type=Path, required=True)
     p_dd_report.set_defaults(func=cmd_death_detection_report)
+
+    p_ar = sub.add_parser("analysis-ready")
+    p_ar.add_argument("--curvature-metrics-csv", type=Path, required=True)
+    p_ar.add_argument("--stage-predictions-csv", type=Path, required=True)
+    p_ar.add_argument("--mask-geometry-csv", type=Path, required=True)
+    p_ar.add_argument("--pose-kinematics-csv", type=Path, required=True)
+    p_ar.add_argument("--fraction-alive-csv", type=Path, required=True)
+    p_ar.add_argument("--latents-parquet", type=Path, required=True)
+    p_ar.add_argument("--snip-qc-parquet", type=Path, required=True)
+    p_ar.add_argument("--plate-metadata-csv", type=Path, required=True)
+    p_ar.add_argument("--output-parquet", type=Path, required=True)
+    p_ar.set_defaults(func=cmd_analysis_ready)
+
+    p_ar_report = sub.add_parser("analysis-ready-report")
+    p_ar_report.add_argument("--analysis-ready-parquet", type=Path, required=True)
+    p_ar_report.add_argument("--death-event-csv", type=Path, required=True)
+    p_ar_report.add_argument("--output-latent-projection-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-survival-over-stage-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-genotype-survival-panel-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-well-survival-over-stage-png", type=Path, required=True)
+    p_ar_report.set_defaults(func=cmd_analysis_ready_report)
 
     for verb, fn in (
         ("validate-death-detection-qc", cmd_validate_death_detection_qc),
@@ -1522,8 +1601,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_per_report = sub.add_parser("physical-embryo-registry-report")
     p_per_report.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_per_report.add_argument("--frame-masks-csv", type=Path, required=True)
     p_per_report.add_argument("--output-embryos-per-well-png", type=Path, required=True)
     p_per_report.add_argument("--output-embryos-per-well-plate-png", type=Path, required=True)
+    p_per_report.add_argument("--output-embryos-per-well-over-time-png", type=Path, required=True)
     p_per_report.set_defaults(func=cmd_physical_embryo_registry_report)
 
     p_stage_rollup = sub.add_parser("stage-rollup-report")

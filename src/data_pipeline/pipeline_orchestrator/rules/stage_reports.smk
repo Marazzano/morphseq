@@ -72,3 +72,18 @@ rule quality_control_rollup_report:
           --stage quality_control --data-root "{DATA_ROOT}" --experiment "{wildcards.experiment}" \
           --output-html "{output.html}"
         """
+
+
+rule analysis_ready_rollup_report:
+    """TERMINAL stage rollup: every analysis_ready per-step report PNG on one HTML+PDF page."""
+    input:
+        lambda wc: _stage_rollup_pngs("analysis_ready", wc.experiment),
+    output:
+        html=_rollup_outputs("analysis_ready")["html"],
+        pdf=_rollup_outputs("analysis_ready")["pdf"],
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks stage-rollup-report \
+          --stage analysis_ready --data-root "{DATA_ROOT}" --experiment "{wildcards.experiment}" \
+          --output-html "{output.html}"
+        """

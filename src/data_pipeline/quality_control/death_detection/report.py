@@ -24,6 +24,7 @@ from data_pipeline.viz.reporting import (
     plot_grouped_traces,
     plot_line,
     plot_metric_histogram,
+    plot_well_survival_over_time,
 )
 
 
@@ -90,6 +91,22 @@ def _experiment_survival(alive_per_well: pd.DataFrame) -> pd.DataFrame:
     return alive_per_well.groupby("time_index")["n_alive"].sum().reset_index()
 
 
+def _fraction_alive_per_well_time(trace: pd.DataFrame) -> pd.DataFrame:
+    """Per (well_id, time_index): FRACTION of embryos alive = mean(~persistence_dead_flag).
+
+    This is the REAL survival signal (persistence flag), distinct from the fraction_alive-cutoff
+    marks used for the mortality curtain. One row per (well_id, time_index) with `frac_alive` in
+    [0, 1], ready for the shared well x time heatmap helper.
+    """
+    t = trace[["well_id", "time_index", "persistence_dead_flag"]].copy()
+    t["alive"] = ~t["persistence_dead_flag"].astype(bool)
+    return (
+        t.groupby(["well_id", "time_index"])["alive"]
+        .mean()
+        .reset_index(name="frac_alive")
+    )
+
+
 def build_death_detection_report(
     *,
     death_detection_qc_csv: Path,
@@ -97,6 +114,7 @@ def build_death_detection_report(
     output_experiment_png: Path,
     output_curtain_png: Path,
     output_death_time_png: Path,
+    output_well_survival_png: Path,
 ) -> list[Path]:
     trace = _trace_with_flags(fraction_alive_csv, death_detection_qc_csv)
     marks = _called_death_marks(trace)  # one row per dead embryo: physical_embryo_id, time_index
@@ -105,7 +123,9 @@ def build_death_detection_report(
     survival = _experiment_survival(alive_per_well)
     survival_overlay = (survival["time_index"], survival["n_alive"], "total alive (experiment)")
 
-    for output_png in (output_experiment_png, output_curtain_png, output_death_time_png):
+    for output_png in (
+        output_experiment_png, output_curtain_png, output_death_time_png, output_well_survival_png,
+    ):
         Path(output_png).parent.mkdir(parents=True, exist_ok=True)
 
     # 1. Whole-experiment survival curve (standalone) — the clearest entry point into this report.
@@ -146,4 +166,17 @@ def build_death_detection_report(
         output_path=output_death_time_png,
         xlabel="called-death time_index",
     )
-    return [experiment, curtain, death_time_hist]
+
+    # 5. Per-well fraction-alive over time_index — the REAL survival heatmap (persistence flag),
+    #    via the shared well x time helper (same plot as registry proxy / analysis_ready stage view).
+    well_survival = plot_well_survival_over_time(
+        _fraction_alive_per_well_time(trace),
+        time_col="time_index",
+        value_col="frac_alive",
+        value_label="fraction alive",
+        title="death_detection — fraction alive per well over time (persistence flag)",
+        output_path=output_well_survival_png,
+        vmin=0.0,
+        vmax=1.0,
+    )
+    return [experiment, curtain, death_time_hist, well_survival]
