@@ -122,4 +122,11 @@ _Archive/
 # Copy env.example.yaml -> env.yaml on each machine; never commit env.yaml.
 src/data_pipeline/pipeline_orchestrator/env.yaml
 
+# SGE / cluster job logs (per-JOB_ID stdout/stderr next to submit scripts).
+src/data_pipeline/pipeline_orchestrator/*.out
+src/data_pipeline/pipeline_orchestrator/*.err
+
+# Repo-root scratch dir (ad-hoc scripts, review images, comparison outputs).
+/tmp/
+
 .vscode/
