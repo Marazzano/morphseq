@@ -12,9 +12,18 @@ Reuses the shared helpers defined in frame_inventory.smk (included before this f
 
 
 rule write_resolved_product_plan_for_well:
-    """Write one resolved product commitment for one well/product_key."""
+    """Write one resolved product commitment for one well/product_key.
+
+    The merged config is a `params:` value, NOT a file `input:`: the resolved plan is the stable,
+    content-guarded artifact that captures only the config fields this well/product needs, and
+    downstream rules depend on THAT plan — not on raw config. Taking config as a file input here
+    would make the config file's mtime a rerun trigger, so any config write (even a no-op rewrite)
+    would invalidate every resolved plan and cascade through the whole DAG. Mirrors how
+    fraction_alive / snip_auxiliary_masks pass config via params. (A genuine config change still
+    propagates: it changes the resolved plan's CONTENT, which re-triggers real downstream work.)"""
     input:
         discovered_wells=DISCOVERED_WELLS_TXT,
+    params:
         config_yaml=str(CONFIG_YAML),
     output:
         resolved_product_plan=str(_resolved_product_plan(
@@ -28,7 +37,7 @@ rule write_resolved_product_plan_for_well:
           --scope "{SCOPE_TOKEN}" \
           --product-key "{wildcards.product_key}" \
           --output-json "{output.resolved_product_plan}" \
-          --config-yaml "{input.config_yaml}"
+          --config-yaml "{params.config_yaml}"
         """
 
 
@@ -60,8 +69,13 @@ rule materialize_image_product_for_well:
             else ""
         ),
     shell:
+        # MATERIALIZATION_RUN, not RUN: this task calls materialize_stitched_images ->
+        # LoG_focus_stacker, a genuine torch/conv2d GPU compute path (Phase 0 finding — see
+        # spec §1 "materialization is a THIRD compute zone"). Under runner == "conda" this is
+        # identical to RUN (materialization has no separate conda env today); under
+        # runner == "pixi" it resolves to the `materialization` pixi env instead of `pipeline`.
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-image-product-for-well \
+        {MATERIALIZATION_RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-image-product-for-well \
           --experiment "{wildcards.experiment}" \
           --well-id "{wildcards.well_id}" \
           --scope "{SCOPE_TOKEN}" \

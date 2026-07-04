@@ -183,6 +183,39 @@ inspect disk — but its name and docstring must announce it as a runtime/disk-s
 `run_well_shard_paths` (planning, pure) vs `collect_well_shard_paths` (runtime, disk) split, stated
 as a rule so it can't be re-broken.
 
+### Config is a `params:` value, never a file `input:` — resolve it into a stable artifact
+The merged run config (`merged_config.yaml`) must **never** appear in a rule's `input:` block. Under
+Snakemake's default `--rerun-triggers`, a file input's **mtime** is a rebuild trigger — so any config
+write (even a content-identical rewrite, which the Snakefile's own merged-config step can emit at
+plan time) restamps the file newer than every already-built artifact and cascades a rebuild through
+the entire downstream DAG. A merged CSV/parquet built yesterday is not stale because the config file
+was touched today.
+
+The rule instead:
+- takes config as a **`params:`** value (`config_yaml=str(CONFIG_YAML)`) and passes it on the command
+  line. A `params` value only triggers a rerun when its **string** changes — and a constant path
+  string never does — so a config touch causes no rebuild. This is how `fraction_alive` and
+  `snip_auxiliary_masks` already consume config.
+- **or**, when the config genuinely selects *what* to build, is fronted by a **resolver rule** that
+  reads config (as a `params:` value) and writes a small, content-guarded *resolved plan* artifact
+  (the `resolved_product_plan` pattern). Downstream rules depend on the **plan**, not on config. A
+  real config change flows through as a change in the plan's **content**, which re-triggers exactly
+  the work that depends on that decision — and nothing else.
+
+> The rule of thumb: raw config in `input:` means "rebuild the world whenever the config file is
+> touched." Config in `params:` (or behind a content-guarded resolved plan) means "rebuild only what
+> the config actually *changed*." Only the second is correct.
+
+**Nuance — the one-time metadata cascade when you fix this.** Moving config from `input:` to `params:`
+(or otherwise editing a resolver rule body) is itself a rule-definition change. Under the default
+`code`/`params`/`input`-set rerun-triggers, Snakemake will re-run that rule once (reason: "Code has
+changed / Params have changed / Set of input files has changed") — and if that rule feeds the DAG,
+that one-time rerun cascades. This is a migration artifact, not the steady state: after the resolver's
+content-guarded outputs regenerate once, the plans are byte-identical and future config touches no
+longer cascade. Absorb the one-time hit deliberately (e.g. a scoped `--rerun-triggers mtime` catch-up
+run, or `snakemake --touch` to bless the existing valid outputs) rather than recomputing expensive
+upstream stages that did not semantically change.
+
 ### Fail loud at contract boundaries; the message names the fix
 Every guard raises with a message that says *what was wrong AND what to do*:
 - unknown step → lists the known steps;
@@ -317,6 +350,7 @@ inventing a new path string or a new id format, a constraint was broken.
 - [ ] Scope-specific code ends at canonical acquired image tiles; nothing after the bundle is microscope-aware.
 - [ ] Snakemake input functions declare expected paths only; they do not live-check files the DAG is meant to build.
 - [ ] Runtime collectors may inspect disk, but their name/docstring says they are runtime/disk-scan helpers.
+- [ ] Merged config is a `params:` value (or behind a content-guarded resolved-plan artifact), never a file `input:` — so a config touch rebuilds only what the config actually changed, not the whole DAG.
 - [ ] `tasks.py` verbs are thin — parse + delegate to the stage module, no stage logic.
 - [ ] Every guard fails loud with a message that names the fix.
 - [ ] Module docstring orients (jobs + why + boundaries) before the code.
