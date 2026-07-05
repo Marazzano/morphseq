@@ -41,6 +41,7 @@ from typing import Callable
 import numpy as np
 from scipy.ndimage import label as ndi_label
 from scipy.sparse.csgraph import connected_components, laplacian, minimum_spanning_tree
+from scipy.spatial import Delaunay, QhullError
 from scipy.spatial.distance import pdist, squareform
 from scipy.stats import gaussian_kde
 
@@ -542,6 +543,124 @@ def conductance(points_2d: np.ndarray, k: int | None = None) -> float:
     cut = float(adj[np.ix_(side, ~side)].sum())  # weight crossing the cut (one direction, symmetric adj)
     phi = cut / denom
     return float(1.0 / (1.0 + phi))
+
+
+# ---------------------------------------------------------------------------
+# Experimental statistic: Delaunay critical connection scale
+# ---------------------------------------------------------------------------
+
+def _delaunay_edges(points_2d: np.ndarray) -> np.ndarray:
+    """Unique undirected edges from a 2-D Delaunay triangulation."""
+    pts = np.asarray(points_2d, dtype=float)
+    n = len(pts)
+    if n < 2:
+        return np.empty((0, 2), dtype=int)
+    if n == 2:
+        return np.array([[0, 1]], dtype=int)
+
+    try:
+        tri = Delaunay(pts)
+    except QhullError:
+        # Degenerate samples can be collinear or duplicate-heavy after bootstrap
+        # resampling. Fall back to all pairwise edges so the statistic remains
+        # defined; the bootstrap null sees the same fallback behavior.
+        return np.array([(i, j) for i in range(n) for j in range(i + 1, n)], dtype=int)
+
+    edges = set()
+    for simplex in tri.simplices:
+        for a, b in ((0, 1), (1, 2), (2, 0)):
+            i, j = int(simplex[a]), int(simplex[b])
+            if i > j:
+                i, j = j, i
+            edges.add((i, j))
+    return np.array(sorted(edges), dtype=int)
+
+
+def _largest_component_fraction(n: int, edges: np.ndarray) -> float:
+    if n == 0:
+        return 0.0
+    parent = np.arange(n)
+    size = np.ones(n, dtype=int)
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, j in edges:
+        ri, rj = find(int(i)), find(int(j))
+        if ri == rj:
+            continue
+        if size[ri] < size[rj]:
+            ri, rj = rj, ri
+        parent[rj] = ri
+        size[ri] += size[rj]
+    return float(size[[find(i) for i in range(n)]].max() / n)
+
+
+def critical_connection_ratio(
+    points_2d: np.ndarray,
+    k: int = 3,
+    target_mass: float = 0.90,
+) -> float:
+    """Alpha-like support-connectivity scale normalized by local spacing.
+
+    Builds a Delaunay edge graph, then asks how long edges must be before one
+    connected component contains at least `target_mass` of the points. The returned
+    statistic is that critical edge length divided by the median kNN local spacing.
+
+    Larger values mean the cloud needs an unusually long bridge to connect, which
+    is the direction expected for separated support. The target-mass criterion
+    keeps a small number of outliers from dominating the score.
+    """
+    pts = np.asarray(points_2d, dtype=float)
+    n = len(pts)
+    if n < 2:
+        return 0.0
+    target_mass = float(np.clip(target_mass, 1.0 / n, 1.0))
+
+    dmat = squareform(pdist(pts))
+    sorted_d = np.sort(dmat, axis=1)
+    k_eff = max(1, min(int(k), n - 1))
+    kth = sorted_d[:, k_eff]
+    positive = kth[kth > 1e-12]
+    if positive.size == 0:
+        return 0.0
+    r_local = float(np.median(positive))
+    if r_local <= 1e-12:
+        return 0.0
+
+    edges = _delaunay_edges(pts)
+    if edges.size == 0:
+        return 0.0
+    edge_lengths = dmat[edges[:, 0], edges[:, 1]]
+    order = np.argsort(edge_lengths)
+    edges = edges[order]
+    edge_lengths = edge_lengths[order]
+
+    parent = np.arange(n)
+    size = np.ones(n, dtype=int)
+    max_size = 1
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for length, edge in zip(edge_lengths, edges):
+        i, j = int(edge[0]), int(edge[1])
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            if size[ri] < size[rj]:
+                ri, rj = rj, ri
+            parent[rj] = ri
+            size[ri] += size[rj]
+            max_size = max(max_size, int(size[ri]))
+        if max_size / n >= target_mass:
+            return float(length / r_local)
+    return float(edge_lengths[-1] / r_local)
 
 
 # ---------------------------------------------------------------------------
