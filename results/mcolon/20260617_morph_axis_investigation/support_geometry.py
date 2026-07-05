@@ -53,6 +53,9 @@ class KDESpec:
     estimator: str = "scipy_gaussian"
     bw_method: object | None = None
     bw_scale: float = 1.0
+    k: int = 10
+    min_factor: float = 0.5
+    max_factor: float = 2.5
 
 
 def scipy_gaussian_kde_spec(
@@ -61,6 +64,22 @@ def scipy_gaussian_kde_spec(
 ) -> KDESpec:
     """Spec for scipy.stats.gaussian_kde, optionally scaling its bandwidth factor."""
     return KDESpec(estimator="scipy_gaussian", bw_method=bw_method, bw_scale=float(bw_scale))
+
+
+def knn_adaptive_kde_spec(
+    k: int = 10,
+    bw_scale: float = 1.0,
+    min_factor: float = 0.5,
+    max_factor: float = 2.5,
+) -> KDESpec:
+    """Spec for a sample-point adaptive KDE with kNN local bandwidths."""
+    return KDESpec(
+        estimator="knn_adaptive",
+        k=int(k),
+        bw_scale=float(bw_scale),
+        min_factor=float(min_factor),
+        max_factor=float(max_factor),
+    )
 
 
 DensityEvaluator = Callable[[np.ndarray], np.ndarray]
@@ -89,6 +108,50 @@ def _scaled_bw_method(bw_method: object | None, bw_scale: float):
     return _bw
 
 
+def _knn_adaptive_evaluator(points_2d: np.ndarray, spec: KDESpec) -> DensityEvaluator:
+    """Sample-point adaptive Gaussian KDE using per-sample kNN bandwidths.
+
+    Each sample point owns its bandwidth. Evaluation locations do not affect
+    bandwidth, so the estimator asks "how much sample-point mass reaches here?"
+    rather than adapting the valley itself.
+    """
+    pts = np.asarray(points_2d, dtype=float)
+    n = len(pts)
+    if n < 2:
+        h = np.ones(n, dtype=float)
+    else:
+        dmat = squareform(pdist(pts))
+        sorted_d = np.sort(dmat, axis=1)
+        k_eff = max(1, min(int(spec.k), n - 1))
+        h = sorted_d[:, k_eff]
+        positive = h[h > 1e-12]
+        fallback = float(np.median(positive)) if positive.size else 1.0
+        h = np.where(h > 1e-12, h, fallback)
+
+    h = h * float(spec.bw_scale)
+    positive = h[h > 1e-12]
+    if positive.size:
+        q10, q90 = np.quantile(positive, [0.10, 0.90])
+        lo = max(float(q10) * float(spec.min_factor), 1e-12)
+        hi = max(float(q90) * float(spec.max_factor), lo)
+        h = np.clip(h, lo, hi)
+    else:
+        h = np.ones_like(h)
+
+    norm = 1.0 / (2.0 * np.pi * h ** 2)
+
+    def _eval(grid_points: np.ndarray) -> np.ndarray:
+        gp = np.asarray(grid_points, dtype=float)
+        if gp.shape[0] != 2:
+            raise ValueError(f"Expected grid_points shape (2, m), got {gp.shape}")
+        diff = gp.T[:, None, :] - pts[None, :, :]
+        scaled_sq = np.sum((diff / h[None, :, None]) ** 2, axis=2)
+        kernels = norm[None, :] * np.exp(-0.5 * scaled_sq)
+        return kernels.mean(axis=1)
+
+    return _eval
+
+
 def make_kde_evaluator(points_2d: np.ndarray, kde: KDESpec | Callable | None = None) -> DensityEvaluator:
     """Build a callable density estimator for already-normalized 2-D points.
 
@@ -109,7 +172,7 @@ def make_kde_evaluator(points_2d: np.ndarray, kde: KDESpec | Callable | None = N
         )
         return lambda grid_points: scipy_kde(grid_points)
     if kde.estimator == "knn_adaptive":
-        raise NotImplementedError("knn_adaptive KDE is reserved for the post-diagnostic phase")
+        return _knn_adaptive_evaluator(pts, kde)
     raise ValueError(f"Unknown KDE estimator: {kde.estimator!r}")
 
 
