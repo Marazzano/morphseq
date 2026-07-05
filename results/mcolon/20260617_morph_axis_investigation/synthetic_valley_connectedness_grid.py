@@ -35,7 +35,10 @@ from scipy.ndimage import label as ndi_label
 RUN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(RUN_DIR))
 
-from support_geometry import compute_support_geometry, normalize_shape  # noqa: E402
+from support_geometry import (  # noqa: E402
+    MIN_COMPONENT_MASS_FRAC, VALLEY_SWEEP_STEPS, compute_support_geometry,
+    evaluate_kde_on_grid, normalize_shape,
+)
 from synthetic_scenarios import SCENARIOS, wt_reference  # noqa: E402
 
 PLOT_DIR = RUN_DIR / "plots"
@@ -45,7 +48,6 @@ N = 40                  # sample size per scenario (mid-range of SAMPLE_SIZES)
 N_RESAMPLE = 200
 RNG_SEED = 7
 GRID = 60
-MIN_MODE_MASS_FRAC = 0.03
 DENS_CMAP = "Blues"
 DENS_CMAP_HI = 0.62
 RING_COLOR = "#B8860B"
@@ -99,15 +101,14 @@ def _disagreement_type(bundle):
     return "agree: continuous", CONTINUOUS_COLOR
 
 
-def _kde_grid_padded(pts, grid=GRID, pad_frac=0.35):
-    from scipy.stats import gaussian_kde
+def _kde_grid_padded(pts, grid=GRID, pad_frac=0.35, *, kde=None):
     xr = np.percentile(pts[:, 0], [1, 99])
     yr = np.percentile(pts[:, 1], [1, 99])
     padx, pady = (xr[1] - xr[0]) * pad_frac, (yr[1] - yr[0]) * pad_frac
     xs = np.linspace(xr[0] - padx, xr[1] + padx, grid)
     ys = np.linspace(yr[0] - pady, yr[1] + pady, grid)
     xx, yy = np.meshgrid(xs, ys)
-    dens = gaussian_kde(pts.T)(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
+    dens = evaluate_kde_on_grid(pts, xx, yy, kde=kde)
     return xx, yy, dens
 
 
@@ -115,19 +116,19 @@ def _count_modes(dens):
     peak = float(dens.max()); total = float(dens.sum())
     if peak <= 0 or total <= 0:
         return 0, None
-    for frac in np.linspace(0.95, 0.05, 25):
+    for frac in np.linspace(0.97, 0.02, VALLEY_SWEEP_STEPS):
         level = frac * peak
         labels, n = ndi_label(dens >= level)
         if n < 2:
             continue
         masses = np.array([dens[labels == k].sum() / total for k in range(1, n + 1)])
-        if int((masses >= MIN_MODE_MASS_FRAC).sum()) >= 2:
-            return int((masses >= MIN_MODE_MASS_FRAC).sum()), level
+        if int((masses >= MIN_COMPONENT_MASS_FRAC).sum()) >= 2:
+            return int((masses >= MIN_COMPONENT_MASS_FRAC).sum()), level
     return 1, 0.5 * peak
 
 
-def _render_kde_cell(ax, pts_norm, wt_norm, sig):
-    xx, yy, dens = _kde_grid_padded(pts_norm)
+def _render_kde_cell(ax, pts_norm, wt_norm, sig, *, kde=None):
+    xx, yy, dens = _kde_grid_padded(pts_norm, kde=kde)
     light_blues = ListedColormap(plt.get_cmap(DENS_CMAP)(np.linspace(0.0, DENS_CMAP_HI, 256)))
     peak = float(dens.max())
     levels = np.linspace(0.06 * peak, peak, 16)
@@ -194,7 +195,7 @@ def _render_vote_table(ax, bundle):
             fontsize=7.6, va="top", ha="left", color=dis_color, fontweight="bold")
 
 
-def main():
+def main(kde=None):
     rng_master = np.random.default_rng(RNG_SEED)
     n_scen = len(SCENARIOS)
     fig, axes = plt.subplots(2, n_scen, figsize=(2.7 * n_scen, 6.3), squeeze=False,
@@ -206,7 +207,8 @@ def main():
         wt_raw = wt_reference(N, rng)
 
         bundle = compute_support_geometry(pts_raw, wt_raw, n_resample=N_RESAMPLE,
-                                          rng=np.random.default_rng(RNG_SEED + col))
+                                          rng=np.random.default_rng(RNG_SEED + col),
+                                          kde=kde)
         vp = bundle.results["valley_depth"].pvalue
         sig = vp < 0.05
 
@@ -214,7 +216,7 @@ def main():
         wt_norm = normalize_shape(wt_raw)
 
         ax0 = axes[0][col]
-        _render_kde_cell(ax0, pts_norm, wt_norm, sig)
+        _render_kde_cell(ax0, pts_norm, wt_norm, sig, kde=kde)
         expected = f"exp:{scen.expected_support}"
         ax0.set_title(f"{scen.name}\n({expected})", fontsize=8.6, fontweight="bold")
 

@@ -42,6 +42,7 @@ from density_geometry import (
 )
 from distribution_shift import DistributionShiftResult, compute_distribution_shift
 from support_geometry import (
+    KDESpec,
     STATISTIC_MIN_N,
     SupportGeometryBundle,
     compute_support_geometry,
@@ -96,6 +97,7 @@ def _loo_support_stability(
     rng: np.random.Generator,
     n_resample: int,
     max_loo: int = 15,
+    kde: KDESpec | None = None,
 ) -> float:
     """Fraction of leave-one-out refits whose support_call matches the full-sample
     call. Caps the number of LOO refits at `max_loo` (subsampling rows) to keep
@@ -110,7 +112,7 @@ def _loo_support_stability(
     for i in drop_idx:
         loo = np.delete(group_pts, i, axis=0)
         b = compute_support_geometry(loo, reference_pts, n_resample=max(60, n_resample // 4),
-                                     rng=rng)
+                                     rng=rng, kde=kde)
         agree += (b.support_call == full_call)
     return float(agree / len(drop_idx))
 
@@ -121,6 +123,7 @@ def run_phenotype_geometry(
     n_resample: int = 500,
     rng: np.random.Generator | None = None,
     compute_loo: bool = True,
+    kde: KDESpec | None = None,
 ) -> PhenotypeGeometryResult:
     """Run the full conditional decision tree for one group against its WT reference.
 
@@ -158,7 +161,7 @@ def run_phenotype_geometry(
 
     # ---- Stage 2: support geometry ---------------------------------------
     support = compute_support_geometry(group_pts, reference_pts,
-                                       n_resample=n_resample, rng=rng)
+                                       n_resample=n_resample, rng=rng, kde=kde)
     call = support.support_call
     result.support = support
     result.support_call = call
@@ -166,7 +169,7 @@ def run_phenotype_geometry(
 
     loo_stab = 1.0
     if compute_loo:
-        loo_stab = _loo_support_stability(group_pts, reference_pts, call, rng, n_resample)
+        loo_stab = _loo_support_stability(group_pts, reference_pts, call, rng, n_resample, kde=kde)
 
     for name, sr in support.results.items():
         result.confidence[f"stage2:{name}"] = score_confidence(

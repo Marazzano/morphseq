@@ -56,7 +56,8 @@ from plot_config import PHENOTYPE_COLORS  # noqa: E402
 from scipy.ndimage import label as ndi_label  # noqa: E402
 
 from support_geometry import (  # noqa: E402
-    compute_support_geometry, normalize_shape, valley_detection_detail,
+    MIN_COMPONENT_MASS_FRAC, VALLEY_SWEEP_STEPS, compute_support_geometry,
+    evaluate_kde_on_grid, normalize_shape, valley_detection_detail,
 )
 
 GENES = {
@@ -80,7 +81,6 @@ DENS_CMAP_HI = 0.62            # cap the Blues ramp here so the peak stays light
 TARGET_DENS_COLOR = "#2166AC"   # target overlap density   (blue)
 WT_DENS_COLOR = "#808080"       # reference overlap density (gray)
 WT_POINT_COLOR = "#808080"      # WT reference raw points (gray)
-MIN_MODE_MASS_FRAC = 0.03      # ignore island fragments below this share of mass
 GRID = 40
 LABEL_FS = 11                  # bigger labels throughout
 
@@ -111,7 +111,7 @@ def load_bins(cfg):
 SUPPORT_FRAC = 0.02   # combined KDE >= this * peak defines the "where there's mass" box
 
 
-def _data_box(pts_list, support_frac=SUPPORT_FRAC, margin=0.06, scan_pct=2.0):
+def _data_box(pts_list, support_frac=SUPPORT_FRAC, margin=0.06, scan_pct=2.0, *, kde=None):
     """THE single per-column box, defined by DENSITY not by point extremes.
 
     A lone outlier contributes almost no KDE mass, so instead of a bounding box of
@@ -129,7 +129,6 @@ def _data_box(pts_list, support_frac=SUPPORT_FRAC, margin=0.06, scan_pct=2.0):
     Every row in the column -- KDE grid AND axis limits -- uses this exact box, so it is
     the single coordinate frame all rows map into (row 3 just renders the same box at a
     different aspect ratio). Returns (xlo, xhi, ylo, yhi)."""
-    from scipy.stats import gaussian_kde
     allpts = np.vstack(pts_list)
     # robust scan range: percentile-clip so far fliers never enter the support search
     xr = np.percentile(allpts[:, 0], [scan_pct, 100 - scan_pct])
@@ -138,7 +137,7 @@ def _data_box(pts_list, support_frac=SUPPORT_FRAC, margin=0.06, scan_pct=2.0):
     xs = np.linspace(xr[0] - padx, xr[1] + padx, 80)
     ys = np.linspace(yr[0] - pady, yr[1] + pady, 80)
     xx, yy = np.meshgrid(xs, ys)
-    dens = gaussian_kde(allpts.T)(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
+    dens = evaluate_kde_on_grid(allpts, xx, yy, kde=kde)
     mask = dens >= support_frac * float(dens.max())
     xsel, ysel = xx[mask], yy[mask]
     xlo, xhi, ylo, yhi = xsel.min(), xsel.max(), ysel.min(), ysel.max()
@@ -146,16 +145,15 @@ def _data_box(pts_list, support_frac=SUPPORT_FRAC, margin=0.06, scan_pct=2.0):
     return xlo - mx, xhi + mx, ylo - my, yhi + my
 
 
-def _kde_in_box(pts, box, grid=GRID):
+def _kde_in_box(pts, box, grid=GRID, *, kde=None):
     """Evaluate a gaussian KDE of `pts` on the column box. The density is rendered with
     its lowest contour band starting above zero (see callers) so it fades to background
     before the edge -- no hard fill rectangle, even though the grid == the visible box."""
-    from scipy.stats import gaussian_kde
     xlo, xhi, ylo, yhi = box
     xs = np.linspace(xlo, xhi, grid)
     ys = np.linspace(ylo, yhi, grid)
     xx, yy = np.meshgrid(xs, ys)
-    dens = gaussian_kde(pts.T)(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
+    dens = evaluate_kde_on_grid(pts, xx, yy, kde=kde)
     return xx, yy, dens
 
 
@@ -171,13 +169,13 @@ def count_modes(dens):
     peak = float(dens.max()); total = float(dens.sum())
     if peak <= 0 or total <= 0:
         return 0, None
-    for frac in np.linspace(0.95, 0.05, 25):
+    for frac in np.linspace(0.97, 0.02, VALLEY_SWEEP_STEPS):
         level = frac * peak
         labels, n = ndi_label(dens >= level)
         if n < 2:
             continue
         masses = np.array([dens[labels == k].sum() / total for k in range(1, n + 1)])
-        n_real = int((masses >= MIN_MODE_MASS_FRAC).sum())
+        n_real = int((masses >= MIN_COMPONENT_MASS_FRAC).sum())
         if n_real >= 2:
             return n_real, level
     return 1, 0.5 * peak  # never splits -> single mode, ring at half-peak
@@ -192,7 +190,7 @@ def _target_ring(ax, xx, yy, dens):
                    linewidths=2.2, linestyles="--", zorder=4)
 
 
-def render_gene(gene, cfg):
+def render_gene(gene, cfg, *, kde=None):
     bins = load_bins(cfg)
     hpfs = [h for h in TARGET_DESIGN_HPF if h in bins]
     n = len(hpfs)
@@ -210,15 +208,15 @@ def render_gene(gene, cfg):
         wt = normalize_shape(wt_raw)
 
         bundle = compute_support_geometry(grp_raw, wt_raw, n_resample=N_RESAMPLE,
-                                          rng=np.random.default_rng(42))
+                                          rng=np.random.default_rng(42), kde=kde)
         vp = bundle.results["valley_depth"].pvalue
         sig = vp < VALLEY_SIG_P
 
         # ONE box per column: fits all target+WT data (robust), + margin. Every row --
         # KDE grid and axis limits -- uses this exact box, so nothing is re-cropped.
-        box = _data_box([grp, wt])
-        gx, gy, gd = _kde_in_box(grp, box)   # target density on the box
-        wx, wy, wd = _kde_in_box(wt, box)    # WT density on the SAME box -> comparable
+        box = _data_box([grp, wt], kde=kde)
+        gx, gy, gd = _kde_in_box(grp, box, kde=kde)  # target density on the box
+        wx, wy, wd = _kde_in_box(wt, box, kde=kde)   # WT density on the SAME box -> comparable
 
         # ── ROW 1: TARGET KDE (soft blue) + decision ring (ring ONLY if sig) ─
         ax = axes[0][col]

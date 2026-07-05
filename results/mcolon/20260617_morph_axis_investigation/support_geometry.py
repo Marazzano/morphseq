@@ -36,6 +36,7 @@ See docs/todos_scratch/morph_axis_discreteness_spec.md.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 import numpy as np
 from scipy.ndimage import label as ndi_label
@@ -44,6 +45,84 @@ from scipy.spatial.distance import pdist, squareform
 from scipy.stats import gaussian_kde
 
 GRID_SIZE = 30
+
+
+@dataclass(frozen=True)
+class KDESpec:
+    """Density-estimator spec for valley_depth's 2-D KDE."""
+    estimator: str = "scipy_gaussian"
+    bw_method: object | None = None
+    bw_scale: float = 1.0
+
+
+def scipy_gaussian_kde_spec(
+    bw_method: object | None = None,
+    bw_scale: float = 1.0,
+) -> KDESpec:
+    """Spec for scipy.stats.gaussian_kde, optionally scaling its bandwidth factor."""
+    return KDESpec(estimator="scipy_gaussian", bw_method=bw_method, bw_scale=float(bw_scale))
+
+
+DensityEvaluator = Callable[[np.ndarray], np.ndarray]
+
+
+def _scaled_bw_method(bw_method: object | None, bw_scale: float):
+    if bw_scale == 1.0:
+        return bw_method
+
+    def _bw(kde_obj):
+        if bw_method is None:
+            base = kde_obj.scotts_factor()
+        elif isinstance(bw_method, str):
+            if bw_method == "scott":
+                base = kde_obj.scotts_factor()
+            elif bw_method == "silverman":
+                base = kde_obj.silverman_factor()
+            else:
+                raise ValueError(f"Unsupported scipy gaussian_kde bw_method: {bw_method!r}")
+        elif callable(bw_method):
+            base = bw_method(kde_obj)
+        else:
+            base = float(bw_method)
+        return float(base) * bw_scale
+
+    return _bw
+
+
+def make_kde_evaluator(points_2d: np.ndarray, kde: KDESpec | Callable | None = None) -> DensityEvaluator:
+    """Build a callable density estimator for already-normalized 2-D points.
+
+    `kde=None` deliberately preserves the old scipy default: `gaussian_kde(pts.T)`.
+    """
+    pts = np.asarray(points_2d, dtype=float)
+    if kde is None:
+        scipy_kde = gaussian_kde(pts.T)
+        return lambda grid_points: scipy_kde(grid_points)
+    if callable(kde) and not isinstance(kde, KDESpec):
+        return kde(pts)
+    if not isinstance(kde, KDESpec):
+        raise TypeError(f"kde must be None, KDESpec, or a factory callable; got {type(kde)!r}")
+    if kde.estimator == "scipy_gaussian":
+        scipy_kde = gaussian_kde(
+            pts.T,
+            bw_method=_scaled_bw_method(kde.bw_method, kde.bw_scale),
+        )
+        return lambda grid_points: scipy_kde(grid_points)
+    if kde.estimator == "knn_adaptive":
+        raise NotImplementedError("knn_adaptive KDE is reserved for the post-diagnostic phase")
+    raise ValueError(f"Unknown KDE estimator: {kde.estimator!r}")
+
+
+def evaluate_kde_on_grid(
+    points_2d: np.ndarray,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    *,
+    kde: KDESpec | Callable | None = None,
+) -> np.ndarray:
+    """Evaluate the configured 2-D density estimator on an existing meshgrid."""
+    evaluator = make_kde_evaluator(points_2d, kde=kde)
+    return evaluator(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
 
 
 def _midrank_percentile(obs: float, null: np.ndarray) -> float:
@@ -86,10 +165,9 @@ def normalize_shape(points_2d: np.ndarray) -> np.ndarray:
 # Statistic 1: valley depth (KDE super-level density separation)
 # ---------------------------------------------------------------------------
 
-def _kde_grid(points_2d: np.ndarray, grid_size: int = GRID_SIZE):
+def _kde_grid(points_2d: np.ndarray, grid_size: int = GRID_SIZE, *, kde: KDESpec | Callable | None = None):
     """Evaluate a 2-D gaussian KDE of (already-normalized) points on a padded grid."""
     pts = np.asarray(points_2d, dtype=float)
-    kde = gaussian_kde(pts.T)
 
     pad = 1.0
     x_lo, x_hi = pts[:, 0].min() - pad, pts[:, 0].max() + pad
@@ -97,7 +175,7 @@ def _kde_grid(points_2d: np.ndarray, grid_size: int = GRID_SIZE):
     xs = np.linspace(x_lo, x_hi, grid_size)
     ys = np.linspace(y_lo, y_hi, grid_size)
     xx, yy = np.meshgrid(xs, ys)
-    density = kde(np.vstack([xx.ravel(), yy.ravel()])).reshape(xx.shape)
+    density = evaluate_kde_on_grid(pts, xx, yy, kde=kde)
     return xx, yy, density
 
 
@@ -131,7 +209,12 @@ def _refine_valley_transition(density, total_mass, frac_hi, frac_lo, peak):
     raise NotImplementedError("bisection refinement not needed yet -- see stub docstring")
 
 
-def valley_depth(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> float:
+def valley_depth(
+    points_2d: np.ndarray,
+    grid_size: int = GRID_SIZE,
+    *,
+    kde: KDESpec | Callable | None = None,
+) -> float:
     """Scale-and-mass-invariant relative valley depth of a 2-D point cloud's density.
 
     Points are assumed already `normalize_shape`-d. Builds a KDE, finds the global
@@ -141,7 +224,7 @@ def valley_depth(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> float:
     share of the total density mass. High (near 1) => deep interior valley =>
     discrete. Low (near 0) => one connected blob all the way down => continuous.
     """
-    _, _, density = _kde_grid(points_2d, grid_size=grid_size)
+    _, _, density = _kde_grid(points_2d, grid_size=grid_size, kde=kde)
     peak = density.max()
     total_mass = density.sum()
     if peak <= 0 or total_mass <= 0:
@@ -165,7 +248,12 @@ def valley_depth(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> float:
     return 0.0
 
 
-def valley_detection_detail(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> dict:
+def valley_detection_detail(
+    points_2d: np.ndarray,
+    grid_size: int = GRID_SIZE,
+    *,
+    kde: KDESpec | Callable | None = None,
+) -> dict:
     """Same computation as `valley_depth`, but returns everything needed to VISUALIZE
     it: the KDE grid, the density field, the detected valley threshold (fraction of
     peak, 0.0 if none), and the super-level component mask AT that threshold.
@@ -182,12 +270,14 @@ def valley_detection_detail(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -
       labels      : connected-component labels of the super-level set at that level
                     (all zeros if no valley)
     """
-    xx, yy, density = _kde_grid(points_2d, grid_size=grid_size)
+    xx, yy, density = _kde_grid(points_2d, grid_size=grid_size, kde=kde)
     peak = float(density.max())
     total_mass = float(density.sum())
     out = {"xx": xx, "yy": yy, "density": density, "peak": peak,
            "valley_frac": 0.0, "level": None,
-           "labels": np.zeros_like(density, dtype=int)}
+           "labels": np.zeros_like(density, dtype=int),
+           "n_components_at_split": 0,
+           "component_mass_fracs": np.array([], dtype=float)}
     if peak <= 0 or total_mass <= 0:
         return out
 
@@ -206,6 +296,8 @@ def valley_detection_detail(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -
             out["valley_frac"] = float(frac)
             out["level"] = float(frac * peak)
             out["labels"] = labels
+            out["n_components_at_split"] = int(np.sum(component_masses >= MIN_COMPONENT_MASS_FRAC))
+            out["component_mass_fracs"] = component_masses
             return out
     return out
 
@@ -514,6 +606,7 @@ def compute_support_geometry(
     n_resample: int = 500,
     rng: np.random.Generator | None = None,
     statistics: dict | None = None,
+    kde: KDESpec | Callable | None = None,
 ) -> SupportGeometryBundle:
     """Compute every required support-geometry statistic on `group_pts`, each with
     its own matched-N WT (`reference_pts`) bootstrap null.
@@ -528,6 +621,10 @@ def compute_support_geometry(
         rng = np.random.default_rng(0)
     if statistics is None:
         statistics = SUPPORT_STATISTICS
+    else:
+        statistics = dict(statistics)
+    if kde is not None and "valley_depth" in statistics:
+        statistics["valley_depth"] = lambda pts: valley_depth(pts, kde=kde)
 
     group_norm = normalize_shape(group_pts)
     ref_norm = normalize_shape(reference_pts)
@@ -585,6 +682,7 @@ def connectedness_pvalue(
     reference_pts: np.ndarray,
     n_resample: int = 500,
     rng: np.random.Generator | None = None,
+    kde: KDESpec | Callable | None = None,
 ) -> ConnectednessResult:
     """Legacy entry point: valley_depth statistic only, matched-N WT null.
 
@@ -593,7 +691,7 @@ def connectedness_pvalue(
     """
     bundle = compute_support_geometry(
         group_pts, reference_pts, n_resample=n_resample, rng=rng,
-        statistics={"valley_depth": valley_depth},
+        statistics={"valley_depth": valley_depth}, kde=kde,
     )
     r = bundle.results["valley_depth"]
     return ConnectednessResult(
