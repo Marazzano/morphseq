@@ -44,7 +44,7 @@ PLOT_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(GENE14_DIR))
 from plot_config import GENOTYPE_COLORS, PHENOTYPE_COLORS  # noqa: E402
 
-from connectedness import connectedness_pvalue, normalize_shape  # noqa: E402
+from support_geometry import compute_support_geometry, normalize_shape  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Config -- mirrors morph_axis_scatter.py's gene/binning setup
@@ -73,7 +73,7 @@ BIN_CENTER_TO_DESIGN_HPF = {_bin_center(h): h for h in TARGET_DESIGN_HPF}
 
 CLIP_PERCENTILE = 1
 MIN_EMBRYOS_PER_CLASS = 10
-N_RESAMPLE = 150
+N_RESAMPLE = 80  # lowered from 150: conductance eigendecomps per resample are slow
 
 WT_COLOR = GENOTYPE_COLORS["wildtype"]
 UNLABELED_COLOR = "#BBBBBB"
@@ -155,15 +155,116 @@ for gene, cfg in GENES.items():
         # second mode, and percentile clipping was erasing exactly the fracture we
         # are trying to detect. Keep every labeled embryo.
 
-        res = connectedness_pvalue(grp_xy, wt_xy, n_resample=N_RESAMPLE,
-                                    rng=np.random.default_rng(42))
-        call = "DISCRETE" if res.pvalue < 0.05 else "continuous"
+        bundle = compute_support_geometry(grp_xy, wt_xy, n_resample=N_RESAMPLE,
+                                          rng=np.random.default_rng(42))
+        call = bundle.support_call.upper() if bundle.support_call == "discrete" else "continuous"
         pheno_counts = grp_bdf["phenotype_clean"].value_counts().to_dict()
+        stat_str = "  ".join(f"{n}:p={bundle.results[n].pvalue:.2f}"
+                             for n in bundle.results)
         print(f"  homozygous @ {design_hpf} hpf: n={len(grp_xy)} (wt n={len(wt_xy)}) "
-              f"stat={res.stat:.3f} wt_ref={res.reference_stat:.3f} p={res.pvalue:.3f} "
-              f"-> {call}  [{pheno_counts}]")
+              f"-> {call}  [{stat_str}]  {pheno_counts}")
 
-        all_results[gene].append((design_hpf, res, grp_bdf, wt_xy))
+        all_results[gene].append((design_hpf, bundle, grp_bdf, wt_xy))
+
+
+# ---------------------------------------------------------------------------
+# Deciding-statistics strip under each panel
+# ---------------------------------------------------------------------------
+
+# Each metric is oriented so that LARGER = more broken/discrete (valley depth & MST
+# max-edge are naturally so; fiedler & conductance are returned inverted 1/(1+.) for
+# this). So a metric "votes DISCRETE" when its observed value is significantly LARGER
+# than the wildtype null -- i.e. one-sided p < its threshold. Otherwise it votes
+# CONTINUOUS. Each metric gets its OWN threshold constant so they can be tuned
+# independently later (all default 0.05 today).
+DISCRETE_P_THRESHOLDS = {
+    "valley_depth": 0.05,
+    "mst_max_edge": 0.05,
+    "fiedler": 0.05,
+    "conductance": 0.05,
+}
+
+# (stat key, display label) in table row order.
+_STAT_ROWS = [
+    ("valley_depth", "valley"),
+    ("mst_max_edge", "MST"),
+    ("fiedler", "Fiedler"),
+    ("conductance", "conduct"),
+]
+_FIRED_COLOR = "#B2182B"      # crimson: votes DISCRETE (p < threshold)
+_QUIET_COLOR = "#7f7f7f"      # gray: votes CONTINUOUS
+
+
+def _votes_discrete(name: str, pvalue: float) -> bool:
+    """A metric votes DISCRETE iff observed >> WT null at its own threshold."""
+    return pvalue < DISCRETE_P_THRESHOLDS.get(name, 0.05)
+
+
+def _tally_call(bundle) -> str:
+    """Overall call from the per-metric votes: DISCRETE if a majority of estimable
+    metrics vote discrete, else continuous. (Simple, transparent vote tally -- each
+    metric weighs equally. Distinct from support_geometry.support_call's AND-rule;
+    this panel shows the metrics as independent votes so the reader decides.)"""
+    votes = [_votes_discrete(n, sr.pvalue)
+             for n, sr in bundle.results.items() if sr is not None]
+    if not votes:
+        return "n/a"
+    return "discrete" if sum(votes) > len(votes) / 2 else "continuous"
+
+
+def _render_stat_strip(ax, bundle) -> None:
+    """Render the per-metric DISCR/CONT vote table beneath a panel.
+
+    One row per metric. Each metric independently votes DISCRETE or CONTINUOUS by
+    whether its observed value is significantly LARGER than the WT null (one-sided
+    p < its threshold; every metric is oriented so larger = more broken). Columns:
+        metric | DISCR | CONT | p (vs WT)
+    A dot marks the column the metric supports; the p-value and value are shown."""
+    x_label, x_discr, x_cont, x_p = 0.02, 0.45, 0.62, 0.78
+    y = -0.05
+    dy = 0.082
+
+    # header row
+    ax.text(x_label, y, "metric", transform=ax.transAxes, fontsize=6.4,
+            va="top", ha="left", color="#333", fontstyle="italic", fontfamily="monospace")
+    ax.text(x_discr, y, "DISCR", transform=ax.transAxes, fontsize=6.4,
+            va="top", ha="center", color=_FIRED_COLOR, fontweight="bold", fontfamily="monospace")
+    ax.text(x_cont, y, "CONT", transform=ax.transAxes, fontsize=6.4,
+            va="top", ha="center", color=CONTINUOUS_COLOR, fontweight="bold", fontfamily="monospace")
+    ax.text(x_p, y, "p vs WT", transform=ax.transAxes, fontsize=6.4,
+            va="top", ha="left", color="#333", fontstyle="italic", fontfamily="monospace")
+
+    for i, (name, label) in enumerate(_STAT_ROWS):
+        yy = y - (i + 1) * dy
+        sr = bundle.results.get(name)
+        ax.text(x_label, yy, label, transform=ax.transAxes, fontsize=6.4,
+                va="top", ha="left", color="#222", fontfamily="monospace")
+        if sr is None:
+            ax.text(x_p, yy, "n/a", transform=ax.transAxes, fontsize=6.4,
+                    va="top", ha="left", color="#bbb", fontfamily="monospace")
+            continue
+        discrete = _votes_discrete(name, sr.pvalue)
+        # dot in the supported column
+        ax.text(x_discr, yy, "●" if discrete else "", transform=ax.transAxes, fontsize=8,
+                va="top", ha="center", color=_FIRED_COLOR)
+        ax.text(x_cont, yy, "" if discrete else "●", transform=ax.transAxes, fontsize=8,
+                va="top", ha="center", color=CONTINUOUS_COLOR)
+        thr = DISCRETE_P_THRESHOLDS.get(name, 0.05)
+        pcolor = _FIRED_COLOR if discrete else _QUIET_COLOR
+        ax.text(x_p, yy, f"p={sr.pvalue:.2f} (<{thr:g}?)", transform=ax.transAxes,
+                fontsize=6.4, va="top", ha="left", color=pcolor, fontfamily="monospace",
+                fontweight="bold" if discrete else "normal")
+
+    # tally line
+    call = _tally_call(bundle)
+    ncall_disc = sum(_votes_discrete(n, sr.pvalue)
+                     for n, sr in bundle.results.items() if sr is not None)
+    ntot = sum(1 for sr in bundle.results.values() if sr is not None)
+    tcolor = _FIRED_COLOR if call == "discrete" else CONTINUOUS_COLOR
+    ax.text(x_label, y - (len(_STAT_ROWS) + 1.1) * dy,
+            f"tally: {ncall_disc}/{ntot} discrete  =>  {call.upper()}",
+            transform=ax.transAxes, fontsize=6.6, va="top", ha="left",
+            color=tcolor, fontweight="bold", fontfamily="monospace")
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +276,8 @@ for gene, cfg in GENES.items():
     entries = all_results[gene]
     n_cols = len(TARGET_DESIGN_HPF)
 
-    fig, axes = plt.subplots(1, n_cols, figsize=(3.4 * n_cols, 3.8), squeeze=False)
+    # taller figure + bottom room for the per-metric vote table under each panel
+    fig, axes = plt.subplots(1, n_cols, figsize=(3.7 * n_cols, 5.2), squeeze=False)
     axes = axes[0]
     results_by_hpf = {e[0]: e for e in entries}
 
@@ -191,7 +293,7 @@ for gene, cfg in GENES.items():
                 spine.set_visible(False)
             continue
 
-        _, res, grp_bdf, wt_xy = entry
+        _, bundle, grp_bdf, wt_xy = entry
         grp_xy = grp_bdf[[X_FEAT, Y_FEAT]].values.astype(float)
         grp_norm = normalize_shape(grp_xy)
         wt_norm = normalize_shape(wt_xy)
@@ -210,14 +312,14 @@ for gene, cfg in GENES.items():
                        facecolors=color, edgecolors="k", linewidths=0.3,
                        label=pheno, zorder=2)
 
-        is_discrete = res.pvalue < 0.05
+        is_discrete = _tally_call(bundle) == "discrete"
         badge_color = SIGNIFICANT_COLOR if is_discrete else CONTINUOUS_COLOR
         badge_text = "DISCRETE" if is_discrete else "continuous"
         ax.text(0.03, 0.96, badge_text, transform=ax.transAxes, fontsize=8,
                  fontweight="bold", color="white", va="top", ha="left",
                  bbox=dict(boxstyle="round,pad=0.25", facecolor=badge_color,
                             edgecolor="none", alpha=0.9))
-        ax.text(0.97, 0.04, f"p={res.pvalue:.2f}\nvalley={res.stat:.2f}\nn={len(grp_xy)}",
+        ax.text(0.97, 0.04, f"n={len(grp_xy)}",
                  transform=ax.transAxes, fontsize=7, va="bottom", ha="right",
                  color="#333333")
 
@@ -226,6 +328,11 @@ for gene, cfg in GENES.items():
             spine.set_color("#cccccc")
         ax.set_title(f"{design_hpf} hpf", fontsize=10, fontweight="bold")
 
+        # ── deciding-statistics strip: the per-statistic p-values that drive the
+        #    support_call, rendered directly under this panel. valley is the
+        #    density gate (must fire); MST/Fiedler/conductance are graph corroborators.
+        _render_stat_strip(ax, bundle)
+
     handles = [
         mpatches.Patch(facecolor="none", edgecolor=WT_COLOR, label="wildtype (stage-matched null)"),
     ] + [
@@ -233,13 +340,14 @@ for gene, cfg in GENES.items():
         for p in cfg["phenotype_labels"] + ["unlabeled"]
     ]
     fig.legend(handles=handles, loc="lower center", ncol=len(handles), fontsize=9,
-               bbox_to_anchor=(0.5, -0.05), frameon=False)
+               bbox_to_anchor=(0.5, -0.12), frameon=False)
 
     fig.suptitle(f"{gene}  —  pooled homozygous connectedness (normalized shape)\n"
                  f"axis: {X_FEAT}  x  {Y_FEAT}   |   phenotype color shows the EMERGENT split, "
                  f"not the tested grouping",
-                 fontsize=11, fontweight="bold", y=1.08)
-    fig.tight_layout()
+                 fontsize=11, fontweight="bold", y=0.97)
+    fig.subplots_adjust(bottom=0.40, top=0.86, left=0.03, right=0.99,
+                        wspace=0.12)  # room for the per-metric vote table (no tight_layout: it fights the strip)
     out_path = PLOT_DIR / f"{gene}_connectedness_panel.png"
     fig.savefig(out_path, dpi=160, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -259,32 +367,43 @@ for gene in GENES:
     if not entries:
         continue
     color = GENE_TRAJECTORY_COLORS.get(gene, "#444444")
+    # Plot 2 tracks the DENSITY GATE (valley_depth) over time -- the statistic that
+    # must fire for a discrete call. Pull it out of each bundle.
     hpfs = [e[0] for e in entries]
-    stats = [e[1].stat for e in entries]
-    pvals = [e[1].pvalue for e in entries]
-    wt_refs = [e[1].reference_stat for e in entries]
+    stats = [e[1].results["valley_depth"].stat for e in entries]
+    pvals = [e[1].results["valley_depth"].pvalue for e in entries]
+    wt_refs = [e[1].results["valley_depth"].reference_stat for e in entries]
 
     ax2.plot(hpfs, stats, "o-", color=color, linewidth=2.4, markersize=9,
              label=f"{gene} homozygous (pooled)", zorder=3)
     ax2.plot(hpfs, wt_refs, "--", color=color, linewidth=1.2, alpha=0.4, zorder=1)
 
-    sig_hpfs = [h for h, p in zip(hpfs, pvals) if p < 0.05]
-    if sig_hpfs:
-        transition_hpf = min(sig_hpfs)
+    # The TRUE call is support_call (valley gate AND graph corroboration), not raw
+    # valley significance. Mark both: a filled ring where the system calls discrete,
+    # and an X where valley fires but the graph statistics VETO it (the b9d2 story).
+    calls = [_tally_call(e[1]) for e in entries]
+    discrete_hpfs = [h for h, c in zip(hpfs, calls) if c == "discrete"]
+    if discrete_hpfs:
+        transition_hpf = min(discrete_hpfs)
         ax2.axvline(transition_hpf, color=color, linestyle=":", alpha=0.5, zorder=0)
         ax2.annotate(f"{gene}: discrete\nfrom {transition_hpf} hpf",
                      xy=(transition_hpf, ax2.get_ylim()[1]),
                      xytext=(transition_hpf, 1.02), textcoords=("data", "axes fraction"),
                      ha="center", va="bottom", fontsize=8, color=color, fontweight="bold")
 
-    for h, s, p in zip(hpfs, stats, pvals):
-        if p < 0.05:
+    for h, s, p, c in zip(hpfs, stats, pvals, calls):
+        if c == "discrete":
             ax2.scatter([h], [s], s=200, facecolors="none", edgecolors=color,
                         linewidths=2.2, zorder=4)
+        elif p < 0.05:  # valley gate fired but graph vetoed -> continuous call
+            ax2.scatter([h], [s], s=120, marker="x", color=color,
+                        linewidths=2.0, zorder=4)
 
 ax2.plot([], [], "--", color="#888888", linewidth=1.2, alpha=0.6, label="wildtype null (median)")
 ax2.scatter([], [], s=200, facecolors="none", edgecolors="#444", linewidths=2.2,
-            label="p < 0.05 (discrete)")
+            label="support_call = discrete")
+ax2.scatter([], [], s=120, marker="x", color="#444", linewidths=2.0,
+            label="valley fires but graph vetoes")
 
 ax2.set_xlabel("predicted stage (hpf)", fontsize=11)
 ax2.set_ylabel("relative valley depth\n(0 = continuous, 1 = deeply fractured)", fontsize=10)

@@ -75,7 +75,8 @@ TARGET_BIN_CENTERS = sorted(BIN_CENTER_TO_DESIGN_HPF)
 
 CLIP_PERCENTILE = 1
 MIN_EMBRYOS = 10
-N_RESAMPLE = 200
+N_RESAMPLE = 80  # lowered from 200: conductance eigendecomps per resample are slow;
+                 # 80 is adequate for p-value resolution at the p<0.05 threshold
 
 CONF_ORDER = {"insufficient": 0, "low": 1, "moderate": 2, "high": 3}
 
@@ -154,10 +155,13 @@ def run_axis(
         design_hpf = BIN_CENTER_TO_DESIGN_HPF[bc]
         sub = edf[edf["time_bin_center"] == bc]
         wt = sub[sub["zygosity"] == "wildtype"]
-        homo = sub[
-            (sub["zygosity"] == "homozygous")
-            & (sub["phenotype_clean"].isin(phenotype_labels))
-        ]
+        # Test the WHOLE phenotype-labeled population, NOT homozygous-only. The
+        # homozygous filter kept only ~8 of ~38 CE embryos and discarded the arm that
+        # forms the fracture (CE is overwhelmingly het/unknown). The phenotype label is
+        # a morphological cluster independent of genotype, and any real split is what
+        # the geometry test should recover -- so pool by phenotype label and let the
+        # geometry speak. Mirrors morph_axis_connectedness.py.
+        homo = sub[sub["phenotype_clean"].isin(phenotype_labels)]
         if len(wt) < MIN_EMBRYOS or len(homo) < MIN_EMBRYOS:
             continue
 
@@ -171,9 +175,9 @@ def run_axis(
         else:
             wt_xy, homo_xy = wt_feat, homo_feat
 
-        gk = remove_outliers(homo_xy)
-        wk = remove_outliers(wt_xy)
-        homo_xy, wt_xy = homo_xy[gk], wt_xy[wk]
+        # Outlier removal DISABLED: the extreme-short CE embryos ARE the second mode;
+        # percentile clipping erases exactly the fracture we test for. Keep every
+        # labeled embryo. (Matches morph_axis_connectedness.py.)
         if len(homo_xy) < MIN_EMBRYOS or len(wt_xy) < MIN_EMBRYOS:
             continue
 
@@ -214,10 +218,8 @@ def run_full_reference_axis(
         label_cols=["zygosity", "phenotype_clean"],
     )
     wt = edf[edf["zygosity"] == "wildtype"]
-    homo = edf[
-        (edf["zygosity"] == "homozygous")
-        & (edf["phenotype_clean"].isin(phenotype_labels))
-    ]
+    # Whole phenotype-labeled population (NOT homozygous-only) -- see run_axis note.
+    homo = edf[edf["phenotype_clean"].isin(phenotype_labels)]
     if len(wt) < MIN_EMBRYOS or len(homo) < MIN_EMBRYOS:
         print(f"  [full {axis_name:9s}] {gene}: skip (n_group={len(homo)}, n_wt={len(wt)})")
         return None
@@ -231,11 +233,9 @@ def run_full_reference_axis(
     else:
         wt_xy, homo_xy = wt_feat, homo_feat
 
-    homo_xy = homo_xy[remove_outliers(homo_xy)]
-    wt_xy = wt_xy[remove_outliers(wt_xy)]
+    # Outlier removal DISABLED (extreme-short CE = the second mode) -- see run_axis note.
     if len(homo_xy) < MIN_EMBRYOS or len(wt_xy) < MIN_EMBRYOS:
-        print(f"  [full {axis_name:9s}] {gene}: skip after outlier removal "
-              f"(n_group={len(homo_xy)}, n_wt={len(wt_xy)})")
+        print(f"  [full {axis_name:9s}] {gene}: skip (n_group={len(homo_xy)}, n_wt={len(wt_xy)})")
         return None
 
     res = run_phenotype_geometry(homo_xy, wt_xy, n_resample=N_RESAMPLE,
@@ -314,6 +314,7 @@ def emit_outputs(all_rows: list[dict], transitions: dict):
             "valley_p": p("valley_depth"),
             "mst_p": p("mst_max_edge"),
             "fiedler_p": p("fiedler"),
+            "conductance_p": p("conductance"),
             "confidence": conf,
             "terminal_stage": res.terminal_stage,
             "label": res.summary_label(),
@@ -357,7 +358,7 @@ def emit_full_reference_outputs(full_rows: list[dict]) -> pd.DataFrame:
         summary.append({
             "gene": r["gene"],
             "axis": r["axis"],
-            "scope": "full_reference_labeled_homozygous",
+            "scope": "full_reference_all_phenotype_labeled",
             "n_group": res.n_group,
             "n_wt": res.n_wt,
             "group_label_counts": r.get("label_counts", {}),
@@ -368,6 +369,7 @@ def emit_full_reference_outputs(full_rows: list[dict]) -> pd.DataFrame:
             "valley_p": p("valley_depth"),
             "mst_p": p("mst_max_edge"),
             "fiedler_p": p("fiedler"),
+            "conductance_p": p("conductance"),
             "confidence": conf,
             "terminal_stage": res.terminal_stage,
             "label": res.summary_label(),
