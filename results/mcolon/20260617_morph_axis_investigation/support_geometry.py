@@ -16,9 +16,9 @@ Statistics (required):
   - mst_max_edge : largest unsupported jump in the minimum spanning tree
                    (local gaps + bridges; works at very small n)
   - fiedler      : algebraic connectivity of the kNN graph (global connectivity)
-Optional / deferred:
-  - conductance  : kNN-graph bottleneck (taper vs. hard break) -- NOT yet wired;
-                   MST + Fiedler already cover local + global.
+  - conductance  : sharpness of the spectral-cut bottleneck (hard break vs. taper).
+                   Corroborating graph statistic alongside MST + Fiedler (does not
+                   solely trigger the discrete call).
 
 WILDTYPE has two distinct roles (Axiom 3):
   - reference: WT's OWN shape defines what "normal geometry" is.
@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.ndimage import label as ndi_label
-from scipy.sparse.csgraph import laplacian, minimum_spanning_tree
+from scipy.sparse.csgraph import connected_components, laplacian, minimum_spanning_tree
 from scipy.spatial.distance import pdist, squareform
 from scipy.stats import gaussian_kde
 
@@ -109,6 +109,27 @@ def _connected_components(mask: np.ndarray) -> np.ndarray:
 
 MIN_COMPONENT_MASS_FRAC = 0.03  # ignore fragments holding < 3% of the total KDE mass
 
+# Number of super-level thresholds to check when sweeping from peak down to near-zero.
+# Must be dense enough that a narrow split-window (e.g. 3+ unequal-height modes, where
+# the "all components simultaneously separate" band can be thin) isn't stepped over
+# between two adjacent samples. Verified against three_discrete/small_middle synthetics:
+# 25 steps missed a real split at frac=0.841 (both neighboring steps saw "no split");
+# 200 steps reliably lands inside it. See git history / FINDING docs for the diagnosis.
+VALLEY_SWEEP_STEPS = 200
+
+
+def _refine_valley_transition(density, total_mass, frac_hi, frac_lo, peak):
+    """STUB: not yet needed at VALLEY_SWEEP_STEPS=200 (dense scan already finds the
+    known-hard synthetic cases). If a future case needs finer resolution than a flat
+    dense sweep can afford, bisect between `frac_hi` (last frac with <2 real
+    components) and `frac_lo` (first frac with >=2) to pin the exact transition
+    frac, rather than blanket-increasing VALLEY_SWEEP_STEPS everywhere. Note bisection
+    only refines a transition the coarse scan already detected -- it cannot discover a
+    split the coarse scan stepped over entirely, so this is a refinement of a known
+    transition's location, not a substitute for a dense-enough initial scan.
+    """
+    raise NotImplementedError("bisection refinement not needed yet -- see stub docstring")
+
 
 def valley_depth(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> float:
     """Scale-and-mass-invariant relative valley depth of a 2-D point cloud's density.
@@ -126,7 +147,7 @@ def valley_depth(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> float:
     if peak <= 0 or total_mass <= 0:
         return 0.0
 
-    fracs = np.linspace(0.97, 0.02, 25)
+    fracs = np.linspace(0.97, 0.02, VALLEY_SWEEP_STEPS)
     for frac in fracs:
         mask = density >= frac * peak
         if not mask.any():
@@ -142,6 +163,51 @@ def valley_depth(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> float:
         if n_real_components >= 2:
             return float(frac)
     return 0.0
+
+
+def valley_detection_detail(points_2d: np.ndarray, grid_size: int = GRID_SIZE) -> dict:
+    """Same computation as `valley_depth`, but returns everything needed to VISUALIZE
+    it: the KDE grid, the density field, the detected valley threshold (fraction of
+    peak, 0.0 if none), and the super-level component mask AT that threshold.
+
+    This is the single source of truth for the valley visualization -- it re-runs the
+    identical KDE + threshold sweep so the picture matches the statistic exactly.
+
+    Returns dict with keys:
+      xx, yy      : meshgrid coords (grid_size x grid_size)
+      density     : KDE density on the grid
+      peak        : peak density
+      valley_frac : the threshold fraction where >=2 real components appear (0.0 if none)
+      level       : valley_frac * peak (the absolute density 'waterline'); None if none
+      labels      : connected-component labels of the super-level set at that level
+                    (all zeros if no valley)
+    """
+    xx, yy, density = _kde_grid(points_2d, grid_size=grid_size)
+    peak = float(density.max())
+    total_mass = float(density.sum())
+    out = {"xx": xx, "yy": yy, "density": density, "peak": peak,
+           "valley_frac": 0.0, "level": None,
+           "labels": np.zeros_like(density, dtype=int)}
+    if peak <= 0 or total_mass <= 0:
+        return out
+
+    for frac in np.linspace(0.97, 0.02, VALLEY_SWEEP_STEPS):
+        mask = density >= frac * peak
+        if not mask.any():
+            continue
+        labels = _connected_components(mask)
+        n_labels = labels.max()
+        if n_labels < 2:
+            continue
+        component_masses = np.array([
+            density[labels == lbl].sum() / total_mass for lbl in range(1, n_labels + 1)
+        ])
+        if int(np.sum(component_masses >= MIN_COMPONENT_MASS_FRAC)) >= 2:
+            out["valley_frac"] = float(frac)
+            out["level"] = float(frac * peak)
+            out["labels"] = labels
+            return out
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -184,27 +250,41 @@ def mst_max_edge(points_2d: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 def _knn_adjacency(points_2d: np.ndarray, k: int) -> np.ndarray:
-    """Symmetric kNN adjacency with Gaussian (heat-kernel) weights.
+    """Symmetric kNN adjacency with a LOCALLY-scaled Gaussian (heat-kernel) weight.
 
-    Weight scale (sigma) is the median kNN distance -- a data-driven bandwidth so
-    the graph is not sensitive to absolute scale. Symmetrized by max so a mutual or
-    one-way neighbor both connect.
+    Bandwidth is self-tuning (Zelnik-Manor & Perona 2004): each point i gets its own
+    sigma_i = distance to its k-th nearest neighbor, and an edge (i,j) is weighted
+
+        w_ij = exp( -d_ij^2 / (sigma_i * sigma_j) ).
+
+    Why local and not a single global sigma (the old median-kNN bandwidth): a global
+    sigma is set by the whole cloud's typical spacing, so once a real GAP opens
+    between two modes the global scale inflates -- it either over-smooths the two
+    modes into one fuzzy blob (spurious high-conductance cut) or collapses the graph
+    into disconnected pieces (degenerate Fiedler/conductance). A verified 2-D sweep
+    (two clusters at growing separation) showed the global bandwidth makes the cut
+    conductance NON-monotonic / nan past a moderate gap, while the local bandwidth
+    keeps it monotonically -> 0 as the gap grows, independent of gap size and of
+    whether the points were shape-normalized. So the fragility was the bandwidth, not
+    the whitening. Local scaling keeps within-mode neighborhoods tight regardless of
+    between-mode distance, which is exactly what a support-connectivity probe needs.
+
+    Symmetrized by construction (sigma_i*sigma_j is symmetric); a one-way neighbor
+    still connects both directions.
     """
     pts = np.asarray(points_2d, dtype=float)
     n = len(pts)
     dmat = squareform(pdist(pts))
-    # distance to the k-th nearest neighbor (excluding self) for each point
+    # per-point local bandwidth: distance to each point's own k-th nearest neighbor
     sorted_d = np.sort(dmat, axis=1)
-    knn_d = sorted_d[:, 1:k + 1]  # skip self (col 0)
-    sigma = np.median(knn_d)
-    if sigma < 1e-12:
-        sigma = 1.0
+    sigma = sorted_d[:, k]  # col 0 is self (dist 0), so col k is the k-th neighbor
+    sigma = np.where(sigma < 1e-12, 1.0, sigma)
 
     adj = np.zeros((n, n))
     for i in range(n):
         nbr_idx = np.argsort(dmat[i])[1:k + 1]
         for j in nbr_idx:
-            w = np.exp(-(dmat[i, j] ** 2) / (2 * sigma ** 2))
+            w = np.exp(-(dmat[i, j] ** 2) / (sigma[i] * sigma[j]))
             adj[i, j] = w
             adj[j, i] = w  # symmetrize
     return adj
@@ -241,24 +321,96 @@ def fiedler_value(points_2d: np.ndarray, k: int | None = None) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Statistic 4: conductance of the spectral cut (bottleneck sharpness)
+# ---------------------------------------------------------------------------
+
+def conductance(points_2d: np.ndarray, k: int | None = None) -> float:
+    """Conductance of the graph's sparsest spectral cut, as a "brokenness" statistic.
+
+    Complements Fiedler: Fiedler asks "is there a bottleneck?" (global connectivity
+    magnitude); conductance asks "how SHARP is that bottleneck?" -- a graceful taper
+    vs. a hard break. It is the classic Cheeger cut quantity:
+
+        phi(S) = (weight of edges crossing S) / min(vol(S), vol(complement))
+
+    evaluated on the cut induced by the sign of the Fiedler eigenvector (the standard
+    spectral bisection, so it targets the graph's genuine bottleneck rather than an
+    arbitrary split). Low phi = a thin bridge separating two heavy halves (a real,
+    hard gap); high phi = the halves are richly interconnected (a taper / continuum).
+
+    Returned INVERTED so it points the same direction as the other statistics
+    (larger = more broken):
+        stat = 1 / (1 + phi)
+    A hard break drives phi -> 0 -> stat -> 1; a well-mixed cloud keeps phi large ->
+    stat -> small. Mirrors the fiedler_value convention exactly.
+
+    Same n-adaptive k and same n>=4 floor as fiedler_value; unstable at very small n,
+    which the caller's confidence machinery (STATISTIC_MIN_N) accounts for.
+    """
+    pts = np.asarray(points_2d, dtype=float)
+    n = len(pts)
+    if n < 4:
+        return 0.0
+    if k is None:
+        k = max(3, min(n - 1, int(np.ceil(np.log2(n)))))
+    adj = _knn_adjacency(pts, k=k)
+
+    # If the graph is already disconnected, the support is MAXIMALLY broken: no edge
+    # bridges the components at all. This is the large-gap limit -- the spectral cut
+    # below is only defined for a connected graph (a disconnected graph has >=2 zero
+    # Laplacian eigenvalues, so the "2nd" eigenvector is an arbitrary component
+    # indicator, not a bottleneck direction, and its sign-split degenerates to
+    # all-one-side). Short-circuit to the fully-broken value rather than letting that
+    # degeneracy fall through to a phi that reads as "connected".
+    n_components, _ = connected_components(adj > 0, directed=False)
+    if n_components > 1:
+        return 1.0  # phi -> 0 (no crossing edges) -> inverted stat -> 1 = max broken
+
+    # Fiedler vector of the normalized Laplacian -> sign gives the spectral bisection.
+    lap = laplacian(adj, normed=True)
+    eigvals, eigvecs = np.linalg.eigh(lap)
+    order = np.argsort(eigvals)
+    fiedler_vec = eigvecs[:, order[1]] if eigvecs.shape[1] > 1 else eigvecs[:, 0]
+    side = fiedler_vec >= 0.0
+    if side.all() or (~side).all():
+        # Connected graph but the sign-split still put everything on one side (near-
+        # degenerate Fiedler vector -- an essentially-disconnected bottleneck). Treat
+        # as maximally broken, consistent with the disconnected branch above.
+        return 1.0
+
+    degree = adj.sum(axis=1)
+    vol_a = float(degree[side].sum())
+    vol_b = float(degree[~side].sum())
+    denom = min(vol_a, vol_b)
+    if denom <= 1e-12:
+        return 1.0  # one side carries no volume -> isolated component -> max broken
+    cut = float(adj[np.ix_(side, ~side)].sum())  # weight crossing the cut (one direction, symmetric adj)
+    phi = cut / denom
+    return float(1.0 / (1.0 + phi))
+
+
+# ---------------------------------------------------------------------------
 # The bundle: run all required statistics, each with its own matched-N WT null
 # ---------------------------------------------------------------------------
 
 # Registry of required support-geometry statistics. Each maps a name -> callable.
-# Conductance is intentionally omitted (optional/deferred). Adding a statistic here
-# automatically flows it through the bundle, the bootstrap null, and the caller.
+# Adding a statistic here automatically flows it through the bundle, the bootstrap
+# null, and the caller.
 SUPPORT_STATISTICS = {
     "valley_depth": valley_depth,
     "mst_max_edge": mst_max_edge,
     "fiedler": fiedler_value,
+    "conductance": conductance,
 }
 
 # Minimum n at which each statistic is considered estimable (drives per-statistic
-# confidence downstream; NOT a hard gate here).
+# confidence downstream; NOT a hard gate here). Conductance shares Fiedler's spectral
+# machinery, so it inherits the same estimability floor.
 STATISTIC_MIN_N = {
     "valley_depth": 10,
     "mst_max_edge": 5,
     "fiedler": 8,
+    "conductance": 8,
 }
 
 
@@ -317,10 +469,12 @@ class SupportGeometryBundle:
         vd = self.results.get("valley_depth")
         fied = self.results.get("fiedler")
         mst = self.results.get("mst_max_edge")
+        cond = self.results.get("conductance")
 
         valley_p = vd.pvalue if vd is not None else 1.0
         fiedler_p = fied.pvalue if fied is not None else 1.0
         mst_p = mst.pvalue if mst is not None else 1.0
+        conductance_p = cond.pvalue if cond is not None else 1.0
 
         # A true gap has BOTH a density valley (empty interior between filled
         # regions) AND weak global connectivity. A sparse/curved connected manifold
@@ -331,7 +485,7 @@ class SupportGeometryBundle:
         #   - valley clearly significant (p<0.05) with graph corroboration, OR
         #   - valley marginal (p<0.12) with STRONG global-connectivity loss
         #     (fiedler p<0.02) -- the two-of-a-kind confirmation.
-        graph_corroborates = (fiedler_p < 0.05) or (mst_p < 0.05)
+        graph_corroborates = (fiedler_p < 0.05) or (mst_p < 0.05) or (conductance_p < 0.05)
         strong_disconnect = fiedler_p < 0.02
 
         is_discrete = (

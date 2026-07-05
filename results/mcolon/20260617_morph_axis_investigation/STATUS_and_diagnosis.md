@@ -6,6 +6,32 @@ over developmental time.
 
 ---
 
+> **Update 2026-07-04 — kNN bandwidth fix (see `FINDING_knn_bandwidth_instability.md`).**
+> The Stage-2 graph statistics' fragility was traced to the **global** heat-kernel
+> bandwidth in `_knn_adjacency` (unstable once a real gap opens), NOT the MAD whitening
+> — isolated by a 2×2 sweep. Fixed to a per-point self-tuning bandwidth (Zelnik-Manor).
+> `conductance` is now implemented + wired into the Stage-2 bundle (was deferred because
+> it was unusable under the old bandwidth). Spot-checks pass; the full synthetic gate +
+> b9d2/cep290 re-run is still TODO. This does not by itself resolve §4 (the AND-rule
+> under-call); conductance is still a graph witness subject to the same veto.
+
+> **Update 2026-07-05 — `valley_depth` sweep-resolution fix + bandwidth investigated
+> (not applied; see §6).** Built `synthetic_valley_connectedness_grid.py`, rendering
+> the valley-KDE visualization + connectedness vote table side by side for every
+> `synthetic_scenarios.py` case at once — the density-vs-graph disagreement is now
+> visible per scenario in one figure
+> (`plots/synthetic_valley_connectedness_grid.png`). This surfaced a real bug:
+> `three_discrete` and `small_middle` sometimes read `valley_p≈1.0` (should fire) even
+> though they use the same separation as `two_discrete` (which correctly fires).
+> Root cause: `valley_depth`'s super-level threshold sweep used only 25 fixed steps,
+> which can step clean over a narrow split-window — the "all 3 modes separated
+> simultaneously" band is narrower for 3 unequal-height modes than for 2 equal ones.
+> **Fixed:** `VALLEY_SWEEP_STEPS` raised 25 → 200 (cheap; just re-labels the same
+> 30×30 KDE grid more times). Verified this alone fixes some seeds. On other seeds
+> the miss persists even at 200 steps — that residual is a **KDE bandwidth**
+> (Scott's rule) problem, not a resolution problem; see §6 for the full
+> investigation and why narrowing the bandwidth was tried and rejected.
+
 ## 0. Open questions (require further investigation)
 
 - **The 30 hpf continuity dip.** b9d2 reads discrete at 24 hpf and 48 hpf but
@@ -208,3 +234,131 @@ gap from a curved-connected manifold. Two honest directions:
 crescent/spiral/outlier synthetics exist precisely to catch a rule that starts
 inventing gaps — b9d2 reading discrete is only trustworthy if those still read
 continuous.
+
+---
+
+## 6. `valley_depth` sweep resolution + KDE bandwidth investigation (2026-07-05)
+
+### What prompted this
+`synthetic_valley_connectedness_grid.py` renders the valley-KDE view (real KDE,
+significance ring) directly above the connectedness vote table, for every
+`synthetic_scenarios.py` case in one figure — so the density-vs-graph disagreement
+discussed in §4 (b9d2: density-yes/graph-no) and its mirror (spiral/crescent:
+graph-yes/density-no) is visible per synthetic case at a glance, not just for the
+two real genes. Run: `python synthetic_valley_connectedness_grid.py` →
+`plots/synthetic_valley_connectedness_grid.png`.
+
+This surfaced a real bug: `three_discrete` and `small_middle` sometimes read
+`valley_p ≈ 1.0` (i.e. `valley_depth` obs = 0.0, no split detected at all) even
+though they are built with the *same* blob separation (6.0) as `two_discrete`,
+which reliably fires. This is independent of the b9d2 corroboration-rule question
+in §4 — it's a bug in the density statistic itself, on the easy synthetic cases the
+framework is supposed to nail.
+
+### Root cause 1 (fixed): threshold-sweep resolution
+`valley_depth` sweeps a super-level threshold down from the KDE peak on a **fixed
+25-point grid** (`np.linspace(0.97, 0.02, 25)`), returning the first threshold where
+the super-level set has ≥2 real (≥3%-mass) connected components. For 2 equal blobs
+the "both separated" window is wide, so 25 coarse steps reliably land inside it. For
+3 blobs of unequal apparent height (a denser center flanked by two outer blobs), the
+window where *all three* are simultaneously separated AND each clears the mass floor
+can be much narrower — confirmed directly: a finer 60-point manual scan found a real
+split at `frac=0.841` that the 25-point production grid stepped over entirely (its
+neighboring grid points both saw "no split").
+
+**Fix applied:** `VALLEY_SWEEP_STEPS = 200` (was a bare `25` inlined twice, in
+`valley_depth` and `valley_detection_detail` — now one shared constant so the
+statistic and its visualization can't drift out of sync). Cheap: it's just
+re-labeling the same 30×30 boolean grid more times, no new KDE evaluations.
+Verified fix on the seed where the bug was first found (`valley_depth` went from
+`0.0` to `0.846`, correctly matching a hand-checked finer scan).
+
+A `_refine_valley_transition(...)` stub is left next to `VALLEY_SWEEP_STEPS` for a
+bisection-based refinement, per discussion, but it is **not needed and not wired
+in** — reasoning below.
+
+**Why bisection was considered and not used:** bisection can only refine a
+transition the coarse scan *already detected* (i.e. narrow down exactly where
+between two known-different heights the split occurs) — it cannot discover a split
+that the coarse scan stepped over so cleanly that both neighboring samples agree
+("no split" on both sides). Our actual failure mode was the latter: the 25-point
+scan's adjacent samples agreed with each other right across the real transition, so
+there was nothing for bisection to refine. A flat, denser sweep was the correct fix
+for *this* failure mode; bisection remains a plausible future optimization if a
+denser flat sweep ever becomes too slow, not a substitute for a dense-enough initial
+scan.
+
+### Root cause 2 (investigated, NOT fixed — deeper issue): KDE bandwidth
+Even at 200 steps, some random draws of `three_discrete` still read `valley_p ≈ 1.0`
+(obs = 0.0). Diagnosis: `_kde_grid` calls `gaussian_kde(pts.T)` with **no
+`bw_method`**, so scipy defaults to Scott's rule, whose bandwidth factor is
+`n**(-1/6)` — a function of sample size ONLY, blind to whether the cloud is one
+blob or three. On the specific failing draw, the default bandwidth (factor ≈0.541)
+oversmooths the sparse middle cluster so no threshold ever shows all 3 blobs as
+simultaneously real; a narrower override (`bw_method=0.5`, barely different from
+default) does briefly resolve it — confirming the mechanism — but this is not
+enough to ship as a fix; see below.
+
+**Tested: does the bootstrap null absorb the narrower bandwidth's noise?**
+Correctly framed per discussion: what matters isn't whether the *raw* `valley_depth`
+number looks alarming on a single-blob control, it's whether it's *significant*
+against a matched-N WT null computed under the *same* bandwidth. Ran
+`compute_support_geometry` (not a reimplementation) with `_kde_grid` patched to
+`bw_method=0.5`, 8 seeds × 80 resamples, `valley_depth` only, N=40:
+
+| scenario | expected | frac of seeds significant (p<0.05) |
+|---|---|---|
+| unimodal_compact | connected | 0.00 |
+| variance_only | connected | 0.00 |
+| outliers | connected | 0.00 |
+| spiral | connected | **0.12** |
+| crescent | connected | **0.12** |
+| two_discrete | discrete | **0.12** |
+| three_discrete | discrete | 0.25 |
+| weak_separation | discrete | 0.12 |
+| small_middle | discrete | 0.12 |
+
+**Verdict: rejected.** The null does absorb noise on the plain single-blob controls
+(`unimodal_compact`/`variance_only` stay at 0.00 as they should — validating the
+p-value machinery itself). But `bw_method=0.5` is not a viable fix for two reasons:
+1. It reopens a real false-positive risk on `spiral`/`crescent` (12% each) — exactly
+   the curved-manifold cases the density statistic is supposed to leave alone.
+2. More decisively, it **breaks the easy true-positive case**: `two_discrete` (two
+   cleanly separated equal blobs) is now only significant 12% of the time — no
+   better than the spiral/crescent false-positive rate. The statistic has lost the
+   power to distinguish an obvious split from a curved manifold. This is a
+   regression, not a partial fix — narrowing bw was the wrong lever.
+
+**Why this happened:** Scott's rule is a single global scalar that has to
+simultaneously be narrow enough to resolve a thin/sparse middle cluster (favors
+small bandwidth) and wide enough to never manufacture structure inside a smooth
+curved manifold (favors large bandwidth). Those are competing constraints on one
+knob; no fixed factor satisfies both. This is the same shape-of-the-problem as
+`FINDING_knn_bandwidth_instability.md`'s global-vs-local sigma story for the graph
+statistics, but on the KDE side, and no local/adaptive analogue has been tried yet.
+
+**Status:** `VALLEY_SWEEP_STEPS=200` is shipped (real, isolated improvement, no
+observed downside). The bandwidth is **left at scipy default** (not changed).
+`three_discrete`/`small_middle` will still occasionally under-fire on certain random
+draws until a shape-adaptive bandwidth (or some other principled fix) is found.
+
+**Next step (not started):** research a bandwidth-selection method that adapts to
+local structure rather than a single global `n**(-1/6)` scalar — e.g.
+cross-validated bandwidth per cloud, adaptive/local bandwidth analogous to the
+Zelnik-Manor per-point sigma already used in `_knn_adjacency`, or restricting a
+narrower bandwidth to the mode-counting sweep only rather than the whole KDE. Any
+candidate must be re-validated the same way as above (full `synthetic_scenarios.py`
+sweep, multi-seed, checking BOTH false-positive scenarios AND the easy true-positive
+`two_discrete` case — not just the originally-broken cases) before being adopted.
+
+### New visualization
+- `synthetic_valley_connectedness_grid.py` — one script, one figure, all 12
+  synthetic scenarios: row 1 = real KDE + phenotype points + significance ring
+  (reuses the same visual language as `valley_visualization.py`), row 2 = the
+  connectedness vote table (reuses `connectedness_panel.py`'s per-metric
+  DISCR/CONT convention) plus a density-vs-graph disagreement classification
+  (`density-YES/graph-NO`, `graph-YES/density-NO`, `agree: discrete`,
+  `agree: continuous`). Useful going forward as the first check after any change to
+  `support_geometry.py` — it shows at a glance whether a change fixes the intended
+  case without reopening a false positive elsewhere, across ALL scenarios at once
+  rather than one at a time.
