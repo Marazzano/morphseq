@@ -1,26 +1,5 @@
-# Two-experiment full default target run.
-#
-# Requested 2026-07-03:
-#   - 20250912
-#   - 20260410_otx_pilot
-# Target: rule all (merged frame_masks + stage rollup report leaves).
-#
-# This is an overlay on config.yaml:
-#   snakemake --configfile config.yaml config_all_20250912_and_20260410_otx_pilot.yaml all
-
+# Runtime overlay for the combined 20250912 + 20260410_otx_pilot run.
+# Keep this file narrow: it only overrides the default config's experiment list.
 experiments:
   - 20250912
   - 20260410_otx_pilot
-
-microscope: "YX1"
-
-plate_metadata:
-  enabled: true
-
-image_materialization:
-  # 0 disables the development smoke cap: all time_index values per discovered well.
-  smoke_max_time_indices: 0
-  products:
-    - channel_id: BF
-      image_product_type: projection
-      projection_method: focus_stack

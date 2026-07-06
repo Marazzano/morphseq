@@ -1,8 +1,9 @@
 """Contract tests for the snip image-source seam (collect_snip_inputs).
 
-Pins: manifest-relative path resolution, the is_valid_snip gate, manifest order,
-and the fail-loud paths (missing CSV / missing column / missing image). Includes a
-smoke against the REAL one-well snip_inventory under tests/improvements/ when present.
+Pins: output_root-relative path resolution (matching the write-side contract in
+snip_processing/io.py::rel_to_root), the is_valid_snip gate, manifest order, and the
+fail-loud paths (missing CSV / missing column / missing image). Includes a smoke
+against the REAL one-well snip_inventory under tests/improvements/ when present.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ def _write_manifest(tmp_path, rows, *, make_images=True):
 # Resolution + gating — the worked examples
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_resolves_relative_paths_against_manifest_dir_in_order(tmp_path):
+def test_resolves_relative_paths_against_output_root_in_order(tmp_path):
     csv = _write_manifest(
         tmp_path,
         [
@@ -48,7 +49,7 @@ def test_resolves_relative_paths_against_manifest_dir_in_order(tmp_path):
         ],
     )
 
-    inputs = collect_snip_inputs(csv)
+    inputs = collect_snip_inputs(csv, output_root=tmp_path)
 
     assert [s.snip_id for s in inputs] == ["e01_BF_t0000", "e01_BF_t0001"]
     assert inputs[0].image_path == tmp_path / "snips/e01/a.png"
@@ -64,8 +65,10 @@ def test_valid_only_gate_drops_invalid_snips(tmp_path):
         ],
     )
 
-    assert [s.snip_id for s in collect_snip_inputs(csv)] == ["good"]
-    assert {s.snip_id for s in collect_snip_inputs(csv, valid_only=False)} == {"good", "bad"}
+    assert [s.snip_id for s in collect_snip_inputs(csv, output_root=tmp_path)] == ["good"]
+    assert {
+        s.snip_id for s in collect_snip_inputs(csv, output_root=tmp_path, valid_only=False)
+    } == {"good", "bad"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -74,14 +77,14 @@ def test_valid_only_gate_drops_invalid_snips(tmp_path):
 
 def test_missing_csv_fails_loud(tmp_path):
     with pytest.raises(FileNotFoundError, match="snip_inventory CSV not found"):
-        collect_snip_inputs(tmp_path / "nope.csv")
+        collect_snip_inputs(tmp_path / "nope.csv", output_root=tmp_path)
 
 
 def test_missing_required_column_fails_loud(tmp_path):
     csv = tmp_path / "snip_inventory.csv"
     pd.DataFrame([{"snip_id": "x"}]).to_csv(csv, index=False)
     with pytest.raises(KeyError, match="processed_snip_path"):
-        collect_snip_inputs(csv)
+        collect_snip_inputs(csv, output_root=tmp_path)
 
 
 def test_missing_image_file_fails_loud_naming_snip(tmp_path):
@@ -91,7 +94,7 @@ def test_missing_image_file_fails_loud_naming_snip(tmp_path):
         make_images=False,
     )
     with pytest.raises(FileNotFoundError, match="ghost"):
-        collect_snip_inputs(csv)
+        collect_snip_inputs(csv, output_root=tmp_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -100,7 +103,7 @@ def test_missing_image_file_fails_loud_naming_snip(tmp_path):
 
 @pytest.mark.skipif(not REAL_MANIFEST.exists(), reason="real snip_inventory fixture absent")
 def test_real_one_well_manifest_resolves_existing_pngs():
-    inputs = collect_snip_inputs(REAL_MANIFEST)
+    inputs = collect_snip_inputs(REAL_MANIFEST, output_root=REAL_MANIFEST.parent)
 
     assert len(inputs) == 3
     assert all(s.image_path.exists() for s in inputs)

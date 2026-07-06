@@ -23,6 +23,7 @@ from data_pipeline.object_extraction.segmentation.backends.sam2_video.prompt_det
 )
 from data_pipeline.object_extraction.segmentation.frame_masks_contract import (
     FRAME_MASKS_REQUIRED_COLUMNS,
+    MAX_VALID_MASK_AREA_FRACTION,
     no_mask_frame_mask_row,
 )
 from data_pipeline.object_extraction.segmentation.masks.mask_geometry import mask_geometry
@@ -132,7 +133,9 @@ def adapt_sam2_well_output(
             # SAM2 can lose a track mid-propagation and return an all-background mask for
             # this object on this frame. mask_geometry then returns the degenerate (0,0,0,0)
             # sentinel, which is only a valid bbox for an explicitly-invalid mask row.
-            is_valid_mask = bool(geom["area_px"] > 0)
+            image_area_px = float(frame_row["image_width_px"]) * float(frame_row["image_height_px"])
+            area_fraction = float(geom["area_px"]) / image_area_px if image_area_px > 0 else 0.0
+            is_valid_mask = bool(geom["area_px"] > 0 and area_fraction <= MAX_VALID_MASK_AREA_FRACTION)
             rows.append(
                 {
                     "experiment_id": str(frame_row["experiment_id"]),

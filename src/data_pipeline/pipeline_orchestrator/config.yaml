@@ -63,6 +63,8 @@ image_materialization:
   # DEVELOPMENT-ONLY SCAFFOLDING:
   # smoke_max_time_indices limits materialization to the first N time_index values so the
   # live front-half spine can be smoke-tested cheaply during pipeline development.
+  # Set it to 1 to process only the first discovered time_index per well; set it to 0 to
+  # disable the cap entirely.
   #
   # This is NOT a production frame-selection policy and must not be used as a scientific
   # sampling mechanism. <=0 (the default below) means INACTIVE / no cap. To run a capped
@@ -73,6 +75,14 @@ image_materialization:
   # frame_selection contract that derives the time-index subset systematically from the
   # acquisition inventory / experiment design, or remove it.
   smoke_max_time_indices: 0
+  # Product selection. Defaults to focus_stack projection + full z_stack retention (promoted
+  # from opt-in overlay to baseline 2026-07-04).
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+    - channel_id: BF
+      image_product_type: z_stack
   # Product write policy: product selection stays in image_materialization.products; this map only
   # declares how active products are encoded/written. BF__z_stack is JPEG q85 at ds4 to keep the
   # persisted z planes small enough for post-segmentation QC.

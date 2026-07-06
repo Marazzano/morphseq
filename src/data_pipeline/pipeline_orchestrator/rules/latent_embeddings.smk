@@ -82,6 +82,7 @@ rule encode_latent_embeddings_for_well:
         )),
     params:
         model_run=_MODEL_RUN_OR_FAIL,
+        output_root=str(DATA_ROOT),
         models_root=lambda wc: str(_LE_CFG.get("models_root_override") or MODELS_DIR),
         model_name=lambda wc: str(_LE_CFG.get("model_name", "")),
         model_input_height=lambda wc: int(_LE_CFG.get("model_input_shape", [288, 128])[0]),
@@ -94,6 +95,7 @@ rule encode_latent_embeddings_for_well:
         {params.model_run} -m data_pipeline.feature_extraction.legacy_embeddings.entrypoint \
           --snip-inventory-csv "{input.snip_inventory}" \
           --output-parquet "{output.latents}" \
+          --output-root "{params.output_root}" \
           --models-root "{params.models_root}" \
           --model-name "{params.model_name}" \
           --model-input-height {params.model_input_height} \

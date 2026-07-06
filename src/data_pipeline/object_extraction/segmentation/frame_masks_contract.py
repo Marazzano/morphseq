@@ -45,6 +45,10 @@ FRAME_MASKS_REQUIRED_COLUMNS: tuple[str, ...] = (
 
 FRAME_MASKS_UNIQUE_KEY: tuple[str, ...] = ("mask_id",)
 
+# Extremely large masks are usually background/full-frame failures, not valid embryo instances.
+# This is intentionally conservative: real embryos should not cover most of the field of view.
+MAX_VALID_MASK_AREA_FRACTION = 0.90
+
 
 def empty_frame_masks() -> pd.DataFrame:
     return pd.DataFrame(columns=FRAME_MASKS_REQUIRED_COLUMNS)

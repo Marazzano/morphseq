@@ -5,7 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from data_pipeline.object_extraction.segmentation.frame_masks_contract import FRAME_MASKS_REQUIRED_COLUMNS
+from data_pipeline.object_extraction.segmentation.frame_masks_contract import (
+    FRAME_MASKS_REQUIRED_COLUMNS,
+    MAX_VALID_MASK_AREA_FRACTION,
+)
 from data_pipeline.shared.identifiers import build_no_mask_id, parse_mask_id, parse_track_id
 
 
@@ -69,6 +72,8 @@ def validate_frame_mask_block(frame_masks: pd.DataFrame) -> None:
         raise ValueError("frame_masks valid rows must have mask_rle_format")
 
     numeric_cols = [
+        "image_width_px",
+        "image_height_px",
         "area_px",
         "bbox_x_min_px",
         "bbox_y_min_px",
@@ -82,8 +87,21 @@ def validate_frame_mask_block(frame_masks: pd.DataFrame) -> None:
         if not np.isfinite(values).all():
             raise ValueError(f"frame_masks valid {col} values must be finite")
 
+    valid_width = pd.to_numeric(valid["image_width_px"], errors="coerce")
+    valid_height = pd.to_numeric(valid["image_height_px"], errors="coerce")
+    if (valid_width <= 0).any() or (valid_height <= 0).any():
+        raise ValueError("frame_masks valid image dimensions must be positive")
     if (pd.to_numeric(valid["area_px"], errors="coerce") < 0).any():
         raise ValueError("frame_masks area_px must be non-negative")
+    valid_area = pd.to_numeric(valid["area_px"], errors="coerce")
+    image_area_px = valid_width * valid_height
+    too_large = (image_area_px > 0) & ((valid_area / image_area_px) > MAX_VALID_MASK_AREA_FRACTION)
+    if bool(np.any(too_large)):
+        bad = valid.loc[too_large, "mask_id"].head(5).tolist()
+        raise ValueError(
+            "frame_masks valid mask(s) cover too much of the frame "
+            f"({MAX_VALID_MASK_AREA_FRACTION:.2f} max area fraction); examples: {bad}"
+        )
 
 
 def validate_frame_masks(

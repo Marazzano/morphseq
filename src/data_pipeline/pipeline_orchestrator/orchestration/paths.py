@@ -611,6 +611,32 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── QUALITY CONTROL — mask_quality_qc report (TERMINAL) ─────────────────
+    # Report-only severity quartiles for each binary mask-quality flag, with the canonical snip
+    # mask overlaid on the source snip image for review.
+    "mask_quality_qc_report": {
+        "stage": "quality_control",
+        "product_dir": "mask_quality_qc/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "edge_flag_histogram_png": "{experiment_id}_mask_quality_qc_edge_flag_histogram.png",
+            "edge_flag_gallery_png": "{experiment_id}_mask_quality_qc_edge_flag_gallery.png",
+            "discontinuous_mask_flag_histogram_png": (
+                "{experiment_id}_mask_quality_qc_discontinuous_mask_flag_histogram.png"
+            ),
+            "discontinuous_mask_flag_gallery_png": (
+                "{experiment_id}_mask_quality_qc_discontinuous_mask_flag_gallery.png"
+            ),
+            "overlapping_mask_flag_histogram_png": (
+                "{experiment_id}_mask_quality_qc_overlapping_mask_flag_histogram.png"
+            ),
+            "overlapping_mask_flag_gallery_png": (
+                "{experiment_id}_mask_quality_qc_overlapping_mask_flag_gallery.png"
+            ),
+        },
+    },
+
     # ── QUALITY CONTROL — focus QC ─────────────────────────────────────────────
     # Interior structural-edge-content heuristic per snip (ghost/structureless embryo
     # detection). Reads pixels via frame_inventory (materialized_image_readers), masks via

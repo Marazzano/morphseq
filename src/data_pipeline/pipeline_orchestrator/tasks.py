@@ -729,6 +729,24 @@ def cmd_validate_mask_quality_qc(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_mask_quality_qc_report(args: argparse.Namespace) -> None:
+    """Build the mask_quality_qc TERMINAL report (histograms + per-flag galleries with overlays)."""
+    from data_pipeline.quality_control.mask_quality_qc.report import build_mask_quality_qc_report
+
+    build_mask_quality_qc_report(
+        mask_quality_qc_csv=args.mask_quality_qc_csv,
+        snip_inventory_csv=args.snip_inventory_csv,
+        frame_masks_csv=args.frame_masks_csv,
+        output_root=args.output_root,
+        output_edge_flag_histogram_png=args.output_edge_flag_histogram_png,
+        output_edge_flag_gallery_png=args.output_edge_flag_gallery_png,
+        output_discontinuous_mask_flag_histogram_png=args.output_discontinuous_mask_flag_histogram_png,
+        output_discontinuous_mask_flag_gallery_png=args.output_discontinuous_mask_flag_gallery_png,
+        output_overlapping_mask_flag_histogram_png=args.output_overlapping_mask_flag_histogram_png,
+        output_overlapping_mask_flag_gallery_png=args.output_overlapping_mask_flag_gallery_png,
+    )
+
+
 def cmd_focus_qc(args: argparse.Namespace) -> None:
     """Compute the per-well focus_qc shard. Thin dispatcher; logic lives in the product."""
     from data_pipeline.quality_control.focus_qc.entrypoint import run_focus_qc
@@ -1491,6 +1509,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_saqc_report.add_argument("--output-vs-stage-png", type=Path, required=True)
     p_saqc_report.add_argument("--output-gallery-png", type=Path, required=True)
     p_saqc_report.set_defaults(func=cmd_surface_area_qc_report)
+
+    p_mqqc_report = sub.add_parser("mask-quality-qc-report")
+    p_mqqc_report.add_argument("--mask-quality-qc-csv", type=Path, required=True)
+    p_mqqc_report.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_mqqc_report.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_mqqc_report.add_argument("--output-root", type=Path, required=True)
+    p_mqqc_report.add_argument("--output-edge-flag-histogram-png", type=Path, required=True)
+    p_mqqc_report.add_argument("--output-edge-flag-gallery-png", type=Path, required=True)
+    p_mqqc_report.add_argument("--output-discontinuous-mask-flag-histogram-png", type=Path, required=True)
+    p_mqqc_report.add_argument("--output-discontinuous-mask-flag-gallery-png", type=Path, required=True)
+    p_mqqc_report.add_argument("--output-overlapping-mask-flag-histogram-png", type=Path, required=True)
+    p_mqqc_report.add_argument("--output-overlapping-mask-flag-gallery-png", type=Path, required=True)
+    p_mqqc_report.set_defaults(func=cmd_mask_quality_qc_report)
 
     p_mqqc = sub.add_parser("mask-quality-qc")
     p_mqqc.add_argument("--snip-inventory-csv", type=Path, required=True)

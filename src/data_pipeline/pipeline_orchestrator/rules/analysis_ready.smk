@@ -54,18 +54,31 @@ rule analysis_ready_report:
     input:
         analysis_ready=str(_analysis_ready_artifact("{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
         death_event=str(rule_artifact("death_event", "death_event", "{experiment}", path_mode=PATH_MODE_MERGED)),
+        snip_inventory=str(rule_artifact("snip_inventory", "snip_inventory", "{experiment}", path_mode=PATH_MODE_MERGED)),
     output:
-        latent_projection_png=str(rule_artifact("analysis_ready_report", "latent_projection_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        latent_pca_qc_state_png=str(rule_artifact("analysis_ready_report", "latent_pca_qc_state_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        latent_pca_stage_png=str(rule_artifact("analysis_ready_report", "latent_pca_stage_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        latent_pca_genotype_png=str(rule_artifact("analysis_ready_report", "latent_pca_genotype_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        post_qc_area_um2_gallery_png=str(rule_artifact("analysis_ready_report", "post_qc_area_um2_gallery_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        post_qc_baseline_deviation_gallery_png=str(rule_artifact("analysis_ready_report", "post_qc_baseline_deviation_gallery_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
         survival_over_stage_png=str(rule_artifact("analysis_ready_report", "survival_over_stage_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
         genotype_survival_panel_png=str(rule_artifact("analysis_ready_report", "genotype_survival_panel_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
-        well_survival_over_stage_png=str(rule_artifact("analysis_ready_report", "well_survival_over_stage_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        well_survival_over_stage_all_png=str(rule_artifact("analysis_ready_report", "well_survival_over_stage_all_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        well_survival_over_stage_by_genotype_png=str(rule_artifact("analysis_ready_report", "well_survival_over_stage_by_genotype_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks analysis-ready-report \
           --analysis-ready-parquet "{input.analysis_ready}" \
           --death-event-csv "{input.death_event}" \
-          --output-latent-projection-png "{output.latent_projection_png}" \
+          --snip-inventory-csv "{input.snip_inventory}" \
+          --output-root "{DATA_ROOT}" \
+          --output-latent-pca-qc-state-png "{output.latent_pca_qc_state_png}" \
+          --output-latent-pca-stage-png "{output.latent_pca_stage_png}" \
+          --output-latent-pca-genotype-png "{output.latent_pca_genotype_png}" \
+          --output-post-qc-area-um2-gallery-png "{output.post_qc_area_um2_gallery_png}" \
+          --output-post-qc-baseline-deviation-gallery-png "{output.post_qc_baseline_deviation_gallery_png}" \
           --output-survival-over-stage-png "{output.survival_over_stage_png}" \
           --output-genotype-survival-panel-png "{output.genotype_survival_panel_png}" \
-          --output-well-survival-over-stage-png "{output.well_survival_over_stage_png}"
+          --output-well-survival-over-stage-all-png "{output.well_survival_over_stage_all_png}" \
+          --output-well-survival-over-stage-by-genotype-png "{output.well_survival_over_stage_by_genotype_png}"
         """

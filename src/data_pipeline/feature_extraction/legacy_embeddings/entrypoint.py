@@ -38,6 +38,7 @@ def run_legacy_embeddings(
     *,
     snip_inventory_csvs: list[Path],
     output_parquets: list[Path],
+    output_root: Path,
     models_root: Path,
     model_name: str,
     model_input_shape: tuple[int, int],
@@ -50,6 +51,8 @@ def run_legacy_embeddings(
     Args:
         snip_inventory_csvs: per-well snip_inventory CSVs (the run set), in well order.
         output_parquets: per-well output paths, paired positionally with ``snip_inventory_csvs``.
+        output_root: the pipeline output root (``data_pipeline_output``) that each
+            manifest's ``processed_snip_path`` is stored relative to.
         models_root: machine path holding ``legacy/<model_name>/`` (env.yaml.paths.models_root,
             or the config ``models_root_override`` if set — resolved by the caller).
         model_name: which trained model to load (the science knob; names the weights dir).
@@ -70,7 +73,7 @@ def run_legacy_embeddings(
     encoder = load_legacy_vae_encoder(model_dir, device=device)
 
     for snip_inventory_csv, output_parquet in zip(snip_inventory_csvs, output_parquets):
-        snip_inputs = collect_snip_inputs(snip_inventory_csv)
+        snip_inputs = collect_snip_inputs(snip_inventory_csv, output_root=output_root)
         latents = encode_snips(
             snip_inputs,
             encoder=encoder,
@@ -90,6 +93,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--snip-inventory-csv", type=Path, nargs="+", required=True)
     p.add_argument("--output-parquet", type=Path, nargs="+", required=True)
+    p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--models-root", type=Path, required=True)
     p.add_argument("--model-name", required=True)
     # model_input_shape is (height, width) — two ints, in that order.
@@ -106,6 +110,7 @@ def main(argv: list[str] | None = None) -> None:
     run_legacy_embeddings(
         snip_inventory_csvs=list(args.snip_inventory_csv),
         output_parquets=list(args.output_parquet),
+        output_root=args.output_root,
         models_root=args.models_root,
         model_name=args.model_name,
         model_input_shape=(args.model_input_height, args.model_input_width),

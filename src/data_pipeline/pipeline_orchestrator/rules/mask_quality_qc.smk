@@ -101,3 +101,64 @@ shards = collect_well_shard_paths('{DATA_ROOT}', 'mask_quality_qc', 'mask_qualit
 concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
+
+
+rule mask_quality_qc_report:
+    """TERMINAL: per-flag histograms and quartile galleries with canonical snip-mask overlays."""
+    input:
+        mask_quality_qc=str(_mqqc_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
+        snip_inventory=str(rule_artifact("snip_inventory", "snip_inventory", "{experiment}", path_mode=PATH_MODE_MERGED)),
+        frame_masks=str(rule_artifact("frame_masks", "frame_masks", "{experiment}", path_mode=PATH_MODE_MERGED)),
+    output:
+        edge_flag_histogram_png=str(
+            rule_artifact("mask_quality_qc_report", "edge_flag_histogram_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)
+        ),
+        edge_flag_gallery_png=str(
+            rule_artifact("mask_quality_qc_report", "edge_flag_gallery_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)
+        ),
+        discontinuous_mask_flag_histogram_png=str(
+            rule_artifact(
+                "mask_quality_qc_report",
+                "discontinuous_mask_flag_histogram_png",
+                "{experiment}",
+                path_mode=PATH_MODE_EXPERIMENT,
+            )
+        ),
+        discontinuous_mask_flag_gallery_png=str(
+            rule_artifact(
+                "mask_quality_qc_report",
+                "discontinuous_mask_flag_gallery_png",
+                "{experiment}",
+                path_mode=PATH_MODE_EXPERIMENT,
+            )
+        ),
+        overlapping_mask_flag_histogram_png=str(
+            rule_artifact(
+                "mask_quality_qc_report",
+                "overlapping_mask_flag_histogram_png",
+                "{experiment}",
+                path_mode=PATH_MODE_EXPERIMENT,
+            )
+        ),
+        overlapping_mask_flag_gallery_png=str(
+            rule_artifact(
+                "mask_quality_qc_report",
+                "overlapping_mask_flag_gallery_png",
+                "{experiment}",
+                path_mode=PATH_MODE_EXPERIMENT,
+            )
+        ),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks mask-quality-qc-report \
+          --mask-quality-qc-csv "{input.mask_quality_qc}" \
+          --snip-inventory-csv "{input.snip_inventory}" \
+          --frame-masks-csv "{input.frame_masks}" \
+          --output-root "{DATA_ROOT}" \
+          --output-edge-flag-histogram-png "{output.edge_flag_histogram_png}" \
+          --output-edge-flag-gallery-png "{output.edge_flag_gallery_png}" \
+          --output-discontinuous-mask-flag-histogram-png "{output.discontinuous_mask_flag_histogram_png}" \
+          --output-discontinuous-mask-flag-gallery-png "{output.discontinuous_mask_flag_gallery_png}" \
+          --output-overlapping-mask-flag-histogram-png "{output.overlapping_mask_flag_histogram_png}" \
+          --output-overlapping-mask-flag-gallery-png "{output.overlapping_mask_flag_gallery_png}"
+        """
