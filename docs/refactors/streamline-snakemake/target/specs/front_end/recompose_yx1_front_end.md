@@ -1,0 +1,292 @@
+# Recompose — YX1 Front End (🟢 TARGET, microscope-scoped)
+
+**Status:** the YX1 recomposition plan, from a read-only research pass 2026-06-07.
+**Owner of this doc:** the **YX1 model only.** Keyence is a *separate* doc/model
+(`recompose_keyence_front_end.md`) — **do not read or import Keyence logic.** The two microscopes
+must not fuse. They meet only at the convergence line (the shared join), which neither doc owns.
+**Terminology guard:** `raw_position_label` means the raw ND2 position token. Do **not** call it `well_index` until it has been resolved to the local plate well label by mapping.
+**2026-06-17 contract update:** the shared mapping artifact is now `position_well_mapping.csv`
+with required `position_index`, not `series_number`. Historical notes below may mention the old
+`map_series_to_wells`/`series_well_mapping` vocabulary while explaining the migration; new code uses
+`map_positions_to_wells`, `apply_position_to_well_mapping`, and fails loudly instead of shimming
+`series_number`.
+**North star (read first, in order):**
+1. `pipeline_file_philosophy.md` — the conventions every change must satisfy (the two hard
+   constraints, nouns-for-steps, fail-loud, the conformance checklist). **Judge every file against it.**
+2. `front_end_naming_and_frame_inventory_flow.md` — the target flow + naming (the "ONE raw read" + convergence-line
+   decisions this doc implements).
+3. `frame_inventory_handoff_contract.md` — only for Phase 2 (the stitched seam + `well_id`-keyed tree).
+
+---
+
+## 🧭 THE THREE LAYERS (hold them distinct — do not collapse)
+- **L1 — legacy/source reality** (real-data lessons): `src/build/build01B_compile_yx1_images_torch.py` (853 lines).
+- **L2 — current refactored code** (partially built, may not read as narrative):
+  `metadata_ingest/scope/yx1/{extract_scope_metadata,map_series_to_wells,validate_xy_reference_grid,generate_xy_reference}.py`
+  + the LIVE Snakefile front-end rules + `tasks.py` verbs.
+- **L3 — cohesive narrative target** (what L2 should become to honor L1's lessons AND the philosophy).
+
+This doc maps L1→L2→L3 for YX1 and prescribes the recomposition.
+
+---
+
+## 🚦 THE TWO PHASES — a HARD line at the GPU boundary
+
+YX1's native-microscope entry mode is **two phases with different resource profiles**. Keep them separated; do not fuse the
+flow into one job. The shared pipeline begins at the canonical stitched handoff tree; the external-handoff entry mode starts there.
+
+```
+  PHASE 1 — METADATA (CPU, implement NOW)                    │  PHASE 2 — STITCH (GPU, specified, deferred)
+  ingest_scope_metadata → map_positions_to_wells →          │  materialize_well[well_id]
+  join_series_mapping_to_scope_metadata → discover_wells    │  (LoG focus-projection + frame_tiler stitch)
+            (no GPU; the 2-well smoke run needs this)        │  (needs a GPU; depends on Phase 1)
+                            └──────────── CONVERGENCE LINE (microscope gone) ────────────┘
+```
+
+> **Implement Phase 1 now.** It is lower-risk (no GPU scheduling), it is the "ONE raw read" fix, and
+> it is exactly what the 2-well smoke run needs. Phase 2 is fully specified below but built after
+> Phase 1 runs clean.
+>
+> **"ONE raw read" here means one raw metadata read in Phase 1.** It does not prohibit later raw
+> image reads in Phase 2.
+
+---
+
+# ════════ PHASE 1 — METADATA (CPU) — the implement-now recompose ════════
+
+## Phase 1 split: required recomposition vs safety parity
+
+### 1A — Required recomposition
+- no premature IDs
+- add `x_um`/`y_um`
+- CSV→CSV `map_series_to_wells`
+- config-sourced reference path
+
+### 1B — Safety parity (stay out of 1A unless the immediate smoke run needs it)
+- BF env override
+- timestamp jump detection
+- KMeans QC
+- cleanup / dead-code removal
+- `generate_xy_reference.py` relocation / dead-helper cleanup
+
+## What L2 has today (inventory + narrative judgment)
+
+| File | What it does | Narrative verdict (vs philosophy) |
+|---|---|---|
+| `yx1/extract_scope_metadata.py` (271) | opens ND2, reads calibration/dims/channels, imputes+monotonizes timestamps, normalizes channel, writes `scope_metadata__yx1.csv` | **Partial.** Honest name/docstring, BUT mints `well_id`/`image_id` at ingest (lines ~212-213) before a real well exists — violates "well_id born at the join." Does NOT emit stage XY. Duplicate `'time_int'` dict key. |
+| `yx1/map_series_to_wells.py` (510) | **re-opens the ND2** for stage XY, KD-tree matches to a reference grid, writes `series_well_mapping.csv` + `.provenance.json` | **Fails the central rule.** Target says map is **CSV→CSV**; this re-reads raw (the 2nd raw metadata read in Phase 1). Hardcoded absolute `DEFAULT_REF_XY_PATH` (line ~21). Dead helpers `_parse_series_number_map`/`_build_implicit_mapping`. |
+| `yx1/validate_xy_reference_grid.py` (200) | geometric sanity-check on the reference grid; fail-loud with previews | **Good — the exemplar.** Keyword-only, fail-loud-with-the-words. Match this altitude. |
+| `yx1/generate_xy_reference.py` (232) | offline one-shot tool: builds the `well,x_um,y_um` reference CSV from a verified experiment | **Out-of-band / Phase 1B cleanup.** NOT a DAG node. Hardcodes ref experiment + `morphseq_playground` paths; duplicates `extract_nd2_stage_positions` (drift risk). |
+
+## The real-data lessons from L1 (`build01B`) — must survive
+1. **Distance tolerance = half-grid-spacing** (`max_distance_um=4500` ≈ 9000/2). A match beyond half a
+   well pitch is rejected. The single most important tolerance — faithfully in L2, keep it.
+2. **Series is 1-based; ND2 position is 0-based** (`series = P + 1`). Off-by-one silently shifts every
+   well. Preserve.
+3. **Stage-XY frame addressing:** position `w` at T=0 is frame `w*(Z*C)`; read
+   `channels[0].position.stagePositionUm`. Preserve exactly.
+4. **Column-major Excel series order** (8×12 grid read down columns). Load-bearing if any Excel-grid
+   code is touched.
+5. **KMeans match-QC cross-check** (L1 `_qc_well_assignments`): clusters stage Y→rows, X→cols and
+   asserts they match assigned labels — catches a transposed/flipped reference. **L2 DROPPED this**
+   (kept only reference-grid-shape validation + distance rejection). Gap — see risks.
+6. **Timestamp imputation + `cummax()` monotonic** — ported to L2. But L1's mid-acquisition **jump
+   detection** (`_fix_nd2_timestamp`) is **NOT ported** — latent correctness gap on jumpy ND2s.
+7. **BF channel detection is fuzzy** (`BF`/`EYES - Dia`/`Empty`/single-channel fallback/fail-loud).
+   L2 covers most but not the `YX1_BF_CHANNEL_INDEX` env override.
+8. **Well label is an opaque string** in image building (dict key + dir component, never parsed) —
+   confirms switching the image tree to `well_id` is a pure substitution.
+
+## Current → target mapping (Phase 1)
+
+| Target step | Existing code | Reuse | Reorient | Rewrite | Missing |
+|---|---|---|---|---|---|
+| `ingest_scope_metadata` (the ONE raw metadata read in Phase 1) | `extract_scope_metadata.py`; live rule; `tasks.py::cmd_extract_scope` | timestamp impute, channel normalize, ND2 open, schema-validate+write | **stop minting `well_id`/`image_id`** (emit only `raw_position_label`, not a resolved well label) | **ADD `x_um`/`y_um` stage-XY columns per series** so map can be CSV→CSV | 1B: BF env override; timestamp jump-detection (only pull into 1A if the smoke run proves it is required) |
+| `map_series_to_wells` (CSV→CSV) | `map_series_to_wells.py`; live rule; `cmd_map_series` | KD-tree XY match, grid-validator call, distance tol, provenance + gap/dup warnings | **read stage XY from `scope_metadata__yx1.csv` columns** instead of re-opening the ND2; drop `nd2_path` from signature + rule input + verb | replace hardcoded `DEFAULT_REF_XY_PATH` with a config-sourced path; delete dead fallbacks | 1B: KMeans match-QC (only pull into 1A if the smoke run proves it is required) |
+| `join_series_mapping_to_scope_metadata` ← **CONVERGENCE; NOT this doc's to design** | `scope/shared/apply_series_mapping.py` (shared) | the whole join; `well_id` minted here (correct point) | — | normalize `.validated` suffix (open audit) | — |
+| `discover_wells` ← shared, already TARGET-shaped | `checkpoint discover_wells` | reads `well_id` col → `discovered_wells.txt` | — | — | — |
+
+**Where YX1 converges out:** at the **input** to `join_series_mapping_to_scope_metadata`. The only
+YX1-specific front-end modules are `extract_scope_metadata.py` and `map_series_to_wells.py` (both
+under `scope/yx1/`). The join and everything after are shared — out of scope here.
+
+## Phase-1 recomposition plan (what to change)
+1. **`extract_scope_metadata.py` — reorient to a pure raw-reader.**
+   - Emit acquisition facts **+ stage XY (`x_um`,`y_um`) per series**.
+   - Emit only `raw_position_label` (the raw ND2 position label). **Remove `well_id`/`image_id` minting** —
+     those are born at the join; `image_id` is minted later when frames/images are materialized and the final frame key exists. Fix the duplicate `'time_int'` key.
+   - Phase 1B: port the BF-channel env override + timestamp jump-detection (lessons 6-7) only if the smoke run needs them.
+   - Schema: add `x_um`/`y_um` to `REQUIRED_COLUMNS_SCOPE_METADATA` (⚠️ shared schema — coordinate; see
+     "Cross-cutting" below).
+2. **`map_series_to_wells.py` — rewrite the read path to CSV→CSV.**
+   - Read `x_um`/`y_um` from `scope_metadata__yx1.csv`; **delete** `extract_nd2_stage_positions` +
+     `nd2_path`. Remove the ND2 glob from `tasks.py::cmd_map_series`.
+   - Source the reference grid path from config (`scope_metadata.yx1.ref_xy_csv` or similar), not a
+     module constant.
+   - Phase 1B: port a lightweight `_qc_well_assignments` as a post-match assertion (lesson 5) only if the smoke run needs it.
+   - Delete dead `_parse_series_number_map`/`_build_implicit_mapping`.
+3. **`validate_xy_reference_grid.py` — keep as-is** (the exemplar).
+4. **Phase 1B / cleanup: `generate_xy_reference.py` — relocate** to a `tools/`-style location (not a DAG node);
+   de-duplicate `extract_nd2_stage_positions` (import one shared `nd2_stage_positions` helper).
+
+## Philosophy violations to fix (YX1, Phase 1)
+- NO-LEAKAGE: `extract_scope_metadata.py` mints `well_id`/`image_id` at the wrong moment → move to join; `image_id` is minted later when frames/images are materialized and the final frame key exists.
+- Second raw metadata read in Phase 1: `map_series_to_wells.py` re-opens the ND2 → CSV→CSV.
+- Hardcoded path string: `DEFAULT_REF_XY_PATH` → config.
+- Minor / safety parity: duplicate `'time_int'` key; dead helpers; `cmd_map_series` self-globs the ND2 (delete once CSV→CSV).
+- Keep BF env override, timestamp jump detection, and KMeans QC in 1B unless the immediate smoke run forces one of them into 1A. The relocation / dead-helper cleanup for `generate_xy_reference.py` also stays in 1B.
+
+---
+
+# ════════ PHASE 2 — STITCH (GPU) — specified, build AFTER Phase 1 ════════
+
+> **GPU-gated, per-well, depends on Phase 1.** Do not start until the metadata phase runs clean for
+> the 2 wells. Different resource profile (needs `device=cuda`).
+
+**Reuse the shared engine — do NOT rewrite stitching.** `image_building/utils/frame_tiler.py` (419
+lines: `stitch_frame_tiles`, `FrameTilingConfig`, `FallbackParams`, QC, legacy-canvas fallback) is
+the LIVE shared stitch engine. The YX1 `materialize_well` **calls it**; it does not reimplement tiling.
+This is the native-microscope entry mode; the shared pipeline does not care about YX1 vs Keyence
+once the canonical stitched handoff tree exists.
+
+**Target shape:**
+- `materialize_well[well_id]` — per-well fanout (not the current experiment-grain loop). Reads this well's
+  raw frames + its mapping rows; writes `built_image_data/{exp}/stitched_ff_images/{well_id}/{channel}/`
+  keyed on **`well_id`** (compose via `shared/identifiers`, never an f-string in a path helper);
+  sentinel `.well_{well_id}.done`.
+- Off-registry image path comes from a `stitched_handoff/paths.py` helper, not an inline string.
+  That helper is the practical seam between native microscope mode and the shared pipeline.
+- YX1 focus/stitch specifics stay in the YX1 backend; the cross-microscope tiling stays in `frame_tiler`.
+
+**Orphaned stitch code (deferred until after Phase 1 — do not clean up yet):** `image_building/yx1/
+stitched_ff_builder.py` (4-line shim → delete) and `image_building/scope/yx1/stitched_ff_builder.py`
+(279 lines, orphaned old builder → **diff against the inlined logic in `materialize_stitched_images.py`
+first**, confirm no unique capability, then delete). `frame_tiler.py` is KEPT.
+
+---
+
+## 🔗 CROSS-CUTTING (shared with the Keyence doc — coordinate, don't fuse)
+These touch shared surfaces; resolve them jointly so the two microscopes stay consistent. The
+shared side begins at the canonical stitched handoff tree; the native side ends there:
+- **Scope-metadata schema** (`REQUIRED_COLUMNS_SCOPE_METADATA`) — both ingests change it (YX1 adds
+  `x_um`/`y_um`; Keyence adds position). Change once, together.
+- **`.validated` sentinel suffix** (leading vs trailing dot) at the join — shared open audit.
+- **The orphan-shim deletion** — both microscopes have a `scope/{scope}/stitched_ff_builder.py`;
+  verify-then-delete each against the inlined logic, but only after Phase 1 is green. `frame_tiler.py` stays for both.
+- **The convergence line itself** (`join_...`, `discover_wells`) — neither microscope doc designs it. The seam that matters for the shared pipeline is the canonical stitched handoff tree.
+
+## ✅ DONE-FOR-PHASE-1 (YX1) — smoke run verified 2026-06-07
+
+### Phase 1A implementation
+- `ingest_scope_metadata` emits `raw_position_label` + stage XY (`x_um`/`y_um`), no premature `well_id`/`image_id`.
+  Duplicate `'time_int'` dict key fixed. Schema updated (`REQUIRED_COLUMNS_SCOPE_METADATA` drops `well_id`/`image_id`/`well_index`, adds `raw_position_label`/`x_um`/`y_um`).
+- Module renamed: `scope/yx1/extract_scope_metadata.py` → `extract_yx1_scope_metadata.py` (matches function name).
+- `map_series_to_wells` is CSV→CSV (no ND2 re-open). `extract_nd2_stage_positions` deleted. `DEFAULT_REF_XY_PATH`
+  replaced by config-sourced `scope_metadata.yx1.ref_xy_csv`. Dead helpers (`_parse_series_number_map`,
+  `_build_implicit_mapping`, `map_nd2_to_wells_by_xy`) deleted. `--raw-images-dir` dropped from Snakefile rule
+  and `tasks.py` parser. `ref_xy_csv` is now a **required** argument (no silent default).
+- Module renamed: `scope/yx1/map_series_to_wells.py` → `map_yx1_series_to_wells.py`.
+- `apply_series_mapping` (the join/convergence) updated to read `raw_position_label` column when present
+  (falls back to `well_index` for Keyence backward compat).
+- `config.yaml` gains `scope_metadata.yx1.ref_xy_csv` key.
+- `env.yaml` gains `conda_base` for Snakemake subshell conda resolution.
+- `discover_wells` rule moved from heredoc to `tasks.py` `discover-wells` verb (fixed NameError).
+
+### Two-Well Smoke Run — PASSED
+- Experiment `20250912` (95 positions, T=113, W=95, Z=15 = 10 735 rows).
+- All 4 stages completed cleanly: `ingest_scope_metadata` → `map_positions_to_wells` → `join_series_mapping_to_scope_metadata` → `discover_wells`.
+- XY matching: 95 positions, distance min=0.0 max=0.0 mean=0.0 µm (perfect match against reference grid).
+- `scope_metadata_mapped.csv`: `well_id = 20250912_A01` format (global ID) ✅
+- `discovered_wells.txt`: 95 wells, all global IDs ✅
+
+### Infrastructure fixes uncovered during smoke run
+- `pulp` version conflict: snakemake 7.32.4 requires `pip install "pulp<2.8"` (documented in `env.example.yaml`).
+- Snakefile parse needs `PYTHONPATH` set in the outer `conda run` invocation — wired via `env PYTHONPATH=...` in `RUN` variable.
+
+---
+
+# ════════ PHASE 1C — YX1 ACQUISITION INVENTORY (record-only) — IMPLEMENTED 2026-06-16 ════════
+
+**Companion:** `acquisition_inventory_flow.md` (the full TARGET, written for Keyence's messy
+re-acquisition collisions). **YX1 is the simple, no-collision case** that paves the path before
+Keyence's reconstruction logic lands. **Firewall holds:** this section imports no Keyence logic.
+
+## YX1 is a TENSOR — record everything, collapse nothing
+YX1 is `dask_arr[time, position, Z, channel, Y, X]` (`materialize_stitched_images.py:139-142`). A
+frame's address is a tuple of indices into **one ND2** (Y/X are pixels). The acquisition inventory
+is the **maximal system of record** for that tensor — not a thin address table:
+
+```
+acquisition_inventory__yx1.csv   ONE ROW PER FULL TENSOR COORDINATE (position, z, channel, time)
+   experiment_id, raw_position_label, position_index, z_index,
+   channel_index, channel, raw_channel_name, time_index, acquisition_time_s,
+   x_um, y_um, micrometers_per_pixel, image_width_px, image_height_px,
+   objective_magnification, microscope_id, n_z, source_nd2_path
+```
+
+- **Z is EXPLODED** (one row per `z_index` 0..n_z-1), even though stitch LoG-projects it today —
+  the inventory is the record a future per-Z extraction / z-stack save will read. No per-plane
+  *file* exists (planes are array slices in the ND2) → `source_nd2_path`, no `source_image_path`.
+- **No collision is possible** (one ND2 cell per coordinate) → every YX1 well is `clean` by
+  construction; the cell-uniqueness check is a defensive assertion, the YX1 analogue of Keyence's
+  collision key.
+
+## Axis standardization (the tensor vocabulary) + the `map_positions_to_wells` rename
+The inventory is a NEW artifact, so it is born with the standardized `*_index` names (no Scope-2
+ripple): `time_int`→`time_index`, +`position_index`, +`z_index`, +`channel_index`,
+`experiment_time_s`→`acquisition_time_s`. (The legacy `scope_metadata__yx1.csv` keeps its current
+names until the Scope-2 collapse; it is **byte-for-byte unchanged** by this work — record-only.)
+
+Vocabulary also drove the rename **`map_series_to_wells` → `map_positions_to_wells`** ("series" is
+ND2 jargon; "position" is the tensor P axis). Full rename: rule + `tasks.py` verb (NO back-compat
+alias — they get messy) + `PIPELINE_STEPS` key + artifact `series_well_mapping.csv` →
+`position_well_mapping.csv` + module `map_yx1_series_to_wells.py` → `map_yx1_positions_to_wells.py`.
+The mapping CSV uses **`position_index`** as the canonical acquisition-position key. `series_number`
+is stale 1-based ND2 vocabulary and is deliberately not part of the shared contract; do not add
+fallbacks or compatibility shims. If a producer still emits only `series_number`, it must migrate and
+fail loudly until it does.
+
+## The channel mapping lives HERE, once
+Today channel info is re-derived in three places that each lose something: extract normalizes but
+drops `raw_channel_name` and emits no `channel_index`; the join falls back to losing the raw name;
+stitch re-derives the numeric index via `_select_yx1_channel_index` and keeps only BF. The
+inventory records `channel_index ↔ raw_channel_name ↔ channel` for **every** channel, once, at the
+one raw read — the durable source the deferred channel-aware stitch reads.
+
+## Validator — per-scope wrapper + shared check PRIMITIVES (DRY where honest)
+Even though YX1 can't collide, both scopes want defensive schema/sanity checks. The validator is
+**scope-specific in WHAT it checks, shared in HOW** (the doc's "thin parameterized skeleton, each
+scope declares its key"):
+- `scope/shared/acquisition_checks.py` — pure, scope-agnostic primitives: `assert_columns_present`,
+  `assert_positive_column` (µm/px + dims > 0), `assert_unique_on_key`,
+  `assert_channel_mapping_consistent`. Keyence reuses these with its own (colliding) key.
+- `scope/yx1/acquisition_inventory.py` — declares `YX1_ACQUISITION_INVENTORY_COLUMNS` + the cell
+  key `(position_index, z_index, channel_index, time_index)` and calls the primitives.
+
+## What was built (record-only, CPU, experiment-grain — NOT per-well)
+- `scope/yx1/acquisition_inventory.py` (NEW): row builder + `validate_yx1_acquisition_inventory`.
+- `scope/shared/acquisition_checks.py` (NEW): the shared primitives.
+- `extract_yx1_scope_metadata.py`: emits `acquisition_inventory__yx1.csv` from the SAME single ND2
+  read (optional `--acquisition-inventory-csv`).
+- `paths.py`: `ingest_scope_metadata` gains the `acquisition_inventory` artifact; `Snakefile` adds
+  it as a **YX1-only** `+output:`. `tasks.py` threads the path through (Keyence: no inventory yet).
+- 10 unit tests pass (`scope/tests/test_acquisition_inventory.py`).
+
+> **Grain (the per-well question):** the inventory is emitted at `ingest_scope_metadata`, which is
+> **experiment-grain and runs BEFORE the `discover_wells` fan** — so there is no `well_id` yet
+> (keyed on `raw_position_label`/`position_index`, like `scope_metadata__yx1.csv`). It is **NOT** a
+> per-well shard and does **not** touch the `well_runner.py` machinery. The inventory only goes
+> per-well when its CONSUMER (`materialize_well[well_id]`) does — the deferred stitch pass.
+
+## Deferred (next pass — see `current_state_and_next_steps.md` open decision)
+- **Stitch reads the inventory:** `materialize_stitched_images` consumes
+  `acquisition_inventory__yx1.csv` as its `(well → position_index, channel_index, z)` lookup,
+  becoming channel-aware + Z-aware, killing the in-stitch `_select_yx1_channel_index`/`yx1_series_map`
+  re-derivation. Touches the GPU path.
+- **Per-scope materialization + mandated layout:** split `materialize_stitched_images.py` (mixed
+  `if microscope` file) into per-scope stitch backends sharing only constructors + the
+  `frame_inventory` schema/validator; mandate the canonical stitched tree for the native producer
+  (mismatch = fail), keeping free-form `source_image_path` only at the external drop-in ingress.
+  Microscope boundary runs **through** stitch — code self-documents as scope-specific up to it.
+- Keyence acquisition inventory + conflicts + `resolve_acquisitions` (Keyence-only; YX1 has no
+  quarantine).

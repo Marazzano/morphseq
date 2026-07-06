@@ -1,0 +1,40 @@
+# DEVELOPMENT SMOKE CONFIG — Keyence Stage C end-to-end smoke.
+#
+# Targets 2 wells of 20250612_24hpf_ctrl_atf6 (XY01=A01, XY02=A02) to confirm:
+#   1. ingest_scope_metadata emits acquisition_inventory__keyence.csv
+#   2. rule build_keyence_stitch_map writes master_params.json via the registry path
+#   3. rule materialize_image_product_for_well picks up master_params and produces
+#      projection frames; at least one FrameTileResult.fallback_used == "master"
+#   4. per-well frame inventory shards pass the shared validator
+#
+# Run as an OVERLAY on the main config:
+#   cd src/data_pipeline/pipeline_orchestrator
+#   snakemake --configfile config.yaml --configfile config_smoke_keyence_20250612_24hpf.yaml \
+#     front_half --rerun-triggers mtime --cores 1
+#
+# Notes:
+#   - --rerun-triggers mtime: skip expensive provenance re-checks.
+#   - --cores 1: per-well jobs run serially; safe on CPU-only nodes.
+#   - plate_metadata.enabled=false: the plate xlsx on disk has a filename typo
+#     (well_metadta.xlsx); disable rather than rename the source file.
+#   - Keyence z_stack raises NotImplementedError (Stage B); only projection is wired.
+
+experiments:
+  - 20250612_24hpf_ctrl_atf6
+
+microscope: "Keyence"
+
+target_wells:
+  20250612_24hpf_ctrl_atf6:
+    - A01
+    - A02
+
+plate_metadata:
+  enabled: false
+
+image_materialization:
+  smoke_max_time_indices: 1
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack

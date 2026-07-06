@@ -1,0 +1,6 @@
+# Per-machine environment file (paths + interpreter). Copy env.example.yaml -> env.yaml
+# on each machine and edit; never commit env.yaml. See Scope 3 of the well-id throughline plan.
+env.yaml
+
+# Snakemake working state
+.snakemake/
