@@ -53,12 +53,11 @@ PLOT_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(GENE14_DIR))
 from plot_config import PHENOTYPE_COLORS  # noqa: E402
 
-from scipy.ndimage import label as ndi_label  # noqa: E402
-
 from support_geometry import (  # noqa: E402
     MIN_COMPONENT_MASS_FRAC, VALLEY_SWEEP_STEPS, compute_support_geometry,
     evaluate_kde_on_grid, normalize_shape, valley_detection_detail,
 )
+from morphseq_investigation.core.peak_counting import count_mass_significant_modes  # noqa: E402
 
 GENES = {
     "b9d2":   {"csv": REF_DIR / "reference_b9d2_clean.csv",
@@ -75,7 +74,9 @@ MIN_EMBRYOS = 10
 N_RESAMPLE = 80
 VALLEY_SIG_P = 0.05
 UNLABELED_COLOR = "#BBBBBB"
-RING_COLOR = "#B8860B"          # dark gold, dashed -- circles significant modes
+RING_COLOR = "#B8860B"          # dark gold, dashed -- valley: circles significant modes
+AREA_RING_COLOR = "#1B7837"     # green, solid  -- HDR-area: densest-mass concentration
+HDR_MASS_FRAC = 0.5             # HDR-area concentration ring at densest 50% of KDE mass
 DENS_CMAP = "Blues"            # soft-blue density field (row 1)
 DENS_CMAP_HI = 0.62            # cap the Blues ramp here so the peak stays light
 TARGET_DENS_COLOR = "#2166AC"   # target overlap density   (blue)
@@ -157,37 +158,83 @@ def _kde_in_box(pts, box, grid=GRID, *, kde=None):
     return xx, yy, dens
 
 
-def count_modes(dens):
-    """Number of mass-carrying density modes, and the super-level threshold at which
-    they FIRST separate -- so the ring sits exactly where the modes split (matches the
-    valley_depth logic), not at an arbitrary fixed height.
-
-    Sweep the super-level threshold down from the peak; the first level whose
-    super-level set has >=2 components each holding >= MIN_MODE_MASS_FRAC of the mass
-    gives the mode count + ring level. If it never splits -> 1 mode, ring at half-peak.
-    Returns (n_modes, level)."""
-    peak = float(dens.max()); total = float(dens.sum())
-    if peak <= 0 or total <= 0:
-        return 0, None
-    for frac in np.linspace(0.97, 0.02, VALLEY_SWEEP_STEPS):
-        level = frac * peak
-        labels, n = ndi_label(dens >= level)
-        if n < 2:
-            continue
-        masses = np.array([dens[labels == k].sum() / total for k in range(1, n + 1)])
-        n_real = int((masses >= MIN_COMPONENT_MASS_FRAC).sum())
-        if n_real >= 2:
-            return n_real, level
-    return 1, 0.5 * peak  # never splits -> single mode, ring at half-peak
-
-
 def _target_ring(ax, xx, yy, dens):
     """Draw the two island rings at the valley waterline. Caller only invokes this when
     the valley is SIGNIFICANT, so a ring is always a positive two-mode claim."""
-    _, level = count_modes(dens)
+    _, level = count_mass_significant_modes(
+        dens,
+        min_component_mass_frac=MIN_COMPONENT_MASS_FRAC,
+        sweep_steps=VALLEY_SWEEP_STEPS,
+    )
     if level is not None:
         ax.contour(xx, yy, dens, levels=[level], colors=RING_COLOR,
                    linewidths=2.2, linestyles="--", zorder=4)
+
+
+def _hdr_mass_level(dens, mass_frac=HDR_MASS_FRAC):
+    """Density value bounding the densest `mass_frac` of KDE mass -- the HDR contour.
+
+    This is the geometric locus of the `hdr_area_concentration` statistic: the region
+    inside this contour is the area the densest `mass_frac` of the mass occupies. A
+    tighter contour => mass more concentrated => more discrete vs the WT null."""
+    flat = np.sort(np.asarray(dens, dtype=float).ravel())[::-1]
+    csum = np.cumsum(flat)
+    total = float(csum[-1])
+    if total <= 0:
+        return None
+    idx = int(np.searchsorted(csum / total, mass_frac, side="left"))
+    idx = min(idx, len(flat) - 1)
+    return float(flat[idx])
+
+
+def _area_ring(ax, xx, yy, dens):
+    """Draw the HDR densest-mass concentration ring. Caller invokes only when the
+    HDR-area statistic is SIGNIFICANT vs the WT null, so this ring is a positive claim
+    that the target's mass concentrates into less area than matched-N wildtype."""
+    level = _hdr_mass_level(dens)
+    if level is not None:
+        ax.contour(xx, yy, dens, levels=[level], colors=AREA_RING_COLOR,
+                   linewidths=2.0, linestyles="-", zorder=5)
+
+
+def _null_fit_strip(ax, valley_sr, area_sr):
+    """Inset at the bottom-left of a row-1 cell: for each density witness, show where
+    the OBSERVED statistic falls within its matched-N WT null distribution.
+
+    Two stacked mini-rows (valley on top, HDR-area below). Each draws the null's
+    5-95 percentile band (gray bar), its median (tick), and the observed value (colored
+    triangle). Observed sitting to the RIGHT of the null band = more discrete than
+    wildtype = the significant direction. This is the visual of the p-value: it makes
+    'deeper/tighter than the WT reference null' literal rather than a number in a title."""
+    inset = ax.inset_axes([0.02, 0.02, 0.42, 0.20])
+    inset.set_xticks([]); inset.set_yticks([])
+    inset.patch.set_alpha(0.82)
+    for s in inset.spines.values():
+        s.set_visible(False)
+    rows = [("valley", valley_sr, RING_COLOR), ("HDR-area", area_sr, AREA_RING_COLOR)]
+    y_positions = [0.72, 0.28]
+    for (label, sr, color), y in zip(rows, y_positions):
+        if sr is None:
+            continue
+        null = np.asarray(sr.null_dist, dtype=float)
+        lo, hi = np.percentile(null, [5, 95])
+        med = float(np.median(null))
+        span = hi - lo if hi > lo else (abs(med) + 1e-9)
+        # map [lo-0.2span, obs or hi +0.2span] -> [0.28, 0.98] within the inset
+        left = min(lo, sr.stat) - 0.2 * span
+        right = max(hi, sr.stat) + 0.2 * span
+        rng = right - left if right > left else 1.0
+        to_x = lambda v: 0.28 + 0.70 * (v - left) / rng
+        inset.plot([to_x(lo), to_x(hi)], [y, y], color="#999", lw=3, solid_capstyle="butt")
+        inset.plot([to_x(med)], [y], marker="|", color="#555", ms=8, mew=1.4)
+        sig_dir = sr.pvalue < VALLEY_SIG_P
+        inset.plot([to_x(sr.stat)], [y], marker=">", color=color, ms=7,
+                   mec="k", mew=0.4 if sig_dir else 0.0)
+        inset.text(0.0, y, label, fontsize=6.0, va="center", ha="left",
+                   color=color, fontweight="bold", fontfamily="monospace")
+    inset.text(0.63, 0.99, "obs vs WT null", fontsize=5.4, va="top", ha="center",
+               color="#666", fontstyle="italic")
+    inset.set_xlim(0, 1); inset.set_ylim(0, 1)
 
 
 def render_gene(gene, cfg, *, kde=None):
@@ -199,8 +246,8 @@ def render_gene(gene, cfg, *, kde=None):
 
     fig, axes = plt.subplots(3, n, figsize=(3.3 * n, 9.6), squeeze=False)
     # fix positions BEFORE _pair_cell reads them via get_position()
-    fig.subplots_adjust(bottom=0.08, top=0.89, left=0.07, right=0.99,
-                        hspace=0.26, wspace=0.10)
+    fig.subplots_adjust(bottom=0.08, top=0.87, left=0.07, right=0.99,
+                        hspace=0.30, wspace=0.10)
 
     for col, hpf in enumerate(hpfs):
         grp_raw, phenos, wt_raw = bins[hpf]
@@ -209,8 +256,12 @@ def render_gene(gene, cfg, *, kde=None):
 
         bundle = compute_support_geometry(grp_raw, wt_raw, n_resample=N_RESAMPLE,
                                           rng=np.random.default_rng(42), kde=kde)
-        vp = bundle.results["valley_depth"].pvalue
-        sig = vp < VALLEY_SIG_P
+        valley_sr = bundle.results["valley_depth"]
+        area_sr = bundle.results.get("hdr_area_concentration")
+        vp = valley_sr.pvalue
+        sig = vp < VALLEY_SIG_P                      # valley witness
+        ap = area_sr.pvalue if area_sr is not None else 1.0
+        area_sig = area_sr is not None and ap < VALLEY_SIG_P   # HDR-area witness
 
         # ONE box per column: fits all target+WT data (robust), + margin. Every row --
         # KDE grid and axis limits -- uses this exact box, so nothing is re-cropped.
@@ -235,13 +286,29 @@ def render_gene(gene, cfg, *, kde=None):
             ax.scatter(grp[m, 0], grp[m, 1], s=20, alpha=0.9,
                        facecolors=PHENOTYPE_COLORS.get(pheno, UNLABELED_COLOR),
                        edgecolors="k", linewidths=0.4, zorder=3, label=pheno)
+        # Two parallel density witnesses, drawn independently (NOT fused into one call):
+        #   valley (dashed gold) -- is there an empty gap BETWEEN modes?
+        #   HDR-area (solid green) -- does the mass concentrate into LESS area than WT?
         if sig:
             _target_ring(ax, gx, gy, gd)
+        if area_sig:
+            _area_ring(ax, gx, gy, gd)
         ax.set_xlim(box[0], box[1]); ax.set_ylim(box[2], box[3])
         ax.set_xticks([]); ax.set_yticks([])
-        sig_txt, sig_col = ("SIGNIF", "#B2182B") if sig else ("n.s.", "#2166AC")
-        ax.set_title(f"{hpf} hpf   valley p={vp:.2f} [{sig_txt}]",
-                     fontsize=LABEL_FS, fontweight="bold", color=sig_col)
+        # Title carries BOTH witnesses; each colored by its own significance so the
+        # density-yes-here / no-there split is legible per bin.
+        v_col = "#B2182B" if sig else "#2166AC"
+        a_col = AREA_RING_COLOR if area_sig else "#2166AC"
+        ax.set_title(f"{hpf} hpf", fontsize=LABEL_FS, fontweight="bold", color="#222")
+        ax.text(0.5, 1.11, f"valley p={vp:.2f}", transform=ax.transAxes,
+                fontsize=LABEL_FS - 2, fontweight="bold", color=v_col,
+                ha="right", va="bottom")
+        ax.text(0.5, 1.11, f"   HDR-area p={ap:.2f}", transform=ax.transAxes,
+                fontsize=LABEL_FS - 2, fontweight="bold", color=a_col,
+                ha="left", va="bottom")
+        # Where each observed stat sits against its WT null (the "fit to reference
+        # nulls" the fused figure is meant to show): a compact bracket per witness.
+        _null_fit_strip(ax, valley_sr, area_sr)
 
         # ── ROW 2: smooth OVERLAP of the two density distributions ──────────
         # framed to fit BOTH distributions so neither density is cut off
@@ -262,18 +329,23 @@ def render_gene(gene, cfg, *, kde=None):
     # combined legend: phenotype markers (rows 1/3) + overlap density hues (row 2)
     handles, labels_ = axes[0][0].get_legend_handles_labels()
     from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
     handles = handles + [
         Patch(facecolor=TARGET_DENS_COLOR, alpha=0.55, label=f"{gene} density"),
         Patch(facecolor=WT_DENS_COLOR, alpha=0.55, label="WT density"),
+        Line2D([0], [0], color=RING_COLOR, lw=2.2, ls="--", label="valley ring (sig.)"),
+        Line2D([0], [0], color=AREA_RING_COLOR, lw=2.0, ls="-", label="HDR-area ring (sig.)"),
     ]
-    labels_ = labels_ + [f"{gene} density", "WT density"]
+    labels_ = labels_ + [f"{gene} density", "WT density",
+                         "valley ring (sig.)", "HDR-area ring (sig.)"]
     fig.legend(handles, labels_, loc="lower center", ncol=len(handles),
                fontsize=LABEL_FS - 1, frameon=False, bbox_to_anchor=(0.5, 0.005))
 
     fig.suptitle(
-        f"{gene} — valley significance visualization  (axis: {X_FEAT} x {Y_FEAT}, normalized)\n"
-        f"real KDE always shown; a valley ring is drawn ONLY when significant "
-        f"(deeper than the wildtype null, p < {VALLEY_SIG_P})",
+        f"{gene} — density-discreteness visualization  (axis: {X_FEAT} x {Y_FEAT}, normalized)\n"
+        f"real KDE always shown; TWO parallel density witnesses vs the matched-N wildtype null "
+        f"(p < {VALLEY_SIG_P}): dashed gold valley ring (gap between modes) + solid green "
+        f"HDR-area ring (mass concentration).  Inset per cell = obs vs WT null.",
         fontsize=LABEL_FS + 1, fontweight="bold", y=0.996)
     out = PLOT_DIR / f"{gene}_valley_visualization.png"
     fig.savefig(out, dpi=150, facecolor="white")

@@ -30,15 +30,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import ListedColormap
-from scipy.ndimage import label as ndi_label
 
 RUN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(RUN_DIR))
 
 from support_geometry import (  # noqa: E402
-    MIN_COMPONENT_MASS_FRAC, VALLEY_SWEEP_STEPS, compute_support_geometry,
+    compute_support_geometry,
     evaluate_kde_on_grid, normalize_shape,
 )
+from morphseq_investigation.core.peak_counting import count_mass_significant_modes  # noqa: E402
 from synthetic_scenarios import SCENARIOS, wt_reference  # noqa: E402
 
 PLOT_DIR = RUN_DIR / "plots"
@@ -50,14 +50,20 @@ RNG_SEED = 7
 GRID = 60
 DENS_CMAP = "Blues"
 DENS_CMAP_HI = 0.62
-RING_COLOR = "#B8860B"
+RING_COLOR = "#B8860B"        # valley super-level split floor (dashed)
+AREA_RING_COLOR = "#1B7837"   # HDR densest-50%-mass contour (solid)
 WT_POINT_COLOR = "#9a9a9a"
 TARGET_POINT_COLOR = "#1a1a1a"
-DISCRETE_P_THRESHOLDS = {"valley_depth": 0.05, "mst_max_edge": 0.05,
-                         "fiedler": 0.05, "conductance": 0.05}
+DISCRETE_P_THRESHOLDS = {"valley_depth": 0.05, "hdr_area_concentration": 0.05,
+                         "mst_max_edge": 0.05, "fiedler": 0.05, "conductance": 0.05}
 TALLY_EXCLUDED = {"mst_max_edge"}
-_STAT_ROWS = [("valley_depth", "valley"), ("mst_max_edge", "MST"),
-              ("fiedler", "Fiedler"), ("conductance", "conduct")]
+# Two families: density witnesses (gap-based valley + sweep-free area concentration)
+# and graph witnesses (connectivity). Kept separate so the density-vs-graph
+# disagreement stays legible, and so we can see where area catches what valley misses.
+DENSITY_STATS = {"valley_depth", "hdr_area_concentration"}
+_STAT_ROWS = [("valley_depth", "valley"), ("hdr_area_concentration", "HDR-area"),
+              ("mst_max_edge", "MST"), ("fiedler", "Fiedler"),
+              ("conductance", "conduct")]
 _FIRED_COLOR = "#B2182B"
 _QUIET_COLOR = "#7f7f7f"
 CONTINUOUS_COLOR = "#2166AC"
@@ -75,28 +81,38 @@ def _tally_call(bundle):
     return "discrete" if sum(votes) > len(votes) / 2 else "continuous"
 
 
+def _density_fires(bundle):
+    """A density witness (valley OR HDR-area) calls discrete."""
+    return any(
+        bundle.results.get(n) is not None
+        and _votes_discrete(n, bundle.results[n].pvalue)
+        for n in DENSITY_STATS
+    )
+
+
 def _disagreement_type(bundle):
     """Classify density-vs-graph disagreement for this scenario.
 
-    density-yes/graph-no : valley fires but no graph stat corroborates (b9d2-like)
-    graph-yes/density-no : a graph stat fires but valley does not (crescent/spiral-like)
-    agree-discrete       : valley AND >=1 graph stat fire
+    Density now has TWO witnesses (valley + HDR-area); "density fires" means either.
+
+    density-yes/graph-no : a density stat fires but no graph stat (b9d2-like)
+    graph-yes/density-no : a graph stat fires but no density stat (crescent/spiral-like)
+    agree-discrete       : a density stat AND >=1 graph stat fire
     agree-continuous     : nothing fires
     """
-    vd = bundle.results.get("valley_depth")
     fied = bundle.results.get("fiedler")
     mst = bundle.results.get("mst_max_edge")
     cond = bundle.results.get("conductance")
-    valley_fires = vd is not None and _votes_discrete("valley_depth", vd.pvalue)
+    density_fires = _density_fires(bundle)
     graph_fires = any(
         s is not None and _votes_discrete(n, s.pvalue)
         for n, s in (("fiedler", fied), ("mst_max_edge", mst), ("conductance", cond))
     )
-    if valley_fires and not graph_fires:
+    if density_fires and not graph_fires:
         return "density-YES / graph-NO", "#B2182B"
-    if graph_fires and not valley_fires:
+    if graph_fires and not density_fires:
         return "graph-YES / density-NO", "#6A3D9A"
-    if valley_fires and graph_fires:
+    if density_fires and graph_fires:
         return "agree: DISCRETE", "#B2182B"
     return "agree: continuous", CONTINUOUS_COLOR
 
@@ -112,22 +128,22 @@ def _kde_grid_padded(pts, grid=GRID, pad_frac=0.35, *, kde=None):
     return xx, yy, dens
 
 
-def _count_modes(dens):
-    peak = float(dens.max()); total = float(dens.sum())
-    if peak <= 0 or total <= 0:
-        return 0, None
-    for frac in np.linspace(0.97, 0.02, VALLEY_SWEEP_STEPS):
-        level = frac * peak
-        labels, n = ndi_label(dens >= level)
-        if n < 2:
-            continue
-        masses = np.array([dens[labels == k].sum() / total for k in range(1, n + 1)])
-        if int((masses >= MIN_COMPONENT_MASS_FRAC).sum()) >= 2:
-            return int((masses >= MIN_COMPONENT_MASS_FRAC).sum()), level
-    return 1, 0.5 * peak
+HDR_MASS_FRAC = 0.5  # HDR-area contour drawn at the densest 50% of KDE mass
 
 
-def _render_kde_cell(ax, pts_norm, wt_norm, sig, *, kde=None):
+def _hdr_mass_level(dens, mass_frac=HDR_MASS_FRAC):
+    """Density value bounding the densest `mass_frac` of KDE mass (the HDR contour)."""
+    flat = np.sort(dens.ravel())[::-1]
+    csum = np.cumsum(flat)
+    total = csum[-1]
+    if total <= 0:
+        return None
+    idx = int(np.searchsorted(csum / total, mass_frac, side="left"))
+    idx = min(idx, len(flat) - 1)
+    return float(flat[idx])
+
+
+def _render_kde_cell(ax, pts_norm, wt_norm, valley_sig, area_sig, *, kde=None):
     xx, yy, dens = _kde_grid_padded(pts_norm, kde=kde)
     light_blues = ListedColormap(plt.get_cmap(DENS_CMAP)(np.linspace(0.0, DENS_CMAP_HI, 256)))
     peak = float(dens.max())
@@ -137,11 +153,20 @@ def _render_kde_cell(ax, pts_norm, wt_norm, sig, *, kde=None):
                edgecolors=WT_POINT_COLOR, linewidths=0.6, zorder=2)
     ax.scatter(pts_norm[:, 0], pts_norm[:, 1], s=14, alpha=0.9,
                facecolors=TARGET_POINT_COLOR, edgecolors="white", linewidths=0.3, zorder=3)
-    if sig:
-        _, level = _count_modes(dens)
+    # Valley witness: dashed ring at the super-level split floor (the gap).
+    if valley_sig:
+        _, level = count_mass_significant_modes(dens)
         if level is not None:
             ax.contour(xx, yy, dens, levels=[level], colors=RING_COLOR,
                        linewidths=2.0, linestyles="--", zorder=4)
+    # HDR-area witness: solid ring at the densest-50%-mass contour (the concentration).
+    # Drawn independently -- when it fires but valley does not, this is the case area
+    # catches and valley misses (asymmetric / unequal split with no clean gap floor).
+    if area_sig:
+        level = _hdr_mass_level(dens)
+        if level is not None:
+            ax.contour(xx, yy, dens, levels=[level], colors=AREA_RING_COLOR,
+                       linewidths=1.8, linestyles="-", zorder=5)
     ax.set_xticks([]); ax.set_yticks([])
     for s in ax.spines.values():
         s.set_color("#ccc")
@@ -198,8 +223,8 @@ def _render_vote_table(ax, bundle):
 def main(kde=None):
     rng_master = np.random.default_rng(RNG_SEED)
     n_scen = len(SCENARIOS)
-    fig, axes = plt.subplots(2, n_scen, figsize=(2.7 * n_scen, 6.3), squeeze=False,
-                              gridspec_kw={"height_ratios": [2.0, 1.15]})
+    fig, axes = plt.subplots(2, n_scen, figsize=(2.7 * n_scen, 6.8), squeeze=False,
+                              gridspec_kw={"height_ratios": [2.0, 1.35]})
 
     for col, scen in enumerate(SCENARIOS):
         rng = np.random.default_rng(rng_master.integers(0, 2**31))
@@ -209,14 +234,15 @@ def main(kde=None):
         bundle = compute_support_geometry(pts_raw, wt_raw, n_resample=N_RESAMPLE,
                                           rng=np.random.default_rng(RNG_SEED + col),
                                           kde=kde)
-        vp = bundle.results["valley_depth"].pvalue
-        sig = vp < 0.05
+        valley_sig = bundle.results["valley_depth"].pvalue < 0.05
+        area_sr = bundle.results.get("hdr_area_concentration")
+        area_sig = area_sr is not None and area_sr.pvalue < 0.05
 
         pts_norm = normalize_shape(pts_raw)
         wt_norm = normalize_shape(wt_raw)
 
         ax0 = axes[0][col]
-        _render_kde_cell(ax0, pts_norm, wt_norm, sig, kde=kde)
+        _render_kde_cell(ax0, pts_norm, wt_norm, valley_sig, area_sig, kde=kde)
         expected = f"exp:{scen.expected_support}"
         ax0.set_title(f"{scen.name}\n({expected})", fontsize=8.6, fontweight="bold")
 
@@ -228,8 +254,9 @@ def main(kde=None):
                     fontsize=9, rotation=90, va="center", ha="center")
 
     fig.suptitle(
-        "Synthetic scenarios — density (KDE/valley) vs graph (MST/Fiedler/conductance) disagreement\n"
-        "ring = valley significant (p<0.05, matched-N WT null); vote table shows each statistic's own call",
+        "Synthetic scenarios — density (valley + HDR-area) vs graph (MST/Fiedler/conductance) disagreement\n"
+        "dashed gold ring = valley split floor;  solid green ring = HDR densest-50%-mass contour  "
+        "(both vs matched-N WT null, p<0.05);  vote table shows each statistic's own call",
         fontsize=11, fontweight="bold", y=0.995)
     fig.subplots_adjust(left=0.045, right=0.995, top=0.86, bottom=0.03, wspace=0.18, hspace=0.08)
     out = PLOT_DIR / "synthetic_valley_connectedness_grid.png"

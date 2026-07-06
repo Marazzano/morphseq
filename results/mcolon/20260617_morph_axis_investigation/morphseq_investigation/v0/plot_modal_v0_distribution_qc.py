@@ -11,12 +11,15 @@ Run:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 RUN_DIR = Path(__file__).resolve().parents[2]
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/morphseq_mplconfig")
+os.environ.setdefault("XDG_CACHE_HOME", "/tmp/morphseq_xdg_cache")
 sys.path.insert(0, str(RUN_DIR))
 
 from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402
@@ -34,12 +37,13 @@ def build_visual_specs(n: int, seed: int) -> list[DistributionVisualSpec]:
     out = []
     for spec in V0_DISTRIBUTIONS:
         rng = np.random.default_rng(rng_master.integers(0, 2**31 - 1))
-        points, labels = spec.generator(n, rng)
+        realization = spec.realize(n, rng)
         out.append(
             DistributionVisualSpec(
                 distribution_id=spec.distribution_id,
-                points=points,
-                labels=labels,
+                points=realization.points,
+                component_labels=realization.component_labels,
+                composed_grid=realization.truth.composed_grid,
                 note=spec.note,
             )
         )
@@ -57,11 +61,12 @@ def main() -> None:
     out = plot_v0_distribution_qc_grid(
         specs,
         args.out,
-        title=f"V0 modal distribution visual QA (n={args.n}, seed={args.seed})",
+        title=f"V0 modal density-composition visual QA (n={args.n}, seed={args.seed})",
+        auto_scale=False,
+        include_metric_row=True,
     )
     print(f"Saved: {out}")
 
 
 if __name__ == "__main__":
     main()
-

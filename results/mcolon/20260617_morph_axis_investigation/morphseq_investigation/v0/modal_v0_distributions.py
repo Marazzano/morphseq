@@ -3,155 +3,223 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
 import numpy as np
 
-
-Generator = Callable[[int, np.random.Generator], tuple[np.ndarray, np.ndarray]]
-
-MODE_WIDTH_COMPACT = 0.22
-MODE_WIDTH_TWO_PEAK = 0.76
+from morphseq_investigation.core.density_composition import (
+    DensityComponentSpec,
+    DensityRealization,
+    DensitySpec,
+    build_density_spec,
+    realize_density,
+)
 
 
 @dataclass(frozen=True)
 class V0Distribution:
     distribution_id: str
-    generator: Generator
+    density_spec: DensitySpec
     note: str
 
-
-def _labels(n: int, value: str) -> np.ndarray:
-    return np.full(n, value, dtype=object)
-
-
-def one_peak_compact(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    pts = rng.normal(0.0, MODE_WIDTH_COMPACT, size=(n, 2))
-    return pts, _labels(n, "mode_0")
+    def realize(self, n: int, rng: np.random.Generator) -> DensityRealization:
+        return realize_density(self.density_spec, n=n, rng=rng)
 
 
-def one_peak_diffuse(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    """One broad, near-homogeneous density region.
-
-    This is intentionally not just a wider Gaussian. It should read visually as
-    one diffuse support region with comparatively even density.
-    """
-    theta = rng.uniform(0.0, 2.0 * np.pi, size=n)
-    radius = 2.25 * np.sqrt(rng.uniform(0.0, 1.0, size=n))
-    pts = np.column_stack([radius * np.cos(theta), radius * np.sin(theta)])
-    pts += rng.normal(0.0, 0.05, size=(n, 2))
-    return pts, _labels(n, "mode_0")
-
-
-def one_peak_elongated(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    """One anisotropic peak: a long strip with narrow local width."""
-    x = rng.uniform(-3.8, 3.8, size=n)
-    y = rng.normal(0.0, 0.17, size=n)
-    pts = np.column_stack([x, y])
-    pts[:, 0] += rng.normal(0.0, 0.08, size=n)
-    return pts, _labels(n, "mode_0")
-
-
-def one_peak_spiral(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    t = np.sort(rng.uniform(0.0, 1.0, size=n))
-    theta = 1.45 * 2.0 * np.pi * t
-    radius = 0.45 + 4.0 * t
-    pts = np.column_stack([radius * np.cos(theta), radius * np.sin(theta)])
-    pts += rng.normal(0.0, 0.18, size=(n, 2))
-    return pts, _labels(n, "mode_0")
-
-
-def _two_peaks_with_bridge(
-    n: int,
-    rng: np.random.Generator,
+def _mode(
+    component_id: str,
     *,
-    bridge_frac: float,
-    separation: float = 4.8,
-    sigma: float = MODE_WIDTH_TWO_PEAK,
-) -> tuple[np.ndarray, np.ndarray]:
-    n_bridge = int(round(n * bridge_frac))
-    n_modes = n - n_bridge
-    n0 = n_modes // 2
-    n1 = n_modes - n0
-    left = rng.normal([-separation / 2.0, 0.0], sigma, size=(n0, 2))
-    right = rng.normal([separation / 2.0, 0.0], sigma, size=(n1, 2))
-    labels = ["mode_0"] * n0 + ["mode_1"] * n1
-    parts = [left, right]
-    if n_bridge > 0:
-        x = rng.uniform(-separation / 2.0, separation / 2.0, size=n_bridge)
-        y = rng.normal(0.0, sigma * 0.75, size=n_bridge)
-        bridge = np.column_stack([x, y])
-        parts.append(bridge)
-        labels.extend(["bridge"] * n_bridge)
-    pts = np.vstack(parts)
-    labels_arr = np.asarray(labels, dtype=object)
-    order = rng.permutation(len(pts))
-    return pts[order], labels_arr[order]
-
-
-def two_peaks_no_bridge(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    return _two_peaks_with_bridge(n, rng, bridge_frac=0.0)
-
-
-def two_peaks_low_bridge(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    return _two_peaks_with_bridge(n, rng, bridge_frac=0.06)
-
-
-def two_peaks_high_bridge(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    return _two_peaks_with_bridge(n, rng, bridge_frac=0.28)
-
-
-def spiral_beaded(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    """Three compact beads placed along the same spiral geometry."""
-    bead_t = np.array([0.16, 0.50, 0.84])
-    theta = 1.45 * 2.0 * np.pi * bead_t
-    radius = 0.45 + 4.0 * bead_t
-    centers = np.column_stack([radius * np.cos(theta), radius * np.sin(theta)])
-    counts = np.full(len(centers), n // len(centers), dtype=int)
-    counts[-1] += n - int(counts.sum())
-    pts = []
-    labels = []
-    for i, (center, count) in enumerate(zip(centers, counts)):
-        pts.append(rng.normal(center, MODE_WIDTH_COMPACT, size=(int(count), 2)))
-        labels.extend([f"mode_{i}"] * int(count))
-    all_pts = np.vstack(pts)
-    labels_arr = np.asarray(labels, dtype=object)
-    order = rng.permutation(len(all_pts))
-    return all_pts[order], labels_arr[order]
-
-
-def three_peaks_compact(n: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-    """Three compact modes with a broad global footprint."""
-    centers = np.asarray(
-        [
-            [-1.45, -1.05],
-            [1.45, -1.05],
-            [0.00, 1.45],
-        ]
+    mass_fraction: float,
+    anchor_x: float,
+    anchor_y: float,
+    width: float,
+    anisotropy_ratio: float = 1.0,
+    orientation_angle: float = 0.0,
+    density_profile: str = "gaussian",
+) -> DensityComponentSpec:
+    return DensityComponentSpec(
+        component_id=component_id,
+        component_type="mode",
+        mass_fraction=mass_fraction,
+        geometry_type="ellipse" if density_profile == "gaussian" else "spiral",
+        anchor_x=anchor_x,
+        anchor_y=anchor_y,
+        orientation_angle=orientation_angle,
+        local_width=width,
+        anisotropy_ratio=anisotropy_ratio,
+        density_profile=density_profile,
     )
-    counts = np.full(len(centers), n // len(centers), dtype=int)
-    counts[-1] += n - int(counts.sum())
-    pts = []
-    labels = []
-    for i, (center, count) in enumerate(zip(centers, counts)):
-        pts.append(rng.normal(center, MODE_WIDTH_COMPACT, size=(int(count), 2)))
-        labels.extend([f"mode_{i}"] * int(count))
-    all_pts = np.vstack(pts)
-    labels_arr = np.asarray(labels, dtype=object)
-    order = rng.permutation(len(all_pts))
-    return all_pts[order], labels_arr[order]
+
+
+def _bridge(
+    component_id: str,
+    *,
+    mass_fraction: float,
+    left_anchor: tuple[float, float],
+    right_anchor: tuple[float, float],
+    width: float,
+    left_id: str,
+    right_id: str,
+    n_curve_samples: int = 256,
+    axial_sigma: float = 0.28,
+) -> DensityComponentSpec:
+    anchor_x = 0.5 * (float(left_anchor[0]) + float(right_anchor[0]))
+    anchor_y = 0.5 * (float(left_anchor[1]) + float(right_anchor[1]))
+    return DensityComponentSpec(
+        component_id=component_id,
+        component_type="bridge",
+        mass_fraction=mass_fraction,
+        geometry_type="ridge",
+        anchor_x=anchor_x,
+        anchor_y=anchor_y,
+        local_width=width,
+        density_profile="ridge",
+        connected_components=(left_id, right_id),
+        parameters={
+            "n_curve_samples": float(n_curve_samples),
+            "axial_sigma": float(axial_sigma),
+        },
+    )
+
+
+def _make_spec(density_id: str, components: list[DensityComponentSpec]) -> DensitySpec:
+    return build_density_spec(density_id, components, grid_size=161, margin=0.16)
+
+
+COMPACT_MODE_WIDTH = 0.34
+
+
+ONE_PEAK_COMPACT = _make_spec(
+    "one_peak_compact",
+    [
+        _mode(
+            "mode_0",
+            mass_fraction=1.0,
+            anchor_x=0.0,
+            anchor_y=0.0,
+            width=COMPACT_MODE_WIDTH,
+            anisotropy_ratio=1.0,
+        )
+    ],
+)
+
+ONE_PEAK_DIFFUSE = _make_spec(
+    "one_peak_diffuse",
+    [
+        DensityComponentSpec(
+            component_id="mode_0",
+            component_type="mode",
+            mass_fraction=1.0,
+            geometry_type="region",
+            anchor_x=0.0,
+            anchor_y=0.0,
+            local_width=1.55,
+            density_profile="flat_core",
+        )
+    ],
+)
+
+ONE_PEAK_ELONGATED = _make_spec(
+    "one_peak_elongated",
+    [
+        _mode(
+            "mode_0",
+            mass_fraction=1.0,
+            anchor_x=0.0,
+            anchor_y=0.0,
+            width=0.28,
+            anisotropy_ratio=6.0,
+            orientation_angle=0.12,
+        )
+    ],
+)
+
+ONE_PEAK_SPIRAL = _make_spec(
+    "one_peak_spiral",
+    [
+        DensityComponentSpec(
+            component_id="mode_0",
+            component_type="mode",
+            mass_fraction=1.0,
+            geometry_type="spiral",
+            anchor_x=0.0,
+            anchor_y=0.0,
+            orientation_angle=0.0,
+            local_width=0.18,
+            density_profile="spiral",
+            parameters={
+                "turns": 1.55,
+                "base_radius": 0.28,
+                "radial_growth": 3.10,
+                "phase": 0.18,
+                "n_curve_samples": 384.0,
+            },
+        )
+    ],
+)
+
+TWO_PEAKS_NO_BRIDGE = _make_spec(
+    "two_peaks_no_bridge",
+    [
+        _mode("mode_left", mass_fraction=0.5, anchor_x=-2.35, anchor_y=0.0, width=COMPACT_MODE_WIDTH),
+        _mode("mode_right", mass_fraction=0.5, anchor_x=2.35, anchor_y=0.0, width=COMPACT_MODE_WIDTH),
+    ],
+)
+
+TWO_PEAKS_LOW_BRIDGE = _make_spec(
+    "two_peaks_low_bridge",
+    [
+        _mode("mode_left", mass_fraction=0.475, anchor_x=-2.35, anchor_y=0.0, width=COMPACT_MODE_WIDTH),
+        _mode("mode_right", mass_fraction=0.475, anchor_x=2.35, anchor_y=0.0, width=COMPACT_MODE_WIDTH),
+        _bridge(
+            "bridge_left_right",
+            mass_fraction=0.05,
+            left_anchor=(-2.35, 0.0),
+            right_anchor=(2.35, 0.0),
+            width=0.14,
+            left_id="mode_left",
+            right_id="mode_right",
+            n_curve_samples=256,
+        ),
+    ],
+)
+
+TWO_PEAKS_HIGH_BRIDGE = _make_spec(
+    "two_peaks_high_bridge",
+    [
+        _mode("mode_left", mass_fraction=0.32, anchor_x=-2.35, anchor_y=0.0, width=COMPACT_MODE_WIDTH),
+        _mode("mode_right", mass_fraction=0.32, anchor_x=2.35, anchor_y=0.0, width=COMPACT_MODE_WIDTH),
+        _bridge(
+            "bridge_left_right",
+            mass_fraction=0.36,
+            left_anchor=(-2.35, 0.0),
+            right_anchor=(2.35, 0.0),
+            width=0.25,
+            left_id="mode_left",
+            right_id="mode_right",
+            n_curve_samples=320,
+        ),
+    ],
+)
+
+THREE_PEAKS_COMPACT = _make_spec(
+    "three_peaks_compact",
+    [
+        _mode("mode_0", mass_fraction=1.0 / 3.0, anchor_x=-1.72, anchor_y=-1.12, width=COMPACT_MODE_WIDTH),
+        _mode("mode_1", mass_fraction=1.0 / 3.0, anchor_x=1.72, anchor_y=-1.12, width=COMPACT_MODE_WIDTH),
+        _mode("mode_2", mass_fraction=1.0 / 3.0, anchor_x=0.00, anchor_y=1.62, width=COMPACT_MODE_WIDTH),
+    ],
+)
 
 
 V0_DISTRIBUTIONS: list[V0Distribution] = [
-    V0Distribution("one_peak_compact", one_peak_compact, "one peak; very compact"),
-    V0Distribution("one_peak_diffuse", one_peak_diffuse, "one broad homogeneous region"),
-    V0Distribution("one_peak_elongated", one_peak_elongated, "one anisotropic strip"),
-    V0Distribution("one_peak_spiral", one_peak_spiral, "one curved trend"),
-    V0Distribution("spiral_beaded", spiral_beaded, "three beads along one spiral geometry"),
-    V0Distribution("two_peaks_high_bridge", two_peaks_high_bridge, "two peaks; high bridge"),
-    V0Distribution("two_peaks_low_bridge", two_peaks_low_bridge, "two peaks; weak bridge"),
-    V0Distribution("two_peaks_no_bridge", two_peaks_no_bridge, "two peaks; no bridge"),
-    V0Distribution("three_peaks_compact", three_peaks_compact, "three compact modes"),
+    V0Distribution("one_peak_compact", ONE_PEAK_COMPACT, "one peak; very compact"),
+    V0Distribution("one_peak_diffuse", ONE_PEAK_DIFFUSE, "one broad homogeneous region"),
+    V0Distribution("one_peak_elongated", ONE_PEAK_ELONGATED, "one anisotropic strip"),
+    V0Distribution("one_peak_spiral", ONE_PEAK_SPIRAL, "one curved trend"),
+    V0Distribution("two_peaks_high_bridge", TWO_PEAKS_HIGH_BRIDGE, "two peaks; high bridge"),
+    V0Distribution("two_peaks_low_bridge", TWO_PEAKS_LOW_BRIDGE, "two peaks; weak bridge"),
+    V0Distribution("two_peaks_no_bridge", TWO_PEAKS_NO_BRIDGE, "two peaks; no bridge"),
+    V0Distribution("three_peaks_compact", THREE_PEAKS_COMPACT, "three compact modes"),
 ]
 
 

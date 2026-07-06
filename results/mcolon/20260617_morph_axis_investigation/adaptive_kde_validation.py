@@ -50,8 +50,12 @@ DEFAULT_N_RESAMPLE = 50
 WT_POOL_N = 3000
 SIG_ALPHA = 0.05
 
-CONTROLS = {"unimodal_compact", "variance_only", "crescent", "spiral", "outliers"}
-TARGETS = {"two_discrete", "three_discrete", "small_middle"}
+# Full 12-scenario partition (was missing broad_continuum/tapered_tail/
+# continuum_with_hole, so the target/control score ignored 3 cases). CONTROLS must
+# stay quiet (connected); TARGETS must fire (discrete). Derived from each scenario's
+# declared expected_support so this can't drift from synthetic_scenarios.py.
+CONTROLS = {s.name for s in SCENARIOS if s.expected_support == "connected"}
+TARGETS = {s.name for s in SCENARIOS if s.expected_support == "discrete"}
 
 _WT_POOL = None
 

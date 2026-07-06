@@ -19,6 +19,15 @@ import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap, to_rgba
 
+from morphseq_investigation.core.density_composition import DensityGrid
+from morphseq_investigation.core.peak_counting import PeakCountDetail, peak_count_detail
+from morphseq_investigation.core.support_geometry import (
+    fiedler_value,
+    hdr_concentration_auc,
+    mst_max_edge,
+    normalize_shape,
+    valley_depth,
+)
 from morphseq_investigation.core.support_geometry import evaluate_kde_on_grid
 
 
@@ -33,22 +42,84 @@ DENS_CMAP_HI = 0.62
 SUPPORT_FRAC = 0.02
 GRID = 70
 HDR_MASS_FRAC = 0.5
-
-
-@dataclass(frozen=True)
-class DensityGrid:
-    xx: np.ndarray
-    yy: np.ndarray
-    density: np.ndarray
+POINT_ALPHA = 0.28
+POINT_ALPHA_HDR = 0.22
+POINT_COLOR_BY_LABEL = {
+    "mode_0": "#2A9D9D",
+    "mode_1": "#D05A8A",
+    "mode_2": "#8E6BBE",
+    "mode_left": "#2A9D9D",
+    "mode_right": "#D05A8A",
+    "bridge": "#E0A11B",
+    "bridge_left_right": "#E0A11B",
+    "artifact": "#666666",
+}
+METRIC_COLOR_BY_NAME = {
+    "hdr_concentration_auc": "#2166AC",
+    "valley_depth": "#B2182B",
+    "mst_max_edge": "#E0A11B",
+    "fiedler": "#7A5CC6",
+}
 
 
 @dataclass(frozen=True)
 class DistributionVisualSpec:
     distribution_id: str
     points: np.ndarray
-    labels: np.ndarray | None = None
-    true_grid: DensityGrid | None = None
+    component_labels: np.ndarray | None = None
+    composed_grid: DensityGrid | None = None
     note: str = ""
+
+    @property
+    def true_grid(self) -> DensityGrid | None:
+        """Backward-compatible alias for the composed density grid."""
+        return self.composed_grid
+
+
+def compute_v0_metric_summary(
+    points: np.ndarray,
+    *,
+    kde=None,
+    distribution_id: str | None = None,
+) -> dict[str, float | None]:
+    """Compute the small V0 metric set on shape-normalized sampled points."""
+
+    pts = normalize_shape(np.asarray(points, dtype=float))
+    valley = float(valley_depth(pts, kde=kde))
+    if distribution_id is not None and distribution_id.startswith("one_peak_"):
+        valley = None
+    return {
+        "hdr_concentration_auc": float(hdr_concentration_auc(pts, relative=True, kde=kde)),
+        "valley_depth": valley,
+        "mst_max_edge": float(mst_max_edge(pts)),
+        "fiedler": float(fiedler_value(pts)),
+    }
+
+
+def compute_v0_peak_count_summary(
+    *,
+    truth_density: np.ndarray | None = None,
+    observed_density: np.ndarray | None = None,
+    min_component_mass_frac: float = 0.10,
+    sweep_steps: int = 50,
+) -> dict[str, PeakCountDetail | None]:
+    """Compute truth and observed peak-count probes for one V0 distribution."""
+
+    truth_detail = None
+    if truth_density is not None:
+        truth_detail = peak_count_detail(
+            truth_density,
+            min_component_mass_frac=min_component_mass_frac,
+            sweep_steps=sweep_steps,
+        )
+    observed_detail = None
+    if observed_density is not None:
+        observed_detail = peak_count_detail(
+            observed_density,
+            min_component_mass_frac=min_component_mass_frac,
+            sweep_steps=sweep_steps,
+        )
+    return {"truth": truth_detail, "observed": observed_detail}
 
 
 def density_box(
@@ -103,6 +174,22 @@ def square_density_box(box: tuple[float, float, float, float]) -> tuple[float, f
     return xmid - half, xmid + half, ymid - half, ymid + half
 
 
+def canonical_box_from_specs(specs: list[DistributionVisualSpec]) -> tuple[float, float, float, float]:
+    """Return a shared plotting box from the canonical grids on the specs."""
+    boxes = []
+    for spec in specs:
+        if spec.composed_grid is not None and spec.composed_grid.grid is not None:
+            grid = spec.composed_grid.grid
+            boxes.append((grid.x_min, grid.x_max, grid.y_min, grid.y_max))
+    if not boxes:
+        raise ValueError("canonical_box_from_specs requires at least one spec with a canonical grid")
+    x_lo = min(box[0] for box in boxes)
+    x_hi = max(box[1] for box in boxes)
+    y_lo = min(box[2] for box in boxes)
+    y_hi = max(box[3] for box in boxes)
+    return square_density_box((x_lo, x_hi, y_lo, y_hi))
+
+
 def evaluate_density_grid(
     points: np.ndarray,
     box: tuple[float, float, float, float],
@@ -141,11 +228,12 @@ def plot_kde_field(
     color: str = TARGET_DENS_COLOR,
     cmap: str | None = DENS_CMAP,
     alpha_max: float = 0.46,
+    peak_ref: float | None = None,
     zorder: int = 0,
 ) -> None:
     """Draw a soft filled KDE field without a hard rectangular edge."""
     dens = np.asarray(grid.density, dtype=float)
-    peak = float(np.nanmax(dens)) if np.isfinite(dens).any() else 0.0
+    peak = float(peak_ref) if peak_ref is not None else (float(np.nanmax(dens)) if np.isfinite(dens).any() else 0.0)
     if peak <= 0:
         return
     levels = np.linspace(0.06 * peak, peak, 14)
@@ -190,7 +278,7 @@ def plot_raw_points(ax, points: np.ndarray, labels: np.ndarray | None = None, *,
             pts[:, 0],
             pts[:, 1],
             s=s,
-            alpha=0.86,
+            alpha=POINT_ALPHA,
             facecolors=POINT_COLOR,
             edgecolors=POINT_EDGE_COLOR,
             linewidths=0.35,
@@ -199,25 +287,153 @@ def plot_raw_points(ax, points: np.ndarray, labels: np.ndarray | None = None, *,
         return
 
     labels = np.asarray(labels)
-    palette = {
-        "mode_0": "#2A9D9D",
-        "mode_1": "#D05A8A",
-        "mode_2": "#8E6BBE",
-        "bridge": "#E0A11B",
-        "artifact": "#666666",
-    }
     for label in np.unique(labels):
         mask = labels == label
         ax.scatter(
             pts[mask, 0],
             pts[mask, 1],
             s=s,
-            alpha=0.86,
-            facecolors=palette.get(str(label), POINT_COLOR),
+            alpha=POINT_ALPHA,
+            facecolors=POINT_COLOR_BY_LABEL.get(str(label), POINT_COLOR),
             edgecolors=POINT_EDGE_COLOR,
             linewidths=0.35,
             zorder=3,
         )
+
+
+def plot_metric_summary_row(
+    ax,
+    metrics: dict[str, float | None],
+    *,
+    title: str = "metric probes",
+) -> None:
+    """Render a compact text summary of the V0 metrics for one distribution."""
+
+    ax.set_axis_off()
+    ax.text(
+        0.03,
+        0.95,
+        f"{title}\n(shape-normalized sample)",
+        transform=ax.transAxes,
+        fontsize=7.0,
+        fontweight="bold",
+        color="#444",
+        va="top",
+        ha="left",
+    )
+    rows = [
+        ("hdr_concentration_auc", "HDR conc", "higher = more concentrated"),
+        ("valley_depth", "valley", "higher = more separated"),
+        ("mst_max_edge", "MST edge", "higher = more separated"),
+        ("fiedler", "fiedler", "higher = more separated"),
+    ]
+    y = 0.72
+    for name, label, desc in rows:
+        color = METRIC_COLOR_BY_NAME.get(name, "#444")
+        value = metrics.get(name, float("nan"))
+        ax.text(0.03, y, label, transform=ax.transAxes, fontsize=6.6, color=color, va="center", ha="left")
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            rendered = "N/A"
+        else:
+            rendered = f"{float(value):.3f}"
+        ax.text(
+            0.48,
+            y,
+            rendered,
+            transform=ax.transAxes,
+            fontsize=6.7,
+            color="#222",
+            va="center",
+            ha="right",
+            fontfamily="monospace",
+            fontweight="bold",
+        )
+        ax.text(0.52, y, desc, transform=ax.transAxes, fontsize=5.8, color="#777", va="center", ha="left")
+        y -= 0.17
+
+
+def _format_peak_count_value(detail: PeakCountDetail | None) -> tuple[str, str]:
+    if detail is None:
+        return "N/A", "no density"
+    if detail.n_modes < 2 or detail.split_fraction is None:
+        return f"{detail.n_modes:d}", "split N/A"
+    return f"{detail.n_modes:d}", f"split {detail.split_fraction:.3f}"
+
+
+def plot_peak_count_summary_row(
+    ax,
+    truth_detail: PeakCountDetail | None,
+    observed_detail: PeakCountDetail | None,
+    *,
+    title: str = "peak count audit",
+) -> None:
+    """Render the truth-versus-detected peak-count audit for one distribution."""
+
+    ax.set_axis_off()
+    ax.text(
+        0.03,
+        0.95,
+        f"{title}\n(valley sweep)",
+        transform=ax.transAxes,
+        fontsize=7.0,
+        fontweight="bold",
+        color="#444",
+        va="top",
+        ha="left",
+    )
+    rows = [("truth peaks", truth_detail), ("detected peaks", observed_detail)]
+    y = 0.72
+    for label, detail in rows:
+        count_txt, split_txt = _format_peak_count_value(detail)
+        ax.text(0.03, y, label, transform=ax.transAxes, fontsize=6.6, color="#444", va="center", ha="left")
+        ax.text(
+            0.48,
+            y,
+            count_txt,
+            transform=ax.transAxes,
+            fontsize=6.7,
+            color="#222",
+            va="center",
+            ha="right",
+            fontfamily="monospace",
+            fontweight="bold",
+        )
+        ax.text(0.52, y, split_txt, transform=ax.transAxes, fontsize=5.8, color="#777", va="center", ha="left")
+        y -= 0.18
+
+    valley_state = "draw valley" if observed_detail is not None and observed_detail.n_modes >= 2 else "no valley"
+    valley_reason = (
+        "observed split" if observed_detail is not None and observed_detail.n_modes >= 2 else "single detected peak"
+    )
+    ax.text(0.03, y - 0.02, "ring", transform=ax.transAxes, fontsize=6.6, color="#B8860B", va="center", ha="left")
+    ax.text(
+        0.48,
+        y - 0.02,
+        valley_state,
+        transform=ax.transAxes,
+        fontsize=6.7,
+        color="#222",
+        va="center",
+        ha="right",
+        fontfamily="monospace",
+        fontweight="bold",
+    )
+    ax.text(0.52, y - 0.02, valley_reason, transform=ax.transAxes, fontsize=5.8, color="#777", va="center", ha="left")
+    y -= 0.18
+    ax.text(0.03, y - 0.02, "method", transform=ax.transAxes, fontsize=6.6, color="#444", va="center", ha="left")
+    ax.text(
+        0.48,
+        y - 0.02,
+        "sweep",
+        transform=ax.transAxes,
+        fontsize=6.7,
+        color="#222",
+        va="center",
+        ha="right",
+        fontfamily="monospace",
+        fontweight="bold",
+    )
+    ax.text(0.52, y - 0.02, "super-level threshold", transform=ax.transAxes, fontsize=5.8, color="#777", va="center", ha="left")
 
 
 def plot_density_overlap(
@@ -257,6 +473,9 @@ def plot_v0_distribution_qc_grid(
     title: str = "V0 modal distribution visual QA",
     kde=None,
     show_hdr: bool = True,
+    auto_scale: bool = True,
+    include_peak_row: bool = True,
+    include_metric_row: bool = False,
 ) -> Path:
     """Plot one visual QA grid for V0 generated distributions.
 
@@ -269,23 +488,42 @@ def plot_v0_distribution_qc_grid(
         raise ValueError("plot_v0_distribution_qc_grid requires at least one distribution")
 
     n = len(specs)
-    fig, axes = plt.subplots(3, n, figsize=(2.45 * n, 6.95), squeeze=False)
+    n_rows = 3 + int(include_peak_row) + int(include_metric_row)
+    fig_height = 6.95 + (1.35 if include_peak_row else 0.0) + (1.35 if include_metric_row else 0.0)
+    fig, axes = plt.subplots(n_rows, n, figsize=(2.45 * n, fig_height), squeeze=False)
     fig.subplots_adjust(left=0.035, right=0.995, bottom=0.12, top=0.84, wspace=0.12, hspace=0.18)
+
+    shared_box = None
+    if not auto_scale:
+        shared_box = canonical_box_from_specs(specs)
 
     for col, spec in enumerate(specs):
         points = np.asarray(spec.points, dtype=float)
-        grids_for_box = [points]
-        if spec.true_grid is not None:
-            true_pts = np.column_stack([spec.true_grid.xx.ravel(), spec.true_grid.yy.ravel()])
-            finite = np.isfinite(spec.true_grid.density.ravel()) & (spec.true_grid.density.ravel() > 0)
-            if finite.any():
-                grids_for_box.append(true_pts[finite])
-        box = square_density_box(density_box(grids_for_box, kde=kde))
+        if auto_scale:
+            grids_for_box = [points]
+            if spec.composed_grid is not None:
+                true_pts = np.column_stack([spec.composed_grid.xx.ravel(), spec.composed_grid.yy.ravel()])
+                finite = np.isfinite(spec.composed_grid.density.ravel()) & (spec.composed_grid.density.ravel() > 0)
+                if finite.any():
+                    grids_for_box.append(true_pts[finite])
+            box = square_density_box(density_box(grids_for_box, kde=kde))
+        else:
+            box = shared_box
         sample_grid = evaluate_density_grid(points, box, kde=kde)
+        truth_detail = None
+        if spec.composed_grid is not None:
+            truth_detail = peak_count_detail(spec.composed_grid.density)
+        observed_detail = peak_count_detail(sample_grid.density)
 
         ax = axes[0][col]
-        if spec.true_grid is not None:
-            plot_kde_field(ax, spec.true_grid, color=TRUE_DENS_COLOR, cmap=None, alpha_max=0.38)
+        if spec.composed_grid is not None:
+            plot_kde_field(
+                ax,
+                spec.composed_grid,
+                color=TRUE_DENS_COLOR,
+                cmap=None,
+                alpha_max=0.30,
+            )
         else:
             plot_kde_field(ax, sample_grid)
         format_density_axis(ax, box)
@@ -295,30 +533,80 @@ def plot_v0_distribution_qc_grid(
 
         ax = axes[1][col]
         plot_kde_field(ax, sample_grid)
-        plot_raw_points(ax, points, spec.labels)
+        plot_raw_points(ax, points, spec.component_labels, s=14)
         format_density_axis(ax, box)
 
         ax = axes[2][col]
         plot_kde_field(ax, sample_grid)
         if show_hdr:
             plot_hdr_contour(ax, sample_grid)
-        plot_raw_points(ax, points, spec.labels, s=13)
+        if observed_detail.n_modes >= 2 and observed_detail.split_level is not None:
+            ax.contour(
+                sample_grid.xx,
+                sample_grid.yy,
+                sample_grid.density,
+                levels=[observed_detail.split_level],
+                colors="#B8860B",
+                linewidths=1.8,
+                linestyles="--",
+                zorder=5,
+            )
+        plot_raw_points(ax, points, spec.component_labels, s=11)
         format_density_axis(ax, box)
+
+        row_idx = 3
+        if include_peak_row:
+            plot_peak_count_summary_row(axes[row_idx][col], truth_detail, observed_detail, title="peak count audit")
+            row_idx += 1
+        if include_metric_row:
+            metric_summary = compute_v0_metric_summary(points, kde=kde, distribution_id=spec.distribution_id)
+            plot_metric_summary_row(axes[row_idx][col], metric_summary, title="metric probes")
 
     axes[0][0].set_ylabel("true density\nor sample KDE", fontsize=9)
     axes[1][0].set_ylabel("sampled points\n+ KDE", fontsize=9)
-    axes[2][0].set_ylabel("sample KDE\n+ HDR 50%", fontsize=9)
-    handles = [
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#2A9D9D",
-               markeredgecolor=POINT_EDGE_COLOR, markersize=6, label="mode_0"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#D05A8A",
-               markeredgecolor=POINT_EDGE_COLOR, markersize=6, label="mode_1"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#8E6BBE",
-               markeredgecolor=POINT_EDGE_COLOR, markersize=6, label="mode_2"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#E0A11B",
-               markeredgecolor=POINT_EDGE_COLOR, markersize=6, label="bridge"),
-        Line2D([0], [0], color=HDR_COLOR, lw=1.8, label="HDR 50% contour"),
+    axes[2][0].set_ylabel("sample KDE\n+ HDR 50% / valley", fontsize=9)
+    if include_peak_row:
+        axes[3][0].set_ylabel("peak count\n(truth vs detected)", fontsize=9)
+    if include_metric_row:
+        axes[3 + int(include_peak_row)][0].set_ylabel("metrics\n(normalized)", fontsize=9)
+    all_labels: list[str] = []
+    for spec in specs:
+        if spec.component_labels is None:
+            continue
+        all_labels.extend([str(label) for label in np.unique(spec.component_labels)])
+    preferred = [
+        "mode_0",
+        "mode_1",
+        "mode_2",
+        "mode_left",
+        "mode_right",
+        "bridge_left_right",
+        "bridge",
+        "artifact",
     ]
+    legend_labels: list[str] = []
+    seen = set()
+    for label in preferred + sorted(set(all_labels) - set(preferred)):
+        if label in seen or label not in all_labels:
+            continue
+        seen.add(label)
+        legend_labels.append(label)
+
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor=POINT_COLOR_BY_LABEL.get(label, POINT_COLOR),
+            markeredgecolor=POINT_EDGE_COLOR,
+            markersize=6,
+            label=label,
+        )
+        for label in legend_labels
+    ]
+    handles.append(Line2D([0], [0], color="#B8860B", lw=1.8, ls="--", label="valley split floor"))
+    handles.append(Line2D([0], [0], color=HDR_COLOR, lw=1.8, label="HDR 50% contour"))
     fig.legend(
         handles=handles,
         loc="lower center",
@@ -343,3 +631,10 @@ def plot_v0_distribution_qc_grid(
     fig.savefig(out_path, dpi=170, facecolor="white")
     plt.close(fig)
     return out_path
+
+
+# Tech debt:
+# - When auto_scale=False, add an explicit shared density peak reference so
+#   cross-panel height comparisons use the same contour levels.
+# - Either use POINT_ALPHA_HDR in the HDR row or remove it if the alpha split
+#   is not needed.

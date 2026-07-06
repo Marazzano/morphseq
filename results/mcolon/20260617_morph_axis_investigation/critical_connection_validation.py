@@ -26,7 +26,11 @@ import pandas as pd
 RUN_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(RUN_DIR))
 
-from support_geometry import compute_support_geometry, critical_connection_ratio  # noqa: E402
+from support_geometry import (  # noqa: E402
+    compute_support_geometry,
+    critical_connection_ratio,
+    critical_major_connection_ratio,
+)
 from synthetic_scenarios import SCENARIOS, wt_reference  # noqa: E402
 
 TABLE_DIR = RUN_DIR / "tables" / "support_connectivity"
@@ -51,13 +55,25 @@ SIG_ALPHA = 0.05
 _WT_POOL = None
 
 
-def candidate_specs() -> list[tuple[str, dict]]:
-    return [
-        ("delaunay_k3_mass90", {"k": 3, "target_mass": 0.90}),
-        ("delaunay_k5_mass90", {"k": 5, "target_mass": 0.90}),
-        ("delaunay_k3_mass95", {"k": 3, "target_mass": 0.95}),
-        ("delaunay_k5_mass95", {"k": 5, "target_mass": 0.95}),
+def candidate_specs(candidate_names: list[str] | None = None) -> list[tuple[str, dict]]:
+    specs = [
+        ("largest_k3_mass90", {"fn": "largest", "k": 3, "target_mass": 0.90}),
+        ("largest_k5_mass90", {"fn": "largest", "k": 5, "target_mass": 0.90}),
+        ("major_k3_min05_cov85", {"fn": "major", "k": 3, "min_component_mass": 0.05, "covered_mass": 0.85}),
+        ("major_k5_min05_cov85", {"fn": "major", "k": 5, "min_component_mass": 0.05, "covered_mass": 0.85}),
+        ("major_k3_min10_cov85", {"fn": "major", "k": 3, "min_component_mass": 0.10, "covered_mass": 0.85}),
+        ("major_k5_min10_cov85", {"fn": "major", "k": 5, "min_component_mass": 0.10, "covered_mass": 0.85}),
+        ("major_k3_min10_cov90", {"fn": "major", "k": 3, "min_component_mass": 0.10, "covered_mass": 0.90}),
+        ("major_k5_min10_cov90", {"fn": "major", "k": 5, "min_component_mass": 0.10, "covered_mass": 0.90}),
     ]
+    if candidate_names is None:
+        return specs
+    requested = set(candidate_names)
+    known = {name for name, _ in specs}
+    unknown = sorted(requested - known)
+    if unknown:
+        raise ValueError(f"Unknown candidate(s): {unknown}. Known candidates: {sorted(known)}")
+    return [(name, params) for name, params in specs if name in requested]
 
 
 def _init_worker(wt_pool: np.ndarray) -> None:
@@ -74,7 +90,14 @@ def _run_one(task: tuple[int, int, str, dict, int, int]) -> dict:
 
     rng = np.random.default_rng(1000 + 100 * seed + n)
     pts = scen.generator(n, rng)
-    stat_fn = lambda x: critical_connection_ratio(x, **params)
+    params = dict(params)
+    fn_name = params.pop("fn")
+    if fn_name == "largest":
+        stat_fn = lambda x: critical_connection_ratio(x, **params)
+    elif fn_name == "major":
+        stat_fn = lambda x: critical_major_connection_ratio(x, **params)
+    else:
+        raise ValueError(f"Unknown critical-connection candidate type: {fn_name!r}")
     bundle = compute_support_geometry(
         pts,
         wt_pool,
@@ -96,16 +119,24 @@ def _run_one(task: tuple[int, int, str, dict, int, int]) -> dict:
     }
 
 
-def run_sweep(n: int, n_seeds: int, n_resample: int, n_workers: int) -> pd.DataFrame:
+def run_sweep(
+    n: int,
+    n_seeds: int,
+    n_resample: int,
+    n_workers: int,
+    candidate_names: list[str] | None = None,
+    output_prefix: str = "critical_connection_validation",
+) -> pd.DataFrame:
     wt_pool = wt_reference(WT_POOL_N, np.random.default_rng(1))
     scenario_indices = [i for i, scen in enumerate(SCENARIOS) if scen.name in GATE_SCENARIOS]
+    candidates = candidate_specs(candidate_names)
     tasks = [
         (scen_idx, seed, candidate, params, n, n_resample)
         for scen_idx in scenario_indices
         for seed in range(n_seeds)
-        for candidate, params in candidate_specs()
+        for candidate, params in candidates
     ]
-    partial = TABLE_DIR / "critical_connection_validation.partial.csv"
+    partial = TABLE_DIR / f"{output_prefix}.partial.csv"
     partial.unlink(missing_ok=True)
     rows = []
     total = len(tasks)
@@ -131,7 +162,7 @@ def run_sweep(n: int, n_seeds: int, n_resample: int, n_workers: int) -> pd.DataF
     return pd.DataFrame(rows)
 
 
-def summarize(df: pd.DataFrame) -> pd.DataFrame:
+def summarize(df: pd.DataFrame, output_prefix: str = "critical_connection_validation") -> pd.DataFrame:
     summary = (
         df.groupby(["candidate", "scenario", "expected_support"], as_index=False)
         .agg(significant_rate=("significant", "mean"),
@@ -150,15 +181,15 @@ def summarize(df: pd.DataFrame) -> pd.DataFrame:
             "score": target_rate - control_rate,
         })
     pd.DataFrame(scores).sort_values(["score", "target_rate"], ascending=False).to_csv(
-        TABLE_DIR / "critical_connection_validation_scores.csv",
+        TABLE_DIR / f"{output_prefix}_scores.csv",
         index=False,
     )
-    summary.to_csv(TABLE_DIR / "critical_connection_validation_summary.csv", index=False)
+    summary.to_csv(TABLE_DIR / f"{output_prefix}_summary.csv", index=False)
     return summary
 
 
-def make_plot(summary: pd.DataFrame) -> Path:
-    candidates = [name for name, _ in candidate_specs()]
+def make_plot(summary: pd.DataFrame, output_prefix: str = "critical_connection_validation") -> Path:
+    candidates = [name for name, _ in candidate_specs() if name in set(summary["candidate"])]
     pivot = (
         summary.pivot(index="scenario", columns="candidate", values="significant_rate")
         .reindex(index=GATE_SCENARIOS, columns=candidates)
@@ -184,7 +215,7 @@ def make_plot(summary: pd.DataFrame) -> Path:
     cbar = fig.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
     cbar.set_label("significant fraction")
     fig.tight_layout()
-    out = PLOT_DIR / "critical_connection_gate_heatmap.png"
+    out = PLOT_DIR / f"{output_prefix}_heatmap.png"
     fig.savefig(out, dpi=180, facecolor="white")
     plt.close(fig)
     return out
@@ -196,20 +227,30 @@ def main() -> None:
     parser.add_argument("--n-seeds", type=int, default=5)
     parser.add_argument("--n-resample", type=int, default=100)
     parser.add_argument("--n-workers", type=int, default=min(8, os.cpu_count() or 1))
+    parser.add_argument("--candidates", nargs="*", default=None)
+    parser.add_argument("--output-prefix", default="critical_connection_validation")
     args = parser.parse_args()
 
+    candidates = candidate_specs(args.candidates)
     print("Critical-connection focused validation")
     print(f"  scenarios={GATE_SCENARIOS}")
-    print(f"  candidates={[name for name, _ in candidate_specs()]}")
+    print(f"  candidates={[name for name, _ in candidates]}")
     print(f"  n={args.sample_size} n_seeds={args.n_seeds} n_resample={args.n_resample} n_workers={args.n_workers}")
-    df = run_sweep(args.sample_size, args.n_seeds, args.n_resample, args.n_workers)
-    csv_out = TABLE_DIR / "critical_connection_validation.csv"
+    df = run_sweep(
+        args.sample_size,
+        args.n_seeds,
+        args.n_resample,
+        args.n_workers,
+        candidate_names=args.candidates,
+        output_prefix=args.output_prefix,
+    )
+    csv_out = TABLE_DIR / f"{args.output_prefix}.csv"
     df.to_csv(csv_out, index=False)
-    summary = summarize(df)
-    plot_out = make_plot(summary)
+    summary = summarize(df, output_prefix=args.output_prefix)
+    plot_out = make_plot(summary, output_prefix=args.output_prefix)
     print(f"Saved: {csv_out}")
-    print(f"Saved: {TABLE_DIR / 'critical_connection_validation_summary.csv'}")
-    print(f"Saved: {TABLE_DIR / 'critical_connection_validation_scores.csv'}")
+    print(f"Saved: {TABLE_DIR / f'{args.output_prefix}_summary.csv'}")
+    print(f"Saved: {TABLE_DIR / f'{args.output_prefix}_scores.csv'}")
     print(f"Saved: {plot_out}")
 
 

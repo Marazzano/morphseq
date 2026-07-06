@@ -174,14 +174,14 @@ sum(F_component * dx * dy) = 1
 The true density landscape is then composed as:
 
 ```text
-F_true(x, y) =
+F_composed(x, y) =
     sum_c component_mass_c * F_component_c(x, y)
 ```
 
 and validated so that:
 
 ```text
-sum(F_true * dx * dy) = 1
+sum(F_composed * dx * dy) = 1
 ```
 
 ### Component Truth Versus Composed Density Truth
@@ -203,13 +203,13 @@ composed density truth:
 ```
 
 Both outcomes are valid. The composed density truth is measured from the final
-composed density landscape `F_true`, not inferred from the component names.
+composed density landscape `F_composed`, not inferred from the component names.
 
 The benchmark should therefore keep two truth layers:
 
 ```text
 component truth = what was specified
-composed density truth = measurements computed from F_true
+composed density truth = measurements computed from F_composed
 ```
 
 Component truth records:
@@ -308,9 +308,9 @@ The simulation architecture is:
 3. evaluate each component on the canonical grid
 4. normalize each component independently
 5. weight components by assigned mass
-6. sum components to form F_true
+6. sum components to form F_composed
 7. resolve realized peaks, basins, saddles, bridges, and compactness
-8. sample finite observations from F_true
+8. sample finite observations from F_composed
 9. estimate metrics from sampled observations
 10. compare estimated metrics to composed density truth
 ```
@@ -570,7 +570,7 @@ The important additions are `density_spec`, `component_truth`,
 `density_spec` defines the component recipe and mass budget.
 `component_truth` records the intended density components.
 `composed_density_truth` records measurements computed from the final composed
-density `F_true`.
+density `F_composed`.
 `expected_relative_scores` encodes expected directional relationships for each
 metric family, not just scenario labels.
 
@@ -655,8 +655,8 @@ For a neighboring peak pair `(i, j)`, define:
 peak_density_pair = min(local_max_density_i, local_max_density_j)
 valley_density_ratio = saddle_or_min_bridge_density / peak_density_pair
 bridge_component_mass_fraction = probability mass assigned to the bridge component in the recipe
-bridge_region_density_ratio = mean(F_true over bridge_region) / peak_density_pair
-bridge_region_mass_fraction = sum(F_true[cell] * dx * dy for cell in bridge_region)
+bridge_region_density_ratio = mean(F_composed over bridge_region) / peak_density_pair
+bridge_region_mass_fraction = sum(F_composed[cell] * dx * dy for cell in bridge_region)
 inter_peak_distance_ratio = inter_peak_distance / mean_peak_width
 bridge_width_ratio = bridge_width / mean_peak_width
 saddle_density_ratio = saddle_density / peak_density_pair
@@ -675,7 +675,7 @@ the composed density landscape.
 Recipe-level bridge mass and measured bridge-region mass should be stored
 separately. `bridge_component_mass_fraction` records the probability budget
 assigned to the bridge component. `bridge_region_mass_fraction` records the
-probability mass measured inside the bridge/intermediate region of `F_true`.
+probability mass measured inside the bridge/intermediate region of `F_composed`.
 These need not be identical because mode tails, background, and the bridge
 component can all contribute density inside the bridge region.
 
@@ -1650,3 +1650,33 @@ discreteness calls.
 The final report should not say only that a method "works." It should say which
 metric works for which relative property, at which sample size, and where its
 failure boundary begins.
+
+---
+
+## Simulation Results Insights
+
+Current V0 validation shows the composed-density layer is behaving as intended:
+
+- `F_composed` is validated before sampling.
+- The V0 truth peak counts match the expected recipe counts.
+- Bridge labels are now tied to measured composed-density ratios rather than
+  recipe names alone.
+
+The useful signal is not perfect per-replicate agreement. The useful signal is
+the power boundary:
+
+- concentration metrics already separate compact vs diffuse cases cleanly
+- bridge-related metrics are informative but sample-size sensitive
+- graph bottleneck metrics remain corroborating signals rather than sole truth
+  calls
+- larger `n` improves ordering stability, which is what we want to quantify
+
+This is the main takeaway for the simulation framework: the benchmark should
+report where each metric starts to separate distributions reliably, and where
+it remains ambiguous. That gives us a practical operating range before we move
+to direct distribution-vs-distribution comparisons.
+
+See the companion docs:
+
+- [MODAL_ORGANIZATION_OPEN_QUESTIONS.md](MODAL_ORGANIZATION_OPEN_QUESTIONS.md)
+- [MODAL_ORGANIZATION_RESOLVED_QUESTIONS.md](MODAL_ORGANIZATION_RESOLVED_QUESTIONS.md)
