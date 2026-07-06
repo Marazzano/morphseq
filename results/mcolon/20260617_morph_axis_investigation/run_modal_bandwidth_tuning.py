@@ -31,6 +31,7 @@ from morphseq_investigation.core.density_composition import (  # noqa: E402
     realize_from_truth,
     validate_composed_density_truth,
 )
+from morphseq_investigation.core.peak_counting import SUPPORTED_METHODS, detect_peaks  # noqa: E402
 from morphseq_investigation.v0.modal_v0_distributions import V0_DISTRIBUTIONS_BY_ID  # noqa: E402
 
 
@@ -100,6 +101,21 @@ def _fmt_float_list(values: tuple[float, ...], digits: int = 4) -> str:
     if not values:
         return ""
     return ";".join(_fmt_float(value, digits=digits) for value in values)
+
+
+def _fmt_int_list(values: tuple[int, ...]) -> str:
+    if not values:
+        return ""
+    return ";".join(str(int(value)) for value in values)
+
+
+def _fmt_pair_list(values: tuple[tuple[float, float], ...], digits: int = 4) -> str:
+    if not values:
+        return ""
+    return ";".join(
+        ",".join(_fmt_float(coord, digits=digits) for coord in pair)
+        for pair in values
+    )
 
 
 def _is_finite(value: object) -> bool:
@@ -293,6 +309,48 @@ def _build_candidate_row(
     }
 
 
+def _build_detector_audit_row(
+    *,
+    distribution_id: str,
+    n: int,
+    seed: int,
+    bandwidth_rule: str,
+    bandwidth_multiplier: float,
+    bandwidth: float,
+    truth_peak_count: int,
+    result,
+) -> dict[str, object]:
+    return {
+        "distribution_id": distribution_id,
+        "n": int(n),
+        "seed": int(seed),
+        "bandwidth_rule": bandwidth_rule,
+        "bandwidth_multiplier": float(bandwidth_multiplier),
+        "bandwidth": float(bandwidth),
+        "peak_detector_method": result.method_name,
+        "estimated_peak_count": int(result.n_modes),
+        "candidate_peak_count": int(result.candidate_peak_count),
+        "accepted_peak_count": int(result.accepted_peak_count),
+        "rejected_peak_count": int(result.rejected_peak_count),
+        "reject_reasons": ";".join(result.reject_reasons),
+        "notes": ";".join(result.notes),
+        "truth_peak_count": int(truth_peak_count),
+        "split_fraction": result.split_fraction,
+        "split_level": result.split_level,
+        "component_masses": _fmt_float_list(tuple(float(v) for v in result.component_masses)),
+        "peak_locations": _fmt_pair_list(tuple(tuple(float(x) for x in pair) for pair in result.peak_locations)),
+        "peak_heights": _fmt_float_list(tuple(float(v) for v in result.peak_heights)),
+        "basin_sample_counts": _fmt_int_list(tuple(int(v) for v in result.basin_sample_counts)),
+        "basin_sample_fractions": _fmt_float_list(tuple(float(v) for v in result.basin_sample_fractions)),
+        "basin_kde_masses": _fmt_float_list(tuple(float(v) for v in result.basin_kde_masses)),
+        "hdr_component_counts": _fmt_int_list(tuple(int(v) for v in result.hdr_component_counts)),
+        "candidate_details": ";".join(
+            f"{detail.candidate_peak_id}|{_fmt_float(detail.peak_height)}|{_fmt_float(detail.basin_sample_fraction)}|{_fmt_float(detail.basin_kde_mass)}|{detail.reject_reason}"
+            for detail in result.candidate_details
+        ),
+    }
+
+
 def _measure_truth(distribution_id: str) -> tuple[ComposedDensityTruth, DensityGeometryMeasurement, dict[str, str]]:
     spec = V0_DISTRIBUTIONS_BY_ID[distribution_id].density_spec
     truth = compose_density_truth(spec, keep_component_fields=False)
@@ -418,6 +476,95 @@ def _select_best_rule_multiplier(summary: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(selected_rows)
 
 
+def _summarize_detector_audit(audit_df: pd.DataFrame) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    if audit_df.empty:
+        return pd.DataFrame(rows)
+    for (method, bandwidth_rule, n), sub in audit_df.groupby(
+        ["peak_detector_method", "bandwidth_rule", "n"],
+        sort=False,
+    ):
+        truth_peak = sub["truth_peak_count"].astype(float)
+        estimated_peak = sub["estimated_peak_count"].astype(float)
+        rows.append(
+            {
+                "peak_detector_method": method,
+                "bandwidth_rule": bandwidth_rule,
+                "n": int(n),
+                "n_rows": int(len(sub)),
+                "median_estimated_peak_count": float(np.median(estimated_peak)),
+                "peak_count_match_rate": float(np.mean(estimated_peak == truth_peak)),
+                "false_merge_rate": float(np.mean(estimated_peak < truth_peak)),
+                "false_split_rate": float(np.mean(estimated_peak > truth_peak)),
+                "median_candidate_peak_count": float(np.median(sub["candidate_peak_count"].astype(float))),
+            }
+        )
+    summary = pd.DataFrame(rows)
+    return summary.sort_values(
+        [
+            "peak_detector_method",
+            "bandwidth_rule",
+            "n",
+        ],
+        ascending=[True, True, True],
+    )
+
+
+def _write_detector_report(
+    audit_df: pd.DataFrame,
+    summary_df: pd.DataFrame,
+    out_path: Path,
+    *,
+    config: CalibrationConfig,
+) -> None:
+    lines: list[str] = [
+        "# Modal peak-detector audit",
+        "",
+        f"Sample sizes: {list(config.sample_sizes)}",
+        f"Seeds per sample size: {config.n_seeds}",
+        f"Rules: {', '.join(config.rule_names)}",
+        f"Methods: {', '.join(SUPPORTED_METHODS)}",
+        "",
+        "## Summary",
+        "",
+    ]
+    if summary_df.empty:
+        lines.append("  no detector audit rows were generated.")
+    else:
+        lines.append(summary_df.to_string(index=False))
+    if not audit_df.empty:
+        compact = audit_df.loc[audit_df["distribution_id"] == "three_peaks_compact"].copy()
+        compact = compact.loc[compact["bandwidth_rule"].isin(["longest_non_outlier_MST_edge", "median_kNN_distance"])]
+        lines.extend(
+            [
+                "",
+                "## three_peaks_compact snapshot",
+                "",
+            ]
+        )
+        if compact.empty:
+            lines.append("  no compact three-peak audit rows were generated.")
+        else:
+            snapshot_cols = [
+                "distribution_id",
+                "n",
+                "seed",
+                "bandwidth_rule",
+                "bandwidth_multiplier",
+                "peak_detector_method",
+                "estimated_peak_count",
+                "candidate_peak_count",
+                "accepted_peak_count",
+                "rejected_peak_count",
+                "reject_reasons",
+                "component_masses",
+                "basin_sample_fractions",
+                "hdr_component_counts",
+            ]
+            lines.append(compact.loc[:, snapshot_cols].head(24).to_string(index=False))
+    out_path.write_text("\n".join(lines) + "\n")
+
+
 def _write_report(
     truth_df: pd.DataFrame,
     summary_df: pd.DataFrame,
@@ -507,7 +654,7 @@ def _init_worker(
     _DIST_INDEX_BY_ID = dist_index_by_id
 
 
-def _run_task(task: tuple[str, int, int]) -> list[dict[str, object]]:
+def _run_task(task: tuple[str, int, int]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     distribution_id, n, seed = task
     truth = _TRUTH_BY_ID[distribution_id]
     truth_measurement = _TRUTH_MEASUREMENT_BY_ID[distribution_id]
@@ -531,7 +678,8 @@ def _run_task(task: tuple[str, int, int]) -> list[dict[str, object]]:
         connectivity_mass=config.connectivity_mass,
     )
 
-    rows: list[dict[str, object]] = []
+    candidate_rows: list[dict[str, object]] = []
+    detector_rows: list[dict[str, object]] = []
     for candidate in candidates:
         density_flat = evaluate_isotropic_gaussian_kde_from_dist2(
             dist2,
@@ -547,7 +695,8 @@ def _run_task(task: tuple[str, int, int]) -> list[dict[str, object]]:
             min_component_mass_frac=config.min_component_mass_frac,
             sweep_steps=config.sweep_steps,
         )
-        rows.append(
+        density_grid = type(grid)(grid=grid.grid, xx=grid.xx, yy=grid.yy, density=density)
+        candidate_rows.append(
             _build_candidate_row(
                 distribution_id=distribution_id,
                 n=n,
@@ -557,7 +706,28 @@ def _run_task(task: tuple[str, int, int]) -> list[dict[str, object]]:
                 estimated_measurement=measurement,
             )
         )
-    return rows
+        for method_name in SUPPORTED_METHODS:
+            detector_result = detect_peaks(
+                density_grid.density,
+                method=method_name,
+                grid=density_grid,
+                sample_points=points,
+                min_component_mass_frac=config.min_component_mass_frac,
+                sweep_steps=config.sweep_steps,
+            )
+            detector_rows.append(
+                _build_detector_audit_row(
+                    distribution_id=distribution_id,
+                    n=n,
+                    seed=seed,
+                    bandwidth_rule=candidate.bandwidth_rule,
+                    bandwidth_multiplier=candidate.bandwidth_multiplier,
+                    bandwidth=candidate.bandwidth,
+                    truth_peak_count=truth_measurement.peak_count,
+                    result=detector_result,
+                )
+            )
+    return candidate_rows, detector_rows
 
 
 def _build_truth_tables(config: CalibrationConfig) -> tuple[pd.DataFrame, dict[str, ComposedDensityTruth], dict[str, DensityGeometryMeasurement]]:
@@ -582,19 +752,22 @@ def run_sweep(
     config: CalibrationConfig,
     truth_by_id: dict[str, ComposedDensityTruth],
     truth_measurement_by_id: dict[str, DensityGeometryMeasurement],
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     tasks = [
         (distribution_id, n, seed)
         for distribution_id in ANCHOR_CASES
         for n in sample_sizes
         for seed in range(n_seeds)
     ]
-    rows: list[dict[str, object]] = []
+    candidate_rows: list[dict[str, object]] = []
+    detector_rows: list[dict[str, object]] = []
 
     if n_workers <= 1:
         _init_worker(truth_by_id, truth_measurement_by_id, config, {k: i for i, k in enumerate(ANCHOR_CASES)})
         for done, task_rows in enumerate(map(_run_task, tasks), start=1):
-            rows.extend(task_rows)
+            candidate_chunk, detector_chunk = task_rows
+            candidate_rows.extend(candidate_chunk)
+            detector_rows.extend(detector_chunk)
             if done % 5 == 0 or done == len(tasks):
                 print(f"  completed {done}/{len(tasks)} realizations", flush=True)
     else:
@@ -604,11 +777,13 @@ def run_sweep(
             initargs=(truth_by_id, truth_measurement_by_id, config, {k: i for i, k in enumerate(ANCHOR_CASES)}),
         ) as pool:
             for done, task_rows in enumerate(pool.imap_unordered(_run_task, tasks, chunksize=1), start=1):
-                rows.extend(task_rows)
+                candidate_chunk, detector_chunk = task_rows
+                candidate_rows.extend(candidate_chunk)
+                detector_rows.extend(detector_chunk)
                 if done % 5 == 0 or done == len(tasks):
                     print(f"  completed {done}/{len(tasks)} realizations", flush=True)
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(candidate_rows), pd.DataFrame(detector_rows)
 
 
 def main() -> None:
@@ -640,7 +815,7 @@ def main() -> None:
     )
 
     truth_df, truth_by_id, truth_measurement_by_id = _build_truth_tables(config)
-    candidate_df = run_sweep(
+    candidate_df, audit_df = run_sweep(
         sample_sizes=sample_sizes,
         n_seeds=config.n_seeds,
         n_workers=int(args.n_workers),
@@ -650,6 +825,7 @@ def main() -> None:
     )
     rule_multiplier_summary = _summarize_rule_multiplier(candidate_df)
     selected_df = _select_best_rule_multiplier(rule_multiplier_summary)
+    detector_audit_summary = _summarize_detector_audit(audit_df)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     truth_path = args.out_dir / "modal_bandwidth_tuning_truth.csv"
@@ -657,18 +833,27 @@ def main() -> None:
     summary_path = args.out_dir / "modal_bandwidth_tuning_summary.csv"
     rule_summary_path = args.out_dir / "modal_bandwidth_tuning_rule_summary.csv"
     report_path = args.out_dir / "modal_bandwidth_tuning_report.md"
+    detector_audit_path = args.out_dir / "modal_peak_detector_audit.csv"
+    detector_summary_path = args.out_dir / "modal_peak_detector_audit_summary.csv"
+    detector_report_path = args.out_dir / "modal_peak_detector_audit_report.md"
 
     truth_df.to_csv(truth_path, index=False)
     candidate_df.to_csv(candidate_path, index=False)
+    audit_df.to_csv(detector_audit_path, index=False)
     rule_multiplier_summary.to_csv(rule_summary_path, index=False)
     selected_df.to_csv(summary_path, index=False)
+    detector_audit_summary.to_csv(detector_summary_path, index=False)
     _write_report(truth_df, rule_multiplier_summary, selected_df, report_path, config=config)
+    _write_detector_report(audit_df, detector_audit_summary, detector_report_path, config=config)
 
     print(f"Saved: {truth_path}")
     print(f"Saved: {candidate_path}")
+    print(f"Saved: {detector_audit_path}")
     print(f"Saved: {rule_summary_path}")
     print(f"Saved: {summary_path}")
+    print(f"Saved: {detector_summary_path}")
     print(f"Saved: {report_path}")
+    print(f"Saved: {detector_report_path}")
 
 
 if __name__ == "__main__":

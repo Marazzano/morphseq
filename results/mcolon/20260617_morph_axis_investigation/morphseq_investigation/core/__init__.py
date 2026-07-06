@@ -35,6 +35,9 @@ from .bandwidth_tuning import (  # noqa: F401
 )
 from .peak_counting import (  # noqa: F401
     PeakCountDetail,
+    PeakDetectionResult,
+    SUPPORTED_METHODS,
+    detect_peaks,
     count_mass_significant_modes,
     peak_count_detail,
 )

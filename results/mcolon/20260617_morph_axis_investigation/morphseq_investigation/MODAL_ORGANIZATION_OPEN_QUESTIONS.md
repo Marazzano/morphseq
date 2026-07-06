@@ -22,11 +22,23 @@ This file tracks simulation questions that are still under active calibration.
 
 ## Peak Counting
 
-- Should we add alternative peak-count conventions later, such as HDR-based peak
-  counting or basin-based peak counting, for comparison against the empirical
-  valley-sweep helper?
+- Should the basin-support detector stay with nearest-peak assignment for V0, or
+  should it move to watershed / gradient-ascent basins before we trust it as a
+  primary diagnostic?
 - Do we want peak-count confidence thresholds to vary by sample size, or keep one
   fixed rule for the whole V0 benchmark?
+- Should HDR persistence remain a diagnostic-only route, or should it be allowed
+  to vote on the final peak count once the audit table stabilizes?
+- We should explicitly compare `hdr_component_persistence` versus
+  `kde_peak_basins_sample_support` for robustness on anisotropic / elongated
+  cases.
+- If basin counts a peak but does not report a stable split value, that is a
+  detector-semantics mismatch, not automatically a basin failure: basin is
+  sample-support based, while split still comes from the superlevel geometry
+  sweep.
+- Multi-basin cases with no credible split should be flagged as `ambig` in the
+  audit output until we decide whether they count as one broad mode or two weak
+  modes.
 
 ## Visualization
 
@@ -39,9 +51,15 @@ This file tracks simulation questions that are still under active calibration.
 
 - The immediate calibration target is geometry-derived KDE bandwidth tuning
   against the V0 anchors.
-- Use `three_peaks_compact` as a sanity anchor for peak-count recovery, but do
-  not choose the rule on peak count alone.
+- Local geometry-derived rules are currently the right regime; the main question
+  is how to tighten peak-count recovery without giving up valley preservation.
+- `three_peaks_compact` is the most important failure case right now: the current
+  local rules preserve the bridge ladder well, but they still merge the compact
+  three-peak truth down to two peaks.
 - Keep global valley geometry, bridge-pair valley geometry, and bridge-region
   density separate when comparing KDE estimates to `F_composed` truth.
-- The next executable step is the bandwidth-tuning sweep described in
-  `MODAL_ORGANIZATION_BANDWIDTH_TUNING_PLAN.md`.
+- The next executable step is to refine the KDE/local-scale side of the peak
+  detector so that truth-vs-detected split values move closer together on
+  compact multi-peak cases, not just on the bridge ladder.
+- The routed detector audit now makes it possible to tell whether a failure is
+  coming from cap mass, HDR persistence, or empirical basin support.

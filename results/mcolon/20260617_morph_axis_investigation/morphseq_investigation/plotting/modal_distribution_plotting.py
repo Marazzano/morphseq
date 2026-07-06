@@ -354,18 +354,31 @@ def plot_metric_summary_row(
 
 def _format_peak_count_value(detail: PeakCountDetail | None) -> tuple[str, str]:
     if detail is None:
-        return "N/A", "no density"
+        return "N/A", "no dens"
     if detail.n_modes < 2 or detail.split_fraction is None:
+        if detail.n_modes > 1:
+            return f"{detail.n_modes:d}", "ambig"
         return f"{detail.n_modes:d}", "split N/A"
     return f"{detail.n_modes:d}", f"split {detail.split_fraction:.3f}"
+
+
+def _peak_method_label(method_name: str) -> str:
+    labels = {
+        "superlevel_cap_mass": "KDE cap",
+        "hdr_component_persistence": "KDE HDR",
+        "kde_peak_basins_sample_support": "KDE basin",
+    }
+    return labels.get(method_name, method_name)
 
 
 def plot_peak_count_summary_row(
     ax,
     truth_detail: PeakCountDetail | None,
-    observed_detail: PeakCountDetail | None,
+    observed_detail: PeakCountDetail | dict[str, PeakCountDetail | None] | None,
     *,
     title: str = "peak count audit",
+    observed_method_order: tuple[str, ...] | None = None,
+    primary_method: str | None = None,
 ) -> None:
     """Render the truth-versus-detected peak-count audit for one distribution."""
 
@@ -381,59 +394,76 @@ def plot_peak_count_summary_row(
         va="top",
         ha="left",
     )
-    rows = [("truth peaks", truth_detail), ("detected peaks", observed_detail)]
-    y = 0.72
+    if isinstance(observed_detail, dict):
+        rows = [("truth", truth_detail)]
+        method_order = observed_method_order or tuple(observed_detail.keys())
+        for method_name in method_order:
+            rows.append((_peak_method_label(method_name), observed_detail.get(method_name)))
+        primary_detail = None
+        if primary_method is not None:
+            primary_detail = observed_detail.get(primary_method)
+        if primary_detail is None and method_order:
+            primary_detail = observed_detail.get(method_order[0])
+        if primary_detail is None:
+            primary_detail = truth_detail
+    else:
+        rows = [("truth", truth_detail), ("det", observed_detail)]
+        primary_detail = observed_detail
+
+    y = 0.74
+    step = 0.13 if len(rows) <= 4 else 0.10
     for label, detail in rows:
         count_txt, split_txt = _format_peak_count_value(detail)
-        ax.text(0.03, y, label, transform=ax.transAxes, fontsize=6.6, color="#444", va="center", ha="left")
+        ax.text(0.03, y, label, transform=ax.transAxes, fontsize=6.2, color="#444", va="center", ha="left")
         ax.text(
             0.48,
             y,
             count_txt,
             transform=ax.transAxes,
-            fontsize=6.7,
+            fontsize=6.4,
             color="#222",
             va="center",
             ha="right",
             fontfamily="monospace",
             fontweight="bold",
         )
-        ax.text(0.52, y, split_txt, transform=ax.transAxes, fontsize=5.8, color="#777", va="center", ha="left")
-        y -= 0.18
+        ax.text(0.52, y, split_txt, transform=ax.transAxes, fontsize=5.4, color="#777", va="center", ha="left")
+        y -= step
 
-    valley_state = "draw valley" if observed_detail is not None and observed_detail.n_modes >= 2 else "no valley"
+    valley_state = "draw valley" if primary_detail is not None and primary_detail.n_modes >= 2 else "no valley"
     valley_reason = (
-        "observed split" if observed_detail is not None and observed_detail.n_modes >= 2 else "single detected peak"
+        "observed split" if primary_detail is not None and primary_detail.n_modes >= 2 else "single detected peak"
     )
-    ax.text(0.03, y - 0.02, "ring", transform=ax.transAxes, fontsize=6.6, color="#B8860B", va="center", ha="left")
+    ax.text(0.03, y - 0.02, "ring", transform=ax.transAxes, fontsize=6.2, color="#B8860B", va="center", ha="left")
     ax.text(
         0.48,
         y - 0.02,
         valley_state,
         transform=ax.transAxes,
-        fontsize=6.7,
+        fontsize=6.4,
         color="#222",
         va="center",
         ha="right",
         fontfamily="monospace",
         fontweight="bold",
     )
-    ax.text(0.52, y - 0.02, valley_reason, transform=ax.transAxes, fontsize=5.8, color="#777", va="center", ha="left")
-    y -= 0.18
-    ax.text(0.03, y - 0.02, "method", transform=ax.transAxes, fontsize=6.6, color="#444", va="center", ha="left")
+    ax.text(0.52, y - 0.02, valley_reason, transform=ax.transAxes, fontsize=5.4, color="#777", va="center", ha="left")
+    y -= step
+    ax.text(0.03, y - 0.02, "meth", transform=ax.transAxes, fontsize=6.2, color="#444", va="center", ha="left")
     ax.text(
         0.48,
         y - 0.02,
-        "sweep",
+        "audit",
         transform=ax.transAxes,
-        fontsize=6.7,
+        fontsize=6.4,
         color="#222",
         va="center",
         ha="right",
         fontfamily="monospace",
         fontweight="bold",
     )
-    ax.text(0.52, y - 0.02, "super-level threshold", transform=ax.transAxes, fontsize=5.8, color="#777", va="center", ha="left")
+    method_note = "KDE geom" if not isinstance(observed_detail, dict) else "KDE geom; sample support"
+    ax.text(0.52, y - 0.02, method_note, transform=ax.transAxes, fontsize=5.2, color="#777", va="center", ha="left")
 
 
 def plot_density_overlap(
@@ -476,6 +506,9 @@ def plot_v0_distribution_qc_grid(
     auto_scale: bool = True,
     include_peak_row: bool = True,
     include_metric_row: bool = False,
+    observed_details_by_method: dict[str, dict[str, PeakCountDetail | None]] | None = None,
+    observed_method_order: tuple[str, ...] | None = None,
+    primary_observed_method: str | None = None,
 ) -> Path:
     """Plot one visual QA grid for V0 generated distributions.
 
@@ -489,7 +522,10 @@ def plot_v0_distribution_qc_grid(
 
     n = len(specs)
     n_rows = 3 + int(include_peak_row) + int(include_metric_row)
-    fig_height = 6.95 + (1.35 if include_peak_row else 0.0) + (1.35 if include_metric_row else 0.0)
+    extra_peak_detail_rows = 0
+    if observed_details_by_method:
+        extra_peak_detail_rows = max(0, len(observed_method_order or tuple(next(iter(observed_details_by_method.values())).keys())) - 1)
+    fig_height = 6.95 + (1.05 if include_peak_row else 0.0) + (1.35 if include_metric_row else 0.0) + 0.45 * extra_peak_detail_rows
     fig, axes = plt.subplots(n_rows, n, figsize=(2.45 * n, fig_height), squeeze=False)
     fig.subplots_adjust(left=0.035, right=0.995, bottom=0.12, top=0.84, wspace=0.12, hspace=0.18)
 
@@ -514,6 +550,19 @@ def plot_v0_distribution_qc_grid(
         if spec.composed_grid is not None:
             truth_detail = peak_count_detail(spec.composed_grid.density)
         observed_detail = peak_count_detail(sample_grid.density)
+        observed_method_details = None
+        if observed_details_by_method is not None:
+            observed_method_details = observed_details_by_method.get(spec.distribution_id)
+            if observed_method_details is None:
+                observed_method_details = {}
+        primary_detail = observed_detail
+        if observed_method_details:
+            if primary_observed_method and primary_observed_method in observed_method_details:
+                primary_detail = observed_method_details[primary_observed_method]
+            elif observed_method_order:
+                primary_detail = observed_method_details.get(observed_method_order[0], observed_detail)
+            else:
+                primary_detail = next(iter(observed_method_details.values()))
 
         ax = axes[0][col]
         if spec.composed_grid is not None:
@@ -540,12 +589,12 @@ def plot_v0_distribution_qc_grid(
         plot_kde_field(ax, sample_grid)
         if show_hdr:
             plot_hdr_contour(ax, sample_grid)
-        if observed_detail.n_modes >= 2 and observed_detail.split_level is not None:
+        if primary_detail is not None and primary_detail.n_modes >= 2 and primary_detail.split_level is not None:
             ax.contour(
                 sample_grid.xx,
                 sample_grid.yy,
                 sample_grid.density,
-                levels=[observed_detail.split_level],
+                levels=[primary_detail.split_level],
                 colors="#B8860B",
                 linewidths=1.8,
                 linestyles="--",
@@ -556,7 +605,14 @@ def plot_v0_distribution_qc_grid(
 
         row_idx = 3
         if include_peak_row:
-            plot_peak_count_summary_row(axes[row_idx][col], truth_detail, observed_detail, title="peak count audit")
+            plot_peak_count_summary_row(
+                axes[row_idx][col],
+                truth_detail,
+                observed_method_details if observed_method_details else observed_detail,
+                title="peak count audit",
+                observed_method_order=observed_method_order,
+                primary_method=primary_observed_method,
+            )
             row_idx += 1
         if include_metric_row:
             metric_summary = compute_v0_metric_summary(points, kde=kde, distribution_id=spec.distribution_id)
