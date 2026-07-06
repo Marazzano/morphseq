@@ -1,0 +1,46 @@
+# DEVELOPMENT SMOKE CONFIG — z_stack + projection/focus_stack channel-first layout test.
+#
+# Tests the locked channel-first path grammar ({well_id}/{channel_id}/{product}/...) for both
+# image products: z_stack planes AND projection/focus_stack + focus_index_map provenance.
+#
+# Run as an OVERLAY on the main config:
+#   cd src/data_pipeline/pipeline_orchestrator
+#   snakemake --configfile config.yaml --configfile config_smoke_zstack_20250912.yaml \
+#     front_half --rerun-triggers mtime --cores 1
+#
+# Notes:
+#   - --rerun-triggers mtime: avoid re-running expensive ND2 ingest on provenance triggers.
+#   - --cores 1: two parallel ND2 loads on CPU can OOM; run wells serially.
+#   - focus_stack projection requires GPU; z_stack is CPU-only. On a no-GPU box the
+#     focus_stack product will call resolve_device -> "cpu" (via image_building.device: "auto").
+#   - Expected channel-first output tree:
+#       built_image_data/20250912/materialized_images/
+#         20250912_B01/BF/z_stack/20250912_B01_BF_z0000_t0000.jpg
+#         20250912_B01/BF/projection/focus_stack/20250912_B01_BF_t0000.png
+#         20250912_B01/BF/projection/focus_stack/focus_index_map/20250912_B01_BF_t0000.npz
+#         20250912_C01/BF/z_stack/...
+#         20250912_C01/BF/projection/focus_stack/...
+
+target_wells:
+  20250912:
+    - B01
+    - C01
+
+image_materialization:
+  smoke_max_time_indices: 3
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+    - channel_id: BF
+      image_product_type: z_stack
+  write_policies:
+    BF__z_stack:
+      file_format: jpg
+      jpeg_quality: 85
+      downsample_factor: 4
+      downsample_method: area_resize
+      pixel_dtype: uint8
+
+unet_snip:
+  device: cpu

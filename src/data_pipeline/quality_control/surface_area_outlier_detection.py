@@ -24,6 +24,14 @@ Reference Generation:
 
 Authors: SA Outlier Detection Team
 Date: 2025-10-08
+
+RETIRED — legacy benchmark module. The canonical surface-area-outlier logic now lives in
+``quality_control/surface_area_qc/``. This top-level module is kept LIVE only because
+``src/build/build04_perform_embryo_qc.py`` still calls ``compute_sa_outlier_flag`` to produce the
+legacy ``sa_outlier_flag`` ground truth the legacy-drift gate compares against. Do NOT import it
+from new pipeline rules; its ``validate_sa_reference`` is a forked second validator of the
+surface-area reference contract (the authoritative one lives in ``surface_area_qc/``). Delete this
+module once build04 is migrated and the drift gate signs off.
 """
 
 import pandas as pd

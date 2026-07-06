@@ -1,0 +1,46 @@
+#!/bin/bash
+# SGE submission for the two-experiment default `all` target.
+#
+# Experiments:
+#   - 20250912
+#   - 20260410_otx_pilot
+#
+# Target: rule all — the full pipeline end-to-end for both experiments: each experiment's
+# analysis_ready parquet (which transitively requires every upstream feature/QC product) plus
+# every per-step report and stage rollup page.
+# Submit from src/data_pipeline/pipeline_orchestrator:
+#   qsub submit_all_20250912_and_20260410_otx_pilot.sge
+
+#$ -N all_20250912_otx
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=24G
+#$ -pe serial 4
+#$ -o all_20250912_otx.$JOB_ID.out
+#$ -e all_20250912_otx.$JOB_ID.err
+
+set -euo pipefail
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+SRC_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/src"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+CORES=4
+
+echo "=== all_20250912_otx START $(date) on $(hostname) ==="
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L || echo "WARNING: nvidia-smi -L failed; no GPU visible on this node"
+
+# The Snakefile imports `data_pipeline` at parse time.
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+
+"${SNAKEMAKE}" \
+  --configfile config.yaml config_all_20250912_and_20260410_otx_pilot.yaml \
+  --cores "${CORES}" \
+  --rerun-triggers mtime \
+  --keep-going \
+  --printshellcmds \
+  all
+
+echo "=== all_20250912_otx FINISHED $(date) ==="

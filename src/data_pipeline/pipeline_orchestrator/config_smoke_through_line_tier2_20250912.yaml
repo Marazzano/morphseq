@@ -1,0 +1,37 @@
+# DEVELOPMENT SMOKE CONFIG — Tier 2 WIDTH proof of the data-flow through-line.
+#
+# The WHOLE 20250912 YX1 experiment (all 95 discovered wells), ALL timepoints, raw ND2 -> the
+# per-snip `snip_qc` verdict. This is the WIDTH leg of the tiered data-flow test plan: fan the
+# spine across every discovered well in parallel and merge, exercising the discover_wells
+# checkpoint fan, per-well parallelism, the merge seams, and GPU contention across wells.
+#
+#   docs/refactors/streamline-snakemake/target/specs/data_flow_test_plan.md  (Tier 2)
+#
+# Differs from the Tier 1 overlay (config_smoke_through_line_20250912_B01.yaml) in these
+# ways, all intentional:
+#   1. NO `target_wells` filter  -> through_line fans over ALL discovered wells (95), not just B01.
+#   2. NO `unet_snip.device: cpu` override -> device auto-resolves to CUDA on the GPU node.
+#   3. Timepoint cap is disabled here (0 = no cap) -> all time_index values per well.
+#   4. z_stack is explicitly materialized because motion_blur_qc consumes z planes.
+#
+# Run it as an OVERLAY on the main config, on a GPU node (see the qsub script
+# submit_tier2_through_line.sge alongside this file), targeting the `through_line` rule:
+#   snakemake --configfile config.yaml \
+#     --configfile config_smoke_through_line_tier2_20250912.yaml \
+#     through_line --rerun-triggers mtime --cores <N>
+#
+# HARD GPU GATE: this run is Tier 2 and may only be launched AFTER mdcolon has verified the Tier-1
+# depth result + change log (data_flow_test_plan.md §"GPU GATE"). Cleared by mdcolon 2026-06-29.
+
+# All timepoints. 0 disables the development smoke cap.
+image_materialization:
+  smoke_max_time_indices: 0
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+    - channel_id: BF
+      image_product_type: z_stack
+
+# NOTE: intentionally NO `target_wells` key (fan to all discovered wells) and NO
+# `unet_snip.device` override (let resolve_device pick CUDA on the GPU node).

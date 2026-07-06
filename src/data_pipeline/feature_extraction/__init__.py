@@ -1,45 +1,8 @@
-from .core import (
-    consolidate_snip_features,
-    validate_feature_schema,
-    save_consolidated_features,
-    load_and_consolidate_features,
-    compute_fraction_alive,
-    extract_fraction_alive_batch,
-    compute_mask_geometry,
-    extract_geometry_metrics_batch,
-    compute_pose_features,
-    compute_kinematics,
-    extract_pose_kinematics_batch,
-    predict_stage_hpf,
-    infer_stage_from_area,
-    compute_stage_predictions_batch,
-)
-from .io.paths import (
-    analysis_ready_path,
-    consolidated_features_path,
-    feature_output_dir,
-    feature_output_path,
-    experiment_features_root,
-)
+"""feature_extraction — per-product feature packages.
 
-__all__ = [
-    "consolidate_snip_features",
-    "validate_feature_schema",
-    "save_consolidated_features",
-    "load_and_consolidate_features",
-    "compute_fraction_alive",
-    "extract_fraction_alive_batch",
-    "compute_mask_geometry",
-    "extract_geometry_metrics_batch",
-    "analysis_ready_path",
-    "consolidated_features_path",
-    "feature_output_dir",
-    "feature_output_path",
-    "experiment_features_root",
-    "compute_pose_features",
-    "compute_kinematics",
-    "extract_pose_kinematics_batch",
-    "predict_stage_hpf",
-    "infer_stage_from_area",
-    "compute_stage_predictions_batch",
-]
+Each feature product owns its own folder (compute + contract + entrypoint): mask_geometry,
+curvature_metrics, pose_kinematics, stage_predictions, fraction_alive. There is no package-level
+facade — import from the product you need. The former ``core/`` re-export facade and the
+whole-experiment ``consolidate_features`` path were retired (superseded by the per-product folders
+and their per-well DAG rules).
+"""
