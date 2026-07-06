@@ -24,24 +24,7 @@ from data_pipeline.object_extraction.segmentation.backends.unet_snip.snip_auxili
     validate_snip_auxiliary_masks,
     validate_snip_auxiliary_masks_against_snip_inventory,
 )
-
-
-def _resolve_snip_paths(snip_inventory: pd.DataFrame, output_root: Path) -> pd.DataFrame:
-    """Return a copy with ``processed_snip_path`` made absolute against ``output_root``.
-
-    snip_inventory stores ``processed_snip_path`` relative to the data root; the runner checks
-    existence with a bare ``Path(p).exists()``, so the path must be absolute before we hand it off.
-    """
-    resolved = snip_inventory.copy()
-
-    def _abs(value: object) -> object:
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return value
-        p = Path(str(value))
-        return str(p if p.is_absolute() else (output_root / p))
-
-    resolved["processed_snip_path"] = resolved["processed_snip_path"].map(_abs)
-    return resolved
+from data_pipeline.object_extraction.snip_processing.io import resolve_snip_inventory_image_paths
 
 
 def run_snip_auxiliary_masks(
@@ -65,7 +48,10 @@ def run_snip_auxiliary_masks(
     predictors = load_unet_snip_predictors(specs, device=device)
     checkpoint_paths = {spec.mask_type: str(spec.checkpoint_path) for spec in specs}
 
-    resolved_inventory = _resolve_snip_paths(snip_inventory, output_root)
+    resolved_inventory = resolve_snip_inventory_image_paths(snip_inventory, output_root=output_root)
+    resolved_inventory = snip_inventory.merge(resolved_inventory, on="snip_id", how="left")
+    resolved_inventory["processed_snip_path"] = resolved_inventory["resolved_image_path"]
+    resolved_inventory = resolved_inventory.drop(columns=["resolved_image_path"])
 
     masks_dir = output_root / "object_extraction"
     df = run_unet_for_snip_inventory(

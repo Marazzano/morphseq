@@ -19,6 +19,7 @@ import pandas as pd
 from data_pipeline.object_extraction.segmentation.backends.unet_snip.snip_auxiliary_masks_contract import (
     ALLOWED_AUXILIARY_MASK_TYPES,
 )
+from data_pipeline.object_extraction.snip_processing.io import resolve_snip_inventory_image_paths
 from data_pipeline.viz.config import COLORBLIND_PALETTE, RenderConfig
 from data_pipeline.viz.overlay import draw_banner
 
@@ -117,6 +118,7 @@ def render_snip_auxiliary_masks_contact_sheet(
     auxiliary_masks: pd.DataFrame,
     output_path: Path,
     *,
+    output_root: Path,
     well_id: str | None = None,
     config: RenderConfig | None = None,
     max_snips: int | None = None,
@@ -134,12 +136,15 @@ def render_snip_auxiliary_masks_contact_sheet(
     valid = snip_inventory[snip_inventory["is_valid_snip"].astype(bool)].copy()
     if max_snips is not None:
         valid = valid.head(max_snips)
+    resolved = resolve_snip_inventory_image_paths(valid, output_root=Path(output_root)).set_index("snip_id")
 
     rows_rendered: list[np.ndarray] = []
 
     for _, snip_row in valid.iterrows():
         snip_id = snip_row["snip_id"]
-        snip_path = Path(str(snip_row["processed_snip_path"]))
+        if snip_id not in resolved.index:
+            continue
+        snip_path = Path(str(resolved.loc[snip_id, "resolved_image_path"]))
         if not snip_path.exists():
             continue
 

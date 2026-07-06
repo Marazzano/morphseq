@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from data_pipeline.object_extraction.snip_processing.io import resolve_snip_inventory_image_paths
 from data_pipeline.viz.reporting import plot_histogram_grid, render_value_quartile_gallery
 
 # The mask_geometry payload columns (measured geometry per snip). Kept explicit rather than
@@ -21,23 +22,6 @@ from data_pipeline.viz.reporting import plot_histogram_grid, render_value_quarti
 GEOMETRY_FEATURE_COLUMNS = [
     "area_um2", "perimeter_um", "length_um", "width_um", "centroid_x_um", "centroid_y_um",
 ]
-
-
-def _resolve_snip_image_paths(snip_inventory: pd.DataFrame, output_root: Path) -> pd.DataFrame:
-    """snip_id -> absolute processed-snip image path, resolved against output_root.
-
-    snip_inventory stores ``processed_snip_path`` relative to the data root (same convention as
-    unet_snip's entrypoint resolver).
-    """
-    def _abs(value: object) -> object:
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return value
-        p = Path(str(value))
-        return str(p if p.is_absolute() else (output_root / p))
-
-    resolved = snip_inventory[["snip_id", "processed_snip_path"]].copy()
-    resolved["resolved_image_path"] = resolved["processed_snip_path"].map(_abs)
-    return resolved[["snip_id", "resolved_image_path"]]
 
 
 def build_mask_geometry_report(
@@ -63,7 +47,7 @@ def build_mask_geometry_report(
     # No threshold here → plain VALUE quartiles (what does a small / mid / large embryo look like?),
     # not a pass/fail cutoff gallery. area_um2 is the most interpretable geometry axis for eyeballing.
     gallery = render_value_quartile_gallery(
-        geom.merge(_resolve_snip_image_paths(snip_inventory, Path(output_root)), on="snip_id", how="left"),
+        geom.merge(resolve_snip_inventory_image_paths(snip_inventory, output_root=Path(output_root)), on="snip_id", how="left"),
         "area_um2",
         image_path_col="resolved_image_path",
         label_col="snip_id",

@@ -19,6 +19,7 @@ import skimage.io as io
 
 from data_pipeline.feature_extraction.fraction_alive._legacy_compute import compute_fraction_alive
 from data_pipeline.feature_extraction.shared.feature_table_utils import SNIP_FEATURE_TABLE_SPINE_COLUMNS
+from data_pipeline.object_extraction.snip_processing.io import resolve_from_root
 
 from .contract import FRACTION_ALIVE_TABLE_COLUMNS
 
@@ -48,18 +49,6 @@ def compute_fraction_alive_features(
     """Return one fraction_alive row per snip from the saved embryo mask + the snip via mask."""
     via_by_snip = _via_path_by_snip(snip_auxiliary_masks_df)
 
-    def _resolve(path: str) -> str:
-        """Resolve a stored snip-mask path: relative paths root at ``output_root``.
-
-        ``embryo_mask`` / ``embryo_mask_snip_path`` / auxiliary-mask paths are stored relative to
-        ``output_root`` by snip_processing; an already-absolute path is used as-is. No hidden global
-        root (the retired ``path_contracts`` helper that used to live here raised on call).
-        """
-        p = Path(str(path))
-        if output_root is not None and not p.is_absolute():
-            p = Path(output_root) / p
-        return str(p)
-
     rows: list[dict] = []
     for _, snip in snip_inventory_df.iterrows():
         snip_id = str(snip["snip_id"])
@@ -72,7 +61,12 @@ def compute_fraction_alive_features(
                 f"fraction_alive: snip {snip_id!r} has no embryo_mask. snip_processing "
                 "must save the cropped embryo mask for every valid snip."
             )
-        embryo_mask = io.imread(_resolve(str(embryo_path)))
+        embryo_mask_path = (
+            resolve_from_root(str(embryo_path), output_root=Path(output_root))
+            if output_root is not None
+            else Path(str(embryo_path))
+        )
+        embryo_mask = io.imread(str(embryo_mask_path))
 
         via_path = via_by_snip.get(snip_id)
         if via_path is None:
