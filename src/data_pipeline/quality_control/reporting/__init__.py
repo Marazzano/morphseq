@@ -64,9 +64,7 @@ QC_REPORT_SPECS: dict[str, QCReportSpec] = {
         qc_product="motion_blur_qc",
         flag_col="motion_blur_flag",
         metric_col="mask_pixel_bad_pair_frac",
-        # Reporting-only cutoff for the viz: any bad z-pair at all is worth a look, so the
-        # gallery's fail side is "> 0" rather than the pipeline's official 0.10 flag threshold
-        # (see motion_blur_qc/config.py for the actual QC gate, which is unchanged).
+        # Matches the QC gate: any bad z-pair at all is a fail.
         cutoff=0.0,
         fail_direction="above",
         metric_label="mask_pixel_bad_pair_frac",

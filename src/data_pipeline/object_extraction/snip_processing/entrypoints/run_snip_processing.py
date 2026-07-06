@@ -98,6 +98,7 @@ def run_snip_processing(
     output_height_px: int = 576,
     output_width_px: int = 256,
     background_noise_scale: float = 0.1,
+    blend_radius_um: float = 20.0,
 ) -> None:
     frame_masks = pd.read_csv(frame_masks_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
@@ -196,7 +197,14 @@ def run_snip_processing(
                 image_rotated, mask_rotated, yolk_rotated, output_shape,
             )
 
-            augmented, _ = augment_snip(image_cropped, mask_cropped, background_mean, background_std)
+            augmented, _ = augment_snip(
+                image_cropped,
+                mask_cropped,
+                background_mean,
+                background_std,
+                blend_radius_um=float(blend_radius_um),
+                pixel_size_um=float(target_pixel_size_um),
+            )
 
             embryo_snips_dir = snips_dir / physical_embryo_id
             embryo_snips_dir.mkdir(parents=True, exist_ok=True)

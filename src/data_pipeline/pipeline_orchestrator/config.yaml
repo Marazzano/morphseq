@@ -172,6 +172,9 @@ snip_processing:
   # produces a visually dark background that contrasts with the CLAHE-brightened
   # embryo interior. Increase toward 1.0 to match real background brightness.
   background_noise_scale: 0.1
+  # Physical soft-edge blend used when replacing non-target pixels with synthetic background.
+  # Keep this small enough that close neighboring embryos are not visibly carried into the snip.
+  blend_radius_um: 20.0
 
 # Feature extraction stage defaults.
 feature_extraction:

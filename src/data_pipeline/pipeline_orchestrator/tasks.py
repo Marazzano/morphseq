@@ -435,6 +435,7 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
         output_height_px=args.output_height_px,
         output_width_px=args.output_width_px,
         background_noise_scale=args.background_noise_scale,
+        blend_radius_um=args.blend_radius_um,
     )
 
 
@@ -1361,6 +1362,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--output-height-px", type=int, default=576)
     p_sp.add_argument("--output-width-px", type=int, default=256)
     p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
+    p_sp.add_argument("--blend-radius-um", type=float, default=20.0)
     p_sp.set_defaults(func=cmd_snip_processing)
 
     p_mg = sub.add_parser("mask-geometry")

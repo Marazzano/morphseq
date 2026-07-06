@@ -2,7 +2,7 @@
 
 MVP policy, fixed from the 2026-06-30 review:
 adjacent z-plane mask-pixel NCC below 0.90 is a bad pair, and a snip is flagged when more than
-10% of valid adjacent pairs are bad. Missing masks/stacks and undefined NCC support fail loud.
+0% of valid adjacent pairs are bad. Missing masks/stacks and undefined NCC support fail loud.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 MOTION_BLUR_QC_DEFAULTS: dict = {
     "z_stack_product_key": "BF__z_stack",
     "bad_z_pair_ncc_threshold": 0.90,
-    "bad_pair_frac_threshold": 0.10,
+    "bad_pair_frac_threshold": 0.0,
     "flat_pair_variance_epsilon": 0.0,
     "missing_z_stack_policy": "fail",
     "missing_mask_policy": "fail",

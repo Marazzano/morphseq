@@ -90,6 +90,9 @@ rule snip_processing_per_well:
         background_noise_scale=lambda wc: float(
             config.get("snip_processing", {}).get("background_noise_scale", 0.1)
         ),
+        blend_radius_um=lambda wc: float(
+            config.get("snip_processing", {}).get("blend_radius_um", 20.0)
+        ),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-processing \
@@ -102,7 +105,8 @@ rule snip_processing_per_well:
           --target-pixel-size-um "{params.target_pixel_size_um}" \
           --output-height-px "{params.output_height_px}" \
           --output-width-px "{params.output_width_px}" \
-          --background-noise-scale "{params.background_noise_scale}"
+          --background-noise-scale "{params.background_noise_scale}" \
+          --blend-radius-um "{params.blend_radius_um}"
         """
 
 

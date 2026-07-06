@@ -41,7 +41,7 @@ def run_snip_processing_well(
     mask_type = str(snip_cfg.get("mask_type", "embryo"))
     target_pixel_size_um = float(snip_cfg.get("target_pixel_size_um", 7.8))
     output_shape_hw = tuple(int(x) for x in (snip_cfg.get("output_shape_hw") or [576, 256]))
-    blend_radius_um = float(snip_cfg.get("blend_radius_um", 75.0))
+    blend_radius_um = float(snip_cfg.get("blend_radius_um", 20.0))
     save_raw_crops = bool(snip_cfg.get("save_raw_crops", True))
     overwrite = bool(snip_cfg.get("overwrite", False))
     skip_existing = bool(snip_cfg.get("skip_existing", True))
