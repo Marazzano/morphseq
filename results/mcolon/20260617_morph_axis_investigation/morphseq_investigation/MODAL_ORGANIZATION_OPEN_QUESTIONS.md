@@ -10,7 +10,7 @@ This file tracks simulation questions that are still under active calibration.
   broad corroborating signal?
 - Should `fiedler` remain a corroborating metric only, or does it become useful
   for any sub-region of the bridge ladder at larger sample sizes?
-
+/
 ## Bridge Ladder
 
 - Do the current low/high bridge V0 recipes remain in the intended density bands
@@ -35,13 +35,13 @@ This file tracks simulation questions that are still under active calibration.
 - Do we want a compact per-distribution failure note in the plot footer when a
   metric remains sample-sensitive?
 
-## Handoff
+## Bandwidth Tuning
 
-- Next calibration target: tune the peak-count helper against
-  `three_peaks_compact` first, with the goal that the detected peak count is
-  exactly `3` in the no-bridge compact case.
-- Use that case as the anchor for a threshold sweep before revisiting the other
-  V0 ladders.
-- Do not change the density primitives yet; this is a peak-detection calibration
-  step only.
-- 
+- The immediate calibration target is geometry-derived KDE bandwidth tuning
+  against the V0 anchors.
+- Use `three_peaks_compact` as a sanity anchor for peak-count recovery, but do
+  not choose the rule on peak count alone.
+- Keep global valley geometry, bridge-pair valley geometry, and bridge-region
+  density separate when comparing KDE estimates to `F_composed` truth.
+- The next executable step is the bandwidth-tuning sweep described in
+  `MODAL_ORGANIZATION_BANDWIDTH_TUNING_PLAN.md`.

@@ -1676,6 +1676,11 @@ report where each metric starts to separate distributions reliably, and where
 it remains ambiguous. That gives us a practical operating range before we move
 to direct distribution-vs-distribution comparisons.
 
+The next calibration pass is bandwidth tuning. The dedicated plan lives in
+`MODAL_ORGANIZATION_BANDWIDTH_TUNING_PLAN.md`. That sweep compares KDE
+estimates against `F_composed` truth while keeping global valley geometry,
+bridge-pair valley geometry, and recipe-defined bridge-region density separate.
+
 See the companion docs:
 
 - [MODAL_ORGANIZATION_OPEN_QUESTIONS.md](MODAL_ORGANIZATION_OPEN_QUESTIONS.md)
