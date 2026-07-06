@@ -6,9 +6,11 @@
 
 ---
 
+
+
 ## Part A — The big picture
 
-### A1. The scope/well overlap regime  *(lead diagram)*
+### A1. The scope/well overlap regime  *(lead diagram TODO)*
 The fundamental running unit is **per well** — but which wells exist can't be known until metadata
 is run, and stitching mechanics differ per scope. So the *scope world* and the *well world* overlap.
 Bookends: metadata ingest opens the scope world; **materialization closes it**. Everything after is
@@ -16,7 +18,7 @@ per-well and scope-free.
 
 _TODO: ASCII diagram — scopes in → [scope world] → discover_wells → materialization → [well world]._
 
-### A2. Where each stage lies  *(river diagram)*
+### A2. Where each stage lies  *(river diagram TODO)*
 Two words the rest of this doc leans on, and one contains the other:
 
 ```
@@ -216,8 +218,148 @@ inputs.
 ## Part C — Detail per stage
 
 ### C1. Acquisition
-Incl. `materialized_image_paths.py`; **produce_codes / stack projection** (materialized-image write
-policy, z-stack vs projection); the snapshot-vs-timepoint required-columns nuance. _stub._
+Acquisition produces **five landmark artifacts** (roughly in order of importance):
+
+- **`discovered_wells.txt`** — *which wells exist*. The **fan point** — everything per-well downstream
+  expands from it. The foremost artifact of the whole pipeline.
+- **acquisition inventory** — *what was acquired*: the per-coordinate image enumeration from the scope.
+- **resolved product plan** — *what to build, and how*: the concrete per-well commitment a request
+  resolves into (keyed by `product_key`) — the input to materializing pixels.
+- **frame inventory** — *what's materialized*: the canonical, microscope-free per-frame handoff
+  (the product of the resolved products), validated against the pixels on disk and read by everything
+  downstream.
+- **plate metadata** — the *biological* annotation (genotype, condition, timing, plate geometry).
+
+It reaches them in **two phases** — metadata ingest, then materialization — over **two independent
+lineages** (plate vs scope) that run in parallel and converge late. Keep them untangled.
+
+#### C1.1 Plate metadata ingest
+The **biological** annotation: genotype, condition, timing, plate geometry. Accepts **either an Excel
+sheet or a long-format table** — both are routed to the **same long format internally**. It is a
+**parked annotation**: nothing in acquisition or object extraction reads it; its first consumer is
+feature extraction (→ C3), where it joins by `well_id`. It runs in parallel and converges late — set
+it aside.
+
+#### C1.2 Scope read → acquisition inventory + well discovery
+The load-bearing guarantee: the raw microscope data is **read exactly once**, and **both** downstream
+artifacts derive from that single read (no re-opening the ND2):
+
+- **acquisition inventory** — the maximal per-coordinate record, one row per
+  `(position, z, channel, time)` — the exhaustive enumeration of *what was acquired*, and the lookup
+  everything materializes against (the z-stack / tile lookup).
+- **`discovered_wells.txt`** — the **fan point**: which wells physically exist. It falls out of the
+  scope read alone — you do **not** need the plate metadata to know which wells exist.
+
+**Contract validation.** Validated in layers (schema → identity → grain → sources). The hard part is
+making it **the same across scopes**: a shared, hard-checked core every scope must satisfy, plus soft
+scope-specific extras. The validation *is* the scope boundary.
+(→ `acquisition_inventory_schema_policy.md`.)
+
+#### C1.3 Materialization → resolved product plan → frame inventory
+Goal: turn a requested image product into pixels on disk, then validate the resulting table as the
+scope-free frame inventory that downstream stages read.
+
+  1. Request image produce
+    The request key is `channel_id × image_product_type` and passed in by the config. The actual request in config is scope agnostic
+    Examples:  `BF × z_stack` , `BF × projection x focus_stack` , `GFP × projection x max`.
+
+    in the config.py this looks like :
+      products:
+      - channel_id: BF
+        image_product_type: z_stack 
+      - channel_id: BF
+        image_product_type: projection
+        projection_method: focus_stack
+      - channel_id: BF
+        image_product_type: projection
+        projection_method: max   
+  
+  
+  2. Resolve request to scope-aware and well-aware product plan
+
+      The goal of this step is to turn a scope-agnostic product request from the congig into a concrete per-well, per-scope commitment:
+          well_id × channel_id × image_product_type (the product_key) → backend/scope → materialized output plan
+
+      This is important because materilization of a scope ooutputs into image files on disk requires knowledge of the scope and the microscope backend. The product plan is a concrete commitment to build a specific product for a specific well, and it is **scope-aware**. Thus it it also verifies the scope has support for the requested product.
+
+      Core code for this is in `resolved_product_plans.py`.
+
+      This is the **last scope-aware routing step**. After this, downstream logic should not need to know how the scope acquired or built the raw data.
+
+
+  3. Place pixels on disk and record
+      Now that we have a concrtete product plan, we can materialize the pixels on disk and record the paths in the frame_inventory. The highest-level layout is:
+
+        well_id → channel_id → image_product_type → product-specific layout
+
+        Note: the image paths are not routed by 'paths.py' it is handled by the 'materialized_image_paths.py' 
+        path. The frame_inventory stored stored and validates this and other metadata (see step 4 below).
+  
+      Image on disk layout:
+      ```text
+      built_image_data/20250912/materialized_images/
+        20250912_A01/                         ← well_id
+          BF/                                 ← channel_id
+            z_stack/                          ← image_product_type
+              20250912_A01_BF_z0003_t0007.png ← frame: well × channel × z × time
+
+            projection/                       ← image_product_type
+              focus_stack/                    ← projection_method
+                20250912_A01_BF_t0007.png     ← frame: well × channel × time
+                focus_index_map/              ← provenance for focus-stack construction
+                  20250912_A01_BF_t0007.npz   ← provenance, not a primary image
+                  
+          GFP/                                ← channel_id
+            projection/                       ← image_product_type
+              max/                            ← projection_method
+                20250912_A01_GFP_t0007.png    ← frame: well × channel × time
+                max_index_map/                ← provenance for max projection
+      ,,,
+
+
+4. The Validate
+
+  The frame inventory is the canonical, microscope-agnostic per-frame handoff (the product of the
+  resolved products), validated against the pixels on disk and read by everything downstream.
+
+  Each inventory is produced under a resolved product plan that records the microscope used
+  (`scope_name`) and the requested objective (`product_key`).
+
+  It is organized the way a reader should interpret it:
+
+  - Frame spine — stable frame address
+    `experiment_id`, `well_index`, `well_id`, `channel_id`, `time_index`, `image_id`
+  - Product identity — what materialized product this frame belongs to
+    `image_product_type`, `projection_method`, `z_index`
+  - Time block — acquisition / time-series position
+    `elapsed_time_s`, `acquisition_time_s`
+  - Source / provenance — source image and construction provenance
+    `source_image_path`, `focus_index_map_path`
+  - Microscope source — what backend produced it
+    `scope_name`
+  - Writer policy / encoding — how the materialized output was written
+    `source_image_width_px`, `source_image_height_px`, `image_file_format`, `pixel_dtype`,
+    `downsample_factor`, `downsample_method`, `jpeg_quality`
+
+  Handled by the frame-inventory validator.
+  It checks that the reported materialized frames satisfy the handoff contract.
+  The validation is layered so you can see exactly why the table is trusted:
+
+  - L1 identity → product atoms are coherent; `(image_id, product_key)` stays unique; derived ids match the atoms.
+  - L2 grain → the scope is correct; each product stream is contiguous, channels stay rectangular, and multi-timepoint wells carry `elapsed_time_s`.
+  - L3 sources → when enabled, `source_image_path` resolves, the image opens, the recorded dimensions self-check, and `source_micrometers_per_pixel > 0`.
+  - L4 provenance → focus-stack projections carry a valid `focus_index_map_path` `.npz`; non-focus-stack rows leave it empty.
+
+  The code splits the strict source/provenance work across `check_sources` and the focus-index-map
+  provenance check, but the user-facing contract is the same: the frame inventory is only trusted
+  after the table, its paths, and its provenance all pass.
+
+Once validated, the frame inventory becomes the trusted downstream handoff
+
+Drop in Datasets: 
+Importantlyl the frame iventory is also the seam for curated external datasets. A user can bypass native materialization by providing a manifest that passes the same frame inventory validation.
+
+See: frame_inventory_handoff_contract.md, external_dataset_handoff_target.md.
 
 ### C2. Object extraction — the snip world
 Still run per well, but now computed per `snip_id` (spine column vs payload column). _stub._
