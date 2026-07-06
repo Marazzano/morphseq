@@ -3,11 +3,7 @@
 > **Draft outline.** Section headers + one-line stubs only. We refine each section in place.
 > This is an *overview / glossary* for someone new to the pipeline — short and visual. Real detail
 > lives in the referenced markdown files, not here.
-
----
-
-
-
+--- 
 ## Part A — The big picture
 
 ### A1. The scope/well overlap regime  *(lead diagram TODO)*
@@ -362,13 +358,53 @@ Importantlyl the frame iventory is also the seam for curated external datasets. 
 See: frame_inventory_handoff_contract.md, external_dataset_handoff_target.md.
 
 ### C2. Object extraction — the snip world
-Still run per well, but now computed per `snip_id` (spine column vs payload column). _stub._
+Still run per well, but now computed per `snip_id`.
+
+This is where segmentation and tracking hand off the animal identity: frame masks become
+`physical_embryo_id`, then snip processing projects that stable embryo onto channel and time to
+mint `embryo_id` and `snip_id`. This is the first place the pipeline starts carrying the embryo
+itself, not just the frame.
+
+Most important sub-stages:
+- detection (using gdino model)
+- segmentation and tracking (using SAM2 model)
+- physical embryo registry: track identity becomes `physical_embryo_id`
+- snip cropping: registered embryos are projected into channel/time crops
+- snip inventory: crop identity, provenance, and output paths are assembled
+- auxiliary masks: snip-level masks for yolk, viability (for death), and other structures
 
 ### C3. Feature extraction
-(1) overview, (2) each step. _stub._
+This is where snips turn into feature payloads: geometry, pose, stage, embeddings, and other
+derived measurements. The key is that `snip_id` stays the spine while the measured values are
+added as payload columns for downstream joins.
+
+Most important sub-stages:
+- predicted stage: `predicted_stage_hpf` inferred from temperature and elapsed time
+- geometry features: mask area, perimeter, length, width, centroid
+- curvature features: centerline and curvature-derived shape summaries
+- viability features: time-series summaries that support QC and downstream analysis
+- embeddings: learned latent features attached as payload
 
 ### C4. Quality control
-(1) overview, (2) what matters for QC generally, (3) each step. _stub._
+This is where feature payloads get judged, flagged, and summarized. QC consumes the feature tables
+and emits verdict payloads like `use_snip` and `qc_fail_reasons`, so downstream work can keep the
+same `snip_id` spine and just read the decision.
+
+Most important sub-stages:
+- death detection: alive/dead judgments over the snip universe
+- surface-area QC: size-based outlier and plausibility checks
+- mask-quality QC: segmentation and mask-geometry sanity checks
+- snip QC verdict: roll flags into `use_snip` and `qc_fail_reasons`
 
 ### C5. Analysis ready
-Final merge + report. _stub._
+Final merge + report.
+
+This is the last fan-in: join the `snip_id` spine with the selected feature payloads, the QC
+verdict, and the broadcast plate metadata into one wide table for notebooks and downstream
+analysis.
+
+Most important sub-stages:
+- spine fan-in: keep `snip_id` as the base row identity
+- payload joins: attach feature tables and QC verdicts on `snip_id`
+- plate broadcast: join plate metadata by `well_id`
+- final table: emit one wide analysis-ready table
