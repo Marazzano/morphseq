@@ -156,6 +156,7 @@ def run_snip_processing(
             "track_id": track_id,
             "source_image_path": None,
             "processed_snip_path": None,
+            "embryo_mask": None,
             "embryo_mask_snip_path": None,
             "crop_x_min_px": None,
             "crop_y_min_px": None,
@@ -222,9 +223,11 @@ def run_snip_processing(
             except ValueError:
                 out["processed_snip_path"] = str(processed_path)
             try:
-                out["embryo_mask_snip_path"] = embryo_mask_path.relative_to(output_root).as_posix()
+                embryo_mask_rel = embryo_mask_path.relative_to(output_root).as_posix()
             except ValueError:
-                out["embryo_mask_snip_path"] = str(embryo_mask_path)
+                embryo_mask_rel = str(embryo_mask_path)
+            out["embryo_mask"] = embryo_mask_rel
+            out["embryo_mask_snip_path"] = embryo_mask_rel
 
             out["is_valid_snip"] = True
 

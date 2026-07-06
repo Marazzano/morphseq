@@ -1,8 +1,8 @@
 """fraction_alive compute — viability fraction per snip from snip-resolution masks.
 
 The embryo mask is the cropped frame_masks RLE that snip_processing already saved beside each snip
-(``embryo_mask_snip_path`` in snip_inventory) — same crop transform as the snip image, so it is
-pixel-aligned, with no model and no re-prediction. The ``via`` (dead-tissue) mask comes from the
+(``embryo_mask`` in snip_inventory; legacy alias ``embryo_mask_snip_path``) — same crop transform as
+the snip image, so it is pixel-aligned, with no model and no re-prediction. The ``via`` (dead-tissue) mask comes from the
 per-snip ``snip_auxiliary_masks`` product. Both live in the one snip coordinate space governed by
 ``snip_frame_shape``, so the overlap is well defined. (``compute_fraction_alive`` still aligns
 shapes defensively as a cheap safety net.) Empty embryo mask -> null (documented); missing VIA mask
@@ -51,9 +51,9 @@ def compute_fraction_alive_features(
     def _resolve(path: str) -> str:
         """Resolve a stored snip-mask path: relative paths root at ``output_root``.
 
-        ``embryo_mask_snip_path`` / auxiliary-mask paths are stored relative to ``output_root`` by
-        snip_processing; an already-absolute path is used as-is. No hidden global root (the retired
-        ``path_contracts`` helper that used to live here raised on call).
+        ``embryo_mask`` / ``embryo_mask_snip_path`` / auxiliary-mask paths are stored relative to
+        ``output_root`` by snip_processing; an already-absolute path is used as-is. No hidden global
+        root (the retired ``path_contracts`` helper that used to live here raised on call).
         """
         p = Path(str(path))
         if output_root is not None and not p.is_absolute():
@@ -64,10 +64,12 @@ def compute_fraction_alive_features(
     for _, snip in snip_inventory_df.iterrows():
         snip_id = str(snip["snip_id"])
 
-        embryo_path = snip.get("embryo_mask_snip_path")
+        embryo_path = snip.get("embryo_mask")
+        if embryo_path is None or (isinstance(embryo_path, float) and pd.isna(embryo_path)):
+            embryo_path = snip.get("embryo_mask_snip_path")
         if embryo_path is None or (isinstance(embryo_path, float) and pd.isna(embryo_path)):
             raise ValueError(
-                f"fraction_alive: snip {snip_id!r} has no embryo_mask_snip_path. snip_processing "
+                f"fraction_alive: snip {snip_id!r} has no embryo_mask. snip_processing "
                 "must save the cropped embryo mask for every valid snip."
             )
         embryo_mask = io.imread(_resolve(str(embryo_path)))

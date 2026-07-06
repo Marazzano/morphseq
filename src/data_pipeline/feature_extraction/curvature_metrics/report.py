@@ -2,11 +2,11 @@
 TERMINAL leaf (report_world.md).
 
 Consumes curvature_metrics's own merged output (the numbers) + snip_inventory (for the gallery's
-snip image path AND its per-snip embryo mask, ``embryo_mask_snip_path``) + frame_inventory (for the
+snip image path AND its per-snip embryo mask, ``embryo_mask``; legacy alias ``embryo_mask_snip_path``) + frame_inventory (for the
 micron calibration the spine's arc length needs).
 
 The overlay redraws the geodesic spine PURELY FOR DISPLAY. It recomputes the centerline from
-``embryo_mask_snip_path`` — the cropped-and-rotated embryo mask snip_processing persists in the SAME
+``embryo_mask`` — the cropped-and-rotated embryo mask snip_processing persists in the SAME
 pixel frame as the snip image (see run_snip_processing.py: image and mask go through one
 ``extract_embryo_crop -> rotate -> crop`` together). Computing the spine on that snip-space mask
 lands its coordinates directly in snip-pixel space, pixel-aligned with the snip by construction —
@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+from data_pipeline.object_extraction.snip_processing.io import resolve_snip_inventory_image_and_mask_paths
 from data_pipeline.feature_extraction.curvature_metrics.geodesic_centerline import (
     extract_geodesic_centerline,
 )
@@ -51,37 +52,15 @@ CURVATURE_FEATURE_COLUMNS = [
 RANK_COLUMN = "baseline_deviation_normalized"
 
 
-def _resolve_against_root(value: object, output_root: Path) -> object:
-    """Resolve a stored (possibly relative) path against ``output_root``; pass NaN/None through."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return value
-    p = Path(str(value))
-    return str(p if p.is_absolute() else (output_root / p))
-
-
-def _resolve_snip_paths(snip_inventory: pd.DataFrame, output_root: Path) -> pd.DataFrame:
-    """snip_id -> (image_id, absolute processed-snip image, absolute per-snip embryo mask).
-
-    ``embryo_mask_snip_path`` is the crop-and-rotate-aligned embryo mask snip_processing writes next
-    to each snip, so the overlay's spine can be recomputed in snip-pixel space with no coordinate
-    math (see module docstring)."""
-    resolved = snip_inventory[
-        ["snip_id", "image_id", "processed_snip_path", "embryo_mask_snip_path"]
-    ].copy()
-    resolved["resolved_image_path"] = resolved["processed_snip_path"].map(
-        lambda v: _resolve_against_root(v, output_root)
-    )
-    resolved["resolved_mask_path"] = resolved["embryo_mask_snip_path"].map(
-        lambda v: _resolve_against_root(v, output_root)
-    )
-    return resolved[["snip_id", "image_id", "resolved_image_path", "resolved_mask_path"]]
-
-
 def _geodesic_spine_layers(mask: np.ndarray, pixel_size_um: float) -> tuple[np.ndarray, np.ndarray]:
     """Return (smoothed head-oriented B-spline, raw skeleton centerline) for the overlay.
-    Either array is empty when the skeleton was too short to fit a spline."""
+    Either array is empty when the skeleton was too short to fit a spline, or when it was too
+    degenerate to skeletonize at all (mirrors compute.py's per-mask null-metrics handling)."""
     smoothed = smooth_mask_boundary(mask)
-    centerline = extract_geodesic_centerline(smoothed, pixel_size_um=pixel_size_um)
+    try:
+        centerline = extract_geodesic_centerline(smoothed, pixel_size_um=pixel_size_um)
+    except (ValueError, RuntimeError):
+        return np.empty((0, 2)), np.empty((0, 2))
     if len(centerline.smoothed_xy) == 0:
         return np.empty((0, 2)), centerline.raw_xy
     spline_xy = orient_centerline_head_to_tail(centerline.smoothed_xy, smoothed)
@@ -97,7 +76,7 @@ def _overlay_fn(paths_by_snip: dict[str, tuple[str, str, float]]):
     """Return image_fn(row) that draws the B-spline (bold) over the raw skeleton (faint) + mask
     outline on the snip. ``paths_by_snip``: snip_id -> (snip_image_path, mask_path, pixel_size_um).
 
-    ``mask_path`` is ``embryo_mask_snip_path`` — the embryo mask already carried through snip_processing's
+    ``mask_path`` is ``embryo_mask`` — the embryo mask already carried through snip_processing's
     exact crop+rotate into the SAME pixel frame as the snip image. The spine is computed on that
     snip-space mask, so its coordinates land directly on the snip: no offset, rotation, or resize
     (which is why the earlier full-frame-RLE-then-crop-resize path drew nothing — it ignored the
@@ -145,7 +124,7 @@ def build_curvature_metrics_report(
         output_path=output_feature_grid_png,
     )
 
-    resolved_paths = _resolve_snip_paths(snip_inventory, Path(output_root))
+    resolved_paths = resolve_snip_inventory_image_and_mask_paths(snip_inventory, output_root=Path(output_root))
     frame_inventory_by_image = frame_inventory.set_index("image_id")
     resolved_by_snip = resolved_paths.set_index("snip_id")
 

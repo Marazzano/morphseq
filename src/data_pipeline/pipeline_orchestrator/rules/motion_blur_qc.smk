@@ -106,3 +106,22 @@ shards = collect_well_shard_paths('{DATA_ROOT}', 'motion_blur_qc', 'motion_blur_
 concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
+
+
+rule motion_blur_qc_report:
+    """TERMINAL: histogram + cutoff-relative gallery for motion_blur_qc."""
+    input:
+        motion_blur_qc=str(_mbqc_artifact("{experiment}", path_mode=PATH_MODE_MERGED)),
+        snip_inventory=str(rule_artifact("snip_inventory", "snip_inventory", "{experiment}", path_mode=PATH_MODE_MERGED)),
+    output:
+        histogram_png=str(rule_artifact("motion_blur_qc_report", "histogram_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+        gallery_png=str(rule_artifact("motion_blur_qc_report", "gallery_png", "{experiment}", path_mode=PATH_MODE_EXPERIMENT)),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks motion-blur-qc-report \
+          --motion-blur-qc-csv "{input.motion_blur_qc}" \
+          --snip-inventory-csv "{input.snip_inventory}" \
+          --output-root "{DATA_ROOT}" \
+          --output-histogram-png "{output.histogram_png}" \
+          --output-gallery-png "{output.gallery_png}"
+        """

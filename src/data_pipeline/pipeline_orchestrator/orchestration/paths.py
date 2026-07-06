@@ -644,6 +644,20 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── QUALITY CONTROL — motion_blur_qc report (TERMINAL) ───────────────────
+    # Histogram + cutoff-relative gallery for the adjacent-z NCC QC metric. Consumed by nothing;
+    # see viz/report_world.md.
+    "motion_blur_qc_report": {
+        "stage": "quality_control",
+        "product_dir": "motion_blur_qc/report",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "histogram_png": "{experiment_id}_motion_blur_qc_histogram.png",
+            "gallery_png": "{experiment_id}_motion_blur_qc_gallery.png",
+        },
+    },
+
     # ── QUALITY CONTROL — death detection (per-snip flags) ────────────────────
     # Two-mode death QC per snip: viability_dead_flag (per frame) + persistence_dead_flag
     # (per animal, broadcast time_index >= D). Consumes fraction_alive + frame timing.
@@ -765,19 +779,27 @@ PIPELINE_STEPS: dict[str, dict] = {
 
     # ── ANALYSIS READY — report (TERMINAL) ────────────────────────────────────
     # The ONE step whose input surface is the whole joined DAG (embeddings + plate_metadata +
-    # predicted_stage_hpf + genotype), so genotype/stage-colored PCA belongs here. Consumed by
-    # nothing; see viz/report_world.md. Three artifacts: side-by-side latent PCA/UMAP, the
-    # experiment survival curve over predicted_stage_hpf, and the per-genotype survival panel.
+    # predicted_stage_hpf + genotype), so stage/genotype/QC PCA belongs here. Consumed by nothing;
+    # see viz/report_world.md. Artifacts: PCA views, post-QC feature galleries, the experiment
+    # survival curve over predicted_stage_hpf, the per-genotype survival panel, and separate
+    # all-genotype/per-genotype well survival heatmaps.
     "analysis_ready_report": {
         "stage": "analysis_ready",
         "product_dir": "analysis_ready/report",
         "fanout": EXPERIMENT,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {
-            "latent_projection_png": "{experiment_id}_latent_projection.png",
+            "latent_pca_qc_state_png": "{experiment_id}_latent_pca_qc_state.png",
+            "latent_pca_stage_png": "{experiment_id}_latent_pca_passing_qc_by_stage_hpf.png",
+            "latent_pca_genotype_png": "{experiment_id}_latent_pca_passing_qc_by_genotype.png",
+            "post_qc_area_um2_gallery_png": "{experiment_id}_post_qc_area_um2_gallery.png",
+            "post_qc_baseline_deviation_gallery_png": (
+                "{experiment_id}_post_qc_baseline_deviation_normalized_gallery.png"
+            ),
             "survival_over_stage_png": "{experiment_id}_survival_over_stage.png",
             "genotype_survival_panel_png": "{experiment_id}_genotype_survival_panel.png",
-            "well_survival_over_stage_png": "{experiment_id}_well_survival_over_stage.png",
+            "well_survival_over_stage_all_png": "{experiment_id}_well_survival_over_stage_all_genotypes.png",
+            "well_survival_over_stage_by_genotype_png": "{experiment_id}_well_survival_over_stage_by_genotype.png",
         },
     },
 

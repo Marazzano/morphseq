@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from data_pipeline.object_extraction.snip_processing.io import resolve_snip_inventory_image_paths
 from data_pipeline.quality_control.reporting import SURFACE_AREA_QC_REPORT_SPEC
 from data_pipeline.quality_control.surface_area_qc.config import resolve_config
 from data_pipeline.quality_control.surface_area_qc.reference import (
@@ -23,19 +24,6 @@ from data_pipeline.viz.reporting import plot_metric_vs_reference, render_quartil
 
 _SA_CONFIG = resolve_config()
 SA_K_LOWER, SA_K_UPPER = _SA_CONFIG.k_lower, _SA_CONFIG.k_upper
-
-
-def _resolve_snip_image_paths(snip_inventory: pd.DataFrame, output_root: Path) -> pd.DataFrame:
-    """snip_id -> absolute processed-snip image path, resolved against output_root."""
-    def _abs(value: object) -> object:
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return value
-        p = Path(str(value))
-        return str(p if p.is_absolute() else (output_root / p))
-
-    resolved = snip_inventory[["snip_id", "processed_snip_path"]].copy()
-    resolved["resolved_image_path"] = resolved["processed_snip_path"].map(_abs)
-    return resolved[["snip_id", "resolved_image_path"]]
 
 
 def _metrics(
@@ -76,7 +64,7 @@ def build_surface_area_qc_report(
         pd.read_csv(mask_geometry_csv), pd.read_csv(stage_predictions_csv),
         pd.read_csv(surface_area_qc_csv), reference,
     ).merge(
-        _resolve_snip_image_paths(pd.read_csv(snip_inventory_csv), Path(output_root)),
+        resolve_snip_inventory_image_paths(pd.read_csv(snip_inventory_csv), output_root=Path(output_root)),
         on="snip_id", how="left",
     )
 

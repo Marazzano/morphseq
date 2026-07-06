@@ -43,7 +43,7 @@ SNIP_AUXILIARY_MASKS_REQUIRED_COLUMNS = [
 ]
 
 # The UNet auxiliary-mask families. NO "foreground": the whole-embryo mask is created by
-# snip_processing (the cropped frame_masks RLE, embryo_mask_snip_path), not predicted here —
+# snip_processing (the cropped frame_masks RLE, embryo_mask), not predicted here —
 # fraction_alive reads foreground from snip_processing and only `via` from this product.
 ALLOWED_AUXILIARY_MASK_TYPES = ("via", "yolk", "focus", "bubble")
 

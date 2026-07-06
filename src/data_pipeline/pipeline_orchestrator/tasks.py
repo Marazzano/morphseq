@@ -755,6 +755,19 @@ def cmd_motion_blur_qc(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_motion_blur_qc_report(args: argparse.Namespace) -> None:
+    """Build the motion_blur_qc TERMINAL report (histogram + cutoff-relative gallery)."""
+    from data_pipeline.quality_control.motion_blur_qc.report import build_motion_blur_qc_report
+
+    build_motion_blur_qc_report(
+        motion_blur_qc_csv=args.motion_blur_qc_csv,
+        snip_inventory_csv=args.snip_inventory_csv,
+        output_root=args.output_root,
+        output_histogram_png=args.output_histogram_png,
+        output_gallery_png=args.output_gallery_png,
+    )
+
+
 def cmd_validate_focus_qc(args: argparse.Namespace) -> None:
     """Validate a per-well focus_qc shard (spine + metric + flag, registry as verifier) and write .validated."""
     import pandas as pd
@@ -838,10 +851,17 @@ def cmd_analysis_ready_report(args: argparse.Namespace) -> None:
     build_analysis_ready_report(
         analysis_ready_parquet=args.analysis_ready_parquet,
         death_event_csv=args.death_event_csv,
-        output_latent_projection_png=args.output_latent_projection_png,
+        snip_inventory_csv=args.snip_inventory_csv,
+        output_root=args.output_root,
+        output_latent_pca_qc_state_png=args.output_latent_pca_qc_state_png,
+        output_latent_pca_stage_png=args.output_latent_pca_stage_png,
+        output_latent_pca_genotype_png=args.output_latent_pca_genotype_png,
+        output_post_qc_area_um2_gallery_png=args.output_post_qc_area_um2_gallery_png,
+        output_post_qc_baseline_deviation_gallery_png=args.output_post_qc_baseline_deviation_gallery_png,
         output_survival_over_stage_png=args.output_survival_over_stage_png,
         output_genotype_survival_panel_png=args.output_genotype_survival_panel_png,
-        output_well_survival_over_stage_png=args.output_well_survival_over_stage_png,
+        output_well_survival_over_stage_all_png=args.output_well_survival_over_stage_all_png,
+        output_well_survival_over_stage_by_genotype_png=args.output_well_survival_over_stage_by_genotype_png,
     )
 
 
@@ -1487,6 +1507,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_fqc.add_argument("--output-csv", type=Path, required=True)
     p_fqc.set_defaults(func=cmd_focus_qc)
 
+    p_mbqc_report = sub.add_parser("motion-blur-qc-report")
+    p_mbqc_report.add_argument("--motion-blur-qc-csv", type=Path, required=True)
+    p_mbqc_report.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_mbqc_report.add_argument("--output-root", type=Path, required=True)
+    p_mbqc_report.add_argument("--output-histogram-png", type=Path, required=True)
+    p_mbqc_report.add_argument("--output-gallery-png", type=Path, required=True)
+    p_mbqc_report.set_defaults(func=cmd_motion_blur_qc_report)
+
     p_mbqc = sub.add_parser("motion-blur-qc")
     p_mbqc.add_argument("--snip-inventory-csv", type=Path, required=True)
     p_mbqc.add_argument("--frame-masks-csv", type=Path, required=True)
@@ -1529,10 +1557,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_ar_report = sub.add_parser("analysis-ready-report")
     p_ar_report.add_argument("--analysis-ready-parquet", type=Path, required=True)
     p_ar_report.add_argument("--death-event-csv", type=Path, required=True)
-    p_ar_report.add_argument("--output-latent-projection-png", type=Path, required=True)
+    p_ar_report.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_ar_report.add_argument("--output-root", type=Path, required=True)
+    p_ar_report.add_argument("--output-latent-pca-qc-state-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-latent-pca-stage-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-latent-pca-genotype-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-post-qc-area-um2-gallery-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-post-qc-baseline-deviation-gallery-png", type=Path, required=True)
     p_ar_report.add_argument("--output-survival-over-stage-png", type=Path, required=True)
     p_ar_report.add_argument("--output-genotype-survival-panel-png", type=Path, required=True)
-    p_ar_report.add_argument("--output-well-survival-over-stage-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-well-survival-over-stage-all-png", type=Path, required=True)
+    p_ar_report.add_argument("--output-well-survival-over-stage-by-genotype-png", type=Path, required=True)
     p_ar_report.set_defaults(func=cmd_analysis_ready_report)
 
     for verb, fn in (

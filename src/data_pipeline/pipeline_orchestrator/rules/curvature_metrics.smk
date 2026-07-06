@@ -7,8 +7,9 @@ the per-well physical_embryo_registry shard (identity verifier). Per-well build 
 merge, mirroring the snip_processing template.
 
 The TERMINAL curvature_metrics_report rule reads the merged curvature_metrics (the numbers) plus
-snip_inventory for both the snip image and its snip-space embryo mask (``embryo_mask_snip_path``);
-it redraws the spine on the snip from that pre-cropped mask (no frame_masks / RLE at report time).
+snip_inventory for both the snip image and its snip-space embryo mask (``embryo_mask``; legacy
+alias ``embryo_mask_snip_path``); it redraws the spine on the snip from that pre-cropped mask
+(no frame_masks / RLE at report time).
 """
 
 CURVATURE_METRICS_STEP = "curvature_metrics"

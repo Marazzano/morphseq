@@ -234,6 +234,8 @@ _SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS: tuple[str, ...] = (
     "track_id",
     "source_image_path",
     "processed_snip_path",
+    "embryo_mask",
+    "embryo_mask_snip_path",
     "is_valid_snip",
     "error_message",
 )
