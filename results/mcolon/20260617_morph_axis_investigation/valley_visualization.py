@@ -55,9 +55,14 @@ from plot_config import PHENOTYPE_COLORS  # noqa: E402
 
 from support_geometry import (  # noqa: E402
     MIN_COMPONENT_MASS_FRAC, VALLEY_SWEEP_STEPS, compute_support_geometry,
-    evaluate_kde_on_grid, normalize_shape, valley_detection_detail,
+    normalize_shape, valley_detection_detail,
 )
 from morphseq_investigation.core.peak_counting import count_mass_significant_modes  # noqa: E402
+from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402
+    build_distribution_overlay,
+    format_density_axis,
+    plot_density_overlap,
+)
 
 GENES = {
     "b9d2":   {"csv": REF_DIR / "reference_b9d2_clean.csv",
@@ -107,56 +112,6 @@ def load_bins(cfg):
                     grp["phenotype_clean"].values,
                     wt[[X_FEAT, Y_FEAT]].values.astype(float))
     return out
-
-
-SUPPORT_FRAC = 0.02   # combined KDE >= this * peak defines the "where there's mass" box
-
-
-def _data_box(pts_list, support_frac=SUPPORT_FRAC, margin=0.06, scan_pct=2.0, *, kde=None):
-    """THE single per-column box, defined by DENSITY not by point extremes.
-
-    A lone outlier contributes almost no KDE mass, so instead of a bounding box of
-    points we take the bounding box of the region where the COMBINED (target+WT) kernel
-    density exceeds `support_frac` of its peak, then add a margin. This frames the mass
-    of both distributions and ignores fliers.
-
-    IMPORTANT: the density-support SCAN grid is built on a robust (percentile-clipped)
-    range, NOT raw min/max. Otherwise a couple of far outliers stretch the coarse scan
-    grid, and an isolated flier can still clear the support threshold on a sparse cell --
-    blowing the box out (the 48 hpf bug: a WT point ~15 sigma out dragged the frame so
-    the real cloud sat in a tiny corner). Clipping the scan range keeps outliers out of
-    the search entirely.
-
-    Every row in the column -- KDE grid AND axis limits -- uses this exact box, so it is
-    the single coordinate frame all rows map into (row 3 just renders the same box at a
-    different aspect ratio). Returns (xlo, xhi, ylo, yhi)."""
-    allpts = np.vstack(pts_list)
-    # robust scan range: percentile-clip so far fliers never enter the support search
-    xr = np.percentile(allpts[:, 0], [scan_pct, 100 - scan_pct])
-    yr = np.percentile(allpts[:, 1], [scan_pct, 100 - scan_pct])
-    padx, pady = (xr[1] - xr[0]) * 0.35, (yr[1] - yr[0]) * 0.35
-    xs = np.linspace(xr[0] - padx, xr[1] + padx, 80)
-    ys = np.linspace(yr[0] - pady, yr[1] + pady, 80)
-    xx, yy = np.meshgrid(xs, ys)
-    dens = evaluate_kde_on_grid(allpts, xx, yy, kde=kde)
-    mask = dens >= support_frac * float(dens.max())
-    xsel, ysel = xx[mask], yy[mask]
-    xlo, xhi, ylo, yhi = xsel.min(), xsel.max(), ysel.min(), ysel.max()
-    mx, my = (xhi - xlo) * margin, (yhi - ylo) * margin
-    return xlo - mx, xhi + mx, ylo - my, yhi + my
-
-
-def _kde_in_box(pts, box, grid=GRID, *, kde=None):
-    """Evaluate a gaussian KDE of `pts` on the column box. The density is rendered with
-    its lowest contour band starting above zero (see callers) so it fades to background
-    before the edge -- no hard fill rectangle, even though the grid == the visible box."""
-    xlo, xhi, ylo, yhi = box
-    xs = np.linspace(xlo, xhi, grid)
-    ys = np.linspace(ylo, yhi, grid)
-    xx, yy = np.meshgrid(xs, ys)
-    dens = evaluate_kde_on_grid(pts, xx, yy, kde=kde)
-    return xx, yy, dens
-
 
 def _target_ring(ax, xx, yy, dens):
     """Draw the two island rings at the valley waterline. Caller only invokes this when
@@ -263,11 +218,9 @@ def render_gene(gene, cfg, *, kde=None):
         ap = area_sr.pvalue if area_sr is not None else 1.0
         area_sig = area_sr is not None and ap < VALLEY_SIG_P   # HDR-area witness
 
-        # ONE box per column: fits all target+WT data (robust), + margin. Every row --
-        # KDE grid and axis limits -- uses this exact box, so nothing is re-cropped.
-        box = _data_box([grp, wt], kde=kde)
-        gx, gy, gd = _kde_in_box(grp, box, kde=kde)  # target density on the box
-        wx, wy, wd = _kde_in_box(wt, box, kde=kde)   # WT density on the SAME box -> comparable
+        overlay = build_distribution_overlay(grp, wt, grid=GRID, kde=kde)
+        box = overlay.box
+        gx, gy, gd = overlay.target_grid.xx, overlay.target_grid.yy, overlay.target_grid.density
 
         # ── ROW 1: TARGET KDE (soft blue) + decision ring (ring ONLY if sig) ─
         ax = axes[0][col]
@@ -286,15 +239,7 @@ def render_gene(gene, cfg, *, kde=None):
             ax.scatter(grp[m, 0], grp[m, 1], s=20, alpha=0.9,
                        facecolors=PHENOTYPE_COLORS.get(pheno, UNLABELED_COLOR),
                        edgecolors="k", linewidths=0.4, zorder=3, label=pheno)
-        # Two parallel density witnesses, drawn independently (NOT fused into one call):
-        #   valley (dashed gold) -- is there an empty gap BETWEEN modes?
-        #   HDR-area (solid green) -- does the mass concentrate into LESS area than WT?
-        if sig:
-            _target_ring(ax, gx, gy, gd)
-        if area_sig:
-            _area_ring(ax, gx, gy, gd)
-        ax.set_xlim(box[0], box[1]); ax.set_ylim(box[2], box[3])
-        ax.set_xticks([]); ax.set_yticks([])
+        format_density_axis(ax, box)
         # Title carries BOTH witnesses; each colored by its own significance so the
         # density-yes-here / no-there split is legible per bin.
         v_col = "#B2182B" if sig else "#2166AC"
@@ -312,11 +257,12 @@ def render_gene(gene, cfg, *, kde=None):
 
         # ── ROW 2: smooth OVERLAP of the two density distributions ──────────
         # framed to fit BOTH distributions so neither density is cut off
-        _overlap_cell(axes[1][col], gx, gy, gd, wd, gene, box)
+        plot_density_overlap(axes[1][col], overlay.target_grid, overlay.reference_grid)
+        format_density_axis(axes[1][col], box)
 
         # ── ROW 3: RAW POINTS + each cloud's own KDE, target (L) vs WT (R) ──
         _points_pair_cell(fig, axes[2][col], grp, phenos, wt, cfg, gene,
-                          (gx, gy, gd), (wx, wy, wd), box)
+                          overlay.target_grid, overlay.reference_grid, box)
 
     # row labels
     axes[0][0].set_ylabel("TARGET KDE\n+ ring if significant", fontsize=LABEL_FS)
@@ -353,28 +299,8 @@ def render_gene(gene, cfg, *, kde=None):
     print(f"Saved: {out.name}")
 
 
-def _overlap_cell(ax, xx, yy, target_dens, wt_dens, gene, vlim):
-    """Row 2: two smooth probability distributions overlaid, seaborn `kdeplot(hue=...)`
-    style -- a FEW translucent filled contour bands per distribution in two distinct
-    hues. Low alpha means the intersection blends the two hues, which is the standard,
-    least-busy way to read overlap (per seaborn / ggplot practice)."""
-    from matplotlib.colors import to_rgba
-
-    def _fill(dens, color):
-        # a handful of iso-proportion bands (not a dense ramp); translucent so overlap blends
-        peak = float(dens.max())
-        levels = [f * peak for f in (0.20, 0.45, 0.70, 0.90)] + [peak]
-        colors = [to_rgba(color, a) for a in (0.16, 0.24, 0.32, 0.42)]
-        ax.contourf(xx, yy, dens, levels=levels, colors=colors, antialiased=True)
-
-    _fill(wt_dens, WT_DENS_COLOR)
-    _fill(target_dens, TARGET_DENS_COLOR)
-    ax.set_xlim(vlim[0], vlim[1]); ax.set_ylim(vlim[2], vlim[3])
-    ax.set_xticks([]); ax.set_yticks([])
-
-
 def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
-                      grp_field, wt_field, vlim):
+                      grp_grid, wt_grid, box):
     """Row 3: TARGET (LEFT) then reference WT (RIGHT) -- as two mini-axes inside
     host_ax, on the shared frame so spreads compare directly. Each panel overlays its
     OWN KDE (target blue / WT gray) behind the raw points; target keeps its phenotype
@@ -386,16 +312,16 @@ def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
     axL = fig.add_axes([pos.x0, pos.y0, w * 0.94, pos.height])
     axR = fig.add_axes([pos.x0 + w * 1.06, pos.y0, w * 0.94, pos.height])
 
-    def _bg_kde(ax, field, color):
-        xx, yy, dens = field
+    def _bg_kde(ax, grid, color):
+        dens = np.asarray(grid.density, dtype=float)
         peak = float(dens.max())
         colors = [to_rgba(color, a) for a in np.linspace(0.10, 0.40, 12)]
         levels = np.linspace(0.06 * peak, peak, 13)
-        ax.contourf(xx, yy, dens, levels=levels, colors=colors,
+        ax.contourf(grid.xx, grid.yy, dens, levels=levels, colors=colors,
                     antialiased=True, zorder=0)
 
-    _bg_kde(axL, grp_field, TARGET_DENS_COLOR)
-    _bg_kde(axR, wt_field, WT_DENS_COLOR)
+    _bg_kde(axL, grp_grid, TARGET_DENS_COLOR)
+    _bg_kde(axR, wt_grid, WT_DENS_COLOR)
 
     for pheno in cfg["phenotype_labels"] + ["unlabeled"]:
         m = phenos == pheno
@@ -409,8 +335,7 @@ def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
     axL.set_title(gene, fontsize=LABEL_FS - 2, color=TARGET_DENS_COLOR)
     axR.set_title("WT (reference)", fontsize=LABEL_FS - 2, color=WT_POINT_COLOR)
     for ax in (axL, axR):
-        ax.set_xlim(vlim[0], vlim[1]); ax.set_ylim(vlim[2], vlim[3])
-        ax.set_xticks([]); ax.set_yticks([])
+        format_density_axis(ax, box)
 
 
 def main():

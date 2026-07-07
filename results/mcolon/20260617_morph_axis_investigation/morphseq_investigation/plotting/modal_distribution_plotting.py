@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable, Sequence
 from typing import Iterable
 
 import matplotlib
@@ -74,6 +75,18 @@ class DistributionVisualSpec:
     def true_grid(self) -> DensityGrid | None:
         """Backward-compatible alias for the composed density grid."""
         return self.composed_grid
+
+
+@dataclass(frozen=True)
+class DistributionOverlay:
+    """Two density evaluations on a shared plotting frame."""
+
+    box: tuple[float, float, float, float]
+    target_grid: DensityGrid
+    reference_grid: DensityGrid
+
+
+RowOverlayFn = Callable[[plt.Axes, DistributionVisualSpec, DensityGrid, tuple[float, float, float, float]], None]
 
 
 def compute_v0_metric_summary(
@@ -204,6 +217,73 @@ def evaluate_density_grid(
     xx, yy = np.meshgrid(xs, ys)
     dens = evaluate_kde_on_grid(np.asarray(points, dtype=float), xx, yy, kde=kde)
     return DensityGrid(xx=xx, yy=yy, density=dens)
+
+
+def build_distribution_overlay(
+    target_points: np.ndarray,
+    reference_points: np.ndarray,
+    *,
+    canonical_grid: DensityGrid | None = None,
+    kde=None,
+    grid: int = GRID,
+    support_frac: float = SUPPORT_FRAC,
+    margin: float = 0.06,
+    scan_pct: float = 2.0,
+) -> DistributionOverlay:
+    """Evaluate two point clouds on one shared plotting frame.
+
+    If a canonical density grid is provided, reuse its coordinates exactly. Otherwise
+    derive a density-defined shared box from both point clouds and evaluate a fresh
+    grid over that frame.
+    """
+
+    target_pts = np.asarray(target_points, dtype=float)
+    reference_pts = np.asarray(reference_points, dtype=float)
+
+    if canonical_grid is not None:
+        xx = np.asarray(canonical_grid.xx, dtype=float)
+        yy = np.asarray(canonical_grid.yy, dtype=float)
+        if canonical_grid.grid is not None:
+            box = (
+                float(canonical_grid.grid.x_min),
+                float(canonical_grid.grid.x_max),
+                float(canonical_grid.grid.y_min),
+                float(canonical_grid.grid.y_max),
+            )
+        else:
+            box = (
+                float(np.min(xx)),
+                float(np.max(xx)),
+                float(np.min(yy)),
+                float(np.max(yy)),
+            )
+    else:
+        box = square_density_box(
+            density_box(
+                [target_pts, reference_pts],
+                support_frac=support_frac,
+                margin=margin,
+                scan_pct=scan_pct,
+                kde=kde,
+            )
+        )
+        xs = np.linspace(box[0], box[1], grid)
+        ys = np.linspace(box[2], box[3], grid)
+        xx, yy = np.meshgrid(xs, ys)
+
+    target_grid = DensityGrid(
+        xx=xx,
+        yy=yy,
+        density=evaluate_kde_on_grid(target_pts, xx, yy, kde=kde),
+        grid=canonical_grid.grid if canonical_grid is not None else None,
+    )
+    reference_grid = DensityGrid(
+        xx=xx,
+        yy=yy,
+        density=evaluate_kde_on_grid(reference_pts, xx, yy, kde=kde),
+        grid=canonical_grid.grid if canonical_grid is not None else None,
+    )
+    return DistributionOverlay(box=box, target_grid=target_grid, reference_grid=reference_grid)
 
 
 def hdr_mass_level(density: np.ndarray, mass_frac: float = HDR_MASS_FRAC) -> float | None:
@@ -509,6 +589,7 @@ def plot_v0_distribution_qc_grid(
     observed_details_by_method: dict[str, dict[str, PeakCountDetail | None]] | None = None,
     observed_method_order: tuple[str, ...] | None = None,
     primary_observed_method: str | None = None,
+    row_overlays: dict[int, Sequence[RowOverlayFn]] | None = None,
 ) -> Path:
     """Plot one visual QA grid for V0 generated distributions.
 
@@ -576,6 +657,8 @@ def plot_v0_distribution_qc_grid(
         else:
             plot_kde_field(ax, sample_grid)
         format_density_axis(ax, box)
+        for overlay_fn in (row_overlays or {}).get(0, ()):
+            overlay_fn(ax, spec, sample_grid, box)
         ax.set_title(spec.distribution_id.replace("_", "\n"), fontsize=8.0, fontweight="bold")
         if spec.note:
             ax.text(0.02, 0.03, spec.note, transform=ax.transAxes, fontsize=6.2, color="#555", va="bottom")
@@ -584,6 +667,8 @@ def plot_v0_distribution_qc_grid(
         plot_kde_field(ax, sample_grid)
         plot_raw_points(ax, points, spec.component_labels, s=14)
         format_density_axis(ax, box)
+        for overlay_fn in (row_overlays or {}).get(1, ()):
+            overlay_fn(ax, spec, sample_grid, box)
 
         ax = axes[2][col]
         plot_kde_field(ax, sample_grid)
@@ -602,6 +687,8 @@ def plot_v0_distribution_qc_grid(
             )
         plot_raw_points(ax, points, spec.component_labels, s=11)
         format_density_axis(ax, box)
+        for overlay_fn in (row_overlays or {}).get(2, ()):
+            overlay_fn(ax, spec, sample_grid, box)
 
         row_idx = 3
         if include_peak_row:
