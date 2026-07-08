@@ -5,9 +5,12 @@ This pipeline uses **Snakemake** so you can run the full pipeline, one experimen
 The key idea is that Snakemake configs can be passed **compositionally**:
 
 ```text
-config.yaml                  ← stable defaults
-config_runtime_*.yaml        ← experiments, optional wells, smoke limits
+config.yaml                               ← tracked base science config
+configs/runtime_configs/*.yaml            ← experiment / smoke overlays
+sge_job_submissions/*.sge                 ← local SGE launchers
 ```
+
+`config.yaml` is the only file here meant to stay tracked. The overlay and SGE directories are local-only and ignored by git.
 
 Later `--configfile` arguments override earlier ones.
 
@@ -15,7 +18,7 @@ So a normal run looks like:
 
 ```bash
 snakemake --configfile config.yaml \
-  --configfile config_runtime_20250912.yaml \
+  --configfile configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml \
   all --cores 1
 ```
 
@@ -133,7 +136,7 @@ Example: run all discovered wells for one experiment through the full pipeline:
 
 ```bash
 snakemake --configfile config.yaml \
-  --configfile config_runtime_20250912.yaml \
+  --configfile configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml \
   all --cores 1
 ```
 
@@ -141,7 +144,7 @@ Example: run one well through the front half only:
 
 ```bash
 snakemake --configfile config.yaml \
-  --configfile config_runtime_20250912_B01.yaml \
+  --configfile configs/runtime_configs/config_smoke_front_half_20250912.yaml \
   front_half --cores 1
 ```
 
@@ -149,6 +152,53 @@ Example: run one well through the biological processing path:
 
 ```bash
 snakemake --configfile config.yaml \
-  --configfile config_runtime_20250912_B01.yaml \
+  --configfile configs/runtime_configs/config_smoke_through_line_20250912_B01.yaml \
   through_line --cores 1
+```
+
+---
+
+### 4. Submit a cluster run with SGE
+
+For GPU/full-pipeline reruns, submit from the orchestrator directory so SGE writes logs next to the
+submission script. This example is a two-experiment `rule all` run:
+
+```bash
+cd /net/trapnell/vol1/home/mdcolon/proj/morphseq/src/data_pipeline/pipeline_orchestrator
+qsub sge_job_submissions/submit_all_20250912_and_20260410_otx_pilot.sge
+```
+
+The runtime overlay is `configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml`:
+
+```yaml
+experiments:
+  - 20250912
+  - 20260410_otx_pilot
+```
+
+The SGE script runs `rule all` with that overlay:
+
+```bash
+snakemake --configfile config.yaml \
+  --configfile configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml \
+  --cores 4 --rerun-triggers mtime --keep-going --printshellcmds all
+```
+
+SGE logs are written under the repo root:
+
+```text
+/net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/all_20250912_otx.<JOB_ID>.out
+/net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/all_20250912_otx.<JOB_ID>.err
+```
+
+Stub for a new cluster rerun:
+
+```bash
+cp configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml \
+  configs/runtime_configs/config_runtime_<run_name>.yaml
+cp sge_job_submissions/submit_snakemake_TEMPLATE.sge \
+  sge_job_submissions/submit_<run_name>.sge
+# Edit experiments, optional target_wells/experiment_wells, rule target, job name, log names,
+# and remove the TEMPLATE_GUARD block before submitting.
+qsub sge_job_submissions/submit_<run_name>.sge
 ```

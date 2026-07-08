@@ -1,20 +1,23 @@
 # MorphSeq Pipeline Configuration
+# Base science config. Compose run-specific overlays on top of this file via
+# `--configfile` order.
+
 
 # Experiments to process
-experiments:
-  - 20250912
+experiments: # pass with  to runtime_config
+#  - 20250912  
 
 # Optional per-experiment well subsets for smoke runs or targeted reruns.
-experiment_wells:
-  20240418:
-    - A01
-    - C01
+experiment_wells: # pass with runtime_config
+#  20240418: 
+#    - A01
+#    - C01
 
 # Microscope selection.
 # If you need per-experiment microscope selection, add:
 # microscope_by_experiment:
 #   20250912: "YX1"
-microscope: "YX1"
+microscope: "YX1" #or Keyence 
 
 # Front-end producer selection (mode-EXCLUSIVE). 'native' = microscope ingest/materialize producers;
 # 'dropin' = an external dataset's own frame_inventory manifest (no microscope). Both produce the SAME
