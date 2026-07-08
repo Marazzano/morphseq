@@ -1,0 +1,4 @@
+# Drift-benchmark reports are regenerated on every `-m legacy_drift` run (timestamped). Keep the
+# directory tracked, but ignore the generated JSON — attach a specific report to a product's PR when
+# signing off a comparison, rather than committing churn.
+*.json

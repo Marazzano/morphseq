@@ -79,11 +79,11 @@ else:
     chem_mask = pd.Series([True] * len(df_all))
 
 # Use embryo flag
-if 'use_snip' in df_all.columns:
-    use_mask = df_all['use_snip'].astype(bool)
-    print(f"use_snip=True: {use_mask.sum()} / {len(df_all)} rows")
+if 'use_embryo_flag' in df_all.columns:
+    use_mask = df_all['use_embryo_flag'].astype(bool)
+    print(f"use_embryo_flag=True: {use_mask.sum()} / {len(df_all)} rows")
 else:
-    print("⚠️  'use_snip' column not found, assuming all usable")
+    print("⚠️  'use_embryo_flag' column not found, assuming all usable")
     use_mask = pd.Series([True] * len(df_all))
 
 # Control flag alternative

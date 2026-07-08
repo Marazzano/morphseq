@@ -1,0 +1,19 @@
+#!/bin/bash
+#$ -cwd
+#$ -N adaptive_kde_gate
+#$ -pe serial 8
+#$ -l h_rt=04:00:00
+#$ -l h_vmem=8G
+#$ -o results/mcolon/20260617_morph_axis_investigation/logs/density_improvements/adaptive_kde_gate.$JOB_ID.out
+#$ -e results/mcolon/20260617_morph_axis_investigation/logs/density_improvements/adaptive_kde_gate.$JOB_ID.err
+
+set -euo pipefail
+
+conda run -n segmentation_grounded_sam --no-capture-output python \
+  results/mcolon/20260617_morph_axis_investigation/adaptive_kde_validation.py \
+  --sample-size 40 \
+  --n-seeds 3 \
+  --n-resample 50 \
+  --n-workers 8 \
+  --scenarios two_discrete three_discrete small_middle spiral crescent outliers unimodal_compact variance_only \
+  --candidates scott knn_k10_bw0.8 knn_k5_bw0.6 knn_k5_bw0.5_clip1.5 knn_k3_bw0.5_clip1.5 knn_k3_bw0.6_clip1.5 knn_k8_bw0.6

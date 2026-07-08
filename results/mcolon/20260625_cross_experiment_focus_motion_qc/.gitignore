@@ -1,0 +1,6 @@
+# Large/regenerable artifacts — keep code + handoff only.
+# (CSV tables are already excluded by the parent results/mcolon/.gitignore policy.)
+__pycache__/
+logs/
+figures/
+preliminary_run/

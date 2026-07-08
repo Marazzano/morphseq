@@ -1,23 +1,14 @@
 # MorphSeq Pipeline Configuration
 
-# Data paths.
-# Relative paths resolve from PROJECT_ROOT (repo root). Absolute paths used as-is.
-# Defaults:
-#   data_root:           PROJECT_ROOT/data_pipeline_output
-#   data_pipeline_code:  PROJECT_ROOT/src/data_pipeline
-# Override examples:
-#   data_root: "/net/trapnell/vol1/home/mdcolon/proj/morphseq-docs/data_pipeline_output"
-#   data_pipeline_code: "/some/other/pipeline/src"
-
 # Experiments to process
 experiments:
   - 20250912
 
-# Optional smoke-test subset. Accepts canonical wells (B01) or full well IDs
-# (20250912_B01). Non-empty values write outputs under:
-#   {data_root}/scoped_runs/wells-.../
-# Leave empty for full-plate processing in canonical output locations.
-target_wells: []
+# Optional per-experiment well subsets for smoke runs or targeted reruns.
+experiment_wells:
+  20240418:
+    - A01
+    - C01
 
 # Microscope selection.
 # If you need per-experiment microscope selection, add:
@@ -25,63 +16,209 @@ target_wells: []
 #   20250912: "YX1"
 microscope: "YX1"
 
+# Front-end producer selection (mode-EXCLUSIVE). 'native' = microscope ingest/materialize producers;
+# 'dropin' = an external dataset's own frame_inventory manifest (no microscope). Both produce the SAME
+# canonical artifacts (discovered_wells.txt, per-well frame_inventory shards, .validated sentinels) —
+# exactly one family is registered. Unknown mode fails loud.
+front_end:
+  mode: native            # native | dropin
+
+# Drop-in ingress (used ONLY when front_end.mode == dropin). These are config/CLI INPUT paths, NOT
+# pipeline artifacts — the canonical pipeline begins at the per-well frame_inventory shards.
+# dropin:
+#   enabled: true
+#   frame_inventory_csv: /abs/path/to/dropin_frame_inventory.csv
+#   image_root: /abs/path/to/images        # resolves relative source_image_path
+
 # Plate metadata is optional for build/segment/snips, but kept for later biology/QC/analysis.
 plate_metadata:
   enabled: true
   # Expected input path:
-  #   {data_root}/inputs/plate_metadata/{experiment}_well_metadata.xlsx
+  #   {input_root}/plate_metadata/{experiment}_well_metadata.xlsx
 
 # Scope metadata (physical) extraction.
 scope_metadata:
   yx1:
     raw_images_pattern: "YX1/{experiment}"
+    # Absolute path to the reference plate XY coordinates CSV.
+    # Required for CSV→CSV series-to-well mapping (no second ND2 open).
+    # Build with: src/data_pipeline/acquisition/metadata_ingest/scope/yx1/generate_xy_reference.py
+    ref_xy_csv: "/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/metadata/YX1_nd2_ref_plate_xy_coordinates.csv"
   keyence:
     raw_images_pattern: "Keyence/{experiment}"
 
 # Image building (stitched FF images).
 image_building:
-  device: "cuda"
+  # "auto" → resolve_device picks cuda if available, else cpu (announced as AUTO_MODE_CHOSEN).
+  device: "auto"
   overwrite: false
-  image_format: "jpg"
   yx1:
     z_buffer: false
   # Keyence support depends on having FF tiles/inputs wired; leave disabled for now.
   keyence:
     enabled: false
 
+# Image materialization (per-well frame_inventory branch, Step 6).
+image_materialization:
+  # DEVELOPMENT-ONLY SCAFFOLDING:
+  # smoke_max_time_indices limits materialization to the first N time_index values so the
+  # live front-half spine can be smoke-tested cheaply during pipeline development.
+  # Set it to 1 to process only the first discovered time_index per well; set it to 0 to
+  # disable the cap entirely.
+  #
+  # This is NOT a production frame-selection policy and must not be used as a scientific
+  # sampling mechanism. <=0 (the default below) means INACTIVE / no cap. To run a capped
+  # smoke, do NOT edit this — use the dedicated smoke config:
+  #   snakemake --configfile config_smoke_front_half_20250912.yaml front_half
+  #
+  # TODO(frame_selection): once full materialization is stable, replace this with an explicit
+  # frame_selection contract that derives the time-index subset systematically from the
+  # acquisition inventory / experiment design, or remove it.
+  smoke_max_time_indices: 0
+  # Product selection. Defaults to focus_stack projection + full z_stack retention (promoted
+  # from opt-in overlay to baseline 2026-07-04).
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+    - channel_id: BF
+      image_product_type: z_stack
+  # Product write policy: product selection stays in image_materialization.products; this map only
+  # declares how active products are encoded/written. BF__z_stack is JPEG q85 at ds4 to keep the
+  # persisted z planes small enough for post-segmentation QC.
+  write_policies:
+    BF__z_stack:
+      file_format: jpg
+      jpeg_quality: 85
+      downsample_factor: 4
+      downsample_method: area_resize
+      pixel_dtype: uint8
+
 # Segmentation + tracking (GroundingDINO + SAM2).
 segmentation_and_tracking:
   device: "cuda"
   channel_id: "BF"
   tracking_mode: "bidirectional"
+  models_root: "models"
+  groundingdino_repo: "GroundingDINO"
+  groundingdino_config: "groundingdino/config/GroundingDINO_SwinT_OGC.py"
+  groundingdino_weights: "weights/groundingdino_swint_ogc.pth"
+  groundingdino_release: "legacy"
+  groundingdino_model_name: "SwinT_OGC"
+  sam2_models_root: "sam2"
+  sam2_config: "configs/sam2.1/sam2.1_hiera_l.yaml"
+  sam2_checkpoint: "checkpoints/sam2.1_hiera_large.pt"
+  sam2_release: "legacy"
+  sam2_model_name: "hiera_large"
   groundingdino:
     text_prompt: "individual embryo"
     box_threshold: 0.35
     text_threshold: 0.25
-    confidence_threshold: 0.45
     iou_threshold: 0.5
-    config_path: "segmentation_sandbox/models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-    weights_path: "/net/trapnell/vol1/home/mdcolon/proj/image_segmentation/Open-GroundingDino/finetune_output/finetune_output_run_nick_masks_20250308/checkpoint_best_regular.pth"
+    config_path: ""
+    weights_path: ""
   sam2:
-    config_path: "configs/sam2.1/sam2.1_hiera_l.yaml"
-    checkpoint_path: "/net/trapnell/vol1/home/mdcolon/proj/image_segmentation/sam2/checkpoints/sam2.1_hiera_large.pt"
+    config_path: ""
+    checkpoint_path: ""
 
-# Auxiliary masks (UNet-derived QC masks).
-auxiliary_masks:
-  model_root: "models/segmentation"
-  batch_size: 64
-  num_workers: 1
-  overwrite: false
+# ── THE SNIP COORDINATE SPACE — single source of truth ───────────────────────────────────────
+# One (height, width) governs every "snip-resolution" consumer: the snip_processing crop output,
+# the cropped embryo mask saved beside each snip, and the per-snip UNet auxiliary masks. It is a
+# NAMED YAML ANCHOR (&snip_frame_shape) so every consumer POINTS at it (*snip_frame_shape) — the
+# equality is declared out loud, never copy-pasted as a bare [576, 256] (which would drift).
+# Resolved by data_pipeline.object_extraction.snip_processing.snip_frame_shape.resolve_snip_frame_shape(config).
+snip_frame_shape: &snip_frame_shape [576, 256]
+
+# Per-snip auxiliary masks (UNet-derived). Runs on the snip crop AFTER snip_processing, so masks
+# are native snip resolution and co-keyed by snip_id (replaces the retired full-frame
+# auxiliary_masks step). NO foreground family — the embryo mask for fraction_alive is the cropped
+# frame_masks RLE saved by snip_processing (embryo_mask_snip_path), not a UNet prediction.
+#
+# SHAPE OWNERSHIP (full table lives in object_extraction/segmentation/backends/unet_snip/model_loader.py):
+#   snip_frame_shape    — the configured law (above). Persists to disk.
+#   artifact_shape      — derived = snip_frame_shape; what masks are WRITTEN at. NOT a key here.
+#   model_input_shape   — per-model transient doorway the U-Net runs inference on (below).
+#   model_output_shape  — runtime-observed model emission; never configured.
+# Each model declares its OWN model_input_shape: point it at *snip_frame_shape to say "this model
+# runs on the canonical snip grid" (the via mask then needs no resampling). Override with an explicit
+# [height, width] only if a checkpoint REQUIRES its true training size; the predictor resizes to it,
+# then brings the mask home to artifact_shape. model_input_shape is transient and never persists.
+# NOTE: checkpoint filenames carried over from the old full-frame path — confirm/adjust per family.
+unet_snip:
+  # models_root is ENVIRONMENT, not data layout. The orchestrator passes --models-root from
+  # env.yaml.paths.models_root (the gitignored per-machine ENVIRONMENT) and that value REPLACES the
+  # one below — model weights may live anywhere on a given machine, not under the data/output tree.
+  # The placeholder below only keeps this config block self-consistent when read in isolation
+  # (the loader requires a models_root key); the env always wins at run time.
+  # The per-family `checkpoint` key is the only model PATH the science config owns; it carries the
+  # family sub-route (e.g. "segmentation/<family>") resolved UNDER the env models_root.
+  models_root: "models"
+  device: "cuda"
+  models:
+    via:
+      checkpoint: "segmentation/via_v1_0100"
+      model_input_shape: *snip_frame_shape
+    yolk:
+      checkpoint: "segmentation/yolk_v1_0050"
+      model_input_shape: *snip_frame_shape
+    focus:
+      checkpoint: "segmentation/focus_v0_0100"
+      model_input_shape: *snip_frame_shape
+    bubble:
+      checkpoint: "segmentation/bubble_v0_0100"
+      model_input_shape: *snip_frame_shape
 
 # Snip processing (crop + rotate + augment).
 snip_processing:
-  # Legacy downstream models expect (H, W) = (576, 256).
-  output_shape: [576, 256]
+  # Crop output (H, W) IS the canonical snip grid — point at the same anchor, never a bare copy.
+  output_shape: *snip_frame_shape
   target_pixel_size_um: 7.8
   save_raw_crops: true
   write_manifest_csv: true
   background_n_samples: 100
   background_seed: 309
+  # Background noise injected outside the embryo mask is scaled down from the
+  # real image background intensity. 0.1 matches legacy build03B doctrine —
+  # produces a visually dark background that contrasts with the CLAHE-brightened
+  # embryo interior. Increase toward 1.0 to match real background brightness.
+  background_noise_scale: 0.1
+  # Physical soft-edge blend used when replacing non-target pixels with synthetic background.
+  # Keep this small enough that close neighboring embryos are not visibly carried into the snip.
+  blend_radius_um: 20.0
+
+# Feature extraction stage defaults.
+feature_extraction:
+  stage_predictions: {}
+
+  # mask_geometry has no run-level knobs yet: pixel size comes from frame_inventory, and the
+  # product emits one row per snip regardless of validity (QC excludes, not feature extraction).
+  mask_geometry: {}
+  curvature_metrics: {}
+  pose_kinematics: {}
+  # fraction_alive reads the per-snip foreground + via masks from snip_auxiliary_masks (snip-native
+  # resolution). missing_via_policy: "fail" (default) | "null".
+  fraction_alive: {}
+  consolidated_features: {}
+
+  # Legacy VAE encoder — produces latent embeddings (latent_embeddings step).
+  # model_name:           which trained model to load (science choice; names the weights dir)
+  # model_input_shape:    [height, width] — PyTorch/torchvision (H, W) convention, NOT (W, H).
+  #                       288 = height (tall embryo axis), 128 = width. Matches the snip output
+  #                       shape from snip_processing (output_shape: [576, 256] downsampled 2×).
+  # model_input_channels: channel count the encoder expects. Confirmed by model_config.json:
+  #                       "input_dim": [1, 288, 128] (SeqVAEConfig). All legacy dataset
+  #                       transforms used Grayscale(num_output_channels=1). 1 = grayscale;
+  #                       3 = RGB only if a future model is trained on colour input.
+  # batch_size:           snips per encoder forward pass
+  legacy_embeddings:
+    model_name: 20241107_ds_sweep01_optimum
+    # models_root_override: null  # set to an absolute path to override env.yaml.paths.models_root
+    #   e.g. "/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/models"
+    #   Useful when weights live in a legacy playground dir rather than the pipeline output tree.
+    #   Resolved by entrypoint: override wins if non-null, else falls back to env.yaml.paths.models_root.
+    model_input_shape: [288, 128]   # [height, width] per PyTorch convention; 288=tall axis
+    model_input_channels: 1         # grayscale; confirmed by model_config.json input_dim=[1,288,128]
+    batch_size: 64
 
 # Phase 5: QC (placeholder)
 qc:
