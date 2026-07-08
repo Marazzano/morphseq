@@ -741,8 +741,10 @@ def make_scatter_figure(reorg):
     its own genotype. If genotype alignment held roughly constant across churn
     levels within a genotype, alignment is a floor property of the reorganization,
     not something proportional to how MUCH an embryo reorganized."""
-    plt.rcParams.update({"axes.titlesize": TITLE_FS, "axes.labelsize": LABEL_FS,
-                         "xtick.labelsize": TICK_FS, "ytick.labelsize": TICK_FS})
+    # larger type throughout — the top panel is condensed to afford it
+    BIG_LABEL, BIG_TICK = LABEL_FS + 3, TICK_FS + 3
+    plt.rcParams.update({"axes.titlesize": TITLE_FS + 2, "axes.labelsize": BIG_LABEL,
+                         "xtick.labelsize": BIG_TICK, "ytick.labelsize": BIG_TICK})
     reorg = reorg.copy()
     reorg["churn"] = reorg["churn"].round(6)
     # ALL possible churn levels for k=5 (0/5 … 5/5), shown even when empty so an
@@ -754,8 +756,8 @@ def make_scatter_figure(reorg):
     genos = [g for g in GROUPS if (reorg.genotype == g).any()]
 
     fig, (ax, axp) = plt.subplots(
-        2, 1, figsize=(12, 8), sharex=True,
-        gridspec_kw=dict(height_ratios=[3, 1], hspace=0.08))
+        2, 1, figsize=(12, 8.5), sharex=True,
+        gridspec_kw=dict(height_ratios=[1.3, 1], hspace=0.08))
     step = 1.0                       # x-spacing between churn levels
     grp_w = 0.8                      # total width occupied by the genotype cluster
     vw = grp_w / max(len(genos), 1)  # per-violin / per-bar slot width
@@ -789,22 +791,24 @@ def make_scatter_figure(reorg):
                            edgecolors="none", zorder=3)
                 ax.plot([xpos - vw * 0.4, xpos + vw * 0.4], [v.mean()] * 2,
                         color="k", lw=1.4, zorder=6)
-                # n above the violin, clear of the point cloud
-                ax.text(xpos, max(v.max(), v.mean()) + 0.015, f"{len(v)}",
-                        ha="center", va="bottom", rotation=90,
-                        fontsize=TICK_FS - 1, fontweight="bold", color="k",
-                        zorder=7)
             # ── proportion panel: fraction of THIS genotype at this churn level ──
             # counted over EVERY embryo (churn=0 included), so a 0-height bar means
             # genuinely no embryos at this level, not a dropped null-enrichment row
             n_here = ((reorg.churn == lv) & (reorg.genotype == g)).sum()
-            axp.bar(xpos, n_here / geno_tot[g], width=vw * 0.9, color=COLORS[g],
+            frac = n_here / geno_tot[g]
+            axp.bar(xpos, frac, width=vw * 0.9, color=COLORS[g],
                     alpha=0.85, edgecolor="none")
+            # n above each bar (this is the panel about counts / mass)
+            if n_here:
+                axp.text(xpos, frac + 0.008, f"{n_here}", ha="left", va="bottom",
+                         rotation=45, rotation_mode="anchor",
+                         fontsize=TICK_FS + 1, fontweight="bold",
+                         color="k", zorder=5)
 
     ax.axhline(0, color="#888", lw=1, ls=":")
     ax.set_ylabel("Same-genotype enrichment of the churn\n(observed − null; ↑ toward own genotype)")
     ax.set_title("How much of the raw→margin reorganization is genotype-driven?",
-                 fontsize=TITLE_FS, fontweight="bold", pad=14)
+                 fontsize=TITLE_FS + 2, fontweight="bold", pad=14)
     ax.grid(alpha=0.3, axis="y")
 
     axp.set_xticks([li * step for li in range(len(levels))])
@@ -814,11 +818,12 @@ def make_scatter_figure(reorg):
                    "(1 − raw∩margin overlap; → more reorganized)")
     axp.set_ylabel("Proportion of\ngenotype")
     axp.grid(alpha=0.3, axis="y")
+    axp.margins(y=0.18)   # headroom for the rotated n labels above the bars
 
     from matplotlib.patches import Patch
     handles = [Patch(facecolor=COLORS[g], label=GENO_LABEL[g]) for g in genos]
     handles.append(Line2D([0], [0], color="k", lw=1.2, label="mean"))
-    ax.legend(handles=handles, loc="lower left", fontsize=TICK_FS, ncol=3,
+    ax.legend(handles=handles, loc="lower left", fontsize=TICK_FS + 2, ncol=3,
               frameon=True)
     fig.savefig(FIGURES / "reorg_vs_alignment.png", dpi=130, bbox_inches="tight")
 
