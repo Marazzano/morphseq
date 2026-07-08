@@ -34,10 +34,25 @@ from .bandwidth_tuning import (  # noqa: F401
     propose_bandwidth_candidates,
 )
 from .peak_counting import (  # noqa: F401
+    PeakCandidateDetail,
     PeakCountDetail,
     PeakDetectionResult,
     SUPPORTED_METHODS,
     detect_peaks,
     count_mass_significant_modes,
     peak_count_detail,
+)
+from .resolved_peak_metrics import (  # noqa: F401
+    EmpiricalNullResult,
+    PeakGeometry,
+    RESOLVED_PEAK_METRICS,
+    ResolvedPeak,
+    ResolvedPeakDistribution,
+    ResolvedPeakDistributionSummary,
+    ResolvedPeakMetricDefinition,
+    ResolvedPeakRunContext,
+    resolve_empirical_peak_distribution,
+    resolve_truth_peak_distribution,
+    run_empirical_null_test,
+    summarize_resolved_peak_distribution,
 )

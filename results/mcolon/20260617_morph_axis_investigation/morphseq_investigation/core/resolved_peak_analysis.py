@@ -1,0 +1,402 @@
+"""Orchestration layer wiring points -> KDE -> detector -> resolved-peak geometry.
+
+`resolved_peak_metrics.py` implements the resolved-peak object model and
+scalar-summary primitives but does not itself know how to build a `DensityGrid`
+from raw points or how to route `PeakDetectionResult` construction. This module
+is the single place that translates a fixed analysis configuration into that
+wiring, so KDE/detector-argument plumbing does not get duplicated across every
+runner and null draw.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal, Mapping
+
+import numpy as np
+import pandas as pd
+
+from .density_composition import CanonicalGrid, DensityGrid
+from .peak_counting import detect_peaks
+from .resolved_peak_metrics import (
+    ResolvedPeakDistribution,
+    ResolvedPeakDistributionSummary,
+    ResolvedPeakRunContext,
+    resolve_empirical_peak_distribution,
+    run_empirical_null_test,
+    summarize_resolved_peak_distribution,
+)
+from .support_geometry import evaluate_kde_on_grid
+
+
+@dataclass(frozen=True)
+class ResolvedPeakAnalysisSpec:
+    """Fixed KDE + detector configuration for one resolved-peak analysis pass.
+
+    Deliberately excludes null-test settings (see `EmpiricalNullSpec`) so the
+    same spec can be reused across smoke tests, truth calibration, and future
+    sensitivity runs without dragging bootstrap/permutation concerns along.
+    """
+
+    bandwidth_rule: str
+    bandwidth_multiplier: float
+    peak_detector_method: str
+    assignment_rule: str = "nearest_all_candidates_mask_rejected"
+    min_component_mass_frac: float = 0.10
+    min_sample_fraction: float = 0.05
+    min_prominence_ratio: float = 0.10
+    outlier_density_floor_fraction: float | None = None
+
+
+@dataclass(frozen=True)
+class EmpiricalNullSpec:
+    """Null-test configuration, kept separate from `ResolvedPeakAnalysisSpec`."""
+
+    method: Literal["pooled_label_permutation"]
+    n_draws: int = 500
+    alternative: Literal["two-sided", "greater", "less"] = "two-sided"
+    min_valid_null_fraction: float = 0.80
+
+
+_SUPPORTED_BANDWIDTH_RULES = ("scipy_default",)
+
+
+def _kde_spec_for_bandwidth_rule(analysis_spec: ResolvedPeakAnalysisSpec) -> None:
+    if analysis_spec.bandwidth_rule not in _SUPPORTED_BANDWIDTH_RULES:
+        raise NotImplementedError(
+            f"bandwidth_rule={analysis_spec.bandwidth_rule!r} not yet wired; "
+            f"supported: {_SUPPORTED_BANDWIDTH_RULES}"
+        )
+    if analysis_spec.bandwidth_rule == "scipy_default" and analysis_spec.bandwidth_multiplier != 1.0:
+        raise NotImplementedError(
+            "bandwidth_multiplier != 1.0 is not yet wired for bandwidth_rule='scipy_default'."
+        )
+    # kde=None routes evaluate_kde_on_grid to plain scipy.stats.gaussian_kde.
+    return None
+
+
+def resolve_points_with_analysis_spec(
+    *,
+    distribution_id: str,
+    points: np.ndarray,
+    canonical_grid: CanonicalGrid,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+) -> ResolvedPeakDistribution:
+    """Build a `ResolvedPeakDistribution` from raw points under a fixed analysis spec.
+
+    Centralizes: KDE evaluation, `DensityGrid` construction, `detect_peaks`
+    argument routing, and `resolve_empirical_peak_distribution` construction.
+    """
+    points_array = np.asarray(points, dtype=float)
+    kde = _kde_spec_for_bandwidth_rule(analysis_spec)
+
+    density = evaluate_kde_on_grid(points_array, canonical_grid.xx, canonical_grid.yy, kde=kde)
+    density_grid = DensityGrid(xx=canonical_grid.xx, yy=canonical_grid.yy, density=density, grid=canonical_grid)
+
+    detection_result = detect_peaks(
+        density,
+        method=analysis_spec.peak_detector_method,
+        grid=density_grid,
+        sample_points=points_array,
+        min_component_mass_frac=analysis_spec.min_component_mass_frac,
+        min_sample_fraction=analysis_spec.min_sample_fraction,
+        min_prominence_ratio=analysis_spec.min_prominence_ratio,
+    )
+
+    return resolve_empirical_peak_distribution(
+        distribution_id=distribution_id,
+        density_grid=density_grid,
+        sample_points=points_array,
+        detection_result=detection_result,
+        outlier_density_floor_fraction=analysis_spec.outlier_density_floor_fraction,
+    )
+
+
+def summarize_points_with_analysis_spec(
+    *,
+    distribution_id: str,
+    points: np.ndarray,
+    canonical_grid: CanonicalGrid,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+) -> ResolvedPeakDistributionSummary:
+    """Resolve and immediately summarize, discarding the full resolved object.
+
+    Used by null draws (see `run_resolved_peak_permutation_comparison`), which
+    only need the scalar summary and should not retain per-draw resolved
+    objects in memory.
+    """
+    distribution = resolve_points_with_analysis_spec(
+        distribution_id=distribution_id,
+        points=points,
+        canonical_grid=canonical_grid,
+        analysis_spec=analysis_spec,
+    )
+    return summarize_resolved_peak_distribution(distribution)
+
+
+def resolved_peak_to_rows(distribution: ResolvedPeakDistribution) -> list[dict[str, Any]]:
+    """One row per accepted resolved peak (`resolved_peak_table` schema)."""
+    rows: list[dict[str, Any]] = []
+    for peak in distribution.peaks:
+        geometry = peak.geometry
+        rows.append(
+            {
+                "distribution_id": distribution.distribution_id,
+                "source_type": distribution.source_type,
+                "candidate_peak_id": geometry.peak_id,
+                "center_x": geometry.center_coordinate[0],
+                "center_y": geometry.center_coordinate[1],
+                "total_support_fraction": geometry.total_support_fraction,
+                "radius": geometry.radius,
+                "cv_radius_from_center": geometry.cv_radius_from_center,
+                "within_peak_r80_density": geometry.within_peak_r80_density,
+            }
+        )
+    return rows
+
+
+def resolved_peak_summary_to_row(
+    summary: ResolvedPeakDistributionSummary,
+    *,
+    context: ResolvedPeakRunContext,
+) -> dict[str, Any]:
+    """One row per resolved distribution (`resolved_peak_distribution_summary_table` schema)."""
+    return {
+        "analysis_id": context.analysis_id,
+        "distribution_id": summary.distribution_id,
+        "source_type": summary.source_type,
+        "scenario_id": context.scenario_id,
+        "replicate_id": context.replicate_id,
+        "seed": context.seed,
+        "n": context.n,
+        "bandwidth_rule": context.bandwidth_rule,
+        "bandwidth_multiplier": context.bandwidth_multiplier,
+        "bandwidth_value": context.bandwidth_value,
+        "peak_detector_method": context.peak_detector_method,
+        "canonical_grid_id": context.canonical_grid_id,
+        "assignment_rule": context.assignment_rule,
+        "number_of_peaks": summary.number_of_peaks,
+        "assigned_support_fraction": summary.assigned_support_fraction,
+        "unassigned_support_fraction": summary.unassigned_support_fraction,
+        "across_peak_total_support_fraction_mean": summary.across_peak_total_support_fraction_mean,
+        "across_peak_total_support_fraction_skew": summary.across_peak_total_support_fraction_skew,
+        "across_peak_radius_mean": summary.across_peak_radius_mean,
+        "across_peak_radius_skew": summary.across_peak_radius_skew,
+        "across_peak_cv_radius_from_center_mean": summary.across_peak_cv_radius_from_center_mean,
+        "across_peak_distance_mean": summary.across_peak_distance_mean,
+        "across_peak_r80_density_mean": summary.across_peak_r80_density_mean,
+    }
+
+
+_PRIMARY_NULL_TEST_METRICS = (
+    "number_of_peaks",
+    "assigned_support_fraction",
+    "across_peak_r80_density_mean",
+    "across_peak_radius_mean",
+    "across_peak_cv_radius_from_center_mean",
+    "across_peak_distance_mean",
+)
+
+
+def _metric_value(summary: ResolvedPeakDistributionSummary, metric: str) -> float:
+    return float(getattr(summary, metric))
+
+
+def compute_observed_delta(
+    *,
+    reference_points: np.ndarray,
+    target_points: np.ndarray,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+    canonical_grid: CanonicalGrid,
+    metrics: tuple[str, ...] = _PRIMARY_NULL_TEST_METRICS,
+) -> tuple[dict[str, float], ResolvedPeakDistributionSummary, ResolvedPeakDistributionSummary]:
+    """Observed reference/target summaries and per-metric observed_delta.
+
+    Factored out of `run_resolved_peak_permutation_comparison` so the array-job
+    path (`run_resolved_peak_permutation_draws`, one process per task) and the
+    serial path compute the observed statistic identically instead of via
+    copy-pasted logic.
+    """
+    reference_points = np.asarray(reference_points, dtype=float)
+    target_points = np.asarray(target_points, dtype=float)
+
+    reference_summary = summarize_points_with_analysis_spec(
+        distribution_id="observed_reference", points=reference_points,
+        canonical_grid=canonical_grid, analysis_spec=analysis_spec,
+    )
+    target_summary = summarize_points_with_analysis_spec(
+        distribution_id="observed_target", points=target_points,
+        canonical_grid=canonical_grid, analysis_spec=analysis_spec,
+    )
+
+    observed_delta = {
+        metric: _metric_value(target_summary, metric) - _metric_value(reference_summary, metric)
+        for metric in metrics
+    }
+    return observed_delta, reference_summary, target_summary
+
+
+def run_resolved_peak_permutation_draws(
+    *,
+    reference_points: np.ndarray,
+    target_points: np.ndarray,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+    canonical_grid: CanonicalGrid,
+    n_draws: int,
+    rng: np.random.Generator,
+    metrics: tuple[str, ...] = _PRIMARY_NULL_TEST_METRICS,
+) -> dict[str, np.ndarray]:
+    """Run `n_draws` pooled-label permutation draws and return raw null_delta arrays.
+
+    This is the parallelizable unit of `run_resolved_peak_permutation_comparison`:
+    it has no dependency on the observed statistic, so independent processes
+    (e.g. SGE array tasks, each with its own `rng` and its own slice of
+    `n_draws`) can call it and have their `null_delta` arrays concatenated
+    before the final `run_empirical_null_test` reduction. Reduction is
+    intentionally excluded here -- it must run once, after all slices are
+    pooled, not per-slice.
+    """
+    reference_points = np.asarray(reference_points, dtype=float)
+    target_points = np.asarray(target_points, dtype=float)
+    n_reference = len(reference_points)
+    n_target = len(target_points)
+
+    pooled = np.concatenate([reference_points, target_points], axis=0)
+    null_deltas: dict[str, list[float]] = {metric: [] for metric in metrics}
+
+    for draw_id in range(n_draws):
+        permutation = rng.permutation(len(pooled))
+        null_reference_points = pooled[permutation[:n_reference]]
+        null_target_points = pooled[permutation[n_reference:n_reference + n_target]]
+
+        null_reference_summary = summarize_points_with_analysis_spec(
+            distribution_id=f"null_reference_{draw_id}", points=null_reference_points,
+            canonical_grid=canonical_grid, analysis_spec=analysis_spec,
+        )
+        null_target_summary = summarize_points_with_analysis_spec(
+            distribution_id=f"null_target_{draw_id}", points=null_target_points,
+            canonical_grid=canonical_grid, analysis_spec=analysis_spec,
+        )
+
+        for metric in metrics:
+            null_deltas[metric].append(
+                _metric_value(null_target_summary, metric) - _metric_value(null_reference_summary, metric)
+            )
+
+    return {metric: np.asarray(values, dtype=float) for metric, values in null_deltas.items()}
+
+
+def reduce_permutation_null_test(
+    *,
+    observed_delta: dict[str, float],
+    reference_summary: ResolvedPeakDistributionSummary,
+    target_summary: ResolvedPeakDistributionSummary,
+    null_deltas: dict[str, np.ndarray],
+    analysis_spec: ResolvedPeakAnalysisSpec,
+    null_spec: EmpiricalNullSpec,
+    context: ResolvedPeakRunContext,
+    metrics: tuple[str, ...] = _PRIMARY_NULL_TEST_METRICS,
+) -> pd.DataFrame:
+    """Reduce pooled null_delta arrays (all draws, from one or many sources) into
+    the `resolved_peak_null_test_table` schema. Shared by the serial and
+    array-job paths so the final reduction logic exists in exactly one place.
+    """
+    rows: list[dict[str, Any]] = []
+    for metric in metrics:
+        null_result = run_empirical_null_test(
+            observed_value=observed_delta[metric],
+            null_values=np.asarray(null_deltas[metric], dtype=float),
+            alternative=null_spec.alternative,
+            min_valid_null_fraction=null_spec.min_valid_null_fraction,
+        )
+        rows.append(
+            {
+                "analysis_id": context.analysis_id,
+                "comparison_id": f"{reference_summary.distribution_id}_vs_{target_summary.distribution_id}",
+                "reference_group_id": "reference",
+                "target_group_id": "target",
+                "metric_name": metric,
+                "observed_reference_value": _metric_value(reference_summary, metric),
+                "observed_target_value": _metric_value(target_summary, metric),
+                "observed_difference": null_result.observed_value,
+                "null_mean": null_result.null_mean,
+                "null_std": null_result.null_std,
+                "null_median": null_result.null_median,
+                "null_q025": null_result.null_q025,
+                "null_q975": null_result.null_q975,
+                "empirical_p_value": null_result.empirical_p_value,
+                "standardized_effect": null_result.standardized_effect,
+                "n_null": null_result.n_null,
+                "n_valid_null": null_result.n_valid_null,
+                "valid_null_fraction": null_result.valid_null_fraction,
+                "test_is_valid": null_result.test_is_valid,
+                "alternative": null_spec.alternative,
+                "null_generation_method": "pooled_label_permutation",
+                "bandwidth_rule": analysis_spec.bandwidth_rule,
+                "bandwidth_multiplier": analysis_spec.bandwidth_multiplier,
+                "peak_detector_method": analysis_spec.peak_detector_method,
+                "n": context.n,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def run_resolved_peak_permutation_comparison(
+    *,
+    reference_points: np.ndarray,
+    target_points: np.ndarray,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+    null_spec: EmpiricalNullSpec,
+    context: ResolvedPeakRunContext,
+    rng: np.random.Generator,
+    canonical_grid: CanonicalGrid,
+    metrics: tuple[str, ...] = _PRIMARY_NULL_TEST_METRICS,
+) -> pd.DataFrame:
+    """Pooled-label permutation null test for reference vs. target resolved-peak metrics.
+
+    Null construction (two-group, statistic-preserving): pool reference and
+    target points, permute labels while preserving original group sizes,
+    resolve+summarize both null groups independently under the fixed
+    `analysis_spec`, and compute `null_delta = null_target_metric -
+    null_reference_metric` per draw. This must match the shape of the observed
+    statistic (`observed_delta = target_metric - reference_metric`) -- a
+    single-group null value is not comparable to a two-group observed
+    difference.
+
+    Serial reference implementation. For large `null_spec.n_draws`, see
+    `run_resolved_peak_permutation_draws` (parallelizable draw generation) and
+    `reduce_permutation_null_test` (shared final reduction), which this
+    function is a thin wrapper around.
+    """
+    if null_spec.method != "pooled_label_permutation":
+        raise NotImplementedError(f"null_spec.method={null_spec.method!r} not yet wired")
+
+    observed_delta, reference_summary, target_summary = compute_observed_delta(
+        reference_points=reference_points, target_points=target_points,
+        analysis_spec=analysis_spec, canonical_grid=canonical_grid, metrics=metrics,
+    )
+    null_deltas = run_resolved_peak_permutation_draws(
+        reference_points=reference_points, target_points=target_points,
+        analysis_spec=analysis_spec, canonical_grid=canonical_grid,
+        n_draws=null_spec.n_draws, rng=rng, metrics=metrics,
+    )
+    return reduce_permutation_null_test(
+        observed_delta=observed_delta, reference_summary=reference_summary,
+        target_summary=target_summary, null_deltas=null_deltas,
+        analysis_spec=analysis_spec, null_spec=null_spec, context=context, metrics=metrics,
+    )
+
+
+__all__ = [
+    "EmpiricalNullSpec",
+    "ResolvedPeakAnalysisSpec",
+    "compute_observed_delta",
+    "reduce_permutation_null_test",
+    "resolve_points_with_analysis_spec",
+    "resolved_peak_summary_to_row",
+    "resolved_peak_to_rows",
+    "run_resolved_peak_permutation_comparison",
+    "run_resolved_peak_permutation_draws",
+    "summarize_points_with_analysis_spec",
+]

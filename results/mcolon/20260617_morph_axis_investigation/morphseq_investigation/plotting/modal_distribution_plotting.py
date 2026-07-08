@@ -776,6 +776,49 @@ def plot_v0_distribution_qc_grid(
     return out_path
 
 
+def plot_resolved_peak_overlay(ax, distribution, summary, *, title: str | None = None) -> None:
+    """Overlay resolved-peak geometry on the KDE field for visual QC.
+
+    Draws the KDE field, sample points colored by `sample_peak_ids` (accepted
+    peak id vs. -1 for unassigned/outlier), and each resolved peak's center
+    with its `radius` (R80) as a circle, annotated with `within_peak_r80_density`,
+    `total_support_fraction`, and `cv_radius_from_center`.
+    """
+    plot_kde_field(ax, distribution.density_grid)
+
+    if distribution.sample_points is not None:
+        plot_raw_points(ax, distribution.sample_points, labels=distribution.sample_peak_ids)
+
+    for peak in distribution.peaks:
+        geometry = peak.geometry
+        cx, cy = geometry.center_coordinate
+        ax.plot(cx, cy, marker="x", color="black", markersize=8, markeredgewidth=1.6, zorder=5)
+        if np.isfinite(geometry.radius) and geometry.radius > 0:
+            circle = plt.Circle(
+                (cx, cy), geometry.radius, fill=False, edgecolor="black", linewidth=1.2,
+                linestyle="--", zorder=5,
+            )
+            ax.add_patch(circle)
+        label = (
+            f"peak {geometry.peak_id}\n"
+            f"support={geometry.total_support_fraction:.2f}\n"
+            f"r80_density={geometry.within_peak_r80_density:.3f}\n"
+            f"cv={geometry.cv_radius_from_center:.2f}"
+        )
+        ax.annotate(
+            label, (cx, cy), textcoords="offset points", xytext=(6, 6),
+            fontsize=6.5, color="#222",
+        )
+
+    header = title if title is not None else distribution.distribution_id
+    subtitle = (
+        f"n_peaks={summary.number_of_peaks} "
+        f"assigned={summary.assigned_support_fraction:.2f}"
+    )
+    ax.set_title(f"{header}\n{subtitle}", fontsize=8.5)
+    ax.set_aspect("equal")
+
+
 # Tech debt:
 # - When auto_scale=False, add an explicit shared density peak reference so
 #   cross-panel height comparisons use the same contour levels.
