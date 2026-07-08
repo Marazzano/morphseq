@@ -44,6 +44,7 @@ import pandas as pd
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 GENE14_DIR = PROJECT_ROOT / "results/mcolon/20260607_sci_cilia_gene14_imaging_qc"
@@ -59,14 +60,12 @@ from support_geometry import (  # noqa: E402
 )
 from morphseq_investigation.core.density_composition import CanonicalGrid  # noqa: E402
 from morphseq_investigation.core.distribution_records import (  # noqa: E402
+    DistributionAnalysisContext,
     DistributionComparison,
     DistributionRecord,
-    add_density,
-    add_observed_metrics,
-    add_peak_detection,
-    add_peak_membership,
-    add_resolved_peak_distribution,
-    add_resolved_peak_summary,
+    compute_observed_metrics,
+    compute_peak_stats,
+    compute_resolved_peaks,
 )
 from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
     ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec,
@@ -157,7 +156,11 @@ def _resampled_mode_count(points, canonical_grid, analysis_spec, *, n_draws, sam
     counts = []
     for _ in range(n_draws):
         sample = points[rng.choice(n, size=sample_n, replace=False)]
-        counts.append(_resolved_peaks(sample, canonical_grid, analysis_spec).number_of_peaks)
+        resolved = resolve_points_with_analysis_spec(
+            distribution_id="fig", points=sample, canonical_grid=canonical_grid,
+            analysis_spec=analysis_spec,
+        )
+        counts.append(resolved.number_of_peaks)
     values, freqs = np.unique(np.asarray(counts, dtype=int), return_counts=True)
     best_i = int(np.argmax(freqs))
     best_count = int(values[best_i])
@@ -204,47 +207,24 @@ def load_bins(cfg):
                     wt[[X_FEAT, Y_FEAT]].values.astype(float))
     return out
 
-def _resolved_peaks(points, canonical_grid, analysis_spec):
-    """Resolve peaks for a point set on a shared CanonicalGrid; return the
-    ResolvedPeakDistribution (whose .peaks carry center + R80 radius)."""
-    return resolve_points_with_analysis_spec(
-        distribution_id="fig", points=points, canonical_grid=canonical_grid,
-        analysis_spec=analysis_spec,
-    )
-
-
-def _build_distribution_record(distribution_id, points, canonical_grid, analysis_spec, *, kde):
+def _build_distribution_record(distribution_id, points, canonical_grid, analysis_spec):
+    """Build + resolve a typed DistributionRecord in one call: points -> the
+    ONE resolve engine (resolve_points_with_analysis_spec, reached via
+    compute_resolved_peaks) -> scalar peak_stats. Density is derived from
+    `analysis_spec` alone inside the engine -- no separate `kde=` parameter
+    (Stage 0: ResolvedPeakAnalysisSpec is the sole bandwidth authority)."""
     record = DistributionRecord(
         distribution_id=distribution_id,
         points=np.asarray(points, dtype=float),
-        canonical_grid=canonical_grid,
+        analysis_context=DistributionAnalysisContext(grid=canonical_grid, spec=analysis_spec),
         metadata={
             "bandwidth_rule": analysis_spec.bandwidth_rule,
             "bandwidth_multiplier": analysis_spec.bandwidth_multiplier,
             "peak_detector_method": analysis_spec.peak_detector_method,
         },
     )
-    record = add_density(record, name="primary", kde=kde)
-    record = add_peak_detection(
-        record,
-        name="primary",
-        density_name="primary",
-        method=analysis_spec.peak_detector_method,
-        min_component_mass_frac=analysis_spec.min_component_mass_frac,
-        min_sample_fraction=analysis_spec.min_sample_fraction,
-        min_prominence_ratio=analysis_spec.min_prominence_ratio,
-        outlier_density_floor_fraction=analysis_spec.outlier_density_floor_fraction,
-    )
-    record = add_peak_membership(record, name="primary", detection_name="primary")
-    record = add_resolved_peak_distribution(
-        record,
-        name="primary",
-        density_name="primary",
-        detection_name="primary",
-        membership_name="primary",
-        outlier_density_floor_fraction=analysis_spec.outlier_density_floor_fraction,
-    )
-    record = add_resolved_peak_summary(record, name="primary", resolved_name="primary")
+    record = compute_resolved_peaks(record)
+    record = compute_peak_stats(record)
     return record
 
 
@@ -339,21 +319,21 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         canonical_grid = derive_shared_grid(grp, wt, grid=GRID, kde=kde)
         box = (canonical_grid.x_min, canonical_grid.x_max, canonical_grid.y_min, canonical_grid.y_max)
         grp_record = _build_distribution_record(
-            f"{gene}_{hpf}_target", grp, canonical_grid, analysis_spec, kde=kde
+            f"{gene}_{hpf}_target", grp, canonical_grid, analysis_spec
         )
         wt_record = _build_distribution_record(
-            f"{gene}_{hpf}_reference", wt, canonical_grid, analysis_spec, kde=kde
+            f"{gene}_{hpf}_reference", wt, canonical_grid, analysis_spec
         )
         comparison = DistributionComparison(
             comparison_id=f"{gene}_{hpf}_comparison",
             members={"reference": wt_record, "target": grp_record},
             metadata={"stage_hpf": hpf, "gene": gene},
         )
-        comparison = add_observed_metrics(comparison, name="primary")
-        grp_dist = grp_record.resolved_peak_distributions["primary"]
-        wt_dist = wt_record.resolved_peak_distributions["primary"]
-        grp_density = grp_record.densities["primary"]
-        wt_density = wt_record.densities["primary"]
+        comparison = compute_observed_metrics(comparison, name="primary")
+        grp_dist = grp_record.resolved_peaks
+        wt_dist = wt_record.resolved_peaks
+        grp_density = grp_record.resolved_peaks.density_grid
+        wt_density = wt_record.resolved_peaks.density_grid
         gx, gy, gd = grp_density.xx, grp_density.yy, grp_density.density
 
         # Downsample each distribution independently. Row 1 and row 4 only claim
@@ -393,8 +373,6 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
             target_points=grp, wt_points=wt, canonical_grid=canonical_grid,
             n_draws=N_READOUT_DRAWS, seed=42, stage_id=f"{hpf}hpf", gene=gene,
             analysis_spec=analysis_spec)
-        observed_metrics = comparison.observed_metrics["primary"]
-        _ = observed_metrics  # retained for parity with the new typed comparison path
 
         # ── ROW 1: TARGET KDE + points + supported modes + count ─────────────
         ax = axes[0][col]

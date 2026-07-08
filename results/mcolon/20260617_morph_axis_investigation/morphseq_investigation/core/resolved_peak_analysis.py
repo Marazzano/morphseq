@@ -16,6 +16,7 @@ from typing import Any, Literal, Mapping
 import numpy as np
 import pandas as pd
 
+from ._resample_adapters import run_permutation_draws
 from .bandwidth_tuning import (
     bandwidth_geometry_scales,
     evaluate_isotropic_gaussian_kde_from_dist2,
@@ -310,35 +311,42 @@ def run_resolved_peak_permutation_draws(
     before the final `run_empirical_null_test` reduction. Reduction is
     intentionally excluded here -- it must run once, after all slices are
     pooled, not per-slice.
+
+    Internally this now delegates draw generation to
+    `analyze.utils.resampling` (via `core._resample_adapters`) instead of a
+    hand-rolled permutation loop -- COMPOSE_single_path_plan Sec 1.11 /
+    Stage 1. The external signature (an already-seeded `rng`, not an int
+    `seed`) is preserved exactly so the SGE array-task caller does not need
+    to change: a fixed-width integer seed is deterministically derived from
+    `rng` so this function stays a pure function of its caller-supplied RNG
+    stream, not of wall-clock or process state. Per the resampling package's
+    documented SeedSequence clean break (see its README), the exact null
+    values drawn here shift relative to the old hand-rolled loop for the same
+    `rng` -- this is the expected, documented re-baseline, not a bug.
     """
     reference_points = np.asarray(reference_points, dtype=float)
     target_points = np.asarray(target_points, dtype=float)
-    n_reference = len(reference_points)
-    n_target = len(target_points)
 
-    pooled = np.concatenate([reference_points, target_points], axis=0)
-    null_deltas: dict[str, list[float]] = {metric: [] for metric in metrics}
+    if n_draws <= 0:
+        return {metric: np.asarray([], dtype=float) for metric in metrics}
 
-    for draw_id in range(n_draws):
-        permutation = rng.permutation(len(pooled))
-        null_reference_points = pooled[permutation[:n_reference]]
-        null_target_points = pooled[permutation[n_reference:n_reference + n_target]]
+    derived_seed = int(rng.integers(0, 2**32 - 1))
 
-        null_reference_summary = summarize_points_with_analysis_spec(
-            distribution_id=f"null_reference_{draw_id}", points=null_reference_points,
+    def _resolve_and_summarize(points: np.ndarray) -> dict[str, float]:
+        summary = summarize_points_with_analysis_spec(
+            distribution_id="null_draw", points=points,
             canonical_grid=canonical_grid, analysis_spec=analysis_spec,
         )
-        null_target_summary = summarize_points_with_analysis_spec(
-            distribution_id=f"null_target_{draw_id}", points=null_target_points,
-            canonical_grid=canonical_grid, analysis_spec=analysis_spec,
-        )
+        return {metric: _metric_value(summary, metric) for metric in metrics}
 
-        for metric in metrics:
-            null_deltas[metric].append(
-                _metric_value(null_target_summary, metric) - _metric_value(null_reference_summary, metric)
-            )
-
-    return {metric: np.asarray(values, dtype=float) for metric, values in null_deltas.items()}
+    return run_permutation_draws(
+        reference_points=reference_points,
+        target_points=target_points,
+        metrics=metrics,
+        resolve_and_summarize=_resolve_and_summarize,
+        n_draws=n_draws,
+        seed=derived_seed,
+    )
 
 
 def reduce_permutation_null_test(

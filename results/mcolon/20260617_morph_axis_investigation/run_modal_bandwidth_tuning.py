@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 RUN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 from morphseq_investigation.core.bandwidth_tuning import (  # noqa: E402

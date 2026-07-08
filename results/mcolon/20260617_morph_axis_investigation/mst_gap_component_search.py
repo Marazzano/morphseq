@@ -23,6 +23,7 @@ from scipy.sparse.csgraph import connected_components, minimum_spanning_tree
 from scipy.spatial.distance import pdist, squareform
 
 RUN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 from support_geometry import normalize_shape  # noqa: E402

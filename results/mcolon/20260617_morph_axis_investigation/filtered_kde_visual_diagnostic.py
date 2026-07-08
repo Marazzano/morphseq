@@ -28,6 +28,7 @@ from scipy.sparse.csgraph import connected_components
 from scipy.spatial.distance import pdist, squareform
 
 RUN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 from support_geometry import DEFAULT_HDR_MASS_LEVELS, _kde_grid, knn_adaptive_kde_spec, normalize_shape, scipy_gaussian_kde_spec  # noqa: E402

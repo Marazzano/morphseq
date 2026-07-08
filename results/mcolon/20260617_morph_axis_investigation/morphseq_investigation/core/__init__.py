@@ -38,6 +38,8 @@ from .peak_counting import (  # noqa: F401
     PeakCountDetail,
     PeakDetectionResult,
     SUPPORTED_METHODS,
+    assign_cells_to_peaks,
+    assign_points_to_peaks,
     detect_peaks,
     count_mass_significant_modes,
     peak_count_detail,
@@ -57,14 +59,11 @@ from .resolved_peak_metrics import (  # noqa: F401
     summarize_resolved_peak_distribution,
 )
 from .distribution_records import (  # noqa: F401
-    DensityField,
+    DistributionAnalysisContext,
     DistributionComparison,
     DistributionRecord,
-    EmpiricalPeakMembership,
-    add_density,
-    add_observed_metrics,
-    add_peak_detection,
-    add_peak_membership,
-    add_resolved_peak_distribution,
-    add_resolved_peak_summary,
+    compute_observed_metrics,
+    compute_peak_stats,
+    compute_resolved_peaks,
 )
+from .peak_acceptance import PeakAcceptancePolicy  # noqa: F401

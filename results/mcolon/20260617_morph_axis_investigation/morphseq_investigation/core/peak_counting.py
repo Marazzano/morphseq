@@ -15,6 +15,8 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import label as ndi_label
 from scipy.ndimage import maximum_filter
 
+from .peak_acceptance import PeakAcceptancePolicy
+
 if TYPE_CHECKING:
     from .density_composition import DensityGrid
 
@@ -237,10 +239,15 @@ def _approx_saddle_height(dens: np.ndarray, p0: tuple[float, float], p1: tuple[f
     return float(np.min(values))
 
 
-def _assign_cells_to_peaks(
+def assign_cells_to_peaks(
     grid: "DensityGrid",
     peak_locations: tuple[tuple[float, float], ...],
 ) -> np.ndarray:
+    """Public seeded-N carving primitive: label every grid cell with the index
+    (1-based; 0 = none) of its nearest peak location. Behavior-identical to
+    the former `_assign_cells_to_peaks`; exposed without the leading
+    underscore per COMPOSE_single_path_plan Part 4 (a `PeakSeedSet` -> carve
+    is a thin wrapper over this, not new machinery)."""
     xx = np.asarray(grid.xx, dtype=float)
     yy = np.asarray(grid.yy, dtype=float)
     coords = np.stack([xx, yy], axis=-1)
@@ -253,16 +260,24 @@ def _assign_cells_to_peaks(
     return labels
 
 
-def _assign_points_to_peaks(
+def assign_points_to_peaks(
     points: np.ndarray,
     peak_locations: tuple[tuple[float, float], ...],
 ) -> np.ndarray:
+    """Public seeded-N carving primitive: assign every sample point the index
+    (1-based) of its nearest peak location. Behavior-identical to the former
+    `_assign_points_to_peaks`; exposed without the leading underscore."""
     pts = np.asarray(points, dtype=float)
     if pts.size == 0 or not peak_locations:
         return np.zeros(len(pts), dtype=int)
     peak_xy = np.asarray(peak_locations, dtype=float)
     d2 = np.sum((pts[:, None, :] - peak_xy[None, :, :]) ** 2, axis=-1)
     return np.argmin(d2, axis=-1) + 1
+
+
+# Backwards-compatible aliases for existing internal call sites in this module.
+_assign_cells_to_peaks = assign_cells_to_peaks
+_assign_points_to_peaks = assign_points_to_peaks
 
 
 def _format_reject_reasons(reasons: list[str]) -> tuple[str, ...]:
@@ -762,9 +777,14 @@ def _detect_kde_peak_basins_sample_support(
     else:
         saddle_heights = [float("nan") for _ in peak_locations_tuple]
 
-    accepted_mask: list[bool] = []
-    reject_reasons: list[str] = []
-    candidate_details: list[PeakCandidateDetail] = []
+    acceptance_policy = PeakAcceptancePolicy(
+        min_sample_fraction=min_sample_fraction,
+        min_prominence_ratio=min_prominence_ratio,
+        min_component_mass_fraction=min_component_mass_frac,
+    )
+    peak_heights_finite: list[float] = []
+    prominences: list[float | None] = []
+    basin_fractions: list[float] = []
     for idx, peak_loc in enumerate(peak_locations_tuple):
         peak_height = float(peak_heights_tuple[idx]) if idx < len(peak_heights_tuple) else float("nan")
         saddle_height = saddle_heights[idx] if idx < len(saddle_heights) else float("nan")
@@ -772,18 +792,26 @@ def _detect_kde_peak_basins_sample_support(
         if np.isfinite(saddle_height) and peak_height > 0:
             prominence = float(max(0.0, 1.0 - (saddle_height / peak_height)))
         basin_fraction = float(sample_fractions[idx]) if idx < len(sample_fractions) else 0.0
-        accepted = True
-        reasons: list[str] = []
-        if len(peak_locations_tuple) > 1:
-            if basin_fraction < float(min_sample_fraction):
-                accepted = False
-                reasons.append(f"sample_fraction_below_{min_sample_fraction:.3f}")
-            if prominence is not None and prominence < float(min_prominence_ratio):
-                accepted = False
-                reasons.append(f"prominence_below_{min_prominence_ratio:.3f}")
+        peak_heights_finite.append(peak_height)
+        prominences.append(prominence)
+        basin_fractions.append(basin_fraction)
+
+    accepted_mask, reasons_by_candidate = acceptance_policy.filter_detection_candidates(
+        n_candidates=len(peak_locations_tuple),
+        basin_fractions=basin_fractions,
+        prominences=prominences,
+    )
+    reject_reasons: list[str] = []
+    candidate_details: list[PeakCandidateDetail] = []
+    for idx, peak_loc in enumerate(peak_locations_tuple):
+        peak_height = peak_heights_finite[idx]
+        saddle_height = saddle_heights[idx] if idx < len(saddle_heights) else float("nan")
+        prominence = prominences[idx]
+        basin_fraction = basin_fractions[idx]
+        accepted = accepted_mask[idx]
+        reasons = reasons_by_candidate[idx]
         if not accepted:
             reject_reasons.extend(reasons or ["rejected"])
-        accepted_mask.append(accepted)
         candidate_details.append(
             PeakCandidateDetail(
                 candidate_peak_id=idx + 1,

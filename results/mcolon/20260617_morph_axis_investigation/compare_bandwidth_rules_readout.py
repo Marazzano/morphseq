@@ -27,8 +27,9 @@ import numpy as np
 import pandas as pd
 
 RUN_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(RUN_DIR))
 PROJECT_ROOT = RUN_DIR.parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(RUN_DIR))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from valley_visualization import GENES, load_bins, TARGET_DESIGN_HPF, GRID  # noqa: E402

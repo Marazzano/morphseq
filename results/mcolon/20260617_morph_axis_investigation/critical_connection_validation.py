@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 RUN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 from support_geometry import (  # noqa: E402

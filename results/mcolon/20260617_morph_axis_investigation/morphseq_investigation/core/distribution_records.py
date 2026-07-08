@@ -1,16 +1,35 @@
-"""Distribution record/comparison containers for resolved-peak analyses.
+"""Distribution record/comparison containers -- Stage 1 of
+COMPOSE_single_path_plan.md (see that doc for the full ontology).
 
-This module provides the lean V0 object model described in
-`Disturbion_Peak_broad_refactor.md`:
+Greenfield rewrite (plan Sec 5.5 decision 1): the prior `add_*`-verb scaffold
+here was never wired into the live pipeline (`valley_visualization.py` used
+`resolved_peak_analysis.resolve_points_with_analysis_spec` directly). This
+module now implements the plan's `compute_*` verb set, Stage-1 scoped:
 
-- a persistent empirical distribution record,
-- typed density / detector / membership / resolved-peak slots,
-- a lightweight comparison container, and
-- pure `add_*` enrichment helpers.
+- `derive_shared_grid`      -> CanonicalGrid                    (plan Part 2 (1))
+- `DistributionRecord`      persistent subject: points + analysis_context
+                            + resolved_peaks | None + peak_stats | None
+- `compute_resolved_peaks`  -> record.resolved_peaks   (delegates to the ONE
+                               engine: `resolved_peak_analysis.
+                               resolve_points_with_analysis_spec`; no math
+                               reimplemented here)
+- `compute_peak_stats`      -> record.peak_stats        (delegates to
+                               `summarize_resolved_peak_distribution`)
+- `DistributionComparison`  persistent contrast (reference/target roles)
+- `compute_observed_metrics` -> comparison.observed_metrics (one registry:
+                               RESOLVED_PEAK_METRICS)
 
-The implementation stays close to the current resolved-peak stack. It does not
-replace the existing KDE / detector / summary code; it just makes the derived
-products explicit and owned by the distribution they describe.
+Density is specified ONCE: `DistributionAnalysisContext.spec`
+(`ResolvedPeakAnalysisSpec`) is the sole bandwidth authority. There is no
+parallel `kde=` parameter anywhere in this module -- `compute_resolved_peaks`
+derives density from the spec alone, inside
+`resolve_points_with_analysis_spec` (Stage 0).
+
+Deliberately NOT built here (Stage 2+ per plan Part 4): PeakResolutionConfig
+strategy/retention axes, the bootstrap vote, PeakSeedSet, mass-splitting,
+PeakStabilityGraph, is_reliable / resolved_peak_count-may-be-None failure
+semantics. `compute_resolved_peaks` today is a single full-data resolve
+(MODE_VOTE_FULL_DATA's Stage-1 stand-in), same math the figure already uses.
 """
 
 from __future__ import annotations
@@ -23,15 +42,13 @@ import numpy as np
 import pandas as pd
 
 from .density_composition import CanonicalGrid
-from .peak_counting import PeakDetectionResult, detect_peaks
+from .resolved_peak_analysis import ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec
 from .resolved_peak_metrics import (
     RESOLVED_PEAK_METRICS,
     ResolvedPeakDistribution,
     ResolvedPeakDistributionSummary,
     summarize_resolved_peak_distribution,
-    resolve_empirical_peak_distribution,
 )
-from .support_geometry import evaluate_kde_on_grid
 
 
 def _readonly_array(values: np.ndarray | list[Any] | tuple[Any, ...], *, dtype: Any | None = None) -> np.ndarray:
@@ -42,11 +59,6 @@ def _readonly_array(values: np.ndarray | list[Any] | tuple[Any, ...], *, dtype: 
 
 def _readonly_mapping(values: Mapping[str, Any]) -> Mapping[str, Any]:
     return MappingProxyType(dict(values))
-
-
-def _assert_product_name_available(existing: Mapping[str, Any], name: str, *, replace_ok: bool) -> None:
-    if name in existing and not replace_ok:
-        raise KeyError(f"Product {name!r} already exists; pass replace=True to overwrite it.")
 
 
 def _grid_signature(grid: CanonicalGrid) -> tuple[float, float, float, float, int]:
@@ -64,78 +76,72 @@ def _assert_grid_compatibility(left: CanonicalGrid, right: CanonicalGrid) -> Non
         raise ValueError("DistributionComparison members must share an identical canonical grid.")
 
 
-def _assign_to_centers(points: np.ndarray, centers: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, dtype=float)
-    centers = np.asarray(centers, dtype=float)
-    if len(points) == 0:
-        return np.asarray([], dtype=int)
-    if len(centers) == 0:
-        return np.full(len(points), -1, dtype=int)
-    distances_sq = np.empty((len(points), len(centers)), dtype=float)
-    for center_idx in range(len(centers)):
-        diff = points - centers[center_idx]
-        distances_sq[:, center_idx] = np.einsum("ij,ij->i", diff, diff)
-    return np.argmin(distances_sq, axis=1).astype(int)
+def derive_shared_grid(
+    reference_points: np.ndarray,
+    target_points: np.ndarray,
+    *,
+    x_min: float | None = None,
+    x_max: float | None = None,
+    y_min: float | None = None,
+    y_max: float | None = None,
+    grid_size: int = 61,
+    margin: float = 0.1,
+) -> CanonicalGrid:
+    """Derive ONE `CanonicalGrid` shared by a reference/target pair (plan
+    Part 2 step (1)). Pure coordinate frame -- owns no points, no density.
+
+    If explicit bounds are not given, they are the union bounding box of both
+    point sets, padded by `margin` (fraction of the box's span per axis).
+    This is a Stage-1-scoped convenience for building typed
+    `DistributionRecord`s outside the figure pipeline (which derives its grid
+    via `plotting.modal_distribution_plotting.derive_shared_grid`'s
+    support-fraction box instead -- both produce a `CanonicalGrid`, only the
+    bound-selection policy differs, and that policy is not part of the
+    Stage 0/1 density-authority collapse).
+    """
+    reference_points = np.asarray(reference_points, dtype=float)
+    target_points = np.asarray(target_points, dtype=float)
+    pooled = np.concatenate([reference_points, target_points], axis=0)
+
+    if x_min is None or x_max is None:
+        lo, hi = float(np.min(pooled[:, 0])), float(np.max(pooled[:, 0]))
+        pad = (hi - lo) * float(margin) if hi > lo else 1.0
+        x_min = lo - pad if x_min is None else x_min
+        x_max = hi + pad if x_max is None else x_max
+    if y_min is None or y_max is None:
+        lo, hi = float(np.min(pooled[:, 1])), float(np.max(pooled[:, 1]))
+        pad = (hi - lo) * float(margin) if hi > lo else 1.0
+        y_min = lo - pad if y_min is None else y_min
+        y_max = hi + pad if y_max is None else y_max
+
+    return CanonicalGrid(
+        x_min=float(x_min), x_max=float(x_max),
+        y_min=float(y_min), y_max=float(y_max),
+        grid_size=int(grid_size),
+    )
 
 
 @dataclass(frozen=True)
-class DensityField:
-    """Density values evaluated on a canonical grid."""
+class DistributionAnalysisContext:
+    """Grid + spec, bundled so both comparison members are guaranteed to
+    share ONE frame and ONE bandwidth authority (plan "Target API" section):
+    prevents a grid built with spec A being resolved with spec B."""
 
     grid: CanonicalGrid
-    values: np.ndarray
-    source_distribution_id: str
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        values = _readonly_array(self.values, dtype=float)
-        if values.shape != self.grid.xx.shape:
-            raise ValueError("DensityField.values shape does not match grid.")
-        object.__setattr__(self, "values", values)
-        object.__setattr__(self, "metadata", _readonly_mapping(self.metadata))
-
-    @property
-    def xx(self) -> np.ndarray:
-        return self.grid.xx
-
-    @property
-    def yy(self) -> np.ndarray:
-        return self.grid.yy
-
-    @property
-    def density(self) -> np.ndarray:
-        return self.values
-
-    @property
-    def cell_area(self) -> float:
-        return float(self.grid.cell_area)
-
-
-@dataclass(frozen=True)
-class EmpiricalPeakMembership:
-    distribution_id: str
-    sample_peak_ids: np.ndarray
-    assignment_rule: str
-    candidate_peak_ids: tuple[int, ...]
-    provenance: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        sample_peak_ids = _readonly_array(self.sample_peak_ids, dtype=int)
-        object.__setattr__(self, "sample_peak_ids", sample_peak_ids)
-        object.__setattr__(self, "candidate_peak_ids", tuple(int(value) for value in self.candidate_peak_ids))
-        object.__setattr__(self, "provenance", _readonly_mapping(self.provenance))
+    spec: ResolvedPeakAnalysisSpec
 
 
 @dataclass(frozen=True)
 class DistributionRecord:
+    """Persistent subject. `points` is the raw empirical support; everything
+    else is an enrichment computed FROM points + analysis_context by a
+    `compute_*` verb and stored back onto the record (plan Part 2)."""
+
     distribution_id: str
     points: np.ndarray
-    canonical_grid: CanonicalGrid
-    densities: Mapping[str, DensityField] = field(default_factory=dict)
-    peak_detections: Mapping[str, PeakDetectionResult] = field(default_factory=dict)
-    peak_memberships: Mapping[str, EmpiricalPeakMembership] = field(default_factory=dict)
-    resolved_peak_distributions: Mapping[str, ResolvedPeakDistribution] = field(default_factory=dict)
-    resolved_peak_summaries: Mapping[str, ResolvedPeakDistributionSummary] = field(default_factory=dict)
+    analysis_context: DistributionAnalysisContext
+    resolved_peaks: ResolvedPeakDistribution | None = None
+    peak_stats: ResolvedPeakDistributionSummary | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -143,12 +149,15 @@ class DistributionRecord:
         if points.ndim != 2:
             raise ValueError("DistributionRecord.points must be a 2-D array.")
         object.__setattr__(self, "points", points)
-        object.__setattr__(self, "densities", _readonly_mapping(self.densities))
-        object.__setattr__(self, "peak_detections", _readonly_mapping(self.peak_detections))
-        object.__setattr__(self, "peak_memberships", _readonly_mapping(self.peak_memberships))
-        object.__setattr__(self, "resolved_peak_distributions", _readonly_mapping(self.resolved_peak_distributions))
-        object.__setattr__(self, "resolved_peak_summaries", _readonly_mapping(self.resolved_peak_summaries))
         object.__setattr__(self, "metadata", _readonly_mapping(self.metadata))
+
+    @property
+    def canonical_grid(self) -> CanonicalGrid:
+        return self.analysis_context.grid
+
+    @property
+    def analysis_spec(self) -> ResolvedPeakAnalysisSpec:
+        return self.analysis_context.spec
 
 
 @dataclass(frozen=True)
@@ -171,150 +180,49 @@ class DistributionComparison:
         object.__setattr__(self, "metadata", _readonly_mapping(self.metadata))
 
 
-def add_density(
-    distribution: DistributionRecord,
-    *,
-    name: str,
-    kde: Any = None,
-    replace: bool = False,
-    metadata: Mapping[str, Any] | None = None,
-) -> DistributionRecord:
-    _assert_product_name_available(distribution.densities, name, replace_ok=replace)
-    values = evaluate_kde_on_grid(distribution.points, distribution.canonical_grid.xx, distribution.canonical_grid.yy, kde=kde)
-    field = DensityField(
-        grid=distribution.canonical_grid,
-        values=values,
-        source_distribution_id=distribution.distribution_id,
-        metadata=metadata or {},
+def compute_resolved_peaks(record: DistributionRecord) -> DistributionRecord:
+    """The one resolve entrypoint: density -> detect -> resolve, delegated
+    whole to `resolved_peak_analysis.resolve_points_with_analysis_spec` (the
+    single engine both this record path and the null-permutation path call --
+    plan invariant #2). Returns a new record with `resolved_peaks` filled in;
+    `sample_resolved_peak_ids` / `resolved_peak_field` are fields already
+    carried on the returned `ResolvedPeakDistribution`
+    (`.sample_peak_ids` / basin raster), not separate compute steps (plan
+    Part 4 Stage 1)."""
+    resolved = resolve_points_with_analysis_spec(
+        distribution_id=record.distribution_id,
+        points=record.points,
+        canonical_grid=record.canonical_grid,
+        analysis_spec=record.analysis_spec,
     )
-    updated = dict(distribution.densities)
-    updated[name] = field
-    return dc_replace(distribution, densities=_readonly_mapping(updated))
+    return dc_replace(record, resolved_peaks=resolved)
 
 
-def add_peak_detection(
-    distribution: DistributionRecord,
-    *,
-    name: str,
-    density_name: str,
-    method: str,
-    min_component_mass_frac: float = 0.10,
-    min_sample_fraction: float = 0.05,
-    min_prominence_ratio: float = 0.10,
-    outlier_density_floor_fraction: float | None = None,
-    replace: bool = False,
-    metadata: Mapping[str, Any] | None = None,
-) -> DistributionRecord:
-    _assert_product_name_available(distribution.peak_detections, name, replace_ok=replace)
-    density = distribution.densities[density_name]
-    detection = detect_peaks(
-        density.density,
-        method=method,
-        grid=density,
-        sample_points=distribution.points,
-        min_component_mass_frac=min_component_mass_frac,
-        min_sample_fraction=min_sample_fraction,
-        min_prominence_ratio=min_prominence_ratio,
-    )
-    if outlier_density_floor_fraction is not None:
-        detection = dc_replace(
-            detection,
-            notes=tuple(list(detection.notes) + [f"outlier_density_floor_fraction={outlier_density_floor_fraction}"]),
+def compute_peak_stats(record: DistributionRecord) -> DistributionRecord:
+    """Scalar summary of the FINAL resolved peaks (plan Part 2 step (5)).
+    Requires `compute_resolved_peaks` to have run first."""
+    if record.resolved_peaks is None:
+        raise ValueError(
+            "compute_peak_stats requires record.resolved_peaks; call "
+            "compute_resolved_peaks(record) first."
         )
-    if metadata:
-        detection = dc_replace(detection, notes=tuple(list(detection.notes) + [f"metadata={dict(metadata)}"]))
-    updated = dict(distribution.peak_detections)
-    updated[name] = detection
-    return dc_replace(distribution, peak_detections=_readonly_mapping(updated))
+    summary = summarize_resolved_peak_distribution(record.resolved_peaks)
+    return dc_replace(record, peak_stats=summary)
 
 
-def add_peak_membership(
-    distribution: DistributionRecord,
-    *,
-    name: str,
-    detection_name: str,
-    replace: bool = False,
-    metadata: Mapping[str, Any] | None = None,
-) -> DistributionRecord:
-    _assert_product_name_available(distribution.peak_memberships, name, replace_ok=replace)
-    detection = distribution.peak_detections[detection_name]
-    details = tuple(detection.candidate_details)
-    candidate_peak_ids = tuple(int(detail.candidate_peak_id) for detail in details)
-    if details:
-        centers = np.asarray([(float(detail.peak_x), float(detail.peak_y)) for detail in details], dtype=float)
-        assigned_candidate_indices = _assign_to_centers(distribution.points, centers)
-        assigned_candidate_ids = np.asarray([candidate_peak_ids[idx] for idx in assigned_candidate_indices], dtype=int)
-        rejected_ids = np.asarray([int(detail.candidate_peak_id) for detail in details if not bool(detail.accepted)], dtype=int)
-        sample_peak_ids = np.where(np.isin(assigned_candidate_ids, rejected_ids), -1, assigned_candidate_ids).astype(int)
-    else:
-        sample_peak_ids = np.full(len(distribution.points), -1, dtype=int)
-
-    membership = EmpiricalPeakMembership(
-        distribution_id=distribution.distribution_id,
-        sample_peak_ids=sample_peak_ids,
-        assignment_rule="nearest_candidate_center_then_reject",
-        candidate_peak_ids=candidate_peak_ids,
-        provenance=dict(metadata or {}),
-    )
-    updated = dict(distribution.peak_memberships)
-    updated[name] = membership
-    return dc_replace(distribution, peak_memberships=_readonly_mapping(updated))
-
-
-def add_resolved_peak_distribution(
-    distribution: DistributionRecord,
-    *,
-    name: str,
-    density_name: str,
-    detection_name: str,
-    membership_name: str,
-    replace: bool = False,
-    outlier_density_floor_fraction: float | None = None,
-) -> DistributionRecord:
-    _assert_product_name_available(distribution.resolved_peak_distributions, name, replace_ok=replace)
-    density = distribution.densities[density_name]
-    detection = distribution.peak_detections[detection_name]
-    membership = distribution.peak_memberships[membership_name]
-    resolved = resolve_empirical_peak_distribution(
-        distribution_id=distribution.distribution_id,
-        density_grid=density,
-        sample_points=distribution.points,
-        detection_result=detection,
-        outlier_density_floor_fraction=outlier_density_floor_fraction,
-    )
-    if not np.array_equal(np.asarray(resolved.sample_peak_ids, dtype=int), np.asarray(membership.sample_peak_ids, dtype=int)):
-        raise ValueError("Membership product does not match resolved peak assignment.")
-    updated = dict(distribution.resolved_peak_distributions)
-    updated[name] = resolved
-    return dc_replace(distribution, resolved_peak_distributions=_readonly_mapping(updated))
-
-
-def add_resolved_peak_summary(
-    distribution: DistributionRecord,
-    *,
-    name: str,
-    resolved_name: str,
-    replace: bool = False,
-) -> DistributionRecord:
-    _assert_product_name_available(distribution.resolved_peak_summaries, name, replace_ok=replace)
-    resolved = distribution.resolved_peak_distributions[resolved_name]
-    summary = summarize_resolved_peak_distribution(resolved)
-    updated = dict(distribution.resolved_peak_summaries)
-    updated[name] = summary
-    return dc_replace(distribution, resolved_peak_summaries=_readonly_mapping(updated))
-
-
-def add_observed_metrics(
+def compute_observed_metrics(
     comparison: DistributionComparison,
     *,
     name: str = "primary",
-    summary_name: str = "primary",
     reference_role: str = "reference",
     target_role: str = "target",
     metric_registry: Mapping[str, Any] = RESOLVED_PEAK_METRICS,
     replace: bool = False,
 ) -> DistributionComparison:
-    _assert_product_name_available(comparison.observed_metrics, name, replace_ok=replace)
+    """One registry, one table: per-metric reference/target/observed_difference
+    rows computed from each member's `peak_stats` (plan Part 2 step (6))."""
+    if name in comparison.observed_metrics and not replace:
+        raise KeyError(f"Product {name!r} already exists; pass replace=True to overwrite it.")
     if reference_role not in comparison.members:
         raise KeyError(f"Missing comparison member role: {reference_role!r}")
     if target_role not in comparison.members:
@@ -324,14 +232,13 @@ def add_observed_metrics(
     target = comparison.members[target_role]
     _assert_grid_compatibility(reference.canonical_grid, target.canonical_grid)
 
-    try:
-        reference_summary = reference.resolved_peak_summaries[summary_name]
-    except KeyError as exc:
-        raise KeyError(f"Missing summary {summary_name!r} on {reference_role!r}") from exc
-    try:
-        target_summary = target.resolved_peak_summaries[summary_name]
-    except KeyError as exc:
-        raise KeyError(f"Missing summary {summary_name!r} on {target_role!r}") from exc
+    if reference.peak_stats is None:
+        raise ValueError(f"Member {reference_role!r} is missing peak_stats; call compute_peak_stats first.")
+    if target.peak_stats is None:
+        raise ValueError(f"Member {target_role!r} is missing peak_stats; call compute_peak_stats first.")
+
+    reference_summary = reference.peak_stats
+    target_summary = target.peak_stats
 
     rows: list[dict[str, Any]] = []
     for metric_name, metric_def in metric_registry.items():
@@ -344,7 +251,6 @@ def add_observed_metrics(
                 "comparison_id": comparison.comparison_id,
                 "reference_role": reference_role,
                 "target_role": target_role,
-                "summary_name": summary_name,
                 "metric_name": metric_name,
                 "minimum_peak_count": getattr(metric_def, "minimum_peak_count", None),
                 "observed_reference_value": reference_value,
@@ -362,14 +268,11 @@ def add_observed_metrics(
 
 
 __all__ = [
-    "DensityField",
+    "DistributionAnalysisContext",
     "DistributionComparison",
     "DistributionRecord",
-    "EmpiricalPeakMembership",
-    "add_density",
-    "add_observed_metrics",
-    "add_peak_detection",
-    "add_peak_membership",
-    "add_resolved_peak_distribution",
-    "add_resolved_peak_summary",
+    "compute_observed_metrics",
+    "compute_peak_stats",
+    "compute_resolved_peaks",
+    "derive_shared_grid",
 ]

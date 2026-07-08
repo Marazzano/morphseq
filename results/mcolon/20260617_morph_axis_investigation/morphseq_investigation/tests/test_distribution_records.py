@@ -1,4 +1,12 @@
-"""Tests for the typed distribution record/comparison layer."""
+"""Tests for the Stage-1 typed distribution record/comparison layer
+(`compute_*` verbs; see COMPOSE_single_path_plan.md).
+
+Mirrors the structure of the pre-refactor `add_*`-scaffold tests this file
+replaces: pipeline populates fields, duplicate-safety, comparison/grid
+compatibility, mismatched-grid rejection -- adapted to the new
+`DistributionRecord(analysis_context=...)` + `compute_resolved_peaks` /
+`compute_peak_stats` / `compute_observed_metrics` shape.
+"""
 
 from __future__ import annotations
 
@@ -6,20 +14,17 @@ import numpy as np
 import pytest
 
 from morphseq_investigation.core.distribution_records import (
+    DistributionAnalysisContext,
     DistributionComparison,
     DistributionRecord,
-    add_density,
-    add_observed_metrics,
-    add_peak_detection,
-    add_peak_membership,
-    add_resolved_peak_distribution,
-    add_resolved_peak_summary,
+    compute_observed_metrics,
+    compute_peak_stats,
+    compute_resolved_peaks,
+    derive_shared_grid,
 )
 from morphseq_investigation.core.density_composition import CanonicalGrid
 from morphseq_investigation.core.resolved_peak_analysis import ResolvedPeakAnalysisSpec
 from morphseq_investigation.core.resolved_peak_metrics import RESOLVED_PEAK_METRICS
-from morphseq_investigation.plotting.modal_distribution_plotting import build_distribution_overlay, derive_shared_grid
-from morphseq_investigation.core.support_geometry import isotropic_geometry_kde_spec
 
 
 def _two_cluster_points(center_offset: float = 0.0) -> np.ndarray:
@@ -36,65 +41,54 @@ def _analysis_spec() -> ResolvedPeakAnalysisSpec:
         bandwidth_rule="scipy_default",
         bandwidth_multiplier=1.0,
         peak_detector_method="kde_peak_basins_sample_support",
+        min_sample_fraction=0.10,
     )
 
 
-def _build_record(distribution_id: str, points: np.ndarray, grid: CanonicalGrid):
+def _build_record(distribution_id: str, points: np.ndarray, grid: CanonicalGrid) -> DistributionRecord:
     record = DistributionRecord(
         distribution_id=distribution_id,
         points=points,
-        canonical_grid=grid,
+        analysis_context=DistributionAnalysisContext(grid=grid, spec=_analysis_spec()),
         metadata={"kind": "test"},
     )
-    record = add_density(record, name="primary", kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
-    record = add_peak_detection(
-        record,
-        name="primary",
-        density_name="primary",
-        method=_analysis_spec().peak_detector_method,
-        min_sample_fraction=0.10,
-    )
-    record = add_peak_membership(record, name="primary", detection_name="primary")
-    record = add_resolved_peak_distribution(
-        record,
-        name="primary",
-        density_name="primary",
-        detection_name="primary",
-        membership_name="primary",
-    )
-    record = add_resolved_peak_summary(record, name="primary", resolved_name="primary")
+    record = compute_resolved_peaks(record)
+    record = compute_peak_stats(record)
     return record
 
 
-def test_distribution_record_pipeline_populates_typed_products():
+def test_distribution_record_pipeline_populates_resolved_peaks_and_peak_stats():
     points = _two_cluster_points()
-    grid = derive_shared_grid(points, points, grid=61, kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
+    grid = derive_shared_grid(points, points, grid_size=61)
 
     record = _build_record("sample", points, grid)
 
     assert record.points.flags.writeable is False
-    assert set(record.densities) == {"primary"}
-    assert set(record.peak_detections) == {"primary"}
-    assert set(record.peak_memberships) == {"primary"}
-    assert set(record.resolved_peak_distributions) == {"primary"}
-    assert set(record.resolved_peak_summaries) == {"primary"}
-    assert record.resolved_peak_summaries["primary"].number_of_peaks == record.resolved_peak_distributions["primary"].number_of_peaks
+    assert record.resolved_peaks is not None
+    assert record.peak_stats is not None
+    assert record.peak_stats.number_of_peaks == record.resolved_peaks.number_of_peaks
+    # Density authority is sole (Stage 0): resolved_peaks carries the density
+    # grid derived purely from analysis_context.spec, no separate kde= input.
+    assert record.resolved_peaks.density_grid is not None
 
 
-def test_duplicate_product_name_is_rejected_by_default():
+def test_compute_peak_stats_requires_resolved_peaks_first():
     points = _two_cluster_points()
-    grid = derive_shared_grid(points, points, grid=61, kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
-    record = DistributionRecord(distribution_id="sample", points=points, canonical_grid=grid)
-    record = add_density(record, name="primary", kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
+    grid = derive_shared_grid(points, points, grid_size=61)
+    record = DistributionRecord(
+        distribution_id="sample",
+        points=points,
+        analysis_context=DistributionAnalysisContext(grid=grid, spec=_analysis_spec()),
+    )
 
-    with pytest.raises(KeyError):
-        add_density(record, name="primary", kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
+    with pytest.raises(ValueError):
+        compute_peak_stats(record)
 
 
 def test_distribution_comparison_observed_metrics_and_grid_compatibility():
     target_points = _two_cluster_points(center_offset=0.0)
     reference_points = _two_cluster_points(center_offset=0.5)
-    grid = derive_shared_grid(target_points, reference_points, grid=61, kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
+    grid = derive_shared_grid(target_points, reference_points, grid_size=61)
 
     target = _build_record("target", target_points, grid)
     reference = _build_record("reference", reference_points, grid)
@@ -102,7 +96,7 @@ def test_distribution_comparison_observed_metrics_and_grid_compatibility():
         comparison_id="cmp",
         members={"reference": reference, "target": target},
     )
-    comparison = add_observed_metrics(comparison, name="primary")
+    comparison = compute_observed_metrics(comparison, name="primary")
     table = comparison.observed_metrics["primary"]
 
     assert set(table["metric_name"]) == set(RESOLVED_PEAK_METRICS)
@@ -111,10 +105,24 @@ def test_distribution_comparison_observed_metrics_and_grid_compatibility():
     assert table["observed_target_value"].notna().any()
 
 
+def test_compute_observed_metrics_duplicate_name_rejected_by_default():
+    points = _two_cluster_points()
+    grid = derive_shared_grid(points, points, grid_size=61)
+    target = _build_record("target", points, grid)
+    reference = _build_record("reference", points, grid)
+    comparison = DistributionComparison(
+        comparison_id="cmp", members={"reference": reference, "target": target},
+    )
+    comparison = compute_observed_metrics(comparison, name="primary")
+
+    with pytest.raises(KeyError):
+        compute_observed_metrics(comparison, name="primary")
+
+
 def test_distribution_comparison_rejects_mismatched_grids():
     points = _two_cluster_points()
-    grid_a = derive_shared_grid(points, points, grid=61, kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
-    grid_b = derive_shared_grid(points, points, grid=63, kde=isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75))
+    grid_a = derive_shared_grid(points, points, grid_size=61)
+    grid_b = derive_shared_grid(points, points, grid_size=63)
 
     target = _build_record("target", points, grid_a)
     reference = _build_record("reference", points, grid_b)
@@ -123,9 +131,10 @@ def test_distribution_comparison_rejects_mismatched_grids():
         DistributionComparison(comparison_id="cmp", members={"reference": reference, "target": target})
 
 
-def test_build_distribution_overlay_always_carries_a_canonical_grid():
+def test_derive_shared_grid_always_carries_pooled_bounds():
     points = _two_cluster_points()
-    overlay = build_distribution_overlay(points, points, grid=51, kde=None)
+    grid = derive_shared_grid(points, points, grid_size=51)
 
-    assert overlay.target_grid.grid is not None
-    assert overlay.reference_grid.grid is not None
+    assert grid.grid_size == 51
+    assert grid.x_min < points[:, 0].min()
+    assert grid.x_max > points[:, 0].max()

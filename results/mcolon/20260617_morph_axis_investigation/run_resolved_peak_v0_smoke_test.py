@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 RUN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/morphseq_mplconfig")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/morphseq_xdg_cache")
 sys.path.insert(0, str(RUN_DIR))
