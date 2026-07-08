@@ -346,8 +346,8 @@ def _plot_spectrum_with_accuracy(
     """4-column × 4-row comparison figure for choosing the best bottom-row design.
 
     Row 0  — query strip plot (same as existing spectrum, homo only)
-    Row 1  — Option A: reference strip split by true class, colored correct/incorrect
-    Row 2  — Option B: stacked accuracy bars per true class
+    Row 1  — Option A: reference strip split by true class, with tilted true labels
+    Row 2  — Option B: reference confusion matrices at the 0.5 threshold
     Row 3  — Option C: calibration scatter — mean predicted P per true class ± std
 
     All columns = 18 / 24 / 30 / 48 hpf.
@@ -375,13 +375,13 @@ def _plot_spectrum_with_accuracy(
     n_rows, n_cols = 4, len(stages)
     fig, axes = plt.subplots(
         n_rows, n_cols,
-        figsize=(4.5 * n_cols, 3.8 * n_rows),
+        figsize=(4.7 * n_cols, 4.0 * n_rows),
         squeeze=False,
     )
     row_labels = [
         "Query\n(sequenced homo)",
-        "Option A\nRef strip by true class\n(green=correct, red=wrong)",
-        "Option B\nRef accuracy bars\nper true class",
+        "Option A\nRef strip by true class\n(true labels tilted)",
+        "Option B\nRef confusion matrices\n(0.5 threshold)",
         "Option C\nRef calibration\nmean P ± std per class",
     ]
 
@@ -420,7 +420,7 @@ def _plot_spectrum_with_accuracy(
         ax.axvspan(0.45, 0.55, color="#EEEEEE", zorder=0)
         ax.axvline(0.5, color="#777777", lw=0.8, ls=":", zorder=1)
         class_y = {left: 0, right: 1}
-        for ci, cls in enumerate([left, right]):
+        for cls in [left, right]:
             sub_cls = sub_ref[sub_ref["true_label"] == cls]
             if sub_cls.empty:
                 continue
@@ -434,34 +434,48 @@ def _plot_spectrum_with_accuracy(
         ax.set_xlim(-0.03, 1.03)
         ax.set_ylim(-0.45, 1.45)
         ax.set_yticks([0, 1])
-        ax.set_yticklabels([left, right], fontsize=7)
+        ax.set_yticklabels([f"true {left}", f"true {right}"], fontsize=7,
+                           rotation=18, ha="right", rotation_mode="anchor")
+        ax.tick_params(axis="y", pad=12)
         ax.set_xlabel(f"P({right})", fontsize=8)
 
-        # ── Row 2: Option B — stacked accuracy bars ───────────────────────────
+        # ── Row 2: Option B — confusion matrix at the 0.5 threshold ──────────
         ax = axes[2][col]
-        correct_color = "#2ca02c"
-        wrong_color   = "#d62728"
-        for ci, cls in enumerate([left, right]):
-            sub_cls = sub_ref[sub_ref["true_label"] == cls]
-            if sub_cls.empty:
-                ax.bar(ci, 0, color="#CCCCCC", width=0.6)
-                continue
-            # correct = prediction agrees with true label at 0.5 threshold
-            correct = (
-                ((cls == right) & (sub_cls["p_Low_to_High"] >= 0.5)) |
-                ((cls == left)  & (sub_cls["p_Low_to_High"] < 0.5))
-            )
-            frac_corr = correct.mean()
-            ax.bar(ci, frac_corr, color=correct_color, width=0.6)
-            ax.bar(ci, 1 - frac_corr, bottom=frac_corr, color=wrong_color, width=0.6)
-            ax.text(ci, 1.03, f"{frac_corr:.0%}\n(n={len(sub_cls)})",
-                    ha="center", va="bottom", fontsize=7)
-        ax.set_xlim(-0.6, 1.6)
-        ax.set_ylim(0, 1.35)
-        ax.set_xticks([0, 1])
-        ax.set_xticklabels([left, right], fontsize=7, rotation=20, ha="right")
-        ax.set_ylabel("fraction correct" if col == 0 else "", fontsize=8)
-        ax.axhline(0.5, color="#AAAAAA", lw=0.8, ls="--")
+        if sub_ref.empty:
+            ax.text(0.5, 0.5, "no reference CV", ha="center", va="center",
+                    fontsize=9, color="#777777", transform=ax.transAxes)
+            ax.set_xticks([0, 1])
+            ax.set_yticks([0, 1])
+        else:
+            pred_cls = np.where(sub_ref["p_Low_to_High"].astype(float) >= 0.5, right, left)
+            cm = confusion_matrix(sub_ref["true_label"], pred_cls, labels=[left, right])
+            denom = cm.sum(axis=1, keepdims=True)
+            cmn = np.divide(cm, denom, out=np.zeros_like(cm, dtype=float), where=denom != 0)
+            ax.imshow(cmn, cmap="Blues", vmin=0, vmax=1, zorder=0)
+            for i in range(2):
+                for j in range(2):
+                    val = cmn[i, j]
+                    count = cm[i, j]
+                    ax.text(
+                        j,
+                        i,
+                        f"{val:.0%}\n({count})",
+                        ha="center",
+                        va="center",
+                        fontsize=13,
+                        fontweight="bold",
+                        color="white" if val > 0.55 else "black",
+                    )
+            ax.set_xticks([0, 1])
+            ax.set_xticklabels([f"pred {left}", f"pred {right}"], fontsize=8,
+                               rotation=25, ha="right")
+            ax.set_yticks([0, 1])
+            ax.set_yticklabels([f"true {left}", f"true {right}"], fontsize=8)
+            ax.tick_params(length=0)
+        ax.set_xlim(-0.5, 1.5)
+        ax.set_ylim(1.5, -0.5)
+        ax.set_xlabel("predicted class" if col == 0 else "", fontsize=8)
+        ax.set_ylabel("true class" if col == 0 else "", fontsize=8)
 
         # ── Row 3: Option C — violin plot per true class, clipped [0, 1] ───────
         ax = axes[3][col]
@@ -516,22 +530,14 @@ def _plot_spectrum_with_accuracy(
     cbar.set_ticks([0, 0.5, 1])
     cbar.set_ticklabels(["0", "0.5", "1"], fontsize=7)
 
-    # legend for row 2 (accuracy bars)
-    from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor="#2ca02c", label="correct"),
-                       Patch(facecolor="#d62728", label="wrong")]
-    fig.legend(handles=legend_elements, loc="upper right",
-               bbox_to_anchor=(0.915, 0.50), fontsize=8, title="ref CV (row 2)")
-
     fig.suptitle(
         f"{DATASET_LABEL} homo-only spectrum — bottom row design comparison\n"
         f"Top: query sequenced homozygous  |  Rows 1–3: reference LOEO CV options",
         fontsize=11,
     )
-    fig.subplots_adjust(left=0.14, right=0.91, top=0.93, bottom=0.06,
-                        hspace=0.55, wspace=0.35)
+    fig.subplots_adjust(left=0.18, right=0.90, top=0.93, bottom=0.06,
+                        hspace=0.62, wspace=0.38)
     _save(fig, SEQ_OUT / f"{FILE_PREFIX}_spectrum_bottom_row_options.png")
-
 
 def _plot_minibars(pred: pd.DataFrame, *, homo_only: bool) -> None:
     p = pred.dropna(subset=["stage"]).copy()
