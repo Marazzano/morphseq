@@ -38,11 +38,21 @@ GENOTYPE_COLORS = {
 }
 
 # ── status / source (audit + portfolio) ──────────────────────────────────────────
+# The first block is the original generic vocabulary (kept for back-compat — other 3x
+# scripts may reference these keys). The second block adds the 3a audit failure-mode
+# taxonomy (values mirror 3a_audit_sequenced_coverage.py STATUS_COLORS) so the portfolio
+# can color cards by their real pipeline status. Additive only — do not rename/remove.
 STATUS_COLORS = {
     "included":  "#1b9e77",
     "excluded":  "#B2182B",
     "missing":   "#777777",
     "reference": "#cccccc",
+    # 3a audit failure-mode taxonomy
+    "OK":              "#2ca02c",   # green   — in build04, passed QC
+    "EXCLUDED":        "#ff7f0e",   # orange  — detected+tracked, then QC-failed
+    "ABSENT_IMAGED":   "#d62728",   # red     — imaged but never detected (no build04 row)
+    "ABSENT_NO_IMAGE": "#7f1d1d",   # dark red — not detected and no stitched image
+    "QC_NOT_RUN":      "#9467bd",   # purple  — no build04 CSV; QC pipeline not run
 }
 
 # ── developmental ages a plate is collected at (hpf) ─────────────────────────────

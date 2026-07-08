@@ -1,14 +1,5 @@
 exp,well,disposition,note
 20260324_cep290_18hpf_24hpf_plate02,G08,truncated_acq,Template well (no genotype); Keyence stopped before G/H rows (G06).
-20260324_cep290_18hpf_24hpf_plate02,G11,truncated_acq,Keyence stopped at G06 - never imaged.
-20260324_cep290_18hpf_24hpf_plate02,H01,truncated_acq,Keyence stopped at G06 - never imaged.
-20260324_cep290_18hpf_24hpf_plate02,H05,truncated_acq,Keyence stopped at G06 - never imaged.
-20260324_cep290_18hpf_24hpf_plate02,H06,truncated_acq,Keyence stopped at G06 - never imaged.
-20260324_cep290_18hpf_24hpf_plate02,H08,truncated_acq,Template well (no genotype); Keyence stopped before G/H rows.
-20260324_cep290_18hpf_plate01,G09,truncated_acq,Keyence stopped at G06 (78 XY dirs) - never imaged.
-20260324_cep290_18hpf_plate01,H02,truncated_acq,Keyence stopped at G06 - never imaged.
-20260324_cep290_18hpf_plate01,H06,truncated_acq,Keyence stopped at G06 - never imaged.
-20260324_cep290_18hpf_plate01,H09,truncated_acq,Keyence stopped at G06 - never imaged.
 20260324_cep290_30hpf_plate01,A09,gdino_fn,Image exported; GDino found 0 embryos. Needs image review (empty vs false negative).
 20260324_cep290_30hpf_plate01,G07,clipped_lost,QC_EXCLUDED (frame_flag+sam2_qc_flag); tail clipped; confirmed unrecoverable by mdcolon.
 20260331_b9d2_18hpf_plate01,A06,gdino_fn,Re-acquired well (6-tile stitch); GDino found 0 embryos on double-width image. Needs review.

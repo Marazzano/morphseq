@@ -123,7 +123,10 @@ def make_feature_plot(gene: str, cross_bin: pd.DataFrame) -> None:
     ref = ref[ref[TIME_COL].between(hpf_min, hpf_max)].copy()
 
     qry_ts = qry[qry["data_source"] == "timeseries"].copy()
-    qry_snap = qry[qry["data_source"] == "snapshot"].copy()
+    qry_snap = qry[
+        (qry["data_source"] == "snapshot") &
+        (qry["collection_time_hpf"].isin([30, 48]))
+    ].copy()
     n_ts = qry_ts[ID_COL].nunique()
     n_snap = qry_snap["physical_embryo_id"].nunique()
     n_ref = ref[ID_COL].nunique()
