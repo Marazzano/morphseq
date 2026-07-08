@@ -46,6 +46,14 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--samples", type=int, default=30)
     ap.add_argument("--device", type=str, default="cpu")
     ap.add_argument("--include", action="append", default=[], help="Explicit WELL:T example, e.g. D05:97")
+    # Full-dataset mode: compute ff_* metrics on EVERY masked (t, well) so the
+    # projected-image distribution can be compared against the z-stack scan.
+    ap.add_argument("--all", action="store_true",
+                    help="Process every masked (t, well) instead of a sampled band")
+    ap.add_argument("--t-start", type=int, default=None,
+                    help="Chunked --all: first t (inclusive). For array jobs.")
+    ap.add_argument("--t-end", type=int, default=None,
+                    help="Chunked --all: last t (exclusive). For array jobs.")
     return ap.parse_args()
 
 
@@ -91,10 +99,22 @@ def metric_row(ff_u8: np.ndarray, mask: np.ndarray) -> dict[str, float]:
     emb_lap_mean = float(np.mean(emb_lap))
     bg_lap_mean = float(np.mean(bg_lap))
 
+    # Focus-variability signal: spread of the chosen best-focus pixels within the
+    # embryo. ff IS the per-pixel best-focus selection, so a wide intensity spread
+    # flags an embryo that does not sit in a single focal plane (e.g. a long tail
+    # dipping out of plane) -- the case flat-image entropy/sharpness averages away.
+    # NOTE(micron-tiling): the eventual pipeline metric should tile the mask in
+    # MICRONS (tile_um -> px via pixel size) and take std across tile means, so it
+    # is resolution-portable. This raw-pixel std is the simple proof-of-concept.
+    emb_std = float(np.std(emb_px))
+    emb_std_iqr = float(np.percentile(emb_px, 75) - np.percentile(emb_px, 25))
+
     return {
         "ff_entropy_emb": emb_ent,
         "ff_entropy_bg": bg_ent,
         "ff_rel_entropy": emb_ent - bg_ent,
+        "ff_std_emb": emb_std,
+        "ff_std_iqr_emb": emb_std_iqr,
         "ff_mean_emb": float(np.mean(emb_px)),
         "ff_mean_bg": float(np.mean(bg_px)),
         "ff_rel_mean": float(np.mean(emb_px) - np.mean(bg_px)),
@@ -106,6 +126,16 @@ def metric_row(ff_u8: np.ndarray, mask: np.ndarray) -> dict[str, float]:
         "ff_rel_lap_abs_mean": emb_lap_mean - bg_lap_mean,
         "ff_lap_abs_ratio": emb_lap_mean / (bg_lap_mean + 1e-9),
     }
+
+
+def select_all(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
+    """Full-dataset selection: every masked (t, well), optionally a t-chunk."""
+    sub = df[df["has_mask"].astype(bool)].copy()
+    if args.t_start is not None:
+        sub = sub[sub["t"].astype(int) >= args.t_start]
+    if args.t_end is not None:
+        sub = sub[sub["t"].astype(int) < args.t_end]
+    return sub.sort_values(["t", "well"]).reset_index(drop=True)
 
 
 def choose_examples(df: pd.DataFrame, args: argparse.Namespace) -> pd.DataFrame:
@@ -142,7 +172,7 @@ def main() -> None:
     if missing:
         raise ValueError(f"{args.input_csv} missing required columns: {missing}")
 
-    examples = choose_examples(df, args)
+    examples = select_all(df, args) if args.all else choose_examples(df, args)
     if examples.empty:
         raise ValueError("No examples selected")
 
@@ -174,11 +204,8 @@ def main() -> None:
     args.out_csv.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out_csv, index=False)
     print(f"Saved -> {args.out_csv} ({len(out)} rows)", flush=True)
-    print(
-        out[["well", "t", "rel_entropy_mean", "ff_rel_entropy", "ff_rel_lap_abs_mean", "ff_lap_abs_ratio"]]
-        .to_string(index=False),
-        flush=True,
-    )
+    preview = out[["well", "t", "rel_entropy_mean", "ff_rel_entropy", "ff_rel_lap_abs_mean", "ff_lap_abs_ratio"]]
+    print((preview.head(20) if len(preview) > 20 else preview).to_string(index=False), flush=True)
 
 
 if __name__ == "__main__":

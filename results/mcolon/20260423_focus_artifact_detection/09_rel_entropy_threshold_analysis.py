@@ -6,7 +6,7 @@ Threshold search for mask-aware focus QC using rel_entropy_mean.
 Inputs:
   07_focus_output/focus_summaries.csv
 
-Outputs (under figures/threshold_bins/v1_rel_entropy_analysis):
+Outputs (under outputs/zstack/threshold/v1_rel_entropy_analysis):
   - rel_entropy_by_category.csv
   - rel_entropy_threshold_sweep.csv
   - rel_entropy_hist_by_category.png
@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_CSV = BASE_DIR / "07_focus_output/focus_summaries.csv"
-OUT_DIR = BASE_DIR / "figures/threshold_bins/v1_rel_entropy_analysis"
+OUT_DIR = BASE_DIR / "outputs/zstack/threshold/v1_rel_entropy_analysis"
 
 GOOD_ANCHOR = "Great Images"
 BAD_ANCHOR = "Bad Images"

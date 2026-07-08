@@ -1,0 +1,49 @@
+#!/bin/bash
+#$ -N ff_focus_full_scan
+#$ -t 1-12
+#$ -tc 6
+#$ -q trapnell-long.q
+#$ -pe serial 1
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=16G
+#$ -l h_rt=8:00:00
+#$ -cwd
+#$ -o results/mcolon/20260423_focus_artifact_detection/outputs/projected/scan/logs/
+#$ -e results/mcolon/20260423_focus_artifact_detection/outputs/projected/scan/logs/
+#$ -V
+
+# Full-dataset PROJECTED (post focus-stack, ff_*) metric scan.
+# Array job: 12 chunks covering T=0..112 (113 timepoints, ~10 T per chunk),
+# mirroring 10_rel_entropy_scan.qsub but re-running _focus_stack() on GPU per
+# (t, well). Per-chunk CSVs land in outputs/projected/scan/chunks and are merged
+# afterward with 11_merge_chunks.py.
+# tc=6 caps concurrent GPU tasks (one cuda device each).
+
+set -euo pipefail
+
+MORPHSEQ_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+BASE="$MORPHSEQ_ROOT/results/mcolon/20260423_focus_artifact_detection"
+SCRIPT="$BASE/11_focus_stacked_metrics.py"
+CHUNKS="$BASE/outputs/projected/scan/chunks"
+
+mkdir -p "$BASE/outputs/projected/scan/logs" "$CHUNKS"
+
+CHUNK_SIZE=10
+T_START=$(( (SGE_TASK_ID - 1) * CHUNK_SIZE ))
+T_END=$(( SGE_TASK_ID * CHUNK_SIZE ))
+if [ "$T_END" -gt 113 ]; then T_END=113; fi
+
+OUT_CSV=$(printf "%s/chunk_t%03d_t%03d.csv" "$CHUNKS" "$T_START" "$T_END")
+
+echo "[$HOSTNAME] Task $SGE_TASK_ID: T=$T_START..$((T_END-1)) -> $OUT_CSV"
+nvidia-smi || true
+
+conda run -n segmentation_grounded_sam --no-capture-output \
+  python "$SCRIPT" \
+    --all \
+    --t-start "$T_START" \
+    --t-end "$T_END" \
+    --device cuda \
+    --out-csv "$OUT_CSV"
+
+echo "[$HOSTNAME] Task $SGE_TASK_ID done."
