@@ -431,3 +431,45 @@ def test_points_to_resolved_pipeline_smoke():
     for peak in distribution.peaks:
         assert math.isfinite(peak.geometry.radius)
         assert math.isfinite(peak.geometry.total_support_fraction)
+
+
+# ---------------------------------------------------------------------------
+# Empirical basin-label raster exposure (Part 1: expose detector B(x,y))
+# ---------------------------------------------------------------------------
+
+
+def test_empirical_basin_labels_raster_exposed_on_two_mode_synthetic():
+    # Two well-separated gaussians -> detector should resolve two basins and the
+    # empirical resolved distribution should expose the basin-label raster that
+    # the detector computed (label 0 = background, 1..K = basins).
+    left_offsets = np.array(
+        [[-0.05, 0.0], [0.05, 0.0], [0.0, -0.05], [0.0, 0.05], [0.02, 0.02], [-0.02, -0.02]]
+    )
+    right_offsets = left_offsets.copy()
+    left_cluster = np.array([-2.0, 0.0]) + left_offsets
+    right_cluster = np.array([2.0, 0.0]) + right_offsets
+    points = np.concatenate([left_cluster, right_cluster], axis=0)
+
+    canonical_grid = CanonicalGrid(x_min=-5.0, x_max=5.0, y_min=-5.0, y_max=5.0, grid_size=121)
+    spec = ResolvedPeakAnalysisSpec(
+        bandwidth_rule="scipy_default",
+        bandwidth_multiplier=1.0,
+        peak_detector_method="kde_peak_basins_sample_support",
+    )
+
+    distribution = resolve_points_with_analysis_spec(
+        distribution_id="basin_labels_test",
+        points=points,
+        canonical_grid=canonical_grid,
+        analysis_spec=spec,
+    )
+
+    assert distribution.number_of_peaks == 2
+
+    basin_labels = distribution.empirical_basin_labels
+    assert basin_labels is not None
+    # Same grid as the density surface.
+    assert basin_labels.shape == np.asarray(distribution.density_grid.density).shape
+    # Distinct nonzero label count == number_of_peaks.
+    distinct_nonzero = sorted(int(v) for v in np.unique(basin_labels) if int(v) != 0)
+    assert len(distinct_nonzero) == distribution.number_of_peaks

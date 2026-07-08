@@ -74,6 +74,9 @@ class PeakDetectionResult:
     reject_reasons: tuple[str, ...]
     notes: tuple[str, ...]
     candidate_details: tuple[PeakCandidateDetail, ...] = ()
+    # Integer basin-label raster B(x,y) on the SAME grid as the input `density`
+    # (label 0 = background, 1..K = basins). None for empty/degenerate results.
+    basin_labels: np.ndarray | None = None
 
     @property
     def component_mass_fractions(self) -> tuple[float, ...]:
@@ -440,6 +443,8 @@ def _detect_superlevel_cap_mass(
         component_masses=masses,
     )
     n_modes = int(accepted)
+    superlevel_basin_labels = labels if labels.size else np.zeros_like(dens, dtype=int)
+    assert superlevel_basin_labels.shape == dens.shape
     return PeakDetectionResult(
         method_name="superlevel_cap_mass",
         n_modes=n_modes,
@@ -461,6 +466,7 @@ def _detect_superlevel_cap_mass(
         reject_reasons=_format_reject_reasons(reject_reasons),
         notes=notes,
         candidate_details=candidate_details,
+        basin_labels=superlevel_basin_labels,
     )
 
 
@@ -634,6 +640,7 @@ def _detect_hdr_component_persistence(
         reject_reasons=reject_reasons,
         notes=notes,
         candidate_details=candidate_details,
+        basin_labels=(labels if labels.size else np.zeros_like(dens, dtype=int)),
     )
 
 
@@ -832,6 +839,7 @@ def _detect_kde_peak_basins_sample_support(
         reject_reasons=_format_reject_reasons(reject_reasons),
         notes=tuple(note for note in notes if note is not None),
         candidate_details=tuple(candidate_details),
+        basin_labels=np.asarray(component_assignment, dtype=int),
     )
 
 

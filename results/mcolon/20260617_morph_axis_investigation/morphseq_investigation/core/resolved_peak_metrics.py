@@ -56,6 +56,11 @@ class ResolvedPeakDistribution:
     sample_points: np.ndarray | None = None
     sample_peak_ids: np.ndarray | None = None
     grid_peak_ids: np.ndarray | None = None
+    # Detector basin-label raster B(x,y) on the density grid (label 0 =
+    # background, 1..K = basins), forwarded from the empirical detection result
+    # so plotting can draw basin boundaries without reconstruction. Only set on
+    # the empirical path; None on the truth path (which uses grid_peak_ids).
+    empirical_basin_labels: np.ndarray | None = None
     provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -70,6 +75,12 @@ class ResolvedPeakDistribution:
             raise ValueError("ResolvedPeak peak_id values must be unique.")
 
         density_shape = np.asarray(self.density_grid.density).shape
+
+        if self.empirical_basin_labels is not None:
+            basin_labels = _readonly_copy(self.empirical_basin_labels, dtype=int)
+            if basin_labels.shape != density_shape:
+                raise ValueError("empirical_basin_labels must match density_grid.density shape.")
+            object.__setattr__(self, "empirical_basin_labels", basin_labels)
 
         if self.source_type == "empirical":
             if self.sample_points is None or self.sample_peak_ids is None:
@@ -519,6 +530,11 @@ def resolve_empirical_peak_distribution(
         peaks=tuple(resolved_peaks),
         sample_points=sample_points_array,
         sample_peak_ids=_readonly_copy(resolved_sample_peak_ids, dtype=int),
+        empirical_basin_labels=(
+            detection_result.basin_labels
+            if detection_result.basin_labels is not None
+            else None
+        ),
         provenance={
             "assignment_rule": "nearest_candidate_center_then_reject",
             "outlier_density_floor_fraction": outlier_density_floor_fraction,
