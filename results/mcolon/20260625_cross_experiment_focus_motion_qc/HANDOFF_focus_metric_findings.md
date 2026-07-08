@@ -1,18 +1,21 @@
 # Focus QC metric findings — handoff (2026-06-30)
 
-## FINAL LOCKED THRESHOLDS (2026-06-30)
+## FINAL LOCKED THRESHOLDS (2026-06-30, amended after fine-tuning)
 Two independent QC gates on the eroded embryo INTERIOR. An embryo is flagged if EITHER:
-- **Focus gate:  `interior_strong_edge_frac < 0.25`**  (blurred / structureless / ghost / dead)
+- **Focus gate: local-context Sobel `grad > 0.02`, then
+  `interior_strong_edge_frac < 0.50`**  (low-information / structureless / ghost / dead)
 - **Saturation gate:  `top_spread_p99_p90 < 4`**  (bright-tail crushed = over-saturated)
 
-Population behavior (7,500-embryo cross-experiment sample): focus gate flags ~3.0%
-(20251125 4.9%, skewed by thin larvae — accepted, "over-exclude and move on"); saturation
-gate flags ~0.65%; combined OR ~3.1%, mostly independent (overlap=37). spread<4 chosen over
-<5 because 4→5 adds ~0.3% that is almost entirely GOOD bright larvae in 20251125, not real
-saturation. edge<0.25 chosen over 0.20 to be conservative on soft cases (costs ~3% incl.
-some in-focus thin larvae). KNOWN: the saturation gate also flags bright DORSAL views —
-dorsal cannot be separated from true saturation by intensity (see saturation section).
-NEXT: wire these two gates into the pipeline; then motion QC.
+Fine-tuning behavior (7,500-embryo cross-experiment sample): the final focus gate flags 159/7500
+(~2.1%) overall: 20250305 0.76%, 20251125 5.12%, 20260206 0.48%. This is a deliberate
+low-information exclusion compromise, not a claim that every excluded embryo is pure optical
+out-of-focus. The manual review decision is to remove the low-information tail, even when some
+bright/dorsal embryos are included, because preserving borderline low-information snips is worse for
+downstream analysis. Saturation gate remains separate and belongs to the general image/mask-quality
+QC product, not `focus_qc`. spread<4 chosen over <5 because 4→5 adds ~0.3% that is almost entirely
+GOOD bright larvae in 20251125, not real saturation. KNOWN: the saturation gate also flags bright
+DORSAL views — dorsal cannot be separated from true saturation by intensity (see saturation section).
+NEXT: wire focus, saturation ownership, and then motion QC.
 
 ## The question
 Find an image metric that flags **out-of-focus embryos** in 2D snips, without being
@@ -87,14 +90,14 @@ Decile galleries (per-experiment, 20/decile) built for both metrics:
 axes over the population: `figures/interior_structure/interior_std_vs_strong_edge_frac_scatter.png`.
 
 **Operational conclusion — use an ABSOLUTE cut, NOT a decile cut:**
-- Gate = **`interior_strong_edge_frac < ~0.20`**. Catches ghosts (4/5) AND dead (0.19), with
-  minimal collateral. Validated on anchors AND the population: 0.20 sits just below the
-  bottom edge of the healthy cloud in the scatter.
+- Final gate after fine-tuning = **local-context Sobel `grad > 0.02`, then
+  `interior_strong_edge_frac < 0.50`**. This catches the whole-embryo ghost/structureless anchors,
+  catches the dead low-structure control, and removes a small low-information tail in the population
+  (~2.1% overall). The cutoff is intentionally conservative about low information, even when that
+  excludes some bright/dorsal cases.
 - Why not a decile cut: like all metrics in this family, strong_edge_frac PARTLY sorts
-  stage/morphology (D1 = thin diagonal larvae that are IN FOCUS but low-mass; D3-D6 = round
-  yolk-balls; D7-D10 = curled late embryos). So "drop the bottom decile" would discard good
-  thin larvae. The absolute 0.20 cut corresponds to only the first ~2-3 cells of D1 (the
-  genuinely structureless ones), sparing the thin-larva contamination above it.
+  stage/morphology. "Drop the bottom decile" would discard many good thin larvae. The final absolute
+  cut is reviewed against anchors and population behavior rather than chosen as a fixed rank fraction.
 - `interior_std` = complementary second axis (separates ghosts; does NOT catch dead). Keep
   for the scatter / defense-in-depth, not as a standalone gate.
 - The two-axis scatter makes the complementarity explicit: dead = low-edge/mid-std corner,
@@ -126,10 +129,12 @@ Findings (interior pixels, eroded mask):
   (`figures/interior_structure/focus_vs_top_spread_familiar.png` and
   `..._interior_mean_familiar.png`, focus + saturation anchors over the 7,500 population),
   `interior_mean` is ANTI-correlated with edge_frac (bright⇒less structure, diagonal cloud),
-  so a mean cut entangles the two QC decisions; `p99-p90` is more orthogonal. Tentative
-  joint gate: `edge_frac > 0.25` AND `p99-p90 > ~10`. In BOTH plots the gold_dorsal_in_focus
-  anchors slide into the bright-problem band — reconfirming dorsal can't be separated from
-  saturation by intensity. Anchors: clean_reference (G04 t102,
+  so a mean cut entangles the two QC decisions; `p99-p90` is more orthogonal. Final pipeline
+  ownership keeps these as separate gates: focus removes low-information snips
+  (`edge_frac < 0.50` using the fine-tuned local-context `grad > 0.02` definition), while
+  saturation / crushed-brightness belongs to the general image-quality QC product. In BOTH plots the
+  gold_dorsal_in_focus anchors slide into the bright-problem band — reconfirming dorsal can't be
+  separated from saturation by intensity. Anchors: clean_reference (G04 t102,
   A10 t194, E04 t108), oversaturated (A06 t82/t92/t93), dorsal_bright_good (E10 t145),
   dead_saturated (D10 t143).
 
