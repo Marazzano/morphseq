@@ -31,6 +31,7 @@ Run:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import sys
 from pathlib import Path
 
@@ -54,13 +55,11 @@ sys.path.insert(0, str(GENE14_DIR))
 from plot_config import PHENOTYPE_COLORS  # noqa: E402
 
 from support_geometry import (  # noqa: E402
-    MIN_COMPONENT_MASS_FRAC, VALLEY_SWEEP_STEPS, compute_support_geometry,
-    isotropic_geometry_kde_spec, normalize_shape, valley_detection_detail,
+    isotropic_geometry_kde_spec, normalize_shape,
 )
-from morphseq_investigation.core.peak_counting import count_mass_significant_modes  # noqa: E402
 from morphseq_investigation.core.density_composition import CanonicalGrid  # noqa: E402
 from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
-    DEFAULT_ANALYSIS_SPEC, ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec,
+    ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec,
 )
 from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402
     build_distribution_overlay,
@@ -72,22 +71,25 @@ from resolved_peak_reference_readout import (  # noqa: E402
     _SIG_COLOR, _NS_COLOR, _INVALID_COLOR,
 )
 
-# The three bandwidth methods to render a full valley figure for. Each is a
-# (KDESpec-or-None, ResolvedPeakAnalysisSpec, label, filename-slug). kde=None is
-# scipy's Scott default; the geometry methods route through the isotropic KDE.
+# Tuned geometry-bandwidth methods to render. Each is a
+# (KDESpec, ResolvedPeakAnalysisSpec, label, filename-slug). The MST-edge rule is
+# the current default; median-kNN is kept as a conservative fallback diagnostic.
 _PEAK_METHOD = "kde_peak_basins_sample_support"
 def _analysis_spec(rule, mult):
     return ResolvedPeakAnalysisSpec(bandwidth_rule=rule, bandwidth_multiplier=mult,
                                     peak_detector_method=_PEAK_METHOD, min_sample_fraction=0.10)
+DEFAULT_KDE = isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75)
+DEFAULT_ANALYSIS_SPEC = _analysis_spec("longest_non_outlier_MST_edge", 0.75)
 METHODS = [
-    (None, DEFAULT_ANALYSIS_SPEC, "scipy_default (Scott)", "scipy_default"),
+    (DEFAULT_KDE, DEFAULT_ANALYSIS_SPEC, "MST_edge x0.75", "MST_edge"),
     (isotropic_geometry_kde_spec("median_kNN_distance", 1.0),
      _analysis_spec("median_kNN_distance", 1.0), "median_kNN x1.0", "median_kNN"),
-    (isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75),
-     _analysis_spec("longest_non_outlier_MST_edge", 0.75), "MST_edge x0.75", "MST_edge"),
 ]
 PEAK_OVERLAY_COLOR = "#666666"   # grey dashed peak-basin contour (row 1)
 N_READOUT_DRAWS = 200
+N_MODE_RESAMPLE_DRAWS = 80
+MODE_DOWNSAMPLE_FRACTION = 0.80
+MODE_RESAMPLE_MIN_FREQ = 0.80
 
 GENES = {
     "b9d2":   {"csv": REF_DIR / "reference_b9d2_clean.csv",
@@ -116,6 +118,60 @@ GRID = 40
 LABEL_FS = 11                  # bigger labels throughout
 
 
+@dataclass(frozen=True)
+class ResampledModeCount:
+    modal_count: int
+    count: int | None
+    frequency: float
+    counts: dict[int, int]
+
+    @property
+    def stable(self):
+        return self.count is not None
+
+
+def _mode_count_label(n_modes, *, frequency=None):
+    """Compact label for downsample-supported mode counts in row titles."""
+    if n_modes is None:
+        return "mode count unstable"
+    n = int(n_modes)
+    word = "mode" if n == 1 else "modes"
+    suffix = f" ({frequency:.0%})" if frequency is not None else ""
+    return f"{n} {word}{suffix}"
+
+
+def _resampled_mode_count(points, canonical_grid, analysis_spec, *, n_draws, sample_fraction, min_freq, rng):
+    """Subsample one distribution and return its consensus resolved mode count."""
+    n = len(points)
+    sample_n = min(n, max(MIN_EMBRYOS, int(np.ceil(float(sample_fraction) * n))))
+    counts = []
+    for _ in range(n_draws):
+        sample = points[rng.choice(n, size=sample_n, replace=False)]
+        counts.append(_resolved_peaks(sample, canonical_grid, analysis_spec).number_of_peaks)
+    values, freqs = np.unique(np.asarray(counts, dtype=int), return_counts=True)
+    best_i = int(np.argmax(freqs))
+    best_count = int(values[best_i])
+    best_freq = float(freqs[best_i]) / float(n_draws)
+    return ResampledModeCount(
+        modal_count=best_count,
+        count=best_count if best_freq >= min_freq else None,
+        frequency=best_freq,
+        counts={int(v): int(c) for v, c in zip(values, freqs)},
+    )
+
+
+def _displayable_resampled_mode_count(mode_count, observed_count):
+    """Do not display a resampled count that the observed KDE cannot outline."""
+    if mode_count.count is None or int(mode_count.count) <= int(observed_count):
+        return mode_count
+    return ResampledModeCount(
+        modal_count=mode_count.modal_count,
+        count=None,
+        frequency=mode_count.frequency,
+        counts=mode_count.counts,
+    )
+
+
 def load_bins(cfg):
     df = pd.read_csv(cfg["csv"], low_memory=False)
     needed = [TIME_COL, X_FEAT, Y_FEAT, "phenotype_clean", "zygosity"]
@@ -138,85 +194,6 @@ def load_bins(cfg):
                     wt[[X_FEAT, Y_FEAT]].values.astype(float))
     return out
 
-def _target_ring(ax, xx, yy, dens):
-    """Draw the two island rings at the valley waterline. Caller only invokes this when
-    the valley is SIGNIFICANT, so a ring is always a positive two-mode claim."""
-    _, level = count_mass_significant_modes(
-        dens,
-        min_component_mass_frac=MIN_COMPONENT_MASS_FRAC,
-        sweep_steps=VALLEY_SWEEP_STEPS,
-    )
-    if level is not None:
-        ax.contour(xx, yy, dens, levels=[level], colors=RING_COLOR,
-                   linewidths=2.2, linestyles="--", zorder=4)
-
-
-def _hdr_mass_level(dens, mass_frac=HDR_MASS_FRAC):
-    """Density value bounding the densest `mass_frac` of KDE mass -- the HDR contour.
-
-    This is the geometric locus of the `hdr_area_concentration` statistic: the region
-    inside this contour is the area the densest `mass_frac` of the mass occupies. A
-    tighter contour => mass more concentrated => more discrete vs the WT null."""
-    flat = np.sort(np.asarray(dens, dtype=float).ravel())[::-1]
-    csum = np.cumsum(flat)
-    total = float(csum[-1])
-    if total <= 0:
-        return None
-    idx = int(np.searchsorted(csum / total, mass_frac, side="left"))
-    idx = min(idx, len(flat) - 1)
-    return float(flat[idx])
-
-
-def _area_ring(ax, xx, yy, dens):
-    """Draw the HDR densest-mass concentration ring. Caller invokes only when the
-    HDR-area statistic is SIGNIFICANT vs the WT null, so this ring is a positive claim
-    that the target's mass concentrates into less area than matched-N wildtype."""
-    level = _hdr_mass_level(dens)
-    if level is not None:
-        ax.contour(xx, yy, dens, levels=[level], colors=AREA_RING_COLOR,
-                   linewidths=2.0, linestyles="-", zorder=5)
-
-
-def _null_fit_strip(ax, valley_sr, area_sr):
-    """Inset at the bottom-left of a row-1 cell: for each density witness, show where
-    the OBSERVED statistic falls within its matched-N WT null distribution.
-
-    Two stacked mini-rows (valley on top, HDR-area below). Each draws the null's
-    5-95 percentile band (gray bar), its median (tick), and the observed value (colored
-    triangle). Observed sitting to the RIGHT of the null band = more discrete than
-    wildtype = the significant direction. This is the visual of the p-value: it makes
-    'deeper/tighter than the WT reference null' literal rather than a number in a title."""
-    inset = ax.inset_axes([0.02, 0.02, 0.42, 0.20])
-    inset.set_xticks([]); inset.set_yticks([])
-    inset.patch.set_alpha(0.82)
-    for s in inset.spines.values():
-        s.set_visible(False)
-    rows = [("valley", valley_sr, RING_COLOR), ("HDR-area", area_sr, AREA_RING_COLOR)]
-    y_positions = [0.72, 0.28]
-    for (label, sr, color), y in zip(rows, y_positions):
-        if sr is None:
-            continue
-        null = np.asarray(sr.null_dist, dtype=float)
-        lo, hi = np.percentile(null, [5, 95])
-        med = float(np.median(null))
-        span = hi - lo if hi > lo else (abs(med) + 1e-9)
-        # map [lo-0.2span, obs or hi +0.2span] -> [0.28, 0.98] within the inset
-        left = min(lo, sr.stat) - 0.2 * span
-        right = max(hi, sr.stat) + 0.2 * span
-        rng = right - left if right > left else 1.0
-        to_x = lambda v: 0.28 + 0.70 * (v - left) / rng
-        inset.plot([to_x(lo), to_x(hi)], [y, y], color="#999", lw=3, solid_capstyle="butt")
-        inset.plot([to_x(med)], [y], marker="|", color="#555", ms=8, mew=1.4)
-        sig_dir = sr.pvalue < VALLEY_SIG_P
-        inset.plot([to_x(sr.stat)], [y], marker=">", color=color, ms=7,
-                   mec="k", mew=0.4 if sig_dir else 0.0)
-        inset.text(0.0, y, label, fontsize=6.0, va="center", ha="left",
-                   color=color, fontweight="bold", fontfamily="monospace")
-    inset.text(0.63, 0.99, "obs vs WT null", fontsize=5.4, va="top", ha="center",
-               color="#666", fontstyle="italic")
-    inset.set_xlim(0, 1); inset.set_ylim(0, 1)
-
-
 def _resolved_peaks(points, canonical_grid, analysis_spec):
     """Resolve peaks for a point set on a shared CanonicalGrid; return the
     ResolvedPeakDistribution (whose .peaks carry center + R80 radius)."""
@@ -226,47 +203,73 @@ def _resolved_peaks(points, canonical_grid, analysis_spec):
     )
 
 
-def _overlay_peak_basins(ax, xx, yy, dens, dist):
-    """Grey dashed contour around each detected peak basin (row 1). Uses the
-    detector's own accepted-peak waterline if available, else a mid-density
-    contour, so the reader sees WHERE the engine placed modes regardless of
-    valley significance."""
-    _, level = count_mass_significant_modes(
-        dens, min_component_mass_frac=MIN_COMPONENT_MASS_FRAC, sweep_steps=VALLEY_SWEEP_STEPS)
-    if level is None:
-        peak = float(np.max(dens))
-        level = 0.35 * peak if peak > 0 else None
-    if level is not None:
-        ax.contour(xx, yy, dens, levels=[level], colors=PEAK_OVERLAY_COLOR,
-                   linewidths=1.2, linestyles="--", zorder=3.5, alpha=0.9)
+def _hdr_contour(ax, xx, yy, mode_dens, color, lw, hdr_mass):
+    """Draw one smooth HDR iso-density loop of `mode_dens` enclosing `hdr_mass`
+    of its mass -- a closed curve that follows the KDE bump's shape."""
+    if mode_dens.max() <= 0:
+        return
+    flat = np.sort(mode_dens.ravel())[::-1]
+    csum = np.cumsum(flat)
+    total = float(csum[-1])
+    if total <= 0:
+        return
+    idx = min(int(np.searchsorted(csum / total, hdr_mass, side="left")), len(flat) - 1)
+    level = float(flat[idx])
+    if level <= 0:
+        level = float(flat[flat > 0].min()) if np.any(flat > 0) else 0.0
+    ax.contour(xx, yy, mode_dens, levels=[level], colors=[color],
+               linewidths=lw, zorder=5, alpha=0.95)
 
 
-def _contour_peaks(ax, dist, box, color, *, lw=1.8):
-    """Draw the ACTUAL peak boundaries from inference -- not a re-estimated KDE.
+def _draw_basins(ax, dist, *, color, lw=2.0, hdr_mass=0.60, n_modes=None):
+    """Outline the modes with smooth KDE HDR loops that hug each bump's shape.
 
-    Uses the same density the peaks were detected on (`dist.density_grid.density`)
-    contoured at the detector's own basin waterline (`detection_result.split_level`).
-    That is exactly the iso-density level the detector used to separate the modes,
-    so the contour is the real basin boundary on the real (method) bandwidth. When
-    only one mode was found (no split), fall back to a mid-density outline so the
-    single peak is still traced."""
+    `n_modes` is the downsample-supported number of modes to display.
+    - n_modes is None -> do not draw a basin count claim.
+    - n_modes >= detected count -> draw every detected basin.
+    - n_modes <  detected count -> the extra detected modes aren't statistically
+      supported; collapse to ONE outer loop of the whole distribution (for
+      n_modes==1) rather than drawing unsupported sub-modes. This keeps the
+      drawing consistent with the count shown in the title.
+
+    Basin masking uses `empirical_basin_labels` so adjacent supported modes stay
+    separate loops."""
     dg = dist.density_grid
     dens = np.asarray(dg.density, dtype=float)
-    peak = float(np.nanmax(dens)) if np.isfinite(dens).any() else 0.0
-    if peak <= 0:
+    labels = getattr(dist, "empirical_basin_labels", None)
+    labels = np.asarray(labels, dtype=int) if labels is not None else None
+    peaks = list(dist.peaks)
+    detected = len(peaks)
+    if n_modes is None:
         return
-    level = dist.detection_result.split_level
-    if level is None or not np.isfinite(level) or level <= 0:
-        level = 0.30 * peak   # single-mode fallback: outline the one basin
-    ax.contour(dg.xx, dg.yy, dens, levels=[float(level)], colors=[color],
-               linewidths=lw, zorder=5, alpha=0.95)
-    for pk in dist.peaks:
+    show = int(n_modes)
+
+    # Not enough support for the detected sub-structure: draw ONE loop for the
+    # whole distribution (the honest "one mode" view). Only the single-mode
+    # collapse is handled specially; 1 <= show < detected with show>1 is rare and
+    # falls through to drawing the `show` strongest basins.
+    if show <= 1 or detected <= 1:
+        # center mark(s): the strongest peak
+        if peaks:
+            cx, cy = peaks[0].geometry.center_coordinate
+            ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
+        _hdr_contour(ax, dg.xx, dg.yy, dens, color, lw, hdr_mass)
+        return
+
+    # Show the `show` strongest detected modes as separate basin loops.
+    peaks_by_height = sorted(peaks, key=lambda p: p.geometry.total_support_fraction, reverse=True)
+    for pk in peaks_by_height[:show]:
         cx, cy = pk.geometry.center_coordinate
-        ax.plot([cx], [cy], marker="+", color=color, ms=6, mew=1.4, zorder=5)
+        ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
+        if labels is not None and pk.geometry.peak_id in np.unique(labels):
+            mode_dens = np.where(labels == pk.geometry.peak_id, dens, 0.0)
+        else:
+            mode_dens = dens
+        _hdr_contour(ax, dg.xx, dg.yy, mode_dens, color, lw, hdr_mass)
 
 
-def render_gene(gene, cfg, *, kde=None, analysis_spec=DEFAULT_ANALYSIS_SPEC,
-                method_label="scipy_default (Scott)", method_slug="scipy_default"):
+def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SPEC,
+                method_label="MST_edge x0.75", method_slug="MST_edge"):
     bins = load_bins(cfg)
     hpfs = [h for h in TARGET_DESIGN_HPF if h in bins]
     n = len(hpfs)
@@ -288,36 +291,61 @@ def render_gene(gene, cfg, *, kde=None, analysis_spec=DEFAULT_ANALYSIS_SPEC,
         grp = normalize_shape(grp_raw)
         wt = normalize_shape(wt_raw)
 
-        bundle = compute_support_geometry(grp_raw, wt_raw, n_resample=N_RESAMPLE,
-                                          rng=np.random.default_rng(42), kde=kde)
-        valley_sr = bundle.results["valley_depth"]
-        area_sr = bundle.results.get("hdr_area_concentration")
-        vp = valley_sr.pvalue
-        sig = vp < VALLEY_SIG_P
-        ap = area_sr.pvalue if area_sr is not None else 1.0
-        area_sig = area_sr is not None and ap < VALLEY_SIG_P
-
         overlay = build_distribution_overlay(grp, wt, grid=GRID, kde=kde)
         box = overlay.box
         gx, gy, gd = overlay.target_grid.xx, overlay.target_grid.yy, overlay.target_grid.density
 
-        # Shared CanonicalGrid for the resolved-peak engine (row 2 readout + peak
-        # circles), built from the overlay box so density and peaks agree.
+        # Shared CanonicalGrid for the resolved-peak engine, built from the overlay
+        # box so density and peaks agree.
         canonical_grid = CanonicalGrid(x_min=box[0], x_max=box[1],
                                        y_min=box[2], y_max=box[3], grid_size=GRID)
         grp_dist = _resolved_peaks(grp, canonical_grid, analysis_spec)
         wt_dist = _resolved_peaks(wt, canonical_grid, analysis_spec)
 
-        # ── ROW 1: TARGET KDE + grey-dashed peak basins + sig rings ──────────
+        # Downsample each distribution independently. Row 1 and row 4 only claim
+        # a mode count if the same count appears in >= MODE_RESAMPLE_MIN_FREQ of
+        # subsampled draws; otherwise the panel is labeled unstable.
+        seed_base = 42 + sum(ord(c) for c in f"{gene}:{method_slug}:{hpf}")
+        seed_seq = np.random.SeedSequence(seed_base)
+        grp_mode_boot = _resampled_mode_count(
+            grp, canonical_grid, analysis_spec,
+            n_draws=N_MODE_RESAMPLE_DRAWS,
+            sample_fraction=MODE_DOWNSAMPLE_FRACTION,
+            min_freq=MODE_RESAMPLE_MIN_FREQ,
+            rng=np.random.default_rng(seed_seq.spawn(1)[0]),
+        )
+        wt_mode_boot = _resampled_mode_count(
+            wt, canonical_grid, analysis_spec,
+            n_draws=N_MODE_RESAMPLE_DRAWS,
+            sample_fraction=MODE_DOWNSAMPLE_FRACTION,
+            min_freq=MODE_RESAMPLE_MIN_FREQ,
+            rng=np.random.default_rng(seed_seq.spawn(1)[0]),
+        )
+        grp_mode_boot = _displayable_resampled_mode_count(grp_mode_boot, grp_dist.number_of_peaks)
+        wt_mode_boot = _displayable_resampled_mode_count(wt_mode_boot, wt_dist.number_of_peaks)
+        print(
+            f"{gene} {method_slug} {hpf}hpf: "
+            f"target subsample modal={grp_mode_boot.modal_count}, display={grp_mode_boot.count} "
+            f"(freq={grp_mode_boot.frequency:.2f}, observed={grp_dist.number_of_peaks}, "
+            f"counts={grp_mode_boot.counts}); "
+            f"WT subsample modal={wt_mode_boot.modal_count}, display={wt_mode_boot.count} "
+            f"(freq={wt_mode_boot.frequency:.2f}, observed={wt_dist.number_of_peaks}, "
+            f"counts={wt_mode_boot.counts})"
+        )
+
+        # Comparative target-vs-WT readout. This does not decide the displayed
+        # mode count; it only says whether the target differs significantly from WT.
+        cells = compute_reference_readout(
+            target_points=grp, wt_points=wt, canonical_grid=canonical_grid,
+            n_draws=N_READOUT_DRAWS, seed=42, stage_id=f"{hpf}hpf", gene=gene,
+            analysis_spec=analysis_spec)
+
+        # ── ROW 1: TARGET KDE + points + supported modes + count ─────────────
         ax = axes[0][col]
         peak = float(gd.max())
         levels = np.linspace(0.06 * peak, peak, 16)
         ax.contourf(gx, gy, gd, levels=levels, cmap=light_blues, extend="max")
-        _overlay_peak_basins(ax, gx, gy, gd, grp_dist)   # grey dashed found-peak contour
-        if sig:
-            _target_ring(ax, gx, gy, gd)
-        if area_sig:
-            _area_ring(ax, gx, gy, gd)
+        _draw_basins(ax, grp_dist, color=PEAK_OVERLAY_COLOR, lw=1.8, n_modes=grp_mode_boot.count)
         for pheno in cfg["phenotype_labels"] + ["unlabeled"]:
             m = phenos == pheno
             if not m.any():
@@ -326,19 +354,10 @@ def render_gene(gene, cfg, *, kde=None, analysis_spec=DEFAULT_ANALYSIS_SPEC,
                        facecolors=PHENOTYPE_COLORS.get(pheno, UNLABELED_COLOR),
                        edgecolors="k", linewidths=0.4, zorder=4, label=pheno)
         format_density_axis(ax, box)
-        v_col = "#B2182B" if sig else "#2166AC"
-        a_col = AREA_RING_COLOR if area_sig else "#2166AC"
-        ax.set_title(f"{hpf} hpf", fontsize=LABEL_FS, fontweight="bold", color="#222")
-        ax.text(0.5, 1.11, f"valley p={vp:.2f}", transform=ax.transAxes,
-                fontsize=LABEL_FS - 2, fontweight="bold", color=v_col, ha="right", va="bottom")
-        ax.text(0.5, 1.11, f"   HDR-area p={ap:.2f}", transform=ax.transAxes,
-                fontsize=LABEL_FS - 2, fontweight="bold", color=a_col, ha="left", va="bottom")
+        ax.set_title(f"{hpf} hpf  ·  {_mode_count_label(grp_mode_boot.count, frequency=grp_mode_boot.frequency)}",
+                     fontsize=LABEL_FS, fontweight="bold", color="#222")
 
         # ── ROW 2: reference readout (resolved-peak metrics, target vs WT) ───
-        cells = compute_reference_readout(
-            target_points=grp, wt_points=wt, canonical_grid=canonical_grid,
-            n_draws=N_READOUT_DRAWS, seed=42, stage_id=f"{hpf}hpf", gene=gene,
-            analysis_spec=analysis_spec)
         render_readout_cell(axes[1][col], cells, label_fs=LABEL_FS)
 
         # ── ROW 3: DENSITY OVERLAP (lightened background) ────────────────────
@@ -346,13 +365,15 @@ def render_gene(gene, cfg, *, kde=None, analysis_spec=DEFAULT_ANALYSIS_SPEC,
                              alpha_scale=0.62)
         format_density_axis(axes[2][col], box)
 
-        # ── ROW 4: RAW POINTS + circled found peaks (target | WT) ────────────
+        # ── ROW 4: RAW POINTS + supported modes (target | WT) ────────────────
+        # Target and WT each show their own downsample-supported mode count.
         _points_pair_cell(fig, axes[3][col], grp, phenos, wt, cfg, gene,
                           overlay.target_grid, overlay.reference_grid, box,
-                          grp_dist=grp_dist, wt_dist=wt_dist)
+                          grp_dist=grp_dist, wt_dist=wt_dist,
+                          grp_mode_boot=grp_mode_boot, wt_mode_boot=wt_mode_boot)
 
     # row labels (row 2 readout has no map, so label it plainly)
-    axes[0][0].set_ylabel("TARGET KDE\n+ found peaks", fontsize=LABEL_FS)
+    axes[0][0].set_ylabel("TARGET KDE\n+ stable modes", fontsize=LABEL_FS)
     metric_order = " · ".join(f"{i+1}.{s.label}" for i, s in enumerate(READOUT_METRICS))
     for r, txt in [(1, "REF READOUT\n(vs WT)"), (2, "DENSITY OVERLAP\n(target vs WT)"),
                    (3, "RAW POINTS\n(target | WT)")]:
@@ -366,22 +387,19 @@ def render_gene(gene, cfg, *, kde=None, analysis_spec=DEFAULT_ANALYSIS_SPEC,
     handles += [
         Patch(facecolor=TARGET_DENS_COLOR, alpha=0.55, label=f"{gene} density"),
         Patch(facecolor=WT_DENS_COLOR, alpha=0.55, label="WT density"),
-        Line2D([0], [0], color=PEAK_OVERLAY_COLOR, lw=1.4, ls="--", label="found peak basin"),
-        Line2D([0], [0], color=RING_COLOR, lw=2.2, ls="--", label="valley ring (sig.)"),
-        Line2D([0], [0], color=AREA_RING_COLOR, lw=2.0, ls="-", label="HDR-area ring (sig.)"),
-        Line2D([0], [0], color=_SIG_COLOR, lw=1.8, label="peak basin contour (inference)"),
+        Line2D([0], [0], color=PEAK_OVERLAY_COLOR, lw=1.8, label="resolved mode basin"),
     ]
-    labels_ += [f"{gene} density", "WT density", "found peak basin",
-                "valley ring (sig.)", "HDR-area ring (sig.)", "peak basin contour (inference)"]
+    labels_ += [f"{gene} density", "WT density", "resolved mode basin"]
     fig.legend(handles, labels_, loc="lower center", ncol=len(handles),
                fontsize=LABEL_FS - 1, frameon=False, bbox_to_anchor=(0.5, 0.004))
 
     fig.suptitle(
-        f"{gene} — density-discreteness visualization  ·  bandwidth: {method_label}\n"
-        f"axis: {X_FEAT} x {Y_FEAT} (normalized).  Row 2 = resolved-peak readout vs matched-N WT "
+        f"{gene} — mode-structure visualization  ·  bandwidth: {method_label}\n"
+        f"axis: {X_FEAT} x {Y_FEAT} (normalized).  Row 1 = target KDE + resolved mode basins "
+        f"(count accepted if {MODE_DOWNSAMPLE_FRACTION:.0%}-downsample consensus >= "
+        f"{MODE_RESAMPLE_MIN_FREQ:.0%}).  Row 2 = resolved-peak readout vs matched-N WT "
         f"({N_READOUT_DRAWS} draws), top→bottom: {metric_order}.\n"
-        f"Grey dashed = found peak basins; gold/green rings = valley / HDR-area sig. (p<{VALLEY_SIG_P}); "
-        f"row 4 contours = inference basin waterline of each detected peak (target & WT).",
+        f"Row 3 = target-vs-WT density overlap.  Row 4 = raw points + resolved mode basins/counts (target | WT).",
         fontsize=LABEL_FS, fontweight="bold", y=0.997)
     out = PLOT_DIR / f"{gene}_valley_{method_slug}.png"
     fig.savefig(out, dpi=150, facecolor="white")
@@ -390,7 +408,8 @@ def render_gene(gene, cfg, *, kde=None, analysis_spec=DEFAULT_ANALYSIS_SPEC,
 
 
 def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
-                      grp_grid, wt_grid, box, *, grp_dist=None, wt_dist=None):
+                      grp_grid, wt_grid, box, *, grp_dist=None, wt_dist=None,
+                      grp_mode_boot=None, wt_mode_boot=None):
     """Row 3: TARGET (LEFT) then reference WT (RIGHT) -- as two mini-axes inside
     host_ax, on the shared frame so spreads compare directly. Each panel overlays its
     OWN KDE (target blue / WT gray) behind the raw points; target keeps its phenotype
@@ -422,14 +441,22 @@ def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
                     edgecolors="k", linewidths=0.3, zorder=3)
     axR.scatter(wt_pts[:, 0], wt_pts[:, 1], s=16, alpha=0.85,
                 facecolors=WT_POINT_COLOR, edgecolors="k", linewidths=0.3, zorder=3)
-    # Circle each detected peak (R80) on its own panel: target peaks (blue) on the
-    # left, WT/null peaks (dark) on the right, so found modes are explicit.
+    # Draw each detected peak basin on its own panel: target modes (blue) on the
+    # left, WT modes (dark) on the right, so the mode counts are explicit.
     if grp_dist is not None:
-        _contour_peaks(axL, grp_dist, box, TARGET_DENS_COLOR)
+        _draw_basins(axL, grp_dist, color=TARGET_DENS_COLOR,
+                     n_modes=None if grp_mode_boot is None else grp_mode_boot.count)
     if wt_dist is not None:
-        _contour_peaks(axR, wt_dist, box, "#333333")
-    axL.set_title(gene, fontsize=LABEL_FS - 2, color=TARGET_DENS_COLOR)
-    axR.set_title("WT (reference)", fontsize=LABEL_FS - 2, color=WT_POINT_COLOR)
+        _draw_basins(axR, wt_dist, color="#333333",
+                     n_modes=None if wt_mode_boot is None else wt_mode_boot.count)
+    grp_count = None if grp_mode_boot is None else grp_mode_boot.count
+    grp_freq = None if grp_mode_boot is None else grp_mode_boot.frequency
+    wt_count = None if wt_mode_boot is None else wt_mode_boot.count
+    wt_freq = None if wt_mode_boot is None else wt_mode_boot.frequency
+    axL.set_title(f"{gene} · {_mode_count_label(grp_count, frequency=grp_freq)}",
+                  fontsize=LABEL_FS - 2, color=TARGET_DENS_COLOR)
+    axR.set_title(f"WT · {_mode_count_label(wt_count, frequency=wt_freq)}",
+                  fontsize=LABEL_FS - 2, color=WT_POINT_COLOR)
     for ax in (axL, axR):
         format_density_axis(ax, box)
 

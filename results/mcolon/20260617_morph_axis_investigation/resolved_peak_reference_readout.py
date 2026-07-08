@@ -65,6 +65,8 @@ class MetricCell:
     direction: int      # +1 up, -1 down, 0 flat/undefined
     meaning: str        # plain-English reading for THIS direction
     valid: bool         # test_is_valid (structural validity of the null)
+    target_value: float = float("nan")     # observed target metric value
+    reference_value: float = float("nan")  # observed WT reference metric value
 
 
 def compute_reference_readout(
@@ -129,17 +131,26 @@ def compute_reference_readout(
         p = float(row["empirical_p_value"])
         valid = bool(row["test_is_valid"])
         sig = valid and np.isfinite(p) and p < SIG_P
-        if not valid or not np.isfinite(diff) or diff == 0.0:
+        if not valid or not np.isfinite(diff):
             direction = 0
             meaning = "no modes to compare" if not valid else "no shift"
+        elif not sig:
+            direction = 0
+            meaning = "no significant shift"
+        elif diff == 0.0:
+            direction = 0
+            meaning = "no shift"
         elif diff > 0:
             direction = 1
             meaning = spec.up_word
         else:
             direction = -1
             meaning = spec.down_word
+        tv = float(row.get("observed_target_value", float("nan")))
+        rv = float(row.get("observed_reference_value", float("nan")))
         cells[spec.metric] = MetricCell(
-            spec.metric, diff, p, sig, direction, meaning, valid)
+            spec.metric, diff, p, sig, direction, meaning, valid,
+            target_value=tv, reference_value=rv)
     return cells
 
 
@@ -170,7 +181,12 @@ def render_readout_cell(ax, cells: dict[str, MetricCell], *, label_fs: int = 11)
         ax.text(0.03, y, arrow, transform=ax.transAxes, fontsize=label_fs + 3,
                 fontweight="bold", color=color, ha="left", va="center")
         star = " *" if cell.significant else ""
-        ax.text(0.20, y, f"{cell.meaning}{star}", transform=ax.transAxes,
+        # For the mode-count row, state the actual counts found (target vs WT) so
+        # the reader sees "how many modes", not only the direction of change.
+        suffix = ""
+        if spec.metric == "number_of_peaks" and np.isfinite(cell.target_value):
+            suffix = f"  ({int(round(cell.target_value))} vs {int(round(cell.reference_value))})"
+        ax.text(0.20, y, f"{cell.meaning}{star}{suffix}", transform=ax.transAxes,
                 fontsize=label_fs - 2, fontweight=weight, color=color,
                 ha="left", va="center")
 
