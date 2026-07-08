@@ -116,6 +116,7 @@ def _plot_features_over_time_subplot(
     id_style_lookup: Optional[Dict[str, IdTraceStyle]] = None,
     label_map: Optional[Dict[Any, str]] = None,
     style: Optional[StyleSpec] = None,
+    color_preset: Optional["ColorPreset"] = None,
 ) -> SubplotData:
     """Plot Features Over Time Subplot (internal IR builder for one facet cell)."""
     style = style or default_style()
@@ -487,6 +488,7 @@ def plot_feature_over_time(
             id_style_lookup=normalized_id_styles,
             label_map=label_map,
             style=style,
+            color_preset=color_preset,
         )
         if xlim is not None:
             subplot.xlim = tuple(float(v) for v in xlim)

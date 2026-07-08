@@ -34,7 +34,9 @@ class StyleSpec:
     
     # Legend
     legend_fontsize: int = 12
-    legend_loc: str = 'upper right'  # any matplotlib loc string, or 'outside' to place right of axes
+    legend_loc: str = 'upper right'  # any matplotlib loc string, 'outside' to place right of axes,
+                                     # or 'per-panel' for a compact legend on every populated axis
+                                     # (each panel lists only its own curves + shared markers)
 
     # Text (Matplotlib)
     # If None, defer to backend defaults / rcParams.

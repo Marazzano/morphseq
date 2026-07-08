@@ -192,6 +192,9 @@ def render_matplotlib(
             )
 
     legend_entries: Dict[str, Dict[str, Any]] = {}  # label → {'kind': str, 'style': TraceStyle}
+    # Per-panel legend entries: list of (ax, {label → {'kind', 'style'}}) so that the
+    # 'per-panel' legend mode shows only the curves actually drawn on each axis.
+    panel_legends: list[Tuple[plt.Axes, Dict[str, Dict[str, Any]]]] = []
     last_im = None  # track last AxesImage for colorbar
 
     # Build heatmap norm once, shared across all panels
@@ -215,6 +218,7 @@ def render_matplotlib(
         else:
             # Trace panel (existing logic)
             has_data = False
+            this_panel_entries: Dict[str, Dict[str, Any]] = {}
 
             for trace in sub.traces:
                 has_data = True
@@ -250,6 +254,16 @@ def render_matplotlib(
                 if trace.show_legend and trace.label and trace.label not in legend_entries:
                     kind = 'scatter' if trace.render_as == 'scatter' else 'line'
                     legend_entries[trace.label] = {'kind': kind, 'style': trace.style}
+
+                # Per-panel legend: record every labeled trace drawn on THIS axis,
+                # regardless of the figure-wide show_legend de-duplication. This lets
+                # the 'per-panel' mode list only the curves present in each panel.
+                if trace.label and trace.label not in this_panel_entries:
+                    kind = 'scatter' if trace.render_as == 'scatter' else 'line'
+                    this_panel_entries[trace.label] = {'kind': kind, 'style': trace.style}
+
+            if this_panel_entries:
+                panel_legends.append((ax, this_panel_entries))
 
         if not has_data and sub.heatmap is None:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center',
@@ -298,30 +312,48 @@ def render_matplotlib(
         )
 
     # Unified legend (trace figures only)
-    if legend_entries:
-        handles = []
-        for lbl, entry in legend_entries.items():
-            kind = entry['kind']
-            tstyle: TraceStyle = entry['style']
-            if kind == 'scatter':
-                edge = tstyle.marker_edgecolor or tstyle.color
-                handles.append(
-                    Line2D(
-                        [0],
-                        [0],
-                        color=edge,
-                        marker=tstyle.marker,
-                        markersize=float(tstyle.marker_size),
-                        markerfacecolor=tstyle.marker_facecolor,
-                        markeredgewidth=float(tstyle.marker_edgewidth),
-                        linestyle='None',
-                        label=lbl,
-                    )
-                )
-            else:
-                handles.append(Line2D([0], [0], color=tstyle.color, linewidth=style.trend_width, label=lbl))
+    def _make_handle(lbl: str, entry: Dict[str, Any]) -> Line2D:
+        """Build a Line2D legend proxy from a legend_entries record."""
+        tstyle: TraceStyle = entry['style']
+        if entry['kind'] == 'scatter':
+            edge = tstyle.marker_edgecolor or tstyle.color
+            return Line2D(
+                [0], [0],
+                color=edge,
+                marker=tstyle.marker,
+                markersize=float(tstyle.marker_size),
+                markerfacecolor=tstyle.marker_facecolor,
+                markeredgewidth=float(tstyle.marker_edgewidth),
+                linestyle='None',
+                label=lbl,
+            )
+        return Line2D([0], [0], color=tstyle.color, linewidth=style.trend_width, label=lbl)
+
+    legend_loc = getattr(style, 'legend_loc', 'upper right')
+
+    if legend_loc == 'per-panel' and panel_legends:
+        # A compact legend on every populated axis, listing only that panel's curves.
+        # Figure-wide scatter markers (e.g. the significance handle) only ever appear in
+        # one panel's traces upstream, so inject them into every panel for completeness.
+        shared_scatter = {
+            lbl: entry for lbl, entry in legend_entries.items() if entry['kind'] == 'scatter'
+        }
+        for ax, entries in panel_legends:
+            merged = {**entries, **{k: v for k, v in shared_scatter.items() if k not in entries}}
+            handles = [_make_handle(lbl, entry) for lbl, entry in merged.items()]
+            ax.legend(
+                handles=handles,
+                loc='upper left',
+                fontsize=style.legend_fontsize,
+                frameon=True,
+                framealpha=0.8,
+                handlelength=1.4,
+                borderpad=0.4,
+                labelspacing=0.3,
+            )
+    elif legend_entries:
+        handles = [_make_handle(lbl, entry) for lbl, entry in legend_entries.items()]
         rightmost_ax = axes[0, -1]
-        legend_loc = getattr(style, 'legend_loc', 'upper right')
         if legend_loc == 'outside':
             fig.legend(handles=handles, loc='upper left',
                        bbox_to_anchor=(1.01, 1.0), bbox_transform=rightmost_ax.transAxes,
