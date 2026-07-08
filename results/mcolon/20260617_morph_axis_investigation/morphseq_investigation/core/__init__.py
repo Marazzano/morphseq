@@ -56,3 +56,15 @@ from .resolved_peak_metrics import (  # noqa: F401
     run_empirical_null_test,
     summarize_resolved_peak_distribution,
 )
+from .distribution_records import (  # noqa: F401
+    DensityField,
+    DistributionComparison,
+    DistributionRecord,
+    EmpiricalPeakMembership,
+    add_density,
+    add_observed_metrics,
+    add_peak_detection,
+    add_peak_membership,
+    add_resolved_peak_distribution,
+    add_resolved_peak_summary,
+)

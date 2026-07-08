@@ -33,8 +33,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from valley_visualization import GENES, load_bins, TARGET_DESIGN_HPF, GRID  # noqa: E402
 from support_geometry import normalize_shape  # noqa: E402
-from morphseq_investigation.plotting.modal_distribution_plotting import build_distribution_overlay  # noqa: E402
-from morphseq_investigation.core.density_composition import CanonicalGrid  # noqa: E402
+from morphseq_investigation.plotting.modal_distribution_plotting import derive_shared_grid  # noqa: E402
 from resolved_peak_reference_readout import (  # noqa: E402
     READOUT_METRICS, compute_reference_readout, render_readout_cell, _ARROW,
     _SIG_COLOR, _NS_COLOR, _INVALID_COLOR,
@@ -72,14 +71,7 @@ def run_gene(gene, cfg):
         grp_raw, phenos, wt_raw = bins[hpf]
         grp = normalize_shape(grp_raw)
         wt = normalize_shape(wt_raw)
-        # build_distribution_overlay without a canonical_grid derives a square box
-        # from the points but leaves DensityGrid.grid=None. Promote that box to a
-        # real CanonicalGrid (same GRID resolution, same linspace endpoints, so the
-        # meshgrid matches) and pass it back in, so the figure density and the
-        # resolved-peak engine share one grid with a defined cell_area.
-        box = build_distribution_overlay(grp, wt, grid=GRID, kde=None).box
-        canonical_grid = CanonicalGrid(x_min=box[0], x_max=box[1],
-                                       y_min=box[2], y_max=box[3], grid_size=GRID)
+        canonical_grid = derive_shared_grid(grp, wt, grid=GRID, kde=None)
 
         cells_by_stage_rule[hpf] = {}
         for rule, mult, label in RULES:

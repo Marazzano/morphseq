@@ -58,11 +58,21 @@ from support_geometry import (  # noqa: E402
     isotropic_geometry_kde_spec, normalize_shape,
 )
 from morphseq_investigation.core.density_composition import CanonicalGrid  # noqa: E402
+from morphseq_investigation.core.distribution_records import (  # noqa: E402
+    DistributionComparison,
+    DistributionRecord,
+    add_density,
+    add_observed_metrics,
+    add_peak_detection,
+    add_peak_membership,
+    add_resolved_peak_distribution,
+    add_resolved_peak_summary,
+)
 from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
     ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec,
 )
 from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402
-    build_distribution_overlay,
+    derive_shared_grid,
     format_density_axis,
     plot_density_overlap,
 )
@@ -203,6 +213,41 @@ def _resolved_peaks(points, canonical_grid, analysis_spec):
     )
 
 
+def _build_distribution_record(distribution_id, points, canonical_grid, analysis_spec, *, kde):
+    record = DistributionRecord(
+        distribution_id=distribution_id,
+        points=np.asarray(points, dtype=float),
+        canonical_grid=canonical_grid,
+        metadata={
+            "bandwidth_rule": analysis_spec.bandwidth_rule,
+            "bandwidth_multiplier": analysis_spec.bandwidth_multiplier,
+            "peak_detector_method": analysis_spec.peak_detector_method,
+        },
+    )
+    record = add_density(record, name="primary", kde=kde)
+    record = add_peak_detection(
+        record,
+        name="primary",
+        density_name="primary",
+        method=analysis_spec.peak_detector_method,
+        min_component_mass_frac=analysis_spec.min_component_mass_frac,
+        min_sample_fraction=analysis_spec.min_sample_fraction,
+        min_prominence_ratio=analysis_spec.min_prominence_ratio,
+        outlier_density_floor_fraction=analysis_spec.outlier_density_floor_fraction,
+    )
+    record = add_peak_membership(record, name="primary", detection_name="primary")
+    record = add_resolved_peak_distribution(
+        record,
+        name="primary",
+        density_name="primary",
+        detection_name="primary",
+        membership_name="primary",
+        outlier_density_floor_fraction=analysis_spec.outlier_density_floor_fraction,
+    )
+    record = add_resolved_peak_summary(record, name="primary", resolved_name="primary")
+    return record
+
+
 def _hdr_contour(ax, xx, yy, mode_dens, color, lw, hdr_mass):
     """Draw one smooth HDR iso-density loop of `mode_dens` enclosing `hdr_mass`
     of its mass -- a closed curve that follows the KDE bump's shape."""
@@ -291,16 +336,25 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         grp = normalize_shape(grp_raw)
         wt = normalize_shape(wt_raw)
 
-        overlay = build_distribution_overlay(grp, wt, grid=GRID, kde=kde)
-        box = overlay.box
-        gx, gy, gd = overlay.target_grid.xx, overlay.target_grid.yy, overlay.target_grid.density
-
-        # Shared CanonicalGrid for the resolved-peak engine, built from the overlay
-        # box so density and peaks agree.
-        canonical_grid = CanonicalGrid(x_min=box[0], x_max=box[1],
-                                       y_min=box[2], y_max=box[3], grid_size=GRID)
-        grp_dist = _resolved_peaks(grp, canonical_grid, analysis_spec)
-        wt_dist = _resolved_peaks(wt, canonical_grid, analysis_spec)
+        canonical_grid = derive_shared_grid(grp, wt, grid=GRID, kde=kde)
+        box = (canonical_grid.x_min, canonical_grid.x_max, canonical_grid.y_min, canonical_grid.y_max)
+        grp_record = _build_distribution_record(
+            f"{gene}_{hpf}_target", grp, canonical_grid, analysis_spec, kde=kde
+        )
+        wt_record = _build_distribution_record(
+            f"{gene}_{hpf}_reference", wt, canonical_grid, analysis_spec, kde=kde
+        )
+        comparison = DistributionComparison(
+            comparison_id=f"{gene}_{hpf}_comparison",
+            members={"reference": wt_record, "target": grp_record},
+            metadata={"stage_hpf": hpf, "gene": gene},
+        )
+        comparison = add_observed_metrics(comparison, name="primary")
+        grp_dist = grp_record.resolved_peak_distributions["primary"]
+        wt_dist = wt_record.resolved_peak_distributions["primary"]
+        grp_density = grp_record.densities["primary"]
+        wt_density = wt_record.densities["primary"]
+        gx, gy, gd = grp_density.xx, grp_density.yy, grp_density.density
 
         # Downsample each distribution independently. Row 1 and row 4 only claim
         # a mode count if the same count appears in >= MODE_RESAMPLE_MIN_FREQ of
@@ -339,6 +393,8 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
             target_points=grp, wt_points=wt, canonical_grid=canonical_grid,
             n_draws=N_READOUT_DRAWS, seed=42, stage_id=f"{hpf}hpf", gene=gene,
             analysis_spec=analysis_spec)
+        observed_metrics = comparison.observed_metrics["primary"]
+        _ = observed_metrics  # retained for parity with the new typed comparison path
 
         # ── ROW 1: TARGET KDE + points + supported modes + count ─────────────
         ax = axes[0][col]
@@ -361,14 +417,14 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         render_readout_cell(axes[1][col], cells, label_fs=LABEL_FS)
 
         # ── ROW 3: DENSITY OVERLAP (lightened background) ────────────────────
-        plot_density_overlap(axes[2][col], overlay.target_grid, overlay.reference_grid,
+        plot_density_overlap(axes[2][col], grp_density, wt_density,
                              alpha_scale=0.62)
         format_density_axis(axes[2][col], box)
 
         # ── ROW 4: RAW POINTS + supported modes (target | WT) ────────────────
         # Target and WT each show their own downsample-supported mode count.
         _points_pair_cell(fig, axes[3][col], grp, phenos, wt, cfg, gene,
-                          overlay.target_grid, overlay.reference_grid, box,
+                          grp_density, wt_density, box,
                           grp_dist=grp_dist, wt_dist=wt_dist,
                           grp_mode_boot=grp_mode_boot, wt_mode_boot=wt_mode_boot)
 

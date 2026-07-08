@@ -20,7 +20,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap, to_rgba
 
-from morphseq_investigation.core.density_composition import DensityGrid
+from morphseq_investigation.core.density_composition import CanonicalGrid, DensityGrid
 from morphseq_investigation.core.peak_counting import PeakCountDetail, peak_count_detail
 from morphseq_investigation.core.support_geometry import (
     fiedler_value,
@@ -187,6 +187,35 @@ def square_density_box(box: tuple[float, float, float, float]) -> tuple[float, f
     return xmid - half, xmid + half, ymid - half, ymid + half
 
 
+def derive_shared_grid(
+    target_points: np.ndarray,
+    reference_points: np.ndarray,
+    *,
+    grid: int = GRID,
+    support_frac: float = SUPPORT_FRAC,
+    margin: float = 0.06,
+    scan_pct: float = 2.0,
+    kde=None,
+) -> CanonicalGrid:
+    """Derive the canonical grid used for a target/reference comparison."""
+    box = square_density_box(
+        density_box(
+            [np.asarray(target_points, dtype=float), np.asarray(reference_points, dtype=float)],
+            support_frac=support_frac,
+            margin=margin,
+            scan_pct=scan_pct,
+            kde=kde,
+        )
+    )
+    return CanonicalGrid(
+        x_min=float(box[0]),
+        x_max=float(box[1]),
+        y_min=float(box[2]),
+        y_max=float(box[3]),
+        grid_size=int(grid),
+    )
+
+
 def canonical_box_from_specs(specs: list[DistributionVisualSpec]) -> tuple[float, float, float, float]:
     """Return a shared plotting box from the canonical grids on the specs."""
     boxes = []
@@ -212,11 +241,10 @@ def evaluate_density_grid(
 ) -> DensityGrid:
     """Evaluate a KDE on a fixed box."""
     xlo, xhi, ylo, yhi = box
-    xs = np.linspace(xlo, xhi, grid)
-    ys = np.linspace(ylo, yhi, grid)
-    xx, yy = np.meshgrid(xs, ys)
+    canonical_grid = CanonicalGrid(x_min=float(xlo), x_max=float(xhi), y_min=float(ylo), y_max=float(yhi), grid_size=int(grid))
+    xx, yy = canonical_grid.xx, canonical_grid.yy
     dens = evaluate_kde_on_grid(np.asarray(points, dtype=float), xx, yy, kde=kde)
-    return DensityGrid(xx=xx, yy=yy, density=dens)
+    return DensityGrid(xx=xx, yy=yy, density=dens, grid=canonical_grid)
 
 
 def build_distribution_overlay(
@@ -244,6 +272,7 @@ def build_distribution_overlay(
         xx = np.asarray(canonical_grid.xx, dtype=float)
         yy = np.asarray(canonical_grid.yy, dtype=float)
         if canonical_grid.grid is not None:
+            canonical = canonical_grid.grid
             box = (
                 float(canonical_grid.grid.x_min),
                 float(canonical_grid.grid.x_max),
@@ -251,6 +280,13 @@ def build_distribution_overlay(
                 float(canonical_grid.grid.y_max),
             )
         else:
+            canonical = CanonicalGrid(
+                x_min=float(np.min(xx)),
+                x_max=float(np.max(xx)),
+                y_min=float(np.min(yy)),
+                y_max=float(np.max(yy)),
+                grid_size=int(xx.shape[0]),
+            )
             box = (
                 float(np.min(xx)),
                 float(np.max(xx)),
@@ -258,30 +294,34 @@ def build_distribution_overlay(
                 float(np.max(yy)),
             )
     else:
-        box = square_density_box(
-            density_box(
-                [target_pts, reference_pts],
-                support_frac=support_frac,
-                margin=margin,
-                scan_pct=scan_pct,
-                kde=kde,
-            )
+        canonical = derive_shared_grid(
+            target_pts,
+            reference_pts,
+            grid=grid,
+            support_frac=support_frac,
+            margin=margin,
+            scan_pct=scan_pct,
+            kde=kde,
         )
-        xs = np.linspace(box[0], box[1], grid)
-        ys = np.linspace(box[2], box[3], grid)
-        xx, yy = np.meshgrid(xs, ys)
+        box = (
+            float(canonical.x_min),
+            float(canonical.x_max),
+            float(canonical.y_min),
+            float(canonical.y_max),
+        )
+        xx, yy = canonical.xx, canonical.yy
 
     target_grid = DensityGrid(
         xx=xx,
         yy=yy,
         density=evaluate_kde_on_grid(target_pts, xx, yy, kde=kde),
-        grid=canonical_grid.grid if canonical_grid is not None else None,
+        grid=canonical,
     )
     reference_grid = DensityGrid(
         xx=xx,
         yy=yy,
         density=evaluate_kde_on_grid(reference_pts, xx, yy, kde=kde),
-        grid=canonical_grid.grid if canonical_grid is not None else None,
+        grid=canonical,
     )
     return DistributionOverlay(box=box, target_grid=target_grid, reference_grid=reference_grid)
 
