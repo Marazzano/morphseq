@@ -57,6 +57,22 @@ class KDESpec:
     k: int = 10
     min_factor: float = 0.5
     max_factor: float = 2.5
+    # For estimator="isotropic_geometry": the bandwidth_geometry_scales rule name
+    # (e.g. "longest_non_outlier_MST_edge") and its multiplier. The evaluator
+    # derives one isotropic sigma from whatever point set it is handed, so the
+    # SAME spec applied to target, reference, and every null resample gives each
+    # its own geometry-appropriate bandwidth -- the whole figure stays on-method.
+    geometry_rule: str = "longest_non_outlier_MST_edge"
+
+
+def isotropic_geometry_kde_spec(
+    geometry_rule: str = "longest_non_outlier_MST_edge",
+    bw_scale: float = 1.0,
+) -> KDESpec:
+    """Spec for a single-sigma isotropic Gaussian KDE whose sigma is derived from
+    point-cloud geometry (median kNN distance / longest non-outlier MST edge)."""
+    return KDESpec(estimator="isotropic_geometry",
+                   geometry_rule=str(geometry_rule), bw_scale=float(bw_scale))
 
 
 def scipy_gaussian_kde_spec(
@@ -174,7 +190,42 @@ def make_kde_evaluator(points_2d: np.ndarray, kde: KDESpec | Callable | None = N
         return lambda grid_points: scipy_kde(grid_points)
     if kde.estimator == "knn_adaptive":
         return _knn_adaptive_evaluator(pts, kde)
+    if kde.estimator == "isotropic_geometry":
+        return _isotropic_geometry_evaluator(pts, kde)
     raise ValueError(f"Unknown KDE estimator: {kde.estimator!r}")
+
+
+def _isotropic_geometry_evaluator(points_2d: np.ndarray, spec: KDESpec) -> DensityEvaluator:
+    """Single-sigma isotropic Gaussian KDE with sigma from point-cloud geometry.
+
+    sigma = bandwidth_geometry_scales(points)[spec.geometry_rule] * spec.bw_scale.
+    Imported lazily to avoid a module import cycle at load time.
+    """
+    from .bandwidth_tuning import bandwidth_geometry_scales
+
+    pts = np.asarray(points_2d, dtype=float)
+    n = len(pts)
+    scales = bandwidth_geometry_scales(pts) if n >= 2 else {}
+    scale = float(scales.get(spec.geometry_rule, float("nan")))
+    if not np.isfinite(scale) or scale <= 0:
+        # Fall back to a robust global spread so a degenerate/tiny group still
+        # yields a usable (if crude) density rather than a crash or all-zeros.
+        if n >= 2:
+            scale = float(np.median(np.std(pts, axis=0))) or 1.0
+        else:
+            scale = 1.0
+    h = max(scale * float(spec.bw_scale), 1e-6)
+    h2 = h * h
+    norm = 1.0 / (2.0 * np.pi * h2 * max(n, 1))
+
+    def _evaluate(grid_points: np.ndarray) -> np.ndarray:
+        gp = np.asarray(grid_points, dtype=float)  # shape (2, n_grid)
+        gx = gp[0][:, None]
+        gy = gp[1][:, None]
+        d2 = (gx - pts[None, :, 0]) ** 2 + (gy - pts[None, :, 1]) ** 2
+        return np.sum(np.exp(-0.5 * d2 / h2), axis=1) * norm
+
+    return _evaluate
 
 
 def evaluate_kde_on_grid(

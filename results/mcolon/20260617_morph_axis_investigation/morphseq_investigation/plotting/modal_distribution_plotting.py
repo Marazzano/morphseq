@@ -553,15 +553,20 @@ def plot_density_overlap(
     *,
     color_a: str = TARGET_DENS_COLOR,
     color_b: str = REFERENCE_DENS_COLOR,
+    alpha_scale: float = 1.0,
 ) -> None:
-    """Draw two translucent density fields on the same grid."""
+    """Draw two translucent density fields on the same grid.
+
+    `alpha_scale` < 1 lightens both fields uniformly (e.g. 0.62 for a softer
+    background that lets overlaid marks read).
+    """
     for grid, color in ((grid_b, color_b), (grid_a, color_a)):
         dens = np.asarray(grid.density, dtype=float)
         peak = float(np.nanmax(dens)) if np.isfinite(dens).any() else 0.0
         if peak <= 0:
             continue
         levels = [f * peak for f in (0.20, 0.45, 0.70, 0.90)] + [peak]
-        colors = [to_rgba(color, a) for a in (0.16, 0.24, 0.32, 0.42)]
+        colors = [to_rgba(color, a * float(alpha_scale)) for a in (0.16, 0.24, 0.32, 0.42)]
         ax.contourf(grid.xx, grid.yy, dens, levels=levels, colors=colors, antialiased=True)
 
 

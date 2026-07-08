@@ -50,6 +50,13 @@ def _bare_summary(distribution_id: str, source_type: str, metric_names: list[str
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--array-dir", type=Path, default=ARRAY_OUT_DIR)
+    parser.add_argument(
+        "--n-tasks", type=int, default=None,
+        help="If given, merge only task_*_of_{n_tasks:03d}.npz files. Prevents stale "
+             "outputs from a prior run with a different task count from colliding with "
+             "the current run. If omitted, all task_*_of_*.npz are merged and a mixed "
+             "n_tasks is a hard error.",
+    )
     parser.add_argument("--n", type=int, default=80)
     parser.add_argument("--realization-seed", type=int, default=7)
     parser.add_argument("--out-dir", type=Path, default=SMOKE_OUT_DIR)
@@ -59,9 +66,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    files = sorted(glob.glob(str(args.array_dir / "task_*_of_*.npz")))
+    pattern = f"task_*_of_{args.n_tasks:03d}.npz" if args.n_tasks is not None else "task_*_of_*.npz"
+    files = sorted(glob.glob(str(args.array_dir / pattern)))
     if not files:
-        raise SystemExit(f"No array task outputs found in {args.array_dir}")
+        raise SystemExit(f"No array task outputs matching {pattern!r} found in {args.array_dir}")
 
     metrics: list[str] | None = None
     observed_delta_ref: np.ndarray | None = None

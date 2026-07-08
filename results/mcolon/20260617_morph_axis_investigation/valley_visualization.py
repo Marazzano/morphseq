@@ -55,14 +55,39 @@ from plot_config import PHENOTYPE_COLORS  # noqa: E402
 
 from support_geometry import (  # noqa: E402
     MIN_COMPONENT_MASS_FRAC, VALLEY_SWEEP_STEPS, compute_support_geometry,
-    normalize_shape, valley_detection_detail,
+    isotropic_geometry_kde_spec, normalize_shape, valley_detection_detail,
 )
 from morphseq_investigation.core.peak_counting import count_mass_significant_modes  # noqa: E402
+from morphseq_investigation.core.density_composition import CanonicalGrid  # noqa: E402
+from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
+    DEFAULT_ANALYSIS_SPEC, ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec,
+)
 from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402
     build_distribution_overlay,
     format_density_axis,
     plot_density_overlap,
 )
+from resolved_peak_reference_readout import (  # noqa: E402
+    READOUT_METRICS, compute_reference_readout, render_readout_cell,
+    _SIG_COLOR, _NS_COLOR, _INVALID_COLOR,
+)
+
+# The three bandwidth methods to render a full valley figure for. Each is a
+# (KDESpec-or-None, ResolvedPeakAnalysisSpec, label, filename-slug). kde=None is
+# scipy's Scott default; the geometry methods route through the isotropic KDE.
+_PEAK_METHOD = "kde_peak_basins_sample_support"
+def _analysis_spec(rule, mult):
+    return ResolvedPeakAnalysisSpec(bandwidth_rule=rule, bandwidth_multiplier=mult,
+                                    peak_detector_method=_PEAK_METHOD, min_sample_fraction=0.10)
+METHODS = [
+    (None, DEFAULT_ANALYSIS_SPEC, "scipy_default (Scott)", "scipy_default"),
+    (isotropic_geometry_kde_spec("median_kNN_distance", 1.0),
+     _analysis_spec("median_kNN_distance", 1.0), "median_kNN x1.0", "median_kNN"),
+    (isotropic_geometry_kde_spec("longest_non_outlier_MST_edge", 0.75),
+     _analysis_spec("longest_non_outlier_MST_edge", 0.75), "MST_edge x0.75", "MST_edge"),
+]
+PEAK_OVERLAY_COLOR = "#666666"   # grey dashed peak-basin contour (row 1)
+N_READOUT_DRAWS = 200
 
 GENES = {
     "b9d2":   {"csv": REF_DIR / "reference_b9d2_clean.csv",
@@ -192,17 +217,71 @@ def _null_fit_strip(ax, valley_sr, area_sr):
     inset.set_xlim(0, 1); inset.set_ylim(0, 1)
 
 
-def render_gene(gene, cfg, *, kde=None):
+def _resolved_peaks(points, canonical_grid, analysis_spec):
+    """Resolve peaks for a point set on a shared CanonicalGrid; return the
+    ResolvedPeakDistribution (whose .peaks carry center + R80 radius)."""
+    return resolve_points_with_analysis_spec(
+        distribution_id="fig", points=points, canonical_grid=canonical_grid,
+        analysis_spec=analysis_spec,
+    )
+
+
+def _overlay_peak_basins(ax, xx, yy, dens, dist):
+    """Grey dashed contour around each detected peak basin (row 1). Uses the
+    detector's own accepted-peak waterline if available, else a mid-density
+    contour, so the reader sees WHERE the engine placed modes regardless of
+    valley significance."""
+    _, level = count_mass_significant_modes(
+        dens, min_component_mass_frac=MIN_COMPONENT_MASS_FRAC, sweep_steps=VALLEY_SWEEP_STEPS)
+    if level is None:
+        peak = float(np.max(dens))
+        level = 0.35 * peak if peak > 0 else None
+    if level is not None:
+        ax.contour(xx, yy, dens, levels=[level], colors=PEAK_OVERLAY_COLOR,
+                   linewidths=1.2, linestyles="--", zorder=3.5, alpha=0.9)
+
+
+def _contour_peaks(ax, dist, box, color, *, lw=1.8):
+    """Draw the ACTUAL peak boundaries from inference -- not a re-estimated KDE.
+
+    Uses the same density the peaks were detected on (`dist.density_grid.density`)
+    contoured at the detector's own basin waterline (`detection_result.split_level`).
+    That is exactly the iso-density level the detector used to separate the modes,
+    so the contour is the real basin boundary on the real (method) bandwidth. When
+    only one mode was found (no split), fall back to a mid-density outline so the
+    single peak is still traced."""
+    dg = dist.density_grid
+    dens = np.asarray(dg.density, dtype=float)
+    peak = float(np.nanmax(dens)) if np.isfinite(dens).any() else 0.0
+    if peak <= 0:
+        return
+    level = dist.detection_result.split_level
+    if level is None or not np.isfinite(level) or level <= 0:
+        level = 0.30 * peak   # single-mode fallback: outline the one basin
+    ax.contour(dg.xx, dg.yy, dens, levels=[float(level)], colors=[color],
+               linewidths=lw, zorder=5, alpha=0.95)
+    for pk in dist.peaks:
+        cx, cy = pk.geometry.center_coordinate
+        ax.plot([cx], [cy], marker="+", color=color, ms=6, mew=1.4, zorder=5)
+
+
+def render_gene(gene, cfg, *, kde=None, analysis_spec=DEFAULT_ANALYSIS_SPEC,
+                method_label="scipy_default (Scott)", method_slug="scipy_default"):
     bins = load_bins(cfg)
     hpfs = [h for h in TARGET_DESIGN_HPF if h in bins]
     n = len(hpfs)
     if n == 0:
         print(f"  {gene}: no usable bins"); return
 
-    fig, axes = plt.subplots(3, n, figsize=(3.3 * n, 9.6), squeeze=False)
-    # fix positions BEFORE _pair_cell reads them via get_position()
-    fig.subplots_adjust(bottom=0.08, top=0.87, left=0.07, right=0.99,
-                        hspace=0.30, wspace=0.10)
+    # 4 rows: (1) target KDE + peaks, (2) reference readout, (3) density overlap,
+    # (4) raw points with circled peaks. Row 2 (readout) is shorter than the map rows.
+    fig, axes = plt.subplots(4, n, figsize=(3.3 * n, 12.6), squeeze=False,
+                             gridspec_kw={"height_ratios": [1.0, 0.72, 1.0, 1.0]})
+    fig.subplots_adjust(bottom=0.06, top=0.88, left=0.09, right=0.99,
+                        hspace=0.34, wspace=0.10)
+
+    from matplotlib.colors import ListedColormap
+    light_blues = ListedColormap(plt.get_cmap(DENS_CMAP)(np.linspace(0.0, DENS_CMAP_HI, 256)))
 
     for col, hpf in enumerate(hpfs):
         grp_raw, phenos, wt_raw = bins[hpf]
@@ -214,93 +293,104 @@ def render_gene(gene, cfg, *, kde=None):
         valley_sr = bundle.results["valley_depth"]
         area_sr = bundle.results.get("hdr_area_concentration")
         vp = valley_sr.pvalue
-        sig = vp < VALLEY_SIG_P                      # valley witness
+        sig = vp < VALLEY_SIG_P
         ap = area_sr.pvalue if area_sr is not None else 1.0
-        area_sig = area_sr is not None and ap < VALLEY_SIG_P   # HDR-area witness
+        area_sig = area_sr is not None and ap < VALLEY_SIG_P
 
         overlay = build_distribution_overlay(grp, wt, grid=GRID, kde=kde)
         box = overlay.box
         gx, gy, gd = overlay.target_grid.xx, overlay.target_grid.yy, overlay.target_grid.density
 
-        # ── ROW 1: TARGET KDE (soft blue) + decision ring (ring ONLY if sig) ─
+        # Shared CanonicalGrid for the resolved-peak engine (row 2 readout + peak
+        # circles), built from the overlay box so density and peaks agree.
+        canonical_grid = CanonicalGrid(x_min=box[0], x_max=box[1],
+                                       y_min=box[2], y_max=box[3], grid_size=GRID)
+        grp_dist = _resolved_peaks(grp, canonical_grid, analysis_spec)
+        wt_dist = _resolved_peaks(wt, canonical_grid, analysis_spec)
+
+        # ── ROW 1: TARGET KDE + grey-dashed peak basins + sig rings ──────────
         ax = axes[0][col]
-        from matplotlib.colors import ListedColormap
-        light_blues = ListedColormap(
-            plt.get_cmap(DENS_CMAP)(np.linspace(0.0, DENS_CMAP_HI, 256)))
-        # start the lowest band just above zero so the tail fades out instead of
-        # painting a flat block to the grid edge
         peak = float(gd.max())
         levels = np.linspace(0.06 * peak, peak, 16)
         ax.contourf(gx, gy, gd, levels=levels, cmap=light_blues, extend="max")
+        _overlay_peak_basins(ax, gx, gy, gd, grp_dist)   # grey dashed found-peak contour
+        if sig:
+            _target_ring(ax, gx, gy, gd)
+        if area_sig:
+            _area_ring(ax, gx, gy, gd)
         for pheno in cfg["phenotype_labels"] + ["unlabeled"]:
             m = phenos == pheno
             if not m.any():
                 continue
             ax.scatter(grp[m, 0], grp[m, 1], s=20, alpha=0.9,
                        facecolors=PHENOTYPE_COLORS.get(pheno, UNLABELED_COLOR),
-                       edgecolors="k", linewidths=0.4, zorder=3, label=pheno)
+                       edgecolors="k", linewidths=0.4, zorder=4, label=pheno)
         format_density_axis(ax, box)
-        # Title carries BOTH witnesses; each colored by its own significance so the
-        # density-yes-here / no-there split is legible per bin.
         v_col = "#B2182B" if sig else "#2166AC"
         a_col = AREA_RING_COLOR if area_sig else "#2166AC"
         ax.set_title(f"{hpf} hpf", fontsize=LABEL_FS, fontweight="bold", color="#222")
         ax.text(0.5, 1.11, f"valley p={vp:.2f}", transform=ax.transAxes,
-                fontsize=LABEL_FS - 2, fontweight="bold", color=v_col,
-                ha="right", va="bottom")
+                fontsize=LABEL_FS - 2, fontweight="bold", color=v_col, ha="right", va="bottom")
         ax.text(0.5, 1.11, f"   HDR-area p={ap:.2f}", transform=ax.transAxes,
-                fontsize=LABEL_FS - 2, fontweight="bold", color=a_col,
-                ha="left", va="bottom")
-        # Where each observed stat sits against its WT null (the "fit to reference
-        # nulls" the fused figure is meant to show): a compact bracket per witness.
-        _null_fit_strip(ax, valley_sr, area_sr)
+                fontsize=LABEL_FS - 2, fontweight="bold", color=a_col, ha="left", va="bottom")
 
-        # ── ROW 2: smooth OVERLAP of the two density distributions ──────────
-        # framed to fit BOTH distributions so neither density is cut off
-        plot_density_overlap(axes[1][col], overlay.target_grid, overlay.reference_grid)
-        format_density_axis(axes[1][col], box)
+        # ── ROW 2: reference readout (resolved-peak metrics, target vs WT) ───
+        cells = compute_reference_readout(
+            target_points=grp, wt_points=wt, canonical_grid=canonical_grid,
+            n_draws=N_READOUT_DRAWS, seed=42, stage_id=f"{hpf}hpf", gene=gene,
+            analysis_spec=analysis_spec)
+        render_readout_cell(axes[1][col], cells, label_fs=LABEL_FS)
 
-        # ── ROW 3: RAW POINTS + each cloud's own KDE, target (L) vs WT (R) ──
-        _points_pair_cell(fig, axes[2][col], grp, phenos, wt, cfg, gene,
-                          overlay.target_grid, overlay.reference_grid, box)
+        # ── ROW 3: DENSITY OVERLAP (lightened background) ────────────────────
+        plot_density_overlap(axes[2][col], overlay.target_grid, overlay.reference_grid,
+                             alpha_scale=0.62)
+        format_density_axis(axes[2][col], box)
 
-    # row labels
-    axes[0][0].set_ylabel("TARGET KDE\n+ ring if significant", fontsize=LABEL_FS)
-    r1 = axes[1][0].get_position(); r2 = axes[2][0].get_position()
-    fig.text(0.014, r1.y0 + r1.height / 2, "DENSITY OVERLAP\n(target vs WT)",
-             fontsize=LABEL_FS, rotation=90, va="center", ha="center")
-    fig.text(0.014, r2.y0 + r2.height / 2, "RAW POINTS\n(target | WT)", fontsize=LABEL_FS,
-             rotation=90, va="center", ha="center")
+        # ── ROW 4: RAW POINTS + circled found peaks (target | WT) ────────────
+        _points_pair_cell(fig, axes[3][col], grp, phenos, wt, cfg, gene,
+                          overlay.target_grid, overlay.reference_grid, box,
+                          grp_dist=grp_dist, wt_dist=wt_dist)
 
-    # combined legend: phenotype markers (rows 1/3) + overlap density hues (row 2)
+    # row labels (row 2 readout has no map, so label it plainly)
+    axes[0][0].set_ylabel("TARGET KDE\n+ found peaks", fontsize=LABEL_FS)
+    metric_order = " · ".join(f"{i+1}.{s.label}" for i, s in enumerate(READOUT_METRICS))
+    for r, txt in [(1, "REF READOUT\n(vs WT)"), (2, "DENSITY OVERLAP\n(target vs WT)"),
+                   (3, "RAW POINTS\n(target | WT)")]:
+        pos = axes[r][0].get_position()
+        fig.text(0.016, pos.y0 + pos.height / 2, txt, fontsize=LABEL_FS,
+                 rotation=90, va="center", ha="center")
+
     handles, labels_ = axes[0][0].get_legend_handles_labels()
     from matplotlib.patches import Patch
     from matplotlib.lines import Line2D
-    handles = handles + [
+    handles += [
         Patch(facecolor=TARGET_DENS_COLOR, alpha=0.55, label=f"{gene} density"),
         Patch(facecolor=WT_DENS_COLOR, alpha=0.55, label="WT density"),
+        Line2D([0], [0], color=PEAK_OVERLAY_COLOR, lw=1.4, ls="--", label="found peak basin"),
         Line2D([0], [0], color=RING_COLOR, lw=2.2, ls="--", label="valley ring (sig.)"),
         Line2D([0], [0], color=AREA_RING_COLOR, lw=2.0, ls="-", label="HDR-area ring (sig.)"),
+        Line2D([0], [0], color=_SIG_COLOR, lw=1.8, label="peak basin contour (inference)"),
     ]
-    labels_ = labels_ + [f"{gene} density", "WT density",
-                         "valley ring (sig.)", "HDR-area ring (sig.)"]
+    labels_ += [f"{gene} density", "WT density", "found peak basin",
+                "valley ring (sig.)", "HDR-area ring (sig.)", "peak basin contour (inference)"]
     fig.legend(handles, labels_, loc="lower center", ncol=len(handles),
-               fontsize=LABEL_FS - 1, frameon=False, bbox_to_anchor=(0.5, 0.005))
+               fontsize=LABEL_FS - 1, frameon=False, bbox_to_anchor=(0.5, 0.004))
 
     fig.suptitle(
-        f"{gene} — density-discreteness visualization  (axis: {X_FEAT} x {Y_FEAT}, normalized)\n"
-        f"real KDE always shown; TWO parallel density witnesses vs the matched-N wildtype null "
-        f"(p < {VALLEY_SIG_P}): dashed gold valley ring (gap between modes) + solid green "
-        f"HDR-area ring (mass concentration).  Inset per cell = obs vs WT null.",
-        fontsize=LABEL_FS + 1, fontweight="bold", y=0.996)
-    out = PLOT_DIR / f"{gene}_valley_visualization.png"
+        f"{gene} — density-discreteness visualization  ·  bandwidth: {method_label}\n"
+        f"axis: {X_FEAT} x {Y_FEAT} (normalized).  Row 2 = resolved-peak readout vs matched-N WT "
+        f"({N_READOUT_DRAWS} draws), top→bottom: {metric_order}.\n"
+        f"Grey dashed = found peak basins; gold/green rings = valley / HDR-area sig. (p<{VALLEY_SIG_P}); "
+        f"row 4 contours = inference basin waterline of each detected peak (target & WT).",
+        fontsize=LABEL_FS, fontweight="bold", y=0.997)
+    out = PLOT_DIR / f"{gene}_valley_{method_slug}.png"
     fig.savefig(out, dpi=150, facecolor="white")
     plt.close(fig)
     print(f"Saved: {out.name}")
 
 
 def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
-                      grp_grid, wt_grid, box):
+                      grp_grid, wt_grid, box, *, grp_dist=None, wt_dist=None):
     """Row 3: TARGET (LEFT) then reference WT (RIGHT) -- as two mini-axes inside
     host_ax, on the shared frame so spreads compare directly. Each panel overlays its
     OWN KDE (target blue / WT gray) behind the raw points; target keeps its phenotype
@@ -332,6 +422,12 @@ def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
                     edgecolors="k", linewidths=0.3, zorder=3)
     axR.scatter(wt_pts[:, 0], wt_pts[:, 1], s=16, alpha=0.85,
                 facecolors=WT_POINT_COLOR, edgecolors="k", linewidths=0.3, zorder=3)
+    # Circle each detected peak (R80) on its own panel: target peaks (blue) on the
+    # left, WT/null peaks (dark) on the right, so found modes are explicit.
+    if grp_dist is not None:
+        _contour_peaks(axL, grp_dist, box, TARGET_DENS_COLOR)
+    if wt_dist is not None:
+        _contour_peaks(axR, wt_dist, box, "#333333")
     axL.set_title(gene, fontsize=LABEL_FS - 2, color=TARGET_DENS_COLOR)
     axR.set_title("WT (reference)", fontsize=LABEL_FS - 2, color=WT_POINT_COLOR)
     for ax in (axL, axR):
@@ -340,8 +436,10 @@ def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
 
 def main():
     for gene, cfg in GENES.items():
-        print(f"\n=== {gene} ===")
-        render_gene(gene, cfg)
+        for kde, analysis_spec, label, slug in METHODS:
+            print(f"\n=== {gene} · {label} ===")
+            render_gene(gene, cfg, kde=kde, analysis_spec=analysis_spec,
+                        method_label=label, method_slug=slug)
     print("\nDone.")
 
 

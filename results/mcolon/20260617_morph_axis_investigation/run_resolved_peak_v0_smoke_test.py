@@ -35,6 +35,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from morphseq_investigation.core.density_composition import compose_density_truth, realize_from_truth  # noqa: E402
 from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
+    DEFAULT_ANALYSIS_SPEC,
     EmpiricalNullSpec,
     ResolvedPeakAnalysisSpec,
     resolve_points_with_analysis_spec,
@@ -55,16 +56,9 @@ PLOT_DIR = RUN_DIR / "morphseq_investigation" / "plots" / "resolved_peak_v0_smok
 
 SCENARIOS = ("one_peak_compact", "two_peaks_no_bridge", "three_peaks_compact")
 
-ANALYSIS_SPEC = ResolvedPeakAnalysisSpec(
-    bandwidth_rule="scipy_default",
-    bandwidth_multiplier=1.0,
-    peak_detector_method="kde_peak_basins_sample_support",
-    # QC on one_peak_compact at n=80 showed the default 0.05 min_sample_fraction
-    # lets through spurious low-support "peaks" (~7-9% support) sitting in
-    # near-empty tail density -- raised to 0.10 to reject those at the detector
-    # level rather than adding a second-pass filter.
-    min_sample_fraction=0.10,
-)
+# The canonical V0 spec now lives in core (DEFAULT_ANALYSIS_SPEC) so the figure
+# reference-readout, the SGE array path, and this smoke test share one config.
+ANALYSIS_SPEC = DEFAULT_ANALYSIS_SPEC
 
 
 def build_smoke_rows(n: int, seeds: list[int]) -> tuple[pd.DataFrame, pd.DataFrame, dict]:

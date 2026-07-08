@@ -16,6 +16,11 @@ from typing import Any, Literal, Mapping
 import numpy as np
 import pandas as pd
 
+from .bandwidth_tuning import (
+    bandwidth_geometry_scales,
+    evaluate_isotropic_gaussian_kde_from_dist2,
+    precompute_squared_distances,
+)
 from .density_composition import CanonicalGrid, DensityGrid
 from .peak_counting import detect_peaks
 from .resolved_peak_metrics import (
@@ -58,21 +63,73 @@ class EmpiricalNullSpec:
     min_valid_null_fraction: float = 0.80
 
 
-_SUPPORTED_BANDWIDTH_RULES = ("scipy_default",)
+_SUPPORTED_BANDWIDTH_RULES = (
+    "scipy_default",
+    "median_kNN_distance",
+    "longest_non_outlier_MST_edge",
+)
+# Rules other than scipy_default derive an isotropic sigma from point-cloud
+# geometry (see bandwidth_tuning.bandwidth_geometry_scales) and evaluate the KDE
+# with that fixed sigma via the isotropic evaluator, honoring bandwidth_multiplier.
+_GEOMETRY_BANDWIDTH_RULES = ("median_kNN_distance", "longest_non_outlier_MST_edge")
+
+# Canonical V0 analysis configuration -- the one validated by the smoke test and
+# the SGE array path. min_sample_fraction is raised from the detector default
+# (0.05) to 0.10 because QC on one_peak_compact at n=80 showed 0.05 admits
+# spurious low-support "peaks" (~7-9% support) sitting in near-empty tail
+# density. Anything reusing the resolved-peak engine on real data (e.g. the
+# valley-visualization reference readout) should import this rather than
+# re-declaring a spec, so figures and null-test tables share one configuration.
+DEFAULT_ANALYSIS_SPEC = ResolvedPeakAnalysisSpec(
+    bandwidth_rule="scipy_default",
+    bandwidth_multiplier=1.0,
+    peak_detector_method="kde_peak_basins_sample_support",
+    min_sample_fraction=0.10,
+)
 
 
-def _kde_spec_for_bandwidth_rule(analysis_spec: ResolvedPeakAnalysisSpec) -> None:
-    if analysis_spec.bandwidth_rule not in _SUPPORTED_BANDWIDTH_RULES:
+def _evaluate_density_for_spec(
+    points: np.ndarray,
+    canonical_grid: CanonicalGrid,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+) -> np.ndarray:
+    """Evaluate the KDE density on `canonical_grid` under the spec's bandwidth rule.
+
+    scipy_default:  scipy.stats.gaussian_kde (Scott's rule); multiplier must be 1.0.
+    geometry rules: an isotropic sigma from bandwidth_geometry_scales, scaled by
+                    bandwidth_multiplier, evaluated with the isotropic Gaussian KDE.
+    """
+    rule = analysis_spec.bandwidth_rule
+    if rule not in _SUPPORTED_BANDWIDTH_RULES:
         raise NotImplementedError(
-            f"bandwidth_rule={analysis_spec.bandwidth_rule!r} not yet wired; "
-            f"supported: {_SUPPORTED_BANDWIDTH_RULES}"
+            f"bandwidth_rule={rule!r} not yet wired; supported: {_SUPPORTED_BANDWIDTH_RULES}"
         )
-    if analysis_spec.bandwidth_rule == "scipy_default" and analysis_spec.bandwidth_multiplier != 1.0:
-        raise NotImplementedError(
-            "bandwidth_multiplier != 1.0 is not yet wired for bandwidth_rule='scipy_default'."
+
+    if rule == "scipy_default":
+        if analysis_spec.bandwidth_multiplier != 1.0:
+            raise NotImplementedError(
+                "bandwidth_multiplier != 1.0 is not yet wired for bandwidth_rule='scipy_default'."
+            )
+        # kde=None routes evaluate_kde_on_grid to plain scipy.stats.gaussian_kde.
+        return evaluate_kde_on_grid(points, canonical_grid.xx, canonical_grid.yy, kde=None)
+
+    # Geometry-derived isotropic sigma (median kNN / longest non-outlier MST edge).
+    scales = bandwidth_geometry_scales(points)
+    geometry_scale = scales.get(rule, float("nan"))
+    if not np.isfinite(geometry_scale) or geometry_scale <= 0:
+        raise ValueError(
+            f"bandwidth_rule={rule!r} produced a non-finite/nonpositive scale "
+            f"({geometry_scale}); cannot evaluate KDE for {len(points)} points."
         )
-    # kde=None routes evaluate_kde_on_grid to plain scipy.stats.gaussian_kde.
-    return None
+    bandwidth = float(geometry_scale) * float(analysis_spec.bandwidth_multiplier)
+
+    grid_points = np.column_stack([canonical_grid.xx.ravel(), canonical_grid.yy.ravel()])
+    dist2 = precompute_squared_distances(grid_points, np.asarray(points, dtype=float))
+    cell_area = canonical_grid.cell_area if hasattr(canonical_grid, "cell_area") else None
+    density_flat = evaluate_isotropic_gaussian_kde_from_dist2(
+        dist2, bandwidth, cell_area=cell_area, normalize_grid=cell_area is not None,
+    )
+    return density_flat.reshape(canonical_grid.xx.shape)
 
 
 def resolve_points_with_analysis_spec(
@@ -88,9 +145,7 @@ def resolve_points_with_analysis_spec(
     argument routing, and `resolve_empirical_peak_distribution` construction.
     """
     points_array = np.asarray(points, dtype=float)
-    kde = _kde_spec_for_bandwidth_rule(analysis_spec)
-
-    density = evaluate_kde_on_grid(points_array, canonical_grid.xx, canonical_grid.yy, kde=kde)
+    density = _evaluate_density_for_spec(points_array, canonical_grid, analysis_spec)
     density_grid = DensityGrid(xx=canonical_grid.xx, yy=canonical_grid.yy, density=density, grid=canonical_grid)
 
     detection_result = detect_peaks(
