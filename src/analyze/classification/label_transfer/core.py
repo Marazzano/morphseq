@@ -176,6 +176,19 @@ def prepare_reference(
             pipe, X_emb, y_emb,
             groups=groups, cv=cv,
         )
+        proba_cv = cross_val_predict(
+            pipe, X_emb, y_emb,
+            groups=groups, cv=cv, method="predict_proba",
+        )
+    cv_probabilities = pd.DataFrame(
+        proba_cv, columns=[f"prob_{c}" for c in classes]
+    ).assign(
+        **{
+            group_col: emb[group_col].values,
+            "true_label": y_emb,
+            time_col: emb[time_col].values,
+        }
+    )
 
     # ── per-class quality at embryo level ─────────────────────────────────────
     quality_per_class = {}
@@ -308,6 +321,7 @@ def prepare_reference(
         ),
         label_profile=label_profile,
         diagnostics=diagnostics,
+        cv_probabilities=cv_probabilities,
         _emb_df=emb,           # keep for plotting; prefixed _ = internal
         _feature_cols=feature_cols,
     )
