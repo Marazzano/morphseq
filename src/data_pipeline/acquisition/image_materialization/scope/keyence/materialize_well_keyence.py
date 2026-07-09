@@ -160,9 +160,11 @@ def materialize_keyence_product_for_well(
     img_w = int(inv["image_width_px"].iloc[0])
     img_h = int(inv["image_height_px"].iloc[0])
 
-    # Determine orientation for the stitcher (from inventory; default vertical if unknown).
+    # Determine orientation for the stitcher. Keyence mosaics are horizontal strips, and the
+    # inventory routinely reports orientation='unknown'; defaulting that to "vertical" stacked
+    # the tiles down the wrong axis. Only an explicit "vertical" opts out.
     orientation_raw = str(inv["orientation"].iloc[0]).lower()
-    orientation = "vertical" if orientation_raw not in ("horizontal",) else "horizontal"
+    orientation = "vertical" if orientation_raw == "vertical" else "horizontal"
 
     time_indices = sorted(inv["time_index"].unique())
     if smoke_max_time_indices is not None and smoke_max_time_indices > 0:

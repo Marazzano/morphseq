@@ -53,10 +53,13 @@ def build_keyence_stitch_map(
     if acquisition_inventory_df.empty:
         raise ValueError("acquisition_inventory_df is empty — nothing to sample.")
 
+    # Keyence mosaics are horizontal strips, and the inventory routinely reports
+    # orientation='unknown'; defaulting that to "vertical" wrote a [n_tiles, 1] shape into the
+    # stitch map and stacked tiles down the wrong axis. Only an explicit "vertical" opts out.
     orientation_raw = str(
         acquisition_inventory_df["orientation"].mode().iloc[0]
     ).lower()
-    orientation = "horizontal" if orientation_raw == "horizontal" else "vertical"
+    orientation = "vertical" if orientation_raw == "vertical" else "horizontal"
 
     pairs = (
         acquisition_inventory_df[["well_id", "time_index"]]
