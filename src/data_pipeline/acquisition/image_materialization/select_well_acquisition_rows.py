@@ -63,23 +63,18 @@ def select_well_acquisition_rows(
 
     acquisition_inventory_df = acquisition_inventory_df.copy()
     acquisition_inventory_df["experiment_id"] = acquisition_inventory_df["experiment_id"].astype(str)
-    # Drop identity columns that will be authoritatively provided by the mapping join.
-    # Some scope inventories (e.g. Keyence) already carry well_index / well_id minted at ingest;
-    # keeping them causes pandas to emit _x/_y suffixes, breaking the downstream filter.
-    for _col in ("well_index", "well_id"):
-        if _col in acquisition_inventory_df.columns:
-            acquisition_inventory_df = acquisition_inventory_df.drop(columns=[_col])
 
-    mapping = position_well_mapping_df.copy()
-    mapping["experiment_id"] = mapping["experiment_id"].astype(str)
-    mapping = mapping[mapping["experiment_id"] == experiment_id]
-
-    joined = acquisition_inventory_df.merge(
-        mapping[["experiment_id", "position_index", "well_index", "well_id"]],
-        on=["experiment_id", "position_index"],
-        how="left",
-        validate="many_to_one",
-    )
+    # An inventory that already carries well identity is authoritative and must NOT be re-derived.
+    # Multi-tile scopes (Keyence) number position_index per TILE, whereas position_well_mapping
+    # numbers it per WELL; joining across those two spaces silently assembles wells out of tiles
+    # that belong to other wells. Such inventories mint well_index/well_id at ingest, where the
+    # tile→well relationship is still known, so trust them and skip the join entirely.
+    if {"well_index", "well_id"}.issubset(acquisition_inventory_df.columns):
+        joined = acquisition_inventory_df
+    else:
+        joined = _join_well_identity(
+            acquisition_inventory_df, position_well_mapping_df, experiment_id=experiment_id
+        )
 
     well_rows = joined[
         (joined["experiment_id"].astype(str) == experiment_id)
@@ -92,3 +87,22 @@ def select_well_acquisition_rows(
             f"covers this well's position_index and that the well_id is well-formed."
         )
     return well_rows
+
+
+def _join_well_identity(
+    acquisition_inventory_df: pd.DataFrame,
+    position_well_mapping_df: pd.DataFrame,
+    *,
+    experiment_id: str,
+) -> pd.DataFrame:
+    """Attach ``well_index``/``well_id`` to an inventory that lacks them, via the mapping."""
+    mapping = position_well_mapping_df.copy()
+    mapping["experiment_id"] = mapping["experiment_id"].astype(str)
+    mapping = mapping[mapping["experiment_id"] == experiment_id]
+
+    return acquisition_inventory_df.merge(
+        mapping[["experiment_id", "position_index", "well_index", "well_id"]],
+        on=["experiment_id", "position_index"],
+        how="left",
+        validate="many_to_one",
+    )
