@@ -1,0 +1,28 @@
+# TEST overlay: 2 wells of the first hotchem file, run end-to-end (`all`).
+# Purpose: validate materialize -> detect -> SAM2 -> features -> QC -> analysis_ready on
+# real data cheaply before committing the full 6-plate GPU run.
+#
+# Usage (target BEFORE --configfile; later configfile wins):
+#   PYTHONPATH=<repo>/src snakemake all --cores 4 \
+#     --configfile config.yaml config_test_2well_20260702_24hpf_plate01.yaml
+
+experiments:
+  - 20260702_hotchem_24hpf_plate01
+
+microscope: "Keyence"
+
+# Keyence: projection only (z_stack raises NotImplementedError).
+image_materialization:
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+
+plate_metadata:
+  enabled: true
+
+# Narrow the fan to two wells. Change these slugs to test different wells.
+target_wells:
+  20260702_hotchem_24hpf_plate01:
+    - A01
+    - A02

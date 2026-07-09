@@ -1,0 +1,240 @@
+=== hotchem_all6 through_line START Thu Jul  9 09:08:08 PDT 2026 on t010.grid.gs.washington.edu ===
+GPU 0: NVIDIA L40S (UUID: GPU-d85c5177-0020-7256-d5db-0119fdf9943d)
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+Discovered 96 wells → /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_30hpf_plate01/well_identities/discovered_wells.txt
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.

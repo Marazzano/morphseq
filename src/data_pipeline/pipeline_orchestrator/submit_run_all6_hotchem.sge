@@ -1,0 +1,45 @@
+#!/bin/bash
+# Full run — all 6 hotchem Keyence experiments through `through_line`
+# (segmentation + z_stack-free QC -> snip_qc). No motion_blur/focus, no embeddings.
+#
+# cores=8 for CPU-step parallelism across wells. GPU-heavy rules are capped to 1-at-a-time via
+# --resources gpu=1 + --set-resources (rules don't declare a gpu resource; done on the CLI to
+# avoid editing them) so concurrent model loads can't OOM the single card — GPU inference
+# serializes on one GPU anyway, so no throughput is lost there.
+# Requires the merge/validated race fix on branch pipeline-merge-validated-fix.
+#
+# Submit from src/data_pipeline/pipeline_orchestrator:  qsub submit_run_all6_hotchem.sge
+
+#$ -N hotchem_all6_throughline
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=10G
+#$ -pe serial 8
+#$ -o hotchem_all6.$JOB_ID.out
+#$ -e hotchem_all6.$JOB_ID.err
+
+set -euo pipefail
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+SRC_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src"
+
+echo "=== hotchem_all6 through_line START $(date) on $(hostname) ==="
+nvidia-smi -L || echo "WARNING: no GPU visible"
+
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+
+"${SNAKEMAKE}" through_line \
+  --cores 8 \
+  --resources gpu=1 \
+  --set-resources materialize_image_product_for_well:gpu=1 frame_detections_per_well:gpu=1 \
+                  frame_masks_per_well:gpu=1 build_snip_auxiliary_masks_for_well:gpu=1 \
+  --keep-going \
+  --rerun-triggers mtime \
+  --printshellcmds \
+  --configfile config.yaml config_runtime_20260702_hotchem.yaml
+
+echo "=== hotchem_all6 through_line FINISHED $(date) — exit $? ==="

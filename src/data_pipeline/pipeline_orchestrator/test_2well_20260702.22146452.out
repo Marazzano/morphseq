@@ -1,0 +1,10 @@
+=== test_2well_hotchem START Wed Jul  8 15:43:31 PDT 2026 on t005.grid.gs.washington.edu ===
+CUDA_VISIBLE_DEVICES=<unset>
+GPU 0: NVIDIA L40S (UUID: GPU-63dcd7d1-e333-ee59-ee42-f46451c98d34)
+Project root: /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq
+Output root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output
+Inputs root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq
+Models root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models
+Runner:       conda (conda env: segmentation_grounded_sam)
+Experiments:  ['20260702_hotchem_24hpf_plate01']
+Microscope:   Keyence

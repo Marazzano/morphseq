@@ -1,0 +1,9 @@
+=== hotchem_all6 through_line START Thu Jul  9 08:59:06 PDT 2026 on t001.grid.gs.washington.edu ===
+GPU 0: NVIDIA A100-PCIE-40GB (UUID: GPU-c466a255-535a-8f9c-798d-63f27f60ae17)
+Project root: /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq
+Output root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output
+Inputs root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq
+Models root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models
+Runner:       conda (conda env: segmentation_grounded_sam)
+Experiments:  ['20260702_hotchem_24hpf_plate01', '20260702_hotchem_24hpf_plate02', '20260702_hotchem_30hpf_plate01', '20260702_hotchem_30hpf_plate02', '20260702_hotchem_36hpf_plate01', '20260702_hotchem_36hpf_plate02']
+Microscope:   Keyence

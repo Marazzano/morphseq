@@ -1,0 +1,970 @@
+Config file /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/config.yaml is extended by additional config specified via the command line.
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 4
+Rules claiming more threads will be scaled down.
+Job stats:
+job                                 count
+--------------------------------  -------
+all                                     1
+analysis_ready_report                   1
+analysis_ready_rollup_report            1
+apply_position_to_well_mapping          1
+build_analysis_ready                    1
+curvature_metrics_report                1
+death_detection_report                  1
+discover_wells                          1
+feature_extraction_rollup_report        1
+ingest_plate_metadata                   1
+ingest_scope_metadata                   1
+map_positions_to_wells                  1
+mask_geometry_report                    1
+mask_quality_qc_report                  1
+merge_curvature_metrics                 1
+merge_death_detection_qc                1
+merge_death_event                       1
+merge_fraction_alive                    1
+merge_frame_inventory                   1
+merge_frame_masks                       1
+merge_latent_embeddings                 1
+merge_mask_geometry                     1
+merge_mask_quality_qc                   1
+merge_motion_blur_qc                    1
+merge_physical_embryo_registry          1
+merge_pose_kinematics                   1
+merge_snip_inventory                    1
+merge_snip_qc                           1
+merge_stage_predictions                 1
+merge_surface_area_qc                   1
+motion_blur_qc_report                   1
+object_extraction_rollup_report         1
+physical_embryo_registry_report         1
+quality_control_rollup_report           1
+snip_qc_report                          1
+surface_area_qc_report                  1
+total                                  36
+
+Select jobs to execute...
+
+[Wed Jul  8 14:30:41 2026]
+rule ingest_scope_metadata:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/raw_image_data/Keyence/20260702_hotchem_24hpf_plate01
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv
+    jobid: 5
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks ingest-scope-metadata           --raw-images-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/raw_image_data/Keyence/20260702_hotchem_24hpf_plate01"           --experiment "20260702_hotchem_24hpf_plate01"           --microscope "Keyence"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv"           --acquisition-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv"
+        
+
+[Wed Jul  8 14:30:41 2026]
+rule ingest_plate_metadata:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/plate_metadata/20260702_hotchem_24hpf_plate01_well_metadata.xlsx
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/plate_metadata.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/plate_metadata.csv.validated
+    jobid: 13
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/plate_metadata.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks ingest-plate-metadata           --input-file "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/plate_metadata/20260702_hotchem_24hpf_plate01_well_metadata.xlsx"           --experiment "20260702_hotchem_24hpf_plate01"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/plate_metadata.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/plate_metadata.csv.validated"
+        
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.extract_scope_metadata:Extracting Keyence scope metadata for 20260702_hotchem_24hpf_plate01
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.extract_scope_metadata:Discovered 4032 Keyence TIFF files in /net/trapnell/vol1/home/nlammers/projects/data/morphseq/raw_image_data/Keyence/20260702_hotchem_24hpf_plate01
+[Wed Jul  8 14:30:55 2026]
+Finished job 13.
+1 of 36 steps (3%) done
+/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/acquisition/metadata_ingest/scope/keyence/extract_scope_metadata.py:394: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  df = df.groupby('well_index', group_keys=False).apply(compute_intervals)
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.extract_scope_metadata:Wrote Keyence scope metadata to /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.acquisition_inventory:Built Keyence acquisition inventory: 4032 planes, 96 wells, tiles/well=[3]
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.extract_scope_metadata:Wrote Keyence acquisition inventory (4032 rows) to /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv
+[Wed Jul  8 14:44:35 2026]
+Finished job 5.
+2 of 36 steps (6%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:44:35 2026]
+rule map_positions_to_wells:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv.provenance.json
+    jobid: 6
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks map-positions-to-wells           --experiment "20260702_hotchem_24hpf_plate01"           --microscope "Keyence"           --scope-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv"           --ref-xy-csv "/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/metadata/YX1_nd2_ref_plate_xy_coordinates.csv"           --raw-images-parent "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/raw_image_data/Keyence"           --output-mapping-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv"           --output-provenance-json "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv.provenance.json"
+        
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.map_keyence_positions_to_wells:Mapping Keyence positions to wells for 20260702_hotchem_24hpf_plate01
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.map_keyence_positions_to_wells:Discovered 96 Keyence wells in /net/trapnell/vol1/home/nlammers/projects/data/morphseq/raw_image_data/Keyence/20260702_hotchem_24hpf_plate01
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.map_keyence_positions_to_wells:Wrote Keyence position-well mapping to /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv
+INFO:data_pipeline.acquisition.metadata_ingest.scope.keyence.map_keyence_positions_to_wells:Wrote mapping provenance to /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv.provenance.json
+[Wed Jul  8 14:45:00 2026]
+Finished job 6.
+3 of 36 steps (8%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:45:00 2026]
+rule apply_position_to_well_mapping:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv.validated
+    jobid: 4
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks apply-position-to-well-mapping           --experiment "20260702_hotchem_24hpf_plate01"           --scope-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata__keyence.csv"           --mapping-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv.validated"
+        
+[Wed Jul  8 14:45:03 2026]
+Finished job 4.
+4 of 36 steps (11%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:45:03 2026]
+checkpoint discover_wells:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/discovered_wells.txt
+    jobid: 3
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/discovered_wells.txt; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+DAG of jobs will be updated after completion.
+
+
+            /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks discover-wells               --mapped-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/scope_metadata_mapped.csv"               --output-wells "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/discovered_wells.txt"
+            
+[Wed Jul  8 14:45:04 2026]
+Finished job 3.
+5 of 36 steps (14%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:45:04 2026]
+rule write_resolved_product_plan_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/discovered_wells.txt
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A02/BF__projection__focus_stack_resolved_product_plan.json
+    jobid: 90
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A02/BF__projection__focus_stack_resolved_product_plan.json
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02, product_key=BF__projection__focus_stack
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks write-resolved-product-plan-for-well           --experiment "20260702_hotchem_24hpf_plate01"           --well-id "20260702_hotchem_24hpf_plate01_A02"           --scope "keyence"           --product-key "BF__projection__focus_stack"           --output-json "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A02/BF__projection__focus_stack_resolved_product_plan.json"           --config-yaml "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/_snakemake_runtime/merged_config.yaml"
+        
+
+[Wed Jul  8 14:45:04 2026]
+rule write_resolved_product_plan_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/discovered_wells.txt
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A01/BF__projection__focus_stack_resolved_product_plan.json
+    jobid: 75
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A01/BF__projection__focus_stack_resolved_product_plan.json
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01, product_key=BF__projection__focus_stack
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks write-resolved-product-plan-for-well           --experiment "20260702_hotchem_24hpf_plate01"           --well-id "20260702_hotchem_24hpf_plate01_A01"           --scope "keyence"           --product-key "BF__projection__focus_stack"           --output-json "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A01/BF__projection__focus_stack_resolved_product_plan.json"           --config-yaml "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/_snakemake_runtime/merged_config.yaml"
+        
+
+[Wed Jul  8 14:45:04 2026]
+rule build_keyence_stitch_map:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json
+    jobid: 76
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json
+    wildcards: experiment=20260702_hotchem_24hpf_plate01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+            /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks build-keyence-stitch-map               --acquisition-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv"               --output-json "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json"               --n-samples 50
+            
+[Wed Jul  8 14:45:06 2026]
+Finished job 75.
+6 of 119 steps (5%) done
+[Wed Jul  8 14:45:06 2026]
+Finished job 90.
+7 of 119 steps (6%) done
+INFO:data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map:build_keyence_stitch_map: orientation=vertical n_candidates=96 n_samples=50
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:stitch2d.mosaic:Aligned 2 tiles in <StructuredMosaic shape=(3, 1)>
+INFO:stitch2d.mosaic:Initialized <StructuredMosaic shape=None>
+INFO:stitch2d.mosaic:Creating StructuredMosaic from 1D list
+INFO:stitch2d.mosaic:Running tile.detect_and_extract() using 1 cores on batch of 3 tiles
+INFO:stitch2d.mosaic:Finished running tile.detect_and_extract() (3 tiles)
+INFO:stitch2d.mosaic:Running tile.align_to() using 1 cores on batch of 2 tiles
+INFO:stitch2d.mosaic:Finished running tile.align_to() (2 tiles)
+INFO:data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map:build_keyence_stitch_map: wrote 3 tile coords to /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json (from 50/50 good samples)
+[Wed Jul  8 14:49:04 2026]
+Finished job 76.
+8 of 119 steps (7%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:49:04 2026]
+rule materialize_image_product_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A02/BF__projection__focus_stack_resolved_product_plan.json, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv
+    jobid: 89
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A02/BF__projection__focus_stack_resolved_product_plan.json
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02, product_key=BF__projection__focus_stack
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks materialize-image-product-for-well           --experiment "20260702_hotchem_24hpf_plate01"           --well-id "20260702_hotchem_24hpf_plate01_A02"           --scope "keyence"           --product-key "BF__projection__focus_stack"           --resolved-product-plan-json "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A02/BF__projection__focus_stack_resolved_product_plan.json"           --acquisition-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv"           --position-well-mapping-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv"           --built-image-data-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition"           --frame-inventory-product-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv"           --config-yaml "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/_snakemake_runtime/merged_config.yaml"           --candidate "false"           --device "auto"           --smoke-max-time-indices "0"           --master-params-path "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json"
+        
+
+[Wed Jul  8 14:49:04 2026]
+rule materialize_image_product_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A01/BF__projection__focus_stack_resolved_product_plan.json, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv
+    jobid: 74
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A01/BF__projection__focus_stack_resolved_product_plan.json
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01, product_key=BF__projection__focus_stack
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks materialize-image-product-for-well           --experiment "20260702_hotchem_24hpf_plate01"           --well-id "20260702_hotchem_24hpf_plate01_A01"           --scope "keyence"           --product-key "BF__projection__focus_stack"           --resolved-product-plan-json "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/resolved_product_plans/per_well/20260702_hotchem_24hpf_plate01_A01/BF__projection__focus_stack_resolved_product_plan.json"           --acquisition-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/acquisition_inventory__keyence.csv"           --position-well-mapping-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/well_identities/position_well_mapping.csv"           --built-image-data-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition"           --frame-inventory-product-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv"           --config-yaml "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/_snakemake_runtime/merged_config.yaml"           --candidate "false"           --device "auto"           --smoke-max-time-indices "0"           --master-params-path "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json"
+        
+INFO:data_pipeline.acquisition.image_materialization.run_materialize_well:AUTO_MODE_CHOSEN: requested=auto -> CUDA
+INFO:data_pipeline.acquisition.image_materialization.run_materialize_well:AUTO_MODE_CHOSEN: requested=auto -> CUDA
+INFO:data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence:materialize_keyence_product_for_well: experiment=20260702_hotchem_24hpf_plate01 well=20260702_hotchem_24hpf_plate01_A02 channel=BF product=projection n_time=1 orientation=vertical master_params=/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json candidate=False
+INFO:data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence:materialize_keyence_product_for_well: experiment=20260702_hotchem_24hpf_plate01 well=20260702_hotchem_24hpf_plate01_A01 channel=BF product=projection n_time=1 orientation=vertical master_params=/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/ingest_metadata/keyence_stitch_map__keyence.json candidate=False
+INFO:data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence:materialize_keyence_product_for_well complete: well=20260702_hotchem_24hpf_plate01_A01 product=projection frames=1
+INFO:data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence:materialize_keyence_product_for_well complete: well=20260702_hotchem_24hpf_plate01_A02 product=projection frames=1
+[Wed Jul  8 14:50:03 2026]
+Finished job 74.
+9 of 119 steps (8%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:03 2026]
+rule validate_frame_inventory_product_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv.validated
+    jobid: 73
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv.validated; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01, product_key=BF__projection__focus_stack
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory           --input-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv.validated"           --image-root "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition"           --check-sources "true"           --validation-scope "per_well"
+        
+[Wed Jul  8 14:50:04 2026]
+Finished job 89.
+10 of 119 steps (8%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:04 2026]
+rule validate_frame_inventory_product_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv.validated
+    jobid: 88
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv.validated; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02, product_key=BF__projection__focus_stack
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory           --input-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv.validated"           --image-root "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition"           --check-sources "true"           --validation-scope "per_well"
+        
+[Wed Jul  8 14:50:30 2026]
+Finished job 73.
+11 of 119 steps (9%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:30 2026]
+rule discover_product_shards_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_available_products.csv
+    jobid: 72
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_available_products.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_BF__projection__focus_stack_frame_inventory.csv.validated
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks discover-product-shards-for-well           --experiment "20260702_hotchem_24hpf_plate01"           --well-id "20260702_hotchem_24hpf_plate01_A01"           --frame-inventory-products-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A01"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_available_products.csv"
+        
+[Wed Jul  8 14:50:30 2026]
+Finished job 88.
+12 of 119 steps (10%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:30 2026]
+rule discover_product_shards_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_available_products.csv
+    jobid: 87
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_available_products.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_BF__projection__focus_stack_frame_inventory.csv.validated
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks discover-product-shards-for-well           --experiment "20260702_hotchem_24hpf_plate01"           --well-id "20260702_hotchem_24hpf_plate01_A02"           --frame-inventory-products-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/product_inventories/per_well/20260702_hotchem_24hpf_plate01_A02"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_available_products.csv"
+        
+[Wed Jul  8 14:50:36 2026]
+Finished job 87.
+13 of 119 steps (11%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:36 2026]
+rule assemble_well_frame_inventory:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_available_products.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv
+    jobid: 86
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_available_products.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks assemble-well-frame-inventory           --discovered-product-shards-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_available_products.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv"
+        
+[Wed Jul  8 14:50:36 2026]
+Finished job 72.
+14 of 119 steps (12%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:36 2026]
+rule assemble_well_frame_inventory:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_available_products.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv
+    jobid: 71
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_available_products.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks assemble-well-frame-inventory           --discovered-product-shards-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/available_products/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_available_products.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv"
+        
+[Wed Jul  8 14:50:37 2026]
+Finished job 86.
+15 of 119 steps (13%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:37 2026]
+rule validate_frame_inventory_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated
+    jobid: 91
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory           --input-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated"           --image-root "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition"           --check-sources "true"           --validation-scope "per_well"
+        
+[Wed Jul  8 14:50:37 2026]
+Finished job 71.
+16 of 119 steps (13%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:37 2026]
+rule validate_frame_inventory_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated
+    jobid: 77
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks validate-frame-inventory           --input-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated"           --image-root "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition"           --check-sources "true"           --validation-scope "per_well"
+        
+[Wed Jul  8 14:50:38 2026]
+Finished job 91.
+17 of 119 steps (14%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:38 2026]
+rule frame_detections_per_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_detections.csv
+    jobid: 92
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_detections.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks frame-detections           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_detections.csv"           --gdino-repo-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO"           --gdino-config "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"           --gdino-weights "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/weights/groundingdino_swint_ogc.pth"           --device "cuda"
+        
+[Wed Jul  8 14:50:38 2026]
+Finished job 77.
+18 of 119 steps (15%) done
+Select jobs to execute...
+
+[Wed Jul  8 14:50:38 2026]
+rule frame_detections_per_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_detections.csv
+    jobid: 78
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_detections.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks frame-detections           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_detections.csv"           --gdino-repo-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO"           --gdino-config "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"           --gdino-weights "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/weights/groundingdino_swint_ogc.pth"           --device "cuda"
+        
+
+[Wed Jul  8 14:50:38 2026]
+rule merge_frame_inventory:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/20260702_hotchem_24hpf_plate01_frame_inventory.csv
+    jobid: 22
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/20260702_hotchem_24hpf_plate01_frame_inventory.csv; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated
+    wildcards: experiment=20260702_hotchem_24hpf_plate01
+    resources: tmpdir=/tmp/22145369.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks merge-frame-inventory           --inputs /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/20260702_hotchem_24hpf_plate01_frame_inventory.csv"
+        
+[Wed Jul  8 14:50:40 2026]
+Finished job 22.
+19 of 119 steps (16%) done
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 476, in cached_files
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 476, in cached_files
+    hf_hub_download(
+    hf_hub_download(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+    return fn(*args, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1010, in hf_hub_download
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1010, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1117, in _hf_hub_download_to_cache_dir
+    return _hf_hub_download_to_cache_dir(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1117, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1649, in _raise_on_head_call_error
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1649, in _raise_on_head_call_error
+    raise LocalEntryNotFoundError(
+huggingface_hub.errors.LocalEntryNotFoundError: Cannot find the requested files in the disk cache and outgoing traffic has been disabled. To enable hf.co look-ups and downloads online, set 'local_files_only' to False.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/models/groundingdino.py", line 56, in load_groundingdino_model
+    raise LocalEntryNotFoundError(
+huggingface_hub.errors.LocalEntryNotFoundError: Cannot find the requested files in the disk cache and outgoing traffic has been disabled. To enable hf.co look-ups and downloads online, set 'local_files_only' to False.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/models/groundingdino.py", line 56, in load_groundingdino_model
+    return load_model(str(config_path), str(weights_path), device=device)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/util/inference.py", line 35, in load_model
+    return load_model(str(config_path), str(weights_path), device=device)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/util/inference.py", line 35, in load_model
+    model = build_model(args)
+    model = build_model(args)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/__init__.py", line 17, in build_model
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/__init__.py", line 17, in build_model
+    model = build_func(args)
+    model = build_func(args)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 388, in build_groundingdino
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 388, in build_groundingdino
+    model = GroundingDINO(
+    model = GroundingDINO(
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 107, in __init__
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 107, in __init__
+    self.tokenizer = get_tokenlizer.get_tokenlizer(text_encoder_type)
+    self.tokenizer = get_tokenlizer.get_tokenlizer(text_encoder_type)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/util/get_tokenlizer.py", line 22, in get_tokenlizer
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/util/get_tokenlizer.py", line 22, in get_tokenlizer
+    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/tokenization_auto.py", line 1067, in from_pretrained
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/tokenization_auto.py", line 1067, in from_pretrained
+    config = AutoConfig.from_pretrained(
+    config = AutoConfig.from_pretrained(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/configuration_auto.py", line 1244, in from_pretrained
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/configuration_auto.py", line 1244, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 649, in get_config_dict
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 649, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 708, in _get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 708, in _get_config_dict
+    resolved_config_file = cached_file(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 318, in cached_file
+    resolved_config_file = cached_file(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 318, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 550, in cached_files
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 550, in cached_files
+    raise OSError(
+OSError: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.
+Check your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 476, in cached_files
+    raise OSError(
+OSError: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.
+Check your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 476, in cached_files
+    hf_hub_download(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    hf_hub_download(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1010, in hf_hub_download
+    return fn(*args, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1010, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1117, in _hf_hub_download_to_cache_dir
+    return _hf_hub_download_to_cache_dir(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1117, in _hf_hub_download_to_cache_dir
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1649, in _raise_on_head_call_error
+    _raise_on_head_call_error(head_call_error, force_download, local_files_only)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/huggingface_hub/file_download.py", line 1649, in _raise_on_head_call_error
+    raise LocalEntryNotFoundError(
+huggingface_hub.errors.LocalEntryNotFoundError: Cannot find the requested files in the disk cache and outgoing traffic has been disabled. To enable hf.co look-ups and downloads online, set 'local_files_only' to False.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    raise LocalEntryNotFoundError(
+huggingface_hub.errors.LocalEntryNotFoundError: Cannot find the requested files in the disk cache and outgoing traffic has been disabled. To enable hf.co look-ups and downloads online, set 'local_files_only' to False.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+    return _run_code(code, main_globals, None,
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/runpy.py", line 86, in _run_code
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+    exec(code, run_globals)
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 1717, in <module>
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 1717, in <module>
+    main()
+    main()
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 1713, in main
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 1713, in main
+    args.func(args)
+    args.func(args)
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 376, in cmd_frame_detections
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 376, in cmd_frame_detections
+    model = load_groundingdino_model(
+    model = load_groundingdino_model(
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/models/groundingdino.py", line 67, in load_groundingdino_model
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/models/groundingdino.py", line 67, in load_groundingdino_model
+    model = build_model(args)
+    model = build_model(args)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/__init__.py", line 17, in build_model
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/__init__.py", line 17, in build_model
+    model = build_func(args)
+    model = build_func(args)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 388, in build_groundingdino
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 388, in build_groundingdino
+    model = GroundingDINO(
+    model = GroundingDINO(
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 107, in __init__
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/models/GroundingDINO/groundingdino.py", line 107, in __init__
+    self.tokenizer = get_tokenlizer.get_tokenlizer(text_encoder_type)
+    self.tokenizer = get_tokenlizer.get_tokenlizer(text_encoder_type)
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/util/get_tokenlizer.py", line 22, in get_tokenlizer
+  File "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/util/get_tokenlizer.py", line 22, in get_tokenlizer
+    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/tokenization_auto.py", line 1067, in from_pretrained
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/tokenization_auto.py", line 1067, in from_pretrained
+    config = AutoConfig.from_pretrained(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/configuration_auto.py", line 1244, in from_pretrained
+    config = AutoConfig.from_pretrained(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/models/auto/configuration_auto.py", line 1244, in from_pretrained
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 649, in get_config_dict
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+    config_dict, unused_kwargs = PretrainedConfig.get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 708, in _get_config_dict
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 649, in get_config_dict
+    resolved_config_file = cached_file(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 318, in cached_file
+    config_dict, kwargs = cls._get_config_dict(pretrained_model_name_or_path, **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/configuration_utils.py", line 708, in _get_config_dict
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 550, in cached_files
+    resolved_config_file = cached_file(
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 318, in cached_file
+    raise OSError(
+OSError: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.
+Check your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/site-packages/transformers/utils/hub.py", line 550, in cached_files
+    raise OSError(
+OSError: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.
+Check your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.
+ERROR conda.cli.main_run:execute(125): `conda run env PYTHONPATH=/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src python -m data_pipeline.pipeline_orchestrator.tasks frame-detections --frame-inventory-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv --output-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_detections.csv --gdino-repo-dir /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO --gdino-config /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py --gdino-weights /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/weights/groundingdino_swint_ogc.pth --device cuda` failed. (See above for error)
+ERROR conda.cli.main_run:execute(125): `conda run env PYTHONPATH=/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src python -m data_pipeline.pipeline_orchestrator.tasks frame-detections --frame-inventory-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv --output-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_detections.csv --gdino-repo-dir /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO --gdino-config /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py --gdino-weights /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/weights/groundingdino_swint_ogc.pth --device cuda` failed. (See above for error)
+[Wed Jul  8 14:52:56 2026]
+[Wed Jul  8 14:52:56 2026]
+Error in rule frame_detections_per_well:
+    jobid: 92
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_detections.csv
+    shell:
+        
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks frame-detections           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_detections.csv"           --gdino-repo-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO"           --gdino-config "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"           --gdino-weights "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/weights/groundingdino_swint_ogc.pth"           --device "cuda"
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Error in rule frame_detections_per_well:
+    jobid: 78
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_detections.csv
+    shell:
+        
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks frame-detections           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_detections/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_detections.csv"           --gdino-repo-dir "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO"           --gdino-config "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"           --gdino-weights "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models/GroundingDINO/weights/groundingdino_swint_ogc.pth"           --device "cuda"
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: .snakemake/log/2026-07-08T143018.893086.snakemake.log
