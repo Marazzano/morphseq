@@ -7,6 +7,7 @@ Maps Keyence microscope acquisition positions to well positions based on file st
 import argparse
 import pandas as pd
 import json
+import re
 from pathlib import Path
 import logging
 
@@ -102,10 +103,16 @@ def _count_positions_per_well(well_path: Path) -> int:
     if pos_dirs:
         return len(pos_dirs)
 
-    # Check for direct image files (single position)
+    # Keyence multi-tile wells: files are named ..._<NNNNN>_Z<zzz>_CH<c>.tif, one <NNNNN> per
+    # spatial tile (mosaic). Count DISTINCT tile indices, NOT a hard-coded 1 — returning 1 here
+    # collapsed 3-tile mosaics to a single tile and desynced position_index from the acquisition
+    # inventory (which numbers positions per tile), so only one (wrong) tile per well survived
+    # the join into materialization.
     image_files = list(well_path.glob("*CH*.tif"))
     if image_files:
-        return 1
+        tiles = {m.group(1) for f in image_files
+                 if (m := re.search(r"_(\d{5})_Z\d+_CH", f.name))}
+        return len(tiles) if tiles else 1
 
     # No images found
     log.warning(f"No images found in {well_path}")

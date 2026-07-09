@@ -34,8 +34,8 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 "${SNAKEMAKE}" through_line \
   --cores 8 \
-  --resources gpu=1 \
-  --set-resources materialize_image_product_for_well:gpu=1 frame_detections_per_well:gpu=1 \
+  --resources gpu=6 \
+  --set-resources frame_detections_per_well:gpu=1 \
                   frame_masks_per_well:gpu=1 build_snip_auxiliary_masks_for_well:gpu=1 \
   --keep-going \
   --rerun-triggers mtime \

@@ -49,23 +49,40 @@ def apply_position_to_well_mapping(
         mapped_df[source_col], errors="raise"
     ).astype(int)
 
-    identity_cols = ["experiment_id", "position_index", "well_index", "well_id"]
-    mapped_df = mapped_df.drop(columns=["well_index", "well_id"], errors="ignore").merge(
-        mapping_df[identity_cols],
-        on=["experiment_id", "position_index"],
-        how="left",
-        validate="many_to_one",
-    )
-
-    missing_identity = mapped_df["well_id"].isna()
-    if missing_identity.any():
-        sample = mapped_df.loc[
-            missing_identity, ["experiment_id", "position_index"]
-        ].drop_duplicates().head(10).to_dict(orient="records")
-        raise ValueError(
-            "position_well_mapping.csv does not cover all scope metadata positions. "
-            f"Missing preview: {sample}"
+    scope_has_identity = {"well_index", "well_id"}.issubset(mapped_df.columns)
+    if scope_has_identity:
+        # Keyence scope metadata is already well-identified from the XY##/W0## directory path.
+        # Its position_index is well-grain, while the Keyence position mapping can be tile-grain
+        # (multiple position_index rows per well). Re-merging identity by position_index would
+        # alias 96 well positions onto the first 32 wells for 3-tile plates.
+        mapped_df["well_index"] = mapped_df["well_index"].astype(str)
+        mapped_df["well_id"] = mapped_df["well_id"].astype(str)
+        mapping_wells = set(mapping_df["well_id"].astype(str))
+        scope_wells = set(mapped_df["well_id"].astype(str))
+        missing_wells = scope_wells - mapping_wells
+        if missing_wells:
+            raise ValueError(
+                "position_well_mapping.csv does not cover all scope metadata wells. "
+                f"Missing wells preview: {sorted(missing_wells)[:10]}"
+            )
+    else:
+        identity_cols = ["experiment_id", "position_index", "well_index", "well_id"]
+        mapped_df = mapped_df.merge(
+            mapping_df[identity_cols],
+            on=["experiment_id", "position_index"],
+            how="left",
+            validate="many_to_one",
         )
+
+        missing_identity = mapped_df["well_id"].isna()
+        if missing_identity.any():
+            sample = mapped_df.loc[
+                missing_identity, ["experiment_id", "position_index"]
+            ].drop_duplicates().head(10).to_dict(orient="records")
+            raise ValueError(
+                "position_well_mapping.csv does not cover all scope metadata positions. "
+                f"Missing preview: {sample}"
+            )
 
     mapped_df["channel_id"] = mapped_df.get("channel", "BF").astype(str)
 

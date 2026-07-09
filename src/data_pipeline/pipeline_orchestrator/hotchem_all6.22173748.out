@@ -1,0 +1,244 @@
+=== hotchem_all6 through_line START Thu Jul  9 11:10:57 PDT 2026 on t001.grid.gs.washington.edu ===
+GPU 0: NVIDIA A100-PCIE-40GB (UUID: GPU-c466a255-535a-8f9c-798d-63f27f60ae17)
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+final text_encoder_type: bert-base-uncased
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+AUTO_MODE_CHOSEN: requested='auto' -> CUDA
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+surface_area_qc band: flag area_um2 OUTSIDE [ k_lower(0.90) x p5 , k_upper(1.40) x p95 ]
+  percentiles interpolated per snip at predicted_stage_hpf (wildtype reference, fixed for MVP);
+  k = tolerance multiplier beyond the reference curve.
+  -> "too small" if area < 0.90 x p5;  "too large" if area > 1.40 x p95.
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
