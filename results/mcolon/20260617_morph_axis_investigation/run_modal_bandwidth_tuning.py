@@ -670,7 +670,7 @@ def _run_task(task: tuple[str, int, int]) -> tuple[list[dict[str, object]], list
     if grid.grid is None:
         raise ValueError("truth grid is missing its canonical grid")
     grid_points = np.column_stack([grid.xx.ravel(), grid.yy.ravel()])
-    dist2 = precompute_squared_distances(grid_points, points, chunk_size=2048)
+    dist2 = precompute_squared_distances(grid_points, points)
     candidates = propose_bandwidth_candidates(
         points,
         rule_names=config.rule_names,

@@ -52,7 +52,11 @@ from .peak_stability import (
     build_consensus_seed_set,
     compute_peak_count_stability,
 )
-from .resolved_peak_analysis import ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec
+from .resolved_peak_analysis import (
+    ResolvedPeakAnalysisSpec,
+    _compute_peak_detection_with_analysis_spec,
+    resolve_points_with_analysis_spec,
+)
 from .resolved_peak_metrics import (
     RESOLVED_PEAK_METRICS,
     PeakGeometry,
@@ -230,23 +234,30 @@ def _acceptance_policy_for_spec(spec: ResolvedPeakAnalysisSpec) -> PeakAcceptanc
     )
 
 
-def _resolve_draw_for_vote(canonical_grid, analysis_spec):
+def _resolve_draw_for_vote(canonical_grid, analysis_spec, *, sweep_steps: int | None = None):
     """Build the `resolve_draw` closure `bootstrap_peak_vote` calls per draw:
-    subsample -> the SAME single engine (`resolve_points_with_analysis_spec`)
-    -> `(count, centers)`. This is a transient per-draw resolve -- its
-    resolved object is discarded immediately after reading count + candidate
-    centers (plan Sec 1.5c: retention governs PERSISTED evidence, not
-    transient resolver inputs)."""
+    subsample -> the canonical detection-only primitive
+    (`_compute_peak_detection_with_analysis_spec`) -> `(count, centers)`.
+
+    A vote only needs the accepted candidate count and centers, not a full
+    `ResolvedPeakDistribution` -- calling the detection-only primitive skips
+    sample-to-peak reassignment, per-peak R80/radius/CV geometry, and
+    `ResolvedPeakDistribution.__post_init__` validation, none of which the
+    vote reads (plan Sec 1.5c: retention governs PERSISTED evidence, not
+    transient resolver inputs; this is the transient path).
+
+    `sweep_steps=None` (the default) leaves `detect_peaks` at its own default
+    resolution -- identical numeric behavior to the pre-optimization full
+    resolve. A non-`None` value is an explicit approximation knob, not
+    enabled by default (see PeakResolutionConfig.vote_sweep_steps)."""
 
     def _resolve_draw(sample_points: np.ndarray) -> tuple[int, tuple[tuple[float, float], ...]]:
-        resolved = resolve_points_with_analysis_spec(
-            distribution_id="bootstrap_draw",
-            points=sample_points,
-            canonical_grid=canonical_grid,
-            analysis_spec=analysis_spec,
+        _density_grid, _points_array, detection_result = _compute_peak_detection_with_analysis_spec(
+            sample_points, canonical_grid, analysis_spec, sweep_steps=sweep_steps,
         )
-        centers = tuple(peak.geometry.center_coordinate for peak in resolved.peaks)
-        return resolved.number_of_peaks, centers
+        accepted = tuple(d for d in detection_result.candidate_details if d.accepted)
+        centers = tuple((float(d.peak_x), float(d.peak_y)) for d in accepted)
+        return len(accepted), centers
 
     return _resolve_draw
 

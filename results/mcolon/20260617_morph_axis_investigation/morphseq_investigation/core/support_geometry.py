@@ -205,7 +205,16 @@ def _isotropic_geometry_evaluator(points_2d: np.ndarray, spec: KDESpec) -> Densi
 
     pts = np.asarray(points_2d, dtype=float)
     n = len(pts)
-    scales = bandwidth_geometry_scales(pts) if n >= 2 else {}
+    # Unlike resolved_peak_analysis.py's bandwidth_rule, KDESpec.geometry_rule is
+    # an unvalidated free-form str (any caller can set it to
+    # "connectivity_90_radius"), so this check is a real runtime branch, not a
+    # dead/always-false guard.
+    needs_connectivity = spec.geometry_rule in ("connectivity_90_radius", "graph_connectivity_radius")
+    scales = (
+        bandwidth_geometry_scales(pts, include_connectivity_radius=needs_connectivity)
+        if n >= 2
+        else {}
+    )
     scale = float(scales.get(spec.geometry_rule, float("nan")))
     if not np.isfinite(scale) or scale <= 0:
         # Fall back to a robust global spread so a degenerate/tiny group still

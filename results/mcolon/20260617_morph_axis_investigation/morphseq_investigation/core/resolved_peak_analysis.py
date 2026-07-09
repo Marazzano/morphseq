@@ -23,7 +23,7 @@ from .bandwidth_tuning import (
     precompute_squared_distances,
 )
 from .density_composition import CanonicalGrid, DensityGrid
-from .peak_counting import detect_peaks
+from .peak_counting import PeakDetectionResult, detect_peaks
 from .resolved_peak_metrics import (
     ResolvedPeakDistribution,
     ResolvedPeakDistributionSummary,
@@ -115,7 +115,11 @@ def _evaluate_density_for_spec(
         return evaluate_kde_on_grid(points, canonical_grid.xx, canonical_grid.yy, kde=None)
 
     # Geometry-derived isotropic sigma (median kNN / longest non-outlier MST edge).
-    scales = bandwidth_geometry_scales(points)
+    # The NotImplementedError check above guarantees rule is in
+    # _GEOMETRY_BANDWIDTH_RULES here, which never includes connectivity_90_radius
+    # / graph_connectivity_radius -- so that O(n^2) union-find sweep is never
+    # needed on this path.
+    scales = bandwidth_geometry_scales(points, include_connectivity_radius=False)
     geometry_scale = scales.get(rule, float("nan"))
     if not np.isfinite(geometry_scale) or geometry_scale <= 0:
         raise ValueError(
@@ -133,6 +137,44 @@ def _evaluate_density_for_spec(
     return density_flat.reshape(canonical_grid.xx.shape)
 
 
+def _compute_peak_detection_with_analysis_spec(
+    points: np.ndarray,
+    canonical_grid: CanonicalGrid,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+    *,
+    sweep_steps: int | None = None,
+) -> tuple[DensityGrid, np.ndarray, PeakDetectionResult]:
+    """KDE density -> `detect_peaks`, stopping short of full empirical resolution.
+
+    This is the canonical density-to-detection path: `resolve_points_with_analysis_spec`
+    delegates to it for the full resolve, and callers that only need a peak count
+    and candidate centers (e.g. bootstrap-vote draws) can call it directly to skip
+    sample-to-peak reassignment, per-peak geometry, and `ResolvedPeakDistribution`
+    construction/validation entirely.
+
+    `sweep_steps=None` omits the kwarg to `detect_peaks`, so its own default (50,
+    the full-resolution honest value) applies. Only vote-only callers should ever
+    pass a non-`None` value here.
+    """
+    points_array = np.asarray(points, dtype=float)
+    density = _evaluate_density_for_spec(points_array, canonical_grid, analysis_spec)
+    density_grid = DensityGrid(xx=canonical_grid.xx, yy=canonical_grid.yy, density=density, grid=canonical_grid)
+
+    detect_peaks_kwargs = dict(
+        method=analysis_spec.peak_detector_method,
+        grid=density_grid,
+        sample_points=points_array,
+        min_component_mass_frac=analysis_spec.min_component_mass_frac,
+        min_sample_fraction=analysis_spec.min_sample_fraction,
+        min_prominence_ratio=analysis_spec.min_prominence_ratio,
+    )
+    if sweep_steps is not None:
+        detect_peaks_kwargs["sweep_steps"] = sweep_steps
+
+    detection_result = detect_peaks(density, **detect_peaks_kwargs)
+    return density_grid, points_array, detection_result
+
+
 def resolve_points_with_analysis_spec(
     *,
     distribution_id: str,
@@ -144,19 +186,11 @@ def resolve_points_with_analysis_spec(
 
     Centralizes: KDE evaluation, `DensityGrid` construction, `detect_peaks`
     argument routing, and `resolve_empirical_peak_distribution` construction.
+    Always resolves at full resolution (sweep_steps left at its detect_peaks
+    default) -- this is the honest, non-approximated path.
     """
-    points_array = np.asarray(points, dtype=float)
-    density = _evaluate_density_for_spec(points_array, canonical_grid, analysis_spec)
-    density_grid = DensityGrid(xx=canonical_grid.xx, yy=canonical_grid.yy, density=density, grid=canonical_grid)
-
-    detection_result = detect_peaks(
-        density,
-        method=analysis_spec.peak_detector_method,
-        grid=density_grid,
-        sample_points=points_array,
-        min_component_mass_frac=analysis_spec.min_component_mass_frac,
-        min_sample_fraction=analysis_spec.min_sample_fraction,
-        min_prominence_ratio=analysis_spec.min_prominence_ratio,
+    density_grid, points_array, detection_result = _compute_peak_detection_with_analysis_spec(
+        points, canonical_grid, analysis_spec, sweep_steps=None,
     )
 
     return resolve_empirical_peak_distribution(
@@ -454,6 +488,7 @@ def run_resolved_peak_permutation_comparison(
 __all__ = [
     "EmpiricalNullSpec",
     "ResolvedPeakAnalysisSpec",
+    "_compute_peak_detection_with_analysis_spec",
     "compute_observed_delta",
     "reduce_permutation_null_test",
     "resolve_points_with_analysis_spec",

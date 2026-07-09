@@ -84,7 +84,7 @@ def _sample_grid_for_spec(spec: DistributionVisualSpec, bandwidth_rule: str, ban
     points = np.asarray(spec.points, dtype=float)
     candidate = _select_candidate(points, bandwidth_rule, bandwidth_multiplier)
     grid_points = np.column_stack([grid.xx.ravel(), grid.yy.ravel()])
-    dist2 = precompute_squared_distances(grid_points, points, chunk_size=2048)
+    dist2 = precompute_squared_distances(grid_points, points)
     density_flat = evaluate_isotropic_gaussian_kde_from_dist2(
         dist2,
         candidate.bandwidth,
