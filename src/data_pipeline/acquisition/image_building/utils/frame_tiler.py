@@ -132,8 +132,18 @@ def stitch_frame_tiles(
         )
 
     fallback = fallback or FallbackParams()
-    initial = _init_transforms_from_priors(tiles)
-    initial_qc = _run_tiling_qc(initial, config)
+
+    # Load master coords (if available) up front — used both as a fallback stitch source and as
+    # the plausibility reference (ground truth) for QC on ANY per-frame align result. Comparing
+    # against master, not an absolute-canvas-position threshold, is the fix for the legitimate
+    # dy≈tile-pitch stacking offset of a correctly-aligned multi-tile strip being misflagged by
+    # ``max_abs_shift_px``.
+    master_coords: dict[int, list[float]] | None = None
+    if fallback.master_params_path is not None and fallback.master_params_path.exists():
+        try:
+            master_coords = _load_master_coords(fallback.master_params_path)
+        except Exception:
+            master_coords = None
 
     if config.mode != "prior_only" and config.enable_alignment:
         try:
@@ -143,7 +153,7 @@ def stitch_frame_tiles(
                 load_params_path=None,
                 run_align=True,
             )
-            qc_align = _run_tiling_qc(tr_align, config)
+            qc_align = _run_tiling_qc(tr_align, config, master_coords=master_coords, tiles=tiles)
             if qc_align.passed or config.mode == "align_only":
                 stitched = _finalize_image(
                     stitched_align,
@@ -158,14 +168,13 @@ def stitch_frame_tiles(
                     qc=qc_align,
                     fallback_used="none",
                 )
-            initial_qc = qc_align
-        except Exception:
-            initial_qc = TilingQC(
-                passed=False,
-                reasons=("alignment_failed",),
-                metrics=initial_qc.metrics,
-                suggested_action="use_master",
-            )
+            # Alignment ran and placed all tiles but the result is implausible vs. master —
+            # fall through to the master/fail path below.
+        except IncompleteTileAlignmentError:
+            # Legitimate stitch2d behavior: a weak pairwise feature-match can drop a tile even
+            # though the raster layout fully determines its position. NOT a hard failure — fall
+            # through to the master fallback (or loud failure if no master).
+            pass
 
     for step in config.fallback_policy:
         if step == "per_frame" and fallback.per_frame_params_path is not None and fallback.per_frame_params_path.exists():
@@ -176,7 +185,7 @@ def stitch_frame_tiles(
                     load_params_path=fallback.per_frame_params_path,
                     run_align=False,
                 )
-                qc_pf = _run_tiling_qc(tr_pf, config)
+                qc_pf = _run_tiling_qc(tr_pf, config, master_coords=master_coords, tiles=tiles)
                 stitched = _finalize_image(
                     stitched_pf,
                     config=config,
@@ -194,61 +203,37 @@ def stitch_frame_tiles(
                 pass
 
         if step == "master" and fallback.master_params_path is not None and fallback.master_params_path.exists():
-            try:
-                stitched_master, tr_master = _stitch_with_stitch2d(
-                    tiles=tiles,
-                    orientation=config.orientation,
-                    load_params_path=fallback.master_params_path,
-                    run_align=False,
-                )
-                qc_master = _run_tiling_qc(tr_master, config)
-                stitched = _finalize_image(
-                    stitched_master,
-                    config=config,
-                    n_tiles=len(tiles),
-                    tile_shape=tiles[0].image.shape[:2],
-                )
-                return FrameTileResult(
-                    stitched=stitched,
-                    tile_transforms=tr_master,
-                    canvas_shape=stitched.shape[:2],
-                    qc=qc_master,
-                    fallback_used="master",
-                )
-            except Exception:
-                pass
-
-        if step == "concat":
-            stitched_concat, tr_concat = _concat_tiles(tiles=tiles, orientation=config.orientation)
-            qc_concat = _run_tiling_qc(tr_concat, config, allow_zero_shift=False)
+            stitched_master, tr_master = _stitch_with_stitch2d(
+                tiles=tiles,
+                orientation=config.orientation,
+                load_params_path=fallback.master_params_path,
+                run_align=False,
+            )
+            qc_master = _run_tiling_qc(tr_master, config, master_coords=master_coords, tiles=tiles)
             stitched = _finalize_image(
-                stitched_concat,
+                stitched_master,
                 config=config,
                 n_tiles=len(tiles),
                 tile_shape=tiles[0].image.shape[:2],
             )
             return FrameTileResult(
                 stitched=stitched,
-                tile_transforms=tr_concat,
+                tile_transforms=tr_master,
                 canvas_shape=stitched.shape[:2],
-                qc=qc_concat,
-                fallback_used="concat",
+                qc=qc_master,
+                fallback_used="master",
             )
 
-    stitched_default, tr_default = _concat_tiles(tiles=tiles, orientation=config.orientation)
-    stitched_default = _finalize_image(
-        stitched_default,
-        config=config,
-        n_tiles=len(tiles),
-        tile_shape=tiles[0].image.shape[:2],
-    )
-    qc_default = _run_tiling_qc(tr_default, config, allow_zero_shift=False)
-    return FrameTileResult(
-        stitched=stitched_default,
-        tile_transforms=tr_default,
-        canvas_shape=stitched_default.shape[:2],
-        qc=qc_default,
-        fallback_used="concat",
+        if step == "concat":
+            # Concat is diagnostics-only from here on — see the loud-failure raise below.
+            # Never returned as the normal-flow result: an unstitchable frame with no master
+            # must fail loud, not silently write a dumb stack that passes downstream QC.
+            continue
+
+    raise UnstitchableFrameError(
+        f"Could not stitch {len(tiles)} tiles: per-frame alignment was incomplete/implausible "
+        f"and no usable master_params_path fallback was available "
+        f"(master_params_path={fallback.master_params_path})."
     )
 
 
@@ -287,6 +272,55 @@ def _coords_to_transforms(tiles: Sequence[TileSpec], coords: dict) -> dict[str, 
     return out
 
 
+class IncompleteTileAlignmentError(RuntimeError):
+    """Raised internally by ``_stitch_with_stitch2d`` when stitch2d's ``align()`` (or
+    ``load_params``) placed fewer tiles than exist. Caught by ``stitch_frame_tiles`` and treated
+    as a signal to fall back to master coords — NOT propagated to callers directly."""
+
+
+class UnstitchableFrameError(RuntimeError):
+    """Raised by ``stitch_frame_tiles`` when a frame cannot be stitched correctly: per-frame
+    alignment was incomplete or implausible AND no master fallback was available/usable. The
+    caller must NOT materialize anything for this frame — silently concatenating tiles produces
+    a wrong-but-passing image, which is the bug this error exists to prevent."""
+
+
+def _load_master_coords(master_params_path: Path) -> dict[int, list[float]]:
+    """Read ``{"coords": {...}}`` from ``master_params_path`` with integer tile-index keys."""
+    import json
+
+    raw = json.loads(Path(master_params_path).read_text())
+    coords_raw = raw.get("coords", {})
+    return {int(k): [float(v[0]), float(v[1])] for k, v in coords_raw.items()}
+
+
+def raw_stitch2d_align(
+    tiles: Sequence[TileSpec],
+    orientation: Orientation,
+) -> dict[int, list[float]]:
+    """Run stitch2d ``align()`` on ``tiles`` and return the RAW ``coords`` dict (tile index ->
+    ``[y, x]``, stitch2d's own convention), WITHOUT raising when alignment is incomplete.
+
+    This is the primitive the experiment-grain master-builder needs: it must be able to inspect
+    ``len(coords)`` itself and skip partial samples (mirrors legacy
+    ``build01A_compile_keyence_images.py`` lines ~495-514), rather than have incompleteness
+    turned into an exception it can't distinguish from a real failure.
+    """
+    from stitch2d import StructuredMosaic
+    from stitch2d.tile import OpenCVTile
+
+    tile_images = [tile.image for tile in tiles]
+    mosaic = StructuredMosaic(
+        [OpenCVTile(img) for img in tile_images],
+        dim=len(tile_images),
+        origin="upper left",
+        direction=orientation,
+        pattern="raster",
+    )
+    mosaic.align()
+    return mosaic.params.get("coords", {})
+
+
 def _stitch_with_stitch2d(
     tiles: Sequence[TileSpec],
     orientation: Orientation,
@@ -319,7 +353,10 @@ def _stitch_with_stitch2d(
 
     coords = mosaic.params.get("coords", {})
     if len(coords) != len(tile_images):
-        raise RuntimeError("incomplete tile alignment")
+        raise IncompleteTileAlignmentError(
+            f"stitch2d placed {len(coords)}/{len(tile_images)} tiles "
+            f"(load_params_path={load_params_path})."
+        )
     transforms = _coords_to_transforms(tiles, coords)
 
     mosaic.reset_tiles()
@@ -352,10 +389,20 @@ def _concat_tiles(
     return stitched, transforms
 
 
+_MASTER_PLAUSIBILITY_TOL_PX: float = 50.0
+"""Max allowed per-tile deviation (px) between a per-frame align result and the master
+(ground-truth empirical) coords before the frame is considered implausible. Generous relative to
+the ~1-2px legacy cross-axis check, but tight relative to a full tile pitch (~677px here) — it
+exists to catch alignments that placed tiles in a genuinely different arrangement than the
+raster layout demands, not to flag normal jitter."""
+
+
 def _run_tiling_qc(
     transforms: dict[str, TileTransform],
     config: FrameTilingConfig,
     allow_zero_shift: bool = True,
+    master_coords: dict[int, list[float]] | None = None,
+    tiles: Sequence[TileSpec] | None = None,
 ) -> TilingQC:
     max_abs_shift = 0.0
     all_zero = True
@@ -366,13 +413,32 @@ def _run_tiling_qc(
             all_zero = False
 
     reasons: list[str] = []
-    if max_abs_shift > float(config.max_abs_shift_px):
-        reasons.append("shift_exceeds_threshold")
+
+    if master_coords is not None and tiles is not None:
+        # Plausibility vs. ground truth (the master grid), NOT vs. an absolute-canvas-position
+        # threshold — max_abs_shift_px legitimately reaches ~tile-pitch (e.g. ~1440px for a
+        # correct 3-tile vertical strip) and must not be flagged.
+        max_master_dev = 0.0
+        for idx, tile in enumerate(tiles):
+            tr = transforms.get(tile.tile_id)
+            master_yx = master_coords.get(idx)
+            if tr is None or master_yx is None:
+                continue
+            # Match the same (swapped) convention _coords_to_transforms uses: dx_px <- coords[0],
+            # dy_px <- coords[1], so master deviation must be computed the same way for consistency.
+            dev = max(abs(float(tr.dx_px) - master_yx[0]), abs(float(tr.dy_px) - master_yx[1]))
+            max_master_dev = max(max_master_dev, dev)
+        if max_master_dev > _MASTER_PLAUSIBILITY_TOL_PX:
+            reasons.append("deviates_from_master")
+    else:
+        if max_abs_shift > float(config.max_abs_shift_px):
+            reasons.append("shift_exceeds_threshold")
+
     if not allow_zero_shift and all_zero:
         reasons.append("unresolved_transforms")
 
     passed = len(reasons) == 0
-    suggested_action: Literal["ok", "use_master", "concat", "fail"] = "ok" if passed else "concat"
+    suggested_action: Literal["ok", "use_master", "concat", "fail"] = "ok" if passed else "use_master"
     metrics = {
         "max_abs_shift_px": float(max_abs_shift),
         "tile_count": float(len(transforms)),

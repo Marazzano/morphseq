@@ -24,10 +24,8 @@ import skimage.io as skio
 
 from data_pipeline.acquisition.image_building.shared.log_focus import im_rescale
 from data_pipeline.acquisition.image_building.utils.frame_tiler import (
-    FrameTilingConfig,
-    FrameTileResult,
     TileSpec,
-    stitch_frame_tiles,
+    raw_stitch2d_align,
 )
 from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
     materialize_ff_projection,
@@ -59,7 +57,6 @@ def build_keyence_stitch_map(
         acquisition_inventory_df["orientation"].mode().iloc[0]
     ).lower()
     orientation = "horizontal" if orientation_raw == "horizontal" else "vertical"
-    tiling_config = FrameTilingConfig(orientation=orientation)
 
     pairs = (
         acquisition_inventory_df[["well_id", "time_index"]]
@@ -75,10 +72,13 @@ def build_keyence_stitch_map(
         orientation, len(pairs), len(sampled),
     )
 
-    # Collect per-tile (dx_px, dy_px) across good samples.
-    # Structure: {tile_id: [(dx, dy), ...]}
-    tile_deltas: dict[str, list[tuple[float, float]]] = {}
+    # Collect per-tile-index [y, x] coords (raw stitch2d convention) across FULLY aligned
+    # samples only — mirrors legacy build01A_compile_keyence_images.py lines ~495-514: a sample
+    # that aligns fewer than n_images tiles is skipped, NOT treated as a failure of the whole
+    # batch. Only a handful of fully-aligned frames are needed to get a good median.
+    align_rows: list[np.ndarray] = []  # each entry: (n_images, 2) array of [y, x]
     n_good = 0
+    n_tried = 0
 
     for _, row in sampled.iterrows():
         well_id = row["well_id"]
@@ -89,27 +89,49 @@ def build_keyence_stitch_map(
         ]
         try:
             tile_specs = _build_tile_specs(sample_rows)
-            result: FrameTileResult = stitch_frame_tiles(tile_specs, tiling_config, fallback=None)
-            for tid, tr in result.tile_transforms.items():
-                tile_deltas.setdefault(tid, []).append((float(tr.dx_px), float(tr.dy_px)))
-            n_good += 1
         except Exception as exc:
+            log.debug("Sample well=%s time=%s skipped (tile build): %s", well_id, time_index, exc)
+            continue
+
+        n_tried += 1
+
+        try:
+            coords_raw = raw_stitch2d_align(tile_specs, orientation=orientation)
+        except Exception as exc:
+            log.debug("Sample well=%s time=%s skipped (align): %s", well_id, time_index, exc)
+            continue
+
+        # Mirror legacy: only keep samples where EVERY tile placed. Partial alignments are
+        # silently skipped here (not an error) — that is the whole point of sampling many.
+        if len(coords_raw) != len(tile_specs):
             log.debug(
-                "Sample well=%s time=%s skipped: %s", well_id, time_index, exc
+                "Sample well=%s time=%s partial alignment (%d/%d tiles) — skipped",
+                well_id, time_index, len(coords_raw), len(tile_specs),
             )
+            continue
+
+        arr = np.full((len(tile_specs), 2), np.nan, dtype=float)
+        for tid_idx, yx in coords_raw.items():
+            arr[int(tid_idx), 0] = float(yx[0])
+            arr[int(tid_idx), 1] = float(yx[1])
+        align_rows.append(arr)
+        n_good += 1
 
     if n_good == 0:
         raise RuntimeError(
-            f"build_keyence_stitch_map: no sample succeeded alignment "
-            f"(tried {len(sampled)} candidates). Cannot write stitch map."
+            f"build_keyence_stitch_map: no sample fully aligned all tiles "
+            f"(tried {n_tried} candidates). Cannot write stitch map."
         )
 
-    coords: dict[str, list[float]] = {}
-    for tid, deltas in tile_deltas.items():
-        arr = np.array(deltas)  # (N, 2)
-        median_x = float(np.nanmedian(arr[:, 0]))
-        median_y = float(np.nanmedian(arr[:, 1]))
-        coords[tid] = [median_x, median_y]
+    stacked = np.stack(align_rows, axis=0)  # (n_good, n_images, 2)
+    med_coords = np.nanmedian(stacked, axis=0)  # (n_images, 2) in [y, x]
+
+    # Written coords are keyed by tile INDEX (0-based, raster order) — matching stitch2d's own
+    # convention and what `load_params`/`_stitch_with_stitch2d` expect. [y, x] order preserved.
+    coords: dict[str, list[float]] = {
+        str(idx): [float(med_coords[idx, 0]), float(med_coords[idx, 1])]
+        for idx in range(med_coords.shape[0])
+    }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({"coords": coords}))
