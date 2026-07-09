@@ -11,12 +11,6 @@ import pytest
 from data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map import (
     build_keyence_stitch_map,
 )
-from data_pipeline.acquisition.image_building.utils.frame_tiler import (
-    FrameTileResult,
-    FrameTilingConfig,
-    TileTransform,
-    TilingQC,
-)
 
 
 def _make_inventory(
@@ -44,22 +38,14 @@ def _make_inventory(
     return pd.DataFrame(rows)
 
 
-def _fake_tile_result(tile_ids: list[str], dx_offset: float = 10.0) -> FrameTileResult:
-    transforms = {
-        tid: TileTransform(tile_id=tid, dx_px=dx_offset * i, dy_px=0.0, source="align")
-        for i, tid in enumerate(tile_ids)
+def _fake_raw_coords(tile_ids: list[str], x_offset: float = 10.0) -> dict[int, list[float]]:
+    return {
+        idx: [0.0, x_offset * idx]
+        for idx, _tile_id in enumerate(tile_ids)
     }
-    qc = TilingQC(passed=True, reasons=(), metrics={}, suggested_action="ok")
-    return FrameTileResult(
-        stitched=np.zeros((100, 100), dtype=np.uint8),
-        tile_transforms=transforms,
-        canvas_shape=(100, 100),
-        qc=qc,
-        fallback_used="none",
-    )
 
 
-def _patch_io_and_stitch(tile_ids: list[str], dx_offset: float = 10.0):
+def _patch_io_and_stitch(tile_ids: list[str], x_offset: float = 10.0):
     fake_image = np.zeros((10, 10), dtype=np.uint8)
     fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
     return [
@@ -69,8 +55,8 @@ def _patch_io_and_stitch(tile_ids: list[str], dx_offset: float = 10.0):
               return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
               return_value=fake_ff),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.stitch_frame_tiles",
-              return_value=_fake_tile_result(tile_ids, dx_offset)),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
+              return_value=_fake_raw_coords(tile_ids, x_offset)),
     ]
 
 
@@ -79,7 +65,7 @@ def test_writes_coords_json(tmp_path):
     out = tmp_path / "master_params.json"
     tile_ids = ["0", "1", "2"]
 
-    patches = _patch_io_and_stitch(tile_ids, dx_offset=10.0)
+    patches = _patch_io_and_stitch(tile_ids, x_offset=10.0)
     with patches[0], patches[1], patches[2], patches[3]:
         build_keyence_stitch_map(inv, n_samples=3, out_path=out)
 
@@ -88,10 +74,13 @@ def test_writes_coords_json(tmp_path):
     assert "coords" in data
     coords = data["coords"]
     assert set(coords.keys()) == set(tile_ids)
-    # tile 0 dx=0, tile 1 dx=10, tile 2 dx=20 — median of identical samples
+    assert data["metadata"]["shape"] == [3, 1]
+    assert data["metadata"]["size"] == 3
+    assert data["metadata"]["tile_shape"] == [10, 10]
+    # stitch2d coords are [y, x]; tile 1 x=10, tile 2 x=20 across identical samples.
     assert abs(coords["0"][0] - 0.0) < 1e-6
-    assert abs(coords["1"][0] - 10.0) < 1e-6
-    assert abs(coords["2"][0] - 20.0) < 1e-6
+    assert abs(coords["1"][1] - 10.0) < 1e-6
+    assert abs(coords["2"][1] - 20.0) < 1e-6
 
 
 def test_deterministic_seed(tmp_path):
@@ -119,7 +108,7 @@ def test_raises_when_no_good_samples(tmp_path):
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.skio.imread",
               side_effect=OSError("file not found")),
     ):
-        with pytest.raises(RuntimeError, match="no sample succeeded alignment"):
+        with pytest.raises(RuntimeError, match="no sample fully aligned"):
             build_keyence_stitch_map(inv, n_samples=5, out_path=out)
 
     assert not out.exists()
@@ -130,11 +119,11 @@ def test_orientation_from_inventory(tmp_path):
     out = tmp_path / "map.json"
     tile_ids = ["0", "1"]
 
-    captured_configs = []
+    captured_orientations = []
 
-    def _fake_stitch(tile_specs, config, fallback=None):
-        captured_configs.append(config)
-        return _fake_tile_result(tile_ids)
+    def _fake_align(tile_specs, orientation):
+        captured_orientations.append(orientation)
+        return _fake_raw_coords(tile_ids)
 
     fake_image = np.zeros((10, 10), dtype=np.uint8)
     fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
@@ -145,15 +134,41 @@ def test_orientation_from_inventory(tmp_path):
               return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
               return_value=fake_ff),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.stitch_frame_tiles",
-              side_effect=_fake_stitch),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
+              side_effect=_fake_align),
     ):
         build_keyence_stitch_map(inv, n_samples=2, out_path=out)
 
-    assert all(c.orientation == "horizontal" for c in captured_configs)
+    assert all(orientation == "horizontal" for orientation in captured_orientations)
 
 
 def test_raises_on_empty_inventory(tmp_path):
     inv = pd.DataFrame()
     with pytest.raises(ValueError, match="empty"):
         build_keyence_stitch_map(inv, n_samples=5, out_path=tmp_path / "map.json")
+
+
+def test_skips_partial_alignments_and_keeps_good_samples(tmp_path):
+    inv = _make_inventory(n_wells=1, n_time=3, n_tiles=3)
+    out = tmp_path / "map.json"
+
+    fake_image = np.zeros((10, 10), dtype=np.uint8)
+    fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
+    partial = {0: [0.0, 0.0], 1: [700.0, 1.0]}
+    full = {0: [0.0, 0.0], 1: [700.0, 1.0], 2: [1400.0, 2.0]}
+
+    with (
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.skio.imread",
+              return_value=fake_image),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.im_rescale",
+              return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
+              return_value=fake_ff),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
+              side_effect=[partial, full, partial]),
+    ):
+        build_keyence_stitch_map(inv, n_samples=3, out_path=out)
+
+    data = json.loads(out.read_text())
+    assert data["coords"] == {"0": [0.0, 0.0], "1": [700.0, 1.0], "2": [1400.0, 2.0]}
+    assert data["metadata"]["shape"] == [3, 1]

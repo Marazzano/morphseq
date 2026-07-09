@@ -81,9 +81,35 @@ so it never drifts). The short version:
      timeseries lines ending in circles colored by predicted class, snapshots as squares.
      → `plots/feature/<gene>_feature_24_48.png`.
 
-3e/3f (DEFER/REUSE): 3D PCA batch-effect check and the per-embryo image portfolio reuse
-   the working scripts in `../20260605_sci_cilia_qc_first_pass/` (`make_3d_pca*.py`,
-   `make_embryo_portfolio.py`, `make_sequenced_portfolio_views.py`).
+3f. `3f_embryo_portfolio.py` — the per-embryo image portfolio (QC canvas).
+   - SNAPSHOTS ONLY (non-`_sci_`): one card per sequenced snapshot well, image + four labels
+     (true genotype / predicted genotype / predicted phenotype / QC status). The `_sci_`
+     timeseries plates are excluded (you can't put a timeseries in a contact sheet); a
+     plate01 card still shows the model's timeseries-based call on its snapshot image.
+   - **Spine = the 3a audit** (`tables/embryo_loss_map.csv`), keyed on `embryo_id` — one
+     audit row = one card, so no sequenced embryo silently disappears. Labels join from TWO
+     model files (genotype-QC + homozygous-phenotype). Non-homozygous embryos legitimately
+     get no phenotype call (`phen: n/a (not homozygous)`); audit rows with no model output
+     (EXCLUDED / ABSENT_IMAGED / OK-but-unscored) are kept as labeled cards.
+   - **Timeseries bridge for plate01 `_t02` snapshots.** A plate01 48 hpf `_t02` snapshot has
+     no prediction under its own `embryo_id` (the call was filed under the `_sci_` timeseries
+     sibling). The card borrows that call by joining on `physical_embryo_id` (reconstructed
+     with script 0's `COLLECTION_TIME_HPF` + `plate_token`) and is flagged `pred via
+     timeseries`. This is why those 48 hpf snapshot cards show real genotype/phenotype calls
+     and land on their true stratum page instead of `mutant_unresolved`.
+   - **Image fallback so you can see WHY a well failed:** embryo snip first, else the raw
+     stitched-FF well image (`built_image_data/stitched_FF_images/`, e.g. the out-of-focus
+     ABSENT_IMAGED row-H crispants) flagged with a blue "FF raw well" border, else a gray
+     placeholder. Every image is fit into a fixed snip-shaped frame (rotate longest-side →
+     longest-side, scale-to-fit, no crop). A wrong genotype call (scored truth ≠ pred) gets
+     a red border.
+   - Two views, like the legacy `make_sequenced_portfolio_views.py`: **by plate** and **by
+     gene × stratum × collection-stage**, plus standalone per-(gene,stratum,stage) PNGs.
+     → `plots/portfolio/` (`portfolio_by_plate.pdf`, `portfolio_by_gene_time.pdf`,
+     `<gene>__<stratum>__<stage>.png`, `portfolio_manifest.csv`).
+
+3e (DEFER/REUSE): 3D PCA batch-effect check reuses the working scripts in
+   `../20260605_sci_cilia_qc_first_pass/` (`make_3d_pca*.py`).
 
 ## Labels
 
@@ -128,6 +154,10 @@ Step `0` can copy the plate metadata Excel files used for sequencing status into
 - `plots/genotype_qc/`: confusion matrices, per-class accuracy bars, and plate×stage accuracy heatmaps.
 - `plots/confidence/`: the key 5-row × collection×support homozygous-phenotype confidence plot, per gene.
 - `plots/feature/`: curvature + length over development (reference backdrop, timeseries lines, snapshot squares), per gene.
+- `plots/portfolio/`: per-embryo image cards (snip, FF-well fallback, or placeholder) with
+  true/predicted genotype, predicted phenotype, and QC status. `portfolio_by_plate.pdf`,
+  `portfolio_by_gene_time.pdf`, standalone `<gene>__<stratum>__<stage>.png` pages, and
+  `portfolio_manifest.csv` (the audit-spine join, one row per sequenced snapshot well).
 
 Note: the `.csv` outputs under `models/` and `predictions/` are gitignored — regenerate by
 running scripts `1` then `2`.

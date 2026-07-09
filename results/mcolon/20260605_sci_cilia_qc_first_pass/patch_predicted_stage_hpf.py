@@ -27,6 +27,7 @@ REPO = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq")
 PLATE_META = REPO / "metadata/plate_metadata"
 B06 = REPO / "morphseq_playground/metadata/build06_output"
 B03 = REPO / "morphseq_playground/metadata/build03_output"
+B04 = REPO / "morphseq_playground/metadata/build04_output"
 
 EXPERIMENTS = """
 20260319_cilia_crispant_18hpf
@@ -42,6 +43,7 @@ EXPERIMENTS = """
 20260331_b9d2_18hpf_plate01
 20260331_b9d2_18hpf_plate02
 20260414_b9d2_14hpf_plate01
+20260414_b9d2_14hpf_plate02
 20260414_b9d2_30hpf_plate01
 20260414_b9d2_30hpf_plate02
 20260415_b9d2_30to48hpf_plate01_t02
@@ -58,11 +60,19 @@ WELLS = [f"{r}{c:02}" for r in "ABCDEFGH" for c in range(1, 13)]
 
 def well_start_age_map(exp: str) -> dict[str, float]:
     """well -> start_age_hpf (float), mirroring export_utils.py parsing of the 8x12 grid."""
-    xl = PLATE_META / f"{exp}_well_metadata.xlsx"
+    for cand in (f"{exp}_well_metadata.xlsx", f"{exp}.xlsx"):
+        xl = PLATE_META / cand
+        if xl.exists():
+            break
+    else:
+        raise ValueError(f"{exp}: Excel not found in {PLATE_META}")
     with pd.ExcelFile(xl) as xlf:
-        if "start_age_hpf" not in xlf.sheet_names:
-            raise ValueError(f"{exp}: no start_age_hpf sheet")
-        df = xlf.parse("start_age_hpf", header=0)
+        sheet = next((s for s in ("start_age_hpf", "start_stage_hpf") if s in xlf.sheet_names), None)
+        if sheet is None:
+            raise ValueError(f"{exp}: no start_age_hpf sheet in {xl.name}")
+        if sheet == "start_stage_hpf":
+            print(f"  WARNING: {exp} using legacy sheet name 'start_stage_hpf'")
+        df = xlf.parse(sheet, header=0)
         block = df.iloc[:8, 1:13].reindex(index=range(8), columns=range(1, 13), fill_value="")
         arr = block.to_numpy(dtype=str).ravel()
     out = {}
@@ -128,6 +138,7 @@ def main():
         print(f"{exp}  ({len(age_map)} wells, stages={sorted(set(age_map.values()))})")
         print(patch_csv(B06 / f"df03_final_output_with_latents_{exp}.csv", age_map, dry))
         print(patch_csv(B03 / f"expr_embryo_metadata_{exp}.csv", age_map, dry))
+        print(patch_csv(B04 / f"qc_staged_{exp}.csv", age_map, dry))
     if dry:
         print("\nNo files written. Re-run with --apply to write.")
 

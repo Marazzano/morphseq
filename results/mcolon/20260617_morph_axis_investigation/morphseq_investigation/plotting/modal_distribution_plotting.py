@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Callable, Sequence
 from typing import Iterable
 
 import matplotlib
@@ -19,7 +20,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap, to_rgba
 
-from morphseq_investigation.core.density_composition import DensityGrid
+from morphseq_investigation.core.density_composition import CanonicalGrid, DensityGrid
 from morphseq_investigation.core.peak_counting import PeakCountDetail, peak_count_detail
 from morphseq_investigation.core.support_geometry import (
     fiedler_value,
@@ -76,6 +77,18 @@ class DistributionVisualSpec:
         return self.composed_grid
 
 
+@dataclass(frozen=True)
+class DistributionOverlay:
+    """Two density evaluations on a shared plotting frame."""
+
+    box: tuple[float, float, float, float]
+    target_grid: DensityGrid
+    reference_grid: DensityGrid
+
+
+RowOverlayFn = Callable[[plt.Axes, DistributionVisualSpec, DensityGrid, tuple[float, float, float, float]], None]
+
+
 def compute_v0_metric_summary(
     points: np.ndarray,
     *,
@@ -122,6 +135,20 @@ def compute_v0_peak_count_summary(
     return {"truth": truth_detail, "observed": observed_detail}
 
 
+def square_density_box(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Expand the shorter axis so equal-aspect panels do not collapse into strips."""
+    xlo, xhi, ylo, yhi = box
+    xmid = 0.5 * (xlo + xhi)
+    ymid = 0.5 * (ylo + yhi)
+    width = xhi - xlo
+    height = yhi - ylo
+    side = max(width, height)
+    if side <= 0:
+        side = 1.0
+    half = 0.5 * side
+    return xmid - half, xmid + half, ymid - half, ymid + half
+
+
 def density_box(
     point_sets: Iterable[np.ndarray],
     *,
@@ -130,7 +157,13 @@ def density_box(
     scan_pct: float = 2.0,
     kde=None,
 ) -> tuple[float, float, float, float]:
-    """Return a robust density-defined box around the mass of one or more clouds."""
+    """Return a robust density-defined box around the mass of one or more clouds.
+
+    ALWAYS square (via `square_density_box`): this is the one place a plotting
+    box gets built from raw points, so squaring here means every caller --
+    including ones that forget to wrap the call -- gets equal-aspect panels
+    for free, instead of squaring being an opt-in step.
+    """
     pts_list = [np.asarray(p, dtype=float) for p in point_sets if len(p) > 0]
     if not pts_list:
         raise ValueError("density_box requires at least one non-empty point set")
@@ -157,21 +190,35 @@ def density_box(
         xlo, xhi, ylo, yhi = xsel.min(), xsel.max(), ysel.min(), ysel.max()
     mx = (xhi - xlo) * margin if xhi > xlo else 1.0
     my = (yhi - ylo) * margin if yhi > ylo else 1.0
-    return float(xlo - mx), float(xhi + mx), float(ylo - my), float(yhi + my)
+    box = (float(xlo - mx), float(xhi + mx), float(ylo - my), float(yhi + my))
+    return square_density_box(box)
 
 
-def square_density_box(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
-    """Expand the shorter axis so equal-aspect panels do not collapse into strips."""
-    xlo, xhi, ylo, yhi = box
-    xmid = 0.5 * (xlo + xhi)
-    ymid = 0.5 * (ylo + yhi)
-    width = xhi - xlo
-    height = yhi - ylo
-    side = max(width, height)
-    if side <= 0:
-        side = 1.0
-    half = 0.5 * side
-    return xmid - half, xmid + half, ymid - half, ymid + half
+def derive_shared_grid(
+    target_points: np.ndarray,
+    reference_points: np.ndarray,
+    *,
+    grid: int = GRID,
+    support_frac: float = SUPPORT_FRAC,
+    margin: float = 0.06,
+    scan_pct: float = 2.0,
+    kde=None,
+) -> CanonicalGrid:
+    """Derive the canonical grid used for a target/reference comparison."""
+    box = density_box(
+        [np.asarray(target_points, dtype=float), np.asarray(reference_points, dtype=float)],
+        support_frac=support_frac,
+        margin=margin,
+        scan_pct=scan_pct,
+        kde=kde,
+    )
+    return CanonicalGrid(
+        x_min=float(box[0]),
+        x_max=float(box[1]),
+        y_min=float(box[2]),
+        y_max=float(box[3]),
+        grid_size=int(grid),
+    )
 
 
 def canonical_box_from_specs(specs: list[DistributionVisualSpec]) -> tuple[float, float, float, float]:
@@ -199,11 +246,89 @@ def evaluate_density_grid(
 ) -> DensityGrid:
     """Evaluate a KDE on a fixed box."""
     xlo, xhi, ylo, yhi = box
-    xs = np.linspace(xlo, xhi, grid)
-    ys = np.linspace(ylo, yhi, grid)
-    xx, yy = np.meshgrid(xs, ys)
+    canonical_grid = CanonicalGrid(x_min=float(xlo), x_max=float(xhi), y_min=float(ylo), y_max=float(yhi), grid_size=int(grid))
+    xx, yy = canonical_grid.xx, canonical_grid.yy
     dens = evaluate_kde_on_grid(np.asarray(points, dtype=float), xx, yy, kde=kde)
-    return DensityGrid(xx=xx, yy=yy, density=dens)
+    return DensityGrid(xx=xx, yy=yy, density=dens, grid=canonical_grid)
+
+
+def build_distribution_overlay(
+    target_points: np.ndarray,
+    reference_points: np.ndarray,
+    *,
+    canonical_grid: DensityGrid | None = None,
+    kde=None,
+    grid: int = GRID,
+    support_frac: float = SUPPORT_FRAC,
+    margin: float = 0.06,
+    scan_pct: float = 2.0,
+) -> DistributionOverlay:
+    """Evaluate two point clouds on one shared plotting frame.
+
+    If a canonical density grid is provided, reuse its coordinates exactly. Otherwise
+    derive a density-defined shared box from both point clouds and evaluate a fresh
+    grid over that frame.
+    """
+
+    target_pts = np.asarray(target_points, dtype=float)
+    reference_pts = np.asarray(reference_points, dtype=float)
+
+    if canonical_grid is not None:
+        xx = np.asarray(canonical_grid.xx, dtype=float)
+        yy = np.asarray(canonical_grid.yy, dtype=float)
+        if canonical_grid.grid is not None:
+            canonical = canonical_grid.grid
+            box = (
+                float(canonical_grid.grid.x_min),
+                float(canonical_grid.grid.x_max),
+                float(canonical_grid.grid.y_min),
+                float(canonical_grid.grid.y_max),
+            )
+        else:
+            canonical = CanonicalGrid(
+                x_min=float(np.min(xx)),
+                x_max=float(np.max(xx)),
+                y_min=float(np.min(yy)),
+                y_max=float(np.max(yy)),
+                grid_size=int(xx.shape[0]),
+            )
+            box = (
+                float(np.min(xx)),
+                float(np.max(xx)),
+                float(np.min(yy)),
+                float(np.max(yy)),
+            )
+    else:
+        canonical = derive_shared_grid(
+            target_pts,
+            reference_pts,
+            grid=grid,
+            support_frac=support_frac,
+            margin=margin,
+            scan_pct=scan_pct,
+            kde=kde,
+        )
+        box = (
+            float(canonical.x_min),
+            float(canonical.x_max),
+            float(canonical.y_min),
+            float(canonical.y_max),
+        )
+        xx, yy = canonical.xx, canonical.yy
+
+    target_grid = DensityGrid(
+        xx=xx,
+        yy=yy,
+        density=evaluate_kde_on_grid(target_pts, xx, yy, kde=kde),
+        grid=canonical,
+    )
+    reference_grid = DensityGrid(
+        xx=xx,
+        yy=yy,
+        density=evaluate_kde_on_grid(reference_pts, xx, yy, kde=kde),
+        grid=canonical,
+    )
+    return DistributionOverlay(box=box, target_grid=target_grid, reference_grid=reference_grid)
 
 
 def hdr_mass_level(density: np.ndarray, mass_frac: float = HDR_MASS_FRAC) -> float | None:
@@ -473,15 +598,20 @@ def plot_density_overlap(
     *,
     color_a: str = TARGET_DENS_COLOR,
     color_b: str = REFERENCE_DENS_COLOR,
+    alpha_scale: float = 1.0,
 ) -> None:
-    """Draw two translucent density fields on the same grid."""
+    """Draw two translucent density fields on the same grid.
+
+    `alpha_scale` < 1 lightens both fields uniformly (e.g. 0.62 for a softer
+    background that lets overlaid marks read).
+    """
     for grid, color in ((grid_b, color_b), (grid_a, color_a)):
         dens = np.asarray(grid.density, dtype=float)
         peak = float(np.nanmax(dens)) if np.isfinite(dens).any() else 0.0
         if peak <= 0:
             continue
         levels = [f * peak for f in (0.20, 0.45, 0.70, 0.90)] + [peak]
-        colors = [to_rgba(color, a) for a in (0.16, 0.24, 0.32, 0.42)]
+        colors = [to_rgba(color, a * float(alpha_scale)) for a in (0.16, 0.24, 0.32, 0.42)]
         ax.contourf(grid.xx, grid.yy, dens, levels=levels, colors=colors, antialiased=True)
 
 
@@ -509,6 +639,7 @@ def plot_v0_distribution_qc_grid(
     observed_details_by_method: dict[str, dict[str, PeakCountDetail | None]] | None = None,
     observed_method_order: tuple[str, ...] | None = None,
     primary_observed_method: str | None = None,
+    row_overlays: dict[int, Sequence[RowOverlayFn]] | None = None,
 ) -> Path:
     """Plot one visual QA grid for V0 generated distributions.
 
@@ -542,7 +673,7 @@ def plot_v0_distribution_qc_grid(
                 finite = np.isfinite(spec.composed_grid.density.ravel()) & (spec.composed_grid.density.ravel() > 0)
                 if finite.any():
                     grids_for_box.append(true_pts[finite])
-            box = square_density_box(density_box(grids_for_box, kde=kde))
+            box = density_box(grids_for_box, kde=kde)
         else:
             box = shared_box
         sample_grid = evaluate_density_grid(points, box, kde=kde)
@@ -576,6 +707,8 @@ def plot_v0_distribution_qc_grid(
         else:
             plot_kde_field(ax, sample_grid)
         format_density_axis(ax, box)
+        for overlay_fn in (row_overlays or {}).get(0, ()):
+            overlay_fn(ax, spec, sample_grid, box)
         ax.set_title(spec.distribution_id.replace("_", "\n"), fontsize=8.0, fontweight="bold")
         if spec.note:
             ax.text(0.02, 0.03, spec.note, transform=ax.transAxes, fontsize=6.2, color="#555", va="bottom")
@@ -584,6 +717,8 @@ def plot_v0_distribution_qc_grid(
         plot_kde_field(ax, sample_grid)
         plot_raw_points(ax, points, spec.component_labels, s=14)
         format_density_axis(ax, box)
+        for overlay_fn in (row_overlays or {}).get(1, ()):
+            overlay_fn(ax, spec, sample_grid, box)
 
         ax = axes[2][col]
         plot_kde_field(ax, sample_grid)
@@ -602,6 +737,8 @@ def plot_v0_distribution_qc_grid(
             )
         plot_raw_points(ax, points, spec.component_labels, s=11)
         format_density_axis(ax, box)
+        for overlay_fn in (row_overlays or {}).get(2, ()):
+            overlay_fn(ax, spec, sample_grid, box)
 
         row_idx = 3
         if include_peak_row:
@@ -687,6 +824,153 @@ def plot_v0_distribution_qc_grid(
     fig.savefig(out_path, dpi=170, facecolor="white")
     plt.close(fig)
     return out_path
+
+
+def mode_count_label(n_modes: int | None, *, frequency: float | None = None) -> str:
+    """Compact label for vote-supported mode counts (row titles / legends).
+
+    Extracted from `valley_visualization.py::_mode_count_label` -- shared
+    across any figure that reports a `resolved_peak_count` next to its
+    bootstrap-vote `mode_frequency`.
+    """
+    if n_modes is None:
+        return "mode count unstable"
+    n = int(n_modes)
+    word = "mode" if n == 1 else "modes"
+    suffix = f" ({frequency:.0%})" if frequency is not None else ""
+    return f"{n} {word}{suffix}"
+
+
+def hdr_contour_for_field(
+    ax,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    density: np.ndarray,
+    *,
+    color: str,
+    linewidth: float = 2.0,
+    hdr_mass: float = 0.60,
+) -> None:
+    """Draw one smooth HDR iso-density loop of `density` enclosing `hdr_mass`
+    of its mass -- a closed curve that follows the KDE bump's shape.
+
+    Extracted from `valley_visualization.py::_hdr_contour`. Unlike
+    `plot_hdr_contour` (which reads a full `DensityGrid`'s mass), this takes a
+    raw density array directly so callers can mask it to one basin's mass
+    first (see `draw_resolved_peak_basins`).
+    """
+    density = np.asarray(density, dtype=float)
+    if density.max() <= 0:
+        return
+    flat = np.sort(density.ravel())[::-1]
+    csum = np.cumsum(flat)
+    total = float(csum[-1])
+    if total <= 0:
+        return
+    idx = min(int(np.searchsorted(csum / total, hdr_mass, side="left")), len(flat) - 1)
+    level = float(flat[idx])
+    if level <= 0:
+        nonzero = flat[flat > 0]
+        if nonzero.size == 0:
+            return
+        level = float(nonzero.min())
+    ax.contour(xx, yy, density, levels=[level], colors=[color], linewidths=linewidth, zorder=5, alpha=0.95)
+
+
+def draw_resolved_peak_basins(
+    ax,
+    distribution,
+    *,
+    color: str,
+    linewidth: float = 2.0,
+    hdr_mass: float = 0.60,
+    n_modes: int | None,
+) -> None:
+    """Outline a `ResolvedPeakDistribution`'s modes with smooth KDE HDR loops
+    that hug each bump's shape (extracted from
+    `valley_visualization.py::_draw_basins`).
+
+    `n_modes` is the vote-supported number of modes to actually display:
+    - `None` -> draw nothing (no basin-count claim to make).
+    - `n_modes >= len(distribution.peaks)` -> draw every detected basin.
+    - `n_modes < len(distribution.peaks)` (in practice `n_modes <= 1`) -> the
+      extra detected peaks are not statistically supported; collapse to ONE
+      outer HDR loop over the whole density rather than drawing unsupported
+      sub-modes. This keeps the drawing consistent with a count shown
+      elsewhere (e.g. via `mode_count_label`).
+
+    Basin masking uses `distribution.empirical_basin_labels` so adjacent
+    supported peaks stay separate loops.
+    """
+    density_grid = distribution.density_grid
+    density = np.asarray(density_grid.density, dtype=float)
+    labels = getattr(distribution, "empirical_basin_labels", None)
+    labels = np.asarray(labels, dtype=int) if labels is not None else None
+    peaks = list(distribution.peaks)
+    detected = len(peaks)
+    if n_modes is None:
+        return
+    show = int(n_modes)
+
+    if show <= 1 or detected <= 1:
+        if peaks:
+            cx, cy = peaks[0].geometry.center_coordinate
+            ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
+        hdr_contour_for_field(ax, density_grid.xx, density_grid.yy, density, color=color, linewidth=linewidth, hdr_mass=hdr_mass)
+        return
+
+    peaks_by_support = sorted(peaks, key=lambda p: p.geometry.total_support_fraction, reverse=True)
+    for peak in peaks_by_support[:show]:
+        cx, cy = peak.geometry.center_coordinate
+        ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
+        if labels is not None and peak.geometry.peak_id in np.unique(labels):
+            mode_density = np.where(labels == peak.geometry.peak_id, density, 0.0)
+        else:
+            mode_density = density
+        hdr_contour_for_field(ax, density_grid.xx, density_grid.yy, mode_density, color=color, linewidth=linewidth, hdr_mass=hdr_mass)
+
+
+def plot_resolved_peak_overlay(ax, distribution, summary, *, title: str | None = None) -> None:
+    """Overlay resolved-peak geometry on the KDE field for visual QC.
+
+    Draws the KDE field, sample points colored by `sample_peak_ids` (accepted
+    peak id vs. -1 for unassigned/outlier), and each resolved peak's center
+    with its `radius` (R80) as a circle, annotated with `within_peak_r80_density`,
+    `total_support_fraction`, and `cv_radius_from_center`.
+    """
+    plot_kde_field(ax, distribution.density_grid)
+
+    if distribution.sample_points is not None:
+        plot_raw_points(ax, distribution.sample_points, labels=distribution.sample_peak_ids)
+
+    for peak in distribution.peaks:
+        geometry = peak.geometry
+        cx, cy = geometry.center_coordinate
+        ax.plot(cx, cy, marker="x", color="black", markersize=8, markeredgewidth=1.6, zorder=5)
+        if np.isfinite(geometry.radius) and geometry.radius > 0:
+            circle = plt.Circle(
+                (cx, cy), geometry.radius, fill=False, edgecolor="black", linewidth=1.2,
+                linestyle="--", zorder=5,
+            )
+            ax.add_patch(circle)
+        label = (
+            f"peak {geometry.peak_id}\n"
+            f"support={geometry.total_support_fraction:.2f}\n"
+            f"r80_density={geometry.within_peak_r80_density:.3f}\n"
+            f"cv={geometry.cv_radius_from_center:.2f}"
+        )
+        ax.annotate(
+            label, (cx, cy), textcoords="offset points", xytext=(6, 6),
+            fontsize=6.5, color="#222",
+        )
+
+    header = title if title is not None else distribution.distribution_id
+    subtitle = (
+        f"n_peaks={summary.number_of_peaks} "
+        f"assigned={summary.assigned_support_fraction:.2f}"
+    )
+    ax.set_title(f"{header}\n{subtitle}", fontsize=8.5)
+    ax.set_aspect("equal")
 
 
 # Tech debt:

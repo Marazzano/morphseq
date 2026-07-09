@@ -43,6 +43,7 @@ from data_pipeline.acquisition.image_building.utils.frame_tiler import (
     FrameTilingConfig,
     PreComputeStitchParams,
     TileSpec,
+    UnstitchableFrameError,
     stitch_frame_tiles,
 )
 from data_pipeline.acquisition.image_materialization import materialized_image_paths
@@ -227,8 +228,18 @@ def materialize_keyence_product_for_well(
             tile_specs.append(TileSpec(tile_id=str(tile_id), image=tile_img))
             tile_fims[str(tile_id)] = tile_fim.astype(np.int32)
 
-        # Stitch the per-tile 2D images into one mosaic.
+        # Stitch the per-tile 2D images into one mosaic. ``stitch_frame_tiles`` itself raises
+        # ``UnstitchableFrameError`` when it cannot produce a trustworthy mosaic (incomplete/
+        # implausible alignment + no usable master fallback) — this guard is defense-in-depth
+        # for any path that returns a result with qc.passed=False instead of raising. Either
+        # way: refuse to materialize a wrong-but-passing image.
         result = stitch_frame_tiles(tile_specs, tiling_config, fallback)
+        if not result.qc.passed:
+            raise UnstitchableFrameError(
+                f"stitch_frame_tiles returned qc.passed=False for well={well_id} "
+                f"time_index={t}: reasons={result.qc.reasons} fallback_used={result.fallback_used}. "
+                f"Refusing to materialize a wrong-but-passing image."
+            )
         mosaic = result.stitched
 
         # Build canvas focus_index_map by painting each tile's fim at its stitched origin.

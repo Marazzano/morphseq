@@ -16,7 +16,7 @@ Inputs:
     (optional motion-context metrics)
 
 Output:
-  - figures/threshold_bins/rel_entropy_deciles/D01_<lo>_to_<hi>.png  ... D10_...png
+  - outputs/zstack/threshold/deciles/D01_<lo>_to_<hi>.png  ... D10_...png
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ MASKS_DIR      = MORPHSEQ_ROOT / "morphseq_playground/sam2_pipeline_files/export
 IMAGES_DIR     = MORPHSEQ_ROOT / "morphseq_playground/sam2_pipeline_files/raw_data_organized/20250912/images"
 GRIDS_DIR      = MOTION_DIR / "06_scan_output/grids"
 SERIES_WELL_MAP = MOTION_DIR / "06_scan_output/series_well_map.csv"
-OUT_DIR        = HERE / "figures/threshold_bins/rel_entropy_deciles"
+OUT_DIR        = HERE / "outputs/zstack/threshold/deciles"
 
 DATE        = "20250912"
 N_DECILES   = 10

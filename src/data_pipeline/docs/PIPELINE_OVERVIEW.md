@@ -1,20 +1,33 @@
 # Pipeline Overview
-
-> **Draft outline.** Section headers + one-line stubs only. We refine each section in place.
-> This is an *overview / glossary* for someone new to the pipeline — short and visual. Real detail
-> lives in the referenced markdown files, not here.
---- 
+s
+---
 ## Part A — The big picture
 
-### A1. The scope/well overlap regime  *(lead diagram TODO)*
+### A1. The scope/well overlap regime
 The fundamental running unit is **per well** — but which wells exist can't be known until metadata
 is run, and stitching mechanics differ per scope. So the *scope world* and the *well world* overlap.
 Bookends: metadata ingest opens the scope world; **materialization closes it**. Everything after is
 per-well and scope-free.
 
-_TODO: ASCII diagram — scopes in → [scope world] → discover_wells → materialization → [well world]._
+```
+                 ┌────────────── scope world (per-scope) ──────────────┐
+scope read ──▶ acquisition inventory ──▶ discovered_wells.txt ──▶ materialization ──▶ frame inventory
+                                              (fan point)         (still per-scope)   └── well world (per-well, scope-free) ──▶
+```
 
-### A2. Where each stage lies  *(river diagram TODO)*
+`discovered_wells.txt` is where the well world *starts* — everything downstream fans out per
+`well_id` — but materialization still has to run per-scope to reach pixels, so the two worlds
+overlap until the frame inventory closes the seam.
+
+### A2. Where each stage lies
+```
+                  ┌ metadata ingest ┐
+acquisition ──────┤                 ├──▶ materialization ──▶ object_extraction ──▶ feature_extraction ──▶ quality_control ──▶ analysis_ready
+                  └ well discovery ─┘         (per-scope)      (mints physical_      (payload fan-out,      (payload fan-out,     (final fan-in:
+                                                                embryo_id → embryo_    snip_id spine)         snip_id spine)        spine + features
+                                                                id → snip_id)                                                       + qc + plate)
+```
+
 Two words the rest of this doc leans on, and one contains the other:
 
 ```
@@ -38,8 +51,6 @@ The five stages in order, one line each:
 - **feature_extraction** — predicted stage (hpf), embeddings, curvature, mask measurements, viability. _snip level._
 - **quality_control** — motion-blur, focus, death detection, surface-area, snip_qc gate. _snip level._
 - **analysis_ready** — final report; merge plate metadata with embryos.
-
-_TODO: ASCII diagram — the five-stage river (with acquisition's ingest→discovery→materialize split)._
 
 ---
 
@@ -362,46 +373,167 @@ Still run per well, but now computed per `snip_id`.
 
 This is where segmentation and tracking hand off the animal identity: frame masks become
 `physical_embryo_id`, then snip processing projects that stable embryo onto channel and time to
-mint `embryo_id` and `snip_id`. This is the first place the pipeline starts carrying the embryo
-itself, not just the frame.
+mint `embryo_id` and `snip_id` (→ B1). This is the first place the pipeline starts carrying the
+embryo itself, not just the frame:
+*animal → animal-in-a-channel → animal-at-a-time.*
+
+Object extraction produces **three landmark artifacts** (roughly in order of importance):
+
+- **physical embryo registry** — *which animals exist*. Track identity becomes `physical_embryo_id`
+  — the first per-well fan point below the frame, everything snip-level downstream expands from it.
+- **snip inventory** — *what was cropped*: crop identity, provenance, and output paths for every
+  `snip_id`, projected from the registered animal onto channel and time.
+- **auxiliary masks** — *what else was segmented per snip*: yolk, viability (for death), and other
+  structures, at snip grain.
 
 Most important sub-stages:
-- detection (using gdino model)
-- segmentation and tracking (using SAM2 model)
+- detection (using gdino model) — proposes animal candidates per frame
+- segmentation and tracking (using SAM2 model) — turns candidates into frame masks with a stable track
 - physical embryo registry: track identity becomes `physical_embryo_id`
 - snip cropping: registered embryos are projected into channel/time crops
 - snip inventory: crop identity, provenance, and output paths are assembled
 - auxiliary masks: snip-level masks for yolk, viability (for death), and other structures
 
+**How it's performed**, step by step:
+
+```
+detection ──▶ segmentation+tracking ──▶ physical embryo registry ──▶ snip cropping ──▶ snip inventory ──▶ auxiliary masks
+ (detection_id)      (track_id)           (mints physical_embryo_id)   (mints embryo_id, snip_id)
+```
+
+1. **Detection (gdino).** Per frame, propose animal candidate boxes/masks — not yet identity, just
+   candidates.
+   → **detection inventory**: one row per candidate, `image_id`, `detection_id`, bbox/mask columns,
+   confidence score. Lives in `object_extraction/detection/` (`run_frame_detection.py`, contract
+   `frame_detections_contract.py`).
+
+2. **Segmentation and tracking (SAM2).** Turn candidates into per-frame masks and link them into a
+   stable track across time within a well — still frame-grain, not yet the pipeline's identity.
+   → **frame mask inventory**: one row per tracked mask per frame, `image_id`, `track_id`, mask path,
+   mask area. `track_id` is well-local, not yet minted identity. Lives in
+   `object_extraction/segmentation/` (`sam2_video/run_sam2_video.py`, contract
+   `frame_masks_contract.py`).
+
+3. **Physical embryo registry — pause here to mint `physical_embryo_id`.** This is the seam: a
+   stable track is promoted into the pipeline's identity, one `physical_embryo_id` per animal found
+   in the well. Nothing before this step knows about embryos, only frames and tracks; nothing after
+   it re-derives identity — it only projects this id forward. This is the fan point B1 refers to as
+   *animal*.
+   → **physical embryo registry**: one row per animal, the mint site: `well_id`,
+   `physical_embryo_id`, `track_id` (provenance link back to step 2). Lives in
+   `object_extraction/segmentation/physical_embryo_registry/` (`build_physical_embryo_registry.py`,
+   contract `physical_embryo_registry_contract.py` / `snip_identity_contract.py`).
+
+4. **Snip cropping.** Project each registered `physical_embryo_id` onto its channels and timepoints,
+   minting `embryo_id` (animal-in-a-channel) and `snip_id` (animal-at-a-time) — the actual crops on
+   disk.
+
+5. **Snip inventory.** Record crop identity, provenance (source frame, source track), and output
+   paths for every `snip_id` — the validated table everything downstream reads.
+   → **snip inventory**: one row per snip, `physical_embryo_id`, `embryo_id`, `snip_id`,
+   `channel_id`, `time_index`, crop path, source `image_id` (provenance). Lives in
+   `object_extraction/snip_processing/` (`process_snips.py` / `extraction.py`, contract
+   `contract.py`).
+
+6. **Auxiliary masks.** At snip grain, segment yolk, viability (for death), and other structures
+   against the same `snip_id` spine.
+   → **auxiliary mask tables**: one row per snip per mask type, `snip_id`, mask type
+   (yolk/viability/…), mask path, mask area. Lives in
+   `object_extraction/segmentation/backends/unet_snip/` (contract
+   `snip_auxiliary_masks_contract.py`), consumed by `snip_processing/snip_frame_masks.py`.
+
 ### C3. Feature extraction
 This is where snips turn into feature payloads: geometry, pose, stage, embeddings, and other
 derived measurements. The key is that `snip_id` stays the spine while the measured values are
-added as payload columns for downstream joins.
+added as payload columns for downstream joins. Unlike object extraction (→ C2), **no new identity is
+minted here** — every payload below joins onto the same fixed `snip_id`, so there's no ordering
+between them, just a fan-out:
 
-Most important sub-stages:
-- predicted stage: `predicted_stage_hpf` inferred from temperature and elapsed time
-- geometry features: mask area, perimeter, length, width, centroid
-- curvature features: centerline and curvature-derived shape summaries
-- viability features: time-series summaries that support QC and downstream analysis
-- embeddings: learned latent features attached as payload
+```
+                    ┌── predicted stage
+                    ├── geometry features
+snip_id (spine) ────┼── curvature features
+                    ├── viability features
+                    └── embeddings
+```
+
+**On-disk reality** — every payload is a module with the same three files; only the module name and
+columns change:
+
+```
+feature_extraction/
+├── stage_predictions/   ──▶ predicted_stage_hpf, model_version
+│   ├── entrypoint.py      (runs it)
+│   ├── compute.py         (does it)
+│   └── contract.py        (defines + validates the payload columns)
+├── mask_geometry/       ──▶ area_um2, perimeter_um, length_um, width_um, centroid_x_um/y_um  (same shape)
+├── curvature_metrics/   ──▶ total_length_um, mean_curvature_per_um, baseline_deviation_um, centerline_point_count  (same shape)
+├── fraction_alive/      ──▶ fraction_alive                                                  (same shape)
+└── legacy_embeddings/   ──▶ embedding_model_name, z_mu_*, z_sigma_*                          (same shape)
+```
 
 ### C4. Quality control
-This is where feature payloads get judged, flagged, and summarized. QC consumes the feature tables
-and emits verdict payloads like `use_snip` and `qc_fail_reasons`, so downstream work can keep the
-same `snip_id` spine and just read the decision.
+This is where feature payloads get judged, flagged, and summarized. Each QC rule reads whatever mix
+of features / masks / reference data / raw images it needs and judges snips independently — a
+**spread of rules**, not a chain — each emitting its own `_flag` payload column on the `snip_id`
+spine. A final verdict step then rolls every fired flag into one pass/fail:
 
-Most important sub-stages:
-- death detection: alive/dead judgments over the snip universe
-- surface-area QC: size-based outlier and plausibility checks
-- mask-quality QC: segmentation and mask-geometry sanity checks
-- snip QC verdict: roll flags into `use_snip` and `qc_fail_reasons`
+```
+                                    ┌── death detection    ──▶ viability_dead_flag, persistence_dead_flag ──┐
+                                    ├── surface-area QC    ──▶ sa_outlier_flag                              ├──▶ snip_qc verdict
+features / masks / refs / images  ──┼── mask-quality QC    ──▶ edge_flag, discontinuous_mask_flag, …        │    (use_snip,
+                                    ├── focus QC           ──▶ focus_flag                                   │     qc_fail_reasons)
+                                    └── motion-blur QC     ──▶ motion_blur_flag                           ──┘
+```
+
+**On-disk reality** — same shape as C3, one module per rule, each ending in its own `_flag`
+column(s); `snip_qc/` is the fan-in that reads all of them:
+
+```
+quality_control/
+├── death_detection/     ──▶ viability_dead_flag, persistence_dead_flag
+│   ├── entrypoint.py      (runs it)
+│   ├── compute.py         (does it)
+│   └── contract.py        (defines + validates the _flag column(s))
+├── surface_area_qc/     ──▶ sa_outlier_flag                                    (same shape)
+├── mask_quality_qc/     ──▶ edge_flag, discontinuous_mask_flag, overlapping_mask_flag  (same shape)
+├── focus_qc/            ──▶ focus_flag                                         (same shape)
+├── motion_blur_qc/      ──▶ motion_blur_flag                                    (same shape)
+│
+└── snip_qc/             ──▶ use_snip, qc_fail_reasons   (fan-in over all flags above)
+    ├── entrypoint.py      (runs it)
+    └── build.py           (does it)
+```
+
+**snip QC verdict** gathers every rule's `_flag` column (the known vocabulary is
+`SNIP_QC_EXCLUSION_FLAGS`: the eight flags above) into one verdict per snip: `use_snip` (bool) and
+`qc_fail_reasons` (the pipe-joined list of whichever `_flag` names fired, e.g.
+`"edge_flag|focus_flag"`; empty string = pass).
 
 ### C5. Analysis ready
 Final merge + report.
 
-This is the last fan-in: join the `snip_id` spine with the selected feature payloads, the QC
-verdict, and the broadcast plate metadata into one wide table for notebooks and downstream
-analysis.
+This is the last fan-in: join the `snip_id` spine with the selected feature payloads (→ C3), the QC
+verdict (→ C4), and the broadcast plate metadata (→ C1.1) into one wide table for notebooks and
+downstream analysis. **Nothing is re-declared here** — every column block is imported from the
+contract that minted it (the "stub doctrine"); `analysis_ready` only assembles:
+
+```
+snip_id spine ──┐
+feature payloads (curvature, stage, geometry, pose, fraction_alive, embeddings) ──┤
+qc verdict (use_snip, qc_fail_reasons)                                           ├──▶ analysis-ready table
+plate metadata (broadcast by well_id) ─────────────────────────────────────────────┘
+```
+
+**On-disk reality:**
+
+```
+analysis_ready/
+├── entrypoint.py   (runs it)
+├── assemble.py     (does it — joins everything on snip_id, broadcasts plate on well_id)
+├── contract.py     (imports each block from its own mint-site contract, no local literals)
+└── report.py       (final report — → B7)
+```
 
 Most important sub-stages:
 - spine fan-in: keep `snip_id` as the base row identity

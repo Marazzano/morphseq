@@ -1,5 +1,0 @@
-# Runtime overlay for the combined 20250912 + 20260410_otx_pilot run.
-# Keep this file narrow: it only overrides the default config's experiment list.
-experiments:
-  - 20250912
-  - 20260410_otx_pilot

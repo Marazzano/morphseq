@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#$ -cwd
+#$ -N resolved_peak_perm
+#$ -t 1-20
+#$ -l h_rt=00:30:00
+#$ -l h_vmem=4G
+#$ -o results/mcolon/20260617_morph_axis_investigation/logs/resolved_peak_permutation
+#$ -e results/mcolon/20260617_morph_axis_investigation/logs/resolved_peak_permutation
+
+set -euo pipefail
+
+N_TASKS=20
+N_DRAWS_TOTAL=500
+
+conda run -n segmentation_grounded_sam --no-capture-output python \
+  results/mcolon/20260617_morph_axis_investigation/run_resolved_peak_permutation_array_task.py \
+  --n-tasks "${N_TASKS}" \
+  --n-draws-total "${N_DRAWS_TOTAL}"

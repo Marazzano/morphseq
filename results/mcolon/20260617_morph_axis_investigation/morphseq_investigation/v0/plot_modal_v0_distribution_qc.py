@@ -20,6 +20,7 @@ import numpy as np
 RUN_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/morphseq_mplconfig")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/morphseq_xdg_cache")
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402

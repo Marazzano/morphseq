@@ -149,7 +149,7 @@ PIPELINE_STEPS: dict[str, dict] = {
         "stage": "acquisition",
         "product_dir": "ingest_metadata",
         "fanout": EXPERIMENT,
-        "execution": EXECUTION_PER_WELL,
+        "execution": EXECUTION_PER_WELL, # weird no wells here, extion shoudl be per expetuins @Claude
         "artifacts": {"csv": "plate_metadata.csv"},
     },
 

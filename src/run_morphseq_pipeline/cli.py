@@ -900,6 +900,7 @@ def main(argv: list[str] | None = None) -> int:
                                 'force_detection': True,
                                 'ensure_built_metadata': True,
                                 'force_metadata_overwrite': True,
+                                'force_mask_export': True,
                                 'force_raw_data_organization': True,
                             })
                         elif args.force_raw_data_organization:

@@ -23,7 +23,7 @@ DATA_ROOT="${DATA_ROOT:-${REPO_ROOT}/morphseq_playground}"
 EXPERIMENTS=" 20260319, 20260320,20260213,20260304, 20260306,20260228" #"20250305,20230531,20230525,20230615" #"20250711,20250519"
 ACTION="${ACTION:-e2e}"     # default to e2e, but can be overridden with -v ACTION=build03
 DRY_RUN="0"                 # set to 1 to enable --dry-run
-FORCE_OVERWRITE="0"         # set to 1 to enable --force (regenerates FF files AND reruns steps)
+FORCE_OVERWRITE="${FORCE_OVERWRITE:-0}"   # set to 1 to enable --force (regenerates FF files AND reruns steps)
 ENV_NAME="segmentation_grounded_sam"
 # Prefer an explicit interpreter over `conda activate` (which is often unavailable/broken on compute nodes).
 PYTHON_EXEC="${PYTHON_EXEC:-/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/${ENV_NAME}/bin/python}"
@@ -140,3 +140,12 @@ echo "[morphseq] Done."
 # qsub -t 1-6 -tc 3 src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
 
 # qsub src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+
+# qsub -t 1-5 -tc 1 \
+#   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/crispant_pilot_group_1.txt \
+#   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh
+
+
+# qsub -t 14 -tc 1 \
+#   -v EXP_FILE=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src/run_morphseq_pipeline/run_experiment_lists/20260605_sci_cilia_qc_first_pass.txt \
+#   src/run_morphseq_pipeline/run_experiment_manager_qsub.sh

@@ -43,6 +43,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 RUN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 PLOT_DIR = RUN_DIR / "plots"
 PLOT_DIR.mkdir(exist_ok=True)
 sys.path.insert(0, str(RUN_DIR))

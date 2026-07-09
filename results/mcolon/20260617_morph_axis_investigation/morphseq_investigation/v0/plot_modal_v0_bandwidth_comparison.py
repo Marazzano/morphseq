@@ -21,6 +21,7 @@ import numpy as np
 RUN_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/morphseq_mplconfig")
 os.environ.setdefault("XDG_CACHE_HOME", "/tmp/morphseq_xdg_cache")
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 from morphseq_investigation.core.bandwidth_tuning import (  # noqa: E402
@@ -83,7 +84,7 @@ def _sample_grid_for_spec(spec: DistributionVisualSpec, bandwidth_rule: str, ban
     points = np.asarray(spec.points, dtype=float)
     candidate = _select_candidate(points, bandwidth_rule, bandwidth_multiplier)
     grid_points = np.column_stack([grid.xx.ravel(), grid.yy.ravel()])
-    dist2 = precompute_squared_distances(grid_points, points, chunk_size=2048)
+    dist2 = precompute_squared_distances(grid_points, points)
     density_flat = evaluate_isotropic_gaussian_kde_from_dist2(
         dist2,
         candidate.bandwidth,

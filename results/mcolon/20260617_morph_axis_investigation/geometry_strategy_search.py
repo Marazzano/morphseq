@@ -29,6 +29,7 @@ from sklearn.cluster import DBSCAN, OPTICS, cluster_optics_dbscan
 from sklearn.neighbors import NearestNeighbors
 
 RUN_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 from support_geometry import DEFAULT_HDR_MASS_LEVELS, GRID_SIZE, _kde_grid, normalize_shape, scipy_gaussian_kde_spec  # noqa: E402

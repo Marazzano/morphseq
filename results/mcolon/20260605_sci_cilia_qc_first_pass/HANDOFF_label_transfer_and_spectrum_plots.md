@@ -58,11 +58,11 @@ The main spectrum plot. Three rows of sequenced genotype groups × four stage co
 A **design comparison figure** — 4 rows × 4 columns. Use this to decide which bottom row format to adopt for the final spectrum plot. The user has not yet made a final choice.
 
 - **Row 0 (Query):** Sequenced homozygous embryos, P(Low_to_High) strip, probability-colored. Same as the main spectrum.
-- **Row 1 (Option A):** Reference LOEO CV embryos split by true class (High_to_Low strip at y=0, Low_to_High at y=1). Colored by P(Low_to_High) via the same colormap. **Alpha=0.35** so overlapping dots accumulate visually, revealing density. A dense correct cluster becomes a saturated blob; isolated wrong calls stay faint.
-- **Row 2 (Option B):** Stacked accuracy bars per true class (green=correct, red=wrong at 0.5 threshold). Shows classification accuracy but loses probability distribution.
+- **Row 1 (Option A):** Reference LOEO CV embryos split by true class, with the true labels tilted for readability. The left panel now carries `true High_to_Low` / `true Low_to_High` labels and extra padding. Colored by P(Low_to_High) via the same colormap. **Alpha=0.35** so overlapping dots accumulate visually, revealing density. A dense correct cluster becomes a saturated blob; isolated wrong calls stay faint.
+- **Row 2 (Option B):** Reference confusion matrices at the 0.5 threshold, with big bold annotations so they read from a distance. Shows both row-normalized accuracy and raw counts without collapsing the probabilities into a single bar.
 - **Row 3 (Option C):** Violin plots of P(Low_to_High) per true class, clipped to [0,1]. Shows full distribution shape per class per stage. **User preferred this over the previous calibration scatter.**
 
-**Next decision:** Pick one of A/B/C for the final spectrum plot and merge it into `_plot_probability_spectrum`.
+**Next decision:** The bottom-row comparison is now anchored by A (tilted true labels), B (confusion matrices), and C (violin plots); decide which of those should become the final spectrum bottom row and merge it into `_plot_probability_spectrum`.
 
 ### `cep290_homo_low_to_high_global_vs_perbin_model_comparison.png`
 2×4 grid (rows = query/reference, columns = 18/24/30/48 hpf). X-axis = global model P(High_to_Low), Y-axis = per-bin model P(High_to_Low). Shows where the two models disagree. Top row is sequenced homozygous query embryos; bottom row is reference LOEO CV embryos.
@@ -90,4 +90,4 @@ Precision and recall by time bin for the per-bin model from LOEO CV. Shows where
 |---|---|
 | `src/analyze/classification/label_transfer/core.py` | Per-bin model training now uses within-bin `_aggregate_binned`; imports `add_time_bins` + `_aggregate_binned` from engine |
 | `src/analyze/classification/label_transfer/IMPROVEMENTS.md` | Added note: `run_classification` should expose fitted per-bin pipelines |
-| `results/mcolon/20260605_sci_cilia_qc_first_pass/cep290_homo_low_to_high.py` | Fixed `_ref_cv_probs` (within-bin aggregation); added `_plot_spectrum_with_accuracy` (design comparison); updated Option A alpha, Option C to violin; fixed `time_bin_center` column name in comparison plot |
+| `results/mcolon/20260605_sci_cilia_qc_first_pass/cep290_homo_low_to_high.py` | Fixed `_ref_cv_probs` (within-bin aggregation); updated Option A labels/padding and replaced Option B with confusion matrices; kept Option C as violin plots; fixed `time_bin_center` column name in comparison plot |

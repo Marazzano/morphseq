@@ -34,6 +34,7 @@ import pandas as pd
 RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
 GENE14_DIR = PROJECT_ROOT / "results/mcolon/20260607_sci_cilia_gene14_imaging_qc"

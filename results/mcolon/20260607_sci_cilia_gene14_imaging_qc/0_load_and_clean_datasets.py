@@ -17,6 +17,7 @@ Run:
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -36,6 +37,8 @@ RUN_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = RUN_DIR.parents[2]
 
 BUILD06_DIR = PROJECT_ROOT / "morphseq_playground" / "metadata" / "build06_output"
+BUILD04_DIR = PROJECT_ROOT / "morphseq_playground" / "metadata" / "build04_output"
+STITCHED_FF  = PROJECT_ROOT / "morphseq_playground" / "built_image_data" / "stitched_FF_images"
 PLATE_METADATA_DIR = PROJECT_ROOT / "metadata" / "plate_metadata"
 EXPERIMENT_LIST = PROJECT_ROOT / "src/run_morphseq_pipeline/run_experiment_lists/20260605_sci_cilia_qc_first_pass.txt"
 
@@ -43,6 +46,8 @@ TABLE_DIR = RUN_DIR / "tables"
 EXCEL_COPY_DIR = RUN_DIR / "source_plate_metadata_excels"
 TABLE_DIR.mkdir(exist_ok=True)
 EXCEL_COPY_DIR.mkdir(exist_ok=True)
+
+SEQ_QC_FAILURES_CSV = TABLE_DIR / "failed_sequencing_qc" / "missing_embryos_due_to_sequencing.csv"
 
 # This is intentionally a plain string so provenance is stable in the output table.
 COPIED_ON = "2026-06-09"
@@ -98,6 +103,57 @@ HOMO_PHENOTYPE_LABELS = {
 }
 
 WELLS = [f"{row}{col:02}" for row in "ABCDEFGH" for col in range(1, 13)]
+
+
+# -----------------------------------------------------------------------------
+# Imaging QC constants
+# -----------------------------------------------------------------------------
+
+REAL_QC_FLAGS = [
+    "frame_flag", "sam2_qc_flag", "no_yolk_flag", "focus_flag",
+    "bubble_flag", "dead_flag", "dead_flag2", "sa_outlier_flag",
+]
+
+
+# -----------------------------------------------------------------------------
+# Sequencing QC: imaging-plate → experiment_id mapping
+# -----------------------------------------------------------------------------
+# (imaging_plate, perturbation) -> list[experiment_id]
+# Copied verbatim from 3a_audit_sequenced_coverage.py (verified correct).
+SEQ_QC_IMAGING_PLATE_MAP: dict[tuple[str, str], list[str]] = {
+    # crispant
+    ("260319_plate_1", "crispants"):         ["20260319_cilia_crispant_18hpf"],
+    ("260319_plate_2", "crispants"):         ["20260319_cilia_crispant_24hpf"],
+    ("260319_plate_3", "crispants"):         ["20260319_cilia_crispant_30hpf"],
+    ("260320_plate_4", "crispants"):         ["20260320_cilia_crispant_48hpf"],
+    # cep290
+    ("260414_plate_3", "18hpf_cep290_mut"):  ["20260415_cep290_18hpf_plate03"],
+    ("260414_plate_3", "18hpf_cep290_wt"):   ["20260415_cep290_18hpf_plate03"],
+    ("260401_plate_2", "24hpf_cep290_wt"):   ["20260324_cep290_18hpf_24hpf_plate02"],
+    ("260324_plate_1", "30hpf_cep290_mut"):  ["20260324_cep290_30hpf_plate01"],
+    # 48hpf cep290: snapshot + sci timeseries
+    ("260416_plate_1", "48hpf_cep290_mut"):  ["20260416_cep290_30to48hpf_plate01_t02", "20260415_sci_cep290_48hpf_plate01"],
+    ("260416_plate_1", "48hpf_cep290_wt"):   ["20260416_cep290_30to48hpf_plate01_t02", "20260415_sci_cep290_48hpf_plate01"],
+    ("260416_plate_1", "48hpf_cep290_AB"):   ["20260416_cep290_30to48hpf_plate01_t02", "20260415_sci_cep290_48hpf_plate01"],
+    # b9d2
+    ("260414_plate_1", "14hpf_b9d2_mut"):    ["20260414_b9d2_14hpf_plate01"],
+    ("260414_plate_1", "14hpf_b9d2_wt"):     ["20260414_b9d2_14hpf_plate01"],
+    ("260414_plate_1", "14hpf_b9d2_AB"):     ["20260414_b9d2_14hpf_plate01"],
+    ("260415_plate_1", "30hpf_b9d2_mut"):    ["20260414_b9d2_30hpf_plate01"],
+    ("260415_plate_1", "30hpf_b9d2_wt"):     ["20260414_b9d2_30hpf_plate01"],
+    # 48hpf b9d2: snapshot + sci timeseries
+    ("260414_plate_1", "48hpf_b9d2_mut"):    ["20260415_b9d2_30to48hpf_plate01_t02", "20260414_sci_b9d2_48hpf_plate01"],
+    ("260414_plate_1", "48hpf_b9d2_wt"):     ["20260415_b9d2_30to48hpf_plate01_t02", "20260414_sci_b9d2_48hpf_plate01"],
+    ("260414_plate_1", "48hpf_b9d2_AB"):     ["20260415_b9d2_30to48hpf_plate01_t02", "20260414_sci_b9d2_48hpf_plate01"],
+    ("260414_plate_2", "48hpf_b9d2_mut"):    ["20260415_b9d2_30to48hpf_plate02_t02"],
+}
+
+SEQ_QC_DATE_WARNINGS: dict[tuple[str, str], str] = {
+    ("260401_plate_2", "24hpf_cep290_wt"):   "date 260401 has no manifest experiment; mapped to 20260324_cep290_18hpf_24hpf_plate02",
+    ("260414_plate_3", "18hpf_cep290_mut"):  "date 260414 vs experiment date 260415 for cep290_18hpf_plate03",
+    ("260414_plate_3", "18hpf_cep290_wt"):   "date 260414 vs experiment date 260415 for cep290_18hpf_plate03",
+    ("260414_plate_2", "48hpf_b9d2_mut"):    "date 260414 vs experiment date 260415 for b9d2_30to48hpf_plate02_t02",
+}
 
 
 # -----------------------------------------------------------------------------
@@ -427,6 +483,188 @@ def load_reference_table(gene: str, path: Path) -> pd.DataFrame:
     return df
 
 
+# -----------------------------------------------------------------------------
+# QC helpers
+# -----------------------------------------------------------------------------
+
+def _norm_well(w: str) -> str:
+    """Normalize bare well format (E3) to zero-padded build06 format (E03)."""
+    return re.sub(r"([A-Ha-h])(\d)$", lambda m: m.group(1).upper() + m.group(2).zfill(2), w.strip())
+
+
+def _stitched_image_exists(exp: str, well: str) -> bool:
+    d = STITCHED_FF / exp
+    if not d.is_dir():
+        return False
+    return any(d.glob(f"{well}_*stitch*"))
+
+
+def read_imaging_qc(exp: str) -> dict[str, dict]:
+    """Return {well: {imaging_qc_status, exclusion_flags, embryo_id}} for every sequenced well.
+
+    Logic mirrors 3a audit() — build04 CSV is the source of truth.
+    Status values: OK / EXCLUDED / ABSENT_IMAGED / ABSENT_NO_IMAGE / QC_NOT_RUN
+    """
+    grid = read_sequenced_grid(exp)
+    if grid is None:
+        return {}
+    seq_wells = {w for w, v in grid.items() if v in (1, 2)}
+
+    b04_path = BUILD04_DIR / f"qc_staged_{exp}.csv"
+    b04 = pd.read_csv(b04_path) if b04_path.exists() else None
+    b04_wells = set(b04["well"].astype(str).str.strip()) if b04 is not None else set()
+
+    out: dict[str, dict] = {}
+    for w in seq_wells:
+        embryo_id, flags = "", ""
+        if b04 is None:
+            status = "QC_NOT_RUN"
+        elif w not in b04_wells:
+            status = "ABSENT_IMAGED" if _stitched_image_exists(exp, w) else "ABSENT_NO_IMAGE"
+        else:
+            row = b04[b04["well"].astype(str).str.strip() == w].iloc[0]
+            embryo_id = str(row.get("embryo_id", "") or "")
+            use_ok = bool(row.get("use_embryo_flag", False))
+            fired = [f for f in REAL_QC_FLAGS if bool(row.get(f, False))]
+            status = "OK" if use_ok else "EXCLUDED"
+            flags = "|".join(fired)
+        if not embryo_id:
+            embryo_id = f"{exp}_{w}"
+        out[w] = {"imaging_qc_status": status, "exclusion_flags": flags, "embryo_id": embryo_id}
+    return out
+
+
+def load_seq_qc_failures(query_all_rows: pd.DataFrame) -> set[tuple[str, str]]:
+    """Return set of (experiment, well) pairs that failed sequencing QC.
+
+    Reads missing_embryos_due_to_sequencing.csv and resolves to experiment_id
+    via SEQ_QC_IMAGING_PLATE_MAP. Mirrors 3a load_seq_qc_failures() but returns
+    a simpler (exp, well) set — sufficient for the final_usable gate in 0.
+    """
+    if not SEQ_QC_FAILURES_CSV.exists():
+        print(f"  NOTE: seq-QC failures CSV not found at {SEQ_QC_FAILURES_CSV.relative_to(RUN_DIR)}; no seq failures applied")
+        return set()
+
+    src = pd.read_csv(SEQ_QC_FAILURES_CSV, dtype=str).fillna("")
+    warned_keys: set[tuple[str, str]] = set()
+    fail_pairs: set[tuple[str, str]] = set()
+
+    for _, r in src.iterrows():
+        plate = r["imaging_plate"].strip()
+        pert  = r["perturbation"].strip()
+        well  = _norm_well(r["imaging_well"].strip())
+        key   = (plate, pert)
+
+        if key in SEQ_QC_DATE_WARNINGS and key not in warned_keys:
+            print(f"  WARNING seq-QC date mismatch: {plate} / {pert} — {SEQ_QC_DATE_WARNINGS[key]}")
+            warned_keys.add(key)
+
+        exp_ids = SEQ_QC_IMAGING_PLATE_MAP.get(key)
+        if exp_ids is None:
+            print(f"  WARNING seq-QC unmapped: ({plate}, {pert}) — skipping row {r['embryo_ID']}")
+            continue
+        for exp_id in exp_ids:
+            fail_pairs.add((exp_id, well))
+
+    print(f"  seq-QC failures resolved: {len(fail_pairs)} (experiment, well) pairs")
+    return fail_pairs
+
+
+def build_qc_registry(
+    query_all_rows: pd.DataFrame,
+    seq_fail_pairs: set[tuple[str, str]],
+    manifest: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build qc_registry.csv: one row per sequenced well with imaging + seq QC status.
+
+    Spine: ALL (experiment, well) pairs with sequenced > 0 from the Excel sequenced sheet —
+    including imaging-failed embryos that never reached build06. This is the correct universe
+    for the Venn / loss accounting; build06 survivors are a strict subset.
+
+    Joined to: build04 imaging QC, build06 latent existence, seq QC.
+    final_usable = (imaging_qc_status == "OK") & (seq_qc_status == "seq_ok")
+    """
+    # One row per embryo_id from build06 survivors (for has_latents + metadata)
+    b06_dedup = query_all_rows.drop_duplicates("embryo_id")[
+        ["embryo_id", "experiment", "well", "physical_embryo_id",
+         "collection_time_hpf", "data_source", "gene",
+         "sequenced", "sequenced_stratum", "genotype_clean", "zygosity"]
+    ]
+    b06_lookup: dict[tuple[str, str], dict] = {
+        (r["experiment"], r["well"]): r.to_dict()
+        for _, r in b06_dedup.iterrows()
+    }
+
+    non_sci_exps = set(manifest.loc[~manifest["is_sci_timelapse"], "experiment"])
+    gene_map = dict(zip(manifest["experiment"], manifest["gene"]))
+
+    rows = []
+    for _, mrow in manifest.iterrows():
+        exp  = mrow["experiment"]
+        gene = mrow["gene"]
+
+        grid = read_sequenced_grid(exp)
+        if grid is None:
+            continue
+        seq_wells = {w: v for w, v in grid.items() if v in (1, 2)}
+        if not seq_wells:
+            continue
+
+        # Imaging QC map for this experiment (non-sci only; sci treated as OK)
+        if exp in non_sci_exps:
+            qc_map = read_imaging_qc(exp)
+        else:
+            qc_map = {}
+
+        for well, seq_code in seq_wells.items():
+            b06 = b06_lookup.get((exp, well))
+            has_latents = b06 is not None
+
+            if exp in non_sci_exps:
+                qc_info = qc_map.get(well, {
+                    "imaging_qc_status": "QC_NOT_RUN",
+                    "exclusion_flags": "",
+                    "embryo_id": f"{exp}_{well}",
+                })
+            else:
+                qc_info = {
+                    "imaging_qc_status": "OK",
+                    "exclusion_flags": "",
+                    "embryo_id": b06["embryo_id"] if b06 else f"{exp}_{well}",
+                }
+
+            embryo_id          = b06["embryo_id"]          if b06 else qc_info["embryo_id"]
+            physical_embryo_id = b06["physical_embryo_id"] if b06 else ""
+            collection_time_hpf = b06["collection_time_hpf"] if b06 else np.nan
+            data_source        = b06["data_source"]        if b06 else ""
+            genotype_clean     = b06["genotype_clean"]     if b06 else ""
+            zygosity           = b06["zygosity"]           if b06 else ""
+            sequenced_stratum  = b06["sequenced_stratum"]  if b06 else ""
+
+            seq_qc_status = "seq_failed" if (exp, well) in seq_fail_pairs else "seq_ok"
+
+            rows.append({
+                "embryo_id":           embryo_id,
+                "physical_embryo_id":  physical_embryo_id,
+                "experiment":          exp,
+                "gene":                gene,
+                "well":                well,
+                "sequenced":           int(seq_code),
+                "sequenced_stratum":   sequenced_stratum,
+                "genotype_clean":      genotype_clean,
+                "zygosity":            zygosity,
+                "collection_time_hpf": collection_time_hpf,
+                "data_source":         data_source,
+                "imaging_qc_status":   qc_info["imaging_qc_status"],
+                "exclusion_flags":     qc_info["exclusion_flags"],
+                "has_latents":         has_latents,
+                "seq_qc_status":       seq_qc_status,
+                "final_usable":        (qc_info["imaging_qc_status"] == "OK") and (seq_qc_status == "seq_ok"),
+            })
+
+    return pd.DataFrame(rows)
+
+
 def main() -> None:
     print("0 - load and clean datasets")
     print("Reference: all valid labeled reference embryos")
@@ -453,7 +691,8 @@ def main() -> None:
         query_tables.append(load_query_table(row))
     query = pd.concat(query_tables, ignore_index=True)
 
-    sequenced_embryos = (
+    # All sequenced wells from build06 survivors (pre-QC-gate spine for registry).
+    sequenced_embryos_all = (
         query[query["sequenced"] > 0]
         .drop_duplicates("embryo_id")
         [[
@@ -470,7 +709,37 @@ def main() -> None:
     )
 
     query.to_csv(TABLE_DIR / "query_all_rows_clean.csv", index=False)
+
+    # ------------------------------------------------------------------
+    # QC registry: imaging QC + seq QC -> final_usable gate
+    # ------------------------------------------------------------------
+    print("\n=== QC REGISTRY ===")
+    seq_fail_pairs = load_seq_qc_failures(query)
+    registry = build_qc_registry(query, seq_fail_pairs, experiment_manifest)
+    registry.to_csv(TABLE_DIR / "qc_registry.csv", index=False)
+    print(f"  wrote tables/qc_registry.csv ({len(registry)} rows)")
+
+    n_total     = len(registry)
+    n_img_fail  = (registry["imaging_qc_status"] != "OK").sum()
+    n_seq_fail  = (registry["seq_qc_status"] == "seq_failed").sum()
+    n_usable    = registry["final_usable"].sum()
+    print(f"  total sequenced wells : {n_total}")
+    print(f"  imaging QC failures   : {n_img_fail}")
+    print(f"  seq QC failures       : {n_seq_fail}")
+    print(f"  final_usable          : {n_usable}")
+
+    print("\nfinal_usable by gene x sequenced_stratum:")
+    print(registry[registry["final_usable"]].groupby(["gene", "sequenced_stratum"]).size().to_string())
+
+    # query_sequenced_embryos.csv: ONLY final_usable rows — this is what 1_fit and 2_predict read
+    sequenced_embryos = (
+        registry[registry["final_usable"]]
+        [["embryo_id", "experiment", "gene", "well", "sequenced",
+          "sequenced_stratum", "genotype_clean", "zygosity"]]
+        .sort_values(["gene", "experiment", "well"])
+    )
     sequenced_embryos.to_csv(TABLE_DIR / "query_sequenced_embryos.csv", index=False)
+    print(f"\n  wrote tables/query_sequenced_embryos.csv ({len(sequenced_embryos)} final_usable rows)")
 
     reference_tables = []
     for gene, path in REFERENCE_FILES.items():
