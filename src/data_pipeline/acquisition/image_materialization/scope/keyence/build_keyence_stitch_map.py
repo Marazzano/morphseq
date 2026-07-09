@@ -79,6 +79,7 @@ def build_keyence_stitch_map(
     align_rows: list[np.ndarray] = []  # each entry: (n_images, 2) array of [y, x]
     n_good = 0
     n_tried = 0
+    tile_shape: list[int] | None = None
 
     for _, row in sampled.iterrows():
         well_id = row["well_id"]
@@ -115,6 +116,8 @@ def build_keyence_stitch_map(
             arr[int(tid_idx), 0] = float(yx[0])
             arr[int(tid_idx), 1] = float(yx[1])
         align_rows.append(arr)
+        if tile_shape is None:
+            tile_shape = list(tile_specs[0].image.shape[:2])
         n_good += 1
 
     if n_good == 0:
@@ -133,8 +136,22 @@ def build_keyence_stitch_map(
         for idx in range(med_coords.shape[0])
     }
 
+    n_tiles = int(med_coords.shape[0])
+    shape = [n_tiles, 1] if orientation == "vertical" else [1, n_tiles]
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"coords": coords}))
+    out_path.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "shape": shape,
+                    "size": n_tiles,
+                    "tile_shape": tile_shape or [],
+                },
+                "coords": coords,
+            }
+        )
+    )
     log.info(
         "build_keyence_stitch_map: wrote %d tile coords to %s (from %d/%d good samples)",
         len(coords), out_path, n_good, len(sampled),

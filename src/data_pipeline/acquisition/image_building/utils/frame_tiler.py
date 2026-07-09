@@ -261,8 +261,9 @@ def _coords_to_transforms(tiles: Sequence[TileSpec], coords: dict) -> dict[str, 
     out: dict[str, TileTransform] = {}
     for idx, tile in enumerate(tiles):
         value = coords.get(idx, coords.get(str(idx), (0.0, 0.0)))
-        x_val = float(value[0]) if len(value) > 0 else 0.0
-        y_val = float(value[1]) if len(value) > 1 else 0.0
+        # stitch2d stores coords as [y, x]. TileTransform exposes dx/dy in image axes.
+        y_val = float(value[0]) if len(value) > 0 else 0.0
+        x_val = float(value[1]) if len(value) > 1 else 0.0
         out[tile.tile_id] = TileTransform(
             tile_id=tile.tile_id,
             dx_px=x_val,
@@ -396,6 +397,14 @@ the ~1-2px legacy cross-axis check, but tight relative to a full tile pitch (~67
 exists to catch alignments that placed tiles in a genuinely different arrangement than the
 raster layout demands, not to flag normal jitter."""
 
+_LEGACY_CROSS_AXIS_SHIFT_TOL_PX: dict[int, dict[Orientation, float]] = {
+    2: {"vertical": 1.0, "horizontal": 1.0},
+    3: {"vertical": 2.0, "horizontal": 2.0},
+}
+"""Legacy stitch QC: for a vertical strip, x wobble should be tiny; for a horizontal strip,
+y wobble should be tiny. The along-strip tile pitch can be hundreds/thousands of pixels and is
+not evidence of a bad alignment."""
+
 
 def _run_tiling_qc(
     transforms: dict[str, TileTransform],
@@ -405,14 +414,18 @@ def _run_tiling_qc(
     tiles: Sequence[TileSpec] | None = None,
 ) -> TilingQC:
     max_abs_shift = 0.0
+    max_cross_axis_shift = 0.0
     all_zero = True
     for tr in transforms.values():
         local_max = max(abs(float(tr.dx_px)), abs(float(tr.dy_px)))
         max_abs_shift = max(max_abs_shift, local_max)
+        cross_axis = float(tr.dx_px) if config.orientation == "vertical" else float(tr.dy_px)
+        max_cross_axis_shift = max(max_cross_axis_shift, abs(cross_axis))
         if local_max > 0:
             all_zero = False
 
     reasons: list[str] = []
+    max_master_dev: float | None = None
 
     if master_coords is not None and tiles is not None:
         # Plausibility vs. ground truth (the master grid), NOT vs. an absolute-canvas-position
@@ -424,15 +437,18 @@ def _run_tiling_qc(
             master_yx = master_coords.get(idx)
             if tr is None or master_yx is None:
                 continue
-            # Match the same (swapped) convention _coords_to_transforms uses: dx_px <- coords[0],
-            # dy_px <- coords[1], so master deviation must be computed the same way for consistency.
-            dev = max(abs(float(tr.dx_px) - master_yx[0]), abs(float(tr.dy_px) - master_yx[1]))
+            dev = max(abs(float(tr.dx_px) - master_yx[1]), abs(float(tr.dy_px) - master_yx[0]))
             max_master_dev = max(max_master_dev, dev)
         if max_master_dev > _MASTER_PLAUSIBILITY_TOL_PX:
             reasons.append("deviates_from_master")
     else:
-        if max_abs_shift > float(config.max_abs_shift_px):
-            reasons.append("shift_exceeds_threshold")
+        n_tiles = len(transforms)
+        tol = _LEGACY_CROSS_AXIS_SHIFT_TOL_PX.get(
+            n_tiles,
+            {"vertical": float(config.max_abs_shift_px), "horizontal": float(config.max_abs_shift_px)},
+        )[config.orientation]
+        if max_cross_axis_shift > tol:
+            reasons.append("cross_axis_shift_exceeds_threshold")
 
     if not allow_zero_shift and all_zero:
         reasons.append("unresolved_transforms")
@@ -441,8 +457,11 @@ def _run_tiling_qc(
     suggested_action: Literal["ok", "use_master", "concat", "fail"] = "ok" if passed else "use_master"
     metrics = {
         "max_abs_shift_px": float(max_abs_shift),
+        "max_cross_axis_shift_px": float(max_cross_axis_shift),
         "tile_count": float(len(transforms)),
     }
+    if max_master_dev is not None:
+        metrics["max_master_deviation_px"] = float(max_master_dev)
     return TilingQC(
         passed=passed,
         reasons=tuple(reasons),
