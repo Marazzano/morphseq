@@ -73,7 +73,9 @@ from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
 )
 from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402
     derive_shared_grid,
+    draw_resolved_peak_basins,
     format_density_axis,
+    mode_count_label,
     plot_density_overlap,
 )
 from resolved_peak_reference_readout import (  # noqa: E402
@@ -126,16 +128,6 @@ WT_DENS_COLOR = "#808080"       # reference overlap density (gray)
 WT_POINT_COLOR = "#808080"      # WT reference raw points (gray)
 GRID = 40
 LABEL_FS = 11                  # bigger labels throughout
-
-
-def _mode_count_label(n_modes, *, frequency=None):
-    """Compact label for vote-supported mode counts in row titles."""
-    if n_modes is None:
-        return "mode count unstable"
-    n = int(n_modes)
-    word = "mode" if n == 1 else "modes"
-    suffix = f" ({frequency:.0%})" if frequency is not None else ""
-    return f"{n} {word}{suffix}"
 
 
 def load_bins(cfg):
@@ -196,71 +188,6 @@ def _build_distribution_record(distribution_id, points, canonical_grid, analysis
     record = compute_resolved_peaks(record, _resolution_config(seed))
     record = compute_peak_stats(record)
     return record
-
-
-def _hdr_contour(ax, xx, yy, mode_dens, color, lw, hdr_mass):
-    """Draw one smooth HDR iso-density loop of `mode_dens` enclosing `hdr_mass`
-    of its mass -- a closed curve that follows the KDE bump's shape."""
-    if mode_dens.max() <= 0:
-        return
-    flat = np.sort(mode_dens.ravel())[::-1]
-    csum = np.cumsum(flat)
-    total = float(csum[-1])
-    if total <= 0:
-        return
-    idx = min(int(np.searchsorted(csum / total, hdr_mass, side="left")), len(flat) - 1)
-    level = float(flat[idx])
-    if level <= 0:
-        level = float(flat[flat > 0].min()) if np.any(flat > 0) else 0.0
-    ax.contour(xx, yy, mode_dens, levels=[level], colors=[color],
-               linewidths=lw, zorder=5, alpha=0.95)
-
-
-def _draw_basins(ax, dist, *, color, lw=2.0, hdr_mass=0.60, n_modes=None):
-    """Outline the modes with smooth KDE HDR loops that hug each bump's shape.
-
-    `n_modes` is the downsample-supported number of modes to display.
-    - n_modes is None -> do not draw a basin count claim.
-    - n_modes >= detected count -> draw every detected basin.
-    - n_modes <  detected count -> the extra detected modes aren't statistically
-      supported; collapse to ONE outer loop of the whole distribution (for
-      n_modes==1) rather than drawing unsupported sub-modes. This keeps the
-      drawing consistent with the count shown in the title.
-
-    Basin masking uses `empirical_basin_labels` so adjacent supported modes stay
-    separate loops."""
-    dg = dist.density_grid
-    dens = np.asarray(dg.density, dtype=float)
-    labels = getattr(dist, "empirical_basin_labels", None)
-    labels = np.asarray(labels, dtype=int) if labels is not None else None
-    peaks = list(dist.peaks)
-    detected = len(peaks)
-    if n_modes is None:
-        return
-    show = int(n_modes)
-
-    # Not enough support for the detected sub-structure: draw ONE loop for the
-    # whole distribution (the honest "one mode" view). Only the single-mode
-    # collapse is handled specially; 1 <= show < detected with show>1 is rare and
-    # falls through to drawing the `show` strongest basins.
-    if show <= 1 or detected <= 1:
-        # center mark(s): the strongest peak
-        if peaks:
-            cx, cy = peaks[0].geometry.center_coordinate
-            ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
-        _hdr_contour(ax, dg.xx, dg.yy, dens, color, lw, hdr_mass)
-        return
-
-    # Show the `show` strongest detected modes as separate basin loops.
-    peaks_by_height = sorted(peaks, key=lambda p: p.geometry.total_support_fraction, reverse=True)
-    for pk in peaks_by_height[:show]:
-        cx, cy = pk.geometry.center_coordinate
-        ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
-        if labels is not None and pk.geometry.peak_id in np.unique(labels):
-            mode_dens = np.where(labels == pk.geometry.peak_id, dens, 0.0)
-        else:
-            mode_dens = dens
-        _hdr_contour(ax, dg.xx, dg.yy, mode_dens, color, lw, hdr_mass)
 
 
 def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SPEC,
@@ -348,7 +275,7 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         peak = float(gd.max())
         levels = np.linspace(0.06 * peak, peak, 16)
         ax.contourf(gx, gy, gd, levels=levels, cmap=light_blues, extend="max")
-        _draw_basins(ax, grp_dist, color=PEAK_OVERLAY_COLOR, lw=1.8, n_modes=grp_count)
+        draw_resolved_peak_basins(ax, grp_dist, color=PEAK_OVERLAY_COLOR, linewidth=1.8, n_modes=grp_count)
         for pheno in cfg["phenotype_labels"] + ["unlabeled"]:
             m = phenos == pheno
             if not m.any():
@@ -357,7 +284,7 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
                        facecolors=PHENOTYPE_COLORS.get(pheno, UNLABELED_COLOR),
                        edgecolors="k", linewidths=0.4, zorder=4, label=pheno)
         format_density_axis(ax, box)
-        ax.set_title(f"{hpf} hpf  ·  {_mode_count_label(grp_count, frequency=grp_freq)}",
+        ax.set_title(f"{hpf} hpf  ·  {mode_count_label(grp_count, frequency=grp_freq)}",
                      fontsize=LABEL_FS, fontweight="bold", color="#222")
 
         # ── ROW 2: reference readout (resolved-peak metrics, target vs WT) ───
@@ -448,12 +375,12 @@ def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
     # Draw each detected peak basin on its own panel: target modes (blue) on the
     # left, WT modes (dark) on the right, so the mode counts are explicit.
     if grp_dist is not None:
-        _draw_basins(axL, grp_dist, color=TARGET_DENS_COLOR, n_modes=grp_count)
+        draw_resolved_peak_basins(axL, grp_dist, color=TARGET_DENS_COLOR, n_modes=grp_count)
     if wt_dist is not None:
-        _draw_basins(axR, wt_dist, color="#333333", n_modes=wt_count)
-    axL.set_title(f"{gene} · {_mode_count_label(grp_count, frequency=grp_freq)}",
+        draw_resolved_peak_basins(axR, wt_dist, color="#333333", n_modes=wt_count)
+    axL.set_title(f"{gene} · {mode_count_label(grp_count, frequency=grp_freq)}",
                   fontsize=LABEL_FS - 2, color=TARGET_DENS_COLOR)
-    axR.set_title(f"WT · {_mode_count_label(wt_count, frequency=wt_freq)}",
+    axR.set_title(f"WT · {mode_count_label(wt_count, frequency=wt_freq)}",
                   fontsize=LABEL_FS - 2, color=WT_POINT_COLOR)
     for ax in (axL, axR):
         format_density_axis(ax, box)

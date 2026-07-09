@@ -135,6 +135,20 @@ def compute_v0_peak_count_summary(
     return {"truth": truth_detail, "observed": observed_detail}
 
 
+def square_density_box(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Expand the shorter axis so equal-aspect panels do not collapse into strips."""
+    xlo, xhi, ylo, yhi = box
+    xmid = 0.5 * (xlo + xhi)
+    ymid = 0.5 * (ylo + yhi)
+    width = xhi - xlo
+    height = yhi - ylo
+    side = max(width, height)
+    if side <= 0:
+        side = 1.0
+    half = 0.5 * side
+    return xmid - half, xmid + half, ymid - half, ymid + half
+
+
 def density_box(
     point_sets: Iterable[np.ndarray],
     *,
@@ -143,7 +157,13 @@ def density_box(
     scan_pct: float = 2.0,
     kde=None,
 ) -> tuple[float, float, float, float]:
-    """Return a robust density-defined box around the mass of one or more clouds."""
+    """Return a robust density-defined box around the mass of one or more clouds.
+
+    ALWAYS square (via `square_density_box`): this is the one place a plotting
+    box gets built from raw points, so squaring here means every caller --
+    including ones that forget to wrap the call -- gets equal-aspect panels
+    for free, instead of squaring being an opt-in step.
+    """
     pts_list = [np.asarray(p, dtype=float) for p in point_sets if len(p) > 0]
     if not pts_list:
         raise ValueError("density_box requires at least one non-empty point set")
@@ -170,21 +190,8 @@ def density_box(
         xlo, xhi, ylo, yhi = xsel.min(), xsel.max(), ysel.min(), ysel.max()
     mx = (xhi - xlo) * margin if xhi > xlo else 1.0
     my = (yhi - ylo) * margin if yhi > ylo else 1.0
-    return float(xlo - mx), float(xhi + mx), float(ylo - my), float(yhi + my)
-
-
-def square_density_box(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
-    """Expand the shorter axis so equal-aspect panels do not collapse into strips."""
-    xlo, xhi, ylo, yhi = box
-    xmid = 0.5 * (xlo + xhi)
-    ymid = 0.5 * (ylo + yhi)
-    width = xhi - xlo
-    height = yhi - ylo
-    side = max(width, height)
-    if side <= 0:
-        side = 1.0
-    half = 0.5 * side
-    return xmid - half, xmid + half, ymid - half, ymid + half
+    box = (float(xlo - mx), float(xhi + mx), float(ylo - my), float(yhi + my))
+    return square_density_box(box)
 
 
 def derive_shared_grid(
@@ -198,14 +205,12 @@ def derive_shared_grid(
     kde=None,
 ) -> CanonicalGrid:
     """Derive the canonical grid used for a target/reference comparison."""
-    box = square_density_box(
-        density_box(
-            [np.asarray(target_points, dtype=float), np.asarray(reference_points, dtype=float)],
-            support_frac=support_frac,
-            margin=margin,
-            scan_pct=scan_pct,
-            kde=kde,
-        )
+    box = density_box(
+        [np.asarray(target_points, dtype=float), np.asarray(reference_points, dtype=float)],
+        support_frac=support_frac,
+        margin=margin,
+        scan_pct=scan_pct,
+        kde=kde,
     )
     return CanonicalGrid(
         x_min=float(box[0]),
@@ -668,7 +673,7 @@ def plot_v0_distribution_qc_grid(
                 finite = np.isfinite(spec.composed_grid.density.ravel()) & (spec.composed_grid.density.ravel() > 0)
                 if finite.any():
                     grids_for_box.append(true_pts[finite])
-            box = square_density_box(density_box(grids_for_box, kde=kde))
+            box = density_box(grids_for_box, kde=kde)
         else:
             box = shared_box
         sample_grid = evaluate_density_grid(points, box, kde=kde)
@@ -819,6 +824,110 @@ def plot_v0_distribution_qc_grid(
     fig.savefig(out_path, dpi=170, facecolor="white")
     plt.close(fig)
     return out_path
+
+
+def mode_count_label(n_modes: int | None, *, frequency: float | None = None) -> str:
+    """Compact label for vote-supported mode counts (row titles / legends).
+
+    Extracted from `valley_visualization.py::_mode_count_label` -- shared
+    across any figure that reports a `resolved_peak_count` next to its
+    bootstrap-vote `mode_frequency`.
+    """
+    if n_modes is None:
+        return "mode count unstable"
+    n = int(n_modes)
+    word = "mode" if n == 1 else "modes"
+    suffix = f" ({frequency:.0%})" if frequency is not None else ""
+    return f"{n} {word}{suffix}"
+
+
+def hdr_contour_for_field(
+    ax,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    density: np.ndarray,
+    *,
+    color: str,
+    linewidth: float = 2.0,
+    hdr_mass: float = 0.60,
+) -> None:
+    """Draw one smooth HDR iso-density loop of `density` enclosing `hdr_mass`
+    of its mass -- a closed curve that follows the KDE bump's shape.
+
+    Extracted from `valley_visualization.py::_hdr_contour`. Unlike
+    `plot_hdr_contour` (which reads a full `DensityGrid`'s mass), this takes a
+    raw density array directly so callers can mask it to one basin's mass
+    first (see `draw_resolved_peak_basins`).
+    """
+    density = np.asarray(density, dtype=float)
+    if density.max() <= 0:
+        return
+    flat = np.sort(density.ravel())[::-1]
+    csum = np.cumsum(flat)
+    total = float(csum[-1])
+    if total <= 0:
+        return
+    idx = min(int(np.searchsorted(csum / total, hdr_mass, side="left")), len(flat) - 1)
+    level = float(flat[idx])
+    if level <= 0:
+        nonzero = flat[flat > 0]
+        if nonzero.size == 0:
+            return
+        level = float(nonzero.min())
+    ax.contour(xx, yy, density, levels=[level], colors=[color], linewidths=linewidth, zorder=5, alpha=0.95)
+
+
+def draw_resolved_peak_basins(
+    ax,
+    distribution,
+    *,
+    color: str,
+    linewidth: float = 2.0,
+    hdr_mass: float = 0.60,
+    n_modes: int | None,
+) -> None:
+    """Outline a `ResolvedPeakDistribution`'s modes with smooth KDE HDR loops
+    that hug each bump's shape (extracted from
+    `valley_visualization.py::_draw_basins`).
+
+    `n_modes` is the vote-supported number of modes to actually display:
+    - `None` -> draw nothing (no basin-count claim to make).
+    - `n_modes >= len(distribution.peaks)` -> draw every detected basin.
+    - `n_modes < len(distribution.peaks)` (in practice `n_modes <= 1`) -> the
+      extra detected peaks are not statistically supported; collapse to ONE
+      outer HDR loop over the whole density rather than drawing unsupported
+      sub-modes. This keeps the drawing consistent with a count shown
+      elsewhere (e.g. via `mode_count_label`).
+
+    Basin masking uses `distribution.empirical_basin_labels` so adjacent
+    supported peaks stay separate loops.
+    """
+    density_grid = distribution.density_grid
+    density = np.asarray(density_grid.density, dtype=float)
+    labels = getattr(distribution, "empirical_basin_labels", None)
+    labels = np.asarray(labels, dtype=int) if labels is not None else None
+    peaks = list(distribution.peaks)
+    detected = len(peaks)
+    if n_modes is None:
+        return
+    show = int(n_modes)
+
+    if show <= 1 or detected <= 1:
+        if peaks:
+            cx, cy = peaks[0].geometry.center_coordinate
+            ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
+        hdr_contour_for_field(ax, density_grid.xx, density_grid.yy, density, color=color, linewidth=linewidth, hdr_mass=hdr_mass)
+        return
+
+    peaks_by_support = sorted(peaks, key=lambda p: p.geometry.total_support_fraction, reverse=True)
+    for peak in peaks_by_support[:show]:
+        cx, cy = peak.geometry.center_coordinate
+        ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
+        if labels is not None and peak.geometry.peak_id in np.unique(labels):
+            mode_density = np.where(labels == peak.geometry.peak_id, density, 0.0)
+        else:
+            mode_density = density
+        hdr_contour_for_field(ax, density_grid.xx, density_grid.yy, mode_density, color=color, linewidth=linewidth, hdr_mass=hdr_mass)
 
 
 def plot_resolved_peak_overlay(ax, distribution, summary, *, title: str | None = None) -> None:
