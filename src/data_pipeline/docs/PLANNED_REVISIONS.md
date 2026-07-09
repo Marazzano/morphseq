@@ -15,15 +15,26 @@ cold-load model → process one well → exit. Across ~576 wells that is thousan
 reloads (GroundingDINO, SAM2, 4× UNet), which dominates wall-clock. Observed: a serial
 (`--cores 1`) full run did ~⅓ of the wells in ~16 h.
 
-**Current state.** `paths.py` defines `EXECUTION_RUN_BATCH` and even tags `frame_masks` with it
-("SAM2 loads its model once and processes all run wells"), **but nothing consumes the field** —
-no dispatch logic reads `execution`, and the rule is `frame_masks_per_well` regardless. So
-`run_batch` is *declared but unimplemented*.
+**Current state — `EXECUTION_RUN_BATCH` is an intent label, not wired behavior.** The registry
+defines `EXECUTION_RUN_BATCH`, tags `frame_masks` and `latent_embeddings` with it, and even exposes
+an accessor `execution_model_for_step()` (paths.py). **But the field is consumed by nothing:**
+- `execution_model_for_step()` is *called nowhere* — no rule or code path branches on
+  `per_well` vs `run_batch`.
+- The code says so itself. `rules/latent_embeddings.smk` DOCTRINE NOTE: *"Realizing a true
+  single-process-all-wells batch needs Snakemake's `--batch` mechanism, which no rule in this repo
+  uses yet; like frame_masks (also RUN_BATCH in the registry), the rule is declared per-well. The
+  `execution` field documents intent; the batch optimization is deferred."*
+- Proof: `frame_masks` is *already* tagged `EXECUTION_RUN_BATCH`, yet in the 2026-07 run it
+  reloaded SAM2 **per well** (one `conda run … frame_masks` per `{well_id}`).
+
+Consequence: **flipping a step's `execution` to `EXECUTION_RUN_BATCH` is a no-op** — the rule stays
+`<step>_per_well` (one job/well) and the model still reloads per well. The field is a TODO marker.
 
 **What proper batching needs.**
-1. **Batch-capable entrypoints** — `cmd_frame_detections` / `cmd_frame_masks` /
-   `cmd_snip_auxiliary_masks` accept a *well list* (or "all discovered"), load the model **once**,
-   loop wells.
+1. **Batch-capable entrypoints** — accept a *well list* (or "all discovered"), load the model
+   **once**, loop wells. Partly built already: `legacy_embeddings/entrypoint.py` "accepts a list of
+   `(inventory, output)` pairs" (load once, iterate) — the rule just hands it a single pair today.
+   `cmd_frame_detections` / `cmd_frame_masks` / `cmd_snip_auxiliary_masks` still take one well.
 2. **A batch Snakefile rule** — one job producing *all* per-well shards for the run
    (checkpoint-aware; expands over discovered wells like the merge helpers).
 3. **Incremental write+validate inside the loop** — stamp each well's shard `.validated` as it
