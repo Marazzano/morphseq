@@ -14,6 +14,7 @@ from scipy.spatial.distance import pdist
 
 from .density_composition import DensityGrid
 from .peak_counting import PeakCandidateDetail, PeakDetectionResult
+from .peak_stability import PeakCountStability, PeakSeedSet
 
 
 SOURCE_TYPES = ("truth", "empirical")
@@ -47,6 +48,35 @@ class ResolvedPeak:
 
 
 @dataclass(frozen=True)
+class PeakResolutionEvidence:
+    """BACKGROUND sidecar: how the foreground `resolved_peak_count` /
+    `is_reliable` answer was reached (COMPOSE_single_path_plan Sec 1.6).
+    Only populated by the Stage-2a bootstrap-vote resolution path
+    (`compute_resolved_peaks`'s MODE_VOTE_FULL_DATA strategy); `None` on
+    distributions built via the plain single-pass constructors below
+    (`resolve_empirical_peak_distribution` / `resolve_truth_peak_distribution`),
+    which do not vote (plan Sec 1.5c: retention governs PERSISTED evidence).
+    """
+
+    target_peak_count: int | None
+    resolution_succeeded: bool
+    count_is_stable: bool
+    count_stability: PeakCountStability
+    consensus_seed_set: PeakSeedSet
+    full_data_detection: PeakDetectionResult
+    # CANDIDATES+ retention (Stage 2b) and STABILITY_GRAPH (Stage 5) are out
+    # of scope for Stage 2a; both fields exist on the plan's target shape but
+    # are intentionally left unpopulated here.
+    bootstrap_tally: Any | None = None
+    stability_graph: Any | None = None
+    # Per-basin mass fractions computed at the final full-data carve, kept for
+    # audit even when resolution failed (rejected basins are NOT exposed as
+    # foreground peaks -- plan Sec 1.5d failure semantics).
+    basin_component_mass_fractions: tuple[float, ...] = ()
+    basin_validation: tuple[bool, ...] = ()
+
+
+@dataclass(frozen=True)
 class ResolvedPeakDistribution:
     distribution_id: str
     source_type: Literal["truth", "empirical"]
@@ -62,8 +92,33 @@ class ResolvedPeakDistribution:
     # the empirical path; None on the truth path (which uses grid_peak_ids).
     empirical_basin_labels: np.ndarray | None = None
     provenance: Mapping[str, Any] = field(default_factory=dict)
+    # ---- Stage 2a foreground fields (plan Sec 1.6) -----------------------
+    # "This many peaks" -- None if resolution failed (no honest answer, NOT
+    # forced to a smaller count). Falls back to `number_of_peaks` (the
+    # accepted-candidate count already on `peaks`) for distributions built by
+    # the single-pass constructors below, which have no vote: for those, the
+    # single detected-and-accepted count IS the answer, so defaulting to it
+    # (rather than None) keeps every pre-Stage-2a call site's
+    # `resolved_peak_count` reading meaningful without requiring a vote.
+    resolved_peak_count: int | None = None
+    # "Trust it / don't." Defaults to True for single-pass (non-voting)
+    # construction: those paths have no stability/failure concept to report,
+    # and forcing a default of False would incorrectly read as "known
+    # unreliable" to every existing (smoke test / array-job / null-path)
+    # caller that never asked for a vote. Only the Stage-2a vote path can
+    # actually set this to False (an unstable vote or a failed basin
+    # validation).
+    is_reliable: bool = True
+    # BACKGROUND: audit / drill-down sidecar. None on all single-pass
+    # construction paths; populated only by the Stage-2a vote resolution.
+    resolution_evidence: PeakResolutionEvidence | None = None
 
     def __post_init__(self) -> None:
+        if self.resolved_peak_count is None and self.resolution_evidence is None:
+            # Single-pass (non-voting) construction: the accepted-candidate
+            # count on `peaks` IS the answer (see field docstring above).
+            object.__setattr__(self, "resolved_peak_count", len(self.peaks))
+
         if self.source_type not in SOURCE_TYPES:
             raise ValueError(f"Unknown source_type: {self.source_type!r}")
 
@@ -755,6 +810,7 @@ def run_empirical_null_test(
 __all__ = [
     "EmpiricalNullResult",
     "PeakGeometry",
+    "PeakResolutionEvidence",
     "RADIUS_DEFINITION",
     "R80_DENSITY_DEFINITION",
     "RESOLVED_PEAK_METRICS",

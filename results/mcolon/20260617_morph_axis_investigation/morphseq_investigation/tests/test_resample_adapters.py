@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from morphseq_investigation.core._resample_adapters import run_permutation_draws
+from morphseq_investigation.core._resample_adapters import bootstrap_peak_vote, run_permutation_draws
 from morphseq_investigation.core.resolved_peak_metrics import run_empirical_null_test
 
 
@@ -115,6 +115,76 @@ def test_failed_draws_reduce_valid_null_fraction_downstream():
     # reporting test_is_valid=True against a truncated 100%-valid array.
     if null_result.valid_null_fraction < 0.8:
         assert not null_result.test_is_valid
+
+
+def test_bootstrap_peak_vote_returns_counts_and_centers_per_successful_draw():
+    points = np.arange(40.0).reshape(20, 2)
+
+    def _resolve_draw(sample_points):
+        # A deterministic, cheap stand-in for resolve_points_with_analysis_spec:
+        # "count" = 2 always, "centers" = the sample mean twice (arbitrary but
+        # exercises the (count, centers) contract bootstrap_peak_vote expects).
+        mean = tuple(np.mean(sample_points, axis=0))
+        return 2, (mean, mean)
+
+    counts, centers_by_draw, n_failed = bootstrap_peak_vote(
+        points=points,
+        resolve_draw=_resolve_draw,
+        n_draws=15,
+        sample_fraction=0.8,
+        min_sample_size=5,
+        seed=42,
+    )
+    assert n_failed == 0
+    assert len(counts) == 15
+    assert all(count == 2 for count in counts)
+    assert len(centers_by_draw) == 15
+    assert all(len(centers) == 2 for centers in centers_by_draw)
+
+
+def test_bootstrap_peak_vote_min_sample_size_floor_and_frac_cap():
+    """Mirrors valley_visualization.py's pre-refactor sample_n formula:
+    min(n, max(min_sample_size, ceil(sample_fraction * n)))."""
+    points = np.arange(20.0).reshape(10, 2)
+    seen_sizes = []
+
+    def _resolve_draw(sample_points):
+        seen_sizes.append(len(sample_points))
+        return 1, ((0.0, 0.0),)
+
+    bootstrap_peak_vote(
+        points=points,
+        resolve_draw=_resolve_draw,
+        n_draws=5,
+        sample_fraction=0.1,  # ceil(0.1*10)=1, but min_sample_size=6 floors it
+        min_sample_size=6,
+        seed=1,
+    )
+    # The engine's unperturbed "observed" call (see resample._engine.run) also
+    # invokes the statistic once on the FULL (unsubsampled) data before any
+    # per-draw perturbation, and preflight's dry run makes one more perturbed
+    # call before the real loop -- so `seen_sizes` has a couple of extra
+    # entries beyond the 5 real draws. What matters here is that every
+    # PERTURBED call (i.e. every call that isn't on the full unsubsampled
+    # data) sees exactly the floored sample_n=6, never the raw
+    # ceil(0.1*10)=1.
+    per_draw_sizes = [size for size in seen_sizes if size != len(points)]
+    assert len(per_draw_sizes) >= 5
+    assert all(size == 6 for size in per_draw_sizes)
+
+
+def test_bootstrap_peak_vote_empty_points_returns_empty():
+    counts, centers_by_draw, n_failed = bootstrap_peak_vote(
+        points=np.empty((0, 2)),
+        resolve_draw=lambda pts: (0, ()),
+        n_draws=10,
+        sample_fraction=0.8,
+        min_sample_size=5,
+        seed=1,
+    )
+    assert counts == []
+    assert centers_by_draw == []
+    assert n_failed == 0
 
 
 def test_run_permutation_draws_no_failures_all_finite():

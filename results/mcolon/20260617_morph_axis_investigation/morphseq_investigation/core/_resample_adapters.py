@@ -7,9 +7,12 @@ stringly-typed handshake. This module owns those conventions so
 `resolved_peak_analysis.py` never talks to `analyze.utils.resampling`
 directly, only to the typed helper here.
 
-Stage 1 scope: only the null-test permutation draw generation is wired
-(`run_permutation_draws`). The bootstrap vote (`bootstrap_peak_vote`) is
-Stage 2 scope and intentionally not built here yet.
+Stage 2a adds `bootstrap_peak_vote`, wrapping `resample.subsample` the same
+way `run_permutation_draws` wraps `resample.permute_groups`: same typed
+seam, same `_FAILED`/`n_failed` -> NaN-padding discipline for invalid draws
+(here: dropped rather than NaN-padded, since a vote's "invalid draw" is
+"does not vote," not a numeric quantity to average -- see `n_failed`
+handling below for the reasoning).
 
 Note: `resolved_peak_analysis.py` already computes the OBSERVED delta itself
 (`compute_observed_delta`) and reduces observed-vs-null via the existing
@@ -22,7 +25,7 @@ reduction step instead of duplicating it.
 
 from __future__ import annotations
 
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -108,4 +111,73 @@ def run_permutation_draws(
     }
 
 
-__all__ = ["run_permutation_draws"]
+def bootstrap_peak_vote(
+    *,
+    points: np.ndarray,
+    resolve_draw: Callable[[np.ndarray], tuple[int, Sequence[tuple[float, float]]]],
+    n_draws: int,
+    sample_fraction: float,
+    min_sample_size: int,
+    seed: int,
+) -> tuple[list[int], list[tuple[tuple[float, float], ...]], int]:
+    """Run `n_draws` bootstrap-subsample draws via
+    `analyze.utils.resampling.subsample`, each resolving a reduced-sample-size
+    draw with `resolve_draw(sample_points) -> (count, centers)`.
+
+    Returns `(counts, centers_by_draw, n_failed)`:
+      - `counts`: one accepted-peak-count int per SUCCESSFUL draw
+      - `centers_by_draw`: the parallel list of that draw's candidate centers
+        (transient use only -- consumed to build a `PeakSeedSet`, never
+        persisted on the final `ResolvedPeakDistribution`; Stage 2b scope)
+      - `n_failed`: engine-level `_FAILED` count (a crashed/degenerate draw
+        is NOT a vote for "0 modes" -- it is simply excluded, per plan Sec 1.5)
+
+    The draw sample size mirrors the pre-refactor `_resampled_mode_count` in
+    `valley_visualization.py`: `max(min_sample_size, ceil(sample_fraction * n))`,
+    capped at `n`, so the MIN_EMBRYOS floor logic carries over unchanged.
+    """
+    points = np.asarray(points, dtype=float)
+    n = len(points)
+    if n_draws <= 0 or n == 0:
+        return [], [], 0
+
+    sample_n = min(n, max(int(min_sample_size), int(np.ceil(float(sample_fraction) * n))))
+
+    def _vote_statistic(data: dict, rng: np.random.Generator | None) -> dict:
+        indices = data.get("indices")
+        if indices is None:
+            # The engine's unperturbed "observed" call (see `resample._engine.run`)
+            # has no "indices" key -- use the full-data pass so it does not
+            # crash preflight; its count/centers are not read by this adapter
+            # (only `out.samples`, i.e. the per-draw perturbed results, are).
+            sample_points = data["points"]
+        else:
+            sample_points = data["points"][np.asarray(indices)]
+        count, centers = resolve_draw(sample_points)
+        return {"count": int(count), "centers": tuple(tuple(map(float, c)) for c in centers)}
+
+    # Pass an explicit `size=` (rather than `frac=`) so the draw count is
+    # exactly `sample_n` (which already folds in the MIN_EMBRYOS floor) --
+    # avoids a float round-trip through `frac = sample_n / n`.
+    spec = resample.subsample(size=sample_n)
+    stat = resample.statistic(
+        "peak_count_vote",
+        _vote_statistic,
+        outputs=["count", "centers"],
+    )
+    out = resample.run(
+        data={"n": n, "points": points},
+        spec=spec,
+        statistic=stat,
+        n_iters=int(n_draws),
+        seed=int(seed),
+        store="all",
+    )
+
+    samples = out.samples or []
+    counts = [int(sample["count"]) for sample in samples]
+    centers_by_draw = [tuple(sample["centers"]) for sample in samples]
+    return counts, centers_by_draw, int(out.n_failed)
+
+
+__all__ = ["bootstrap_peak_vote", "run_permutation_draws"]

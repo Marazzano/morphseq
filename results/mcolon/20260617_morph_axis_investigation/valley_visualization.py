@@ -31,7 +31,6 @@ Run:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import sys
 from pathlib import Path
 
@@ -63,12 +62,14 @@ from morphseq_investigation.core.distribution_records import (  # noqa: E402
     DistributionAnalysisContext,
     DistributionComparison,
     DistributionRecord,
+    PeakResolutionConfig,
     compute_observed_metrics,
     compute_peak_stats,
     compute_resolved_peaks,
 )
+from morphseq_investigation.core.peak_stability import PeakCountStabilityPolicy  # noqa: E402
 from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
-    ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec,
+    ResolvedPeakAnalysisSpec,
 )
 from morphseq_investigation.plotting.modal_distribution_plotting import (  # noqa: E402
     derive_shared_grid,
@@ -127,62 +128,14 @@ GRID = 40
 LABEL_FS = 11                  # bigger labels throughout
 
 
-@dataclass(frozen=True)
-class ResampledModeCount:
-    modal_count: int
-    count: int | None
-    frequency: float
-    counts: dict[int, int]
-
-    @property
-    def stable(self):
-        return self.count is not None
-
-
 def _mode_count_label(n_modes, *, frequency=None):
-    """Compact label for downsample-supported mode counts in row titles."""
+    """Compact label for vote-supported mode counts in row titles."""
     if n_modes is None:
         return "mode count unstable"
     n = int(n_modes)
     word = "mode" if n == 1 else "modes"
     suffix = f" ({frequency:.0%})" if frequency is not None else ""
     return f"{n} {word}{suffix}"
-
-
-def _resampled_mode_count(points, canonical_grid, analysis_spec, *, n_draws, sample_fraction, min_freq, rng):
-    """Subsample one distribution and return its consensus resolved mode count."""
-    n = len(points)
-    sample_n = min(n, max(MIN_EMBRYOS, int(np.ceil(float(sample_fraction) * n))))
-    counts = []
-    for _ in range(n_draws):
-        sample = points[rng.choice(n, size=sample_n, replace=False)]
-        resolved = resolve_points_with_analysis_spec(
-            distribution_id="fig", points=sample, canonical_grid=canonical_grid,
-            analysis_spec=analysis_spec,
-        )
-        counts.append(resolved.number_of_peaks)
-    values, freqs = np.unique(np.asarray(counts, dtype=int), return_counts=True)
-    best_i = int(np.argmax(freqs))
-    best_count = int(values[best_i])
-    best_freq = float(freqs[best_i]) / float(n_draws)
-    return ResampledModeCount(
-        modal_count=best_count,
-        count=best_count if best_freq >= min_freq else None,
-        frequency=best_freq,
-        counts={int(v): int(c) for v, c in zip(values, freqs)},
-    )
-
-
-def _displayable_resampled_mode_count(mode_count, observed_count):
-    """Do not display a resampled count that the observed KDE cannot outline."""
-    if mode_count.count is None or int(mode_count.count) <= int(observed_count):
-        return mode_count
-    return ResampledModeCount(
-        modal_count=mode_count.modal_count,
-        count=None,
-        frequency=mode_count.frequency,
-        counts=mode_count.counts,
-    )
 
 
 def load_bins(cfg):
@@ -207,12 +160,29 @@ def load_bins(cfg):
                     wt[[X_FEAT, Y_FEAT]].values.astype(float))
     return out
 
-def _build_distribution_record(distribution_id, points, canonical_grid, analysis_spec):
+# Stage 2a: the bootstrap mode-count vote is folded INTO compute_resolved_peaks
+# (core/distribution_records.py). This config's defaults already match the
+# pre-refactor numbers (N_MODE_RESAMPLE_DRAWS/MODE_DOWNSAMPLE_FRACTION/
+# MODE_RESAMPLE_MIN_FREQ below), but each render_gene call needs its own seed
+# per (gene, hpf, distribution) to preserve the old per-distribution
+# independent-RNG-stream behavior -- see render_gene for the derivation.
+def _resolution_config(seed):
+    return PeakResolutionConfig(
+        n_bootstrap_draws=N_MODE_RESAMPLE_DRAWS,
+        bootstrap_sample_fraction=MODE_DOWNSAMPLE_FRACTION,
+        min_bootstrap_sample_size=MIN_EMBRYOS,
+        count_stability_policy=PeakCountStabilityPolicy(min_mode_frequency=MODE_RESAMPLE_MIN_FREQ),
+        seed=seed,
+    )
+
+
+def _build_distribution_record(distribution_id, points, canonical_grid, analysis_spec, *, seed):
     """Build + resolve a typed DistributionRecord in one call: points -> the
-    ONE resolve engine (resolve_points_with_analysis_spec, reached via
-    compute_resolved_peaks) -> scalar peak_stats. Density is derived from
-    `analysis_spec` alone inside the engine -- no separate `kde=` parameter
-    (Stage 0: ResolvedPeakAnalysisSpec is the sole bandwidth authority)."""
+    ONE resolve engine (resolve_points_with_analysis_spec + the Stage-2a
+    bootstrap vote, reached via compute_resolved_peaks) -> scalar peak_stats.
+    Density is derived from `analysis_spec` alone inside the engine -- no
+    separate `kde=` parameter (Stage 0: ResolvedPeakAnalysisSpec is the sole
+    bandwidth authority)."""
     record = DistributionRecord(
         distribution_id=distribution_id,
         points=np.asarray(points, dtype=float),
@@ -223,7 +193,7 @@ def _build_distribution_record(distribution_id, points, canonical_grid, analysis
             "peak_detector_method": analysis_spec.peak_detector_method,
         },
     )
-    record = compute_resolved_peaks(record)
+    record = compute_resolved_peaks(record, _resolution_config(seed))
     record = compute_peak_stats(record)
     return record
 
@@ -318,11 +288,21 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
 
         canonical_grid = derive_shared_grid(grp, wt, grid=GRID, kde=kde)
         box = (canonical_grid.x_min, canonical_grid.x_max, canonical_grid.y_min, canonical_grid.y_max)
+
+        # Each distribution's bootstrap vote (folded into compute_resolved_peaks,
+        # Stage 2a) gets its own independent RNG stream -- same SeedSequence.spawn
+        # pattern as the pre-refactor _resampled_mode_count calls, so target and
+        # WT draws stay decorrelated per (gene, method, hpf).
+        seed_base = 42 + sum(ord(c) for c in f"{gene}:{method_slug}:{hpf}")
+        seed_seq = np.random.SeedSequence(seed_base)
+        grp_seed = int(seed_seq.spawn(1)[0].generate_state(1)[0])
+        wt_seed = int(seed_seq.spawn(1)[0].generate_state(1)[0])
+
         grp_record = _build_distribution_record(
-            f"{gene}_{hpf}_target", grp, canonical_grid, analysis_spec
+            f"{gene}_{hpf}_target", grp, canonical_grid, analysis_spec, seed=grp_seed
         )
         wt_record = _build_distribution_record(
-            f"{gene}_{hpf}_reference", wt, canonical_grid, analysis_spec
+            f"{gene}_{hpf}_reference", wt, canonical_grid, analysis_spec, seed=wt_seed
         )
         comparison = DistributionComparison(
             comparison_id=f"{gene}_{hpf}_comparison",
@@ -336,35 +316,24 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         wt_density = wt_record.resolved_peaks.density_grid
         gx, gy, gd = grp_density.xx, grp_density.yy, grp_density.density
 
-        # Downsample each distribution independently. Row 1 and row 4 only claim
-        # a mode count if the same count appears in >= MODE_RESAMPLE_MIN_FREQ of
-        # subsampled draws; otherwise the panel is labeled unstable.
-        seed_base = 42 + sum(ord(c) for c in f"{gene}:{method_slug}:{hpf}")
-        seed_seq = np.random.SeedSequence(seed_base)
-        grp_mode_boot = _resampled_mode_count(
-            grp, canonical_grid, analysis_spec,
-            n_draws=N_MODE_RESAMPLE_DRAWS,
-            sample_fraction=MODE_DOWNSAMPLE_FRACTION,
-            min_freq=MODE_RESAMPLE_MIN_FREQ,
-            rng=np.random.default_rng(seed_seq.spawn(1)[0]),
-        )
-        wt_mode_boot = _resampled_mode_count(
-            wt, canonical_grid, analysis_spec,
-            n_draws=N_MODE_RESAMPLE_DRAWS,
-            sample_fraction=MODE_DOWNSAMPLE_FRACTION,
-            min_freq=MODE_RESAMPLE_MIN_FREQ,
-            rng=np.random.default_rng(seed_seq.spawn(1)[0]),
-        )
-        grp_mode_boot = _displayable_resampled_mode_count(grp_mode_boot, grp_dist.number_of_peaks)
-        wt_mode_boot = _displayable_resampled_mode_count(wt_mode_boot, wt_dist.number_of_peaks)
+        # Row 1 and row 4 read the vote-supported mode count + reliability
+        # straight off the resolved distribution -- no resampling here anymore
+        # (Stage 2a: robustness lives in compute_resolved_peaks, plotting only
+        # reads fields).
+        grp_count = grp_dist.resolved_peak_count
+        wt_count = wt_dist.resolved_peak_count
+        grp_evidence = grp_dist.resolution_evidence
+        wt_evidence = wt_dist.resolution_evidence
+        grp_freq = grp_evidence.count_stability.mode_frequency if grp_evidence is not None else float("nan")
+        wt_freq = wt_evidence.count_stability.mode_frequency if wt_evidence is not None else float("nan")
         print(
             f"{gene} {method_slug} {hpf}hpf: "
-            f"target subsample modal={grp_mode_boot.modal_count}, display={grp_mode_boot.count} "
-            f"(freq={grp_mode_boot.frequency:.2f}, observed={grp_dist.number_of_peaks}, "
-            f"counts={grp_mode_boot.counts}); "
-            f"WT subsample modal={wt_mode_boot.modal_count}, display={wt_mode_boot.count} "
-            f"(freq={wt_mode_boot.frequency:.2f}, observed={wt_dist.number_of_peaks}, "
-            f"counts={wt_mode_boot.counts})"
+            f"target resolved_peak_count={grp_count}, is_reliable={grp_dist.is_reliable} "
+            f"(freq={grp_freq:.2f}, "
+            f"counts={dict(grp_evidence.count_stability.vote.peak_count_frequencies) if grp_evidence else {}}); "
+            f"WT resolved_peak_count={wt_count}, is_reliable={wt_dist.is_reliable} "
+            f"(freq={wt_freq:.2f}, "
+            f"counts={dict(wt_evidence.count_stability.vote.peak_count_frequencies) if wt_evidence else {}})"
         )
 
         # Comparative target-vs-WT readout. This does not decide the displayed
@@ -379,7 +348,7 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         peak = float(gd.max())
         levels = np.linspace(0.06 * peak, peak, 16)
         ax.contourf(gx, gy, gd, levels=levels, cmap=light_blues, extend="max")
-        _draw_basins(ax, grp_dist, color=PEAK_OVERLAY_COLOR, lw=1.8, n_modes=grp_mode_boot.count)
+        _draw_basins(ax, grp_dist, color=PEAK_OVERLAY_COLOR, lw=1.8, n_modes=grp_count)
         for pheno in cfg["phenotype_labels"] + ["unlabeled"]:
             m = phenos == pheno
             if not m.any():
@@ -388,7 +357,7 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
                        facecolors=PHENOTYPE_COLORS.get(pheno, UNLABELED_COLOR),
                        edgecolors="k", linewidths=0.4, zorder=4, label=pheno)
         format_density_axis(ax, box)
-        ax.set_title(f"{hpf} hpf  ·  {_mode_count_label(grp_mode_boot.count, frequency=grp_mode_boot.frequency)}",
+        ax.set_title(f"{hpf} hpf  ·  {_mode_count_label(grp_count, frequency=grp_freq)}",
                      fontsize=LABEL_FS, fontweight="bold", color="#222")
 
         # ── ROW 2: reference readout (resolved-peak metrics, target vs WT) ───
@@ -400,11 +369,12 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         format_density_axis(axes[2][col], box)
 
         # ── ROW 4: RAW POINTS + supported modes (target | WT) ────────────────
-        # Target and WT each show their own downsample-supported mode count.
+        # Target and WT each show their own vote-supported mode count.
         _points_pair_cell(fig, axes[3][col], grp, phenos, wt, cfg, gene,
                           grp_density, wt_density, box,
                           grp_dist=grp_dist, wt_dist=wt_dist,
-                          grp_mode_boot=grp_mode_boot, wt_mode_boot=wt_mode_boot)
+                          grp_count=grp_count, grp_freq=grp_freq,
+                          wt_count=wt_count, wt_freq=wt_freq)
 
     # row labels (row 2 readout has no map, so label it plainly)
     axes[0][0].set_ylabel("TARGET KDE\n+ stable modes", fontsize=LABEL_FS)
@@ -443,7 +413,7 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
 
 def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
                       grp_grid, wt_grid, box, *, grp_dist=None, wt_dist=None,
-                      grp_mode_boot=None, wt_mode_boot=None):
+                      grp_count=None, grp_freq=None, wt_count=None, wt_freq=None):
     """Row 3: TARGET (LEFT) then reference WT (RIGHT) -- as two mini-axes inside
     host_ax, on the shared frame so spreads compare directly. Each panel overlays its
     OWN KDE (target blue / WT gray) behind the raw points; target keeps its phenotype
@@ -478,15 +448,9 @@ def _points_pair_cell(fig, host_ax, grp_pts, phenos, wt_pts, cfg, gene,
     # Draw each detected peak basin on its own panel: target modes (blue) on the
     # left, WT modes (dark) on the right, so the mode counts are explicit.
     if grp_dist is not None:
-        _draw_basins(axL, grp_dist, color=TARGET_DENS_COLOR,
-                     n_modes=None if grp_mode_boot is None else grp_mode_boot.count)
+        _draw_basins(axL, grp_dist, color=TARGET_DENS_COLOR, n_modes=grp_count)
     if wt_dist is not None:
-        _draw_basins(axR, wt_dist, color="#333333",
-                     n_modes=None if wt_mode_boot is None else wt_mode_boot.count)
-    grp_count = None if grp_mode_boot is None else grp_mode_boot.count
-    grp_freq = None if grp_mode_boot is None else grp_mode_boot.frequency
-    wt_count = None if wt_mode_boot is None else wt_mode_boot.count
-    wt_freq = None if wt_mode_boot is None else wt_mode_boot.frequency
+        _draw_basins(axR, wt_dist, color="#333333", n_modes=wt_count)
     axL.set_title(f"{gene} · {_mode_count_label(grp_count, frequency=grp_freq)}",
                   fontsize=LABEL_FS - 2, color=TARGET_DENS_COLOR)
     axR.set_title(f"WT · {_mode_count_label(wt_count, frequency=wt_freq)}",
