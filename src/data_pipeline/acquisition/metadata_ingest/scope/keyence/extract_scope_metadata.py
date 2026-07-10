@@ -26,6 +26,10 @@ from data_pipeline.shared.identifiers import build_well_id
 
 log = logging.getLogger(__name__)
 
+# Keyence writes its <Data> XML block in the TIFF TAIL (observed: last ~9 KB of a ~1.4 MB plane).
+# Scrape a suffix window rather than reading every byte off NFS.
+_XML_SUFFIX_BYTES = 32768
+
 
 def _extract_time_int_from_path(file_path: Path) -> int:
     """
@@ -66,14 +70,24 @@ def _scrape_keyence_metadata(tiff_path: Path) -> Dict[str, Any]:
         return len(haystack) - len(parts[-1]) - len(needle)
 
     with open(tiff_path, 'rb') as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - _XML_SUFFIX_BYTES))
         fulldata = f.read()
 
     # Extract XML metadata between <Data> tags
     metadata = fulldata.partition(b'<Data>')[2].partition(b'</Data>')[0].decode()
+    if not metadata:
+        raise ValueError(
+            f"No <Data> XML block in the last {_XML_SUFFIX_BYTES} bytes of {tiff_path}. "
+            f"Raise _XML_SUFFIX_BYTES if Keyence wrote a larger metadata block."
+        )
 
     meta_dict = {}
-    keyword_list = ['ShootingDateTime', 'LensName', 'Observation Type', 'Width', 'Height', 'Width', 'Height']
-    outname_list = ['Time (s)', 'Objective', 'Channel', 'Width (px)', 'Height (px)', 'Width (um)', 'Height (um)']
+    keyword_list = ['ShootingDateTime', 'LensName', 'Observation Type', 'Width', 'Height', 'Width', 'Height',
+                    'StageLocationX', 'StageLocationY', 'StageLocationZ']
+    outname_list = ['Time (s)', 'Objective', 'Channel', 'Width (px)', 'Height (px)', 'Width (um)', 'Height (um)',
+                    'stage_x_nm', 'stage_y_nm', 'stage_z_nm']
 
     for k in range(len(keyword_list)):
         param_string = keyword_list[k]
@@ -133,7 +147,61 @@ def _scrape_keyence_plane_metadata(tiff_path: Path) -> Dict[str, Any]:
         "objective_magnification": meta.get("Objective", "unknown"),
         "acquisition_time_s": meta.get("Time (s)", 0.0),
         "raw_channel_name": raw_channel_name,
+        # Absolute stage position of this plane (nm). The per-tile DELTAS are the mosaic geometry:
+        # they give exact relative tile offsets without any image-based registration.
+        "stage_x_nm": meta.get("stage_x_nm", 0),
+        "stage_y_nm": meta.get("stage_y_nm", 0),
+        "stage_z_nm": meta.get("stage_z_nm", 0),
     }
+
+
+_TILE_Z_RE = re.compile(r"_(\d{5})_Z(\d+)_CH(\d+)\.tif$", re.IGNORECASE)
+
+
+def make_keyence_plane_scraper(scrape=_scrape_keyence_plane_metadata):
+    """Return a ``(tiff_path) -> dict`` scraper that reads only Z=1 and Z=2 of each tile.
+
+    Within one ``(well, tile, channel)`` Z-stack the stage does not move in XY, the optics are
+    fixed, and ``StageLocationZ`` advances by a constant step. So every field is either constant
+    across Z or linear in Z: scraping two planes determines all of them. The remaining planes are
+    interpolated as ``z1 + (z_index - 1) * dz``, cutting XML scrapes ~7x on a 14-plane stack.
+
+    ``acquisition_time_s`` is likewise interpolated. Per-plane shutter timings are NOT recoverable
+    this way (their true spacing is slightly irregular), but Z planes are focus-stacked into one
+    image downstream, so only the frame-grain time survives — and that is the Z=1 value.
+    """
+    cache: dict[tuple, tuple[dict, dict]] = {}
+
+    def scraper(tiff_path: Path) -> Dict[str, Any]:
+        path = Path(tiff_path)
+        m = _TILE_Z_RE.search(path.name)
+        if not m:
+            return scrape(path)  # unrecognized name: no safe interpolation, scrape it
+        tile, z_index, channel = m.group(1), int(m.group(2)), m.group(3)
+        key = (str(path.parent), tile, channel)
+
+        if key not in cache:
+            base = path.name[: m.start()]
+            p1 = path.parent / f"{base}_{tile}_Z001_CH{channel}.tif"
+            p2 = path.parent / f"{base}_{tile}_Z002_CH{channel}.tif"
+            if not p1.exists():
+                return scrape(path)
+            m1 = scrape(p1)
+            m2 = scrape(p2) if p2.exists() else dict(m1)
+            cache[key] = (m1, m2)
+
+        m1, m2 = cache[key]
+        if z_index == 1:
+            return dict(m1)
+
+        out = dict(m1)
+        for field in ("stage_z_nm", "acquisition_time_s"):
+            v1, v2 = m1.get(field), m2.get(field)
+            if isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+                out[field] = v1 + (z_index - 1) * (v2 - v1)
+        return out
+
+    return scraper
 
 
 def _channel_index_from_path(tiff_path: Path) -> int:
@@ -420,7 +488,7 @@ def extract_keyence_scope_metadata(
         inventory_df = build_keyence_acquisition_inventory(
             experiment_id=experiment_id,
             raw_data_dir=raw_data_dir / experiment_id,
-            scrape_plane_metadata=_scrape_keyence_plane_metadata,
+            scrape_plane_metadata=make_keyence_plane_scraper(),
         )
         acquisition_inventory_csv = Path(acquisition_inventory_csv)
         acquisition_inventory_csv.parent.mkdir(parents=True, exist_ok=True)
