@@ -1,4 +1,6 @@
-"""TASK_D — plotting-as-IR tests (ontology §1b "KDE strips fall out for free").
+"""TASK_D/TASK_C — plotting-as-IR tests (ontology §1b "KDE strips fall out for
+free"; TASK_C PATH A / typed FacetKey, see
+``docs/tasks_catalog/TASK_C_plotting.md``).
 
 These tests only assert IR shape + the faceting engine's own ``render()``
 accepts the emitted ``FigureData`` without error (emit-only smoke, per the
@@ -17,12 +19,18 @@ from analyze.viz.plotting.faceting_engine import (
     render,
 )
 
+from morphseq_investigation.engine.facets import CoordinateFacet, LabelGroupFacet
 from morphseq_investigation.engine.grid import build_grid, evaluate_density
-from morphseq_investigation.engine.objects import HDR, SampleSet
+from morphseq_investigation.engine.identifiers import make_distribution_id
+from morphseq_investigation.engine.objects import HDR, Distribution, SampleSet
 from morphseq_investigation.engine.plotting import (
     UNASSIGNED_LABEL,
+    DistributionGrid,
+    IncomparableDistributionsError,
+    build_1d_density_grid,
     hdr_band_trace,
     overlay_strip_subplot,
+    plot_1d_density_grid,
     sample_set_strip_with_hdr,
     strip_grid_figure,
     strip_trace,
@@ -285,4 +293,181 @@ def test_single_overlay_subplot_smoke_renders():
     fig_data = FigureData(title="single strip", subplots=[subplot])
 
     result = render(fig_data, backend="matplotlib")
+    assert result is not None
+
+
+# =========================================================================== #
+# TASK_C fixtures — hand-built Distributions/DistributionLabelGroups (PATH A).
+# No catalog or real peak detection needed (spec §"Develop against fixtures").
+# =========================================================================== #
+def _make_distribution(coordinates, feature="total_length_um", n_per_group=None, seed=0):
+    """A Distribution with one feature and a "genotype" label column attached.
+
+    ``n_per_group`` maps category -> sample count (e.g. {"wildtype": 20,
+    "b9d2": 15}); samples not named end up UNASSIGNED via with_label's default.
+    """
+    n_per_group = dict(n_per_group or {"wildtype": 20, "b9d2": 15})
+    rng = np.random.default_rng(seed)
+    sample_ids = []
+    assignments = {}
+    values = []
+    loc_by_group = {"wildtype": 0.0, "b9d2": 3.0, "unlabeled_extra": 50.0}
+    for group, n in n_per_group.items():
+        for i in range(n):
+            sid = f"{coordinates.get('time_bin', 'x')}_{group}_{i}"
+            sample_ids.append(sid)
+            assignments[sid] = group
+            loc = loc_by_group.get(group, 0.0)
+            values.append(rng.normal(loc=loc, scale=1.0))
+
+    dist = Distribution(
+        distribution_id=make_distribution_id(coordinates),
+        sample_ids=tuple(sample_ids),
+        feature_names=(feature,),
+        feature_values=np.asarray(values, dtype=float).reshape(-1, 1),
+        coordinates=coordinates,
+    )
+    return dist.with_label("genotype", assignments)
+
+
+# --------------------------------------------------------------------------- #
+# Typed FacetKey — a bad coordinate name is a construction-time error, not late
+# --------------------------------------------------------------------------- #
+def test_facet_key_bad_coordinate_name_is_construction_error_not_late_crash():
+    dist = _make_distribution({"time_bin": 30})
+    group = dist.label_group("genotype", display_name="Genotype")
+    # Resolving an unknown coordinate raises immediately at facet-resolution
+    # time (inside build_1d_density_grid's bucketing pass), with a precise
+    # KeyError naming the missing coordinate — not a downstream/late failure.
+    with pytest.raises(KeyError):
+        build_1d_density_grid(
+            [group], "total_length_um",
+            facet_row=LabelGroupFacet(), facet_col=CoordinateFacet("no_such_coordinate"),
+        )
+
+
+def test_coordinate_facet_and_label_group_facet_are_distinct_typed_keys():
+    assert CoordinateFacet("time_bin") != CoordinateFacet("scope_id")
+    assert CoordinateFacet("time_bin") == CoordinateFacet("time_bin")
+    assert LabelGroupFacet() == LabelGroupFacet()
+
+
+# --------------------------------------------------------------------------- #
+# PATH A — build_1d_density_grid(DistributionLabelGroup*)
+# --------------------------------------------------------------------------- #
+def test_build_1d_density_grid_cells_and_curves_match_label_group_sample_sets():
+    dist_30 = _make_distribution({"time_bin": 30}, seed=0)
+    dist_48 = _make_distribution({"time_bin": 48}, seed=1)
+    groups = [
+        dist_30.label_group("genotype", display_name="Genotype"),
+        dist_48.label_group("genotype", display_name="Genotype"),
+    ]
+
+    grid = build_1d_density_grid(
+        groups, "total_length_um",
+        facet_row=LabelGroupFacet(), facet_col=CoordinateFacet("time_bin"),
+    )
+
+    assert isinstance(grid, DistributionGrid)
+    assert grid.feature_name == "total_length_um"
+    # One cell per (label_group display_name, time_bin) -> 2 cells (30, 48).
+    cells = {c.cell for c in grid.curves}
+    assert cells == {("Genotype", 30), ("Genotype", 48)}
+    # Curves = the label group's SampleSets (wildtype + b9d2, unassigned dropped).
+    names_30 = sorted(c.sample_set_name for c in grid.curves if c.cell == ("Genotype", 30))
+    assert names_30 == ["b9d2", "wildtype"]
+
+
+def test_build_1d_density_grid_cell_bounds_from_selected_curves_only():
+    # A Distribution carries an extreme-valued sample NOT named by the
+    # "genotype" label column (so it is UNASSIGNED under that label group,
+    # per with_label's contract) -- dropping it must not stretch the cell's
+    # shared grid (spec §PATH A: "cell grid = union of the CURVES SELECTED").
+    rng = np.random.default_rng(2)
+    sample_ids = [f"wt_{i}" for i in range(20)] + [f"b9d2_{i}" for i in range(15)]
+    values = list(rng.normal(loc=0.0, scale=1.0, size=20)) + list(
+        rng.normal(loc=3.0, scale=1.0, size=15)
+    )
+    assignments = {sid: ("wildtype" if sid.startswith("wt") else "b9d2") for sid in sample_ids}
+
+    # dist_without_outlier: exactly these samples, nothing more.
+    dist_without_outlier = Distribution(
+        distribution_id=make_distribution_id({"time_bin": 30, "variant": "clean"}),
+        sample_ids=tuple(sample_ids),
+        feature_names=("total_length_um",),
+        feature_values=np.asarray(values, dtype=float).reshape(-1, 1),
+        coordinates={"time_bin": 30, "variant": "clean"},
+    ).with_label("genotype", assignments)
+
+    # dist_with_outlier: same samples + one extreme-valued sample that the
+    # "genotype" label column does NOT name (with_label marks it UNASSIGNED).
+    outlier_id = "outlier_0"
+    sample_ids_with = tuple(sample_ids) + (outlier_id,)
+    values_with = np.asarray(values + [500.0], dtype=float).reshape(-1, 1)
+    dist_with_outlier = Distribution(
+        distribution_id=make_distribution_id({"time_bin": 30, "variant": "with_outlier"}),
+        sample_ids=sample_ids_with,
+        feature_names=("total_length_um",),
+        feature_values=values_with,
+        coordinates={"time_bin": 30, "variant": "with_outlier"},
+    ).with_label("genotype", assignments)  # outlier_id absent -> UNASSIGNED
+
+    group_with_outlier = dist_with_outlier.label_group("genotype", display_name="Genotype")
+    group_without_outlier = dist_without_outlier.label_group("genotype", display_name="Genotype")
+
+    grid_with = build_1d_density_grid([group_with_outlier], "total_length_um")
+    grid_without = build_1d_density_grid([group_without_outlier], "total_length_um")
+
+    bounds_with = grid_with.curves[0].grid.axis_values[0]
+    bounds_without = grid_without.curves[0].grid.axis_values[0]
+    # The outlier is UNASSIGNED under "genotype" -> excluded from
+    # Distribution.sample_sets("genotype") -> never enters the pooled bounds.
+    # Both grids' selected curves are wildtype/b9d2 only -> identical bounds,
+    # proving the outlier's extreme value never stretched the shared grid.
+    np.testing.assert_allclose(bounds_with.min(), bounds_without.min())
+    np.testing.assert_allclose(bounds_with.max(), bounds_without.max())
+
+
+def test_build_1d_density_grid_raises_on_mixed_distribution_cell():
+    # Facet ONLY on time_bin (NOT LabelGroupFacet), and both distributions
+    # share time_bin=30 despite being different distributions (different
+    # scope_id) -- they land in the SAME cell, which is the forbidden
+    # "overlay two distributions" shape (spec §"One-distribution-per-cell
+    # invariant").
+    dist_a = _make_distribution({"time_bin": 30, "scope_id": "expA"}, seed=0)
+    dist_b = _make_distribution({"time_bin": 30, "scope_id": "expB"}, seed=1)
+    groups = [
+        dist_a.label_group("genotype", display_name="Genotype"),
+        dist_b.label_group("genotype", display_name="Genotype"),
+    ]
+
+    with pytest.raises(IncomparableDistributionsError):
+        build_1d_density_grid(
+            groups, "total_length_um",
+            facet_row=CoordinateFacet("time_bin"), facet_col=CoordinateFacet("time_bin"),
+        )
+
+
+def test_build_1d_density_grid_label_group_facet_as_axis_never_raises_mixed_cell():
+    # When LabelGroupFacet IS an axis, every cell is single-label-group (hence
+    # single-distribution) by construction -- the guard is skipped, not
+    # bypassed unsafely, because it cannot fire.
+    dist_a = _make_distribution({"time_bin": 30}, seed=0)
+    groups = [dist_a.label_group("genotype", display_name="Genotype")]
+    grid = build_1d_density_grid(
+        groups, "total_length_um",
+        facet_row=LabelGroupFacet(), facet_col=CoordinateFacet("time_bin"),
+    )
+    assert len(grid.curves) > 0
+
+
+# --------------------------------------------------------------------------- #
+# plot_1d_density_grid renders the PATH A grid; reference role -> dashed/gray
+# --------------------------------------------------------------------------- #
+def test_plot_1d_density_grid_renders_path_a_grid():
+    dist_30 = _make_distribution({"time_bin": 30}, seed=0)
+    group = dist_30.label_group("genotype", display_name="Genotype")
+    grid = build_1d_density_grid([group], "total_length_um")
+
+    result = plot_1d_density_grid(grid, reference_role=None)
     assert result is not None
