@@ -7,6 +7,7 @@ Extracts scope metadata from Keyence BZ-X TIFF files and validates against schem
 import argparse
 import pandas as pd
 import numpy as np
+from functools import lru_cache
 from pathlib import Path
 from typing import Union, List, Dict, Any
 import logging
@@ -267,6 +268,25 @@ def _discover_keyence_files(raw_data_dir: Path, experiment_id: str) -> List[Path
     return sorted(tiff_files)
 
 
+_WELL_MARKER_RE = re.compile(r"^_([A-H])(\d{1,2})$")
+
+
+@lru_cache(maxsize=None)
+def _marker_well_for_dir(well_dir: Path) -> str | None:
+    """Well label from the scope's own ``_<WELL>`` marker file in ``well_dir``, or None.
+
+    Cached: this is consulted once per plane (thousands of times), but the answer is per-directory.
+    """
+    try:
+        for entry in well_dir.iterdir():
+            m = _WELL_MARKER_RE.match(entry.name)
+            if m:
+                return f"{m.group(1)}{int(m.group(2)):02d}"
+    except OSError:
+        return None
+    return None
+
+
 def _extract_well_from_path(file_path: Path) -> str:
     """
     Extract well identifier from Keyence file path.
@@ -283,6 +303,13 @@ def _extract_well_from_path(file_path: Path) -> str:
         Well identifier (e.g., "A01", "B12")
     """
     path_str = str(file_path)
+
+    # The scope drops a `_<WELL>` marker file (e.g. `_B12`) beside the planes in each XY## dir.
+    # It is GROUND TRUTH and must beat any arithmetic on the XY index: Keyence images plates
+    # serpentine, so XY13 is B12, not B01. Raster arithmetic column-reverses every even row.
+    marker = _marker_well_for_dir(file_path.parent)
+    if marker is not None:
+        return marker
 
     # Check for XY pattern in path (e.g., XY01, XY16, XY01a)
     for part in file_path.parts:
