@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from .objects import (
+    UNASSIGNED_LABEL,
     Distribution,
     DensityGrid,
     Grid,
@@ -20,6 +21,75 @@ from .objects import (
 
 class InvariantError(ValueError):
     """Raised when an ontology invariant is violated. Message is precise."""
+
+
+def validate_sample_sets(
+    distribution: Distribution,
+    label_name: str,
+    sample_sets: Iterable[SampleSet],
+) -> None:
+    """Derived-view consistency (spec §"What must stay in sync": SampleSets are
+    DERIVED from labels).
+
+    Guarantees the ``distribution.sample_sets(label_name)`` output is a faithful
+    view of the label column:
+      - one set per assigned category, no set for unassigned;
+      - the union of set members == exactly the column's ASSIGNED samples
+        (disjoint across sets, unassigned excluded);
+      - every set's ``distribution_id`` / ``sample_set_name`` matches the column.
+    The labelers call this after deriving sets, so no caller hand-rolls the check.
+    """
+    column = distribution.label_column(label_name)
+    sets = list(sample_sets)
+
+    assigned = {
+        sid
+        for sid, call in column.values.items()
+        if call != UNASSIGNED_LABEL and sid in set(distribution.sample_ids)
+    }
+    expected_categories = [str(c) for c in column.categories()]
+
+    got_names = [s.sample_set_name for s in sets]
+    if got_names != expected_categories:
+        raise InvariantError(
+            "derived-view: sample_sets names "
+            f"{got_names} != label categories {expected_categories}"
+        )
+
+    seen: set[str] = set()
+    union: set[str] = set()
+    for sset in sets:
+        if sset.distribution_id != distribution.distribution_id:
+            raise InvariantError(
+                f"derived-view: SampleSet {sset.sample_set_id!r}.distribution_id "
+                f"{sset.distribution_id!r} != {distribution.distribution_id!r}"
+            )
+        members = set(sset.sample_ids)
+        overlap = union & members
+        if overlap:
+            raise InvariantError(
+                f"derived-view: sample overlaps across sets: {sorted(overlap)}"
+            )
+        union |= members
+        seen.add(sset.sample_set_name)
+        # Members must be the column's samples assigned to THIS category.
+        expected_members = {
+            sid for sid, call in column.values.items() if str(call) == sset.sample_set_name
+        }
+        if members != (expected_members & assigned):
+            raise InvariantError(
+                f"derived-view: SampleSet {sset.sample_set_name!r} members disagree "
+                "with the label column assignment"
+            )
+
+    if union != assigned:
+        missing = sorted(assigned - union)
+        extra = sorted(union - assigned)
+        raise InvariantError(
+            "derived-view: sample_sets do not cover exactly the assigned samples: "
+            + (f"missing {missing}; " if missing else "")
+            + (f"extra {extra}" if extra else "")
+        )
 
 
 def _check_ordered_features(distribution: Distribution) -> None:

@@ -1,4 +1,12 @@
-"""TASK_0 — central invariant guard tests (#3, #6b/#10, #7)."""
+"""TASK_0 — central invariant guard tests.
+
+Two guards:
+  - ``validate_label_group`` (kept) — coverage / assignment-consistency / FK on a
+    labeler RUN-result (LabelGroup + its SampleSets).
+  - ``validate_sample_sets`` (new) — derived-view consistency: the sets
+    ``Distribution.sample_sets(label)`` returns cover EXACTLY the label column's
+    assigned samples.
+"""
 
 import numpy as np
 import pytest
@@ -8,25 +16,25 @@ from morphseq_investigation.engine.objects import (
     SampleSet,
     LabelGroup,
 )
+from morphseq_investigation.engine.identifiers import make_distribution_id
 from morphseq_investigation.engine.invariants import (
     validate_label_group,
+    validate_sample_sets,
     InvariantError,
 )
 
 
-DID = "b9d2_30hpf_reference"
+DID = make_distribution_id({"scope_id": "b9d2", "time_bin": 30})
 
 
 def _distribution(sample_ids=("s0", "s1", "s2", "s3")):
     n = len(sample_ids)
     return Distribution(
         distribution_id=DID,
-        scope_id="b9d2",
-        time_bin=30,
-        role="reference",
         sample_ids=sample_ids,
         feature_names=("PC1",),
         feature_values=np.arange(n, dtype=float).reshape(n, 1),
+        coordinates={"scope_id": "b9d2", "time_bin": 30},
     )
 
 
@@ -57,6 +65,9 @@ def _valid_group():
     return d, lg, [ssA, ssB]
 
 
+# --------------------------------------------------------------------------- #
+# validate_label_group (kept)
+# --------------------------------------------------------------------------- #
 def test_valid_group_passes():
     d, lg, sets = _valid_group()
     validate_label_group(d, lg, sets)  # no raise
@@ -121,7 +132,7 @@ def test_foreign_distribution_sample_set_raises():
     foreign = SampleSet(
         sample_set_id="other__A",
         sample_set_name="A",
-        distribution_id="other_30hpf_target",
+        distribution_id="dist_other",
         sample_ids=("s0",),
     )
     lg = LabelGroup(
@@ -133,3 +144,47 @@ def test_foreign_distribution_sample_set_raises():
     )
     with pytest.raises(InvariantError):
         validate_label_group(d, lg, [foreign])
+
+
+# --------------------------------------------------------------------------- #
+# validate_sample_sets (new — derived-view consistency)
+# --------------------------------------------------------------------------- #
+def test_validate_sample_sets_passes_on_real_derived_view():
+    d = _distribution().with_label(
+        "genotype", {"s0": "wildtype", "s1": "wildtype", "s2": "b9d2"}
+    )  # s3 unassigned
+    validate_sample_sets(d, "genotype", d.sample_sets("genotype"))  # no raise
+
+
+def test_validate_sample_sets_rejects_extra_member():
+    d = _distribution().with_label("genotype", {"s0": "wildtype"})
+    real = list(d.sample_sets("genotype"))
+    # Tamper: add an unassigned sample to the set.
+    tampered = SampleSet(
+        sample_set_id=real[0].sample_set_id,
+        sample_set_name=real[0].sample_set_name,
+        distribution_id=DID,
+        sample_ids=("s0", "s1"),  # s1 was unassigned
+    )
+    with pytest.raises(InvariantError):
+        validate_sample_sets(d, "genotype", [tampered])
+
+
+def test_validate_sample_sets_rejects_missing_category():
+    d = _distribution().with_label("genotype", {"s0": "wildtype", "s2": "b9d2"})
+    real = list(d.sample_sets("genotype"))
+    # Drop the b9d2 set -> union no longer covers all assigned samples.
+    with pytest.raises(InvariantError):
+        validate_sample_sets(d, "genotype", real[:1])
+
+
+def test_validate_sample_sets_rejects_foreign_distribution_id():
+    d = _distribution().with_label("genotype", {"s0": "wildtype"})
+    foreign = SampleSet(
+        sample_set_id="dist_other__wildtype",
+        sample_set_name="wildtype",
+        distribution_id="dist_other",
+        sample_ids=("s0",),
+    )
+    with pytest.raises(InvariantError):
+        validate_sample_sets(d, "genotype", [foreign])
