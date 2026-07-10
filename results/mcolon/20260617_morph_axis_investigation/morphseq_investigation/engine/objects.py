@@ -1,27 +1,51 @@
-"""The four ontology nouns + the ``label_groups`` view.
+"""The Distribution ontology — typed-column sample table + derived views.
 
-LOCKED shapes — copied field-for-field from ``docs/PRIMITIVE_ONTOLOGY.md``
-(§1 Distribution, §1b Grid/DensityGrid, §2 SampleSet, §3 LabelGroup, §4 label_groups).
+LOCKED shapes — from ``docs/DISTRIBUTION_CATALOG_API.md`` ("The ontology",
+"Objects", "Typed facet keys"). This is the TASK_0 reshape of the older
+PRIMITIVE_ONTOLOGY objects onto the catalog model:
 
-Design rule above all else (ontology line 7): keep the objects dumb, don't leak
-between layers. Validity / grain / time / binning are the *caller's* job. These
-objects only hold what they are.
+    samples        (sample_ids — the join key)
+    features       (feature_names + feature_values)
+    label groups   (sample-aligned partitions: genotype / phenotype / resolved_peak)
+    coordinates    (distribution-level constants: time_bin, scope_id, ...)
 
-TASK_0 builds the shapes + the id/invariant machinery only. No grid construction,
-no labelers, no comparison, no plotting.
+Two metadata types, two jobs (spec §"The ontology"):
+    coordinates  →  which distribution you have  →  selection / faceting / compare()
+    label groups →  how samples inside it split   →  within-cell grouping / overlay
+
+Design rule above all else: keep the objects dumb, don't leak between layers.
+Validity / grain / time / binning are the *caller's* job. ``role`` is a
+RELATIONSHIP assigned by a comparison, NEVER a field here (spec §"role is a
+RELATIONSHIP").
+
+TASK_0 builds the frozen shapes + id/invariant machinery. Grid construction and
+``from_dataframe`` (TASK_A), the ``discover_modes`` body (TASK_B), and all
+plotting (TASK_C/D) live elsewhere — the impl-later method is a documented stub
+that raises ``NotImplementedError``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Hashable, Mapping
 
 import numpy as np
 
+from .identifiers import make_sample_set_id
+
+if TYPE_CHECKING:  # avoid a hard import cycle; facets only needed for typing.
+    from .facets import FacetKey
+
+
+# The canonical "no call" value used by ``with_label`` and pooling. A sample that
+# a label group does not name is UNASSIGNED — never silently dropped, never a
+# SampleSet of its own (residual support is not a coherent group).
+UNASSIGNED_LABEL = "__unassigned__"
+
 
 # --------------------------------------------------------------------------- #
-# Shared idioms (mirror core/distribution_records.py:72 — do not reinvent).
+# Shared idioms (mirror core/distribution_records.py — do not reinvent).
 # --------------------------------------------------------------------------- #
 def _readonly_array(
     values: np.ndarray | list[Any] | tuple[Any, ...],
@@ -40,32 +64,88 @@ def _readonly_mapping(values: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-# §1  Distribution — the dumb substrate
+# Label columns — sample-aligned partitions (the "how samples split" axis)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class LabelProvenance:
+    """How a label column was produced (the SPEC + any eager geometry).
+
+    ``discover_modes`` (TASK_B) fills ``method`` / ``features`` / ``spec`` and,
+    per-category, the eager peak geometry consumed by SampleSet rings. Carried-
+    through columns (genotype / phenotype from the source frame) leave the
+    geometry-bearing fields empty; ``method`` records their origin.
+    """
+
+    method: str
+    features: tuple[str, ...] = ()
+    spec: Mapping[str, Any] = field(default_factory=dict)
+    # {category -> geometry payload}; opaque here, typed/consumed downstream.
+    geometry: Mapping[Hashable, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "features", tuple(self.features))
+        object.__setattr__(self, "spec", _readonly_mapping(self.spec))
+        object.__setattr__(self, "geometry", _readonly_mapping(self.geometry))
+
+
+@dataclass(frozen=True)
+class LabelColumn:
+    """A sample-aligned partition attached to a Distribution.
+
+    ``values`` maps ``sample_id -> call``. A sample_id absent from the map is
+    treated as :data:`UNASSIGNED_LABEL` by consumers; ``with_label`` normalizes
+    coverage so every Distribution sample has an explicit entry.
+    """
+
+    name: str
+    values: Mapping[str, Hashable]
+    provenance: LabelProvenance | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", _readonly_mapping(self.values))
+
+    def categories(self) -> tuple[Hashable, ...]:
+        """Distinct calls in first-appearance order, EXCLUDING unassigned.
+
+        Residual support is not a category (spec §PATH A one-distribution rule):
+        unassigned samples do not become a SampleSet and do not stretch a grid.
+        """
+        seen: list[Hashable] = []
+        for call in self.values.values():
+            if call == UNASSIGNED_LABEL:
+                continue
+            if call not in seen:
+                seen.append(call)
+        return tuple(seen)
+
+
+# --------------------------------------------------------------------------- #
+# Distribution — the typed-column sample table (ONE population)
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Distribution:
-    """A dumb bag: named samples + named features, caller-composed.
+    """One population: samples + features + label groups + coordinates.
 
-    NO ``coordinate_frame`` (ontology §1) — features ARE the primitive
-    coordinates, stored in feature units. Comparability is by ``feature_names``
-    equality; scientific validity (a shared representation before splitting into
-    target/reference) is the *caller's* responsibility, not the object's to infer.
+    NOT a generic ``columns: Mapping[str, Column]`` framework — that was
+    explicitly rejected as recreating AnnData. Features are a dense
+    ``(n_samples, n_features)`` block (col ``j`` ↔ ``feature_names[j]``); label
+    groups are sparse categorical partitions; coordinates are distribution-level
+    constants.
 
-    ``time_bin`` / ``role`` are frozen *identity parts* (which bin/role this bag
-    IS), never a live time column to slice. ``sample_ids`` is the caller's grain,
-    opaque to the object. ``scope_tag`` is a free human label, never parsed.
+    ``distribution_id`` is DERIVED from ``coordinates`` (implementation identity
+    for cache / provenance / equality — never a plotting concept). Changing
+    coordinates yields a new id. Plotting reads ``coordinate(name)``, not the id.
     """
 
-    # --- structured identity (composed from typed parts; NEVER parsed back) ---
+    # --- identity (DERIVED from coordinates; never parsed back) ---
     distribution_id: str
-    scope_id: str
-    time_bin: Any
-    role: str
-    # --- payload (NATIVE feature values; no owned coordinate frame) ---
+    # --- payload (NATIVE feature values; features ARE the coordinates) ---
     sample_ids: tuple[str, ...]
     feature_names: tuple[str, ...]
     feature_values: np.ndarray  # (n_samples, n_features); col j <-> feature_names[j]
-    scope_tag: str | None = None
+    # --- metadata ---
+    labels: Mapping[str, LabelColumn] = field(default_factory=dict)
+    coordinates: Mapping[str, Hashable] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "sample_ids", tuple(self.sample_ids))
@@ -75,7 +155,7 @@ class Distribution:
             raise ValueError(
                 f"feature_values must be 2-D (n_samples, n_features); got shape {values.shape}"
             )
-        # Hard invariant (#3): feature_values[:, j] <-> feature_names[j].
+        # Hard invariant: feature_values[:, j] <-> feature_names[j].
         if values.shape[1] != len(self.feature_names):
             raise ValueError(
                 "feature_values second axis must match feature_names length: "
@@ -87,21 +167,149 @@ class Distribution:
                 f"{values.shape[0]} rows vs {len(self.sample_ids)} sample_ids"
             )
         object.__setattr__(self, "feature_values", values)
+        object.__setattr__(self, "labels", _readonly_mapping(self.labels))
+        object.__setattr__(self, "coordinates", _readonly_mapping(self.coordinates))
+        # A sample_id is the unique join key.
+        if len(set(self.sample_ids)) != len(self.sample_ids):
+            raise ValueError("sample_ids must be unique (they are the join key)")
+
+    # --- coordinate access -------------------------------------------------- #
+    def coordinate(self, name: str) -> Hashable:
+        """Read one distribution-level coordinate (used by faceting)."""
+        try:
+            return self.coordinates[name]
+        except KeyError as exc:
+            raise KeyError(
+                f"coordinate {name!r} not on distribution {self.distribution_id!r}; "
+                f"have {sorted(self.coordinates)}"
+            ) from exc
+
+    def feature_column(self, feature: str) -> np.ndarray:
+        """Return the 1-D column of ``feature`` (read-only view helper)."""
+        try:
+            j = self.feature_names.index(feature)
+        except ValueError as exc:
+            raise KeyError(
+                f"feature {feature!r} not in {list(self.feature_names)}"
+            ) from exc
+        return self.feature_values[:, j]
+
+    # --- label writers / views (pure; return NEW objects) ------------------- #
+    def with_label(
+        self,
+        name: str,
+        assignments: Mapping[str, Hashable],
+        *,
+        provenance: LabelProvenance | None = None,
+    ) -> "Distribution":
+        """Attach a label column; return a NEW Distribution (original unchanged).
+
+        Every Distribution sample gets an explicit entry: samples missing from
+        ``assignments`` are set to :data:`UNASSIGNED_LABEL`. Assignments naming a
+        sample_id not in this Distribution raise (a label can only describe
+        samples it actually has).
+        """
+        dist_samples = set(self.sample_ids)
+        stray = set(assignments) - dist_samples
+        if stray:
+            raise ValueError(
+                f"with_label({name!r}): assignments name samples not in this "
+                f"distribution: {sorted(stray)}"
+            )
+        full = {
+            sid: assignments.get(sid, UNASSIGNED_LABEL) for sid in self.sample_ids
+        }
+        column = LabelColumn(name=name, values=full, provenance=provenance)
+        new_labels = dict(self.labels)
+        new_labels[name] = column
+        return replace(self, labels=new_labels)
+
+    def label_column(self, label_name: str) -> LabelColumn:
+        """Fetch one attached label column (raises if absent)."""
+        try:
+            return self.labels[label_name]
+        except KeyError as exc:
+            raise KeyError(
+                f"label {label_name!r} not on distribution {self.distribution_id!r}; "
+                f"have {sorted(self.labels)}"
+            ) from exc
+
+    def sample_sets(self, label_name: str) -> tuple["SampleSet", ...]:
+        """DERIVE one :class:`SampleSet` per category of a label column.
+
+        A DERIVED VIEW, never stored on the object (spec §"What must stay in
+        sync": SampleSets are derived from labels, never durable glue). Categories
+        appear in first-appearance order; unassigned samples yield NO set. Peak
+        geometry, when the column's provenance carries it, is read back onto the
+        set so rings survive.
+        """
+        column = self.label_column(label_name)
+        provenance = column.provenance
+        geometry_by_cat: Mapping[Hashable, Any] = (
+            provenance.geometry if provenance is not None else {}
+        )
+        members: dict[Hashable, list[str]] = {}
+        for sid in self.sample_ids:  # deterministic: Distribution sample order
+            call = column.values.get(sid, UNASSIGNED_LABEL)
+            if call == UNASSIGNED_LABEL:
+                continue
+            members.setdefault(call, []).append(sid)
+
+        sets: list[SampleSet] = []
+        for category in column.categories():
+            name = str(category)
+            sets.append(
+                SampleSet(
+                    sample_set_id=make_sample_set_id(self.distribution_id, name),
+                    sample_set_name=name,
+                    distribution_id=self.distribution_id,
+                    sample_ids=tuple(members.get(category, ())),
+                    geometry=geometry_by_cat.get(category),
+                )
+            )
+        return tuple(sets)
+
+    def label_group(
+        self, label_name: str, *, display_name: str | None = None
+    ) -> "DistributionLabelGroup":
+        """Bind "use THIS label group from THIS distribution" (PATH A input)."""
+        # Fail fast if the label is absent.
+        self.label_column(label_name)
+        return DistributionLabelGroup(
+            distribution=self,
+            label_name=label_name,
+            display_name=display_name if display_name is not None else label_name,
+        )
+
+    # --- impl-later methods (bodies land in A / B) -------------------------- #
+    def discover_modes(
+        self,
+        *,
+        features: tuple[str, ...],
+        output_label: str,
+        spec: Mapping[str, Any],
+    ) -> "DistributionLabelGroup":
+        """Fit peaks on THIS distribution's own points and write a label column.
+
+        Writes ``output_label`` (e.g. ``resolved_peak``) AND its EAGER peak
+        geometry into the column's provenance, then returns the bound
+        DistributionLabelGroup. Body implemented in TASK_B (labelers).
+        """
+        raise NotImplementedError(
+            "Distribution.discover_modes is implemented in TASK_B (engine/labelers.py)"
+        )
 
 
 # --------------------------------------------------------------------------- #
-# §1b  Feature -> Grid -> DensityGrid  (features are primitive)
+# Feature -> Grid -> DensityGrid  (features are primitive; unchanged shapes)
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Grid:
     """A chosen discretization over some features. Axes IN FEATURE UNITS.
 
-    There is NO "canonical" basis and nothing to invert (ontology §1b): whitening
-    / quantile only picks bounds and cell spacing, never a change of what the
-    numbers mean. ``grid_id`` hashes the ACTUAL produced ``axis_values`` so that
-    ``same grid_id <=> same evaluation coordinates`` (raster comparability).
-
-    TASK_0 freezes the shape only; ``build_grid`` (TASK_A) populates it.
+    ``grid_id`` hashes the ACTUAL produced ``axis_values`` so that
+    ``same grid_id <=> same evaluation coordinates`` (raster comparability — a
+    PRESERVED invariant). ``build_grid`` (TASK_C reuse) populates it.
     """
 
     grid_id: str
@@ -133,6 +341,9 @@ class DensityGrid:
 
     ``density.shape == tuple(len(a) for a in grid.axis_values)`` (checked by the
     central invariants against the owning grid). A KDE strip is the 1-D case.
+
+    PRESERVED invariant: KDE is never fit on a Distribution — densities are
+    materialized per facet cell downstream (shared-grid rule).
     """
 
     grid_id: str
@@ -145,16 +356,11 @@ class DensityGrid:
 
 
 # --------------------------------------------------------------------------- #
-# §2  SampleSet — the durable atom (+ its typed measured-shape fields)
+# SampleSet — a DERIVED view of one label-column category (+ measured shape)
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class FeatureProfile:
-    """Per-feature summary stats, in FEATURE units.
-
-    Self-describing: carries ``feature_names`` so a profile never needs to trace
-    back through provenance to know what its columns mean. Any feature in the
-    Distribution's menu can be profiled on any set.
-    """
+    """Per-feature summary stats, in FEATURE units. Self-describing."""
 
     feature_names: tuple[str, ...]
     mean: np.ndarray
@@ -170,9 +376,8 @@ class FeatureProfile:
 class SampleSetGeometry:
     """INTRINSIC geometry only (feature units). Carries ``grid_id`` + ``feature_names``.
 
-    NOTE (ontology §2, #4/#6): run-relative scalars (support_fraction /
-    prominence_rank / height_relative_to_max / is_dominant) do NOT live here —
-    they belong to ``LabelGroup.per_sample_set_metrics``. One grain each.
+    Run-relative scalars (support_fraction / prominence_rank / ...) do NOT live
+    here — they belong to the label group's metrics. One grain each.
     """
 
     grid_id: str
@@ -204,14 +409,15 @@ class HDR:
 
 @dataclass(frozen=True)
 class SampleSet:
-    """The durable atom: one named subset + its measured shape.
+    """A DERIVED category of one label group + its measured shape.
 
-    A genotype subset, a DTW cluster, and a peak are the SAME type — they differ
-    only in which optional slots are filled (ontology §2). Consumers check
-    ``geometry is not None``, never spelunk a dict for a center.
+    Produced by :meth:`Distribution.sample_sets`, NOT hand-constructed by callers
+    (spec §"What must stay in sync"). A genotype subset, a DTW cluster, and a peak
+    are the SAME type — they differ only in which optional slots are filled;
+    consumers check ``geometry is not None``, never spelunk a dict for a center.
 
     ``sample_set_id`` is durable + composed (unambiguous across distributions);
-    ``sample_set_name`` is the short readable, LabelGroup-local label.
+    ``sample_set_name`` is the short readable, group-local label.
     """
 
     sample_set_id: str
@@ -229,13 +435,45 @@ class SampleSet:
 
 
 # --------------------------------------------------------------------------- #
-# §3  LabelGroup — one labeler run (thin run-result, NOT a dict)
+# DistributionLabelGroup — the plotting bridge ("this label group, this dist")
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class DistributionLabelGroup:
+    """Bind ONE label group to ONE distribution (the PATH A curve source).
+
+    The label group is chosen by the INPUT object — the density-grid builder gets
+    NO second grouping parameter. ``coordinate(FacetKey)`` resolves either the
+    label-group display axis or a distribution coordinate, so faceting keys off a
+    typed key without the plotter knowing the difference.
+    """
+
+    distribution: Distribution
+    label_name: str
+    display_name: str
+
+    def sample_sets(self) -> tuple[SampleSet, ...]:
+        return self.distribution.sample_sets(self.label_name)
+
+    def coordinate(self, key: "FacetKey") -> Hashable:
+        """Resolve a facet key: label-group axis → display_name, else a coordinate."""
+        # Local import to avoid the objects<->facets import cycle at module load.
+        from .facets import CoordinateFacet, LabelGroupFacet
+
+        if isinstance(key, LabelGroupFacet):
+            return self.display_name
+        if isinstance(key, CoordinateFacet):
+            return self.distribution.coordinate(key.name)
+        raise TypeError(f"unsupported FacetKey: {key!r}")
+
+
+# --------------------------------------------------------------------------- #
+# LabelGroup run-result + label_groups view — KEPT for the labeler/plotting
+# layers (TASK_B/C reuse; unchanged from the peer skeleton).
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class LabelGroupArtifacts:
-    """Shared, heavy field products of a run (§3). Grid is an artifact, not
-    provenance — provenance records the *spec* (bandwidth/resolution), this holds
-    the concrete data products."""
+    """Shared, heavy field products of a labeler run. Grid is an artifact, not
+    provenance."""
 
     grid_id: str | None = None
     grid: Grid | None = None
@@ -253,12 +491,8 @@ class LabelGroup:
     """One labeler RUN over a Distribution (assignments + evidence).
 
     ``sample_set_ids`` are REAL groups only — ``unassigned_sample_ids`` is a
-    FIELD, never a SampleSet (ontology §3): residual support is not a coherent
-    group and counting it would inflate the mode count.
-
-    ``per_sample_set_metrics`` — sibling-relative scalars (one value per
-    ``sample_set_id``). ``across_sample_set_metrics`` — WITHIN-one-run pairwise +
-    summary (needs >=2 sets). Cross-run relations live at the comparison layer.
+    FIELD, never a SampleSet: residual support is not a coherent group and
+    counting it would inflate the mode count.
     """
 
     label_group_name: str
@@ -289,20 +523,12 @@ class LabelGroup:
         )
 
 
-# --------------------------------------------------------------------------- #
-# §4  label_groups — a lightweight index (a VIEW, not an object)
-# --------------------------------------------------------------------------- #
 # {label_group_name: (sample_set_ids,)}
 LabelGroups = Mapping[str, tuple[str, ...]]
 
 
 def derive_label_groups(label_groups_list: list[LabelGroup]) -> LabelGroups:
-    """Derive the ``{name: (sample_set_ids,)}`` view from a list of LabelGroups.
-
-    Multiple views coexist for free (two peak bandwidths = two keys). Raises if
-    two runs share a ``label_group_name`` — the view maps a name to exactly one
-    set of ids (strict alias resolution is done by :func:`resolve_label_group`).
-    """
+    """Derive the ``{name: (sample_set_ids,)}`` view from a list of LabelGroups."""
     view: dict[str, tuple[str, ...]] = {}
     for group in label_groups_list:
         if group.label_group_name in view:
@@ -315,13 +541,7 @@ def derive_label_groups(label_groups_list: list[LabelGroup]) -> LabelGroups:
 
 
 def resolve_label_group(label_groups: LabelGroups, alias: str) -> tuple[str, ...]:
-    """Strict alias resolution (#8).
-
-    Exact ``label_group_name``s are canonical and returned directly. A non-exact
-    alias (e.g. ``"peak"``) resolves ONLY if it identifies exactly one group by
-    prefix; an ambiguous alias (``peak_bwA`` + ``peak_bwB`` both present) raises.
-    No silent "first peak-ish thing wins."
-    """
+    """Strict alias resolution: exact name, else a UNIQUE prefix, else raise."""
     if alias in label_groups:
         return label_groups[alias]
     matches = [name for name in label_groups if name.startswith(alias)]
