@@ -43,6 +43,7 @@ from analyze.viz.plotting.faceting_engine import (
 from analyze.viz.styling import STANDARD_PALETTE
 from analyze.viz.styling.genotype_colors import get_color_for_genotype
 
+from .catalog import DistributionComparison, DistributionComparisons
 from .facets import CoordinateFacet, FacetKey, LabelGroupFacet
 from .grid import build_grid, evaluate_density
 from .objects import (
@@ -421,12 +422,34 @@ class MarginalDensityMethod:
 # SAME shape — keep it self-describing and stable).
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
+class CurveKey:
+    """Structured identity for a PATH B comparison curve (spec §"PATH B" /
+    §"CurveKey"): the two axes stay SEPARATE — a comparison member (the
+    ``across`` value, e.g. ``"wildtype"``) and a within-member SampleSet name
+    (e.g. ``"peak_0"``). NEVER a concatenated ``"wildtype_peak_0"`` string, so a
+    caller can facet/style on either axis. :meth:`display` renders the joined
+    human label ``"wildtype · peak_0"`` only for legends/titles."""
+
+    comparison_member: Hashable   # the across value, e.g. "wildtype"
+    sample_set: str               # e.g. "peak_0"
+
+    def display(self) -> str:
+        return f"{self.comparison_member} · {self.sample_set}"
+
+
+@dataclass(frozen=True)
 class DistributionCurve:
     """One resolved curve in one cell — pure data, no styling decisions yet.
 
     ``style_group`` is the value styling/coloring keys off (PATH A: the
-    SampleSet's own name) so the renderer's role-gradient logic does not need
-    to know which build path produced the grid.
+    SampleSet's own name; PATH B: the comparison member / ``across`` value, so
+    a reference member degrades to the gray/dashed baseline) so the renderer's
+    role-gradient logic does not need to know which build path produced the
+    grid.
+
+    ``curve_key`` is populated only by PATH B (the structured
+    :class:`CurveKey`); PATH A leaves it ``None`` (its curve identity is fully
+    carried by ``sample_set_name``). The renderer reads it, never invents it.
     """
 
     cell: tuple[Hashable, Hashable]   # (row_value, col_value)
@@ -435,6 +458,7 @@ class DistributionCurve:
     grid: Grid
     density: DensityGrid
     sample_count: int
+    curve_key: "CurveKey | None" = None
 
 
 @dataclass(frozen=True)
@@ -473,26 +497,41 @@ def _sample_set_feature_values(
     return distribution.feature_values[np.asarray(idx, dtype=int), feature_idx]
 
 
+@dataclass(frozen=True)
+class _CellMember:
+    """One curve-to-be for a cell: the SampleSet + the resolved styling/identity
+    tags the two build paths decide (PATH A keys ``style_group`` off the
+    SampleSet name and leaves ``curve_key`` None; PATH B keys off the comparison
+    member and attaches a :class:`CurveKey`). ``_fit_cell_marginals`` stays
+    path-agnostic — it only fits densities on the shared grid."""
+
+    distribution: Distribution
+    sample_set: SampleSet
+    style_group: Hashable
+    curve_key: "CurveKey | None" = None
+
+
 def _fit_cell_marginals(
     *,
     cell_key: tuple[Hashable, ...],
-    members: Sequence[tuple[Distribution, SampleSet]],
+    members: Sequence[_CellMember],
     feature: str,
     grid_size: int,
 ) -> list[DistributionCurve]:
     """Shared-grid-then-fit for ONE cell: union bounds of the SELECTED curves
-    only (spec §PATH A: dropping a category must not stretch the grid).
+    only (spec §PATH A/B: an omitted/unassigned category must not stretch the
+    grid; PATH B's shared grid spans EVERY selected curve across ALL members).
 
-    ``members`` is a flat list of ``(distribution, sample_set)`` pairs already
-    filtered to exactly what this cell will draw. Returns curves with
-    ``style_group`` defaulted to ``sample_set_name`` (PATH A's convention);
-    order matches ``members`` minus any empty SampleSets.
+    ``members`` is a flat list of :class:`_CellMember` already filtered to
+    exactly what this cell will draw. The KDE is materialized here — the ONLY
+    place a marginal density is fit — per facet cell on the shared grid, never
+    on a ``Distribution``. Order matches ``members`` minus any empty SampleSets.
     """
     pooled: list[np.ndarray] = []
     per_member_values: list[np.ndarray] = []
-    for distribution, sample_set in members:
-        fi = distribution.feature_names.index(feature)
-        vals = _sample_set_feature_values(distribution, sample_set, fi)
+    for member in members:
+        fi = member.distribution.feature_names.index(feature)
+        vals = _sample_set_feature_values(member.distribution, member.sample_set, fi)
         per_member_values.append(vals)
         if vals.size:
             pooled.append(vals)
@@ -511,7 +550,7 @@ def _fit_cell_marginals(
     )
 
     curves: list[DistributionCurve] = []
-    for (distribution, sample_set), vals in zip(members, per_member_values):
+    for member, vals in zip(members, per_member_values):
         if vals.size == 0:
             continue
         density = evaluate_density(
@@ -521,11 +560,12 @@ def _fit_cell_marginals(
         curves.append(
             DistributionCurve(
                 cell=cell_key,
-                sample_set_name=sample_set.sample_set_name,
-                style_group=sample_set.sample_set_name,
+                sample_set_name=member.sample_set.sample_set_name,
+                style_group=member.style_group,
                 grid=shared_grid,
                 density=density,
                 sample_count=int(vals.size),
+                curve_key=member.curve_key,
             )
         )
     return curves
@@ -583,10 +623,17 @@ def build_1d_density_grid(
                     "distribution's label group (facet on LabelGroupFacet, or "
                     "restrict facet_row/facet_col so cells stay single-distribution)."
                 )
-        flat_members: list[tuple[Distribution, SampleSet]] = []
+        flat_members: list[_CellMember] = []
         for g in members:
             for sset in g.sample_sets():
-                flat_members.append((g.distribution, sset))
+                # PATH A: style_group IS the SampleSet name; no CurveKey.
+                flat_members.append(
+                    _CellMember(
+                        distribution=g.distribution,
+                        sample_set=sset,
+                        style_group=sset.sample_set_name,
+                    )
+                )
         curves = _fit_cell_marginals(
             cell_key=cell_key, members=flat_members, feature=feature, grid_size=200,
         )
@@ -595,6 +642,115 @@ def build_1d_density_grid(
     return DistributionGrid(
         feature_name=feature,
         row=facet_row,
+        col=facet_col,
+        curves=tuple(all_curves),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# PATH B — cross-population: build_1d_distribution_comparison(DistributionComparisons)
+# --------------------------------------------------------------------------- #
+def _resolve_comparison_col(comparison: DistributionComparison, facet_col: FacetKey) -> Hashable:
+    """Resolve the column facet value for ONE comparison from its held-constant
+    ``coordinates`` (spec §PATH B: "one cell per DistributionComparison, keyed
+    by its coordinates"). Only a :class:`CoordinateFacet` is meaningful here —
+    a comparison is a set of MEMBERS varying over the ``across`` axis, so it has
+    no single label-group display axis; ``LabelGroupFacet`` is rejected with a
+    precise error rather than silently mis-keying every cell together."""
+    if isinstance(facet_col, LabelGroupFacet):
+        raise TypeError(
+            "build_1d_distribution_comparison faceting a comparison by "
+            "LabelGroupFacet is undefined — a comparison spans multiple members "
+            "(the label group is shared across all of them via label_group=). "
+            "Use CoordinateFacet on a held-constant coordinate (e.g. time_bin)."
+        )
+    if not isinstance(facet_col, CoordinateFacet):
+        raise TypeError(f"unsupported FacetKey for facet_col: {facet_col!r}")
+    if facet_col.name not in comparison.coordinates:
+        raise KeyError(
+            f"comparison lacks coordinate {facet_col.name!r} to facet on; "
+            f"held-constant coordinates are {dict(comparison.coordinates)!r}"
+        )
+    return comparison.coordinates[facet_col.name]
+
+
+def build_1d_distribution_comparison(
+    comparisons: DistributionComparisons,
+    feature: str,
+    *,
+    label_group: str,
+    facet_col: FacetKey = CoordinateFacet("time_bin"),
+    reference_value: Hashable | None = None,
+) -> DistributionGrid:
+    """PATH B (spec §"PATH B" / §"CurveKey"): render TASK_A's matched
+    ``DistributionComparisons`` as a 1-D density grid — one cell per
+    ``DistributionComparison`` (keyed by its held-constant coordinates through
+    ``facet_col``), curves = every member's SampleSets of the ONE shared
+    ``label_group`` (like-with-like across populations).
+
+    Shared-grid rule (spec §"Shared grid"): the cell's grid is the union bounds
+    of EVERY selected curve across ALL members in the cell (wildtype's peaks +
+    b9d2's peaks). The KDE is materialized per cell on that shared grid inside
+    :func:`_fit_cell_marginals` — never fit on a ``Distribution``, and every
+    curve in a cell carries the SAME ``grid_id`` (raster-comparability).
+
+    Curve identity is STRUCTURED (spec §"CurveKey"): each curve carries a
+    :class:`CurveKey(comparison_member, sample_set)` — the two axes stay
+    separate, never a concatenated string. ``style_group`` is the comparison
+    member (the ``across`` value) so per-member styling works: pass
+    ``reference_value`` to route ONE member to the gray/dashed reference role
+    (else members color as peers). The asymmetric per-member ``label_groups=``
+    mapping is DEFERRED — a single shared ``label_group=`` only.
+
+    Feeds the SAME :func:`plot_1d_density_grid` renderer (same
+    ``DistributionGrid`` IR) as PATH A.
+    """
+    row_value = comparisons.across  # single constant row: the comparison axis name
+
+    all_curves: list[DistributionCurve] = []
+    for comparison in comparisons.comparisons:
+        col_value = _resolve_comparison_col(comparison, facet_col)
+        cell_key = (row_value, col_value)
+
+        flat_members: list[_CellMember] = []
+        # ``members`` is ORDERED by ``values`` (DistributionComparisons
+        # invariant) — iterate it so curve order is the requested member order.
+        for member_value, distribution in comparison.members.items():
+            if label_group not in distribution.labels:
+                raise ValueError(
+                    f"member {member_value!r} (distribution "
+                    f"{distribution.distribution_id!r}) lacks the shared label "
+                    f"group {label_group!r} — every member of a comparison must "
+                    "carry the SAME label group for a like-with-like overlay."
+                )
+            if feature not in distribution.feature_names:
+                raise ValueError(
+                    f"member {member_value!r} lacks requested feature {feature!r} "
+                    f"(has {distribution.feature_names!r})"
+                )
+            style_group = "reference" if member_value == reference_value else member_value
+            for sset in distribution.sample_sets(label_group):
+                flat_members.append(
+                    _CellMember(
+                        distribution=distribution,
+                        sample_set=sset,
+                        style_group=style_group,
+                        curve_key=CurveKey(
+                            comparison_member=member_value,
+                            sample_set=sset.sample_set_name,
+                        ),
+                    )
+                )
+
+        # Shared grid over ALL members' curves in this cell (union bounds).
+        curves = _fit_cell_marginals(
+            cell_key=cell_key, members=flat_members, feature=feature, grid_size=200,
+        )
+        all_curves.extend(curves)
+
+    return DistributionGrid(
+        feature_name=feature,
+        row=CoordinateFacet(row_value),
         col=facet_col,
         curves=tuple(all_curves),
     )
@@ -634,12 +790,16 @@ def _resolve_colors(
     resolved: dict[tuple[Hashable, str], str] = {}
 
     if not has_reference:
-        # Peer mode: STANDARD_PALETTE by label, style_group ignored.
-        labels = sorted({c.sample_set_name for c in grid.curves}, key=str)
-        palette = {lbl: STANDARD_PALETTE[i % len(STANDARD_PALETTE)] for i, lbl in enumerate(labels)}
+        # Peer mode: STANDARD_PALETTE, one color per distinct curve identity.
+        # PATH A curves collapse to sample_set_name (style_group == name); PATH B
+        # curves keep member + peak distinct (wildtype·peak_0 != b9d2·peak_0) via
+        # the composite key, so a comparison overlay never draws two members in
+        # the same color.
+        keys = sorted({(c.style_group, c.sample_set_name) for c in grid.curves}, key=str)
+        palette = {k: STANDARD_PALETTE[i % len(STANDARD_PALETTE)] for i, k in enumerate(keys)}
         for c in grid.curves:
             key = (c.style_group, c.sample_set_name)
-            resolved[key] = color_lookup.get(key, palette[c.sample_set_name])
+            resolved[key] = color_lookup.get(key, palette[key])
         return resolved
 
     # Role mode: gradient off each style_group's base hue, one shade per
@@ -737,8 +897,16 @@ def plot_1d_density_grid(
                 # reference) + dash, so keep the label short: sample-set
                 # name + n. Prefix reference sets so a shared name stays
                 # unambiguous.
-                prefix = f"{c.style_group} " if is_ref else ""
-                labels.append(f"{prefix}{c.sample_set_name} (n={c.sample_count})")
+                # PATH B carries a structured CurveKey -> render its joined
+                # "member · sample_set" display so a shared peak name across
+                # members stays unambiguous. PATH A (no CurveKey) keeps the
+                # short sample-set label, prefixing reference sets.
+                if c.curve_key is not None:
+                    base_label = c.curve_key.display()
+                else:
+                    prefix = f"{c.style_group} " if is_ref else ""
+                    base_label = f"{prefix}{c.sample_set_name}"
+                labels.append(f"{base_label} (n={c.sample_count})")
                 styles.append(
                     TraceStyle(
                         color=color,

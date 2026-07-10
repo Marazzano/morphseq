@@ -23,11 +23,17 @@ from morphseq_investigation.engine.facets import CoordinateFacet, LabelGroupFace
 from morphseq_investigation.engine.grid import build_grid, evaluate_density
 from morphseq_investigation.engine.identifiers import make_distribution_id
 from morphseq_investigation.engine.objects import HDR, Distribution, SampleSet
+from morphseq_investigation.engine.catalog import (
+    DistributionComparison,
+    DistributionComparisons,
+)
 from morphseq_investigation.engine.plotting import (
     UNASSIGNED_LABEL,
+    CurveKey,
     DistributionGrid,
     IncomparableDistributionsError,
     build_1d_density_grid,
+    build_1d_distribution_comparison,
     hdr_band_trace,
     overlay_strip_subplot,
     plot_1d_density_grid,
@@ -471,3 +477,162 @@ def test_plot_1d_density_grid_renders_path_a_grid():
 
     result = plot_1d_density_grid(grid, reference_role=None)
     assert result is not None
+
+
+# =========================================================================== #
+# TASK_C PATH B — build_1d_distribution_comparison(DistributionComparisons)
+# Consumes the REAL DistributionComparison(s) shapes from engine.catalog (NOT a
+# hand-invented fixture type): hand-built member Distributions, but assembled
+# into the genuine frozen DistributionComparisons the compare() engine returns.
+# =========================================================================== #
+def _member_distribution(*, member, time_bin, peak_locs, feature="total_length_um", seed=0):
+    """A member Distribution carrying a ``resolved_peak`` label group whose
+    categories are ``peak_0..peak_{k-1}`` (each a cluster around ``peak_locs``).
+    ``member`` and ``time_bin`` become its coordinates."""
+    rng = np.random.default_rng(seed)
+    sample_ids = []
+    assignments = {}
+    values = []
+    for pi, loc in enumerate(peak_locs):
+        for i in range(15):
+            sid = f"{member}_{time_bin}_peak{pi}_{i}"
+            sample_ids.append(sid)
+            assignments[sid] = f"peak_{pi}"
+            values.append(rng.normal(loc=loc, scale=0.6))
+    coordinates = {"genotype": member, "time_bin": time_bin}
+    dist = Distribution(
+        distribution_id=make_distribution_id(coordinates),
+        sample_ids=tuple(sample_ids),
+        feature_names=(feature,),
+        feature_values=np.asarray(values, dtype=float).reshape(-1, 1),
+        coordinates=coordinates,
+    )
+    return dist.with_label("resolved_peak", assignments)
+
+
+def _two_member_comparisons(*, values=("wildtype", "b9d2")):
+    """A REAL DistributionComparisons over two time bins; each cell has a
+    wildtype member (one peak near 0) and a b9d2 member (peaks near 0 and 8)."""
+    comparisons = []
+    for time_bin in (30, 48):
+        wt = _member_distribution(
+            member="wildtype", time_bin=time_bin, peak_locs=[0.0], seed=time_bin
+        )
+        b9 = _member_distribution(
+            member="b9d2", time_bin=time_bin, peak_locs=[0.0, 8.0], seed=time_bin + 1
+        )
+        members = {"wildtype": wt, "b9d2": b9}
+        comparisons.append(
+            DistributionComparison(
+                coordinates={"time_bin": time_bin}, members=members
+            )
+        )
+    return DistributionComparisons(
+        comparisons=tuple(comparisons),
+        across="genotype",
+        values=tuple(values),
+        match_on=("time_bin",),
+    )
+
+
+def test_build_1d_distribution_comparison_one_cell_per_comparison():
+    comparisons = _two_member_comparisons()
+    grid = build_1d_distribution_comparison(
+        comparisons, "total_length_um",
+        label_group="resolved_peak", facet_col=CoordinateFacet("time_bin"),
+    )
+    assert isinstance(grid, DistributionGrid)
+    # One cell per comparison (two time bins); col value = the time bin.
+    col_vals = {c.cell[1] for c in grid.curves}
+    assert col_vals == {30, 48}
+    # Row is the single constant comparison axis name.
+    assert {c.cell[0] for c in grid.curves} == {"genotype"}
+
+
+def test_build_1d_distribution_comparison_curves_keyed_by_curvekey():
+    comparisons = _two_member_comparisons()
+    grid = build_1d_distribution_comparison(
+        comparisons, "total_length_um", label_group="resolved_peak",
+    )
+    # Every PATH B curve carries a STRUCTURED CurveKey (never a concatenated
+    # string); the two axes stay separate.
+    keys_30 = {
+        c.curve_key for c in grid.curves if c.cell == ("genotype", 30)
+    }
+    assert CurveKey("wildtype", "peak_0") in keys_30
+    assert CurveKey("b9d2", "peak_0") in keys_30
+    assert CurveKey("b9d2", "peak_1") in keys_30
+    # wildtype has ONE peak only -> no wildtype peak_1 curve.
+    assert CurveKey("wildtype", "peak_1") not in keys_30
+    for c in grid.curves:
+        assert isinstance(c.curve_key, CurveKey)
+    # display() joins the two axes without collapsing them into the model.
+    assert CurveKey("wildtype", "peak_0").display() == "wildtype · peak_0"
+
+
+def test_build_1d_distribution_comparison_shared_grid_spans_all_members():
+    comparisons = _two_member_comparisons()
+    grid = build_1d_distribution_comparison(
+        comparisons, "total_length_um", label_group="resolved_peak",
+    )
+    cell_curves = [c for c in grid.curves if c.cell == ("genotype", 30)]
+    # Shared-grid invariant: EVERY curve in a cell shares ONE grid_id, and the
+    # bounds span both members (wildtype's ~0 peak AND b9d2's ~8 peak).
+    grid_ids = {c.grid.grid_id for c in cell_curves}
+    assert len(grid_ids) == 1
+    axis = cell_curves[0].grid.axis_values[0]
+    assert axis.min() < 2.0     # covers wildtype/b9d2 peak near 0
+    assert axis.max() > 6.0     # covers b9d2 peak near 8 -> spans BOTH members
+
+
+def test_build_1d_distribution_comparison_reference_member_gets_reference_role():
+    comparisons = _two_member_comparisons()
+    grid = build_1d_distribution_comparison(
+        comparisons, "total_length_um", label_group="resolved_peak",
+        reference_value="wildtype",
+    )
+    # wildtype routes to the "reference" style_group; b9d2 keeps its own.
+    style_groups = {c.style_group for c in grid.curves}
+    assert "reference" in style_groups
+    assert "b9d2" in style_groups
+    assert "wildtype" not in style_groups
+    # Renderer: reference role -> dashed/gray, and renders without error.
+    result = plot_1d_density_grid(grid, reference_role="reference")
+    assert result is not None
+
+
+def test_build_1d_distribution_comparison_feeds_same_renderer():
+    comparisons = _two_member_comparisons()
+    grid = build_1d_distribution_comparison(
+        comparisons, "total_length_um", label_group="resolved_peak",
+    )
+    # Same DistributionGrid IR -> same renderer, peer mode, no error.
+    result = plot_1d_density_grid(grid, reference_role=None)
+    assert result is not None
+
+
+def test_build_1d_distribution_comparison_rejects_member_missing_label_group():
+    # A member lacking the shared label group is a like-with-like violation.
+    wt = _member_distribution(member="wildtype", time_bin=30, peak_locs=[0.0], seed=0)
+    b9_no_label = Distribution(
+        distribution_id=make_distribution_id({"genotype": "b9d2", "time_bin": 30}),
+        sample_ids=("b9_0", "b9_1"),
+        feature_names=("total_length_um",),
+        feature_values=np.asarray([[1.0], [2.0]]),
+        coordinates={"genotype": "b9d2", "time_bin": 30},
+    )  # NO resolved_peak label attached
+    comparisons = DistributionComparisons(
+        comparisons=(
+            DistributionComparison(
+                coordinates={"time_bin": 30},
+                members={"wildtype": wt, "b9d2": b9_no_label},
+            ),
+        ),
+        across="genotype",
+        values=("wildtype", "b9d2"),
+        match_on=("time_bin",),
+    )
+    with pytest.raises(ValueError):
+        build_1d_distribution_comparison(
+            comparisons, "total_length_um", label_group="resolved_peak",
+        )
