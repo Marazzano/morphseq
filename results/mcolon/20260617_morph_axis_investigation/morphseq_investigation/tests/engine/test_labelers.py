@@ -247,3 +247,49 @@ def test_no_tuple_return_shape_remains():
     assert not hasattr(labelers_module, "_finalize")
 
 
+# --------------------------------------------------------------------------- #
+# regression — peak COUNT per bin matches the old engine's counts.
+#
+# The b9d2 worked example (v0/b9d2_worked_example.py) demonstrates the
+# emergence signal on real imaging QC data (target phenotype peak count grows
+# 1 -> 2 as hpf increases), but records no fixed numeric table -- it computes
+# counts at runtime from a CSV that is gitignored and not present in a fresh
+# checkout. This regression instead builds a b9d2-LIKE synthetic fixture
+# engineered to reproduce that documented qualitative signal (14hpf-like bin:
+# 1 mode; later bins: 2 modes) at a FIXED, reproducible seed, and asserts the
+# NEW detect_peaks output shape reproduces the SAME counts the OLD
+# (LabelGroup, [SampleSet])-returning label_peak_finding would have produced
+# for identical points/grid/config (the peak algorithm is byte-for-byte reused
+# -- see engine/labelers.py's detect_peaks docstring -- only the OUTPUT SHAPE
+# moved).
+# --------------------------------------------------------------------------- #
+def _b9d2_like_bin_points(hpf: int, seed: int = 100):
+    """One synthetic 'target phenotype' point cloud per design hpf.
+
+    14hpf: a single compact cluster (phenotype not yet resolvable).
+    18/24/30/48hpf: two increasingly separated clusters (CE vs HTA emerging),
+    matching the worked example's documented 1 -> 2 emergence signal.
+    """
+    rng = np.random.default_rng(seed + hpf)
+    if hpf <= 14:
+        return rng.normal(loc=(0.0, 0.0), scale=1.0, size=(120, 2))
+    # separation grows with hpf so later bins are unambiguously bimodal.
+    sep = 4.0 + 0.3 * (hpf - 14)
+    a = rng.normal(loc=(0.0, 0.0), scale=0.8, size=(60, 2))
+    b = rng.normal(loc=(sep, sep), scale=0.8, size=(60, 2))
+    return np.vstack([a, b])
+
+
+EXPECTED_PEAK_COUNTS = {14: 1, 18: 2, 24: 2, 30: 2, 48: 2}
+
+
+@pytest.mark.parametrize("hpf", sorted(EXPECTED_PEAK_COUNTS))
+def test_detect_peaks_peak_count_regression_matches_old_engine_per_bin(hpf):
+    points = _b9d2_like_bin_points(hpf)
+    dist = _peak_distribution(points, coordinates={"scope_id": "b9d2", "time_bin": hpf})
+    lg = _detect(dist, resolution=61)
+    column = lg.distribution.label_column("resolved_peak")
+    assert len(column.categories()) == EXPECTED_PEAK_COUNTS[hpf], (
+        f"{hpf}hpf: expected {EXPECTED_PEAK_COUNTS[hpf]} peak(s) "
+        f"(pre-migration engine parity), got {len(column.categories())}"
+    )
