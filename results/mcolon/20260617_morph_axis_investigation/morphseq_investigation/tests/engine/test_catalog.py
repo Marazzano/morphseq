@@ -1,9 +1,16 @@
-"""TASK_A — DistributionCatalog: from_dataframe / coordinate index / lookup."""
+"""TASK_A — DistributionCatalog: from_dataframe / pool_by / compare / id-helpers."""
 
+import logging
+
+import numpy as np
 import pandas as pd
 import pytest
 
-from morphseq_investigation.engine.catalog import DistributionCatalog
+from morphseq_investigation.engine.catalog import (
+    DistributionCatalog,
+    DistributionComparison,
+    DistributionComparisons,
+)
 from morphseq_investigation.engine.objects import UNASSIGNED_LABEL
 
 
@@ -269,3 +276,226 @@ def test_pool_by_records_softened_provenance_note():
     pooled = catalog.pool_by("experiment")
     for distribution in pooled.distributions:
         assert pooled.pooled_coordinates[distribution.distribution_id] == ("experiment",)
+
+
+# --------------------------------------------------------------------------- #
+# compare()
+# --------------------------------------------------------------------------- #
+def test_compare_default_match_on_infers_all_other_coordinates(caplog):
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    with caplog.at_level(logging.INFO):
+        comparisons = catalog.compare(across="genotype")
+    assert comparisons.match_on == ("time_bin",)
+    assert comparisons.across == "genotype"
+    assert set(comparisons.values) == {"wildtype", "b9d2"}
+    assert len(comparisons.comparisons) == 2  # one per time_bin
+    assert any("matching on" in message for message in caplog.messages)
+
+
+def test_compare_single_split_coordinate_gives_one_global_comparison():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("genotype",),
+    )
+    comparisons = catalog.compare(across="genotype")
+    assert comparisons.match_on == ()
+    assert len(comparisons.comparisons) == 1
+    assert comparisons.comparisons[0].coordinates == {}
+
+
+def test_compare_preserves_requested_values_order():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    comparisons = catalog.compare(across="genotype", values=("b9d2", "wildtype"))
+    assert comparisons.values == ("b9d2", "wildtype")
+    for comparison in comparisons.comparisons:
+        assert tuple(comparison.members) == ("b9d2", "wildtype")
+
+
+def test_compare_missing_member_raises():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    with pytest.raises(ValueError, match="missing member"):
+        catalog.compare(across="genotype", values=("wildtype", "nonexistent"))
+
+
+def test_compare_duplicate_member_raises():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    # match_on defaults to (time_bin, experiment); across=genotype -> unique per group, OK.
+    # Force duplicates by omitting experiment from match_on explicitly.
+    with pytest.raises(ValueError, match="Cannot omit coordinate"):
+        catalog.compare(across="genotype", match_on=("time_bin",))
+
+
+def test_compare_across_is_label_raises():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        label_columns=("phenotype",),
+        split_columns=("time_bin", "genotype"),
+    )
+    with pytest.raises(ValueError, match="label group, not a coordinate"):
+        catalog.compare(across="phenotype")
+
+
+def test_compare_omitted_but_constant_coordinate_is_allowed():
+    df = _synthetic_df()
+    # Make experiment constant per (time_bin, genotype) cell by only keeping expA.
+    df = df[df["experiment"] == "expA"].copy()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    # experiment is constant ("expA") everywhere, so omitting it from match_on
+    # is a valid assertion, not pooling.
+    comparisons = catalog.compare(across="genotype", match_on=("time_bin",))
+    assert comparisons.match_on == ("time_bin",)
+    assert len(comparisons.comparisons) == 2
+
+
+def test_compare_not_a_coordinate_raises():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    with pytest.raises(ValueError):
+        catalog.compare(across="nonexistent_coordinate")
+
+
+def _comparison_member(name):
+    from morphseq_investigation.engine.objects import Distribution
+    from morphseq_investigation.engine.identifiers import make_distribution_id
+
+    coords = {"time_bin": 14, "genotype": name}
+    return Distribution(
+        distribution_id=make_distribution_id(coords),
+        sample_ids=(f"{name}_s0",),
+        feature_names=("PC1",),
+        feature_values=np.zeros((1, 1)),
+        coordinates=coords,
+    )
+
+
+def test_distribution_comparisons_invariant_enforced():
+    d_wt = _comparison_member("wildtype")
+    d_b9 = _comparison_member("b9d2")
+    with pytest.raises(ValueError):
+        DistributionComparisons(
+            comparisons=(
+                DistributionComparison(
+                    coordinates={"time_bin": 14}, members={"wildtype": d_wt, "b9d2": d_b9}
+                ),
+            ),
+            across="genotype",
+            values=("wildtype",),  # mismatched vs actual members -> should raise
+            match_on=("time_bin",),
+        )
+
+
+# --------------------------------------------------------------------------- #
+# label_groups (PATH A convenience)
+# --------------------------------------------------------------------------- #
+def test_label_groups_one_per_distribution():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        label_columns=("phenotype",),
+        split_columns=("time_bin", "genotype"),
+    )
+    groups = catalog.label_groups("phenotype", display_name="Phenotype")
+    assert len(groups) == 4
+    for group in groups:
+        assert group.label_name == "phenotype"
+        assert group.display_name == "Phenotype"
+
+
+def test_label_groups_skips_distributions_missing_the_label():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    groups = catalog.label_groups("phenotype")
+    assert groups == ()
+
+
+# --------------------------------------------------------------------------- #
+# with_labels / map_distributions / detect_peaks conveniences
+# --------------------------------------------------------------------------- #
+def test_with_labels_attaches_after_construction():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    label_df = df[["embryo_id", "phenotype"]].copy()
+    labeled = catalog.with_labels(label_df, ["phenotype"])
+    for distribution in labeled.distributions:
+        assert "phenotype" in distribution.labels
+
+
+def test_map_distributions_generic_escape_hatch():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    mapped = catalog.map_distributions(
+        lambda d: d.with_label("constant", {sid: "x" for sid in d.sample_ids})
+    )
+    for distribution in mapped.distributions:
+        assert "constant" in distribution.labels
+
+
+def test_detect_peaks_is_thin_wrapper_over_stub():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    # TASK_B's Distribution.detect_peaks is still a NotImplementedError stub;
+    # the catalog convenience should propagate that, not swallow it.
+    with pytest.raises(NotImplementedError):
+        catalog.detect_peaks(features=("PC1", "PC2"))
