@@ -17,7 +17,7 @@ attaches label columns, mirroring the spec's two-line example.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Hashable, Mapping, Sequence
 
@@ -57,20 +57,10 @@ class DistributionCatalog:
 
     distributions: tuple[Distribution, ...]
     coordinate_names: tuple[str, ...] = ()
-    # Softened pool_by provenance note (spec §"Provenance is in the samples"):
-    # {distribution_id: (collapsed_coordinate_names,)}. NOT a Distribution field
-    # (that shape is frozen by TASK_0) — kept here so callers can still see
-    # "this distribution came from a pool_by" without re-deriving it, while the
-    # REAL lineage (which experiment each sample came from) stays in the
-    # samples' own labels, never duplicated here.
-    pooled_coordinates: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "distributions", tuple(self.distributions))
         object.__setattr__(self, "coordinate_names", tuple(self.coordinate_names))
-        object.__setattr__(
-            self, "pooled_coordinates", _readonly_mapping(self.pooled_coordinates)
-        )
 
     # ----------------------------------------------------------------- #
     # Construction
@@ -166,6 +156,15 @@ class DistributionCatalog:
             names.update(distribution.labels)
         return names
 
+    def _pooled_away_names(self) -> set[str]:
+        """Coordinate names any distribution collapsed via pool_by (read off the
+        distributions' own ``pooled_coordinates``, so the fact travels with the
+        objects). compare() must not offer these as across/match_on axes."""
+        names: set[str] = set()
+        for distribution in self.distributions:
+            names.update(distribution.pooled_coordinates)
+        return names
+
     def _check_coords_not_labels(self, coords: Mapping[str, Any]) -> None:
         label_names = self._label_names()
         for key in coords:
@@ -236,28 +235,12 @@ class DistributionCatalog:
             groups[key].append(distribution)
 
         pooled: list[Distribution] = []
-        new_pooled_notes: dict[str, tuple[str, ...]] = {}
         for key in group_order:
             members = groups[key]
-            new_distribution = _pool_distributions(members, remaining, key)
-            pooled.append(new_distribution)
-            # Carry forward any UPSTREAM pooled coordinates (pooling twice) plus
-            # this one — the note is additive, never overwritten.
-            prior: tuple[str, ...] = ()
-            for member in members:
-                prior = tuple(
-                    dict.fromkeys(
-                        prior + self.pooled_coordinates.get(member.distribution_id, ())
-                    )
-                )
-            new_pooled_notes[new_distribution.distribution_id] = tuple(
-                dict.fromkeys(prior + (coordinate,))
-            )
+            pooled.append(_pool_distributions(members, coordinate, remaining, key))
 
         return DistributionCatalog(
-            distributions=tuple(pooled),
-            coordinate_names=remaining,
-            pooled_coordinates=new_pooled_notes,
+            distributions=tuple(pooled), coordinate_names=remaining
         )
 
     # ----------------------------------------------------------------- #
@@ -273,9 +256,7 @@ class DistributionCatalog:
         """
         new_distributions = tuple(fn(distribution) for distribution in self.distributions)
         return DistributionCatalog(
-            distributions=new_distributions,
-            coordinate_names=self.coordinate_names,
-            pooled_coordinates=self.pooled_coordinates,
+            distributions=new_distributions, coordinate_names=self.coordinate_names
         )
 
     def with_labels(
@@ -366,9 +347,20 @@ class DistributionCatalog:
         See :mod:`engine.catalog` module docstring / ``docs/tasks_catalog/
         TASK_A_catalog.md`` for the full 7-step algorithm this implements.
         """
-        # 1. across must be a catalog COORDINATE.
+        # 1. across must be a catalog COORDINATE. A name that a pool_by
+        #    collapsed away (recorded on each distribution's pooled_coordinates)
+        #    is NOT a coordinate anymore — reject it with a targeted message so
+        #    the caller doesn't try to resolve across an axis they pooled out.
+        pooled_away = self._pooled_away_names()
         if across not in self.coordinate_names:
             label_names = self._label_names()
+            if across in pooled_away:
+                raise ValueError(
+                    f"{across!r} was collapsed by pool_by — it is no longer a "
+                    "coordinate to resolve across. Rebuild the catalog without "
+                    f"pooling {across!r} (keep it in split_columns) if you need "
+                    "to compare across it."
+                )
             if across in label_names:
                 raise ValueError(
                     f"{across!r} is a label group, not a coordinate — split on "
@@ -386,6 +378,15 @@ class DistributionCatalog:
             resolved_match_on = default_match_on
         else:
             resolved_match_on = tuple(match_on)
+            # An explicit match_on may not name a coordinate that pool_by
+            # collapsed away — it is no longer available to hold constant.
+            bad_match = tuple(name for name in resolved_match_on if name in pooled_away)
+            if bad_match:
+                raise ValueError(
+                    f"match_on names pooled-away coordinate(s) {list(bad_match)} "
+                    "— they were collapsed by pool_by and are no longer "
+                    "coordinates. Remove them from match_on."
+                )
 
         # 6. Omitting a coordinate from an EXPLICIT match_on asserts it is
         #    constant in the selection (checked per-group below, not pooling).
@@ -483,6 +484,7 @@ class DistributionCatalog:
 
 def _pool_distributions(
     members: Sequence[Distribution],
+    pooled_coordinate: str,
     remaining_coordinate_names: tuple[str, ...],
     remaining_key: tuple[Any, ...],
 ) -> Distribution:
@@ -491,7 +493,9 @@ def _pool_distributions(
     Implements spec §"pool_by" / §"Provenance is in the samples": duplicate
     ``sample_id`` across sources raises; labels ride along per-sample
     (``UNASSIGNED_LABEL`` where a source lacks a given label group); only a
-    ``pooled_coordinates`` note survives (kept on the CATALOG, not this object).
+    ``pooled_coordinates`` note survives — kept ON the pooled Distribution (so
+    the note travels with the object outside its catalog), accumulating
+    ``pooled_coordinate`` onto whatever the sources already collapsed.
     """
     if not members:
         raise ValueError("pool_by: empty member group (nothing to pool)")
@@ -520,6 +524,18 @@ def _pool_distributions(
         [member.feature_values for member in members], axis=0
     )
 
+    # Accumulate the collapsed-coordinate note: any coordinate(s) the SOURCES
+    # already pooled away (repeated pool_by) + this one. distribution_id is NOT
+    # affected — it derives from `coordinates` only (§"What must stay in sync").
+    prior_pooled: list[str] = []
+    for member in members:
+        for name in member.pooled_coordinates:
+            if name not in prior_pooled:
+                prior_pooled.append(name)
+    accumulated_pooled = tuple(
+        dict.fromkeys([*prior_pooled, pooled_coordinate])
+    )
+
     new_coordinates = dict(zip(remaining_coordinate_names, remaining_key))
     pooled = Distribution(
         distribution_id=make_distribution_id(new_coordinates),
@@ -527,6 +543,7 @@ def _pool_distributions(
         feature_names=feature_names,
         feature_values=all_feature_values,
         coordinates=new_coordinates,
+        pooled_coordinates=accumulated_pooled,
     )
 
     # Labels ride along per-sample: union of label names across sources;

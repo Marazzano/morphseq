@@ -265,7 +265,7 @@ def test_pool_by_labels_ride_along_per_sample():
         assert set(col.values) == set(distribution.sample_ids)
 
 
-def test_pool_by_records_softened_provenance_note():
+def test_pool_by_records_softened_provenance_note_on_distribution():
     df = _synthetic_df()
     catalog = DistributionCatalog.from_dataframe(
         df,
@@ -274,8 +274,49 @@ def test_pool_by_records_softened_provenance_note():
         split_columns=("time_bin", "genotype", "experiment"),
     )
     pooled = catalog.pool_by("experiment")
+    # The note lives ON the pooled Distribution so it travels with the object
+    # outside its catalog (into plotting / cross-population compare).
     for distribution in pooled.distributions:
-        assert pooled.pooled_coordinates[distribution.distribution_id] == ("experiment",)
+        assert distribution.pooled_coordinates == ("experiment",)
+
+
+def test_pool_by_note_accumulates_across_repeated_pooling():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    pooled = catalog.pool_by("experiment").pool_by("genotype")
+    for distribution in pooled.distributions:
+        assert set(distribution.pooled_coordinates) == {"experiment", "genotype"}
+
+
+def test_compare_across_pooled_away_coordinate_raises():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    pooled = catalog.pool_by("experiment")
+    with pytest.raises(ValueError, match="collapsed by pool_by"):
+        pooled.compare(across="experiment")
+
+
+def test_compare_match_on_pooled_away_coordinate_raises():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    pooled = catalog.pool_by("experiment")
+    with pytest.raises(ValueError, match="pooled-away coordinate"):
+        pooled.compare(across="genotype", match_on=("time_bin", "experiment"))
 
 
 # --------------------------------------------------------------------------- #
