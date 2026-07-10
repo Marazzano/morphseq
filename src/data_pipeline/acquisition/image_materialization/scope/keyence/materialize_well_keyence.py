@@ -194,11 +194,15 @@ def materialize_keyence_product_for_well(
     # use_legacy_canvas resizes the mosaic to a hardcoded [1140, 480] * (tile_width/640) target,
     # i.e. 1710x720 — an anisotropic ~0.74x horizontal squash of the true 2304x720 stitch, baked in
     # for a 640px-wide camera. That distorts morphology; keep the true stitch geometry instead.
+    # invert_intensity=False: TEMPORARY. The invert never fired on this path anyway, so the images
+    # downstream consumers have seen are non-inverted; make that explicit rather than implicit.
+    # Revisit once the inversion contract is settled (see PLANNED_REVISIONS.md).
     tiling_config = FrameTilingConfig(
         orientation=orientation,
         enable_alignment=False,
         fallback_policy=("master",),
         use_legacy_canvas=False,
+        invert_intensity=False,
     )
     fallback = PreComputeStitchParams(master_params_path=master_params_path)
 
@@ -220,6 +224,7 @@ def materialize_keyence_product_for_well(
         tile_specs: list[TileSpec] = []
         tile_fims: dict[str, np.ndarray] = {}  # tile_id → per-tile focus_index_map
         tile_z_indices: np.ndarray | None = None
+        tile_stacks: list[tuple[str, np.ndarray]] = []  # (tile_id, raw Z-stack), pre-rescale
         for tile_id, tile_rows in t_rows.groupby("tile_id"):
             sorted_rows = tile_rows.sort_values("z_index")
             z_paths = sorted_rows["source_tiff_path"].map(lambda p: Path(str(p))).tolist()
@@ -234,8 +239,22 @@ def materialize_keyence_product_for_well(
             if tile_z_indices is None:
                 tile_z_indices = z_indices_tile
 
+            tile_stacks.append((str(tile_id), stack_zyx))
+
+        # Rescale ALL tiles against ONE pair of percentiles, computed over the whole well.
+        # im_rescale() defaults to per-array percentiles, so calling it per tile stretched each
+        # tile independently to full range: tiles holding only background have a narrow intensity
+        # band and got blown out, while the tile holding the embryo (wide range) looked correct.
+        # Keyence tiles carry a real illumination gradient across the strip (tile means ~65/92/155);
+        # a shared lo/hi preserves that gradient instead of erasing it per tile.
+        all_vals = np.concatenate([s.ravel() for _, s in tile_stacks])
+        if all_vals.size > 1_000_000:
+            all_vals = all_vals[:: all_vals.size // 1_000_000]
+        well_lo, well_hi = np.percentile(all_vals, (0.01, 99.99))
+
+        for tile_id, stack_zyx in tile_stacks:
             # Focus-stack: same primitive as YX1 (DRY — imported, not copied).
-            norm, _, _ = im_rescale(stack_zyx)
+            norm, _, _ = im_rescale(stack_zyx, lo=float(well_lo), hi=float(well_hi))
             tile_ff, tile_fim = materialize_ff_projection(
                 norm.astype(np.float32), device=device
             )

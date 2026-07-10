@@ -96,7 +96,13 @@ def build_keyence_stitch_map(
     offsets_nm = stage - stage[:, :1, :]                     # relative to tile 0 within each well
     offsets_px = np.nanmedian(offsets_nm, axis=0) / 1000.0 / um_per_px   # (n_tiles, 2) [x, y]
 
-    # Anchor at the minimum so all coords are >= 0 (stage x DECREASES with tile_id on this scope).
+    # Stage axes need not agree with image axes: on this scope stage x DECREASES as tile_id
+    # increases, so using the stage offsets directly puts tile 1 at the far right and reverses the
+    # strip. stitch2d's "raster" pattern places tiles in tile order, so flip any axis whose stage
+    # coordinate runs backwards, then anchor at the minimum to keep all coords >= 0.
+    for axis in (0, 1):
+        if offsets_px[-1, axis] < offsets_px[0, axis]:
+            offsets_px[:, axis] *= -1.0
     offsets_px -= offsets_px.min(axis=0)
 
     spread = offsets_px.max(axis=0) - offsets_px.min(axis=0)  # [x_spread, y_spread]
