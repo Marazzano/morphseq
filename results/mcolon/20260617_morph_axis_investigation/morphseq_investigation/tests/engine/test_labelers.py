@@ -16,7 +16,8 @@ from morphseq_investigation.engine.objects import (
     SampleSet,
     SampleSetGeometry,
 )
-from morphseq_investigation.engine.labelers import label_genotype
+from morphseq_investigation.engine.grid import build_grid
+from morphseq_investigation.engine.labelers import label_genotype, label_peak_finding
 
 
 # --------------------------------------------------------------------------- #
@@ -119,3 +120,153 @@ def test_genotype_forced_abstention_goes_to_unassigned():
         assert "e0" not in s.sample_ids and "e5" not in s.sample_ids
     validate_label_group(dist, lg, sample_sets)
 
+
+# --------------------------------------------------------------------------- #
+# peak_finding fixtures
+# --------------------------------------------------------------------------- #
+def _fast_config():
+    # A cheaper bootstrap vote so tests run quickly (the numbers only affect the
+    # vote's precision, not the mapping being tested).
+    from morphseq_investigation.core.distribution_records import PeakResolutionConfig
+    from morphseq_investigation.core.peak_stability import PeakCountStabilityPolicy
+
+    return PeakResolutionConfig(
+        n_bootstrap_draws=15,
+        bootstrap_sample_fraction=0.80,
+        min_bootstrap_sample_size=10,
+        count_stability_policy=PeakCountStabilityPolicy(min_mode_frequency=0.50),
+        seed=7,
+    )
+
+
+def _bimodal_points(seed=0, n_per=90, sep=8.0):
+    rng = np.random.default_rng(seed)
+    a = rng.normal(loc=(0.0, 0.0), scale=0.6, size=(n_per, 2))
+    b = rng.normal(loc=(sep, sep), scale=0.6, size=(n_per, 2))
+    return np.vstack([a, b])
+
+
+def _unimodal_points(seed=1, n=180):
+    rng = np.random.default_rng(seed)
+    return rng.normal(loc=(0.0, 0.0), scale=0.8, size=(n, 2))
+
+
+def _peak_distribution(points, *, scope="b9d2", role="target"):
+    sample_ids = [f"p{i}" for i in range(len(points))]
+    return _make_distribution(points, sample_ids, scope=scope, role=role)
+
+
+def _grid_for(points):
+    sample_ids = tuple(f"p{i}" for i in range(len(points)))
+    return build_grid(
+        ("PC1", "PC2"),
+        np.asarray(points, dtype=float),
+        sample_ids,
+        "pooled_min_max",
+        {"resolution": 61},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# peak_finding labeler
+# --------------------------------------------------------------------------- #
+def test_peak_finding_bimodal_gives_two_sample_sets_with_geometry():
+    points = _bimodal_points()
+    dist = _peak_distribution(points)
+    grid = _grid_for(points)
+    lg, sample_sets = label_peak_finding(
+        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    )
+
+    assert len(sample_sets) == 2, "clearly bimodal fixture must resolve 2 modes"
+    for s in sample_sets:
+        assert s.geometry is not None
+        assert isinstance(s.geometry, SampleSetGeometry)
+        assert s.geometry.center.shape == (2,)
+        assert np.isfinite(s.geometry.radius)
+        assert s.geometry.grid_id == grid.grid_id
+        # geometry carries NO run-relative scalars
+        assert not hasattr(s.geometry, "support_fraction")
+        assert not hasattr(s.geometry, "prominence_rank")
+    # resolved_peak_count is derived = len(sample_set_ids)
+    assert len(lg.sample_set_ids) == 2
+
+
+def test_peak_finding_unimodal_gives_one_sample_set():
+    points = _unimodal_points()
+    dist = _peak_distribution(points)
+    grid = _grid_for(points)
+    lg, sample_sets = label_peak_finding(
+        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    )
+    assert len(sample_sets) == 1
+
+
+def test_peak_finding_per_sample_set_metrics_populated_off_geometry():
+    points = _bimodal_points()
+    dist = _peak_distribution(points)
+    grid = _grid_for(points)
+    lg, sample_sets = label_peak_finding(
+        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    )
+    # per_sample_set_metrics holds the run-relative scalars, keyed by sample_set_id
+    for s in sample_sets:
+        metrics = lg.per_sample_set_metrics[s.sample_set_id]
+        assert "support_fraction" in metrics
+        assert "prominence_rank" in metrics
+        assert "height_relative_to_max" in metrics
+        assert "is_dominant" in metrics
+    # exactly one dominant peak
+    n_dominant = sum(
+        lg.per_sample_set_metrics[s.sample_set_id]["is_dominant"] == 1.0 for s in sample_sets
+    )
+    assert n_dominant == 1
+
+
+def test_peak_finding_artifacts_carry_grid_density_basins_with_grid_id():
+    points = _bimodal_points()
+    dist = _peak_distribution(points)
+    grid = _grid_for(points)
+    lg, sample_sets = label_peak_finding(
+        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    )
+    art = lg.artifacts
+    assert art is not None
+    assert art.grid_id == grid.grid_id
+    assert art.grid is grid
+    assert art.density_grid is not None
+    assert art.density_grid.grid_id == grid.grid_id
+    assert art.basin_labels is not None
+    assert art.basin_labels.shape == art.density_grid.density.shape
+
+
+def test_peak_finding_vote_lives_in_provenance():
+    points = _bimodal_points()
+    dist = _peak_distribution(points)
+    grid = _grid_for(points)
+    lg, sample_sets = label_peak_finding(
+        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    )
+    assert "is_reliable" in lg.provenance
+    assert "vote" in lg.provenance
+    assert "mode_peak_count" in lg.provenance["vote"]
+    assert "peak_count_frequencies" in lg.provenance["vote"]
+
+
+def test_peak_finding_vote_collapse_no_phantom_sample_sets():
+    # Two nearby Gaussian clusters that the KDE reads as ONE mode. Naive
+    # per-cluster counting would say 2; the density/vote resolves 1 -> ONE
+    # SampleSet, and the rejected split is NOT a phantom SampleSet.
+    rng = np.random.default_rng(3)
+    a = rng.normal(loc=(0.0, 0.0), scale=1.0, size=(120, 2))
+    b = rng.normal(loc=(1.2, 0.0), scale=1.0, size=(120, 2))  # heavily overlapping
+    points = np.vstack([a, b])
+    dist = _peak_distribution(points)
+    grid = _grid_for(points)
+    lg, sample_sets = label_peak_finding(
+        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    )
+    # one coherent mode; never a phantom set per rejected candidate
+    assert len(sample_sets) == 1
+    # every accepted set corresponds to a real declared sample_set_id
+    assert set(s.sample_set_id for s in sample_sets) == set(lg.sample_set_ids)
