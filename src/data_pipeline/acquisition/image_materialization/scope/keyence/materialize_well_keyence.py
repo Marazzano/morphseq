@@ -186,7 +186,20 @@ def materialize_keyence_product_for_well(
         .to_dict("index")
     )
 
-    tiling_config = FrameTilingConfig(orientation=orientation)
+    # Stage coords from the experiment-grain stitch map ARE the geometry (build_keyence_stitch_map
+    # derives them from StageLocationX/Y), so never attempt per-frame registration: stitch2d fails
+    # on these low-texture, illumination-gradient brightfield tiles. Drop "per_frame" from the
+    # policy and disable alignment so the master coords are the SOURCE, not a fallback.
+    #
+    # use_legacy_canvas resizes the mosaic to a hardcoded [1140, 480] * (tile_width/640) target,
+    # i.e. 1710x720 — an anisotropic ~0.74x horizontal squash of the true 2304x720 stitch, baked in
+    # for a 640px-wide camera. That distorts morphology; keep the true stitch geometry instead.
+    tiling_config = FrameTilingConfig(
+        orientation=orientation,
+        enable_alignment=False,
+        fallback_policy=("master",),
+        use_legacy_canvas=False,
+    )
     fallback = PreComputeStitchParams(master_params_path=master_params_path)
 
     log.info(
