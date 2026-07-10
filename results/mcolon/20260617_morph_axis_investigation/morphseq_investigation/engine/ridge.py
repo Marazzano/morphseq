@@ -7,7 +7,7 @@ density-strip verb. It consumes the SAME ``DistributionGrid`` IR that
 ``build_1d_density_grid`` AND cross-population ``build_1d_distribution_comparison``
 — feed it for free).
 
-This RE-HOMES the working prototype ``v0/rich_distribution_plot.render_ridgeline``
+This RE-HOMES the working prototype ``v0/_superseded/rich_distribution_plot.render_ridgeline``
 (its offset math + target/reference styling was reviewed against real figures)
 onto the grid IR. The three variants and their offset arithmetic are ported
 verbatim in spirit:
@@ -84,7 +84,7 @@ def plot_1d_ridgeline(
         ``reversed(design_hpfs)`` with earliest-first hpf input).
 
     ``variant`` controls placement of target vs reference within each bin
-    (offset math ported from ``v0/rich_distribution_plot.render_ridgeline``):
+    (offset math ported from ``v0/_superseded/rich_distribution_plot.render_ridgeline``):
       overlaid : both on the bin baseline (fills overlap).
       stacked  : reference on baseline, target on a sub-offset just above.
       mirror   : reference mirrored downward, target upward.

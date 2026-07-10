@@ -1,4 +1,9 @@
-"""Rich faceted distribution plots for the b9d2 worked example.
+"""RETIRED (superseded) — its ridgeline offset math + target/reference styling
+were re-homed onto the grid IR in ``engine/ridge.py::plot_1d_ridgeline``; the
+canonical driver is ``../b9d2_catalog_example.py``. Kept for historical
+reference; will NOT run on ``main`` (imports the removed pre-migration API).
+
+Rich faceted distribution plots for the b9d2 worked example.
 
 This is the "rich plot" follow-up to TASK_E (see docs/tech_debt/next_steps.md
 "True KDE ridge plot over time"). The plain emergence strip in
