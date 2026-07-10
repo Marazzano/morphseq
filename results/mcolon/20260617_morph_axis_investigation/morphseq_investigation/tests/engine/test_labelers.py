@@ -1,132 +1,41 @@
-"""TASK_B — labeler tests (genotype + peak_finding).
+"""TASK_B (commit 1) — detect_peaks writes the resolved_peak label column.
 
-Both labelers run the SAME skeleton and pass the SAME ``validate_label_group``
-(peer symmetry). Genotype proves the skeleton; peak_finding folds the live
-``compute_resolved_peaks`` machinery into the ontology.
+Eager geometry / HDR wiring + retirement of the old tuple-return labelers land
+in the next checkpoint; this commit proves the CALLS + column-write only.
 """
 
+from __future__ import annotations
+
 import numpy as np
-import pytest
 
 from morphseq_investigation.engine.identifiers import make_distribution_id
-from morphseq_investigation.engine.invariants import validate_label_group
-from morphseq_investigation.engine.objects import (
-    Distribution,
-    LabelGroup,
-    SampleSet,
-    SampleSetGeometry,
-)
-from morphseq_investigation.engine.grid import build_grid
-from morphseq_investigation.engine.labelers import label_genotype, label_peak_finding
+from morphseq_investigation.engine.objects import Distribution, DistributionLabelGroup
 
 
-# --------------------------------------------------------------------------- #
-# fixtures
-# --------------------------------------------------------------------------- #
-def _make_distribution(values, sample_ids, *, scope="b9d2", time_bin=30, role="target"):
-    dist_id = make_distribution_id(scope, time_bin, role)
+def _make_distribution(values, sample_ids, *, coordinates=None):
+    coordinates = coordinates if coordinates is not None else {"scope_id": "b9d2", "time_bin": 30}
     return Distribution(
-        distribution_id=dist_id,
-        scope_id=scope,
-        time_bin=time_bin,
-        role=role,
+        distribution_id=make_distribution_id(coordinates),
         sample_ids=tuple(sample_ids),
         feature_names=("PC1", "PC2"),
         feature_values=np.asarray(values, dtype=float),
+        coordinates=coordinates,
     )
 
 
-def _genotype_distribution():
-    # 6 samples, 2 features. Labels exercise: two real categories, the literal
-    # string "unknown", and one NA (None).
-    values = np.arange(12, dtype=float).reshape(6, 2)
-    sample_ids = [f"e{i}" for i in range(6)]
-    return _make_distribution(values, sample_ids)
+def _bimodal_points(seed=0, n_per=90, sep=8.0):
+    rng = np.random.default_rng(seed)
+    a = rng.normal(loc=(0.0, 0.0), scale=0.6, size=(n_per, 2))
+    b = rng.normal(loc=(sep, sep), scale=0.6, size=(n_per, 2))
+    return np.vstack([a, b])
 
 
-# --------------------------------------------------------------------------- #
-# genotype labeler
-# --------------------------------------------------------------------------- #
-def test_genotype_category_counts_match():
-    dist = _genotype_distribution()
-    labels = ["wildtype", "wildtype", "homo", "homo", "homo", "wildtype"]
-    lg, sample_sets = label_genotype(dist, "column", {"labels": labels, "column": "genotype"})
-
-    by_name = {s.sample_set_name: s for s in sample_sets}
-    assert set(by_name) == {"wildtype", "homo"}
-    assert len(by_name["wildtype"].sample_ids) == 3
-    assert len(by_name["homo"].sample_ids) == 3
-    # peer shape
-    assert isinstance(lg, LabelGroup)
-    assert all(isinstance(s, SampleSet) for s in sample_sets)
-    # provided labels carry no measured geometry
-    assert all(s.geometry is None for s in sample_sets)
-    # feature_names the labeler USED to form groups is empty for a provided labeler
-    assert lg.provenance["labeler"]["feature_names"] == ()
-    assert lg.artifacts is None
+def _peak_distribution(points, *, coordinates=None):
+    sample_ids = [f"p{i}" for i in range(len(points))]
+    return _make_distribution(points, sample_ids, coordinates=coordinates)
 
 
-def test_genotype_unknown_is_a_real_sample_set():
-    dist = _genotype_distribution()
-    # a LITERAL "unknown" string (not NA) must become a real SampleSet, not abstention
-    labels = ["wildtype", "unknown", "unknown", "homo", "homo", "wildtype"]
-    lg, sample_sets = label_genotype(dist, "column", {"labels": labels})
-
-    by_name = {s.sample_set_name: s for s in sample_sets}
-    assert "unknown" in by_name
-    unknown_set = by_name["unknown"]
-    assert len(unknown_set.sample_ids) == 2
-    # a literal "unknown" is a real category, NOT a missing value
-    assert unknown_set.provenance["evidence"]["is_missing_value"] is False
-    # and it is NOT in unassigned
-    assert unknown_set.sample_ids[0] not in lg.unassigned_sample_ids
-
-
-def test_genotype_na_source_marks_is_missing_value():
-    dist = _genotype_distribution()
-    labels = ["wildtype", None, "homo", np.nan, "homo", "wildtype"]
-    lg, sample_sets = label_genotype(
-        dist, "column", {"labels": labels, "missing_name": "na_bucket"}
-    )
-    by_name = {s.sample_set_name: s for s in sample_sets}
-    assert "na_bucket" in by_name
-    na_set = by_name["na_bucket"]
-    # both the None and the NaN sample landed in the missing bucket
-    assert len(na_set.sample_ids) == 2
-    assert na_set.provenance["evidence"]["is_missing_value"] is True
-    # the missing bucket is a REAL SampleSet, not abstention
-    assert na_set.sample_set_id in lg.sample_set_ids
-
-
-def test_genotype_coverage_invariant_holds():
-    dist = _genotype_distribution()
-    labels = ["wildtype", "wildtype", "homo", "homo", None, "unknown"]
-    lg, sample_sets = label_genotype(dist, "column", {"labels": labels})
-    # validate_label_group already ran inside the labeler; assert coverage directly too
-    validate_label_group(dist, lg, sample_sets)
-    covered = set(lg.sample_id_to_sample_set_id) | set(lg.unassigned_sample_ids)
-    assert covered == set(dist.sample_ids)
-
-
-def test_genotype_forced_abstention_goes_to_unassigned():
-    dist = _genotype_distribution()
-    labels = ["wildtype"] * 6
-    lg, sample_sets = label_genotype(
-        dist, "column", {"labels": labels, "unassigned": {"e0", "e5"}}
-    )
-    assert set(lg.unassigned_sample_ids) == {"e0", "e5"}
-    # the abstained samples are in NO SampleSet
-    for s in sample_sets:
-        assert "e0" not in s.sample_ids and "e5" not in s.sample_ids
-    validate_label_group(dist, lg, sample_sets)
-
-
-# --------------------------------------------------------------------------- #
-# peak_finding fixtures
-# --------------------------------------------------------------------------- #
-def _fast_config():
-    # A cheaper bootstrap vote so tests run quickly (the numbers only affect the
-    # vote's precision, not the mapping being tested).
+def _fast_resolution_config():
     from morphseq_investigation.core.distribution_records import PeakResolutionConfig
     from morphseq_investigation.core.peak_stability import PeakCountStabilityPolicy
 
@@ -139,193 +48,44 @@ def _fast_config():
     )
 
 
-def _bimodal_points(seed=0, n_per=90, sep=8.0):
-    rng = np.random.default_rng(seed)
-    a = rng.normal(loc=(0.0, 0.0), scale=0.6, size=(n_per, 2))
-    b = rng.normal(loc=(sep, sep), scale=0.6, size=(n_per, 2))
-    return np.vstack([a, b])
+def test_detect_peaks_bimodal_writes_resolved_peak_column_with_two_categories():
+    from morphseq_investigation.engine.labelers import detect_peaks
 
-
-def _unimodal_points(seed=1, n=180):
-    rng = np.random.default_rng(seed)
-    return rng.normal(loc=(0.0, 0.0), scale=0.8, size=(n, 2))
-
-
-def _peak_distribution(points, *, scope="b9d2", role="target"):
-    sample_ids = [f"p{i}" for i in range(len(points))]
-    return _make_distribution(points, sample_ids, scope=scope, role=role)
-
-
-def _grid_for(points):
-    sample_ids = tuple(f"p{i}" for i in range(len(points)))
-    return build_grid(
-        ("PC1", "PC2"),
-        np.asarray(points, dtype=float),
-        sample_ids,
-        "pooled_min_max",
-        {"resolution": 61},
-    )
-
-
-# --------------------------------------------------------------------------- #
-# peak_finding labeler
-# --------------------------------------------------------------------------- #
-def test_peak_finding_bimodal_gives_two_sample_sets_with_geometry():
     points = _bimodal_points()
     dist = _peak_distribution(points)
-    grid = _grid_for(points)
-    lg, sample_sets = label_peak_finding(
-        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    lg = detect_peaks(
+        dist,
+        features=("PC1", "PC2"),
+        resolution_config=_fast_resolution_config(),
     )
 
-    assert len(sample_sets) == 2, "clearly bimodal fixture must resolve 2 modes"
-    for s in sample_sets:
-        assert s.geometry is not None
-        assert isinstance(s.geometry, SampleSetGeometry)
-        assert s.geometry.center.shape == (2,)
-        assert np.isfinite(s.geometry.radius)
-        assert s.geometry.grid_id == grid.grid_id
-        # geometry carries NO run-relative scalars
-        assert not hasattr(s.geometry, "support_fraction")
-        assert not hasattr(s.geometry, "prominence_rank")
-    # resolved_peak_count is derived = len(sample_set_ids)
-    assert len(lg.sample_set_ids) == 2
+    assert isinstance(lg, DistributionLabelGroup)
+    column = lg.distribution.label_column("resolved_peak")
+    categories = column.categories()
+    assert len(categories) == 2, "clearly bimodal fixture must resolve 2 modes"
+    assert set(categories) == {"peak_0", "peak_1"}
 
 
-def test_peak_finding_unimodal_gives_one_sample_set():
-    points = _unimodal_points()
-    dist = _peak_distribution(points)
-    grid = _grid_for(points)
-    lg, sample_sets = label_peak_finding(
-        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
-    )
-    assert len(sample_sets) == 1
+def test_detect_peaks_returns_new_distribution_original_unchanged():
+    from morphseq_investigation.engine.labelers import detect_peaks
 
-
-def test_peak_finding_per_sample_set_metrics_populated_off_geometry():
     points = _bimodal_points()
     dist = _peak_distribution(points)
-    grid = _grid_for(points)
-    lg, sample_sets = label_peak_finding(
-        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    lg = detect_peaks(
+        dist,
+        features=("PC1", "PC2"),
+        resolution_config=_fast_resolution_config(),
     )
-    # per_sample_set_metrics holds the run-relative scalars, keyed by sample_set_id
-    for s in sample_sets:
-        metrics = lg.per_sample_set_metrics[s.sample_set_id]
-        assert "support_fraction" in metrics
-        assert "prominence_rank" in metrics
-        assert "height_relative_to_max" in metrics
-        assert "is_dominant" in metrics
-    # exactly one dominant peak
-    n_dominant = sum(
-        lg.per_sample_set_metrics[s.sample_set_id]["is_dominant"] == 1.0 for s in sample_sets
-    )
-    assert n_dominant == 1
+
+    assert "resolved_peak" not in dist.labels
+    assert "resolved_peak" in lg.distribution.labels
+    assert lg.distribution is not dist
 
 
-def test_peak_finding_artifacts_carry_grid_density_basins_with_grid_id():
+def test_stub_wiring_matches_direct_call():
     points = _bimodal_points()
     dist = _peak_distribution(points)
-    grid = _grid_for(points)
-    lg, sample_sets = label_peak_finding(
-        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
-    )
-    art = lg.artifacts
-    assert art is not None
-    assert art.grid_id == grid.grid_id
-    assert art.grid is grid
-    assert art.density_grid is not None
-    assert art.density_grid.grid_id == grid.grid_id
-    assert art.basin_labels is not None
-    assert art.basin_labels.shape == art.density_grid.density.shape
-
-
-def test_peak_finding_vote_lives_in_provenance():
-    points = _bimodal_points()
-    dist = _peak_distribution(points)
-    grid = _grid_for(points)
-    lg, sample_sets = label_peak_finding(
-        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
-    )
-    assert "is_reliable" in lg.provenance
-    assert "vote" in lg.provenance
-    assert "mode_peak_count" in lg.provenance["vote"]
-    assert "peak_count_frequencies" in lg.provenance["vote"]
-
-
-def test_peak_finding_vote_collapse_no_phantom_sample_sets():
-    # Two nearby Gaussian clusters that the KDE reads as ONE mode. Naive
-    # per-cluster counting would say 2; the density/vote resolves 1 -> ONE
-    # SampleSet, and the rejected split is NOT a phantom SampleSet.
-    rng = np.random.default_rng(3)
-    a = rng.normal(loc=(0.0, 0.0), scale=1.0, size=(120, 2))
-    b = rng.normal(loc=(1.2, 0.0), scale=1.0, size=(120, 2))  # heavily overlapping
-    points = np.vstack([a, b])
-    dist = _peak_distribution(points)
-    grid = _grid_for(points)
-    lg, sample_sets = label_peak_finding(
-        dist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
-    )
-    # one coherent mode; never a phantom set per rejected candidate
-    assert len(sample_sets) == 1
-    # every accepted set corresponds to a real declared sample_set_id
-    assert set(s.sample_set_id for s in sample_sets) == set(lg.sample_set_ids)
-
-
-# --------------------------------------------------------------------------- #
-# peer symmetry — both labelers return the SAME shape + pass the SAME validator
-# --------------------------------------------------------------------------- #
-def test_peer_symmetry_same_return_shape_and_validator():
-    # genotype run
-    gdist = _genotype_distribution()
-    glabels = ["wildtype", "wildtype", "homo", "homo", "homo", "wildtype"]
-    g_lg, g_sets = label_genotype(gdist, "column", {"labels": glabels})
-
-    # peak run
-    points = _bimodal_points()
-    pdist = _peak_distribution(points)
-    grid = _grid_for(points)
-    p_lg, p_sets = label_peak_finding(
-        pdist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
-    )
-
-    for lg, sets, dist in ((g_lg, g_sets, gdist), (p_lg, p_sets, pdist)):
-        assert isinstance(lg, LabelGroup)
-        assert isinstance(sets, list)
-        assert all(isinstance(s, SampleSet) for s in sets)
-        # the SAME central validator accepts both (re-run it explicitly)
-        validate_label_group(dist, lg, sets)
-
-
-# --------------------------------------------------------------------------- #
-# TASK_A integration — ONE pooled grid shared by target & reference peak runs.
-# --------------------------------------------------------------------------- #
-def test_peak_finding_target_and_reference_share_one_pooled_grid_id():
-    # Two roles' point clouds, ONE grid built from the POOLED features (§1b) via
-    # the real TASK_A build_grid. Both peak runs must reference the SAME grid_id
-    # -> directly raster-comparable (HDR/basins overlap without interpolation).
-    target_points = _bimodal_points(seed=0)
-    reference_points = _bimodal_points(seed=5)
-    pooled = np.vstack([reference_points, target_points])
-    pooled_ids = tuple(f"pool{i}" for i in range(len(pooled)))
-    shared_grid = build_grid(
-        ("PC1", "PC2"), pooled, pooled_ids, "pooled_min_max", {"resolution": 61}
-    )
-
-    tdist = _peak_distribution(target_points, role="target")
-    rdist = _peak_distribution(reference_points, role="reference")
-    t_lg, t_sets = label_peak_finding(
-        tdist, "peak_finding", {"grid": shared_grid, "resolution_config": _fast_config()}
-    )
-    r_lg, r_sets = label_peak_finding(
-        rdist, "peak_finding", {"grid": shared_grid, "resolution_config": _fast_config()}
-    )
-
-    # raster comparability: identical grid_id on both runs' artifacts + geometry + HDR.
-    assert t_lg.artifacts.grid_id == r_lg.artifacts.grid_id == shared_grid.grid_id
-    for s in t_sets + r_sets:
-        assert s.geometry.grid_id == shared_grid.grid_id
-        assert s.hdr.grid_id == shared_grid.grid_id
-    # density_grid evaluated on the shared grid carries the same id (evaluate_density).
-    assert t_lg.artifacts.density_grid.grid_id == shared_grid.grid_id
-    assert r_lg.artifacts.density_grid.grid_id == shared_grid.grid_id
+    via_method = dist.detect_peaks(features=("PC1", "PC2"), spec=None)
+    assert isinstance(via_method, DistributionLabelGroup)
+    assert "resolved_peak" in via_method.distribution.labels
+    assert "resolved_peak" not in dist.labels

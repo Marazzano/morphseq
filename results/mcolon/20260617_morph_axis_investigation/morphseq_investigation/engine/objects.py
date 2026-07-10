@@ -291,7 +291,7 @@ class Distribution:
             display_name=display_name if display_name is not None else label_name,
         )
 
-    # --- impl-later methods (bodies land in A / B) -------------------------- #
+    # --- detect_peaks (TASK_B body; SIBLING of with_label) ------------------ #
     def detect_peaks(
         self,
         *,
@@ -303,13 +303,19 @@ class Distribution:
 
         Writes ``output_label`` (e.g. ``resolved_peak``) AND its EAGER peak
         geometry into the column's provenance, then returns the bound
-        DistributionLabelGroup (``.distribution`` carries the new column). Body
-        implemented in TASK_B (labelers); ``spec`` defaults to
-        ``DEFAULT_ANALYSIS_SPEC`` there. Peak ids are LOCAL to this distribution
+        DistributionLabelGroup (``.distribution`` carries the new column).
+        ``spec`` defaults to ``DEFAULT_ANALYSIS_SPEC`` (the same spec the live
+        peak machinery already uses). Peak ids are LOCAL to this distribution
         (matching ≠ discovery) — no cross-distribution peak_0↔peak_0 claim.
+
+        The body lives in ``engine/labelers.detect_peaks`` (TASK_B) — imported
+        locally here to avoid a module import cycle (``labelers`` imports this
+        module's types).
         """
-        raise NotImplementedError(
-            "Distribution.detect_peaks is implemented in TASK_B (engine/labelers.py)"
+        from .labelers import detect_peaks as _detect_peaks
+
+        return _detect_peaks(
+            self, features=features, output_label=output_label, spec=spec
         )
 
 

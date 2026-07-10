@@ -45,16 +45,18 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from .grid import evaluate_density
+from .grid import build_grid, evaluate_density
 from .identifiers import make_sample_set_id
 from .invariants import validate_label_group
 from .objects import (
     DensityGrid,
     Distribution,
+    DistributionLabelGroup,
     Grid,
     HDR,
     LabelGroup,
     LabelGroupArtifacts,
+    LabelProvenance,
     SampleSet,
     SampleSetGeometry,
 )
@@ -557,3 +559,93 @@ def _detail_to_dict(detail) -> dict[str, Any] | None:
         "accepted": bool(detail.accepted),
         "reject_reason": detail.reject_reason,
     }
+
+
+# --------------------------------------------------------------------------- #
+# detect_peaks (TASK_B, commit 1) — writes the resolved_peak label column onto
+# a Distribution. Calls into the SAME live machinery as label_peak_finding
+# above; geometry/HDR eager-attachment + retirement of the old tuple-return
+# labelers lands in the next checkpoint.
+# --------------------------------------------------------------------------- #
+def detect_peaks(
+    distribution: Distribution,
+    *,
+    features: Sequence[str],
+    output_label: str = "resolved_peak",
+    spec: Mapping[str, Any] | None = None,
+    resolution: int = 61,
+    grid_method: str = "pooled_min_max",
+    grid_params: Mapping[str, Any] | None = None,
+    resolution_config: Any | None = None,
+) -> DistributionLabelGroup:
+    """Fit peaks on ``distribution``'s OWN points for ``features`` and write a
+    label column named ``output_label``. This is the BODY of
+    ``Distribution.detect_peaks`` (TASK_0 stub); called from there so the
+    public surface stays ``distribution.detect_peaks(...)``.
+
+    The grid is built from THIS distribution's own points ONLY (no pooled
+    target/reference grid). Peak ids are LOCAL: two independently-run
+    distributions may both produce a ``peak_0`` and nothing here claims they
+    correspond.
+    """
+    from ..core.distribution_records import (
+        DistributionAnalysisContext,
+        DistributionRecord,
+        PeakResolutionConfig,
+        compute_resolved_peaks,
+    )
+    from ..core.resolved_peak_analysis import DEFAULT_ANALYSIS_SPEC
+
+    features = tuple(features)
+    analysis_spec = spec if spec is not None else DEFAULT_ANALYSIS_SPEC
+    resolution_config = resolution_config or PeakResolutionConfig()
+
+    points = np.column_stack([distribution.feature_column(f) for f in features])
+
+    grid = build_grid(
+        feature_names=features,
+        pooled_values=points,
+        fit_sample_ids=distribution.sample_ids,
+        method=grid_method,
+        params={**dict(grid_params or {}), "resolution": resolution},
+    )
+    canonical_grid = _grid_to_canonical(grid)
+
+    record = DistributionRecord(
+        distribution_id=distribution.distribution_id,
+        points=points,
+        analysis_context=DistributionAnalysisContext(grid=canonical_grid, spec=analysis_spec),
+    )
+    record = compute_resolved_peaks(record, resolution_config)
+    resolved = record.resolved_peaks
+
+    sample_peak_ids = (
+        np.asarray(resolved.sample_peak_ids, dtype=int)
+        if resolved.sample_peak_ids is not None
+        else np.full(len(points), -1, dtype=int)
+    )
+
+    assignments: dict[str, str] = {}
+    for peak in resolved.peaks:
+        peak_id = int(peak.geometry.peak_id)
+        category = f"peak_{peak_id}"
+        member_indices = np.nonzero(sample_peak_ids == peak_id)[0]
+        for i in member_indices:
+            assignments[distribution.sample_ids[i]] = category
+
+    provenance = LabelProvenance(
+        method="detect_peaks",
+        features=features,
+        spec={
+            "bandwidth_rule": analysis_spec.bandwidth_rule,
+            "bandwidth_multiplier": analysis_spec.bandwidth_multiplier,
+            "peak_detector_method": analysis_spec.peak_detector_method,
+            "is_reliable": bool(resolved.is_reliable),
+            "resolved_peak_count": len(resolved.peaks),
+        },
+    )
+
+    new_distribution = distribution.with_label(
+        output_label, assignments, provenance=provenance
+    )
+    return new_distribution.label_group(output_label, display_name=output_label)
