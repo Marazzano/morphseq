@@ -1,0 +1,9 @@
+# Smoke overlay: 3 wells of one Keyence experiment, to validate the tile->well
+# assignment fix and the horizontal orientation default before a full re-run.
+experiments:
+  - 20260702_hotchem_24hpf_plate01
+experiment_wells:
+  20260702_hotchem_24hpf_plate01:
+    - A01
+    - C04
+    - H07

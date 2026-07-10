@@ -1,6 +1,0 @@
-Config file /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/config.yaml is extended by additional config specified via the command line.
-Building DAG of jobs...
-LockException:
-Error: Directory cannot be locked. Please make sure that no other Snakemake process is trying to create the same files in the following directory:
-/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator
-If you are sure that no other instances of snakemake are running on this directory, the remaining lock was likely caused by a kill signal or a power loss. It can be removed with the --unlock argument.

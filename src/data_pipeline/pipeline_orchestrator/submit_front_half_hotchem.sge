@@ -1,0 +1,44 @@
+#!/bin/bash
+# Full run: all 6 hotchem Keyence plates, through materialization only (target: front_half).
+# Produces 96 stitched 3-tile full-field images per experiment (720x2304 portrait).
+#
+# Geometry comes from the experiment-grain stitch map, which is derived from the Keyence
+# StageLocationX/Y metadata -- no per-frame image registration is attempted.
+#
+# NOTE: each experiment's pipeline_output/acquisition/<exp> must be cleared first, so ingest
+# regenerates the acquisition inventory WITH the stage_x/y/z_nm columns the stitch map needs.
+#
+# Submit from src/data_pipeline/pipeline_orchestrator:  qsub submit_front_half_hotchem.sge
+
+#$ -N hotchem_front_half
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=10G
+#$ -pe serial 8
+#$ -o hotchem_fronthalf.$JOB_ID.out
+#$ -e hotchem_fronthalf.$JOB_ID.err
+
+set -euo pipefail
+trap 'status=$?; echo "=== hotchem_front_half FINISHED $(date) on $(hostname) - exit ${status} ==="; exit "${status}"' EXIT
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+SRC_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src"
+
+echo "=== hotchem front_half START $(date) on $(hostname) ==="
+nvidia-smi -L || echo "WARNING: no GPU visible"
+
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
+# Target must precede --configfile: --configfile is greedy and would swallow it.
+# --keep-going: one bad well should not abandon the other 575.
+"${SNAKEMAKE}" front_half \
+  --cores 8 \
+  --keep-going \
+  --rerun-triggers mtime \
+  --printshellcmds \
+  --configfile config.yaml config_runtime_20260702_hotchem.yaml

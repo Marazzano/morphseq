@@ -122,5 +122,10 @@ _Archive/
 data_pipeline_output/
 .snakemake/
 
+# Ignore image and cluster job log files
+*.png
+*.err
+*.out
+
 # mdcolon results-specific rules moved to results/mcolon/.gitignore
 # (see results/mcolon/.gitignore for details)

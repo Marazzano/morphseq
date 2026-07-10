@@ -1,9 +1,0 @@
-=== hotchem_all6 through_line START Thu Jul  9 09:07:09 PDT 2026 on t005.grid.gs.washington.edu ===
-GPU 0: NVIDIA L40S (UUID: GPU-63dcd7d1-e333-ee59-ee42-f46451c98d34)
-Project root: /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq
-Output root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output
-Inputs root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq
-Models root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models
-Runner:       conda (conda env: segmentation_grounded_sam)
-Experiments:  ['20260702_hotchem_24hpf_plate01', '20260702_hotchem_24hpf_plate02', '20260702_hotchem_30hpf_plate01', '20260702_hotchem_30hpf_plate02', '20260702_hotchem_36hpf_plate01', '20260702_hotchem_36hpf_plate02']
-Microscope:   Keyence
