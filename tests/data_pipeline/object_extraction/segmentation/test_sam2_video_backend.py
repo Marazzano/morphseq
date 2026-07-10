@@ -25,7 +25,7 @@ def _model_frame_view(tmp_path: Path, *, well_id: str = "20250912_B01") -> pd.Da
                 "image_id": f"{well_id}_BF_t{t:04d}",
                 "time_index": t,
                 "channel_id": "BF",
-                "source_image_path": str(frame),
+                "image_path": str(frame),
                 "image_width_px": 100,
                 "image_height_px": 80,
             }

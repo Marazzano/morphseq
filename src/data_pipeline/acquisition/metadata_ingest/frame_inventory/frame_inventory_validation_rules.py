@@ -25,9 +25,6 @@ from data_pipeline.acquisition.image_materialization.frame_inventory_contract im
     REQUIRED_CHANNEL,
     frame_inventory_product_keys,
 )
-from data_pipeline.acquisition.image_materialization.materialized_image_write_policy import (
-    expected_downsampled_dims,
-)
 from data_pipeline.shared.identifiers import build_well_id
 
 log = logging.getLogger(__name__)
@@ -221,25 +218,25 @@ def _assert_multitimepoint_has_elapsed_time(df: pd.DataFrame, *, scope_label: st
 
 
 # ---------------------------------------------------------------------------
-# L4 — source / image contract (gated by check_sources)
+# L4 — image contract (gated by check_sources)
 # ---------------------------------------------------------------------------
 
-def validate_sources(
+def validate_image_paths(
     df: pd.DataFrame, *, image_root: Path | None, scope_label: str
 ) -> None:
-    """For every row: resolve source_image_path, open the image, self-check dims, require µm/px > 0.
+    """For every row: resolve image_path, open the image, self-check dims, require µm/px > 0.
 
     The CSV is never rewritten — paths are resolved only during validation.
     """
     from PIL import Image  # local import: only the strict source mode needs pillow.
 
     for idx, row in df.iterrows():
-        resolved = _resolve_source_path(
-            str(row["source_image_path"]), image_root=image_root, scope_label=scope_label
+        resolved = _resolve_image_path(
+            str(row["image_path"]), image_root=image_root, scope_label=scope_label
         )
         if not resolved.exists():
             raise ValueError(
-                f"[{scope_label}] source_image_path does not exist: {resolved} "
+                f"[{scope_label}] image_path does not exist: {resolved} "
                 f"(row {idx}). Fix the path or place the image where it resolves."
             )
         if resolved.suffix.lower() not in ALLOWED_IMAGE_SUFFIXES:
@@ -287,18 +284,6 @@ def validate_sources(
 
         declared_w = int(row["image_width_px"])
         declared_h = int(row["image_height_px"])
-        source_w = int(row["source_image_width_px"])
-        source_h = int(row["source_image_height_px"])
-        expected_w, expected_h = expected_downsampled_dims(
-            source_w, source_h, downsample_factor, str(row["downsample_method"])
-        )
-        if (declared_w, declared_h) != (expected_w, expected_h):
-            raise ValueError(
-                f"[{scope_label}] image dims disagree with write policy for {resolved}: "
-                f"source dims {source_w}x{source_h} with downsample_factor={downsample_factor} "
-                f"and downsample_method={row['downsample_method']!r} imply "
-                f"{expected_w}x{expected_h}, but the manifest declares {declared_w}x{declared_h}."
-            )
         if (real_w, real_h) != (declared_w, declared_h):
             raise ValueError(
                 f"[{scope_label}] image dims mismatch for {resolved}: header says "
@@ -306,10 +291,10 @@ def validate_sources(
                 "Correct image_width_px / image_height_px (they are a self-check, not new info)."
             )
 
-        um_per_px = float(row["source_micrometers_per_pixel"])
+        um_per_px = float(row["image_micrometers_per_pixel"])
         if not um_per_px > 0:
             raise ValueError(
-                f"[{scope_label}] source_micrometers_per_pixel must be > 0; "
+                f"[{scope_label}] image_micrometers_per_pixel must be > 0; "
                 f"row {idx} has {um_per_px}."
             )
 
@@ -386,7 +371,7 @@ def _validate_focus_index_map_provenance(
                 f"[{scope_label}] projection/focus_stack row {idx} is missing focus_index_map_path. "
                 "Every focus_stack projection must carry its focus_index_map provenance .npz."
             )
-        resolved = _resolve_source_path(str(raw), image_root=image_root, scope_label=scope_label)
+        resolved = _resolve_image_path(str(raw), image_root=image_root, scope_label=scope_label)
         if resolved.suffix.lower() != ".npz":
             raise ValueError(
                 f"[{scope_label}] focus_index_map_path must be a .npz; row {idx} has {resolved}."
@@ -465,7 +450,7 @@ def validate_focus_index_map_against_inventory(
         raw = row.get("focus_index_map_path")
         if raw is None or pd.isna(raw):
             continue
-        resolved = _resolve_source_path(str(raw), image_root=image_root, scope_label=scope_label)
+        resolved = _resolve_image_path(str(raw), image_root=image_root, scope_label=scope_label)
         with np.load(resolved) as data:
             z_indices = list(int(z) for z in data["z_indices"])
         sel = well_acquisition_inventory_df[
@@ -481,7 +466,7 @@ def validate_focus_index_map_against_inventory(
             )
 
 
-def _resolve_source_path(
+def _resolve_image_path(
     raw_path: str, *, image_root: Path | None, scope_label: str
 ) -> Path:
     """Absolute paths validate directly; relative paths resolve under image_root (no `..` escape)."""
@@ -490,14 +475,14 @@ def _resolve_source_path(
         return path
     if image_root is None:
         raise ValueError(
-            f"[{scope_label}] relative source_image_path {raw_path!r} requires image_root when "
+            f"[{scope_label}] relative image_path {raw_path!r} requires image_root when "
             "check_sources=True. Pass --image-root or author absolute paths."
         )
     root = Path(image_root).resolve()
     resolved = (root / path).resolve()
     if not resolved.is_relative_to(root):
         raise ValueError(
-            f"[{scope_label}] relative source_image_path {raw_path!r} escapes image_root "
+            f"[{scope_label}] relative image_path {raw_path!r} escapes image_root "
             f"({root}) via '..'. Paths may not climb out of the image root."
         )
     return resolved

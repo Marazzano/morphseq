@@ -75,7 +75,7 @@ def _identity_row_for(inv_row: pd.Series, image_id: str) -> dict:
         "time_index": int(inv_row["time_index"]),
         "z_index": pd.NA,
         "channel_id": str(inv_row["channel_id"]),
-        "source_image_path": str(inv_row["source_image_path"]),
+        "image_path": str(inv_row["image_path"]),
         "image_width_px": int(inv_row["image_width_px"]),
         "image_height_px": int(inv_row["image_height_px"]),
     }
@@ -94,7 +94,7 @@ def run_frame_detection_df(
 
     Returns the validated ``frame_detections`` table. ``reference_frame_inventory`` is the trusted
     read-only inventory; ``model`` is injected; per-frame inference is delegated to the backend
-    adapter. ``image_root`` resolves relative ``source_image_path`` values (None → paths used as-is).
+    adapter. ``image_root`` resolves relative ``image_path`` values (None → paths used as-is).
     """
     detect_frame = _resolve_backend(backend)
 
@@ -108,7 +108,7 @@ def run_frame_detection_df(
     for _, inv_row in bf.iterrows():
         image_id = str(inv_row["image_id"])
         identity = _identity_row_for(inv_row, image_id)
-        image_path = _resolve_image_path(inv_row["source_image_path"], image_root)
+        image_path = _resolve_image_path(inv_row["image_path"], image_root)
 
         det_rows = detect_frame(
             model,
@@ -155,8 +155,8 @@ def run_frame_detection(
     return df
 
 
-def _resolve_image_path(source_image_path: str, image_root: str | Path | None) -> Path:
-    p = Path(str(source_image_path))
+def _resolve_image_path(image_path: str, image_root: str | Path | None) -> Path:
+    p = Path(str(image_path))
     if p.is_absolute() or image_root is None:
         return p
     return Path(image_root) / p

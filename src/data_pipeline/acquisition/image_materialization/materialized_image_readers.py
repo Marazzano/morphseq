@@ -3,16 +3,16 @@
 Read-only mirror of ``materialized_image_paths.py`` (the write grammar). ``frame_inventory`` is the
 validated read index for materialized image products: the materializer writes files using the
 write grammar and emits ``frame_inventory`` rows recording each product's path as
-``source_image_path``; the ``frame_inventory`` validator proves those rows agree with the product
+``image_path``; the ``frame_inventory`` validator proves those rows agree with the product
 identity/path contract. After that point, downstream consumers must not reconstruct paths from
 identity atoms — they resolve the validated row by product identity and read its recorded
-``source_image_path``.
+``image_path``.
 
 Paths writes. Inventory remembers. Validation makes memory trustworthy. Readers read the memory.
 
 Two verbs:
   - ``resolve_*`` returns ``frame_inventory`` row(s) — facts, no pixels.
-  - ``load_*`` returns ndarray pixels, reading the row's RECORDED ``source_image_path`` — never
+  - ``load_*`` returns ndarray pixels, reading the row's RECORDED ``image_path`` — never
     recomputed via ``materialized_image_paths.py``.
 ``*_from_image_id`` performs an inventory lookup; ``*_from_row(s)`` consumes already-resolved rows.
 
@@ -170,7 +170,7 @@ def _row_product_keys(frame_inventory_df: pd.DataFrame) -> pd.Series:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# load: row(s) -> pixels (reads RECORDED source_image_path, never recomputes it)
+# load: row(s) -> pixels (reads RECORDED image_path, never recomputes it)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -179,17 +179,17 @@ def load_materialized_image_from_row(
     *,
     image_root: Path | None = None,
 ) -> np.ndarray:
-    """Read the pixels named by ``frame_inventory_row['source_image_path']``.
+    """Read the pixels named by ``frame_inventory_row['image_path']``.
 
     Reads the RECORDED path; never reconstructs it via ``materialized_image_paths.py``.
     Encoding-agnostic (jpg/png/tif) — the caller does not need to know the suffix.
     """
-    path = _resolve_source_image_path(frame_inventory_row["source_image_path"], image_root)
+    path = _resolve_image_path(frame_inventory_row["image_path"], image_root)
     image = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
     if image is None:
         raise ValueError(
             f"load_materialized_image_from_row: could not read image at {path} "
-            f"(source_image_path={frame_inventory_row['source_image_path']!r})."
+            f"(image_path={frame_inventory_row['image_path']!r})."
         )
     return image
 
@@ -206,7 +206,7 @@ def load_materialized_images_from_rows(
     ]
 
 
-def _resolve_source_image_path(value: object, image_root: Path | None) -> Path:
+def _resolve_image_path(value: object, image_root: Path | None) -> Path:
     path = Path(str(value))
     if not path.is_absolute() and image_root is not None:
         path = image_root / path

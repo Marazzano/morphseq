@@ -56,7 +56,9 @@ def build_keyence_stitch_map(
     orientation_raw = str(
         acquisition_inventory_df["orientation"].mode().iloc[0]
     ).lower()
-    orientation = "horizontal" if orientation_raw == "horizontal" else "vertical"
+    # Modern Keyence exports often have no explicit orientation in TIFF metadata; legacy behavior
+    # treats unknown/non-vertical layouts as horizontal strips.
+    orientation = "vertical" if orientation_raw == "vertical" else "horizontal"
 
     pairs = (
         acquisition_inventory_df[["well_id", "time_index"]]

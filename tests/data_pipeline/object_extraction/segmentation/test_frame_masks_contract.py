@@ -27,7 +27,7 @@ def _model_frame_view() -> pd.DataFrame:
                 "image_id": f"20250912_B01_BF_t{t:04d}",
                 "time_index": t,
                 "channel_id": "BF",
-                "source_image_path": f"frames/t{t:04d}.jpg",
+                "image_path": f"frames/t{t:04d}.jpg",
                 "image_width_px": 100,
                 "image_height_px": 80,
             }
@@ -82,7 +82,7 @@ def _legacy_mask_rle() -> pd.DataFrame:
                 "centroid_x_px": 15,
                 "centroid_y_px": 16,
                 "mask_confidence": 0.9,
-                "source_image_path": f"frames/t{t:04d}.jpg",
+                "image_path": f"frames/t{t:04d}.jpg",
                 "image_width_px": 100,
                 "image_height_px": 80,
                 "source_backend": "sam2",

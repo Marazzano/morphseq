@@ -166,7 +166,7 @@ def _snip_inventory_row(**kw):
     row.update({
         "mask_id": f"{row['image_id']}_m0001",
         "track_id": f"{row['well_id']}_track0000",
-        "source_image_path": "images/src.png",
+        "image_path": "images/src.png",
         "processed_snip_path": "snips/out.png",
         "is_valid_snip": True,
         "error_message": "",

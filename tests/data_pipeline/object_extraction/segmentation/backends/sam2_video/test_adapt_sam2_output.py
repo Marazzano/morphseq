@@ -45,7 +45,7 @@ def _model_frame_view(n_frames: int = 2) -> pd.DataFrame:
             "time_index": t,
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": f"/data/{image_id}.png",
+            "image_path": f"/data/{image_id}.png",
             "image_width_px": 100,
             "image_height_px": 80,
             "sam2_frame_index": t,

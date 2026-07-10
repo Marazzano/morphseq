@@ -16,11 +16,13 @@ import numpy as np
 from PIL import Image
 
 FileFormat = Literal["png", "jpg", "tif"]
+Orientation = Literal["none", "horizontal", "vertical"]
 DownsampleMethod = Literal["none", "block_mean", "area_resize"]
 PixelDType = Literal["uint8", "uint16"]
 
 _VALID_POLICY_KEYS = frozenset({
     "file_format",
+    "orientation",
     "downsample_factor",
     "downsample_method",
     "pixel_dtype",
@@ -30,8 +32,7 @@ _VALID_POLICY_KEYS = frozenset({
 # Contract columns emitted at the writer/materializer boundary. These are frame_inventory columns,
 # but the vocabulary is owned here because it describes the bytes produced by this writer layer.
 MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS: tuple[str, ...] = (
-    "source_image_width_px",
-    "source_image_height_px",
+    "orientation",
     "image_file_format",
     "pixel_dtype",
     "downsample_factor",
@@ -45,6 +46,7 @@ MATERIALIZED_IMAGE_WRITE_POLICY_NULLABLE_COLUMNS: tuple[str, ...] = (
 
 _BASE_DEFAULT = {
     "file_format": "png",
+    "orientation": "none",
     "downsample_factor": 1,
     "downsample_method": "none",
     "pixel_dtype": "uint8",
@@ -78,6 +80,7 @@ _DEFAULT_METHOD_BY_FORMAT_FACTOR = {
 @dataclass(frozen=True)
 class ImageWritePolicy:
     file_format: FileFormat
+    orientation: Orientation
     downsample_factor: int
     downsample_method: DownsampleMethod
     pixel_dtype: PixelDType
@@ -178,6 +181,23 @@ def downsample_image(image: np.ndarray, policy: ImageWritePolicy) -> np.ndarray:
     return reduced.astype(arr.dtype, copy=False)
 
 
+def orient_image_for_write(image: np.ndarray, policy: ImageWritePolicy) -> np.ndarray:
+    """Rotate a 2D image only when needed to satisfy the write-policy orientation."""
+    arr = np.asarray(image)
+    if arr.ndim != 2:
+        raise ValueError(f"orient_image_for_write expects a 2D image; got shape {arr.shape}.")
+    if policy.orientation == "none":
+        return arr
+    height_px, width_px = arr.shape
+    if policy.orientation == "horizontal":
+        return arr if width_px >= height_px else np.rot90(arr)
+    if policy.orientation == "vertical":
+        return arr if height_px >= width_px else np.rot90(arr)
+    raise ValueError(
+        f"Unknown orientation {policy.orientation!r}; expected 'none', 'horizontal', or 'vertical'."
+    )
+
+
 def convert_pixel_dtype(image: np.ndarray, pixel_dtype: PixelDType) -> np.ndarray:
     """Convert to the encoder/read-back dtype using a fixed range, no per-image normalization."""
     arr = np.asarray(image)
@@ -197,8 +217,10 @@ def convert_pixel_dtype(image: np.ndarray, pixel_dtype: PixelDType) -> np.ndarra
 
 
 def prepare_image_for_write(image: np.ndarray, policy: ImageWritePolicy) -> np.ndarray:
-    """Apply the locked write order: downsample, then fixed dtype conversion."""
-    return convert_pixel_dtype(downsample_image(image, policy), policy.pixel_dtype)
+    """Apply the locked write order: orient, downsample, then fixed dtype conversion."""
+    oriented = orient_image_for_write(image, policy)
+    downsampled = downsample_image(oriented, policy)
+    return convert_pixel_dtype(downsampled, policy.pixel_dtype)
 
 
 def write_image(image: np.ndarray, path: Path, policy: ImageWritePolicy) -> None:
@@ -230,6 +252,7 @@ def _default_downsample_method(file_format: str, factor: int) -> str:
 
 def _validate_policy(policy: ImageWritePolicy) -> ImageWritePolicy:
     fmt = _normalize_format(policy.file_format)
+    orientation = _normalize_orientation(policy.orientation)
     method = str(policy.downsample_method)
     dtype = str(policy.pixel_dtype)
     if method not in ("none", "block_mean", "area_resize"):
@@ -256,6 +279,7 @@ def _validate_policy(policy: ImageWritePolicy) -> ImageWritePolicy:
     return replace(
         policy,
         file_format=fmt,
+        orientation=orientation,
         downsample_factor=factor,
         downsample_method=method,  # type: ignore[arg-type]
         pixel_dtype=dtype,  # type: ignore[arg-type]
@@ -274,3 +298,13 @@ def _normalize_format(file_format: str) -> FileFormat:
             f"file_format must be one of 'png', 'jpg', 'tif'; got {file_format!r}."
         )
     return fmt  # type: ignore[return-value]
+
+
+def _normalize_orientation(orientation: str) -> Orientation:
+    normalized = str(orientation).lower()
+    if normalized not in ("none", "horizontal", "vertical"):
+        raise ValueError(
+            "orientation must be one of 'none', 'horizontal', 'vertical'; "
+            f"got {orientation!r}."
+        )
+    return normalized  # type: ignore[return-value]

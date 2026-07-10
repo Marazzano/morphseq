@@ -51,8 +51,8 @@ REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "projection_method",           # method WITHIN projection ("focus_stack" …); NA for z_stack
     "elapsed_time_s",              # seconds since this well's first frame — CARRIED from acquisition
     "acquisition_time_s",          # raw per-frame timestamp — CARRIED from acquisition (audit)
-    "source_image_path",           # TIFF / PNG / JPEG; absolute OR relative to image_root
-    "source_micrometers_per_pixel",  # calibration µm/px, required > 0
+    "image_path",                  # TIFF / PNG / JPEG; absolute OR relative to image_root
+    "image_micrometers_per_pixel",  # calibration µm/px of the materialized image, required > 0
     "image_width_px",              # on-disk/post-downsample width (self-check against image header)
     "image_height_px",             # on-disk/post-downsample height (self-check against image header)
     *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,  # writer-owned bytes-on-disk policy fields
@@ -76,7 +76,7 @@ DERIVED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
 # CONSTRUCTION-PROVENANCE columns: nullable, contract-DECLARED paths that explain HOW the image in
 # the same row was produced. They are 1:1 with image_id, co-produced by the same materialization job,
 # and L4-validated alongside the image. A provenance path is NOT an image (it never appears in
-# source_image_path), NOT a product, and NOT a second image identity. Declared here so the assembler
+# image_path), NOT a product, and NOT a second image identity. Declared here so the assembler
 # treats them as known nullable columns rather than schema drift.
 #
 #   focus_index_map_path — the focus_stack focus_index_map .npz (focus_index_map + z_indices arrays):
@@ -144,7 +144,7 @@ DOWNSTREAM_FRAME_IDENTITY_BLOCK: tuple[str, ...] = (
     "time_index",
     "z_index",
     "channel_id",
-    "source_image_path",
+    "image_path",
     "image_width_px",
     "image_height_px",
 )
@@ -157,7 +157,7 @@ FRAME_IDENTITY_NULLABLE: frozenset[str] = frozenset({"z_index"})
 _FRAME_IDENTITY_CARRIED_COLUMNS: tuple[str, ...] = (
     "time_index",
     "channel_id",
-    "source_image_path",
+    "image_path",
     "image_width_px",
     "image_height_px",
 )
@@ -428,7 +428,7 @@ def validate_frame_identity_block(
         are non-null; rows belong to exactly one ``experiment_id`` and one ``well_id``;
       - *reference layer* ("bones belong to the right body"): every ``image_id`` exists in
         ``reference_frame_inventory`` (membership via ``frame_inventory_image_ids``); ``time_index`` /
-        ``channel_id`` / ``source_image_path`` / ``image_width_px`` / ``image_height_px`` agree with the
+        ``channel_id`` / ``image_path`` / ``image_width_px`` / ``image_height_px`` agree with the
         matching inventory row.
 
     Raises:
@@ -502,7 +502,7 @@ class StitchedHandoffSpec:
 
     experiment_id: str
     manifest_path: Path  # the dataset-level dropin_frame_inventory.csv (all wells)
-    image_root: Path | None = None  # resolves relative source_image_path; None → must be absolute
+    image_root: Path | None = None  # resolves relative image_path; None → must be absolute
 
 
 @dataclass(frozen=True)

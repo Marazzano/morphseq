@@ -64,7 +64,7 @@ def _one_well_inputs(*, time_indices=(0, 1, 2), mask_size=10):
             {"mask_id": mask_id, "image_id": image_id, "mask_rle": json.dumps(rle)}
         )
         inv_rows.append(
-            {"image_id": image_id, "source_micrometers_per_pixel": PIXEL_SIZE_UM}
+            {"image_id": image_id, "image_micrometers_per_pixel": PIXEL_SIZE_UM}
         )
 
     return (
@@ -101,7 +101,7 @@ def test_compute_emits_row_for_invalid_snip_no_filtering():
 
 def test_compute_falls_back_to_legacy_pixel_size_column():
     snip, masks, inv, side = _one_well_inputs(time_indices=(0,))
-    inv = inv.rename(columns={"source_micrometers_per_pixel": "micrometers_per_pixel"})
+    inv = inv.rename(columns={"image_micrometers_per_pixel": "micrometers_per_pixel"})
     df = compute_mask_geometry_features(snip, masks, inv)
     expected_area = side * side * (PIXEL_SIZE_UM**2)
     assert np.allclose(df["area_um2"], expected_area)
@@ -109,7 +109,7 @@ def test_compute_falls_back_to_legacy_pixel_size_column():
 
 def test_compute_fails_loud_on_missing_pixel_size():
     snip, masks, inv, _ = _one_well_inputs(time_indices=(0,))
-    inv = inv.drop(columns=["source_micrometers_per_pixel"])
+    inv = inv.drop(columns=["image_micrometers_per_pixel"])
     with pytest.raises(ValueError, match="micron calibration"):
         compute_mask_geometry_features(snip, masks, inv)
 

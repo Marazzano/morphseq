@@ -55,6 +55,12 @@ def test_dataclasses_importable():
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_IN_REQUIRED = {"well_id", "image_id"}
+_FORBIDDEN_OLD_CORE_FIELDS = {
+    "source_image_path",
+    "source_micrometers_per_pixel",
+    "source_image_width_px",
+    "source_image_height_px",
+}
 
 _FRAME_KEY_ATOMS = {"experiment_id", "well_index", "channel_id", "time_index", "z_index"}
 
@@ -71,6 +77,10 @@ def test_required_columns_include_writer_policy_column_family():
 
 def test_derived_ids_not_in_required():
     assert not _FORBIDDEN_IN_REQUIRED.intersection(set(REQUIRED_FRAME_INVENTORY_COLUMNS))
+
+
+def test_old_source_core_fields_not_in_required():
+    assert not _FORBIDDEN_OLD_CORE_FIELDS.intersection(set(REQUIRED_FRAME_INVENTORY_COLUMNS))
 
 
 def test_derived_columns_tuple():
@@ -198,7 +208,7 @@ def _ref_inventory(n_frames: int) -> pd.DataFrame:
         "well_index": "B01",
         "channel_id": "BF",
         "time_index": t,
-        "source_image_path": f"images/{_WELL_ID}_BF_t{t:04d}.png",
+        "image_path": f"images/{_WELL_ID}_BF_t{t:04d}.png",
         "image_width_px": _WIDTH,
         "image_height_px": _HEIGHT,
     } for t in range(n_frames)])
@@ -214,7 +224,7 @@ def _identity_df(n_frames: int, **overrides) -> pd.DataFrame:
             "time_index": t,
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": f"images/{_WELL_ID}_BF_t{t:04d}.png",
+            "image_path": f"images/{_WELL_ID}_BF_t{t:04d}.png",
             "image_width_px": _WIDTH,
             "image_height_px": _HEIGHT,
         }
@@ -265,7 +275,7 @@ def test_identity_validator_multiple_wells_fails():
 
 
 def test_identity_validator_uses_context_in_error():
-    df = _identity_df(1, source_image_path="images/wrong.png")
+    df = _identity_df(1, image_path="images/wrong.png")
     with pytest.raises(ValueError, match=r"\[my_product\]"):
         validate_frame_identity_block(df, _ref_inventory(1), context="my_product")
 

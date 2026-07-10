@@ -341,11 +341,11 @@ scope-free frame inventory that downstream stages read.
   - Time block — acquisition / time-series position
     `elapsed_time_s`, `acquisition_time_s`
   - Source / provenance — source image and construction provenance
-    `source_image_path`, `focus_index_map_path`
+    `image_path`, `focus_index_map_path`
   - Microscope source — what backend produced it
     `scope_name`
   - Writer policy / encoding — how the materialized output was written
-    `source_image_width_px`, `source_image_height_px`, `image_file_format`, `pixel_dtype`,
+    `image_width_px`, `image_height_px`, `image_file_format`, `pixel_dtype`,
     `downsample_factor`, `downsample_method`, `jpeg_quality`
 
   Handled by the frame-inventory validator.
@@ -354,7 +354,7 @@ scope-free frame inventory that downstream stages read.
 
   - L1 identity → product atoms are coherent; `(image_id, product_key)` stays unique; derived ids match the atoms.
   - L2 grain → the scope is correct; each product stream is contiguous, channels stay rectangular, and multi-timepoint wells carry `elapsed_time_s`.
-  - L3 sources → when enabled, `source_image_path` resolves, the image opens, the recorded dimensions self-check, and `source_micrometers_per_pixel > 0`.
+  - L3 sources → when enabled, `image_path` resolves, the image opens, the recorded dimensions self-check, and `image_micrometers_per_pixel > 0`.
   - L4 provenance → focus-stack projections carry a valid `focus_index_map_path` `.npz`; non-focus-stack rows leave it empty.
 
   The code splits the strict source/provenance work across `check_sources` and the focus-index-map

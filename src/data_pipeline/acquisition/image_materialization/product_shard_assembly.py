@@ -2,7 +2,9 @@
 
 Product materialization writes one frame-inventory shard per ``(well_id, product_key)``. This module
 owns the next boundary: discover which validated product shards are active on disk, then concatenate
-them into the canonical per-well ``frame_inventory`` shard.
+them into the canonical per-well ``frame_inventory`` shard. The shard schema itself is owned by
+``frame_inventory_contract.py``; this module stays schema-agnostic beyond enforcing exact
+column-list agreement across shards.
 """
 
 from __future__ import annotations

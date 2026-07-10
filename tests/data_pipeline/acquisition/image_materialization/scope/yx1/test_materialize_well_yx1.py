@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+from PIL import Image
 
 from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
     materialize_ff_projection,
-    materialize_yx1_product_for_well,
     materialize_yx1_well,
     _EMITTED_COLUMNS,
 )
@@ -179,27 +179,48 @@ class TestMaterializeYX1Well:
         nd_mock.frame_metadata.return_value.channels = [channel_mock]
         return nd_mock
 
-    def _run(self, inventory_df, tmp_path, candidate=True, resolved_plan=IDENTITY_PLAN):
+    def _run(
+        self,
+        inventory_df,
+        tmp_path,
+        *,
+        candidate=True,
+        resolved_plan=IDENTITY_PLAN,
+        projection_frame=None,
+        focus_index_map=None,
+        stack=None,
+    ):
         # The consume-side contract check asserts source_nd2_path EXISTS before the open is faked,
         # so point the shard at a real (empty) file under tmp_path.
         nd2_file = tmp_path / "exp.nd2"
         nd2_file.write_bytes(b"")
         inventory_df = inventory_df.copy()
         inventory_df["source_nd2_path"] = str(nd2_file)
-        nd_mock = self._make_mock_nd2(n_t=len(inventory_df))
+        stack = np.ones((4, 8, 8), dtype=np.uint16) if stack is None else stack
+        projection_frame = (
+            np.zeros(stack.shape[1:], dtype=np.uint8)
+            if projection_frame is None else projection_frame
+        )
+        focus_index_map = (
+            np.zeros(stack.shape[1:], dtype=np.int32)
+            if focus_index_map is None else focus_index_map
+        )
+        nd_mock = self._make_mock_nd2(
+            n_t=int(inventory_df["time_index"].nunique()),
+            n_z=stack.shape[0],
+            h=stack.shape[1],
+            w=stack.shape[2],
+        )
 
         _mod = "data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1"
         with (
             patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
             patch(f"{_mod}.materialize_ff_projection",
-                  return_value=(np.zeros((8, 8), dtype=np.uint8),
-                                np.zeros((8, 8), dtype=np.int32))) as mock_proj,
-            patch(f"{_mod}.write_image") as mock_write,
+                  return_value=(projection_frame, focus_index_map)) as mock_proj,
             patch(f"{_mod}._get_stack",
-                  return_value=np.ones((4, 8, 8), dtype=np.uint16)) as mock_get_stack,
+                  return_value=stack) as mock_get_stack,
         ):
-
-            return materialize_yx1_well(
+            df = materialize_yx1_well(
                 experiment_id=EXP,
                 well_id=WELL_ID,
                 well_index=WELL_INDEX,
@@ -209,28 +230,36 @@ class TestMaterializeYX1Well:
                 device="cpu",
                 candidate=candidate,
             )
+        return df, mock_proj, mock_get_stack
 
     def test_returns_dataframe_with_correct_columns(self, tmp_path):
         inv = _make_inventory(n_times=3)
-        df = self._run(inv, tmp_path)
+        df, _, _ = self._run(inv, tmp_path)
         for col in _EMITTED_COLUMNS:
             assert col in df.columns, f"Missing column: {col}"
+        for removed in (
+            "source_image_path",
+            "source_micrometers_per_pixel",
+            "source_image_width_px",
+            "source_image_height_px",
+        ):
+            assert removed not in df.columns
 
     def test_one_row_per_time_index(self, tmp_path):
         n = 4
         inv = _make_inventory(n_times=n)
-        df = self._run(inv, tmp_path)
+        df, _, _ = self._run(inv, tmp_path)
         assert len(df) == n
 
     def test_no_duplicate_rows_on_key(self, tmp_path):
         inv = _make_inventory(n_times=5)
-        df = self._run(inv, tmp_path)
+        df, _, _ = self._run(inv, tmp_path)
         key = ["experiment_id", "well_index", "channel_id", "time_index", "z_index"]
         assert not df.duplicated(subset=key).any()
 
-    def test_source_image_path_matches_layout(self, tmp_path):
+    def test_projection_image_path_matches_layout(self, tmp_path):
         inv = _make_inventory(n_times=2)
-        df = self._run(inv, tmp_path, candidate=True)
+        df, _, _ = self._run(inv, tmp_path, candidate=True)
         for _, row in df.iterrows():
             expected = projection_frame_path(
                 tmp_path,
@@ -240,19 +269,51 @@ class TestMaterializeYX1Well:
                 time_index=row["time_index"],
                 candidate=True,
             )
-            assert row["source_image_path"] == str(expected)
+            assert row["image_path"] == str(expected)
 
     def test_z_index_is_na_for_projection(self, tmp_path):
         inv = _make_inventory(n_times=2)
-        df = self._run(inv, tmp_path)
+        df, _, _ = self._run(inv, tmp_path)
         assert df["z_index"].isna().all()
+
+    def test_projection_rows_record_materialized_and_raw_image_facts(self, tmp_path):
+        inv = _make_inventory(n_times=2)
+        projection = np.arange(7 * 11, dtype=np.uint8).reshape(7, 11)
+        focus_map = np.zeros((7, 11), dtype=np.int32)
+        stack = np.ones((4, 7, 11), dtype=np.uint16)
+
+        df, _, _ = self._run(
+            inv,
+            tmp_path,
+            candidate=True,
+            projection_frame=projection,
+            focus_index_map=focus_map,
+            stack=stack,
+        )
+
+        assert (df["image_width_px"] == 11).all()
+        assert (df["image_height_px"] == 7).all()
+        assert np.allclose(df["image_micrometers_per_pixel"], 0.65)
+        assert (df["image_file_format"] == "png").all()
+        assert (df["pixel_dtype"] == "uint8").all()
+        assert (df["downsample_factor"] == 1).all()
+        assert (df["downsample_method"] == "none").all()
+        assert df["jpeg_quality"].isna().all()
+        assert (df["raw_image_source_path"] == str(tmp_path / "exp.nd2")).all()
+        assert (df["raw_image_width_px"] == 512).all()
+        assert (df["raw_image_height_px"] == 512).all()
+        assert np.allclose(df["raw_micrometers_per_pixel"], 0.65)
+
+        for image_path in df["image_path"]:
+            with Image.open(image_path) as written:
+                assert written.size == (11, 7)
 
     def test_projection_rows_carry_focus_index_map_path_1to1(self, tmp_path):
         from data_pipeline.acquisition.image_materialization.materialized_image_paths import (
             focus_index_map_path,
         )
         inv = _make_inventory(n_times=2)
-        df = self._run(inv, tmp_path, candidate=True)
+        df, _, _ = self._run(inv, tmp_path, candidate=True)
         # every projection row carries a populated focus_index_map_path, 1:1 with its image_id
         assert df["focus_index_map_path"].notna().all()
         for _, row in df.iterrows():
@@ -268,7 +329,7 @@ class TestMaterializeYX1Well:
 
     def test_focus_index_map_npz_has_offsets_bounded_by_z_indices(self, tmp_path):
         inv = _make_inventory(n_times=1)
-        df = self._run(inv, tmp_path, candidate=True)
+        df, _, _ = self._run(inv, tmp_path, candidate=True)
         npz_path = df.iloc[0]["focus_index_map_path"]
         data = np.load(npz_path)
         fim = data["focus_index_map"]
@@ -280,26 +341,14 @@ class TestMaterializeYX1Well:
         nd2_file = tmp_path / "exp.nd2"
         nd2_file.write_bytes(b"")
         inv = _make_z_inventory(n_times=2, z_indices=(0, 2), source_nd2_path=str(nd2_file))
-        nd_mock = self._make_mock_nd2(n_t=2, n_z=4)
-
-        _mod = "data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1"
-        with (
-            patch(f"{_mod}.nd2.ND2File", return_value=nd_mock),
-            patch(f"{_mod}.materialize_ff_projection") as mock_proj,
-            patch(f"{_mod}.write_image") as mock_write,
-            patch(f"{_mod}._get_stack",
-                  return_value=np.arange(4 * 8 * 8, dtype=np.uint16).reshape(4, 8, 8)) as mock_get_stack,
-        ):
-            df = materialize_yx1_well(
-                experiment_id=EXP,
-                well_id=WELL_ID,
-                well_index=WELL_INDEX,
-                well_acquisition_inventory_df=inv,
-                built_image_data_dir=tmp_path,
-                resolved_plan=Z_STACK_PLAN,
-                device="cpu",
-                candidate=True,
-            )
+        stack = np.arange(4 * 9 * 7, dtype=np.uint16).reshape(4, 9, 7)
+        df, mock_proj, mock_get_stack = self._run(
+            inv,
+            tmp_path,
+            candidate=True,
+            resolved_plan=Z_STACK_PLAN,
+            stack=stack,
+        )
 
         assert len(df) == 4
         assert sorted(df["z_index"].unique().tolist()) == [0, 2]
@@ -323,23 +372,28 @@ class TestMaterializeYX1Well:
             ext="jpg",
             candidate=True,
         )
-        assert str(expected_path) in set(df["source_image_path"])
+        assert str(expected_path) in set(df["image_path"])
         assert (df["image_file_format"] == "jpg").all()
         assert (df["pixel_dtype"] == "uint8").all()
         assert (df["downsample_factor"] == 4).all()
         assert (df["downsample_method"] == "area_resize").all()
         assert (df["jpeg_quality"] == 85).all()
-        assert (df["source_image_width_px"] == 512).all()
-        assert (df["source_image_height_px"] == 512).all()
-        assert (df["image_width_px"] == 128).all()
-        assert (df["image_height_px"] == 128).all()
+        assert np.allclose(df["image_micrometers_per_pixel"], 2.6)
+        assert (df["raw_image_source_path"] == str(nd2_file)).all()
+        assert (df["raw_image_width_px"] == 512).all()
+        assert (df["raw_image_height_px"] == 512).all()
+        assert np.allclose(df["raw_micrometers_per_pixel"], 0.65)
+        assert (df["image_width_px"] == 2).all()
+        assert (df["image_height_px"] == 2).all()
+        for image_path in df["image_path"]:
+            with Image.open(image_path) as written:
+                assert written.size == (2, 2)
         assert mock_get_stack.call_count == 2
-        assert mock_write.call_count == 4
         mock_proj.assert_not_called()
 
     def test_product_grain_helper_accepts_one_resolved_product(self, tmp_path):
         inv = _make_inventory(n_times=1)
-        df = self._run(inv, tmp_path)
+        df, _, _ = self._run(inv, tmp_path)
         assert len(df) == 1
 
     def test_materialize_yx1_well_rejects_multi_product_plan(self, tmp_path):
@@ -358,12 +412,12 @@ class TestMaterializeYX1Well:
 
     def test_image_product_type_is_projection(self, tmp_path):
         inv = _make_inventory(n_times=2)
-        df = self._run(inv, tmp_path)
+        df, _, _ = self._run(inv, tmp_path)
         assert (df["image_product_type"] == "projection").all()
 
     def test_projection_method_is_focus_stack(self, tmp_path):
         inv = _make_inventory(n_times=2)
-        df = self._run(inv, tmp_path)
+        df, _, _ = self._run(inv, tmp_path)
         assert (df["projection_method"] == "focus_stack").all()
 
     def test_mismatched_well_id_raises(self, tmp_path):
@@ -459,7 +513,6 @@ class TestMaterializeYX1Well:
             patch(f"{_mod}.materialize_ff_projection",
                   return_value=(np.zeros((8, 8), dtype=np.uint8),
                                 np.zeros((8, 8), dtype=np.int32))),
-            patch(f"{_mod}.write_image"),
             patch(f"{_mod}._get_stack",
                   return_value=np.ones((4, 8, 8), dtype=np.uint16)),
         ):

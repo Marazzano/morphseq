@@ -69,7 +69,7 @@ def _estimate_background(
         if image_id not in inventory_index.index:
             continue
         try:
-            src = Path(str(inventory_index.loc[image_id]["source_image_path"]))
+            src = Path(str(inventory_index.loc[image_id]["image_path"]))
             img = skio.imread(str(src))
             if img.ndim == 3:
                 img = img[:, :, 0]
@@ -154,7 +154,7 @@ def run_snip_processing(
             "channel_id": channel_id,
             "mask_id": mask_id,
             "track_id": track_id,
-            "source_image_path": None,
+            "image_path": None,
             "processed_snip_path": None,
             "embryo_mask": None,
             "embryo_mask_snip_path": None,
@@ -173,15 +173,15 @@ def run_snip_processing(
                 raise KeyError(f"image_id {image_id!r} not found in frame_inventory")
             inv_row = inventory_index.loc[image_id]
 
-            source_image_path = Path(str(inv_row["source_image_path"]))
-            pixel_size_um = float(inv_row.get("micrometers_per_pixel", inv_row.get("source_micrometers_per_pixel", 2.17)))
-            out["source_image_path"] = str(inv_row["source_image_path"])
+            image_path = Path(str(inv_row["image_path"]))
+            pixel_size_um = float(inv_row["image_micrometers_per_pixel"])
+            out["image_path"] = str(inv_row["image_path"])
 
             # Decode RLE mask from frame_masks row.
             rle = json.loads(str(mask_row["mask_rle"]))
             embryo_mask = decode_binary_mask_rle(rle).astype(np.uint8)
 
-            image = skio.imread(str(source_image_path))
+            image = skio.imread(str(image_path))
             if image.ndim == 3:
                 image = image[:, :, 0]
 

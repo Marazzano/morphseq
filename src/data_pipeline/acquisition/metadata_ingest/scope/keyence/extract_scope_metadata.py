@@ -19,6 +19,7 @@ from data_pipeline.acquisition.metadata_ingest.scope.keyence.acquisition_invento
 )
 from data_pipeline.acquisition.metadata_ingest.scope.keyence.raw_plane_parsing import (
     _extract_keyence_well_and_tile,
+    _parse_keyence_xy_position_index,
     _parse_keyence_time_z_channel,
 )
 from data_pipeline.io.validators import validate_dataframe_schema
@@ -292,14 +293,6 @@ def extract_keyence_scope_metadata(
 
     # Discover TIFF files
     tiff_files = _discover_keyence_files(raw_data_dir, experiment_id)
-    position_keys = sorted(
-        {
-            (_extract_well_from_path(path), _extract_position_label_within_well(path))
-            for path in tiff_files
-        }
-    )
-    position_index_by_key = {key: idx for idx, key in enumerate(position_keys)}
-
     # Extract metadata from each file
     rows = []
     for tiff_path in tiff_files:
@@ -308,8 +301,12 @@ def extract_keyence_scope_metadata(
 
             # Extract well from path
             well_index = _extract_well_from_path(tiff_path)
-            position_key = (well_index, _extract_position_label_within_well(tiff_path))
-            position_index = position_index_by_key[position_key]
+            position_index = _parse_keyence_xy_position_index(tiff_path)
+            if position_index is None:
+                raise ValueError(
+                    f"Could not parse Keyence XY acquisition position from {tiff_path}. "
+                    "Expected path to contain a directory like 'XY13'."
+                )
 
             # Resolve channel_id from the reliable filename CH# index (proprietary names unreliable).
             channel_index = _channel_index_from_path(tiff_path)

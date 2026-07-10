@@ -112,7 +112,7 @@ def validate_frame_masks(
     validate_frame_mask_block(frame_masks)
     _require_columns(
         frame_inventory,
-        ("image_id", "time_index", "source_image_path", "image_width_px", "image_height_px"),
+        ("image_id", "time_index", "image_path", "image_width_px", "image_height_px"),
         "frame_inventory",
     )
 
@@ -125,7 +125,7 @@ def validate_frame_masks(
     frame_by_id = frame_inventory.set_index("image_id", drop=False)
     compare_cols = [
         "time_index",
-        "source_image_path",
+        "image_path",
         "image_width_px",
         "image_height_px",
     ]

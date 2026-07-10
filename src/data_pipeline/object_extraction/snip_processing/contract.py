@@ -18,7 +18,7 @@ REQUIRED_COLUMNS_SNIP_MANIFEST = [
     "time_int",
 
     # Inputs (relative to data_pipeline_output where possible)
-    "source_image_path",
+    "image_path",
     "exported_mask_path",
     "yolk_mask_path",  # nullable
 
@@ -27,7 +27,7 @@ REQUIRED_COLUMNS_SNIP_MANIFEST = [
     "raw_crop_path",  # nullable
 
     # Processing params
-    "source_micrometers_per_pixel",
+    "image_micrometers_per_pixel",
     "target_pixel_size_um",
     "output_height_px",
     "output_width_px",

@@ -1048,7 +1048,7 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
         rgb_dir = Path(tmpdir)
         for _, row in ordered.iterrows():
             dst = rgb_dir / f"{int(row['time_index']):05d}.jpg"
-            _to_rgb_jpeg(Path(str(row["source_image_path"])), dst)
+            _to_rgb_jpeg(Path(str(row["image_path"])), dst)
 
         # Seed frame: earliest time_index that has kept detections.
         seed_time = int(prompt_detections["time_index"].min())

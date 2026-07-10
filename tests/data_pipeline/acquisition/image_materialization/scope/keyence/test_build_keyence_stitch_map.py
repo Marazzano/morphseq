@@ -142,6 +142,34 @@ def test_orientation_from_inventory(tmp_path):
     assert all(orientation == "horizontal" for orientation in captured_orientations)
 
 
+def test_unknown_orientation_defaults_to_horizontal(tmp_path):
+    inv = _make_inventory(n_wells=1, n_time=2, n_tiles=2, orientation="unknown")
+    out = tmp_path / "map.json"
+    tile_ids = ["0", "1"]
+
+    captured_orientations = []
+
+    def _fake_align(tile_specs, orientation):
+        captured_orientations.append(orientation)
+        return _fake_raw_coords(tile_ids)
+
+    fake_image = np.zeros((10, 10), dtype=np.uint8)
+    fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
+    with (
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.skio.imread",
+              return_value=fake_image),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.im_rescale",
+              return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
+              return_value=fake_ff),
+        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
+              side_effect=_fake_align),
+    ):
+        build_keyence_stitch_map(inv, n_samples=2, out_path=out)
+
+    assert all(orientation == "horizontal" for orientation in captured_orientations)
+
+
 def test_raises_on_empty_inventory(tmp_path):
     inv = pd.DataFrame()
     with pytest.raises(ValueError, match="empty"):

@@ -1,4 +1,4 @@
-"""Step 2 — strict L0–L4 frame_inventory gate (scope-aware grain + source checks)."""
+"""Step 2 — strict L0–L4 frame_inventory gate (scope-aware grain + image checks)."""
 
 from pathlib import Path
 
@@ -31,12 +31,11 @@ def _row(well_id: str, channel: str, time_index: int, *, src: str, w: int = 16, 
         "z_index": pd.NA,
         "image_product_type": "projection",
         "projection_method": "focus_stack",
-        "source_image_path": src,
-        "source_micrometers_per_pixel": 0.75,
-        "source_image_width_px": w,
-        "source_image_height_px": h,
+        "image_path": src,
+        "image_micrometers_per_pixel": 0.75,
         "image_width_px": w,
         "image_height_px": h,
+        "orientation": "none",
         "image_file_format": "png",
         "pixel_dtype": "uint8",
         "downsample_factor": 1,
@@ -63,7 +62,7 @@ def _jpg(path: Path, w: int = 16, h: int = 16) -> str:
     return str(path)
 
 
-# --- L3 grain (per_well, no source checks) -------------------------------------------------
+# --- L3 grain (per_well, no image checks) --------------------------------------------------
 
 def test_per_well_bf_gap_fails(tmp_path):
     # BF at 0 and 2 — not contiguous.
@@ -155,7 +154,7 @@ def test_merged_group_check_catches_one_bad_well(tmp_path):
         validate_frame_inventory(shard, tmp_path / "f.validated", validation_scope="merged")
 
 
-# --- L4 sources (check_sources=True) --------------------------------------------------------
+# --- L4 images (check_sources=True) ---------------------------------------------------------
 
 def test_check_sources_false_skips_l4(tmp_path):
     # Nonexistent path, but check_sources=False → passes (L0–L3 only).
@@ -170,7 +169,7 @@ def test_relative_path_without_image_root_fails(tmp_path):
         validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 
-def test_source_checks_pass_on_real_image(tmp_path):
+def test_image_checks_pass_on_real_image(tmp_path):
     img = _png(tmp_path / "imgs" / "a.png", w=16, h=16)
     shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [_row(A01, "BF", 0, src=img)])
     validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
@@ -203,33 +202,30 @@ def test_jpg_requires_quality(tmp_path):
         validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 
-def test_downsampled_dims_validate_against_source_dims(tmp_path):
+def test_positive_image_micrometers_per_pixel_required(tmp_path):
     img = _jpg(tmp_path / "imgs" / "a.jpg", w=4, h=4)
     row = _row(A01, "BF", 0, src=img, w=4, h=4)
-    row["source_image_width_px"] = 16
-    row["source_image_height_px"] = 16
     row["image_file_format"] = "jpg"
     row["downsample_factor"] = 4
     row["downsample_method"] = "block_mean"
     row["jpeg_quality"] = 85
+    row["image_micrometers_per_pixel"] = 0.0
     shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [row])
 
-    validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
-    assert (tmp_path / "f.validated").exists()
+    with pytest.raises(ValueError, match="image_micrometers_per_pixel"):
+        validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 
-def test_downsampled_dims_mismatch_fails_before_header_check(tmp_path):
+def test_header_dims_are_checked_directly(tmp_path):
     img = _jpg(tmp_path / "imgs" / "a.jpg", w=4, h=4)
     row = _row(A01, "BF", 0, src=img, w=8, h=4)
-    row["source_image_width_px"] = 16
-    row["source_image_height_px"] = 16
     row["image_file_format"] = "jpg"
     row["downsample_factor"] = 4
     row["downsample_method"] = "block_mean"
     row["jpeg_quality"] = 85
     shard = _write(tmp_path / f"{A01}_frame_inventory.csv", [row])
 
-    with pytest.raises(ValueError, match="write policy"):
+    with pytest.raises(ValueError, match="dims mismatch"):
         validate_frame_inventory(shard, tmp_path / "f.validated", check_sources=True)
 
 

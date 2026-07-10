@@ -31,12 +31,14 @@ or YX1-specific logic (e.g. ``_determine_bf_channel``, ``_get_stack``, nd2).
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import skimage.io as skio
+from PIL import Image
 
 from data_pipeline.acquisition.image_building.shared.log_focus import im_rescale
 from data_pipeline.acquisition.image_building.utils.frame_tiler import (
@@ -48,13 +50,20 @@ from data_pipeline.acquisition.image_building.utils.frame_tiler import (
 )
 from data_pipeline.acquisition.image_materialization import materialized_image_paths
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
-    REQUIRED_FRAME_INVENTORY_COLUMNS,
     derive_image_id,
     derive_well_id,
 )
 from data_pipeline.acquisition.image_materialization.materialization_plan import ResolvedImageProduct
+from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
+    image_product_key_for_resolved_product,
+)
 from data_pipeline.acquisition.image_materialization.materialized_image_write_policy import (
     MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+    orient_image_for_write,
+    prepare_image_for_write,
+    resolve_image_write_policy,
+    suffix_for_policy,
+    write_image,
 )
 from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
     materialize_ff_projection,
@@ -78,12 +87,40 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "z_index",
     "image_product_type",
     "projection_method",
-    "source_image_path",
-    "focus_index_map_path",
-    "source_micrometers_per_pixel",
+    "image_path",
+    "image_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
+    "focus_index_map_path",
+    "raw_tile_path",
+    "raw_tile_manifest_path",
+    "raw_tile_width_px",
+    "raw_tile_height_px",
+    "raw_tile_count",
+    "raw_micrometers_per_pixel",
     *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+)
+
+_REQUIRED_IMAGE_CORE_COLUMNS: tuple[str, ...] = (
+    "experiment_id",
+    "well_index",
+    "well_id",
+    "channel_id",
+    "time_index",
+    "image_id",
+    "elapsed_time_s",
+    "acquisition_time_s",
+    "z_index",
+    "image_product_type",
+    "projection_method",
+    "image_path",
+    "image_micrometers_per_pixel",
+    "image_width_px",
+    "image_height_px",
+    "image_file_format",
+    "pixel_dtype",
+    "downsample_factor",
+    "downsample_method",
 )
 
 
@@ -99,6 +136,7 @@ def materialize_keyence_product_for_well(
     candidate: bool = False,
     smoke_max_time_indices: int | None = None,
     master_params_path: Path | None = None,
+    config: dict | None = None,
 ) -> pd.DataFrame:
     """Materialize ONE Keyence image product for ONE well; return frame-inventory rows.
 
@@ -132,6 +170,9 @@ def materialize_keyence_product_for_well(
             f"Keyence projection materialization requires projection_method='focus_stack'; "
             f"got {resolved_product.projection_method!r}."
         )
+    product_key = image_product_key_for_resolved_product(resolved_product)
+    write_policy = resolve_image_write_policy(config, product_key)
+    ext = suffix_for_policy(write_policy)
 
     # --- Entry guard: well/inventory consistency ---
     expected_well_id = derive_well_id(experiment_id, well_index)
@@ -160,9 +201,10 @@ def materialize_keyence_product_for_well(
     img_w = int(inv["image_width_px"].iloc[0])
     img_h = int(inv["image_height_px"].iloc[0])
 
-    # Determine orientation for the stitcher (from inventory; default vertical if unknown).
+    # Determine orientation for the stitcher. Modern Keyence exports often leave this unknown;
+    # legacy behavior treats those as horizontal strips.
     orientation_raw = str(inv["orientation"].iloc[0]).lower()
-    orientation = "vertical" if orientation_raw not in ("horizontal",) else "horizontal"
+    orientation = "vertical" if orientation_raw == "vertical" else "horizontal"
 
     time_indices = sorted(inv["time_index"].unique())
     if smoke_max_time_indices is not None and smoke_max_time_indices > 0:
@@ -266,10 +308,36 @@ def materialize_keyence_product_for_well(
             channel_id=channel_id,
             time_index=int(t),
             projection_method="focus_stack",
+            ext=ext,
             candidate=candidate,
         )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        skio.imsave(str(out_path), mosaic, check_contrast=False)
+        prepared_mosaic = prepare_image_for_write(mosaic, write_policy)
+        oriented_fim = orient_image_for_write(canvas_fim, write_policy)
+        write_image(mosaic, out_path, write_policy)
+        written_meta = _read_written_image_metadata(out_path)
+        image_height_px = int(written_meta["image_height_px"])
+        image_width_px = int(written_meta["image_width_px"])
+        if prepared_mosaic.shape != (image_height_px, image_width_px):
+            raise RuntimeError(
+                "Keyence materializer wrote an image whose header dimensions disagree with the "
+                f"shared writer output for {out_path}: prepared={prepared_mosaic.shape}, "
+                f"header={(image_height_px, image_width_px)}."
+            )
+        if str(prepared_mosaic.dtype) != str(written_meta["pixel_dtype"]):
+            raise RuntimeError(
+                "Keyence materializer wrote an image whose read-back dtype disagrees with the "
+                f"shared writer output for {out_path}: prepared={prepared_mosaic.dtype}, "
+                f"header={written_meta['pixel_dtype']}."
+            )
+        image_micrometers_per_pixel = _materialized_micrometers_per_pixel(
+            raw_micrometers_per_pixel=um_per_px,
+            oriented_native_shape=oriented_fim.shape,
+            written_shape=(image_height_px, image_width_px),
+        )
+        aligned_fim = _resize_index_map(
+            oriented_fim,
+            target_shape=(image_height_px, image_width_px),
+        )
 
         fim_path = materialized_image_paths.focus_index_map_path(
             built_image_data_dir,
@@ -281,7 +349,16 @@ def materialize_keyence_product_for_well(
         )
         fim_path.parent.mkdir(parents=True, exist_ok=True)
         z_indices_out = tile_z_indices if tile_z_indices is not None else np.array([], dtype=np.int32)
-        np.savez(fim_path, focus_index_map=canvas_fim, z_indices=z_indices_out)
+        np.savez(fim_path, focus_index_map=aligned_fim, z_indices=z_indices_out)
+
+        raw_tile_path, raw_tile_manifest_path = _raw_tile_provenance_paths(
+            out_path=out_path,
+            experiment_id=experiment_id,
+            well_id=well_id,
+            channel_id=channel_id,
+            time_index=int(t),
+            t_rows=t_rows,
+        )
 
         image_id = derive_image_id(well_id, channel_id, int(t))
         rows.append({
@@ -296,18 +373,23 @@ def materialize_keyence_product_for_well(
             "z_index": pd.NA,
             "image_product_type": "projection",
             "projection_method": "focus_stack",
-            "source_image_path": str(out_path),
+            "image_path": str(out_path),
+            "image_micrometers_per_pixel": image_micrometers_per_pixel,
+            "image_width_px": image_width_px,
+            "image_height_px": image_height_px,
             "focus_index_map_path": str(fim_path),
-            "source_micrometers_per_pixel": um_per_px,
-            "source_image_width_px": mosaic.shape[1],
-            "source_image_height_px": mosaic.shape[0],
-            "image_width_px": mosaic.shape[1],
-            "image_height_px": mosaic.shape[0],
-            "image_file_format": "png",
-            "pixel_dtype": "uint8",
-            "downsample_factor": 1,
-            "downsample_method": "none",
-            "jpeg_quality": pd.NA,
+            "raw_tile_path": raw_tile_path,
+            "raw_tile_manifest_path": raw_tile_manifest_path,
+            "raw_tile_width_px": img_w,
+            "raw_tile_height_px": img_h,
+            "raw_tile_count": int(t_rows["tile_id"].nunique()),
+            "raw_micrometers_per_pixel": um_per_px,
+            "orientation": write_policy.orientation,
+            "image_file_format": str(written_meta["image_file_format"]),
+            "pixel_dtype": str(written_meta["pixel_dtype"]),
+            "downsample_factor": write_policy.downsample_factor,
+            "downsample_method": write_policy.downsample_method,
+            "jpeg_quality": write_policy.jpeg_quality if write_policy.file_format == "jpg" else pd.NA,
         })
 
         if (len(rows) % 10) == 0:
@@ -315,7 +397,7 @@ def materialize_keyence_product_for_well(
 
     inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
 
-    missing = [c for c in REQUIRED_FRAME_INVENTORY_COLUMNS if c not in inv_df.columns]
+    missing = [c for c in _REQUIRED_IMAGE_CORE_COLUMNS if c not in inv_df.columns]
     if missing:
         raise RuntimeError(
             f"materialize_keyence_product_for_well produced a frame-inventory DataFrame missing "
@@ -327,3 +409,98 @@ def materialize_keyence_product_for_well(
         well_id, resolved_product.image_product_type, len(inv_df),
     )
     return inv_df
+
+
+def _read_written_image_metadata(path: Path) -> dict[str, object]:
+    with Image.open(path) as im:
+        arr = np.asarray(im)
+        file_format = str(im.format or path.suffix.lstrip(".")).lower()
+    if file_format == "jpeg":
+        file_format = "jpg"
+    if file_format == "tiff":
+        file_format = "tif"
+    return {
+        "image_width_px": int(arr.shape[1]),
+        "image_height_px": int(arr.shape[0]),
+        "image_file_format": file_format,
+        "pixel_dtype": str(arr.dtype),
+    }
+
+
+def _materialized_micrometers_per_pixel(
+    *,
+    raw_micrometers_per_pixel: float,
+    oriented_native_shape: tuple[int, int],
+    written_shape: tuple[int, int],
+) -> float:
+    native_height_px, native_width_px = oriented_native_shape
+    written_height_px, written_width_px = written_shape
+    if written_height_px <= 0 or written_width_px <= 0:
+        raise ValueError(
+            f"Written image shape must be positive; got {written_shape}."
+        )
+    scale_y = float(native_height_px) / float(written_height_px)
+    scale_x = float(native_width_px) / float(written_width_px)
+    return float(raw_micrometers_per_pixel) * ((scale_y + scale_x) / 2.0)
+
+
+def _resize_index_map(index_map: np.ndarray, *, target_shape: tuple[int, int]) -> np.ndarray:
+    arr = np.asarray(index_map)
+    if arr.ndim != 2:
+        raise ValueError(f"focus_index_map must be 2D; got shape {arr.shape}.")
+    target_height_px, target_width_px = target_shape
+    if (target_height_px, target_width_px) == arr.shape:
+        return arr.astype(np.int32, copy=False)
+    if target_height_px <= 0 or target_width_px <= 0:
+        raise ValueError(f"target_shape must be positive; got {target_shape}.")
+    y_idx = np.clip(
+        np.floor((np.arange(target_height_px) + 0.5) * arr.shape[0] / target_height_px).astype(int),
+        0,
+        arr.shape[0] - 1,
+    )
+    x_idx = np.clip(
+        np.floor((np.arange(target_width_px) + 0.5) * arr.shape[1] / target_width_px).astype(int),
+        0,
+        arr.shape[1] - 1,
+    )
+    return arr[np.ix_(y_idx, x_idx)].astype(np.int32, copy=False)
+
+
+def _raw_tile_provenance_paths(
+    *,
+    out_path: Path,
+    experiment_id: str,
+    well_id: str,
+    channel_id: str,
+    time_index: int,
+    t_rows: pd.DataFrame,
+) -> tuple[object, object]:
+    raw_paths = sorted(str(p) for p in t_rows["source_tiff_path"].dropna().unique())
+    if len(raw_paths) == 1:
+        return raw_paths[0], pd.NA
+
+    manifest_path = out_path.parent / "raw_tile_manifest" / f"{out_path.stem}.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_payload = {
+        "schema_version": 1,
+        "experiment_id": experiment_id,
+        "well_id": well_id,
+        "channel_id": channel_id,
+        "time_index": int(time_index),
+        "tiles": [
+            {
+                "tile_id": str(tile_id),
+                "z_indices": [int(z) for z in tile_df.sort_values("z_index")["z_index"].tolist()],
+                "source_tiff_paths": [
+                    str(path)
+                    for path in tile_df.sort_values("z_index")["source_tiff_path"].tolist()
+                ],
+            }
+            for tile_id, tile_df in t_rows.groupby("tile_id")
+        ],
+    }
+    manifest_path.write_text(
+        json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return pd.NA, str(manifest_path)

@@ -70,7 +70,7 @@ def estimate_background_stats_full_frame(
     returning hardcoded fallback values like the original broken implementation).
     
     This adaptation uses the new segmentation_tracking-based data structure
-    (source_image_path, exported_mask_path) instead of legacy file discovery.
+    (image_path, exported_mask_path) instead of legacy file discovery.
     """
     definition = "full_frame_outside_embryo"
     if len(rows) == 0:
@@ -96,7 +96,7 @@ def estimate_background_stats_full_frame(
         row = rows.iloc[int(i)]
         
         # Resolve paths using the snip_processing path resolver
-        img_path = resolve_from_root(str(row["source_image_path"]), output_root=output_root)
+        img_path = resolve_from_root(str(row["image_path"]), output_root=output_root)
         mask_path = resolve_from_root(str(row["exported_mask_path"]), output_root=output_root)
         
         if not img_path.exists() or not mask_path.exists():
@@ -124,7 +124,7 @@ def estimate_background_stats_full_frame(
     if not bkg_pixel_list:
         raise ValueError(
             f"Failed to collect background pixels after sampling {len(sample_indices)} embryos. "
-            f"Check that source_image_path and exported_mask_path exist and are readable."
+            f"Check that image_path and exported_mask_path exist and are readable."
         )
     
     # Compute statistics from collected background pixels (same as build03A)
@@ -192,7 +192,7 @@ def process_snip_row(
     mask_type = str(row.get("mask_type", "embryo"))
     time_int = int(row["time_int"])
 
-    source_image_abs = resolve_from_root(str(row["source_image_path"]), output_root=output_root)
+    image_abs = resolve_from_root(str(row["image_path"]), output_root=output_root)
     embryo_mask_abs = resolve_from_root(str(row["exported_mask_path"]), output_root=output_root)
 
     yolk_mask_abs = None
@@ -220,12 +220,12 @@ def process_snip_row(
         "image_id": image_id,
         "embryo_id": embryo_id,
         "time_int": time_int,
-        "source_image_path": str(row["source_image_path"]),
+        "image_path": str(row["image_path"]),
         "exported_mask_path": str(row["exported_mask_path"]),
         "yolk_mask_path": yolk_mask_rel,
         "processed_snip_path": None,
         "raw_crop_path": None,
-        "source_micrometers_per_pixel": float(row["micrometers_per_pixel"]),
+        "image_micrometers_per_pixel": float(row["image_micrometers_per_pixel"]),
         "target_pixel_size_um": float(target_pixel_size_um),
         "output_height_px": int(output_shape_hw[0]),
         "output_width_px": int(output_shape_hw[1]),
@@ -243,18 +243,18 @@ def process_snip_row(
     }
 
     try:
-        if not source_image_abs.exists():
-            raise FileNotFoundError(f"source_image_path not found: {source_image_abs}")
+        if not image_abs.exists():
+            raise FileNotFoundError(f"image_path not found: {image_abs}")
         if not embryo_mask_abs.exists():
             raise FileNotFoundError(f"exported_mask_path not found: {embryo_mask_abs}")
 
         result = process_single_snip(
             snip_id=snip_id,
-            image_path=source_image_abs,
+            image_path=image_abs,
             mask_path=embryo_mask_abs,
             yolk_mask_path=yolk_mask_abs,
             output_shape=output_shape_hw,
-            pixel_size_um=float(row["micrometers_per_pixel"]),
+            pixel_size_um=float(row["image_micrometers_per_pixel"]),
             target_pixel_size_um=float(target_pixel_size_um),
             background_mean=float(background_mean),
             background_std=float(background_std),

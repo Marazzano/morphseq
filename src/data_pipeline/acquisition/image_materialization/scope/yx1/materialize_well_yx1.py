@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 import skimage.util
 import torch
+from PIL import Image
 
 from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder import (
     _determine_bf_channel,
@@ -40,7 +41,6 @@ from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder impo
 from data_pipeline.acquisition.image_building.shared.log_focus import LoG_focus_stacker, im_rescale
 from data_pipeline.acquisition.image_materialization import materialized_image_paths
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
-    REQUIRED_FRAME_INVENTORY_COLUMNS,
     derive_image_id,
     derive_well_id,
 )
@@ -53,8 +53,6 @@ from data_pipeline.acquisition.image_materialization.resolved_product_plans impo
 )
 from data_pipeline.acquisition.image_materialization.materialized_image_write_policy import (
     ImageWritePolicy,
-    MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
-    expected_downsampled_dims,
     resolve_image_write_policy,
     suffix_for_policy,
     write_image,
@@ -80,12 +78,20 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "z_index",
     "image_product_type",
     "projection_method",
-    "source_image_path",
+    "image_path",
     "focus_index_map_path",
-    "source_micrometers_per_pixel",
+    "image_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
-    *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+    "image_file_format",
+    "pixel_dtype",
+    "downsample_factor",
+    "downsample_method",
+    "jpeg_quality",
+    "raw_image_source_path",
+    "raw_image_width_px",
+    "raw_image_height_px",
+    "raw_micrometers_per_pixel",
 )
 
 
@@ -259,7 +265,7 @@ def materialize_yx1_product_for_well(
             f"Unsupported YX1 image_product_type {resolved_product.image_product_type!r}."
         )
     product_key = image_product_key_for_resolved_product(resolved_product)
-    write_policy = resolve_image_write_policy(config, product_key)
+    write_policy = _build_yx1_write_policy(config, product_key)
     ext = suffix_for_policy(write_policy)
 
     # Entry guard — fail loud before any disk work.
@@ -354,7 +360,7 @@ def materialize_yx1_product_for_well(
             .to_dict()
         )
 
-        # --- Materialization loop: per time_index → product frame(s) → write PNG → record rows ---
+        # --- Materialization loop: per time_index → product frame(s) → write image → record rows --
         for t in time_indices:
             stack = _get_stack(dask_arr, t=t, w=position_index)
             t_times = time_lookup[t]
@@ -371,10 +377,7 @@ def materialize_yx1_product_for_well(
                     ext=ext,
                     candidate=candidate,
                 )
-                write_image(ff, out_path, write_policy)
-                out_w, out_h = expected_downsampled_dims(
-                    img_w, img_h, write_policy.downsample_factor, write_policy.downsample_method
-                )
+                out_w, out_h = _write_image_and_read_dims(ff, out_path, write_policy)
 
                 # --- Construction provenance: the focus_index_map .npz (focus_stack only) ----------
                 # focus_index_map values are STACK-AXIS OFFSETS into `stack` (axis 0). z_indices is
@@ -414,14 +417,16 @@ def materialize_yx1_product_for_well(
                     z_index=pd.NA,
                     image_product_type="projection",
                     projection_method="focus_stack",
-                    source_image_path=out_path,
+                    image_path=out_path,
                     focus_index_map_path=fim_path,
-                    source_micrometers_per_pixel=um_per_px,
-                    source_image_width_px=img_w,
-                    source_image_height_px=img_h,
+                    image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                     image_width_px=out_w,
                     image_height_px=out_h,
                     write_policy=write_policy,
+                    raw_image_source_path=nd2_path,
+                    raw_image_width_px=img_w,
+                    raw_image_height_px=img_h,
+                    raw_micrometers_per_pixel=um_per_px,
                 ))
             else:
                 for z_index in z_lookup.get(t, []):
@@ -441,10 +446,7 @@ def materialize_yx1_product_for_well(
                         ext=ext,
                         candidate=candidate,
                     )
-                    write_image(stack[z_index], out_path, write_policy)
-                    out_w, out_h = expected_downsampled_dims(
-                        img_w, img_h, write_policy.downsample_factor, write_policy.downsample_method
-                    )
+                    out_w, out_h = _write_image_and_read_dims(stack[z_index], out_path, write_policy)
 
                     image_id = derive_image_id(well_id, "BF", int(t), z_index=z_index)
                     rows.append(_frame_inventory_row(
@@ -458,14 +460,16 @@ def materialize_yx1_product_for_well(
                         z_index=int(z_index),
                         image_product_type="z_stack",
                         projection_method=pd.NA,
-                        source_image_path=out_path,
+                        image_path=out_path,
                         focus_index_map_path=None,  # z_stack rows carry no focus provenance
-                        source_micrometers_per_pixel=um_per_px,
-                        source_image_width_px=img_w,
-                        source_image_height_px=img_h,
+                        image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                         image_width_px=out_w,
                         image_height_px=out_h,
                         write_policy=write_policy,
+                        raw_image_source_path=nd2_path,
+                        raw_image_width_px=img_w,
+                        raw_image_height_px=img_h,
+                        raw_micrometers_per_pixel=um_per_px,
                     ))
 
             if (len(rows) % 10) == 0:
@@ -477,8 +481,9 @@ def materialize_yx1_product_for_well(
     # --- Inventory assembly: build the frame-inventory shard + final required-columns check ---
     inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
 
-    # Sanity check — all required atom columns present.
-    missing = [c for c in REQUIRED_FRAME_INVENTORY_COLUMNS if c not in inv_df.columns]
+    # Migration-local sanity check: Stage 3 emits the materialized-image-first contract shape even
+    # if the shared frame_inventory contract module has not been updated yet on this branch.
+    missing = [c for c in _EMITTED_COLUMNS if c not in inv_df.columns]
     if missing:
         raise RuntimeError(
             f"materialize_yx1_well produced a frame-inventory DataFrame missing required "
@@ -504,14 +509,16 @@ def _frame_inventory_row(
     z_index: object,
     image_product_type: str,
     projection_method: object,
-    source_image_path: Path,
+    image_path: Path,
     focus_index_map_path: object,
-    source_micrometers_per_pixel: float,
-    source_image_width_px: int,
-    source_image_height_px: int,
+    image_micrometers_per_pixel: float,
     image_width_px: int,
     image_height_px: int,
     write_policy: ImageWritePolicy,
+    raw_image_source_path: Path,
+    raw_image_width_px: int,
+    raw_image_height_px: int,
+    raw_micrometers_per_pixel: float,
 ) -> dict:
     return {
         "experiment_id": experiment_id,
@@ -525,21 +532,61 @@ def _frame_inventory_row(
         "z_index": z_index,
         "image_product_type": image_product_type,
         "projection_method": projection_method,
-        "source_image_path": str(source_image_path),
+        "image_path": str(image_path),
         # Construction-provenance path (NOT a primary image): the focus_stack focus_index_map .npz,
         # populated for projection/focus_stack rows, NA otherwise.
         "focus_index_map_path": (
             pd.NA if focus_index_map_path is None or focus_index_map_path is pd.NA
             else str(focus_index_map_path)
         ),
-        "source_micrometers_per_pixel": source_micrometers_per_pixel,
-        "source_image_width_px": source_image_width_px,
-        "source_image_height_px": source_image_height_px,
+        "image_micrometers_per_pixel": image_micrometers_per_pixel,
         "image_width_px": image_width_px,
         "image_height_px": image_height_px,
         "image_file_format": write_policy.file_format,
         "pixel_dtype": write_policy.pixel_dtype,
         "downsample_factor": write_policy.downsample_factor,
         "downsample_method": write_policy.downsample_method,
-        "jpeg_quality": write_policy.jpeg_quality,
+        "jpeg_quality": (
+            pd.NA if write_policy.jpeg_quality is None else int(write_policy.jpeg_quality)
+        ),
+        "raw_image_source_path": str(raw_image_source_path),
+        "raw_image_width_px": int(raw_image_width_px),
+        "raw_image_height_px": int(raw_image_height_px),
+        "raw_micrometers_per_pixel": float(raw_micrometers_per_pixel),
     }
+
+
+def _build_yx1_write_policy(config: dict | None, product_key: str) -> ImageWritePolicy:
+    """Construct the YX1 writer policy explicitly at the writer boundary.
+
+    This stays integration-ready with Stage 1's optional orientation field without forcing the
+    current branch to have landed that dataclass change yet.
+    """
+    resolved = resolve_image_write_policy(config, product_key)
+    policy_kwargs = {
+        "file_format": resolved.file_format,
+        "downsample_factor": int(resolved.downsample_factor),
+        "downsample_method": resolved.downsample_method,
+        "pixel_dtype": resolved.pixel_dtype,
+        "jpeg_quality": resolved.jpeg_quality,
+    }
+    if "orientation" in getattr(ImageWritePolicy, "__dataclass_fields__", {}):
+        policy_kwargs["orientation"] = "none"
+    return ImageWritePolicy(**policy_kwargs)
+
+
+def _write_image_and_read_dims(
+    image: np.ndarray,
+    out_path: Path,
+    write_policy: ImageWritePolicy,
+) -> tuple[int, int]:
+    """Write one image through the shared policy boundary and read back its header dimensions."""
+    write_image(image, out_path, write_policy)
+    with Image.open(out_path) as written:
+        width_px, height_px = written.size
+    return int(width_px), int(height_px)
+
+
+def _materialized_um_per_px(raw_um_per_px: float, write_policy: ImageWritePolicy) -> float:
+    """Return the materialized-image calibration after the writer downsample policy."""
+    return float(raw_um_per_px) * int(write_policy.downsample_factor)

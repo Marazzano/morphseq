@@ -29,7 +29,7 @@ def test_scaffold_reads_dims_and_infers_atoms(tmp_path):
     # The user must still fill these — the scaffold leaves them blank.
     assert row["experiment_id"] == ""
     assert row["well_index"] == ""
-    assert row["source_micrometers_per_pixel"] == ""
+    assert row["image_micrometers_per_pixel"] == ""
     # well_id / image_id are never authored.
     assert "well_id" not in row
     assert "image_id" not in row
@@ -38,7 +38,7 @@ def test_scaffold_reads_dims_and_infers_atoms(tmp_path):
 def test_scaffold_relative_path_when_under_root(tmp_path):
     img = _png(tmp_path / "imgs" / "a_B01_BF_t0001.png")
     row = scaffold_row_for_image(img, image_root=tmp_path / "imgs")
-    assert row["source_image_path"] == "a_B01_BF_t0001.png"
+    assert row["image_path"] == "a_B01_BF_t0001.png"
 
 
 def test_scaffold_unparseable_name_leaves_blanks(tmp_path):

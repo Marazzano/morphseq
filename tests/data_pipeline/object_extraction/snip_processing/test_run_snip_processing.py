@@ -51,10 +51,10 @@ def _make_frame_inventory(tmp_images: Path) -> pd.DataFrame:
             "time_index": t,
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": str(img_path),
+            "image_path": str(img_path),
             "image_width_px": IMG_W,
             "image_height_px": IMG_H,
-            "micrometers_per_pixel": 2.17,
+            "image_micrometers_per_pixel": 2.17,
         })
     return pd.DataFrame(rows)
 
@@ -135,7 +135,7 @@ def test_run_snip_processing_produces_inventory(tmp_path):
     required = [
         "snip_id", "embryo_id", "physical_embryo_id", "experiment_id", "well_id",
         "image_id", "time_index", "channel_id", "mask_id", "track_id",
-        "source_image_path", "processed_snip_path", "is_valid_snip", "error_message",
+        "image_path", "processed_snip_path", "is_valid_snip", "error_message",
     ]
     missing = [c for c in required if c not in df.columns]
     assert not missing, f"missing columns: {missing}"

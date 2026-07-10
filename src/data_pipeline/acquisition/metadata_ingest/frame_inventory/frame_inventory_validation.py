@@ -12,7 +12,7 @@ The ordered sequence:
                     unique + derived ids consistent          (validate_frame_inventory_identity_contract)
     L2  grain       scope-aware: per_well = one well; merged = many wells, per-well checks grouped;
                     each product stream contiguous + rectangular, multi-timepoint ⇒ elapsed_time_s
-    L3  sources     (only when check_sources=True) paths resolve + images open + dims + µm/px > 0
+    L3  images      (only when check_sources=True) paths resolve + images open + dims + µm/px > 0
 
 The identity gate (L1) is the ONE place frame identity is enforced — the assembler and the merge
 call the SAME gate, never the individual helpers, so identity can never be checked inconsistently
@@ -40,7 +40,7 @@ from data_pipeline.acquisition.image_materialization.frame_inventory_contract im
 )
 from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_validation_rules import (
     validate_grain,
-    validate_sources,
+    validate_image_paths,
 )
 from data_pipeline.shared.identifiers import build_well_id
 
@@ -98,9 +98,9 @@ def validate_frame_inventory(
             scope_label="frame_inventory",
             ragged_channel_policy=ragged_channel_policy,
         )
-        # L3 — source/image contract (only in strict mode).
+        # L3 — image contract (only in strict mode).
         if check_sources:
-            validate_sources(df, image_root=image_root, scope_label="frame_inventory")
+            validate_image_paths(df, image_root=image_root, scope_label="frame_inventory")
     except Exception as exc:  # noqa: BLE001 — report then re-raise; fail loud is the contract.
         _write_errors_report(input_csv, df, validation_scope=validation_scope, error=exc)
         raise

@@ -49,12 +49,12 @@ def _frame_inventory(n_frames: int = 2, tmp_path: Path | None = None) -> pd.Data
             "time_index": t,
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": str(src),
+            "image_path": str(src),
             "image_width_px": _W,
             "image_height_px": _H,
             "elapsed_time_s": float(t * 60),
             "acquisition_time_s": float(t * 60),
-            "source_micrometers_per_pixel": 1.0,
+            "image_micrometers_per_pixel": 1.0,
         })
     return pd.DataFrame(rows)
 
@@ -72,7 +72,7 @@ def _frame_detections(frame_inventory: pd.DataFrame) -> pd.DataFrame:
             "time_index": inv_row["time_index"],
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": str(inv_row["source_image_path"]),
+            "image_path": str(inv_row["image_path"]),
             "image_width_px": _W,
             "image_height_px": _H,
             "elapsed_time_s": inv_row["elapsed_time_s"],
@@ -109,7 +109,7 @@ def _frame_masks(frame_inventory: pd.DataFrame) -> pd.DataFrame:
             "time_index": inv_row["time_index"],
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": str(inv_row["source_image_path"]),
+            "image_path": str(inv_row["image_path"]),
             "image_width_px": _W,
             "image_height_px": _H,
             "prompt_detection_id": f"{image_id}_det0000",

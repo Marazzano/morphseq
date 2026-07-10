@@ -20,7 +20,7 @@ def _identity_row() -> dict:
         "time_index": 0,
         "z_index": pd.NA,
         "channel_id": "BF",
-        "source_image_path": f"images/{IMAGE_ID}.png",
+        "image_path": f"images/{IMAGE_ID}.png",
         "image_width_px": 1000,
         "image_height_px": 800,
     }

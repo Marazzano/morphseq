@@ -42,6 +42,204 @@ producers — native microscope ingest **and** external drop-in.
 > and YX1 must record the ND2 `raw_image_source_path` plus raw image dimensions/calibration while
 > still deriving the required core fields from the final writer-policy output.
 
+### Migration Plan — materialized-image truth first
+
+The implementation migration must land in small verified commits. The first priority is making the
+native pipeline write correct images; broad column renames come only after that is proven. Do not
+add compatibility readers: migrate the contract directly, update call sites, update fixtures, and
+commit each stage after focused verification.
+
+Verification should be narrow. A stage is allowed to prove the native path on **one target well per
+scope** (one Keyence well and one YX1 well) rather than rematerializing whole experiments. The point
+is to prove that the writer boundary, frame-inventory row shape, validator, and downstream consumer
+path work end-to-end for each microscope family; full-experiment generalization can follow once the
+contract path is correct.
+
+#### Stage 1 — writer policy owns only final presentation and bytes
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/materialized_image_write_policy.py`
+  - add `orientation: none | horizontal | vertical` to `ImageWritePolicy`;
+  - add an orientation transform that rotates only when needed to satisfy horizontal/vertical;
+  - apply orientation inside `prepare_image_for_write` before/with downsample/dtype conversion;
+  - remove `source_image_width_px` / `source_image_height_px` from
+    `MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS`;
+  - keep `jpeg_quality` format-conditional, not a universal required core fact.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_materialization/test_materialized_image_write_policy.py`
+  - add orientation cases (`none`, already-horizontal, rotate-to-horizontal, rotate-to-vertical);
+  - update expected `ImageWritePolicy(...)` constructors and policy-column expectations.
+
+Commit this stage alone after the write-policy unit tests pass.
+
+#### Stage 2 — Keyence constructs from coordinates, writer orients
+
+Change:
+
+- `src/data_pipeline/acquisition/image_building/utils/frame_tiler.py`
+  - remove/retire legacy crop/pad canvas fitting from the native Keyence path;
+  - render the canonical mosaic from tile coordinates/bounds;
+  - keep tile coordinates as the geometry source of truth, not the orientation string;
+  - normalize stitch2d failures so master coordinates can be used when appropriate.
+- `src/data_pipeline/acquisition/image_materialization/scope/keyence/materialize_well_keyence.py`
+  - call the shared writer policy instead of raw `skio.imsave`;
+  - write `image_path`, `image_width_px`, `image_height_px`,
+    `image_micrometers_per_pixel`, `image_file_format`, `pixel_dtype`,
+    `downsample_factor`, and `downsample_method` from the final written file;
+  - populate Keyence optional raw provenance: `raw_tile_path` or `raw_tile_manifest_path`,
+    `raw_tile_width_px`, `raw_tile_height_px`, `raw_tile_count`, and
+    `raw_micrometers_per_pixel`;
+  - keep focus-index-map provenance aligned to the final written orientation/shape.
+- `src/data_pipeline/acquisition/image_materialization/scope/keyence/build_keyence_stitch_map.py`
+  - ensure generated master params/coordinate records do not encode stale orientation as truth.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_building/utils/test_frame_tiler.py`
+- `tests/data_pipeline/acquisition/image_materialization/scope/keyence/test_build_keyence_stitch_map.py`
+- add/update Keyence materializer tests if present or create focused coverage for final written
+  dimensions and raw-tile provenance.
+
+Verification:
+
+- run a focused Keyence candidate materialization on a known previously bad well;
+- inspect the written file header and assert `image_width_px` / `image_height_px` match it.
+
+Commit this stage alone after the Keyence smoke and focused tests pass.
+
+#### Stage 3 — YX1 uses the same writer boundary
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/scope/yx1/materialize_well_yx1.py`
+  - keep product construction as-is, but route projection and z-stack writes through the shared
+    writer policy;
+  - compute `image_width_px` / `image_height_px` from the final written image, not raw ND2 shape
+    and not `expected_downsampled_dims` over source columns;
+  - write core fields: `image_path`, `image_micrometers_per_pixel`, `image_file_format`,
+    `pixel_dtype`, `downsample_factor`, `downsample_method`, and conditional `jpeg_quality`;
+  - write optional raw provenance: `raw_image_source_path`, `raw_image_width_px`,
+    `raw_image_height_px`, and `raw_micrometers_per_pixel`.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_materialization/scope/yx1/test_materialize_well_yx1.py`
+  - update expected columns and row assertions;
+  - add/check ND2 raw provenance;
+  - assert written dimensions come from the writer output.
+
+Verification:
+
+- run a focused YX1 materialization smoke for projection and z-stack products;
+- validate the product frame-inventory shard with source/image checks enabled.
+
+Commit this stage alone after the YX1 smoke and focused tests pass.
+
+#### Stage 4 — frame-inventory contract and validators become image-core-first
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/frame_inventory_contract.py`
+  - replace required core `source_image_path` with `image_path`;
+  - replace required `source_micrometers_per_pixel` with `image_micrometers_per_pixel`;
+  - remove `source_image_width_px` / `source_image_height_px` from required/write-policy columns;
+  - update `DOWNSTREAM_FRAME_IDENTITY_BLOCK` and `_FRAME_IDENTITY_CARRIED_COLUMNS` to carry
+    `image_path`, `image_width_px`, and `image_height_px`;
+  - keep optional `raw_*` provenance out of the core required-column tuple.
+- `src/data_pipeline/acquisition/metadata_ingest/frame_inventory/frame_inventory_validation_rules.py`
+  - rename `validate_sources` semantics/messages to validate `image_path`;
+  - open `image_path`, check suffix vs `image_file_format`, and check header dimensions against
+    `image_width_px` / `image_height_px`;
+  - require `image_micrometers_per_pixel > 0`;
+  - stop recomputing dimensions from `source_image_width_px` / `source_image_height_px`;
+  - keep JPEG quality conditional.
+- `src/data_pipeline/acquisition/metadata_ingest/frame_inventory/frame_inventory_validation.py`
+  - update names/messages only as needed.
+- `src/data_pipeline/acquisition/metadata_ingest/frame_inventory/scaffold_dropin_inventory.py`
+  - emit `image_path`, `image_micrometers_per_pixel` placeholder, and final image dims;
+  - stop scaffolding `source_image_width_px` / `source_image_height_px`.
+- `src/data_pipeline/acquisition/image_materialization/product_shard_assembly.py`
+  - update any expected-column or drift checks if they assume old source columns.
+
+Tests:
+
+- `tests/data_pipeline/acquisition/image_materialization/test_frame_inventory_contract.py`
+- `tests/data_pipeline/acquisition/metadata_ingest/test_frame_inventory.py`
+- `tests/data_pipeline/acquisition/metadata_ingest/test_frame_inventory_strict_gate.py`
+- `tests/data_pipeline/acquisition/metadata_ingest/frame_inventory/test_scaffold_dropin_inventory.py`
+- `tests/data_pipeline/acquisition/image_materialization/test_product_shard_assembly.py`
+- `tests/data_pipeline/acquisition/image_materialization/test_product_shard_merge_integration.py`
+
+Commit this stage alone after the frame-inventory contract/validator tests pass.
+
+#### Stage 5 — materialized-image readers and image consumers use `image_path`
+
+Change:
+
+- `src/data_pipeline/acquisition/image_materialization/materialized_image_readers.py`
+  - rename resolver/helpers/docstrings from `source_image_path` to `image_path`.
+- `src/data_pipeline/pipeline_orchestrator/tasks.py`
+  - update frame-preview / RGB conversion code that reads `row["source_image_path"]`.
+- Detection:
+  - `src/data_pipeline/object_extraction/detection/run_frame_detection.py`
+  - `src/data_pipeline/object_extraction/detection/kept_frame_detections.py`
+  - detection validators/contracts/tests that carry frame identity.
+- Segmentation:
+  - `src/data_pipeline/object_extraction/segmentation/sam2_video/sam2_frame_view.py`
+  - `src/data_pipeline/object_extraction/segmentation/backends/sam2_video/adapt_sam2_output.py`
+  - `src/data_pipeline/object_extraction/segmentation/frame_masks_contract.py`
+  - `src/data_pipeline/object_extraction/segmentation/validate_frame_masks.py`
+  - `src/data_pipeline/object_extraction/segmentation/physical_embryo_registry/snip_identity_contract.py`
+- Snip processing:
+  - `src/data_pipeline/object_extraction/snip_processing/contract.py`
+  - `src/data_pipeline/object_extraction/snip_processing/pipelines/snip_processing.py`
+  - `src/data_pipeline/object_extraction/snip_processing/entrypoints/run_snip_processing.py`
+  - `src/data_pipeline/object_extraction/snip_processing/ops.py`
+- Feature/QC/viz consumers:
+  - `src/data_pipeline/feature_extraction/mask_geometry/compute.py`
+  - `src/data_pipeline/feature_extraction/shared/feature_table_utils.py`
+  - `src/data_pipeline/quality_control/focus_qc/compute.py`
+  - `src/data_pipeline/quality_control/motion_blur_qc/*`
+  - `src/data_pipeline/viz/render_well.py`
+
+Tests:
+
+- update all fixtures that currently author `source_image_path` or
+  `source_micrometers_per_pixel`, especially:
+  - `tests/data_pipeline/acquisition/image_materialization/test_materialized_image_readers.py`
+  - `tests/data_pipeline/object_extraction/detection/*`
+  - `tests/data_pipeline/object_extraction/segmentation/*`
+  - `tests/data_pipeline/object_extraction/snip_processing/*`
+  - `tests/data_pipeline/quality_control/*`
+  - `tests/data_pipeline/viz/test_render_well.py`
+  - `tests/test_frame_snapshot_hash.py`
+
+Commit this stage alone after downstream unit tests for detection/segmentation/snip/QC/viz pass.
+
+#### Stage 6 — docs/config cleanup and final grep gate
+
+Change:
+
+- `src/data_pipeline/docs/PIPELINE_OVERVIEW.md`
+- `src/data_pipeline/pipeline_orchestrator/config.yaml` comments
+- related front-end specs that still describe old core fields:
+  - `docs/refactors/streamline-snakemake/target/specs/front_end/external_dataset_handoff_target.md`
+  - `docs/refactors/streamline-snakemake/target/specs/front_end/keyence_wire_through.md`
+  - `docs/refactors/streamline-snakemake/target/specs/front_end/z_stack_materialization_wire_through.md`
+  - `docs/refactors/streamline-snakemake/target/specs/front_end/magterialization_policy_plan.md`
+
+Final grep gate:
+
+```text
+rg "source_image_path|source_micrometers_per_pixel|source_image_width_px|source_image_height_px" src tests
+```
+
+Expected result: no live code/tests use old core fields. Any remaining mentions must be archival
+docs or explicitly raw/acquisition contexts. Commit this cleanup separately.
+
 > **Vocabulary note (2026-06-04):** this doc adopts **`frame_inventory`** as the name of the
 > per-well validated table, replacing the older `frame_contract`. The code rename
 > (`frame_contract` → `frame_inventory`: 37 Snakefile refs + 3 Python modules + schema) is a

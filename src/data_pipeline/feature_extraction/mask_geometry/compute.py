@@ -28,7 +28,7 @@ from .contract import MASK_GEOMETRY_PAYLOAD_COLUMNS, MASK_GEOMETRY_TABLE_COLUMNS
 
 # Micron calibration source on a frame_inventory row. Target name first, legacy name as fallback;
 # fail loud if neither is present (a micron-aware feature cannot guess pixel size).
-_PIXEL_SIZE_COLUMNS: tuple[str, ...] = ("source_micrometers_per_pixel", "micrometers_per_pixel")
+_PIXEL_SIZE_COLUMNS: tuple[str, ...] = ("image_micrometers_per_pixel", "micrometers_per_pixel")
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
