@@ -212,12 +212,12 @@ def test_distribution_label_group_sample_sets_delegates():
 
 
 # --------------------------------------------------------------------------- #
-# discover_modes — documented stub (body lands in TASK_B)
+# detect_peaks — documented stub (body lands in TASK_B)
 # --------------------------------------------------------------------------- #
-def test_discover_modes_is_stub():
+def test_detect_peaks_is_stub():
     d = _distribution()
     with pytest.raises(NotImplementedError):
-        d.discover_modes(features=("PC1",), output_label="resolved_peak", spec={})
+        d.detect_peaks(features=("PC1",), output_label="resolved_peak")
 
 
 # --------------------------------------------------------------------------- #

@@ -282,21 +282,24 @@ class Distribution:
         )
 
     # --- impl-later methods (bodies land in A / B) -------------------------- #
-    def discover_modes(
+    def detect_peaks(
         self,
         *,
         features: tuple[str, ...],
-        output_label: str,
-        spec: Mapping[str, Any],
+        output_label: str = "resolved_peak",
+        spec: Mapping[str, Any] | None = None,
     ) -> "DistributionLabelGroup":
         """Fit peaks on THIS distribution's own points and write a label column.
 
         Writes ``output_label`` (e.g. ``resolved_peak``) AND its EAGER peak
         geometry into the column's provenance, then returns the bound
-        DistributionLabelGroup. Body implemented in TASK_B (labelers).
+        DistributionLabelGroup (``.distribution`` carries the new column). Body
+        implemented in TASK_B (labelers); ``spec`` defaults to
+        ``DEFAULT_ANALYSIS_SPEC`` there. Peak ids are LOCAL to this distribution
+        (matching ≠ discovery) — no cross-distribution peak_0↔peak_0 claim.
         """
         raise NotImplementedError(
-            "Distribution.discover_modes is implemented in TASK_B (engine/labelers.py)"
+            "Distribution.detect_peaks is implemented in TASK_B (engine/labelers.py)"
         )
 
 
