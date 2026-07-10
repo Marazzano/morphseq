@@ -179,12 +179,43 @@ def test_sample_sets_read_back_geometry_from_provenance():
         r80=0.8,
         cv_radius_from_center=0.1,
     )
-    prov = LabelProvenance(method="discover_modes", geometry={"peak_0": geom})
+    prov = LabelProvenance(method="detect_peaks", geometry={"peak_0": geom})
     d = _distribution().with_label(
         "resolved_peak", {"s0": "peak_0", "s1": "peak_0"}, provenance=prov
     )
     sets = d.sample_sets("resolved_peak")
     assert sets[0].geometry is geom
+    assert sets[0].hdr is None  # bare geometry payload -> only the geometry slot
+
+
+def test_sample_sets_unpack_category_shape_into_typed_slots():
+    # The peak read-back contract: a CategoryShape bundle in provenance.geometry
+    # is unpacked into SampleSet.geometry / .hdr (TASK_B stores this; TASK_C reads
+    # SampleSet.geometry directly — never a wrapper).
+    from morphseq_investigation.engine.objects import CategoryShape, HDR
+
+    geom = SampleSetGeometry(
+        grid_id="g", feature_names=("PC1",), center=np.array([0.0]),
+        radius=1.0, r80=0.8, cv_radius_from_center=0.1,
+    )
+    hdr = HDR(grid_id="g", feature_names=("PC1",), level=0.8, mask=np.array([True, False]))
+    prov = LabelProvenance(
+        method="detect_peaks",
+        geometry={"peak_0": CategoryShape(geometry=geom, hdr=hdr)},
+    )
+    d = _distribution().with_label(
+        "resolved_peak", {"s0": "peak_0", "s1": "peak_0"}, provenance=prov
+    )
+    s = d.sample_sets("resolved_peak")[0]
+    assert s.geometry is geom and s.hdr is hdr
+    assert isinstance(s.geometry, SampleSetGeometry)  # NOT a wrapper
+
+
+def test_sample_sets_rejects_bad_geometry_payload():
+    prov = LabelProvenance(method="x", geometry={"a": object()})
+    d = _distribution().with_label("g", {"s0": "a"}, provenance=prov)
+    with pytest.raises(TypeError):
+        d.sample_sets("g")
 
 
 def test_missing_label_column_raises():

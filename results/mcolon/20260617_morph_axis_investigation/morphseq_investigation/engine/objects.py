@@ -264,13 +264,17 @@ class Distribution:
         sets: list[SampleSet] = []
         for category in column.categories():
             name = str(category)
+            shape = geometry_by_cat.get(category)
+            geometry, hdr, feature_profile = _unpack_category_shape(shape)
             sets.append(
                 SampleSet(
                     sample_set_id=make_sample_set_id(self.distribution_id, name),
                     sample_set_name=name,
                     distribution_id=self.distribution_id,
                     sample_ids=tuple(members.get(category, ())),
-                    geometry=geometry_by_cat.get(category),
+                    geometry=geometry,
+                    hdr=hdr,
+                    feature_profile=feature_profile,
                 )
             )
         return tuple(sets)
@@ -441,6 +445,46 @@ class SampleSet:
     def __post_init__(self) -> None:
         object.__setattr__(self, "sample_ids", tuple(self.sample_ids))
         object.__setattr__(self, "provenance", _readonly_mapping(self.provenance))
+
+
+@dataclass(frozen=True)
+class CategoryShape:
+    """The eager per-category measured shape a labeler stashes in
+    ``LabelProvenance.geometry[category]`` (spec: detection = labeling with more
+    evidence).
+
+    ``Distribution.sample_sets`` unpacks this into the SampleSet's TYPED slots
+    (``geometry`` / ``hdr`` / ``feature_profile``) so consumers (TASK_C plotting)
+    always read a proper ``SampleSetGeometry`` off ``SampleSet.geometry`` — never a
+    wrapper. A provenance that stores a bare ``SampleSetGeometry`` (no HDR) is also
+    accepted by ``sample_sets`` and routed to the ``geometry`` slot. This is the
+    ONE geometry read-back contract; there is no separate unpacking helper.
+    """
+
+    geometry: SampleSetGeometry | None = None
+    hdr: HDR | None = None
+    feature_profile: FeatureProfile | None = None
+
+
+def _unpack_category_shape(
+    shape: Any,
+) -> tuple["SampleSetGeometry | None", "HDR | None", "FeatureProfile | None"]:
+    """Route a provenance geometry payload into typed SampleSet slots.
+
+    Accepts a :class:`CategoryShape` bundle (geometry + hdr + feature_profile), a
+    bare :class:`SampleSetGeometry` (geometry only), or ``None``. Any other type is
+    rejected loudly — a labeler must store one of these, never a private wrapper.
+    """
+    if shape is None:
+        return None, None, None
+    if isinstance(shape, CategoryShape):
+        return shape.geometry, shape.hdr, shape.feature_profile
+    if isinstance(shape, SampleSetGeometry):
+        return shape, None, None
+    raise TypeError(
+        "LabelProvenance.geometry[category] must be a CategoryShape, a "
+        f"SampleSetGeometry, or None — got {type(shape).__name__}"
+    )
 
 
 # --------------------------------------------------------------------------- #
