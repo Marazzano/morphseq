@@ -53,6 +53,20 @@ def test_distribution_has_no_role_or_coordinate_frame():
     assert "coordinates" in fields and "labels" in fields
 
 
+def test_pooled_coordinates_defaults_empty_and_normalizes_to_tuple():
+    # pool_by writes the collapsed coordinate name(s) here (spec §pool_by).
+    assert _distribution().pooled_coordinates == ()
+    d = Distribution(
+        distribution_id="x",
+        sample_ids=("s0",),
+        feature_names=("PC1",),
+        feature_values=np.zeros((1, 1)),
+        coordinates={"scope_id": "b9d2"},
+        pooled_coordinates=["experiment"],
+    )
+    assert d.pooled_coordinates == ("experiment",)
+
+
 def test_distribution_frozen():
     d = _distribution()
     with pytest.raises(dataclasses.FrozenInstanceError):

@@ -146,6 +146,11 @@ class Distribution:
     # --- metadata ---
     labels: Mapping[str, LabelColumn] = field(default_factory=dict)
     coordinates: Mapping[str, Hashable] = field(default_factory=dict)
+    # Names of coordinate(s) collapsed by a pool_by (spec §pool_by "Provenance is
+    # in the samples"): the ONE distribution-grain note kept, so compare() won't
+    # re-treat a pooled-away coordinate as a coordinate. Empty for un-pooled
+    # distributions. All other lineage is recoverable at the SAMPLE grain (labels).
+    pooled_coordinates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "sample_ids", tuple(self.sample_ids))
@@ -169,6 +174,7 @@ class Distribution:
         object.__setattr__(self, "feature_values", values)
         object.__setattr__(self, "labels", _readonly_mapping(self.labels))
         object.__setattr__(self, "coordinates", _readonly_mapping(self.coordinates))
+        object.__setattr__(self, "pooled_coordinates", tuple(self.pooled_coordinates))
         # A sample_id is the unique join key.
         if len(set(self.sample_ids)) != len(self.sample_ids):
             raise ValueError("sample_ids must be unique (they are the join key)")
