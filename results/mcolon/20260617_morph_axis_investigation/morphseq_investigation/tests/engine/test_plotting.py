@@ -636,3 +636,134 @@ def test_build_1d_distribution_comparison_rejects_member_missing_label_group():
         build_1d_distribution_comparison(
             comparisons, "total_length_um", label_group="resolved_peak",
         )
+
+
+# =========================================================================== #
+# TASK_C COMMIT 3 — integration: swap hand-built fixtures for REAL
+# catalog + detect_peaks outputs (both now on main). Same DistributionGrid IR,
+# both build paths, preserved invariants (frozen objects, shared grid_id,
+# grid_id raster-comparability).
+# =========================================================================== #
+def _fast_resolution_config():
+    """Cheaper bootstrap vote so integration tests run quickly (mirrors
+    test_labelers._fast_resolution_config — precision only, not the peak-count
+    answer)."""
+    from morphseq_investigation.core.distribution_records import PeakResolutionConfig
+    from morphseq_investigation.core.peak_stability import PeakCountStabilityPolicy
+
+    return PeakResolutionConfig(
+        n_bootstrap_draws=15,
+        bootstrap_sample_fraction=0.80,
+        min_bootstrap_sample_size=10,
+        count_stability_policy=PeakCountStabilityPolicy(min_mode_frequency=0.50),
+        seed=7,
+    )
+
+
+def _real_catalog_with_peaks():
+    """A REAL DistributionCatalog (from_dataframe) with a REAL detect_peaks
+    ``resolved_peak`` label group on every distribution — 2 time bins x
+    {wildtype (unimodal), b9d2 (bimodal)}. Uses the fast resolution config via
+    map_distributions so the real labeler stays cheap."""
+    from morphseq_investigation.engine.catalog import DistributionCatalog
+    from morphseq_investigation.engine.labelers import detect_peaks as _detect_peaks
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    rows = []
+    for time_bin in (30, 48):
+        for geno, locs in (("wildtype", [0.0]), ("b9d2", [0.0, 8.0])):
+            for pi, loc in enumerate(locs):
+                pts = rng.normal(loc=(loc, loc), scale=0.6, size=(90, 2))
+                for i in range(90):
+                    rows.append(
+                        {
+                            "sample_id": f"{geno}_{time_bin}_{pi}_{i}",
+                            "time_bin": time_bin,
+                            "genotype": geno,
+                            "PC1": pts[i, 0],
+                            "PC2": pts[i, 1],
+                        }
+                    )
+    df = pd.DataFrame(rows)
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="sample_id",
+        feature_columns=["PC1", "PC2"],
+        split_columns=["time_bin", "genotype"],
+    )
+    cfg = _fast_resolution_config()
+
+    def _detect(distribution):
+        return _detect_peaks(
+            distribution,
+            features=("PC1", "PC2"),
+            resolution_config=cfg,
+        ).distribution
+
+    return catalog.map_distributions(_detect)
+
+
+def test_integration_path_a_from_real_catalog_label_groups():
+    catalog = _real_catalog_with_peaks()
+    groups = catalog.label_groups("resolved_peak", display_name="Modes")
+    assert len(groups) == 4  # 2 time bins x 2 genotypes
+
+    grid = build_1d_density_grid(
+        groups, "PC1",
+        facet_row=LabelGroupFacet(), facet_col=CoordinateFacet("time_bin"),
+    )
+    assert isinstance(grid, DistributionGrid)
+    assert len(grid.curves) > 0
+    # Shared-grid invariant: every curve in a cell shares ONE grid_id.
+    by_cell = {}
+    for c in grid.curves:
+        by_cell.setdefault(c.cell, set()).add(c.grid.grid_id)
+    for cell, grid_ids in by_cell.items():
+        assert len(grid_ids) == 1, cell
+    result = plot_1d_density_grid(grid, reference_role=None)
+    assert result is not None
+
+
+def test_integration_path_b_from_real_catalog_compare():
+    catalog = _real_catalog_with_peaks()
+    comparisons = catalog.compare("genotype", values=("wildtype", "b9d2"))
+
+    grid = build_1d_distribution_comparison(
+        comparisons, "PC1",
+        label_group="resolved_peak", facet_col=CoordinateFacet("time_bin"),
+    )
+    # One cell per comparison (2 time bins).
+    assert {c.cell[1] for c in grid.curves} == {30, 48}
+    # Curves keyed by structured CurveKey; both members present per cell.
+    for cell in {c.cell for c in grid.curves}:
+        members = {
+            c.curve_key.comparison_member for c in grid.curves if c.cell == cell
+        }
+        assert members == {"wildtype", "b9d2"}
+    # b9d2 (bimodal) contributes >1 peak curve -> shared grid must span both
+    # members' peaks; grid_id comparability holds within the cell.
+    cell_curves = [c for c in grid.curves if c.cell == ("genotype", 30)]
+    assert len({c.grid.grid_id for c in cell_curves}) == 1
+    b9_peaks = {
+        c.curve_key.sample_set
+        for c in cell_curves
+        if c.curve_key.comparison_member == "b9d2"
+    }
+    assert len(b9_peaks) >= 2
+
+    result = plot_1d_density_grid(grid, reference_role="reference")
+    assert result is not None
+
+
+def test_integration_objects_frozen_every_op_returns_new_object():
+    # Preserved invariant: everything frozen; catalog ops return NEW objects.
+    catalog = _real_catalog_with_peaks()
+    groups = catalog.label_groups("resolved_peak")
+    grid = build_1d_density_grid(groups, "PC1")
+    # DistributionGrid + curves are frozen dataclasses -> assignment raises.
+    with pytest.raises(Exception):
+        grid.curves = ()  # type: ignore[misc]
+    if grid.curves:
+        with pytest.raises(Exception):
+            grid.curves[0].sample_count = 999  # type: ignore[misc]
