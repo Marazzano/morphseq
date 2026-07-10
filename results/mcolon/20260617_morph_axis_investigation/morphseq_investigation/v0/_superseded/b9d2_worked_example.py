@@ -1,4 +1,10 @@
-"""TASK_E - the b9d2 worked example (ACCEPTANCE TARGET for the whole engine).
+"""RETIRED (superseded) — see ``../b9d2_catalog_example.py`` (the canonical
+acceptance runner through DistributionCatalog). This pre-migration script will
+NOT run on ``main``: it imports the removed ``label_genotype`` labeler. Kept for
+historical reference only; ``load_binned`` here documents the upstream binning
+the catalog example reuses.
+
+TASK_E - the b9d2 worked example (ACCEPTANCE TARGET for the whole engine).
 
 > "Generate the b9d2 phenotype distributions over time vs their controls, and
 >  watch the two clusters emerge."

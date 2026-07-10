@@ -120,11 +120,14 @@ engine/
                     #         plot_1d_density_grid, CurveKey ; TASK_D: ridge verb
 tests/engine/       # mirror the above, one test module per source module
 v0/
-  b9d2_catalog_example.py   # TASK_E: the new acceptance caller (replaces the two old v0 scripts)
+  b9d2_catalog_example.py   # TASK_E: the CANONICAL acceptance caller (replaces the old v0 scripts)
+  _superseded/              # TASK_E: the retired pre-migration scripts (do not run) + a pointer README
 ```
 The old `v0/b9d2_worked_example.py` + `v0/rich_distribution_plot_v2.py` + the
-bespoke `v0/rich_distribution_plot.py` are superseded by TASK_E; TASK_E decides
-whether to delete or leave them stale (see its brief).
+bespoke `v0/rich_distribution_plot.py` are superseded by TASK_E and now live in
+`v0/_superseded/` (they will not run on `main` — they import the removed
+`label_genotype` / `DistributionGrouping` API). The single live pipeline is
+`v0/b9d2_catalog_example.py`; see `v0/_superseded/README.md`.
 
 ## Definition of done (the whole set)
 TASK_E reproduces the b9d2 rows (peak / phenotype / genotype over time) through
