@@ -194,15 +194,13 @@ def materialize_keyence_product_for_well(
     # use_legacy_canvas resizes the mosaic to a hardcoded [1140, 480] * (tile_width/640) target,
     # i.e. 1710x720 — an anisotropic ~0.74x horizontal squash of the true 2304x720 stitch, baked in
     # for a 640px-wide camera. That distorts morphology; keep the true stitch geometry instead.
-    # invert_intensity=False: TEMPORARY. The invert never fired on this path anyway, so the images
-    # downstream consumers have seen are non-inverted; make that explicit rather than implicit.
-    # Revisit once the inversion contract is settled (see PLANNED_REVISIONS.md).
+    # invert_intensity stays ON: materialize_ff_projection emits a dark-background image, and this
+    # invert is what turns it back into the bright-field convention (bright background, dark embryo).
     tiling_config = FrameTilingConfig(
         orientation=orientation,
         enable_alignment=False,
         fallback_policy=("master",),
         use_legacy_canvas=False,
-        invert_intensity=False,
     )
     fallback = PreComputeStitchParams(master_params_path=master_params_path)
 
