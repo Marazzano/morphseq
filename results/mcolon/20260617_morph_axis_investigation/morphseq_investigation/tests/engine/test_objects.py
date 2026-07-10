@@ -257,11 +257,17 @@ def test_distribution_label_group_sample_sets_delegates():
 
 
 # --------------------------------------------------------------------------- #
-# detect_peaks — documented stub (body lands in TASK_B)
+# detect_peaks — TASK_B fills the body; the 1-D-grid rejection below still
+# comes from the (reused) live peak machinery, not this stub itself. Full
+# detect_peaks coverage (2-D fixtures, geometry, provenance, peak-count
+# regression) lives in tests/engine/test_labelers.py.
 # --------------------------------------------------------------------------- #
-def test_detect_peaks_is_stub():
+def test_detect_peaks_delegates_to_labelers_body():
     d = _distribution()
-    with pytest.raises(NotImplementedError):
+    # A single feature isn't yet supported by the live 2-D-only peak detector
+    # (engine/labelers.py's _grid_to_canonical) -- this proves detect_peaks is
+    # NOT a stub anymore: it raises the LABELER's own guard, not NotImplementedError.
+    with pytest.raises(ValueError, match="2-D"):
         d.detect_peaks(features=("PC1",), output_label="resolved_peak")
 
 
