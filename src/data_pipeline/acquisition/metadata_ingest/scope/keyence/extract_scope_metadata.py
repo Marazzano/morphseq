@@ -18,6 +18,7 @@ from data_pipeline.acquisition.metadata_ingest.scope.keyence.acquisition_invento
     build_keyence_acquisition_inventory,
 )
 from data_pipeline.acquisition.metadata_ingest.scope.keyence.raw_plane_parsing import (
+    _extract_keyence_well_and_tile,
     _parse_keyence_time_z_channel,
 )
 from data_pipeline.io.validators import validate_dataframe_schema
@@ -214,18 +215,14 @@ def _extract_well_from_path(file_path: Path) -> str:
     Returns:
         Well identifier (e.g., "A01", "B12")
     """
-    path_str = str(file_path)
+    parsed_well, _tile_id = _extract_keyence_well_and_tile(file_path)
+    if parsed_well is not None:
+        return parsed_well
 
-    # Check for XY pattern in path (e.g., XY01, XY16, XY01a)
+    # Check for legacy XY pattern in path (e.g., XY01a)
     for part in file_path.parts:
         if part.startswith('XY'):
             suffix = part[2:]
-            if suffix.isdigit():
-                xy_idx = int(suffix)
-                row = (xy_idx - 1) // 12
-                col = (xy_idx - 1) % 12 + 1
-                return f"{chr(65 + row)}{col:02d}"
-
             # Legacy XY01a format
             well_num = part[2:4]
             well_letter = part[-1].upper()

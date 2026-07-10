@@ -22,10 +22,61 @@ import re
 from pathlib import Path
 
 
+_WELL_MARKER_RE = re.compile(r"_([A-H](?:0[1-9]|1[0-2]))$", flags=re.IGNORECASE)
+
+
 def _well_from_w_index(raw: int) -> str:
     row = (raw - 1) // 12
     col = (raw - 1) % 12 + 1
     return f"{chr(65 + row)}{col:02d}"
+
+
+def _normalize_well_marker(value: str) -> str:
+    marker = str(value).strip().upper()
+    if not re.fullmatch(r"[A-H](?:0[1-9]|1[0-2])", marker):
+        raise ValueError(f"Invalid Keyence well marker {value!r}; expected A01-H12.")
+    return marker
+
+
+def _keyence_xy_position_dir(path: Path) -> Path | None:
+    for idx, part in enumerate(path.parts):
+        if re.fullmatch(r"XY\d+", part, flags=re.IGNORECASE):
+            return Path(*path.parts[: idx + 1])
+    return None
+
+
+def _parse_keyence_xy_position_index(path: Path) -> int | None:
+    for part in path.parts:
+        match = re.fullmatch(r"XY(\d+)", part, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _read_keyence_well_marker(position_dir: Path) -> str:
+    """Read the explicit Keyence well marker under an ``XY##`` directory.
+
+    Newer BZ-X plate-map exports observed in production write a zero-byte marker
+    file named like ``_A01`` inside each ``XY##`` position directory. That marker
+    is the authoritative well label; ``XY##`` is only the acquisition position.
+    """
+    markers = []
+    for child in Path(position_dir).iterdir():
+        match = _WELL_MARKER_RE.fullmatch(child.name)
+        if match:
+            markers.append(_normalize_well_marker(match.group(1)))
+
+    if len(markers) == 1:
+        return markers[0]
+    if not markers:
+        raise ValueError(
+            f"No Keyence well marker found in {position_dir}. Expected exactly one marker file "
+            "named like '_A01'. Refusing to infer plate wells from XY capture order."
+        )
+    raise ValueError(
+        f"Multiple Keyence well markers found in {position_dir}: {sorted(markers)}. "
+        "Expected exactly one marker file named like '_A01'."
+    )
 
 
 def _extract_keyence_well_and_tile(path: Path) -> tuple[str | None, int]:
@@ -47,7 +98,10 @@ def _extract_keyence_well_and_tile(path: Path) -> tuple[str | None, int]:
                 if tile_id is None:
                     tile_id = max(ord(suffix.lower()) - 96, 1)
             else:
-                well_index = _well_from_w_index(xy_raw)
+                position_dir = _keyence_xy_position_dir(path)
+                if position_dir is None:
+                    return None, tile_id or 1
+                well_index = _read_keyence_well_marker(position_dir)
                 if tile_id is None:
                     # Legacy XY layout without P*/T* encodes sub-position in filename,
                     # e.g. embryo__XY16_00003_Z001_CH1.tif -> tile 3 at time 0.
