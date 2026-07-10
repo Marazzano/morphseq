@@ -25,19 +25,81 @@ _PARAM_FLOAT_DECIMALS = 9
 _AXIS_DTYPE = np.float64
 
 
-def make_distribution_id(scope_id: str, time_bin: Any, role: str) -> str:
-    """``make_distribution_id("b9d2", 30, "reference") -> "b9d2_30hpf_reference"``.
+def make_distribution_id(coordinates: Mapping[str, Any]) -> str:
+    """DERIVE a distribution id from its coordinate map (spec §"What must stay in
+    sync": ``coordinates ↔ distribution_id``).
 
-    ``time_bin`` is rendered with an ``hpf`` unit suffix when numeric (the repo's
-    binning grain); non-numeric bins render as their string form. Parts are the
-    stored truth on :class:`~engine.objects.Distribution`; this string is only a
-    rendering.
+    The coordinate map is open-ended (``time_bin``, ``scope_id``, ``experiment_id``,
+    …), so the id is a hash of the CANONICALIZED map, not a positional render. The
+    guarantees (all in ``test_identifiers.py``):
+
+      - same coordinates → same id (deterministic; blake2b over a canonical byte
+        serialization, NOT Python's salted ``hash()``);
+      - different coordinates → different id;
+      - ORDER-INDEPENDENT over the map (``{"a":1,"b":2}`` == ``{"b":2,"a":1}``) —
+        keys are sorted before hashing.
+
+    A short readable slug of the sorted values is prefixed for debuggability, but
+    the trailing hash is the identity — nothing ever parses the slug back.
+    Pooled distributions (spec §pool_by) re-derive from their post-collapse map
+    like any other; there is NO separate pooled-content hash (deferred).
     """
-    if isinstance(time_bin, (int, float)) and not isinstance(time_bin, bool):
-        bin_token = f"{int(time_bin) if float(time_bin).is_integer() else time_bin}hpf"
-    else:
-        bin_token = str(time_bin)
-    return f"{scope_id}_{bin_token}_{role}"
+    canonical = _canonicalize_coordinates(dict(coordinates))
+    digest = hashlib.blake2b(canonical.encode("utf-8"), digest_size=12).hexdigest()
+    slug = _coordinate_slug(coordinates)
+    return f"dist_{slug}_{digest}" if slug else f"dist_{digest}"
+
+
+def _canonicalize_coordinates(coordinates: Mapping[str, Any]) -> str:
+    """Deterministic, order-independent string form of a coordinate map.
+
+    Like :func:`_canonicalize_params` but collapses whole-number floats to int so
+    a ``time_bin`` of ``30`` and ``30.0`` mean the SAME distribution (same id).
+    Non-whole floats are rounded to fixed precision; numpy scalars are unwrapped.
+    """
+
+    def _norm(value: Any) -> Any:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, np.integer)):
+            return int(value)
+        if isinstance(value, (float, np.floating)):
+            fv = round(float(value), _PARAM_FLOAT_DECIMALS)
+            return int(fv) if fv.is_integer() else fv
+        if isinstance(value, Mapping):
+            return {str(k): _norm(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_norm(v) for v in value]
+        return str(value)
+
+    normalized = {str(k): _norm(v) for k, v in dict(coordinates).items()}
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+
+
+def _coordinate_slug(coordinates: Mapping[str, Any]) -> str:
+    """A short, sanitized, order-stable render of coordinate VALUES (debug only).
+
+    Values are joined in sorted-key order. Numeric time-like bins keep their bare
+    number; everything else is stringified and stripped to id-safe characters.
+    Purely cosmetic — the hash carries identity — so collisions in the slug are
+    harmless.
+    """
+    tokens: list[str] = []
+    for key in sorted(str(k) for k in coordinates):
+        value = coordinates[key]
+        if isinstance(value, bool):
+            token = str(value)
+        elif isinstance(value, (int, np.integer)):
+            token = str(int(value))
+        elif isinstance(value, (float, np.floating)):
+            fv = float(value)
+            token = str(int(fv)) if fv.is_integer() else str(fv)
+        else:
+            token = str(value)
+        token = "".join(ch if (ch.isalnum() or ch in "-.") else "" for ch in token)
+        if token:
+            tokens.append(token)
+    return "_".join(tokens)
 
 
 def make_sample_set_id(distribution_id: str, name: str) -> str:
