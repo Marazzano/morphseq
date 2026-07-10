@@ -317,6 +317,17 @@ def neighbor_composition(joined, z_cols, m_cols, k=COMPOSITION_K):
 
             rec = dict(time_bin=b, genotype=g_i, experiment=e_i)
 
+            # raw-neighborhood composition (pre-reorganization baseline): the
+            # same-genotype / same-experiment share of N_i^raw itself. This is the
+            # "where the raw space already was" reference drawn as the dashed box
+            # alongside the ADDED observed/null bars in the composition figure.
+            C_raw0 = np.array(sorted(raw_set), dtype=int)
+            if len(C_raw0):
+                rec.update(raw_gen=np.mean(geno[C_raw0] == g_i),
+                           raw_exp=np.mean(expt[C_raw0] == e_i))
+            else:
+                rec.update(raw_gen=np.nan, raw_exp=np.nan)
+
             if len(G_i):
                 obs_gen = np.mean(geno[G_i] == g_i)
                 obs_exp = np.mean(expt[G_i] == e_i)
@@ -385,13 +396,14 @@ def reorg_vs_alignment(joined, z_cols, m_cols, k=SCATTER_K):
 
         churn_i = 1 - |N_i^raw ∩ N_i^margin| / k        (0 = unchanged, 1 = all new)
         R_gen_i = same-genotype share of ADDED neighbors
-                  - same-genotype share of the eligible pool C_i               (1a, per embryo)
+                  - same-genotype share of the RAW neighborhood N_i^raw    (per embryo)
 
-    R_gen is null-subtracted (chance genotype share among embryos actually
-    eligible to be gained), so a churn→R_gen slope is NOT the added-set-denominator
-    tautology: it asks whether embryos that reorganize MORE do so preferentially
-    TOWARD their own genotype. Slope≈0 with high churn = reorganization driven by
-    something other than genotype (the residual we can't get a clean null for)."""
+    The baseline is the RAW neighborhood the embryo started with, so R_gen asks
+    whether the margin reorganization moved the embryo toward its own genotype
+    BEYOND where the raw manifold already had it (not merely above chance). A churn
+    →R_gen slope then means embryos that reorganize MORE do so preferentially TOWARD
+    their own genotype relative to their raw starting point; slope≈0 with high churn
+    = reorganization driven by something other than genotype."""
     rows = []
     for b, sub in joined.groupby("time_bin"):
         sub = sub.reset_index(drop=True)
@@ -409,14 +421,13 @@ def reorg_vs_alignment(joined, z_cols, m_cols, k=SCATTER_K):
             mar_set = set(nn_mar[i].tolist())
             churn = 1.0 - len(raw_set & mar_set) / k
             G_i = np.array(sorted(mar_set - raw_set), dtype=int)
-            excl = raw_set | {i}
-            C_i = all_idx[~np.isin(all_idx, list(excl))]
-            if len(G_i) == 0 or len(C_i) == 0:
+            raw_arr = np.array(sorted(raw_set), dtype=int)
+            if len(G_i) == 0 or len(raw_arr) == 0:
                 r_gen = np.nan
             else:
-                obs = np.mean(geno[G_i] == geno[i])
-                null = np.mean(geno[C_i] == geno[i])
-                r_gen = obs - null
+                obs = np.mean(geno[G_i] == geno[i])           # ADDED same-genotype share
+                raw_base = np.mean(geno[raw_arr] == geno[i])  # RAW-neighborhood baseline
+                r_gen = obs - raw_base
             rows.append(dict(embryo_id=eid[i], time_bin=b, genotype=geno[i],
                              k=k, churn=churn, n_gained=len(G_i), R_gen=r_gen))
     return pd.DataFrame(rows)
@@ -534,8 +545,11 @@ def report_and_plot(A):
     print("  Lost_gen<0 = dropped neighbors are LESS same-genotype than the raw "
           "neighborhood (margin preferentially discards cross-genotype raw ties)")
 
+    make_composition_figure(comp_focal)
+    print(f"\nSaved figure -> figures/neighbor_genotype_composition.png")
+
     make_figure(pooled, dd_bin, cons, comp_focal, pb, wg)
-    print(f"\nSaved figure -> figures/genotype_stratified_preservation.png")
+    print(f"Saved figure -> figures/genotype_stratified_preservation.png")
 
     print("\n=== Reorganization vs genotype-alignment (per embryo, k=%d) ===" % SCATTER_K)
     rr = reorg.dropna(subset=["R_gen"])
@@ -593,16 +607,97 @@ def _shared_genotype_legend(fig):
                frameon=False, bbox_to_anchor=(0.5, -0.01))
 
 
+def make_composition_figure(comp_focal):
+    """Standalone: same-class composition of the ADDED neighbors, split into
+    (1a) GENOTYPE and (1b) EXPERIMENT. Three elements per genotype:
+      observed  (solid, coloured)  = share of ADDED neighbors sharing the class
+      raw-space (dashed, hollow)   = share in the RAW neighbourhood before margin
+                                     reorganised it (the pre-existing baseline)
+      null      (grey)             = chance share in the eligible replacement pool
+    The raw-space box says where the raw manifold already sat; the gap from raw to
+    observed is what the margin space added on top of what was already there."""
+    plt.rcParams.update({"axes.titlesize": TITLE_FS, "axes.labelsize": LABEL_FS,
+                         "xtick.labelsize": TICK_FS, "ytick.labelsize": TICK_FS,
+                         "legend.fontsize": TICK_FS})
+    obs = comp_focal.groupby("genotype")[
+        ["obs_gen", "null_gen", "raw_gen", "obs_exp", "null_exp", "raw_exp"]].mean()
+
+    def paired(ax, obs_col, null_col, raw_col, class_word):
+        gg = [g for g in GROUPS if g in obs.index]
+        x = np.arange(len(gg))
+        o = [obs.loc[g, obs_col] for g in gg]
+        nb = [obs.loc[g, null_col] for g in gg]
+        rw = [obs.loc[g, raw_col] for g in gg]
+        # bootstrap CI on the observed share
+        cis = [_boot_ci(comp_focal[comp_focal.genotype == g][obs_col].values) for g in gg]
+        elo = [max(0.0, o[i] - cis[i][0]) for i in range(len(gg))]
+        ehi = [max(0.0, cis[i][1] - o[i]) for i in range(len(gg))]
+        w = 0.27
+        ax.bar(x - w, o, width=w, color=[COLORS[g] for g in gg],
+               label="ADDED by margin (neighbors margin gained over raw)")
+        ax.errorbar(x - w, o, yerr=[elo, ehi], fmt="none", ecolor="k",
+                    elinewidth=0.8, capsize=2)
+        # raw-space baseline: same colour but greyed-down and diagonally hatched,
+        # so it reads as "the raw starting point for this genotype", distinct from
+        # the solid observed bar without going hollow.
+        import matplotlib.colors as mcolors
+        plt.rcParams["hatch.linewidth"] = 1.1
+        for i, g in enumerate(gg):
+            base = np.array(mcolors.to_rgb(COLORS[g]))
+            faded = tuple(base * 0.55 + 0.45)   # lighten toward white
+            ax.bar(x[i], rw[i], width=w, facecolor=faded, hatch="////",
+                   edgecolor=COLORS[g], linewidth=1.0,
+                   label="RAW neighborhood (before margin reorganized it)" if i == 0 else None)
+        ax.bar(x + w, nb, width=w, color="#cccccc", edgecolor="k",
+               label="CHANCE (share in the eligible replacement pool)")
+        ax.set_xticks(x); ax.set_xticklabels([GENO_LABEL[g] for g in gg])
+        ax.grid(alpha=0.3, axis="y")
+
+    fig, (axa, axb) = plt.subplots(1, 2, figsize=(13, 6.0))
+    fig.subplots_adjust(wspace=0.28, top=0.72, bottom=0.11)
+
+    def panel_head(ax, title, takeaway, define, good=True):
+        ax.set_title(title, fontsize=TITLE_FS, fontweight="bold", pad=34)
+        ax.text(0.5, 1.085, takeaway, transform=ax.transAxes, ha="center",
+                va="bottom", fontsize=LABEL_FS, style="italic", wrap=True,
+                color=("#1b7837" if good else "#b2182b"))
+        ax.text(0.5, 1.025, define, transform=ax.transAxes, ha="center",
+                va="bottom", fontsize=TICK_FS - 0.5, color="#555")
+
+    paired(axa, "obs_gen", "null_gen", "raw_gen", "genotype")
+    axa.set(ylabel="Same-genotype share of a neighbor set\n(fraction sharing focal embryo's genotype)",
+            ylim=(0, 1))
+    axa.legend(loc="upper left")
+    panel_head(axa, "(1a) Added neighbors: share GENOTYPE?",
+               "Yes — far above both chance AND the raw-space baseline.",
+               "dashed box = same-genotype share of the RAW neighborhood", good=True)
+
+    paired(axb, "obs_exp", "null_exp", "raw_exp", "experiment")
+    axb.set(ylabel="Same-experiment share of a neighbor set\n(fraction sharing focal embryo's experiment)",
+            ylim=(0, 1))
+    axb.legend(loc="upper left")
+    panel_head(axb, "(1b) Added neighbors: share EXPERIMENT?",
+               "No — observed tracks chance/raw: no added batch bias.",
+               "same axes as (1a), experiment substituted for genotype", good=True)
+
+    fig.suptitle("Composition of neighbors ADDED by the margin space, vs. the raw baseline",
+                 fontsize=14, fontweight="bold", y=1.0)
+    fig.savefig(FIGURES / "neighbor_genotype_composition.png", dpi=130,
+                bbox_inches="tight")
+    plt.close(fig)
+
+
 def make_figure(pooled, dd_bin, cons, comp_focal, pb, wg):
     """Four panels, each built backwards from ONE thing to show. Rules:
       (1) x = the thing under examination; (2) y-label states what high/low MEAN;
       (3) the conclusion is an italic subtitle, and a grey line under it DEFINES
           the metric in plain words (never a bare 'O').
 
-    (1a) added neighbors are same-GENOTYPE far above chance   -> the finding
-    (1b) same plot for EXPERIMENT: added neighbors sit at chance -> no batch bias
     (2)  preservation over time: the late drop is controls' PCA rising, not crispant
     (3)  within-genotype preservation over time: double crispant lowest (k=3 & k=8)
+
+    Neighbor-composition panels (1a/1b) now live in their own figure
+    (make_composition_figure -> neighbor_genotype_composition.png).
     """
     plt.rcParams.update({"axes.titlesize": TITLE_FS, "axes.labelsize": LABEL_FS,
                          "xtick.labelsize": TICK_FS, "ytick.labelsize": TICK_FS,
@@ -613,49 +708,7 @@ def make_figure(pooled, dd_bin, cons, comp_focal, pb, wg):
     def mk(g):
         return "s" if g in CONTROLS else "o"
 
-    # per-genotype observed & null same-class shares of ADDED neighbors
-    obs = comp_focal.groupby("genotype")[["obs_gen", "null_gen", "obs_exp", "null_exp"]].mean()
-
-    def paired_obs_null(ax, obs_col, null_col, class_word):
-        gg = [g for g in GROUPS if g in obs.index]
-        x = np.arange(len(gg))
-        o = [obs.loc[g, obs_col] for g in gg]
-        nblo = [obs.loc[g, null_col] for g in gg]
-        # bootstrap CI on the observed share
-        cis = []
-        for g in gg:
-            v = comp_focal[comp_focal.genotype == g][obs_col].values
-            cis.append(_boot_ci(v))
-        elo = [max(0.0, o[i] - cis[i][0]) for i in range(len(gg))]
-        ehi = [max(0.0, cis[i][1] - o[i]) for i in range(len(gg))]
-        ax.bar(x - 0.2, o, width=0.38, color=[COLORS[g] for g in gg],
-               label=f"observed same-{class_word} share")
-        ax.errorbar(x - 0.2, o, yerr=[elo, ehi], fmt="none", ecolor="k",
-                    elinewidth=0.8, capsize=2)
-        ax.bar(x + 0.2, nblo, width=0.38, color="#cccccc", edgecolor="k",
-               label=f"null: chance share in the eligible pool")
-        ax.set_xticks(x); ax.set_xticklabels([GENO_LABEL[g] for g in gg])
-        ax.grid(alpha=0.3, axis="y")
-
-    # ══ (1a) added neighbors: observed vs null same-GENOTYPE share ══════════════
-    ax = fig.add_subplot(gs[0, 0])
-    paired_obs_null(ax, "obs_gen", "null_gen", "genotype")
-    ax.set(ylabel="Fraction of ADDED neighbors\nsharing focal embryo's genotype", ylim=(0, 1))
-    ax.set_title("(1a) Added neighbors: share GENOTYPE?")
-    ax.legend(loc="upper left")
-    _subtitle(ax, "Yes — far above chance everywhere.",
-              define="added = a margin k-NN that wasn't a raw k-NN",
-              good=True)
-
-    # ══ (1b) same plot for EXPERIMENT ══════════════════════════════════════════
-    ax = fig.add_subplot(gs[1, 0])
-    paired_obs_null(ax, "obs_exp", "null_exp", "experiment")
-    ax.set(ylabel="Fraction of ADDED neighbors\nsharing focal embryo's experiment", ylim=(0, 1))
-    ax.set_title("(1b) Added neighbors: share EXPERIMENT?")
-    ax.legend(loc="upper left")
-    _subtitle(ax, "No — observed sits on the null: no batch bias.",
-              define="same axes as (1a), experiment substituted for genotype",
-              good=True)
+    # gs[:, 0] intentionally left empty (1a/1b moved to their own figure)
 
     # ══ Pod 2 — controls preservation over time, low k=5 vs high k=15 merged ════
     def ctl_pooled(k):
@@ -737,8 +790,9 @@ def make_scatter_figure(reorg):
     Churn (=neighbors-changed/k) is inherently discrete, so instead of a strip
     scatter we draw, at EACH churn level, one violin PER genotype showing the
     distribution of R_gen (same-genotype share of ADDED neighbors minus the
-    eligible-pool chance share). High R_gen = the churn moved that embryo toward
-    its own genotype. If genotype alignment held roughly constant across churn
+    same-genotype share of the RAW neighborhood it started with). High R_gen = the
+    churn moved that embryo toward its own genotype beyond its raw starting point.
+    If genotype alignment held roughly constant across churn
     levels within a genotype, alignment is a floor property of the reorganization,
     not something proportional to how MUCH an embryo reorganized."""
     # larger type throughout — the top panel is condensed to afford it
@@ -785,9 +839,14 @@ def make_scatter_figure(reorg):
                     body.set_facecolor("none"); body.set_alpha(1.0)
                     body.set_edgecolor(COLORS[g]); body.set_linewidth(1.1)
             if len(v):
-                # jittered raw points: the actual mass, so big n reads as big
+                # jittered raw points: the actual mass, so big n reads as big.
+                # R_gen is now discrete (obs & raw baseline are both k-ths, so it
+                # lands on a 1/k grid); points pile onto those levels, so we add a
+                # small VERTICAL jitter (< half the 1/k step) as well as horizontal,
+                # spreading each stacked level into a visible cloud.
                 jit = rng.uniform(-1, 1, len(v)) * max(w, vw * 0.12) * 0.45
-                ax.scatter(xpos + jit, v, s=5, color=COLORS[g], alpha=0.30,
+                vjit = v + rng.uniform(-1, 1, len(v)) * (0.9 / SCATTER_K) * 0.5
+                ax.scatter(xpos + jit, vjit, s=5, color=COLORS[g], alpha=0.30,
                            edgecolors="none", zorder=3)
                 ax.plot([xpos - vw * 0.4, xpos + vw * 0.4], [v.mean()] * 2,
                         color="k", lw=1.4, zorder=6)
@@ -806,7 +865,7 @@ def make_scatter_figure(reorg):
                          color="k", zorder=5)
 
     ax.axhline(0, color="#888", lw=1, ls=":")
-    ax.set_ylabel("Same-genotype enrichment of the churn\n(observed − null; ↑ toward own genotype)")
+    ax.set_ylabel("Margin gain vs raw\n(↑ toward own genotype)")
     ax.set_title("How much of the raw→margin reorganization is genotype-driven?",
                  fontsize=TITLE_FS + 2, fontweight="bold", pad=14)
     ax.grid(alpha=0.3, axis="y")

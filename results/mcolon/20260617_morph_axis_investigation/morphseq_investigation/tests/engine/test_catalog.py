@@ -528,7 +528,7 @@ def test_map_distributions_generic_escape_hatch():
         assert "constant" in distribution.labels
 
 
-def test_detect_peaks_is_thin_wrapper_over_stub():
+def test_detect_peaks_is_thin_wrapper_over_map_distributions():
     df = _synthetic_df()
     catalog = DistributionCatalog.from_dataframe(
         df,
@@ -536,7 +536,11 @@ def test_detect_peaks_is_thin_wrapper_over_stub():
         feature_columns=("PC1", "PC2"),
         split_columns=("time_bin", "genotype"),
     )
-    # TASK_B's Distribution.detect_peaks is still a NotImplementedError stub;
-    # the catalog convenience should propagate that, not swallow it.
-    with pytest.raises(NotImplementedError):
-        catalog.detect_peaks(features=("PC1", "PC2"))
+    # TASK_B implemented Distribution.detect_peaks; the catalog convenience
+    # delegates to map_distributions and writes the output label onto every
+    # distribution, returning a new catalog (frozen — new object).
+    result = catalog.detect_peaks(features=("PC1", "PC2"), output_label="resolved_peak")
+    assert isinstance(result, DistributionCatalog)
+    assert result is not catalog
+    for distribution in result.distributions:
+        assert "resolved_peak" in distribution.labels
