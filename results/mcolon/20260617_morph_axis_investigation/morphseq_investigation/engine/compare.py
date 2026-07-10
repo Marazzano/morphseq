@@ -7,14 +7,14 @@ this keeps ``artifacts``/``provenance``/``across_sample_set_metrics``/
 bare geometry. Roles (``reference``/``target``) are assigned AT CALL TIME -- a
 ``LabelGroup`` is not intrinsically one or the other.
 
-This module builds up in two checkpoints (see TASK_C brief):
+Two distinct comparison shapes live in this module:
 
 1. ``compare_label_groups`` -- REF-vs-TARGET correspondence between two
    LabelGroups (usually from two different Distributions/roles). A
-   ``correspondence_spec`` policy decides which SampleSets pair up. (COMMIT 1)
-2. genotype-vs-peak partition agreement -- partition-vs-partition agreement
-   between two TOTAL partitions of the SAME Distribution's samples: "do they
-   carve alike?" (COMMIT 2)
+   ``correspondence_spec`` policy decides which SampleSets pair up.
+2. ``label_group_agreement`` -- partition-vs-partition agreement between two
+   TOTAL partitions of the SAME Distribution's samples (e.g. genotype vs peak)
+   -- "do they carve alike?"
 
 Both are cross-run relations and therefore live HERE, not on
 ``LabelGroup.across_sample_set_metrics`` (ontology #8: that slot is WITHIN one
@@ -34,6 +34,7 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 import numpy as np
+from sklearn.metrics import adjusted_rand_score
 
 from .objects import HDR, LabelGroup, SampleSet, SampleSetGeometry
 
@@ -105,6 +106,38 @@ class ComparisonResult:
             self,
             "target_unassigned_sample_ids",
             tuple(self.target_unassigned_sample_ids),
+        )
+
+
+@dataclass(frozen=True)
+class PartitionAgreementResult:
+    """Result of :func:`label_group_agreement` -- partition-vs-partition on the
+    SAME Distribution's samples (e.g. genotype vs peak): do they carve alike?
+
+    Distinct from :class:`ComparisonResult` (ref-vs-target correspondence).
+    """
+
+    distribution_id: str
+    left_label_group_name: str
+    right_label_group_name: str
+    cross_tab: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+    agreement_metric: str = "adjusted_rand_score"
+    agreement_score: float = 0.0
+    n_samples_compared: int = 0
+    left_only_sample_ids: tuple[str, ...] = ()   # unassigned on left, assigned on right
+    right_only_sample_ids: tuple[str, ...] = ()   # unassigned on right, assigned on left
+    unassigned_both_sample_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "cross_tab",
+            _readonly_mapping({k: _readonly_mapping(v) for k, v in dict(self.cross_tab).items()}),
+        )
+        object.__setattr__(self, "left_only_sample_ids", tuple(self.left_only_sample_ids))
+        object.__setattr__(self, "right_only_sample_ids", tuple(self.right_only_sample_ids))
+        object.__setattr__(
+            self, "unassigned_both_sample_ids", tuple(self.unassigned_both_sample_ids)
         )
 
 
@@ -351,4 +384,80 @@ def compare_label_groups(
         unmatched_target_sample_set_ids=unmatched_tgt,
         reference_unassigned_sample_ids=reference_lg.unassigned_sample_ids,
         target_unassigned_sample_ids=target_lg.unassigned_sample_ids,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Genotype-vs-peak agreement -- partition-vs-partition on the SAME Distribution.
+# --------------------------------------------------------------------------- #
+def label_group_agreement(
+    left_lg: LabelGroup,
+    right_lg: LabelGroup,
+) -> PartitionAgreementResult:
+    """Agreement between two TOTAL partitions of the SAME Distribution's samples
+    (e.g. genotype vs peak) -- do they carve alike?
+
+    Distinct from :func:`compare_label_groups` (that's ref-vs-target
+    correspondence between two possibly-different Distributions; this is
+    partition-vs-partition on ONE Distribution, per the TASK_C brief).
+
+    Agreement metric: **adjusted Rand index** (``sklearn.metrics.
+    adjusted_rand_score``) -- chosen over normalized MI because ARI is
+    chance-corrected AND bounded at exactly 1.0 for identical partitions
+    (NMI is also chance-agnostic in its raw form and less interpretable at the
+    "near chance" end); ARI ~ 0 for independent random partitions, which is
+    exactly the "near chance" contract the TASK_C tests ask for.
+
+    Only samples assigned in BOTH LabelGroups are used for the cross-tab and
+    the agreement score (an ARI over an artificially-added "unassigned"
+    category would conflate labeler abstention with disagreement). Samples
+    unassigned on one or both sides are reported separately, never silently
+    dropped.
+    """
+    if left_lg.distribution_id != right_lg.distribution_id:
+        raise ValueError(
+            "label_group_agreement compares two partitions of the SAME Distribution: "
+            f"{left_lg.distribution_id!r} != {right_lg.distribution_id!r}"
+        )
+
+    left_assignment = dict(left_lg.sample_id_to_sample_set_id)
+    right_assignment = dict(right_lg.sample_id_to_sample_set_id)
+    left_unassigned = set(left_lg.unassigned_sample_ids)
+    right_unassigned = set(right_lg.unassigned_sample_ids)
+
+    common_ids = sorted(set(left_assignment) & set(right_assignment))
+
+    left_only = sorted(set(left_assignment) & right_unassigned)
+    right_only = sorted(left_unassigned & set(right_assignment))
+    unassigned_both = sorted(left_unassigned & right_unassigned)
+
+    cross_tab: dict[str, dict[str, int]] = {
+        left_id: {right_id: 0 for right_id in right_lg.sample_set_ids}
+        for left_id in left_lg.sample_set_ids
+    }
+    left_labels = []
+    right_labels = []
+    for sample_id in common_ids:
+        left_set_id = left_assignment[sample_id]
+        right_set_id = right_assignment[sample_id]
+        cross_tab[left_set_id][right_set_id] += 1
+        left_labels.append(left_set_id)
+        right_labels.append(right_set_id)
+
+    if common_ids:
+        agreement_score = float(adjusted_rand_score(left_labels, right_labels))
+    else:
+        agreement_score = float("nan")
+
+    return PartitionAgreementResult(
+        distribution_id=left_lg.distribution_id,
+        left_label_group_name=left_lg.label_group_name,
+        right_label_group_name=right_lg.label_group_name,
+        cross_tab=cross_tab,
+        agreement_metric="adjusted_rand_score",
+        agreement_score=agreement_score,
+        n_samples_compared=len(common_ids),
+        left_only_sample_ids=tuple(left_only),
+        right_only_sample_ids=tuple(right_only),
+        unassigned_both_sample_ids=tuple(unassigned_both),
     )

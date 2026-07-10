@@ -15,7 +15,9 @@ from morphseq_investigation.engine.objects import (
 )
 from morphseq_investigation.engine.compare import (
     ComparisonResult,
+    PartitionAgreementResult,
     compare_label_groups,
+    label_group_agreement,
 )
 
 
@@ -265,3 +267,89 @@ def test_unassigned_and_unmatched_survive_into_result():
     assert result.reference_unassigned_sample_ids == ("r10",)
     assert result.target_unassigned_sample_ids == ("t7",)
 
+
+# --------------------------------------------------------------------------- #
+# Genotype-vs-peak agreement
+# --------------------------------------------------------------------------- #
+def _partition_label_group(distribution_id, name, id_to_group, group_names, unassigned=()):
+    sets = []
+    for g in group_names:
+        members = tuple(sid for sid, grp in id_to_group.items() if grp == g)
+        sets.append(_sample_set(distribution_id, g, members))
+    return _label_group(distribution_id, name, sets, unassigned=unassigned), _sample_set_map(*sets)
+
+
+def test_agreement_identical_partitions_is_max():
+    sample_ids = [f"s{i}" for i in range(20)]
+    id_to_group = {sid: ("A" if i % 2 == 0 else "B") for i, sid in enumerate(sample_ids)}
+    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
+    right_lg, _ = _partition_label_group(REF_DID, "peak", id_to_group, ["A", "B"])
+
+    result = label_group_agreement(left_lg, right_lg)
+    assert isinstance(result, PartitionAgreementResult)
+    assert result.agreement_metric == "adjusted_rand_score"
+    assert result.agreement_score == pytest.approx(1.0)
+    assert result.n_samples_compared == 20
+
+
+def test_agreement_orthogonal_partitions_near_chance():
+    # 4x4 grid design: left splits into quadrant-rows, right into a scrambled
+    # partition uncorrelated with left -> ARI near 0.
+    rng = np.random.default_rng(0)
+    n = 200
+    sample_ids = [f"s{i}" for i in range(n)]
+    left_labels = rng.integers(0, 3, size=n)
+    right_labels = rng.permutation(left_labels)  # same multiset, shuffled -> independent
+    id_to_left = {sid: f"g{left_labels[i]}" for i, sid in enumerate(sample_ids)}
+    id_to_right = {sid: f"p{right_labels[i]}" for i, sid in enumerate(sample_ids)}
+
+    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_left, ["g0", "g1", "g2"])
+    right_lg, _ = _partition_label_group(REF_DID, "peak", id_to_right, ["p0", "p1", "p2"])
+
+    result = label_group_agreement(left_lg, right_lg)
+    assert abs(result.agreement_score) < 0.2  # near chance
+
+
+def test_agreement_cross_tab_shape_and_counts():
+    id_to_group = {
+        "s0": "A", "s1": "A", "s2": "B", "s3": "B",
+    }
+    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
+    # right partition: s0,s1,s2 -> P; s3 -> Q
+    id_to_right = {"s0": "P", "s1": "P", "s2": "P", "s3": "Q"}
+    right_lg, _ = _partition_label_group(REF_DID, "peak", id_to_right, ["P", "Q"])
+
+    result = label_group_agreement(left_lg, right_lg)
+    left_a = f"{REF_DID}__A"
+    left_b = f"{REF_DID}__B"
+    right_p = f"{REF_DID}__P"
+    right_q = f"{REF_DID}__Q"
+    assert result.cross_tab[left_a][right_p] == 2
+    assert result.cross_tab[left_a][right_q] == 0
+    assert result.cross_tab[left_b][right_p] == 1
+    assert result.cross_tab[left_b][right_q] == 1
+
+
+def test_agreement_unassigned_on_one_side_excluded_but_reported():
+    id_to_group = {"s0": "A", "s1": "A", "s2": "B"}
+    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
+    # right: s0,s1 assigned to P; s2 unassigned (labeler declined to place it)
+    id_to_right = {"s0": "P", "s1": "P"}
+    right_lg, _ = _partition_label_group(
+        REF_DID, "peak", id_to_right, ["P"], unassigned=("s2",)
+    )
+
+    result = label_group_agreement(left_lg, right_lg)
+    assert result.n_samples_compared == 2
+    # s2 is assigned on the LEFT (genotype) but unassigned on the RIGHT (peak)
+    assert result.left_only_sample_ids == ("s2",)
+    assert result.right_only_sample_ids == ()
+    assert result.unassigned_both_sample_ids == ()
+
+
+def test_agreement_requires_same_distribution_id():
+    id_to_group = {"s0": "A", "s1": "B"}
+    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
+    right_lg, _ = _partition_label_group(TGT_DID, "peak", id_to_group, ["A", "B"])
+    with pytest.raises(ValueError):
+        label_group_agreement(left_lg, right_lg)
