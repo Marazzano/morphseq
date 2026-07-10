@@ -1,24 +1,32 @@
 """Pure IR emitters — turn frozen ``Grid``/``DensityGrid``/``SampleSet`` objects
 into faceting-engine IR (``TraceData`` / ``SubplotData`` / ``FigureData``).
 
-Source of truth: ``docs/PRIMITIVE_ONTOLOGY.md`` §1b "KDE strips fall out for
-free" + ``tasks/TASK_D_plotting.md``.
+Source of truth: ``docs/DISTRIBUTION_CATALOG_API.md`` ("Typed facet keys",
+"PATH A", "PATH B", "CurveKey") + ``docs/VISUALIZATION_TAXONOMY.md`` (Tier-1
+primitives vs Tier-2 verbs) + ``docs/tasks_catalog/TASK_C_plotting.md``.
 
 **This module does NOT draw.** It only builds pure dataclasses defined in the
 real faceting engine (``src/analyze/viz/plotting/faceting_engine/ir.py``) and
 hands them to that engine's own ``render()``. No new rendering backend, no
 bespoke matplotlib/plotly calls live here.
 
-The payoff from §1b: a KDE strip is nothing but a 1-D ``Grid`` + a
+The payoff from ontology §1b: a KDE strip is nothing but a 1-D ``Grid`` + a
 ``DensityGrid`` evaluated on it — the SAME machinery as the 2-D peak grid,
 dimension = 1. So ``strip_trace`` below is a thin adapter, not a new code path.
+
+TASK_C reshapes the high-level 1-D grid API (below the Tier-1 primitives) onto
+the TASK_0 objects (``Distribution`` / ``DistributionLabelGroup`` / typed
+``FacetKey``): PATH A (``build_1d_density_grid``, within-population label
+groups) lands in this commit; PATH B (cross-population comparisons) follows.
+Both emit the SAME renderer-neutral ``DistributionGrid`` IR;
+``plot_1d_density_grid`` renders it. The retired ``DistributionGrouping`` /
+``FacetCoordinate`` enum are GONE from this module (spec §"Removed vocabulary").
 """
 
 from __future__ import annotations
 
-import warnings
+import logging
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Hashable, Mapping, Sequence
 
@@ -35,8 +43,20 @@ from analyze.viz.plotting.faceting_engine import (
 from analyze.viz.styling import STANDARD_PALETTE
 from analyze.viz.styling.genotype_colors import get_color_for_genotype
 
+from .catalog import DistributionComparison, DistributionComparisons
+from .facets import CoordinateFacet, FacetKey, LabelGroupFacet
 from .grid import build_grid, evaluate_density
-from .objects import DensityGrid, Distribution, Grid, HDR, LabelGroup, SampleSet
+from .objects import (
+    DensityGrid,
+    Distribution,
+    DistributionLabelGroup,
+    Grid,
+    HDR,
+    LabelGroup,
+    SampleSet,
+)
+
+logger = logging.getLogger(__name__)
 
 # Reserved visual category for LabelGroup.unassigned_sample_ids (ontology §3):
 # never dropped, never counted as a mode, always rendered muted.
@@ -329,31 +349,29 @@ def sample_set_strip_with_hdr(
 # ---------------------------------------------------------------------------
 # The pipeline (each stage a pure function; only the middle one fits KDEs):
 #
-#   scientific objects  ->  DistributionGrouping        (lightweight interpretation)
-#                       ->  MaterializedDistributionGrouping   (shared-grid marginals)
-#                       ->  DistributionGrid             (renderer-neutral IR)
-#                       ->  Figure                       (render_distribution_grid)
+#   PATH A: DistributionLabelGroup(s)  ->  DistributionGrid  ->  Figure
+#   PATH B (next commit): DistributionComparisons -> the SAME DistributionGrid
 #
 # Ownership rule (hard-won): a marginal KDE is NOT a property of a Distribution.
 # It is per-(SampleSet, feature, GRID), and the grid is a *comparison* decision
-# (the cell's shared bounds), resolvable only AFTER groupings are bucketed into
-# cells. So densities live on MaterializedDistributionGrouping (keyed by
-# sample_set_id), never on Distribution/SampleSet — those stay pure durable atoms.
-# The renderer READS these densities; it never calls evaluate_density.
+# (the cell's shared bounds), resolvable only AFTER curves are bucketed into
+# cells. ``build_1d_density_grid`` does this bucketing + fitting internally
+# (the ONLY place a marginal KDE is computed) and emits ONE renderer-neutral
+# ``DistributionGrid``. ``plot_1d_density_grid`` READS these densities; it
+# never calls ``evaluate_density`` itself.
 # =========================================================================== #
 
 
-class FacetCoordinate(str, Enum):
-    """A coordinate a DistributionGrouping can be faceted on (row or column).
+class IncomparableDistributionsError(ValueError):
+    """Raised when a cell would overlay curves from >1 ``distribution_id``.
 
-    Resolved off the grouping's own objects — no DataFrame, no re-derivation.
-    Using an enum (not raw strings) makes typos a construction-time error.
+    Structural one-label-group-per-cell invariant (spec §PATH A): a cell may
+    only ever compare SampleSets drawn from ONE Distribution. This is
+    automatically guaranteed when ``LabelGroupFacet`` is an axis (then every
+    cell is single-label-group, hence single-distribution, by construction);
+    the check only bites when the axes leave room for two distributions to
+    land in the same cell.
     """
-
-    LABEL_GROUP = "label_group"   # which labeling produced this grouping
-    TIME_BIN = "time_bin"         # the distribution's time bin
-    SCOPE = "scope"               # the distribution's scope_id
-    ROLE = "role"                 # target / reference / ... (also the ref selector)
 
 
 @dataclass(frozen=True)
@@ -374,43 +392,19 @@ class GroupStyle:
 
 
 # Reference (baseline) role defaults: dashed, unfilled — communicates
-# experimental role without spending a color dimension.
-DEFAULT_ROLE_STYLES: Mapping[str, GroupStyle] = {
+# experimental role without spending a color dimension. Keyed by whatever
+# ``style_group`` value a curve carries (PATH A: its sample_set_name).
+DEFAULT_ROLE_STYLES: Mapping[Hashable, GroupStyle] = {
     "reference": GroupStyle(line_style="--", fill=False),
 }
 # Auto-palette BASE hue per role. Deliberate choice (not valley's blue target):
 # in the 1-D grouped view the target carries a real hue and the reference
 # degrades to gray — matching valley_visualization's gray WT convention
 # (WT_DENS_COLOR/#808080). Shades within a role are lightness steps off the base.
-DEFAULT_ROLE_PALETTES: Mapping[str, str] = {
+DEFAULT_ROLE_PALETTES: Mapping[Hashable, str] = {
     "target": "#B2182B",     # crimson family (target)
     "reference": "#808080",  # gray family (reference / WT baseline)
 }
-
-
-@dataclass(frozen=True)
-class DistributionGrouping:
-    """One distribution interpreted through ONE grouping scheme — the plot atom.
-
-    Carries its own facet coordinates (via ``distribution``) and its own labels
-    (via ``label_group`` + ``sample_sets``). The plotter never re-labels/re-bins.
-    Lightweight on purpose: no densities here (see MaterializedDistributionGrouping).
-    """
-
-    distribution: Distribution
-    label_group: LabelGroup
-    sample_sets: tuple[SampleSet, ...]
-
-    def coordinate(self, coordinate: FacetCoordinate) -> Hashable:
-        if coordinate is FacetCoordinate.LABEL_GROUP:
-            return self.label_group.label_group_name
-        if coordinate is FacetCoordinate.TIME_BIN:
-            return self.distribution.time_bin
-        if coordinate is FacetCoordinate.SCOPE:
-            return self.distribution.scope_id
-        if coordinate is FacetCoordinate.ROLE:
-            return self.distribution.role
-        raise ValueError(f"unknown facet coordinate {coordinate!r}")
 
 
 @dataclass(frozen=True)
@@ -423,58 +417,67 @@ class MarginalDensityMethod:
     grid_size: int = 200
 
 
+# --------------------------------------------------------------------------- #
+# Renderer-neutral IR (PATH A today; PATH B/TASK_D's ridge will consume the
+# SAME shape — keep it self-describing and stable).
+# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
-class MaterializedDistributionGrouping:
-    """A grouping resolved to plot-ready 1-D marginals for ONE feature.
+class CurveKey:
+    """Structured identity for a PATH B comparison curve (spec §"PATH B" /
+    §"CurveKey"): the two axes stay SEPARATE — a comparison member (the
+    ``across`` value, e.g. ``"wildtype"``) and a within-member SampleSet name
+    (e.g. ``"peak_0"``). NEVER a concatenated ``"wildtype_peak_0"`` string, so a
+    caller can facet/style on either axis. :meth:`display` renders the joined
+    human label ``"wildtype · peak_0"`` only for legends/titles."""
 
-    Feature-specific by construction: every curve here shares ``feature_name``
-    and ``grid`` (the cell's shared grid), so lookups are flat and incompatible
-    objects fail immediately. ``marginal_densities`` maps sample_set_id -> the
-    precomputed 1-D DensityGrid (already on ``grid``). This is the ONLY place a
-    marginal KDE is stored, and it is produced once, upstream, by
-    :func:`materialize_distribution_marginals`.
+    comparison_member: Hashable   # the across value, e.g. "wildtype"
+    sample_set: str               # e.g. "peak_0"
 
-    ``sample_counts`` is captured here so legends/validation never reopen
-    membership after numerical materialization. ``method`` records the estimator.
-    """
-
-    grouping: DistributionGrouping
-    feature_name: str
-    grid: Grid
-    marginal_densities: Mapping[str, DensityGrid]  # sample_set_id -> density
-    sample_counts: Mapping[str, int]               # sample_set_id -> n
-    method: MarginalDensityMethod = field(default_factory=MarginalDensityMethod)
+    def display(self) -> str:
+        return f"{self.comparison_member} · {self.sample_set}"
 
 
-# --------------------------------------------------------------------------- #
-# Renderer-neutral IR (between materialization and drawing)
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class DistributionCurve:
-    """One resolved curve in one cell — pure data, no styling decisions yet."""
+    """One resolved curve in one cell — pure data, no styling decisions yet.
+
+    ``style_group`` is the value styling/coloring keys off (PATH A: the
+    SampleSet's own name; PATH B: the comparison member / ``across`` value, so
+    a reference member degrades to the gray/dashed baseline) so the renderer's
+    role-gradient logic does not need to know which build path produced the
+    grid.
+
+    ``curve_key`` is populated only by PATH B (the structured
+    :class:`CurveKey`); PATH A leaves it ``None`` (its curve identity is fully
+    carried by ``sample_set_name``). The renderer reads it, never invents it.
+    """
 
     cell: tuple[Hashable, Hashable]   # (row_value, col_value)
-    role: str
-    label_group_name: str
     sample_set_name: str
+    style_group: Hashable
     grid: Grid
     density: DensityGrid
     sample_count: int
+    curve_key: "CurveKey | None" = None
 
 
 @dataclass(frozen=True)
 class DistributionGrid:
     """The renderer-neutral figure IR: a flat bag of resolved curves + the two
-    facet coordinates. Backend/appearance are applied later by the renderer."""
+    facet keys. Backend/appearance are applied later by the renderer.
+
+    :func:`build_1d_density_grid` (PATH A) emits this shape today; PATH B
+    (``build_1d_distribution_comparison``, next commit) emits the SAME shape.
+    """
 
     feature_name: str
-    row: FacetCoordinate
-    col: FacetCoordinate
+    row: FacetKey
+    col: FacetKey
     curves: tuple[DistributionCurve, ...]
 
 
 # --------------------------------------------------------------------------- #
-# Stage 1 (the ONLY KDE-fitting stage): resolve shared cell grids + marginals.
+# Shared numerical helpers (the ONLY place KDEs are fit).
 # --------------------------------------------------------------------------- #
 def _silverman_bandwidth(values: np.ndarray) -> float:
     n = max(len(values), 2)
@@ -482,173 +485,274 @@ def _silverman_bandwidth(values: np.ndarray) -> float:
     return 1.06 * spread * n ** (-1.0 / 5.0)
 
 
-def _cell_key(
-    g: DistributionGrouping, row: FacetCoordinate, col: FacetCoordinate
-) -> tuple[Hashable, Hashable]:
-    return (g.coordinate(row), g.coordinate(col))
-
-
 def _sample_set_feature_values(
-    grouping: DistributionGrouping, sample_set: SampleSet, feature_idx: int
+    distribution: Distribution, sample_set: SampleSet, feature_idx: int
 ) -> np.ndarray:
-    """Pull one SampleSet's members' values for ``feature_idx`` from the
-    grouping's Distribution (join on sample_ids — the durable key)."""
-    dist = grouping.distribution
-    pos = {sid: i for i, sid in enumerate(dist.sample_ids)}
+    """Pull one SampleSet's members' values for ``feature_idx`` from its
+    owning Distribution (join on sample_ids — the durable key)."""
+    pos = {sid: i for i, sid in enumerate(distribution.sample_ids)}
     idx = [pos[s] for s in sample_set.sample_ids if s in pos]
     if not idx:
         return np.empty((0,), dtype=float)
-    return dist.feature_values[np.asarray(idx, dtype=int), feature_idx]
+    return distribution.feature_values[np.asarray(idx, dtype=int), feature_idx]
 
 
-def materialize_distribution_marginals(
-    groupings: Sequence[DistributionGrouping],
-    feature_name: str,
+@dataclass(frozen=True)
+class _CellMember:
+    """One curve-to-be for a cell: the SampleSet + the resolved styling/identity
+    tags the two build paths decide (PATH A keys ``style_group`` off the
+    SampleSet name and leaves ``curve_key`` None; PATH B keys off the comparison
+    member and attaches a :class:`CurveKey`). ``_fit_cell_marginals`` stays
+    path-agnostic — it only fits densities on the shared grid."""
+
+    distribution: Distribution
+    sample_set: SampleSet
+    style_group: Hashable
+    curve_key: "CurveKey | None" = None
+
+
+def _fit_cell_marginals(
     *,
-    row: FacetCoordinate = FacetCoordinate.LABEL_GROUP,
-    col: FacetCoordinate = FacetCoordinate.TIME_BIN,
-    grid_size: int = 200,  # TODO(Density1DSpec): promote to a spec (bandwidth/kernel/bounds)
-) -> tuple[MaterializedDistributionGrouping, ...]:
-    """The NUMERICAL boundary: resolve shared comparison grids and evaluate
-    per-SampleSet 1-D marginals for ``feature_name`` ONCE. The only place KDEs
-    are fit.
+    cell_key: tuple[Hashable, ...],
+    members: Sequence[_CellMember],
+    feature: str,
+    grid_size: int,
+) -> list[DistributionCurve]:
+    """Shared-grid-then-fit for ONE cell: union bounds of the SELECTED curves
+    only (spec §PATH A/B: an omitted/unassigned category must not stretch the
+    grid; PATH B's shared grid spans EVERY selected curve across ALL members).
 
-    The shared grid is a *comparison* property (union bounds of everything in the
-    cell), so it can only be built after bucketing into cells — which is why this
-    step, not the grouping and not the plotter, owns density evaluation.
+    ``members`` is a flat list of :class:`_CellMember` already filtered to
+    exactly what this cell will draw. The KDE is materialized here — the ONLY
+    place a marginal density is fit — per facet cell on the shared grid, never
+    on a ``Distribution``. Order matches ``members`` minus any empty SampleSets.
     """
-    method = MarginalDensityMethod(bandwidth_method="silverman", grid_size=grid_size)
-    # Every distribution must actually carry the requested feature (raise, not warn).
-    for g in groupings:
-        if feature_name not in g.distribution.feature_names:
-            raise ValueError(
-                f"distribution {g.distribution.distribution_id!r} lacks requested "
-                f"feature {feature_name!r} (has {g.distribution.feature_names!r})"
-            )
+    pooled: list[np.ndarray] = []
+    per_member_values: list[np.ndarray] = []
+    for member in members:
+        fi = member.distribution.feature_names.index(feature)
+        vals = _sample_set_feature_values(member.distribution, member.sample_set, fi)
+        per_member_values.append(vals)
+        if vals.size:
+            pooled.append(vals)
 
-    # 1) bucket into cells and collect each cell's pooled feature values (bounds).
-    cells: dict[tuple[Hashable, Hashable], list[DistributionGrouping]] = {}
-    for g in groupings:
-        cells.setdefault(_cell_key(g, row, col), []).append(g)
+    if not pooled:
+        return []
 
-    materialized: list[MaterializedDistributionGrouping] = []
-    for key, members in cells.items():
-        # Shared grid = union of every member's feature values in this cell.
-        pooled: list[np.ndarray] = []
-        pooled_ids: list[str] = []
-        for g in members:
-            fi = g.distribution.feature_names.index(feature_name)
-            col_vals = np.asarray(g.distribution.feature_values[:, fi], dtype=float)
-            pooled.append(col_vals)
-            pooled_ids.extend(str(s) for s in g.distribution.sample_ids)
-        pooled_arr = np.concatenate(pooled) if pooled else np.zeros(1)
-        lo, hi = float(pooled_arr.min()), float(pooled_arr.max())
-        shared_grid = build_grid(
-            feature_names=(feature_name,),
-            pooled_values=pooled_arr.reshape(-1, 1),
-            fit_sample_ids=pooled_ids or ["_"],
-            method="fixed_bounds",
-            params={"resolution": grid_size, "bounds": [(lo, hi)]},
-        )
-
-        # 2) per member, evaluate each SampleSet's marginal on the shared grid.
-        for g in members:
-            fi = g.distribution.feature_names.index(feature_name)
-            densities: dict[str, DensityGrid] = {}
-            counts: dict[str, int] = {}
-            for sset in g.sample_sets:
-                vals = _sample_set_feature_values(g, sset, fi)
-                if vals.size == 0:
-                    continue
-                densities[sset.sample_set_id] = evaluate_density(
-                    shared_grid, vals.reshape(-1, 1),
-                    bandwidth_spec=_silverman_bandwidth(vals),
-                )
-                counts[sset.sample_set_id] = int(vals.size)
-            materialized.append(
-                MaterializedDistributionGrouping(
-                    grouping=g,
-                    feature_name=feature_name,
-                    grid=shared_grid,
-                    marginal_densities=densities,
-                    sample_counts=counts,
-                    method=method,
-                )
-            )
-    return tuple(materialized)
-
-
-# --------------------------------------------------------------------------- #
-# Stage 2: validate + convert materialized marginals into renderer-neutral IR.
-# --------------------------------------------------------------------------- #
-def build_distribution_grid(
-    materialized: Sequence[MaterializedDistributionGrouping],
-    *,
-    row: FacetCoordinate = FacetCoordinate.LABEL_GROUP,
-    col: FacetCoordinate = FacetCoordinate.TIME_BIN,
-) -> DistributionGrid:
-    """Validate cell comparability and flatten to ``DistributionCurve``s.
-
-    Comparability invariant: every grouping overlaid in one cell must be the
-    same KIND of labeling. Today we check ``label_group_name`` equality; this is
-    a display-name proxy — TODO(label-schema-id): replace with a stable schema
-    identity once LabelGroup carries one (two unrelated groups can share a name).
-    The check is skipped when LABEL_GROUP is itself an axis (then each cell is
-    single-label-group by construction).
-    """
-    feature_names = {m.feature_name for m in materialized}
-    if len(feature_names) > 1:
-        raise ValueError(f"materialized groupings mix features: {feature_names!r}")
-
-    by_cell: dict[tuple[Hashable, Hashable], list[MaterializedDistributionGrouping]] = {}
-    for m in materialized:
-        by_cell.setdefault(_cell_key(m.grouping, row, col), []).append(m)
-
-    label_group_is_axis = FacetCoordinate.LABEL_GROUP in (row, col)
+    pooled_arr = np.concatenate(pooled)
+    lo, hi = float(pooled_arr.min()), float(pooled_arr.max())
+    shared_grid = build_grid(
+        feature_names=(feature,),
+        pooled_values=pooled_arr.reshape(-1, 1),
+        fit_sample_ids=[f"cell_{cell_key}_{i}" for i in range(pooled_arr.size)],
+        method="fixed_bounds",
+        params={"resolution": grid_size, "bounds": [(lo, hi)]},
+    )
 
     curves: list[DistributionCurve] = []
-    for key, members in by_cell.items():
-        if not label_group_is_axis:
-            names = {m.grouping.label_group.label_group_name for m in members}
-            if len(names) > 1:
-                raise ValueError(
-                    f"cell {key} overlays non-comparable label groups {names!r}; "
-                    "a cell may only overlay one kind of labeling "
-                    "(TODO(label-schema-id): validate on a stable schema, not the name)."
-                )
-        # Structural grid identity: everything in a cell must share one grid_id
-        # (comparability without relying on Python object identity).
-        grid_ids = {m.grid.grid_id for m in members}
-        if len(grid_ids) > 1:
-            raise ValueError(
-                f"cell {key} mixes grid_ids {grid_ids!r}; all overlaid curves "
-                "must share one shared cell grid."
+    for member, vals in zip(members, per_member_values):
+        if vals.size == 0:
+            continue
+        density = evaluate_density(
+            shared_grid, vals.reshape(-1, 1),
+            bandwidth_spec=_silverman_bandwidth(vals),
+        )
+        curves.append(
+            DistributionCurve(
+                cell=cell_key,
+                sample_set_name=member.sample_set.sample_set_name,
+                style_group=member.style_group,
+                grid=shared_grid,
+                density=density,
+                sample_count=int(vals.size),
+                curve_key=member.curve_key,
             )
-        for m in members:
-            role = m.grouping.distribution.role
-            lg_name = m.grouping.label_group.label_group_name
-            for sset in m.grouping.sample_sets:
-                density = m.marginal_densities.get(sset.sample_set_id)
-                if density is None:
-                    continue
-                curves.append(
-                    DistributionCurve(
-                        cell=key,
-                        role=role,
-                        label_group_name=lg_name,
-                        sample_set_name=sset.sample_set_name,
-                        grid=m.grid,
-                        density=density,
-                        sample_count=m.sample_counts.get(sset.sample_set_id, len(sset.sample_ids)),
+        )
+    return curves
+
+
+# --------------------------------------------------------------------------- #
+# PATH A — within-population: build_1d_density_grid(DistributionLabelGroup*)
+# --------------------------------------------------------------------------- #
+def build_1d_density_grid(
+    groups: Sequence[DistributionLabelGroup],
+    feature: str,
+    *,
+    facet_row: FacetKey = LabelGroupFacet(),
+    facet_col: FacetKey = CoordinateFacet("time_bin"),
+) -> DistributionGrid:
+    """PATH A (spec §"PATH A"): one distribution per cell; curves = that label
+    group's SampleSets. The label group is chosen by the INPUT object — no
+    ``group_by``/``overlay_across`` parameter exists here.
+
+    Cell grid = union bounds of the CURVES SELECTED for that cell (NOT
+    automatically all of the distribution's samples — an omitted/unassigned
+    category does not stretch the grid, since ``Distribution.sample_sets``
+    already excludes ``UNASSIGNED_LABEL`` samples).
+
+    One-label-group-per-cell invariant (structural): raises
+    :class:`IncomparableDistributionsError` if a cell would overlay SampleSets
+    from more than one ``distribution_id``. Skipped when ``LabelGroupFacet`` is
+    itself an axis (then every cell is single-label-group by construction).
+    """
+    for g in groups:
+        if feature not in g.distribution.feature_names:
+            raise ValueError(
+                f"distribution {g.distribution.distribution_id!r} lacks requested "
+                f"feature {feature!r} (has {g.distribution.feature_names!r})"
+            )
+
+    label_group_is_axis = isinstance(facet_row, LabelGroupFacet) or isinstance(
+        facet_col, LabelGroupFacet
+    )
+
+    # Bucket groups into cells first (facet resolution only — no fitting yet).
+    cells: dict[tuple[Hashable, Hashable], list[DistributionLabelGroup]] = {}
+    for g in groups:
+        key = (g.coordinate(facet_row), g.coordinate(facet_col))
+        cells.setdefault(key, []).append(g)
+
+    all_curves: list[DistributionCurve] = []
+    for cell_key, members in cells.items():
+        if not label_group_is_axis:
+            distribution_ids = {m.distribution.distribution_id for m in members}
+            if len(distribution_ids) > 1:
+                raise IncomparableDistributionsError(
+                    f"cell {cell_key} would overlay SampleSets from >1 distribution "
+                    f"({sorted(distribution_ids)}); a cell may only compare ONE "
+                    "distribution's label group (facet on LabelGroupFacet, or "
+                    "restrict facet_row/facet_col so cells stay single-distribution)."
+                )
+        flat_members: list[_CellMember] = []
+        for g in members:
+            for sset in g.sample_sets():
+                # PATH A: style_group IS the SampleSet name; no CurveKey.
+                flat_members.append(
+                    _CellMember(
+                        distribution=g.distribution,
+                        sample_set=sset,
+                        style_group=sset.sample_set_name,
+                    )
+                )
+        curves = _fit_cell_marginals(
+            cell_key=cell_key, members=flat_members, feature=feature, grid_size=200,
+        )
+        all_curves.extend(curves)
+
+    return DistributionGrid(
+        feature_name=feature,
+        row=facet_row,
+        col=facet_col,
+        curves=tuple(all_curves),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# PATH B — cross-population: build_1d_distribution_comparison(DistributionComparisons)
+# --------------------------------------------------------------------------- #
+def _resolve_comparison_col(comparison: DistributionComparison, facet_col: FacetKey) -> Hashable:
+    """Resolve the column facet value for ONE comparison from its held-constant
+    ``coordinates`` (spec §PATH B: "one cell per DistributionComparison, keyed
+    by its coordinates"). Only a :class:`CoordinateFacet` is meaningful here —
+    a comparison is a set of MEMBERS varying over the ``across`` axis, so it has
+    no single label-group display axis; ``LabelGroupFacet`` is rejected with a
+    precise error rather than silently mis-keying every cell together."""
+    if isinstance(facet_col, LabelGroupFacet):
+        raise TypeError(
+            "build_1d_distribution_comparison faceting a comparison by "
+            "LabelGroupFacet is undefined — a comparison spans multiple members "
+            "(the label group is shared across all of them via label_group=). "
+            "Use CoordinateFacet on a held-constant coordinate (e.g. time_bin)."
+        )
+    if not isinstance(facet_col, CoordinateFacet):
+        raise TypeError(f"unsupported FacetKey for facet_col: {facet_col!r}")
+    if facet_col.name not in comparison.coordinates:
+        raise KeyError(
+            f"comparison lacks coordinate {facet_col.name!r} to facet on; "
+            f"held-constant coordinates are {dict(comparison.coordinates)!r}"
+        )
+    return comparison.coordinates[facet_col.name]
+
+
+def build_1d_distribution_comparison(
+    comparisons: DistributionComparisons,
+    feature: str,
+    *,
+    label_group: str,
+    facet_col: FacetKey = CoordinateFacet("time_bin"),
+    reference_value: Hashable | None = None,
+) -> DistributionGrid:
+    """PATH B (spec §"PATH B" / §"CurveKey"): render TASK_A's matched
+    ``DistributionComparisons`` as a 1-D density grid — one cell per
+    ``DistributionComparison`` (keyed by its held-constant coordinates through
+    ``facet_col``), curves = every member's SampleSets of the ONE shared
+    ``label_group`` (like-with-like across populations).
+
+    Shared-grid rule (spec §"Shared grid"): the cell's grid is the union bounds
+    of EVERY selected curve across ALL members in the cell (wildtype's peaks +
+    b9d2's peaks). The KDE is materialized per cell on that shared grid inside
+    :func:`_fit_cell_marginals` — never fit on a ``Distribution``, and every
+    curve in a cell carries the SAME ``grid_id`` (raster-comparability).
+
+    Curve identity is STRUCTURED (spec §"CurveKey"): each curve carries a
+    :class:`CurveKey(comparison_member, sample_set)` — the two axes stay
+    separate, never a concatenated string. ``style_group`` is the comparison
+    member (the ``across`` value) so per-member styling works: pass
+    ``reference_value`` to route ONE member to the gray/dashed reference role
+    (else members color as peers). The asymmetric per-member ``label_groups=``
+    mapping is DEFERRED — a single shared ``label_group=`` only.
+
+    Feeds the SAME :func:`plot_1d_density_grid` renderer (same
+    ``DistributionGrid`` IR) as PATH A.
+    """
+    row_value = comparisons.across  # single constant row: the comparison axis name
+
+    all_curves: list[DistributionCurve] = []
+    for comparison in comparisons.comparisons:
+        col_value = _resolve_comparison_col(comparison, facet_col)
+        cell_key = (row_value, col_value)
+
+        flat_members: list[_CellMember] = []
+        # ``members`` is ORDERED by ``values`` (DistributionComparisons
+        # invariant) — iterate it so curve order is the requested member order.
+        for member_value, distribution in comparison.members.items():
+            if label_group not in distribution.labels:
+                raise ValueError(
+                    f"member {member_value!r} (distribution "
+                    f"{distribution.distribution_id!r}) lacks the shared label "
+                    f"group {label_group!r} — every member of a comparison must "
+                    "carry the SAME label group for a like-with-like overlay."
+                )
+            if feature not in distribution.feature_names:
+                raise ValueError(
+                    f"member {member_value!r} lacks requested feature {feature!r} "
+                    f"(has {distribution.feature_names!r})"
+                )
+            style_group = "reference" if member_value == reference_value else member_value
+            for sset in distribution.sample_sets(label_group):
+                flat_members.append(
+                    _CellMember(
+                        distribution=distribution,
+                        sample_set=sset,
+                        style_group=style_group,
+                        curve_key=CurveKey(
+                            comparison_member=member_value,
+                            sample_set=sset.sample_set_name,
+                        ),
                     )
                 )
 
-    m0 = materialized[0] if materialized else None
+        # Shared grid over ALL members' curves in this cell (union bounds).
+        curves = _fit_cell_marginals(
+            cell_key=cell_key, members=flat_members, feature=feature, grid_size=200,
+        )
+        all_curves.extend(curves)
+
     return DistributionGrid(
-        feature_name=m0.feature_name if m0 else "",
-        row=row,
-        col=col,
-        curves=tuple(curves),
+        feature_name=feature,
+        row=CoordinateFacet(row_value),
+        col=facet_col,
+        curves=tuple(all_curves),
     )
 
 
@@ -668,46 +772,64 @@ def _lighten(hex_color: str, amount: float) -> str:
 
 def _resolve_colors(
     grid: DistributionGrid,
-    role_palettes: Mapping[str, str],
-    color_lookup: Mapping[tuple[str, str], str] | None,
+    role_palettes: Mapping[Hashable, str],
+    color_lookup: Mapping[tuple[Hashable, str], str] | None,
     has_reference: bool,
-) -> dict[tuple[str, str], str]:
-    """Assign a color to every (role, sample_set_name) in the figure.
+    reference_role: Hashable,
+) -> dict[tuple[Hashable, str], str]:
+    """Assign a color to every (style_group, sample_set_name) in the figure.
 
-    Explicit ``color_lookup`` wins. Otherwise, if roles are distinguished
-    (a reference exists), each role gets a lightness gradient off its base hue
-    (target=crimson, reference=gray). With NO reference (all peers), fall back to
-    the project STANDARD_PALETTE, one color per distinct sample_set_name.
+    ``style_group`` generalizes the old ``role`` field (PATH A: a curve's own
+    SampleSet name). Explicit ``color_lookup`` wins. Otherwise, if a reference
+    style_group is present, it (and any other style_group) gets a lightness
+    gradient off its base hue (target=crimson, reference=gray). With NO
+    reference, fall back to the project STANDARD_PALETTE, one color per
+    distinct sample_set_name.
     """
     color_lookup = dict(color_lookup or {})
-    resolved: dict[tuple[str, str], str] = {}
+    resolved: dict[tuple[Hashable, str], str] = {}
 
     if not has_reference:
-        # Peer mode: STANDARD_PALETTE by label, role ignored.
-        labels = sorted({c.sample_set_name for c in grid.curves})
-        palette = {lbl: STANDARD_PALETTE[i % len(STANDARD_PALETTE)] for i, lbl in enumerate(labels)}
+        # Peer mode: STANDARD_PALETTE, one color per distinct curve identity.
+        # PATH A curves collapse to sample_set_name (style_group == name); PATH B
+        # curves keep member + peak distinct (wildtype·peak_0 != b9d2·peak_0) via
+        # the composite key, so a comparison overlay never draws two members in
+        # the same color.
+        keys = sorted({(c.style_group, c.sample_set_name) for c in grid.curves}, key=str)
+        palette = {k: STANDARD_PALETTE[i % len(STANDARD_PALETTE)] for i, k in enumerate(keys)}
         for c in grid.curves:
-            key = (c.role, c.sample_set_name)
-            resolved[key] = color_lookup.get(key, palette[c.sample_set_name])
+            key = (c.style_group, c.sample_set_name)
+            resolved[key] = color_lookup.get(key, palette[key])
         return resolved
 
-    # Role mode: gradient off each role's base hue, one shade per distinct
-    # sample_set_name within that role (stable, sorted).
-    per_role_labels: dict[str, list[str]] = {}
+    # Role mode: gradient off each style_group's base hue, one shade per
+    # distinct sample_set_name within that group (stable, sorted).
+    per_group_labels: dict[Hashable, list[str]] = {}
     for c in grid.curves:
-        per_role_labels.setdefault(c.role, [])
-        if c.sample_set_name not in per_role_labels[c.role]:
-            per_role_labels[c.role].append(c.sample_set_name)
-    for role in per_role_labels:
-        per_role_labels[role].sort()
+        per_group_labels.setdefault(c.style_group, [])
+        if c.sample_set_name not in per_group_labels[c.style_group]:
+            per_group_labels[c.style_group].append(c.sample_set_name)
+    for group in per_group_labels:
+        per_group_labels[group].sort()
+
+    non_reference_groups = sorted(
+        (g for g in per_group_labels if g != reference_role), key=str
+    )
+    peer_palette = {
+        g: STANDARD_PALETTE[i % len(STANDARD_PALETTE)]
+        for i, g in enumerate(non_reference_groups)
+    }
 
     for c in grid.curves:
-        key = (c.role, c.sample_set_name)
+        key = (c.style_group, c.sample_set_name)
         if key in color_lookup:
             resolved[key] = color_lookup[key]
             continue
-        base = role_palettes.get(c.role, "#666666")
-        labels = per_role_labels[c.role]
+        base = role_palettes.get(
+            c.style_group,
+            peer_palette.get(c.style_group, "#666666"),
+        )
+        labels = per_group_labels[c.style_group]
         i = labels.index(c.sample_set_name)
         # spread shades across [0, 0.55] lightness so even 1 label stays saturated
         amount = 0.0 if len(labels) == 1 else 0.55 * i / (len(labels) - 1)
@@ -718,10 +840,10 @@ def _resolve_colors(
 def plot_1d_density_grid(
     grid: DistributionGrid,
     *,
-    role_styles: Mapping[str, GroupStyle] = DEFAULT_ROLE_STYLES,
-    role_palettes: Mapping[str, str] = DEFAULT_ROLE_PALETTES,
-    color_lookup: Mapping[tuple[str, str], str] | None = None,
-    reference_role: str | None = "reference",
+    role_styles: Mapping[Hashable, GroupStyle] = DEFAULT_ROLE_STYLES,
+    role_palettes: Mapping[Hashable, str] = DEFAULT_ROLE_PALETTES,
+    color_lookup: Mapping[tuple[Hashable, str], str] | None = None,
+    reference_role: Hashable | None = "reference",
     title: str = "",
     output_path: str | Path | None = None,
     style=None,
@@ -736,14 +858,14 @@ def plot_1d_density_grid(
     ``plot_2d_density_grid``; valley_visualization stays a custom Tier-3 report.)
 
     Appearance only — reads precomputed densities, never fits. ``reference_role``
-    selects which role gets ``role_styles['reference']`` (dashed/unfilled) and the
-    gray gradient; pass ``None`` to treat every curve as a peer (STANDARD_PALETTE,
-    no dashes).
+    selects which style_group gets ``role_styles['reference']`` (dashed/unfilled)
+    and the gray gradient; pass ``None`` to treat every curve as a peer
+    (STANDARD_PALETTE, no dashes).
     """
     has_reference = reference_role is not None and any(
-        c.role == reference_role for c in grid.curves
+        c.style_group == reference_role for c in grid.curves
     )
-    colors = _resolve_colors(grid, role_palettes, color_lookup, has_reference)
+    colors = _resolve_colors(grid, role_palettes, color_lookup, has_reference, reference_role)
 
     # Order cells: rows then cols, preserving first-seen order.
     row_vals: list[Hashable] = []
@@ -767,15 +889,24 @@ def plot_1d_density_grid(
             labels = []
             styles = []
             for c in cell_curves:
-                is_ref = has_reference and c.role == reference_role
-                gs = role_styles.get(c.role, default_style) if is_ref else default_style
-                color = colors[(c.role, c.sample_set_name)]
+                is_ref = has_reference and c.style_group == reference_role
+                gs = role_styles.get(c.style_group, default_style) if is_ref else default_style
+                color = colors[(c.style_group, c.sample_set_name)]
                 densities.append(c.density)
-                # Role is already encoded by color (gray) + dash, so keep the
-                # label short: sample-set name + n. Prefix reference sets so a
-                # shared name (e.g. "peak_0" on both roles) stays unambiguous.
-                prefix = f"{c.role} " if (has_reference and c.role == reference_role) else ""
-                labels.append(f"{prefix}{c.sample_set_name} (n={c.sample_count})")
+                # style_group is already encoded by color (gray for
+                # reference) + dash, so keep the label short: sample-set
+                # name + n. Prefix reference sets so a shared name stays
+                # unambiguous.
+                # PATH B carries a structured CurveKey -> render its joined
+                # "member · sample_set" display so a shared peak name across
+                # members stays unambiguous. PATH A (no CurveKey) keeps the
+                # short sample-set label, prefixing reference sets.
+                if c.curve_key is not None:
+                    base_label = c.curve_key.display()
+                else:
+                    prefix = f"{c.style_group} " if is_ref else ""
+                    base_label = f"{prefix}{c.sample_set_name}"
+                labels.append(f"{base_label} (n={c.sample_count})")
                 styles.append(
                     TraceStyle(
                         color=color,
