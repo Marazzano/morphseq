@@ -270,3 +270,62 @@ def test_peak_finding_vote_collapse_no_phantom_sample_sets():
     assert len(sample_sets) == 1
     # every accepted set corresponds to a real declared sample_set_id
     assert set(s.sample_set_id for s in sample_sets) == set(lg.sample_set_ids)
+
+
+# --------------------------------------------------------------------------- #
+# peer symmetry — both labelers return the SAME shape + pass the SAME validator
+# --------------------------------------------------------------------------- #
+def test_peer_symmetry_same_return_shape_and_validator():
+    # genotype run
+    gdist = _genotype_distribution()
+    glabels = ["wildtype", "wildtype", "homo", "homo", "homo", "wildtype"]
+    g_lg, g_sets = label_genotype(gdist, "column", {"labels": glabels})
+
+    # peak run
+    points = _bimodal_points()
+    pdist = _peak_distribution(points)
+    grid = _grid_for(points)
+    p_lg, p_sets = label_peak_finding(
+        pdist, "peak_finding", {"grid": grid, "resolution_config": _fast_config()}
+    )
+
+    for lg, sets, dist in ((g_lg, g_sets, gdist), (p_lg, p_sets, pdist)):
+        assert isinstance(lg, LabelGroup)
+        assert isinstance(sets, list)
+        assert all(isinstance(s, SampleSet) for s in sets)
+        # the SAME central validator accepts both (re-run it explicitly)
+        validate_label_group(dist, lg, sets)
+
+
+# --------------------------------------------------------------------------- #
+# TASK_A integration — ONE pooled grid shared by target & reference peak runs.
+# --------------------------------------------------------------------------- #
+def test_peak_finding_target_and_reference_share_one_pooled_grid_id():
+    # Two roles' point clouds, ONE grid built from the POOLED features (§1b) via
+    # the real TASK_A build_grid. Both peak runs must reference the SAME grid_id
+    # -> directly raster-comparable (HDR/basins overlap without interpolation).
+    target_points = _bimodal_points(seed=0)
+    reference_points = _bimodal_points(seed=5)
+    pooled = np.vstack([reference_points, target_points])
+    pooled_ids = tuple(f"pool{i}" for i in range(len(pooled)))
+    shared_grid = build_grid(
+        ("PC1", "PC2"), pooled, pooled_ids, "pooled_min_max", {"resolution": 61}
+    )
+
+    tdist = _peak_distribution(target_points, role="target")
+    rdist = _peak_distribution(reference_points, role="reference")
+    t_lg, t_sets = label_peak_finding(
+        tdist, "peak_finding", {"grid": shared_grid, "resolution_config": _fast_config()}
+    )
+    r_lg, r_sets = label_peak_finding(
+        rdist, "peak_finding", {"grid": shared_grid, "resolution_config": _fast_config()}
+    )
+
+    # raster comparability: identical grid_id on both runs' artifacts + geometry + HDR.
+    assert t_lg.artifacts.grid_id == r_lg.artifacts.grid_id == shared_grid.grid_id
+    for s in t_sets + r_sets:
+        assert s.geometry.grid_id == shared_grid.grid_id
+        assert s.hdr.grid_id == shared_grid.grid_id
+    # density_grid evaluated on the shared grid carries the same id (evaluate_density).
+    assert t_lg.artifacts.density_grid.grid_id == shared_grid.grid_id
+    assert r_lg.artifacts.density_grid.grid_id == shared_grid.grid_id
