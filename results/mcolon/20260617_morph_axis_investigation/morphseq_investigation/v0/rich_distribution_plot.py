@@ -348,10 +348,60 @@ def _wide_style():
 
 
 # --------------------------------------------------------------------------- #
-# LAYOUT 2: ridgeline / joyplot. Within each view (row), stack the time bins as
-# vertically-offset baselines so the distribution's march across time is legible.
-# Self-contained matplotlib (the faceting IR has no offset-baseline band-stack).
+# LAYOUT 2: ridgeline / joyplot. RETIRED as bespoke matplotlib — the offset math
+# now lives in the shared Tier-2 verb ``engine.ridge.plot_1d_ridgeline`` (TASK_D),
+# which consumes the same DistributionGrid IR as ``plot_1d_density_grid``. This
+# thin shim repackages the prototype's per-(view, hpf) CellDensities into that IR
+# (view -> row facet, hpf -> col facet / time bin), preserving the per-curve
+# colors via ``color_lookup`` and marking WT reference curves with the reserved
+# ``"reference"`` style_group so they degrade to the dashed/unfilled baseline.
 # --------------------------------------------------------------------------- #
+def _cells_to_distribution_grid(
+    cells: dict[str, dict[int, CellDensities]],
+    design_hpfs: list[int],
+    feature_name: str,
+) -> tuple["DistributionGrid", dict[tuple[Any, str], str]]:
+    """Repackage the prototype cells into a DistributionGrid + a color_lookup.
+
+    ``style_group`` is ``"reference"`` for WT curves (so the verb applies the
+    reserved dashed/unfilled baseline role) and the curve's own display label
+    otherwise. ``color_lookup`` keys are ``(style_group, sample_set_name)`` — the
+    exact key ``engine.ridge`` resolves colors on — so the prototype's bespoke
+    per-mode/per-phenotype palette is preserved through the shared verb.
+    """
+    from ..engine.plotting import DistributionCurve, DistributionGrid
+
+    curves: list[DistributionCurve] = []
+    color_lookup: dict[tuple[Any, str], str] = {}
+    for view in VIEW_ORDER:
+        for hpf in design_hpfs:
+            cell = cells[view][hpf]
+            for (lbl, color, _ls, is_ref, density) in cell.curves:
+                name = lbl.split(" (n=")[0]
+                style_group = "reference" if is_ref else name
+                key = (style_group, name)
+                color_lookup[key] = color
+                curves.append(
+                    DistributionCurve(
+                        cell=(VIEW_TITLES[view], hpf),
+                        sample_set_name=name,
+                        style_group=style_group,
+                        grid=cell.grid,
+                        density=density,
+                        sample_count=0,
+                    )
+                )
+    from ..engine.facets import CoordinateFacet, LabelGroupFacet
+
+    grid = DistributionGrid(
+        feature_name=feature_name,
+        row=LabelGroupFacet(),
+        col=CoordinateFacet("design_hpf"),
+        curves=tuple(curves),
+    )
+    return grid, color_lookup
+
+
 def render_ridgeline(
     cells: dict[str, dict[int, CellDensities]],
     design_hpfs: list[int],
@@ -360,107 +410,24 @@ def render_ridgeline(
     *,
     variant: str = "overlaid",
 ) -> None:
-    """Ridgeline / joyplot. ``variant`` controls how target and reference are
-    placed WITHIN each hpf bin:
-
-      overlaid : both share the bin's baseline (fills overlap). Best for reading
-                 COINCIDENCE — do target and reference sit on top of each other?
-      stacked  : reference on the bin baseline, target on a small sub-offset just
-                 ABOVE it. Best for reading each SHAPE without fill collision; a
-                 vertical gap = "target moved off its reference".
-      mirror   : reference mirrored DOWNWARD (negative) from the bin baseline,
-                 target upward — a back-to-back raincloud. Symmetric divergence.
+    """Ridgeline / joyplot — now a thin wrapper over the shared TASK_D verb
+    ``engine.ridge.plot_1d_ridgeline``. ``variant`` (overlaid/stacked/mirror)
+    is passed straight through; the offset math + target/reference styling that
+    used to live here is the reviewed logic that TASK_D re-homed onto the IR.
     """
-    if variant not in ("overlaid", "stacked", "mirror"):
-        raise ValueError(f"unknown ridge variant {variant!r}")
-    import matplotlib
+    from ..engine.ridge import plot_1d_ridgeline
 
-    matplotlib.use("Agg")
+    grid, color_lookup = _cells_to_distribution_grid(cells, design_hpfs, feature_name)
+    fig = plot_1d_ridgeline(
+        grid,
+        variant=variant,
+        color_lookup=color_lookup,
+        reference_role="reference",
+        title=f"b9d2 distributions over time (ridge · {variant}) — {feature_name}",
+        output_path=out_path,
+    )
     import matplotlib.pyplot as plt
 
-    n_views = len(VIEW_ORDER)
-    fig, axes = plt.subplots(1, n_views, figsize=(6.0 * n_views, 7.0), squeeze=False)
-    axes = axes[0]
-
-    for ax, view in zip(axes, VIEW_ORDER):
-        peak = 0.0
-        for hpf in design_hpfs:
-            for (_lbl, _c, _ls, _r, d) in cells[view][hpf].curves:
-                peak = max(peak, float(np.asarray(d.density).max()))
-        peak = peak or 1.0
-        # Row spacing must clear whatever the variant stacks within a bin.
-        if variant == "overlaid":
-            step = peak * 0.7
-        elif variant == "stacked":
-            step = peak * 1.3          # room for ref (baseline) + target (sub-offset)
-        else:  # mirror
-            step = peak * 1.6          # room for +target above and -reference below
-        sub = peak * 0.55              # within-bin sub-offset for the 'stacked' variant
-
-        seen_labels: set[str] = set()
-        for row_i, hpf in enumerate(reversed(design_hpfs)):
-            offset = row_i * step
-            cell = cells[view][hpf]
-            x = np.asarray(cell.grid.axis_values[0], dtype=float)
-            for (lbl, color, ls, is_ref, d) in cell.curves:
-                dens = np.asarray(d.density, dtype=float).reshape(-1)
-                base_label = lbl.split(" (n=")[0]
-                show = base_label not in seen_labels
-                if show:
-                    seen_labels.add(base_label)
-
-                # Place the curve per variant. baseline = where the fill sits;
-                # sign flips the reference downward in 'mirror'.
-                if variant == "overlaid":
-                    baseline, y = offset, offset + dens
-                elif variant == "stacked":
-                    baseline = offset + (0.0 if is_ref else sub)
-                    y = baseline + dens
-                else:  # mirror: target up, reference down
-                    if is_ref:
-                        baseline, y = offset, offset - dens
-                    else:
-                        baseline, y = offset, offset + dens
-
-                if is_ref:
-                    # Reference = dashed outline, no solid fill (the baseline).
-                    ax.fill_between(
-                        x, baseline, y, facecolor="none", edgecolor=color,
-                        linestyle="--", linewidth=1.2, alpha=0.9, zorder=row_i,
-                    )
-                else:
-                    ax.fill_between(x, baseline, y, color=color, alpha=0.25, zorder=row_i)
-                ax.plot(
-                    x, y, color=color, lw=1.8, ls=ls, zorder=row_i,
-                    label=base_label if show else None,
-                )
-            ax.axhline(offset, color="#cccccc", lw=0.6, zorder=row_i - 0.5)
-            ax.text(
-                x.min(), offset, f"{hpf} hpf  ",
-                ha="right", va="bottom", fontsize=9, fontweight="bold",
-            )
-
-        ax.set_title(VIEW_TITLES[view], fontsize=11, fontweight="bold")
-        ax.set_xlabel(feature_name)
-        ax.set_yticks([])
-        ax.legend(loc="upper right", fontsize=7, frameon=True, framealpha=0.85)
-        for spine in ("left", "right", "top"):
-            ax.spines[spine].set_visible(False)
-
-    _VARIANT_BLURB = {
-        "overlaid": "target & WT share each bin's baseline (read coincidence)",
-        "stacked": "WT on baseline, target lifted just above (read each shape)",
-        "mirror": "target up, WT mirrored down (read divergence)",
-    }
-    fig.suptitle(
-        f"b9d2 distributions over time (ridge · {variant}) — {feature_name}\n"
-        f"columns = label views · each ridge = one hpf bin · earliest at bottom · "
-        f"{_VARIANT_BLURB[variant]}",
-        fontsize=13, fontweight="bold", linespacing=1.5,
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.90])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"ridge ({variant}) written: {out_path}")
 
