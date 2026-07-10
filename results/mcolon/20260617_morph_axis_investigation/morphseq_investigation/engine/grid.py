@@ -1,13 +1,16 @@
-"""``Grid`` construction (ontology §1b, Invariant #4/#9).
+"""``Grid``/``DensityGrid`` construction + evaluation (ontology §1b, Invariant #4/#9).
 
-TASK_A builds the primitive the handoff left open:
+TASK_A builds the two primitives the handoff left open:
 
 - :func:`build_grid` — turn POOLED feature values into a :class:`Grid`
   (feature-unit axes, deterministic ``grid_id`` via ``engine.identifiers.make_grid_id``).
+- :func:`evaluate_density` — KDE arbitrary samples ON a Grid's ``axis_values``,
+  producing a :class:`DensityGrid` tagged with the SAME ``grid_id``.
 
 No coordinate frame, no inverse, no "canonical" basis anywhere (axes stay in
 feature units per decision (b)); whitening (``pooled_mad_scaled``) only picks
-*bounds and spacing*, never a change of basis.
+*bounds and spacing*, never a change of basis. The 1-D case is not special
+cased: a single-feature Grid + ``evaluate_density`` IS a KDE strip.
 """
 
 from __future__ import annotations
@@ -17,7 +20,15 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from .identifiers import make_grid_id
-from .objects import Grid
+from .objects import DensityGrid, Grid
+
+# Reuse the existing dimension-agnostic KDE kernel (core/bandwidth_tuning.py) —
+# it evaluates a dense isotropic Gaussian KDE from precomputed squared
+# distances and does not assume 2-D, only ``precompute_squared_distances``
+# (in the same module) hardcodes shape (n, 2). We roll our own N-D squared
+# distance so build_grid/evaluate_density work for any feature count,
+# including the 1-D strip case TASK_D needs.
+from ..core.bandwidth_tuning import evaluate_isotropic_gaussian_kde_from_dist2
 
 _VALID_METHODS = (
     "pooled_min_max",
@@ -196,4 +207,101 @@ def build_grid(
         construction_method=method,
         construction_params=normalized_params,
         fit_sample_ids=fit_sample_ids,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# evaluate_density
+# --------------------------------------------------------------------------- #
+def _grid_mesh_points(axis_values: Sequence[np.ndarray]) -> np.ndarray:
+    """Flatten a Grid's per-axis coordinates into ``(n_cells, n_axes)`` mesh points.
+
+    ``indexing="ij"`` so the flattened row-major order matches
+    ``density.reshape(tuple(len(a) for a in axis_values))`` — i.e. axis i
+    varies slowest in the flat ordering, matching numpy's default C order for
+    an array of that shape.
+    """
+    if len(axis_values) == 1:
+        return axis_values[0].reshape(-1, 1)
+    mesh = np.meshgrid(*axis_values, indexing="ij")
+    return np.stack([m.ravel() for m in mesh], axis=-1)
+
+
+def _cell_volume(axis_values: Sequence[np.ndarray]) -> float:
+    """Product of per-axis cell spacing — the N-D generalization of ``cell_area``."""
+    volume = 1.0
+    for axis in axis_values:
+        if len(axis) > 1:
+            volume *= float(axis[1] - axis[0])
+    return volume
+
+
+def _resolve_bandwidth(bandwidth_spec: Mapping[str, Any] | float) -> float:
+    """Accept either a bare scalar bandwidth or a ``{"bandwidth": h}``-style mapping.
+
+    Only isotropic scalar bandwidths are supported (matches the reused kernel,
+    ``evaluate_isotropic_gaussian_kde_from_dist2``); no separate bandwidth path
+    is added here.
+    """
+    if isinstance(bandwidth_spec, Mapping):
+        if "bandwidth" not in bandwidth_spec:
+            raise ValueError("bandwidth_spec mapping must carry a 'bandwidth' key")
+        return float(bandwidth_spec["bandwidth"])
+    return float(bandwidth_spec)
+
+
+def evaluate_density(
+    grid: Grid,
+    sample_values: np.ndarray,
+    bandwidth_spec: Mapping[str, Any] | float,
+) -> DensityGrid:
+    """KDE ``sample_values`` ON ``grid.axis_values`` -> a :class:`DensityGrid`.
+
+    Tagged with the SAME ``grid_id`` as ``grid`` (never re-derived) — this is
+    the primitive both peak runs and 1-D KDE strips share (ontology §1b): a
+    1-feature ``Grid`` + ``evaluate_density`` IS a KDE strip, no special case.
+
+    Reuses ``core.bandwidth_tuning.evaluate_isotropic_gaussian_kde_from_dist2``
+    (dimension-agnostic dense isotropic Gaussian KDE from squared distances)
+    rather than adding a second KDE code path; only the squared-distance
+    computation here is written fresh since the module's own
+    ``precompute_squared_distances`` hardcodes 2-D points.
+
+    Never interpolates a density across grids — to compare on a shared grid,
+    re-evaluate the samples on that grid.
+    """
+    sample_values = np.asarray(sample_values, dtype=float)
+    if sample_values.ndim != 2:
+        raise ValueError(f"sample_values must be 2-D (n_samples, n_features); got shape {sample_values.shape}")
+    if sample_values.shape[1] != len(grid.feature_names):
+        raise ValueError(
+            "sample_values second axis must match grid.feature_names length: "
+            f"{sample_values.shape[1]} columns vs {len(grid.feature_names)} feature_names"
+        )
+
+    mesh_points = _grid_mesh_points(grid.axis_values)  # (n_cells, n_axes)
+    bandwidth = _resolve_bandwidth(bandwidth_spec)
+
+    if sample_values.shape[0] == 0:
+        density_flat = np.zeros(mesh_points.shape[0], dtype=float)
+    else:
+        # (n_cells, n_samples) squared Euclidean distances, N-D generalization
+        # of core.bandwidth_tuning.precompute_squared_distances (2-D only).
+        diff = mesh_points[:, None, :] - sample_values[None, :, :]
+        dist2 = np.einsum("ijk,ijk->ij", diff, diff)
+        cell_volume = _cell_volume(grid.axis_values)
+        density_flat = evaluate_isotropic_gaussian_kde_from_dist2(
+            dist2,
+            bandwidth,
+            cell_area=cell_volume,
+            normalize_grid=True,
+        )
+
+    shape = tuple(len(a) for a in grid.axis_values)
+    density = density_flat.reshape(shape)
+
+    return DensityGrid(
+        grid_id=grid.grid_id,
+        feature_names=grid.feature_names,
+        density=density,
     )

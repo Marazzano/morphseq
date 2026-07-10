@@ -1,10 +1,10 @@
-"""TASK_A — build_grid tests (ontology §1b, Invariant #4/#9)."""
+"""TASK_A — build_grid + evaluate_density tests (ontology §1b, Invariant #4/#9)."""
 
 import numpy as np
 import pytest
 
-from morphseq_investigation.engine.grid import build_grid
-from morphseq_investigation.engine.objects import Grid
+from morphseq_investigation.engine.grid import build_grid, evaluate_density
+from morphseq_investigation.engine.objects import Grid, DensityGrid
 
 
 def _pooled_2d(seed=0, n=40):
@@ -12,6 +12,14 @@ def _pooled_2d(seed=0, n=40):
     pc1 = rng.normal(loc=0.0, scale=2.0, size=n)
     pc2 = rng.normal(loc=5.0, scale=1.0, size=n)
     values = np.stack([pc1, pc2], axis=1)
+    sample_ids = tuple(f"s{i}" for i in range(n))
+    return values, sample_ids
+
+
+def _pooled_1d(seed=0, n=40):
+    rng = np.random.default_rng(seed)
+    pc1 = rng.normal(loc=0.0, scale=2.0, size=n)
+    values = pc1.reshape(-1, 1)
     sample_ids = tuple(f"s{i}" for i in range(n))
     return values, sample_ids
 
@@ -153,3 +161,54 @@ def test_different_pooled_values_different_grid_id():
         ("PC1", "PC2"), other_values, sample_ids, "pooled_min_max", {"resolution": 20}
     )
     assert grid_a.grid_id != grid_b.grid_id
+
+
+# --------------------------------------------------------------------------- #
+# evaluate_density — 1-D strip integrates to ~1, 2-D shape matches axes
+# --------------------------------------------------------------------------- #
+def test_1d_strip_density_integrates_to_one():
+    values, sample_ids = _pooled_1d()
+    grid = build_grid(
+        ("PC1",), values, sample_ids, "pooled_min_max", {"resolution": 200}
+    )
+    density_grid = evaluate_density(grid, values, bandwidth_spec=0.5)
+    assert isinstance(density_grid, DensityGrid)
+    assert density_grid.grid_id == grid.grid_id
+    assert density_grid.density.shape == (200,)
+
+    dx = float(grid.axis_values[0][1] - grid.axis_values[0][0])
+    mass = float(np.sum(density_grid.density) * dx)
+    assert mass == pytest.approx(1.0, abs=0.05)
+
+
+def test_2d_density_shape_matches_axis_lengths():
+    values, sample_ids = _pooled_2d()
+    grid = build_grid(
+        ("PC1", "PC2"), values, sample_ids, "pooled_min_max", {"resolution": 30}
+    )
+    density_grid = evaluate_density(grid, values, bandwidth_spec=0.75)
+    expected_shape = tuple(len(a) for a in grid.axis_values)
+    assert density_grid.density.shape == expected_shape
+    assert density_grid.grid_id == grid.grid_id
+    assert density_grid.feature_names == grid.feature_names
+
+
+def test_evaluate_density_never_reinterpolates_across_grids():
+    # Evaluating the SAME samples on two grids with different resolutions must
+    # give two independently-computed DensityGrids (different shapes/ids),
+    # never one derived from the other by interpolation.
+    values, sample_ids = _pooled_2d()
+    grid_a = build_grid(("PC1", "PC2"), values, sample_ids, "pooled_min_max", {"resolution": 15})
+    grid_b = build_grid(("PC1", "PC2"), values, sample_ids, "pooled_min_max", {"resolution": 31})
+    density_a = evaluate_density(grid_a, values, bandwidth_spec=0.75)
+    density_b = evaluate_density(grid_b, values, bandwidth_spec=0.75)
+    assert density_a.density.shape != density_b.density.shape
+    assert density_a.grid_id != density_b.grid_id
+
+
+def test_bandwidth_spec_accepts_mapping_and_scalar():
+    values, sample_ids = _pooled_1d()
+    grid = build_grid(("PC1",), values, sample_ids, "pooled_min_max", {"resolution": 50})
+    density_scalar = evaluate_density(grid, values, bandwidth_spec=0.5)
+    density_mapping = evaluate_density(grid, values, bandwidth_spec={"bandwidth": 0.5})
+    assert np.allclose(density_scalar.density, density_mapping.density)
