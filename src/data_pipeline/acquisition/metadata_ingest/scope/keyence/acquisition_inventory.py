@@ -74,6 +74,9 @@ KEYENCE_ACQUISITION_INVENTORY_SCOPE_COLUMNS: tuple[str, ...] = (
     "acquisition_time_s",          # raw per-frame timestamp (the atom elapsed_time_s is derived from)
     "objective_magnification",     # scraped lens (provenance)
     "orientation",                 # tile raster orientation (feeds stitch config; "unknown" if unknown)
+    "stage_x_nm",                  # absolute stage X (nm); per-tile DELTAS are the mosaic geometry
+    "stage_y_nm",                  # absolute stage Y (nm); ditto — build_keyence_stitch_map reads these
+    "stage_z_nm",                  # absolute stage Z (nm); the focal plane of this Z slice
     "source_tiff_path",            # the ONE raw TIFF for THIS plane (per-row, not per-well)
 )
 
@@ -314,6 +317,9 @@ def build_keyence_acquisition_inventory_rows(
                 "acquisition_time_s": float(meta["acquisition_time_s"]),
                 "objective_magnification": meta.get("objective_magnification", "unknown"),
                 "orientation": meta.get("orientation", "unknown"),
+                "stage_x_nm": int(meta.get("stage_x_nm", 0)),
+                "stage_y_nm": int(meta.get("stage_y_nm", 0)),
+                "stage_z_nm": int(meta.get("stage_z_nm", 0)),
                 "source_tiff_path": plane["source_tiff_path"],
             }
         )
