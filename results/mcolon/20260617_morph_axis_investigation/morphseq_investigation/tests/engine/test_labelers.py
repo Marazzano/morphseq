@@ -15,13 +15,11 @@ from morphseq_investigation.engine.identifiers import make_distribution_id
 from morphseq_investigation.engine.objects import (
     Distribution,
     DistributionLabelGroup,
+    HDR,
     SampleSetGeometry,
     UNASSIGNED_LABEL,
 )
-from morphseq_investigation.engine.labelers import (
-    label_column_from_series,
-    sample_sets_with_hdr,
-)
+from morphseq_investigation.engine.labelers import label_column_from_series
 
 
 # --------------------------------------------------------------------------- #
@@ -129,18 +127,21 @@ def test_sample_sets_resolved_peak_carry_geometry():
         assert s.geometry is not None
 
 
-def test_sample_sets_with_hdr_unpacks_geometry_and_hdr():
+def test_sample_sets_resolved_peak_carry_typed_geometry_and_hdr_directly():
+    # Distribution.sample_sets("resolved_peak") unpacks the eager CategoryShape
+    # into the SampleSet's TYPED slots -- a proper SampleSetGeometry on
+    # .geometry and an HDR on .hdr -- with NO wrapper and NO separate unpack call.
     points = _bimodal_points()
     dist = _peak_distribution(points)
     lg = _detect(dist)
 
-    sets = sample_sets_with_hdr(lg)
+    sets = lg.distribution.sample_sets("resolved_peak")
     assert len(sets) == 2
     for s in sets:
         assert isinstance(s.geometry, SampleSetGeometry)
         assert s.geometry.center.shape == (2,)
         assert np.isfinite(s.geometry.radius)
-        assert s.hdr is not None
+        assert isinstance(s.hdr, HDR)
         assert s.hdr.mask is not None
         # geometry carries NO run-relative scalars (kept off SampleSetGeometry)
         assert not hasattr(s.geometry, "support_fraction")

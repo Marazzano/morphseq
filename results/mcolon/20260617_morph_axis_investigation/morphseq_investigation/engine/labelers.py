@@ -11,12 +11,11 @@ with those slots ``None``. ONE type all the way down.
 
 Where the "more information" a detector produces lives, by grain:
   - per-category (this peak's center / radius / r80 / HDR) -> eager, in
-    ``LabelProvenance.geometry`` (frozen TASK_0 shape: ``{category -> payload}``,
-    opaque here). ``Distribution.sample_sets`` already reads this map back onto
-    each derived SampleSet's ``geometry`` slot (see ``objects.py``); this module
-    stores a small ``_PeakCategoryGeometry`` payload there that carries BOTH the
-    intrinsic :class:`SampleSetGeometry` and the per-category :class:`HDR`, and
-    :func:`sample_sets_with_hdr` unpacks it for callers that need the ring.
+    ``LabelProvenance.geometry`` as a :class:`~.objects.CategoryShape` bundle
+    (``{category -> CategoryShape(geometry, hdr, feature_profile)}``).
+    ``Distribution.sample_sets`` (TASK_0) UNPACKS each bundle into the derived
+    SampleSet's TYPED slots, so ``dist.sample_sets("resolved_peak")`` returns
+    geometry- AND hdr-bearing sets directly — no wrapper, no separate unpack call.
   - per-run robustness (bootstrap vote frequencies, count stability,
     ``is_reliable``, the density field, basin labels) -> ``LabelGroupArtifacts``,
     carried in ``LabelProvenance.spec["artifacts"]`` alongside the resolved
@@ -33,13 +32,13 @@ distributions' ``peak_0`` correspond.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace as _replace
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 
 from .grid import build_grid, evaluate_density
 from .objects import (
+    CategoryShape,
     Distribution,
     DistributionLabelGroup,
     Grid,
@@ -98,23 +97,6 @@ def label_column_from_series(
 # --------------------------------------------------------------------------- #
 # detect_peaks — the unsupervised labeler, folding in the live machinery.
 # --------------------------------------------------------------------------- #
-@dataclass(frozen=True)
-class _PeakCategoryGeometry:
-    """Per-category payload stashed in ``LabelProvenance.geometry["peak_k"]``.
-
-    ``objects.py``'s ``Distribution.sample_sets`` reads ``provenance.geometry``
-    back onto each SampleSet's single ``geometry`` slot verbatim (opaque, TASK_0
-    frozen). Rather than smuggle the HDR through a second channel, this small
-    wrapper carries BOTH — ``.geometry`` for the intrinsic shape, ``.hdr`` for
-    the highest-density-region mask — and :func:`sample_sets_with_hdr` (below)
-    is the ONE place that unpacks it back into the proper ``SampleSet.geometry``
-    / ``SampleSet.hdr`` slots for TASK_C plotting.
-    """
-
-    geometry: SampleSetGeometry
-    hdr: HDR
-
-
 def _grid_to_canonical(grid: Grid):
     """Bridge a TASK_A 2-D feature-unit :class:`Grid` to a live ``CanonicalGrid``.
 
@@ -261,7 +243,7 @@ def detect_peaks(
     )
 
     assignments: dict[str, str] = {}
-    geometry_by_category: dict[str, _PeakCategoryGeometry] = {}
+    geometry_by_category: dict[str, CategoryShape] = {}
     per_category_metrics: dict[str, dict[str, float]] = {}
 
     peaks = tuple(resolved.peaks)
@@ -308,7 +290,9 @@ def detect_peaks(
             mask=_hdr_mask_for_basin(engine_density, basin_labels, peak_id, hdr_level),
         )
 
-        geometry_by_category[category] = _PeakCategoryGeometry(geometry=geometry, hdr=hdr)
+        # EAGER per-category shape (geometry + HDR) — Distribution.sample_sets
+        # unpacks this CategoryShape into the SampleSet's typed geometry/hdr slots.
+        geometry_by_category[category] = CategoryShape(geometry=geometry, hdr=hdr)
 
         detail = peak.detector_detail
         height = float(detail.peak_height) if detail is not None else float("nan")
@@ -351,8 +335,10 @@ def detect_peaks(
             "peak_detector_method": analysis_spec.peak_detector_method,
             **run_evidence,
         },
-        # EAGER per-category geometry (+ HDR, wrapped) — read back onto derived
-        # SampleSets by Distribution.sample_sets (objects.py, TASK_0).
+        # EAGER per-category CategoryShape (geometry + HDR) — Distribution.
+        # sample_sets (objects.py, TASK_0) unpacks it into the SampleSet's typed
+        # geometry/hdr slots, so callers read a proper SampleSetGeometry / HDR
+        # off sample_sets("resolved_peak") directly (no wrapper, no unpack helper).
         geometry=geometry_by_category,
     )
 
@@ -360,27 +346,3 @@ def detect_peaks(
         output_label, assignments, provenance=provenance
     )
     return new_distribution.label_group(output_label, display_name=output_label)
-
-
-def sample_sets_with_hdr(
-    label_group: DistributionLabelGroup,
-) -> tuple[Any, ...]:
-    """Return this label group's SampleSets with BOTH ``geometry`` and ``hdr``
-    filled in from a :func:`detect_peaks` run.
-
-    ``Distribution.sample_sets`` (TASK_0, ``objects.py``) reads
-    ``LabelProvenance.geometry`` back onto each SampleSet's single ``geometry``
-    slot verbatim; ``detect_peaks`` stores a :class:`_PeakCategoryGeometry`
-    wrapper there (intrinsic geometry + HDR together) so nothing is lost. This
-    helper unwraps it into the proper ``SampleSet.geometry`` / ``SampleSet.hdr``
-    slots for callers (TASK_C plotting) that need the ring. SampleSets from a
-    provided/column label group (no wrapper stashed) pass through unchanged.
-    """
-    sets = label_group.sample_sets()
-    unwrapped = []
-    for s in sets:
-        if isinstance(s.geometry, _PeakCategoryGeometry):
-            unwrapped.append(_replace(s, geometry=s.geometry.geometry, hdr=s.geometry.hdr))
-        else:
-            unwrapped.append(s)
-    return tuple(unwrapped)
