@@ -190,3 +190,82 @@ def test_resolve_id_label_kwarg_raises():
     )
     with pytest.raises(ValueError, match="label group, not a coordinate"):
         catalog.resolve_id(phenotype="affected")
+
+
+# --------------------------------------------------------------------------- #
+# pool_by
+# --------------------------------------------------------------------------- #
+def test_pool_by_collapses_coordinate_and_unions_samples():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    assert len(catalog.distributions) == 8  # 2x2x2
+
+    pooled = catalog.pool_by("experiment")
+    assert pooled.coordinate_names == ("time_bin", "genotype")
+    assert len(pooled.distributions) == 4  # 2x2
+
+    # samples union: each pooled distribution has 2x the per-cell rows.
+    for distribution in pooled.distributions:
+        assert len(distribution.sample_ids) == 6  # 2 experiments x 3 rows
+        assert "experiment" not in distribution.coordinates
+
+
+def test_pool_by_not_a_coordinate_raises():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype"),
+    )
+    with pytest.raises(ValueError):
+        catalog.pool_by("experiment")
+
+
+def test_pool_by_duplicate_sample_id_raises():
+    df = _synthetic_df()
+    # Force a duplicate embryo_id across experiments within the same time/genotype cell.
+    df.loc[df["experiment"] == "expB", "embryo_id"] = df.loc[
+        df["experiment"] == "expA", "embryo_id"
+    ].to_numpy()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    with pytest.raises(ValueError, match="duplicate sample_id"):
+        catalog.pool_by("experiment")
+
+
+def test_pool_by_labels_ride_along_per_sample():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        label_columns=("phenotype",),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    pooled = catalog.pool_by("experiment")
+    for distribution in pooled.distributions:
+        col = distribution.label_column("phenotype")
+        assert set(col.values) == set(distribution.sample_ids)
+
+
+def test_pool_by_records_softened_provenance_note():
+    df = _synthetic_df()
+    catalog = DistributionCatalog.from_dataframe(
+        df,
+        sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"),
+        split_columns=("time_bin", "genotype", "experiment"),
+    )
+    pooled = catalog.pool_by("experiment")
+    for distribution in pooled.distributions:
+        assert pooled.pooled_coordinates[distribution.distribution_id] == ("experiment",)
