@@ -81,9 +81,33 @@ _GEOMETRY_BANDWIDTH_RULES = ("median_kNN_distance", "longest_non_outlier_MST_edg
 # density. Anything reusing the resolved-peak engine on real data (e.g. the
 # valley-visualization reference readout) should import this rather than
 # re-declaring a spec, so figures and null-test tables share one configuration.
+# Bandwidth: the default is the geometry-derived `longest_non_outlier_MST_edge`
+# at multiplier 0.75 — the configuration VALIDATED against synthetic truth in
+# v0/validate_v0_resolved_peaks.py (one/two/three-peak fixtures recover the right
+# counts). This is an isotropic sigma from the point cloud's largest non-outlier
+# spanning-tree gap, NOT scipy/Scott, and it matches the rest of the framework
+# (support_geometry.isotropic_geometry_kde_spec uses the same rule) so target,
+# reference, and every null resample each get their own geometry-appropriate sigma
+# and the whole figure stays on-method.
+#
+# NOTE: this default previously read `scipy_default` (Scott's rule) — a stale
+# leftover from when scipy was the ONLY supported rule (commit cd6e9a5e). When the
+# geometry rules were wired (a12fbfda) the validation script adopted the MST-edge
+# rule but this default was never updated to match. Corrected here.
+#
+# Do NOT revert to `scipy_default` (Scott's rule). The only situation in which
+# scipy_default would even be worth *considering* is >2 feature dimensions, and
+# even that is currently UNPROVEN — no calibration backs it.
+#
+# TODO(prove-before-use): before scipy_default is ever adopted (only in the >2-D
+# case), it must be proven on the WT-calibrated support-vs-density gate — show on
+# labeled synthetic truth (the discrete/continuous fixtures) that Scott's rule in
+# >2-D does not inflate the two_discrete false-positive rate or miss narrow 3+-mode
+# splits the way it does in 2-D. Until that calibration exists, this default stays
+# on longest_non_outlier_MST_edge for ALL dimensionalities.
 DEFAULT_ANALYSIS_SPEC = ResolvedPeakAnalysisSpec(
-    bandwidth_rule="scipy_default",
-    bandwidth_multiplier=1.0,
+    bandwidth_rule="longest_non_outlier_MST_edge",
+    bandwidth_multiplier=0.75,
     peak_detector_method="kde_peak_basins_sample_support",
     min_sample_fraction=0.10,
 )
