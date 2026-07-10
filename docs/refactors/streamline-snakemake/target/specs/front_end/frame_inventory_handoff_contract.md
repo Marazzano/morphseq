@@ -20,6 +20,28 @@ boundary between them — see that doc's "Acquisition inventory ≠ frame invent
 shared validator** (`validate_frame_inventory_well`), and a **worked walkthrough** of both
 producers — native microscope ingest **and** external drop-in.
 
+> **Migration note (2026-07-10): core frame inventory describes the materialized image on disk.**
+> The core contract is being migrated away from ambiguous `source_*` image fields. The required
+> image columns are the facts downstream needs to open and interpret the materialized image:
+> `image_path`, `image_width_px`, `image_height_px`, `image_micrometers_per_pixel`,
+> `image_file_format`, `pixel_dtype`, `downsample_factor`, and `downsample_method`.
+> `jpeg_quality` is format-conditional: required only for JPEG rows, null/absent otherwise.
+> Raw acquisition facts are optional provenance, not core frame identity. Keyence may carry
+> `raw_tile_path`/`raw_tile_manifest_path`, `raw_tile_width_px`, `raw_tile_height_px`, `raw_tile_count`, and
+> `raw_micrometers_per_pixel`; YX1 may carry `raw_image_source_path`, `raw_image_width_px`,
+> `raw_image_height_px`, and `raw_micrometers_per_pixel`. The old `source_image_path` core name
+> is mechanically a materialized image path today and should migrate to `image_path` with a
+> compatibility fallback during code migration.
+
+> **Migration order (pipeline-first).** First fix native materialization so it writes correct
+> images: stitch from canonical tile coordinates, remove legacy crop/pad canvas behavior, and let
+> write policy optionally orient the final array as `horizontal` or `vertical`. Only after the
+> materialized Keyence/YX1 rows validate should the broader contract rename land everywhere
+> downstream (`source_image_path` -> `image_path`, raw/source facts -> optional `raw_*` columns).
+> This check is required for **both** native producers: Keyence must record tiled raw provenance,
+> and YX1 must record the ND2 `raw_image_source_path` plus raw image dimensions/calibration while
+> still deriving the required core fields from the final writer-policy output.
+
 > **Vocabulary note (2026-06-04):** this doc adopts **`frame_inventory`** as the name of the
 > per-well validated table, replacing the older `frame_contract`. The code rename
 > (`frame_contract` → `frame_inventory`: 37 Snakefile refs + 3 Python modules + schema) is a
@@ -239,10 +261,15 @@ the drop-in file the *same table* the native pipeline builds internally.
 | `well_index` | local well label (`B01`) — **atom** | ✅ | from scope metadata |
 | `channel_id` | controlled channel token — **atom** | ✅ | from scope metadata |
 | `time_index` | the **T dimension** (0-based, contiguous) — **atom** | ✅ | from scope metadata (was `frame_index`/`time_int` — see Naming) |
-| `source_image_path` | image path (TIFF/PNG/JPEG); **absolute OR relative to `image_root`** | ✅ | built from the stitched-tree layout |
-| `source_micrometers_per_pixel` | calibration (µm/px) — **required, > 0** | ✅ | from scope metadata calibration |
-| `image_width_px` | declared width | ✅ | from the image header |
-| `image_height_px` | declared height | ✅ | from the image header |
+| `image_path` | materialized image path (TIFF/PNG/JPEG); **absolute OR relative to `image_root`** | ✅ | written by materialization |
+| `image_micrometers_per_pixel` | materialized-image calibration (µm/px) — **required, > 0** | ✅ | from acquisition calibration after write policy |
+| `image_width_px` | materialized image width on disk | ✅ | from the written image header |
+| `image_height_px` | materialized image height on disk | ✅ | from the written image header |
+| `image_file_format` | written image encoding (`png`, `jpg`, `tif`) | ✅ | from write policy |
+| `pixel_dtype` | encoder/read-back dtype, not raw acquisition dtype | ✅ | from write policy |
+| `downsample_factor` | write-policy downsample factor (`1` = identity) | ✅ | from write policy |
+| `downsample_method` | write-policy downsample method (`none` for identity) | ✅ | from write policy |
+| `jpeg_quality` | JPEG quality; required only for JPEG rows | ⬚ conditional | from write policy |
 | `elapsed_time_s` | the time block — **drop-in conditional** (see below) | ✅ (multi-timepoint) | from scope metadata timing |
 | `acquisition_time_s` | raw/source timing provenance — **not** the timing contract | ⬚ optional | from scope metadata timing |
 | `well_id` *(derived)* | `{experiment_id}_{well_index}` | ⛔ **do not author** | composed + written by the build step |
@@ -262,15 +289,16 @@ the drop-in file the *same table* the native pipeline builds internally.
 > composed id is tolerated-but-checked, not required.
 
 > **Why dims are required despite being derivable:** `image_width_px`/`image_height_px` are
-> **intentionally duplicated** from the image header so the validator can detect mismatches
-> (header says 2048×2048 but the manifest claims 2048×1024 → fail loud). They are a self-check,
-> not new information.
+> **intentionally duplicated** from the written image header so the validator can detect mismatches
+> (header says 2048x2048 but the manifest claims 2048x1024 -> fail loud). They are a self-check,
+> not new information, and they always describe the materialized image downstream will open.
 
-> **`source_micrometers_per_pixel` is the SOURCE pixel size** of the submitted image as stored —
-> not a desired resampling target. It is the one genuinely external scientific fact the user
-> supplies; everything else is the file's coordinates or encoded in the path/filename.
+> **`image_micrometers_per_pixel` is the materialized-image pixel size** after write policy. Raw
+> acquisition calibration, when carried, is optional provenance named `raw_micrometers_per_pixel`.
+> Do not use `source_*` dimensions/calibration as required core fields: Keyence raw input is tiled,
+> so there is no single raw source image width/height for a materialized frame.
 
-> **📁 Relative vs. absolute paths (accept both, prefer relative).** `source_image_path` may be
+> **Relative vs. absolute paths (accept both, prefer relative).** `image_path` may be
 > absolute *or* relative to an `image_root` (see `StitchedHandoffSpec`). Relative makes the dataset
 > **portable**; the validator **canonicalizes to absolute** in the shard, so the spine is always
 > unambiguous. Validation errors if a path is relative and `image_root` is `None`, or if a given
