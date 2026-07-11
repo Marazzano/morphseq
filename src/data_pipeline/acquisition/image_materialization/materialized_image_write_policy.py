@@ -3,7 +3,7 @@
 This module owns how a materialized image product is encoded on disk: file format, downsample
 transform, output dtype, and JPEG quality. It is deliberately small. Product selection lives in
 ``materialization_plan.py``; paths live in ``materialized_image_paths.py``; readers consume the
-recorded ``source_image_path``.
+recorded ``image_path``.
 """
 
 from __future__ import annotations

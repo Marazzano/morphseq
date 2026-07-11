@@ -54,7 +54,7 @@ from data_pipeline.shared.identifiers.validators import validate_well_id
 ALLOWED_IMAGE_PRODUCT_TYPES: frozenset[str] = frozenset({"projection", "z_stack"})
 
 # Suffixes allowed for CONSTRUCTION-PROVENANCE artifacts (e.g. focus_index_map .npz). This is a
-# DISTINCT allowlist from ``ALLOWED_IMAGE_SUFFIXES`` (which gates primary image / source_image_path
+# DISTINCT allowlist from ``ALLOWED_IMAGE_SUFFIXES`` (which gates primary image / image_path
 # files). A provenance artifact is the EXPLANATION of an image, never an image: keeping the two
 # allowlists separate prevents ``.npz`` from ever becoming a legal materialized image suffix.
 ALLOWED_PROVENANCE_SUFFIXES: tuple[str, ...] = (".npz",)

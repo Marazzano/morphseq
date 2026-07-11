@@ -1,6 +1,5 @@
 """Tests for materialize_well_yx1 — mocked ND2 + image ops, no GPU required."""
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -26,7 +25,6 @@ from data_pipeline.shared.identifiers.constructors import build_well_id
 EXP = "20250912"
 WELL_INDEX = "B01"
 WELL_ID = build_well_id(EXP, WELL_INDEX)  # never mint ids by hand, even in tests
-ROOT = Path("/fake/built_image_data")
 
 # The one accepted YX1 product, already resolved (identity XY composition).
 IDENTITY_PLAN = ResolvedMaterializationPlan(

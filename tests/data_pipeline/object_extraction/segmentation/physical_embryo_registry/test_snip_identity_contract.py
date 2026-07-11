@@ -168,6 +168,8 @@ def _snip_inventory_row(**kw):
         "track_id": f"{row['well_id']}_track0000",
         "image_path": "images/src.png",
         "processed_snip_path": "snips/out.png",
+        "embryo_mask": "snips/out_mask.png",
+        "embryo_mask_snip_path": "snips/out_mask.png",
         "is_valid_snip": True,
         "error_message": "",
     })
