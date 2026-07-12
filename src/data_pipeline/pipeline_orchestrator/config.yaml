@@ -43,10 +43,11 @@ plate_metadata:
 scope_metadata:
   yx1:
     raw_images_pattern: "YX1/{experiment}"
-    # Absolute path to the reference plate XY coordinates CSV.
+    # Reference plate XY coordinates CSV — a fixed YX1 hardware fact, versioned in the repo.
     # Required for CSV→CSV series-to-well mapping (no second ND2 open).
+    # RELATIVE paths resolve against PROJECT_ROOT (repo root); absolute paths are used as-is.
     # Build with: src/data_pipeline/acquisition/metadata_ingest/scope/yx1/generate_xy_reference.py
-    ref_xy_csv: "/net/trapnell/vol1/home/mdcolon/proj/morphseq/morphseq_playground/metadata/YX1_nd2_ref_plate_xy_coordinates.csv"
+    ref_xy_csv: "metadata/reference/yx1/nd2_ref_plate_xy_coordinates.csv"
   keyence:
     raw_images_pattern: "Keyence/{experiment}"
 

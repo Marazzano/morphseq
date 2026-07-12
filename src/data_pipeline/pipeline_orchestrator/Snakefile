@@ -267,9 +267,16 @@ DISCOVERED_WELLS_TXT = artifact_path(
 )
 
 # YX1 reference plate XY grid (config-sourced; required for CSV→CSV series mapping).
-# Set scope_metadata.yx1.ref_xy_csv in config.yaml to a real path before running YX1.
+# This is a fixed hardware fact (the microscope's plate grid), versioned in the repo at
+# metadata/reference/yx1/. Set scope_metadata.yx1.ref_xy_csv in config.yaml. A RELATIVE value
+# is resolved against PROJECT_ROOT so the workflow is portable to any checkout; an absolute value
+# is used as-is.
 _YX1_REF_XY_CSV = config.get("scope_metadata", {}).get("yx1", {}).get("ref_xy_csv", "")
-YX1_REF_XY_CSV = Path(_YX1_REF_XY_CSV) if _YX1_REF_XY_CSV else None
+if _YX1_REF_XY_CSV:
+    _ref_path = Path(_YX1_REF_XY_CSV)
+    YX1_REF_XY_CSV = _ref_path if _ref_path.is_absolute() else (PROJECT_ROOT / _ref_path)
+else:
+    YX1_REF_XY_CSV = None
 
 # Keyence experiment-grain stitch map (Stage C). None on non-Keyence runs — the variable must
 # exist for materialize_well_native.smk to reference it at parse time.
