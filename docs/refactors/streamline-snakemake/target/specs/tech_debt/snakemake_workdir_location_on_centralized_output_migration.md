@@ -1,9 +1,17 @@
 # Tech Debt: Snakemake work-directory location must be reconsidered on the centralized-output migration
 
-**Status:** known placement decision to revisit, mdcolon 2026-07-10. Not a blocker today — the
-current placement is correct for the single-user tree. The debt is that the chosen location is
-**tied to the local `WORKFLOW_DIR`**, and the upcoming shared-output migration changes the
-constraints that placement must satisfy.
+**Status:** RESOLVED 2026-07-12 (mdcolon). The centralized-output migration landed; `SMK_WORKDIR`
+now derives from `env.paths.output_root` → `{output_root}/work_directories/{experiment}` in both SGE
+templates (`submit_snakemake_TEMPLATE.sge` and `submit_snakemake_array_TEMPLATE.sge`). Incremental
+DAG state + the lock are co-located with the shared outputs, keyed by experiment.
+**Open follow-up:** verify NFS lock correctness on the shared `gs2` FS before relying on the
+co-located lock to coordinate two users on the SAME experiment (the templates carry a NOTE(verify)).
+
+---
+
+*Original entry (2026-07-10):* known placement decision to revisit. Not a blocker for the single-user
+tree; the debt was that the location was **tied to the local `WORKFLOW_DIR`**, and the shared-output
+migration changes the constraints that placement must satisfy.
 
 ---
 

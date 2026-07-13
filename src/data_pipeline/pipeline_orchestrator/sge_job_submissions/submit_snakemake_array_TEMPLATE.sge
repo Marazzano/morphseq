@@ -1,0 +1,136 @@
+#!/bin/bash
+# ARRAY TEMPLATE — one SGE array task per experiment, each with its OWN Snakemake work tree.
+# TEMPLATE ONLY - COPY THIS FILE, DO NOT EDIT OR OVERWRITE IT.
+#
+# This fans a list of experiments across SGE array tasks: `qsub -t 1-N` launches N tasks, each
+# reads SGE_TASK_ID, indexes into the experiment list, and runs the pipeline for THAT one
+# experiment. Every experiment gets its own isolated .snakemake lock/DAG tree (SMK_WORKDIR keyed by
+# experiment), so concurrent tasks never collide. Ported from the legacy
+# run_experiment_manager_qsub.sh array pattern.
+#
+# Copy, then edit the #$ directives + CONFIG_FILES + TARGET, remove the TEMPLATE_GUARD, and submit:
+#   cp submit_snakemake_array_TEMPLATE.sge submit_my_array_run.sge
+#   # edit it, then (6 experiments in a file, max 3 running at once):
+#   qsub -t 1-6 -tc 3 -v EXP_FILE=.../run_experiment_lists/my_experiments.txt \
+#     sge_job_submissions/submit_my_array_run.sge
+#
+# Experiment source (first match wins), one experiment per array index:
+#   -v EXP_FILE=/abs/path/list.txt   # newline-separated experiment ids (blank lines skipped)
+#   -v EXP_LIST="20250912,20240418"  # comma-separated inline
+#   else the EXPERIMENTS default below (comma-separated)
+# The array RANGE (-t 1-N) must match the number of experiments; N = line/element count.
+
+#$ -N mseq_array
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=24G
+#$ -pe serial 4
+#$ -o /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/mseq_array.$JOB_ID.$TASK_ID.out
+#$ -e /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/mseq_array.$JOB_ID.$TASK_ID.err
+
+set -uo pipefail   # no -e: we capture snakemake's exit code and notify explicitly.
+
+# Remove this block in copied scripts before qsub (prevents accidental template submission).
+TEMPLATE_GUARD="REMOVE_THIS_BLOCK_BEFORE_SUBMITTING"
+if [[ -n "${TEMPLATE_GUARD}" ]]; then
+  echo "ERROR: This is the array template, not a real submit script. Copy it, edit, remove the guard." >&2
+  exit 64
+fi
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+# Absolute repo paths (NOT BASH_SOURCE — SGE runs a spooled copy under /var/spool).
+REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+WORKFLOW_DIR="${REPO_ROOT}/src/data_pipeline/pipeline_orchestrator"
+SRC_ROOT="${REPO_ROOT}/src"
+LOG_DIR="${REPO_ROOT}/logs"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
+
+CORES=4
+TARGET="analysis_ready"
+NOTIFY_EMAIL="mdcolon@uw.edu"
+CONFIG_FILES=(
+  "${WORKFLOW_DIR}/config.yaml"
+  "${WORKFLOW_DIR}/configs/runtime_configs/config_runtime_<run_name>.yaml"
+)
+# Fallback default experiments (used only if neither EXP_FILE nor EXP_LIST is passed via -v).
+EXPERIMENTS="<exp1>,<exp2>"
+
+cd "${WORKFLOW_DIR}"
+mkdir -p "${LOG_DIR}"
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+
+# ── Select THIS task's experiment from the list via SGE_TASK_ID ────────────────────────────────
+if [[ -z "${SGE_TASK_ID:-}" || ! "${SGE_TASK_ID}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: SGE_TASK_ID unset/non-numeric — submit as an array job: qsub -t 1-N ..." >&2
+  exit 2
+fi
+if [[ -n "${EXP_FILE:-}" && -f "${EXP_FILE}" ]]; then
+  mapfile -t _EXPS < <(grep -vE '^\s*$' "${EXP_FILE}")   # skip blank lines
+elif [[ -n "${EXP_LIST:-}" ]]; then
+  IFS=',' read -r -a _EXPS <<< "${EXP_LIST}"
+else
+  IFS=',' read -r -a _EXPS <<< "${EXPERIMENTS}"
+fi
+_IDX=$(( SGE_TASK_ID - 1 ))
+if (( _IDX < 0 || _IDX >= ${#_EXPS[@]} )); then
+  echo "ERROR: task index ${_IDX} out of range (have ${#_EXPS[@]} experiments); check -t 1-N." >&2
+  exit 2
+fi
+EXPERIMENT="$(echo "${_EXPS[_IDX]}" | tr -d '[:space:]')"   # trim stray whitespace
+
+# ── Work tree lives with the shared output tree, keyed by experiment ───────────────────────────
+# So incremental DAG state + the lock are shared across users/machines. output_root comes from env.yaml.
+OUTPUT_ROOT="$("${PYTHON}" -c "import yaml; print(yaml.safe_load(open('${WORKFLOW_DIR}/env.yaml'))['paths']['output_root'])")"
+if [[ -z "${OUTPUT_ROOT}" ]]; then echo "ERROR: could not read output_root from env.yaml" >&2; exit 2; fi
+SMK_WORKDIR="${OUTPUT_ROOT}/work_directories/${EXPERIMENT}"
+STATUS_FILE="${LOG_DIR}/mseq_array.${JOB_ID:-manual}.${SGE_TASK_ID}.status"
+mkdir -p "${SMK_WORKDIR}"
+
+echo "=== mseq_array START $(date) on $(hostname) ==="
+echo "Task ${SGE_TASK_ID}/${#_EXPS[@]}  experiment=${EXPERIMENT}"
+echo "SMK_WORKDIR=${SMK_WORKDIR}"
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L || echo "WARNING: no GPU visible on this node"
+
+# Refuse to start on a stale lock for THIS experiment's work tree.
+LOCK_DIR="${SMK_WORKDIR}/.snakemake/locks"
+LOCK_FILE="$(find "${LOCK_DIR}" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
+if [[ -n "${LOCK_FILE}" ]]; then
+  echo "ERROR: Snakemake lock present for ${EXPERIMENT}: ${LOCK_FILE}. Another run may own it." >&2
+  echo "  Clear (only if no active run owns it): ${SNAKEMAKE} --configfile ${CONFIG_FILES[*]} --directory ${SMK_WORKDIR} --unlock" >&2
+  echo "FAILED lock-present ${EXPERIMENT} $(date)" > "${STATUS_FILE}"
+  exit 2
+fi
+
+# ── Run snakemake for this one experiment; capture rc; notify ─────────────────────────────────
+set +e
+"${SNAKEMAKE}" \
+  --configfile "${CONFIG_FILES[@]}" \
+  --config experiments="[${EXPERIMENT}]" \
+  --directory "${SMK_WORKDIR}" \
+  --cores "${CORES}" \
+  --rerun-triggers mtime \
+  --keep-going \
+  --printshellcmds \
+  "${TARGET}"
+RC=$?
+set -e
+
+END_TS="$(date)"
+ERR_LOG="${LOG_DIR}/mseq_array.${JOB_ID:-manual}.${SGE_TASK_ID}.err"
+if [[ ${RC} -eq 0 ]]; then
+  echo "SUCCESS ${EXPERIMENT} ${END_TS}" > "${STATUS_FILE}"
+  echo "morphseq array task SUCCEEDED: ${EXPERIMENT} (target ${TARGET})" \
+    | /bin/mail -s "[morphseq] array ${EXPERIMENT} SUCCESS job ${JOB_ID:-manual}.${SGE_TASK_ID}" "${NOTIFY_EMAIL}"
+else
+  echo "FAILED rc=${RC} ${EXPERIMENT} ${END_TS}" > "${STATUS_FILE}"
+  { echo "morphseq array task FAILED: ${EXPERIMENT} (snakemake exit ${RC})";
+    echo "---- last 40 lines of stderr ----"; tail -n 40 "${ERR_LOG}" 2>/dev/null; } \
+    | /bin/mail -s "[morphseq] array ${EXPERIMENT} FAILED rc=${RC} job ${JOB_ID:-manual}.${SGE_TASK_ID}" "${NOTIFY_EMAIL}"
+fi
+
+echo "=== mseq_array FINISHED ${EXPERIMENT} ${END_TS} (rc=${RC}) ==="
+exit ${RC}

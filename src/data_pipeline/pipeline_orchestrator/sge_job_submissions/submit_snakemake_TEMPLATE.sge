@@ -1,0 +1,145 @@
+#!/bin/bash
+# TEMPLATE ONLY - COPY THIS FILE, DO NOT EDIT OR OVERWRITE IT.
+#
+# This template is intentionally guarded. A copied job exits before running
+# Snakemake until you remove the TEMPLATE_GUARD block below.
+#
+# Copy from src/data_pipeline/pipeline_orchestrator/sge_job_submissions:
+#   cp submit_snakemake_TEMPLATE.sge submit_<run_name>.sge
+#
+# Then edit:
+#   - job name and log filenames in the #$ directives
+#   - QUEUE / memory / cores / GPU request
+#   - CONFIG_FILES
+#   - TARGET
+
+#$ -N TEMPLATE_DO_NOT_RUN
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=24G
+#$ -pe serial 4
+#$ -o /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/TEMPLATE_DO_NOT_RUN.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/TEMPLATE_DO_NOT_RUN.$JOB_ID.err
+
+set -euo pipefail
+
+# Remove this entire block in copied submit scripts after you have edited the
+# #$ directives and command settings. Leaving it in place prevents accidental
+# submission of the template.
+TEMPLATE_GUARD="REMOVE_THIS_BLOCK_BEFORE_SUBMITTING"
+if [[ -n "${TEMPLATE_GUARD}" ]]; then
+  cat >&2 <<'EOF'
+ERROR: This is the Snakemake SGE template, not a real submit script.
+
+Copy it first, edit the copy, and remove the TEMPLATE_GUARD block before qsub.
+
+Example:
+  cp sge_job_submissions/submit_snakemake_TEMPLATE.sge \
+    sge_job_submissions/submit_my_run.sge
+  sed -n '1,120p' sge_job_submissions/submit_my_run.sge
+  qsub sge_job_submissions/submit_my_run.sge
+EOF
+  exit 64
+fi
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKFLOW_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${WORKFLOW_DIR}/../../.." && pwd)"
+SRC_ROOT="${REPO_ROOT}/src"
+LOG_DIR="${REPO_ROOT}/logs"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+
+CORES=4
+TARGET="all"
+# EXPERIMENT is the single source of truth for this run: the Snakemake work directory is DERIVED
+# from it (below), so every experiment systematically gets its OWN isolated .snakemake lock/DAG
+# tree. This lets concurrent runs on DIFFERENT experiments share this one WORKFLOW_DIR without
+# colliding on a single lock. Set it to the experiment this job runs.
+EXPERIMENT="<experiment_id>"
+CONFIG_FILES=(
+  "${WORKFLOW_DIR}/config.yaml"
+  "${WORKFLOW_DIR}/configs/runtime_configs/config_runtime_<run_name>.yaml"
+)
+
+# Per-experiment Snakemake work directory, co-located with the shared output tree so incremental
+# DAG state + the lock are shared across users/machines. --directory relocates ONLY .snakemake
+# bookkeeping; outputs/config/includes are unaffected. output_root comes from env.yaml.
+PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
+OUTPUT_ROOT="$("${PYTHON}" -c "import yaml; print(yaml.safe_load(open('${WORKFLOW_DIR}/env.yaml'))['paths']['output_root'])")"
+SMK_WORKDIR="${OUTPUT_ROOT}/work_directories/${EXPERIMENT}"
+
+mkdir -p "${LOG_DIR}" "${SMK_WORKDIR}"
+cd "${WORKFLOW_DIR}"
+
+echo "=== ${JOB_NAME:-snakemake_sge} START $(date) on $(hostname) ==="
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L || echo "WARNING: nvidia-smi -L failed; no GPU visible on this node"
+
+# The Snakefile imports `data_pipeline` at parse time.
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+
+LOCK_DIR="${SMK_WORKDIR}/.snakemake/locks"
+LOCK_FILE="$(find "${LOCK_DIR}" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
+if [[ -n "${LOCK_FILE}" ]]; then
+  cat >&2 <<EOF
+ERROR: Snakemake lock detected before starting ${JOB_NAME:-snakemake_sge}.
+
+Lock directory:
+  ${LOCK_DIR}
+
+At least one lock file exists:
+  ${LOCK_FILE}
+
+This usually means another Snakemake run is still active on experiment
+${EXPERIMENT}, or a previous run exited without clearing its lock. This SGE script
+refuses to start because two schedulers against the SAME experiment's outputs can
+corrupt them. (Runs on DIFFERENT experiments are isolated by their own SMK_WORKDIR
+and do not trip this.)
+
+Check active jobs first:
+  qstat -u "${USER}"
+
+If no active run owns experiment ${EXPERIMENT}, clear its stale lock with:
+  env PYTHONPATH="${SRC_ROOT}" "${SNAKEMAKE}" --configfile ${CONFIG_FILES[*]} \
+    --directory "${SMK_WORKDIR}" --unlock
+
+Then resubmit:
+  qsub "$0"
+EOF
+  exit 2
+fi
+
+"${SNAKEMAKE}" \
+  --configfile "${CONFIG_FILES[@]}" \
+  --directory "${SMK_WORKDIR}" \
+  --cores "${CORES}" \
+  # --rerun-triggers mtime \
+  --keep-going \
+  --printshellcmds \
+  "${TARGET}"
+
+echo "=== ${JOB_NAME:-snakemake_sge} FINISHED $(date) ==="
+
+# Simple command examples:
+#
+# Copy the template:
+#   cp sge_job_submissions/submit_snakemake_TEMPLATE.sge \
+#     sge_job_submissions/submit_my_run.sge
+#
+# Submit from this directory:
+#   qsub sge_job_submissions/submit_my_run.sge
+#
+# Check job state:
+#   qstat -j <JOB_ID>
+#
+# Follow logs from the repo root:
+#   tail -f /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/<job_name>.<JOB_ID>.err
+#   tail -f /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/<job_name>.<JOB_ID>.out
+#
+# Clear a stale lock only after confirming no active run owns it:
+#   env PYTHONPATH=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src \
+#     /net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/snakemake \
+#     --configfile config.yaml configs/runtime_configs/config_runtime_<run_name>.yaml --unlock
