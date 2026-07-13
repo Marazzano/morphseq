@@ -1,6 +1,7 @@
 """TASK_A — DistributionCatalog: from_dataframe / pool_by / compare / id-helpers."""
 
 import logging
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -11,7 +12,18 @@ from morphseq_investigation.engine.catalog import (
     DistributionComparison,
     DistributionComparisons,
 )
-from morphseq_investigation.engine.objects import UNASSIGNED_LABEL
+from morphseq_investigation.core.peak_stability import (
+    PeakCountRobustnessPolicy,
+    PeakCountVote,
+    PeakResolutionSummary,
+    PeakVotingSpec,
+)
+from morphseq_investigation.engine.objects import (
+    UNASSIGNED_LABEL,
+    DensityEstimateSpec,
+    LabelGroup,
+    SampleSetGeometry,
+)
 
 
 def _synthetic_df(n_per_cell=3):
@@ -72,9 +84,9 @@ def test_from_dataframe_attaches_labels_best_effort():
         split_columns=("time_bin", "genotype"),
     )
     for distribution in catalog.distributions:
-        assert "phenotype" in distribution.labels
-        col = distribution.label_column("phenotype")
-        assert set(col.values.values()) <= {"affected", "unaffected", UNASSIGNED_LABEL}
+        assert "phenotype" in distribution.label_groups
+        group = distribution.get_label_group("phenotype")
+        assert set(group.assignments.values()) <= {"affected", "unaffected", UNASSIGNED_LABEL}
 
 
 def test_from_dataframe_missing_label_value_becomes_unassigned():
@@ -92,8 +104,8 @@ def test_from_dataframe_missing_label_value_becomes_unassigned():
         time_bin=missing_row["time_bin"], genotype=missing_row["genotype"]
     )
     distribution = next(d for d in catalog.distributions if d.distribution_id == dist_id)
-    col = distribution.label_column("phenotype")
-    assert col.values[missing_row["embryo_id"]] == UNASSIGNED_LABEL
+    group = distribution.get_label_group("phenotype")
+    assert group.assignments[missing_row["embryo_id"]] == UNASSIGNED_LABEL
 
 
 def test_from_dataframe_no_split_columns_yields_one_distribution():
@@ -261,8 +273,8 @@ def test_pool_by_labels_ride_along_per_sample():
     )
     pooled = catalog.pool_by("experiment")
     for distribution in pooled.distributions:
-        col = distribution.label_column("phenotype")
-        assert set(col.values) == set(distribution.sample_ids)
+        group = distribution.get_label_group("phenotype")
+        assert set(group.assignments) == set(distribution.sample_ids)
 
 
 def test_pool_by_records_softened_provenance_note_on_distribution():
@@ -477,11 +489,10 @@ def test_label_groups_one_per_distribution():
         label_columns=("phenotype",),
         split_columns=("time_bin", "genotype"),
     )
-    groups = catalog.label_groups("phenotype", display_name="Phenotype")
+    groups = catalog.label_groups("phenotype")
     assert len(groups) == 4
     for group in groups:
-        assert group.label_name == "phenotype"
-        assert group.display_name == "Phenotype"
+        assert group.name == "phenotype"
 
 
 def test_label_groups_skips_distributions_missing_the_label():
@@ -510,7 +521,7 @@ def test_with_labels_attaches_after_construction():
     label_df = df[["embryo_id", "phenotype"]].copy()
     labeled = catalog.with_labels(label_df, ["phenotype"])
     for distribution in labeled.distributions:
-        assert "phenotype" in distribution.labels
+        assert "phenotype" in distribution.label_groups
 
 
 def test_map_distributions_generic_escape_hatch():
@@ -525,10 +536,10 @@ def test_map_distributions_generic_escape_hatch():
         lambda d: d.with_label("constant", {sid: "x" for sid in d.sample_ids})
     )
     for distribution in mapped.distributions:
-        assert "constant" in distribution.labels
+        assert "constant" in distribution.label_groups
 
 
-def test_detect_peaks_is_thin_wrapper_over_map_distributions():
+def test_detect_peaks_is_thin_wrapper_over_distribution_api(monkeypatch):
     df = _synthetic_df()
     catalog = DistributionCatalog.from_dataframe(
         df,
@@ -536,11 +547,78 @@ def test_detect_peaks_is_thin_wrapper_over_map_distributions():
         feature_columns=("PC1", "PC2"),
         split_columns=("time_bin", "genotype"),
     )
-    # TASK_B implemented Distribution.detect_peaks; the catalog convenience
-    # delegates to map_distributions and writes the output label onto every
-    # distribution, returning a new catalog (frozen — new object).
-    result = catalog.detect_peaks(features=("PC1", "PC2"), output_label="resolved_peak")
+    calls = []
+    def fake_detect(self, **kwargs):
+        calls.append((self.distribution_id, kwargs))
+        return self.with_label(kwargs["output_label"], {sid: "peak_0" for sid in self.sample_ids})
+
+    monkeypatch.setattr(
+        "morphseq_investigation.engine.objects.Distribution.detect_peaks", fake_detect
+    )
+    result = catalog.detect_peaks(
+        output_label="resolved_peak",
+        density_spec=DensityEstimateSpec(grid_params={"resolution": 9}),
+        n_draws=4,
+        sample_fraction=0.75,
+        min_valid_draws=2,
+        min_mode_frequency=0.6,
+    )
     assert isinstance(result, DistributionCatalog)
     assert result is not catalog
     for distribution in result.distributions:
-        assert "resolved_peak" in distribution.labels
+        assert "resolved_peak" in distribution.label_groups
+    assert len(calls) == len(catalog.distributions)
+    assert all(call[1]["n_draws"] == 4 for call in calls)
+    assert all(call[1]["sample_fraction"] == 0.75 for call in calls)
+    assert all(call[1]["min_valid_draws"] == 2 for call in calls)
+    assert all(call[1]["min_mode_frequency"] == 0.6 for call in calls)
+
+
+def test_catalog_single_density_is_rejected_when_mapping_is_ambiguous():
+    catalog = DistributionCatalog.from_dataframe(
+        _synthetic_df(), sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"), split_columns=("time_bin", "genotype"),
+    )
+    density = catalog.distributions[0].calc_density(DensityEstimateSpec(grid_params={"resolution": 9}))
+    with pytest.raises(ValueError, match="ambiguous"):
+        catalog.detect_peaks(
+            output_label="resolved_peak", density=density,
+        )
+
+
+def test_peak_counts_retains_coordinates_and_typed_vote_metrics():
+    catalog = DistributionCatalog.from_dataframe(
+        _synthetic_df(), sample_id_column="embryo_id",
+        feature_columns=("PC1", "PC2"), split_columns=("time_bin", "genotype"),
+    )
+    enriched = []
+    for distribution in catalog.distributions:
+        vote = PeakCountVote({1: 1, 2: 3}, 4, 4, 0.8)
+        summary = PeakResolutionSummary(
+            vote, PeakVotingSpec(n_draws=4, sample_fraction=0.8, min_valid_draws=2),
+            PeakCountRobustnessPolicy(min_mode_frequency=0.7), 2, True,
+        )
+        density = distribution.calc_density(DensityEstimateSpec(grid_params={"resolution": 9}))
+        geometries = {
+            name: SampleSetGeometry(
+                feature_names=distribution.feature_names, center=np.asarray(center),
+                radius=1.0, support_fraction=0.5,
+                r80_radial_concentration=0.1, cv_radius_from_center=0.2,
+            )
+            for name, center in (("peak_0", (0.0, 0.0)), ("peak_1", (1.0, 1.0)))
+        }
+        group = LabelGroup(
+            name="resolved_peak", distribution_id=distribution.distribution_id,
+            assignments={sid: ("peak_0" if i % 2 == 0 else "peak_1") for i, sid in enumerate(distribution.sample_ids)},
+            density=density, sample_set_geometries=geometries,
+            peak_resolution_summary=summary,
+        )
+        enriched.append(replace(distribution, label_groups={"resolved_peak": group}))
+    table = DistributionCatalog(tuple(enriched), catalog.coordinate_names).peak_counts("resolved_peak")
+    assert list(table.columns) == [
+        "distribution_id", "time_bin", "genotype", "resolved_peak_count",
+        "mean_peak_count", "peak_count_variance", "mode_frequency", "is_robust",
+    ]
+    assert set(table["resolved_peak_count"]) == {2}
+    assert set(table["mode_frequency"]) == {0.75}
+    assert set(table["time_bin"]) == {14, 30}

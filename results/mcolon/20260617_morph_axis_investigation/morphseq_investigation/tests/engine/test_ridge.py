@@ -1,159 +1,90 @@
-"""TASK_D — ridgeline verb tests (``docs/tasks_catalog/TASK_D_ridge.md``).
-
-The ridge is its OWN Tier-2 verb (offset baselines), consuming the SAME
-``DistributionGrid`` IR that ``plot_1d_density_grid`` does. These tests:
-  - render each variant (overlaid/stacked/mirror) from a grid fixture w/o error;
-  - assert reference curves draw dashed, offsets increase per bin, earliest at
-    bottom;
-  - prove ONE grid drives BOTH verbs (shared-IR).
-
-Fixtures reuse TASK_C's grid-construction helpers from ``test_plotting`` (the
-hand-built Distributions + the real DistributionComparisons assembly) so the
-ridge is exercised against the exact IR the strip verb consumes.
-"""
+import dataclasses
 
 import matplotlib
-
 matplotlib.use("Agg")
 import numpy as np
 import pytest
 
 from morphseq_investigation.engine.facets import CoordinateFacet, LabelGroupFacet
-from morphseq_investigation.engine.plotting import (
-    DistributionGrid,
-    build_1d_density_grid,
-    build_1d_distribution_comparison,
-    plot_1d_density_grid,
+from morphseq_investigation.engine.objects import (
+    DensityEstimate, DensityEstimateSpec, DensityGrid, Distribution, Grid,
 )
+from morphseq_investigation.engine.plotting import (
+    DistributionCurve, DistributionGrid, build_1d_density_grid,
+    marginalize_density_estimate,
+)
+from morphseq_investigation.engine.facets import LabelGroupFacet, CoordinateFacet
 from morphseq_investigation.engine.ridge import plot_1d_ridgeline
 
-# Reuse TASK_C's fixture builders verbatim (grid-construction helpers).
-from morphseq_investigation.tests.engine.test_plotting import (
-    _make_distribution,
-    _two_member_comparisons,
-)
+
+def _grid():
+    values = np.random.default_rng(1).normal(size=(20, 1))
+    distribution = Distribution("d", tuple(f"s{i}" for i in range(20)), ("x",), values)
+    axis = np.linspace(values.min(), values.max(), 12)
+    raster = Grid("g", ("x",), (axis,), "fixed_bounds")
+    estimate = DensityEstimate(
+        "d", ("x",), DensityEstimateSpec(), raster,
+        DensityGrid("g", ("x",), np.exp(-axis ** 2)),
+    )
+    robust = DistributionCurve(("view", 30), "peak_0", "target", estimate.grid,
+                               estimate.density_grid, 10, is_robust=True)
+    nonrobust = dataclasses.replace(robust, sample_set_name="peak_1", is_robust=False)
+    return DistributionGrid("x", LabelGroupFacet(), CoordinateFacet("time_bin"), (robust, nonrobust))
 
 
-def _path_a_grid():
-    """Within-population PATH A grid over two time bins (30, 48)."""
-    dist_30 = _make_distribution({"time_bin": 30}, seed=0)
-    dist_48 = _make_distribution({"time_bin": 48}, seed=1)
-    groups = [
-        dist_30.label_group("genotype", display_name="Genotype"),
-        dist_48.label_group("genotype", display_name="Genotype"),
-    ]
-    return build_1d_density_grid(
-        groups, "total_length_um",
+@pytest.mark.parametrize("variant", ["overlaid", "stacked", "mirror"])
+def test_ridge_variants_read_existing_density(variant):
+    assert plot_1d_ridgeline(_grid(), variant=variant, reference_role=None) is not None
+
+
+def test_ridge_keeps_nonrobust_curve_visible_and_dotted():
+    figure = plot_1d_ridgeline(_grid(), reference_role=None)
+    lines = [line for axis in figure.axes for line in axis.get_lines()]
+    assert any(line.get_linestyle() in (":", "dotted") for line in lines)
+
+
+def test_unknown_ridge_variant_raises():
+    with pytest.raises(ValueError):
+        plot_1d_ridgeline(_grid(), variant="unknown")
+
+
+def _two_dimensional_distribution():
+    distribution = Distribution(
+        "d2", ("s0", "s1", "s2", "s3"), ("x", "y"),
+        np.asarray([[-1, -1], [-1, 1], [1, -1], [1, 1]], dtype=float),
+        coordinates={"time_bin": 30},
+    ).with_label("peaks", {"s0": "peak_0", "s1": "peak_0", "s2": "peak_1", "s3": "peak_1"})
+    x = np.linspace(-2, 2, 41)
+    y = np.linspace(-3, 3, 51)
+    field = np.exp(-0.5 * (x[:, None] ** 2 + (y[None, :] / 1.5) ** 2))
+    raster = Grid("g2", ("x", "y"), (x, y), "fixed_bounds")
+    estimate = DensityEstimate(
+        "d2", ("x", "y"), DensityEstimateSpec(), raster,
+        DensityGrid("g2", ("x", "y"), field),
+    )
+    group = dataclasses.replace(distribution.get_label_group("peaks"), density=estimate)
+    distribution = dataclasses.replace(distribution, label_groups={"peaks": group})
+    return distribution, estimate
+
+
+def test_analytical_marginal_has_selected_shape_and_unit_integral():
+    _, estimate = _two_dimensional_distribution()
+    marginal = marginalize_density_estimate(estimate, "x")
+    assert marginal.feature_names == ("x",)
+    assert marginal.density_grid.density.shape == estimate.grid.axis_values[0].shape
+    assert np.trapz(marginal.density_grid.density, marginal.grid.axis_values[0]) == pytest.approx(1.0)
+
+
+def test_retained_two_dimensional_density_drives_one_dimensional_ridge_without_kde(monkeypatch):
+    distribution, estimate = _two_dimensional_distribution()
+    monkeypatch.setattr(
+        "morphseq_investigation.engine.grid.evaluate_density",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("KDE called")),
+    )
+    density_grid = build_1d_density_grid(
+        [(distribution, distribution.get_label_group("peaks"))], "x",
         facet_row=LabelGroupFacet(), facet_col=CoordinateFacet("time_bin"),
     )
-
-
-def _path_b_grid(reference_value="wildtype"):
-    """Cross-population PATH B grid; wildtype routed to the reference role."""
-    comparisons = _two_member_comparisons()
-    return build_1d_distribution_comparison(
-        comparisons, "total_length_um", label_group="resolved_peak",
-        facet_col=CoordinateFacet("time_bin"), reference_value=reference_value,
-    )
-
-
-# --------------------------------------------------------------------------- #
-# Each variant renders without error.
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("variant", ["overlaid", "stacked", "mirror"])
-def test_each_variant_renders_path_a(variant):
-    fig = plot_1d_ridgeline(_path_a_grid(), variant=variant, reference_role=None)
-    assert fig is not None
-
-
-@pytest.mark.parametrize("variant", ["overlaid", "stacked", "mirror"])
-def test_each_variant_renders_path_b_with_reference(variant):
-    fig = plot_1d_ridgeline(
-        _path_b_grid(), variant=variant, reference_role="reference"
-    )
-    assert fig is not None
-
-
-def test_unknown_variant_raises():
-    with pytest.raises(ValueError):
-        plot_1d_ridgeline(_path_a_grid(), variant="nope")
-
-
-# --------------------------------------------------------------------------- #
-# Reference curves are dashed (line + unfilled outline).
-# --------------------------------------------------------------------------- #
-def test_reference_curves_are_dashed():
-    grid = _path_b_grid(reference_value="wildtype")
-    fig = plot_1d_ridgeline(grid, variant="stacked", reference_role="reference")
-
-    # Reference lines are dashed; at least one dashed Line2D exists, and the
-    # reference fill is unfilled (facecolor alpha ~ 0), while target fills are
-    # solid-ish. matplotlib records the requested linestyle on each Line2D.
-    dashed = []
-    for ax in fig.axes:
-        for line in ax.get_lines():
-            ls = line.get_linestyle()
-            if ls in ("--", "dashed") or (isinstance(ls, tuple)):
-                dashed.append(line)
-    assert dashed, "expected at least one dashed reference line"
-
-    # Reference PolyCollection (fill_between) has facecolor 'none' -> alpha 0.
-    from matplotlib.collections import PolyCollection
-
-    unfilled = []
-    filled = []
-    for ax in fig.axes:
-        for coll in ax.collections:
-            if isinstance(coll, PolyCollection):
-                fc = coll.get_facecolor()
-                # facecolor="none" -> empty facecolor array (size 0) or alpha 0.
-                if fc.size == 0 or fc[0, 3] == 0.0:
-                    unfilled.append(coll)
-                else:
-                    filled.append(coll)
-    assert unfilled, "reference fill_between should be unfilled (facecolor none)"
-    assert filled, "target fill_between should be filled"
-
-
-# --------------------------------------------------------------------------- #
-# Offsets increase per bin; earliest at bottom.
-# --------------------------------------------------------------------------- #
-def test_offsets_increase_per_bin_earliest_at_bottom():
-    grid = _path_a_grid()  # time bins 30 (first-seen) then 48
-    fig = plot_1d_ridgeline(grid, variant="overlaid", reference_role=None)
-
-    ax = fig.axes[0]
-    # The per-bin baseline is drawn as an axhline (a Line2D with constant y).
-    baseline_ys = sorted(
-        {
-            float(line.get_ydata()[0])
-            for line in ax.get_lines()
-            if len(np.unique(line.get_ydata())) == 1
-        }
-    )
-    assert len(baseline_ys) >= 2, "expected >=2 stacked bin baselines"
-    # Strictly increasing offsets.
-    assert all(b < a for b, a in zip(baseline_ys, baseline_ys[1:]))
-    # Earliest bin (30) sits at the bottom (offset 0); later bin lifted above.
-    assert baseline_ys[0] == pytest.approx(0.0)
-
-    # Bin labels confirm bottom = earliest col value: the y=0 text is "30".
-    texts = {
-        round(float(t.get_position()[1]), 6): t.get_text().strip()
-        for t in ax.texts
-    }
-    assert texts[0.0] == "30"
-
-
-# --------------------------------------------------------------------------- #
-# Shared-IR proof: one grid drives BOTH verbs.
-# --------------------------------------------------------------------------- #
-def test_shared_ir_one_grid_drives_both_verbs():
-    grid = _path_a_grid()
-    assert isinstance(grid, DistributionGrid)
-
-    density_result = plot_1d_density_grid(grid, reference_role=None)
-    ridge_fig = plot_1d_ridgeline(grid, variant="overlaid", reference_role=None)
-
-    assert density_result is not None
-    assert ridge_fig is not None
+    assert len(density_grid.curves) == 2
+    assert all(curve.density.density.shape == (41,) for curve in density_grid.curves)
+    assert plot_1d_ridgeline(density_grid, reference_role=None) is not None

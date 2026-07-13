@@ -15,10 +15,6 @@ from morphseq_investigation.engine.objects import (
 )
 
 
-VOTING = PeakVotingSpec(n_draws=5, sample_fraction=.8, min_valid_draws=4)
-POLICY = PeakCountRobustnessPolicy(.8)
-
-
 def _distribution(distribution_id="d", features=("x", "y")):
     rng = np.random.default_rng(13)
     values = rng.normal(size=(16, len(features)))
@@ -46,10 +42,7 @@ def _stub_labeler(monkeypatch, calls):
 
 
 def _detect(distribution, **kwargs):
-    return distribution.detect_peaks(
-        output_label="peaks", voting_spec=VOTING,
-        robustness_policy=POLICY, **kwargs
-    )
+    return distribution.detect_peaks(output_label="peaks", **kwargs)
 
 
 def test_explicit_density_routes_exact_object_and_attaches_immutably(monkeypatch):
@@ -60,7 +53,9 @@ def test_explicit_density_routes_exact_object_and_attaches_immutably(monkeypatch
     result = _detect(distribution, density=density)
     assert distribution.label_groups == {}
     assert result.label_groups["peaks"].density is density
-    assert calls[0][2] is density and calls[0][3:] == (VOTING, POLICY)
+    assert calls[0][2] is density
+    assert calls[0][3] == PeakVotingSpec(80, .8, 64)
+    assert calls[0][4] == PeakCountRobustnessPolicy(.8)
     assert result.densities == distribution.densities == ()
 
 
@@ -87,6 +82,65 @@ def test_neither_density_input_uses_shared_density_without_registry_change(monke
     assert calls[0][2] is density
     assert result.densities == distribution.densities
     assert result.shared_density_index == distribution.shared_density_index
+
+
+def test_zero_configuration_arguments_use_smart_defaults_and_default_label(monkeypatch):
+    calls = []
+    _stub_labeler(monkeypatch, calls)
+    base = _distribution()
+    density = base.calc_density(DensityEstimateSpec(grid_params={"resolution": 8}))
+    distribution = base.with_density(density)
+    result = distribution.detect_peaks()
+    assert "resolved_peaks" in result.label_groups
+    _, output, passed_density, voting, policy = calls[0]
+    assert output == "resolved_peaks" and passed_density is density
+    assert voting == PeakVotingSpec(n_draws=80, sample_fraction=.80, min_valid_draws=64)
+    assert policy == PeakCountRobustnessPolicy(min_mode_frequency=.80)
+
+
+def test_scalar_overrides_compose_canonical_backend_contracts(monkeypatch):
+    calls = []
+    _stub_labeler(monkeypatch, calls)
+    base = _distribution()
+    density = base.calc_density(DensityEstimateSpec(grid_params={"resolution": 8}))
+    base.detect_peaks(
+        density=density,
+        n_draws=11,
+        sample_fraction=.6,
+        min_valid_draws=7,
+        min_mode_frequency=.9,
+    )
+    assert calls[0][3] == PeakVotingSpec(11, .6, 7)
+    assert calls[0][4] == PeakCountRobustnessPolicy(.9)
+
+
+def test_implicit_min_valid_draws_uses_ceiling_of_eighty_percent(monkeypatch):
+    calls = []
+    _stub_labeler(monkeypatch, calls)
+    distribution = _distribution()
+    density = distribution.calc_density(DensityEstimateSpec(grid_params={"resolution": 8}))
+    distribution.detect_peaks(density=density, n_draws=11)
+    assert calls[0][3].min_valid_draws == 9
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"n_draws": 0},
+        {"sample_fraction": 0},
+        {"sample_fraction": 1.1},
+        {"n_draws": 4, "min_valid_draws": 5},
+        {"min_mode_frequency": 1.1},
+    ],
+)
+def test_invalid_scalar_configuration_uses_canonical_validation(monkeypatch, kwargs):
+    calls = []
+    _stub_labeler(monkeypatch, calls)
+    distribution = _distribution()
+    density = distribution.calc_density(DensityEstimateSpec(grid_params={"resolution": 8}))
+    with pytest.raises(ValueError):
+        distribution.detect_peaks(density=density, **kwargs)
+    assert calls == []
 
 
 def test_density_selection_errors_happen_before_labeler(monkeypatch):

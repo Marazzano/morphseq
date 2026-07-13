@@ -23,6 +23,7 @@ RELATIONSHIP").
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from math import ceil
 from types import MappingProxyType
 from typing import Any, Hashable, Literal, Mapping
 
@@ -279,11 +280,13 @@ class Distribution:
     def detect_peaks(
         self,
         *,
-        output_label: str,
+        output_label: str = "resolved_peaks",
         density: "DensityEstimate | None" = None,
         density_spec: "DensityEstimateSpec | None" = None,
-        voting_spec: PeakVotingSpec,
-        robustness_policy: PeakCountRobustnessPolicy,
+        n_draws: int = 80,
+        sample_fraction: float = 0.80,
+        min_valid_draws: int | None = None,
+        min_mode_frequency: float = 0.80,
     ) -> "Distribution":
         """Resolve peaks and immutably attach the resulting unified label group.
 
@@ -296,6 +299,18 @@ class Distribution:
             raise ValueError("density and density_spec are mutually exclusive")
         if output_label in self.label_groups:
             raise ValueError(f"label group {output_label!r} already exists")
+
+        resolved_min_valid_draws = (
+            ceil(0.80 * n_draws) if min_valid_draws is None else min_valid_draws
+        )
+        voting_spec = PeakVotingSpec(
+            n_draws=n_draws,
+            sample_fraction=sample_fraction,
+            min_valid_draws=resolved_min_valid_draws,
+        )
+        robustness_policy = PeakCountRobustnessPolicy(
+            min_mode_frequency=min_mode_frequency
+        )
 
         if density is not None:
             selected_density = density

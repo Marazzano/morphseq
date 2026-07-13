@@ -175,13 +175,15 @@ def plot_1d_ridgeline(
                     else:
                         baseline, y = offset, offset + dens
 
-                if is_ref:
+                nonrobust = c.is_robust is False
+                if is_ref or nonrobust:
                     # Reference = dashed outline, no solid fill (the baseline).
                     ax.fill_between(
                         x, baseline, y, facecolor="none", edgecolor=color,
-                        linestyle="--", linewidth=1.2, alpha=0.9, zorder=row_i,
+                        linestyle="--" if is_ref else ":", linewidth=1.2,
+                        alpha=0.65 if nonrobust else 0.9, zorder=row_i,
                     )
-                    line_ls = gs.line_style if gs.line_style != "-" else "--"
+                    line_ls = ":" if nonrobust else (gs.line_style if gs.line_style != "-" else "--")
                 else:
                     ax.fill_between(
                         x, baseline, y, color=color, alpha=default_style.fill_alpha,

@@ -14,10 +14,8 @@ The payoff from ontology §1b: a KDE strip is nothing but a 1-D ``Grid`` + a
 ``DensityGrid`` evaluated on it — the SAME machinery as the 2-D peak grid,
 dimension = 1. So ``strip_trace`` below is a thin adapter, not a new code path.
 
-TASK_C reshapes the high-level 1-D grid API (below the Tier-1 primitives) onto
-the TASK_0 objects (``Distribution`` / ``DistributionLabelGroup`` / typed
-``FacetKey``): PATH A (``build_1d_density_grid``, within-population label
-groups) lands in this commit; PATH B (cross-population comparisons) follows.
+The high-level 1-D API consumes attached ``(Distribution, LabelGroup)`` pairs
+and typed ``FacetKey`` values.
 Both emit the SAME renderer-neutral ``DistributionGrid`` IR;
 ``plot_1d_density_grid`` renders it. The retired ``DistributionGrouping`` /
 ``FacetCoordinate`` enum are GONE from this module (spec §"Removed vocabulary").
@@ -45,16 +43,15 @@ from analyze.viz.styling.genotype_colors import get_color_for_genotype
 
 from .catalog import DistributionComparison, DistributionComparisons
 from .facets import CoordinateFacet, FacetKey, LabelGroupFacet
-from .grid import build_grid, evaluate_density
 from .objects import (
+    DensityEstimate,
     DensityGrid,
     Distribution,
-    DistributionLabelGroup,
     Grid,
-    HDR,
     LabelGroup,
     SampleSet,
 )
+from .identifiers import make_grid_id
 
 logger = logging.getLogger(__name__)
 
@@ -252,96 +249,30 @@ def strip_grid_figure(
     return FigureData(title=title, subplots=subplots)
 
 
-# --------------------------------------------------------------------------- #
-# 3. Per-SampleSet HDR overlay (1-D): shade the HDR mask region under the strip
-# --------------------------------------------------------------------------- #
-def hdr_band_trace(
-    grid: Grid,
-    density_grid: DensityGrid,
-    hdr: HDR,
-    *,
-    style: TraceStyle | None = None,
-    label: str | None = None,
-) -> TraceData:
-    """Shade the 1-D HDR mask region as a filled band under the strip curve.
-
-    Uses the faceting IR's native band support (``render_as='band'``,
-    ``band_lower``/``band_upper``) rather than any bespoke fill call — no new
-    rendering backend, the faceting engine's own renderers already know how to
-    draw a band (matplotlib ``fill_between`` / plotly filled trace).
-
-    ``band_lower`` is 0 everywhere; ``band_upper`` is ``density_grid.density``
-    where ``hdr.mask`` is True and 0 elsewhere — i.e. the shaded region is
-    exactly the HDR's support on this strip, sitting under the density curve.
-
-    All three of ``grid``, ``density_grid``, and ``hdr`` must share one
-    ``grid_id`` (self-describing comparability, ontology §2) — mismatched ids
-    raise.
-    """
-    if len(grid.axis_values) != 1:
-        raise ValueError(
-            f"hdr_band_trace requires a 1-D Grid; got {len(grid.axis_values)} axes."
-        )
-    if density_grid.grid_id != grid.grid_id:
-        raise ValueError(
-            f"density_grid.grid_id {density_grid.grid_id!r} != grid.grid_id {grid.grid_id!r}"
-        )
-    if hdr.grid_id != grid.grid_id:
-        raise ValueError(f"hdr.grid_id {hdr.grid_id!r} != grid.grid_id {grid.grid_id!r}")
-
-    x = np.asarray(grid.axis_values[0], dtype=float)
-    density = np.asarray(density_grid.density, dtype=float).reshape(-1)
-    mask = np.asarray(hdr.mask).reshape(-1)
-    if mask.shape[0] != x.shape[0]:
-        raise ValueError(
-            f"hdr.mask has {mask.shape[0]} cells but grid axis has {x.shape[0]}"
-        )
-
-    band_lower = np.zeros_like(density)
-    band_upper = np.where(mask, density, 0.0)
-
-    resolved_style = style if style is not None else _default_style_for_label(label)
-    resolved_style = TraceStyle(
-        color=resolved_style.color,
-        alpha=min(resolved_style.alpha, 0.35),
-        width=resolved_style.width,
-        linestyle=resolved_style.linestyle,
-        zorder=resolved_style.zorder,
-    )
-    return TraceData(
-        x=x,
-        y=band_upper,
-        style=resolved_style,
-        label=label,
-        show_legend=False,
-        band_lower=band_lower,
-        band_upper=band_upper,
-        render_as="band",
-    )
-
-
-def sample_set_strip_with_hdr(
-    grid: Grid,
-    sample_set: SampleSet,
-    density_grid: DensityGrid,
-    *,
-    style: TraceStyle | None = None,
-    label: str | None = None,
-) -> list[TraceData]:
-    """Convenience: strip curve + (if present) its HDR band for one ``SampleSet``.
-
-    Returns a list of 1 or 2 ``TraceData`` (curve, or curve + band) ready to
-    drop into a ``SubplotData.traces`` list alongside other SampleSets'
-    traces. ``sample_set.hdr`` is optional (ontology §2 — not every SampleSet
-    carries one); when ``None`` only the curve is returned.
-    """
-    resolved_label = label if label is not None else sample_set.sample_set_name
-    traces = [strip_trace(grid, density_grid, style=style, label=resolved_label)]
-    if sample_set.hdr is not None:
+def label_group_scatter_subplot(
+    distribution: Distribution,
+    label_group: LabelGroup,
+    feature: str,
+) -> SubplotData:
+    """Density-free sample view for provided or resolved label groups."""
+    if distribution.label_groups.get(label_group.name) is not label_group:
+        raise ValueError("LabelGroup must be attached to its Distribution")
+    feature_index = distribution.feature_names.index(feature)
+    positions = {sid: i for i, sid in enumerate(distribution.sample_ids)}
+    traces: list[TraceData] = []
+    for sample_set in distribution.sample_sets(label_group.name):
+        rows = [positions[sid] for sid in sample_set.sample_ids]
         traces.append(
-            hdr_band_trace(grid, density_grid, sample_set.hdr, style=style, label=resolved_label)
+            TraceData(
+                x=distribution.feature_values[rows, feature_index],
+                y=np.zeros(len(rows)),
+                label=sample_set.sample_set_name,
+                show_legend=True,
+                style=_default_style_for_label(sample_set.sample_set_name),
+                render_as="scatter",
+            )
         )
-    return traces
+    return SubplotData(traces=traces, key=(label_group.name, feature), x_label=feature)
 
 
 # =========================================================================== #
@@ -349,7 +280,7 @@ def sample_set_strip_with_hdr(
 # ---------------------------------------------------------------------------
 # The pipeline (each stage a pure function; only the middle one fits KDEs):
 #
-#   PATH A: DistributionLabelGroup(s)  ->  DistributionGrid  ->  Figure
+#   PATH A: (Distribution, LabelGroup) pairs -> DistributionGrid -> Figure
 #   PATH B (next commit): DistributionComparisons -> the SAME DistributionGrid
 #
 # Ownership rule (hard-won): a marginal KDE is NOT a property of a Distribution.
@@ -459,6 +390,7 @@ class DistributionCurve:
     density: DensityGrid
     sample_count: int
     curve_key: "CurveKey | None" = None
+    is_robust: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -477,26 +409,8 @@ class DistributionGrid:
 
 
 # --------------------------------------------------------------------------- #
-# Shared numerical helpers (the ONLY place KDEs are fit).
+# Existing-density helpers. Plotting never calculates or evaluates a KDE.
 # --------------------------------------------------------------------------- #
-def _silverman_bandwidth(values: np.ndarray) -> float:
-    n = max(len(values), 2)
-    spread = float(np.std(values)) or 1.0
-    return 1.06 * spread * n ** (-1.0 / 5.0)
-
-
-def _sample_set_feature_values(
-    distribution: Distribution, sample_set: SampleSet, feature_idx: int
-) -> np.ndarray:
-    """Pull one SampleSet's members' values for ``feature_idx`` from its
-    owning Distribution (join on sample_ids — the durable key)."""
-    pos = {sid: i for i, sid in enumerate(distribution.sample_ids)}
-    idx = [pos[s] for s in sample_set.sample_ids if s in pos]
-    if not idx:
-        return np.empty((0,), dtype=float)
-    return distribution.feature_values[np.asarray(idx, dtype=int), feature_idx]
-
-
 @dataclass(frozen=True)
 class _CellMember:
     """One curve-to-be for a cell: the SampleSet + the resolved styling/identity
@@ -506,9 +420,71 @@ class _CellMember:
     path-agnostic — it only fits densities on the shared grid."""
 
     distribution: Distribution
+    label_group: LabelGroup
     sample_set: SampleSet
     style_group: Hashable
     curve_key: "CurveKey | None" = None
+
+
+def marginalize_density_estimate(
+    estimate: DensityEstimate,
+    feature: str,
+) -> DensityEstimate:
+    """Analytically marginalize a retained raster density onto one feature.
+
+    No samples or KDE implementation are consulted. Other raster axes are
+    integrated using their actual grid coordinates, then the retained 1-D
+    marginal is normalized to unit integral.
+    """
+    if feature not in estimate.feature_names:
+        raise ValueError(
+            f"density features {estimate.feature_names!r} do not contain {feature!r}"
+        )
+    selected_axis = estimate.feature_names.index(feature)
+    if len(estimate.feature_names) == 1:
+        return estimate
+
+    marginal = np.asarray(estimate.density_grid.density, dtype=float)
+    # Descending axes keep the selected axis index stable until axes below it
+    # disappear; axis coordinates supply nonuniform grid spacing exactly.
+    for axis_index in reversed(range(len(estimate.feature_names))):
+        if axis_index == selected_axis:
+            continue
+        marginal = np.trapz(
+            marginal,
+            x=np.asarray(estimate.grid.axis_values[axis_index], dtype=float),
+            axis=axis_index,
+        )
+    selected_values = np.asarray(estimate.grid.axis_values[selected_axis], dtype=float)
+    total = float(np.trapz(marginal, x=selected_values))
+    if not np.isfinite(total) or total <= 0:
+        raise ValueError("retained density has no finite positive marginal mass")
+    marginal = np.asarray(marginal / total, dtype=float)
+
+    construction_method = "analytical_raster_marginal"
+    construction_params = {
+        "source_grid_id": estimate.grid.grid_id,
+        "selected_feature": feature,
+    }
+    grid_id = make_grid_id(
+        (feature,), construction_method, construction_params,
+        (selected_values,), estimate.grid.fit_sample_ids,
+    )
+    grid = Grid(
+        grid_id=grid_id,
+        feature_names=(feature,),
+        axis_values=(selected_values,),
+        construction_method=construction_method,
+        construction_params=construction_params,
+        fit_sample_ids=estimate.grid.fit_sample_ids,
+    )
+    return DensityEstimate(
+        distribution_id=estimate.distribution_id,
+        feature_names=(feature,),
+        spec=estimate.spec,
+        grid=grid,
+        density_grid=DensityGrid(grid_id, (feature,), marginal),
+    )
 
 
 def _fit_cell_marginals(
@@ -516,66 +492,38 @@ def _fit_cell_marginals(
     cell_key: tuple[Hashable, ...],
     members: Sequence[_CellMember],
     feature: str,
-    grid_size: int,
+    grid_size: int = 0,
 ) -> list[DistributionCurve]:
-    """Shared-grid-then-fit for ONE cell: union bounds of the SELECTED curves
-    only (spec §PATH A/B: an omitted/unassigned category must not stretch the
-    grid; PATH B's shared grid spans EVERY selected curve across ALL members).
-
-    ``members`` is a flat list of :class:`_CellMember` already filtered to
-    exactly what this cell will draw. The KDE is materialized here — the ONLY
-    place a marginal density is fit — per facet cell on the shared grid, never
-    on a ``Distribution``. Order matches ``members`` minus any empty SampleSets.
-    """
-    pooled: list[np.ndarray] = []
-    per_member_values: list[np.ndarray] = []
-    for member in members:
-        fi = member.distribution.feature_names.index(feature)
-        vals = _sample_set_feature_values(member.distribution, member.sample_set, fi)
-        per_member_values.append(vals)
-        if vals.size:
-            pooled.append(vals)
-
-    if not pooled:
-        return []
-
-    pooled_arr = np.concatenate(pooled)
-    lo, hi = float(pooled_arr.min()), float(pooled_arr.max())
-    shared_grid = build_grid(
-        feature_names=(feature,),
-        pooled_values=pooled_arr.reshape(-1, 1),
-        fit_sample_ids=[f"cell_{cell_key}_{i}" for i in range(pooled_arr.size)],
-        method="fixed_bounds",
-        params={"resolution": grid_size, "bounds": [(lo, hi)]},
-    )
-
+    """Build curves only from already-calculated effective densities."""
     curves: list[DistributionCurve] = []
-    for member, vals in zip(members, per_member_values):
-        if vals.size == 0:
-            continue
-        density = evaluate_density(
-            shared_grid, vals.reshape(-1, 1),
-            bandwidth_spec=_silverman_bandwidth(vals),
-        )
+    for member in members:
+        estimate = member.label_group.density or member.distribution.shared_density
+        if estimate is None:
+            raise ValueError(
+                f"label group {member.label_group.name!r} has no effective density; "
+                "calculate and supply/register density before density plotting"
+            )
+        marginal = marginalize_density_estimate(estimate, feature)
         curves.append(
             DistributionCurve(
                 cell=cell_key,
                 sample_set_name=member.sample_set.sample_set_name,
                 style_group=member.style_group,
-                grid=shared_grid,
-                density=density,
-                sample_count=int(vals.size),
+                grid=marginal.grid,
+                density=marginal.density_grid,
+                sample_count=len(member.sample_set.sample_ids),
                 curve_key=member.curve_key,
+                is_robust=member.label_group.is_robust,
             )
         )
     return curves
 
 
 # --------------------------------------------------------------------------- #
-# PATH A — within-population: build_1d_density_grid(DistributionLabelGroup*)
+# PATH A — within-population attached label groups
 # --------------------------------------------------------------------------- #
 def build_1d_density_grid(
-    groups: Sequence[DistributionLabelGroup],
+    groups: Sequence[tuple[Distribution, LabelGroup]],
     feature: str,
     *,
     facet_row: FacetKey = LabelGroupFacet(),
@@ -595,11 +543,13 @@ def build_1d_density_grid(
     from more than one ``distribution_id``. Skipped when ``LabelGroupFacet`` is
     itself an axis (then every cell is single-label-group by construction).
     """
-    for g in groups:
-        if feature not in g.distribution.feature_names:
+    for distribution, group in groups:
+        if group.name not in distribution.label_groups or distribution.label_groups[group.name] is not group:
+            raise ValueError("each LabelGroup must be attached to its paired Distribution")
+        if feature not in distribution.feature_names:
             raise ValueError(
-                f"distribution {g.distribution.distribution_id!r} lacks requested "
-                f"feature {feature!r} (has {g.distribution.feature_names!r})"
+                f"distribution {distribution.distribution_id!r} lacks requested "
+                f"feature {feature!r} (has {distribution.feature_names!r})"
             )
 
     label_group_is_axis = isinstance(facet_row, LabelGroupFacet) or isinstance(
@@ -607,15 +557,25 @@ def build_1d_density_grid(
     )
 
     # Bucket groups into cells first (facet resolution only — no fitting yet).
-    cells: dict[tuple[Hashable, Hashable], list[DistributionLabelGroup]] = {}
-    for g in groups:
-        key = (g.coordinate(facet_row), g.coordinate(facet_col))
-        cells.setdefault(key, []).append(g)
+    def facet_value(distribution: Distribution, group: LabelGroup, key: FacetKey):
+        if isinstance(key, LabelGroupFacet):
+            return group.name
+        if isinstance(key, CoordinateFacet):
+            return distribution.coordinate(key.name)
+        raise TypeError(f"unsupported FacetKey: {key!r}")
+
+    cells: dict[tuple[Hashable, Hashable], list[tuple[Distribution, LabelGroup]]] = {}
+    for distribution, group in groups:
+        key = (
+            facet_value(distribution, group, facet_row),
+            facet_value(distribution, group, facet_col),
+        )
+        cells.setdefault(key, []).append((distribution, group))
 
     all_curves: list[DistributionCurve] = []
     for cell_key, members in cells.items():
         if not label_group_is_axis:
-            distribution_ids = {m.distribution.distribution_id for m in members}
+            distribution_ids = {distribution.distribution_id for distribution, _ in members}
             if len(distribution_ids) > 1:
                 raise IncomparableDistributionsError(
                     f"cell {cell_key} would overlay SampleSets from >1 distribution "
@@ -624,12 +584,13 @@ def build_1d_density_grid(
                     "restrict facet_row/facet_col so cells stay single-distribution)."
                 )
         flat_members: list[_CellMember] = []
-        for g in members:
-            for sset in g.sample_sets():
+        for distribution, group in members:
+            for sset in distribution.sample_sets(group.name):
                 # PATH A: style_group IS the SampleSet name; no CurveKey.
                 flat_members.append(
                     _CellMember(
-                        distribution=g.distribution,
+                        distribution=distribution,
+                        label_group=group,
                         sample_set=sset,
                         style_group=sset.sample_set_name,
                     )
@@ -716,7 +677,7 @@ def build_1d_distribution_comparison(
         # ``members`` is ORDERED by ``values`` (DistributionComparisons
         # invariant) — iterate it so curve order is the requested member order.
         for member_value, distribution in comparison.members.items():
-            if label_group not in distribution.labels:
+            if label_group not in distribution.label_groups:
                 raise ValueError(
                     f"member {member_value!r} (distribution "
                     f"{distribution.distribution_id!r}) lacks the shared label "
@@ -729,10 +690,12 @@ def build_1d_distribution_comparison(
                     f"(has {distribution.feature_names!r})"
                 )
             style_group = "reference" if member_value == reference_value else member_value
+            group = distribution.label_groups[label_group]
             for sset in distribution.sample_sets(label_group):
                 flat_members.append(
                     _CellMember(
                         distribution=distribution,
+                        label_group=group,
                         sample_set=sset,
                         style_group=style_group,
                         curve_key=CurveKey(
@@ -910,9 +873,9 @@ def plot_1d_density_grid(
                 styles.append(
                     TraceStyle(
                         color=color,
-                        alpha=gs.line_alpha,
+                        alpha=gs.line_alpha if c.is_robust is not False else min(gs.line_alpha, 0.65),
                         width=gs.line_width,
-                        linestyle=gs.line_style,
+                        linestyle=gs.line_style if c.is_robust is not False else ":",
                     )
                 )
             subplots.append(

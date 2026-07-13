@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 
 from ..engine.catalog import DistributionCatalog
+from ..engine.objects import DensityEstimateSpec
 from ..engine.facets import CoordinateFacet, LabelGroupFacet
 from ..engine.plotting import (
     DEFAULT_ROLE_PALETTES,
@@ -54,6 +55,7 @@ FEATURE_NAMES = ("total_length_um", "baseline_deviation_normalized")  # peak eng
 PHENOTYPE_LABELS = ("CE", "HTA")
 TARGET_DESIGN_HPF = (14, 18, 24, 30, 48)
 MIN_EMBRYOS = 10
+DENSITY_SPEC = DensityEstimateSpec(grid_params={"resolution": 61})
 
 # Reference-role styling: wildtype degrades to gray/dashed (matching the WT
 # baseline convention); everything else (b9d2, CE/HTA phenotypes, peaks) carries
@@ -153,8 +155,31 @@ def target_peak_counts(catalog2: DistributionCatalog) -> dict[float, int]:
         if dist.coordinates.get("genotype") != "b9d2":
             continue
         tb = dist.coordinates.get("time_bin")
-        counts[tb] = len(dist.sample_sets("resolved_peak"))
+        group = dist.get_label_group("resolved_peak")
+        if group.peak_count is None:
+            raise RuntimeError("resolved_peak group lacks typed peak resolution summary")
+        counts[tb] = group.peak_count
     return dict(sorted(counts.items()))
+
+
+def _resolve_catalog(catalog: DistributionCatalog) -> DistributionCatalog:
+    registered = catalog.map_distributions(
+        lambda distribution: distribution.with_density(
+            distribution.calc_density(DENSITY_SPEC), select_as_shared=True
+        )
+    )
+    return registered.detect_peaks(
+        output_label="resolved_peak",
+    )
+
+
+def _plot_groups(catalog: DistributionCatalog, names: tuple[str, ...]):
+    return tuple(
+        (distribution, distribution.get_label_group(name))
+        for distribution in catalog.distributions
+        for name in names
+        if name in distribution.label_groups
+    )
 
 
 def main() -> None:
@@ -177,13 +202,9 @@ def main() -> None:
         label_columns=("genotype", "phenotype_clean"),
         split_columns=("time_bin",),
     )
-    catalog = catalog.detect_peaks(features=FEATURE_NAMES, output_label="resolved_peak")
+    catalog = _resolve_catalog(catalog)
 
-    groups = (
-        *catalog.label_groups("resolved_peak", display_name="Resolved peaks"),
-        *catalog.label_groups("phenotype_clean", display_name="Phenotype"),
-        *catalog.label_groups("genotype", display_name="Genotype"),
-    )
+    groups = _plot_groups(catalog, ("resolved_peak", "phenotype_clean", "genotype"))
 
     # ------------------------------------------------------------------- #
     # PATH B — cross-population. A SECOND catalog split on (time_bin, genotype):
@@ -196,7 +217,7 @@ def main() -> None:
         label_columns=("genotype", "phenotype_clean"),
         split_columns=("time_bin", "genotype"),
     )
-    catalog2 = catalog2.detect_peaks(features=FEATURE_NAMES, output_label="resolved_peak")
+    catalog2 = _resolve_catalog(catalog2)
 
     # ---- ACCEPTANCE CHECK: target peak count per bin (1 -> 2 emergence) ---- #
     counts_by_bin = target_peak_counts(catalog2)
@@ -206,19 +227,17 @@ def main() -> None:
     counts = [counts_by_bin[tb] for tb in sorted(counts_by_bin)]
     print(f"\nper-bin target peak counts (earliest first): {counts}")
     assert len(counts) >= 2, f"need >=2 bins to see emergence; got {counts}"
-    # NOTE: the old <=1-at-earliest-bin "emergence" oracle was calibrated on the
-    # STALE scipy_default (Scott's-rule) bandwidth, which over-smoothed b9d2. Under
-    # the calibrated longest_non_outlier_MST_edge @ 0.75 rule, the honest counts are
-    # multimodal earlier. Report the counts and ALWAYS render the figures so the
-    # clusters can be inspected visually; do not abort on the old oracle.
-    if counts[0] <= 1 and max(counts) >= 2:
-        print("emergence (1 -> 2 peaks) seen under the old scipy-shaped oracle.")
-    else:
-        print(
-            f"NOTE: counts {counts} do NOT match the old scipy-era <=1-then->=2 "
-            f"oracle. This is expected under the calibrated MST-edge bandwidth — "
-            f"inspect the emitted figures to judge the clusters."
-        )
+    assert counts[0] <= 1 and max(counts) >= 2, (
+        "authoritative b9d2 resolver acceptance requires early <=1 mode and "
+        f"later >=2 modes; observed {counts}"
+    )
+    print("authoritative resolver acceptance: emergence from <=1 to >=2 peaks.")
+    robustness = {
+        dist.coordinates["time_bin"]: dist.get_label_group("resolved_peak").is_robust
+        for dist in catalog2.distributions
+        if dist.coordinates.get("genotype") == "b9d2"
+    }
+    print(f"per-bin robustness decisions: {dict(sorted(robustness.items()))}")
 
     comparisons = catalog2.compare(across="genotype", values=("wildtype", "b9d2"))
 

@@ -7,7 +7,8 @@ build_1d_density_grid (PATH A) AND compare -> build_1d_distribution_comparison
 (PATH B) + a ridge — on a small synthetic b9d2-LIKE frame engineered to show the
 documented 1 -> 2 emergence signal, so the acceptance PATH is exercised without
 the data. Peak-count parity itself is covered separately in
-``test_labelers.py::test_detect_peaks_peak_count_regression_matches_old_engine_per_bin``.
+The peak trajectory is an authoritative scientific expectation of the unified
+resolver, not a parity check against the deleted catalog detector.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import pandas as pd
 import pytest
 
 from morphseq_investigation.engine.catalog import DistributionCatalog
+from morphseq_investigation.engine.objects import DensityEstimateSpec
 from morphseq_investigation.engine.facets import CoordinateFacet, LabelGroupFacet
 from morphseq_investigation.engine.plotting import (
     DistributionGrid,
@@ -26,6 +28,7 @@ from morphseq_investigation.engine.ridge import plot_1d_ridgeline
 
 FEATURE_NAMES = ("total_length_um", "baseline_deviation_normalized")
 DESIGN_BINS = (14.0, 18.0, 30.0)
+DENSITY_SPEC = DensityEstimateSpec(grid_params={"resolution": 61})
 
 
 def _b9d2_like_frame(seed: int = 100) -> pd.DataFrame:
@@ -60,21 +63,40 @@ def _b9d2_like_frame(seed: int = 100) -> pd.DataFrame:
     )
 
 
+def _resolve_catalog(catalog: DistributionCatalog) -> DistributionCatalog:
+    with_density = catalog.map_distributions(
+        lambda distribution: distribution.with_density(
+            distribution.calc_density(DENSITY_SPEC), select_as_shared=True
+        )
+    )
+    return with_density.detect_peaks(
+        output_label="resolved_peak",
+        n_draws=15,
+        min_valid_draws=10,
+        min_mode_frequency=0.5,
+    )
+
+
+def _plot_groups(catalog: DistributionCatalog, names: tuple[str, ...]):
+    return tuple(
+        (distribution, distribution.get_label_group(name))
+        for distribution in catalog.distributions
+        for name in names
+        if name in distribution.label_groups
+    )
+
+
 def test_path_a_density_grid_has_three_label_group_rows():
     df = _b9d2_like_frame()
-    catalog = DistributionCatalog.from_dataframe(
+    catalog = _resolve_catalog(DistributionCatalog.from_dataframe(
         df,
         sample_id_column="embryo_id",
         feature_columns=FEATURE_NAMES,
         label_columns=("genotype", "phenotype_clean"),
         split_columns=("time_bin",),
-    ).detect_peaks(features=FEATURE_NAMES, output_label="resolved_peak")
+    ))
 
-    groups = (
-        *catalog.label_groups("resolved_peak", display_name="Resolved peaks"),
-        *catalog.label_groups("phenotype_clean", display_name="Phenotype"),
-        *catalog.label_groups("genotype", display_name="Genotype"),
-    )
+    groups = _plot_groups(catalog, ("resolved_peak", "phenotype_clean", "genotype"))
     grid = build_1d_density_grid(
         groups,
         feature="total_length_um",
@@ -84,7 +106,7 @@ def test_path_a_density_grid_has_three_label_group_rows():
     assert isinstance(grid, DistributionGrid)
     # 3 rows: the three label-group display names show up as cell row keys.
     row_names = {c.cell[0] for c in grid.curves}
-    assert row_names == {"Resolved peaks", "Phenotype", "Genotype"}
+    assert row_names == {"resolved_peak", "phenotype_clean", "genotype"}
     # columns are the design time bins. (single-split-column groupby keys the
     # coordinate as a 1-tuple, so normalize before comparing.)
     col_bins = {c.cell[1][0] if isinstance(c.cell[1], tuple) else c.cell[1] for c in grid.curves}
@@ -95,13 +117,13 @@ def test_path_a_density_grid_has_three_label_group_rows():
 
 def test_path_b_compare_overlays_wt_and_b9d2_per_cell():
     df = _b9d2_like_frame()
-    catalog2 = DistributionCatalog.from_dataframe(
+    catalog2 = _resolve_catalog(DistributionCatalog.from_dataframe(
         df,
         sample_id_column="embryo_id",
         feature_columns=FEATURE_NAMES,
         label_columns=("genotype", "phenotype_clean"),
         split_columns=("time_bin", "genotype"),
-    ).detect_peaks(features=FEATURE_NAMES, output_label="resolved_peak")
+    ))
 
     comparisons = catalog2.compare(across="genotype", values=("wildtype", "b9d2"))
     # every comparison holds both members (invariant).
@@ -131,17 +153,19 @@ def test_emergence_peak_count_via_catalog():
     """The acceptance signal itself, through the catalog: b9d2 target peak count
     is <=1 at the earliest bin and reaches >=2 at a later bin."""
     df = _b9d2_like_frame()
-    catalog2 = DistributionCatalog.from_dataframe(
+    catalog2 = _resolve_catalog(DistributionCatalog.from_dataframe(
         df,
         sample_id_column="embryo_id",
         feature_columns=FEATURE_NAMES,
         label_columns=("genotype", "phenotype_clean"),
         split_columns=("time_bin", "genotype"),
-    ).detect_peaks(features=FEATURE_NAMES, output_label="resolved_peak")
+    ))
 
     counts = {}
     for dist in catalog2.distributions:
         if dist.coordinates.get("genotype") == "b9d2":
-            counts[dist.coordinates["time_bin"]] = len(dist.sample_sets("resolved_peak"))
+            group = dist.get_label_group("resolved_peak")
+            assert group.is_robust in (True, False)
+            counts[dist.coordinates["time_bin"]] = group.peak_count
     ordered = [counts[tb] for tb in sorted(counts)]
     assert ordered[0] <= 1 and max(ordered) >= 2, ordered
