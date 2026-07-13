@@ -49,6 +49,10 @@ class FrameTilingConfig:
     transpose_after_stitch: bool = True
     use_legacy_canvas: bool = True
     compat_postprocess: bool = True
+    # DEPRECATED / INERT: display-polarity inversion is no longer done in the stitcher. It moved to
+    # the shared image-math layer (apply_display_polarity), applied once post-composition by the
+    # materializer so every microscope shares one polarity. Field kept only for back-compat of
+    # existing FrameTilingConfig(...) call sites; it has no effect on stitch output.
     invert_intensity: bool = True
 
 
@@ -574,6 +578,10 @@ def _finalize_image(
         if target != (0, 0):
             out = trim_to_shape(out, target)
 
-    if config.compat_postprocess and config.invert_intensity:
-        out = np.iinfo(out.dtype).max - out
+    # NOTE: display polarity (bright-embryo/dark-background inversion) is intentionally NOT done
+    # here. Stitching composes tiles and returns them in the SAME polarity it received. Inversion
+    # is owned by the shared image-math layer (image_building/shared: apply_display_polarity) and
+    # applied ONCE by the materializer after composition, so YX1 (no stitch) and Keyence (stitch)
+    # share one polarity. The old hidden `max - out` here was Keyence-only and is exactly what let
+    # YX1 drift to the opposite polarity.
     return out

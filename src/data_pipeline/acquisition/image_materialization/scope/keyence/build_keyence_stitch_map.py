@@ -22,13 +22,14 @@ import numpy as np
 import pandas as pd
 import skimage.io as skio
 
-from data_pipeline.acquisition.image_building.shared.log_focus import im_rescale
+from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
+    FocusStackConfig,
+    focus_stack_group,
+)
+from data_pipeline.shared.path_roots import resolve_under_input_root
 from data_pipeline.acquisition.image_building.utils.frame_tiler import (
     TileSpec,
     raw_stitch2d_align,
-)
-from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
-    materialize_ff_projection,
 )
 
 log = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def build_keyence_stitch_map(
     *,
     n_samples: int = 50,
     out_path: Path,
+    input_root: Path | None = None,
 ) -> None:
     """Build the experiment-grain Keyence stitch map and write it to ``out_path``.
 
@@ -91,7 +93,7 @@ def build_keyence_stitch_map(
             & (acquisition_inventory_df["time_index"] == time_index)
         ]
         try:
-            tile_specs = _build_tile_specs(sample_rows)
+            tile_specs = _build_tile_specs(sample_rows, input_root=input_root)
         except Exception as exc:
             log.debug("Sample well=%s time=%s skipped (tile build): %s", well_id, time_index, exc)
             continue
@@ -160,20 +162,34 @@ def build_keyence_stitch_map(
     )
 
 
-def _build_tile_specs(sample_rows: pd.DataFrame) -> list[TileSpec]:
-    """Focus-stack each tile's Z planes and return a sorted list of TileSpecs."""
-    tile_specs: list[TileSpec] = []
+def _build_tile_specs(
+    sample_rows: pd.DataFrame, *, input_root: Path | None = None
+) -> list[TileSpec]:
+    """Focus-stack a sample frame's tiles (ONE shared-bounds group) and return TileSpecs.
+
+    Uses the same shared focus-projection route as ``materialize_well_keyence`` so the coords
+    are computed on the exact tile pixels production will stitch — one 0.1–99.9% intensity
+    range across all tiles/Z planes, no per-tile normalization.
+    """
+    ordered_tile_ids: list[str] = []
+    raw_stacks: list[np.ndarray] = []
     for tile_id, tile_rows in sample_rows.groupby("tile_id"):
         z_paths = (
             tile_rows.sort_values("z_index")["source_tiff_path"]
-            .map(lambda p: Path(str(p)))
+            .map(lambda p: resolve_under_input_root(
+                p, input_root=input_root, scope_label="Keyence acquisition inventory",
+                full_root_fallback=True,
+            ))
             .tolist()
         )
         if not z_paths:
             raise ValueError(f"No z-plane TIFFs for tile_id={tile_id!r}.")
         planes = [skio.imread(str(p)) for p in z_paths]
-        stack_zyx = np.stack(planes, axis=0)
-        norm, _, _ = im_rescale(stack_zyx)
-        tile_ff, _ = materialize_ff_projection(norm.astype(np.float32), device="cpu")
-        tile_specs.append(TileSpec(tile_id=str(tile_id), image=np.asarray(tile_ff)))
-    return tile_specs
+        ordered_tile_ids.append(str(tile_id))
+        raw_stacks.append(np.stack(planes, axis=0))
+
+    group = focus_stack_group(raw_stacks, config=FocusStackConfig(), device="cpu")
+    return [
+        TileSpec(tile_id=tid, image=group.tiles[i].projection_u8)
+        for i, tid in enumerate(ordered_tile_ids)
+    ]

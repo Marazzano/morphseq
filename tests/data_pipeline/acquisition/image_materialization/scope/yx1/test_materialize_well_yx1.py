@@ -119,15 +119,10 @@ def _make_z_inventory(
 
 class TestMaterializeFFProjection:
     def test_returns_2d_uint8_and_focus_index_map(self):
+        # materialize_ff_projection now delegates to the shared focus_stack_group; run it for
+        # real (small stack, fast) and assert the output shape/dtype contract.
         stack = np.random.randint(0, 1000, size=(5, 64, 64), dtype=np.uint16)
-        with patch(
-            "data_pipeline.acquisition.image_materialization.scope.yx1"
-            ".materialize_well_yx1.LoG_focus_stacker"
-        ) as mock_log:
-            # LoG_focus_stacker returns (ff, abs_log); abs_log has shape (Z, Y, X).
-            abs_log = np.ones((5, 64, 64), dtype=np.float32)
-            mock_log.return_value = (np.ones((64, 64), dtype=np.float32) * 100, abs_log)
-            projection_u8, focus_index_map = materialize_ff_projection(stack, device="cpu")
+        projection_u8, focus_index_map = materialize_ff_projection(stack, device="cpu")
         assert projection_u8.ndim == 2
         assert projection_u8.dtype == np.uint8
         assert focus_index_map.shape == (64, 64)

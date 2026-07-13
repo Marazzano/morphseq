@@ -30,15 +30,17 @@ from pathlib import Path
 import nd2
 import numpy as np
 import pandas as pd
-import skimage.util
-import torch
 from PIL import Image
 
 from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder import (
     _determine_bf_channel,
     _get_stack,
 )
-from data_pipeline.acquisition.image_building.shared.log_focus import LoG_focus_stacker, im_rescale
+from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
+from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
+    FocusStackConfig,
+    focus_stack_group,
+)
 from data_pipeline.acquisition.image_materialization import materialized_image_paths
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     derive_image_id,
@@ -60,8 +62,12 @@ from data_pipeline.acquisition.image_materialization.materialized_image_write_po
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
     validate_yx1_acquisition_inventory,
 )
+from data_pipeline.shared.path_roots import resolve_under_input_root
 
 log = logging.getLogger(__name__)
+
+# Label for resolve_under_input_root errors when reading the inventory's stored ND2 path.
+_SCOPE_LABEL = "YX1 acquisition inventory"
 
 # Frame-inventory columns emitted by this module (flat schema, decided 2026-06-17). Derived columns
 # are written for consumers but never trusted: the validator recomputes them from atoms and fails
@@ -106,11 +112,14 @@ def materialize_ff_projection(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Focus-stack a Z-stack into one 2D frame (BF / brightfield projection method).
 
-    This is the ``projection_method='focus_stack'`` primitive. Pure image math — does not know
-    about well_id, time_index, or paths.
+    This is the ``projection_method='focus_stack'`` primitive. It is a thin YX1-identity
+    wrapper over the shared ``focus_stack_group`` (one-stack group) — the shared layer owns
+    intensity bounds, LoG scoring, raw-pixel gather, and the uint8 display transform (see
+    ``image_building/shared/README.md``). Pure image math — no well_id, time_index, or paths.
 
     Args:
-        stack_zyx: a single ``(Z, Y, X)`` brightfield z-stack for one (well, channel, time).
+        stack_zyx: a single ``(Z, Y, X)`` uint16 brightfield z-stack for one (well, channel,
+            time).
         device: torch device for the LoG convolutions (``"cpu"`` or ``"cuda"``).
 
     Returns:
@@ -121,17 +130,18 @@ def materialize_ff_projection(
             LoG response. It is NOT an acquisition ``z_index`` label; the caller pairs it with an
             ordered ``z_indices`` array to recover the labels.
     """
-    norm, _, _ = im_rescale(stack_zyx)
-    # LoG_focus_stacker returns (ff, abs_log); abs_log is the per-plane LoG response magnitude with
-    # shape (Z, Y, X). The focus index is argmax over the Z AXIS (axis 0) — the exact same selection
-    # the stacker makes internally to gather ff.
-    ff, abs_log = LoG_focus_stacker(norm.astype(np.float32), filter_size=3, device=device)
-    arr = ff.cpu().numpy() if torch.is_tensor(ff) else np.asarray(ff)
-    projection_u8 = skimage.util.img_as_ubyte(np.clip(arr, 0, 65535).astype(np.uint16))
-
-    abs_log_np = abs_log.cpu().numpy() if torch.is_tensor(abs_log) else np.asarray(abs_log)
-    focus_index_map = np.argmax(abs_log_np, axis=0).astype(np.int32)
-    return projection_u8, focus_index_map
+    # Delegate the focus-projection image math to the shared group primitive on a ONE-stack
+    # group (YX1 identity composition). This is the sole owner of intensity bounds, LoG
+    # scoring, raw-pixel gather, and the uint8 display transform — the adapter must not
+    # normalize itself (see image_building/shared/README.md). One stack ⇒ one shared bound
+    # pair over exactly this frame, matching legacy per-frame behavior.
+    result = focus_stack_group([stack_zyx], config=FocusStackConfig(), device=device)
+    tile = result.tiles[0]
+    # Apply the ONE shared display polarity (bright-embryo/dark-background) so YX1 matches Keyence.
+    # Previously YX1 emitted the opposite polarity because inversion was hidden in the Keyence-only
+    # stitcher path — see image_building/shared/display_polarity.py.
+    projection_u8 = apply_display_polarity(tile.projection_u8)
+    return projection_u8, tile.focus_index_map
 
 
 def materialize_max_projection(stack_zyx: np.ndarray) -> np.ndarray:
@@ -160,6 +170,7 @@ def materialize_yx1_well(
     candidate: bool = True,
     smoke_max_time_indices: int | None = None,
     config: dict | None = None,
+    input_root: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize exactly one resolved product for ONE YX1 well.
 
@@ -182,6 +193,7 @@ def materialize_yx1_well(
         candidate=candidate,
         smoke_max_time_indices=smoke_max_time_indices,
         config=config,
+        input_root=input_root,
     )
 
 
@@ -197,6 +209,7 @@ def materialize_yx1_product_for_well(
     candidate: bool = True,
     smoke_max_time_indices: int | None = None,
     config: dict | None = None,
+    input_root: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize ONE YX1 image product for ONE well and return frame-inventory rows.
 
@@ -296,14 +309,22 @@ def materialize_yx1_product_for_well(
     # so a moved/deleted/corrupt ND2 fails loud HERE (named, with the fix) before any tensor read —
     # not as a raw nd2.ND2File traceback below. The readability logic is OWNED by the acquisition
     # contract; this backend only calls it. (The nunique()==1 guard above stays as a local tripwire.)
-    validate_yx1_acquisition_inventory(well_acquisition_inventory_df, check_sources=True)
+    validate_yx1_acquisition_inventory(
+        well_acquisition_inventory_df, check_sources=True, input_root=input_root
+    )
 
     position_index = int(well_acquisition_inventory_df["position_index"].iloc[0])
     um_per_px = float(well_acquisition_inventory_df["micrometers_per_pixel"].iloc[0])
     img_w = int(well_acquisition_inventory_df["image_width_px"].iloc[0])
     img_h = int(well_acquisition_inventory_df["image_height_px"].iloc[0])
     # The ND2 source comes from the inventory (the record of what was acquired), not a CLI arg.
-    nd2_path = Path(well_acquisition_inventory_df["source_nd2_path"].iloc[0])
+    # Stored as a full path; re-anchored onto input_root if it has moved.
+    nd2_path = resolve_under_input_root(
+        well_acquisition_inventory_df["source_nd2_path"].iloc[0],
+        input_root=input_root,
+        scope_label=_SCOPE_LABEL,
+        full_root_fallback=True,
+    )
 
     log.info(
         "materialize_yx1_product_for_well: experiment=%s well=%s product=%s position_index=%d nd2=%s device=%s candidate=%s",
