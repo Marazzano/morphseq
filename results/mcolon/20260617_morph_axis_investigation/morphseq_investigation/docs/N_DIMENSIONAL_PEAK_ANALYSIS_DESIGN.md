@@ -478,26 +478,139 @@ from it for tabular analysis and plotting.
 ## Distribution comparisons
 
 Reference and target are relationships, not intrinsic distribution labels.
-Use the existing comparison layer:
+Use one role-aware catalog call:
 
 ```python
 comparisons = catalog.compare(
     across="genotype",
-    values=("wildtype", "control", "mutant"),
+    reference="wildtype",
+    targets=("mutant_a", "mutant_b"),
     match_on=("time_bin",),
+    label_group="resolved_peaks_default",
+    features=("total_length_um", "baseline_deviation_normalized"),
+    grid_size=40,
 )
 ```
 
 Each `DistributionComparison` contains the distributions matched at one time
-bin. A comparison view may then identify one or more members as references and
-targets:
+bin. Biological comparisons normally declare roles explicitly and construct
+directed contrasts as part of that same public call. Internally, member matching
+and contrast expansion may remain separate operations, but callers should not
+have to materialize an un-oriented comparison collection and then immediately
+assign roles or call a public preparation/generation step.
+
+The returned comparisons are already descriptive, aligned, and plot-ready. The
+same call resolves the requested label group, validates ordered-feature
+compatibility, derives each target/reference pair's shared grid, evaluates both
+densities directly on it, and computes lightweight descriptive quantities such
+as raster overlap. It does not run reference-null tests or silently rerun peak
+voting. If the requested peak label group is absent, comparison raises rather
+than hiding an expensive resolution run.
+
+The authoritative descriptive implementation is also directly callable with
+raw distribution objects:
 
 ```python
-comparison_view = comparisons.with_roles(
-    references=("wildtype", "control"),
-    targets=("mutant",),
+comparisons = compare_distributions(
+    reference=wildtype_distribution,
+    targets=(mutant_a_distribution, mutant_b_distribution),
+    label_group="resolved_peaks_default",
+    grid_size=40,
 )
 ```
+
+`compare_distributions()` performs the feature/label validation, pair-specific
+shared-grid derivation, aligned density evaluation, and lightweight descriptive
+comparison work. It does not perform catalog matching, infer biological roles,
+or run null tests. The caller explicitly supplies the reference and targets.
+
+Grid/feature inputs obey these MVP rules:
+
+- A caller may supply an existing evaluation grid. At the semantic composition
+  boundary, that grid's ordered features determine the comparison features;
+  the low-level numeric grid implementation remains feature-blind.
+- Without a supplied grid, a single-feature distribution can infer its only
+  feature. If the distributions contain multiple features, the caller supplies
+  the ordered `features` to compare. A two-dimensional comparison therefore
+  names its two ordered features explicitly.
+- A derived grid pools target/reference values independently for each requested
+  feature, uses the Valley robust-bound/padding policy, and uses the same number
+  of coordinates per axis. "Square" means equal raster resolution per axis,
+  not forced equal numeric spans for native features with different units.
+- Comparison does not normalize features implicitly; normalization is upstream.
+- The supported comparison-density MVP is one or two dimensions. The grid
+  abstraction may be N-dimensional, but the API must not advertise general N-D
+  density comparison until N-D bandwidth support is implemented and tested.
+
+Density specifications need not be identical. A provided label group may have
+no retained density, and independently prepared distributions may legitimately
+carry different density specifications. Comparison evaluates each member on
+the shared coordinate grid using its applicable retained/default density
+definition and preserves that provenance. Shared axes make raster operations
+mechanically possible; they do not assert that estimator specifications are
+identical. No `density_spec` equality guard is imposed.
+
+The requested label group supplies assignments, geometry, counts, and overlays;
+it does not filter samples used for the distribution density. Density uses the
+complete distribution membership, including samples unassigned in that label
+group. Comparing an individual sample set is a separate future operation.
+
+`DistributionCatalog.compare()` is orchestration around that same function. It
+matches members from catalog coordinates, resolves the reference and targets in
+each matched group, routes those raw `Distribution` objects through
+`compare_distributions()` exactly once, and attaches the final catalog context
+(`across`, `match_on`, held-constant coordinates, and member values) to the
+returned wrappers. It must not contain a second grid, density, overlap, or
+descriptive-comparison implementation.
+
+Contrast construction occurs only within each matched comparison group and
+never pairs members from different time bins. Every contrast records its target
+and reference explicitly; roles are not inferred from member names or order.
+The MVP accepts one explicit `reference` per call. Comparing against a second
+reference is a second call. This avoids silently expanding, pooling, or
+summarizing multiple biological references before such a policy is designed.
+
+An explicitly named `all_pairs()` utility may still produce semantically neutral
+unordered pairs for exploratory symmetric analysis. It is not the default
+biological-comparison workflow, because most scientific questions already know
+which members are references and targets and do not require every quadratic
+pair.
+
+Known distribution IDs are resolved by the catalog and are never parsed. Once
+resolved, they follow the same `compare_distributions()` path as coordinate-
+matched members. A dedicated ID-only convenience is deferred unless a concrete
+caller needs it.
+
+Internal pair preparation:
+
+1. requires identical ordered feature names;
+2. derives one N-dimensional grid from both distributions' feature values;
+3. evaluates both densities directly on that grid rather than interpolating a
+   retained raster;
+4. optionally retrieves the same named label-group view from both members; and
+5. preserves the matched coordinates and member values for downstream use.
+
+Low-level shared-grid derivation, rasterization, and overlap are numeric,
+feature-blind utilities. The higher-level preparation boundary validates feature
+identity before calling them. Plotting does not derive the grid or calculate a
+KDE.
+
+Prepared neutral pairs are reusable inputs to symmetric analysis and
+basic/custom plotting. The one-call catalog comparison surface attaches the
+biological roles used by comparison analysis and annotated plotting.
+
+Expensive inference is a separate, explicit immutable enrichment:
+
+```python
+tested_comparisons = comparisons.test_nulls(n_draws=200, seed=42)
+```
+
+`test_nulls()` returns comparisons with the same aligned descriptive inputs plus
+null distributions, valid-draw evidence, p-values, and test provenance. The
+original descriptive comparisons remain unchanged. Plotting accepts either
+form. It must distinguish `not tested` from `tested, not significant` and
+`tested, significant`; absent inference is never interpreted as a nonsignificant
+result.
 
 Comparison analysis—not plotting—calculates relative metrics such as:
 
@@ -506,8 +619,23 @@ Comparison analysis—not plotting—calculates relative metrics such as:
 - difference in mean distance or compactness;
 - other future peak-organization contrasts.
 
-Multiple references may remain separate or be summarized according to an
-explicit comparison policy. They are never silently pooled.
+A future multiple-reference API may keep references separate or summarize them
+according to an explicit policy. References are never silently pooled.
+
+Symmetric metrics such as overlap need no role assignment. Directional metrics
+assign reference/target roles in the comparison layer. Scientifically annotated
+plots consume those directed comparison results rather than independently
+inferring roles; neutral pair plots merely preserve deterministic member order.
+
+Shared-grid density evaluations produced by `compare()` are owned by the
+immutable comparison result and do not silently replace retained distribution
+densities.
+
+MVP failure behavior is all-or-error. A missing requested label group, missing
+reference or target in any matched group, or incompatible requested feature
+tuple raises immediately with distribution and matched-coordinate context.
+Partial comparison collections are deferred. `test_nulls()` is immutable
+enrichment, and untested comparisons explicitly remain untested.
 
 ### Deferred peak-matching stub
 

@@ -148,6 +148,97 @@ complete until these are resolved and re-audited.
 
 ### 1. Unify the scientific density grid and plotting grid model
 
+#### Reviewed contract (2026-07-12)
+
+The grid/`resize=True` policy is now decided:
+
+- The semantic overlay boundary requires the same ordered feature set. A
+  caller must not overlay distributions whose feature identities differ.
+- A catalog-level convenience accepts a catalog plus distribution IDs (and,
+  when relevant, one shared label-group name). The catalog already owns the
+  sample IDs and feature values, so it can resolve the selected populations
+  and derive one shared grid without callers supplying point arrays or bounds.
+- The MVP preparation operation is pairwise but semantically neutral. A pair
+  contains two distributions in deterministic input/comparison-value order; it
+  does not yet call either member reference or target. Reference/target roles
+  belong to a later directed comparison or presentation operation.
+- The primary biological-comparison surface is directed: callers explicitly
+  identify one reference value and one or more target values, and the
+  comparison layer constructs the requested target/reference contrasts within
+  each matched group. A second biological reference requires a second MVP call;
+  references are never silently pooled. The API does not biologically infer
+  roles from member order or names.
+- This is one public catalog call, for example
+  `catalog.compare(across=..., reference=..., targets=..., match_on=...,
+  label_group=..., grid_size=...)`.
+  Matching members and expanding directed contrasts may remain separate
+  internal stages, but callers do not need a second `.contrasts(...)`,
+  `.with_roles(...)`, `.prepare(...)`, or `.generate(...)` call immediately
+  after `compare()`.
+- `compare()` returns descriptive, aligned, plot-ready contrasts. It resolves
+  the requested label group, derives pair-specific shared grids, evaluates the
+  densities on those grids, and may compute lightweight descriptive overlap.
+  It does not run reference-null tests or silently invoke peak-voting analysis.
+- `compare_distributions(reference=..., targets=..., label_group=...,
+  grid_size=...)` is the one authoritative descriptive implementation and is
+  directly usable with raw `Distribution` objects. `DistributionCatalog.compare()`
+  only matches catalog members, routes each matched group through that function,
+  and attaches `across`/`match_on`/held-coordinate/member-value context to the
+  final wrapper. The catalog must not duplicate grid, density, overlap, or
+  descriptive-comparison logic.
+- Expensive inference is the explicit next step:
+  `tested = comparisons.test_nulls(n_draws=..., seed=...)`. This returns an
+  immutable enriched result; it does not mutate the descriptive comparisons.
+  Both forms are valid plotting inputs, and plotting distinguishes not tested,
+  tested nonsignificant, and tested significant states.
+- A neutral pair remains the internal reusable preparation primitive. Direct
+  catalog-ID entry can resolve two distributions into that primitive, while a
+  directed comparison wraps the same prepared data with explicit target and
+  reference roles. `all_pairs()` may exist as an explicit exploratory utility,
+  but it is not the default comparison workflow. Pairs never cross matched
+  groups.
+- Grid construction is one N-dimensional operation: pool the selected values
+  and derive the same coordinate axis and resolution for every occurrence of
+  each ordered feature. The 1-D and 2-D cases are not separate policies.
+- If a semantic evaluation grid is supplied, its ordered features define the
+  comparison axes. Without one, a sole feature may be inferred from a
+  single-feature distribution; multi-feature distributions require explicit
+  ordered `features` (including the two names for a 2-D comparison).
+- Derived bounds port the Valley robust-bound/padding behavior per feature.
+  Equal `grid_size` per axis makes a square raster; native axes with different
+  units are not forced to have equal numeric spans, and comparison performs no
+  implicit normalization.
+- The low-level rasterization, grid, and overlap utilities are deliberately
+  blind to feature names, distribution IDs, catalogs, and label groups. They
+  operate only on numeric axes/arrays. Semantic compatibility is validated by
+  the higher-level composition boundary before those reusable primitives are
+  called.
+- Matching label-group names identify the comparable population view across
+  distribution IDs. Individual sample sets inside a label group do not get
+  independently derived grids; all samples represented by the selected view,
+  including unassigned samples, contribute to the common frame.
+- Label groups provide assignments, geometry, counts, and overlays; they do not
+  filter the complete distribution membership used for density evaluation.
+- Density-spec equality is not required. Each distribution uses its applicable
+  retained/default density definition on the shared coordinates, and the result
+  preserves both specifications as provenance. Shared axes do not claim equal
+  estimator configuration.
+- `resize=True` means prepare the selected compatible distributions on one
+  shared grid. Following `valley_visualization.py`, densities are evaluated
+  directly on that grid from catalog-owned samples and the applicable density
+  specification. It does **not** mean interpolate an already-calculated density
+  raster.
+- Existing retained densities are not mutated. Plotting is outside the catalog
+  and outside the MVP except for basic rendering; it receives already-prepared
+  aligned inputs and neither derives catalog membership nor fits a KDE.
+- Raster overlap itself requires only numerically compatible axes and array
+  shapes. It must not duplicate feature-name policy internally.
+- Prepared pairs feed both downstream branches: symmetric metrics/basic plots
+  may remain neutral, while biological comparison assigns reference/target
+  roles at contrast construction. Annotated plotting consumes that directed
+  result instead of independently inferring roles. The standard comparison
+  workflow is role-aware even though its underlying grid preparation is not.
+
 There are currently two density/grid representations and two higher-level
 plotting stacks:
 
@@ -163,28 +254,50 @@ The intended consolidation should distinguish:
 
 - **Scientific evaluation grid**: immutable coordinates on which a retained
   density was calculated; belongs to `DensityEstimate`/resolver evidence.
-- **Shared plotting grid**: display-only common frame used to compare multiple
-  already-calculated rasters.
+- **Shared evaluation grid**: one scientific grid derived before evaluation
+  from the samples belonging to selected compatible distribution IDs. Each
+  participating density is calculated directly on it, making the resulting
+  rasters suitable for both comparison and plotting.
 
-The remembered `resize=True` behavior needs an explicit reviewed contract. A
-safe interpretation is display-only resampling of retained raster values onto
-one shared plotting grid. It must never silently refit a KDE or pretend the
-resized raster is the generating density. Note that earlier ontology documents
-explicitly prohibited interpolating densities and required reevaluating samples
-on a shared grid, while the new plan prohibits plotting from calculating KDEs.
-This tension must be resolved deliberately before implementing `resize=True`.
+A plotting frame may reuse the shared evaluation grid, but it is not a second
+density representation and plotting does not construct or resize density
+rasters.
+
+The remembered `resize=True` behavior is therefore a catalog/data-preparation
+operation, not a plotting-raster interpolation operation. This preserves the
+earlier ontology rule that densities on different grids are reconciled by
+evaluating samples on a shared grid, while also preserving the newer rule that
+plotting does not calculate KDEs.
 
 Recommended direction:
 
-1. Introduce one plot-input raster type/protocol carrying ordered feature names,
-   axis coordinates, density values, and source density identity.
-2. Provide pure adapters from core and engine density representations.
-3. Put shared plotting-grid derivation and any approved raster resampling in a
-   non-analytical plotting-IR module.
-4. Keep original density identity and original grid attached; mark resampled
-   values as display derivatives.
+1. Implement authoritative raw-object `compare_distributions()` and make the
+   role-aware catalog comparison surface a thin matching/context wrapper around
+   it. Keep an explicitly named exploratory all-pairs utility secondary.
+2. Implement the underlying numeric shared-grid derivation as a reusable
+   feature-blind primitive.
+3. Add one preparation primitive that accepts two resolved `Distribution`
+   objects, validates ordered-feature equality, and evaluates each density
+   directly on their shared grid; do not interpolate retained rasters.
+4. Preserve pair/group coordinates and member values so comparison and plotting
+   never parse `distribution_id` values. Provide pure adapters from core and
+   engine density representations without moving catalog or feature semantics
+   into raster utilities.
 5. Require exact shared-grid equality when scientific raster comparison, peak
    assignment, or basin geometry is being claimed.
+
+Implementation requirements:
+
+1. Shared-grid evaluations are owned by the immutable result returned from
+   `compare()`; they do not replace or reselect source-distribution densities.
+2. Missing requested label groups, references, targets, or compatible feature
+   tuples fail immediately with distribution and matched-coordinate context.
+3. Partial comparison collections are not MVP behavior: comparison is
+   all-or-error.
+4. `test_nulls()` returns an immutable enriched result and keeps not-tested,
+   invalid, nonsignificant, and significant states distinct.
+5. Implement and test 1-D and 2-D comparison preparation. Do not advertise
+   general N-D density comparison until bandwidth support exists.
 
 ### 2. Split the plotting package and remove analysis from renderers
 

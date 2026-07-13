@@ -214,6 +214,38 @@ Verify:
 Exit gate: focused tests, broader investigation-package tests, and biological
 acceptance fixtures pass.
 
+## Phase 9: Implement descriptive comparison preparation
+
+Implement `compare_distributions()` as the single raw-object descriptive
+comparison path. Route `DistributionCatalog.compare()` through it after catalog
+matching and attach catalog context only in the wrapper.
+
+Required behavior:
+
+- one explicit reference and one or more explicit targets;
+- caller-supplied semantic grid, or explicit ordered features when a
+  multi-feature distribution needs a derived grid;
+- direct sole-feature inference for a single-feature distribution;
+- pair-specific shared grids using robust pooled bounds and equal resolution
+  per axis without implicit normalization or forced equal native-unit spans;
+- direct evaluation on the shared grid, never raster interpolation;
+- no density-spec equality requirement, with both specs retained as provenance;
+- label groups provide overlays and never filter density-fit membership;
+- missing label groups/members or incompatible features fail immediately;
+- all-or-error results; no partial comparison collection;
+- immutable, plot-ready descriptive results that do not mutate retained source
+  densities; and
+- explicit immutable `.test_nulls()` enrichment that distinguishes not tested,
+  invalid, nonsignificant, and significant states.
+
+Support and test 1-D and 2-D comparison density preparation only. Keep general
+N-D comparison density support deferred until N-D bandwidth selection exists.
+
+Exit gate: raw-distribution and catalog entry points produce equivalent
+descriptive results, plotting consumes untested and tested results without
+analysis, and structural guards prove the catalog does not duplicate shared-grid,
+density, overlap, or null-test implementations.
+
 ## Deferred comparison task: peak matching
 
 Peak matching is not required to consolidate the resolver. After consolidation,
