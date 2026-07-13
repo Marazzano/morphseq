@@ -40,7 +40,8 @@ class Distribution:
     sample_ids: tuple[str, ...]
     feature_names: tuple[str, ...]
     feature_values: np.ndarray
-    shared_density: DensityEstimate | None = None
+    densities: tuple[DensityEstimate, ...] = ()
+    shared_density_index: int | None = None
     label_groups: Mapping[str, LabelGroup] = field(default_factory=dict)
 ```
 
@@ -49,10 +50,30 @@ join between label assignments and feature values. Ordered feature-name equality
 is the compatibility check for comparing peak measurements across
 distributions.
 
-The `Distribution` may have one `shared_density`. It describes the whole
-distribution independently of any labeling. It may be calculated eagerly when
-the distribution is constructed or lazily when an analysis or visualization
-first needs it.
+The `Distribution` may retain multiple density estimates for the same population
+and ordered feature set. `shared_density_index` selects the estimate used as the
+distribution-level default. It is an index rather than a separately stored
+density object, so the shared density cannot diverge from `densities`.
+
+```python
+distribution.shared_density == (
+    distribution.densities[distribution.shared_density_index]
+    if distribution.shared_density_index is not None
+    else distribution.densities[0]
+    if distribution.densities
+    else None
+)
+```
+
+If densities exist and no explicit shared index has been selected, the first
+density is the intelligent default. An explicit shared-density selection
+overrides that fallback. Density estimation remains separate from peak
+resolution: creating or selecting a density does not create peak assignments.
+
+Construction and selection raise `ValueError` when `shared_density_index` is
+negative or out of range, or when a retained density has a different
+`distribution_id` or different ordered feature names. A resolved-peak label
+group's density must satisfy the same compatibility checks.
 
 ## DensityEstimate
 
@@ -62,6 +83,7 @@ and the specification used to fit it:
 ```python
 @dataclass(frozen=True)
 class DensityEstimate:
+    distribution_id: str
     feature_names: tuple[str, ...]
     spec: DensityEstimateSpec
     # fitted density representation
@@ -82,14 +104,22 @@ class LabelGroup:
     distribution_id: str
     assignments: Mapping[str, Hashable]
 
-    shared_density: DensityEstimate | None = None
-    specified_density: DensityEstimate | None = None
+    density: DensityEstimate | None = None
 
     sample_set_geometries: Mapping[Hashable, SampleSetGeometry] = field(
         default_factory=dict
     )
     peak_resolution_summary: PeakResolutionSummary | None = None
     labeling_provenance: LabelingProvenance | None = None
+
+    @property
+    def sample_set_count(self) -> int: ...
+
+    @property
+    def peak_count(self) -> int | None: ...
+
+    @property
+    def is_robust(self) -> bool | None: ...
 ```
 
 For the MVP, labeling provenance supports only the two implemented origins:
@@ -101,26 +131,41 @@ LabelingMethod = Literal["provided", "resolved_peaks"]
 Labels loaded from a dataframe use `provided`. Labels created by the robust
 peak-analysis route use `resolved_peaks`.
 
-`shared_density` is the density used by the label group. Normally it is the same
-object as `Distribution.shared_density`. A labeling analysis may provide a
-`specified_density`; in that case the label group's `shared_density` is that
-specified estimate.
+`density` is an optional label-group override. A resolved-peak label group stores
+the exact density used to produce its assignments. A provided-label group
+normally leaves `density=None`, because its assignments were not produced by a
+KDE and it can safely use the distribution's shared density for visualization.
 
 ```python
-label_group.shared_density is (
-    label_group.specified_density
-    if label_group.specified_density is not None
+effective_density = (
+    label_group.density
+    if label_group.density is not None
     else distribution.shared_density
 )
 ```
 
+The fallback is present for provided labels and other density-independent label
+groups. A resolved-peak label group must never silently fall back: it retains the
+exact density that generated its assignments even when that density is also the
+distribution's shared density.
+
+If a provided-label group has no density and its distribution has no shared
+density, density-free plots still work. Density-dependent plots raise a clear
+error; plotting never calculates a temporary KDE.
+
 The density models the full distribution. Individual `SampleSet`s do not refit
-their own KDEs. They share the label group's density and differ in membership
+their own KDEs. They use the label group's density and differ in membership
 and, when measured, geometry.
 
 Label-group names must be unique within a `Distribution`. Running peak finding
 again with a different density specification requires a different label-group
 name; existing groups are never silently replaced.
+
+`sample_set_count` is the number of materialized, non-throwaway `SampleSet`s and
+is defined for every label group. `peak_count` and `is_robust` are convenience
+properties that delegate to `PeakResolutionSummary`; they return `None` for
+provided labels rather than treating arbitrary categories as peaks. The values
+are not stored twice.
 
 ## SampleSet
 
@@ -152,7 +197,7 @@ class SampleSetGeometry:
     center: np.ndarray
     radius: float
     support_fraction: float
-    density_within_r80: float
+    r80_radial_concentration: float
     cv_radius_from_center: float
 ```
 
@@ -160,11 +205,13 @@ The changes from the current implementation are:
 
 - Add `support_fraction`, because peak mass/support is a core per-peak property
   used in comparisons.
-- Rename the current ambiguous `r80` field to `density_within_r80`; the value is
-  a density/concentration measurement within the R80 region, not the R80 radius.
+- Rename the current ambiguous `r80` field to `r80_radial_concentration`; the
+  value is the peak support inside the R80 region divided by the area of the R80
+  disk. It is a radial concentration measurement, not the R80 radius or a KDE
+  density value.
 - Remove `grid_id`. Intrinsic geometry is expressed in the ordered named feature
   units. The density estimate and its specification belong to the parent label
-  group's `shared_density`; raster identity is not needed for peak-level
+  group's effective density; raster identity is not needed for peak-level
   comparison.
 
 ## PeakResolutionSummary
@@ -176,25 +223,65 @@ Peak finding adds one optional, typed run-level summary to its `LabelGroup`:
 class PeakResolutionSummary:
     peak_count_vote: PeakCountVote
     resolved_peak_count: int
-    robustness_threshold: float
+    voting_spec: PeakVotingSpec
+    robustness_policy: PeakCountRobustnessPolicy
     is_robust: bool
+```
+
+Voting sufficiency and robustness interpretation are separate configurations:
+
+```python
+@dataclass(frozen=True)
+class PeakVotingSpec:
+    n_draws: int
+    sample_fraction: float
+    min_valid_draws: int
+
+@dataclass(frozen=True)
+class PeakCountRobustnessPolicy:
+    min_mode_frequency: float
 ```
 
 Mean peak count, variance, modal frequency, and other summaries are derived from
 the complete `PeakCountVote`; they do not need to be stored twice.
 
-`is_robust` means only that the modal peak-count frequency passes the configured
-threshold. The threshold is chosen by the user and retained with the result.
+`PeakVotingSpec` defines how the vote is collected and how many valid draws are
+required for sufficient evidence. `PeakCountRobustnessPolicy` interprets a
+sufficient vote. `is_robust` is true only when the vote has at least
+`min_valid_draws`, has no tied mode, and its modal frequency passes
+`min_mode_frequency`. Both configurations are retained with the result.
 
-An analysis always retains its modal count and produces assignments for that
-count, even when `is_robust` is false. Robustness qualifies the result; it does
-not suppress the analysis artifact.
+The supported resolved-peak path always performs peak-count voting. The modal
+count is always retained and used to produce assignments and `SampleSet`s, even
+when `is_robust` is false. Robustness qualifies the result; it does not suppress
+the analysis artifact. This is important for diagnosing failure cases and for
+plotting them differently rather than making them disappear.
 
 The central invariant is:
 
 ```python
-peak_resolution_summary.resolved_peak_count == len(peak_sample_sets)
+label_group.peak_count == label_group.sample_set_count
+label_group.peak_count == len(peak_sample_sets)
 ```
+
+Throwaway membership is represented as unassigned samples, never as a
+`SampleSet`. Every distribution sample appears exactly once in either one
+materialized sample set or the explicit unassigned collection. Unknown sample
+IDs, duplicate membership, and assignments without matching geometry raise.
+
+Voting edge cases have deterministic behavior:
+
+- A tied modal count selects the larger count, emits a warning, and forces
+  `is_robust=False`.
+- Too few valid draws retain and materialize the modal count but force
+  `is_robust=False`.
+- Zero valid draws raise an analysis error because no modal count exists.
+- A modal count of zero creates no peak sample sets and leaves all samples
+  unassigned.
+
+Peak IDs are local to one label group and deterministic within that result.
+`peak_0` in different distributions or label groups does not imply biological
+correspondence; cross-distribution peak matching is a separate analysis.
 
 ## Internal resolved-peak result
 
@@ -202,7 +289,7 @@ The existing refined analysis may continue to use
 `ResolvedPeakDistribution` internally:
 
 ```text
-Distribution + shared/specified density
+Distribution + supplied or calculated density
     -> robust peak analysis
     -> ResolvedPeakDistribution          # internal computation result
     -> LabelGroup + derived SampleSets   # durable catalog form
@@ -214,8 +301,8 @@ The durable conversion retains:
 - per-peak geometry;
 - the complete peak-count vote;
 - the resolved modal count;
-- the robustness threshold and result;
-- the density specification through `shared_density`;
+- the voting specification, robustness policy, and result;
+- the exact density estimate;
 - ordinary labeling provenance.
 
 Temporary detector mechanics such as basin-label rasters do not need to be
@@ -234,8 +321,9 @@ one KDE implementation
     -> catalog comparison through SampleSets
 ```
 
-Visualization may use `Distribution.shared_density` or a label group's
-`shared_density`. It does not rediscover peaks.
+Visualization uses a label group's effective density. For provided labels this
+normally falls back to `Distribution.shared_density`; for resolved peaks it is
+the exact stored `LabelGroup.density`. Visualization does not rediscover peaks.
 
 ## Deferred work
 
@@ -264,44 +352,42 @@ catalog = DistributionCatalog.from_dataframe(
 )
 ```
 
-Calculate the shared density for every distribution with:
+Density calculation and registry mutation are separate operations:
 
 ```python
-catalog = catalog.calc_shared_density(spec=None, replace=False)
+density = distribution.calc_density(spec=None)
+distribution = distribution.with_density(
+    density,
+    select_as_shared=True,
+)
 ```
 
-`calc_shared_density` always uses the complete ordered feature set already on
-each `Distribution`; it does not accept another `features` argument. When
-`spec=None`, it uses the validated default density specification.
+`calc_density` uses the complete ordered feature set already on the
+`Distribution`; it does not accept another `features` argument. When `spec=None`,
+it uses the validated default density specification. It only returns a density;
+it does not register it, select it as shared, or create labels.
+
+`with_density` explicitly retains the estimate in `Distribution.densities` and
+may select it through `shared_density_index`. Additional retained estimates may
+coexist, but there is only one selected shared density at a time. Catalog-level
+helpers may map these two explicit operations across distributions, but density
+calculation, registration, and peak assignment remain distinct effects.
 
 Density replacement follows explicit lifecycle rules:
 
-- If an existing shared density has the same specification, reuse it.
-- If an existing shared density has a different specification, raise.
-- Recalculate only when the caller passes `replace=True`.
-- Existing label groups retain the density object used to create them; replacing
-  the distribution's default must not silently leave an existing analysis in an
-  inconsistent state.
+- Never silently replace a retained density estimate with a different one.
+- Adding a density to the registry is an explicit `with_density` operation.
+- Changing `shared_density_index` changes only the distribution fallback used by
+  density-independent label groups and future default analyses.
+- Existing resolved-peak groups retain the exact density object used to create
+  them and are never changed by shared-density selection.
 
 More precisely:
 
 - A provided-label group can follow a replaced distribution density because its
   assignments did not depend on KDE fitting.
-- A label group with `specified_density` remains unchanged.
-- A resolved-peak label group inheriting the distribution's shared density must
-  be rerun when that density changes. Its assignments, geometry, peak-count vote,
-  and resolution summary all depend on the old density.
-
-Therefore replacement must raise when dependent resolved-peak groups exist
-unless the caller explicitly requests that those analyses be rerun:
-
-```python
-catalog.calc_shared_density(
-    spec=new_spec,
-    replace=True,
-    rerun_dependent_analyses=True,
-)
-```
+- A resolved-peak label group retains its exact stored `density` and remains
+  unchanged.
 
 ## Default and custom peak-analysis passes
 
@@ -310,11 +396,13 @@ The default peak-analysis pass uses each distribution's shared density:
 ```python
 catalog = catalog.detect_peaks(
     output_label="resolved_peaks_default",
+    voting_spec=voting_spec,
+    robustness_policy=robustness_policy,
 )
 ```
 
-If the shared density has not yet been calculated, this operation may calculate
-the validated default lazily.
+If neither `density` nor `density_spec` is supplied, this operation uses each
+distribution's shared density and raises clearly when none exists.
 
 A custom density analysis supplies a density specification and must use another
 label-group name:
@@ -328,28 +416,39 @@ custom_spec = DensityEstimateSpec(
 catalog = catalog.detect_peaks(
     output_label="resolved_peaks_custom",
     density_spec=custom_spec,
+    voting_spec=voting_spec,
+    robustness_policy=robustness_policy,
 )
 ```
 
-This produces a `specified_density` for each new label group. It does not replace
-the distribution's shared density or mutate the default peak-analysis group.
+`detect_peaks` accepts either `density` or `density_spec`, never both. A supplied
+`density` is used directly. A supplied `density_spec` calculates an
+analysis-local density and stores that exact density on the resulting label
+group. In every case `detect_peaks` creates peak assignments but never adds,
+removes, or selects entries in `Distribution.densities`.
+
+If an analysis-local density should also be discoverable from the distribution,
+the caller explicitly adds it afterward with `with_density`. Large batch
+analyses can omit that step without filling the registry with hundreds of
+estimates. Their label groups remain fully plottable because they retain their
+exact generating density; registry-based discovery may warn that such a density
+is analysis-local.
 
 ```text
 Distribution
-    shared_density = validated default
+    densities = (validated default,)
+    shared_density_index = 0
 
 LabelGroup "resolved_peaks_default"
-    shared_density = Distribution.shared_density
-    specified_density = None
+    density = Distribution.shared_density
 
 LabelGroup "resolved_peaks_custom"
-    shared_density = custom DensityEstimate
-    specified_density = that same custom DensityEstimate
+    density = analysis-local custom estimate
 ```
 
-One label group has exactly one shared density. Multiple density specifications
-therefore produce multiple uniquely named label groups. Name collisions raise;
-they never silently overwrite an existing analysis.
+One resolved-peak label group has exactly one density. Multiple density
+specifications therefore produce multiple uniquely named label groups. Name
+collisions raise; they never silently overwrite an existing analysis.
 
 ## Distribution-level metric extraction
 
@@ -409,6 +508,62 @@ Comparison analysis—not plotting—calculates relative metrics such as:
 
 Multiple references may remain separate or be summarized according to an
 explicit comparison policy. They are never silently pooled.
+
+### Deferred peak-matching stub
+
+Peak matching belongs to the comparison layer. It consumes resolved peak
+`SampleSetGeometry` from two label groups; it does not refit density, rerun peak
+resolution, or change the local peak IDs.
+
+```python
+matching = comparison.match_peaks(
+    label_group="resolved_peaks_default",
+    reference="wildtype",
+    target="mutant",
+    policy=PeakMatchingPolicy(...),
+)
+```
+
+```python
+@dataclass(frozen=True)
+class PeakMatchingPolicy:
+    method: Literal["nearest_center"] = "nearest_center"
+    max_normalized_distance: float = 1.0
+    # Exact distance normalization remains to be reviewed.
+
+@dataclass(frozen=True)
+class PeakMatch:
+    reference_peak_id: str
+    target_peak_id: str
+    center_distance: float
+    normalized_distance: float
+
+@dataclass(frozen=True)
+class PeakMatchingResult:
+    comparison_id: str
+    reference_distribution_id: str
+    target_distribution_id: str
+    reference_label_group: str
+    target_label_group: str
+    matches: tuple[PeakMatch, ...]
+    unmatched_reference_peak_ids: tuple[str, ...]
+    unmatched_target_peak_ids: tuple[str, ...]
+    policy: PeakMatchingPolicy
+```
+
+The MVP policy is one-to-one nearest-center matching with rejection beyond
+`max_normalized_distance`. Matching requires identical ordered feature names and
+compatible units. The distance must be normalized by a simple peak-scale
+quantity so that the rejection threshold is interpretable across distributions;
+a target-peak radius or a symmetric function of the reference and target radii
+are candidate definitions. The exact normalization is deliberately left as a
+reviewed policy choice rather than fixed in this consolidation design.
+
+Unmatched peaks remain explicit. Non-robust label groups may still be matched,
+but the result retains the robustness of both inputs for downstream filtering or
+display. Cross-distribution peak identity exists only through
+`PeakMatchingResult`; matching never makes local identifiers such as `peak_0`
+globally meaningful.
 
 ## Result-table identity and coordinates
 
@@ -513,12 +668,30 @@ comparison metrics without knowing how those values were calculated. Catalog
 coordinates supply grouping and faceting columns directly.
 
 `is_robust` is a visual annotation, not normally the y-axis metric. The plotting
-layer may encode it through point fill, opacity, outline, or background shading.
+layer renders robust results with solid styling and non-robust results with
+non-solid styling so that failed robustness cases remain visible rather than
+being filtered out.
 
 Plotting remains separate from `DensityEstimate`. Density and peak objects expose
 data; plotting functions arrange many distributions, label groups, time bins,
 and comparison series into figures. Visualization never refits a KDE or
 rediscovers peaks.
+
+Alternative density specifications may be explored without mutating the durable
+distribution or pretending that existing peaks came from another KDE:
+
+```python
+plot_distribution_density(
+    distribution,
+    density=alternative_density,
+)
+```
+
+This is a visualization-only selection of an already calculated density.
+Plotting never fits a KDE. When plotting a resolved-peak label group, plotting
+uses that group's stored `density` and does not accept an override. If an
+alternative density produces a peak result worth retaining, it must be run as a
+separately named peak analysis.
 
 ## Deferred companion output: feature differences from reference over time
 
@@ -618,21 +791,22 @@ path. It must be removed after the catalog has been routed through the refined,
 robust resolved-peak implementation. Do not retain it as a long-lived deprecated
 alternative.
 
-### 1. Establish parity gates
+### 1. Establish adapter-fidelity gates
 
-Before deletion, add tests that run the same distributions through the reviewed
-robust route and the new catalog adapter. Require equality or documented numeric
-tolerance for:
+Treat the reviewed robust voting resolver as authoritative. Do not preserve or
+require parity with the catalog's parallel detector. Add tests proving that the
+catalog adapter transfers the resolver's result without changing:
 
 - the complete peak-count vote;
 - resolved modal count;
-- robustness threshold and decision;
+- voting specification, robustness policy, and decision;
 - sample-to-peak assignments;
 - number of derived peak `SampleSet`s;
 - per-peak geometry.
 
-Retain the existing biological regression cases, including the b9d2 peak-count
-trajectory, as acceptance fixtures.
+Retain scientifically important biological regression cases, including the b9d2
+peak-count trajectory, as acceptance fixtures. These fixtures validate the
+authoritative resolver; they are not compatibility tests for the retired path.
 
 ### 2. Add the single adapter
 
@@ -644,7 +818,7 @@ label_group_from_resolved_peaks(
     resolved_peak_distribution,
     *,
     name,
-    shared_density,
+    density,
 ) -> LabelGroup
 ```
 
@@ -707,7 +881,7 @@ or nested provenance dictionaries.
 
 ### 7. Delete rather than preserve two modes
 
-Once parity and consumer migration pass:
+Once adapter-fidelity tests and consumer migration pass:
 
 - delete the retired helpers and tests that encode their behavior;
 - search the repository for direct calls to those helpers;
