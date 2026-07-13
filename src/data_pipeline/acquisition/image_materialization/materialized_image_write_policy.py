@@ -27,6 +27,7 @@ _VALID_POLICY_KEYS = frozenset({
     "downsample_method",
     "pixel_dtype",
     "jpeg_quality",
+    "flip_polarity",
 })
 
 # Contract columns emitted at the writer/materializer boundary. These are frame_inventory columns,
@@ -38,6 +39,7 @@ MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS: tuple[str, ...] = (
     "downsample_factor",
     "downsample_method",
     "jpeg_quality",
+    "flip_polarity",
 )
 
 MATERIALIZED_IMAGE_WRITE_POLICY_NULLABLE_COLUMNS: tuple[str, ...] = (
@@ -51,6 +53,11 @@ _BASE_DEFAULT = {
     "downsample_method": "none",
     "pixel_dtype": "uint8",
     "jpeg_quality": None,
+    # Canonical materialized polarity: invert to bright-embryo/dark-background for EVERY product
+    # (projection AND z_stack), both microscopes — downstream snip_processing assumes dark bg.
+    # Explicit + per-product overridable here rather than a hidden constant. See
+    # image_building/shared/display_polarity.py.
+    "flip_polarity": True,
 }
 
 _PRODUCT_DEFAULTS = {
@@ -85,6 +92,9 @@ class ImageWritePolicy:
     downsample_method: DownsampleMethod
     pixel_dtype: PixelDType
     jpeg_quality: int | None = None
+    # Whether to invert display polarity (bright-embryo/dark-background) for this product. The
+    # materializer applies it via image_building/shared/display_polarity.apply_display_polarity.
+    flip_polarity: bool = True
 
 
 def resolve_image_write_policy(config: dict | None, product_key: str) -> ImageWritePolicy:

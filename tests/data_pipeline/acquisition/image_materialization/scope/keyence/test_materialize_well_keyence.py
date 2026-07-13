@@ -336,12 +336,17 @@ def test_z_stack_stitches_and_emits_one_inventory_row_per_plane(tmp_path):
     assert df["focus_index_map_path"].isna().all()
     assert df["image_id"].str.contains(r"_z000[01]_t0000$").all()
     assert df["raw_tile_count"].tolist() == [2, 2]
+    # z_stack now carries the canonical display polarity like every other product (default True).
+    assert df["flip_polarity"].tolist() == [True, True]
     validate_frame_inventory_identity_contract(df, scope_label="Keyence z-stack test")
 
     for z_index, row in df.set_index("z_index").iterrows():
         assert f"z{z_index:04d}" in Path(row["image_path"]).stem
         with Image.open(row["image_path"]) as image:
-            np.testing.assert_array_equal(np.asarray(image), mosaics[z_index])
+            # Written plane is the display-polarity-inverted mosaic (uint16: 65535 - v).
+            np.testing.assert_array_equal(
+                np.asarray(image), np.uint16(65535) - mosaics[z_index]
+            )
         manifest = json.loads(Path(row["raw_tile_manifest_path"]).read_text())
         assert len(manifest["tiles"]) == 2
         assert all(tile["z_indices"] == [z_index] for tile in manifest["tiles"])

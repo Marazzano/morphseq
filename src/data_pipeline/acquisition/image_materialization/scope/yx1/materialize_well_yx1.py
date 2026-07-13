@@ -95,6 +95,7 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "downsample_factor",
     "downsample_method",
     "jpeg_quality",
+    "flip_polarity",
     "raw_image_source_path",
     "raw_image_width_px",
     "raw_image_height_px",
@@ -135,13 +136,12 @@ def materialize_ff_projection(
     # scoring, raw-pixel gather, and the uint8 display transform — the adapter must not
     # normalize itself (see image_building/shared/README.md). One stack ⇒ one shared bound
     # pair over exactly this frame, matching legacy per-frame behavior.
+    # Pure focus math only — display polarity is a WRITE-POLICY concern applied by the orchestrator
+    # (per-product flip_polarity), not baked into this primitive. This keeps polarity uniform and
+    # config-driven across both microscopes and both image products.
     result = focus_stack_group([stack_zyx], config=FocusStackConfig(), device=device)
     tile = result.tiles[0]
-    # Apply the ONE shared display polarity (bright-embryo/dark-background) so YX1 matches Keyence.
-    # Previously YX1 emitted the opposite polarity because inversion was hidden in the Keyence-only
-    # stitcher path — see image_building/shared/display_polarity.py.
-    projection_u8 = apply_display_polarity(tile.projection_u8)
-    return projection_u8, tile.focus_index_map
+    return tile.projection_u8, tile.focus_index_map
 
 
 def materialize_max_projection(stack_zyx: np.ndarray) -> np.ndarray:
@@ -388,6 +388,8 @@ def materialize_yx1_product_for_well(
             t_times = time_lookup[t]
             if resolved_product.image_product_type == "projection":
                 ff, focus_index_map = materialize_ff_projection(stack, device=device)
+                # Per-product display polarity (shared owner), same op/flag Keyence uses.
+                ff = apply_display_polarity(ff, invert=write_policy.flip_polarity)
 
                 out_path = materialized_image_paths.projection_frame_path(
                     built_image_data_dir,
@@ -468,7 +470,10 @@ def materialize_yx1_product_for_well(
                         ext=ext,
                         candidate=candidate,
                     )
-                    out_w, out_h = _write_image_and_read_dims(stack[z_index], out_path, write_policy)
+                    # Per-product display polarity (shared owner) — same flag as Keyence z_stack,
+                    # so z_stacks are consistent across microscopes (previously YX1 z_stack was raw).
+                    z_plane = apply_display_polarity(stack[z_index], invert=write_policy.flip_polarity)
+                    out_w, out_h = _write_image_and_read_dims(z_plane, out_path, write_policy)
 
                     image_id = derive_image_id(well_id, "BF", int(t), z_index=z_index)
                     rows.append(_frame_inventory_row(
@@ -572,6 +577,7 @@ def _frame_inventory_row(
         "jpeg_quality": (
             pd.NA if write_policy.jpeg_quality is None else int(write_policy.jpeg_quality)
         ),
+        "flip_polarity": bool(write_policy.flip_polarity),
         "raw_image_source_path": str(raw_image_source_path),
         "raw_image_width_px": int(raw_image_width_px),
         "raw_image_height_px": int(raw_image_height_px),
@@ -592,6 +598,7 @@ def _build_yx1_write_policy(config: dict | None, product_key: str) -> ImageWrite
         "downsample_method": resolved.downsample_method,
         "pixel_dtype": resolved.pixel_dtype,
         "jpeg_quality": resolved.jpeg_quality,
+        "flip_polarity": bool(resolved.flip_polarity),
     }
     if "orientation" in getattr(ImageWritePolicy, "__dataclass_fields__", {}):
         policy_kwargs["orientation"] = "none"

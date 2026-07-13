@@ -31,6 +31,18 @@ def test_resolve_defaults_for_z_stack():
     assert suffix_for_policy(policy) == "jpg"
 
 
+def test_flip_polarity_defaults_true_and_is_overridable():
+    # Canonical display polarity is inverted for every product (both scopes); the flag is an
+    # explicit, per-product write-policy field, not a hidden constant.
+    assert resolve_image_write_policy({}, "BF__projection__focus_stack").flip_polarity is True
+    assert resolve_image_write_policy({}, "BF__z_stack").flip_polarity is True
+    overridden = resolve_image_write_policy(
+        {"image_materialization": {"write_policies": {"BF__z_stack": {"flip_polarity": False}}}},
+        "BF__z_stack",
+    )
+    assert overridden.flip_polarity is False
+
+
 def test_resolve_override_fills_downsample_method_default():
     cfg = {
         "image_materialization": {
@@ -166,6 +178,7 @@ def test_materialized_image_write_policy_columns_drop_source_dims_and_include_or
         "downsample_factor",
         "downsample_method",
         "jpeg_quality",
+        "flip_polarity",
     )
     assert MATERIALIZED_IMAGE_WRITE_POLICY_NULLABLE_COLUMNS == ("jpeg_quality",)
 

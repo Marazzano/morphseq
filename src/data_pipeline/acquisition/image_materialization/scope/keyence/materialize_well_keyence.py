@@ -316,8 +316,8 @@ def materialize_keyence_product_for_well(
                         f"fallback_used={result.fallback_used}."
                     )
                 # One shared, explicit polarity flip post-stitch (NOT hidden in the stitcher):
-                # canonical bright-embryo/dark-background, same op every microscope uses.
-                mosaic = apply_display_polarity(result.stitched)
+                # canonical bright-embryo/dark-background, governed by the per-product write policy.
+                mosaic = apply_display_polarity(result.stitched, invert=write_policy.flip_polarity)
                 out_path = materialized_image_paths.z_stack_frame_path(
                     built_image_data_dir,
                     experiment_id=experiment_id,
@@ -388,6 +388,7 @@ def materialize_keyence_product_for_well(
                     "jpeg_quality": (
                         write_policy.jpeg_quality if write_policy.file_format == "jpg" else pd.NA
                     ),
+                    "flip_polarity": bool(write_policy.flip_polarity),
                 })
             continue
 
@@ -441,8 +442,8 @@ def materialize_keyence_product_for_well(
                 f"Refusing to materialize a wrong-but-passing image."
             )
         # One shared, explicit polarity flip post-stitch (NOT hidden in the stitcher):
-        # canonical bright-embryo/dark-background, same op every microscope uses.
-        mosaic = apply_display_polarity(result.stitched)
+        # canonical bright-embryo/dark-background, governed by the per-product write policy.
+        mosaic = apply_display_polarity(result.stitched, invert=write_policy.flip_polarity)
 
         # Build canvas focus_index_map by painting each tile's fim at its stitched origin.
         # Then trim to the mosaic's actual shape (which may be smaller after legacy-canvas trim).
@@ -551,6 +552,7 @@ def materialize_keyence_product_for_well(
             "downsample_factor": write_policy.downsample_factor,
             "downsample_method": write_policy.downsample_method,
             "jpeg_quality": write_policy.jpeg_quality if write_policy.file_format == "jpg" else pd.NA,
+            "flip_polarity": bool(write_policy.flip_polarity),
         })
 
         if (len(rows) % 10) == 0:
