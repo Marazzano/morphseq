@@ -118,8 +118,12 @@ _Archive/
 **/output/phase0_*/
 **/scripts/output/
 
-# Pipeline outputs and build artifacts
+# Pipeline outputs and build artifacts.
+# Output is centralized on shared storage; the repo path is a browsing symlink into it.
+# Ignore BOTH the directory form (data_pipeline_output/) and the symlink form
+# (data_pipeline_output, no trailing slash) so the symlink is never accidentally committed.
 data_pipeline_output/
+data_pipeline_output
 .snakemake/
 
 # mdcolon results-specific rules moved to results/mcolon/.gitignore
