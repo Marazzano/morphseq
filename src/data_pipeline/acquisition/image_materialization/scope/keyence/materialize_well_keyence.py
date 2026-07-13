@@ -41,6 +41,7 @@ import pandas as pd
 import skimage.io as skio
 from PIL import Image
 
+from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
 from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
     FocusStackConfig,
     focus_stack_group,
@@ -314,7 +315,9 @@ def materialize_keyence_product_for_well(
                         f"time_index={t} z_index={z_index}: reasons={result.qc.reasons} "
                         f"fallback_used={result.fallback_used}."
                     )
-                mosaic = result.stitched
+                # One shared, explicit polarity flip post-stitch (NOT hidden in the stitcher):
+                # canonical bright-embryo/dark-background, same op every microscope uses.
+                mosaic = apply_display_polarity(result.stitched)
                 out_path = materialized_image_paths.z_stack_frame_path(
                     built_image_data_dir,
                     experiment_id=experiment_id,
@@ -437,7 +440,9 @@ def materialize_keyence_product_for_well(
                 f"time_index={t}: reasons={result.qc.reasons} fallback_used={result.fallback_used}. "
                 f"Refusing to materialize a wrong-but-passing image."
             )
-        mosaic = result.stitched
+        # One shared, explicit polarity flip post-stitch (NOT hidden in the stitcher):
+        # canonical bright-embryo/dark-background, same op every microscope uses.
+        mosaic = apply_display_polarity(result.stitched)
 
         # Build canvas focus_index_map by painting each tile's fim at its stitched origin.
         # Then trim to the mosaic's actual shape (which may be smaller after legacy-canvas trim).

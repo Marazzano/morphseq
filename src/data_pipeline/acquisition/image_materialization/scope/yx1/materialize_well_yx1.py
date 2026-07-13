@@ -36,6 +36,7 @@ from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder impo
     _determine_bf_channel,
     _get_stack,
 )
+from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
 from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
     FocusStackConfig,
     focus_stack_group,
@@ -136,7 +137,11 @@ def materialize_ff_projection(
     # pair over exactly this frame, matching legacy per-frame behavior.
     result = focus_stack_group([stack_zyx], config=FocusStackConfig(), device=device)
     tile = result.tiles[0]
-    return tile.projection_u8, tile.focus_index_map
+    # Apply the ONE shared display polarity (bright-embryo/dark-background) so YX1 matches Keyence.
+    # Previously YX1 emitted the opposite polarity because inversion was hidden in the Keyence-only
+    # stitcher path — see image_building/shared/display_polarity.py.
+    projection_u8 = apply_display_polarity(tile.projection_u8)
+    return projection_u8, tile.focus_index_map
 
 
 def materialize_max_projection(stack_zyx: np.ndarray) -> np.ndarray:
