@@ -118,12 +118,11 @@ _Archive/
 **/output/phase0_*/
 **/scripts/output/
 
-# Pipeline outputs and build artifacts.
-# Output is centralized on shared storage; the repo path is a browsing symlink into it.
-# Ignore BOTH the directory form (data_pipeline_output/) and the symlink form
-# (data_pipeline_output, no trailing slash) so the symlink is never accidentally committed.
-data_pipeline_output/
-data_pipeline_output
+# Pipeline tree lives on shared storage (nlammers/.../morphseq/pipeline/{input,output,models}).
+# The repo has a browsing symlink into it; ignore it so it is never committed.
+#   pipeline -> nlammers/.../pipeline   (browse input/output/models)
+pipeline
+pipeline/
 .snakemake/
 
 # mdcolon results-specific rules moved to results/mcolon/.gitignore

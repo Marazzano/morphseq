@@ -36,6 +36,9 @@ def _snip_inventory_validated(experiment: str, *, path_mode: str, well_id: str |
 def _snip_inventory_artifacts_for_run(wc):
     return run_well_shard_paths(DATA_ROOT, SNIP_INVENTORY_STEP, "snip_inventory", wc.experiment, wells_for_experiment(wc))
 
+def _snip_inventory_validated_for_run(wc):
+    return [_snip_inventory_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w) for w in wells_for_experiment(wc)]
+
 def _snip_inventory_snips_dir(experiment: str, well_id: str) -> str:
     """Per-well pixel directory: sits beside the shard CSV under per_well/{well_id}/."""
     return rule_step_dir(SNIP_INVENTORY_STEP, experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id) + "/snips"
@@ -134,6 +137,11 @@ rule merge_snip_inventory:
     """Row-stack per-well snip_inventory shards into the experiment-level merged table."""
     input:
         per_well=_snip_inventory_artifacts_for_run,
+        # Wait on each shard's .validated sentinel too, not just the artifact — otherwise the merge
+        # can fire in the window after the shard CSV exists but before validation writes the
+        # sentinel, and collect_well_shard_paths (which requires both) sees zero validated shards
+        # and raises "no shards to concatenate". Matches the SAFE merge rules (e.g. merge_frame_masks).
+        per_well_validated=_snip_inventory_validated_for_run,
     output:
         merged=str(_snip_inventory_artifact(
             "{experiment}", "snip_inventory",
