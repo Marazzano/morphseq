@@ -6,6 +6,10 @@ upgrade. The **why** lives in `DISTRIBUTION_COMPARISON_MOTIVATION.md` (formerly
 specs onto the existing primitives in `core/` and `plotting/`, then splits the
 work into independently-shippable sub-specs.
 
+Implementation briefs for the current parallel plan live in `../tasks/`
+(`TASK_0_foundation.md`, `TASK_A_grid.md`, `TASK_B_labelers.md`,
+`TASK_C_compare.md`, `TASK_D_plotting.md`, `TASK_E_b9d2_example.md`).
+
 ## What we already have (grounding)
 
 - `core/distribution_records.py`

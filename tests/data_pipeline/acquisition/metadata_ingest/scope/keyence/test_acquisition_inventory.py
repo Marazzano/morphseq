@@ -42,8 +42,14 @@ def _stub_scrape(_tiff_path: Path) -> dict:
     }
 
 
-def _make_well_tree(root: Path, well_xy: str, *, tiles, zs, channels, times) -> None:
+def _make_well_tree(root: Path, well_xy: str, *, tiles, zs, channels, times, marker: str | None = None) -> None:
     """Write empty raw planes for a multi-tile/multi-Z/multi-channel well under an XY dir layout."""
+    if marker is None:
+        xy_num = int(well_xy.removeprefix("XY"))
+        row = (xy_num - 1) // 12
+        col = (xy_num - 1) % 12 + 1
+        marker = f"{chr(65 + row)}{col:02d}"
+    _touch(root / well_xy / f"_{marker}")
     for t in times:
         for tile in tiles:
             for z in zs:
@@ -69,9 +75,22 @@ def test_builder_explodes_one_row_per_plane(tmp_path):
     # No collapse: the cell key is unique across all planes.
     assert not df.duplicated(subset=list(KEYENCE_ACQUISITION_CELL_KEY)).any()
     # Faithful axes captured from the filename grammar.
+    assert df["position_index"].unique().tolist() == [16]
     assert sorted(df["z_index"].unique()) == [1, 2]
     assert sorted(df["tile_id"].unique()) == [1, 2, 3]
     assert df["n_tiles_in_well"].unique().tolist() == [3]
+
+
+def test_builder_uses_well_marker_not_xy_sequence(tmp_path):
+    raw_dir = tmp_path / _EXPERIMENT
+    _make_well_tree(raw_dir, "XY13", tiles=(1,), zs=(1,), channels=(1,), times=(1,), marker="B12")
+
+    df = build_keyence_acquisition_inventory(
+        experiment_id=_EXPERIMENT, raw_data_dir=raw_dir, scrape_plane_metadata=_stub_scrape
+    )
+
+    assert df["position_index"].unique().tolist() == [13]
+    assert df["well_index"].unique().tolist() == ["B12"]
 
 
 def test_multichannel_well_is_not_a_collision(tmp_path):

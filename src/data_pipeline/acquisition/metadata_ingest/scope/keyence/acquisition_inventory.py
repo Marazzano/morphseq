@@ -20,8 +20,9 @@ Key decisions (see ``target/specs/front_end/keyence_wire_through.md`` Stage A + 
     would mislabel a real fluorescence plane). ``channel_index`` stays the faithful on-disk ``CH#``.
   - **Collisions CAN happen** (re-acquisition) — unlike YX1. Stage A asserts cell-key uniqueness
     FAIL-LOUD; resolution/quarantine is Stage E. A clean experiment passes; a re-acquired well fails
-    here until Stage E exists. The cell key separates tiles (``position_index`` is tile-unique) and
-    channels (``channel_index``), so a normal multi-tile/multi-Z/multi-channel well is NOT a collision.
+    here until Stage E exists. The cell key separates the Keyence acquisition position
+    (``position_index`` = ``XY##``), tiles (``tile_id``), and channels (``channel_index``), so a
+    normal multi-tile/multi-Z/multi-channel well is NOT a collision.
 
 Import direction: this module MAY import the shared check primitives, the raw-plane parser, the
 channel mapper, and identifiers; it MUST NOT import stages, Snakemake/tasks, stitch, or YX1 logic.
@@ -40,6 +41,7 @@ from data_pipeline.acquisition.metadata_ingest.scope.acquisition_inventory_contr
 from data_pipeline.acquisition.metadata_ingest.scope.keyence.channel_map import KEYENCE_CHANNEL_INDEX_MAP
 from data_pipeline.acquisition.metadata_ingest.scope.keyence.raw_plane_parsing import (
     _extract_keyence_well_and_tile,
+    _parse_keyence_xy_position_index,
     _parse_keyence_time_z_channel,
 )
 from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_checks import (
@@ -86,12 +88,13 @@ KEYENCE_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
     *KEYENCE_ACQUISITION_INVENTORY_SCOPE_COLUMNS,
 )
 
-# The raw acquisition-cell key (per ``run_well_schema.md``). Exactly one raw plane may occupy each
-# cell. ``position_index`` is tile-unique (see the builder), so this key genuinely separates tiles;
-# ``channel_index`` separates channels; ``z_index`` separates Z. A duplicate cell = a re-acquisition.
+# The raw acquisition-cell key. Exactly one raw plane may occupy each cell. ``position_index`` is the
+# Keyence ``XY##`` acquisition position; ``tile_id`` separates mosaic tiles; ``channel_index``
+# separates channels; ``z_index`` separates Z. A duplicate cell = a re-acquisition.
 KEYENCE_ACQUISITION_CELL_KEY: tuple[str, ...] = (
     "well_id",
     "position_index",
+    "tile_id",
     "z_index",
     "channel_index",
     "time_index_claimed",
@@ -235,9 +238,8 @@ def build_keyence_acquisition_inventory_rows(
             Injected so tests can stub the disk-touching XML scrape. ``extract_scope_metadata`` passes
             the real Keyence scraper.
 
-    ``position_index`` is assigned as a GLOBAL enumeration over the sorted ``(well_index, tile_id)``
-    pairs present, so it is unique per tile per well — the cell key (which already carries ``well_id``)
-    then genuinely separates tiles. ``position_index_within_well`` carries the local ``tile_id``.
+    For modern ``XY##`` exports, ``position_index`` is the numeric Keyence acquisition position
+    encoded by the directory name. ``position_index_within_well`` carries the local ``tile_id``.
     """
     experiment_id = str(experiment_id).strip()
     raw_data_dir = Path(raw_data_dir)
@@ -255,6 +257,7 @@ def build_keyence_acquisition_inventory_rows(
         parsed_planes.append(
             {
                 "well_index": well_index,
+                "position_index": _parse_keyence_xy_position_index(tiff_path),
                 "tile_id": int(tile_id),
                 "z_index": int(z_index),
                 "channel_index": int(channel_index),
@@ -269,9 +272,10 @@ def build_keyence_acquisition_inventory_rows(
             "Expected files named like '...XY##_NNNNN_Z###_CH#.tif'."
         )
 
-    # Global tile-unique position_index over (well_index, tile_id), and per-well tile counts.
+    # Fallback synthetic position index for non-XY legacy layouts; modern XY exports use the real
+    # Keyence position index from the directory name.
     well_tile_pairs = sorted({(p["well_index"], p["tile_id"]) for p in parsed_planes})
-    position_index_by_pair = {pair: idx for idx, pair in enumerate(well_tile_pairs)}
+    fallback_position_index_by_pair = {pair: idx for idx, pair in enumerate(well_tile_pairs)}
     n_tiles_in_well = (
         pd.DataFrame(well_tile_pairs, columns=["well_index", "tile_id"])
         .groupby("well_index")["tile_id"]
@@ -297,7 +301,11 @@ def build_keyence_acquisition_inventory_rows(
             {
                 # Tier-1 shared core
                 "experiment_id": experiment_id,
-                "position_index": int(position_index_by_pair[(well_index, tile_id)]),
+                "position_index": int(
+                    plane["position_index"]
+                    if plane["position_index"] is not None
+                    else fallback_position_index_by_pair[(well_index, tile_id)]
+                ),
                 "channel_id": channel_id,
                 "raw_channel_name": str(raw_channel_name),
                 "time_index": int(plane["time_index_claimed"]),

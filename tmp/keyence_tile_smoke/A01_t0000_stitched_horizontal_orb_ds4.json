@@ -1,0 +1,18 @@
+{
+  "stitched_path": "tmp/keyence_tile_smoke/A01_t0000_stitched_horizontal_orb_ds4.png",
+  "coords_yx": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      -1.4144742869992104,
+      170.86457881694326
+    ],
+    [
+      -0.9290363207439578,
+      349.165231425368
+    ]
+  ],
+  "note": "Diagnostic ORB overlap mosaic, not production stitch2d output."
+}
