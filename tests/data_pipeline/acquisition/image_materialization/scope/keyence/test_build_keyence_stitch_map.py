@@ -45,17 +45,33 @@ def _fake_raw_coords(tile_ids: list[str], x_offset: float = 10.0) -> dict[int, l
     }
 
 
+_BUILD_MOD = "data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map"
+
+
+def _fake_focus_group(stacks_zyx, *, config=None, device="cpu"):
+    """focus_stack_group stand-in: one uint8 projection tile per input stack."""
+    from types import SimpleNamespace
+
+    tiles = tuple(
+        SimpleNamespace(
+            projection_u8=np.zeros((10, 10), dtype=np.uint8),
+            focus_index_map=np.zeros((10, 10), dtype=np.int32),
+        )
+        for _ in stacks_zyx
+    )
+    return SimpleNamespace(tiles=tiles, intensity_lo=0, intensity_hi=65535, config=config)
+
+
+def _patch_focus_group():
+    return patch(f"{_BUILD_MOD}.focus_stack_group", side_effect=_fake_focus_group)
+
+
 def _patch_io_and_stitch(tile_ids: list[str], x_offset: float = 10.0):
     fake_image = np.zeros((10, 10), dtype=np.uint8)
-    fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
     return [
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.skio.imread",
-              return_value=fake_image),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.im_rescale",
-              return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
-              return_value=fake_ff),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
+        patch(f"{_BUILD_MOD}.skio.imread", return_value=fake_image),
+        _patch_focus_group(),
+        patch(f"{_BUILD_MOD}.raw_stitch2d_align",
               return_value=_fake_raw_coords(tile_ids, x_offset)),
     ]
 
@@ -66,7 +82,7 @@ def test_writes_coords_json(tmp_path):
     tile_ids = ["0", "1", "2"]
 
     patches = _patch_io_and_stitch(tile_ids, x_offset=10.0)
-    with patches[0], patches[1], patches[2], patches[3]:
+    with patches[0], patches[1], patches[2]:
         build_keyence_stitch_map(inv, n_samples=3, out_path=out)
 
     assert out.exists()
@@ -90,11 +106,11 @@ def test_deterministic_seed(tmp_path):
     tile_ids = ["0", "1", "2"]
 
     patches = _patch_io_and_stitch(tile_ids)
-    with patches[0], patches[1], patches[2], patches[3]:
+    with patches[0], patches[1], patches[2]:
         build_keyence_stitch_map(inv, n_samples=5, out_path=out1)
 
     patches2 = _patch_io_and_stitch(tile_ids)
-    with patches2[0], patches2[1], patches2[2], patches2[3]:
+    with patches2[0], patches2[1], patches2[2]:
         build_keyence_stitch_map(inv, n_samples=5, out_path=out2)
 
     assert out1.read_bytes() == out2.read_bytes()
@@ -126,14 +142,10 @@ def test_orientation_from_inventory(tmp_path):
         return _fake_raw_coords(tile_ids)
 
     fake_image = np.zeros((10, 10), dtype=np.uint8)
-    fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
     with (
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.skio.imread",
               return_value=fake_image),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.im_rescale",
-              return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
-              return_value=fake_ff),
+        _patch_focus_group(),
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
               side_effect=_fake_align),
     ):
@@ -154,14 +166,10 @@ def test_unknown_orientation_defaults_to_horizontal(tmp_path):
         return _fake_raw_coords(tile_ids)
 
     fake_image = np.zeros((10, 10), dtype=np.uint8)
-    fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
     with (
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.skio.imread",
               return_value=fake_image),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.im_rescale",
-              return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
-              return_value=fake_ff),
+        _patch_focus_group(),
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
               side_effect=_fake_align),
     ):
@@ -181,17 +189,13 @@ def test_skips_partial_alignments_and_keeps_good_samples(tmp_path):
     out = tmp_path / "map.json"
 
     fake_image = np.zeros((10, 10), dtype=np.uint8)
-    fake_ff = (np.zeros((10, 10), dtype=np.float32), None)
     partial = {0: [0.0, 0.0], 1: [700.0, 1.0]}
     full = {0: [0.0, 0.0], 1: [700.0, 1.0], 2: [1400.0, 2.0]}
 
     with (
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.skio.imread",
               return_value=fake_image),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.im_rescale",
-              return_value=(np.zeros((2, 10, 10), dtype=np.float32), None, None)),
-        patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.materialize_ff_projection",
-              return_value=fake_ff),
+        _patch_focus_group(),
         patch("data_pipeline.acquisition.image_materialization.scope.keyence.build_keyence_stitch_map.raw_stitch2d_align",
               side_effect=[partial, full, partial]),
     ):
