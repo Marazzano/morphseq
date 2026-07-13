@@ -260,8 +260,8 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         wt_count = wt_dist.resolved_peak_count
         grp_evidence = grp_dist.resolution_evidence
         wt_evidence = wt_dist.resolution_evidence
-        grp_summary = grp_evidence.count_stability if grp_evidence is not None else None
-        wt_summary = wt_evidence.count_stability if wt_evidence is not None else None
+        grp_summary = grp_evidence.peak_resolution_summary if grp_evidence is not None else None
+        wt_summary = wt_evidence.peak_resolution_summary if wt_evidence is not None else None
         grp_freq = grp_summary.mode_frequency if grp_summary is not None else float("nan")
         wt_freq = wt_summary.mode_frequency if wt_summary is not None else float("nan")
         print(

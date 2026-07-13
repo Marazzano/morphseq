@@ -32,7 +32,6 @@ from .resolved_peak_metrics import (
     run_empirical_null_test,
     summarize_resolved_peak_distribution,
 )
-from .support_geometry import evaluate_kde_on_grid
 
 
 @dataclass(frozen=True)
@@ -65,13 +64,12 @@ class EmpiricalNullSpec:
 
 
 _SUPPORTED_BANDWIDTH_RULES = (
-    "scipy_default",
     "median_kNN_distance",
     "longest_non_outlier_MST_edge",
 )
-# Rules other than scipy_default derive an isotropic sigma from point-cloud
-# geometry (see bandwidth_tuning.bandwidth_geometry_scales) and evaluate the KDE
-# with that fixed sigma via the isotropic evaluator, honoring bandwidth_multiplier.
+# Both supported rules derive an isotropic sigma from point-cloud geometry and
+# feed the single dense isotropic Gaussian evaluator. Alternate estimator
+# backends are deliberately outside the unified resolved-peak API.
 _GEOMETRY_BANDWIDTH_RULES = ("median_kNN_distance", "longest_non_outlier_MST_edge")
 
 # Canonical V0 analysis configuration -- the one validated by the smoke test and
@@ -90,21 +88,9 @@ _GEOMETRY_BANDWIDTH_RULES = ("median_kNN_distance", "longest_non_outlier_MST_edg
 # reference, and every null resample each get their own geometry-appropriate sigma
 # and the whole figure stays on-method.
 #
-# NOTE: this default previously read `scipy_default` (Scott's rule) — a stale
-# leftover from when scipy was the ONLY supported rule (commit cd6e9a5e). When the
-# geometry rules were wired (a12fbfda) the validation script adopted the MST-edge
-# rule but this default was never updated to match. Corrected here.
-#
-# Do NOT revert to `scipy_default` (Scott's rule). The only situation in which
-# scipy_default would even be worth *considering* is >2 feature dimensions, and
-# even that is currently UNPROVEN — no calibration backs it.
-#
-# TODO(prove-before-use): before scipy_default is ever adopted (only in the >2-D
-# case), it must be proven on the WT-calibrated support-vs-density gate — show on
-# labeled synthetic truth (the discrete/continuous fixtures) that Scott's rule in
-# >2-D does not inflate the two_discrete false-positive rate or miss narrow 3+-mode
-# splits the way it does in 2-D. Until that calibration exists, this default stays
-# on longest_non_outlier_MST_edge for ALL dimensionalities.
+# Scott/SciPy was an earlier experimental backend. It is no longer a supported
+# resolved-peak configuration: adding another estimator requires an explicit
+# design/calibration change rather than a second live backend branch here.
 DEFAULT_ANALYSIS_SPEC = ResolvedPeakAnalysisSpec(
     bandwidth_rule="longest_non_outlier_MST_edge",
     bandwidth_multiplier=0.75,
@@ -120,23 +106,15 @@ def _evaluate_density_for_spec(
 ) -> np.ndarray:
     """Evaluate the KDE density on `canonical_grid` under the spec's bandwidth rule.
 
-    scipy_default:  scipy.stats.gaussian_kde (Scott's rule); multiplier must be 1.0.
-    geometry rules: an isotropic sigma from bandwidth_geometry_scales, scaled by
-                    bandwidth_multiplier, evaluated with the isotropic Gaussian KDE.
+    Every supported rule selects an isotropic sigma via
+    ``bandwidth_geometry_scales``. ``bandwidth_multiplier`` scales that sigma;
+    the resulting field is always evaluated by the same Gaussian KDE kernel.
     """
     rule = analysis_spec.bandwidth_rule
     if rule not in _SUPPORTED_BANDWIDTH_RULES:
         raise NotImplementedError(
             f"bandwidth_rule={rule!r} not yet wired; supported: {_SUPPORTED_BANDWIDTH_RULES}"
         )
-
-    if rule == "scipy_default":
-        if analysis_spec.bandwidth_multiplier != 1.0:
-            raise NotImplementedError(
-                "bandwidth_multiplier != 1.0 is not yet wired for bandwidth_rule='scipy_default'."
-            )
-        # kde=None routes evaluate_kde_on_grid to plain scipy.stats.gaussian_kde.
-        return evaluate_kde_on_grid(points, canonical_grid.xx, canonical_grid.yy, kde=None)
 
     # Geometry-derived isotropic sigma (median kNN / longest non-outlier MST edge).
     # The NotImplementedError check above guarantees rule is in
@@ -170,7 +148,7 @@ def _compute_peak_detection_with_analysis_spec(
 ) -> tuple[DensityGrid, np.ndarray, PeakDetectionResult]:
     """KDE density -> `detect_peaks`, stopping short of full empirical resolution.
 
-    This is the canonical density-to-detection path: `resolve_points_with_analysis_spec`
+    This is the canonical density-to-detection path: `_resolve_points_single_pass`
     delegates to it for the full resolve, and callers that only need a peak count
     and candidate centers (e.g. bootstrap-vote draws) can call it directly to skip
     sample-to-peak reassignment, per-peak geometry, and `ResolvedPeakDistribution`
@@ -199,7 +177,7 @@ def _compute_peak_detection_with_analysis_spec(
     return density_grid, points_array, detection_result
 
 
-def resolve_points_with_analysis_spec(
+def _resolve_points_single_pass(
     *,
     distribution_id: str,
     points: np.ndarray,
@@ -221,7 +199,7 @@ def resolve_points_with_analysis_spec(
         density=density,
         grid=canonical_grid,
     )
-    return resolve_density_grid_with_analysis_spec(
+    return _resolve_density_grid_single_pass(
         distribution_id=distribution_id,
         points=points_array,
         density_grid=density_grid,
@@ -229,7 +207,7 @@ def resolve_points_with_analysis_spec(
     )
 
 
-def resolve_density_grid_with_analysis_spec(
+def _resolve_density_grid_single_pass(
     *,
     distribution_id: str,
     points: np.ndarray,
@@ -277,7 +255,7 @@ def summarize_points_with_analysis_spec(
     only need the scalar summary and should not retain per-draw resolved
     objects in memory.
     """
-    distribution = resolve_points_with_analysis_spec(
+    distribution = _resolve_points_single_pass(
         distribution_id=distribution_id,
         points=points,
         canonical_grid=canonical_grid,
@@ -553,8 +531,6 @@ __all__ = [
     "_compute_peak_detection_with_analysis_spec",
     "compute_observed_delta",
     "reduce_permutation_null_test",
-    "resolve_density_grid_with_analysis_spec",
-    "resolve_points_with_analysis_spec",
     "resolved_peak_summary_to_row",
     "resolved_peak_to_rows",
     "run_resolved_peak_permutation_comparison",

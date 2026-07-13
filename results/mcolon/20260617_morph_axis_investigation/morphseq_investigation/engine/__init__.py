@@ -32,6 +32,12 @@ from .invariants import (
     validate_sample_sets,
     InvariantError,
 )
+from .compare import (
+    DescriptiveComparison,
+    DescriptiveComparisons,
+    NullTestResult,
+    compare_distributions,
+)
 
 __all__ = [
     "UNASSIGNED_LABEL",
@@ -56,4 +62,8 @@ __all__ = [
     "validate_label_group",
     "validate_sample_sets",
     "InvariantError",
+    "DescriptiveComparison",
+    "DescriptiveComparisons",
+    "NullTestResult",
+    "compare_distributions",
 ]

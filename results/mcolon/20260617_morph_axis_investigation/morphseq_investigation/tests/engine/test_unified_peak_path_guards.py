@@ -8,6 +8,7 @@ from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[2]
 ENGINE = PACKAGE / "engine"
+CORE = PACKAGE / "core"
 
 
 def _source(name: str) -> str:
@@ -77,6 +78,22 @@ def test_catalog_and_plotting_never_import_or_call_kde_evaluation():
         assert _called_names(module).isdisjoint(forbidden_calls), module
 
 
+def test_active_density_paths_share_one_kde_kernel_and_no_scipy_backend():
+    """The supported engine/resolver surface has one evaluator implementation.
+
+    ``support_geometry`` is intentionally excluded: it is a legacy research
+    diagnostic module and labels its historical alternate estimators as such.
+    """
+    grid_source = (ENGINE / "grid.py").read_text(encoding="utf-8")
+    resolver_source = (CORE / "resolved_peak_analysis.py").read_text(encoding="utf-8")
+    for source in (grid_source, resolver_source):
+        assert "evaluate_isotropic_gaussian_kde_from_dist2(" in source
+        assert "scipy.stats" not in source
+        assert "from scipy" not in source
+        assert "scipy_default" not in source
+    assert resolver_source.count("evaluate_isotropic_gaussian_kde_from_dist2(") == 1
+
+
 def test_catalog_routes_peak_assignment_through_the_single_chain():
     catalog = _source("catalog.py")
     objects = _source("objects.py")
@@ -91,6 +108,25 @@ def test_catalog_routes_peak_assignment_through_the_single_chain():
     assert "resolved_record = compute_resolved_peaks(" in labelers
     assert "return label_group_from_resolved_peaks(" in labelers
     assert "from .peak_adapter import label_group_from_resolved_peaks" in labelers
+
+
+def test_single_pass_resolvers_are_internal_and_not_publicly_exported():
+    source = (CORE / "resolved_peak_analysis.py").read_text(encoding="utf-8")
+    assert "def resolve_points_with_analysis_spec(" not in source
+    assert "def resolve_density_grid_with_analysis_spec(" not in source
+    assert "def _resolve_points_single_pass(" in source
+    assert "def _resolve_density_grid_single_pass(" in source
+    exported = source.partition("__all__ = [")[2]
+    assert "_resolve_points_single_pass" not in exported
+    assert "_resolve_density_grid_single_pass" not in exported
+
+
+def test_engine_labeler_accepts_only_one_resolution_configuration_path():
+    source = _source("labelers.py")
+    signature = source.partition("def detect_peaks(")[2].partition(") -> LabelGroup:")[0]
+    assert "resolution_config: PeakResolutionConfig" in signature
+    assert "voting_spec" not in signature
+    assert "robustness_policy" not in signature
 
 
 def test_catalog_does_not_reconstruct_basins_hdrs_or_recount_peaks():
@@ -116,3 +152,21 @@ def test_catalog_does_not_reconstruct_basins_hdrs_or_recount_peaks():
     assert "len(peaks" not in source
     assert "basin" not in source.lower()
     assert "hdr" not in source.lower()
+
+
+def test_catalog_comparison_is_matching_only_and_delegates_numeric_work():
+    tree = _tree("catalog.py")
+    calls = _called_names("catalog.py")
+    forbidden = {
+        "build_shared_grid", "evaluate_density", "_bandwidth", "_overlap",
+        "test_nulls", "gaussian_kde",
+    }
+    imported = {
+        alias.name.rsplit(".", 1)[-1]
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    assert imported.isdisjoint(forbidden)
+    assert calls.isdisjoint(forbidden)
+    assert calls >= {"compare_distributions"}

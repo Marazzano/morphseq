@@ -37,6 +37,14 @@ _VALID_METHODS = (
     "fixed_bounds",
 )
 
+# The robust-bound policy used by the Valley analysis before its final
+# visualization-only square-box expansion. Comparison grids apply this policy
+# independently per native feature axis; they deliberately do not square or
+# normalize the numeric spans.
+VALLEY_SCAN_PERCENTILE = 2.0
+VALLEY_RANGE_PADDING_FRACTION = 0.35
+VALLEY_MARGIN_FRACTION = 0.06
+
 
 # --------------------------------------------------------------------------- #
 # build_grid
@@ -206,6 +214,128 @@ def build_grid(
         axis_values=axis_values,
         construction_method=method,
         construction_params=normalized_params,
+        fit_sample_ids=fit_sample_ids,
+    )
+
+
+def derive_robust_pooled_axes(
+    left_values: np.ndarray,
+    right_values: np.ndarray,
+    *,
+    resolution: int = 40,
+    scan_percentile: float = VALLEY_SCAN_PERCENTILE,
+    range_padding_fraction: float = VALLEY_RANGE_PADDING_FRACTION,
+    margin_fraction: float = VALLEY_MARGIN_FRACTION,
+) -> tuple[np.ndarray, ...]:
+    """Feature-blind numeric shared axes under the Valley robust-bound policy.
+
+    This primitive knows only two aligned numeric matrices. For each column it
+    pools both populations, takes the ``scan_percentile`` and complementary
+    percentiles, pads that robust range by ``range_padding_fraction``, then
+    adds ``margin_fraction`` of the padded span. This is the pre-squaring
+    numeric policy in ``plotting.modal_distribution_plotting.density_box``.
+
+    The same coordinate count is used independently on every axis. Numeric
+    spans remain in native units and are never equalized or normalized.
+    Feature names, sample IDs, distributions, and catalogs belong to the
+    semantic composition layer and are intentionally absent from this API.
+    """
+    left = np.asarray(left_values, dtype=float)
+    right = np.asarray(right_values, dtype=float)
+    if left.ndim != 2 or right.ndim != 2:
+        raise ValueError("shared-grid inputs must both be 2-D")
+    if left.shape[1] != right.shape[1]:
+        raise ValueError("shared-grid inputs must have the same feature count")
+    if left.shape[1] == 0 or left.shape[0] + right.shape[0] == 0:
+        raise ValueError("shared-grid inputs must contain at least one feature and one row")
+    pooled = np.concatenate((left, right), axis=0)
+    if not np.all(np.isfinite(pooled)):
+        raise ValueError("shared-grid values must all be finite")
+
+    resolution = int(resolution)
+    if resolution < 2:
+        raise ValueError("resolution must be at least 2")
+    scan = float(scan_percentile)
+    padding = float(range_padding_fraction)
+    margin = float(margin_fraction)
+    if not 0.0 <= scan < 50.0:
+        raise ValueError("scan_percentile must satisfy 0 <= value < 50")
+    if padding < 0.0 or margin < 0.0:
+        raise ValueError("padding and margin fractions must be nonnegative")
+
+    robust_lo, robust_hi = np.percentile(pooled, [scan, 100.0 - scan], axis=0)
+    robust_span = robust_hi - robust_lo
+    primary_pad = robust_span * padding
+    primary_pad = np.where(primary_pad > 0.0, primary_pad, 1.0)
+    padded_lo = robust_lo - primary_pad
+    padded_hi = robust_hi + primary_pad
+    outer_margin = (padded_hi - padded_lo) * margin
+    lo = padded_lo - outer_margin
+    hi = padded_hi + outer_margin
+    return tuple(
+        np.linspace(float(lo[j]), float(hi[j]), resolution)
+        for j in range(pooled.shape[1])
+    )
+
+
+def build_shared_grid(
+    feature_names: Sequence[str],
+    left_values: np.ndarray,
+    right_values: np.ndarray,
+    left_sample_ids: Sequence[str],
+    right_sample_ids: Sequence[str],
+    *,
+    resolution: int = 40,
+    scan_percentile: float = VALLEY_SCAN_PERCENTILE,
+    range_padding_fraction: float = VALLEY_RANGE_PADDING_FRACTION,
+    margin_fraction: float = VALLEY_MARGIN_FRACTION,
+) -> Grid:
+    """Attach ordered-feature/sample identity to feature-blind shared axes.
+
+    Numeric derivation is wholly delegated to ``derive_robust_pooled_axes``.
+    This higher-level constructor owns semantic validation, provenance, and
+    deterministic identity only.
+    """
+    left_values = np.asarray(left_values, dtype=float)
+    right_values = np.asarray(right_values, dtype=float)
+    if left_values.ndim != 2 or right_values.ndim != 2:
+        raise ValueError("shared-grid inputs must both be 2-D")
+    if left_values.shape[1] != right_values.shape[1]:
+        raise ValueError("shared-grid inputs must have the same feature count")
+    feature_names = tuple(feature_names)
+    if len(feature_names) != left_values.shape[1]:
+        raise ValueError("ordered feature names must match the numeric column count")
+    fit_sample_ids = (*tuple(left_sample_ids), *tuple(right_sample_ids))
+    if len(fit_sample_ids) != left_values.shape[0] + right_values.shape[0]:
+        raise ValueError("sample IDs must align one-to-one with the pooled numeric rows")
+
+    axis_values = derive_robust_pooled_axes(
+        left_values,
+        right_values,
+        resolution=resolution,
+        scan_percentile=scan_percentile,
+        range_padding_fraction=range_padding_fraction,
+        margin_fraction=margin_fraction,
+    )
+    params = {
+        "resolution": int(resolution),
+        "scan_percentile": float(scan_percentile),
+        "range_padding_fraction": float(range_padding_fraction),
+        "margin_fraction": float(margin_fraction),
+    }
+    grid_id = make_grid_id(
+        feature_names=feature_names,
+        construction_method="valley_robust_pooled_bounds",
+        construction_params=params,
+        axis_values=axis_values,
+        fit_sample_ids=fit_sample_ids,
+    )
+    return Grid(
+        grid_id=grid_id,
+        feature_names=feature_names,
+        axis_values=axis_values,
+        construction_method="valley_robust_pooled_bounds",
+        construction_params=params,
         fit_sample_ids=fit_sample_ids,
     )
 

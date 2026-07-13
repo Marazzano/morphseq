@@ -33,6 +33,8 @@ import numpy as np
 from analyze.viz.plotting.faceting_engine import (
     FacetSpec,
     FigureData,
+    HeatmapData,
+    HeatmapStyle,
     SubplotData,
     TraceData,
     TraceStyle,
@@ -42,6 +44,7 @@ from analyze.viz.styling import STANDARD_PALETTE
 from analyze.viz.styling.genotype_colors import get_color_for_genotype
 
 from .catalog import DistributionComparison, DistributionComparisons
+from .compare import DescriptiveComparison
 from .facets import CoordinateFacet, FacetKey, LabelGroupFacet
 from .objects import (
     DensityEstimate,
@@ -59,6 +62,19 @@ logger = logging.getLogger(__name__)
 # never dropped, never counted as a mode, always rendered muted.
 UNASSIGNED_LABEL = "unassigned"
 _UNASSIGNED_STYLE_DEFAULTS = dict(color="#B0B0B0", alpha=0.5, width=1.0, linestyle=":")
+
+_NULL_STATE_STYLES = {
+    "not_tested": TraceStyle(color="#4C78A8", width=2.0, linestyle=":"),
+    "invalid": TraceStyle(color="#E45756", width=2.0, linestyle="-."),
+    "nonsignificant": TraceStyle(color="#4C78A8", width=2.0, linestyle="--"),
+    "significant": TraceStyle(color="#E45756", width=2.5, linestyle="-"),
+}
+_NULL_STATE_ANNOTATIONS = {
+    "not_tested": "not tested",
+    "invalid": "invalid",
+    "nonsignificant": "n.s.",
+    "significant": "*",
+}
 
 
 def _default_style_for_label(label: str | None) -> TraceStyle:
@@ -191,6 +207,97 @@ def overlay_strip_subplot(
         title=title,
         x_label=x_label if x_label is not None else (grid.feature_names[0] if grid.feature_names else None),
         y_label=y_label if y_label is not None else "density",
+    )
+
+
+def descriptive_comparison_subplot(
+    comparison: DescriptiveComparison,
+    *,
+    key: tuple = (None, None),
+    title: str | None = None,
+) -> SubplotData:
+    """Render-ready 1-D target/reference densities without doing analysis.
+
+    ``compare_distributions`` owns alignment, density evaluation, overlap, and
+    optional null testing.  This adapter consumes those immutable results only.
+    The target line encodes all four inference states so an absent test is not
+    presented as a nonsignificant result.
+    """
+    if len(comparison.features) != 1:
+        raise ValueError("descriptive comparison strip plotting requires 1-D input")
+    state = comparison.null_test.state
+    return overlay_strip_subplot(
+        comparison.grid,
+        (comparison.reference_density.density_grid, comparison.target_density.density_grid),
+        labels=(
+            str(comparison.reference_value or comparison.reference.distribution_id),
+            str(comparison.target_value or comparison.target.distribution_id),
+        ),
+        styles=(
+            TraceStyle(color="#777777", width=2.0, linestyle="-"),
+            _NULL_STATE_STYLES[state],
+        ),
+        key=key,
+        title=title,
+        x_label=comparison.features[0],
+        y_label="density",
+    )
+
+
+def descriptive_comparison_2d_figure(
+    comparison: DescriptiveComparison,
+    *,
+    title: str = "",
+) -> FigureData:
+    """Build target/reference heatmap IR from an already prepared 2-D field.
+
+    This adapter reads the frozen shared grid and its attached density arrays
+    verbatim. It does not align samples, derive a grid, evaluate a density, or
+    interpolate either field.
+    """
+    if len(comparison.features) != 2:
+        raise ValueError("descriptive comparison heatmap plotting requires 2-D input")
+    x_axis, y_axis = comparison.grid.axis_values
+    expected_shape = (len(x_axis), len(y_axis))
+    state = comparison.null_test.state
+    subplots = []
+    roles = (
+        ("reference", comparison.reference_density.density_grid.density, False),
+        ("target", comparison.target_density.density_grid.density, True),
+    )
+    for role, density, is_target in roles:
+        values = np.asarray(density, dtype=float)
+        if values.shape != expected_shape:
+            raise ValueError(
+                f"prepared {role} density shape {values.shape} does not match "
+                f"shared grid shape {expected_shape}"
+            )
+        annotations = np.full(values.shape, "", dtype=object)
+        sig_mask = np.zeros(values.shape, dtype=bool)
+        if is_target:
+            marker_index = np.unravel_index(int(np.nanargmax(values)), values.shape)
+            annotations[marker_index] = _NULL_STATE_ANNOTATIONS[state]
+            if state == "significant":
+                sig_mask[marker_index] = True
+        subplots.append(
+            SubplotData(
+                heatmap=HeatmapData(
+                    values=values,
+                    row_labels=[f"{value:g}" for value in x_axis],
+                    col_labels=[f"{value:g}" for value in y_axis],
+                    sig_mask=sig_mask,
+                    annotations=annotations,
+                ),
+                key=(None, role),
+                title=f"{role} [{state}]" if is_target else role,
+                x_label=comparison.features[1],
+                y_label=comparison.features[0],
+            )
+        )
+    return FigureData(
+        subplots=subplots,
+        title=title,
+        heatmap_style=HeatmapStyle(show_annotations=True),
     )
 
 

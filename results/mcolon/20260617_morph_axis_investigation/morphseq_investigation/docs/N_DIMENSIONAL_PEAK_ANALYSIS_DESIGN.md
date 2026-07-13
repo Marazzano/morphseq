@@ -315,11 +315,20 @@ use the existing refined route that measures peak-count robustness; it must not
 maintain a parallel peak counter or reinterpret a raw candidate count.
 
 ```text
-one KDE implementation
+one supported KDE implementation
     -> one robust resolved-peak implementation
     -> one conversion into LabelGroup
     -> catalog comparison through SampleSets
 ```
+
+“One supported KDE implementation” is literal for the distribution engine and
+resolved-peak resolver: bandwidth rules may choose different scalar sigmas,
+but all active paths evaluate them with
+`evaluate_isotropic_gaussian_kde_from_dist2`. `core/support_geometry.py` keeps
+historical SciPy and adaptive estimators only to reproduce legacy research
+sensitivity diagnostics; those are not distribution-engine backends or
+supported `ResolvedPeakAnalysisSpec` values. Promoting an alternate estimator
+requires a future design and calibration change.
 
 Visualization uses a label group's effective density. For provided labels this
 normally falls back to `Distribution.shared_density`; for resolved peaks it is
@@ -1017,5 +1026,6 @@ Once adapter-fidelity tests and consumer migration pass:
 - add a regression guard proving that only the refined resolver produces
   resolved-peak assignments.
 
-Completion means there is one KDE implementation, one robust peak-resolution
-implementation, and one adapter into the catalog ontology.
+Completion means there is one supported engine/resolver KDE implementation,
+one robust peak-resolution implementation, and one adapter into the catalog
+ontology. Historical research-diagnostic estimators are outside that API.

@@ -18,6 +18,7 @@ persistence with `(draw, candidate)` keys (Stage 2b), `PeakStabilityGraph` /
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Mapping, Sequence
 import warnings
 
@@ -37,11 +38,19 @@ class PeakCountVote:
 
     def __post_init__(self) -> None:
         frequencies = {int(k): int(v) for k, v in dict(self.peak_count_frequencies).items()}
-        object.__setattr__(self, "peak_count_frequencies", frequencies)
+        if any(count < 0 for count in frequencies):
+            raise ValueError("peak counts must be non-negative.")
+        if any(frequency <= 0 for frequency in frequencies.values()):
+            raise ValueError("observed peak-count frequencies must be positive.")
+        object.__setattr__(
+            self, "peak_count_frequencies", MappingProxyType(frequencies)
+        )
         if self.n_draws_requested < 0:
             raise ValueError("n_draws_requested must be non-negative.")
         if self.n_draws_valid < 0 or self.n_draws_valid > self.n_draws_requested:
             raise ValueError("n_draws_valid must be in [0, n_draws_requested].")
+        if not 0 < float(self.sample_fraction) <= 1:
+            raise ValueError("sample_fraction must be in (0, 1].")
         if sum(frequencies.values()) != self.n_draws_valid:
             raise ValueError(
                 "peak_count_frequencies must sum to n_draws_valid "
@@ -166,10 +175,6 @@ class PeakResolutionSummary:
     is_robust: bool
 
     @property
-    def mode_peak_count(self) -> int:
-        return self.resolved_peak_count
-
-    @property
     def mode_frequency(self) -> float:
         return self.peak_count_vote.probability_for(self.resolved_peak_count)
 
@@ -196,15 +201,6 @@ class PeakResolutionSummary:
     @property
     def has_enough_valid_draws(self) -> bool:
         return self.peak_count_vote.n_draws_valid >= self.voting_spec.min_valid_draws
-
-    @property
-    def vote(self) -> PeakCountVote:
-        return self.peak_count_vote
-
-    @property
-    def count_is_stable(self) -> bool:
-        return self.is_robust
-
 
 @dataclass(frozen=True)
 class PeakSeed:

@@ -35,6 +35,7 @@ from ..core.peak_stability import (
     PeakResolutionSummary,
     PeakVotingSpec,
 )
+from ..core.distribution_records import PeakResolutionConfig
 
 # The canonical "no call" value used by ``with_label`` and pooling. A sample that
 # a label group does not name is UNASSIGNED — never silently dropped, never a
@@ -170,6 +171,28 @@ class Distribution:
         densities = self.densities + (density,)
         index = len(densities) - 1 if select_as_shared else self.shared_density_index
         return replace(self, densities=densities, shared_density_index=index)
+
+    def select_shared_density(self, index_or_density: int | "DensityEstimate") -> "Distribution":
+        """Select one already-retained density without changing any evidence.
+
+        A density value is matched by object identity, deliberately avoiding an
+        ambiguous equality comparison over NumPy raster arrays.  Callers that
+        persist only the registry position may instead supply its integer index.
+        """
+        if isinstance(index_or_density, (int, np.integer)):
+            index = int(index_or_density)
+            if not 0 <= index < len(self.densities):
+                raise IndexError("shared density index must index Distribution.densities")
+        else:
+            matches = [
+                index
+                for index, retained in enumerate(self.densities)
+                if retained is index_or_density
+            ]
+            if not matches:
+                raise ValueError("density estimate is not retained by this distribution")
+            index = matches[0]
+        return replace(self, shared_density_index=index)
 
     # --- coordinate access -------------------------------------------------- #
     def coordinate(self, name: str) -> Hashable:
@@ -311,6 +334,13 @@ class Distribution:
         robustness_policy = PeakCountRobustnessPolicy(
             min_mode_frequency=min_mode_frequency
         )
+        resolution_config = PeakResolutionConfig(
+            n_bootstrap_draws=voting_spec.n_draws,
+            bootstrap_sample_fraction=voting_spec.sample_fraction,
+            min_valid_draws=voting_spec.min_valid_draws,
+            robustness_policy=robustness_policy,
+            voting_spec=voting_spec,
+        )
 
         if density is not None:
             selected_density = density
@@ -330,8 +360,7 @@ class Distribution:
             self,
             output_label=output_label,
             density=selected_density,
-            voting_spec=voting_spec,
-            robustness_policy=robustness_policy,
+            resolution_config=resolution_config,
         )
         if group.name != output_label:
             raise ValueError("peak labeler returned a different label-group name")

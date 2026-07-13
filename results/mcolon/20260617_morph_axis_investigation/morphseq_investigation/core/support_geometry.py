@@ -31,6 +31,12 @@ No plotting, no I/O. Pure statistic library, imported by
 (the orchestrator that runs the full decision tree on real data).
 
 See docs/todos_scratch/morph_axis_discreteness_spec.md.
+
+This is a legacy research-statistic module, not a supported KDE backend for the
+unified distribution engine. Its SciPy/adaptive estimator hooks remain solely
+to reproduce historical sensitivity diagnostics. The supported engine and
+resolved-peak APIs use the one isotropic Gaussian implementation in
+``bandwidth_tuning.evaluate_isotropic_gaussian_kde_from_dist2``.
 """
 
 from __future__ import annotations

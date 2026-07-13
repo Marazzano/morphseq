@@ -39,7 +39,7 @@ from morphseq_investigation.core.distribution_records import derive_shared_grid
 from morphseq_investigation.core.resolved_peak_analysis import (
     ResolvedPeakAnalysisSpec,
     _compute_peak_detection_with_analysis_spec,
-    resolve_points_with_analysis_spec,
+    _resolve_points_single_pass,
 )
 
 SEED = 20260617
@@ -100,7 +100,7 @@ def _draw_baseline(points, grid, spec) -> tuple[int, tuple]:
     orig, always_full = _force_connectivity_always_on()
     bandwidth_tuning.bandwidth_geometry_scales = always_full
     try:
-        resolved = resolve_points_with_analysis_spec(
+        resolved = _resolve_points_single_pass(
             distribution_id="bench_draw", points=points, canonical_grid=grid, analysis_spec=spec,
         )
     finally:
@@ -130,7 +130,7 @@ def _draw_step2_only(points, grid, spec) -> tuple[int, tuple]:
     resolve_points_with_analysis_spec already gates connectivity off
     internally, i.e. Step 2 is live here; Step 1's detection-only shortcut is
     the thing NOT applied on this checkpoint)."""
-    resolved = resolve_points_with_analysis_spec(
+    resolved = _resolve_points_single_pass(
         distribution_id="bench_draw", points=points, canonical_grid=grid, analysis_spec=spec,
     )
     centers = tuple(peak.geometry.center_coordinate for peak in resolved.peaks)

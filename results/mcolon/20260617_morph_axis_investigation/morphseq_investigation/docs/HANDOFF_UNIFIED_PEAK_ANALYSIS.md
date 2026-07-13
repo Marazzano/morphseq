@@ -1,10 +1,10 @@
 # Unified Peak Analysis Refactor Handoff
 
-Status: paused after the first consolidation pass and adversarial completion
-audit. The normal `Distribution`/`DistributionCatalog` path is unified and
-tested, but the full implementation plan is **not complete**. Continue from the
-remaining-work section rather than treating the green test suite as proof of
-the complete design.
+Status: implementation complete after the consolidation pass, comparison-grid
+implementation, and two adversarial completion audits. The normal
+`Distribution`/`DistributionCatalog` path, directed comparison path, and pure
+plotting consumers are unified and tested. The audit record below is retained
+to show how each formerly open item was closed.
 
 Source of truth:
 
@@ -102,10 +102,11 @@ unstaged/unmodified by these commits.
 
 ## Verification completed
 
-- Full investigation test suite after the final code changes:
+- Full investigation test suite after the final code changes and plotting
+  package split (2026-07-13):
 
   ```text
-  181 passed in 35.44s
+  229 passed in 89.98s
   ```
 
 - Earlier intermediate full run before the time-series additions:
@@ -114,7 +115,8 @@ unstaged/unmodified by these commits.
   175 passed in 58.90s
   ```
 
-- Real `valley_visualization.py` run completed successfully after migration.
+- Real `valley_visualization.py` run completed successfully on the final
+  combined tree after migration and plotting split.
   All votes had 80 valid draws with `min_valid_draws=64`.
 
 - Regenerated primary artifact:
@@ -141,12 +143,22 @@ unstaged/unmodified by these commits.
   plots/cep290_valley_median_kNN.png
   ```
 
-## Important remaining work
+## Completion audit of formerly open work
 
-The adversarial audit found the following real gaps. Do not mark the plan
-complete until these are resolved and re-audited.
+The first adversarial audit found the following real gaps. Each item now records
+the implementation evidence that closed it.
 
 ### 1. Unify the scientific density grid and plotting grid model
+
+Resolved. `compare_distributions()` is the authoritative raw-object path;
+directed `DistributionCatalog.compare()` performs matching/context only and is
+structurally guarded against duplicating numeric work. Shared axes come from the
+feature-blind `derive_robust_pooled_axes()` primitive, densities are evaluated
+directly on those axes, and immutable descriptive results preserve both source
+specifications without mutating either distribution. Contextual all-or-error
+tests cover missing members/groups/features, 1-D and 2-D preparation, differing
+density specs, unassigned membership, all four null-test states, and failed
+draw retention.
 
 #### Reviewed contract (2026-07-12)
 
@@ -301,6 +313,15 @@ Implementation requirements:
 
 ### 2. Split the plotting package and remove analysis from renderers
 
+Resolved. V0 analysis lives in `plotting/v0_analysis.py`, V0 layout/composition
+in `plotting/v0_qc.py`, and resolved-peak rendering in
+`plotting/resolved_peaks.py`; the compatibility module is reduced from roughly
+900 to 522 lines and lazily re-exports the historical API. Pure 1-D and 2-D
+comparison renderers consume prepared comparison fields only. Tests monkeypatch
+density evaluation to fail if 2-D plotting attempts analysis and cover all four
+null-result styles. The README now states the frozen no-grid-derivation,
+no-KDE-evaluation, and no-raster-interpolation boundary.
+
 `plotting/modal_distribution_plotting.py` is still approximately 900 lines and
 mixes models, frame logic, density/point primitives, resolved-peak overlays,
 V0-specific layout, and V0 analysis summaries.
@@ -326,6 +347,10 @@ decided.
 
 ### 3. Retained-density reselection is incomplete
 
+Resolved. `Distribution.select_shared_density()` selects an already retained
+estimate immutably by index or object identity. A -> B -> A tests prove that
+the density registry and existing resolved label groups are unchanged.
+
 `with_density()` can append and select a newly supplied estimate, but there is
 no API to reselect an estimate already retained in `Distribution.densities`.
 Add an immutable selection operation (for example
@@ -333,6 +358,11 @@ Add an immutable selection operation (for example
 selection leaves existing resolved label groups unchanged.
 
 ### 4. General density calculation is not truly N-dimensional
+
+Resolved for the density lifecycle. Bandwidth geometry now accepts one or more
+features, and `calc_density()` has finite-output/shape coverage in 1-D and 3-D.
+Peak detection and descriptive comparison intentionally remain limited to their
+documented 2-D and 1-D/2-D scopes respectively.
 
 `engine/grid.evaluate_density()` is dimension-agnostic, but
 `engine/density._bandwidth()` calls a bandwidth geometry helper restricted to
@@ -344,6 +374,11 @@ detector remains 2-D.
 
 ### 5. Public non-voting resolved paths remain
 
+Resolved. The single-pass builders are private `_resolve_*_single_pass`
+primitives, are absent from public exports, and are used only by null/research
+internals. `compute_resolved_peaks()` remains the supported voting assignment
+entry point; structural tests enforce the boundary.
+
 `resolve_points_with_analysis_spec()` and
 `resolve_density_grid_with_analysis_spec()` can create a
 `ResolvedPeakDistribution` without voting or the catalog adapter. Null and
@@ -353,6 +388,11 @@ them as internal single-pass primitives, isolate null use, and migrate active
 callers. Keep one public resolved-assignment entry point.
 
 ### 6. Basin-validation failure is inconsistent with the adapter invariant
+
+Resolved. A positive voted count whose final basin validation fails raises
+`PeakResolutionError` before durable evidence is constructed. Evidence
+constructors validate successful basin/count/seed consistency, so an invalid
+result cannot cross the sole adapter.
 
 For a positive modal count whose final basin validation fails,
 `compute_resolved_peaks()` currently returns modal evidence for N peaks but an
@@ -368,6 +408,11 @@ Do not return a result that cannot cross the sole adapter.
 
 ### 7. Canonical evidence still has mutability and legacy aliases
 
+Resolved. Vote histograms are deeply immutable and validated. The legacy
+summary aliases and redundant evidence count/stability fields are removed;
+`PeakResolutionSummary` is the sole count and robustness authority, with
+constructor and structural regression coverage.
+
 - `PeakCountVote.peak_count_frequencies` is a mutable dictionary inside a
   frozen dataclass and lacks validation for negative counts/frequencies and
   invalid sample fractions.
@@ -381,6 +426,10 @@ make the canonical summary the only count/robustness authority.
 
 ### 8. Direct labeler configuration can conflict
 
+Resolved. The engine labeler accepts exactly one `PeakResolutionConfig`.
+Scalar voting/robustness composition occurs at `Distribution.detect_peaks()`,
+and signature/route guards prevent reintroducing competing configuration paths.
+
 The internal/publicly importable labeler accepts voting objects and an optional
 `resolution_config`; when both are supplied, one set can be ignored. Narrow the
 labeler boundary so it accepts one unambiguous configuration path. The scalar
@@ -388,20 +437,36 @@ composition belongs at the `Distribution` API boundary.
 
 ### 9. Supplied grid-coordinate fidelity
 
-The bridge from engine density to the 2-D core resolver reconstructs a uniform,
-square `CanonicalGrid` from endpoints and length. This can change nonuniform
-axis coordinates and rejects nonsquare grids even though the engine `Grid`
-allows them. Resolve this as part of the unified scientific-grid work.
+Resolved. `CanonicalGrid.from_axis_values` retains the engine grid's complete
+x/y coordinate arrays, including nonuniform spacing and unequal axis lengths.
+The engine-to-core bridge transposes only the density raster orientation; it no
+longer reconstructs coordinates from endpoints. A fidelity test covers an
+explicit nonuniform 4-by-3 grid.
 
 ### 10. Literal one-KDE definition needs a decision
 
-Active code contains both the geometry-derived isotropic evaluator and the
-SciPy `gaussian_kde` backend. Decide whether “one KDE implementation” means one
-authoritative default path with explicitly supported alternate backend, or
-literally one backend. Update the design/tests or remove the alternate path;
-do not silently claim the literal definition is satisfied.
+Resolved for the supported unified API. Both `engine.grid.evaluate_density`
+and the resolved-peak path call the dense isotropic Gaussian evaluator.
+`scipy_default` is no longer a supported resolved-peak bandwidth rule. The
+SciPy/adaptive hooks in `core/support_geometry.py` are explicitly legacy
+research diagnostics, not supported distribution-engine estimator backends;
+structural tests enforce that boundary.
 
-## Recommended next sequence
+### 11. Shared-grid numeric/semantic boundary
+
+Resolved. `engine.grid.derive_robust_pooled_axes` is the low-level numeric
+primitive: its signature contains only two aligned numeric matrices,
+resolution, and robust-bound policy scalars. It reproduces Valley's
+2nd/98th-percentile scan, 35%-of-robust-range padding, and 6%-of-padded-span
+margin independently per axis. Unlike the Valley renderer it does not apply a
+visualization-only square box, so equal coordinate counts do not erase unequal
+native-unit spans. `build_shared_grid` is the higher-level composition boundary
+that attaches ordered feature names, aligned sample IDs, construction
+provenance, and the deterministic grid ID. Tests cover policy arithmetic,
+semantic blindness, equal per-axis resolution, unequal native spans without
+normalization, and ordered-feature reordering.
+
+## Completed implementation sequence
 
 1. Review and freeze the scientific-grid/shared-plot-grid/`resize=True`
    contract.
@@ -431,6 +496,7 @@ do not silently claim the literal definition is satisfied.
 
 ## Current completion judgment
 
-The primary catalog path is substantially consolidated and scientifically
-exercised, but the full source-of-truth plan is not yet complete. Leave the
-active goal open.
+The full source-of-truth plan is implemented. The unified catalog/resolver,
+density lifecycle, directed comparison preparation and inference, plotting
+boundaries, structural guards, and real biological acceptance run have all been
+re-audited against current source and current test/runtime evidence.

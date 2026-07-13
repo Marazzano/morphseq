@@ -1,9 +1,19 @@
 """TASK_A — build_grid + evaluate_density tests (ontology §1b, Invariant #4/#9)."""
 
+import inspect
+
 import numpy as np
 import pytest
 
-from morphseq_investigation.engine.grid import build_grid, evaluate_density
+from morphseq_investigation.engine.grid import (
+    VALLEY_MARGIN_FRACTION,
+    VALLEY_RANGE_PADDING_FRACTION,
+    VALLEY_SCAN_PERCENTILE,
+    build_grid,
+    build_shared_grid,
+    derive_robust_pooled_axes,
+    evaluate_density,
+)
 from morphseq_investigation.engine.objects import Grid, DensityGrid
 
 
@@ -125,6 +135,78 @@ def test_all_methods_produce_valid_grid(method, params):
     assert grid.construction_method == method
     assert grid.fit_sample_ids == tuple(sample_ids)
     assert grid.grid_id.startswith("grid_")
+
+
+# --------------------------------------------------------------------------- #
+# shared-grid numeric policy and semantic composition boundary
+# --------------------------------------------------------------------------- #
+def test_robust_pooled_axes_exactly_port_valley_bounds_and_padding_per_axis():
+    left = np.asarray([[0.0, 100.0], [1.0, 120.0], [2.0, 140.0]])
+    right = np.asarray([[3.0, 160.0], [4.0, 180.0], [1000.0, 200.0]])
+    pooled = np.concatenate((left, right), axis=0)
+
+    axes = derive_robust_pooled_axes(left, right, resolution=17)
+
+    robust_lo, robust_hi = np.percentile(
+        pooled, [VALLEY_SCAN_PERCENTILE, 100.0 - VALLEY_SCAN_PERCENTILE], axis=0
+    )
+    primary_pad = (robust_hi - robust_lo) * VALLEY_RANGE_PADDING_FRACTION
+    primary_pad = np.where(primary_pad > 0.0, primary_pad, 1.0)
+    padded_lo, padded_hi = robust_lo - primary_pad, robust_hi + primary_pad
+    outer = (padded_hi - padded_lo) * VALLEY_MARGIN_FRACTION
+    expected_lo, expected_hi = padded_lo - outer, padded_hi + outer
+
+    assert all(len(axis) == 17 for axis in axes)
+    for index, axis in enumerate(axes):
+        assert axis[0] == pytest.approx(expected_lo[index])
+        assert axis[-1] == pytest.approx(expected_hi[index])
+
+
+def test_shared_axes_keep_equal_resolution_but_unequal_native_spans_without_normalization():
+    left = np.asarray([[-1.0, 100.0], [0.0, 130.0], [1.0, 160.0]])
+    right = np.asarray([[-2.0, 190.0], [0.5, 220.0], [2.0, 250.0]])
+    x_axis, y_axis = derive_robust_pooled_axes(left, right, resolution=23)
+
+    assert len(x_axis) == len(y_axis) == 23
+    assert np.ptp(y_axis) > 20.0 * np.ptp(x_axis)
+    assert x_axis.mean() == pytest.approx(0.0, abs=1.0)
+    assert y_axis.mean() > 100.0
+    assert not np.allclose(x_axis, y_axis)
+
+
+def test_numeric_shared_axis_primitive_is_semantically_blind():
+    parameters = inspect.signature(derive_robust_pooled_axes).parameters
+    forbidden = {"feature_names", "sample_ids", "distribution_id", "catalog", "label_group"}
+    assert forbidden.isdisjoint(parameters)
+
+    left = np.asarray([[0.0, 10.0], [1.0, 20.0]])
+    right = np.asarray([[2.0, 30.0], [3.0, 40.0]])
+    numeric_axes = derive_robust_pooled_axes(left, right, resolution=11)
+    grid = build_shared_grid(
+        ("length_um", "curvature"), left, right,
+        ("left-0", "left-1"), ("right-0", "right-1"), resolution=11,
+    )
+    for numeric, semantic in zip(numeric_axes, grid.axis_values):
+        np.testing.assert_array_equal(numeric, semantic)
+    assert grid.feature_names == ("length_um", "curvature")
+    assert grid.fit_sample_ids == ("left-0", "left-1", "right-0", "right-1")
+
+
+def test_ordered_feature_semantics_reorder_with_numeric_columns():
+    left = np.asarray([[0.0, 100.0], [2.0, 200.0]])
+    right = np.asarray([[1.0, 150.0], [3.0, 250.0]])
+    ids_left, ids_right = ("l0", "l1"), ("r0", "r1")
+    original = build_shared_grid(
+        ("x", "y"), left, right, ids_left, ids_right, resolution=9
+    )
+    reordered = build_shared_grid(
+        ("y", "x"), left[:, ::-1], right[:, ::-1], ids_left, ids_right, resolution=9
+    )
+    np.testing.assert_array_equal(original.axis_values[0], reordered.axis_values[1])
+    np.testing.assert_array_equal(original.axis_values[1], reordered.axis_values[0])
+    assert original.feature_names == ("x", "y")
+    assert reordered.feature_names == ("y", "x")
+    assert original.grid_id != reordered.grid_id
 
 
 # --------------------------------------------------------------------------- #

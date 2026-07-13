@@ -8,8 +8,7 @@ statistics.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Iterable
 
 import matplotlib
@@ -17,17 +16,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.lines import Line2D
 from matplotlib.colors import ListedColormap, to_rgba
 
 from morphseq_investigation.core.density_composition import CanonicalGrid, DensityGrid
-from morphseq_investigation.core.peak_counting import PeakCountDetail, peak_count_detail
-from morphseq_investigation.core.support_geometry import (
-    fiedler_value,
-    hdr_concentration_auc,
-    mst_max_edge,
-    normalize_shape,
-    valley_depth,
+from morphseq_investigation.core.peak_counting import PeakCountDetail
+from morphseq_investigation.plotting.v0_analysis import (
+    compute_v0_metric_summary,
+    compute_v0_peak_count_summary,
 )
 
 
@@ -87,52 +82,6 @@ class DistributionOverlay:
 
 
 RowOverlayFn = Callable[[plt.Axes, DistributionVisualSpec, DensityGrid, tuple[float, float, float, float]], None]
-
-
-def compute_v0_metric_summary(
-    points: np.ndarray,
-    *,
-    kde=None,
-    distribution_id: str | None = None,
-) -> dict[str, float | None]:
-    """Compute the small V0 metric set on shape-normalized sampled points."""
-
-    pts = normalize_shape(np.asarray(points, dtype=float))
-    valley = float(valley_depth(pts, kde=kde))
-    if distribution_id is not None and distribution_id.startswith("one_peak_"):
-        valley = None
-    return {
-        "hdr_concentration_auc": float(hdr_concentration_auc(pts, relative=True, kde=kde)),
-        "valley_depth": valley,
-        "mst_max_edge": float(mst_max_edge(pts)),
-        "fiedler": float(fiedler_value(pts)),
-    }
-
-
-def compute_v0_peak_count_summary(
-    *,
-    truth_density: np.ndarray | None = None,
-    observed_density: np.ndarray | None = None,
-    min_component_mass_frac: float = 0.10,
-    sweep_steps: int = 50,
-) -> dict[str, PeakCountDetail | None]:
-    """Compute truth and observed peak-count probes for one V0 distribution."""
-
-    truth_detail = None
-    if truth_density is not None:
-        truth_detail = peak_count_detail(
-            truth_density,
-            min_component_mass_frac=min_component_mass_frac,
-            sweep_steps=sweep_steps,
-        )
-    observed_detail = None
-    if observed_density is not None:
-        observed_detail = peak_count_detail(
-            observed_density,
-            min_component_mass_frac=min_component_mass_frac,
-            sweep_steps=sweep_steps,
-        )
-    return {"truth": truth_detail, "observed": observed_detail}
 
 
 def square_density_box(box: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -541,354 +490,30 @@ def format_density_axis(ax, box: tuple[float, float, float, float]) -> None:
         spine.set_linewidth(0.8)
 
 
-def plot_v0_distribution_qc_grid(
-    specs: list[DistributionVisualSpec],
-    out_path: str | Path,
-    *,
-    title: str = "V0 modal distribution visual QA",
-    show_hdr: bool = True,
-    auto_scale: bool = True,
-    include_peak_row: bool = True,
-    include_metric_row: bool = False,
-    observed_details_by_method: dict[str, dict[str, PeakCountDetail | None]] | None = None,
-    observed_method_order: tuple[str, ...] | None = None,
-    primary_observed_method: str | None = None,
-    row_overlays: dict[int, Sequence[RowOverlayFn]] | None = None,
-) -> Path:
-    """Plot one visual QA grid for V0 generated distributions.
+_COMPATIBILITY_EXPORTS = {
+    "plot_v0_distribution_qc_grid": ("v0_qc", "plot_v0_distribution_qc_grid"),
+    "render_distribution_qc_grid": ("v0_qc", "render_distribution_qc_grid"),
+    "draw_resolved_peak_basins": ("resolved_peaks", "draw_resolved_peak_basins"),
+    "hdr_contour_for_field": ("resolved_peaks", "hdr_contour_for_field"),
+    "mode_count_label": ("resolved_peaks", "mode_count_label"),
+    "plot_resolved_peak_overlay": ("resolved_peaks", "plot_resolved_peak_overlay"),
+}
 
-    Rows:
-      1. True density if provided, otherwise sampled KDE.
-      2. Sampled points on sampled KDE.
-      3. Densest-50% HDR contour on sampled KDE.
-    """
-    if not specs:
-        raise ValueError("plot_v0_distribution_qc_grid requires at least one distribution")
 
-    n = len(specs)
-    n_rows = 3 + int(include_peak_row) + int(include_metric_row)
-    extra_peak_detail_rows = 0
-    if observed_details_by_method:
-        extra_peak_detail_rows = max(0, len(observed_method_order or tuple(next(iter(observed_details_by_method.values())).keys())) - 1)
-    fig_height = 6.95 + (1.05 if include_peak_row else 0.0) + (1.35 if include_metric_row else 0.0) + 0.45 * extra_peak_detail_rows
-    fig, axes = plt.subplots(n_rows, n, figsize=(2.45 * n, fig_height), squeeze=False)
-    fig.subplots_adjust(left=0.035, right=0.995, bottom=0.12, top=0.84, wspace=0.12, hspace=0.18)
+def __getattr__(name: str):
+    """Lazily preserve imports from the former plotting monolith."""
+    export = _COMPATIBILITY_EXPORTS.get(name)
+    if export is None:
+        raise AttributeError(name)
+    module_name, attribute_name = export
+    from importlib import import_module
 
-    shared_box = None
-    if not auto_scale:
-        shared_box = canonical_box_from_specs(specs)
-
-    for col, spec in enumerate(specs):
-        points = np.asarray(spec.points, dtype=float)
-        if auto_scale:
-            grids_for_box = [points]
-            if spec.composed_grid is not None:
-                true_pts = np.column_stack([spec.composed_grid.xx.ravel(), spec.composed_grid.yy.ravel()])
-                finite = np.isfinite(spec.composed_grid.density.ravel()) & (spec.composed_grid.density.ravel() > 0)
-                if finite.any():
-                    grids_for_box.append(true_pts[finite])
-            box = density_box(grids_for_box)
-        else:
-            box = shared_box
-        sample_grid = spec.sampled_grid
-        if sample_grid is None:
-            raise ValueError(
-                f"DistributionVisualSpec {spec.distribution_id!r} requires a precomputed sampled_grid"
-            )
-        truth_detail = None
-        if spec.composed_grid is not None:
-            truth_detail = peak_count_detail(spec.composed_grid.density)
-        observed_detail = peak_count_detail(sample_grid.density)
-        observed_method_details = None
-        if observed_details_by_method is not None:
-            observed_method_details = observed_details_by_method.get(spec.distribution_id)
-            if observed_method_details is None:
-                observed_method_details = {}
-        primary_detail = observed_detail
-        if observed_method_details:
-            if primary_observed_method and primary_observed_method in observed_method_details:
-                primary_detail = observed_method_details[primary_observed_method]
-            elif observed_method_order:
-                primary_detail = observed_method_details.get(observed_method_order[0], observed_detail)
-            else:
-                primary_detail = next(iter(observed_method_details.values()))
-
-        ax = axes[0][col]
-        if spec.composed_grid is not None:
-            plot_kde_field(
-                ax,
-                spec.composed_grid,
-                color=TRUE_DENS_COLOR,
-                cmap=None,
-                alpha_max=0.30,
-            )
-        else:
-            plot_kde_field(ax, sample_grid)
-        format_density_axis(ax, box)
-        for overlay_fn in (row_overlays or {}).get(0, ()):
-            overlay_fn(ax, spec, sample_grid, box)
-        ax.set_title(spec.distribution_id.replace("_", "\n"), fontsize=8.0, fontweight="bold")
-        if spec.note:
-            ax.text(0.02, 0.03, spec.note, transform=ax.transAxes, fontsize=6.2, color="#555", va="bottom")
-
-        ax = axes[1][col]
-        plot_kde_field(ax, sample_grid)
-        plot_raw_points(ax, points, spec.component_labels, s=14)
-        format_density_axis(ax, box)
-        for overlay_fn in (row_overlays or {}).get(1, ()):
-            overlay_fn(ax, spec, sample_grid, box)
-
-        ax = axes[2][col]
-        plot_kde_field(ax, sample_grid)
-        if show_hdr:
-            plot_hdr_contour(ax, sample_grid)
-        if primary_detail is not None and primary_detail.n_modes >= 2 and primary_detail.split_level is not None:
-            ax.contour(
-                sample_grid.xx,
-                sample_grid.yy,
-                sample_grid.density,
-                levels=[primary_detail.split_level],
-                colors="#B8860B",
-                linewidths=1.8,
-                linestyles="--",
-                zorder=5,
-            )
-        plot_raw_points(ax, points, spec.component_labels, s=11)
-        format_density_axis(ax, box)
-        for overlay_fn in (row_overlays or {}).get(2, ()):
-            overlay_fn(ax, spec, sample_grid, box)
-
-        row_idx = 3
-        if include_peak_row:
-            plot_peak_count_summary_row(
-                axes[row_idx][col],
-                truth_detail,
-                observed_method_details if observed_method_details else observed_detail,
-                title="peak count audit",
-                observed_method_order=observed_method_order,
-                primary_method=primary_observed_method,
-            )
-            row_idx += 1
-        if include_metric_row:
-            metric_summary = compute_v0_metric_summary(points, kde=kde, distribution_id=spec.distribution_id)
-            plot_metric_summary_row(axes[row_idx][col], metric_summary, title="metric probes")
-
-    axes[0][0].set_ylabel("true density\nor sample KDE", fontsize=9)
-    axes[1][0].set_ylabel("sampled points\n+ KDE", fontsize=9)
-    axes[2][0].set_ylabel("sample KDE\n+ HDR 50% / valley", fontsize=9)
-    if include_peak_row:
-        axes[3][0].set_ylabel("peak count\n(truth vs detected)", fontsize=9)
-    if include_metric_row:
-        axes[3 + int(include_peak_row)][0].set_ylabel("metrics\n(normalized)", fontsize=9)
-    all_labels: list[str] = []
-    for spec in specs:
-        if spec.component_labels is None:
-            continue
-        all_labels.extend([str(label) for label in np.unique(spec.component_labels)])
-    preferred = [
-        "mode_0",
-        "mode_1",
-        "mode_2",
-        "mode_left",
-        "mode_right",
-        "bridge_left_right",
-        "bridge",
-        "artifact",
-    ]
-    legend_labels: list[str] = []
-    seen = set()
-    for label in preferred + sorted(set(all_labels) - set(preferred)):
-        if label in seen or label not in all_labels:
-            continue
-        seen.add(label)
-        legend_labels.append(label)
-
-    handles = [
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="none",
-            markerfacecolor=POINT_COLOR_BY_LABEL.get(label, POINT_COLOR),
-            markeredgecolor=POINT_EDGE_COLOR,
-            markersize=6,
-            label=label,
-        )
-        for label in legend_labels
-    ]
-    handles.append(Line2D([0], [0], color="#B8860B", lw=1.8, ls="--", label="valley split floor"))
-    handles.append(Line2D([0], [0], color=HDR_COLOR, lw=1.8, label="HDR 50% contour"))
-    fig.legend(
-        handles=handles,
-        loc="lower center",
-        ncol=len(handles),
-        frameon=False,
-        fontsize=8,
-        bbox_to_anchor=(0.5, 0.035),
+    value = getattr(
+        import_module(f"morphseq_investigation.plotting.{module_name}"),
+        attribute_name,
     )
-    fig.text(
-        0.5,
-        0.015,
-        "Point colors are known generator component labels for visual QA; they are not inferred modes.",
-        ha="center",
-        va="bottom",
-        fontsize=8,
-        color="#555",
-    )
-    fig.suptitle(title, fontsize=12, fontweight="bold", y=0.98)
-
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=170, facecolor="white")
-    plt.close(fig)
-    return out_path
-
-
-def mode_count_label(n_modes: int | None, *, frequency: float | None = None) -> str:
-    """Compact label for vote-supported mode counts (row titles / legends).
-
-    Extracted from `valley_visualization.py::_mode_count_label` -- shared
-    across any figure that reports a `resolved_peak_count` next to its
-    bootstrap-vote `mode_frequency`.
-    """
-    if n_modes is None:
-        return "mode count unstable"
-    n = int(n_modes)
-    word = "mode" if n == 1 else "modes"
-    suffix = f" ({frequency:.0%})" if frequency is not None else ""
-    return f"{n} {word}{suffix}"
-
-
-def hdr_contour_for_field(
-    ax,
-    xx: np.ndarray,
-    yy: np.ndarray,
-    density: np.ndarray,
-    *,
-    color: str,
-    linewidth: float = 2.0,
-    hdr_mass: float = 0.60,
-) -> None:
-    """Draw one smooth HDR iso-density loop of `density` enclosing `hdr_mass`
-    of its mass -- a closed curve that follows the KDE bump's shape.
-
-    Extracted from `valley_visualization.py::_hdr_contour`. Unlike
-    `plot_hdr_contour` (which reads a full `DensityGrid`'s mass), this takes a
-    raw density array directly so callers can mask it to one basin's mass
-    first (see `draw_resolved_peak_basins`).
-    """
-    density = np.asarray(density, dtype=float)
-    if density.max() <= 0:
-        return
-    flat = np.sort(density.ravel())[::-1]
-    csum = np.cumsum(flat)
-    total = float(csum[-1])
-    if total <= 0:
-        return
-    idx = min(int(np.searchsorted(csum / total, hdr_mass, side="left")), len(flat) - 1)
-    level = float(flat[idx])
-    if level <= 0:
-        nonzero = flat[flat > 0]
-        if nonzero.size == 0:
-            return
-        level = float(nonzero.min())
-    ax.contour(xx, yy, density, levels=[level], colors=[color], linewidths=linewidth, zorder=5, alpha=0.95)
-
-
-def draw_resolved_peak_basins(
-    ax,
-    distribution,
-    *,
-    color: str,
-    linewidth: float = 2.0,
-    hdr_mass: float = 0.60,
-    n_modes: int | None,
-) -> None:
-    """Outline a `ResolvedPeakDistribution`'s modes with smooth KDE HDR loops
-    that hug each bump's shape (extracted from
-    `valley_visualization.py::_draw_basins`).
-
-    `n_modes` is the vote-supported number of modes to actually display:
-    - `None` -> draw nothing (no basin-count claim to make).
-    - the typed resolved count controls how many supported basins are drawn;
-    - a resolved count of zero or one collapses to the whole-density contour;
-      extra detected peaks are not statistically supported; collapse to ONE
-      outer HDR loop over the whole density rather than drawing unsupported
-      sub-modes. This keeps the drawing consistent with a count shown
-      elsewhere (e.g. via `mode_count_label`).
-
-    Basin masking uses `distribution.empirical_basin_labels` so adjacent
-    supported peaks stay separate loops.
-    """
-    density_grid = distribution.density_grid
-    density = np.asarray(density_grid.density, dtype=float)
-    labels = getattr(distribution, "empirical_basin_labels", None)
-    labels = np.asarray(labels, dtype=int) if labels is not None else None
-    peaks = list(distribution.peaks)
-    if n_modes is None:
-        return
-    show = int(n_modes)
-
-    if show <= 1 or distribution.resolved_peak_count <= 1:
-        if peaks:
-            cx, cy = peaks[0].geometry.center_coordinate
-            ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
-        hdr_contour_for_field(ax, density_grid.xx, density_grid.yy, density, color=color, linewidth=linewidth, hdr_mass=hdr_mass)
-        return
-
-    peaks_by_support = sorted(peaks, key=lambda p: p.geometry.total_support_fraction, reverse=True)
-    for peak in peaks_by_support[:show]:
-        cx, cy = peak.geometry.center_coordinate
-        ax.plot([cx], [cy], marker="+", color=color, ms=7, mew=1.6, zorder=6)
-        if labels is not None and peak.geometry.peak_id in np.unique(labels):
-            mode_density = np.where(labels == peak.geometry.peak_id, density, 0.0)
-        else:
-            mode_density = density
-        hdr_contour_for_field(ax, density_grid.xx, density_grid.yy, mode_density, color=color, linewidth=linewidth, hdr_mass=hdr_mass)
-
-
-def plot_resolved_peak_overlay(ax, distribution, summary, *, title: str | None = None) -> None:
-    """Overlay resolved-peak geometry on the KDE field for visual QC.
-
-    Draws the KDE field, sample points colored by `sample_peak_ids` (accepted
-    peak id vs. -1 for unassigned/outlier), and each resolved peak's center
-    with its `radius` (R80) as a circle, annotated with `within_peak_r80_density`,
-    `total_support_fraction`, and `cv_radius_from_center`.
-    """
-    plot_kde_field(ax, distribution.density_grid)
-
-    if distribution.sample_points is not None:
-        plot_raw_points(ax, distribution.sample_points, labels=distribution.sample_peak_ids)
-
-    for peak in distribution.peaks:
-        geometry = peak.geometry
-        cx, cy = geometry.center_coordinate
-        ax.plot(cx, cy, marker="x", color="black", markersize=8, markeredgewidth=1.6, zorder=5)
-        if np.isfinite(geometry.radius) and geometry.radius > 0:
-            circle = plt.Circle(
-                (cx, cy), geometry.radius, fill=False, edgecolor="black", linewidth=1.2,
-                linestyle="--", zorder=5,
-            )
-            ax.add_patch(circle)
-        label = (
-            f"peak {geometry.peak_id}\n"
-            f"support={geometry.total_support_fraction:.2f}\n"
-            f"r80_density={geometry.within_peak_r80_density:.3f}\n"
-            f"cv={geometry.cv_radius_from_center:.2f}"
-        )
-        ax.annotate(
-            label, (cx, cy), textcoords="offset points", xytext=(6, 6),
-            fontsize=6.5, color="#222",
-        )
-
-    header = title if title is not None else distribution.distribution_id
-    subtitle = (
-        f"n_peaks={summary.number_of_peaks} "
-        f"assigned={summary.assigned_support_fraction:.2f}"
-    )
-    ax.set_title(f"{header}\n{subtitle}", fontsize=8.5)
-    ax.set_aspect("equal")
-
+    globals()[name] = value
+    return value
 
 # Tech debt:
 # - When auto_scale=False, add an explicit shared density peak reference so

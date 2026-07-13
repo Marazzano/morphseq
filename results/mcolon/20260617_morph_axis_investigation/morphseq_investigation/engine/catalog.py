@@ -17,7 +17,7 @@ attaches label columns, mirroring the spec's two-line example.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Callable, Hashable, Mapping, Sequence
 
@@ -404,7 +404,13 @@ class DistributionCatalog:
         *,
         values: Sequence[Hashable] | None = None,
         match_on: Sequence[str] | None = None,
-    ) -> "DistributionComparisons":
+        reference: Hashable | None = None,
+        targets: Sequence[Hashable] | None = None,
+        label_group: str | None = None,
+        features: Sequence[str] | None = None,
+        grid: Any | None = None,
+        grid_size: int = 40,
+    ) -> Any:
         """Group by everything-but-``across``, vary ``across`` (spec §"PATH B").
 
         See :mod:`engine.catalog` module docstring / ``docs/tasks_catalog/
@@ -474,10 +480,25 @@ class DistributionCatalog:
                 group_order.append(key)
             groups[key].append(distribution)
 
+        if reference is not None:
+            if values is not None:
+                raise ValueError("directed comparison uses reference/targets, not values")
+            if targets is None or not tuple(targets):
+                raise ValueError("directed comparison requires one or more targets")
+            resolved_targets = tuple(targets)
+            if reference in resolved_targets:
+                raise ValueError("reference must not also appear in targets")
+            requested_values: Sequence[Hashable] | None = (reference, *resolved_targets)
+        elif targets is not None:
+            raise ValueError("targets requires an explicit reference")
+        else:
+            resolved_targets = ()
+            requested_values = values
+
         # Determine the values order: explicit `values` wins (preserve order,
         # step 5); otherwise infer from first-appearance across the catalog.
-        if values is not None:
-            resolved_values = tuple(values)
+        if requested_values is not None:
+            resolved_values = tuple(requested_values)
         else:
             seen: list[Hashable] = []
             for distribution in self.distributions:
@@ -537,10 +558,62 @@ class DistributionCatalog:
                 )
             )
 
-        return DistributionComparisons(
+        neutral = DistributionComparisons(
             comparisons=tuple(comparisons),
             across=across,
             values=resolved_values,
+            match_on=resolved_match_on,
+        )
+        if reference is None:
+            return neutral
+
+        # Catalog orchestration ends at matching/context. The raw-object
+        # function is the sole owner of grid derivation, density evaluation,
+        # overlap, and optional null testing.
+        from .compare import DescriptiveComparisons, compare_distributions
+
+        prepared = []
+        for comparison in neutral.comparisons:
+            reference_distribution = comparison.members[reference]
+            target_distributions = tuple(
+                comparison.members[value] for value in resolved_targets
+            )
+            try:
+                raw = compare_distributions(
+                    reference=reference_distribution,
+                    targets=target_distributions,
+                    label_group=label_group,
+                    features=features,
+                    grid=grid,
+                    grid_size=grid_size,
+                )
+            except (KeyError, ValueError, NotImplementedError) as exc:
+                member_ids = {
+                    "reference": reference_distribution.distribution_id,
+                    "targets": tuple(
+                        distribution.distribution_id
+                        for distribution in target_distributions
+                    ),
+                }
+                raise ValueError(
+                    f"compare(across={across!r}) failed descriptive preparation "
+                    f"for matched coordinates {dict(comparison.coordinates)!r}; "
+                    f"member distribution IDs={member_ids!r}: {exc}"
+                ) from exc
+            prepared.extend(
+                replace(
+                    item,
+                    reference_value=reference,
+                    target_value=target_value,
+                    coordinates=comparison.coordinates,
+                )
+                for item, target_value in zip(raw.comparisons, resolved_targets)
+            )
+        return DescriptiveComparisons(
+            comparisons=tuple(prepared),
+            across=across,
+            reference_value=reference,
+            target_values=resolved_targets,
             match_on=resolved_match_on,
         )
 

@@ -193,8 +193,10 @@ After consumers have migrated, remove:
 Add a regression guard demonstrating that resolved-peak assignments can only be
 produced through the authoritative resolver and adapter.
 
-Exit gate: repository search finds one KDE implementation, one robust peak
-resolver, and one adapter into the catalog ontology.
+Exit gate: structural tests show the supported engine and resolver import and
+call one KDE evaluator, one robust peak resolver, and one adapter into the
+catalog ontology. Historical estimator experiments in `support_geometry.py`
+are explicitly unsupported diagnostics and do not count as active backends.
 
 ## Phase 8: Scientific acceptance and cleanup
 
@@ -258,7 +260,8 @@ must be reviewed before implementation.
 
 ## Definition of done
 
-- One supported KDE implementation.
+- One supported KDE implementation: the dense isotropic Gaussian evaluator;
+  bandwidth rules select its sigma but not an estimator backend.
 - One voting-based resolved-peak implementation.
 - One adapter into the unified `LabelGroup` representation.
 - No catalog-side alternative peak counter or basin reconstruction.

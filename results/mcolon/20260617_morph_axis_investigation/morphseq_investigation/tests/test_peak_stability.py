@@ -4,6 +4,8 @@ PeakSeedSet construction (COMPOSE_single_path_plan Sec 1.5 / 1.5d).
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import pytest
 
 from morphseq_investigation.core.peak_stability import (
@@ -36,6 +38,26 @@ def test_peak_count_vote_frequency_and_probability_helpers():
     assert vote.frequency_for(3) == 0
     assert vote.probability_for(2) == pytest.approx(0.95)
     assert vote.probability_for(3) == 0.0
+    assert isinstance(vote.peak_count_frequencies, MappingProxyType)
+    with pytest.raises(TypeError):
+        vote.peak_count_frequencies[2] = 1
+
+
+@pytest.mark.parametrize(
+    ("frequencies", "sample_fraction", "message"),
+    [
+        ({-1: 1}, 0.8, "non-negative"),
+        ({1: -1}, 0.8, "positive"),
+        ({1: 0}, 0.8, "positive"),
+        ({1: 1}, 0.0, "sample_fraction"),
+        ({1: 1}, 1.1, "sample_fraction"),
+    ],
+)
+def test_peak_count_vote_rejects_invalid_histogram_and_fraction(
+    frequencies, sample_fraction, message
+):
+    with pytest.raises(ValueError, match=message):
+        PeakCountVote(frequencies, 1, 1, sample_fraction)
 
 
 def test_compute_peak_count_stability_stable_vote():
@@ -47,9 +69,9 @@ def test_compute_peak_count_stability_stable_vote():
     )
     stability = compute_peak_count_stability(vote, PeakCountRobustnessPolicy(min_mode_frequency=0.80))
 
-    assert stability.mode_peak_count == 2
+    assert stability.resolved_peak_count == 2
     assert stability.mode_frequency == pytest.approx(0.95)
-    assert stability.count_is_stable is True
+    assert stability.is_robust is True
     assert stability.valid_draw_fraction == pytest.approx(1.0)
     assert stability.mean_peak_count == pytest.approx((1 * 4 + 2 * 76) / 80)
 
@@ -63,9 +85,9 @@ def test_compute_peak_count_stability_unstable_vote_below_threshold():
     )
     stability = compute_peak_count_stability(vote, PeakCountRobustnessPolicy(min_mode_frequency=0.80))
 
-    assert stability.mode_peak_count == 2
+    assert stability.resolved_peak_count == 2
     assert stability.mode_frequency == pytest.approx(0.55)
-    assert stability.count_is_stable is False
+    assert stability.is_robust is False
 
 
 def test_compute_peak_count_stability_excludes_invalid_draws_from_variance():
@@ -129,6 +151,9 @@ def test_resolution_summary_retains_complete_contracts():
     assert summary.peak_count_vote is vote
     assert summary.voting_spec is voting_spec
     assert summary.robustness_policy is policy
+    assert not hasattr(summary, "mode_peak_count")
+    assert not hasattr(summary, "vote")
+    assert not hasattr(summary, "count_is_stable")
 
 
 def test_build_consensus_seed_set_two_peaks_two_qualifying_draws():

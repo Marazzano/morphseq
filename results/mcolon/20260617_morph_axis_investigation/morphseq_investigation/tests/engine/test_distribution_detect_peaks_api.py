@@ -27,8 +27,8 @@ def _distribution(distribution_id="d", features=("x", "y")):
 
 
 def _stub_labeler(monkeypatch, calls):
-    def fake(distribution, *, output_label, density, voting_spec, robustness_policy):
-        calls.append((distribution, output_label, density, voting_spec, robustness_policy))
+    def fake(distribution, *, output_label, density, resolution_config):
+        calls.append((distribution, output_label, density, resolution_config))
         return LabelGroup(
             name=output_label,
             distribution_id=distribution.distribution_id,
@@ -54,8 +54,8 @@ def test_explicit_density_routes_exact_object_and_attaches_immutably(monkeypatch
     assert distribution.label_groups == {}
     assert result.label_groups["peaks"].density is density
     assert calls[0][2] is density
-    assert calls[0][3] == PeakVotingSpec(80, .8, 64)
-    assert calls[0][4] == PeakCountRobustnessPolicy(.8)
+    assert calls[0][3].voting_spec == PeakVotingSpec(80, .8, 64)
+    assert calls[0][3].robustness_policy == PeakCountRobustnessPolicy(.8)
     assert result.densities == distribution.densities == ()
 
 
@@ -92,10 +92,10 @@ def test_zero_configuration_arguments_use_smart_defaults_and_default_label(monke
     distribution = base.with_density(density)
     result = distribution.detect_peaks()
     assert "resolved_peaks" in result.label_groups
-    _, output, passed_density, voting, policy = calls[0]
+    _, output, passed_density, config = calls[0]
     assert output == "resolved_peaks" and passed_density is density
-    assert voting == PeakVotingSpec(n_draws=80, sample_fraction=.80, min_valid_draws=64)
-    assert policy == PeakCountRobustnessPolicy(min_mode_frequency=.80)
+    assert config.voting_spec == PeakVotingSpec(n_draws=80, sample_fraction=.80, min_valid_draws=64)
+    assert config.robustness_policy == PeakCountRobustnessPolicy(min_mode_frequency=.80)
 
 
 def test_scalar_overrides_compose_canonical_backend_contracts(monkeypatch):
@@ -110,8 +110,8 @@ def test_scalar_overrides_compose_canonical_backend_contracts(monkeypatch):
         min_valid_draws=7,
         min_mode_frequency=.9,
     )
-    assert calls[0][3] == PeakVotingSpec(11, .6, 7)
-    assert calls[0][4] == PeakCountRobustnessPolicy(.9)
+    assert calls[0][3].voting_spec == PeakVotingSpec(11, .6, 7)
+    assert calls[0][3].robustness_policy == PeakCountRobustnessPolicy(.9)
 
 
 def test_implicit_min_valid_draws_uses_ceiling_of_eighty_percent(monkeypatch):
@@ -120,7 +120,7 @@ def test_implicit_min_valid_draws_uses_ceiling_of_eighty_percent(monkeypatch):
     distribution = _distribution()
     density = distribution.calc_density(DensityEstimateSpec(grid_params={"resolution": 8}))
     distribution.detect_peaks(density=density, n_draws=11)
-    assert calls[0][3].min_valid_draws == 9
+    assert calls[0][3].voting_spec.min_valid_draws == 9
 
 
 @pytest.mark.parametrize(

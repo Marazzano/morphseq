@@ -53,6 +53,36 @@ def test_with_density_registers_and_selects_immutably():
     assert registered.shared_density is first
 
 
+def test_reselect_retained_density_a_to_b_to_a_preserves_label_groups():
+    distribution = _distribution()
+    first = distribution.calc_density(DensityEstimateSpec(grid_params={"resolution": 8}))
+    second = distribution.calc_density(
+        DensityEstimateSpec(bandwidth_multiplier=1.1, grid_params={"resolution": 9})
+    )
+    retained = distribution.with_density(first).with_density(second)
+    labeled = retained.with_label("provided", {"s0": "a"})
+
+    selected_b = labeled.select_shared_density(second)
+    selected_a = selected_b.select_shared_density(0)
+
+    assert selected_b.shared_density is second
+    assert selected_a.shared_density is first
+    assert selected_a.densities == labeled.densities
+    assert selected_a.label_groups["provided"] is labeled.label_groups["provided"]
+    with pytest.raises(ValueError, match="not retained"):
+        labeled.select_shared_density(distribution.calc_density())
+    with pytest.raises(IndexError, match="must index"):
+        labeled.select_shared_density(2)
+
+
+@pytest.mark.parametrize("n_features", [1, 3])
+def test_calc_density_supports_general_nd_bandwidth(n_features):
+    distribution = _distribution(features=tuple(f"x{i}" for i in range(n_features)))
+    density = distribution.calc_density(DensityEstimateSpec(grid_params={"resolution": 7}))
+    assert density.density_grid.density.shape == (7,) * n_features
+    assert np.all(np.isfinite(density.density_grid.density))
+
+
 def test_density_registry_rejects_identity_feature_index_and_collision_errors():
     distribution = _distribution()
     density = distribution.calc_density(DensityEstimateSpec(grid_params={"resolution": 8}))

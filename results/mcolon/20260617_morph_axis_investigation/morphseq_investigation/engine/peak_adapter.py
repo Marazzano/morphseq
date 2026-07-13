@@ -40,7 +40,7 @@ def label_group_from_resolved_peaks(
     evidence = resolved_peak_distribution.resolution_evidence
     if evidence is None:
         raise ValueError("resolved peaks must retain peak-count voting evidence")
-    summary = evidence.count_stability
+    summary = evidence.peak_resolution_summary
 
     raw_ids = resolved_peak_distribution.sample_peak_ids
     if raw_ids is None:

@@ -22,6 +22,7 @@ from morphseq_investigation.engine.objects import (
     UNASSIGNED_LABEL,
 )
 from morphseq_investigation.engine.peak_adapter import label_group_from_resolved_peaks
+from morphseq_investigation.engine.labelers import _core_density
 
 
 def _distribution() -> Distribution:
@@ -75,7 +76,7 @@ def _resolved():
         source_type="empirical",
         sample_peak_ids=np.asarray([0, 0, 1, -1]),
         peaks=(SimpleNamespace(geometry=geometry0), SimpleNamespace(geometry=geometry1)),
-        resolution_evidence=SimpleNamespace(count_stability=summary),
+        resolution_evidence=SimpleNamespace(peak_resolution_summary=summary),
         provenance={"resolver": "fixture", "seed": 41},
     ), summary
 
@@ -126,3 +127,27 @@ def test_adapter_rejects_misaligned_or_unknown_assignments():
         label_group_from_resolved_peaks(
             _distribution(), resolved, name="resolved_peak", density=_density()
         )
+
+
+def test_engine_to_core_density_preserves_nonuniform_nonsquare_coordinates_exactly():
+    x_axis = np.asarray([-3.0, -1.25, 0.0, 4.5])
+    y_axis = np.asarray([-8.0, -2.0, -1.5])
+    engine_field = np.arange(12.0).reshape(4, 3)
+    grid = Grid("grid-irregular", ("PC1", "PC2"), (x_axis, y_axis), "fixture")
+    estimate = DensityEstimate(
+        "dist-a",
+        ("PC1", "PC2"),
+        DensityEstimateSpec(grid_params={"fixture": "irregular"}),
+        grid,
+        DensityGrid("grid-irregular", ("PC1", "PC2"), engine_field),
+    )
+
+    core_grid, core_field = _core_density(estimate)
+
+    assert np.array_equal(core_grid.xs, x_axis)
+    assert np.array_equal(core_grid.ys, y_axis)
+    assert core_grid.xx.shape == (3, 4)
+    assert core_grid.yy.shape == (3, 4)
+    assert np.array_equal(core_field.xx[0], x_axis)
+    assert np.array_equal(core_field.yy[:, 0], y_axis)
+    assert np.array_equal(core_field.density, engine_field.T)

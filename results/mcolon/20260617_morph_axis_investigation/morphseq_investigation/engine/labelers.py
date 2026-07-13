@@ -17,7 +17,6 @@ from ..core.distribution_records import (
     PeakResolutionConfig,
     compute_resolved_peaks,
 )
-from ..core.peak_stability import PeakCountRobustnessPolicy, PeakVotingSpec
 from ..core.resolved_peak_analysis import DEFAULT_ANALYSIS_SPEC
 from .objects import DensityEstimate, Distribution, LabelGroup
 from .peak_adapter import label_group_from_resolved_peaks
@@ -28,15 +27,7 @@ def _core_density(density: DensityEstimate) -> tuple[CanonicalGrid, CoreDensityG
     if len(density.grid.axis_values) != 2:
         raise ValueError("peak resolution currently requires a two-dimensional density")
     x_axis, y_axis = density.grid.axis_values
-    if len(x_axis) != len(y_axis):
-        raise ValueError("peak resolution currently requires a square density grid")
-    grid = CanonicalGrid(
-        x_min=float(x_axis[0]),
-        x_max=float(x_axis[-1]),
-        y_min=float(y_axis[0]),
-        y_max=float(y_axis[-1]),
-        grid_size=len(x_axis),
-    )
+    grid = CanonicalGrid.from_axis_values(x_axis, y_axis)
     # CanonicalGrid uses xy raster orientation. Engine DensityGrid stores axes
     # in feature order, so its 2-D field is transposed into (y, x) raster order.
     field = CoreDensityGrid(
@@ -53,9 +44,7 @@ def detect_peaks(
     *,
     output_label: str,
     density: DensityEstimate,
-    voting_spec: PeakVotingSpec,
-    robustness_policy: PeakCountRobustnessPolicy,
-    resolution_config: PeakResolutionConfig | None = None,
+    resolution_config: PeakResolutionConfig,
 ) -> LabelGroup:
     """Resolve supplied density and return its typed label group.
 
@@ -76,13 +65,6 @@ def detect_peaks(
         bandwidth_rule=density.spec.bandwidth_rule,
         bandwidth_multiplier=density.spec.bandwidth_multiplier,
     )
-    config = resolution_config or PeakResolutionConfig(
-        n_bootstrap_draws=voting_spec.n_draws,
-        bootstrap_sample_fraction=voting_spec.sample_fraction,
-        min_valid_draws=voting_spec.min_valid_draws,
-        robustness_policy=robustness_policy,
-        voting_spec=voting_spec,
-    )
     record = DistributionRecord(
         distribution_id=distribution.distribution_id,
         points=distribution.feature_values,
@@ -92,7 +74,7 @@ def detect_peaks(
             density_grid=core_density,
         ),
     )
-    resolved_record = compute_resolved_peaks(record, config)
+    resolved_record = compute_resolved_peaks(record, resolution_config)
     resolved = resolved_record.resolved_peaks
     if resolved is None:  # defensive: the public resolver contract promises one
         raise RuntimeError("core peak resolver returned no resolved distribution")
