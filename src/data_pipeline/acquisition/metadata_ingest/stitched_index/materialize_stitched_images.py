@@ -21,6 +21,7 @@ from data_pipeline.acquisition.image_building.utils.frame_tiler import FrameTile
 from data_pipeline.acquisition.image_building.utils.frame_tiler import TileSpec
 from data_pipeline.acquisition.image_building.utils.frame_tiler import legacy_canvas_shape
 from data_pipeline.acquisition.image_building.utils.frame_tiler import stitch_frame_tiles
+from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
 from data_pipeline.acquisition.image_building.shared.log_focus import LoG_focus_stacker
 from data_pipeline.acquisition.image_building.shared.log_focus import im_rescale
 from data_pipeline.acquisition.metadata_ingest.scope.keyence.raw_plane_parsing import (
@@ -420,6 +421,8 @@ def materialize_stitched_images(
                         channel_index=channel_index,
                         device=yx1_device,
                     )
+                    # Same shared canonical polarity as Keyence, so both microscopes match.
+                    image = apply_display_polarity(image)
                     materialized_height, materialized_width = image.shape[:2]
                     status = _write_image(output_path, image, overwrite=overwrite, image_extension=image_extension)
                 else:
@@ -457,7 +460,10 @@ def materialize_stitched_images(
                         orientation=keyence_orientation,
                         master_params_path=keyence_master_params,
                     )
-                    image = tiler_result.stitched
+                    # Display polarity is a property of materialization, not the stitcher — apply
+                    # the ONE shared canonical flip post-stitch (see image_building/shared/
+                    # display_polarity.py), same op YX1 and the native materializers use.
+                    image = apply_display_polarity(tiler_result.stitched)
                     materialized_height, materialized_width = image.shape[:2]
                     tiler_fallback_used = str(tiler_result.fallback_used)
                     tiler_qc_passed = bool(tiler_result.qc.passed)

@@ -27,8 +27,8 @@ def _make_inventory(n: int) -> pd.DataFrame:
         "channel_id": "BF",
         "time_index": t,
         "elapsed_time_s": float(t * 120),
-        "source_image_path": f"images/{_image_id(t)}.png",
-        "source_micrometers_per_pixel": 0.75,
+        "image_path": f"images/{_image_id(t)}.png",
+        "image_micrometers_per_pixel": 0.75,
         "image_width_px": WIDTH,
         "image_height_px": HEIGHT,
     } for t in range(n)])
@@ -38,7 +38,7 @@ def _identity(t: int) -> dict:
     return {
         "experiment_id": EXP, "well_id": WELL_ID, "image_id": _image_id(t),
         "time_index": t, "z_index": pd.NA, "channel_id": "BF",
-        "source_image_path": f"images/{_image_id(t)}.png",
+        "image_path": f"images/{_image_id(t)}.png",
         "image_width_px": WIDTH, "image_height_px": HEIGHT,
     }
 

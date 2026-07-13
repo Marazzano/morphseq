@@ -5,7 +5,7 @@ This script extracts the verified XY stage positions from the 20251112 experimen
 (which has correct well-to-position mapping) and saves them as a reference file
 for use in XY-based well mapping.
 
-Run once to create: morphseq_playground/metadata/ref_plate_xy_coordinates.csv
+Run once to create: metadata/reference/yx1/nd2_ref_plate_xy_coordinates.csv (versioned in the repo)
 
 Usage:
     python generate_xy_reference.py
@@ -28,7 +28,8 @@ BASE_PATH = Path("/net/trapnell/vol1/home/mdcolon/proj/morphseq")
 PLAYGROUND_PATH = BASE_PATH / "morphseq_playground"
 RAW_DATA_PATH = PLAYGROUND_PATH / "raw_image_data" / "YX1"
 METADATA_PATH = BASE_PATH / "metadata" / "plate_metadata"
-OUTPUT_PATH = PLAYGROUND_PATH / "metadata" / "YX1_nd2_ref_plate_xy_coordinates.csv"
+# Reference lives in the repo (fixed hardware fact, versioned with code), not the playground.
+OUTPUT_PATH = BASE_PATH / "metadata" / "reference" / "yx1" / "nd2_ref_plate_xy_coordinates.csv"
 
 
 def extract_nd2_stage_positions(nd2_path: Path) -> pd.DataFrame:

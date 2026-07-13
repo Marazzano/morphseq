@@ -232,7 +232,7 @@ def validate_snip_grain_identity_columns(
 _SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS: tuple[str, ...] = (
     "mask_id",
     "track_id",
-    "source_image_path",
+    "image_path",
     "processed_snip_path",
     "embryo_mask",
     "embryo_mask_snip_path",

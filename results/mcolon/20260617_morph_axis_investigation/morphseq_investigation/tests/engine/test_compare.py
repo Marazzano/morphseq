@@ -1,355 +1,323 @@
-"""TASK_C -- compare_label_groups + correspondence policies + partition agreement.
-
-Fixture-driven (TASK_0 objects only) -- hand-built LabelGroups/SampleSets with
-known geometry, per the TASK_C brief. Does not depend on TASK_A/B.
-"""
-
 import numpy as np
 import pytest
 
-from morphseq_investigation.engine.objects import (
-    HDR,
-    LabelGroup,
-    SampleSet,
-    SampleSetGeometry,
-)
+import morphseq_investigation.engine.compare as compare_module
+from morphseq_investigation.engine.catalog import DistributionCatalog, DistributionComparison
 from morphseq_investigation.engine.compare import (
-    ComparisonResult,
-    PartitionAgreementResult,
-    compare_label_groups,
+    NullTestResult,
+    compare_distributions,
     label_group_agreement,
+    summarize_label_groups,
 )
+from morphseq_investigation.engine.grid import build_grid
+from morphseq_investigation.engine.objects import (
+    DensityEstimateSpec,
+    Distribution,
+    UNASSIGNED_LABEL,
+)
+from morphseq_investigation.engine.plotting import descriptive_comparison_subplot
 
 
-REF_DID = "b9d2_30hpf_reference"
-TGT_DID = "b9d2_30hpf_target"
-GRID_A = "grid_aaa"
-GRID_B = "grid_bbb"
-
-
-def _geom(center, grid_id=GRID_A, feature_names=("PC1", "PC2")):
-    return SampleSetGeometry(
-        grid_id=grid_id,
-        feature_names=feature_names,
-        center=np.asarray(center, dtype=float),
-        radius=1.0,
-        r80=0.8,
-        cv_radius_from_center=0.1,
-    )
-
-
-def _hdr(mask, grid_id=GRID_A, feature_names=("PC1", "PC2")):
-    return HDR(grid_id=grid_id, feature_names=feature_names, level=0.5, mask=np.asarray(mask, dtype=bool))
-
-
-def _sample_set(
-    distribution_id,
-    name,
-    members,
-    *,
-    geometry=None,
-    hdr=None,
-):
-    return SampleSet(
-        sample_set_id=f"{distribution_id}__{name}",
-        sample_set_name=name,
+def _distribution(distribution_id, condition):
+    return Distribution(
         distribution_id=distribution_id,
-        sample_ids=tuple(members),
-        geometry=geometry,
-        hdr=hdr,
+        sample_ids=("s0", "s1", "s2", "s3"),
+        feature_names=("x", "y"),
+        feature_values=np.zeros((4, 2)),
+        coordinates={"batch": "b1", "condition": condition},
     )
 
 
-def _label_group(distribution_id, name, sample_sets, unassigned=()):
-    assignment = {}
-    for s in sample_sets:
-        for sid in s.sample_ids:
-            assignment[sid] = s.sample_set_id
-    return LabelGroup(
-        label_group_name=name,
-        distribution_id=distribution_id,
-        sample_set_ids=tuple(s.sample_set_id for s in sample_sets),
-        sample_id_to_sample_set_id=assignment,
-        unassigned_sample_ids=tuple(unassigned),
+def test_agreement_reads_unified_assignments_and_explicit_unassigned():
+    distribution = _distribution("d", "reference")
+    distribution = distribution.with_label(
+        "left", {"s0": "A", "s1": "A", "s2": "B", "s3": "B"}
     )
-
-
-def _sample_set_map(*sample_sets):
-    return {s.sample_set_id: s for s in sample_sets}
-
-
-# --------------------------------------------------------------------------- #
-# Fixture: two peak LabelGroups (reference: 1 big + 1 small peak; target: 2 peaks)
-# --------------------------------------------------------------------------- #
-def _peak_fixture():
-    ref_big = _sample_set(
-        REF_DID, "peak_0", [f"r{i}" for i in range(8)],
-        geometry=_geom([0.0, 0.0]),
-        hdr=_hdr(np.array([[1, 1, 0], [1, 1, 0], [0, 0, 0]])),
+    distribution = distribution.with_label(
+        "right", {"s0": "P", "s1": "P", "s2": UNASSIGNED_LABEL, "s3": "Q"}
     )
-    ref_small = _sample_set(
-        REF_DID, "peak_1", [f"r{i}" for i in range(8, 10)],
-        geometry=_geom([10.0, 10.0]),
-        hdr=_hdr(np.array([[0, 0, 0], [0, 0, 0], [0, 0, 1]])),
+    result = label_group_agreement(
+        distribution.get_label_group("left"), distribution.get_label_group("right")
     )
-    reference_lg = _label_group(REF_DID, "peak", [ref_big, ref_small], unassigned=("r10",))
-
-    tgt_near_big = _sample_set(
-        TGT_DID, "peak_0", [f"t{i}" for i in range(5)],
-        geometry=_geom([0.5, 0.5]),
-        hdr=_hdr(np.array([[1, 1, 0], [1, 0, 0], [0, 0, 0]])),
-    )
-    tgt_near_small = _sample_set(
-        TGT_DID, "peak_1", [f"t{i}" for i in range(5, 7)],
-        geometry=_geom([9.5, 9.5]),
-        hdr=_hdr(np.array([[0, 0, 0], [0, 0, 0], [0, 0, 1]])),
-    )
-    target_lg = _label_group(TGT_DID, "peak", [tgt_near_big, tgt_near_small], unassigned=("t7",))
-
-    ref_sets = _sample_set_map(ref_big, ref_small)
-    tgt_sets = _sample_set_map(tgt_near_big, tgt_near_small)
-    return reference_lg, target_lg, ref_sets, tgt_sets, {
-        "ref_big": ref_big, "ref_small": ref_small,
-        "tgt_near_big": tgt_near_big, "tgt_near_small": tgt_near_small,
-    }
-
-
-# --------------------------------------------------------------------------- #
-# largest_reference
-# --------------------------------------------------------------------------- #
-def test_largest_reference_pairs_every_target_to_biggest_ref():
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    result = compare_label_groups(
-        reference_lg, target_lg, "largest_reference",
-        reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-    )
-    assert isinstance(result, ComparisonResult)
-    assert len(result.pairs) == 2
-    for pair in result.pairs:
-        assert pair.reference_sample_set_id == named["ref_big"].sample_set_id
-    tgt_ids = {p.target_sample_set_id for p in result.pairs}
-    assert tgt_ids == {named["tgt_near_big"].sample_set_id, named["tgt_near_small"].sample_set_id}
-
-
-# --------------------------------------------------------------------------- #
-# closest_center
-# --------------------------------------------------------------------------- #
-def test_closest_center_pairs_by_nearest_geometry():
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    result = compare_label_groups(
-        reference_lg, target_lg, "closest_center",
-        reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-    )
-    assert len(result.pairs) == 2
-    by_tgt = {p.target_sample_set_id: p.reference_sample_set_id for p in result.pairs}
-    assert by_tgt[named["tgt_near_big"].sample_set_id] == named["ref_big"].sample_set_id
-    assert by_tgt[named["tgt_near_small"].sample_set_id] == named["ref_small"].sample_set_id
-    # center_distance metric present and small for the correctly-matched pair
-    for pair in result.pairs:
-        assert "center_distance" in pair.metrics
-        assert pair.metrics["center_distance"] < 1.0  # 0.5,0.5 offset -> sqrt(0.5)
-
-
-# --------------------------------------------------------------------------- #
-# matched_by_overlap
-# --------------------------------------------------------------------------- #
-def test_matched_by_overlap_pairs_by_best_hdr_overlap():
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    result = compare_label_groups(
-        reference_lg, target_lg, "matched_by_overlap",
-        reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-    )
-    assert len(result.pairs) == 2
-    by_tgt = {p.target_sample_set_id: p.reference_sample_set_id for p in result.pairs}
-    assert by_tgt[named["tgt_near_big"].sample_set_id] == named["ref_big"].sample_set_id
-    assert by_tgt[named["tgt_near_small"].sample_set_id] == named["ref_small"].sample_set_id
-    for pair in result.pairs:
-        assert "overlap_fraction" in pair.metrics
-        assert pair.metrics["overlap_fraction"] > 0.0
-
-
-# --------------------------------------------------------------------------- #
-# all_pairs
-# --------------------------------------------------------------------------- #
-def test_all_pairs_is_full_cross_product():
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    result = compare_label_groups(
-        reference_lg, target_lg, "all_pairs",
-        reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-    )
-    assert len(result.pairs) == 4  # 2 ref x 2 tgt, no reduction
-    got = {(p.reference_sample_set_id, p.target_sample_set_id) for p in result.pairs}
-    expected = {
-        (r, t)
-        for r in (named["ref_big"].sample_set_id, named["ref_small"].sample_set_id)
-        for t in (named["tgt_near_big"].sample_set_id, named["tgt_near_small"].sample_set_id)
-    }
-    assert got == expected
-    # all_pairs leaves nothing unmatched
-    assert result.unmatched_reference_sample_set_ids == ()
-    assert result.unmatched_target_sample_set_ids == ()
-
-
-def test_unknown_correspondence_spec_raises():
-    reference_lg, target_lg, ref_sets, tgt_sets, _ = _peak_fixture()
-    with pytest.raises(ValueError):
-        compare_label_groups(
-            reference_lg, target_lg, "not_a_real_spec",
-            reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-        )
-
-
-# --------------------------------------------------------------------------- #
-# Guardrails
-# --------------------------------------------------------------------------- #
-def test_mismatched_feature_names_raises_on_closest_center():
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    # swap in a target set whose geometry claims different feature_names
-    bad_tgt = _sample_set(
-        TGT_DID, "peak_0", named["tgt_near_big"].sample_ids,
-        geometry=_geom([0.5, 0.5], feature_names=("umap_1", "umap_2")),
-        hdr=named["tgt_near_big"].hdr,
-    )
-    tgt_sets = dict(tgt_sets)
-    tgt_sets[bad_tgt.sample_set_id] = bad_tgt
-    with pytest.raises(ValueError):
-        compare_label_groups(
-            reference_lg, target_lg, "closest_center",
-            reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-        )
-
-
-def test_mismatched_grid_id_raises_on_matched_by_overlap():
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    bad_tgt = _sample_set(
-        TGT_DID, "peak_0", named["tgt_near_big"].sample_ids,
-        geometry=named["tgt_near_big"].geometry,
-        hdr=_hdr(named["tgt_near_big"].hdr.mask, grid_id=GRID_B),
-    )
-    tgt_sets = dict(tgt_sets)
-    tgt_sets[bad_tgt.sample_set_id] = bad_tgt
-    with pytest.raises(ValueError):
-        compare_label_groups(
-            reference_lg, target_lg, "matched_by_overlap",
-            reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-        )
-
-
-def test_mismatched_feature_names_scalar_pair_metric_raises_even_in_all_pairs():
-    # all_pairs still computes per-pair metrics -> guardrail fires there too.
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    bad_tgt = _sample_set(
-        TGT_DID, "peak_0", named["tgt_near_big"].sample_ids,
-        geometry=_geom([0.5, 0.5], feature_names=("umap_1", "umap_2")),
-        hdr=None,
-    )
-    tgt_sets = dict(tgt_sets)
-    tgt_sets[bad_tgt.sample_set_id] = bad_tgt
-    with pytest.raises(ValueError):
-        compare_label_groups(
-            reference_lg, target_lg, "all_pairs",
-            reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-        )
-
-
-# --------------------------------------------------------------------------- #
-# unassigned + unmatched survive
-# --------------------------------------------------------------------------- #
-def test_unassigned_and_unmatched_survive_into_result():
-    reference_lg, target_lg, ref_sets, tgt_sets, named = _peak_fixture()
-    result = compare_label_groups(
-        reference_lg, target_lg, "largest_reference",
-        reference_sample_sets=ref_sets, target_sample_sets=tgt_sets,
-    )
-    # largest_reference pairs both targets to ref_big -> ref_small unmatched
-    assert result.unmatched_reference_sample_set_ids == (named["ref_small"].sample_set_id,)
-    assert result.unmatched_target_sample_set_ids == ()
-    assert result.reference_unassigned_sample_ids == ("r10",)
-    assert result.target_unassigned_sample_ids == ("t7",)
-
-
-# --------------------------------------------------------------------------- #
-# Genotype-vs-peak agreement
-# --------------------------------------------------------------------------- #
-def _partition_label_group(distribution_id, name, id_to_group, group_names, unassigned=()):
-    sets = []
-    for g in group_names:
-        members = tuple(sid for sid, grp in id_to_group.items() if grp == g)
-        sets.append(_sample_set(distribution_id, g, members))
-    return _label_group(distribution_id, name, sets, unassigned=unassigned), _sample_set_map(*sets)
-
-
-def test_agreement_identical_partitions_is_max():
-    sample_ids = [f"s{i}" for i in range(20)]
-    id_to_group = {sid: ("A" if i % 2 == 0 else "B") for i, sid in enumerate(sample_ids)}
-    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
-    right_lg, _ = _partition_label_group(REF_DID, "peak", id_to_group, ["A", "B"])
-
-    result = label_group_agreement(left_lg, right_lg)
-    assert isinstance(result, PartitionAgreementResult)
-    assert result.agreement_metric == "adjusted_rand_score"
-    assert result.agreement_score == pytest.approx(1.0)
-    assert result.n_samples_compared == 20
-
-
-def test_agreement_orthogonal_partitions_near_chance():
-    # 4x4 grid design: left splits into quadrant-rows, right into a scrambled
-    # partition uncorrelated with left -> ARI near 0.
-    rng = np.random.default_rng(0)
-    n = 200
-    sample_ids = [f"s{i}" for i in range(n)]
-    left_labels = rng.integers(0, 3, size=n)
-    right_labels = rng.permutation(left_labels)  # same multiset, shuffled -> independent
-    id_to_left = {sid: f"g{left_labels[i]}" for i, sid in enumerate(sample_ids)}
-    id_to_right = {sid: f"p{right_labels[i]}" for i, sid in enumerate(sample_ids)}
-
-    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_left, ["g0", "g1", "g2"])
-    right_lg, _ = _partition_label_group(REF_DID, "peak", id_to_right, ["p0", "p1", "p2"])
-
-    result = label_group_agreement(left_lg, right_lg)
-    assert abs(result.agreement_score) < 0.2  # near chance
-
-
-def test_agreement_cross_tab_shape_and_counts():
-    id_to_group = {
-        "s0": "A", "s1": "A", "s2": "B", "s3": "B",
-    }
-    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
-    # right partition: s0,s1,s2 -> P; s3 -> Q
-    id_to_right = {"s0": "P", "s1": "P", "s2": "P", "s3": "Q"}
-    right_lg, _ = _partition_label_group(REF_DID, "peak", id_to_right, ["P", "Q"])
-
-    result = label_group_agreement(left_lg, right_lg)
-    left_a = f"{REF_DID}__A"
-    left_b = f"{REF_DID}__B"
-    right_p = f"{REF_DID}__P"
-    right_q = f"{REF_DID}__Q"
-    assert result.cross_tab[left_a][right_p] == 2
-    assert result.cross_tab[left_a][right_q] == 0
-    assert result.cross_tab[left_b][right_p] == 1
-    assert result.cross_tab[left_b][right_q] == 1
-
-
-def test_agreement_unassigned_on_one_side_excluded_but_reported():
-    id_to_group = {"s0": "A", "s1": "A", "s2": "B"}
-    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
-    # right: s0,s1 assigned to P; s2 unassigned (labeler declined to place it)
-    id_to_right = {"s0": "P", "s1": "P"}
-    right_lg, _ = _partition_label_group(
-        REF_DID, "peak", id_to_right, ["P"], unassigned=("s2",)
-    )
-
-    result = label_group_agreement(left_lg, right_lg)
-    assert result.n_samples_compared == 2
-    # s2 is assigned on the LEFT (genotype) but unassigned on the RIGHT (peak)
+    assert result.n_samples_compared == 3
     assert result.left_only_sample_ids == ("s2",)
-    assert result.right_only_sample_ids == ()
-    assert result.unassigned_both_sample_ids == ()
+    assert result.cross_tab["A"]["P"] == 2
+    assert result.cross_tab["B"]["Q"] == 1
 
 
-def test_agreement_requires_same_distribution_id():
-    id_to_group = {"s0": "A", "s1": "B"}
-    left_lg, _ = _partition_label_group(REF_DID, "genotype", id_to_group, ["A", "B"])
-    right_lg, _ = _partition_label_group(TGT_DID, "peak", id_to_group, ["A", "B"])
-    with pytest.raises(ValueError):
-        label_group_agreement(left_lg, right_lg)
+def test_agreement_requires_same_complete_sample_membership():
+    left = _distribution("d", "reference").with_label("x", {"s0": "A"}).get_label_group("x")
+    right = _distribution("other", "target").with_label("x", {"s0": "A"}).get_label_group("x")
+    with pytest.raises(ValueError, match="same distribution_id"):
+        label_group_agreement(left, right)
+
+
+def test_summary_preserves_structured_coordinates_and_derives_sample_sets():
+    reference = _distribution("ref", "reference").with_label(
+        "genotype", {"s0": "wt", "s1": "wt", "s2": "mut"}
+    )
+    target = _distribution("tgt", "target").with_label(
+        "genotype", {"s0": "wt", "s1": "mut", "s2": "mut", "s3": "mut"}
+    )
+    comparison = DistributionComparison(
+        coordinates={"batch": "b1"}, members={"reference": reference, "target": target}
+    )
+    rows = summarize_label_groups(comparison, "genotype")
+    assert tuple(row.member_value for row in rows) == ("reference", "target")
+    assert all(dict(row.comparison_coordinates) == {"batch": "b1"} for row in rows)
+    assert rows[0].distribution_coordinates["condition"] == "reference"
+    assert rows[0].sample_set_count == len(reference.sample_sets("genotype")) == 2
+    assert rows[0].unassigned_sample_count == 1
+    assert rows[0].peak_count is None
+    assert rows[0].is_robust is None
+
+
+def test_summary_missing_label_raises_instead_of_dropping_member():
+    reference = _distribution("ref", "reference").with_label("group", {"s0": "A"})
+    target = _distribution("tgt", "target")
+    comparison = DistributionComparison(coordinates={"batch": "b1"}, members={"r": reference, "t": target})
+    with pytest.raises(KeyError):
+        summarize_label_groups(comparison, "group")
+
+
+def _numeric_distribution(name, values, features=("x",)):
+    values = np.asarray(values, dtype=float)
+    if values.ndim == 1:
+        values = values[:, None]
+    return Distribution(
+        distribution_id=name,
+        sample_ids=tuple(f"{name}_{i}" for i in range(len(values))),
+        feature_names=tuple(features),
+        feature_values=values,
+        coordinates={"condition": name, "time": 24},
+    )
+
+
+def test_raw_comparison_prepares_1d_shared_grid_without_mutating_sources():
+    reference = _numeric_distribution("wt", [-2, -1, -0.5, 0, 0.5, 1])
+    target = _numeric_distribution("mut", [0, 0.5, 1, 1.5, 2, 2.5])
+    result = compare_distributions(reference=reference, targets=(target,), grid_size=31)
+    item = result.comparisons[0]
+    assert item.features == ("x",)
+    assert item.reference_density.grid.grid_id == item.target_density.grid.grid_id
+    assert item.reference_density.density_grid.density.shape == (31,)
+    assert 0 <= item.density_overlap <= 1
+    assert reference.densities == target.densities == ()
+    assert item.null_test.state == "not_tested"
+
+
+def test_raw_comparison_prepares_2d_and_preserves_label_overlays():
+    ref = _numeric_distribution(
+        "wt", [[-1, 10], [0, 11], [1, 12], [2, 13]], features=("x", "y")
+    ).with_label("peaks", {"wt_0": "peak_0", "wt_1": "peak_0"})
+    target = _numeric_distribution(
+        "mut", [[0, 20], [1, 22], [2, 24], [3, 26]], features=("x", "y")
+    ).with_label("peaks", {"mut_0": "peak_0", "mut_3": "peak_1"})
+    item = compare_distributions(
+        reference=ref, targets=(target,), label_group="peaks",
+        features=("y", "x"), grid_size=17,
+    ).comparisons[0]
+    assert item.grid.feature_names == ("y", "x")
+    assert item.reference_density.density_grid.density.shape == (17, 17)
+    assert item.reference_label_group is ref.get_label_group("peaks")
+    assert len(ref.sample_ids) == 4  # unassigned samples remained in density membership
+
+
+def test_comparison_requires_features_for_multifeature_and_rejects_nd():
+    ref = _numeric_distribution("r", np.zeros((5, 3)), features=("a", "b", "c"))
+    target = _numeric_distribution("t", np.ones((5, 3)), features=("a", "b", "c"))
+    with pytest.raises(ValueError, match="explicit ordered features"):
+        compare_distributions(reference=ref, targets=(target,))
+    with pytest.raises(ValueError, match="only 1-D or 2-D"):
+        compare_distributions(reference=ref, targets=(target,), features=("a", "b", "c"))
+
+
+def test_supplied_semantic_grid_controls_features_and_is_reused_exactly():
+    ref = _numeric_distribution("r", [[0, 10], [1, 11], [2, 12]], features=("x", "y"))
+    target = _numeric_distribution("t", [[2, 20], [3, 21], [4, 22]], features=("x", "y"))
+    grid = build_grid(
+        ("y",), np.array([[0.0], [30.0]]), ("lo", "hi"),
+        "fixed_bounds", {"resolution": 9, "bounds": ((0, 30),)},
+    )
+    item = compare_distributions(reference=ref, targets=(target,), grid=grid).comparisons[0]
+    assert item.grid is grid
+    assert item.features == ("y",)
+
+
+def test_catalog_directed_entry_point_matches_raw_preparation_and_context():
+    ref = _numeric_distribution("wt", [-1, 0, 1, 2])
+    target = _numeric_distribution("mut", [0, 1, 2, 3])
+    catalog = DistributionCatalog((ref, target), coordinate_names=("condition", "time"))
+    catalog_result = catalog.compare(
+        across="condition", reference="wt", targets=("mut",),
+        match_on=("time",), grid_size=15,
+    )
+    raw = compare_distributions(reference=ref, targets=(target,), grid_size=15)
+    item = catalog_result.comparisons[0]
+    assert item.density_overlap == pytest.approx(raw.comparisons[0].density_overlap)
+    assert item.reference_value == "wt" and item.target_value == "mut"
+    assert dict(item.coordinates) == {"time": 24}
+
+
+def test_catalog_preparation_failure_adds_member_ids_and_matched_context():
+    ref = _numeric_distribution("wt", [-1, 0, 1]).with_label(
+        "peaks", {"wt_0": "peak_0"}
+    )
+    target = _numeric_distribution("mut", [0, 1, 2])
+    catalog = DistributionCatalog((ref, target), coordinate_names=("condition", "time"))
+    with pytest.raises(ValueError) as caught:
+        catalog.compare(
+            across="condition", reference="wt", targets=("mut",),
+            match_on=("time",), label_group="peaks",
+        )
+    message = str(caught.value)
+    assert "matched coordinates {'time': 24}" in message
+    assert "'reference': 'wt'" in message and "'targets': ('mut',)" in message
+    assert isinstance(caught.value.__cause__, KeyError)
+
+
+def test_multi_target_failure_is_all_or_error_and_sources_remain_immutable():
+    ref = _numeric_distribution("ref", [-1, 0, 1])
+    valid = _numeric_distribution("valid", [0, 1, 2])
+    invalid = _numeric_distribution("invalid", np.ones((3, 2)), features=("y", "z"))
+    snapshots = tuple((d.densities, d.shared_density_index) for d in (ref, valid, invalid))
+    with pytest.raises(ValueError, match="lacks comparison feature"):
+        compare_distributions(reference=ref, targets=(valid, invalid), features=("x",))
+    assert snapshots == tuple(
+        (d.densities, d.shared_density_index) for d in (ref, valid, invalid)
+    )
+
+
+def test_comparison_preserves_distinct_effective_density_specs():
+    ref = _numeric_distribution("ref", [-2, -1, 0, 1, 2])
+    target = _numeric_distribution("target", [-1, 0, 1, 2, 3])
+    ref_spec = DensityEstimateSpec(
+        bandwidth_multiplier=0.5, grid_params={"resolution": 9}
+    )
+    target_spec = DensityEstimateSpec(
+        bandwidth_multiplier=1.25, grid_params={"resolution": 9}
+    )
+    ref = ref.with_density(ref.calc_density(ref_spec), select_as_shared=True)
+    target = target.with_density(target.calc_density(target_spec), select_as_shared=True)
+    item = compare_distributions(reference=ref, targets=(target,), grid_size=11).comparisons[0]
+    assert item.reference_density.spec is ref_spec
+    assert item.target_density.spec is target_spec
+
+
+def test_label_overlay_does_not_filter_unassigned_density_members(monkeypatch):
+    ref = _numeric_distribution("ref", [-2, -1, 0, 1]).with_label(
+        "peaks", {"ref_0": "peak_0"}
+    )
+    target = _numeric_distribution("target", [0, 1, 2, 3]).with_label(
+        "peaks", {"target_3": "peak_0"}
+    )
+    sizes = []
+    original_bandwidth = compare_module._bandwidth
+
+    def recording_bandwidth(values, spec):
+        sizes.append(len(values))
+        return original_bandwidth(values, spec)
+
+    monkeypatch.setattr(compare_module, "_bandwidth", recording_bandwidth)
+    compare_distributions(reference=ref, targets=(target,), label_group="peaks")
+    assert sizes == [len(ref.sample_ids), len(target.sample_ids)] == [4, 4]
+
+
+def test_null_test_is_immutable_and_has_explicit_state():
+    ref = _numeric_distribution("r", [-2, -1, 0, 1, 2])
+    target = _numeric_distribution("t", [-1, 0, 1, 2, 3])
+    original = compare_distributions(reference=ref, targets=(target,), grid_size=11)
+    tested = original.test_nulls(n_draws=5, seed=7)
+    assert original.comparisons[0].null_test.state == "not_tested"
+    assert tested.comparisons[0].null_test.state in {"invalid", "nonsignificant", "significant"}
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"alpha": 0.0}, "alpha"),
+        ({"state": "not_tested", "n_draws": 1}, "not_tested"),
+        ({"state": "invalid", "n_draws": 2, "observed_overlap": 0.5,
+          "null_overlaps": [0.4], "valid_draws": 0}, "valid_draws"),
+        ({"state": "significant", "n_draws": 2, "observed_overlap": 0.5,
+          "null_overlaps": [0.4], "valid_draws": 1, "p_value": 0.5}, "state"),
+    ],
+)
+def test_null_result_rejects_cross_field_contradictions(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        NullTestResult(**kwargs)
+
+
+def test_null_result_accepts_each_consistent_terminal_state():
+    invalid = NullTestResult(state="invalid", observed_overlap=0.3, n_draws=4)
+    nonsignificant = NullTestResult(
+        state="nonsignificant", observed_overlap=0.3,
+        null_overlaps=np.array([0.2, 0.4]), valid_draws=2,
+        p_value=0.5, n_draws=2,
+    )
+    significant = NullTestResult(
+        state="significant", observed_overlap=0.1,
+        null_overlaps=np.array([0.5] * 20), valid_draws=20,
+        p_value=1 / 21, n_draws=20,
+    )
+    assert (invalid.state, nonsignificant.state, significant.state) == (
+        "invalid", "nonsignificant", "significant"
+    )
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [("invalid", "invalid"), ("low", "nonsignificant"), ("high", "significant")],
+)
+def test_null_enrichment_reaches_each_terminal_state_deterministically(
+    monkeypatch, outcome, expected
+):
+    ref = _numeric_distribution("r", [-2, -1, 0, 1, 2])
+    target = _numeric_distribution("t", [-1, 0, 1, 2, 3])
+    item = compare_distributions(reference=ref, targets=(target,), grid_size=11).comparisons[0]
+
+    def controlled_overlap(left, right):
+        if outcome == "invalid":
+            raise ValueError("invalid permutation")
+        if outcome == "low":
+            return item.density_overlap - 0.01
+        return item.density_overlap + 0.01
+
+    monkeypatch.setattr(compare_module, "_overlap", controlled_overlap)
+    tested = item.test_nulls(n_draws=20, seed=4)
+    assert tested.null_test.state == expected
+    assert tested.null_test.valid_draws == (0 if expected == "invalid" else 20)
+
+
+def test_null_test_preserves_valid_draws_when_an_individual_draw_fails(monkeypatch):
+    ref = _numeric_distribution("r", [-2, -1, 0, 1, 2])
+    target = _numeric_distribution("t", [-1, 0, 1, 2, 3])
+    item = compare_distributions(reference=ref, targets=(target,), grid_size=11).comparisons[0]
+    calls = 0
+
+    def sometimes_fails(left, right):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("one invalid draw")
+        return 0.5
+
+    monkeypatch.setattr(compare_module, "_overlap", sometimes_fails)
+    tested = item.test_nulls(n_draws=4, seed=3)
+    assert tested.null_test.valid_draws == 3
+    assert tested.null_test.n_draws == 4
+    assert tested.null_test.state in {"nonsignificant", "significant"}
+
+
+def test_plotting_consumes_untested_and_tested_comparisons_without_analysis():
+    ref = _numeric_distribution("r", [-2, -1, 0, 1, 2])
+    target = _numeric_distribution("t", [-1, 0, 1, 2, 3])
+    original = compare_distributions(reference=ref, targets=(target,), grid_size=11)
+    tested = original.test_nulls(n_draws=3, seed=11)
+
+    untested_plot = descriptive_comparison_subplot(original.comparisons[0])
+    tested_plot = descriptive_comparison_subplot(tested.comparisons[0])
+
+    assert len(untested_plot.traces) == len(tested_plot.traces) == 2
+    assert untested_plot.traces[1].style.linestyle == ":"
+    assert tested_plot.traces[1].style.linestyle in {"-.", "--", "-"}

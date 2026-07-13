@@ -33,8 +33,8 @@ def _make_inventory(n: int, channel: str = "BF") -> pd.DataFrame:
         "channel_id": channel,
         "time_index": t,
         "elapsed_time_s": float(t * 120),
-        "source_image_path": f"images/{WELL_ID}_{channel}_t{t:04d}.png",
-        "source_micrometers_per_pixel": 0.75,
+        "image_path": f"images/{WELL_ID}_{channel}_t{t:04d}.png",
+        "image_micrometers_per_pixel": 0.75,
         "image_width_px": WIDTH,
         "image_height_px": HEIGHT,
     } for t in range(n)])
@@ -43,7 +43,7 @@ def _make_inventory(n: int, channel: str = "BF") -> pd.DataFrame:
 def _projection_row(t: int) -> dict:
     row = _make_inventory(1).iloc[0].to_dict()
     row["time_index"] = t
-    row["source_image_path"] = f"images/{WELL_ID}_BF_t{t:04d}.png"
+    row["image_path"] = f"images/{WELL_ID}_BF_t{t:04d}.png"
     row["z_index"] = pd.NA
     row["image_product_type"] = "projection"
     return row
@@ -52,7 +52,7 @@ def _projection_row(t: int) -> dict:
 def _z_stack_row(t: int, z: int) -> dict:
     row = _make_inventory(1).iloc[0].to_dict()
     row["time_index"] = t
-    row["source_image_path"] = f"images/{WELL_ID}_BF_z{z:04d}_t{t:04d}.png"
+    row["image_path"] = f"images/{WELL_ID}_BF_z{z:04d}_t{t:04d}.png"
     row["z_index"] = z
     row["image_product_type"] = "z_stack"
     return row

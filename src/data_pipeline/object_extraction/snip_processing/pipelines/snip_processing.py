@@ -57,14 +57,26 @@ def run_snip_processing_well(
     if len(tracking_df) == 0:
         raise ValueError(f"No rows for mask_type={mask_type!r} in: {segmentation_tracking_csv}")
 
-    frame_df = pd.read_csv(frame_contract_csv, usecols=["image_id", "micrometers_per_pixel", "well_index", "well_id", "time_int"])
+    frame_df = pd.read_csv(
+        frame_contract_csv,
+        usecols=["image_id", "image_micrometers_per_pixel", "well_index", "well_id", "time_int"],
+    )
     frame_df["image_id"] = frame_df["image_id"].astype(str)
     tracking_df["image_id"] = tracking_df["image_id"].astype(str)
 
     merged = tracking_df.merge(frame_df, on="image_id", how="left", suffixes=("", "_frame"))
-    if merged["micrometers_per_pixel"].isna().any():
-        bad = merged.loc[merged["micrometers_per_pixel"].isna(), ["image_id", "snip_id"]].head(10).to_dict(orient="records")
-        raise ValueError(f"Missing micrometers_per_pixel after join with frame_contract for rows: {bad}")
+    if merged["image_micrometers_per_pixel"].isna().any():
+        bad = (
+            merged.loc[
+                merged["image_micrometers_per_pixel"].isna(), ["image_id", "snip_id"]
+            ]
+            .head(10)
+            .to_dict(orient="records")
+        )
+        raise ValueError(
+            "Missing image_micrometers_per_pixel after join with frame_contract for rows: "
+            f"{bad}"
+        )
 
     # Determine background stats.
     bg_cfg = (snip_cfg.get("background_stats") or {})
@@ -77,7 +89,7 @@ def run_snip_processing_well(
     else:
         est = (bg_cfg.get("estimate") or {})
         bg = estimate_background_stats_full_frame(
-            rows=merged[["snip_id", "image_id", "source_image_path", "exported_mask_path"]].copy(),
+            rows=merged[["snip_id", "image_id", "image_path", "exported_mask_path"]].copy(),
             output_root=output_root,
             n_samples=int(est.get("n_samples", 100)),
             seed=int(est.get("seed", 309)),
@@ -126,12 +138,12 @@ def run_snip_processing_well(
                     "image_id": str(row["image_id"]),
                     "embryo_id": str(row["embryo_id"]),
                     "time_int": int(row["time_int"]),
-                    "source_image_path": str(row["source_image_path"]),
+                    "image_path": str(row["image_path"]),
                     "exported_mask_path": str(row["exported_mask_path"]),
                     "yolk_mask_path": None,
                     "processed_snip_path": rel_to_root(processed_path, output_root=output_root),
                     "raw_crop_path": None,
-                    "source_micrometers_per_pixel": float(row["micrometers_per_pixel"]),
+                    "image_micrometers_per_pixel": float(row["image_micrometers_per_pixel"]),
                     "target_pixel_size_um": float(target_pixel_size_um),
                     "output_height_px": int(output_shape_hw[0]),
                     "output_width_px": int(output_shape_hw[1]),

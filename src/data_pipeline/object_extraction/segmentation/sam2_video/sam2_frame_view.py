@@ -19,7 +19,7 @@ import pandas as pd
 REQUIRED_SAM2_FRAME_VIEW_COLUMNS: tuple[str, ...] = (
     "image_id",
     "time_index",
-    "source_image_path",
+    "image_path",
     "image_width_px",
     "image_height_px",
 )
@@ -65,7 +65,7 @@ def build_sam2_frame_view(
 
     Args:
         model_frame_view: Frame rows sorted by the pipeline only through `time_index`.
-        image_root: Optional root used to resolve relative `source_image_path` values.
+        image_root: Optional root used to resolve relative `image_path` values.
         temp_root: Optional temp directory parent.
         suffix: Filename suffix for SAM2-local links. SAM2 commonly expects `.jpg`.
 
@@ -88,7 +88,7 @@ def build_sam2_frame_view(
         rows: list[dict[str, object]] = []
 
         for sam2_idx, row in ordered.iterrows():
-            src = _resolve_source_path(row["source_image_path"], image_root)
+            src = _resolve_source_path(row["image_path"], image_root)
             if not src.exists():
                 raise FileNotFoundError(f"Source frame not found: {src}")
 
@@ -98,7 +98,7 @@ def build_sam2_frame_view(
             mapped = row.to_dict()
             mapped["sam2_frame_index"] = int(sam2_idx)
             mapped["sam2_frame_path"] = str(link_path)
-            mapped["source_image_path_resolved"] = str(src.resolve())
+            mapped["image_path_resolved"] = str(src.resolve())
             rows.append(mapped)
 
         index = pd.DataFrame(rows)

@@ -46,7 +46,7 @@ def _projection_row(tmp_path: Path, *, time_index: int = 7) -> dict:
         "image_id": image_id,
         "image_product_type": "projection",
         "projection_method": "focus_stack",
-        "source_image_path": str(path),
+        "image_path": str(path),
     }
 
 
@@ -62,7 +62,7 @@ def _z_stack_row(tmp_path: Path, *, time_index: int = 7, z_index: int) -> dict:
         "image_id": image_id,
         "image_product_type": "z_stack",
         "projection_method": None,
-        "source_image_path": str(path),
+        "image_path": str(path),
     }
 
 
@@ -77,7 +77,7 @@ def test_resolve_projection_row_one_row(tmp_path):
     resolved = resolve_projection_row_from_image_id(
         df, image_id=row["image_id"], product_key=PROJECTION_PRODUCT_KEY
     )
-    assert resolved["source_image_path"] == row["source_image_path"]
+    assert resolved["image_path"] == row["image_path"]
 
 
 def test_resolve_projection_row_zero_rows_fails_loud(tmp_path):
@@ -188,11 +188,11 @@ def test_load_materialized_image_from_row_reads_recorded_path(tmp_path):
 
 
 def test_load_materialized_image_from_row_reads_recorded_path_not_reconstructed(tmp_path):
-    """The row's source_image_path differs from any grammar-reconstructed path — the loader must
+    """The row's image_path differs from any grammar-reconstructed path — the loader must
     still load the RECORDED path, never recompute one."""
     odd_path = tmp_path / "totally_nonstandard_name.png"
     _write_image(odd_path, fill=200)
-    row = pd.Series({**_projection_row(tmp_path), "source_image_path": str(odd_path)})
+    row = pd.Series({**_projection_row(tmp_path), "image_path": str(odd_path)})
     image = load_materialized_image_from_row(row)
     assert (image == 200).all()
 
@@ -201,7 +201,7 @@ def test_load_materialized_image_from_row_image_root_resolves_relative_path(tmp_
     image_id = f"{WELL_ID}_{CHANNEL}_t0007"
     rel_path = Path("nested") / f"{image_id}.png"
     _write_image(tmp_path / rel_path)
-    row = pd.Series({**_projection_row(tmp_path), "source_image_path": str(rel_path)})
+    row = pd.Series({**_projection_row(tmp_path), "image_path": str(rel_path)})
     image = load_materialized_image_from_row(row, image_root=tmp_path)
     assert image is not None
 

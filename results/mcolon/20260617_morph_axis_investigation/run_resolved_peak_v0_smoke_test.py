@@ -39,7 +39,7 @@ from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
     DEFAULT_ANALYSIS_SPEC,
     EmpiricalNullSpec,
     ResolvedPeakAnalysisSpec,
-    resolve_points_with_analysis_spec,
+    _resolve_points_single_pass,
     resolved_peak_summary_to_row,
     resolved_peak_to_rows,
     run_resolved_peak_permutation_comparison,
@@ -76,7 +76,7 @@ def build_smoke_rows(n: int, seeds: list[int]) -> tuple[pd.DataFrame, pd.DataFra
             rng = np.random.default_rng(np.random.SeedSequence([seed, hash(scenario_id) % (2**31)]))
             realization = realize_from_truth(truth, n=n, rng=rng)
 
-            distribution = resolve_points_with_analysis_spec(
+            distribution = _resolve_points_single_pass(
                 distribution_id=f"{scenario_id}_seed{seed}",
                 points=realization.points,
                 canonical_grid=canonical_grid,

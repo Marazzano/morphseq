@@ -67,7 +67,10 @@ from morphseq_investigation.core.distribution_records import (  # noqa: E402
     compute_peak_stats,
     compute_resolved_peaks,
 )
-from morphseq_investigation.core.peak_stability import PeakCountStabilityPolicy  # noqa: E402
+from morphseq_investigation.core.peak_stability import (  # noqa: E402
+    PeakCountRobustnessPolicy,
+    PeakVotingSpec,
+)
 from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
     ResolvedPeakAnalysisSpec,
 )
@@ -102,6 +105,7 @@ N_READOUT_DRAWS = 200
 N_MODE_RESAMPLE_DRAWS = 80
 MODE_DOWNSAMPLE_FRACTION = 0.80
 MODE_RESAMPLE_MIN_FREQ = 0.80
+MODE_MIN_VALID_DRAWS = int(np.ceil(0.80 * N_MODE_RESAMPLE_DRAWS))
 
 GENES = {
     "b9d2":   {"csv": REF_DIR / "reference_b9d2_clean.csv",
@@ -160,10 +164,15 @@ def load_bins(cfg):
 # independent-RNG-stream behavior -- see render_gene for the derivation.
 def _resolution_config(seed):
     return PeakResolutionConfig(
-        n_bootstrap_draws=N_MODE_RESAMPLE_DRAWS,
-        bootstrap_sample_fraction=MODE_DOWNSAMPLE_FRACTION,
+        voting_spec=PeakVotingSpec(
+            n_draws=N_MODE_RESAMPLE_DRAWS,
+            sample_fraction=MODE_DOWNSAMPLE_FRACTION,
+            min_valid_draws=MODE_MIN_VALID_DRAWS,
+        ),
         min_bootstrap_sample_size=MIN_EMBRYOS,
-        count_stability_policy=PeakCountStabilityPolicy(min_mode_frequency=MODE_RESAMPLE_MIN_FREQ),
+        robustness_policy=PeakCountRobustnessPolicy(
+            min_mode_frequency=MODE_RESAMPLE_MIN_FREQ
+        ),
         seed=seed,
     )
 
@@ -213,7 +222,7 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         grp = normalize_shape(grp_raw)
         wt = normalize_shape(wt_raw)
 
-        canonical_grid = derive_shared_grid(grp, wt, grid=GRID, kde=kde)
+        canonical_grid = derive_shared_grid(grp, wt, grid=GRID)
         box = (canonical_grid.x_min, canonical_grid.x_max, canonical_grid.y_min, canonical_grid.y_max)
 
         # Each distribution's bootstrap vote (folded into compute_resolved_peaks,
@@ -251,16 +260,20 @@ def render_gene(gene, cfg, *, kde=DEFAULT_KDE, analysis_spec=DEFAULT_ANALYSIS_SP
         wt_count = wt_dist.resolved_peak_count
         grp_evidence = grp_dist.resolution_evidence
         wt_evidence = wt_dist.resolution_evidence
-        grp_freq = grp_evidence.count_stability.mode_frequency if grp_evidence is not None else float("nan")
-        wt_freq = wt_evidence.count_stability.mode_frequency if wt_evidence is not None else float("nan")
+        grp_summary = grp_evidence.peak_resolution_summary if grp_evidence is not None else None
+        wt_summary = wt_evidence.peak_resolution_summary if wt_evidence is not None else None
+        grp_freq = grp_summary.mode_frequency if grp_summary is not None else float("nan")
+        wt_freq = wt_summary.mode_frequency if wt_summary is not None else float("nan")
         print(
             f"{gene} {method_slug} {hpf}hpf: "
-            f"target resolved_peak_count={grp_count}, is_reliable={grp_dist.is_reliable} "
+            f"target resolved_peak_count={grp_count}, is_robust={grp_summary.is_robust if grp_summary else False} "
             f"(freq={grp_freq:.2f}, "
-            f"counts={dict(grp_evidence.count_stability.vote.peak_count_frequencies) if grp_evidence else {}}); "
-            f"WT resolved_peak_count={wt_count}, is_reliable={wt_dist.is_reliable} "
+            f"valid_draws={grp_summary.peak_count_vote.n_draws_valid if grp_summary else 0}, "
+            f"counts={dict(grp_summary.peak_count_vote.peak_count_frequencies) if grp_summary else {}}); "
+            f"WT resolved_peak_count={wt_count}, is_robust={wt_summary.is_robust if wt_summary else False} "
             f"(freq={wt_freq:.2f}, "
-            f"counts={dict(wt_evidence.count_stability.vote.peak_count_frequencies) if wt_evidence else {}})"
+            f"valid_draws={wt_summary.peak_count_vote.n_draws_valid if wt_summary else 0}, "
+            f"counts={dict(wt_summary.peak_count_vote.peak_count_frequencies) if wt_summary else {}})"
         )
 
         # Comparative target-vs-WT readout. This does not decide the displayed

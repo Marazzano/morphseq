@@ -272,10 +272,7 @@ def build_keyence_acquisition_inventory_rows(
             "Expected files named like '...XY##_NNNNN_Z###_CH#.tif'."
         )
 
-    # Fallback synthetic position index for non-XY legacy layouts; modern XY exports use the real
-    # Keyence position index from the directory name.
     well_tile_pairs = sorted({(p["well_index"], p["tile_id"]) for p in parsed_planes})
-    fallback_position_index_by_pair = {pair: idx for idx, pair in enumerate(well_tile_pairs)}
     n_tiles_in_well = (
         pd.DataFrame(well_tile_pairs, columns=["well_index", "tile_id"])
         .groupby("well_index")["tile_id"]
@@ -286,6 +283,12 @@ def build_keyence_acquisition_inventory_rows(
     rows: list[dict] = []
     for plane in parsed_planes:
         well_index = plane["well_index"]
+        position_index = plane["position_index"]
+        if position_index is None:
+            raise ValueError(
+                f"{_SCOPE_LABEL}: could not parse Keyence XY acquisition position from "
+                f"{plane['source_tiff_path']!r}. Expected path to contain a directory like 'XY13'."
+            )
         tile_id = plane["tile_id"]
         channel_index = plane["channel_index"]
         well_id = build_well_id(experiment_id, well_index)
@@ -301,11 +304,7 @@ def build_keyence_acquisition_inventory_rows(
             {
                 # Tier-1 shared core
                 "experiment_id": experiment_id,
-                "position_index": int(
-                    plane["position_index"]
-                    if plane["position_index"] is not None
-                    else fallback_position_index_by_pair[(well_index, tile_id)]
-                ),
+                "position_index": int(position_index),
                 "channel_id": channel_id,
                 "raw_channel_name": str(raw_channel_name),
                 "time_index": int(plane["time_index_claimed"]),

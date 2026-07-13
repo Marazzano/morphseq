@@ -123,17 +123,17 @@ def _build_frame_order(
     detections: pd.DataFrame | None,
     masks: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    """Return a DataFrame with columns [image_id, source_image_path, image_width_px, image_height_px]
+    """Return a DataFrame with columns [image_id, image_path, image_width_px, image_height_px]
     in frame order, derived from whichever inputs are available."""
     if frame_inventory is not None:
-        cols = {c: frame_inventory[c] for c in ["image_id", "source_image_path", "image_width_px", "image_height_px"] if c in frame_inventory.columns}
+        cols = {c: frame_inventory[c] for c in ["image_id", "image_path", "image_width_px", "image_height_px"] if c in frame_inventory.columns}
         return frame_inventory[list(cols)].drop_duplicates("image_id")
 
     # Fall back: collect image_id ordering from data tables
     sources: list[pd.DataFrame] = []
     for df in (detections, masks):
         if df is not None and "image_id" in df.columns:
-            sub_cols = [c for c in ["image_id", "source_image_path", "image_width_px", "image_height_px", "time_index"] if c in df.columns]
+            sub_cols = [c for c in ["image_id", "image_path", "image_width_px", "image_height_px", "time_index"] if c in df.columns]
             sources.append(df[sub_cols].drop_duplicates("image_id"))
     if not sources:
         raise ValueError("At least one of frame_inventory, frame_detections, or frame_masks must be provided.")
@@ -159,7 +159,7 @@ def _render(
     for _, inv_row in frame_order.iterrows():
         image_id = str(inv_row["image_id"])
 
-        src_raw = inv_row.get("source_image_path")
+        src_raw = inv_row.get("image_path")
         frame: np.ndarray | None = None
         if pd.notna(src_raw):
             src = Path(str(src_raw))

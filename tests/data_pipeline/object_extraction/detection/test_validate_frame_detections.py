@@ -30,8 +30,8 @@ def _make_inventory(n_frames: int, channel: str = "BF") -> pd.DataFrame:
             "channel_id": channel,
             "time_index": t,
             "elapsed_time_s": float(t * 120),
-            "source_image_path": f"images/{_image_id(t, channel)}.png",
-            "source_micrometers_per_pixel": 0.75,
+            "image_path": f"images/{_image_id(t, channel)}.png",
+            "image_micrometers_per_pixel": 0.75,
             "image_width_px": WIDTH,
             "image_height_px": HEIGHT,
         })
@@ -46,7 +46,7 @@ def _identity_fields(time_index: int, channel: str = "BF") -> dict:
         "time_index": time_index,
         "z_index": pd.NA,
         "channel_id": channel,
-        "source_image_path": f"images/{_image_id(time_index, channel)}.png",
+        "image_path": f"images/{_image_id(time_index, channel)}.png",
         "image_width_px": WIDTH,
         "image_height_px": HEIGHT,
     }

@@ -5,6 +5,7 @@ from data_pipeline.acquisition.image_building.utils.frame_tiler import (
     TileSpec,
     TileTransform,
     _coords_to_transforms,
+    _infer_layout_orientation,
     _run_tiling_qc,
 )
 
@@ -79,3 +80,18 @@ def test_master_qc_compares_against_yx_reference_coords():
 
     assert qc.passed
     assert qc.metrics["max_master_deviation_px"] == 0.0
+
+
+def test_layout_orientation_uses_transform_span_not_requested_orientation():
+    transforms = {
+        "0": TileTransform("0", dx_px=0.0, dy_px=0.0, source="align"),
+        "1": TileTransform("1", dx_px=680.0, dy_px=1.0, source="align"),
+        "2": TileTransform("2", dx_px=1360.0, dy_px=0.0, source="align"),
+    }
+
+    orientation = _infer_layout_orientation(
+        transforms,
+        fallback_orientation="vertical",
+    )
+
+    assert orientation == "horizontal"

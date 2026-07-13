@@ -14,7 +14,7 @@ from scipy.spatial.distance import pdist
 
 from .density_composition import DensityGrid
 from .peak_counting import PeakCandidateDetail, PeakDetectionResult
-from .peak_stability import PeakCountStability, PeakSeedSet
+from .peak_stability import PeakResolutionSummary, PeakSeedSet
 
 
 SOURCE_TYPES = ("truth", "empirical")
@@ -58,10 +58,8 @@ class PeakResolutionEvidence:
     which do not vote (plan Sec 1.5c: retention governs PERSISTED evidence).
     """
 
-    target_peak_count: int | None
     resolution_succeeded: bool
-    count_is_stable: bool
-    count_stability: PeakCountStability
+    peak_resolution_summary: PeakResolutionSummary
     consensus_seed_set: PeakSeedSet
     full_data_detection: PeakDetectionResult
     # CANDIDATES+ retention (Stage 2b) and STABILITY_GRAPH (Stage 5) are out
@@ -74,6 +72,27 @@ class PeakResolutionEvidence:
     # foreground peaks -- plan Sec 1.5d failure semantics).
     basin_component_mass_fractions: tuple[float, ...] = ()
     basin_validation: tuple[bool, ...] = ()
+
+    def __post_init__(self) -> None:
+        summary_count = int(self.peak_resolution_summary.resolved_peak_count)
+        if self.consensus_seed_set.target_peak_count != summary_count:
+            raise ValueError(
+                "consensus seed count must equal the canonical resolved peak count "
+                f"(got {self.consensus_seed_set.target_peak_count}, expected {summary_count})."
+            )
+        if len(self.basin_component_mass_fractions) != len(self.basin_validation):
+            raise ValueError(
+                "basin mass fractions and validation decisions must have equal length."
+            )
+        if summary_count != len(self.basin_validation) and summary_count != 0:
+            raise ValueError(
+                "positive resolved peak count must equal the number of basin validations."
+            )
+        if not self.resolution_succeeded or not all(self.basin_validation):
+            raise ValueError(
+                "PeakResolutionEvidence is durable evidence and cannot represent a failed "
+                "basin resolution."
+            )
 
 
 @dataclass(frozen=True)

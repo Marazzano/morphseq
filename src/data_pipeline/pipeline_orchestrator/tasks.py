@@ -421,6 +421,26 @@ def cmd_validate_frame_masks(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
+def cmd_validate_frame_detections(args: argparse.Namespace) -> None:
+    """Validate a per-well frame_detections shard against its frame_inventory and write the .validated sentinel.
+
+    Thin dispatcher mirroring cmd_validate_frame_masks: the composed validator cross-checks each
+    detection row's frame identity against the trusted frame_inventory, so it needs BOTH shards.
+    Writing the sentinel is what makes the shard eligible for merge_frame_detections
+    (collect_well_shard_paths only picks up shards carrying a .validated sentinel).
+    """
+    import pandas as pd
+
+    from data_pipeline.object_extraction.detection.validate_frame_detections import validate_frame_detections
+
+    validate_frame_detections(
+        pd.read_csv(args.input_csv),
+        pd.read_csv(args.frame_inventory_csv),
+    )  # raises on failure
+    args.output_flag.parent.mkdir(parents=True, exist_ok=True)
+    args.output_flag.write_text("ok\n")
+
+
 def cmd_snip_processing(args: argparse.Namespace) -> None:
     from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import run_snip_processing
 
@@ -1048,7 +1068,7 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
         rgb_dir = Path(tmpdir)
         for _, row in ordered.iterrows():
             dst = rgb_dir / f"{int(row['time_index']):05d}.jpg"
-            _to_rgb_jpeg(Path(str(row["source_image_path"])), dst)
+            _to_rgb_jpeg(Path(str(row["image_path"])), dst)
 
         # Seed frame: earliest time_index that has kept detections.
         seed_time = int(prompt_detections["time_index"].min())
@@ -1383,6 +1403,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_fd.add_argument("--gdino-weights", type=Path, required=True)
     p_fd.add_argument("--device", default="cuda")
     p_fd.set_defaults(func=cmd_frame_detections)
+
+    p_fd_validate = sub.add_parser("validate-frame-detections")
+    p_fd_validate.add_argument("--input-csv", type=Path, required=True)
+    p_fd_validate.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_fd_validate.add_argument("--output-flag", type=Path, required=True)
+    p_fd_validate.set_defaults(func=cmd_validate_frame_detections)
 
     p_si_validate = sub.add_parser("validate-snip-inventory")
     p_si_validate.add_argument("--input-csv", type=Path, required=True)

@@ -28,7 +28,7 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 SNIP_FEATURE_TABLE_SPINE_COLUMNS: tuple[str, ...] = SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_PROVENANCE_COLUMNS
 
 # Micron calibration source on a frame_inventory row (target name first, legacy fallback).
-_PIXEL_SIZE_COLUMNS: tuple[str, ...] = ("source_micrometers_per_pixel", "micrometers_per_pixel")
+_PIXEL_SIZE_COLUMNS: tuple[str, ...] = ("image_micrometers_per_pixel", "micrometers_per_pixel")
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────

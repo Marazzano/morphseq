@@ -7,7 +7,7 @@ density-strip verb. It consumes the SAME ``DistributionGrid`` IR that
 ``build_1d_density_grid`` AND cross-population ``build_1d_distribution_comparison``
 — feed it for free).
 
-This RE-HOMES the working prototype ``v0/rich_distribution_plot.render_ridgeline``
+This RE-HOMES the working prototype ``v0/_superseded/rich_distribution_plot.render_ridgeline``
 (its offset math + target/reference styling was reviewed against real figures)
 onto the grid IR. The three variants and their offset arithmetic are ported
 verbatim in spirit:
@@ -84,7 +84,7 @@ def plot_1d_ridgeline(
         ``reversed(design_hpfs)`` with earliest-first hpf input).
 
     ``variant`` controls placement of target vs reference within each bin
-    (offset math ported from ``v0/rich_distribution_plot.render_ridgeline``):
+    (offset math ported from ``v0/_superseded/rich_distribution_plot.render_ridgeline``):
       overlaid : both on the bin baseline (fills overlap).
       stacked  : reference on baseline, target on a sub-offset just above.
       mirror   : reference mirrored downward, target upward.
@@ -175,13 +175,15 @@ def plot_1d_ridgeline(
                     else:
                         baseline, y = offset, offset + dens
 
-                if is_ref:
+                nonrobust = c.is_robust is False
+                if is_ref or nonrobust:
                     # Reference = dashed outline, no solid fill (the baseline).
                     ax.fill_between(
                         x, baseline, y, facecolor="none", edgecolor=color,
-                        linestyle="--", linewidth=1.2, alpha=0.9, zorder=row_i,
+                        linestyle="--" if is_ref else ":", linewidth=1.2,
+                        alpha=0.65 if nonrobust else 0.9, zorder=row_i,
                     )
-                    line_ls = gs.line_style if gs.line_style != "-" else "--"
+                    line_ls = ":" if nonrobust else (gs.line_style if gs.line_style != "-" else "--")
                 else:
                     ax.fill_between(
                         x, baseline, y, color=color, alpha=default_style.fill_alpha,

@@ -27,7 +27,7 @@ _STR_COLUMNS: tuple[str, ...] = (
     "well_id",
     "image_id",
     "channel_id",
-    "source_image_path",
+    "image_path",
     "detection_id",
     "detector_backend",
     "detector_model_id",

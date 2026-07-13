@@ -24,21 +24,79 @@ from .peak_counting import count_mass_significant_modes
 
 @dataclass(frozen=True)
 class CanonicalGrid:
-    """Rectangular grid used to evaluate a composed density landscape."""
+    """Rectangular 2-D raster used to evaluate a density landscape.
+
+    Legacy callers describe a uniform square raster with bounds plus
+    ``grid_size``.  Engine adapters may instead retain the exact coordinates
+    of an already-materialized raster through ``x_coordinates`` and
+    ``y_coordinates``.  Explicit axes may be nonuniform and need not have the
+    same length; no endpoint-based reconstruction is performed.
+    """
 
     x_min: float
     x_max: float
     y_min: float
     y_max: float
     grid_size: int = 161
+    x_coordinates: tuple[float, ...] | None = None
+    y_coordinates: tuple[float, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.x_coordinates is None and self.y_coordinates is None:
+            if int(self.grid_size) < 2:
+                raise ValueError("grid_size must be at least 2")
+            return
+        if self.x_coordinates is None or self.y_coordinates is None:
+            raise ValueError("x_coordinates and y_coordinates must be supplied together")
+        xs = np.asarray(self.x_coordinates, dtype=float)
+        ys = np.asarray(self.y_coordinates, dtype=float)
+        for name, axis in (("x_coordinates", xs), ("y_coordinates", ys)):
+            if axis.ndim != 1 or len(axis) < 2:
+                raise ValueError(f"{name} must be a one-dimensional axis with at least 2 cells")
+            if not np.all(np.isfinite(axis)) or not np.all(np.diff(axis) > 0):
+                raise ValueError(f"{name} must contain finite, strictly increasing coordinates")
+        object.__setattr__(self, "x_coordinates", tuple(float(v) for v in xs))
+        object.__setattr__(self, "y_coordinates", tuple(float(v) for v in ys))
+        object.__setattr__(self, "x_min", float(xs[0]))
+        object.__setattr__(self, "x_max", float(xs[-1]))
+        object.__setattr__(self, "y_min", float(ys[0]))
+        object.__setattr__(self, "y_max", float(ys[-1]))
+        # Retain the legacy attribute as the x-axis size. New code should use
+        # x_size/y_size (or the actual axes) when rectangular grids matter.
+        object.__setattr__(self, "grid_size", int(len(xs)))
+
+    @classmethod
+    def from_axis_values(
+        cls, x_values: Sequence[float], y_values: Sequence[float]
+    ) -> "CanonicalGrid":
+        xs = tuple(float(v) for v in np.asarray(x_values, dtype=float))
+        ys = tuple(float(v) for v in np.asarray(y_values, dtype=float))
+        if not xs or not ys:
+            raise ValueError("grid axes may not be empty")
+        return cls(
+            x_min=xs[0], x_max=xs[-1], y_min=ys[0], y_max=ys[-1],
+            grid_size=len(xs), x_coordinates=xs, y_coordinates=ys,
+        )
 
     @cached_property
     def xs(self) -> np.ndarray:
+        if self.x_coordinates is not None:
+            return np.asarray(self.x_coordinates, dtype=float)
         return np.linspace(self.x_min, self.x_max, self.grid_size)
 
     @cached_property
     def ys(self) -> np.ndarray:
+        if self.y_coordinates is not None:
+            return np.asarray(self.y_coordinates, dtype=float)
         return np.linspace(self.y_min, self.y_max, self.grid_size)
+
+    @cached_property
+    def x_size(self) -> int:
+        return len(self.xs)
+
+    @cached_property
+    def y_size(self) -> int:
+        return len(self.ys)
 
     @cached_property
     def xx(self) -> np.ndarray:
@@ -50,15 +108,33 @@ class CanonicalGrid:
 
     @cached_property
     def dx(self) -> float:
-        return float((self.x_max - self.x_min) / max(self.grid_size - 1, 1))
+        return float(np.mean(np.diff(self.xs)))
 
     @cached_property
     def dy(self) -> float:
-        return float((self.y_max - self.y_min) / max(self.grid_size - 1, 1))
+        return float(np.mean(np.diff(self.ys)))
 
     @cached_property
     def cell_area(self) -> float:
+        """Legacy mean cell area; use ``cell_areas`` for exact integration."""
         return float(self.dx * self.dy)
+
+    @staticmethod
+    def _axis_cell_widths(axis: np.ndarray) -> np.ndarray:
+        if len(axis) == 2:
+            return np.full(2, float(axis[1] - axis[0]))
+        widths = np.empty(len(axis), dtype=float)
+        widths[1:-1] = 0.5 * (axis[2:] - axis[:-2])
+        widths[0] = axis[1] - axis[0]
+        widths[-1] = axis[-1] - axis[-2]
+        return widths
+
+    @cached_property
+    def cell_areas(self) -> np.ndarray:
+        """Per-cell integration weights in the same ``(y, x)`` raster order."""
+        x_widths = self._axis_cell_widths(self.xs)
+        y_widths = self._axis_cell_widths(self.ys)
+        return np.multiply.outer(y_widths, x_widths)
 
 
 @dataclass(frozen=True)

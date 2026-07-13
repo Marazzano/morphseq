@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -24,10 +24,9 @@ os.environ.setdefault("XDG_CACHE_HOME", "/tmp/morphseq_xdg_cache")
 sys.path.insert(0, str(RUN_DIR.parents[2] / "src"))
 sys.path.insert(0, str(RUN_DIR))
 
-from morphseq_investigation.core.bandwidth_tuning import (  # noqa: E402
-    evaluate_isotropic_gaussian_kde_from_dist2,
-    precompute_squared_distances,
-    propose_bandwidth_candidates,
+from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
+    DEFAULT_ANALYSIS_SPEC,
+    _evaluate_density_for_spec,
 )
 from morphseq_investigation.core.density_composition import DensityGrid  # noqa: E402
 from morphseq_investigation.core.peak_counting import SUPPORTED_METHODS, detect_peaks  # noqa: E402
@@ -69,29 +68,18 @@ def build_visual_specs(n: int, seed: int) -> list[DistributionVisualSpec]:
     return out
 
 
-def _select_candidate(points: np.ndarray, rule_name: str, bandwidth_multiplier: float):
-    candidates = propose_bandwidth_candidates(points)
-    for candidate in candidates:
-        if candidate.bandwidth_rule == rule_name and np.isclose(candidate.bandwidth_multiplier, bandwidth_multiplier):
-            return candidate
-    raise ValueError(f"Could not find candidate {rule_name!r} x {bandwidth_multiplier:.3f}")
-
-
 def _sample_grid_for_spec(spec: DistributionVisualSpec, bandwidth_rule: str, bandwidth_multiplier: float) -> DensityGrid:
     if spec.composed_grid is None or spec.composed_grid.grid is None:
         raise ValueError(f"Distribution {spec.distribution_id!r} is missing a composed grid")
     grid = spec.composed_grid
     points = np.asarray(spec.points, dtype=float)
-    candidate = _select_candidate(points, bandwidth_rule, bandwidth_multiplier)
-    grid_points = np.column_stack([grid.xx.ravel(), grid.yy.ravel()])
-    dist2 = precompute_squared_distances(grid_points, points)
-    density_flat = evaluate_isotropic_gaussian_kde_from_dist2(
-        dist2,
-        candidate.bandwidth,
-        cell_area=grid.grid.cell_area,
-        normalize_grid=True,
+    analysis_spec = replace(
+        DEFAULT_ANALYSIS_SPEC,
+        bandwidth_rule=bandwidth_rule,
+        bandwidth_multiplier=bandwidth_multiplier,
     )
-    return DensityGrid(xx=grid.xx, yy=grid.yy, density=density_flat.reshape(grid.density.shape), grid=grid.grid)
+    density = _evaluate_density_for_spec(points, grid.grid, analysis_spec)
+    return DensityGrid(xx=grid.xx, yy=grid.yy, density=density, grid=grid.grid)
 
 
 def _observed_details_for_spec(
@@ -132,6 +120,7 @@ def render_bandwidth_figure(
             DistributionVisualSpec(
                 distribution_id=spec.distribution_id,
                 points=spec.points,
+                sampled_grid=sample_grid,
                 component_labels=spec.component_labels,
                 composed_grid=spec.composed_grid,
                 note=spec.note,

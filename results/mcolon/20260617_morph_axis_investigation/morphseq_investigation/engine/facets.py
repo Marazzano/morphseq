@@ -2,7 +2,7 @@
 
 Coordinates are open-ended (``time_bin``, ``batch``, ``plate_id``, ``stage``, …),
 so an enum rots. A typed key says WHERE the facet value comes from; the plotter
-resolves it via ``DistributionLabelGroup.coordinate(key)`` without knowing the
+resolves it from the paired ``Distribution``/``LabelGroup`` without knowing the
 difference between a coordinate and the label-group display axis.
 
 ``ComparisonMemberFacet`` is DEFERRED (spec §Deferred) — ship ``CoordinateFacet``

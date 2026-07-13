@@ -3,7 +3,7 @@
 For the "researcher + AI assistant" user, a blank CSV is a worse start than a filled-in draft. This
 helper reads an image directory, reads each image header for the real dimensions, infers the frame
 atoms it can from the filename, and emits a starter ``dropin_frame_inventory.csv`` the user edits
-(filling ``source_micrometers_per_pixel`` and correcting any inferred atoms).
+(filling ``image_micrometers_per_pixel`` and correcting any inferred atoms).
 
 It is the inverse read direction of the validator, expressed as **free functions, not a class**, and
 it **does not move or reorganize the user's images** (manifest-is-truth makes reorganization never
@@ -12,7 +12,7 @@ column; the scaffold only touches the manifest.
 
 Filename convention it recognizes (the recommended self-describing layout):
 ``{well_id}_{channel_id}_t{time_index:04d}.{ext}`` — e.g. ``my_experiment_B01_BF_t0000.png``. The
-``experiment_id`` / ``well_index`` atoms and ``source_micrometers_per_pixel`` are left blank for the
+``experiment_id`` / ``well_index`` atoms and ``image_micrometers_per_pixel`` are left blank for the
 user to fill (a well_id embeds them, but the scaffold does not guess the experiment/well split — that
 is the one place the user must declare intent). Unparseable names get blank channel/time the user fills.
 """
@@ -61,20 +61,19 @@ def scaffold_row_for_image(image_path: Path, *, image_root: Path | None = None) 
 
     if image_root is not None:
         try:
-            source_image_path = str(image_path.resolve().relative_to(Path(image_root).resolve()))
+            materialized_image_path = str(image_path.resolve().relative_to(Path(image_root).resolve()))
         except ValueError:
-            source_image_path = str(image_path.resolve())  # outside root → absolute
+            materialized_image_path = str(image_path.resolve())  # outside root → absolute
     else:
-        source_image_path = str(image_path.resolve())
+        materialized_image_path = str(image_path.resolve())
 
     # Author the atoms the scaffold cannot guess as blanks; the user fills experiment_id / well_index
-    # / source_micrometers_per_pixel before validation. well_id / image_id are NEVER authored.
+    # / image_micrometers_per_pixel before validation. well_id / image_id are NEVER authored.
     row = {col: "" for col in REQUIRED_FRAME_INVENTORY_COLUMNS}
     row["channel_id"] = channel_id
     row["time_index"] = time_index
-    row["source_image_path"] = source_image_path
-    row["source_image_width_px"] = width
-    row["source_image_height_px"] = height
+    row["image_path"] = materialized_image_path
+    row["image_micrometers_per_pixel"] = ""
     row["image_width_px"] = width
     row["image_height_px"] = height
     fmt = image_path.suffix.lower().lstrip(".")
@@ -96,7 +95,7 @@ def scaffold_dropin_inventory(
 ) -> pd.DataFrame:
     """Emit a starter ``dropin_frame_inventory.csv`` for every image under ``image_dir``.
 
-    ``image_root`` (default = ``image_dir``) controls whether ``source_image_path`` is written
+    ``image_root`` (default = ``image_dir``) controls whether ``image_path`` is written
     relative (portable) or absolute. Does not move or reorganize any images.
     """
     image_dir = Path(image_dir)
@@ -109,7 +108,7 @@ def scaffold_dropin_inventory(
     df.to_csv(output_csv, index=False)
     print(
         f"[scaffold] wrote {len(df)} starter rows → {output_csv}. "
-        "Fill experiment_id / well_index / source_micrometers_per_pixel, then validate."
+        "Fill experiment_id / well_index / image_micrometers_per_pixel, then validate."
     )
     return df
 

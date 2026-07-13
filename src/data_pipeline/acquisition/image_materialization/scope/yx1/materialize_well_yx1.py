@@ -30,17 +30,19 @@ from pathlib import Path
 import nd2
 import numpy as np
 import pandas as pd
-import skimage.util
-import torch
+from PIL import Image
 
 from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder import (
     _determine_bf_channel,
     _get_stack,
 )
-from data_pipeline.acquisition.image_building.shared.log_focus import LoG_focus_stacker, im_rescale
+from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
+from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
+    FocusStackConfig,
+    focus_stack_group,
+)
 from data_pipeline.acquisition.image_materialization import materialized_image_paths
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
-    REQUIRED_FRAME_INVENTORY_COLUMNS,
     derive_image_id,
     derive_well_id,
 )
@@ -53,8 +55,6 @@ from data_pipeline.acquisition.image_materialization.resolved_product_plans impo
 )
 from data_pipeline.acquisition.image_materialization.materialized_image_write_policy import (
     ImageWritePolicy,
-    MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
-    expected_downsampled_dims,
     resolve_image_write_policy,
     suffix_for_policy,
     write_image,
@@ -62,8 +62,12 @@ from data_pipeline.acquisition.image_materialization.materialized_image_write_po
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
     validate_yx1_acquisition_inventory,
 )
+from data_pipeline.shared.path_roots import resolve_under_input_root
 
 log = logging.getLogger(__name__)
+
+# Label for resolve_under_input_root errors when reading the inventory's stored ND2 path.
+_SCOPE_LABEL = "YX1 acquisition inventory"
 
 # Frame-inventory columns emitted by this module (flat schema, decided 2026-06-17). Derived columns
 # are written for consumers but never trusted: the validator recomputes them from atoms and fails
@@ -80,12 +84,22 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "z_index",
     "image_product_type",
     "projection_method",
-    "source_image_path",
+    "image_path",
     "focus_index_map_path",
-    "source_micrometers_per_pixel",
+    "image_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
-    *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
+    "orientation",
+    "image_file_format",
+    "pixel_dtype",
+    "downsample_factor",
+    "downsample_method",
+    "jpeg_quality",
+    "flip_polarity",
+    "raw_image_source_path",
+    "raw_image_width_px",
+    "raw_image_height_px",
+    "raw_micrometers_per_pixel",
 )
 
 
@@ -99,11 +113,14 @@ def materialize_ff_projection(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Focus-stack a Z-stack into one 2D frame (BF / brightfield projection method).
 
-    This is the ``projection_method='focus_stack'`` primitive. Pure image math — does not know
-    about well_id, time_index, or paths.
+    This is the ``projection_method='focus_stack'`` primitive. It is a thin YX1-identity
+    wrapper over the shared ``focus_stack_group`` (one-stack group) — the shared layer owns
+    intensity bounds, LoG scoring, raw-pixel gather, and the uint8 display transform (see
+    ``image_building/shared/README.md``). Pure image math — no well_id, time_index, or paths.
 
     Args:
-        stack_zyx: a single ``(Z, Y, X)`` brightfield z-stack for one (well, channel, time).
+        stack_zyx: a single ``(Z, Y, X)`` uint16 brightfield z-stack for one (well, channel,
+            time).
         device: torch device for the LoG convolutions (``"cpu"`` or ``"cuda"``).
 
     Returns:
@@ -114,17 +131,17 @@ def materialize_ff_projection(
             LoG response. It is NOT an acquisition ``z_index`` label; the caller pairs it with an
             ordered ``z_indices`` array to recover the labels.
     """
-    norm, _, _ = im_rescale(stack_zyx)
-    # LoG_focus_stacker returns (ff, abs_log); abs_log is the per-plane LoG response magnitude with
-    # shape (Z, Y, X). The focus index is argmax over the Z AXIS (axis 0) — the exact same selection
-    # the stacker makes internally to gather ff.
-    ff, abs_log = LoG_focus_stacker(norm.astype(np.float32), filter_size=3, device=device)
-    arr = ff.cpu().numpy() if torch.is_tensor(ff) else np.asarray(ff)
-    projection_u8 = skimage.util.img_as_ubyte(np.clip(arr, 0, 65535).astype(np.uint16))
-
-    abs_log_np = abs_log.cpu().numpy() if torch.is_tensor(abs_log) else np.asarray(abs_log)
-    focus_index_map = np.argmax(abs_log_np, axis=0).astype(np.int32)
-    return projection_u8, focus_index_map
+    # Delegate the focus-projection image math to the shared group primitive on a ONE-stack
+    # group (YX1 identity composition). This is the sole owner of intensity bounds, LoG
+    # scoring, raw-pixel gather, and the uint8 display transform — the adapter must not
+    # normalize itself (see image_building/shared/README.md). One stack ⇒ one shared bound
+    # pair over exactly this frame, matching legacy per-frame behavior.
+    # Pure focus math only — display polarity is a WRITE-POLICY concern applied by the orchestrator
+    # (per-product flip_polarity), not baked into this primitive. This keeps polarity uniform and
+    # config-driven across both microscopes and both image products.
+    result = focus_stack_group([stack_zyx], config=FocusStackConfig(), device=device)
+    tile = result.tiles[0]
+    return tile.projection_u8, tile.focus_index_map
 
 
 def materialize_max_projection(stack_zyx: np.ndarray) -> np.ndarray:
@@ -153,6 +170,7 @@ def materialize_yx1_well(
     candidate: bool = True,
     smoke_max_time_indices: int | None = None,
     config: dict | None = None,
+    input_root: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize exactly one resolved product for ONE YX1 well.
 
@@ -175,6 +193,7 @@ def materialize_yx1_well(
         candidate=candidate,
         smoke_max_time_indices=smoke_max_time_indices,
         config=config,
+        input_root=input_root,
     )
 
 
@@ -190,6 +209,7 @@ def materialize_yx1_product_for_well(
     candidate: bool = True,
     smoke_max_time_indices: int | None = None,
     config: dict | None = None,
+    input_root: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize ONE YX1 image product for ONE well and return frame-inventory rows.
 
@@ -259,7 +279,7 @@ def materialize_yx1_product_for_well(
             f"Unsupported YX1 image_product_type {resolved_product.image_product_type!r}."
         )
     product_key = image_product_key_for_resolved_product(resolved_product)
-    write_policy = resolve_image_write_policy(config, product_key)
+    write_policy = _build_yx1_write_policy(config, product_key)
     ext = suffix_for_policy(write_policy)
 
     # Entry guard — fail loud before any disk work.
@@ -289,14 +309,22 @@ def materialize_yx1_product_for_well(
     # so a moved/deleted/corrupt ND2 fails loud HERE (named, with the fix) before any tensor read —
     # not as a raw nd2.ND2File traceback below. The readability logic is OWNED by the acquisition
     # contract; this backend only calls it. (The nunique()==1 guard above stays as a local tripwire.)
-    validate_yx1_acquisition_inventory(well_acquisition_inventory_df, check_sources=True)
+    validate_yx1_acquisition_inventory(
+        well_acquisition_inventory_df, check_sources=True, input_root=input_root
+    )
 
     position_index = int(well_acquisition_inventory_df["position_index"].iloc[0])
     um_per_px = float(well_acquisition_inventory_df["micrometers_per_pixel"].iloc[0])
     img_w = int(well_acquisition_inventory_df["image_width_px"].iloc[0])
     img_h = int(well_acquisition_inventory_df["image_height_px"].iloc[0])
     # The ND2 source comes from the inventory (the record of what was acquired), not a CLI arg.
-    nd2_path = Path(well_acquisition_inventory_df["source_nd2_path"].iloc[0])
+    # Stored as a full path; re-anchored onto input_root if it has moved.
+    nd2_path = resolve_under_input_root(
+        well_acquisition_inventory_df["source_nd2_path"].iloc[0],
+        input_root=input_root,
+        scope_label=_SCOPE_LABEL,
+        full_root_fallback=True,
+    )
 
     log.info(
         "materialize_yx1_product_for_well: experiment=%s well=%s product=%s position_index=%d nd2=%s device=%s candidate=%s",
@@ -354,12 +382,14 @@ def materialize_yx1_product_for_well(
             .to_dict()
         )
 
-        # --- Materialization loop: per time_index → product frame(s) → write PNG → record rows ---
+        # --- Materialization loop: per time_index → product frame(s) → write image → record rows --
         for t in time_indices:
             stack = _get_stack(dask_arr, t=t, w=position_index)
             t_times = time_lookup[t]
             if resolved_product.image_product_type == "projection":
                 ff, focus_index_map = materialize_ff_projection(stack, device=device)
+                # Per-product display polarity (shared owner), same op/flag Keyence uses.
+                ff = apply_display_polarity(ff, invert=write_policy.flip_polarity)
 
                 out_path = materialized_image_paths.projection_frame_path(
                     built_image_data_dir,
@@ -371,10 +401,7 @@ def materialize_yx1_product_for_well(
                     ext=ext,
                     candidate=candidate,
                 )
-                write_image(ff, out_path, write_policy)
-                out_w, out_h = expected_downsampled_dims(
-                    img_w, img_h, write_policy.downsample_factor, write_policy.downsample_method
-                )
+                out_w, out_h = _write_image_and_read_dims(ff, out_path, write_policy)
 
                 # --- Construction provenance: the focus_index_map .npz (focus_stack only) ----------
                 # focus_index_map values are STACK-AXIS OFFSETS into `stack` (axis 0). z_indices is
@@ -414,14 +441,16 @@ def materialize_yx1_product_for_well(
                     z_index=pd.NA,
                     image_product_type="projection",
                     projection_method="focus_stack",
-                    source_image_path=out_path,
+                    image_path=out_path,
                     focus_index_map_path=fim_path,
-                    source_micrometers_per_pixel=um_per_px,
-                    source_image_width_px=img_w,
-                    source_image_height_px=img_h,
+                    image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                     image_width_px=out_w,
                     image_height_px=out_h,
                     write_policy=write_policy,
+                    raw_image_source_path=nd2_path,
+                    raw_image_width_px=img_w,
+                    raw_image_height_px=img_h,
+                    raw_micrometers_per_pixel=um_per_px,
                 ))
             else:
                 for z_index in z_lookup.get(t, []):
@@ -441,10 +470,10 @@ def materialize_yx1_product_for_well(
                         ext=ext,
                         candidate=candidate,
                     )
-                    write_image(stack[z_index], out_path, write_policy)
-                    out_w, out_h = expected_downsampled_dims(
-                        img_w, img_h, write_policy.downsample_factor, write_policy.downsample_method
-                    )
+                    # Per-product display polarity (shared owner) — same flag as Keyence z_stack,
+                    # so z_stacks are consistent across microscopes (previously YX1 z_stack was raw).
+                    z_plane = apply_display_polarity(stack[z_index], invert=write_policy.flip_polarity)
+                    out_w, out_h = _write_image_and_read_dims(z_plane, out_path, write_policy)
 
                     image_id = derive_image_id(well_id, "BF", int(t), z_index=z_index)
                     rows.append(_frame_inventory_row(
@@ -458,14 +487,16 @@ def materialize_yx1_product_for_well(
                         z_index=int(z_index),
                         image_product_type="z_stack",
                         projection_method=pd.NA,
-                        source_image_path=out_path,
+                        image_path=out_path,
                         focus_index_map_path=None,  # z_stack rows carry no focus provenance
-                        source_micrometers_per_pixel=um_per_px,
-                        source_image_width_px=img_w,
-                        source_image_height_px=img_h,
+                        image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                         image_width_px=out_w,
                         image_height_px=out_h,
                         write_policy=write_policy,
+                        raw_image_source_path=nd2_path,
+                        raw_image_width_px=img_w,
+                        raw_image_height_px=img_h,
+                        raw_micrometers_per_pixel=um_per_px,
                     ))
 
             if (len(rows) % 10) == 0:
@@ -477,8 +508,9 @@ def materialize_yx1_product_for_well(
     # --- Inventory assembly: build the frame-inventory shard + final required-columns check ---
     inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
 
-    # Sanity check — all required atom columns present.
-    missing = [c for c in REQUIRED_FRAME_INVENTORY_COLUMNS if c not in inv_df.columns]
+    # Migration-local sanity check: Stage 3 emits the materialized-image-first contract shape even
+    # if the shared frame_inventory contract module has not been updated yet on this branch.
+    missing = [c for c in _EMITTED_COLUMNS if c not in inv_df.columns]
     if missing:
         raise RuntimeError(
             f"materialize_yx1_well produced a frame-inventory DataFrame missing required "
@@ -504,14 +536,16 @@ def _frame_inventory_row(
     z_index: object,
     image_product_type: str,
     projection_method: object,
-    source_image_path: Path,
+    image_path: Path,
     focus_index_map_path: object,
-    source_micrometers_per_pixel: float,
-    source_image_width_px: int,
-    source_image_height_px: int,
+    image_micrometers_per_pixel: float,
     image_width_px: int,
     image_height_px: int,
     write_policy: ImageWritePolicy,
+    raw_image_source_path: Path,
+    raw_image_width_px: int,
+    raw_image_height_px: int,
+    raw_micrometers_per_pixel: float,
 ) -> dict:
     return {
         "experiment_id": experiment_id,
@@ -525,21 +559,64 @@ def _frame_inventory_row(
         "z_index": z_index,
         "image_product_type": image_product_type,
         "projection_method": projection_method,
-        "source_image_path": str(source_image_path),
+        "image_path": str(image_path),
         # Construction-provenance path (NOT a primary image): the focus_stack focus_index_map .npz,
         # populated for projection/focus_stack rows, NA otherwise.
         "focus_index_map_path": (
             pd.NA if focus_index_map_path is None or focus_index_map_path is pd.NA
             else str(focus_index_map_path)
         ),
-        "source_micrometers_per_pixel": source_micrometers_per_pixel,
-        "source_image_width_px": source_image_width_px,
-        "source_image_height_px": source_image_height_px,
+        "image_micrometers_per_pixel": image_micrometers_per_pixel,
         "image_width_px": image_width_px,
         "image_height_px": image_height_px,
+        "orientation": write_policy.orientation,
         "image_file_format": write_policy.file_format,
         "pixel_dtype": write_policy.pixel_dtype,
         "downsample_factor": write_policy.downsample_factor,
         "downsample_method": write_policy.downsample_method,
-        "jpeg_quality": write_policy.jpeg_quality,
+        "jpeg_quality": (
+            pd.NA if write_policy.jpeg_quality is None else int(write_policy.jpeg_quality)
+        ),
+        "flip_polarity": bool(write_policy.flip_polarity),
+        "raw_image_source_path": str(raw_image_source_path),
+        "raw_image_width_px": int(raw_image_width_px),
+        "raw_image_height_px": int(raw_image_height_px),
+        "raw_micrometers_per_pixel": float(raw_micrometers_per_pixel),
     }
+
+
+def _build_yx1_write_policy(config: dict | None, product_key: str) -> ImageWritePolicy:
+    """Construct the YX1 writer policy explicitly at the writer boundary.
+
+    This stays integration-ready with Stage 1's optional orientation field without forcing the
+    current branch to have landed that dataclass change yet.
+    """
+    resolved = resolve_image_write_policy(config, product_key)
+    policy_kwargs = {
+        "file_format": resolved.file_format,
+        "downsample_factor": int(resolved.downsample_factor),
+        "downsample_method": resolved.downsample_method,
+        "pixel_dtype": resolved.pixel_dtype,
+        "jpeg_quality": resolved.jpeg_quality,
+        "flip_polarity": bool(resolved.flip_polarity),
+    }
+    if "orientation" in getattr(ImageWritePolicy, "__dataclass_fields__", {}):
+        policy_kwargs["orientation"] = "none"
+    return ImageWritePolicy(**policy_kwargs)
+
+
+def _write_image_and_read_dims(
+    image: np.ndarray,
+    out_path: Path,
+    write_policy: ImageWritePolicy,
+) -> tuple[int, int]:
+    """Write one image through the shared policy boundary and read back its header dimensions."""
+    write_image(image, out_path, write_policy)
+    with Image.open(out_path) as written:
+        width_px, height_px = written.size
+    return int(width_px), int(height_px)
+
+
+def _materialized_um_per_px(raw_um_per_px: float, write_policy: ImageWritePolicy) -> float:
+    """Return the materialized-image calibration after the writer downsample policy."""
+    return float(raw_um_per_px) * int(write_policy.downsample_factor)

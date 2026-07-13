@@ -51,15 +51,14 @@ def _projection_row(well_id: str, time_index: int) -> dict:
         "z_index": pd.NA,
         "image_product_type": "projection",
         "projection_method": "focus_stack",
-        "source_image_path": (
+        "image_path": (
             f"built_image_data/{EXP}/materialized_images/{well_id}/projection/BF/"
             f"{well_id}_BF_t{time_index:04d}.png"
         ),
-        "source_micrometers_per_pixel": 0.75,
-        "source_image_width_px": 1024,
-        "source_image_height_px": 768,
+        "image_micrometers_per_pixel": 0.75,
         "image_width_px": 1024,
         "image_height_px": 768,
+        "orientation": "none",
         "image_file_format": "png",
         "pixel_dtype": "uint8",
         "downsample_factor": 1,
@@ -73,7 +72,7 @@ def _z_stack_row(well_id: str, time_index: int, z_index: int) -> dict:
     row["z_index"] = z_index
     row["image_product_type"] = "z_stack"
     row["projection_method"] = pd.NA
-    row["source_image_path"] = (
+    row["image_path"] = (
         f"built_image_data/{EXP}/materialized_images/{well_id}/z_stack/BF/"
         f"{well_id}_BF_z{z_index:04d}_t{time_index:04d}.png"
     )

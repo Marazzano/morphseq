@@ -35,7 +35,7 @@ def _model_frame_view(n_frames: int = 2, width: int = 100, height: int = 80) -> 
             "time_index": t,
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": f"/data/{image_id}.png",
+            "image_path": f"/data/{image_id}.png",
             "image_width_px": width,
             "image_height_px": height,
         })

@@ -94,7 +94,7 @@ def _snip_rows(tmp_path, specs):
                     "image_id": image_id,
                     "image_product_type": "projection",
                     "projection_method": "focus_stack",
-                    "source_image_path": str(path),
+                    "image_path": str(path),
                 }
             )
     return pd.DataFrame(inv_rows), pd.DataFrame(mask_rows), pd.DataFrame(fi_rows)

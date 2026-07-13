@@ -121,7 +121,7 @@ def test_bootstrap_peak_vote_returns_counts_and_centers_per_successful_draw():
     points = np.arange(40.0).reshape(20, 2)
 
     def _resolve_draw(sample_points):
-        # A deterministic, cheap stand-in for resolve_points_with_analysis_spec:
+        # A deterministic, cheap stand-in for the internal single-pass resolver:
         # "count" = 2 always, "centers" = the sample mean twice (arbitrary but
         # exercises the (count, centers) contract bootstrap_peak_vote expects).
         mean = tuple(np.mean(sample_points, axis=0))

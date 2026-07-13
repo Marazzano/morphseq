@@ -17,7 +17,7 @@ import pytest
 
 from morphseq_investigation.core.density_composition import CanonicalGrid, DensityGrid
 from morphseq_investigation.core.peak_counting import PeakCandidateDetail, PeakDetectionResult
-from morphseq_investigation.core.resolved_peak_analysis import ResolvedPeakAnalysisSpec, resolve_points_with_analysis_spec
+from morphseq_investigation.core.resolved_peak_analysis import ResolvedPeakAnalysisSpec, _resolve_points_single_pass
 from morphseq_investigation.core.resolved_peak_metrics import (
     resolve_empirical_peak_distribution,
     resolve_truth_peak_distribution,
@@ -418,12 +418,12 @@ def test_points_to_resolved_pipeline_smoke():
 
     canonical_grid = CanonicalGrid(x_min=-5.0, x_max=5.0, y_min=-5.0, y_max=5.0, grid_size=121)
     spec = ResolvedPeakAnalysisSpec(
-        bandwidth_rule="scipy_default",
-        bandwidth_multiplier=1.0,
+        bandwidth_rule="longest_non_outlier_MST_edge",
+        bandwidth_multiplier=0.75,
         peak_detector_method="kde_peak_basins_sample_support",
     )
 
-    distribution = resolve_points_with_analysis_spec(
+    distribution = _resolve_points_single_pass(
         distribution_id="smoke_test", points=points, canonical_grid=canonical_grid, analysis_spec=spec,
     )
 
@@ -452,12 +452,12 @@ def test_empirical_basin_labels_raster_exposed_on_two_mode_synthetic():
 
     canonical_grid = CanonicalGrid(x_min=-5.0, x_max=5.0, y_min=-5.0, y_max=5.0, grid_size=121)
     spec = ResolvedPeakAnalysisSpec(
-        bandwidth_rule="scipy_default",
-        bandwidth_multiplier=1.0,
+        bandwidth_rule="longest_non_outlier_MST_edge",
+        bandwidth_multiplier=0.75,
         peak_detector_method="kde_peak_basins_sample_support",
     )
 
-    distribution = resolve_points_with_analysis_spec(
+    distribution = _resolve_points_single_pass(
         distribution_id="basin_labels_test",
         points=points,
         canonical_grid=canonical_grid,

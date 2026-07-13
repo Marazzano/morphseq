@@ -23,7 +23,7 @@ from morphseq_investigation.core.distribution_records import (
 from morphseq_investigation.core.resolved_peak_analysis import (
     ResolvedPeakAnalysisSpec,
     _compute_peak_detection_with_analysis_spec,
-    resolve_points_with_analysis_spec,
+    _resolve_points_single_pass,
 )
 
 
@@ -54,10 +54,10 @@ def _geometry_spec() -> ResolvedPeakAnalysisSpec:
     )
 
 
-def _scipy_spec() -> ResolvedPeakAnalysisSpec:
+def _mst_spec() -> ResolvedPeakAnalysisSpec:
     return ResolvedPeakAnalysisSpec(
-        bandwidth_rule="scipy_default",
-        bandwidth_multiplier=1.0,
+        bandwidth_rule="longest_non_outlier_MST_edge",
+        bandwidth_multiplier=0.75,
         peak_detector_method="kde_peak_basins_sample_support",
         min_sample_fraction=0.10,
     )
@@ -69,9 +69,9 @@ def _scipy_spec() -> ResolvedPeakAnalysisSpec:
 @pytest.mark.parametrize(
     "points_fn,spec_fn",
     [
-        (_two_cluster_points, _scipy_spec),
+        (_two_cluster_points, _mst_spec),
         (_two_cluster_points, _geometry_spec),
-        (_one_cluster_points, _scipy_spec),
+        (_one_cluster_points, _mst_spec),
     ],
 )
 def test_detection_only_matches_full_resolve_accepted_peaks(points_fn, spec_fn):
@@ -82,7 +82,7 @@ def test_detection_only_matches_full_resolve_accepted_peaks(points_fn, spec_fn):
     _density_grid, _points_array, detection_result = _compute_peak_detection_with_analysis_spec(
         points, grid, spec,
     )
-    resolved = resolve_points_with_analysis_spec(
+    resolved = _resolve_points_single_pass(
         distribution_id="full", points=points, canonical_grid=grid, analysis_spec=spec,
     )
 
@@ -157,7 +157,7 @@ def test_connectivity_radius_value_unchanged_by_gating_refactor():
 def test_vote_only_resolve_never_constructs_full_resolved_distribution():
     points = _two_cluster_points()
     grid = _grid_for(points)
-    spec = _scipy_spec()
+    spec = _mst_spec()
 
     resolve_draw = _resolve_draw_for_vote(grid, spec)
 

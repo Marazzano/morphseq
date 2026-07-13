@@ -49,6 +49,10 @@ class FrameTilingConfig:
     transpose_after_stitch: bool = True
     use_legacy_canvas: bool = True
     compat_postprocess: bool = True
+    # DEPRECATED / INERT: display-polarity inversion is no longer done in the stitcher. It moved to
+    # the shared image-math layer (apply_display_polarity), applied once post-composition by the
+    # materializer so every microscope shares one polarity. Field kept only for back-compat of
+    # existing FrameTilingConfig(...) call sites; it has no effect on stitch output.
     invert_intensity: bool = True
 
 
@@ -155,11 +159,16 @@ def stitch_frame_tiles(
             )
             qc_align = _run_tiling_qc(tr_align, config, master_coords=master_coords, tiles=tiles)
             if qc_align.passed or config.mode == "align_only":
+                layout_orientation = _infer_layout_orientation(
+                    tr_align,
+                    fallback_orientation=config.orientation,
+                )
                 stitched = _finalize_image(
                     stitched_align,
                     config=config,
                     n_tiles=len(tiles),
                     tile_shape=tiles[0].image.shape[:2],
+                    layout_orientation=layout_orientation,
                 )
                 return FrameTileResult(
                     stitched=stitched,
@@ -186,11 +195,16 @@ def stitch_frame_tiles(
                     run_align=False,
                 )
                 qc_pf = _run_tiling_qc(tr_pf, config, master_coords=master_coords, tiles=tiles)
+                layout_orientation = _infer_layout_orientation(
+                    tr_pf,
+                    fallback_orientation=config.orientation,
+                )
                 stitched = _finalize_image(
                     stitched_pf,
                     config=config,
                     n_tiles=len(tiles),
                     tile_shape=tiles[0].image.shape[:2],
+                    layout_orientation=layout_orientation,
                 )
                 return FrameTileResult(
                     stitched=stitched,
@@ -210,11 +224,16 @@ def stitch_frame_tiles(
                 run_align=False,
             )
             qc_master = _run_tiling_qc(tr_master, config, master_coords=master_coords, tiles=tiles)
+            layout_orientation = _infer_layout_orientation(
+                tr_master,
+                fallback_orientation=config.orientation,
+            )
             stitched = _finalize_image(
                 stitched_master,
                 config=config,
                 n_tiles=len(tiles),
                 tile_shape=tiles[0].image.shape[:2],
+                layout_orientation=layout_orientation,
             )
             return FrameTileResult(
                 stitched=stitched,
@@ -328,6 +347,9 @@ def _stitch_with_stitch2d(
     load_params_path: Path | None,
     run_align: bool,
 ) -> tuple[np.ndarray, dict[str, TileTransform]]:
+    import json
+    import tempfile
+
     from stitch2d import StructuredMosaic
     from stitch2d.tile import OpenCVTile, Tile
 
@@ -340,7 +362,23 @@ def _stitch_with_stitch2d(
             direction=orientation,
             pattern="raster",
         )
-        mosaic.load_params(str(load_params_path))
+        try:
+            mosaic.load_params(str(load_params_path))
+        except ValueError as exc:
+            if "JSON param 'shape' does not match this mosaic" not in str(exc):
+                raise
+            raw = json.loads(Path(load_params_path).read_text())
+            raw.setdefault("metadata", {})["shape"] = (
+                [len(tile_images), 1] if orientation == "vertical" else [1, len(tile_images)]
+            )
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                suffix=".json",
+                delete=True,
+            ) as tmp:
+                json.dump(raw, tmp)
+                tmp.flush()
+                mosaic.load_params(tmp.name)
     else:
         mosaic = StructuredMosaic(
             [OpenCVTile(img) for img in tile_images],
@@ -350,7 +388,15 @@ def _stitch_with_stitch2d(
             pattern="raster",
         )
         if run_align:
-            mosaic.align()
+            try:
+                mosaic.align()
+            except RuntimeError as exc:
+                if "Could not align tiles" in str(exc):
+                    raise IncompleteTileAlignmentError(
+                        f"stitch2d could not align tiles "
+                        f"(load_params_path={load_params_path})."
+                    ) from exc
+                raise
 
     coords = mosaic.params.get("coords", {})
     if len(coords) != len(tile_images):
@@ -493,25 +539,49 @@ def trim_to_shape(image: np.ndarray, target: tuple[int, int]) -> np.ndarray:
     return image[start_y : start_y + target_y, start_x : start_x + target_x]
 
 
+def _infer_layout_orientation(
+    transforms: dict[str, TileTransform],
+    *,
+    fallback_orientation: Orientation,
+) -> Orientation:
+    """Infer the physical tile-strip direction from stitched coordinates."""
+    if len(transforms) <= 1:
+        return fallback_orientation
+
+    dx_values = [float(tr.dx_px) for tr in transforms.values()]
+    dy_values = [float(tr.dy_px) for tr in transforms.values()]
+    dx_span = max(dx_values) - min(dx_values)
+    dy_span = max(dy_values) - min(dy_values)
+    if dx_span == 0 and dy_span == 0:
+        return fallback_orientation
+    return "horizontal" if dx_span > dy_span else "vertical"
+
+
 def _finalize_image(
     image: np.ndarray,
     config: FrameTilingConfig,
     n_tiles: int,
     tile_shape: tuple[int, int],
+    layout_orientation: Orientation | None = None,
 ) -> np.ndarray:
+    orientation = layout_orientation or config.orientation
     out = image
-    if n_tiles > 1 and config.orientation == "horizontal" and config.transpose_after_stitch:
+    if n_tiles > 1 and orientation == "horizontal" and config.transpose_after_stitch:
         out = out.T
 
     if config.use_legacy_canvas:
         target = legacy_canvas_shape(
             n_tiles=n_tiles,
-            orientation=config.orientation,
+            orientation=orientation,
             tile_shape=tile_shape,
         )
         if target != (0, 0):
             out = trim_to_shape(out, target)
 
-    if config.compat_postprocess and config.invert_intensity:
-        out = np.iinfo(out.dtype).max - out
+    # NOTE: display polarity (bright-embryo/dark-background inversion) is intentionally NOT done
+    # here. Stitching composes tiles and returns them in the SAME polarity it received. Inversion
+    # is owned by the shared image-math layer (image_building/shared: apply_display_polarity) and
+    # applied ONCE by the materializer after composition, so YX1 (no stitch) and Keyence (stitch)
+    # share one polarity. The old hidden `max - out` here was Keyence-only and is exactly what let
+    # YX1 drift to the opposite polarity.
     return out

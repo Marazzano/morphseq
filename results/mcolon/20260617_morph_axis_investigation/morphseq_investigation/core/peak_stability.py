@@ -4,8 +4,8 @@ Stage 2a scope only (`ResolutionStrategy.MODE_VOTE_FULL_DATA` +
 `BootstrapRetention.SUMMARY_ONLY`, plan Part 4). This module holds:
 
 - `PeakCountVote`       raw bootstrap-draw evidence (sparse peak-count histogram)
-- `PeakCountStabilityPolicy` the swappable "is this vote stable" threshold
-- `PeakCountStability`  the derived interpretation of a vote under a policy
+- `PeakCountRobustnessPolicy` the swappable robustness threshold
+- `PeakResolutionSummary` the complete interpreted vote and its contracts
 - `PeakSeed` / `PeakSeedSet`   the target-count consensus locations built from
                                per-draw candidate centers (the vote gives a
                                COUNT, not locations -- plan Sec 1.5d)
@@ -18,7 +18,9 @@ persistence with `(draw, candidate)` keys (Stage 2b), `PeakStabilityGraph` /
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Mapping, Sequence
+import warnings
 
 import numpy as np
 
@@ -36,11 +38,19 @@ class PeakCountVote:
 
     def __post_init__(self) -> None:
         frequencies = {int(k): int(v) for k, v in dict(self.peak_count_frequencies).items()}
-        object.__setattr__(self, "peak_count_frequencies", frequencies)
+        if any(count < 0 for count in frequencies):
+            raise ValueError("peak counts must be non-negative.")
+        if any(frequency <= 0 for frequency in frequencies.values()):
+            raise ValueError("observed peak-count frequencies must be positive.")
+        object.__setattr__(
+            self, "peak_count_frequencies", MappingProxyType(frequencies)
+        )
         if self.n_draws_requested < 0:
             raise ValueError("n_draws_requested must be non-negative.")
         if self.n_draws_valid < 0 or self.n_draws_valid > self.n_draws_requested:
             raise ValueError("n_draws_valid must be in [0, n_draws_requested].")
+        if not 0 < float(self.sample_fraction) <= 1:
+            raise ValueError("sample_fraction must be in (0, 1].")
         if sum(frequencies.values()) != self.n_draws_valid:
             raise ValueError(
                 "peak_count_frequencies must sum to n_draws_valid "
@@ -57,13 +67,34 @@ class PeakCountVote:
 
 
 @dataclass(frozen=True)
-class PeakCountStabilityPolicy:
+class PeakVotingSpec:
+    """Configuration that defines the peak-count vote itself."""
+
+    n_draws: int = 80
+    sample_fraction: float = 0.80
+    min_valid_draws: int = 1
+
+    def __post_init__(self) -> None:
+        if self.n_draws <= 0:
+            raise ValueError("n_draws must be positive.")
+        if not 0 < float(self.sample_fraction) <= 1:
+            raise ValueError("sample_fraction must be in (0, 1].")
+        if self.min_valid_draws <= 0 or self.min_valid_draws > self.n_draws:
+            raise ValueError("min_valid_draws must be in [1, n_draws].")
+
+
+@dataclass(frozen=True)
+class PeakCountRobustnessPolicy:
     """Swappable "is the vote stable" threshold, defined in one place (plan
     Sec 1.5). Ontology default is 0.50; callers pin the actual threshold used
     (e.g. `valley_visualization.py` pins 0.80 to preserve current figure
     behavior -- see that module for the deviation note)."""
 
     min_mode_frequency: float = 0.50
+
+    def __post_init__(self) -> None:
+        if not 0 <= float(self.min_mode_frequency) <= 1:
+            raise ValueError("min_mode_frequency must be in [0, 1].")
 
 
 def _vote_mean_and_variance(vote: PeakCountVote) -> tuple[float, float]:
@@ -80,64 +111,96 @@ def _vote_mean_and_variance(vote: PeakCountVote) -> tuple[float, float]:
 
 
 def compute_peak_count_stability(
-    vote: PeakCountVote, policy: PeakCountStabilityPolicy
-) -> "PeakCountStability":
+    vote: PeakCountVote,
+    policy: PeakCountRobustnessPolicy,
+    voting_spec: PeakVotingSpec | None = None,
+) -> "PeakResolutionSummary":
     """Derive the interpretation of a raw vote under a stability policy
     (plan Sec 1.5: mean/variance are pure functions of the vote over VALID
     draws; an invalid draw is excluded, not a vote for "0 modes")."""
     if vote.n_draws_valid <= 0 or not vote.peak_count_frequencies:
-        return PeakCountStability(
-            vote=vote,
-            mode_peak_count=None,
-            mode_frequency=float("nan"),
-            mean_peak_count=float("nan"),
-            peak_count_variance=float("nan"),
-            valid_draw_fraction=(
-                float(vote.n_draws_valid) / float(vote.n_draws_requested)
-                if vote.n_draws_requested > 0
-                else float("nan")
-            ),
-            count_is_stable=False,
+        raise ValueError("Peak-count resolution requires at least one valid draw.")
+
+    if voting_spec is None:
+        voting_spec = PeakVotingSpec(
+            n_draws=vote.n_draws_requested,
+            sample_fraction=vote.sample_fraction,
+            min_valid_draws=1,
         )
+    if voting_spec.n_draws != vote.n_draws_requested:
+        raise ValueError("PeakVotingSpec.n_draws must match vote.n_draws_requested.")
+    if not np.isclose(voting_spec.sample_fraction, vote.sample_fraction):
+        raise ValueError("PeakVotingSpec.sample_fraction must match vote.sample_fraction.")
 
     items = sorted(vote.peak_count_frequencies.items())
-    best_count, best_freq_count = max(items, key=lambda item: (item[1], -item[0]))
+    best_freq_count = max(freq for _, freq in items)
+    tied_counts = tuple(count for count, freq in items if freq == best_freq_count)
+    mode_was_tied = len(tied_counts) > 1
+    best_count = max(tied_counts)
+    if mode_was_tied:
+        warnings.warn(
+            "Peak-count vote has a tied mode; selecting the larger count and marking it non-robust.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     mode_frequency = float(best_freq_count) / float(vote.n_draws_valid)
-    mean_peak_count, peak_count_variance = _vote_mean_and_variance(vote)
-    valid_draw_fraction = (
-        float(vote.n_draws_valid) / float(vote.n_draws_requested)
-        if vote.n_draws_requested > 0
-        else float("nan")
+    has_enough_valid_draws = vote.n_draws_valid >= voting_spec.min_valid_draws
+    count_is_stable = bool(
+        mode_frequency >= float(policy.min_mode_frequency)
+        and has_enough_valid_draws
+        and not mode_was_tied
     )
-    count_is_stable = bool(mode_frequency >= float(policy.min_mode_frequency))
 
-    return PeakCountStability(
-        vote=vote,
-        mode_peak_count=int(best_count),
-        mode_frequency=mode_frequency,
-        mean_peak_count=mean_peak_count,
-        peak_count_variance=peak_count_variance,
-        valid_draw_fraction=valid_draw_fraction,
-        count_is_stable=count_is_stable,
+    return PeakResolutionSummary(
+        peak_count_vote=vote,
+        voting_spec=voting_spec,
+        robustness_policy=policy,
+        resolved_peak_count=int(best_count),
+        is_robust=count_is_stable,
     )
 
 
 @dataclass(frozen=True)
-class PeakCountStability:
+class PeakResolutionSummary:
     """The DERIVED interpretation of a `PeakCountVote` under a
-    `PeakCountStabilityPolicy` (plan Sec 1.5). `count_is_stable` is ONLY the
+    `PeakCountRobustnessPolicy` (plan Sec 1.5). `is_robust` is ONLY the
     vote check; whether the final full-data basins validate
     (`resolution_succeeded`) is a separate, orthogonal check -- `is_reliable`
     on `ResolvedPeakDistribution` is the AND of both."""
 
-    vote: PeakCountVote
-    mode_peak_count: int | None
-    mode_frequency: float
-    mean_peak_count: float
-    peak_count_variance: float
-    valid_draw_fraction: float
-    count_is_stable: bool
+    peak_count_vote: PeakCountVote
+    voting_spec: PeakVotingSpec
+    robustness_policy: PeakCountRobustnessPolicy
+    resolved_peak_count: int
+    is_robust: bool
 
+    @property
+    def mode_frequency(self) -> float:
+        return self.peak_count_vote.probability_for(self.resolved_peak_count)
+
+    @property
+    def mean_peak_count(self) -> float:
+        return _vote_mean_and_variance(self.peak_count_vote)[0]
+
+    @property
+    def peak_count_variance(self) -> float:
+        return _vote_mean_and_variance(self.peak_count_vote)[1]
+
+    @property
+    def valid_draw_fraction(self) -> float:
+        return self.peak_count_vote.n_draws_valid / self.peak_count_vote.n_draws_requested
+
+    @property
+    def mode_was_tied(self) -> bool:
+        modal_frequency = self.peak_count_vote.frequency_for(self.resolved_peak_count)
+        return sum(
+            frequency == modal_frequency
+            for frequency in self.peak_count_vote.peak_count_frequencies.values()
+        ) > 1
+
+    @property
+    def has_enough_valid_draws(self) -> bool:
+        return self.peak_count_vote.n_draws_valid >= self.voting_spec.min_valid_draws
 
 @dataclass(frozen=True)
 class PeakSeed:
@@ -249,9 +312,10 @@ def build_consensus_seed_set(
 
 
 __all__ = [
-    "PeakCountStability",
-    "PeakCountStabilityPolicy",
+    "PeakCountRobustnessPolicy",
     "PeakCountVote",
+    "PeakResolutionSummary",
+    "PeakVotingSpec",
     "PeakSeed",
     "PeakSeedSet",
     "build_consensus_seed_set",

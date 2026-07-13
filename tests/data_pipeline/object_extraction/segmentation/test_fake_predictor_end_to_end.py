@@ -56,7 +56,7 @@ def _frame_inventory(n_frames: int = 3, width: int = 100, height: int = 80) -> p
             "time_index": t,
             "z_index": pd.NA,
             "channel_id": "BF",
-            "source_image_path": f"/data/{image_id}.png",
+            "image_path": f"/data/{image_id}.png",
             "image_width_px": width,
             "image_height_px": height,
         })

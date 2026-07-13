@@ -17,7 +17,7 @@ attaches label columns, mirroring the spec's two-line example.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Callable, Hashable, Mapping, Sequence
 
@@ -28,9 +28,11 @@ from .facets import CoordinateFacet, LabelGroupFacet  # noqa: F401  (re-exported
 from .identifiers import make_distribution_id
 from .objects import (
     UNASSIGNED_LABEL,
+    DensityEstimate,
+    DensityEstimateSpec,
     Distribution,
-    DistributionLabelGroup,
-    LabelProvenance,
+    LabelGroup,
+    LabelingProvenance,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,7 +127,9 @@ class DistributionCatalog:
                 distribution = distribution.with_label(
                     label_name,
                     assignments,
-                    provenance=LabelProvenance(method="from_dataframe", features=()),
+                    labeling_provenance=LabelingProvenance(
+                        method="provided", detail={"source": "from_dataframe"}
+                    ),
                 )
 
             distributions.append(distribution)
@@ -153,7 +157,7 @@ class DistributionCatalog:
     def _label_names(self) -> set[str]:
         names: set[str] = set()
         for distribution in self.distributions:
-            names.update(distribution.labels)
+            names.update(distribution.label_groups)
         return names
 
     def _pooled_away_names(self) -> set[str]:
@@ -286,7 +290,9 @@ class DistributionCatalog:
                 new = new.with_label(
                     label_name,
                     assignments,
-                    provenance=LabelProvenance(method="with_labels", features=()),
+                    labeling_provenance=LabelingProvenance(
+                        method="provided", detail={"source": "with_labels"}
+                    ),
                 )
             return new
 
@@ -295,21 +301,49 @@ class DistributionCatalog:
     def detect_peaks(
         self,
         *,
-        features: Sequence[str],
-        output_label: str = "resolved_peak",
-        spec: Mapping[str, Any] | None = None,
+        output_label: str = "resolved_peaks",
+        density: DensityEstimate | Mapping[str, DensityEstimate] | None = None,
+        density_spec: DensityEstimateSpec | None = None,
+        n_draws: int = 80,
+        sample_fraction: float = 0.80,
+        min_valid_draws: int | None = None,
+        min_mode_frequency: float = 0.80,
     ) -> "DistributionCatalog":
-        """Thin wrapper over :meth:`map_distributions` calling
-        ``Distribution.detect_peaks`` (TASK_B fills that stub's body) on every
-        distribution with NATIVE arguments — the caller never writes a lambda.
+        """Map the distribution peak API without owning analytical behavior.
+
+        A single estimate is unambiguous only for a one-distribution catalog.
+        Multi-distribution callers supply a complete ``distribution_id`` mapping;
+        ``density_spec`` and shared-density fallback naturally resolve per member.
         """
-        features = tuple(features)
+        if density is not None and density_spec is not None:
+            raise ValueError("density and density_spec are mutually exclusive")
+        if isinstance(density, DensityEstimate):
+            if len(self.distributions) != 1:
+                raise ValueError(
+                    "a single density estimate is ambiguous for a multi-distribution catalog; "
+                    "supply a distribution_id -> DensityEstimate mapping"
+                )
+            density_by_id: Mapping[str, DensityEstimate] = {
+                self.distributions[0].distribution_id: density
+            }
+        elif density is None:
+            density_by_id = {}
+        else:
+            density_by_id = density
+            expected = {item.distribution_id for item in self.distributions}
+            if set(density_by_id) != expected:
+                raise ValueError("density mapping must contain exactly every catalog distribution_id")
 
         def _detect(distribution: Distribution) -> Distribution:
-            label_group = distribution.detect_peaks(
-                features=features, output_label=output_label, spec=spec
+            return distribution.detect_peaks(
+                output_label=output_label,
+                density=density_by_id.get(distribution.distribution_id),
+                density_spec=density_spec,
+                n_draws=n_draws,
+                sample_fraction=sample_fraction,
+                min_valid_draws=min_valid_draws,
+                min_mode_frequency=min_mode_frequency,
             )
-            return label_group.distribution
 
         return self.map_distributions(_detect)
 
@@ -317,20 +351,49 @@ class DistributionCatalog:
     # label_groups — PATH A convenience
     # ----------------------------------------------------------------- #
     def label_groups(
-        self, label_name: str, *, display_name: str | None = None
-    ) -> tuple[DistributionLabelGroup, ...]:
-        """One :class:`DistributionLabelGroup` per distribution IN the catalog
-        (each wraps that distribution + this label). Distributions missing the
-        label are skipped (best-effort — a label attached to only some
-        distributions is a valid, if partial, catalog state)."""
-        groups = []
+        self, label_name: str
+    ) -> tuple[LabelGroup, ...]:
+        """Return the authoritative group from each distribution that has it."""
+        return tuple(
+            distribution.get_label_group(label_name)
+            for distribution in self.distributions
+            if label_name in distribution.label_groups
+        )
+
+    def peak_counts(self, label_group_name: str) -> pd.DataFrame:
+        """One typed peak-resolution row per distribution.
+
+        Coordinates remain individual structured columns; distribution identity
+        is never parsed to reconstruct them.
+        """
+        rows: list[dict[str, Any]] = []
         for distribution in self.distributions:
-            if label_name not in distribution.labels:
+            if label_group_name not in distribution.label_groups:
                 continue
-            groups.append(
-                distribution.label_group(label_name, display_name=display_name)
-            )
-        return tuple(groups)
+            group = distribution.get_label_group(label_group_name)
+            summary = group.peak_resolution_summary
+            if summary is None:
+                raise ValueError(
+                    f"label group {label_group_name!r} on {distribution.distribution_id!r} "
+                    "is not a resolved-peak group"
+                )
+            row: dict[str, Any] = {
+                "distribution_id": distribution.distribution_id,
+                **{name: distribution.coordinates.get(name) for name in self.coordinate_names},
+                "resolved_peak_count": summary.resolved_peak_count,
+                "mean_peak_count": summary.mean_peak_count,
+                "peak_count_variance": summary.peak_count_variance,
+                "mode_frequency": summary.mode_frequency,
+                "is_robust": summary.is_robust,
+            }
+            rows.append(row)
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "distribution_id", *self.coordinate_names, "resolved_peak_count",
+                "mean_peak_count", "peak_count_variance", "mode_frequency", "is_robust",
+            ],
+        )
 
     # ----------------------------------------------------------------- #
     # compare() — the matched-comparison engine (PATH B)
@@ -341,7 +404,13 @@ class DistributionCatalog:
         *,
         values: Sequence[Hashable] | None = None,
         match_on: Sequence[str] | None = None,
-    ) -> "DistributionComparisons":
+        reference: Hashable | None = None,
+        targets: Sequence[Hashable] | None = None,
+        label_group: str | None = None,
+        features: Sequence[str] | None = None,
+        grid: Any | None = None,
+        grid_size: int = 40,
+    ) -> Any:
         """Group by everything-but-``across``, vary ``across`` (spec §"PATH B").
 
         See :mod:`engine.catalog` module docstring / ``docs/tasks_catalog/
@@ -411,10 +480,25 @@ class DistributionCatalog:
                 group_order.append(key)
             groups[key].append(distribution)
 
+        if reference is not None:
+            if values is not None:
+                raise ValueError("directed comparison uses reference/targets, not values")
+            if targets is None or not tuple(targets):
+                raise ValueError("directed comparison requires one or more targets")
+            resolved_targets = tuple(targets)
+            if reference in resolved_targets:
+                raise ValueError("reference must not also appear in targets")
+            requested_values: Sequence[Hashable] | None = (reference, *resolved_targets)
+        elif targets is not None:
+            raise ValueError("targets requires an explicit reference")
+        else:
+            resolved_targets = ()
+            requested_values = values
+
         # Determine the values order: explicit `values` wins (preserve order,
         # step 5); otherwise infer from first-appearance across the catalog.
-        if values is not None:
-            resolved_values = tuple(values)
+        if requested_values is not None:
+            resolved_values = tuple(requested_values)
         else:
             seen: list[Hashable] = []
             for distribution in self.distributions:
@@ -474,10 +558,62 @@ class DistributionCatalog:
                 )
             )
 
-        return DistributionComparisons(
+        neutral = DistributionComparisons(
             comparisons=tuple(comparisons),
             across=across,
             values=resolved_values,
+            match_on=resolved_match_on,
+        )
+        if reference is None:
+            return neutral
+
+        # Catalog orchestration ends at matching/context. The raw-object
+        # function is the sole owner of grid derivation, density evaluation,
+        # overlap, and optional null testing.
+        from .compare import DescriptiveComparisons, compare_distributions
+
+        prepared = []
+        for comparison in neutral.comparisons:
+            reference_distribution = comparison.members[reference]
+            target_distributions = tuple(
+                comparison.members[value] for value in resolved_targets
+            )
+            try:
+                raw = compare_distributions(
+                    reference=reference_distribution,
+                    targets=target_distributions,
+                    label_group=label_group,
+                    features=features,
+                    grid=grid,
+                    grid_size=grid_size,
+                )
+            except (KeyError, ValueError, NotImplementedError) as exc:
+                member_ids = {
+                    "reference": reference_distribution.distribution_id,
+                    "targets": tuple(
+                        distribution.distribution_id
+                        for distribution in target_distributions
+                    ),
+                }
+                raise ValueError(
+                    f"compare(across={across!r}) failed descriptive preparation "
+                    f"for matched coordinates {dict(comparison.coordinates)!r}; "
+                    f"member distribution IDs={member_ids!r}: {exc}"
+                ) from exc
+            prepared.extend(
+                replace(
+                    item,
+                    reference_value=reference,
+                    target_value=target_value,
+                    coordinates=comparison.coordinates,
+                )
+                for item, target_value in zip(raw.comparisons, resolved_targets)
+            )
+        return DescriptiveComparisons(
+            comparisons=tuple(prepared),
+            across=across,
+            reference_value=reference,
+            target_values=resolved_targets,
             match_on=resolved_match_on,
         )
 
@@ -550,17 +686,17 @@ def _pool_distributions(
     # concatenate assignments; UNASSIGNED_LABEL where a source lacks the group.
     label_names: list[str] = []
     for member in members:
-        for name in member.labels:
+        for name in member.label_groups:
             if name not in label_names:
                 label_names.append(name)
 
     for label_name in label_names:
         assignments: dict[str, Hashable] = {}
         for member in members:
-            if label_name in member.labels:
-                column = member.label_column(label_name)
+            if label_name in member.label_groups:
+                group = member.get_label_group(label_name)
                 for sid in member.sample_ids:
-                    value = column.values.get(sid, UNASSIGNED_LABEL)
+                    value = group.assignments[sid]
                     if value != UNASSIGNED_LABEL:
                         assignments[sid] = value
             # else: this source has no such label group -> its samples stay
@@ -568,7 +704,9 @@ def _pool_distributions(
         pooled = pooled.with_label(
             label_name,
             assignments,
-            provenance=LabelProvenance(method="pool_by", features=()),
+            labeling_provenance=LabelingProvenance(
+                method="provided", detail={"source": "pool_by"}
+            ),
         )
 
     return pooled

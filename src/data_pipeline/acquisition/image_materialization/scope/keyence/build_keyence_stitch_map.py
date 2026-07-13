@@ -22,13 +22,14 @@ import numpy as np
 import pandas as pd
 import skimage.io as skio
 
-from data_pipeline.acquisition.image_building.shared.log_focus import im_rescale
+from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
+    FocusStackConfig,
+    focus_stack_group,
+)
+from data_pipeline.shared.path_roots import resolve_under_input_root
 from data_pipeline.acquisition.image_building.utils.frame_tiler import (
     TileSpec,
     raw_stitch2d_align,
-)
-from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
-    materialize_ff_projection,
 )
 
 log = logging.getLogger(__name__)
@@ -37,122 +38,158 @@ log = logging.getLogger(__name__)
 def build_keyence_stitch_map(
     acquisition_inventory_df: pd.DataFrame,
     *,
-    n_samples: int = 3,
+    n_samples: int = 50,
     out_path: Path,
+    input_root: Path | None = None,
 ) -> None:
-    """Build the experiment-grain Keyence stitch map from STAGE COORDINATES, not image alignment.
+    """Build the experiment-grain Keyence stitch map and write it to ``out_path``.
 
-    Every Keyence plane's XML carries the absolute stage position (``stage_x_nm``/``stage_y_nm``)
-    at which it was acquired. The per-tile DELTAS of those positions ARE the mosaic geometry, exact
-    and free — so the tile offsets need no feature detection at all. Feature-based alignment
-    (``raw_stitch2d_align``) fails outright on these frames: brightfield wells are low-texture and
-    carry a strong illumination gradient across the strip, and every one of 50 sampled frames
-    failed to align in both orientations.
-
-    Samples ``n_samples`` wells (fixed seed), converts each well's stage deltas to pixel offsets via
-    ``micrometers_per_pixel``, and writes the median across wells. Coords are keyed by 0-based tile
-    INDEX in ``[y, x]`` order, matching stitch2d's convention and what ``load_params`` expects.
+    Samples up to ``n_samples`` ``(well_id, time_index)`` pairs from the inventory (fixed seed
+    for determinism), focus-stacks each tile's Z planes, runs stitch2d alignment, and collects
+    per-tile ``(dx_px, dy_px)`` transforms. The median across all good samples is written as
+    ``{"coords": {tile_id: [median_x, median_y], ...}}`` JSON.
 
     Raises:
-        ValueError: if the inventory lacks stage columns, or tiles do not form a single strip.
+        RuntimeError: if no sample succeeds alignment (callers must know — silent skip is wrong).
     """
     if acquisition_inventory_df.empty:
         raise ValueError("acquisition_inventory_df is empty — nothing to sample.")
 
-    missing = {"stage_x_nm", "stage_y_nm"} - set(acquisition_inventory_df.columns)
-    if missing:
-        raise ValueError(
-            f"acquisition_inventory is missing {sorted(missing)}; re-run scope ingest so the "
-            f"Keyence stage positions are scraped into the inventory."
-        )
+    orientation_raw = str(
+        acquisition_inventory_df["orientation"].mode().iloc[0]
+    ).lower()
+    # Modern Keyence exports often have no explicit orientation in TIFF metadata; legacy behavior
+    # treats unknown/non-vertical layouts as horizontal strips.
+    orientation = "vertical" if orientation_raw == "vertical" else "horizontal"
 
-    df = acquisition_inventory_df
-    um_per_px = float(df["micrometers_per_pixel"].iloc[0])
-    if not um_per_px > 0:
-        raise ValueError(f"micrometers_per_pixel must be positive, got {um_per_px!r}.")
-
-    wells = sorted(df["well_id"].unique())
+    pairs = (
+        acquisition_inventory_df[["well_id", "time_index"]]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
     rng = np.random.default_rng(seed=42)
-    picked = rng.choice(len(wells), size=min(n_samples, len(wells)), replace=False)
-    sampled_wells = [wells[i] for i in sorted(picked)]
+    idx = rng.choice(len(pairs), size=min(n_samples, len(pairs)), replace=False)
+    sampled = pairs.iloc[sorted(idx)]
 
-    # Per well: one (stage_x, stage_y) per tile, ordered by tile_id. Stage is constant across Z
-    # and channel within a tile, so take the first row of each tile group.
-    per_well: list[np.ndarray] = []
-    for well_id in sampled_wells:
-        w = df[df["well_id"] == well_id].sort_values("tile_id")
-        t = w.groupby("tile_id", sort=True)[["stage_x_nm", "stage_y_nm"]].first()
-        per_well.append(t.to_numpy(dtype=float))
+    log.info(
+        "build_keyence_stitch_map: orientation=%s n_candidates=%d n_samples=%d",
+        orientation, len(pairs), len(sampled),
+    )
 
-    n_tiles = per_well[0].shape[0]
-    if any(a.shape[0] != n_tiles for a in per_well):
-        raise ValueError(
-            f"Sampled wells disagree on tile count: {[a.shape[0] for a in per_well]}. "
-            f"Cannot build one experiment-grain stitch map."
+    # Collect per-tile-index [y, x] coords (raw stitch2d convention) across FULLY aligned
+    # samples only — mirrors legacy build01A_compile_keyence_images.py lines ~495-514: a sample
+    # that aligns fewer than n_images tiles is skipped, NOT treated as a failure of the whole
+    # batch. Only a handful of fully-aligned frames are needed to get a good median.
+    align_rows: list[np.ndarray] = []  # each entry: (n_images, 2) array of [y, x]
+    n_good = 0
+    n_tried = 0
+    tile_shape: list[int] | None = None
+
+    for _, row in sampled.iterrows():
+        well_id = row["well_id"]
+        time_index = row["time_index"]
+        sample_rows = acquisition_inventory_df[
+            (acquisition_inventory_df["well_id"] == well_id)
+            & (acquisition_inventory_df["time_index"] == time_index)
+        ]
+        try:
+            tile_specs = _build_tile_specs(sample_rows, input_root=input_root)
+        except Exception as exc:
+            log.debug("Sample well=%s time=%s skipped (tile build): %s", well_id, time_index, exc)
+            continue
+
+        n_tried += 1
+
+        try:
+            coords_raw = raw_stitch2d_align(tile_specs, orientation=orientation)
+        except Exception as exc:
+            log.debug("Sample well=%s time=%s skipped (align): %s", well_id, time_index, exc)
+            continue
+
+        # Mirror legacy: only keep samples where EVERY tile placed. Partial alignments are
+        # silently skipped here (not an error) — that is the whole point of sampling many.
+        if len(coords_raw) != len(tile_specs):
+            log.debug(
+                "Sample well=%s time=%s partial alignment (%d/%d tiles) — skipped",
+                well_id, time_index, len(coords_raw), len(tile_specs),
+            )
+            continue
+
+        arr = np.full((len(tile_specs), 2), np.nan, dtype=float)
+        for tid_idx, yx in coords_raw.items():
+            arr[int(tid_idx), 0] = float(yx[0])
+            arr[int(tid_idx), 1] = float(yx[1])
+        align_rows.append(arr)
+        if tile_shape is None:
+            tile_shape = list(tile_specs[0].image.shape[:2])
+        n_good += 1
+
+    if n_good == 0:
+        raise RuntimeError(
+            f"build_keyence_stitch_map: no sample fully aligned all tiles "
+            f"(tried {n_tried} candidates). Cannot write stitch map."
         )
 
-    # Offsets relative to tile 0, in nm -> um -> px. Stage +x is image +x; stage +y is image +y.
-    stage = np.stack(per_well, axis=0)                       # (n_wells, n_tiles, 2) [x, y] nm
-    offsets_nm = stage - stage[:, :1, :]                     # relative to tile 0 within each well
-    offsets_px = np.nanmedian(offsets_nm, axis=0) / 1000.0 / um_per_px   # (n_tiles, 2) [x, y]
+    stacked = np.stack(align_rows, axis=0)  # (n_good, n_images, 2)
+    med_coords = np.nanmedian(stacked, axis=0)  # (n_images, 2) in [y, x]
 
-    # Stage axes need not agree with image axes: on this scope stage x DECREASES as tile_id
-    # increases, so using the stage offsets directly puts tile 1 at the far right and reverses the
-    # strip. stitch2d's "raster" pattern places tiles in tile order, so flip any axis whose stage
-    # coordinate runs backwards, then anchor at the minimum to keep all coords >= 0.
-    for axis in (0, 1):
-        if offsets_px[-1, axis] < offsets_px[0, axis]:
-            offsets_px[:, axis] *= -1.0
-    offsets_px -= offsets_px.min(axis=0)
-
-    spread = offsets_px.max(axis=0) - offsets_px.min(axis=0)  # [x_spread, y_spread]
-    orientation = "horizontal" if spread[0] >= spread[1] else "vertical"
-    minor = float(spread.min())
-    if n_tiles > 1 and minor > 1.0:
-        raise ValueError(
-            f"Keyence tiles do not form a single row/column: stage spread is "
-            f"{spread[0]:.1f}px x {spread[1]:.1f}px. A 2-D mosaic is not supported here."
-        )
-
-    # coords keyed by 0-based tile index, value [y, x] — note the axis swap from offsets_px [x, y].
-    coords = {
-        str(i): [float(offsets_px[i, 1]), float(offsets_px[i, 0])]
-        for i in range(n_tiles)
+    # Written coords are keyed by tile INDEX (0-based, raster order) — matching stitch2d's own
+    # convention and what `load_params`/`_stitch_with_stitch2d` expect. [y, x] order preserved.
+    coords: dict[str, list[float]] = {
+        str(idx): [float(med_coords[idx, 0]), float(med_coords[idx, 1])]
+        for idx in range(med_coords.shape[0])
     }
+
+    n_tiles = int(med_coords.shape[0])
     shape = [n_tiles, 1] if orientation == "vertical" else [1, n_tiles]
-    tile_shape = [int(df["image_height_px"].iloc[0]), int(df["image_width_px"].iloc[0])]
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(
             {
-                "metadata": {"shape": shape, "size": n_tiles, "tile_shape": tile_shape},
+                "metadata": {
+                    "shape": shape,
+                    "size": n_tiles,
+                    "tile_shape": tile_shape or [],
+                },
                 "coords": coords,
             }
         )
     )
-    step = float(np.abs(np.diff(offsets_px[:, 0])).max()) if n_tiles > 1 else 0.0
     log.info(
-        "build_keyence_stitch_map: %s, %d tiles, step=%.1fpx, overlap=%.1fpx "
-        "(from stage coords of %d wells) -> %s",
-        orientation, n_tiles, step, tile_shape[1] - step, len(sampled_wells), out_path,
+        "build_keyence_stitch_map: wrote %d tile coords to %s (from %d/%d good samples)",
+        len(coords), out_path, n_good, len(sampled),
     )
 
 
-def _build_tile_specs(sample_rows: pd.DataFrame) -> list[TileSpec]:
-    """Focus-stack each tile's Z planes and return a sorted list of TileSpecs."""
-    tile_specs: list[TileSpec] = []
+def _build_tile_specs(
+    sample_rows: pd.DataFrame, *, input_root: Path | None = None
+) -> list[TileSpec]:
+    """Focus-stack a sample frame's tiles (ONE shared-bounds group) and return TileSpecs.
+
+    Uses the same shared focus-projection route as ``materialize_well_keyence`` so the coords
+    are computed on the exact tile pixels production will stitch — one 0.1–99.9% intensity
+    range across all tiles/Z planes, no per-tile normalization.
+    """
+    ordered_tile_ids: list[str] = []
+    raw_stacks: list[np.ndarray] = []
     for tile_id, tile_rows in sample_rows.groupby("tile_id"):
         z_paths = (
             tile_rows.sort_values("z_index")["source_tiff_path"]
-            .map(lambda p: Path(str(p)))
+            .map(lambda p: resolve_under_input_root(
+                p, input_root=input_root, scope_label="Keyence acquisition inventory",
+                full_root_fallback=True,
+            ))
             .tolist()
         )
         if not z_paths:
             raise ValueError(f"No z-plane TIFFs for tile_id={tile_id!r}.")
         planes = [skio.imread(str(p)) for p in z_paths]
-        stack_zyx = np.stack(planes, axis=0)
-        norm, _, _ = im_rescale(stack_zyx)
-        tile_ff, _ = materialize_ff_projection(norm.astype(np.float32), device="cpu")
-        tile_specs.append(TileSpec(tile_id=str(tile_id), image=np.asarray(tile_ff)))
-    return tile_specs
+        ordered_tile_ids.append(str(tile_id))
+        raw_stacks.append(np.stack(planes, axis=0))
+
+    group = focus_stack_group(raw_stacks, config=FocusStackConfig(), device="cpu")
+    return [
+        TileSpec(tile_id=tid, image=group.tiles[i].projection_u8)
+        for i, tid in enumerate(ordered_tile_ids)
+    ]

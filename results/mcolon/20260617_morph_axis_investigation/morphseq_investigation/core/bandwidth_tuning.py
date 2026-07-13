@@ -470,8 +470,8 @@ def bandwidth_geometry_scales(
     `propose_bandwidth_candidates`) that want every scale.
     """
     pts = np.asarray(points, dtype=float)
-    if pts.ndim != 2 or pts.shape[1] != 2:
-        raise ValueError("points must have shape (n_points, 2)")
+    if pts.ndim != 2 or pts.shape[1] < 1:
+        raise ValueError("points must have shape (n_points, n_features) with at least one feature")
     n = len(pts)
     if n < 2:
         return {}

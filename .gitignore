@@ -118,8 +118,11 @@ _Archive/
 **/output/phase0_*/
 **/scripts/output/
 
-# Pipeline outputs and build artifacts
-data_pipeline_output/
+# Pipeline tree lives on shared storage (nlammers/.../morphseq/pipeline/{input,output,models}).
+# The repo has a browsing symlink into it; ignore it so it is never committed.
+#   pipeline -> nlammers/.../pipeline   (browse input/output/models)
+pipeline
+pipeline/
 .snakemake/
 
 # Ignore image and cluster job log files

@@ -1,4 +1,9 @@
-"""b9d2 rich distribution grid — driven by the engine's DistributionGrouping API.
+"""RETIRED (superseded) — the canonical driver is
+``../b9d2_catalog_example.py`` (PATH A via ``build_1d_density_grid``). This
+drove the removed ``DistributionGrouping`` / ``FacetCoordinate`` API and imports
+the removed ``label_genotype``; it will NOT run on ``main``. Historical only.
+
+b9d2 rich distribution grid — driven by the engine's DistributionGrouping API.
 
 This is the refactor of ``rich_distribution_plot.py`` onto the new three-stage
 engine pipeline (engine/plotting.py):

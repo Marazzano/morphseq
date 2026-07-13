@@ -32,7 +32,6 @@ from .resolved_peak_metrics import (
     run_empirical_null_test,
     summarize_resolved_peak_distribution,
 )
-from .support_geometry import evaluate_kde_on_grid
 
 
 @dataclass(frozen=True)
@@ -65,13 +64,12 @@ class EmpiricalNullSpec:
 
 
 _SUPPORTED_BANDWIDTH_RULES = (
-    "scipy_default",
     "median_kNN_distance",
     "longest_non_outlier_MST_edge",
 )
-# Rules other than scipy_default derive an isotropic sigma from point-cloud
-# geometry (see bandwidth_tuning.bandwidth_geometry_scales) and evaluate the KDE
-# with that fixed sigma via the isotropic evaluator, honoring bandwidth_multiplier.
+# Both supported rules derive an isotropic sigma from point-cloud geometry and
+# feed the single dense isotropic Gaussian evaluator. Alternate estimator
+# backends are deliberately outside the unified resolved-peak API.
 _GEOMETRY_BANDWIDTH_RULES = ("median_kNN_distance", "longest_non_outlier_MST_edge")
 
 # Canonical V0 analysis configuration -- the one validated by the smoke test and
@@ -81,9 +79,21 @@ _GEOMETRY_BANDWIDTH_RULES = ("median_kNN_distance", "longest_non_outlier_MST_edg
 # density. Anything reusing the resolved-peak engine on real data (e.g. the
 # valley-visualization reference readout) should import this rather than
 # re-declaring a spec, so figures and null-test tables share one configuration.
+# Bandwidth: the default is the geometry-derived `longest_non_outlier_MST_edge`
+# at multiplier 0.75 — the configuration VALIDATED against synthetic truth in
+# v0/validate_v0_resolved_peaks.py (one/two/three-peak fixtures recover the right
+# counts). This is an isotropic sigma from the point cloud's largest non-outlier
+# spanning-tree gap, NOT scipy/Scott, and it matches the rest of the framework
+# (support_geometry.isotropic_geometry_kde_spec uses the same rule) so target,
+# reference, and every null resample each get their own geometry-appropriate sigma
+# and the whole figure stays on-method.
+#
+# Scott/SciPy was an earlier experimental backend. It is no longer a supported
+# resolved-peak configuration: adding another estimator requires an explicit
+# design/calibration change rather than a second live backend branch here.
 DEFAULT_ANALYSIS_SPEC = ResolvedPeakAnalysisSpec(
-    bandwidth_rule="scipy_default",
-    bandwidth_multiplier=1.0,
+    bandwidth_rule="longest_non_outlier_MST_edge",
+    bandwidth_multiplier=0.75,
     peak_detector_method="kde_peak_basins_sample_support",
     min_sample_fraction=0.10,
 )
@@ -96,23 +106,15 @@ def _evaluate_density_for_spec(
 ) -> np.ndarray:
     """Evaluate the KDE density on `canonical_grid` under the spec's bandwidth rule.
 
-    scipy_default:  scipy.stats.gaussian_kde (Scott's rule); multiplier must be 1.0.
-    geometry rules: an isotropic sigma from bandwidth_geometry_scales, scaled by
-                    bandwidth_multiplier, evaluated with the isotropic Gaussian KDE.
+    Every supported rule selects an isotropic sigma via
+    ``bandwidth_geometry_scales``. ``bandwidth_multiplier`` scales that sigma;
+    the resulting field is always evaluated by the same Gaussian KDE kernel.
     """
     rule = analysis_spec.bandwidth_rule
     if rule not in _SUPPORTED_BANDWIDTH_RULES:
         raise NotImplementedError(
             f"bandwidth_rule={rule!r} not yet wired; supported: {_SUPPORTED_BANDWIDTH_RULES}"
         )
-
-    if rule == "scipy_default":
-        if analysis_spec.bandwidth_multiplier != 1.0:
-            raise NotImplementedError(
-                "bandwidth_multiplier != 1.0 is not yet wired for bandwidth_rule='scipy_default'."
-            )
-        # kde=None routes evaluate_kde_on_grid to plain scipy.stats.gaussian_kde.
-        return evaluate_kde_on_grid(points, canonical_grid.xx, canonical_grid.yy, kde=None)
 
     # Geometry-derived isotropic sigma (median kNN / longest non-outlier MST edge).
     # The NotImplementedError check above guarantees rule is in
@@ -146,7 +148,7 @@ def _compute_peak_detection_with_analysis_spec(
 ) -> tuple[DensityGrid, np.ndarray, PeakDetectionResult]:
     """KDE density -> `detect_peaks`, stopping short of full empirical resolution.
 
-    This is the canonical density-to-detection path: `resolve_points_with_analysis_spec`
+    This is the canonical density-to-detection path: `_resolve_points_single_pass`
     delegates to it for the full resolve, and callers that only need a peak count
     and candidate centers (e.g. bootstrap-vote draws) can call it directly to skip
     sample-to-peak reassignment, per-peak geometry, and `ResolvedPeakDistribution`
@@ -175,7 +177,7 @@ def _compute_peak_detection_with_analysis_spec(
     return density_grid, points_array, detection_result
 
 
-def resolve_points_with_analysis_spec(
+def _resolve_points_single_pass(
     *,
     distribution_id: str,
     points: np.ndarray,
@@ -189,8 +191,46 @@ def resolve_points_with_analysis_spec(
     Always resolves at full resolution (sweep_steps left at its detect_peaks
     default) -- this is the honest, non-approximated path.
     """
-    density_grid, points_array, detection_result = _compute_peak_detection_with_analysis_spec(
-        points, canonical_grid, analysis_spec, sweep_steps=None,
+    points_array = np.asarray(points, dtype=float)
+    density = _evaluate_density_for_spec(points_array, canonical_grid, analysis_spec)
+    density_grid = DensityGrid(
+        xx=canonical_grid.xx,
+        yy=canonical_grid.yy,
+        density=density,
+        grid=canonical_grid,
+    )
+    return _resolve_density_grid_single_pass(
+        distribution_id=distribution_id,
+        points=points_array,
+        density_grid=density_grid,
+        analysis_spec=analysis_spec,
+    )
+
+
+def _resolve_density_grid_single_pass(
+    *,
+    distribution_id: str,
+    points: np.ndarray,
+    density_grid: DensityGrid,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+) -> ResolvedPeakDistribution:
+    """Resolve an already-calculated density without fitting or evaluating a KDE.
+
+    This is the authoritative supplied-density boundary. The analysis spec
+    contributes detector and assignment configuration only; the density values
+    are consumed exactly as supplied.
+    """
+    points_array = np.asarray(points, dtype=float)
+    detect_peaks_kwargs = dict(
+        method=analysis_spec.peak_detector_method,
+        grid=density_grid,
+        sample_points=points_array,
+        min_component_mass_frac=analysis_spec.min_component_mass_frac,
+        min_sample_fraction=analysis_spec.min_sample_fraction,
+        min_prominence_ratio=analysis_spec.min_prominence_ratio,
+    )
+    detection_result = detect_peaks(
+        np.asarray(density_grid.density, dtype=float), **detect_peaks_kwargs
     )
 
     return resolve_empirical_peak_distribution(
@@ -215,7 +255,7 @@ def summarize_points_with_analysis_spec(
     only need the scalar summary and should not retain per-draw resolved
     objects in memory.
     """
-    distribution = resolve_points_with_analysis_spec(
+    distribution = _resolve_points_single_pass(
         distribution_id=distribution_id,
         points=points,
         canonical_grid=canonical_grid,
@@ -491,7 +531,6 @@ __all__ = [
     "_compute_peak_detection_with_analysis_spec",
     "compute_observed_delta",
     "reduce_permutation_null_test",
-    "resolve_points_with_analysis_spec",
     "resolved_peak_summary_to_row",
     "resolved_peak_to_rows",
     "run_resolved_peak_permutation_comparison",

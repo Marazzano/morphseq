@@ -1,7 +1,7 @@
 """motion_blur_qc compute tests.
 
 Covers the pure adjacent-z NCC behavior and the batch path that reads z-stack planes from
-frame_inventory.source_image_path while masks come from canonical frame_masks RLE.
+frame_inventory.image_path while masks come from canonical frame_masks RLE.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def _snip_rows(tmp_path, *, mask, planes):
                 "image_id": z_image_id,
                 "image_product_type": "z_stack",
                 "projection_method": pd.NA,
-                "source_image_path": str(path),
+                "image_path": str(path),
             }
         )
     return pd.DataFrame(inv_rows), pd.DataFrame(mask_rows), pd.DataFrame(fi_rows)

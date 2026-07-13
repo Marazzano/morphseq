@@ -28,6 +28,11 @@ from morphseq_investigation.plotting.modal_distribution_plotting import (  # noq
     plot_v0_distribution_qc_grid,
 )
 from morphseq_investigation.v0.modal_v0_distributions import V0_DISTRIBUTIONS  # noqa: E402
+from morphseq_investigation.core.density_composition import CanonicalGrid, DensityGrid  # noqa: E402
+from morphseq_investigation.core.resolved_peak_analysis import (  # noqa: E402
+    DEFAULT_ANALYSIS_SPEC,
+    _evaluate_density_for_spec,
+)
 
 
 DEFAULT_OUT = RUN_DIR / "plots" / "modal_v0_distribution_qc.png"
@@ -39,10 +44,25 @@ def build_visual_specs(n: int, seed: int) -> list[DistributionVisualSpec]:
     for spec in V0_DISTRIBUTIONS:
         rng = np.random.default_rng(rng_master.integers(0, 2**31 - 1))
         realization = spec.realize(n, rng)
+        if realization.truth.composed_grid.grid is not None:
+            grid = realization.truth.composed_grid.grid
+        else:
+            lo = realization.points.min(axis=0)
+            hi = realization.points.max(axis=0)
+            grid = CanonicalGrid(
+                x_min=float(lo[0]), x_max=float(hi[0]),
+                y_min=float(lo[1]), y_max=float(hi[1]), grid_size=70,
+            )
+        sampled_grid = DensityGrid(
+            xx=grid.xx, yy=grid.yy,
+            density=_evaluate_density_for_spec(realization.points, grid, DEFAULT_ANALYSIS_SPEC),
+            grid=grid,
+        )
         out.append(
             DistributionVisualSpec(
                 distribution_id=spec.distribution_id,
                 points=realization.points,
+                sampled_grid=sampled_grid,
                 component_labels=realization.component_labels,
                 composed_grid=realization.truth.composed_grid,
                 note=spec.note,

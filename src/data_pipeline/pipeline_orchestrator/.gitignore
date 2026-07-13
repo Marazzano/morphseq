@@ -4,3 +4,7 @@ env.yaml
 
 # Snakemake working state
 .snakemake/
+
+# Per-experiment Snakemake work directories (isolated .snakemake lock/DAG trees so runs on
+# different experiments can execute concurrently from this one WORKFLOW_DIR). Local-only.
+work_directories/

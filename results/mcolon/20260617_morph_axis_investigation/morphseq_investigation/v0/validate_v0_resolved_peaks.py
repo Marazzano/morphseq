@@ -120,7 +120,7 @@ def validate_one(distribution_id: str, points: np.ndarray, config: PeakResolutio
         expected_peak_count=expected,
         resolved_peak_count=dist.resolved_peak_count,
         is_reliable=dist.is_reliable,
-        mode_frequency=dist.resolution_evidence.count_stability.mode_frequency
+        mode_frequency=dist.resolution_evidence.peak_resolution_summary.mode_frequency
         if dist.resolution_evidence is not None
         else float("nan"),
         passed=passed,
