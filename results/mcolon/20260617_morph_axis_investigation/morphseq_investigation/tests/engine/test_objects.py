@@ -1,355 +1,141 @@
-"""TASK_0 — typed-column Distribution + derived views."""
-
 import dataclasses
 
 import numpy as np
 import pytest
 
 from morphseq_investigation.engine.objects import (
-    UNASSIGNED_LABEL,
     Distribution,
-    DistributionLabelGroup,
-    LabelColumn,
-    LabelProvenance,
-    Grid,
-    DensityGrid,
-    SampleSet,
-    SampleSetGeometry,
-    derive_label_groups,
-    resolve_label_group,
     LabelGroup,
+    LabelingProvenance,
+    SampleSetGeometry,
+    UNASSIGNED_LABEL,
 )
-from morphseq_investigation.engine.identifiers import make_distribution_id
-from morphseq_investigation.engine.facets import CoordinateFacet, LabelGroupFacet
+from morphseq_investigation.core.peak_stability import (
+    PeakCountRobustnessPolicy,
+    PeakCountVote,
+    PeakResolutionSummary,
+    PeakVotingSpec,
+)
 
 
-def _distribution(n=4, feats=("PC1", "PC2"), coords=None):
-    coordinates = coords if coords is not None else {"scope_id": "b9d2", "time_bin": 30}
-    return Distribution(
-        distribution_id=make_distribution_id(coordinates),
-        sample_ids=tuple(f"s{i}" for i in range(n)),
-        feature_names=feats,
-        feature_values=np.arange(n * len(feats), dtype=float).reshape(n, len(feats)),
-        coordinates=coordinates,
+def _distribution(**changes):
+    args = dict(
+        distribution_id="d",
+        sample_ids=("s0", "s1", "s2"),
+        feature_names=("x", "y"),
+        feature_values=np.arange(6.0).reshape(3, 2),
     )
+    args.update(changes)
+    return Distribution(**args)
 
 
-# --------------------------------------------------------------------------- #
-# Distribution shape + hard invariants
-# --------------------------------------------------------------------------- #
-def test_distribution_minimal_construction():
-    d = _distribution()
-    assert d.feature_names == ("PC1", "PC2")
-    assert d.feature_values.shape == (4, 2)
-    assert d.coordinate("time_bin") == 30
-    assert d.labels == {}
-
-
-def test_distribution_has_no_role_or_coordinate_frame():
-    # role is a comparison RELATIONSHIP, never a Distribution field (spec).
-    fields = {f.name for f in dataclasses.fields(Distribution)}
-    assert "coordinate_frame" not in fields
-    assert "role" not in fields
-    assert "coordinates" in fields and "labels" in fields
-
-
-def test_pooled_coordinates_defaults_empty_and_normalizes_to_tuple():
-    # pool_by writes the collapsed coordinate name(s) here (spec §pool_by).
-    assert _distribution().pooled_coordinates == ()
-    d = Distribution(
-        distribution_id="x",
-        sample_ids=("s0",),
-        feature_names=("PC1",),
-        feature_values=np.zeros((1, 1)),
-        coordinates={"scope_id": "b9d2"},
-        pooled_coordinates=["experiment"],
-    )
-    assert d.pooled_coordinates == ("experiment",)
-
-
-def test_distribution_frozen():
-    d = _distribution()
+def test_distribution_shape_identity_and_immutability():
+    distribution = _distribution()
+    assert distribution.feature_column("y").tolist() == [1, 3, 5]
     with pytest.raises(dataclasses.FrozenInstanceError):
-        d.distribution_id = "other"  # type: ignore[misc]
-
-
-def test_distribution_feature_values_readonly():
-    d = _distribution()
+        distribution.distribution_id = "x"
     with pytest.raises(ValueError):
-        d.feature_values[0, 0] = 999.0
+        distribution.feature_values[0, 0] = 2
+    with pytest.raises(ValueError, match="second axis"):
+        _distribution(feature_names=("x",))
+    with pytest.raises(ValueError, match="unique"):
+        _distribution(sample_ids=("s0", "s0", "s2"))
 
 
-def test_feature_values_column_invariant_enforced():
-    with pytest.raises(ValueError):
-        Distribution(
-            distribution_id="x",
-            sample_ids=("s0",),
-            feature_names=("PC1", "PC2", "PC3"),
-            feature_values=np.zeros((1, 2)),
+def test_with_label_creates_only_unified_label_group_and_derives_sets():
+    distribution = _distribution().with_label("provided", {"s0": "a", "s1": "a"})
+    assert "labels" not in {field.name for field in dataclasses.fields(Distribution)}
+    group = distribution.label_groups["provided"]
+    assert isinstance(group, LabelGroup)
+    assert group.assignments == {"s0": "a", "s1": "a", "s2": UNASSIGNED_LABEL}
+    assert group.labeling_provenance == LabelingProvenance(method="provided")
+    sets = distribution.sample_sets("provided")
+    assert len(sets) == 1 and sets[0].sample_ids == ("s0", "s1")
+    with pytest.raises(ValueError, match="already exists"):
+        distribution.with_label("provided", {})
+
+
+def test_label_group_constructor_validates_geometry_categories():
+    geometry = SampleSetGeometry(
+        feature_names=("x", "y"), center=np.zeros(2), radius=1,
+        support_fraction=.5, r80_radial_concentration=.2,
+        cv_radius_from_center=.1,
+    )
+    with pytest.raises(ValueError, match="assigned"):
+        LabelGroup(
+            name="g", distribution_id="d", assignments={"s0": "a"},
+            sample_set_geometries={"b": geometry},
         )
 
 
-def test_sample_ids_row_invariant_enforced():
-    with pytest.raises(ValueError):
-        Distribution(
-            distribution_id="x",
-            sample_ids=("s0", "s1"),
-            feature_names=("PC1",),
-            feature_values=np.zeros((1, 1)),
+def test_distribution_requires_total_label_assignment_coverage():
+    group = LabelGroup(name="g", distribution_id="d", assignments={"s0": "a"})
+    with pytest.raises(ValueError, match="cover every sample"):
+        _distribution(label_groups={"g": group})
+
+
+def _summary(count=2):
+    voting = PeakVotingSpec(n_draws=5, sample_fraction=.8, min_valid_draws=4)
+    return PeakResolutionSummary(
+        peak_count_vote=PeakCountVote({count: 5}, 5, 5, .8),
+        voting_spec=voting,
+        robustness_policy=PeakCountRobustnessPolicy(.8),
+        resolved_peak_count=count,
+        is_robust=True,
+    )
+
+
+def _geometry(center):
+    return SampleSetGeometry(
+        feature_names=("x", "y"), center=np.asarray(center), radius=1,
+        support_fraction=.5, r80_radial_concentration=.2,
+        cv_radius_from_center=.1,
+    )
+
+
+def test_throwaway_is_explicit_unassigned_and_never_materializes():
+    distribution = _distribution().with_label(
+        "provided", {"s0": "kept", "s1": UNASSIGNED_LABEL}
+    )
+    sets = distribution.sample_sets("provided")
+    assert [sample_set.sample_set_name for sample_set in sets] == ["kept"]
+    assert {sid for sample_set in sets for sid in sample_set.sample_ids} == {"s0"}
+    assert distribution.label_groups["provided"].assignments["s2"] == UNASSIGNED_LABEL
+
+
+def test_resolved_peak_requires_density_count_geometry_and_local_ids():
+    density = _distribution().calc_density()
+    group = LabelGroup(
+        name="run_a", distribution_id="d",
+        assignments={"s0": "peak_0", "s1": "peak_1", "s2": UNASSIGNED_LABEL},
+        density=density,
+        sample_set_geometries={"peak_0": _geometry((0, 0)), "peak_1": _geometry((1, 1))},
+        peak_resolution_summary=_summary(2),
+        labeling_provenance=LabelingProvenance(method="resolved_peaks"),
+    )
+    distribution = _distribution(label_groups={"run_a": group})
+    sets = distribution.sample_sets("run_a")
+    assert group.peak_count == group.sample_set_count == len(sets) == len(group.sample_set_geometries)
+    assert [item.sample_set_id for item in sets] == [
+        "d__run_a__peak_0", "d__run_a__peak_1"
+    ]
+    assert distribution.sample_sets("run_a")[0].sample_set_id == sets[0].sample_set_id
+
+
+def test_resolved_peak_constructor_rejects_missing_density_count_and_nondeterministic_ids():
+    assignments = {"s0": "peak_0", "s1": "peak_1", "s2": UNASSIGNED_LABEL}
+    geometries = {"peak_0": _geometry((0, 0)), "peak_1": _geometry((1, 1))}
+    with pytest.raises(ValueError, match="generating density"):
+        LabelGroup("r", "d", assignments, sample_set_geometries=geometries,
+                   peak_resolution_summary=_summary(2))
+    density = _distribution().calc_density()
+    with pytest.raises(ValueError, match="count"):
+        LabelGroup("r", "d", assignments, density=density,
+                   sample_set_geometries=geometries, peak_resolution_summary=_summary(1))
+    with pytest.raises(ValueError, match="deterministic"):
+        LabelGroup(
+            "r", "d", {"s0": "peak_1", "s1": "peak_0", "s2": UNASSIGNED_LABEL},
+            density=density, sample_set_geometries=geometries,
+            peak_resolution_summary=_summary(2),
+            labeling_provenance=LabelingProvenance(method="resolved_peaks"),
         )
-
-
-def test_sample_ids_must_be_unique():
-    with pytest.raises(ValueError):
-        Distribution(
-            distribution_id="x",
-            sample_ids=("s0", "s0"),
-            feature_names=("PC1",),
-            feature_values=np.zeros((2, 1)),
-        )
-
-
-def test_feature_values_column_by_name():
-    d = _distribution()
-    np.testing.assert_array_equal(d.feature_column("PC2"), d.feature_values[:, 1])
-    with pytest.raises(KeyError):
-        d.feature_column("nope")
-
-
-# --------------------------------------------------------------------------- #
-# with_label — attaches, normalizes coverage, returns NEW object
-# --------------------------------------------------------------------------- #
-def test_with_label_returns_new_object_original_unchanged():
-    d = _distribution()
-    d2 = d.with_label("genotype", {"s0": "wildtype", "s1": "b9d2"})
-    assert "genotype" not in d.labels  # original untouched
-    assert "genotype" in d2.labels
-    assert d2 is not d
-
-
-def test_with_label_missing_samples_become_unassigned():
-    d = _distribution()
-    d2 = d.with_label("genotype", {"s0": "wildtype"})
-    col = d2.label_column("genotype")
-    assert col.values["s0"] == "wildtype"
-    assert col.values["s1"] == UNASSIGNED_LABEL
-    assert col.values["s3"] == UNASSIGNED_LABEL
-
-
-def test_with_label_stray_sample_raises():
-    d = _distribution()
-    with pytest.raises(ValueError):
-        d.with_label("genotype", {"not_a_sample": "wildtype"})
-
-
-# --------------------------------------------------------------------------- #
-# sample_sets — DERIVED view (one per category, excludes unassigned, not stored)
-# --------------------------------------------------------------------------- #
-def test_sample_sets_derive_one_per_category():
-    d = _distribution().with_label(
-        "genotype", {"s0": "wildtype", "s1": "wildtype", "s2": "b9d2"}
-    )  # s3 unassigned
-    sets = d.sample_sets("genotype")
-    assert [s.sample_set_name for s in sets] == ["wildtype", "b9d2"]
-    assert sets[0].sample_ids == ("s0", "s1")
-    assert sets[1].sample_ids == ("s2",)
-
-
-def test_sample_sets_exclude_unassigned_and_cover_assigned():
-    d = _distribution().with_label("genotype", {"s0": "wildtype", "s2": "b9d2"})
-    sets = d.sample_sets("genotype")
-    covered = {sid for s in sets for sid in s.sample_ids}
-    assert covered == {"s0", "s2"}  # s1, s3 unassigned -> no set
-
-
-def test_sample_sets_not_stored_on_object():
-    d = _distribution().with_label("genotype", {"s0": "wildtype"})
-    a = d.sample_sets("genotype")
-    b = d.sample_sets("genotype")
-    assert "sample_sets" not in {f.name for f in dataclasses.fields(Distribution)}
-    assert [s.sample_ids for s in a] == [s.sample_ids for s in b]
-
-
-def test_sample_sets_read_back_geometry_from_provenance():
-    geom = SampleSetGeometry(
-        grid_id="g",
-        feature_names=("PC1",),
-        center=np.array([0.0]),
-        radius=1.0,
-        r80=0.8,
-        cv_radius_from_center=0.1,
-    )
-    prov = LabelProvenance(method="detect_peaks", geometry={"peak_0": geom})
-    d = _distribution().with_label(
-        "resolved_peak", {"s0": "peak_0", "s1": "peak_0"}, provenance=prov
-    )
-    sets = d.sample_sets("resolved_peak")
-    assert sets[0].geometry is geom
-    assert sets[0].hdr is None  # bare geometry payload -> only the geometry slot
-
-
-def test_sample_sets_unpack_category_shape_into_typed_slots():
-    # The peak read-back contract: a CategoryShape bundle in provenance.geometry
-    # is unpacked into SampleSet.geometry / .hdr (TASK_B stores this; TASK_C reads
-    # SampleSet.geometry directly — never a wrapper).
-    from morphseq_investigation.engine.objects import CategoryShape, HDR
-
-    geom = SampleSetGeometry(
-        grid_id="g", feature_names=("PC1",), center=np.array([0.0]),
-        radius=1.0, r80=0.8, cv_radius_from_center=0.1,
-    )
-    hdr = HDR(grid_id="g", feature_names=("PC1",), level=0.8, mask=np.array([True, False]))
-    prov = LabelProvenance(
-        method="detect_peaks",
-        geometry={"peak_0": CategoryShape(geometry=geom, hdr=hdr)},
-    )
-    d = _distribution().with_label(
-        "resolved_peak", {"s0": "peak_0", "s1": "peak_0"}, provenance=prov
-    )
-    s = d.sample_sets("resolved_peak")[0]
-    assert s.geometry is geom and s.hdr is hdr
-    assert isinstance(s.geometry, SampleSetGeometry)  # NOT a wrapper
-
-
-def test_sample_sets_rejects_bad_geometry_payload():
-    prov = LabelProvenance(method="x", geometry={"a": object()})
-    d = _distribution().with_label("g", {"s0": "a"}, provenance=prov)
-    with pytest.raises(TypeError):
-        d.sample_sets("g")
-
-
-def test_missing_label_column_raises():
-    d = _distribution()
-    with pytest.raises(KeyError):
-        d.sample_sets("nope")
-    with pytest.raises(KeyError):
-        d.coordinate("nope")
-
-
-# --------------------------------------------------------------------------- #
-# label_group + DistributionLabelGroup.coordinate(FacetKey)
-# --------------------------------------------------------------------------- #
-def test_label_group_binds_and_defaults_display_name():
-    d = _distribution().with_label("genotype", {"s0": "wildtype"})
-    lg = d.label_group("genotype")
-    assert isinstance(lg, DistributionLabelGroup)
-    assert lg.display_name == "genotype"
-    assert lg.label_name == "genotype"
-
-
-def test_label_group_absent_label_raises():
-    d = _distribution()
-    with pytest.raises(KeyError):
-        d.label_group("genotype")
-
-
-def test_distribution_label_group_coordinate_facet_resolution():
-    d = _distribution().with_label("genotype", {"s0": "wildtype"})
-    lg = d.label_group("genotype", display_name="Genotype")
-    assert lg.coordinate(LabelGroupFacet()) == "Genotype"
-    assert lg.coordinate(CoordinateFacet("time_bin")) == 30
-
-
-def test_distribution_label_group_sample_sets_delegates():
-    d = _distribution().with_label("genotype", {"s0": "wildtype", "s1": "b9d2"})
-    lg = d.label_group("genotype")
-    assert [s.sample_set_name for s in lg.sample_sets()] == ["wildtype", "b9d2"]
-
-
-# --------------------------------------------------------------------------- #
-# detect_peaks — TASK_B fills the body; the 1-D-grid rejection below still
-# comes from the (reused) live peak machinery, not this stub itself. Full
-# detect_peaks coverage (2-D fixtures, geometry, provenance, peak-count
-# regression) lives in tests/engine/test_labelers.py.
-# --------------------------------------------------------------------------- #
-def test_detect_peaks_delegates_to_labelers_body():
-    d = _distribution()
-    # A single feature isn't yet supported by the live 2-D-only peak detector
-    # (engine/labelers.py's _grid_to_canonical) -- this proves detect_peaks is
-    # NOT a stub anymore: it raises the LABELER's own guard, not NotImplementedError.
-    with pytest.raises(ValueError, match="2-D"):
-        d.detect_peaks(features=("PC1",), output_label="resolved_peak")
-
-
-# --------------------------------------------------------------------------- #
-# LabelColumn.categories excludes unassigned
-# --------------------------------------------------------------------------- #
-def test_label_column_categories_first_appearance_excludes_unassigned():
-    col = LabelColumn(
-        name="g",
-        values={"s0": "b", "s1": "a", "s2": "b", "s3": UNASSIGNED_LABEL},
-    )
-    assert col.categories() == ("b", "a")
-
-
-# --------------------------------------------------------------------------- #
-# Grid / DensityGrid / SampleSet slots (kept shapes)
-# --------------------------------------------------------------------------- #
-def test_grid_axis_count_matches_features():
-    with pytest.raises(ValueError):
-        Grid(
-            grid_id="g",
-            feature_names=("PC1", "PC2"),
-            axis_values=(np.linspace(0, 1, 5),),
-            construction_method="pooled_min_max",
-        )
-
-
-def test_grid_and_density_shapes():
-    grid = Grid(
-        grid_id="g",
-        feature_names=("PC1", "PC2"),
-        axis_values=(np.linspace(0, 1, 5), np.linspace(0, 1, 7)),
-        construction_method="pooled_min_max",
-    )
-    dg = DensityGrid(grid_id="g", feature_names=("PC1", "PC2"), density=np.zeros((5, 7)))
-    assert dg.density.shape == tuple(len(a) for a in grid.axis_values)
-
-
-def test_sample_set_optional_slots_default_none():
-    s = SampleSet(
-        sample_set_id="d__WT",
-        sample_set_name="WT",
-        distribution_id="d",
-        sample_ids=("s0", "s1"),
-    )
-    assert s.geometry is None and s.hdr is None and s.feature_profile is None
-
-
-def test_geometry_has_no_run_relative_scalars():
-    fields = {f.name for f in dataclasses.fields(SampleSetGeometry)}
-    for banned in ("support_fraction", "prominence_rank", "height_relative_to_max", "is_dominant"):
-        assert banned not in fields
-    assert {"center", "radius", "r80", "cv_radius_from_center", "grid_id", "feature_names"} <= fields
-
-
-# --------------------------------------------------------------------------- #
-# label_groups view (kept helpers)
-# --------------------------------------------------------------------------- #
-def test_derive_label_groups_view_and_resolution():
-    lg = LabelGroup(
-        label_group_name="peak",
-        distribution_id="d",
-        sample_set_ids=("d__peak_0", "d__peak_1"),
-        sample_id_to_sample_set_id={},
-    )
-    view = derive_label_groups([lg])
-    assert view["peak"] == ("d__peak_0", "d__peak_1")
-    assert resolve_label_group(view, "peak") == ("d__peak_0", "d__peak_1")
-
-
-def test_derive_label_groups_duplicate_name_raises():
-    lg = LabelGroup(
-        label_group_name="peak", distribution_id="d",
-        sample_set_ids=(), sample_id_to_sample_set_id={},
-    )
-    with pytest.raises(ValueError):
-        derive_label_groups([lg, lg])
-
-
-def test_resolve_label_group_ambiguous_and_missing():
-    view = {"peak_bwA": ("a",), "peak_bwB": ("b",)}
-    with pytest.raises(ValueError):
-        resolve_label_group(view, "peak")
-    with pytest.raises(KeyError):
-        resolve_label_group({"genotype": ("g",)}, "peak")

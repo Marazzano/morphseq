@@ -1,4 +1,4 @@
-"""Unit tests for `core.peak_stability`: PeakCountVote, PeakCountStability,
+"""Unit tests for `core.peak_stability`: vote contracts and resolution summary,
 PeakSeedSet construction (COMPOSE_single_path_plan Sec 1.5 / 1.5d).
 """
 
@@ -7,8 +7,9 @@ from __future__ import annotations
 import pytest
 
 from morphseq_investigation.core.peak_stability import (
-    PeakCountStabilityPolicy,
+    PeakCountRobustnessPolicy,
     PeakCountVote,
+    PeakVotingSpec,
     build_consensus_seed_set,
     compute_peak_count_stability,
 )
@@ -44,7 +45,7 @@ def test_compute_peak_count_stability_stable_vote():
         n_draws_valid=80,
         sample_fraction=0.8,
     )
-    stability = compute_peak_count_stability(vote, PeakCountStabilityPolicy(min_mode_frequency=0.80))
+    stability = compute_peak_count_stability(vote, PeakCountRobustnessPolicy(min_mode_frequency=0.80))
 
     assert stability.mode_peak_count == 2
     assert stability.mode_frequency == pytest.approx(0.95)
@@ -60,7 +61,7 @@ def test_compute_peak_count_stability_unstable_vote_below_threshold():
         n_draws_valid=100,
         sample_fraction=0.8,
     )
-    stability = compute_peak_count_stability(vote, PeakCountStabilityPolicy(min_mode_frequency=0.80))
+    stability = compute_peak_count_stability(vote, PeakCountRobustnessPolicy(min_mode_frequency=0.80))
 
     assert stability.mode_peak_count == 2
     assert stability.mode_frequency == pytest.approx(0.55)
@@ -77,24 +78,57 @@ def test_compute_peak_count_stability_excludes_invalid_draws_from_variance():
         n_draws_valid=40,
         sample_fraction=0.8,
     )
-    stability = compute_peak_count_stability(vote, PeakCountStabilityPolicy())
+    stability = compute_peak_count_stability(vote, PeakCountRobustnessPolicy())
 
     assert stability.mean_peak_count == pytest.approx(2.0)
     assert stability.peak_count_variance == pytest.approx(0.0)
     assert stability.valid_draw_fraction == pytest.approx(0.8)
 
 
-def test_compute_peak_count_stability_no_valid_draws_returns_none_count():
+def test_compute_peak_count_stability_no_valid_draws_raises():
     vote = PeakCountVote(
         peak_count_frequencies={},
         n_draws_requested=10,
         n_draws_valid=0,
         sample_fraction=0.8,
     )
-    stability = compute_peak_count_stability(vote, PeakCountStabilityPolicy())
+    with pytest.raises(ValueError, match="at least one valid draw"):
+        compute_peak_count_stability(vote, PeakCountRobustnessPolicy())
 
-    assert stability.mode_peak_count is None
-    assert stability.count_is_stable is False
+
+def test_tied_mode_selects_larger_warns_and_is_nonrobust():
+    vote = PeakCountVote({1: 5, 2: 5}, 10, 10, 0.8)
+    with pytest.warns(RuntimeWarning, match="tied mode"):
+        summary = compute_peak_count_stability(
+            vote,
+            PeakCountRobustnessPolicy(min_mode_frequency=0.5),
+            PeakVotingSpec(n_draws=10, sample_fraction=0.8, min_valid_draws=5),
+        )
+    assert summary.resolved_peak_count == 2
+    assert summary.mode_was_tied is True
+    assert summary.is_robust is False
+
+
+def test_insufficient_valid_draws_retains_mode_but_is_nonrobust():
+    vote = PeakCountVote({3: 4}, 10, 4, 0.8)
+    summary = compute_peak_count_stability(
+        vote,
+        PeakCountRobustnessPolicy(min_mode_frequency=0.5),
+        PeakVotingSpec(n_draws=10, sample_fraction=0.8, min_valid_draws=5),
+    )
+    assert summary.resolved_peak_count == 3
+    assert summary.has_enough_valid_draws is False
+    assert summary.is_robust is False
+
+
+def test_resolution_summary_retains_complete_contracts():
+    voting_spec = PeakVotingSpec(n_draws=10, sample_fraction=0.7, min_valid_draws=6)
+    policy = PeakCountRobustnessPolicy(min_mode_frequency=0.75)
+    vote = PeakCountVote({2: 8}, 10, 8, 0.7)
+    summary = compute_peak_count_stability(vote, policy, voting_spec)
+    assert summary.peak_count_vote is vote
+    assert summary.voting_spec is voting_spec
+    assert summary.robustness_policy is policy
 
 
 def test_build_consensus_seed_set_two_peaks_two_qualifying_draws():

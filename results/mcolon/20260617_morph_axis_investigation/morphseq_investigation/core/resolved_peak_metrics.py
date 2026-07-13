@@ -14,7 +14,7 @@ from scipy.spatial.distance import pdist
 
 from .density_composition import DensityGrid
 from .peak_counting import PeakCandidateDetail, PeakDetectionResult
-from .peak_stability import PeakCountStability, PeakSeedSet
+from .peak_stability import PeakResolutionSummary, PeakSeedSet
 
 
 SOURCE_TYPES = ("truth", "empirical")
@@ -61,7 +61,7 @@ class PeakResolutionEvidence:
     target_peak_count: int | None
     resolution_succeeded: bool
     count_is_stable: bool
-    count_stability: PeakCountStability
+    count_stability: PeakResolutionSummary
     consensus_seed_set: PeakSeedSet
     full_data_detection: PeakDetectionResult
     # CANDIDATES+ retention (Stage 2b) and STABILITY_GRAPH (Stage 5) are out

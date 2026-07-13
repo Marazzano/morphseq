@@ -213,8 +213,46 @@ def resolve_points_with_analysis_spec(
     Always resolves at full resolution (sweep_steps left at its detect_peaks
     default) -- this is the honest, non-approximated path.
     """
-    density_grid, points_array, detection_result = _compute_peak_detection_with_analysis_spec(
-        points, canonical_grid, analysis_spec, sweep_steps=None,
+    points_array = np.asarray(points, dtype=float)
+    density = _evaluate_density_for_spec(points_array, canonical_grid, analysis_spec)
+    density_grid = DensityGrid(
+        xx=canonical_grid.xx,
+        yy=canonical_grid.yy,
+        density=density,
+        grid=canonical_grid,
+    )
+    return resolve_density_grid_with_analysis_spec(
+        distribution_id=distribution_id,
+        points=points_array,
+        density_grid=density_grid,
+        analysis_spec=analysis_spec,
+    )
+
+
+def resolve_density_grid_with_analysis_spec(
+    *,
+    distribution_id: str,
+    points: np.ndarray,
+    density_grid: DensityGrid,
+    analysis_spec: ResolvedPeakAnalysisSpec,
+) -> ResolvedPeakDistribution:
+    """Resolve an already-calculated density without fitting or evaluating a KDE.
+
+    This is the authoritative supplied-density boundary. The analysis spec
+    contributes detector and assignment configuration only; the density values
+    are consumed exactly as supplied.
+    """
+    points_array = np.asarray(points, dtype=float)
+    detect_peaks_kwargs = dict(
+        method=analysis_spec.peak_detector_method,
+        grid=density_grid,
+        sample_points=points_array,
+        min_component_mass_frac=analysis_spec.min_component_mass_frac,
+        min_sample_fraction=analysis_spec.min_sample_fraction,
+        min_prominence_ratio=analysis_spec.min_prominence_ratio,
+    )
+    detection_result = detect_peaks(
+        np.asarray(density_grid.density, dtype=float), **detect_peaks_kwargs
     )
 
     return resolve_empirical_peak_distribution(
@@ -515,6 +553,7 @@ __all__ = [
     "_compute_peak_detection_with_analysis_spec",
     "compute_observed_delta",
     "reduce_permutation_null_test",
+    "resolve_density_grid_with_analysis_spec",
     "resolve_points_with_analysis_spec",
     "resolved_peak_summary_to_row",
     "resolved_peak_to_rows",

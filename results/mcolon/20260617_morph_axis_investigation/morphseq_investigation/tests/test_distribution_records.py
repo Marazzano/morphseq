@@ -25,7 +25,7 @@ from morphseq_investigation.core.distribution_records import (
 )
 from morphseq_investigation.core.density_composition import CanonicalGrid
 from morphseq_investigation.core.peak_acceptance import PeakAcceptancePolicy
-from morphseq_investigation.core.peak_stability import PeakCountStabilityPolicy
+from morphseq_investigation.core.peak_stability import PeakCountRobustnessPolicy
 from morphseq_investigation.core.resolved_peak_analysis import ResolvedPeakAnalysisSpec
 from morphseq_investigation.core.resolved_peak_metrics import RESOLVED_PEAK_METRICS
 
@@ -165,7 +165,7 @@ def test_compute_resolved_peaks_default_config_matches_pre_refactor_numbers():
     config = PeakResolutionConfig()
     assert config.n_bootstrap_draws == 80
     assert config.bootstrap_sample_fraction == 0.80
-    assert config.count_stability_policy.min_mode_frequency == 0.80
+    assert config.robustness_policy.min_mode_frequency == 0.80
     assert config.strategy == "MODE_VOTE_FULL_DATA"
     assert config.retention == "SUMMARY_ONLY"
 
@@ -226,6 +226,104 @@ def test_compute_resolved_peaks_unsupported_strategy_raises():
         compute_resolved_peaks(record, bad_config)
 
 
+def test_compute_resolved_peaks_modal_zero_is_empty_and_unassigned(monkeypatch):
+    points = _two_cluster_points()
+    grid = derive_shared_grid(points, points, grid_size=31)
+    record = DistributionRecord(
+        distribution_id="zero_mode",
+        points=points,
+        analysis_context=DistributionAnalysisContext(grid=grid, spec=_analysis_spec()),
+    )
+
+    def _zero_vote(**kwargs):
+        n_draws = kwargs["n_draws"]
+        return [0] * n_draws, [()] * n_draws, 0
+
+    monkeypatch.setattr(
+        "morphseq_investigation.core.distribution_records.bootstrap_peak_vote",
+        _zero_vote,
+    )
+    resolved = compute_resolved_peaks(
+        record,
+        PeakResolutionConfig(n_bootstrap_draws=5, min_valid_draws=3),
+    ).resolved_peaks
+
+    assert resolved.resolved_peak_count == 0
+    assert resolved.peaks == ()
+    assert np.all(np.asarray(resolved.sample_peak_ids) == -1)
+    assert resolved.resolution_evidence.resolution_succeeded is True
+
+
+def test_precomputed_full_density_is_used_while_vote_draws_fit_local_kdes(monkeypatch):
+    from morphseq_investigation.core import resolved_peak_analysis as analysis
+
+    points = _rng_two_clusters(seed=4, n_per_cluster=20, sep=5.0)
+    grid = derive_shared_grid(points, points, grid_size=31)
+    spec = _analysis_spec()
+    precomputed = analysis.resolve_points_with_analysis_spec(
+        distribution_id="precompute",
+        points=points,
+        canonical_grid=grid,
+        analysis_spec=spec,
+    ).density_grid
+    record = DistributionRecord(
+        distribution_id="supplied",
+        points=points,
+        analysis_context=DistributionAnalysisContext(
+            grid=grid, spec=spec, density_grid=precomputed
+        ),
+    )
+
+    original = analysis._evaluate_density_for_spec
+    evaluated_sizes = []
+
+    def _tracked_evaluate(draw_points, canonical_grid, analysis_spec):
+        evaluated_sizes.append(len(draw_points))
+        return original(draw_points, canonical_grid, analysis_spec)
+
+    monkeypatch.setattr(analysis, "_evaluate_density_for_spec", _tracked_evaluate)
+    result = compute_resolved_peaks(
+        record,
+        PeakResolutionConfig(
+            n_bootstrap_draws=4,
+            bootstrap_sample_fraction=0.75,
+            min_valid_draws=2,
+            min_bootstrap_sample_size=5,
+        ),
+    )
+
+    assert result.resolved_peaks is not None
+    assert np.array_equal(result.resolved_peaks.density_grid.density, precomputed.density)
+    assert evaluated_sizes
+    # The resampling engine performs one unperturbed statistic preflight on
+    # full points; the authoritative full-data resolver itself adds no KDE
+    # call. The remaining calls are draw-local fits.
+    assert evaluated_sizes.count(len(points)) == 1
+    assert any(size < len(points) for size in evaluated_sizes)
+
+
+def test_supplied_density_resolver_never_evaluates_kde(monkeypatch):
+    from morphseq_investigation.core import resolved_peak_analysis as analysis
+
+    points = _rng_two_clusters(seed=8, n_per_cluster=20, sep=5.0)
+    grid = derive_shared_grid(points, points, grid_size=31)
+    spec = _analysis_spec()
+    precomputed = analysis.resolve_points_with_analysis_spec(
+        distribution_id="precompute", points=points,
+        canonical_grid=grid, analysis_spec=spec,
+    ).density_grid
+
+    def _forbidden(*args, **kwargs):
+        raise AssertionError("supplied-density resolution must not evaluate a KDE")
+
+    monkeypatch.setattr(analysis, "_evaluate_density_for_spec", _forbidden)
+    resolved = analysis.resolve_density_grid_with_analysis_spec(
+        distribution_id="supplied", points=points,
+        density_grid=precomputed, analysis_spec=spec,
+    )
+    assert np.array_equal(resolved.density_grid.density, precomputed.density)
+
+
 def test_compute_resolved_peaks_crisp_failure_when_basin_mass_floor_fails():
     """Force a basin to fail validate_resolved_basins: an overwhelmingly
     lopsided two-cluster case (one cluster tiny) whose bootstrap vote still
@@ -278,7 +376,7 @@ def test_compute_resolved_peaks_crisp_failure_when_basin_mass_floor_fails():
         n_bootstrap_draws=20,
         bootstrap_sample_fraction=0.8,
         min_bootstrap_sample_size=5,
-        count_stability_policy=PeakCountStabilityPolicy(min_mode_frequency=0.5),
+        robustness_policy=PeakCountRobustnessPolicy(min_mode_frequency=0.5),
         peak_acceptance_policy=strict_policy,
         seed=11,
     )

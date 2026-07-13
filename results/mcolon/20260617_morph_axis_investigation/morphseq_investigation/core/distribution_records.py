@@ -46,15 +46,17 @@ from .density_composition import CanonicalGrid, DensityGrid
 from .peak_acceptance import PeakAcceptancePolicy
 from .peak_counting import assign_cells_to_peaks, assign_points_to_peaks
 from .peak_stability import (
-    PeakCountStabilityPolicy,
+    PeakCountRobustnessPolicy,
     PeakCountVote,
     PeakSeedSet,
+    PeakVotingSpec,
     build_consensus_seed_set,
     compute_peak_count_stability,
 )
 from .resolved_peak_analysis import (
     ResolvedPeakAnalysisSpec,
     _compute_peak_detection_with_analysis_spec,
+    resolve_density_grid_with_analysis_spec,
     resolve_points_with_analysis_spec,
 )
 from .resolved_peak_metrics import (
@@ -147,6 +149,13 @@ class DistributionAnalysisContext:
 
     grid: CanonicalGrid
     spec: ResolvedPeakAnalysisSpec
+    density_grid: DensityGrid | None = None
+
+    def __post_init__(self) -> None:
+        if self.density_grid is not None:
+            if self.density_grid.grid is None:
+                raise ValueError("A supplied density_grid must retain its CanonicalGrid.")
+            _assert_grid_compatibility(self.grid, self.density_grid.grid)
 
 
 @dataclass(frozen=True)
@@ -219,11 +228,29 @@ class PeakResolutionConfig:
     n_bootstrap_draws: int = 80
     bootstrap_sample_fraction: float = 0.80
     min_bootstrap_sample_size: int = 10
-    count_stability_policy: PeakCountStabilityPolicy = field(
-        default_factory=lambda: PeakCountStabilityPolicy(min_mode_frequency=0.80)
+    min_valid_draws: int = 1
+    robustness_policy: PeakCountRobustnessPolicy = field(
+        default_factory=lambda: PeakCountRobustnessPolicy(min_mode_frequency=0.80)
     )
     peak_acceptance_policy: PeakAcceptancePolicy | None = None
     seed: int = 42
+    voting_spec: PeakVotingSpec | None = None
+
+    def __post_init__(self) -> None:
+        if self.voting_spec is not None:
+            object.__setattr__(self, "n_bootstrap_draws", self.voting_spec.n_draws)
+            object.__setattr__(self, "bootstrap_sample_fraction", self.voting_spec.sample_fraction)
+            object.__setattr__(self, "min_valid_draws", self.voting_spec.min_valid_draws)
+        else:
+            object.__setattr__(
+                self,
+                "voting_spec",
+                PeakVotingSpec(
+                    n_draws=self.n_bootstrap_draws,
+                    sample_fraction=self.bootstrap_sample_fraction,
+                    min_valid_draws=self.min_valid_draws,
+                ),
+            )
 
 
 def _acceptance_policy_for_spec(spec: ResolvedPeakAnalysisSpec) -> PeakAcceptancePolicy:
@@ -400,12 +427,20 @@ def compute_resolved_peaks(
     points = record.points
 
     # (c) ONE honest full-data resolve -- density + candidate detection.
-    full_data = resolve_points_with_analysis_spec(
-        distribution_id=record.distribution_id,
-        points=points,
-        canonical_grid=canonical_grid,
-        analysis_spec=analysis_spec,
-    )
+    if record.analysis_context.density_grid is None:
+        full_data = resolve_points_with_analysis_spec(
+            distribution_id=record.distribution_id,
+            points=points,
+            canonical_grid=canonical_grid,
+            analysis_spec=analysis_spec,
+        )
+    else:
+        full_data = resolve_density_grid_with_analysis_spec(
+            distribution_id=record.distribution_id,
+            points=points,
+            density_grid=record.analysis_context.density_grid,
+            analysis_spec=analysis_spec,
+        )
 
     acceptance_policy = config.peak_acceptance_policy or _acceptance_policy_for_spec(analysis_spec)
 
@@ -428,24 +463,25 @@ def compute_resolved_peaks(
         n_draws_valid=n_draws_valid,
         sample_fraction=config.bootstrap_sample_fraction,
     )
-    count_stability = compute_peak_count_stability(vote, config.count_stability_policy)
+    count_stability = compute_peak_count_stability(
+        vote, config.robustness_policy, config.voting_spec
+    )
     target_peak_count = count_stability.mode_peak_count
 
-    if target_peak_count is None or target_peak_count <= 0:
-        # No usable vote (e.g. every draw failed, or the vote's mode is 0
-        # peaks): no honest positive-count answer -- crisp failure (plan
-        # Sec 1.5d), same shape as a failed basin validation.
-        consensus_seed_set = PeakSeedSet(target_peak_count=0, seeds=(), construction_method="no_valid_vote")
+    if target_peak_count == 0:
+        # Zero is a valid modal answer: materialize an empty resolved group
+        # with every sample explicitly unassigned.
+        consensus_seed_set = PeakSeedSet(target_peak_count=0, seeds=(), construction_method="modal_zero")
         resolved = dc_replace(
             full_data,
             peaks=(),
             sample_peak_ids=np.full(len(points), -1, dtype=int) if full_data.sample_peak_ids is not None else full_data.sample_peak_ids,
             empirical_basin_labels=np.zeros(full_data.density_grid.xx.shape, dtype=int),
-            resolved_peak_count=None,
-            is_reliable=False,
+            resolved_peak_count=0,
+            is_reliable=count_stability.is_robust,
             resolution_evidence=PeakResolutionEvidence(
                 target_peak_count=target_peak_count,
-                resolution_succeeded=False,
+                resolution_succeeded=True,
                 count_is_stable=count_stability.count_is_stable,
                 count_stability=count_stability,
                 consensus_seed_set=consensus_seed_set,
@@ -570,6 +606,7 @@ __all__ = [
     "DistributionAnalysisContext",
     "DistributionComparison",
     "DistributionRecord",
+    "PeakResolutionConfig",
     "compute_observed_metrics",
     "compute_peak_stats",
     "compute_resolved_peaks",

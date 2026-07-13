@@ -1,9 +1,4 @@
-"""Central invariant guards — called by labelers before returning, not by users.
-
-Every check the ontology's Invariants list (#3, #6b/#10, #7, and the Grid shape
-rule) makes enforceable is here, behind one entry point
-:func:`validate_label_group`, so no labeler hand-rolls its own drift check.
-"""
+"""Cross-object invariant guards for derived SampleSets and density grids."""
 
 from __future__ import annotations
 
@@ -32,19 +27,19 @@ def validate_sample_sets(
     DERIVED from labels).
 
     Guarantees the ``distribution.sample_sets(label_name)`` output is a faithful
-    view of the label column:
+    view of the authoritative label group:
       - one set per assigned category, no set for unassigned;
-      - the union of set members == exactly the column's ASSIGNED samples
+      - the union of set members == exactly the group's assigned samples
         (disjoint across sets, unassigned excluded);
-      - every set's ``distribution_id`` / ``sample_set_name`` matches the column.
+      - every set's ``distribution_id`` / ``sample_set_name`` matches the group.
     The labelers call this after deriving sets, so no caller hand-rolls the check.
     """
-    column = distribution.label_column(label_name)
+    column = distribution.get_label_group(label_name)
     sets = list(sample_sets)
 
     assigned = {
         sid
-        for sid, call in column.values.items()
+        for sid, call in column.assignments.items()
         if call != UNASSIGNED_LABEL and sid in set(distribution.sample_ids)
     }
     expected_categories = [str(c) for c in column.categories()]
@@ -53,7 +48,7 @@ def validate_sample_sets(
     if got_names != expected_categories:
         raise InvariantError(
             "derived-view: sample_sets names "
-            f"{got_names} != label categories {expected_categories}"
+        f"{got_names} != label-group categories {expected_categories}"
         )
 
     seen: set[str] = set()
@@ -72,14 +67,14 @@ def validate_sample_sets(
             )
         union |= members
         seen.add(sset.sample_set_name)
-        # Members must be the column's samples assigned to THIS category.
+        # Members must be the group's samples assigned to this category.
         expected_members = {
-            sid for sid, call in column.values.items() if str(call) == sset.sample_set_name
+            sid for sid, call in column.assignments.items() if str(call) == sset.sample_set_name
         }
         if members != (expected_members & assigned):
             raise InvariantError(
                 f"derived-view: SampleSet {sset.sample_set_name!r} members disagree "
-                "with the label column assignment"
+                "with the label-group assignment"
             )
 
     if union != assigned:
@@ -136,42 +131,29 @@ def validate_label_group(
     _check_ordered_features(distribution)
 
     dist_samples = set(distribution.sample_ids)
-    sets_by_id = {s.sample_set_id: s for s in sample_sets}
-
-    # sample_set_ids on the group must correspond to provided SampleSets.
-    for set_id in label_group.sample_set_ids:
-        if set_id not in sets_by_id:
-            raise InvariantError(
-                f"sample_set_id {set_id!r} in label_group.sample_set_ids has no "
-                "matching SampleSet passed to validate_label_group"
-            )
+    sets = list(sample_sets)
+    sets_by_name = {s.sample_set_name: s for s in sets}
+    expected_names = {str(category) for category in label_group.categories()}
+    if set(sets_by_name) != expected_names:
+        raise InvariantError("materialized SampleSets must equal assigned non-unassigned categories")
 
     # FK: each SampleSet belongs to this Distribution.
-    for set_id in label_group.sample_set_ids:
-        sset = sets_by_id[set_id]
+    for sset in sets:
         if sset.distribution_id != distribution.distribution_id:
             raise InvariantError(
-                f"SampleSet {set_id!r}.distribution_id {sset.distribution_id!r} != "
+                f"SampleSet {sset.sample_set_id!r}.distribution_id {sset.distribution_id!r} != "
                 f"Distribution {distribution.distribution_id!r}"
             )
 
-    assignment = dict(label_group.sample_id_to_sample_set_id)
-    valid_set_ids = set(label_group.sample_set_ids)
-
-    # #10 — every assignment value is a declared sample_set_id.
-    for sample_id, set_id in assignment.items():
-        if set_id not in valid_set_ids:
-            raise InvariantError(
-                f"assignment value {set_id!r} (sample {sample_id!r}) not in "
-                f"label_group.sample_set_ids"
-            )
+    assignment = dict(label_group.assignments)
+    for sample_id in assignment:
         # #10 — every assignment key is a real Distribution sample.
         if sample_id not in dist_samples:
             raise InvariantError(
                 f"assignment key {sample_id!r} is not a Distribution sample"
             )
 
-    unassigned = set(label_group.unassigned_sample_ids)
+    unassigned = {sid for sid, value in assignment.items() if value == UNASSIGNED_LABEL}
 
     # unassigned must be real samples.
     stray = unassigned - dist_samples
@@ -181,7 +163,7 @@ def validate_label_group(
         )
 
     # #7 — assigned ∩ unassigned == ∅.
-    assigned_keys = set(assignment)
+    assigned_keys = set(assignment) - unassigned
     overlap = assigned_keys & unassigned
     if overlap:
         raise InvariantError(
@@ -200,17 +182,16 @@ def validate_label_group(
         )
 
     # #6b — each SampleSet.sample_ids agrees with the assignment map.
-    for set_id in label_group.sample_set_ids:
-        sset = sets_by_id[set_id]
+    for name, sset in sets_by_name.items():
         members_from_assignment = {
-            sid for sid, tgt in assignment.items() if tgt == set_id
+            sid for sid, tgt in assignment.items() if str(tgt) == name
         }
         members_declared = set(sset.sample_ids)
         if members_from_assignment != members_declared:
             only_map = sorted(members_from_assignment - members_declared)
             only_set = sorted(members_declared - members_from_assignment)
             raise InvariantError(
-                f"SampleSet {set_id!r}.sample_ids disagrees with assignment map: "
+                f"SampleSet {sset.sample_set_id!r}.sample_ids disagrees with assignment map: "
                 + (f"in map only {only_map}; " if only_map else "")
                 + (f"in set only {only_set}" if only_set else "")
             )
