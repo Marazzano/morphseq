@@ -1,6 +1,7 @@
 import dataclasses
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from morphseq_investigation.engine.facets import CoordinateFacet, LabelGroupFacet
@@ -13,6 +14,7 @@ from morphseq_investigation.engine.plotting import (
     build_1d_density_grid,
     label_group_scatter_subplot,
     plot_1d_density_grid,
+    plot_distr_metric_over_time,
     strip_trace,
 )
 
@@ -96,3 +98,56 @@ def test_plot_styles_nonrobust_modal_curve_differently(monkeypatch):
     assert traces[0].style.linestyle == "-"
     assert traces[1].style.linestyle == ":"
     assert traces[1].style.alpha < traces[0].style.alpha
+
+
+def test_metric_over_time_retains_robust_and_nonrobust_rows_with_distinct_styles():
+    table = pd.DataFrame(
+        {
+            "time_bin": [24, 30, 36, 24, 30],
+            "genotype": ["b9d2", "b9d2", "b9d2", "wildtype", "wildtype"],
+            "peak_count": [1, 2, 2, 1, 1],
+            "is_robust": [True, False, True, True, False],
+        }
+    )
+    figure = plot_distr_metric_over_time(
+        table, value="peak_count", time="time_bin", group_by="genotype"
+    )
+    lines = figure.axes[0].lines
+    assert sum(len(line.get_xdata()) for line in lines) == len(table)
+    solid = [line for line in lines if line.get_linestyle() == "-"]
+    dashed = [line for line in lines if line.get_linestyle() == "--"]
+    assert solid and dashed
+    assert all(line.get_markerfacecolor() != "none" for line in solid)
+    assert all(line.get_markerfacecolor() == "none" for line in dashed)
+
+
+def test_metric_over_time_supports_generic_relative_metric_and_multi_column_groups():
+    table = pd.DataFrame(
+        {
+            "hpf": [24, 30, 24, 30],
+            "target": ["mut", "mut", "mut", "mut"],
+            "reference": ["wt", "wt", "ctrl", "ctrl"],
+            "relative_radius": [1.1, .9, 1.3, 1.0],
+            "reliable": [True, True, False, True],
+        }
+    )
+    figure = plot_distr_metric_over_time(
+        table, value="relative_radius", time="hpf",
+        group_by=("target", "reference"), style="reliable",
+    )
+    assert sum(len(line.get_xdata()) for line in figure.axes[0].lines) == len(table)
+
+
+@pytest.mark.parametrize(
+    "kwargs, missing",
+    [
+        ({"value": "missing", "time": "time", "group_by": "group"}, "missing"),
+        ({"value": "value", "time": "missing", "group_by": "group"}, "missing"),
+        ({"value": "value", "time": "time", "group_by": "missing"}, "missing"),
+        ({"value": "value", "time": "time", "group_by": "group", "style": "missing"}, "missing"),
+    ],
+)
+def test_metric_over_time_validates_declared_columns(kwargs, missing):
+    table = pd.DataFrame({"value": [1], "time": [2], "group": ["a"], "is_robust": [True]})
+    with pytest.raises(ValueError, match="missing required columns"):
+        plot_distr_metric_over_time(table, **kwargs)

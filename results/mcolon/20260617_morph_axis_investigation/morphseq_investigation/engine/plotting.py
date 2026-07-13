@@ -910,3 +910,87 @@ def plot_1d_density_grid(
         style=style,
         output_path=output_path,
     )
+
+
+def plot_distr_metric_over_time(
+    metric_df,
+    value: str,
+    time: str,
+    group_by: str | Sequence[str],
+    style: str | None = "is_robust",
+    *,
+    title: str | None = None,
+    y_label: str | None = None,
+    output_path: str | Path | None = None,
+    ax=None,
+):
+    """Plot a purpose-specific distribution metric table over time.
+
+    The table is already an analysis result (for example catalog peak counts or
+    relative comparison metrics). This function performs no aggregation,
+    filtering, peak counting, or robustness inference. Robust rows use solid
+    lines and filled markers; nonrobust rows remain visible with dashed lines
+    and hollow markers. Callers that want filtering must filter ``metric_df``
+    explicitly before calling.
+    """
+    import pandas as pd
+
+    if not isinstance(metric_df, pd.DataFrame):
+        raise TypeError("metric_df must be a pandas DataFrame")
+    groups = (group_by,) if isinstance(group_by, str) else tuple(group_by)
+    if not groups:
+        raise ValueError("group_by must name at least one column")
+    required = {value, time, *groups}
+    if style is not None:
+        required.add(style)
+    missing = sorted(required - set(metric_df.columns))
+    if missing:
+        raise ValueError(f"metric_df is missing required columns: {missing}")
+
+    import matplotlib.pyplot as plt
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7.0, 4.2))
+    else:
+        fig = ax.figure
+
+    grouped = metric_df.groupby(list(groups), sort=False, dropna=False)
+    for group_key, frame in grouped:
+        key_tuple = group_key if isinstance(group_key, tuple) else (group_key,)
+        label = " · ".join(str(item) for item in key_tuple)
+        ordered = frame.sort_values(time, kind="stable")
+        robust_mask = (
+            np.ones(len(ordered), dtype=bool)
+            if style is None
+            else ordered[style].fillna(False).astype(bool).to_numpy()
+        )
+        for robust, suffix, linestyle, marker_face in (
+            (True, "", "-", "auto"),
+            (False, " (nonrobust)", "--", "none"),
+        ):
+            selected = ordered.loc[robust_mask == robust]
+            if selected.empty:
+                continue
+            line, = ax.plot(
+                selected[time].to_numpy(),
+                selected[value].to_numpy(),
+                linestyle=linestyle,
+                marker="o",
+                label=label + suffix,
+            )
+            if marker_face == "none":
+                line.set_markerfacecolor("none")
+                line.set_markeredgecolor(line.get_color())
+
+    ax.set_xlabel(time)
+    ax.set_ylabel(y_label or value)
+    if title:
+        ax.set_title(title)
+    if ax.lines:
+        ax.legend()
+    fig.tight_layout()
+    if output_path is not None:
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+    return fig
