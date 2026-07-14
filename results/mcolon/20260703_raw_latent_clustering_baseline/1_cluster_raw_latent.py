@@ -112,9 +112,29 @@ def main() -> None:
         help="If set, condense the Harmony-corrected tensor at this theta "
              "(from 4_harmony_correction.py) instead of the raw pivot.",
     )
+    parser.add_argument(
+        "--harmony-global-theta", type=float, default=None,
+        help="Use one shared global Harmony correction from 22_harmony_global_correction.py.",
+    )
     args = parser.parse_args()
 
-    if args.harmony_theta is not None:
+    if args.harmony_theta is not None and args.harmony_global_theta is not None:
+        raise ValueError("Choose either --harmony-theta or --harmony-global-theta, not both.")
+
+    if args.harmony_global_theta is not None:
+        harmony_path = (
+            _HERE / "figures" / "harmony_corrected_global"
+            / f"z_corrected_global_theta{args.harmony_global_theta:g}.npz"
+        )
+        print(f"Loading global Harmony-corrected tensor (theta={args.harmony_global_theta:g}) from {harmony_path}")
+        data = np.load(harmony_path, allow_pickle=True)
+        features = data["features"]
+        mask = data["mask"]
+        embryo_ids = data["embryo_ids"]
+        time_values = data["time_values"]
+        labels_arr = data["labels"]
+        OUT_DIR = _HERE / "figures" / f"condensed_harmony_global_theta{args.harmony_global_theta:g}"
+    elif args.harmony_theta is not None:
         harmony_path = _HERE / "figures" / "harmony_corrected" / f"z_corrected_theta{args.harmony_theta:g}.npz"
         print(f"Loading Harmony-corrected tensor (theta={args.harmony_theta:g}) from {harmony_path}")
         data = np.load(harmony_path, allow_pickle=True)
@@ -145,7 +165,7 @@ def main() -> None:
     if x0_path.exists():
         print(f"\nLoading cached UMAP init from {x0_path}")
         x0 = np.load(x0_path)["x0"]
-    elif args.harmony_theta is None and legacy_x0_path.exists():
+    elif args.harmony_theta is None and args.harmony_global_theta is None and legacy_x0_path.exists():
         print(f"\nReusing fixed raw UMAP initialization from {legacy_x0_path}")
         x0 = np.load(legacy_x0_path)["x0"]
         np.savez(x0_path, x0=x0, time_values=time_values)
@@ -215,8 +235,11 @@ def main() -> None:
     np.savez(npz_out, **payload)
     print(f"\nSaved -> {npz_out}")
     title = (
-        f"harmony-corrected z_mu_b condensation (theta={args.harmony_theta:g})"
-        if args.harmony_theta is not None else "raw z_mu_b condensation"
+        f"global-Harmony z_mu_b condensation (theta={args.harmony_global_theta:g})"
+        if args.harmony_global_theta is not None else (
+            f"harmony-corrected z_mu_b condensation (theta={args.harmony_theta:g})"
+            if args.harmony_theta is not None else "raw z_mu_b condensation"
+        )
     )
 
     if result.position_history is not None:
