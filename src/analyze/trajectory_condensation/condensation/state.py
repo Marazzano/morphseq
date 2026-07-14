@@ -117,13 +117,13 @@ class CondensationConfig:
     # Attraction
     attract_k: int = 15
     attract_weight: float = 1.0
-    attract_bandwidth_mult: float | None = None
+    attract_bandwidth_mult: float = 1.0
 
     # Temporal coherence
     temporal_cohere_window: int = 3
     temporal_cohere_mode: str = "computed"
     temporal_cohere_weight: float = 1.0
-    temporal_cohere_bandwidth_mult: float | None = None
+    temporal_cohere_bandwidth_mult: float = 1.0
     coherence_cache_every: int = 1
 
     # Elasticity
@@ -138,7 +138,7 @@ class CondensationConfig:
 
     # Void / occupancy
     void_strength: float = 0.0
-    void_bandwidth: float | None = None
+    void_bandwidth_mult: float = 1.0
 
     # Solver
     solver_lr: float = 0.01
@@ -153,17 +153,23 @@ class CondensationConfig:
     # Local scale
     local_scale_strength: float = 0.0
 
-    # Internal geometry scales (calibration-facing, not user-facing)
-    sigma: float = 0.5
-    epsilon_r: float = 0.01
-    lambda_stretch: float = 0.1
-    lambda_bend: float = 0.05
+    # Repulsion.  Both values are dimensionless public strengths; the engine
+    # resolves them against the initialization local spacing.
+    repulsion_strength: float = 0.003
+    repulsion_softening_mult: float = 0.005
 
     def __post_init__(self) -> None:
         if self.elastic_mix is not None and self.elastic_strength is None:
             raise ValueError("elastic_mix requires elastic_strength.")
         if self.elastic_mix is not None and not (0.0 <= self.elastic_mix <= 1.0):
             raise ValueError("elastic_mix must be within [0, 1].")
+        for name in (
+            "attract_bandwidth_mult", "temporal_cohere_bandwidth_mult",
+            "void_bandwidth_mult", "repulsion_strength", "repulsion_softening_mult",
+            "fidelity_init_strength",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be non-negative.")
 
 
 @dataclass
@@ -196,6 +202,7 @@ class ForceBalanceSummary:
     sigma_att: float
     sigma_coh: float
     epsilon_r: float
+    repulsion_eta: float
     lambda_stretch: float
     lambda_bend: float
     local_scale_strength: float
@@ -206,7 +213,7 @@ class ForceBalanceSummary:
     outlier_cutoff_mode: str
     outlier_cutoff_value: float
     void_strength: float
-    void_bandwidth: float | None
+    void_bandwidth: float
     fidelity_strength: float
     geometry_s_local: float
     geometry_s_step: float
@@ -218,6 +225,7 @@ class ForceBalanceSummary:
             "sigma_att": self.sigma_att,
             "sigma_coh": self.sigma_coh,
             "epsilon_r": self.epsilon_r,
+            "repulsion_eta": self.repulsion_eta,
             "lambda_stretch": self.lambda_stretch,
             "lambda_bend": self.lambda_bend,
             "local_scale_strength": self.local_scale_strength,

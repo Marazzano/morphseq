@@ -48,6 +48,7 @@ sys.path.insert(0, str(_REPO / "src"))
 
 from analyze.trajectory_condensation import init_embedding
 from analyze.trajectory_condensation.condensation import CondensationConfig, StoppingConfig, run_condensation
+from analyze.trajectory_condensation.condensation.geometry_refs import estimate_geometry_refs
 import analyze.trajectory_condensation as tc
 
 TABLES = _HERE / "tables"
@@ -55,6 +56,10 @@ TABLES = _HERE / "tables"
 RANDOM_STATE = 42
 N_ITER = 500
 SAVE_EVERY = 25
+MARGIN_REFERENCE_NPZ = (
+    _HERE.parent / "20260407_pbx_analysis_cont" / "results" / "positioning" / "trajectory"
+    / "combined_raw_condensation_5class_bin4_perm500" / "condensed_positions.npz"
+)
 
 
 def _gamma_from_half_life_iters(h: float) -> float:
@@ -86,6 +91,20 @@ def _pivot_to_tensor(
     return features, mask, embryo_ids, time_values, labels_arr
 
 
+def _relative_profile_from_margin_reference() -> dict[str, float]:
+    """Express the known-good legacy margin force balance in public units."""
+    ref = np.load(MARGIN_REFERENCE_NPZ, allow_pickle=True)
+    geometry = estimate_geometry_refs(ref["x0"], ref["mask"])
+    return {
+        "attract_bandwidth_mult": 0.5 / geometry.s_global,
+        "temporal_cohere_bandwidth_mult": 0.5 / geometry.s_local,
+        "repulsion_strength": 5e-4 / geometry.s_local**2,
+        "repulsion_softening_mult": 1e-4 / geometry.s_local**4,
+        "fidelity_init_strength": 0.25 * geometry.s_local**2,
+        "void_bandwidth_mult": 0.5 / geometry.s_global,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -113,7 +132,7 @@ def main() -> None:
         # ── Build (N_e, T, K) tensor ──────────────────────────────────────────
         print("Building (N_e, T, K) feature tensor...")
         features, mask, embryo_ids, time_values, labels_arr = _pivot_to_tensor(binned, z_cols)
-        OUT_DIR = _HERE / "figures" / "condensed_raw_zmub"
+        OUT_DIR = _HERE / "figures" / "condensed_raw_zmub_relative_api"
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"  Shape: {features.shape}, mask coverage: {mask.mean():.1%}")
@@ -122,9 +141,14 @@ def main() -> None:
 
     # ── UMAP initialization (same as PBX condensation) ───────────────────────
     x0_path = OUT_DIR / "x0_init.npz"
+    legacy_x0_path = _HERE / "figures" / "condensed_raw_zmub" / "x0_init.npz"
     if x0_path.exists():
         print(f"\nLoading cached UMAP init from {x0_path}")
         x0 = np.load(x0_path)["x0"]
+    elif args.harmony_theta is None and legacy_x0_path.exists():
+        print(f"\nReusing fixed raw UMAP initialization from {legacy_x0_path}")
+        x0 = np.load(legacy_x0_path)["x0"]
+        np.savez(x0_path, x0=x0, time_values=time_values)
     else:
         print("\nComputing aligned UMAP initialization (this may take a few minutes)...")
         x0 = init_embedding.aligned_umap_init(
@@ -138,15 +162,15 @@ def main() -> None:
         np.savez(x0_path, x0=x0, time_values=time_values)
         print(f"  Saved UMAP init -> {x0_path}")
 
-    # ── Condensation — same config as PBX 20260407 production run ────────────
+    # ── Condensation — public relative API, calibrated from PBX margin ───────
     print(f"\nRunning trajectory condensation ({N_ITER} iters)...")
+    relative_profile = _relative_profile_from_margin_reference()
+    print("Relative profile (derived once from known-good margin geometry):", relative_profile)
     config = CondensationConfig(
-        sigma=0.5,
+        **relative_profile,
         temporal_cohere_window=3,
-        epsilon_r=5e-4,
         elastic_strength=16.0,
         elastic_mix=0.25,
-        fidelity_init_strength=0.25,
         fidelity_half_life=_gamma_from_half_life_iters(70.0),
         void_strength=0.014,
         outlier_strength=16.0,
@@ -190,6 +214,34 @@ def main() -> None:
     npz_out = OUT_DIR / "condensed_positions.npz"
     np.savez(npz_out, **payload)
     print(f"\nSaved -> {npz_out}")
+    title = (
+        f"harmony-corrected z_mu_b condensation (theta={args.harmony_theta:g})"
+        if args.harmony_theta is not None else "raw z_mu_b condensation"
+    )
+
+    if result.position_history is not None:
+        inspection_dir = OUT_DIR / "iteration_inspection"
+        tc.render_iteration_inspection_bundle(
+            position_history=result.position_history,
+            snapshot_iters=result.snapshot_iters,
+            mask=mask,
+            time_values=time_values,
+            labels=labels_arr,
+            output_dir=inspection_dir,
+            metrics_history=result.metrics_history,
+            color_map={
+                "inj_ctrl": "#2166AC", "wik_ab": "#808080",
+                "pbx1b_crispant": "#9467bd", "pbx4_crispant": "#F7B267",
+                "pbx1b_pbx4_crispant": "#B2182B",
+            },
+            title_prefix=title,
+            n_select=6,
+            config_payload={
+                "relative_profile": relative_profile,
+                "resolved_force_balance": tc.describe_force_balance(x0, mask, config),
+            },
+        )
+        print(f"Saved iteration inspection -> {inspection_dir}")
 
     # ── Standard viz bundle ───────────────────────────────────────────────────
     GENOTYPE_COLORS = {
@@ -199,12 +251,18 @@ def main() -> None:
         "pbx4_crispant": "#F7B267",
         "pbx1b_pbx4_crispant": "#B2182B",
     }
-    title = (
-        f"harmony-corrected z_mu_b condensation (theta={args.harmony_theta:g})"
-        if args.harmony_theta is not None else "raw z_mu_b condensation"
-    )
     run = tc.load_run(npz_out, title=title, color_map=GENOTYPE_COLORS)
     tc.render_run(run, str(OUT_DIR), skip_animations=True)
+    tc.time_slice_html(
+        run.positions,
+        run.mask,
+        run.time_values,
+        labels=run.labels,
+        color_map=run.color_map,
+        embryo_ids=run.embryo_ids,
+        title=f"{title} | final condensation",
+        output_path=OUT_DIR / "time_slice.html",
+    )
     print(f"Saved viz bundle -> {OUT_DIR}")
     print("\nDone. Run 2_combined_html.py next.")
 

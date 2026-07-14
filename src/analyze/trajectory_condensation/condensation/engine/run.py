@@ -41,16 +41,10 @@ def resolve_force_balance(
 ) -> ForceBalanceSummary:
     """Resolve geometry-aware force parameters for a specific run."""
     geometry_refs = estimate_geometry_refs(x0, mask, k_local=_K_LOCAL_SCALE_DEFAULT)
-    sigma_att = (
-        config.attract_bandwidth_mult * geometry_refs.s_global
-        if config.attract_bandwidth_mult is not None
-        else config.sigma
-    )
-    sigma_coh = (
-        config.temporal_cohere_bandwidth_mult * geometry_refs.s_local
-        if config.temporal_cohere_bandwidth_mult is not None
-        else sigma_att
-    )
+    sigma_att = config.attract_bandwidth_mult * geometry_refs.s_global
+    sigma_coh = config.temporal_cohere_bandwidth_mult * geometry_refs.s_local
+    epsilon_r = config.repulsion_strength * geometry_refs.s_local**2
+    repulsion_eta = config.repulsion_softening_mult * geometry_refs.s_local**4
     if config.elastic_strength is not None:
         elastic_mix = 0.5 if config.elastic_mix is None else config.elastic_mix
         if config.elastic_kernel == "quadratic":
@@ -62,14 +56,13 @@ def resolve_force_balance(
         else:
             raise ValueError(f"Unsupported elastic_kernel={config.elastic_kernel!r}")
     else:
-        elastic_mix = None
-        lambda_stretch = config.lambda_stretch
-        lambda_bend = config.lambda_bend
+        raise ValueError("elastic_strength is required; raw lambda coefficients are not public API.")
 
     return ForceBalanceSummary(
         sigma_att=float(sigma_att),
         sigma_coh=float(sigma_coh),
-        epsilon_r=float(config.epsilon_r),
+        epsilon_r=float(epsilon_r),
+        repulsion_eta=float(repulsion_eta),
         lambda_stretch=float(lambda_stretch),
         lambda_bend=float(lambda_bend),
         local_scale_strength=float(config.local_scale_strength),
@@ -80,8 +73,8 @@ def resolve_force_balance(
         outlier_cutoff_mode=str(config.outlier_cutoff_mode),
         outlier_cutoff_value=float(config.outlier_cutoff_value),
         void_strength=float(config.void_strength),
-        void_bandwidth=None if config.void_bandwidth is None else float(config.void_bandwidth),
-        fidelity_strength=float(config.fidelity_init_strength),
+        void_bandwidth=float(config.void_bandwidth_mult * geometry_refs.s_global),
+        fidelity_strength=float(config.fidelity_init_strength / max(geometry_refs.s_local**2, 1e-12)),
         geometry_s_local=float(geometry_refs.s_local),
         geometry_s_step=float(geometry_refs.s_step),
         geometry_s_bend=float(geometry_refs.s_bend),
@@ -125,9 +118,9 @@ def run_dynamics(
 
     if verbose:
         print(
-            f"  run_dynamics: sigma_att={sigma_att:.4f}  sigma_coh={sigma_coh:.4f}  epsilon_r={config.epsilon_r:.6f}  "
+            f"  run_dynamics: sigma_att={sigma_att:.4f}  sigma_coh={sigma_coh:.4f}  epsilon_r={resolved_forces.epsilon_r:.6f}  "
             f"s_local={resolved_forces.geometry_s_local:.4f}  s_global={resolved_forces.geometry_s_global:.4f}  "
-            f"epsilon_r/s_local²={config.epsilon_r / (resolved_forces.geometry_s_local**2 + 1e-16):.4f}"
+            f"epsilon_r/s_local²={resolved_forces.epsilon_r / (resolved_forces.geometry_s_local**2 + 1e-16):.4f}"
         )
         print(
             "  force_balance:"
@@ -140,7 +133,7 @@ def run_dynamics(
             f" outlier_strength={resolved_forces.outlier_strength:.6f}"
             f" outlier_cutoff={resolved_forces.outlier_cutoff_mode}:{resolved_forces.outlier_cutoff_value:g}"
             f" void_strength={resolved_forces.void_strength:.6f}"
-            f" void_bandwidth={resolved_forces.void_bandwidth if resolved_forces.void_bandwidth is not None else 'implicit'}"
+            f" void_bandwidth={resolved_forces.void_bandwidth:.6f}"
         )
 
     local_scale_refs = build_local_scale_refs(x0, mask, k_local=_K_LOCAL_SCALE_DEFAULT)
@@ -186,7 +179,7 @@ def run_dynamics(
             )
             coherence_last_computed = n
 
-        mu = config.fidelity_init_strength * (config.fidelity_half_life ** n)
+        mu = resolved_forces.fidelity_strength * (config.fidelity_half_life ** n)
 
         energies, grad = total_energy_and_grad(
             positions=positions,
@@ -194,8 +187,8 @@ def run_dynamics(
             mask=mask,
             coherence=coherence,
             sigma=sigma_att,
-            epsilon_r=config.epsilon_r,
-            eta=1e-4,
+            epsilon_r=resolved_forces.epsilon_r,
+            eta=resolved_forces.repulsion_eta,
             lambda_stretch=resolved_forces.lambda_stretch,
             lambda_bend=resolved_forces.lambda_bend,
             elasticity_kernel=config.elastic_kernel,

@@ -22,6 +22,7 @@ from .viz import (
 )
 from .schema import CondensationData, validate, from_classifier_directions
 from .force_diagnostics import ForceSnapshot, force_snapshot, force_target_table
+from .iteration_ranking import render_iteration_inspection_bundle
 from .condensation import (
     CondensationConfig,
     CondensationResult,
@@ -72,6 +73,7 @@ __all__ = [
     "RunDescriptor",
     "force_snapshot",
     "force_target_table",
+    "render_iteration_inspection_bundle",
     "render_run",
     "render_feature_over_time_facets",
     "compare_runs",
