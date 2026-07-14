@@ -19,6 +19,7 @@ stitch, or scope-inventory logic — those import IT.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -53,12 +54,18 @@ def _parse_keyence_xy_position_index(path: Path) -> int | None:
     return None
 
 
+@lru_cache(maxsize=None)
 def _read_keyence_well_marker(position_dir: Path) -> str:
     """Read the explicit Keyence well marker under an ``XY##`` directory.
 
     Newer BZ-X plate-map exports observed in production write a zero-byte marker
     file named like ``_A01`` inside each ``XY##`` position directory. That marker
     is the authoritative well label; ``XY##`` is only the acquisition position.
+
+    Memoized: the answer is per-directory but this is consulted once per plane
+    (thousands of times over NFS). ``position_dir`` is a hashable ``Path`` and the
+    marker file is immutable within a run, so caching collapses the repeated
+    ``iterdir()`` scans to one per ``XY##`` directory.
     """
     markers = []
     for child in Path(position_dir).iterdir():

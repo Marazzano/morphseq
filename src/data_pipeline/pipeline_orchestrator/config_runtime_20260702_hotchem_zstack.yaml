@@ -1,0 +1,41 @@
+# Runtime overlay for the 20260702 hotchem Keyence run — z_stack + focus_stack variant.
+# Usage (composed over base config.yaml; later --configfile wins):
+#   snakemake --configfile config.yaml --configfile config_runtime_20260702_hotchem_zstack.yaml \
+#     <target> --rerun-triggers mtime --cores 1
+#
+# Difference vs config_runtime_20260702_hotchem.yaml:
+#   - Does NOT override image_materialization.products, so this run inherits the base config's
+#     projection(focus_stack) + z_stack product set (Keyence now materializes z_stack — the old
+#     "NotImplementedError, projection-only" note in the other overlay is obsolete).
+#   - Re-introduces motion_blur_flag in snip_qc exclusions (it needs the z_stack we now emit).
+#     focus_flag is still omitted — re-add it only if focus QC is wanted for this run.
+
+experiments:
+  - 20260702_hotchem_24hpf_plate01
+  - 20260702_hotchem_24hpf_plate02
+  - 20260702_hotchem_30hpf_plate01
+  - 20260702_hotchem_30hpf_plate02
+  - 20260702_hotchem_36hpf_plate01
+  - 20260702_hotchem_36hpf_plate02
+
+microscope: "Keyence"
+
+# image_materialization.products intentionally NOT overridden here — inherit base config.yaml's
+# projection(focus_stack) + z_stack set so both the focus stack AND the z-slices are materialized.
+
+# Plate metadata is needed for through_line/analysis_ready/all. Set enabled:false to run
+# front_half before the well_metadata sheets are finalized.
+plate_metadata:
+  enabled: true
+
+# snip_qc exclusion flags. Re-introduces motion_blur_flag (adjacent-z NCC — depends on z_stack,
+# now emitted). focus_flag remains omitted; add it if focus QC is desired for this run.
+snip_qc:
+  exclusion_flags:
+    - viability_dead_flag
+    - persistence_dead_flag
+    - sa_outlier_flag
+    - edge_flag
+    - discontinuous_mask_flag
+    - overlapping_mask_flag
+    - motion_blur_flag

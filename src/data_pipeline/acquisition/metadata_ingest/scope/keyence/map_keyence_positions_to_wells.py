@@ -31,31 +31,11 @@ REQUIRED_COLUMNS_POSITION_MAPPING = [
 ]
 
 
-<<<<<<< HEAD
-_WELL_MARKER_RE = re.compile(r"^_([A-H])(\d{1,2})$")
-
-
-def _well_index_from_marker(well_dir: Path) -> str | None:
-    """Return the well label the microscope itself recorded in ``well_dir``, or None.
-
-    Keyence drops a zero-byte marker file named ``_<WELL>`` (e.g. ``_B12``) into every ``XY##``
-    directory. That marker is GROUND TRUTH and must win over any arithmetic on the ``XY`` index:
-    the scope images plates in a serpentine (boustrophedon) order, so ``XY13`` is ``B12``, not
-    ``B01``. Deriving the well from ``(idx-1)//12`` / ``(idx-1)%12`` column-reverses every even
-    row and silently mislabels half the plate.
-    """
-    for entry in well_dir.iterdir():
-        m = _WELL_MARKER_RE.match(entry.name)
-        if m:
-            return f"{m.group(1)}{int(m.group(2)):02d}"
-    return None
-=======
 def _keyence_position_sort_key(path: Path) -> tuple[int, str]:
     match = re.fullmatch(r"XY(\d+)([A-Za-z]?)", path.name, flags=re.IGNORECASE)
     if match:
         return int(match.group(1)), match.group(2).lower()
     return 10**9, path.name
->>>>>>> 62691eca2a99c1c3bb7a28444c2d51fc0bf934c4
 
 
 def _discover_keyence_wells(raw_data_dir: Path, experiment_id: str) -> list:
@@ -82,28 +62,6 @@ def _discover_keyence_wells(raw_data_dir: Path, experiment_id: str) -> list:
         key=_keyence_position_sort_key,
     )
     if xy_dirs:
-<<<<<<< HEAD
-        for well_dir in xy_dirs:
-            # The scope's own `_<WELL>` marker is authoritative — see _well_index_from_marker.
-            well_index = _well_index_from_marker(well_dir)
-            if well_index is not None:
-                wells.append((well_index, well_dir))
-                continue
-
-            well_name = well_dir.name  # e.g., "XY01a"
-            suffix = well_name[2:]
-            if suffix.isdigit():
-                xy_idx = int(suffix)
-                row = (xy_idx - 1) // 12
-                col = (xy_idx - 1) % 12 + 1
-                well_index = f"{chr(65 + row)}{col:02d}"
-                log.warning(
-                    "No _<WELL> marker in %s; falling back to raster arithmetic -> %s. This is "
-                    "WRONG for serpentine acquisitions (XY13 is B12, not B01).",
-                    well_dir, well_index,
-                )
-                wells.append((well_index, well_dir))
-=======
         for position_dir in xy_dirs:
             position_name = position_dir.name  # e.g., "XY01" or legacy "XY01a"
             suffix = position_name[2:]
@@ -113,7 +71,6 @@ def _discover_keyence_wells(raw_data_dir: Path, experiment_id: str) -> list:
                     raise ValueError(f"Unexpected Keyence XY position directory: {position_dir}")
                 well_index = _read_keyence_well_marker(position_dir)
                 positions.append((position_index, well_index, position_dir))
->>>>>>> 62691eca2a99c1c3bb7a28444c2d51fc0bf934c4
                 continue
 
             # Legacy format with trailing row letter (e.g. XY01a)
@@ -126,20 +83,9 @@ def _discover_keyence_wells(raw_data_dir: Path, experiment_id: str) -> list:
     # Check for W0 pattern (W001 → A01)
     w0_dirs = sorted(exp_dir.glob("W0*"))
     if w0_dirs and not xy_dirs:
-<<<<<<< HEAD
-        for well_dir in w0_dirs:
-            well_index = _well_index_from_marker(well_dir)
-            if well_index is not None:
-                wells.append((well_index, well_dir))
-                continue
-
-            well_name = well_dir.name  # e.g., "W001"
-            well_num = int(well_name[1:])
-=======
         for position_dir in w0_dirs:
             position_name = position_dir.name  # e.g., "W001"
             well_num = int(position_name[1:])
->>>>>>> 62691eca2a99c1c3bb7a28444c2d51fc0bf934c4
             # Convert to row/col (1-indexed, 12 cols per row)
             row = (well_num - 1) // 12
             col = (well_num - 1) % 12 + 1

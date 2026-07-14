@@ -161,6 +161,43 @@ def _scrape_keyence_plane_metadata(tiff_path: Path) -> Dict[str, Any]:
 _TILE_Z_RE = re.compile(r"_(\d{5})_Z(\d+)_CH(\d+)\.tif$", re.IGNORECASE)
 
 
+def _canonical_to_raw_meta(canonical: Dict[str, Any]) -> Dict[str, Any]:
+    """Adapt the plane scraper's canonical fields back to the raw Keyence keys the FF-row builder
+    reads. The scraper derives ``micrometers_per_pixel`` and drops raw ``Width (um)``; the row
+    builder reads ``Width (um)`` / ``Width (px)`` only to recompute that same ratio, so we hand it
+    a ``Width (um)`` that reproduces the scraper's value (``mpp * width_px``)."""
+    width_px = canonical.get("image_width_px", 0) or 0
+    mpp = canonical.get("micrometers_per_pixel", 0.0) or 0.0
+    return {
+        "Width (px)": width_px,
+        "Height (px)": canonical.get("image_height_px", 0),
+        "Width (um)": mpp * width_px,
+        "Objective": canonical.get("objective_magnification", "unknown"),
+        "Channel": canonical.get("raw_channel_name"),
+        "Time (s)": canonical.get("acquisition_time_s", 0.0),
+        "stage_x_nm": canonical.get("stage_x_nm", 0),
+        "stage_y_nm": canonical.get("stage_y_nm", 0),
+        "stage_z_nm": canonical.get("stage_z_nm", 0),
+    }
+
+
+def _z1_time_for_plane(tiff_path: Path, plane_scraper) -> float:
+    """Return the real frame-grain timestamp for this plane's (tile, channel): the Z=1 value.
+
+    The FF row collapses the Z-stack, so its timestamp must be the true acquired frame time, not an
+    interpolated per-Z ramp. We resolve the Z001 sibling and read its ``acquisition_time_s`` through
+    the same (cached) scraper. Falls back to this plane's own time if the name is not the expected
+    ``..._NNNNN_Z###_CH#.tif`` grammar."""
+    m = _TILE_Z_RE.search(tiff_path.name)
+    if not m:
+        return float(plane_scraper(tiff_path).get("acquisition_time_s", 0.0) or 0.0)
+    tile, channel = m.group(1), m.group(3)
+    base = tiff_path.name[: m.start()]
+    z1 = tiff_path.parent / f"{base}_{tile}_Z001_CH{channel}.tif"
+    target = z1 if z1.exists() else tiff_path
+    return float(plane_scraper(target).get("acquisition_time_s", 0.0) or 0.0)
+
+
 def make_keyence_plane_scraper(scrape=_scrape_keyence_plane_metadata):
     """Return a ``(tiff_path) -> dict`` scraper that reads only Z=1 and Z=2 of each tile.
 
@@ -308,7 +345,6 @@ def _extract_well_from_path(file_path: Path) -> str:
     if parsed_well is not None:
         return parsed_well
 
-<<<<<<< HEAD
     # The scope drops a `_<WELL>` marker file (e.g. `_B12`) beside the planes in each XY## dir.
     # It is GROUND TRUTH and must beat any arithmetic on the XY index: Keyence images plates
     # serpentine, so XY13 is B12, not B01. Raster arithmetic column-reverses every even row.
@@ -316,10 +352,7 @@ def _extract_well_from_path(file_path: Path) -> str:
     if marker is not None:
         return marker
 
-    # Check for XY pattern in path (e.g., XY01, XY16, XY01a)
-=======
     # Check for legacy XY pattern in path (e.g., XY01a)
->>>>>>> 62691eca2a99c1c3bb7a28444c2d51fc0bf934c4
     for part in file_path.parts:
         if part.startswith('XY'):
             suffix = part[2:]
@@ -392,11 +425,24 @@ def extract_keyence_scope_metadata(
 
     # Discover TIFF files
     tiff_files = _discover_keyence_files(raw_data_dir, experiment_id)
+
+    # Per-plane calibration/stage facts come from the interpolating plane scraper: within one
+    # (well, tile, channel) Z-stack every field is constant or linear in Z, so it reads only Z001+
+    # Z002 and interpolates the rest (~7x fewer XML tail-reads on a 14-plane stack). We do NOT use
+    # its interpolated per-plane TIME — the FF row's timestamp is the real frame-grain Z=1 value
+    # (see _z1_time_for_plane), and frame_interval_s is computed from those below. The scraper
+    # returns canonical field names; _canonical_to_raw_meta remaps them to the raw Keyence keys the
+    # row builder reads.
+    plane_scraper = make_keyence_plane_scraper()
+
     # Extract metadata from each file
     rows = []
     for tiff_path in tiff_files:
         try:
-            meta = _scrape_keyence_metadata(tiff_path)
+            canonical = plane_scraper(tiff_path)
+            meta = _canonical_to_raw_meta(canonical)
+            # Time strictly from the Z=1 plane of this (tile, channel) — never interpolated.
+            meta['Time (s)'] = _z1_time_for_plane(tiff_path, plane_scraper)
 
             # Extract well from path
             well_index = _extract_well_from_path(tiff_path)
