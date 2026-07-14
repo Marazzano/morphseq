@@ -31,6 +31,7 @@ from data_pipeline.acquisition.metadata_ingest.scope.acquisition_inventory_contr
     REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
 )
 from data_pipeline.shared.channel_vocabulary import validate_channel_id
+from data_pipeline.shared.path_roots import resolve_under_input_root
 from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_checks import (
     assert_channel_mapping_consistent,
     assert_columns_present,
@@ -83,8 +84,15 @@ _SCOPE_LABEL = "YX1 acquisition inventory"
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def assert_acquisition_sources_readable(df: pd.DataFrame, *, scope_label: str) -> None:
+def assert_acquisition_sources_readable(
+    df: pd.DataFrame, *, scope_label: str, input_root: Path | None = None
+) -> None:
     """Fail loud unless every ``source_nd2_path`` in the inventory still exists AND opens.
+
+    ``source_nd2_path`` is stored as the FULL absolute path at ingest. It is resolved via
+    ``resolve_under_input_root``: used as-is, but re-anchored onto ``input_root`` (pivoting on the
+    ``raw_image_data/`` segment) if it has gone stale because the input tree moved. ``input_root``
+    may be ``None`` when the stored path is still valid on disk.
 
     The disk-touching half of the YX1 acquisition contract. ``source_nd2_path`` is a YX1
     acquisition-inventory field, so the readability check lives here (with the contract), not in the
@@ -103,7 +111,9 @@ def assert_acquisition_sources_readable(df: pd.DataFrame, *, scope_label: str) -
         )
 
     for raw_path in df["source_nd2_path"].dropna().unique():
-        path = Path(str(raw_path))
+        path = resolve_under_input_root(
+            raw_path, input_root=input_root, scope_label=scope_label, full_root_fallback=True
+        )
         if not path.exists():
             raise ValueError(
                 f"{scope_label}: source_nd2_path {str(path)!r} does not exist. The acquisition "
@@ -120,7 +130,9 @@ def assert_acquisition_sources_readable(df: pd.DataFrame, *, scope_label: str) -
             ) from exc
 
 
-def validate_yx1_acquisition_inventory(df: pd.DataFrame, *, check_sources: bool = False) -> None:
+def validate_yx1_acquisition_inventory(
+    df: pd.DataFrame, *, check_sources: bool = False, input_root: Path | None = None
+) -> None:
     """Fail loud unless the YX1 inventory is schema-complete, calibrated, and a clean tensor.
 
     YX1 declares WHAT to check (its schema + cell key); the shared primitives do HOW. The same
@@ -144,7 +156,9 @@ def validate_yx1_acquisition_inventory(df: pd.DataFrame, *, check_sources: bool 
     assert_unique_on_key(df, YX1_ACQUISITION_CELL_KEY, scope_label=_SCOPE_LABEL)
     assert_elapsed_time_valid(df, scope_label=_SCOPE_LABEL)
     if check_sources:
-        assert_acquisition_sources_readable(df, scope_label=_SCOPE_LABEL)
+        assert_acquisition_sources_readable(
+            df, scope_label=_SCOPE_LABEL, input_root=input_root
+        )
 
 
 def assert_channel_id_in_vocabulary(df: pd.DataFrame, *, scope_label: str) -> None:

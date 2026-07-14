@@ -45,6 +45,12 @@ _SOURCE_PAYLOADS: dict[str, tuple[str, ...]] = {
     "motion_blur_qc":     MOTION_BLUR_QC_PAYLOAD_COLUMNS,
 }
 
+# Cross-product requirements that cannot be expressed by paths.py alone. These are checked against
+# the same resolved materialization product keys used to build the DAG.
+_FLAG_PRODUCT_REQUIREMENTS: dict[str, str] = {
+    "motion_blur_flag": "BF__z_stack",
+}
+
 
 @dataclass(frozen=True)
 class ResolvedFlagSource:
@@ -105,6 +111,35 @@ def resolve_snip_qc_flag_sources(
             path=path,
         ))
     return tuple(resolved)
+
+
+def validate_snip_qc_product_requirements(
+    exclusion_flags: tuple[str, ...],
+    *,
+    available_product_keys: tuple[str, ...],
+) -> None:
+    """Fail at DAG planning when a requested QC flag lacks its required image product."""
+    available = set(available_product_keys)
+    missing = [
+        (flag, _FLAG_PRODUCT_REQUIREMENTS[flag])
+        for flag in exclusion_flags
+        if flag in _FLAG_PRODUCT_REQUIREMENTS
+        and _FLAG_PRODUCT_REQUIREMENTS[flag] not in available
+    ]
+    if not missing:
+        return
+
+    details = "\n".join(
+        f"  - {flag} requires image product {product_key}"
+        for flag, product_key in missing
+    )
+    raise ValueError(
+        "snip_qc product requirements are not satisfied:\n"
+        f"{details}\n"
+        f"Configured image products: {sorted(available)}.\n"
+        "Add the required product under image_materialization.products, or remove the "
+        "corresponding flag from snip_qc.exclusion_flags. No QC flag is removed automatically."
+    )
 
 
 def _build_flag_column_index(exclusion_flags: tuple[str, ...]) -> dict[str, str]:

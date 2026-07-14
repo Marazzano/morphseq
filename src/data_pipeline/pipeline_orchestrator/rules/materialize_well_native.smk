@@ -89,6 +89,7 @@ rule materialize_image_product_for_well:
           --candidate "false" \
           --device "{params.device}" \
           --smoke-max-time-indices "{params.smoke_max}" \
+          --input-root "{INPUTS_DIR}" \
           {params.master_params_arg}
         """
 

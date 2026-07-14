@@ -48,6 +48,8 @@ def cmd_normalize_plate(args: argparse.Namespace) -> None:
 
 
 def cmd_extract_scope(args: argparse.Namespace) -> None:
+    # The inventory stores full absolute source paths; readers re-anchor them under input_root at
+    # consume time, so ingest needs no input_root.
     if args.microscope == "YX1":
         experiment_id = resolve_experiment_id(args.raw_images_dir, args.microscope, explicit_experiment_id=args.experiment)
         extract_yx1_scope_metadata(
@@ -300,6 +302,9 @@ def cmd_build_keyence_stitch_map(args: argparse.Namespace) -> None:
         acquisition_inventory_df=pd.read_csv(args.acquisition_inventory_csv),
         n_samples=int(getattr(args, "n_samples", 50)),
         out_path=Path(args.output_json),
+        input_root=(
+            Path(args.input_root) if getattr(args, "input_root", None) else None
+        ),
     )
 
 
@@ -336,6 +341,9 @@ def cmd_materialize_image_product_for_well(args: argparse.Namespace) -> None:
         candidate=_parse_bool(getattr(args, "candidate", "false")),
         smoke_max_time_indices=smoke_cap,
         master_params_path=master_params_path,
+        input_root=(
+            Path(args.input_root) if getattr(args, "input_root", None) else None
+        ),
     )
     out_csv = Path(args.frame_inventory_product_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -1375,12 +1383,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_mip.add_argument("--smoke-max-time-indices", type=int, default=None)
     p_mip.add_argument("--device", default="cuda")
     p_mip.add_argument("--master-params-path", type=Path, default=None)
+    # input_root — resolves inventory source paths stored RELATIVE to it. Optional: legacy
+    # absolute-path inventories resolve without it.
+    p_mip.add_argument("--input-root", type=Path, default=None)
     p_mip.set_defaults(func=cmd_materialize_image_product_for_well)
 
     p_bksm = sub.add_parser("build-keyence-stitch-map")
     p_bksm.add_argument("--acquisition-inventory-csv", type=Path, required=True)
     p_bksm.add_argument("--output-json", type=Path, required=True)
     p_bksm.add_argument("--n-samples", type=int, default=50)
+    # input_root — resolves inventory source paths stored RELATIVE to it (optional; see above).
+    p_bksm.add_argument("--input-root", type=Path, default=None)
     p_bksm.set_defaults(func=cmd_build_keyence_stitch_map)
 
     p_dps = sub.add_parser("discover-product-shards-for-well")

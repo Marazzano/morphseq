@@ -259,6 +259,8 @@ def extract_yx1_scope_metadata(
             image_width_px=image_width_px,
             image_height_px=image_height_px,
             objective_magnification=objective,
+            # Full absolute path (as discovered at ingest). Readers resolve it via
+            # resolve_under_input_root, re-anchoring onto the current input_root if it has moved.
             source_nd2_path=nd2_path,
         )
         acquisition_inventory_csv = Path(acquisition_inventory_csv)
