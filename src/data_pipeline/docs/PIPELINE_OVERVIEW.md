@@ -277,7 +277,7 @@ scope-free frame inventory that downstream stages read.
       - channel_id: BF
         image_product_type: projection
         projection_method: focus_stack
-      - channel_id: BF
+      - channel_id: GFP
         image_product_type: projection
         projection_method: max   
   
