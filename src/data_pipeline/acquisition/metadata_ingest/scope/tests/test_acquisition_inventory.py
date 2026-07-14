@@ -198,6 +198,28 @@ def test_check_sources_true_fails_when_nd2_unopenable(monkeypatch, tmp_path):
         validate_yx1_acquisition_inventory(df, check_sources=True)
 
 
+def test_check_sources_true_reanchors_stale_path_under_input_root(monkeypatch, tmp_path):
+    # The real ND2 lives under a NEW input_root; the stored path points at an OLD (nonexistent) root.
+    # With full_root_fallback (on for the readability check), it re-anchors and opens successfully.
+    real = tmp_path / "new" / "raw_image_data" / "YX1" / "exp" / "exp.nd2"
+    real.parent.mkdir(parents=True)
+    real.write_bytes(b"")
+    monkeypatch.setattr(acq_mod.nd2, "ND2File", _FakeND2)
+    df = _make_inventory()
+    df["source_nd2_path"] = "/OLD/pipeline/input/raw_image_data/YX1/exp/exp.nd2"  # stale absolute
+    validate_yx1_acquisition_inventory(
+        df, check_sources=True, input_root=tmp_path / "new"
+    )  # no raise — re-anchored
+
+
+def test_check_sources_true_stale_path_no_pivot_raises(monkeypatch, tmp_path):
+    df = _make_inventory()
+    # Missing file AND no raw_image_data/ segment to pivot on -> cannot re-anchor.
+    df["source_nd2_path"] = "/OLD/somewhere/no_pivot/exp.nd2"
+    with pytest.raises(ValueError, match="raw_image_data"):
+        validate_yx1_acquisition_inventory(df, check_sources=True, input_root=tmp_path)
+
+
 def test_assert_sources_readable_opens_each_unique_path_once(monkeypatch, tmp_path):
     nd2_file = tmp_path / "shared.nd2"
     nd2_file.write_bytes(b"")

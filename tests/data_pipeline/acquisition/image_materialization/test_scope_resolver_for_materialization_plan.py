@@ -38,6 +38,16 @@ class TestScopeRouting:
         with pytest.raises(UnsupportedMaterializationRequest, match="mosaic"):
             resolve_materialization_plan(scope_name="keyence", requested_plan=_plan(xy_composition="identity"))
 
+    def test_keyence_z_stack_resolves_to_mosaic(self):
+        out = resolve_materialization_plan(
+            scope_name="keyence",
+            requested_plan=_plan(image_product_type="z_stack", projection_method=None),
+        )
+        product = out.products[0]
+        assert product.image_product_type == "z_stack"
+        assert product.projection_method is None
+        assert product.xy_composition == "mosaic"
+
 
 class TestYX1XYComposition:
     def test_auto_resolves_to_identity(self):

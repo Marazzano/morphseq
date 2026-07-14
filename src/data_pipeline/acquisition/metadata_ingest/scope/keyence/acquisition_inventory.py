@@ -53,6 +53,7 @@ from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_checks i
 from data_pipeline.acquisition.metadata_ingest.time_helpers import add_elapsed_time_columns
 from data_pipeline.shared.channel_vocabulary import validate_channel_id
 from data_pipeline.shared.identifiers import build_well_id
+from data_pipeline.shared.path_roots import resolve_under_input_root
 
 log = logging.getLogger(__name__)
 
@@ -108,8 +109,15 @@ _SCOPE_LABEL = "Keyence acquisition inventory"
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def assert_keyence_acquisition_sources_readable(df: pd.DataFrame, *, scope_label: str) -> None:
+def assert_keyence_acquisition_sources_readable(
+    df: pd.DataFrame, *, scope_label: str, input_root: Path | None = None
+) -> None:
     """Fail loud unless every ``source_tiff_path`` in the inventory still exists AND opens.
+
+    ``source_tiff_path`` is stored as the FULL absolute path at ingest. It is resolved via
+    ``resolve_under_input_root``: the stored path is used as-is, but if it has gone stale (the input
+    tree moved) it is re-anchored onto ``input_root`` by pivoting on the ``raw_image_data/`` segment.
+    ``input_root`` may be ``None`` when the stored path is still valid on disk.
 
     The disk-touching half of the Keyence acquisition contract — the twin of YX1's ND2 readability
     check. ``source_tiff_path`` is a Keyence acquisition-inventory field, so the readability check
@@ -130,7 +138,9 @@ def assert_keyence_acquisition_sources_readable(df: pd.DataFrame, *, scope_label
         )
 
     for raw_path in df["source_tiff_path"].dropna().unique():
-        path = Path(str(raw_path))
+        path = resolve_under_input_root(
+            raw_path, input_root=input_root, scope_label=scope_label, full_root_fallback=True
+        )
         if not path.exists():
             raise ValueError(
                 f"{scope_label}: source_tiff_path {str(path)!r} does not exist. The acquisition "
@@ -173,7 +183,9 @@ def assert_elapsed_time_valid(df: pd.DataFrame, *, scope_label: str) -> None:
         )
 
 
-def validate_keyence_acquisition_inventory(df: pd.DataFrame, *, check_sources: bool = False) -> None:
+def validate_keyence_acquisition_inventory(
+    df: pd.DataFrame, *, check_sources: bool = False, input_root: Path | None = None
+) -> None:
     """Fail loud unless the Keyence inventory is schema-complete, calibrated, and collision-free.
 
     Keyence declares WHAT to check (its schema + raw-plane cell key); the shared primitives do HOW.
@@ -205,7 +217,9 @@ def validate_keyence_acquisition_inventory(df: pd.DataFrame, *, check_sources: b
     assert_unique_on_key(df, KEYENCE_ACQUISITION_CELL_KEY, scope_label=_SCOPE_LABEL)
     assert_elapsed_time_valid(df, scope_label=_SCOPE_LABEL)
     if check_sources:
-        assert_keyence_acquisition_sources_readable(df, scope_label=_SCOPE_LABEL)
+        assert_keyence_acquisition_sources_readable(
+            df, scope_label=_SCOPE_LABEL, input_root=input_root
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -327,6 +341,8 @@ def build_keyence_acquisition_inventory_rows(
                 "stage_x_nm": int(meta.get("stage_x_nm", 0)),
                 "stage_y_nm": int(meta.get("stage_y_nm", 0)),
                 "stage_z_nm": int(meta.get("stage_z_nm", 0)),
+                # Full absolute path (as discovered at ingest). Readers resolve it via
+                # resolve_under_input_root, re-anchoring onto the current input_root if it has moved.
                 "source_tiff_path": plane["source_tiff_path"],
             }
         )
@@ -369,6 +385,7 @@ def build_keyence_acquisition_inventory(
     df = pd.DataFrame(rows)
     df = _derive_elapsed_time_s(df)
     df = df.reindex(columns=list(KEYENCE_ACQUISITION_INVENTORY_COLUMNS))
+    # check_sources=False here (build-time); the source paths were just discovered on disk.
     validate_keyence_acquisition_inventory(df)
     log.info(
         "Built Keyence acquisition inventory: %d planes, %d wells, tiles/well=%s",

@@ -18,6 +18,7 @@ from data_pipeline.quality_control.snip_qc.flag_input_resolver import (
     _SOURCE_PAYLOADS,
     _build_flag_column_index,
     resolve_snip_qc_flag_sources,
+    validate_snip_qc_product_requirements,
 )
 
 
@@ -47,6 +48,32 @@ def test_unknown_flag_error_names_eligible_steps():
     flags = ("no_such_flag",)
     with pytest.raises(ValueError, match="eligible steps"):
         _build_flag_column_index(flags)
+
+
+def test_motion_blur_flag_requires_z_stack_product():
+    with pytest.raises(ValueError) as exc_info:
+        validate_snip_qc_product_requirements(
+            ("edge_flag", "motion_blur_flag"),
+            available_product_keys=("BF__projection__focus_stack",),
+        )
+    message = str(exc_info.value)
+    assert "motion_blur_flag" in message
+    assert "BF__z_stack" in message
+    assert "snip_qc.exclusion_flags" in message
+
+
+def test_motion_blur_flag_accepts_configured_z_stack_product():
+    validate_snip_qc_product_requirements(
+        ("motion_blur_flag",),
+        available_product_keys=("BF__projection__focus_stack", "BF__z_stack"),
+    )
+
+
+def test_removing_motion_blur_flag_does_not_require_z_stack():
+    validate_snip_qc_product_requirements(
+        ("edge_flag", "focus_flag"),
+        available_product_keys=("BF__projection__focus_stack",),
+    )
 
 
 def test_ambiguous_flag_lists_all_claimants():

@@ -25,6 +25,7 @@ from data_pipeline.quality_control.snip_qc.contract import SNIP_QC_EXCLUSION_FLA
 from data_pipeline.quality_control.snip_qc.flag_input_resolver import (
     ResolvedFlagSource,
     resolve_snip_qc_flag_sources,
+    validate_snip_qc_product_requirements,
 )
 
 # Resolve config override vs default at parse time — both planning and runtime use this.
@@ -72,6 +73,10 @@ def _snipqc_source_shards(experiment, well_id):
     upstream QC products are built and validated before snip_qc runs. The resolver itself
     does not read these files; it only resolves their paths.
     """
+    validate_snip_qc_product_requirements(
+        _SNIP_QC_EXCLUSION_FLAGS,
+        available_product_keys=tuple(IMAGE_PRODUCT_KEYS),
+    )
     resolved = resolve_snip_qc_flag_sources(
         _SNIP_QC_EXCLUSION_FLAGS,
         output_root=DATA_ROOT,

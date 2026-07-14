@@ -63,6 +63,7 @@ def run_materialize_well(
     candidate: bool = False,
     smoke_max_time_indices: int | None = None,
     master_params_path: Path | None = None,
+    input_root: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize the configured image-product set for ONE well; return frame-inventory rows.
 
@@ -127,6 +128,7 @@ def run_materialize_well(
             candidate=candidate,
             smoke_max_time_indices=smoke_max_time_indices,
             config=config,
+            input_root=input_root,
         )
     if scope_name == "keyence":
         from data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence import (
@@ -148,6 +150,7 @@ def run_materialize_well(
             candidate=candidate,
             smoke_max_time_indices=smoke_max_time_indices,
             master_params_path=master_params_path,
+            input_root=input_root,
         )
     raise UnsupportedScopeError(
         f"No live materialization backend for scope {scope_name!r}. "
@@ -170,6 +173,7 @@ def run_materialize_image_product_for_well(
     candidate: bool = False,
     smoke_max_time_indices: int | None = None,
     master_params_path: Path | None = None,
+    input_root: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize one resolved image product for one well; return its product frame-inventory."""
     scope_name = str(scope_name).strip().lower()
@@ -204,6 +208,7 @@ def run_materialize_image_product_for_well(
             candidate=candidate,
             smoke_max_time_indices=smoke_max_time_indices,
             config=config,
+            input_root=input_root,
         )
     if scope_name == "keyence":
         from data_pipeline.acquisition.image_materialization.scope.keyence.materialize_well_keyence import (
@@ -220,6 +225,7 @@ def run_materialize_image_product_for_well(
             candidate=candidate,
             smoke_max_time_indices=smoke_max_time_indices,
             master_params_path=master_params_path,
+            input_root=input_root,
         )
     raise UnsupportedScopeError(
         f"No live materialization backend for scope {scope_name!r}. "

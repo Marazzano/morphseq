@@ -1,9 +1,9 @@
 # Tech Debt: motion_blur_qc (and therefore snip_qc) hard-requires z-stacks — no graceful path when a scope/dataset can't produce them
 
-**Status:** open design decision, mdcolon 2026-07-10. Today it **fails loud**, which is arguably
-correct — but the failure mode is a mid-DAG `MissingInputException`, not an intentional, explained
-error, and there is no supported way to run the pipeline to `snip_qc` / `analysis_ready` on a
-dataset that legitimately has no z-stacks. Decide the intended behavior.
+**Status:** resolved 2026-07-12. Keyence now materializes `BF__z_stack`. For datasets without
+z-stacks, DAG planning fails with an intentional explanation when `motion_blur_flag` is requested.
+Users may explicitly remove that flag from `snip_qc.exclusion_flags`; the pipeline never removes a
+QC flag automatically.
 
 ---
 
@@ -27,46 +27,21 @@ analysis_ready  ──►  snip_qc
 
 ## Who hits this
 
-- **Keyence native.** Keyence z_stack materialization is not wired
-  (`materialize_well_keyence.py` raises `NotImplementedError`; see
-  `../front_end/...` and the "wire Keyence z_stack" follow-up). Keyence configs therefore request
-  projection only. A full Keyence run on the `all` target will fail at `motion_blur_qc` for every
-  well (no `BF__z_stack` shard), and — because default `exclusion_flags` includes `motion_blur_flag`
-  — snip_qc for those wells is also blocked. **This is expected today** and is why the Keyence full
-  run (job 22211226, 2026-07-10) does not cleanly reach snip_qc.
+- **Keyence native is resolved.** Keyence materializes and validates per-Z mosaics from acquisition
+  inventory rows, so its configured `BF__z_stack` product satisfies motion blur QC.
 - **Any flat-image drop-in dataset.** The drop-in handoff contract deliberately has no
   materialization/z-stack step ("the user already has images"), so a flat-image drop-in has the same
   problem. The DAG dry-run verification confirmed drop-in `through_line` fails with exactly this
   `MissingInputException` on `{well}_BF__z_stack_frame_inventory.csv`.
 
-## The decision to make
+## Implemented policy
 
-When a scope/dataset **cannot** produce z-stacks, what should happen to motion_blur_qc and to
-snip_qc?
+When a scope/dataset cannot produce z-stacks, `motion_blur_flag` remains requested by default and
+planning fails before execution with two explicit remedies: configure `BF__z_stack`, or remove
+`motion_blur_flag` from `snip_qc.exclusion_flags`. Removing it also removes `motion_blur_qc` from the
+resolved snip-QC source inputs through the existing flag resolver.
 
-Candidate answers (pick and specify):
-
-1. **Fail loud, but intentionally.** Detect at DAG-planning time that `motion_blur_flag` is
-   requested while `BF__z_stack` is **not** in the configured product set, and raise a clear message
-   — e.g. *"snip_qc requested `motion_blur_flag`, but no `BF__z_stack` product is configured, so
-   motion_blur_qc cannot be produced. Remove `motion_blur_flag` from `exclusion_flags`, or add the
-   `BF__z_stack` product."* This replaces a confusing mid-run `MissingInputException` with an
-   explained, early failure. (Least behavior change; keeps the honest failure mdcolon wants.)
-
-2. **Config-gate motion_blur_qc on z_stack presence.** Make `motion_blur_qc` (and its
-   `motion_blur_flag` contribution to snip_qc) **conditional** on `BF__z_stack` being in the product
-   set. Absent z_stack → motion_blur_qc is not in the DAG and snip_qc aggregates the remaining four
-   sources. snip_qc / analysis_ready then complete on flat-image / Keyence datasets. (The
-   "graceful" path; more wiring — target chain + resolver + `exclusion_flags` derivation.)
-
-3. **Implement Keyence z_stack** so the question is moot for Keyence (does not help flat-image
-   drop-in).
-
-## Recommendation (not yet implemented)
-
-Option 2 is the structurally correct fix ("z-stack-dependent QC is conditional on the scope actually
-producing z-stacks"), and it generalizes to every flat-image drop-in. Option 1 is a cheap
-intermediate that at least turns the confusing `MissingInputException` into an explained error.
-mdcolon (2026-07-10) chose to **defer** building either for now and let the run fail — recording the
-decision here. Revisit before promising a Keyence or flat-image drop-in run to `snip_qc` /
-`analysis_ready`.
+The requirement is declared in `snip_qc.flag_input_resolver` and checked against the composed
+materialization product keys at DAG parse time. The error names the requested flag, the required
+product, the configured products, and both supported remedies. There is no availability-based
+implicit mutation of the exclusion policy.

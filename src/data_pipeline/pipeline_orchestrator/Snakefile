@@ -330,6 +330,7 @@ if MICROSCOPE == "Keyence":
             {RUN} -m data_pipeline.pipeline_orchestrator.tasks build-keyence-stitch-map \
               --acquisition-inventory-csv "{input.acquisition_inventory_csv}" \
               --output-json "{output.master_params}" \
+              --input-root "{INPUTS_DIR}" \
               --n-samples 50
             """
 
