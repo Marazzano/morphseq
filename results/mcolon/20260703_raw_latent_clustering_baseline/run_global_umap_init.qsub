@@ -1,0 +1,23 @@
+#!/bin/bash
+#$ -N global_umap
+#$ -q trapnell-short.q
+#$ -pe serial 1
+#$ -l mfree=24G
+#$ -l h_rt=04:00:00
+#$ -cwd
+#$ -o results/mcolon/20260703_raw_latent_clustering_baseline/logs/
+#$ -e results/mcolon/20260703_raw_latent_clustering_baseline/logs/
+#$ -V
+
+set -euo pipefail
+
+BASE="/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20260703_raw_latent_clustering_baseline"
+SCRIPT="$BASE/26_global_umap_init.py"
+PY="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+
+mkdir -p "$BASE/logs"
+export PYTHONUNBUFFERED=1
+
+echo "[$(date)] host=$(hostname) job=${JOB_ID:-local} : GLOBAL UMAP init + condensation"
+"$PY" "$SCRIPT"
+echo "[$(date)] done"

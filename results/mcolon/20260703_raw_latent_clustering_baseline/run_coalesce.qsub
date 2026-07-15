@@ -1,0 +1,26 @@
+#!/bin/bash
+#$ -N coalesce
+#$ -q trapnell-short.q
+#$ -pe serial 1
+#$ -l mfree=16G
+#$ -l h_rt=04:00:00
+#$ -cwd
+#$ -o results/mcolon/20260703_raw_latent_clustering_baseline/logs/
+#$ -e results/mcolon/20260703_raw_latent_clustering_baseline/logs/
+#$ -V
+
+set -euo pipefail
+
+MORPHSEQ_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+BASE="$MORPHSEQ_ROOT/results/mcolon/20260703_raw_latent_clustering_baseline"
+SCRIPT="$BASE/30_temporal_coalesce_force.py"
+PY="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+
+mkdir -p "$BASE/logs"
+
+# Unbuffered so per-iteration solver logs land in the SGE .o file live.
+export PYTHONUNBUFFERED=1
+
+echo "[$(date)] host=$(hostname) job=${JOB_ID:-local} : condensation + temporal-coalesce force"
+"$PY" "$SCRIPT"
+echo "[$(date)] done"
