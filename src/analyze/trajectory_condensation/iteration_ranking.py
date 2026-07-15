@@ -120,3 +120,69 @@ def save_ranking_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
     scores.to_csv(output_dir / "iteration_scores.csv", index=False)
     (output_dir / "iteration_geometry_manifest.json").write_text(json.dumps(config_payload, indent=2))
+
+
+def render_iteration_inspection_bundle(
+    *,
+    position_history: np.ndarray,
+    snapshot_iters: list[int] | np.ndarray,
+    mask: np.ndarray,
+    time_values: np.ndarray,
+    labels: np.ndarray,
+    output_dir: str | Path,
+    metrics_history: list[dict[str, Any]] | None = None,
+    color_map: dict[str, str] | None = None,
+    title_prefix: str = "condensation",
+    n_select: int = 6,
+    config_payload: dict[str, Any] | None = None,
+) -> pd.DataFrame:
+    """Write a reviewable folder of chronologically distributed snapshots.
+
+    The bundle contains a score table/plot plus standard static renderings for
+    ``n_select`` snapshots spanning the saved optimization history.  It is
+    intentionally an inspection aid, not an automatic iteration selector.
+    """
+    from .viz.iteration_choice_plots import (
+        plot_iteration_scores,
+        render_selected_iteration_bundle,
+    )
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_iters = np.asarray(snapshot_iters, dtype=int)
+    if position_history.ndim != 4 or len(position_history) != len(snapshot_iters):
+        raise ValueError("position_history and snapshot_iters must have matching saved frames.")
+    if len(snapshot_iters) == 0:
+        raise ValueError("No saved snapshots available for inspection.")
+
+    metrics_df = pd.DataFrame(metrics_history or [])
+    scores = score_saved_iterations(
+        position_history, snapshot_iters, mask, labels, time_values, metrics_df,
+    )
+    payload = dict(config_payload or {})
+    payload.update({"n_saved_snapshots": int(len(snapshot_iters)), "n_selected": int(min(n_select, len(snapshot_iters)))})
+    save_ranking_outputs(scores, output_dir=output_dir, config_payload=payload)
+    plot_iteration_scores(scores, output_dir / "iteration_scores.png", title=title_prefix)
+
+    n_pick = min(max(1, int(n_select)), len(snapshot_iters))
+    selected_idx = np.unique(np.linspace(0, len(snapshot_iters) - 1, n_pick, dtype=int))
+    selected = []
+    palette = color_map or {}
+    for idx in selected_idx:
+        iteration = int(snapshot_iters[idx])
+        snapshot_dir = output_dir / "snapshots" / f"iter_{iteration:04d}"
+        score_row = scores.loc[scores["snapshot_index"] == idx]
+        metadata = {
+            "iteration": iteration,
+            "snapshot_index": int(idx),
+            "score": score_row.iloc[0].to_dict() if not score_row.empty else {},
+            **payload,
+        }
+        render_selected_iteration_bundle(
+            positions=position_history[idx], mask=mask, time_values=time_values,
+            labels=labels, color_map=palette, output_dir=snapshot_dir,
+            title_prefix=title_prefix, snapshot_iter=iteration, metadata=metadata,
+        )
+        selected.append({"iteration": iteration, "snapshot_index": int(idx), "path": str(snapshot_dir.relative_to(output_dir))})
+    pd.DataFrame(selected).to_csv(output_dir / "selected_snapshots.csv", index=False)
+    return scores

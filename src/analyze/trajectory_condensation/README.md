@@ -48,6 +48,7 @@ Stable public entry points currently include:
 | Render condensed time-slice HTML viewer | `tc.time_slice_html(...)` in `viz/condensed_time_slice_viewer.py` |
 | Diagnose force balance | `tc.force_snapshot(...)`, `tc.force_target_table(...)` |
 | Rank saved iterations | `tc.iteration_ranking` helpers |
+| Write a reviewable iteration folder | `tc.render_iteration_inspection_bundle(...)` |
 | Fit downstream principal tree | `tc.fit_principal_tree(...)` and related `tc.principal_tree` helpers |
 
 Use lower-level module imports only when extending internals or debugging a
@@ -146,6 +147,11 @@ for all new work.
 ## Visualization
 
 See [viz/README_viz.md](viz/README_viz.md) for the full visualization API.
+
+When a run saves `position_history`,
+`tc.render_iteration_inspection_bundle(...)` writes an inspection directory
+with an iteration-score table/plot and chronologically distributed snapshot
+subfolders containing trajectory, panel, and stacked-3D renderings.
 
 The standard bundle is written by `tc.render_run(...)` and currently includes
 static trajectory plots, panel plots, stacked 3D plots, rotation GIFs, and

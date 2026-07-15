@@ -132,3 +132,13 @@ pipeline/
 
 # mdcolon results-specific rules moved to results/mcolon/.gitignore
 # (see results/mcolon/.gitignore for details)
+
+# Local worktree artifacts: review images belong under tmp/, while durable
+# investigation scripts/notes continue to live under results/mcolon/.
+.vscode/
+tmp/
+src/data_pipeline/docs/_SCRATCHPAD_*.md
+
+# Scheduler output produced beside pipeline rule files during local runs.
+src/data_pipeline/pipeline_orchestrator/*.err
+src/data_pipeline/pipeline_orchestrator/*.out
