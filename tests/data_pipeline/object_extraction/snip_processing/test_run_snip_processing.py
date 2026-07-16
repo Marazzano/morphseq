@@ -27,6 +27,10 @@ from data_pipeline.object_extraction.segmentation.sam2_video.run_sam2_video impo
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
     build_physical_embryo_registry,
 )
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
+    SNIP_INVENTORY_COLUMNS,
+    validate_snip_inventory_contract,
+)
 from data_pipeline.shared.identifiers import build_image_id, build_well_id
 from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import run_snip_processing
 
@@ -181,6 +185,30 @@ def test_run_snip_processing_joins_registry_physical_embryo_id(tmp_path):
         assert str(row["physical_embryo_id"]) == expected[key], (
             f"snip physical_embryo_id for {key} did not match the registry"
         )
+
+
+def test_run_snip_processing_writes_valid_headered_inventory_for_empty_well(tmp_path):
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    frame_masks = pd.read_csv(frame_masks_csv).iloc[0:0]
+    frame_masks.to_csv(frame_masks_csv, index=False)
+    output_csv = tmp_path / "snip_inventory.csv"
+
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        output_csv=output_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+    )
+
+    result = pd.read_csv(output_csv)
+    assert result.empty
+    assert tuple(result.columns) == SNIP_INVENTORY_COLUMNS
+    validate_snip_inventory_contract(result)
 
 
 def test_run_snip_processing_fails_loud_on_missing_registry_match(tmp_path):

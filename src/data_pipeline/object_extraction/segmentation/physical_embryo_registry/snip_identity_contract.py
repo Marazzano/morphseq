@@ -229,15 +229,27 @@ def validate_snip_grain_identity_columns(
 # spine) — today every snip is tracker-derived so it is non-null in practice, but the contract stays
 # present-but-nullable to pre-allow a future manual/drop-in/untracked snip path WITHOUT a contract
 # change. Do not "tighten" to non-null without retiring that allowance.
-_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS: tuple[str, ...] = (
+SNIP_INVENTORY_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "mask_id",
     "track_id",
     "image_path",
     "processed_snip_path",
     "embryo_mask",
     "embryo_mask_snip_path",
+    "crop_x_min_px",
+    "crop_y_min_px",
+    "crop_x_max_px",
+    "crop_y_max_px",
+    "crop_width_px",
+    "crop_height_px",
     "is_valid_snip",
     "error_message",
+)
+
+# Canonical writer schema for snip_inventory shards, including zero-row shards.
+# Writers import this tuple instead of maintaining a second copy of the contract.
+SNIP_INVENTORY_COLUMNS: tuple[str, ...] = (
+    SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_PROVENANCE_COLUMNS + SNIP_INVENTORY_PAYLOAD_COLUMNS
 )
 
 
@@ -252,14 +264,13 @@ def validate_snip_inventory_contract(df: pd.DataFrame, *, scope_label: str = "sn
          (``validate_snip_grain_identity_columns`` at build mode);
       2. frame-derived provenance columns present (``SNIP_FRAME_PROVENANCE_COLUMNS``);
       3. snip_inventory non-identity payload columns present
-         (``_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS``).
+         (``SNIP_INVENTORY_PAYLOAD_COLUMNS``).
 
     Build mode only (no ``check_sources``): a snip_inventory shard is validated for internal
     coherence at write time; the physical_embryo_registry membership check fires at the consume
     boundaries that already pass ``check_sources=True``.
     """
     validate_snip_grain_identity_columns(df, grain="snip_id", scope_label=scope_label)
-    expected = (*SNIP_FRAME_PROVENANCE_COLUMNS, *_SNIP_INVENTORY_REQUIRED_NON_IDENTITY_COLUMNS)
-    missing = [c for c in expected if c not in df.columns]
+    missing = [c for c in SNIP_INVENTORY_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"{scope_label}: missing required columns: {missing}")

@@ -46,6 +46,12 @@ def validate_mask_quality_qc(
             f"Expected {MASK_QUALITY_QC_TABLE_COLUMNS}."
         )
 
+    # An empty well (0 snips) has nothing to validate — a 0-row CSV round-trip always comes back
+    # as `object` dtype (no True/False tokens to infer bool from), so the dtype check below would
+    # otherwise reject a legitimately-empty, correctly-schemaed well.
+    if df.empty:
+        return
+
     for col in MASK_QUALITY_QC_PAYLOAD_COLUMNS:
         if df[col].isna().any():
             bad = df.loc[df[col].isna(), "snip_id"].head(5).tolist()

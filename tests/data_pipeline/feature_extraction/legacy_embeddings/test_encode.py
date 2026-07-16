@@ -11,6 +11,7 @@ import io
 from pathlib import Path
 
 import numpy as np
+import pandas.api.types as ptypes
 import pytest
 import torch
 from PIL import Image
@@ -58,6 +59,22 @@ MODEL_INPUT_SHAPE = (16, 8)  # (H, W) matching the 16x8 fixture PNGs
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 class TestRowOrderAndCount:
+    def test_empty_input_has_typed_required_schema(self):
+        enc = _FakeEncoder(LATENT_DIM)
+        df = encode_snips([], encoder=enc, model_input_shape=MODEL_INPUT_SHAPE)
+
+        assert df.empty
+        assert list(df.columns) == ["snip_id"] + [f"z_mu_{j:02d}" for j in range(LATENT_DIM)]
+        assert all(ptypes.is_numeric_dtype(df[col]) for col in df.columns[1:])
+
+    def test_empty_input_requires_encoder_latent_dim(self):
+        class _NoDimensionEncoder:
+            def encode_batch(self, x):
+                raise AssertionError("empty input must not call encode_batch")
+
+        with pytest.raises(ValueError, match="latent_dim"):
+            encode_snips([], encoder=_NoDimensionEncoder(), model_input_shape=MODEL_INPUT_SHAPE)
+
     def test_output_row_count_matches_input(self, tmp_path):
         snip_inputs = _make_snip_inputs(5, tmp_path)
         enc = _FakeEncoder(LATENT_DIM)
