@@ -39,7 +39,10 @@ def run_snip_processing_well(
         raise ValueError("snip_processing.enabled is false; nothing to do.")
 
     mask_type = str(snip_cfg.get("mask_type", "embryo"))
-    target_pixel_size_um = float(snip_cfg.get("target_pixel_size_um", 7.8))
+    # 6.5 µm/px matches the materialized z-slice target (see materialized_image_write_policy
+    # .DEFAULT_TARGET_MICROMETERS_PER_PIXEL), so z-snips need no upsampling. Callers may still set a
+    # coarser target here; anything FINER than the source resolution would invent detail.
+    target_pixel_size_um = float(snip_cfg.get("target_pixel_size_um", 6.5))
     output_shape_hw = tuple(int(x) for x in (snip_cfg.get("output_shape_hw") or [576, 256]))
     blend_radius_um = float(snip_cfg.get("blend_radius_um", 20.0))
     save_raw_crops = bool(snip_cfg.get("save_raw_crops", True))

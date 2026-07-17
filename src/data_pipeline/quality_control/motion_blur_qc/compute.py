@@ -17,7 +17,10 @@ import pandas as pd
 from data_pipeline.acquisition.image_materialization.materialized_image_readers import (
     load_z_stack_images_from_image_id,
 )
-from data_pipeline.object_extraction.segmentation.masks.mask_resize import resize_binary_mask_to_shape
+from data_pipeline.object_extraction.segmentation.masks.mask_resize import (
+    resize_binary_mask_to_shape,
+    resize_image_to_shape,
+)
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_FRAME_PROVENANCE_COLUMNS,
@@ -27,6 +30,48 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 from .config import MotionBlurQCConfig
 
 _REQUIRED_FRAME_COLUMNS: tuple[str, ...] = ("mask_id",)
+
+
+def _resample_planes_to_target(
+    planes: list[np.ndarray],
+    z_rows: pd.DataFrame,
+    config: MotionBlurQCConfig,
+) -> list[np.ndarray]:
+    """Resample z-planes to ``config.qc_micrometers_per_pixel`` so the NCC threshold is scope-invariant.
+
+    The stored resolution of a z-slice is a storage decision; the resolution the NCC is computed at
+    is a QC decision. Decoupling them means bad_z_pair_ncc_threshold means the same thing whatever
+    each scope's native calibration is, and lets the write policy change without silently moving the
+    QC operating point. Never upsamples: a source coarser than the target is left alone rather than
+    invent detail.
+    """
+    target = config.qc_micrometers_per_pixel
+    if target is None:
+        return planes
+    if "image_micrometers_per_pixel" not in z_rows.columns:
+        raise ValueError(
+            "motion_blur_qc: qc_micrometers_per_pixel is set but frame_inventory rows lack "
+            "'image_micrometers_per_pixel'; cannot resample to a physical target."
+        )
+    source_values = z_rows["image_micrometers_per_pixel"].astype(float).unique()
+    if len(source_values) != 1:
+        raise ValueError(
+            f"motion_blur_qc: z-stack planes disagree on image_micrometers_per_pixel "
+            f"({sorted(source_values)}); a stack must share one calibration."
+        )
+    source = float(source_values[0])
+    if not source > 0:
+        raise ValueError(
+            f"motion_blur_qc: image_micrometers_per_pixel must be > 0; got {source!r}."
+        )
+    scale = float(target) / source
+    if scale <= 1.0:
+        return planes
+    out_h = max(1, int(round(planes[0].shape[0] / scale)))
+    out_w = max(1, int(round(planes[0].shape[1] / scale)))
+    if (out_h, out_w) == planes[0].shape[:2]:
+        return planes
+    return [resize_image_to_shape(p, (out_h, out_w)) for p in planes]
 
 
 def compute_mask_pixel_motion_metrics(
@@ -120,7 +165,7 @@ def compute_motion_blur_qc(
         mask = _decode_snip_mask(frame_masks_by_mask, mask_id, image_id, snip_id, config)
 
         try:
-            z_planes, _z_rows = load_z_stack_images_from_image_id(
+            z_planes, z_rows = load_z_stack_images_from_image_id(
                 frame_inventory_df,
                 image_id=image_id,
                 product_key=config.z_stack_product_key,
@@ -133,6 +178,8 @@ def compute_motion_blur_qc(
                     f"(image_id={image_id!r}, product_key={config.z_stack_product_key!r}): {exc}"
                 ) from exc
             raise
+
+        z_planes = _resample_planes_to_target(z_planes, z_rows, config)
 
         metrics_by_snip[snip_id] = compute_mask_pixel_motion_metrics(
             np.stack(z_planes, axis=0),

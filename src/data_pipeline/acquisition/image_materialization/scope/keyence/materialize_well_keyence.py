@@ -183,8 +183,6 @@ def materialize_keyence_product_for_well(
             f"Unsupported Keyence image_product_type {resolved_product.image_product_type!r}."
         )
     product_key = image_product_key_for_resolved_product(resolved_product)
-    write_policy = resolve_image_write_policy(config, product_key)
-    ext = suffix_for_policy(write_policy)
 
     # --- Entry guard: well/inventory consistency ---
     expected_well_id = derive_well_id(experiment_id, well_index)
@@ -214,6 +212,13 @@ def materialize_keyence_product_for_well(
     um_per_px = float(inv["micrometers_per_pixel"].iloc[0])
     img_w = int(inv["image_width_px"].iloc[0])
     img_h = int(inv["image_height_px"].iloc[0])
+
+    # Resolved here (not at function entry) because a product declaring a fixed µm/px target needs
+    # this well's native calibration to compute its downsample factor.
+    write_policy = resolve_image_write_policy(
+        config, product_key, native_micrometers_per_pixel=um_per_px
+    )
+    ext = suffix_for_policy(write_policy)
 
     # Determine orientation for the stitcher. Modern Keyence exports often leave this unknown;
     # legacy behavior treats those as horizontal strips.

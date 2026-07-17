@@ -279,8 +279,6 @@ def materialize_yx1_product_for_well(
             f"Unsupported YX1 image_product_type {resolved_product.image_product_type!r}."
         )
     product_key = image_product_key_for_resolved_product(resolved_product)
-    write_policy = _build_yx1_write_policy(config, product_key)
-    ext = suffix_for_policy(write_policy)
 
     # Entry guard — fail loud before any disk work.
     expected_well_id = derive_well_id(experiment_id, well_index)
@@ -317,6 +315,13 @@ def materialize_yx1_product_for_well(
     um_per_px = float(well_acquisition_inventory_df["micrometers_per_pixel"].iloc[0])
     img_w = int(well_acquisition_inventory_df["image_width_px"].iloc[0])
     img_h = int(well_acquisition_inventory_df["image_height_px"].iloc[0])
+
+    # Resolved here (not at function entry) because a product declaring a fixed µm/px target needs
+    # this well's native calibration to compute its downsample factor.
+    write_policy = _build_yx1_write_policy(
+        config, product_key, native_micrometers_per_pixel=um_per_px
+    )
+    ext = suffix_for_policy(write_policy)
     # The ND2 source comes from the inventory (the record of what was acquired), not a CLI arg.
     # Stored as a full path; re-anchored onto input_root if it has moved.
     nd2_path = resolve_under_input_root(
@@ -585,16 +590,23 @@ def _frame_inventory_row(
     }
 
 
-def _build_yx1_write_policy(config: dict | None, product_key: str) -> ImageWritePolicy:
+def _build_yx1_write_policy(
+    config: dict | None,
+    product_key: str,
+    native_micrometers_per_pixel: float | None = None,
+) -> ImageWritePolicy:
     """Construct the YX1 writer policy explicitly at the writer boundary.
 
     This stays integration-ready with Stage 1's optional orientation field without forcing the
     current branch to have landed that dataclass change yet.
     """
-    resolved = resolve_image_write_policy(config, product_key)
+    resolved = resolve_image_write_policy(
+        config, product_key, native_micrometers_per_pixel=native_micrometers_per_pixel
+    )
     policy_kwargs = {
         "file_format": resolved.file_format,
-        "downsample_factor": int(resolved.downsample_factor),
+        # float, not int: a fixed µm/px target yields a fractional factor.
+        "downsample_factor": float(resolved.downsample_factor),
         "downsample_method": resolved.downsample_method,
         "pixel_dtype": resolved.pixel_dtype,
         "jpeg_quality": resolved.jpeg_quality,
@@ -618,5 +630,9 @@ def _write_image_and_read_dims(
 
 
 def _materialized_um_per_px(raw_um_per_px: float, write_policy: ImageWritePolicy) -> float:
-    """Return the materialized-image calibration after the writer downsample policy."""
-    return float(raw_um_per_px) * int(write_policy.downsample_factor)
+    """Return the materialized-image calibration after the writer downsample policy.
+
+    ``downsample_factor`` may be fractional when the product targets a fixed µm/px, so this must NOT
+    coerce to int — doing so truncated e.g. 2.012 to 2 and recorded the wrong calibration.
+    """
+    return float(raw_um_per_px) * float(write_policy.downsample_factor)

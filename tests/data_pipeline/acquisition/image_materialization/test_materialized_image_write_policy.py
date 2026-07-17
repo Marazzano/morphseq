@@ -19,26 +19,83 @@ from data_pipeline.acquisition.image_materialization.materialized_image_write_po
 
 
 def test_resolve_defaults_for_z_stack():
-    policy = resolve_image_write_policy({}, "BF__z_stack")
-    assert policy == ImageWritePolicy(
-        file_format="jpg",
-        orientation="none",
-        downsample_factor=4,
-        downsample_method="area_resize",
-        pixel_dtype="uint8",
-        jpeg_quality=85,
-    )
+    # z_stack targets a FIXED physical resolution, so its factor is derived from the source
+    # calibration rather than being a constant. jpg stays the default while raw data is on disk.
+    policy = resolve_image_write_policy({}, "BF__z_stack", native_micrometers_per_pixel=3.25)
+    assert policy.file_format == "jpg"
+    assert policy.orientation == "none"
+    assert policy.downsample_method == "area_resize"
+    assert policy.pixel_dtype == "uint8"
+    assert policy.jpeg_quality == 85
+    assert policy.downsample_factor == pytest.approx(2.0)  # 6.5 / 3.25
     assert suffix_for_policy(policy) == "jpg"
+
+
+def test_z_stack_lands_on_one_physical_resolution_across_scopes():
+    """The point of the target: different natives must converge on the same µm/px."""
+    keyence = resolve_image_write_policy({}, "BF__z_stack", native_micrometers_per_pixel=3.7744)
+    yx1 = resolve_image_write_policy({}, "BF__z_stack", native_micrometers_per_pixel=3.2308)
+    assert 3.7744 * keyence.downsample_factor == pytest.approx(6.5)
+    assert 3.2308 * yx1.downsample_factor == pytest.approx(6.5)
+    # ...and the factors are genuinely fractional, which the int contract used to forbid.
+    assert not float(keyence.downsample_factor).is_integer()
+
+
+def test_target_without_native_calibration_fails_loud():
+    with pytest.raises(ValueError, match="native_micrometers_per_pixel"):
+        resolve_image_write_policy({}, "BF__z_stack")
+
+
+def test_explicit_downsample_factor_override_beats_product_default_target():
+    # A caller pinning a factor should not also have to null out a default target it never set.
+    cfg = {"image_materialization": {"write_policies": {"BF__z_stack": {"downsample_factor": 4}}}}
+    policy = resolve_image_write_policy(cfg, "BF__z_stack")
+    assert policy.downsample_factor == 4
+
+
+def test_override_naming_both_target_and_factor_fails_loud():
+    cfg = {
+        "image_materialization": {
+            "write_policies": {
+                "BF__z_stack": {"downsample_factor": 4, "target_micrometers_per_pixel": 6.5}
+            }
+        }
+    }
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        resolve_image_write_policy(cfg, "BF__z_stack", native_micrometers_per_pixel=3.25)
+
+
+def test_never_upsamples_when_source_is_coarser_than_target():
+    policy = resolve_image_write_policy({}, "BF__z_stack", native_micrometers_per_pixel=9.0)
+    assert policy.downsample_factor == 1.0
+    assert policy.downsample_method == "none"
+
+
+def test_png_override_keeps_downsampling_active():
+    """Regression: file_format used to drive downsample_method, so flipping a product to PNG
+    silently resolved method='none' and turned downsampling OFF with no error."""
+    cfg = {
+        "image_materialization": {
+            "write_policies": {"BF__z_stack": {"file_format": "png", "jpeg_quality": None}}
+        }
+    }
+    policy = resolve_image_write_policy(cfg, "BF__z_stack", native_micrometers_per_pixel=3.7744)
+    assert policy.file_format == "png"
+    assert policy.downsample_method == "area_resize"
+    assert policy.downsample_factor == pytest.approx(6.5 / 3.7744)
 
 
 def test_flip_polarity_defaults_true_and_is_overridable():
     # Canonical display polarity is inverted for every product (both scopes); the flag is an
     # explicit, per-product write-policy field, not a hidden constant.
     assert resolve_image_write_policy({}, "BF__projection__focus_stack").flip_polarity is True
-    assert resolve_image_write_policy({}, "BF__z_stack").flip_polarity is True
+    assert resolve_image_write_policy(
+        {}, "BF__z_stack", native_micrometers_per_pixel=3.25
+    ).flip_polarity is True
     overridden = resolve_image_write_policy(
         {"image_materialization": {"write_policies": {"BF__z_stack": {"flip_polarity": False}}}},
         "BF__z_stack",
+        native_micrometers_per_pixel=3.25,
     )
     assert overridden.flip_polarity is False
 

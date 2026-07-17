@@ -341,6 +341,76 @@ def raw_stitch2d_align(
     return mosaic.params.get("coords", {})
 
 
+def _overlap_medians(
+    img_a: np.ndarray,
+    img_b: np.ndarray,
+    off_a: tuple[int, int],
+    off_b: tuple[int, int],
+) -> tuple[float, float] | None:
+    """Median of each tile over the region where they OVERLAP, each read in its own frame.
+
+    Returns ``(median_a, median_b)``, or None if the tiles do not overlap. Offsets are ``(y, x)``
+    canvas positions of each tile's top-left corner.
+    """
+    ya0, xa0 = off_a
+    yb0, xb0 = off_b
+    ha, wa = img_a.shape[:2]
+    hb, wb = img_b.shape[:2]
+    y0, y1 = max(ya0, yb0), min(ya0 + ha, yb0 + hb)
+    x0, x1 = max(xa0, xb0), min(xa0 + wa, xb0 + wb)
+    if y1 <= y0 or x1 <= x0:
+        return None
+    a = img_a[y0 - ya0:y1 - ya0, x0 - xa0:x1 - xa0]
+    b = img_b[y0 - yb0:y1 - yb0, x0 - xb0:x1 - xb0]
+    if a.size == 0 or b.size == 0:
+        return None
+    return float(np.median(a)), float(np.median(b))
+
+
+def _overlap_gains(
+    imgs: Sequence[np.ndarray],
+    xs: Sequence[int],
+    ys: Sequence[int],
+    order: Sequence[int],
+) -> list[float]:
+    """Per-tile intensity gain estimated from OVERLAP regions, chained outward from the centre tile.
+
+    Why the overlap and not the whole tile: adjacent tiles image the SAME physical patch in their
+    overlap, so a median difference there is illumination and nothing else. A whole-tile median mixes
+    illumination with CONTENT (an embryo darkens a tile no matter how it was lit), and then
+    "corrects" that content difference as if it were illumination. Measured over plate01's 96 wells,
+    the whole-tile estimator put tile2's gain at mean 1.25 (max 2.06) with a 20.7% CV, while the
+    overlap estimator says mean 1.047 with a 5.4% CV — illumination is an optical property and cannot
+    swing well-to-well, so the extra variance was content. The over-correction also drove gains high
+    enough to clip highlights against the dtype ceiling on 27% of wells (up to 13% of a tile's
+    pixels), because brightfield background already sits at ~65% of the uint16 range.
+
+    Gains chain outward from the centre so every tile lands on the centre tile's photometric scale:
+    ``g[i] = (inner_overlap_median / this_overlap_median) * g[inner]``.
+    """
+    gains = [1.0] * len(imgs)
+    if len(order) < 2:
+        return gains
+    centre_pos = len(order) // 2  # centre of the PHYSICAL order, not of the input list
+
+    def chain(positions, inner_offset: int) -> None:
+        for pos in positions:
+            k = order[pos]
+            inner = order[pos + inner_offset]
+            med = _overlap_medians(imgs[k], imgs[inner], (ys[k], xs[k]), (ys[inner], xs[inner]))
+            if med is None or med[0] <= 0:
+                # No overlap (or a degenerate all-zero edge) => no evidence to re-scale on. Inherit
+                # the neighbour's gain rather than invent one.
+                gains[k] = gains[inner]
+                continue
+            this_med, inner_med = med
+            gains[k] = (inner_med / this_med) * gains[inner]
+
+    chain(range(centre_pos - 1, -1, -1), +1)          # walk outward to the leading edge
+    chain(range(centre_pos + 1, len(order)), -1)      # walk outward to the trailing edge
+    return gains
+
+
 def _feather_composite(
     tiles: Sequence[TileSpec],
     transforms: dict[str, TileTransform],
@@ -350,8 +420,8 @@ def _feather_composite(
 
     Replaces stitch2d's ``smooth_seams()`` (per-tile gamma match) + ``stitch()`` (hard last-wins
     placement) with:
-      - **tile-wide gain**: scale each tile so its whole-tile median matches the CENTER tile's — the
-        intensity-match that made seams agree in the illumination-correction experiments.
+      - **overlap-sampled gain**: scale each tile so its OVERLAP with its inner neighbour matches,
+        chained outward from the centre tile (see ``_overlap_medians``).
       - **linear feather**: in each overlap band, cross-fade tiles by distance from their own edge so
         one fades out as the next fades in — the universal microscopy-stitch blend (Elements / Fiji /
         ASHLAR). Removes the hard seam cut regardless of any residual offset.
@@ -362,11 +432,6 @@ def _feather_composite(
     """
     imgs = [np.asarray(t.image, dtype=np.float64) for t in tiles]
     ids = [t.tile_id for t in tiles]
-
-    # tile-wide gain -> match each tile's median to the center tile's.
-    meds = [np.median(im) for im in imgs]
-    center = len(imgs) // 2
-    gains = [(meds[center] / m if m > 0 else 1.0) for m in meds]
 
     # placement offsets (round to int px)
     stitch_axis = 1 if orientation != "vertical" else 0  # 1 = x (columns), 0 = y (rows)
@@ -380,29 +445,41 @@ def _feather_composite(
     acc = np.zeros((H, W), dtype=np.float64)
     wsum = np.zeros((H, W), dtype=np.float64)
 
-    # order tiles along the stitch axis so "previous overlaps" are well defined
+    # Order tiles along the stitch axis, then give each tile BOTH ramps: fade IN across the overlap
+    # with its predecessor and fade OUT across the overlap with its successor. Both are required —
+    # a tile that only fades in leaves its neighbour at full weight through the overlap, so the
+    # blend jumps to that neighbour's value the moment this tile ends (a hard step at the overlap
+    # EXIT, x = i*step + tile_w). Weights are combined with np.minimum so heavily-overlapped tiles
+    # (leading and trailing ramps colliding) degrade smoothly instead of clobbering each other.
     order = sorted(range(len(imgs)), key=lambda k: (xs[k] if stitch_axis == 1 else ys[k]))
-    placed_extent: list[tuple[int, int]] = []  # (start, end) along stitch axis of already-placed tiles
+    gains = _overlap_gains(imgs, xs, ys, order)
+    extents: dict[int, tuple[int, int]] = {}
     for k in order:
+        start = xs[k] if stitch_axis == 1 else ys[k]
+        span = imgs[k].shape[1] if stitch_axis == 1 else imgs[k].shape[0]
+        extents[k] = (start, start + span)
+
+    for idx, k in enumerate(order):
         im = imgs[k] * gains[k]
         h, w = im.shape
         y0, x0 = ys[k], xs[k]
         # per-column (or per-row) feather weight for THIS tile along the stitch axis
         n = w if stitch_axis == 1 else h
         weight = np.ones(n, dtype=np.float64)
-        start = x0 if stitch_axis == 1 else y0
-        end = start + n
-        # left/upper overlap with any already-placed tile -> ramp 0->1 over the overlapping span
-        for (ps, pe) in placed_extent:
-            ov = min(end, pe) - max(start, ps)
-            if ov > 0 and max(start, ps) == start:      # overlap is on THIS tile's leading edge
-                weight[:ov] = np.linspace(0.0, 1.0, ov)
-            if ov > 0 and min(end, pe) == end:          # overlap on trailing edge (next tile handles it)
-                weight[-ov:] = np.linspace(1.0, 0.0, ov)
+        start, end = extents[k]
+        if idx > 0:  # overlap with the PREVIOUS tile sits on this tile's leading edge -> fade IN
+            ps, pe = extents[order[idx - 1]]
+            ov = min(min(end, pe) - max(start, ps), n)
+            if ov > 0:
+                weight[:ov] = np.minimum(weight[:ov], np.linspace(0.0, 1.0, ov))
+        if idx < len(order) - 1:  # overlap with the NEXT tile sits on the trailing edge -> fade OUT
+            ns, ne = extents[order[idx + 1]]
+            ov = min(min(end, ne) - max(start, ns), n)
+            if ov > 0:
+                weight[-ov:] = np.minimum(weight[-ov:], np.linspace(1.0, 0.0, ov))
         w2d = np.broadcast_to(weight, (h, w)) if stitch_axis == 1 else np.broadcast_to(weight[:, None], (h, w))
         acc[y0:y0+h, x0:x0+w] += im * w2d
         wsum[y0:y0+h, x0:x0+w] += w2d
-        placed_extent.append((start, end))
 
     wsum[wsum == 0] = 1.0
     out = acc / wsum

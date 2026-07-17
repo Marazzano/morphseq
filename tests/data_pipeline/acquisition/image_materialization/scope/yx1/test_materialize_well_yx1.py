@@ -182,6 +182,7 @@ class TestMaterializeYX1Well:
         projection_frame=None,
         focus_index_map=None,
         stack=None,
+        config=None,
     ):
         # The consume-side contract check asserts source_nd2_path EXISTS before the open is faked,
         # so point the shard at a real (empty) file under tmp_path.
@@ -222,6 +223,7 @@ class TestMaterializeYX1Well:
                 resolved_plan=resolved_plan,
                 device="cpu",
                 candidate=candidate,
+                config=config,
             )
         return df, mock_proj, mock_get_stack
 
@@ -335,12 +337,22 @@ class TestMaterializeYX1Well:
         nd2_file.write_bytes(b"")
         inv = _make_z_inventory(n_times=2, z_indices=(0, 2), source_nd2_path=str(nd2_file))
         stack = np.arange(4 * 9 * 7, dtype=np.uint16).reshape(4, 9, 7)
+        # Pin the factor instead of inheriting the product's 6.5 µm/px target: this fixture's
+        # calibration (0.65 µm/px) would resolve to factor 10 and collapse the 9x7 synthetic stack
+        # to a degenerate 1x1, destroying the dimension assertions below. This test is about row
+        # enumeration coming from the inventory's z planes rather than the array shape; the write
+        # policy itself is covered in test_materialized_image_write_policy.py.
         df, mock_proj, mock_get_stack = self._run(
             inv,
             tmp_path,
             candidate=True,
             resolved_plan=Z_STACK_PLAN,
             stack=stack,
+            config={
+                "image_materialization": {
+                    "write_policies": {"BF__z_stack": {"downsample_factor": 4}}
+                }
+            },
         )
 
         assert len(df) == 4
