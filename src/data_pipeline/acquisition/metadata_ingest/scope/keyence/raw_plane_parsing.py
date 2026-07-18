@@ -51,6 +51,14 @@ def _parse_keyence_xy_position_index(path: Path) -> int | None:
         match = re.fullmatch(r"XY(\d+)", part, flags=re.IGNORECASE)
         if match:
             return int(match.group(1))
+    # Legacy W###/P#####/T#### layout (2023 experiments have no XY## dir): the well directory
+    # W### is the acquisition position — one capture location per well; the P##### tile within it
+    # is parsed separately by _extract_keyence_well_and_tile. Mirror the W-handling that the
+    # well/tile parser and _discover_keyence_wells already do, so the position index resolves too.
+    for part in path.parts:
+        match = re.fullmatch(r"W0?(\d+)", part, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
     return None
 
 

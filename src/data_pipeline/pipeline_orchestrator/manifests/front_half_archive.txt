@@ -1,4 +1,4 @@
-# front_half archive manifest — generated 2026-07-16
+# front_half archive manifest — generated 2026-07-17
 #
 # FORMAT:  <experiment> <scope>     (scope is passed as --config microscope=<scope>;
 #          the Snakefile reads raw inputs from RAW_IMAGES_DIR/<scope>/<experiment>)
@@ -7,6 +7,42 @@
 # CONTENT: only experiments with BOTH raw data and a metadata workbook.
 #
 # Regenerate with make_front_half_manifest.py — do not hand-edit.
+20260702_hotchem_24hpf_plate01 Keyence
+20260702_hotchem_24hpf_plate02 Keyence
+20260702_hotchem_30hpf_plate01 Keyence
+20260702_hotchem_30hpf_plate02 Keyence
+20260702_hotchem_36hpf_plate01 Keyence
+20260702_hotchem_36hpf_plate02 Keyence
+20250612_24hpf_ctrl_atf6 Keyence
+20250612_24hpf_wfs1_ctcf Keyence
+20250612_30hpf_ctrl_atf6 Keyence
+20250612_30hpf_wfs1_ctcf Keyence
+20250612_36hpf_ctrl_atf6 Keyence
+20250612_36hpf_wfs1_ctcf Keyence
+20250529_24hpf_ctrl_atf6 Keyence
+20250529_24hpf_wfs1_ctcf Keyence
+20250529_30hpf_ctrl_atf6 Keyence
+20250529_30hpf_wfs1_ctcf Keyence
+20250529_36hpf_ctrl_atf6 Keyence
+20250529_36hpf_wfs1_ctcf Keyence
+20260324_cep290_18hpf_24hpf_plate02 Keyence
+20260324_cep290_18hpf_plate01 Keyence
+20260324_cep290_24hpf_plate01 Keyence
+20260324_cep290_24hpf_plate02 Keyence
+20260324_cep290_30hpf_plate01 Keyence
+20260324_cep290_30hpf_plate02 Keyence
+20260415_cep290_18hpf_plate03 Keyence
+20260415_cep290_30to48hpf_plate02_t01 Keyence
+20260416_cep290_30to48hpf_plate01_t02 Keyence
+20260416_cep290_30to48hpf_plate02_t02 Keyence
+20260331_b9d2_18hpf_plate01 Keyence
+20260331_b9d2_18hpf_plate02 Keyence
+20260414_b9d2_14hpf_plate01 Keyence
+20260414_b9d2_14hpf_plate02 Keyence
+20260414_b9d2_30hpf_plate01 Keyence
+20260414_b9d2_30hpf_plate02 Keyence
+20260415_b9d2_30to48hpf_plate01_t02 Keyence
+20260415_b9d2_30to48hpf_plate02_t02 Keyence
 20230525 Keyence
 20230531 Keyence
 20230602 Keyence
@@ -34,18 +70,6 @@
 20240813_30hpf Keyence
 20240813_36hpf Keyence
 20240813_extras Keyence
-20250529_24hpf_ctrl_atf6 Keyence
-20250529_24hpf_wfs1_ctcf Keyence
-20250529_30hpf_ctrl_atf6 Keyence
-20250529_30hpf_wfs1_ctcf Keyence
-20250529_36hpf_ctrl_atf6 Keyence
-20250529_36hpf_wfs1_ctcf Keyence
-20250612_24hpf_ctrl_atf6 Keyence
-20250612_24hpf_wfs1_ctcf Keyence
-20250612_30hpf_ctrl_atf6 Keyence
-20250612_30hpf_wfs1_ctcf Keyence
-20250612_36hpf_ctrl_atf6 Keyence
-20250612_36hpf_wfs1_ctcf Keyence
 20250622_chem_28C_T00_1425 Keyence
 20250622_chem_28C_T01_1658 Keyence
 20250622_chem_34C_T00_1256 Keyence
@@ -80,30 +104,6 @@
 20260319_cilia_crispant_24hpf Keyence
 20260319_cilia_crispant_30hpf Keyence
 20260320_cilia_crispant_48hpf Keyence
-20260324_cep290_18hpf_24hpf_plate02 Keyence
-20260324_cep290_18hpf_plate01 Keyence
-20260324_cep290_24hpf_plate01 Keyence
-20260324_cep290_24hpf_plate02 Keyence
-20260324_cep290_30hpf_plate01 Keyence
-20260324_cep290_30hpf_plate02 Keyence
-20260331_b9d2_18hpf_plate01 Keyence
-20260331_b9d2_18hpf_plate02 Keyence
-20260414_b9d2_14hpf_plate01 Keyence
-20260414_b9d2_14hpf_plate02 Keyence
-20260414_b9d2_30hpf_plate01 Keyence
-20260414_b9d2_30hpf_plate02 Keyence
-20260415_b9d2_30to48hpf_plate01_t02 Keyence
-20260415_b9d2_30to48hpf_plate02_t02 Keyence
-20260415_cep290_18hpf_plate03 Keyence
-20260415_cep290_30to48hpf_plate02_t01 Keyence
-20260416_cep290_30to48hpf_plate01_t02 Keyence
-20260416_cep290_30to48hpf_plate02_t02 Keyence
-20260702_hotchem_24hpf_plate01 Keyence
-20260702_hotchem_24hpf_plate02 Keyence
-20260702_hotchem_30hpf_plate01 Keyence
-20260702_hotchem_30hpf_plate02 Keyence
-20260702_hotchem_36hpf_plate01 Keyence
-20260702_hotchem_36hpf_plate02 Keyence
 20231110 YX1
 20231206 YX1
 20231218 YX1

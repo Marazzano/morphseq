@@ -33,6 +33,28 @@ DEFAULT_INPUT_ROOT = "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pi
 # second day.
 SCOPE_ORDER = ("Keyence", "YX1")
 
+# Priority experiments dispatch first. SGE array tasks start in ascending task-ID order (subject to
+# -tc), so placing these at the lowest task IDs makes them run first within the shared CPU cap — no
+# separate submission, no disjoint-set bookkeeping. Ordered: earlier patterns rank higher. Substring
+# match, case-insensitive. Applied ONLY to scopes in PRIORITY_SCOPES (Keyence) so the YX1 CPU/GPU
+# split ranges are untouched; a YX1 experiment that happens to match a pattern keeps its normal slot.
+PRIORITY_PATTERNS = (
+    "20260702_hotchem",
+    "20250612_",
+    "20250529_",
+    "_cep290_",
+    "_b9d2",
+)
+PRIORITY_SCOPES = ("Keyence",)
+
+
+def _priority_rank(name: str) -> int:
+    low = name.lower()
+    for i, pat in enumerate(PRIORITY_PATTERNS):
+        if pat.lower() in low:
+            return i
+    return len(PRIORITY_PATTERNS)  # non-priority: sorts after every priority group
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -63,10 +85,15 @@ def main() -> int:
         d = os.path.join(raw, scope)
         if not os.path.isdir(d):
             continue
-        for e in sorted(
+        exps = [
             x for x in os.listdir(d)
             if os.path.isdir(os.path.join(d, x)) and not x.startswith(".") and x != "ignore"
-        ):
+        ]
+        if scope in PRIORITY_SCOPES:
+            exps.sort(key=lambda e: (_priority_rank(e), e))  # priority groups first, then alphabetical
+        else:
+            exps.sort()
+        for e in exps:
             (included if e in stems else skipped).append((scope, e))
 
     with open(args.out, "w") as f:

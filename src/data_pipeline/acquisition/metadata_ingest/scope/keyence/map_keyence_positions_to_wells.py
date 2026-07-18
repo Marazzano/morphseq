@@ -38,6 +38,27 @@ def _keyence_position_sort_key(path: Path) -> tuple[int, str]:
     return 10**9, path.name
 
 
+def _keyence_well_root(exp_dir: Path) -> Path:
+    """Resolve the directory that actually holds the ``XY##``/``W0##`` well dirs.
+
+    Some Keyence exports (observed for cep290/b9d2) wrap the well directories in a redundant single
+    subfolder: ``<experiment>/<experiment_repeat>/XY01`` instead of ``<experiment>/XY01``. Ingest
+    and the acquisition inventory use ``rglob`` so they are unaffected, but this discovery globs the
+    experiment dir directly. If ``exp_dir`` has no ``XY*``/``W0*`` dirs but exactly one subdirectory
+    does, descend into it. The raw tree is not modified.
+    """
+    def _has_well_dirs(d: Path) -> bool:
+        return any(p.is_dir() for p in d.glob("XY*")) or any(p.is_dir() for p in d.glob("W0*"))
+
+    if _has_well_dirs(exp_dir):
+        return exp_dir
+    nested = [p for p in exp_dir.iterdir() if p.is_dir() and _has_well_dirs(p)]
+    if len(nested) == 1:
+        log.info(f"Keyence wells nested one level under {nested[0].name!r}; descending into it.")
+        return nested[0]
+    return exp_dir  # leave unchanged — the "No Keyence well directories" error below fires as before
+
+
 def _discover_keyence_wells(raw_data_dir: Path, experiment_id: str) -> list:
     """
     Discover Keyence acquisition positions and their well markers.
@@ -53,6 +74,8 @@ def _discover_keyence_wells(raw_data_dir: Path, experiment_id: str) -> list:
 
     if not exp_dir.exists():
         raise FileNotFoundError(f"Experiment directory not found: {exp_dir}")
+
+    exp_dir = _keyence_well_root(exp_dir)
 
     positions = []
 
