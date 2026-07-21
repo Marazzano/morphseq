@@ -41,6 +41,9 @@ import pandas as pd
 import skimage.io as skio
 from PIL import Image
 
+from data_pipeline.acquisition.image_materialization.scope.keyence.keyence_plane_io import (
+    read_keyence_plane,
+)
 from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
 from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
     FocusStackConfig,
@@ -304,12 +307,14 @@ def materialize_keyence_product_for_well(
             z_indices = sorted(int(z) for z in t_rows["z_index"].unique())
             for z_index in z_indices:
                 z_rows = t_rows[t_rows["z_index"] == z_index]
+                # z_stack writes planes verbatim; a dropped tile would silently change the stitch
+                # geometry, so this path does NOT tolerate unreadable planes (missing_ok=False).
                 tile_specs = [
                     TileSpec(
                         tile_id=str(row.tile_id),
-                        image=np.asarray(skio.imread(str(
+                        image=read_keyence_plane(
                             _resolve_tiff(row.source_tiff_path, input_root=input_root)
-                        ))),
+                        ),
                     )
                     for row in z_rows.sort_values("tile_id").itertuples(index=False)
                 ]
@@ -415,10 +420,29 @@ def materialize_keyence_product_for_well(
                     f"No z-plane TIFFs for well={well_id} time_index={t} tile_id={tile_id}."
                 )
             # Read raw Z planes → (Z, Y, X) uint16 stack (NOT normalized — that is the shared
-            # primitive's job).
-            planes = [skio.imread(str(p)) for p in z_paths]
-            stack_zyx = np.stack(planes, axis=0)
-            z_indices_tile = np.asarray(sorted_rows["z_index"].tolist(), dtype=np.int32)
+            # primitive's job). read_keyence_plane owns the raw-data edge cases: it promotes 8-bit
+            # (2023-era) acquisitions to uint16 for focus_stack_group, and drops zero-byte planes so
+            # one corrupt file cannot abort the whole experiment.
+            #
+            # Planes and their z_index are filtered TOGETHER: focus_index_map indexes positions in
+            # this stack, and tile_z_indices maps those positions back to real z_index values. If a
+            # plane were dropped without dropping its z_index the two would desync and every focus
+            # index after the gap would be attributed to the wrong Z.
+            kept_planes: list[np.ndarray] = []
+            kept_z: list[int] = []
+            for p, z in zip(z_paths, sorted_rows["z_index"].tolist()):
+                img = read_keyence_plane(p, missing_ok=True)
+                if img is None:
+                    continue
+                kept_planes.append(img)
+                kept_z.append(int(z))
+            if not kept_planes:
+                raise ValueError(
+                    f"All z-plane TIFFs unreadable for well={well_id} time_index={t} "
+                    f"tile_id={tile_id}."
+                )
+            stack_zyx = np.stack(kept_planes, axis=0)
+            z_indices_tile = np.asarray(kept_z, dtype=np.int32)
             if tile_z_indices is None:
                 tile_z_indices = z_indices_tile
             ordered_tile_ids.append(str(tile_id))

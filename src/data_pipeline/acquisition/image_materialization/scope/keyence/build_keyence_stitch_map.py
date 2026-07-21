@@ -27,6 +27,10 @@ import numpy as np
 import pandas as pd
 import skimage.io as skio
 
+from data_pipeline.acquisition.image_materialization.scope.keyence.keyence_plane_io import (
+    read_keyence_plane,
+)
+
 from data_pipeline.acquisition.image_building.shared.focus_stack_group import (
     FocusStackConfig,
     focus_stack_group,
@@ -307,7 +311,14 @@ def _build_tile_specs(
         )
         if not z_paths:
             raise ValueError(f"No z-plane TIFFs for tile_id={tile_id!r}.")
-        planes = [skio.imread(str(p)) for p in z_paths]
+        # Shared read boundary: promotes 8-bit (2023-era) acquisitions to uint16. Without this the
+        # uint16 guard in focus_stack_group raises, the caller swallows it as a non-fatal
+        # 'could not read tile_shape' warning, tile_shape stays [], and stitch2d then rejects the
+        # map for EVERY well — a silent warning turning into a total experiment failure.
+        planes = [read_keyence_plane(p, missing_ok=True) for p in z_paths]
+        planes = [pl for pl in planes if pl is not None]
+        if not planes:
+            raise ValueError(f"All z-plane TIFFs unreadable for tile_id={tile_id!r}.")
         ordered_tile_ids.append(str(tile_id))
         raw_stacks.append(np.stack(planes, axis=0))
 
