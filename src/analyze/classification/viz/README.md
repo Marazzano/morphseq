@@ -17,6 +17,7 @@ For the underlying compute API (producing the inputs to these plots), see [`../R
 | Per-embryo phenotype fingerprint (all-pairs heatmap) | `plot_pairwise_coordinate_heatmap` | `result.layers["raw_contrast_scores_long"]` (needs `save_contrast_coordinates=True`) | Where one embryo falls on every pairwise classifier simultaneously. |
 | Phenotype emergence heatmap (static) | `plot_emergence_heatmap` | `EmergenceData` from `compute_emergence_data(result.scores, ...)` | Per-AUROC-level onset matrix. |
 | Phenotype emergence — interactive explorer | `render_emergence_html` | `EmergenceData` | Self-contained HTML, no server; D3 + data inlined. |
+| Probability-simplex explorer (N sliders, ANDed) | `from_label_transfer` / `from_run_classification` (adapters), or `render_simplex_explorer_html_from_scores` (explicit) | Scored long DataFrame | Self-contained HTML. Adapters translate producer column conventions. |
 | Wrong-rate heatmap (embryos × time) | `plot_wrongness_heatmap` | misclassification pipeline outputs | From misclass deep-dive pipeline. |
 | Per-embryo deep dive (prediction timeline + probability traces) | `plot_embryo_deep_dive` | misclassification pipeline outputs | One embryo, full story. |
 | Wrong-rate violins by group | `plot_wrong_rate_distributions` | misclassification pipeline outputs | |
@@ -37,6 +38,8 @@ For the underlying compute API (producing the inputs to these plots), see [`../R
 | `misclassification.py` | `plot_margin_trends` + the misclassification deep-dive gallery (wrongness heatmap, embryo deep dive, wrong-rate violin, confusion profile, flagged gallery). |
 | `pairwise_coordinates.py` | `plot_pairwise_coordinate_heatmap` — per-embryo all-pairs fingerprint. |
 | `emergence.py` | `EmergenceData`, `compute_emergence_data`, `plot_emergence_heatmap`, `render_emergence_html`, `render_emergence_html_from_scores`. |
+| `simplex_explorer.py` | `build_simplex_payload`, `render_simplex_explorer_html`, `render_simplex_explorer_html_from_scores`. Producer-agnostic. |
+| `simplex_adapters.py` | `resolve_prob_cols`, `from_label_transfer`, `from_run_classification` — producer-specific tables → simplex payloads. |
 | `trajectory.py` | Cluster-level feature trends and rolling-window significance plots (used by misclass pipeline analysis). |
 | `classification.py` | Low-level primitives (`plot_auroc_with_null`, `plot_multiple_aurocs`, `plot_feature_comparison_grid`, `plot_multiclass_ovr_aurocs`). |
 | `utils.py` | Internal validators (`validate_required_columns`, `validate_margin_range`, `validate_unique_embryo_x`). |
@@ -384,6 +387,117 @@ from analyze.classification.emergence import (
 ```
 
 See [`../emergence/ALGORITHM.md`](../emergence/ALGORITHM.md) and [`../emergence/DESIGN.md`](../emergence/DESIGN.md) for the full algorithm spec.
+
+---
+
+## Probability-simplex explorer
+
+**File:** `simplex_explorer.py`
+
+Standalone interactive page with **one threshold slider per class, ANDed together**. Because a multinomial model's probabilities sum to 1, thresholding them independently and ANDing carves out a *region of the simplex* rather than slicing one axis:
+
+```
+P(CE) >= 0.7                          -> confidently CE
+P(CE) >= 0.3 AND P(CE) <= 0.6         -> boundary cases worth eyeballing
+P(Not Penetrant) >= 0.6, facet homo   -> candidate non-penetrant mutants
+```
+
+Impossible combinations (all classes `>= 0.5`) are allowed — they return nothing, and the panel flags the constraint rather than silently blanking.
+
+**Viz consumes probabilities; it does not fit models.** Do the training/CV in your script and pass the probability columns in.
+
+Generalizes to any N: 3 classes → 3 sliders, 2 → 2, 1 → 1. Nothing hardcodes three.
+
+### Simplest path — adapters
+
+`simplex_explorer` is producer-agnostic: `class_prob_cols` is always explicit and it knows nothing about upstream column names. **`simplex_adapters.py` is the translation layer** — one adapter per producer, each knowing exactly one output convention:
+
+```python
+from analyze.classification.viz import from_label_transfer
+
+from_label_transfer(
+    transferred_df,                      # has prob_CE / prob_HTA / prob_Not Penetrant
+    features=["baseline_deviation_normalized", "total_length_um"],
+    class_order=["CE", "HTA", "Not Penetrant"],   # optional: fixes slider order
+    non_penetrant_class="Not Penetrant",
+    group_col="genotype",
+    output_path="explorer.html",
+)
+```
+
+| Adapter | Producer | Prefix | Default `id_col` / `time_col` |
+|---|---|---|---|
+| `from_label_transfer` | `label_transfer.transfer_labels` | `prob_` | `query_embryo_id` / `predicted_stage_hpf` |
+| `from_run_classification` | `run_classification` predictions layer | `pred_proba_` | `embryo_id` / `time_bin_center` |
+
+Extra kwargs forward to `build_simplex_payload`. Naming the producer is the point: a table that doesn't match raises rather than guessing, and a table carrying two conventions resolves strictly to the one you asked for.
+
+**Adding a producer:** write `from_<producer>`, resolve via `resolve_prob_cols(df, prefix, class_order=...)`, delegate. Don't add prefixes to an existing adapter to make it cover a second producer.
+
+### API
+
+```python
+# --- simplex_adapters.py ---
+resolve_prob_cols(
+    df, prefix: str, *, class_order: Sequence[str] | None = None,
+) -> dict[str, str]                       # {class name: probability column}
+
+from_label_transfer(df, *, id_col="query_embryo_id", time_col="predicted_stage_hpf",
+                    features, class_order=None, title=..., subtitle=None,
+                    output_path=None, **payload_kwargs) -> str
+
+from_run_classification(df, *, id_col="embryo_id", time_col="time_bin_center",
+                        features, class_order=None, title=..., subtitle=None,
+                        output_path=None, **payload_kwargs) -> str
+
+# --- simplex_explorer.py ---
+build_simplex_payload(
+    df,
+    *,
+    id_col: str,                          # embryo identifier
+    time_col: str,                        # numeric x axis
+    features: Sequence[str],              # one panel row per feature
+    class_prob_cols: Mapping[str, str],   # explicit; use an adapter to derive it
+    group_col: str | None = None,         # facet/color group, e.g. zygosity
+    curated_col: str | None = None,       # tooltip only
+    in_train_col: str | None = None,      # marks out-of-fold scores
+    class_colors: Mapping[str, str] | None = None,
+    class_aucs: Mapping[str, float] | None = None,      # shown beside each slider
+    feature_labels: Mapping[str, str] | None = None,
+    group_labels: Mapping[str, str] | None = None,
+    group_order: Sequence[str] | None = None,
+    group_colors: Mapping[str, str] | None = None,
+    non_penetrant_class: str | None = None,             # None → last class
+    time_label: str = "Hours post fertilization",
+    max_points: int = 60,                 # traces evenly downsampled beyond this
+    default_color_by: str = "zyg",        # "zyg" | "pred"
+) -> dict
+
+render_simplex_explorer_html(
+    payload, *,
+    title: str = "Probability simplex explorer",
+    subtitle: str | None = None,          # inline HTML allowed, NOT escaped
+    output_path: str | Path | None = None,
+) -> str
+
+render_simplex_explorer_html_from_scores(
+    df, *, id_col, time_col, features, class_prob_cols,
+    title=..., subtitle=None, output_path=None,
+    **payload_kwargs,                     # forwarded to build_simplex_payload
+) -> str
+```
+
+### Page controls
+
+Facet by zygosity or predicted class; color by zygosity, predicted class, or shade by any class's probability. Each slider row carries a **shade** radio that toggles — clicking the active one reverts to the default categorical colors. Sliders show an "N alone" readout (how many embryos that single constraint keeps by itself). Flipping a slider's direction resets it to the end that keeps everything, so the view never blanks. Hovering a trace shows embryo id, zygosity, curated label, predicted class, every class probability, and whether the score was out-of-fold or applied.
+
+Each facet panel draws a dashed divider at the **predicted-penetrant rate** — the fraction of that panel's embryos whose predicted class is not `non_penetrant_class`. This is a **classifier output, not a measured biological penetrance**, and the on-plot label says `predicted penetrant: NN%` for exactly that reason. Do not relabel it plain "penetrance".
+
+### Class names are phenotypes, not genotypes
+
+The unaffected class is named `"Not Penetrant"`, never `"wildtype"`. An embryo of any zygosity — het, homozygous, unknown — can be predicted Not Penetrant; that is the entire point of the class, and naming it "wildtype" conflates genotype with phenotype. The **zygosity facet keeps the genotype vocabulary** (`wildtype` / `heterozygous` / `homozygous` / `unknown`). A `wildtype` *zygosity* and a `Not Penetrant` *class* reading differently is correct and intended.
+
+Output is fully self-contained: no CDN, no external fonts or images, light + dark theme via `prefers-color-scheme`. Worked example: `results/mcolon/20260715_lab_meeting_scratch/30_three_class_simplex_explorer.py`.
 
 ---
 

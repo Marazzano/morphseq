@@ -30,6 +30,16 @@ from .emergence import (
     render_emergence_html,
     render_emergence_html_from_scores,
 )
+from .simplex_explorer import (
+    build_simplex_payload,
+    render_simplex_explorer_html,
+    render_simplex_explorer_html_from_scores,
+)
+from .simplex_adapters import (
+    from_label_transfer,
+    from_run_classification,
+    resolve_prob_cols,
+)
 
 __all__ = [
     "plot_auroc_with_null",
@@ -57,4 +67,12 @@ __all__ = [
     "plot_emergence_heatmap",
     "render_emergence_html",
     "render_emergence_html_from_scores",
+    # Simplex explorer
+    "build_simplex_payload",
+    "render_simplex_explorer_html",
+    "render_simplex_explorer_html_from_scores",
+    # Simplex adapters (producer-specific → explorer)
+    "resolve_prob_cols",
+    "from_label_transfer",
+    "from_run_classification",
 ]
