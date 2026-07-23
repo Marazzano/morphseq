@@ -305,6 +305,50 @@ def materialize_keyence_product_for_well(
 
         if resolved_product.image_product_type == "z_stack":
             z_indices = sorted(int(z) for z in t_rows["z_index"].unique())
+
+            # ── FRAME GEOMETRY: aligned ONCE per (well, time_index), reused by every z plane ──
+            # The tiles of a frame do not move as the stage steps through focus, so tile alignment
+            # is a property of the FRAME, not of the individual plane. Derive it from the frame's
+            # focus-stacked composites (sharp, feature-rich — the same images the projection
+            # product stitches), then apply those transforms verbatim to each plane below.
+            #
+            # This replaces per-plane alignment, which was wrong on both counts: out-of-focus
+            # planes have too few features to align reliably (so planes of one stack could end up
+            # in different coordinate frames from each other and from their own projection), and a
+            # plane yielding <2 descriptors aborts the whole well inside OpenCV's FLANN matcher
+            # ("(size_t)knn <= index_->size()"). No plane is feature-matched any more.
+            frame_stacks: list[np.ndarray] = []
+            frame_tile_ids: list[str] = []
+            for tile_id, tile_rows in t_rows.groupby("tile_id", sort=True):
+                planes = [
+                    read_keyence_plane(
+                        _resolve_tiff(r.source_tiff_path, input_root=input_root)
+                    )
+                    for r in tile_rows.sort_values("z_index").itertuples(index=False)
+                ]
+                frame_stacks.append(np.stack(planes, axis=0))
+                frame_tile_ids.append(str(tile_id))
+
+            if len(frame_tile_ids) == 1:
+                frame_transforms = None  # single tile: nothing to align, stitcher short-circuits
+            else:
+                frame_group = focus_stack_group(
+                    frame_stacks, config=FocusStackConfig(), device=device
+                )
+                frame_specs = [
+                    TileSpec(tile_id=tid, image=frame_group.tiles[i].projection_u8)
+                    for i, tid in enumerate(frame_tile_ids)
+                ]
+                frame_result = stitch_frame_tiles(frame_specs, tiling_config, fallback)
+                if not frame_result.qc.passed:
+                    raise UnstitchableFrameError(
+                        f"Frame-geometry stitch failed for well={well_id} time_index={t}: "
+                        f"reasons={frame_result.qc.reasons} "
+                        f"fallback_used={frame_result.fallback_used}. Refusing to materialize "
+                        f"z planes against untrustworthy geometry."
+                    )
+                frame_transforms = frame_result.tile_transforms
+
             for z_index in z_indices:
                 z_rows = t_rows[t_rows["z_index"] == z_index]
                 # z_stack writes planes verbatim; a dropped tile would silently change the stitch
@@ -318,7 +362,9 @@ def materialize_keyence_product_for_well(
                     )
                     for row in z_rows.sort_values("tile_id").itertuples(index=False)
                 ]
-                result = stitch_frame_tiles(tile_specs, tiling_config, fallback)
+                result = stitch_frame_tiles(
+                    tile_specs, tiling_config, fallback, use_transforms=frame_transforms
+                )
                 if not result.qc.passed:
                     raise UnstitchableFrameError(
                         f"stitch_frame_tiles returned qc.passed=False for well={well_id} "

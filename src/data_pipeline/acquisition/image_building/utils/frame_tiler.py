@@ -108,10 +108,64 @@ def stitch_frame_tiles(
     tile_specs: Sequence[TileSpec],
     config: FrameTilingConfig,
     fallback: FallbackParams | None = None,
+    use_transforms: dict[str, TileTransform] | None = None,
 ) -> FrameTileResult:
+    """Stitch one frame's tiles into a mosaic.
+
+    ``use_transforms``: apply THESE per-tile transforms verbatim and skip alignment entirely.
+
+    This is how a z-stack reuses its own frame's geometry. The tiles of a frame do not move
+    between z planes — the stage does not translate as it steps through focus — so alignment is a
+    property of the FRAME, not of the plane. Computing it once on the in-focus composite and
+    applying it to every plane is both correct and ~z-depth times cheaper.
+
+    Aligning each plane independently (the previous behaviour) is wrong twice over: out-of-focus
+    planes carry too few features to align reliably, so planes of one stack could land in
+    DIFFERENT coordinate frames from each other and from their own projection; and when a blurry
+    plane yields <2 descriptors, OpenCV's FLANN matcher aborts with
+    ``(size_t)knn <= index_->size()``, killing the whole well. Passing the frame's transforms
+    removes both failure modes because no feature matching happens on plane data at all.
+    """
     tiles = _prepare_tile_specs(tile_specs)
     if not tiles:
         raise ValueError("No tile specs provided")
+
+    if use_transforms is not None and len(tiles) > 1:
+        missing = [t.tile_id for t in tiles if t.tile_id not in use_transforms]
+        if missing:
+            raise ValueError(
+                f"use_transforms is missing tile_id(s) {missing}; it must cover every tile in the "
+                f"frame (have {sorted(use_transforms)})."
+            )
+        transforms = {t.tile_id: use_transforms[t.tile_id] for t in tiles}
+        stitched_raw = _feather_composite(tiles, transforms, config.orientation)
+        layout_orientation = _infer_layout_orientation(
+            transforms, fallback_orientation=config.orientation
+        )
+        stitched = _finalize_image(
+            stitched_raw,
+            config=config,
+            n_tiles=len(tiles),
+            tile_shape=tiles[0].image.shape[:2],
+            layout_orientation=layout_orientation,
+        )
+        shifts = [max(abs(tr.dx_px), abs(tr.dy_px)) for tr in transforms.values()]
+        qc = TilingQC(
+            passed=True,
+            reasons=tuple(),
+            metrics={
+                "tile_count": float(len(tiles)),
+                "max_abs_shift_px": float(max(shifts)) if shifts else 0.0,
+            },
+            suggested_action="ok",
+        )
+        return FrameTileResult(
+            stitched=stitched,
+            tile_transforms=transforms,
+            canvas_shape=stitched.shape[:2],
+            qc=qc,
+            fallback_used="none",
+        )
 
     if len(tiles) == 1:
         stitched = _finalize_image(
