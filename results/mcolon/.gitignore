@@ -55,6 +55,10 @@
 **/*.tsv
 **/*.json
 
+# Fitted R objects / session checkpoints (large — e.g. hooke ccm .rds are ~6GB)
+**/*.rds
+**/*.RData
+
 # Avoid accidental package scaffolding from experiment scratch dirs
 **/__init__.py
 
