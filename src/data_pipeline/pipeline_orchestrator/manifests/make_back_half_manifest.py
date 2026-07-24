@@ -16,9 +16,24 @@ Regenerate after any front_half run:
 
 from __future__ import annotations
 
+import argparse
 import sys
 from datetime import date
 from pathlib import Path
+
+# Work dirs owned by another user (mdcolon) WITHOUT group-write. Snakemake writes its own log
+# inside the work dir, so a task using one dies instantly with PermissionError. We cannot chmod or
+# delete them (the metadata/ dir they live in is not group-writable either — verified 2026-07-22).
+# They are excluded by default until the owner opens permissions or the run points at a work-dir
+# root we own. Everything else about these experiments is fine; this is purely a filesystem gate.
+BLOCKED_WORK_DIRS = frozenset({
+    "20260326_wt_ref",
+    "20260410_otx_pilot",
+    "20260414_sci_b9d2_48hpf_plate01",
+    "20260415_sci_cep290_48hpf_plate01",
+    "20260501_zfpm_pilot",
+    "20260502_zfpm_pilot",
+})
 
 ACQ = Path(
     "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/acquisition"
@@ -81,6 +96,18 @@ def _scope_map() -> dict[str, str]:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--scope", choices=("Keyence", "YX1"), default=None,
+                    help="Emit only this scope. Useful when one scope is blocked by a known bug "
+                         "(e.g. the Keyence flann/stitch crash) and the other can run clean.")
+    ap.add_argument("--out", default=None, help="Manifest filename (default: back_half_archive.txt)")
+    ap.add_argument("--include-blocked", action="store_true",
+                    help="Include experiments whose work dir is not writable by us (see "
+                         "BLOCKED_WORK_DIRS). Only useful with a work-dir root override.")
+    args = ap.parse_args()
+
+    out_path = Path(__file__).with_name(args.out) if args.out else MANIFEST
+
     if not ACQ.is_dir():
         sys.exit(f"acquisition root not found: {ACQ}")
 
@@ -99,6 +126,11 @@ def main() -> None:
             # No scope == cannot resolve raw inputs. Exclude loudly rather than emit a line that
             # would fail at DAG-build time on the cluster.
             skipped.append((exp_dir.name, "NO_SCOPE", n_s, n_v))
+            continue
+        if args.scope and scope != args.scope:
+            continue
+        if exp_dir.name in BLOCKED_WORK_DIRS and not args.include_blocked:
+            skipped.append((exp_dir.name, "WORKDIR_PERM", n_s, n_v))
             continue
         ready.append((exp_dir.name, n_s, scope))
 
@@ -128,9 +160,9 @@ def main() -> None:
     ]
     lines += [f"{name} {scope}" for name, _, scope in ready]
 
-    MANIFEST.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    print(f"wrote {MANIFEST}")
+    print(f"wrote {out_path}")
     print(f"  eligible : {len(ready)}  (priority: {n_priority})")
     print(f"  excluded : {len(skipped)}")
     print("\n  first 12 tasks:")
