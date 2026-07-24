@@ -70,9 +70,9 @@ print(f"{len(records)} dataset/timepoint groups loaded; standardized to {STD_DEP
 PANEL = sp.PANEL_HPF
 
 # Protocol grouping drives colour throughout.
-OLD = {"v2.3.0", "GAP16 (v2.3.0)", "GENE11 ctrl (old)"}
+OLD = {"GENE11 ctrl (old)"}
 def protocol(name):
-    return "old method" if name in OLD else "new method"
+    return "old method" if (name in OLD or name.endswith("(v2.3.0)")) else "new method"
 
 COL_OLD, COL_NEW = "#C1666B", "#4281A4"
 def colour(name):
@@ -437,7 +437,7 @@ ns = np.arange(6, 61, 1)
 fig, axes = plt.subplots(1, len(PANEL), figsize=(15, 4.8), sharey=True)
 
 pick = {24: ["GAP16 (v2.3.0)", "GENE7 28C ctrl"],
-        30: ["v2.3.0", "GENE7 28C ctrl"],
+        30: ["GAP14 (v2.3.0)", "HF4 (v2.3.0)", "GENE7 28C ctrl"],
         36: ["GAP16 (v2.3.0)", "GENE11 ctrl (old)", "GENE7 28C ctrl"]}
 
 for ax, stage in zip(axes, PANEL):
@@ -447,9 +447,9 @@ for ax, stage in zip(axes, PANEL):
             continue
         r = match[0]
         pw = [sp.nb_power(r["theta"], r["rate"], r["standard_depth"], int(n), EFFECT) for n in ns]
-        lbl = name + ("  (pooled fallback)" if stage == 30 and name == "v2.3.0" else "")
+        lbl = name
         ax.plot(ns, pw, color=colour(name), lw=2.8,
-                ls="--" if (stage == 30 and name == "v2.3.0") else "-", label=lbl)
+                ls="-", label=lbl)
     ax.axhline(0.80, ls="--", c="grey", lw=1.2)
     ax.axvline(N_ARM, ls=":", c="grey", lw=1.2)
     ax.set_title(f"{stage} hpf")

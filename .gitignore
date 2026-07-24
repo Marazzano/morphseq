@@ -130,6 +130,17 @@ pipeline/
 *.err
 *.out
 
+# Ignore image files repo-wide (case-insensitive extensions)
+*.[Pp][Nn][Gg]
+*.[Tt][Ii][Ff]
+*.[Tt][Ii][Ff][Ff]
+*.[Jj][Pp][Gg]
+*.[Jj][Pp][Ee][Gg]
+*.[Gg][Ii][Ff]
+*.[Bb][Mm][Pp]
+*.[Ww][Ee][Bb][Pp]
+*.[Ss][Vv][Gg]
+
 # mdcolon results-specific rules moved to results/mcolon/.gitignore
 # (see results/mcolon/.gitignore for details)
 

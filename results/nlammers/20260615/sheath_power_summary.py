@@ -69,13 +69,24 @@ def load_embryo_counts():
         if total <= 0 or hpf[key] not in PANEL_HPF:
             continue
         dataset, _ = key
+        # v2.3.0 is a pool of several independent enzymatic experiments; it is
+        # supplied disaggregated by load_v230_experiments(), so drop the pool here
+        # to avoid double-counting it against its own constituents.
+        if dataset == "v2.3.0":
+            continue
         groups[(dataset, hpf[key])][0].append(sheath.get(key, 0))
         groups[(dataset, hpf[key])][1].append(total)
     return groups
 
 
-def load_gap16_counts():
-    """GAP16 is a single v2.3.0 experiment; embryo IDs carry the prefix."""
+def load_v230_experiments():
+    """Split the pooled v2.3.0 cache into its constituent experiments.
+
+    v2.3.0 aggregates several independent enzymatic experiments (embryo IDs carry
+    the experiment as a prefix, e.g. GAP16_..., CHEM1_..., HF4_...). They were run
+    at very different depths, so pooling them hides both the spread and the fact
+    that GAP16 is an outlier. Each prefix becomes its own dataset here.
+    """
     totals, sheath, hpf = defaultdict(int), defaultdict(int), {}
     with open(V230_COUNTS) as handle:
         for row in csv.DictReader(handle):
@@ -92,10 +103,13 @@ def load_gap16_counts():
 
     groups = defaultdict(lambda: ([], []))
     for embryo, total in totals.items():
-        if total <= 0 or embryo.split("_")[0] != "GAP16":
+        if total <= 0:
             continue
-        groups[("GAP16 (v2.3.0)", hpf[embryo])][0].append(sheath.get(embryo, 0))
-        groups[("GAP16 (v2.3.0)", hpf[embryo])][1].append(total)
+        expt = embryo.split("_")[0]
+        # keep GAP16's established label; others get "<EXPT> (v2.3.0)"
+        label = "GAP16 (v2.3.0)" if expt == "GAP16" else f"{expt} (v2.3.0)"
+        groups[(label, hpf[embryo])][0].append(sheath.get(embryo, 0))
+        groups[(label, hpf[embryo])][1].append(total)
     return groups
 
 
@@ -125,7 +139,7 @@ def load_gene11_counts():
 def collect_groups(all_timepoints=False):
     """Merge every source into one {(dataset, hpf): (sheath, total)} mapping."""
     groups = {}
-    for source in (load_embryo_counts(), load_gap16_counts(),
+    for source in (load_embryo_counts(), load_v230_experiments(),
                    load_gene7_counts(), load_gene11_counts()):
         for key, value in source.items():
             groups[key] = value
@@ -263,3 +277,70 @@ def variance_split(record, n_per_arm=24, use_standard_depth=True):
     over = 0.0 if record["theta_is_ceiling"] else 1 / record["theta"]
     total = poisson + over
     return poisson, over, (over / total if total > 0 else 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Dissociation method (confirmed from cds dis_protocol where available, else
+# assigned by the user from experimental records):
+#   bead       = Bead_Milling      (GENE7/8/9/10, v3.1.0 atlas)
+#   enzymatic  = TrypLE_Collagenase (GENE11, GAP16, all v2.3.0 sub-experiments)
+# ---------------------------------------------------------------------------
+BEAD = {
+    "GENE7 28C ctrl", "v3.1.0 GENE8 run 1", "v3.1.0 GENE9 run 1",
+    "v3.1.0 GENE10 run 1", "v3.1.0",
+}
+# Enzymatic explicit members; every disaggregated "<EXPT> (v2.3.0)" experiment is
+# also enzymatic and is matched by suffix in dissociation_method() below. The
+# pooled "v2.3.0" is intentionally absent -- it is replaced by its constituents.
+ENZYMATIC = {
+    "GENE11 ctrl (old)",
+}
+
+METHOD_COLOR = {"bead": "#4281A4", "enzymatic": "#C1666B"}
+
+
+def dissociation_method(dataset):
+    if dataset in BEAD:
+        return "bead"
+    if dataset in ENZYMATIC or dataset.endswith("(v2.3.0)"):
+        return "enzymatic"
+    return "unknown"
+
+
+def method_ranges(records, n_per_arm, effect, standard_depth=None,
+                  metrics=("std_expected_sheath", "per_1000", "power", "mde")):
+    """Min/max/median across datasets within each (method, hpf), plus members.
+
+    The band is the observed spread across independent datasets of the same
+    dissociation method at a timepoint -- a 'probable outcome range' for what a
+    new experiment with that method might yield, given what existing datasets did.
+    Power and MDE are evaluated at the standardized depth on each record.
+    """
+    groups = defaultdict(list)
+    for r in records:
+        m = dissociation_method(r["dataset"])
+        if m == "unknown":
+            continue
+        groups[(m, r["hpf"])].append(r)
+
+    def metric_value(r, name):
+        if name == "power":
+            return std_power(r, n_per_arm, effect)
+        if name == "mde":
+            v = std_mde(r, n_per_arm)
+            return v if v is not None else 1.0   # unreachable -> 100%
+        return r[name]
+
+    out = {}
+    for (method, hpf), recs in groups.items():
+        entry = {"method": method, "hpf": hpf, "n_datasets": len(recs),
+                 "datasets": [r["dataset"] for r in recs],
+                 "n_embryos_total": sum(r["n_embryos"] for r in recs)}
+        for name in metrics:
+            vals = [metric_value(r, name) for r in recs]
+            entry[name] = {
+                "min": min(vals), "max": max(vals),
+                "median": s.median(vals), "values": vals,
+            }
+        out[(method, hpf)] = entry
+    return out

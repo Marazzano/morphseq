@@ -1,0 +1,2 @@
+image_id,image_path,preview_path,segmentation_qc_status,expected_detection_count,box_threshold,text_threshold,raw_detection_count,nms_detection_count,selected_detection_count
+4cdc24ad24c26c1f,/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/image_data/genetic_perturbations/GENE16/Batch 1: foxc1a | foxc1b | krf2a | srfa | tead2/images/24hpf_A_foxc1a.jpg,/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/results/nlammers/20260723_seahub/outputs/segmentation_smoke_test/previews/4cdc24ad24c26c1f__detections.jpg,pass,8,0.15,0.1,8,8,8
