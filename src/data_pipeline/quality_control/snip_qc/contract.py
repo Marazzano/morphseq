@@ -4,16 +4,21 @@ Grain: one row per ``snip_id``. The verdict carries the FULL snip spine (importe
 site, never re-typed) plus ``use_snip`` and ``qc_fail_reasons``. snip_qc is the final operational QC
 table and must not be weaker than its inputs — it is not a minimal-key exception.
 
-``SNIP_QC_EXCLUSION_FLAGS`` is the flat list of source flag columns that count as exclusions. The flag
-column names ARE the vocabulary — ``qc_fail_reasons`` stores the pipe-joined exclusion flag-column
-names that fired (e.g. ``"edge_flag|focus_flag"``); empty string means the snip passed. There is no
-rename layer: a flag column is added here only when its source product exists and emits that column —
-else snip_qc fails loud on a missing column.
+``SNIP_QC_EXCLUSION_FLAGS`` is the flat list of source flag columns eligible to count as exclusions.
+The flag column names ARE the vocabulary — ``qc_fail_reasons`` stores the pipe-joined exclusion
+flag-column names that fired (e.g. ``"edge_flag|focus_flag"``); empty string means the snip passed.
+When a source declares an applicability companion, only ``exclusion`` participates in the verdict;
+the source flag and companion are still carried for audit and analysis-ready broadcast.
 """
 
 from __future__ import annotations
 
 import pandas as pd
+from data_pipeline.quality_control.applicability import (
+    ALLOWED_QC_APPLICABILITY,
+    QC_APPLICABILITY_EXCLUSION,
+    applicability_column_for_flag,
+)
 
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
     SNIP_ID_SPINE_COLUMNS,
@@ -82,6 +87,34 @@ def validate_snip_qc(
             raise ValueError(
                 f"{label}: qc_fail_reasons contains unknown flag(s) {bad}. "
                 f"Known exclusion flags: {sorted(known)}."
+            )
+
+    # Source flags are carried opportunistically by the verdict so analysis_ready
+    # can expose both the decision and why it did/did not participate.
+    for flag in SNIP_QC_EXCLUSION_FLAGS:
+        if flag not in df.columns:
+            continue
+        if df[flag].isna().any() or not pd.api.types.is_bool_dtype(df[flag]):
+            raise ValueError(
+                f"{label}: observed source flag {flag!r} must be non-null boolean."
+            )
+        applicability_col = applicability_column_for_flag(flag)
+        if applicability_col is None or applicability_col not in df.columns:
+            continue
+        values = df[applicability_col].astype(str)
+        unknown = sorted(set(values) - ALLOWED_QC_APPLICABILITY)
+        if unknown:
+            raise ValueError(
+                f"{label}: {applicability_col} contains unknown value(s) {unknown}."
+            )
+        incorrectly_fired = (
+            values.ne(QC_APPLICABILITY_EXCLUSION)
+            & reasons.fillna("").str.contains(flag, regex=False)
+        )
+        if incorrectly_fired.any():
+            raise ValueError(
+                f"{label}: non-exclusion applicability rows cannot list {flag!r} "
+                "in qc_fail_reasons."
             )
 
     # use_snip is true IFF there are no fail reasons.

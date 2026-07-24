@@ -50,16 +50,11 @@ def test_unknown_flag_error_names_eligible_steps():
         _build_flag_column_index(flags)
 
 
-def test_motion_blur_flag_requires_z_stack_product():
-    with pytest.raises(ValueError) as exc_info:
-        validate_snip_qc_product_requirements(
-            ("edge_flag", "motion_blur_flag"),
-            available_product_keys=("BF__projection__focus_stack",),
-        )
-    message = str(exc_info.value)
-    assert "motion_blur_flag" in message
-    assert "BF__z_stack" in message
-    assert "snip_qc.exclusion_flags" in message
+def test_motion_blur_flag_allows_modality_aware_runtime_without_z_stack():
+    validate_snip_qc_product_requirements(
+        ("edge_flag", "motion_blur_flag"),
+        available_product_keys=("BF__projection__focus_stack",),
+    )
 
 
 def test_motion_blur_flag_accepts_configured_z_stack_product():
@@ -126,6 +121,16 @@ def test_resolve_groups_flags_by_step():
         "mask_quality_qc",
         "focus_qc",
         "motion_blur_qc",
+    }
+    applicability = {
+        column
+        for source in resolved
+        for column in source.applicability_columns
+    }
+    assert applicability == {
+        "surface_area_qc_applicability",
+        "focus_qc_applicability",
+        "motion_blur_qc_applicability",
     }
 
 

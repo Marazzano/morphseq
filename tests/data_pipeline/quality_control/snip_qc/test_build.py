@@ -68,7 +68,8 @@ def test_pass_when_no_flags():
     out = build_snip_qc_verdict(uni, flags, exclusion_flags=SNIP_QC_EXCLUSION_FLAGS)
     assert out["use_snip"].tolist() == [True]
     assert out["qc_fail_reasons"].tolist() == [""]
-    assert list(out.columns) == SNIP_QC_TABLE_COLUMNS
+    assert set(SNIP_QC_TABLE_COLUMNS).issubset(out.columns)
+    assert set(_FLAG_COLS).issubset(out.columns)
     validate_snip_qc(out)
 
 
@@ -164,3 +165,18 @@ def test_contract_rejects_use_snip_disagreeing_with_reasons():
     out.loc[0, "use_snip"] = True  # but qc_fail_reasons is non-empty
     with pytest.raises(ValueError, match="true iff qc_fail_reasons"):
         validate_snip_qc(out)
+
+
+def test_diagnostic_and_not_applicable_flags_do_not_exclude():
+    uni = _universe(1)
+    flags = _flags(uni, [["focus_flag", "motion_blur_flag"]])
+    flags["focus_qc_applicability"] = "diagnostic_only"
+    flags["motion_blur_qc_applicability"] = "not_applicable"
+    out = build_snip_qc_verdict(
+        uni, flags, exclusion_flags=SNIP_QC_EXCLUSION_FLAGS
+    )
+    assert out["qc_fail_reasons"].tolist() == [""]
+    assert out["use_snip"].tolist() == [True]
+    assert out["focus_flag"].tolist() == [True]
+    assert out["focus_qc_applicability"].tolist() == ["diagnostic_only"]
+    validate_snip_qc(out)

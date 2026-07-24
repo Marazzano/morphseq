@@ -21,6 +21,10 @@ import pandas as pd
 from scipy.ndimage import binary_erosion, gaussian_filter
 from skimage.filters import sobel
 
+from data_pipeline.acquisition.image_materialization.frame_modality import (
+    IMAGE_KIND_SINGLE_Z,
+    frame_modality_for_image,
+)
 from data_pipeline.acquisition.image_materialization.materialized_image_readers import load_projection_image
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
@@ -29,6 +33,10 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 )
 
 from .config import FocusQCConfig
+from data_pipeline.quality_control.applicability import (
+    QC_APPLICABILITY_DIAGNOSTIC_ONLY,
+    QC_APPLICABILITY_EXCLUSION,
+)
 
 _REQUIRED_FRAME_COLUMNS: tuple[str, ...] = ("mask_id",)
 
@@ -128,11 +136,23 @@ def compute_focus_qc(
 
     fraction_by_snip: dict[str, float] = {}
     n_px_by_snip: dict[str, int] = {}
+    applicability_by_snip: dict[str, str] = {}
 
     for _, snip in snip_inventory_df.iterrows():
         snip_id = str(snip["snip_id"])
         image_id = str(snip["image_id"])
         mask_id = str(snip["mask_id"])
+
+        modality = frame_modality_for_image(
+            frame_inventory_df,
+            image_id=image_id,
+            product_key=config.projection_product_key,
+        )
+        applicability_by_snip[snip_id] = (
+            QC_APPLICABILITY_DIAGNOSTIC_ONLY
+            if str(modality["image_kind"]) == IMAGE_KIND_SINGLE_Z
+            else QC_APPLICABILITY_EXCLUSION
+        )
 
         mask = _decode_snip_mask(frame_masks_by_mask, mask_id, image_id, snip_id, config)
 
@@ -170,6 +190,9 @@ def compute_focus_qc(
         ],
         dtype=bool,
     )
+    out["focus_qc_applicability"] = [
+        applicability_by_snip[s] for s in snip_ids
+    ]
     return out
 
 

@@ -11,7 +11,13 @@ from data_pipeline.quality_control.snip_qc.flag_input_resolver import ResolvedFl
 from data_pipeline.quality_control.snip_qc.inputs import load_snip_qc_flag_inputs
 
 
-def _make_source(tmp_path: Path, step: str, flag_cols: tuple[str, ...], rows: list[dict]) -> ResolvedFlagSource:
+def _make_source(
+    tmp_path: Path,
+    step: str,
+    flag_cols: tuple[str, ...],
+    rows: list[dict],
+    applicability_cols: tuple[str, ...] = (),
+) -> ResolvedFlagSource:
     df = pd.DataFrame(rows)
     csv_path = tmp_path / f"{step}.csv"
     df.to_csv(csv_path, index=False)
@@ -20,6 +26,7 @@ def _make_source(tmp_path: Path, step: str, flag_cols: tuple[str, ...], rows: li
         artifact_key=step,
         flag_columns=flag_cols,
         path=csv_path,
+        applicability_columns=applicability_cols,
     )
 
 
@@ -119,6 +126,24 @@ def test_fails_on_unknown_boolean_value(tmp_path):
     ])
     with pytest.raises(ValueError, match="unrecognized value"):
         load_snip_qc_flag_inputs((src,))
+
+
+def test_loads_and_validates_applicability_column(tmp_path):
+    src = _make_source(
+        tmp_path,
+        "focus_qc",
+        ("focus_flag",),
+        [
+            {
+                "snip_id": "snip_01",
+                "focus_flag": True,
+                "focus_qc_applicability": "diagnostic_only",
+            }
+        ],
+        ("focus_qc_applicability",),
+    )
+    result = load_snip_qc_flag_inputs((src,))
+    assert result["focus_qc_applicability"].tolist() == ["diagnostic_only"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

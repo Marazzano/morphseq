@@ -3,7 +3,8 @@
 Consumes ``snip_universe_df`` (the full snip spine) and an already-assembled ``qc_flags_df``
 (snip_id + the exclusion flag columns). For each snip, ``qc_fail_reasons`` is the pipe-delimited
 list of flag-column names that are true (in the declared order), and
-``use_snip = (qc_fail_reasons == "")``. Returns exactly SNIP_QC_TABLE_COLUMNS.
+``use_snip = (qc_fail_reasons == "")``. Source flags and applicability fields
+are carried so the final analysis table retains the decision context.
 """
 
 from __future__ import annotations
@@ -14,7 +15,10 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
     SNIP_ID_SPINE_COLUMNS,
 )
 
-from .contract import SNIP_QC_TABLE_COLUMNS
+from data_pipeline.quality_control.applicability import (
+    QC_APPLICABILITY_EXCLUSION,
+    applicability_column_for_flag,
+)
 
 
 def build_snip_qc_verdict(
@@ -57,12 +61,33 @@ def build_snip_qc_verdict(
     reasons_out: list[str] = []
     for snip_id in out["snip_id"].astype(str):
         row = flags_by_snip.loc[snip_id]
-        fired = [col for col in exclusion_flags if bool(row[col])]
+        fired = []
+        for col in exclusion_flags:
+            applicability_col = applicability_column_for_flag(col)
+            applicability = (
+                str(row[applicability_col])
+                if applicability_col is not None and applicability_col in row.index
+                else QC_APPLICABILITY_EXCLUSION
+            )
+            if applicability == QC_APPLICABILITY_EXCLUSION and bool(row[col]):
+                fired.append(col)
         reasons_out.append("|".join(fired))
 
-    out["qc_fail_reasons"] = reasons_out
-    out["use_snip"] = pd.array([r == "" for r in reasons_out], dtype=bool)
-    return out[SNIP_QC_TABLE_COLUMNS]
+    # Carry the observed source decisions into snip_qc. analysis_ready uses this
+    # table as its base, so flags and applicability remain directly queryable.
+    observed = qc_flags_df.copy()
+    observed["snip_id"] = observed["snip_id"].astype(str)
+    out["snip_id"] = out["snip_id"].astype(str)
+    reasons_by_snip = dict(zip(out["snip_id"], reasons_out))
+    out = out.merge(observed, on="snip_id", how="left", validate="one_to_one")
+    out["qc_fail_reasons"] = out["snip_id"].map(reasons_by_snip)
+    out["use_snip"] = pd.array(
+        out["qc_fail_reasons"].eq(""), dtype=bool
+    )
+    ordered = list(SNIP_ID_SPINE_COLUMNS) + [
+        c for c in observed.columns if c != "snip_id"
+    ] + ["use_snip", "qc_fail_reasons"]
+    return out[ordered]
 
 
 def _require_unique(df: pd.DataFrame, key: str, label: str) -> None:

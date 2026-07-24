@@ -39,6 +39,7 @@ def _valid_df(n=2):
                 "interior_strong_edge_fraction": 0.65,
                 "interior_n_px": 1000,
                 "focus_flag": False,
+                "focus_qc_applicability": "exclusion",
             }
         )
     df = pd.DataFrame(rows, columns=FOCUS_QC_TABLE_COLUMNS)
@@ -91,3 +92,9 @@ def test_non_numeric_metric_fails():
     df["interior_n_px"] = ["a", "b"]
     with pytest.raises(ValueError, match="must be numeric"):
         validate_focus_qc(df)
+
+
+def test_diagnostic_only_focus_is_valid():
+    df = _valid_df()
+    df["focus_qc_applicability"] = "diagnostic_only"
+    validate_focus_qc(df)

@@ -88,6 +88,7 @@ def _build(areas, stages, ref=_FLAT_REF, config=None):
 def test_normal_area_not_flagged():
     out = _build(areas={0: 150.0}, stages={0: 30.0})
     assert out["sa_outlier_flag"].tolist() == [False]
+    assert out["surface_area_qc_applicability"].tolist() == ["exclusion"]
     validate_surface_area_qc(out)
 
 
@@ -121,6 +122,15 @@ def test_missing_stage_fails_loud():
     stage_df = pd.DataFrame(columns=["snip_id", "predicted_stage_hpf"])
     with pytest.raises(ValueError, match="no stage_predictions row"):
         compute_surface_area_qc_flags(mask_geometry, stage_df, universe, _FLAT_REF, config=resolve_config())
+
+
+def test_null_stage_is_not_applicable_and_does_not_flag():
+    out = _build(areas={0: 150.0}, stages={0: None})
+    assert out["sa_outlier_flag"].tolist() == [False]
+    assert out["surface_area_qc_applicability"].tolist() == [
+        "not_applicable"
+    ]
+    validate_surface_area_qc(out)
 
 
 def test_missing_area_fails_loud():

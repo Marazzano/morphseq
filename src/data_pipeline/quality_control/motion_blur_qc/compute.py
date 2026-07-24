@@ -14,6 +14,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from data_pipeline.acquisition.image_materialization.frame_modality import (
+    IMAGE_KIND_SINGLE_Z,
+    frame_modality_for_image,
+)
 from data_pipeline.acquisition.image_materialization.materialized_image_readers import (
     load_z_stack_images_from_image_id,
 )
@@ -28,6 +32,10 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 )
 
 from .config import MotionBlurQCConfig
+from data_pipeline.quality_control.applicability import (
+    QC_APPLICABILITY_EXCLUSION,
+    QC_APPLICABILITY_NOT_APPLICABLE,
+)
 
 _REQUIRED_FRAME_COLUMNS: tuple[str, ...] = ("mask_id",)
 
@@ -154,13 +162,34 @@ def compute_motion_blur_qc(
         )
 
     frame_masks_by_mask = frame_masks_df.set_index("mask_id")
-    metrics_by_snip: dict[str, dict[str, float | int | bool]] = {}
+    metrics_by_snip: dict[str, dict[str, float | int | bool | None | str]] = {}
     image_root_path = Path(image_root) if image_root is not None else None
 
     for _, snip in snip_inventory_df.iterrows():
         snip_id = str(snip["snip_id"])
         image_id = str(snip["image_id"])
         mask_id = str(snip["mask_id"])
+
+        modality = frame_modality_for_image(
+            frame_inventory_df,
+            image_id=image_id,
+        )
+        if str(modality["image_kind"]) == IMAGE_KIND_SINGLE_Z:
+            metrics_by_snip[snip_id] = {
+                "mask_pixel_ncc_mean": None,
+                "mask_pixel_ncc_min": None,
+                "mask_pixel_ncc_p05": None,
+                "mask_pixel_bad_pair_frac": None,
+                "mask_pixel_longest_bad_run": None,
+                "n_z_planes": None,
+                "n_z_pairs": None,
+                "n_valid_z_pairs": None,
+                "n_flat_z_pairs": None,
+                "n_mask_pixels": None,
+                "motion_blur_flag": False,
+                "motion_blur_qc_applicability": QC_APPLICABILITY_NOT_APPLICABLE,
+            }
+            continue
 
         mask = _decode_snip_mask(frame_masks_by_mask, mask_id, image_id, snip_id, config)
 
@@ -186,6 +215,9 @@ def compute_motion_blur_qc(
             mask,
             config=config,
         )
+        metrics_by_snip[snip_id]["motion_blur_qc_applicability"] = (
+            QC_APPLICABILITY_EXCLUSION
+        )
 
     out = snip_inventory_df[list(SNIP_ID_SPINE_COLUMNS)].copy()
     snip_ids = out["snip_id"].astype(str)
@@ -206,6 +238,9 @@ def compute_motion_blur_qc(
         [metrics_by_snip[s]["motion_blur_flag"] for s in snip_ids],
         dtype=bool,
     )
+    out["motion_blur_qc_applicability"] = [
+        metrics_by_snip[s]["motion_blur_qc_applicability"] for s in snip_ids
+    ]
     return out
 
 

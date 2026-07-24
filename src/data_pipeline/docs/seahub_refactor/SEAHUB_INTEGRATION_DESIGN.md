@@ -1,6 +1,7 @@
 # SeaHub → morphseq pipeline: integration DESIGN & CONTRACTS
 
-**Status:** design frozen, ready to implement.
+**Status:** historical design; owner-reviewed implementation decisions are frozen in
+`SEAHUB_IMPLEMENTATION_CONTRACT.md`, which supersedes conflicts in this document.
 **Companion:** `SEAHUB_INTEGRATION_WORKPLAN.md` (the executable, phased plan).
 **Scope of this doc:** the *decisions* and the *contracts* the implementing agent MUST NOT violate.
 The workplan is procedural and may change during execution; this doc is the stable reference.

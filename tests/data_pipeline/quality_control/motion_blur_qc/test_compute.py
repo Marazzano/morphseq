@@ -87,6 +87,7 @@ def _snip_rows(tmp_path, *, mask, planes):
                 "image_product_type": "z_stack",
                 "projection_method": pd.NA,
                 "image_path": str(path),
+                "image_micrometers_per_pixel": 15.0889,
             }
         )
     return pd.DataFrame(inv_rows), pd.DataFrame(mask_rows), pd.DataFrame(fi_rows)
@@ -166,6 +167,7 @@ def test_batch_compute_loads_z_stack_rows_and_aligns_mask(tmp_path):
     assert row["n_valid_z_pairs"] == 2
     assert row["n_mask_pixels"] > 0
     assert row["motion_blur_flag"] == True  # noqa: E712
+    assert row["motion_blur_qc_applicability"] == "exclusion"
     validate_motion_blur_qc(out)
 
 
@@ -181,3 +183,34 @@ def test_missing_mask_fails_loud(tmp_path):
     masks = masks.iloc[0:0]
     with pytest.raises(ValueError, match="not found in frame_masks"):
         compute_motion_blur_qc(inv, masks, fi, config=resolve_config())
+
+
+def test_single_z_is_not_applicable_without_z_stack(tmp_path):
+    inv, masks, _ = _snip_rows(
+        tmp_path, mask=_mask(), planes=[_gradient(), _gradient()]
+    )
+    image_id = inv.iloc[0]["image_id"]
+    fi = pd.DataFrame(
+        [
+            {
+                "well_id": WELL,
+                "channel_id": CHANNEL,
+                "time_index": 0,
+                "z_index": pd.NA,
+                "image_id": image_id,
+                "image_product_type": "projection",
+                "projection_method": "focus_stack",
+                "image_path": "not-read-for-single-z.jpg",
+                "source_scope": "seahub",
+                "image_kind": "single_z",
+                "z_position": pd.NA,
+                "calibration_status": "placeholder",
+            }
+        ]
+    )
+    out = compute_motion_blur_qc(inv, masks, fi, config=resolve_config())
+    row = out.iloc[0]
+    assert not bool(row["motion_blur_flag"])
+    assert row["motion_blur_qc_applicability"] == "not_applicable"
+    assert pd.isna(row["mask_pixel_ncc_mean"])
+    validate_motion_blur_qc(out)

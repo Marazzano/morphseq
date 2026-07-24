@@ -37,6 +37,7 @@ def _valid_df(n=2, flag=False):
                 "embryo_id": embryo_id,
                 "snip_id": snip_id,
                 "sa_outlier_flag": flag,
+                "surface_area_qc_applicability": "exclusion",
             }
         )
     df = pd.DataFrame(rows, columns=SURFACE_AREA_QC_TABLE_COLUMNS)
@@ -83,3 +84,12 @@ def test_check_sources_requires_registered_animal():
         validate_surface_area_qc(
             df, physical_embryo_registry_df=pd.DataFrame({"physical_embryo_id": []}), check_sources=True
         )
+
+
+def test_not_applicable_requires_false_flag():
+    df = _valid_df()
+    df["surface_area_qc_applicability"] = "not_applicable"
+    validate_surface_area_qc(df)
+    df.loc[0, "sa_outlier_flag"] = True
+    with pytest.raises(ValueError, match="must carry sa_outlier_flag=False"):
+        validate_surface_area_qc(df)

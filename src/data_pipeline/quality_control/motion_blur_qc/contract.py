@@ -26,6 +26,7 @@ MOTION_BLUR_QC_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "n_flat_z_pairs",
     "n_mask_pixels",
     "motion_blur_flag",
+    "motion_blur_qc_applicability",
 )
 
 MOTION_BLUR_QC_TABLE_COLUMNS: list[str] = list(
@@ -68,15 +69,49 @@ def validate_motion_blur_qc(
             f"got {df['motion_blur_flag'].dtype}."
         )
 
-    metric_cols = tuple(c for c in MOTION_BLUR_QC_PAYLOAD_COLUMNS if c != "motion_blur_flag")
+    from data_pipeline.quality_control.applicability import (
+        ALLOWED_QC_APPLICABILITY,
+        QC_APPLICABILITY_DIAGNOSTIC_ONLY,
+        QC_APPLICABILITY_NOT_APPLICABLE,
+    )
+
+    applicability = df["motion_blur_qc_applicability"].astype(str)
+    unknown = sorted(set(applicability) - ALLOWED_QC_APPLICABILITY)
+    if unknown:
+        raise ValueError(
+            f"{scope_label}: motion_blur_qc_applicability has unknown value(s) {unknown}; "
+            f"allowed={sorted(ALLOWED_QC_APPLICABILITY)}."
+        )
+    if applicability.eq(QC_APPLICABILITY_DIAGNOSTIC_ONLY).any():
+        raise ValueError(
+            f"{scope_label}: motion blur is either exclusion-capable or not applicable; "
+            "'diagnostic_only' is not a valid state."
+        )
+
+    not_applicable = applicability.eq(QC_APPLICABILITY_NOT_APPLICABLE)
+    if df.loc[not_applicable, "motion_blur_flag"].any():
+        raise ValueError(
+            f"{scope_label}: not-applicable rows must carry motion_blur_flag=False."
+        )
+
+    metric_cols = tuple(
+        c
+        for c in MOTION_BLUR_QC_PAYLOAD_COLUMNS
+        if c not in {"motion_blur_flag", "motion_blur_qc_applicability"}
+    )
     for col in metric_cols:
-        if df[col].isna().any():
-            bad = df.loc[df[col].isna(), "snip_id"].head(5).tolist()
+        invalid_null = df[col].isna() & ~not_applicable
+        if invalid_null.any():
+            bad = df.loc[invalid_null, "snip_id"].head(5).tolist()
             raise ValueError(
                 f"{scope_label}: metric column {col!r} has null value(s) for snip_id(s) {bad}. "
-                "A flag without its supporting metric is not an acceptable QC product."
+                "Metrics may be null only for not-applicable rows."
             )
-        if not pd.api.types.is_numeric_dtype(df[col]):
+        applicable_values = df.loc[~not_applicable, col]
+        if (
+            not applicable_values.empty
+            and not pd.api.types.is_numeric_dtype(applicable_values)
+        ):
             raise ValueError(
                 f"{scope_label}: metric column {col!r} must be numeric, got {df[col].dtype}."
             )

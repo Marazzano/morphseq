@@ -52,20 +52,27 @@ def compute_stage_prediction_features(
                 "Every snip's well must have a plate_metadata row with start_age_hpf + temperature."
             )
         plate = plate_by_well.loc[well_id]
-        for col in ("start_age_hpf", "temperature"):
-            if col not in plate.index or pd.isna(plate[col]):
-                raise ValueError(
-                    f"stage_predictions: plate_metadata for well {well_id!r} is missing {col!r}."
-                )
-
         elapsed = _elapsed_time_s(frame_inventory_by_image, image_id, snip_id)
-        predicted = predict_stage_hpf(
-            float(plate["start_age_hpf"]), elapsed, float(plate["temperature"])
-        )
+        if "start_age_hpf" not in plate.index or pd.isna(
+            plate["start_age_hpf"]
+        ):
+            predicted = None
+            status = "missing_start_age_hpf"
+        elif "temperature" not in plate.index or pd.isna(plate["temperature"]):
+            predicted = None
+            status = "missing_temperature"
+        else:
+            predicted = predict_stage_hpf(
+                float(plate["start_age_hpf"]),
+                elapsed,
+                float(plate["temperature"]),
+            )
+            status = "predicted"
 
         row = {col: snip[col] for col in SNIP_FEATURE_TABLE_SPINE_COLUMNS}
         row["predicted_stage_hpf"] = predicted
         row["model_version"] = model_version
+        row["stage_prediction_status"] = status
         rows.append(row)
 
     return pd.DataFrame(rows, columns=STAGE_PREDICTION_TABLE_COLUMNS)
