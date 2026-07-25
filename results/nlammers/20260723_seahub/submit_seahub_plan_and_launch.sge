@@ -1,0 +1,99 @@
+#!/bin/bash
+# Plan the corpus-wide bundle, then submit materialization and full-pipeline arrays.
+# Submit this job with -hold_jid <full-corpus detection merge job id>.
+
+#$ -N seahub_plan
+#$ -cwd
+#$ -q trapnell-short.q
+#$ -l mfree=8G
+#$ -l h_rt=3600
+#$ -pe serial 1
+#$ -o /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_plan.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/logs/seahub_plan.$JOB_ID.err
+
+set -euo pipefail
+
+REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
+SRC_ROOT="${REPO_ROOT}/src"
+WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
+RECONCILED="${WORK_DIR}/outputs/full_corpus_20260724/integration/reconciled_fovs.csv"
+DETECTIONS="${WORK_DIR}/outputs/full_corpus_20260724/detection/embryo_manifest.csv"
+BUNDLE_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived/20260724/bundle"
+CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
+
+cd "${REPO_ROOT}"
+echo "=== SeaHub bundle planning START $(date) ==="
+"${CONDA}" run -n morphseq-env --no-capture-output \
+    env PYTHONPATH="${SRC_ROOT}" \
+    python -m data_pipeline.acquisition.seahub build-bundle \
+    --reconciled-fovs-csv "${RECONCILED}" \
+    --detection-manifest-csv "${DETECTIONS}" \
+    --output-root "${BUNDLE_ROOT}" \
+    --operational-date 20260724 \
+    --plan-only
+
+EXPERIMENTS="${BUNDLE_ROOT}/integration/experiments.txt"
+if [[ ! -s "${EXPERIMENTS}" ]]; then
+    echo "ERROR: bundle planning produced no operational experiments." >&2
+    exit 2
+fi
+SHARD_COUNT="$(grep -cvE '^[[:space:]]*$' "${EXPERIMENTS}")"
+echo "Planned ${SHARD_COUNT} operational shards."
+
+MATERIALIZE_SUBMISSION="$(
+    qsub -t "1-${SHARD_COUNT}" -tc 8 \
+        "${WORK_DIR}/submit_seahub_materialize.sge"
+)"
+echo "${MATERIALIZE_SUBMISSION}"
+MATERIALIZE_JOB_ID="$(
+    sed -nE 's/.*job-array ([0-9]+).*/\1/p' <<<"${MATERIALIZE_SUBMISSION}" |
+        tail -n 1
+)"
+if [[ -z "${MATERIALIZE_JOB_ID}" ]]; then
+    echo "ERROR: could not parse materialization job id." >&2
+    exit 2
+fi
+
+BACK_HALF_SUBMISSION="$(
+    qsub -hold_jid "${MATERIALIZE_JOB_ID}" \
+        -t "1-${SHARD_COUNT}" -tc 1 -l gpgpu=TRUE,cuda=1 \
+        "${WORK_DIR}/submit_seahub_back_half.sge"
+)"
+echo "${BACK_HALF_SUBMISSION}"
+BACK_HALF_JOB_ID="$(
+    sed -nE 's/.*job-array ([0-9]+).*/\1/p' <<<"${BACK_HALF_SUBMISSION}" |
+        tail -n 1
+)"
+if [[ -z "${BACK_HALF_JOB_ID}" ]]; then
+    echo "ERROR: could not parse back-half job id." >&2
+    exit 2
+fi
+
+VERIFY_SUBMISSION="$(
+    qsub -hold_jid "${BACK_HALF_JOB_ID}" \
+        "${WORK_DIR}/submit_seahub_verify.sge"
+)"
+echo "${VERIFY_SUBMISSION}"
+VERIFY_JOB_ID="$(
+    sed -nE 's/.*job ([0-9]+).*/\1/p' <<<"${VERIFY_SUBMISSION}" |
+        tail -n 1
+)"
+if [[ -z "${VERIFY_JOB_ID}" ]]; then
+    echo "ERROR: could not parse verification job id." >&2
+    exit 2
+fi
+
+SUBMISSION_RECORD="${BUNDLE_ROOT}/integration/submitted_jobs.txt"
+{
+    echo "plan_job_id=${JOB_ID:-unknown}"
+    echo "materialize_job_id=${MATERIALIZE_JOB_ID}"
+    echo "back_half_job_id=${BACK_HALF_JOB_ID}"
+    echo "verify_job_id=${VERIFY_JOB_ID}"
+    echo "shard_count=${SHARD_COUNT}"
+    echo "submitted_at=$(date --iso-8601=seconds)"
+} > "${SUBMISSION_RECORD}"
+
+echo "=== SeaHub full pipeline CHAINED $(date) ==="
+echo "materialize=${MATERIALIZE_JOB_ID}"
+echo "back_half=${BACK_HALF_JOB_ID}"
+echo "verify=${VERIFY_JOB_ID}"
