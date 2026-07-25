@@ -64,11 +64,42 @@ def _snake_case(value: Any) -> str:
     return re.sub(r"_+", "_", text).strip("_").lower()
 
 
+def _expand_paralog_shorthand(text: str) -> str:
+    """Expand paralog shorthand where a bare numeric suffix inherits the letter
+    prefix of the preceding gene, so image-side forms match the workbook's full
+    names: ``meis1a,1b`` -> ``meis1a;meis1b``, ``pax3a;3b;7a;7b`` ->
+    ``pax3a;pax3b;pax7a;pax7b``, ``twist1a;1b;2`` -> ``twist1a;twist1b;twist2``.
+
+    Only strings with a ``;``/``,`` separator are touched, and a suffix is only
+    prefixed when a preceding gene supplies one, so single tokens and chemicals
+    (e.g. ``2-dg``, ``treatment_28c_14hpf_wash``) are returned unchanged.
+    """
+    parts = re.split(r"[;,]", text)
+    if len(parts) < 2:
+        return text
+    prefix = ""
+    expanded: list[str] = []
+    for part in parts:
+        token = part.strip()
+        if not token:
+            continue
+        head = re.match(r"^([a-z]+)", token)
+        if head:  # a full gene token — becomes the prefix subsequent suffixes inherit
+            prefix = head.group(1)
+            expanded.append(token)
+        elif prefix:  # a bare numeric suffix — inherit the current gene prefix
+            expanded.append(prefix + token)
+        else:  # no gene prefix seen yet — leave as-is (e.g. a numeric-led chemical)
+            expanded.append(token)
+    return ";".join(expanded)
+
+
 def canonical_condition(value: Any) -> str | None:
     """Build the existing separator- and order-tolerant condition key."""
     if _is_missing(value):
         return None
     text = str(value).casefold().replace("\n", " ")
+    text = _expand_paralog_shorthand(text)
     tokens = re.findall(r"[a-z]+[a-z0-9]*|\d+", text)
     ignored = {
         "cropped",
@@ -391,9 +422,17 @@ def reconcile_seahub_metadata(
         candidates = by_experiment.get(experiment or "", prepared.iloc[0:0])
         stage_hpf = output.get("stage_hpf")
         addition_hpf = output.get("stage_addition_hpf")
-        condition_key = output.get("perturbation_key") or canonical_condition(
-            output.get("perturbation_parsed")
-        )
+        # Derive the condition key from the RAW parsed perturbation so paralog
+        # shorthand is expanded consistently with the workbook (the precomputed
+        # perturbation_key predates expansion and would not match). For non-shorthand
+        # rows this reproduces the precomputed key exactly. Fall back to the
+        # precomputed key only when the raw form is missing; a NaN key (pandas reads a
+        # blank cell as float('nan'), which is truthy) is coerced to None so it can
+        # never reach the fuzzy matcher (SequenceMatcher on a float would crash).
+        condition_key = canonical_condition(output.get("perturbation_parsed"))
+        if _is_missing(condition_key):
+            fallback = output.get("perturbation_key")
+            condition_key = None if _is_missing(fallback) else fallback
 
         if stage_hpf is None or pd.isna(stage_hpf):
             output["metadata_match_status"] = "unmatched_stage"
