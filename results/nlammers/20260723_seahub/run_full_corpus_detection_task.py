@@ -97,6 +97,17 @@ def main() -> None:
     if args.dry_run:
         return
 
+    # With array concurrency fixed at one, task 1 is a cheap systemic smoke
+    # gate. If model loading or GPU inference fails there, later tasks stop
+    # before loading the 2 GB checkpoint rather than repeating the same failure.
+    if task_id > 1:
+        smoke_marker = output_root / "tasks" / experiments[0] / "_SUCCESS"
+        if not smoke_marker.is_file():
+            raise RuntimeError(
+                "Task 1 did not leave its _SUCCESS marker; refusing to run "
+                "later partitions after a failed GPU/environment smoke test."
+            )
+
     manifest, qc = run_grounding_dino_segmentation(
         partition,
         task_output,
