@@ -22,3 +22,11 @@ except ImportError:
     # The GroundingDINO adapter imports torch + the groundingdino repo package. Keep the
     # harness importable (and the fake-adapter tests runnable) even without those deps.
     pass
+
+try:
+    from data_pipeline.model_servers.adapters import unet_aux_masks  # noqa: F401
+except ImportError:
+    # The UNet auxiliary-mask adapter imports torch + segmentation_models_pytorch.
+    # Keep the harness importable (and the fake-adapter tests runnable) even in
+    # environments without those deps.
+    pass
