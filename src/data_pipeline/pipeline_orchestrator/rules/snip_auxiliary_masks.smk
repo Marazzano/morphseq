@@ -9,6 +9,31 @@ snip_processing (replaces the retired full-frame auxiliary_masks step). Per-well
 
 SNIP_AUX_STEP = "snip_auxiliary_masks"
 
+# --- resident model server (opt-in) -----------------------------------------------------------
+# The HIGHEST-VALUE amortization in the pipeline. This step loads FOUR UNet checkpoints
+# (via/yolk/focus/bubble) per well: measured 69.94s of load against 2.3-12.6s of actual work.
+# A 3-well GPU A/B ran 280.39s per-well vs 97.47s served (2.88x) with all 2,100 mask PNGs
+# byte-identical. Over 576 wells that is ~11h of repeated loading collapsing to ~70s.
+# See docs/MODEL_LOAD_BENCHMARKS.md and docs/MODEL_SERVER_WIRING.md.
+#
+# TWO THINGS THAT WILL BITE YOU (same as frame_detections.smk):
+#   1. The client rule must NOT declare `resources: gpu=1` -- the SERVICE holds the GPU. If both
+#      declare it, the service takes the only unit, no client is schedulable, and Snakemake
+#      blocks forever WITHOUT an error.
+#   2. Services need >= 2 cores (the service job holds one for the whole run), so --cores 1 fails
+#      with "Excess Resources: _cores: 2/1".
+SNIP_AUX_SERVED = bool(config.get("unet_snip", {}).get("use_model_server", False))
+
+def _snip_aux_socket(experiment: str) -> Path:
+    """Short /tmp socket path -- NOT under DATA_ROOT.
+
+    AF_UNIX caps sun_path at ~108 bytes and DATA_ROOT alone is ~90 on the shared tree, so a
+    data-tree socket path overruns it and dies at bind() while the DAG builds happily. The
+    harness now guards this explicitly; see ModelServer.MAX_SOCKET_PATH_BYTES.
+    """
+    digest = hashlib.sha1(str(experiment).encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"morphseq_unetaux_{digest}.sock"
+
 
 def _sam_artifact(experiment, *, path_mode, well_id=None):
     return rule_artifact(SNIP_AUX_STEP, "manifest", experiment, path_mode=path_mode, well_id=well_id)
@@ -27,6 +52,72 @@ def _sam_artifacts_for_run(wc):
     return run_well_shard_paths(
         DATA_ROOT, SNIP_AUX_STEP, "manifest", wc.experiment, wells_for_experiment(wc),
     )
+
+
+def _snip_aux_unet_config_json(wc) -> str:
+    """The unet_snip config block as JSON, built exactly as cmd_snip_auxiliary_masks builds it.
+
+    Mirrors tasks.py: read the block, then let the ENVIRONMENT models_root (env.yaml
+    paths.models_root) REPLACE any config models_root -- checkpoints may live anywhere on a
+    machine, not under the data tree. Keeping this identical to the per-well path is what makes
+    the served output equivalent; if these two ever drift, the served masks drift with them.
+    """
+    import json
+    block = config.get("unet_snip") or config.get("auxiliary_masks", {}).get("unet_snip", {})
+    block = dict(block)
+    block["models_root"] = str(MODELS_DIR)
+    return json.dumps(block)
+
+
+rule service_unet_aux_masks:
+    """Resident 4x-UNet server: load via/yolk/focus/bubble ONCE, serve per-well requests.
+
+    Only instantiated when unet_snip.use_model_server is true. Holds the GPU for its lifetime,
+    which is why it -- and NOT the client rule -- declares gpu=1.
+
+    The harness creates the socket only after all four checkpoints are loaded, so a client that
+    connects is guaranteed a ready model. That ordering is the readiness handshake.
+    """
+    output:
+        socket=service(str(_snip_aux_socket("{experiment}"))),
+    params:
+        unet_config_json=_snip_aux_unet_config_json,
+        device=lambda wc: str(config.get("unet_snip", {}).get("device", DEVICE)),
+    resources:
+        gpu=1,
+    shell:
+        """
+        {RUN} -m data_pipeline.model_servers.harness \
+          --adapter snip_auxiliary_masks \
+          --socket-path "{output.socket}" \
+          --adapter-arg unet_snip_config_json='{params.unet_config_json}' \
+          --adapter-arg device="{params.device}"
+        """
+
+
+rule build_snip_auxiliary_masks_for_well_served:
+    """Per-well auxiliary masks via the resident UNet server (thin socket client).
+
+    Same inputs, same manifest output, same DAG position as the in-process rule; only the
+    location of inference differs. Declares NO gpu resource -- this process never touches the
+    GPU, and claiming the resource the service holds would deadlock scheduling silently.
+    """
+    input:
+        snip_inventory=str(_sam_snip_inventory("{experiment}", well_id="{well_id}")),
+        snip_inventory_validated=str(_sam_snip_inventory_validated("{experiment}", well_id="{well_id}")),
+        socket=lambda wc: str(_snip_aux_socket(wc.experiment)),
+    output:
+        manifest=str(_sam_artifact(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+    params:
+        output_root=str(DATA_ROOT),
+    shell:
+        """
+        {RUN} -m data_pipeline.model_servers.client \
+          --socket-path "{input.socket}" \
+          --payload-json '{{"snip_inventory_csv": "{input.snip_inventory}", "output_root": "{params.output_root}", "output_csv": "{output.manifest}"}}'
+        """
 
 
 rule build_snip_auxiliary_masks_for_well:
@@ -62,6 +153,15 @@ rule build_snip_auxiliary_masks_for_well:
           --config-yaml "{params.config_yaml}" \
           --models-root "{params.models_root}"
         """
+
+
+# Both build rules produce the same per-well manifest, which is ambiguous to the DAG resolver;
+# ruleorder picks the winner from the config gate. Both stay defined so `snakemake --list` and the
+# tests can see the served rule regardless of the current toggle.
+if SNIP_AUX_SERVED:
+    ruleorder: build_snip_auxiliary_masks_for_well_served > build_snip_auxiliary_masks_for_well
+else:
+    ruleorder: build_snip_auxiliary_masks_for_well > build_snip_auxiliary_masks_for_well_served
 
 
 rule validate_snip_auxiliary_masks_for_well:
