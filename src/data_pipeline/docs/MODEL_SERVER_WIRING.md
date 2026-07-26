@@ -141,11 +141,25 @@ resolution, before any model-server code runs.
   rule and no service. Both directions verified.
 - **DONE — adapter equivalence in isolation.** Served vs per-well output is
   cell-for-cell identical on 3 real wells (commit 49652e05).
-- **BLOCKED — real end-to-end run.** These two wells' shards are write-protected on
-  the shared `nlammers` tree from an earlier run, so a rerun hits
-  `ProtectedOutputException`. Needs either a well whose shards are writable, a
-  scratch `output_root`, or the protection cleared. This is a storage-permissions
-  condition, not a defect in the wiring.
+- **BLOCKED — real end-to-end run.** A rerun of these wells hits
+  `ProtectedOutputException`, but the name is misleading: this is **not** Snakemake
+  write-protection (`--protected-output` would set `0444`). The shards are
+
+  ```
+  owner nlammers, group trapnelllab, mode 0644
+  ```
+
+  i.e. plain Unix ownership — we run as `mdcolon`, and although we are in
+  `trapnelllab`, the group has no write bit. Snakemake reports any unwritable
+  existing output as "protected".
+
+  **Do not chmod or overwrite these.** They are another user's data on a shared
+  tree. The correct fix is a scratch `output_root`. Note `DATA_ROOT` is read only
+  from `env.yaml` (`Snakefile:127`) with no config override, so a scratch run needs
+  a copy of `env.yaml` with `paths.output_root` repointed — adding a config override
+  purely for smoke testing is not worth the extra surface.
+
+  This is an environment condition, not a defect in the wiring.
 
 Remaining pass criteria for that run:
 1. Exactly ONE "adapter loaded in Xs" line in the service log — not one per well.
