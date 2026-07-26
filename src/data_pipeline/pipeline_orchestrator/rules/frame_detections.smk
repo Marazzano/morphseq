@@ -26,8 +26,23 @@ FRAME_DETECTIONS_ARTIFACT = "frame_detections"
 FRAME_DETECTIONS_SERVED = bool(config.get("frame_detections", {}).get("use_model_server", False))
 
 def _frame_detections_socket(experiment: str) -> Path:
-    # Per-experiment so concurrent runs on different experiments cannot collide on one socket.
-    return DATA_ROOT / "object_extraction" / "frame_detections" / str(experiment) / "grounding_dino.sock"
+    """Socket path for this experiment's GroundingDINO service.
+
+    NOT under DATA_ROOT. AF_UNIX socket paths are capped at ~108 bytes by the kernel
+    (sockaddr_un.sun_path), and DATA_ROOT alone is ~90 bytes on the shared nlammers tree --
+    the natural path
+        {DATA_ROOT}/object_extraction/frame_detections/{experiment}/grounding_dino.sock
+    is 157 bytes and fails at bind() with an unhelpful error. The DAG builds fine; the service
+    just dies on startup, so this is a runtime-only trap.
+
+    A short /tmp path avoids it. This is sound because the socket is a transient IPC endpoint,
+    not a data artifact: server and client always run on the same node (AF_UNIX cannot cross
+    nodes anyway), and the file is recreated per run. Hashing the experiment keeps the name
+    short and collision-free while staying per-experiment, so concurrent runs on different
+    experiments cannot share a socket.
+    """
+    digest = hashlib.sha1(str(experiment).encode()).hexdigest()[:12]
+    return Path(tempfile.gettempdir()) / f"morphseq_gdino_{digest}.sock"
 
 
 def _frame_detections_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):

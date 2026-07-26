@@ -10,6 +10,8 @@ Contract-driven pipeline:
 """
 
 from pathlib import Path
+import hashlib   # model-server socket naming (see rules/frame_detections.smk)
+import tempfile  # model-server socket naming (AF_UNIX ~108-byte path limit)
 import yaml
 
 from data_pipeline.pipeline_orchestrator.orchestration import (
