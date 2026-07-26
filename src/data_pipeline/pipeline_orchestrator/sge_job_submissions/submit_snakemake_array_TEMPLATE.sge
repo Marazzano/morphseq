@@ -107,11 +107,18 @@ fi
 
 # ── Run snakemake for this one experiment; capture rc; notify ─────────────────────────────────
 set +e
+# --resources gpu=1 is REQUIRED, not optional: the rules' `resources: gpu=1` declarations are
+# INERT without a CLI budget (no Snakemake profile exists in this repo), so without it Snakemake
+# schedules unlimited concurrent GPU jobs onto one card. Keep another --flag after it -- its greedy
+# nargs="*" swallows a directly-following bare positional target and 7.32.4 then dies with
+# "ValueError: not enough values to unpack". Note an ARRAY job runs several of these at once, so
+# each task claims the cap independently on whichever node it lands.
 "${SNAKEMAKE}" \
   --configfile "${CONFIG_FILES[@]}" \
   --config experiments="[${EXPERIMENT}]" \
   --directory "${SMK_WORKDIR}" \
   --cores "${CORES}" \
+  --resources gpu=1 \
   --rerun-triggers mtime \
   --keep-going \
   --printshellcmds \
