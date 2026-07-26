@@ -108,18 +108,47 @@ viable for everything that does not need a resident model.
 
 ---
 
-## Verification plan
+## Verification
 
-Two wells of a Keyence experiment (lighter compute than YX1), one timepoint, from
-raw through `analysis_ready`. Base config:
-`configs/runtime_configs/config_smoke_centralize_cutover_keyence_hotchem_A01.yaml`
-(already 1 well, `smoke_max_time_indices: 1`) extended to a second well.
+Config: `configs/runtime_configs/config_smoke_model_server_keyence_2well.yaml`
+(A01/A02 of `20260702_hotchem_24hpf_plate01` — two of the three wells the GDINO
+equivalence proof used, so their upstream shards are known good).
 
-Pass criteria:
-1. The DAG builds and runs to `analysis_ready` with servers wired.
-2. Per-well outputs are identical to a non-served run of the same two wells.
-3. The service starts once, not once per well (check the log for a single load line).
-4. No deadlock under `--cores > 1 --resources gpu=1`.
+**Note that `configs/runtime_configs/` is gitignored**, so that file is on-disk
+only. To recreate it, the load-bearing keys are:
 
-Criterion 2 is the one that matters; the adapters were proven equivalent in
-isolation, but not yet through the real rule path.
+```yaml
+experiments: [20260702_hotchem_24hpf_plate01]
+microscope: "Keyence"
+target_wells: {20260702_hotchem_24hpf_plate01: [A01, A02]}
+frame_detections: {use_model_server: true}
+image_materialization: {smoke_max_time_indices: 1, products: [{channel_id: BF, image_product_type: projection, projection_method: focus_stack}]}
+snip_qc:
+  exclusion_flags:  # full set from snip_qc/contract.py MINUS the two z_stack-dependent ones
+    [viability_dead_flag, persistence_dead_flag, sa_outlier_flag, edge_flag,
+     discontinuous_mask_flag, overlapping_mask_flag]
+```
+
+The `snip_qc` block is required, not incidental: Keyence z_stack materialization is
+unimplemented (PLANNED_REVISIONS §2), so `focus_flag` and `motion_blur_flag` cannot
+resolve — both map to `BF__z_stack`. Without dropping them the DAG dies during input
+resolution, before any model-server code runs.
+
+### Status
+
+- **DONE — DAG topology.** Dry-run yields `service_grounding_dino 1` +
+  `frame_detections_per_well_served 2`. Toggling off yields the original per-well
+  rule and no service. Both directions verified.
+- **DONE — adapter equivalence in isolation.** Served vs per-well output is
+  cell-for-cell identical on 3 real wells (commit 49652e05).
+- **BLOCKED — real end-to-end run.** These two wells' shards are write-protected on
+  the shared `nlammers` tree from an earlier run, so a rerun hits
+  `ProtectedOutputException`. Needs either a well whose shards are writable, a
+  scratch `output_root`, or the protection cleared. This is a storage-permissions
+  condition, not a defect in the wiring.
+
+Remaining pass criteria for that run:
+1. Exactly ONE "adapter loaded in Xs" line in the service log — not one per well.
+2. Shards identical to an unserved run of the same wells.
+3. No silent hang. A hang means the client rule re-acquired `gpu=1` and is
+   deadlocked against the service holding the same unit.
