@@ -15,3 +15,10 @@ except ImportError:
     # The SAM2 adapter imports torch + the sam2 package. Keep the harness importable
     # (and the fake-adapter tests runnable) even in environments without those deps.
     pass
+
+try:
+    from data_pipeline.model_servers.adapters import grounding_dino  # noqa: F401
+except ImportError:
+    # The GroundingDINO adapter imports torch + the groundingdino repo package. Keep the
+    # harness importable (and the fake-adapter tests runnable) even without those deps.
+    pass
