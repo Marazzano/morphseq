@@ -292,3 +292,28 @@ def test_atomic_write_cleans_up_tmp_on_writer_failure(tmp_path):
     assert not final_path.exists(), "final path must not exist after a failed write"
     leftover = list(tmp_path.glob(".fails.csv.tmp-*"))
     assert leftover == [], "temp file must be cleaned up after writer failure"
+
+
+def test_bind_rejects_overlong_socket_path(tmp_path):
+    """A too-long AF_UNIX path must fail with an explanation, not a bare OSError.
+
+    Regression test: the first wiring of frame_detections put the socket under DATA_ROOT, which
+    on the shared tree produced a 157-byte path -- over the ~108-byte sockaddr_un.sun_path cap.
+    The DAG built fine and dry-runs passed; the service only died at bind(), which makes this a
+    trap that static checks cannot catch. The guard turns it into a legible startup error.
+    """
+    long_dir = tmp_path / ("d" * 120)
+    server = ModelServer(socket_path=long_dir / "x.sock", adapter=FakeAdapter())
+
+    with pytest.raises(ValueError, match="over the AF_UNIX limit"):
+        server._bind()
+
+
+def test_bind_accepts_short_socket_path(tmp_path):
+    """The complement: a normal short path binds cleanly and creates the socket file."""
+    server = ModelServer(socket_path=tmp_path / "ok.sock", adapter=FakeAdapter())
+    try:
+        server._bind()
+        assert (tmp_path / "ok.sock").exists()
+    finally:
+        server._cleanup()

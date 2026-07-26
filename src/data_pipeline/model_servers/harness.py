@@ -63,7 +63,27 @@ class ModelServer:
         finally:
             self._cleanup()
 
+    # AF_UNIX caps sockaddr_un.sun_path at 108 bytes on Linux (104 on macOS/BSD), including the
+    # NUL terminator -- so 107 usable bytes. We check the Linux bound rather than the portable
+    # one: this pipeline runs on a Linux cluster, and being stricter than the kernel would reject
+    # paths that actually work (pytest's own tmp_path lands at ~107 bytes here).
+    MAX_SOCKET_PATH_BYTES = 107
+
     def _bind(self) -> None:
+        # Fail with an explanation rather than a bare OSError from bind(). A too-long path is a
+        # runtime-only trap: any DAG or dry-run that references it builds perfectly happily, and
+        # the failure only appears when the server actually starts. Deep data-tree paths blow the
+        # limit easily -- {DATA_ROOT}/object_extraction/... was 157 bytes on the shared tree.
+        # Sockets are transient IPC endpoints, not artifacts: put them somewhere short (/tmp).
+        encoded = str(self.socket_path).encode()
+        if len(encoded) > self.MAX_SOCKET_PATH_BYTES:
+            raise ValueError(
+                f"socket path is {len(encoded)} bytes, over the AF_UNIX limit of "
+                f"{self.MAX_SOCKET_PATH_BYTES}: {self.socket_path}\n"
+                "Use a short path (e.g. under /tmp) -- the socket is a transient IPC endpoint, "
+                "not a data artifact, so it does not belong under the data root."
+            )
+
         # Remove a stale socket file from a previous crashed run, if present.
         if self.socket_path.exists():
             self.socket_path.unlink()
