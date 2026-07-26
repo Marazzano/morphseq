@@ -49,6 +49,10 @@ rule build_snip_auxiliary_masks_for_well:
         output_root=str(DATA_ROOT),
         config_yaml=str(CONFIG_YAML),
         models_root=str(MODELS_DIR),
+    # gpu=1: this process loads the 4x UNet auxiliary-mask models onto the GPU and holds that
+    # memory for the job's duration. Do not copy onto a future model-server client rule.
+    resources:
+        gpu=1,
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-auxiliary-masks \
@@ -96,7 +100,8 @@ rule merge_snip_auxiliary_masks:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
+from data_pipeline.object_extraction.segmentation.backends.unet_snip.snip_auxiliary_masks_contract import SNIP_AUXILIARY_MASKS_REQUIRED_COLUMNS
 shards = collect_well_shard_paths('{DATA_ROOT}', 'snip_auxiliary_masks', 'manifest', '{wildcards.experiment}')
-concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id', 'auxiliary_mask_type'])
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=SNIP_AUXILIARY_MASKS_REQUIRED_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id', 'auxiliary_mask_type'])
 "
         """

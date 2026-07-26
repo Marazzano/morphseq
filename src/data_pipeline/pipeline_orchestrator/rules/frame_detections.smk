@@ -48,6 +48,13 @@ rule frame_detections_per_well:
         gdino_repo=lambda wc: str(MODELS_DIR / "GroundingDINO"),
         gdino_config=lambda wc: str(MODELS_DIR / "GroundingDINO" / "groundingdino" / "config" / "GroundingDINO_SwinT_OGC.py"),
         gdino_weights=lambda wc: str(MODELS_DIR / "GroundingDINO" / "weights" / "groundingdino_swint_ogc.pth"),
+    # gpu=1: this process itself loads GroundingDINO onto the GPU and holds that memory for the
+    # job's duration. Caps concurrent GPU jobs to 1 (pass --resources gpu=1 at the CLI to enforce
+    # it; see rules/frame_masks.smk for the fuller note). If a future model-server design puts the
+    # model in a resident process instead, do NOT copy this onto the per-well client rule — the
+    # client no longer holds GPU memory itself, and double-claiming the slot deadlocks scheduling.
+    resources:
+        gpu=1,
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks frame-detections \
