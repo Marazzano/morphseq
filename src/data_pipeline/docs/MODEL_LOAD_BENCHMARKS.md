@@ -43,9 +43,25 @@ one well. A resident server pays warm-load + steady-state work instead — both 
 | Family | Fresh-process ratio (today's reality) | Warm-load/steady-work ratio (server-world) |
 |---|---|---|
 | frame_detections (GroundingDINO) | **0.90** | 0.86 |
-| frame_masks (SAM2) | **0.80** | 0.80 |
+| frame_masks (SAM2) | ~~0.80~~ **see correction below** | ~~0.80~~ |
 | snip_auxiliary_masks (4x UNet) | **0.92** | 0.96 |
 | latent_embeddings (VAE, CPU) | **0.97** | 0.49 (see caveat) |
+
+> **CORRECTION (2026-07-25) — the SAM2 row above is wrong.** It was measured on a well where
+> `select_segmentation_frame_view` selected only **1** frame (see the n_frames=1 note in the
+> per-family section), so it timed SAM2 propagating over a 1-frame "video" — not an empty
+> input, but a badly unrepresentative one. Subsequent full-well runs during the model-server
+> equivalence work measured real per-well SAM2 work at **621s (G05) and 1343s (D04)** —
+> 10 to 22 minutes, not <0.1s. Against a 3.2s load the true ratio is **~0.005**, so serving
+> SAM2 saves roughly 0.5%, not 80%.
+>
+> The SAM2 adapter was still worth building: it is the stateful model and therefore the
+> hardest case, so it proves the architecture. But **the throughput win lives in
+> frame_detections and snip_auxiliary_masks**, not here.
+>
+> The lesson generalizes: these ratios are only as good as the representativeness of the
+> chosen well. Before trusting any row, check that per-well work time is consistent with the
+> observed ~16h/192-well serial baseline (~4 min/well average across ALL steps).
 
 All four ratios are high under the fresh-process framing that matches current production
 behavior — **load dominates for all four families**. The bottom row's warm-load ratio drops
@@ -210,7 +226,7 @@ an MPS/time-slicing setup), which is an operational change beyond just "the memo
 | Family | Recommendation | Why |
 |---|---|---|
 | frame_detections (GroundingDINO) | **SERVE** | Cold load 50s vs. steady work 0.15s/well — load totally dominates. |
-| frame_masks (SAM2) | **SERVE** | Cold load 3.2s (11.3s incl. import) vs. steady work <0.1s/well. |
+| frame_masks (SAM2) | **MARGINAL** (corrected) | Cold load 3.2s (11.3s incl. import) vs. REAL per-well work of 621–1343s measured on full wells — ratio ~0.005, so serving saves ~0.5%. The original `<0.1s/well` figure here timed a 1-frame well; see the correction at the top. An adapter exists and works (it was the stateful hard case, built to prove the architecture), but do not expect throughput from it. |
 | snip_auxiliary_masks (4x UNet) | **SERVE** | Cold load 73–81s vs. steady work <50ms/well — the largest load cost measured, most clear-cut case. |
 | latent_embeddings (VAE) | **FIX THE RULE FIRST, THEN RE-EVALUATE** | The code already supports one-load-many-wells; the Snakemake rule doesn't use it. Wiring the existing batch entrypoint into the rule (no new server needed) captures most of the win. A resident server only helps further if it keeps the Python 3.9 process itself alive across requests — worth revisiting once (a) the batch rule fix lands and (b) whether this stage should move to GPU is decided (today: CPU-only, no CUDA-capable py3.9 torch build available). |
 
