@@ -9,6 +9,26 @@ wired) depend on the per-well shard directly.
 FRAME_DETECTIONS_STEP = "frame_detections"
 FRAME_DETECTIONS_ARTIFACT = "frame_detections"
 
+# --- resident model server (opt-in) -----------------------------------------------------------
+# When enabled, GroundingDINO is loaded ONCE by rule service_grounding_dino and the per-well jobs
+# become thin socket clients. Measured: ~50s of model load per well today, ~8h across a 576-well
+# run. The DAG is unchanged either way -- still one job per well, same shards -- because Snakemake
+# only checks that `output` exists and the command exited 0; it does not care which process wrote
+# the file. See docs/MODEL_SERVER_WIRING.md.
+#
+# TWO THINGS THAT WILL BITE YOU:
+#   1. The client rule must NOT declare `resources: gpu=1`. The client holds no GPU memory -- it
+#      sends two paths over a socket and blocks. The SERVICE holds the GPU. If both declare gpu=1
+#      the service takes the only unit, no client is ever schedulable, and Snakemake blocks
+#      forever WITHOUT an error (it correctly concludes nothing is runnable).
+#   2. Services are incompatible with --cores 1: the service job occupies a core for the whole
+#      run, so service + client needs >= 2 cores, else "Excess Resources: _cores: 2/1".
+FRAME_DETECTIONS_SERVED = bool(config.get("frame_detections", {}).get("use_model_server", False))
+
+def _frame_detections_socket(experiment: str) -> Path:
+    # Per-experiment so concurrent runs on different experiments cannot collide on one socket.
+    return DATA_ROOT / "object_extraction" / "frame_detections" / str(experiment) / "grounding_dino.sock"
+
 
 def _frame_detections_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
     return rule_artifact(FRAME_DETECTIONS_STEP, FRAME_DETECTIONS_ARTIFACT, experiment, path_mode=path_mode, well_id=well_id)
@@ -23,12 +43,85 @@ def _frame_detections_validated_for_run(wc):
     return [_frame_detections_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w) for w in wells_for_experiment(wc)]
 
 
+rule service_grounding_dino:
+    """Resident GroundingDINO server: load the model ONCE, serve per-well requests over a socket.
+
+    Only instantiated when frame_detections.use_model_server is true. `service(...)` marks the
+    socket as a service output, so Snakemake starts this job when the first consumer needs it and
+    tears it down (SIGTERM) after the last one finishes -- exactly the lifetime we want, with no
+    sidecar machinery of our own.
+
+    This rule holds the GPU for its whole lifetime, which is why it -- and NOT the per-well client
+    rule -- declares gpu=1. See the header note.
+
+    The harness creates the socket file only AFTER the adapter finishes loading, so a client that
+    connects successfully is guaranteed to be talking to a ready model. That ordering IS the
+    readiness handshake; there is no other one.
+    """
+    output:
+        socket=service(str(_frame_detections_socket("{experiment}"))),
+    params:
+        device=lambda wc: str(config.get("frame_detections", {}).get("device", "cuda")),
+        gdino_repo=lambda wc: str(MODELS_DIR / "GroundingDINO"),
+        gdino_config=lambda wc: str(MODELS_DIR / "GroundingDINO" / "groundingdino" / "config" / "GroundingDINO_SwinT_OGC.py"),
+        gdino_weights=lambda wc: str(MODELS_DIR / "GroundingDINO" / "weights" / "groundingdino_swint_ogc.pth"),
+    resources:
+        gpu=1,
+    shell:
+        """
+        {RUN} -m data_pipeline.model_servers.harness \
+          --adapter grounding_dino \
+          --socket-path "{output.socket}" \
+          --adapter-arg gdino_repo_dir="{params.gdino_repo}" \
+          --adapter-arg gdino_config="{params.gdino_config}" \
+          --adapter-arg gdino_weights="{params.gdino_weights}" \
+          --adapter-arg device="{params.device}"
+        """
+
+
+rule frame_detections_per_well_served:
+    """Per-well frame_detections via the resident GroundingDINO server (thin socket client).
+
+    Same inputs, same output shard, same DAG position as frame_detections_per_well -- the only
+    difference is that inference happens in the resident service process instead of here. The
+    client sends PATHS and blocks until the server has written the output, so Snakemake's
+    file-exists contract is preserved unchanged.
+
+    Deliberately declares NO gpu resource: this process never touches the GPU. See the header.
+    """
+    input:
+        frame_inventory=str(_frame_inventory_artifact(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+        frame_inventory_validated=str(_frame_inventory_validated(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+        socket=lambda wc: str(_frame_detections_socket(wc.experiment)),
+    output:
+        detections=str(_frame_detections_artifact(
+            "{experiment}",
+            path_mode=PATH_MODE_PER_WELL,
+            well_id="{well_id}",
+        )),
+    params:
+        detector_model_id=lambda wc: str(
+            config.get("frame_detections", {}).get("detector_model_id", "groundingdino_swint_ogc")
+        ),
+    shell:
+        """
+        {RUN} -m data_pipeline.model_servers.client \
+          --socket-path "{input.socket}" \
+          --payload-json '{{"frame_inventory_csv": "{input.frame_inventory}", "output_csv": "{output.detections}", "detector_model_id": "{params.detector_model_id}"}}'
+        """
+
+
 rule frame_detections_per_well:
     """Run GroundingDINO detection over a validated per-well frame_inventory shard.
 
-    One job per well. Reads the frame_inventory shard, runs the detection router, and emits the
-    per-well frame_detections shard. The merged experiment table is produced by
-    merge_frame_detections.
+    One job per well, loading the model in-process. This is the DEFAULT path; set
+    frame_detections.use_model_server to route through the resident server instead
+    (frame_detections_per_well_served), which loads the model once per run rather than once per
+    well. Both write the identical shard -- proven cell-for-cell equivalent on 3 real wells.
     """
     input:
         frame_inventory=str(_frame_inventory_artifact(
@@ -65,6 +158,17 @@ rule frame_detections_per_well:
           --gdino-weights "{params.gdino_weights}" \
           --device "{params.device}"
         """
+
+
+# Both frame_detections_per_well and frame_detections_per_well_served produce the same per-well
+# shard, which is ambiguous to the DAG resolver. ruleorder picks the winner from the config gate;
+# the losing rule stays defined but is never selected. (Defining only one of them conditionally
+# would also work, but keeping both defined means `snakemake --list` and the test suite can see
+# the served rule regardless of the current toggle.)
+if FRAME_DETECTIONS_SERVED:
+    ruleorder: frame_detections_per_well_served > frame_detections_per_well
+else:
+    ruleorder: frame_detections_per_well > frame_detections_per_well_served
 
 
 rule validate_frame_detections_for_well:
