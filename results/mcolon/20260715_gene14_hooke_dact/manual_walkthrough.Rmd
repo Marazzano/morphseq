@@ -1,0 +1,342 @@
+---
+title: "GENE14 Phase-3 — Manual walkthrough"
+author: "mdcolon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+<!--
+  Step-by-step, run-it-yourself walkthrough of the GENE14 Phase-3 analysis.
+  We fill this in one section at a time. Reference: HOWTO_load_and_group.md
+-->
+
+# 1. Load libraries
+
+```{r libs, message=FALSE, warning=FALSE}
+# The processed CDS is a monocle3 object -> we need monocle3 to load it.
+library(monocle3)  # load_monocle_objects(), colData()
+library(readr)     # read_tsv() — fast TSV reader (for the label mapping)
+library(dplyr)     # filter/mutate/group_by/count — the verbs
+library(tidyr)     # pivot_wider / pivot_longer — reshaping
+library(ggplot2)   # plots
+```
+
+# 2. Define paths
+
+```{r paths}
+# The processed cells (fitted hooke v3.1.0 CDS, ~7.3G, BPCells-backed):
+MCCLINTOCK <- "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/v3.1.0/mcclintock/GENE14/run_1"
+CDS_PATH   <- file.path(MCCLINTOCK, "filter_embryos", "embryo_filtered_cds")
+
+# The phenotype label mapping (per-embryo table; the merge source):
+BASE    <- "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20260715_gene14_hooke_dact"
+PHENO   <- file.path(BASE, "output", "gene14_embryos_with_phenotype.tsv")
+OUT_DIR <- file.path(BASE, "output")   # where fit results are saved
+
+# CONFIRM both exist before going further:
+stopifnot(file.exists(CDS_PATH), file.exists(PHENO))
+cat("CDS path and phenotype table found.\n")
+```
+
+# 3. Load the processed cells
+
+```{r load-cds}
+# WARNING: this loads the 7.3G CDS — it OOM-kills a LOGIN node.= that de=esnt have enough RAM.
+cds <- load_monocle_objects(CDS_PATH)
+cat("cds:", ncol(cds), "cells x", nrow(cds), "genes\n")
+```
+
+# 4. Merge the phenotype labels into the object
+
+```{r merge-labels}
+# Read the label mapping (one row per embryo).
+pheno <- read_tsv(PHENO, show_col_types = FALSE)
+
+# The merge: for each CELL, look up its embryo_ID in the label table and pull
+# back that embryo's morphseq_phenotype. match() returns the row index in
+# `pheno` for each cell's embryo_ID; we index the label column with it.
+# This is the whole join — one line, matched on embryo_ID.
+colData(cds)$morphseq_phenotype <-
+  pheno$morphseq_phenotype[match(colData(cds)$embryo_ID, pheno$embryo_ID)]
+
+# CONFIRM the labels landed: how many cells now carry a phenotype?
+# (blank/NA = pre-divergence embryos that have no phenotype label yet)
+cat(sum(!is.na(colData(cds)$morphseq_phenotype)),
+    "cells carry a MorphSeq phenotype\n")
+table(colData(cds)$morphseq_phenotype, useNA = "ifany")
+```
+
+# 5. KR1 baseline — homozygous / crispant vs control (DACTs)
+
+Before splitting by phenotype, get the simple, label-independent baseline: each
+perturbation group vs ITS OWN control. Five fits, all the SAME recipe.
+
+The steps below MUST run top-to-bottom — each depends on the columns the previous
+one wrote onto the CDS. The order that matters:
+
+    5a  load hooke/platt
+    5b  ADD every colData column the fit needs  (genotype_block, batch_one)
+        -> all onto `cds`, BEFORE building ccs
+    5c  build ccs   (it snapshots the CDS colData AS-IS at this moment)
+    5d  define the fit + contrast list
+    5e  run the fits -> DACTs
+
+Why the order is strict: `new_cell_count_set()` copies over ONLY the colData
+columns present on the CDS at build time. If you build ccs first and add a column
+after, ccs won't have it -> hooke's subset is empty -> "time range: Inf to -Inf"
++ a dgCMatrix crash. So ALL colData edits happen in 5b, and ccs is built in 5c.
+
+## 5a. Load hooke / platt
+
+```{r hooke-libs}
+# hooke fits on the CELLS (needs the CDS) — it counts cells per embryo per cell
+# type, then models how those abundances shift. platt wraps hooke's genotype fit.
+library(monocle3)
+library(hooke)
+library(platt)
+library(splines)  # ns() — the natural-spline fn hooke's timepoint formula calls
+```
+
+## 5b. Add ALL the colData columns the fit reads (onto the CDS, before ccs)
+
+```{r prep-coldata}
+# ---- (1) genotype_block: the fence, straight from rt_block --------------------
+# The block IS who-was-collected-with-whom, so it groups each gene with its own
+# controls (mut + negsib + AB reference share the gene's blocks).
+#   Bl1 -> crispant (foxj1a/ift88/sspo/ctrl-inj + AB)   Bl2-5 -> cep290   Bl6-9 -> b9d2
+colData(cds)$genotype_block <- dplyr::case_when(
+  colData(cds)$rt_block == "Bl1"                              ~ "crispant",
+  colData(cds)$rt_block %in% c("Bl2", "Bl3", "Bl4", "Bl5")    ~ "cep290",
+  colData(cds)$rt_block %in% c("Bl6", "Bl7", "Bl8", "Bl9")    ~ "b9d2",
+  TRUE                                                        ~ NA_character_
+)
+
+# ---- (2) batch_one: a CONSTANT batch term -------------------------------------
+# fit_genotype_ccm REQUIRES a batch_col. rt_block can't be it — some blocks hold
+# only case or only control (cep290 Bl2/Bl3 negsib-only, Bl5 case-only), so it's
+# collinear with the case/control split (rank-deficient). A single-value column is
+# a no-op batch term that satisfies the API without distorting the fit.
+colData(cds)$batch_one <- "b1"
+
+# NOTE: no pooled-control COLUMN is needed. The fence is done by SUBSETTING the ccs
+# to one genotype_block before each fit (section 5d) — inside that subset, plain
+# `perturbation` values (mut / negsib / reference) fit cleanly, and a POOLED control
+# is just ctrl_ids = c("<gene>-negsib", "reference") with no leak possible.
+
+# ---- CONFIRM the fence column landed before we freeze it into ccs -------------
+stopifnot(!anyNA(colData(cds)$genotype_block))            # every cell got a family
+print(table(colData(cds)$genotype_block, colData(cds)$perturbation, useNA = "ifany"))
+```
+
+## 5c. Build the cell_count_set (freezes the colData above)
+
+```{r cell-count-set}
+# ONE cell_count_set: how many cells of each cell_type each embryo has — the
+# object hooke actually models. Built ONCE here, AFTER 5b, so it inherits
+# genotype_block + batch_one. Reused (subset per block) by every contrast.
+#   sample_group = embryo (the unit)   cell_group = cell_type (what we count)
+ccs <- new_cell_count_set(cds, sample_group = "embryo_ID", cell_group = "cell_type")
+
+# GUARD: prove the fit's columns rode along onto ccs (else the fit would silently
+# subset to nothing -> "Inf to -Inf" crash). If this fails, re-run 5b then 5c.
+# genotype_block is what we subset the ccs by (the fence); perturbation holds the
+# case + control values within each block.
+stopifnot(all(c("perturbation", "genotype_block", "timepoint", "batch_one")
+              %in% colnames(colData(ccs))))
+ccs
+```
+
+## 5d. The unified fit function (subset ccs by block = the fence)
+
+```{r fit-within-block}
+# THE reusable fit for the whole notebook (baseline AND the phenotype splits later).
+# It SUBSETS the ccs to ONE genotype_block first — that subset IS the fence: inside
+# it only that gene's cells remain (mut / negsib / its own AB), so plain
+# `perturbation` values fit cleanly and `reference` can never leak from other blocks.
+# A POOLED control is simply ctrl_ids = c("<gene>-negsib", "reference").
+#
+# The two knobs per contrast: `genotype` (case) and `ctrl_ids` (control, a vector).
+fit_within_block <- function(block, genotype, ctrl_ids, tag) {
+  ccs_sub <- ccs[, colData(ccs)$genotype_block == block]   # <-- SUBSET = the fence
+  message("\n=== ", tag, "  (", genotype, " vs ", paste(ctrl_ids, collapse = "+"),
+          " | block=", block, ", ", ncol(ccs_sub), " embryos) ===")
+  ccm <- platt:::fit_genotype_ccm(
+    genotype         = genotype,
+    ccs              = ccs_sub,
+    perturbation_col = "perturbation",  # plain perturbation — the subset fenced it
+    ctrl_ids         = ctrl_ids,        # one OR many control values (pool = vector)
+    interval_col     = "timepoint",     # drives the timepoint spline
+    batch_col        = "batch_one",     # constant no-op batch (see 5b)
+    vhat_method      = "sandwich_var",  # fast analytical variance (not bootstrap)
+    num_threads      = 3
+  )
+  # SAVE THE FITTED MODEL (for plotting: plot_contrast / estimate_abundances). LARGE
+  # (~6GB — bundles the ccs), one .rds per contrast, written as the fit finishes.
+  saveRDS(ccm, file.path(OUT_DIR, paste0("dact_ccm_", tag, ".rds")))
+  tbl <- platt:::get_perturbation_effects(ccm, interval_col = "timepoint")
+  tbl$tag <- tag
+  # SAVE-AS-YOU-GO: write each contrast the moment it finishes, so a LATER crash
+  # never loses the ones that already worked.
+  readr::write_tsv(tbl, file.path(OUT_DIR, paste0("dact_contrast_", tag, ".tsv")))
+  tbl
+}
+```
+
+## 5e. The full contrast set (9 fits) + run
+
+```{r contrast-spec}
+# ALL contrasts fit + saved in ONE run. Re-running the chunk refits + re-saves all.
+# cep290 & b9d2 get 3 CONTROLS each (negsib / reference / the pool of both) so we can
+# see if the matched-sibling control is BLUNTING the signal (b9d2=1, cep290=9 earlier).
+# ctrl_ids is a LIST column (each entry a character vector) — pool = c(negsib, ref).
+contrasts_all <- tibble::tribble(
+  ~block,    ~tag,                  ~genotype,     ~ctrl,
+  # -- cep290: 3 controls ------------------------------------------------------
+  "cep290",  "cep290_vs_negsib",    "cep290-mut",  "cep290-negsib",
+  "cep290",  "cep290_vs_reference", "cep290-mut",  "reference",
+  "cep290",  "cep290_vs_pool",      "cep290-mut",  list(c("cep290-negsib", "reference")),
+  # -- b9d2: 3 controls --------------------------------------------------------
+  "b9d2",    "b9d2_vs_negsib",      "b9d2-mut",    "b9d2-negsib",
+  "b9d2",    "b9d2_vs_reference",   "b9d2-mut",    "reference",
+  "b9d2",    "b9d2_vs_pool",        "b9d2-mut",    list(c("b9d2-negsib", "reference")),
+  # -- IS THE SIBLING CONTROL CLEAN? negsib vs AB reference --------------------
+  # If these yield DACTs, the negsibs are THEMSELVES shifted from wildtype — which
+  # is exactly why mut_vs_negsib is blunted vs mut_vs_reference.
+  "cep290",  "cep290_negsib_vs_ref","cep290-negsib","reference",
+  "b9d2",    "b9d2_negsib_vs_ref",  "b9d2-negsib", "reference",
+  # -- crispants vs injection control (their designed control) -----------------
+  "crispant","foxj1a_vs_ctrl",      "foxj1a",      "ctrl-inj",
+  "crispant","ift88_vs_ctrl",       "ift88",       "ctrl-inj",
+  "crispant","sspo_vs_ctrl",        "sspo",        "ctrl-inj",
+)
+# normalize ctrl to a list-column (so scalar strings and the pooled vector coexist)
+contrasts_all$ctrl <- lapply(contrasts_all$ctrl, unlist)
+contrasts_all %>% select(block, tag, genotype)
+```
+
+```{r run-all-fits}
+# Run all 9. Each returns a per-cell-type x per-timepoint contrast table; stacked.
+dact_raw <- purrr::pmap_dfr(
+  contrasts_all,
+  function(block, tag, genotype, ctrl) fit_within_block(block, genotype, ctrl, tag)
+)
+dplyr::count(dact_raw, tag)
+```
+
+## 5f. Inspect the thresholds BEFORE applying them
+
+```{r threshold-diagnostics, fig.width=9, fig.height=6}
+Q_THRESH <- 0.05   # delta_q_value cutoff (FDR)
+LA_THRESH <- -3    # log_abund_x floor (drop near-empty cell types)
+
+# --- how many rows each cut removes, and the two cuts combined ------------------
+n_all   <- nrow(dact_raw)
+n_q     <- sum(dact_raw$delta_q_value < Q_THRESH, na.rm = TRUE)
+n_la    <- sum(dact_raw$log_abund_x  >= LA_THRESH, na.rm = TRUE)
+n_both  <- sum(dact_raw$delta_q_value < Q_THRESH &
+               dact_raw$log_abund_x  >= LA_THRESH, na.rm = TRUE)
+cat(sprintf("total rows            : %d\n", n_all))
+cat(sprintf("pass q < %.2f          : %d  (%.1f%%)\n", Q_THRESH, n_q,  100*n_q /n_all))
+cat(sprintf("pass log_abund_x >= %d : %d  (%.1f%%)\n", LA_THRESH, n_la, 100*n_la/n_all))
+cat(sprintf("pass BOTH (= DACTs)   : %d  (%.1f%%)\n", n_both, 100*n_both/n_all))
+
+# --- histograms with the threshold lines drawn ---------------------------------
+p1 <- ggplot(dact_raw, aes(delta_q_value)) +
+  geom_histogram(bins = 50, fill = "grey70") +
+  geom_vline(xintercept = Q_THRESH, colour = "red") +
+  labs(title = "delta_q_value (red = 0.05 cutoff)", x = "delta_q_value", y = "rows")
+
+p2 <- ggplot(dact_raw, aes(log_abund_x)) +
+  geom_histogram(bins = 50, fill = "grey70") +
+  geom_vline(xintercept = LA_THRESH, colour = "red") +
+  labs(title = "log_abund_x (red = -3 floor; left of line dropped)",
+       x = "log_abund_x", y = "rows")
+
+# --- the key 2D view: WHERE does each cut land, jointly? -----------------------
+# color by pass/fail so you see if the log_abund floor is removing significant hits
+dact_raw$pass <- with(dact_raw, delta_q_value < Q_THRESH & log_abund_x >= LA_THRESH)
+p3 <- ggplot(dact_raw, aes(log_abund_x, -log10(delta_q_value), colour = pass)) +
+  geom_point(alpha = 0.3, size = 0.6) +
+  geom_vline(xintercept = LA_THRESH, colour = "red") +
+  geom_hline(yintercept = -log10(Q_THRESH), colour = "red") +
+  scale_colour_manual(values = c("FALSE" = "grey70", "TRUE" = "firebrick")) +
+  labs(title = "joint cut: red box (upper-right) = kept DACTs",
+       x = "log_abund_x", y = "-log10(delta_q_value)")
+
+# stack them (patchwork if available, else print individually)
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  print(patchwork::wrap_plots(p1, p2, p3, ncol = 2))
+} else { print(p1); print(p2); print(p3) }
+```
+
+The key question p3 answers: **is the `log_abund_x >= -3` floor throwing away
+SIGNIFICANT hits** (grey points that are high on the y-axis but left of the red
+vertical line)? If yes, loosen the floor; if those are all low-significance, the
+floor is safely trimming noise.
+
+## 5g. Apply the DACT gate
+
+```{r kr1-dact-gate}
+# DACT = significant AND above the abundance-quality floor.
+#   delta_q_value < 0.05    (FDR)
+#   log_abund_x >= -3       (not a near-empty cell type)
+# (percent_max_abund filter is skipped — get_perturbation_effects doesn't emit it.)
+dact_hits <- dact_raw %>%
+  filter(delta_q_value < Q_THRESH, log_abund_x >= LA_THRESH)
+
+# the KR1 answer: DACT cell types per contrast
+dact_hits %>%
+  count(tag, name = "n_dacts") %>%
+  arrange(desc(n_dacts))
+```
+
+## 5f. Save the results (same outputs the grid script writes)
+
+```{r save-kr1}
+# Persist so you can reload WITHOUT re-loading the CDS or re-fitting.
+#   dact_raw_contrasts.rds  = the combined raw table, exact R object  (reload: readRDS)
+#   dact_raw_contrasts.tsv  = the same, as a plain text table (view / share)
+#   dact_hits.tsv          = the DACT-gated subset (the answer)
+# (Per-contrast dact_contrast_<tag>.tsv + dact_ccm_<tag>.rds written during 5e.)
+saveRDS(dact_raw,            file.path(OUT_DIR, "dact_raw_contrasts.rds"))
+readr::write_tsv(dact_raw,   file.path(OUT_DIR, "dact_raw_contrasts.tsv"))
+readr::write_tsv(dact_hits,  file.path(OUT_DIR, "dact_hits.tsv"))
+
+cat("saved to", OUT_DIR, ":\n",
+    " dact_raw_contrasts.rds / .tsv  (all 9 contrasts, raw)\n",
+    " dact_hits.tsv                  (DACT-gated)\n",
+    " dact_contrast_<tag>.tsv        (per-contrast, written during 5e)\n")
+```
+
+To reload just the result tables in a fresh session (no CDS needed):
+
+```{r reload-kr1, eval=FALSE}
+dact_raw   <- readRDS(file.path(OUT_DIR, "dact_raw_contrasts.rds"))
+dact_hits <- readr::read_tsv(file.path(OUT_DIR, "dact_hits.tsv"))
+```
+
+## 5g. Checkpoint — save enough to pick up exactly where you left off
+
+```{r checkpoint}
+# A CHECKPOINT bundles several named objects into ONE .RData file, so a fresh
+# session can restore the whole working state at once (by name) — no CDS reload,
+# no re-fitting.
+#   dact_raw, dact_hits  = the results
+#   contrasts_all        = the contrast spec (cheap, handy)
+#   ccs                  = the cell_count_set — so you can run MORE fits (the
+#                          phenotype splits) later WITHOUT rebuilding it from the
+#                          7.3G CDS. (You can always rebuild it if you drop this.)
+# NOT saved: `cds` — 7.3G / BPCells-backed; reload from CDS_PATH only if you truly
+# need cell-level data again.
+CKPT <- file.path(OUT_DIR, "dact_checkpoint.RData")
+save(dact_raw, dact_hits, contrasts_all, ccs, file = CKPT)
+cat("checkpoint ->", CKPT, "\n")
+```
+
+Resume in a brand-new R session (restores all objects by their names):
+
+```{r resume, eval=FALSE}
+# after library(monocle3); library(hooke); library(platt); library(splines)
+load(file.path(OUT_DIR, "dact_checkpoint.RData"))
+#   -> dact_raw, dact_hits, contrasts_all, ccs are all back
+```

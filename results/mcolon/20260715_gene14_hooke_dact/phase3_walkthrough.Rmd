@@ -1,0 +1,204 @@
+---
+title: "GENE14 Phase-3 — Load, Group & DACT walkthrough"
+author: "mdcolon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+<!--
+PURPOSE
+  Step-by-step walkthrough so YOU load and inspect the GENE14 hooke DACT data by
+  hand and understand each object before producing the Phase-3 Key Results.
+
+  Reference how-to:  HOWTO_load_and_group.md   (in this same folder)
+  loaf template:     software/loaf/inst/examples/loaf_example_pbx.Rmd
+
+THE THREE KEY RESULTS (what we're building toward)
+  KR1  Mutant phenotype vs control       e.g. cep290_High_to_Low vs ctrl (negsib)
+  KR2  Mutant phenotype vs phenotype     e.g. cep290_High_to_Low vs cep290_Low_to_High
+  KR3  Transcriptional similarity        (a) shared DACT set across phenotypes
+                                         (b) PCA, one point per embryo's DACT vector
+
+IMPORTANT — WHAT IS ALREADY DONE (so you don't redo heavy work)
+  * The CDS is ALREADY FIT (hooke v3.1.0). Do NOT re-fit for plots.
+  * The DACT contrasts are ALREADY COMPUTED and live in:
+        output/phenosplit_contrasts_all.tsv
+    Its `contrast` column already contains every pairing KR1 & KR2 ask for:
+        KR1 (vs control):  *_vs_ctrl   (cep290_High_to_Low_vs_ctrl, b9d2_CE_vs_ctrl, ...)
+        KR2 (pheno-pheno): *_vs_*      (cep290_High_to_Low_vs_Low_to_High, b9d2_CE_vs_HTA)
+    So KR1 & KR2 are FILTER-AND-READ problems, not fitting problems.
+  * The 7.3G BPCells CDS load (HOWTO §1) OOM-kills the login node. You only need
+    it if you want to derive per-embryo vectors from scratch. For KR3 the
+    per-embryo tables are ALREADY exported:
+        output/embryo_celltype_counts.tsv     (raw counts, embryo x cell_type)
+        output/embryo_celltype_fraction.tsv   (fractions)
+        output/embryo_pca_dact_subset.tsv     (PCA restricted to shared-DACT cell types)
+    Start from those; only touch the CDS on the grid if these are insufficient.
+
+  Because of this, the sections below are ordered:
+    A. environment + column-sanity checks (no CDS)
+    B. KR1 / KR2 directly from phenosplit_contrasts_all.tsv
+    C. KR3 from the exported per-embryo tables
+    D. (OPTIONAL, GRID ONLY) load the CDS the HOWTO way, if you must re-derive
+-->
+
+```{r setup, include=FALSE}
+# CHUNK GOAL: knit options only. leave code as-is or tweak echo/warning.
+# fill in: knitr::opts_chunk$set(...)
+```
+
+# A. Environment & paths
+
+```{r libs}
+# CHUNK GOAL: load the tidyverse tools you'll actually use for A–C.
+# You do NOT need monocle3/hooke/platt for A–C (those are section D only).
+# CONFIRM: each library() call returns without error.
+# fill in: library(...) for readr/dplyr/tidyr/ggplot2 (or tidyverse), etc.
+
+```
+
+```{r paths}
+# CHUNK GOAL: define the file paths you'll read. Keep them in ONE place.
+# Anchor everything on this results folder so it's portable.
+#   BASE      <- ".../results/mcolon/20260715_gene14_hooke_dact"
+#   OUT       <- file.path(BASE, "output")
+#   CONTRASTS <- file.path(OUT, "phenosplit_contrasts_all.tsv")
+#   PHENO     <- file.path(OUT, "gene14_embryos_with_phenotype.tsv")
+#   PCA_DACT  <- file.path(OUT, "embryo_pca_dact_subset.tsv")
+#   COUNTS    <- file.path(OUT, "embryo_celltype_counts.tsv")
+# CONFIRM: file.exists() is TRUE for each path before continuing.
+# fill in:
+
+```
+
+# A2. Sanity-check the inputs (know your columns before analysis)
+
+```{r peek-contrasts}
+# CHUNK GOAL: read phenosplit_contrasts_all.tsv and understand its shape.
+# CONFIRM by eye:
+#   * columns include: gene, contrast, cell_group, timepoint,
+#                      delta_log_abund, delta_q_value, log_abund_x, percent_max_abund(?)
+#   * distinct(contrast) shows the KR1 (*_vs_ctrl) and KR2 (*_vs_*) pairings
+#   * distinct(gene) is {b9d2, cep290}; timepoints are {14,18,24,30,48}
+# fill in: read_tsv(CONTRASTS); glimpse(); count(gene, contrast)
+
+```
+
+```{r peek-pheno}
+# CHUNK GOAL: read the per-embryo phenotype table and learn the label columns.
+# CONFIRM by eye:
+#   * embryo_ID is the join key
+#   * morphseq_phenotype in {CE, HTA, High_to_Low, Low_to_High, NA(blank)}
+#     (NA = pre-divergence embryos with no phenotype label yet)
+#   * perturbation in {b9d2-mut, b9d2-negsib, cep290-mut, cep290-negsib, reference, ...}
+#   * rt_block present (needed for the control-matching rule, HOWTO §2)
+# fill in: read_tsv(PHENO); glimpse(); count(perturbation); count(morphseq_phenotype)
+
+```
+
+# B. KR1 & KR2 — DACT lists (read straight from the contrast table)
+
+```{r dact-filter-fn}
+# CHUNK GOAL: define the DACT threshold ONCE (HOWTO §3a) as a reusable filter.
+# The lab's chosen DACT gate:
+#   percent_max_abund >= 0.1  AND  log_abund_x >= -3  AND  delta_q_value < 0.05
+# NOTE: confirm the column name for percent_max_abund exists in THIS table;
+#       if not, that filter term came from a different export — check A2 output.
+# fill in: a function or dplyr pipeline that applies the gate
+
+```
+
+```{r kr1-vs-control}
+# CHUNK GOAL: KR1 — DACT list per mutant phenotype vs its control.
+# Filter the contrast table to the *_vs_ctrl contrasts, apply the DACT gate.
+#   cep290: cep290_High_to_Low_vs_ctrl, cep290_Low_to_High_vs_ctrl
+#   b9d2:   b9d2_CE_vs_ctrl, b9d2_HTA_vs_ctrl   (POOLED_vs_ctrl = all-mut baseline)
+# CONFIRM: resulting cell_group list matches the pre-exported
+#          output/phenosplit_dacts_<contrast>.tsv (spot-check one).
+# fill in:
+
+```
+
+```{r kr2-pheno-vs-pheno}
+# CHUNK GOAL: KR2 — DACT list, one phenotype vs another.
+#   cep290: cep290_High_to_Low_vs_Low_to_High
+#   b9d2:   b9d2_CE_vs_HTA
+# Same DACT gate as KR1.
+# CONFIRM against output/phenosplit_dacts_*_vs_*.tsv.
+# fill in:
+
+```
+
+# C. KR3 — transcriptional similarity across phenotypes
+
+```{r kr3a-shared-dact}
+# CHUNK GOAL: (a) derive the SHARED DACT set across mutant phenotypes.
+# = the cell types that are DACTs in common across the phenotype contrasts.
+# (intersect? union with count threshold? decide and document your choice.)
+# CONFIRM against the already-exported list: output/shared_dact_celltypes.txt
+# fill in:
+
+```
+
+```{r kr3b-pca}
+# CHUNK GOAL: (b) PCA where each POINT = one embryo's DACT vector.
+# Two routes — pick one and know why:
+#   ROUTE 1 (fast, recommended first): load output/embryo_pca_dact_subset.tsv,
+#           which is ALREADY the PCA restricted to shared-DACT cell types.
+#           Just plot PC1 vs PC2, color by morphseq_phenotype (join PHENO on embryo_ID).
+#   ROUTE 2 (from scratch): start from embryo_celltype_fraction.tsv, subset columns
+#           to the shared-DACT cell types from kr3a, scale, prcomp(), then plot.
+# CONFIRM: the two routes give visually consistent structure.
+# fill in:
+
+```
+
+```{r kr3b-plot}
+# CHUNK GOAL: the actual ggplot. one point per embryo, color = morphseq_phenotype,
+# maybe shape/facet = gene. label axes with % variance explained.
+# fill in:
+
+```
+
+# D. (OPTIONAL — GRID ONLY) Load the CDS the HOWTO way
+
+<!--
+  Only run this section on a grid node (qlogin / sbatch), NOT the login node:
+  load_monocle_objects on the 7.3G BPCells CDS will OOM-kill a login shell.
+  You only need this if sections B/C's exported tables are missing something and
+  you must re-derive from cells. Mirrors HOWTO §1–§2 and 5_phenotype_split_hooke.R.
+-->
+
+```{r cds-load, eval=FALSE}
+# CHUNK GOAL: load fitted CDS + pull colData (HOWTO §1).
+#   CDS_PATH <- ".../v3.1.0/mcclintock/GENE14/run_1/filter_embryos/embryo_filtered_cds"
+#   cds <- load_monocle_objects(CDS_PATH)
+#   cd  <- as.data.frame(colData(cds))
+# CONFIRM: nrow(cd), and embryo_ID present.
+# fill in:
+
+```
+
+```{r cds-build-condition, eval=FALSE}
+# CHUNK GOAL: build the `condition` grouping column (HOWTO §2).
+#   * attach morphseq_phenotype onto cd by matching embryo_ID -> PHENO table
+#   * condition = phenotype for phenotyped mutants;
+#                 "negsib" if perturbation=="<gene>-negsib";
+#                 "AB" if perturbation=="reference";
+#                 "POOLED" = ALL homozygous mutant embryos (perturbation=="<gene>-mut"),
+#                            label-independent (non-empty at every timepoint).
+#   * rt_block matching rule (HOWTO §2, "controls matched within experiment"):
+#       gene_blocks   <- unique(cd$rt_block[is_mut | is_ns])
+#       is_ab_matched <- is_ref & cd$rt_block %in% gene_blocks
+#   Level order — b9d2:  POOLED, CE, HTA, negsib, AB
+#                 cep290: POOLED, Low_to_High, High_to_Low, negsib, AB
+# CONFIRM: count(condition) is non-empty for POOLED at 18 & 24 hpf.
+# fill in:
+
+```
+
+```{r session-info}
+# CHUNK GOAL: record versions for reproducibility.
+# fill in: sessionInfo()
+
+```

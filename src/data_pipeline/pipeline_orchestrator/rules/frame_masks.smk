@@ -71,6 +71,13 @@ rule frame_masks_per_well:
         sam2_model_id=lambda wc: str(config.get("frame_masks", {}).get(
             "sam2_model_id", "sam2.1_hiera_s"
         )),
+    # gpu=1: this process holds GPU memory for SAM2 for the job's duration. Caps concurrent GPU
+    # jobs to 1 under --cores > 1 (only actually enforced if --resources gpu=N is also passed at
+    # the CLI — the declaration alone does not limit local scheduling). If a future model-server
+    # design moves SAM2 into a resident process, the per-well CLIENT rule must NOT declare this
+    # same gpu resource — the server already holds the slot, and a client claiming it too deadlocks.
+    resources:
+        gpu=1,
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks frame-masks \

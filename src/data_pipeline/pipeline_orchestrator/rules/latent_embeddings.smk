@@ -90,6 +90,12 @@ rule encode_latent_embeddings_for_well:
         model_input_channels=lambda wc: int(_LE_CFG.get("model_input_channels", 1)),
         batch_size=lambda wc: int(_LE_CFG.get("batch_size", 64)),
         device=lambda wc: str(_LE_CFG.get("device", "cpu")),
+    # No gpu=1: this stage is CPU-only in production. config.yaml's
+    # feature_extraction.legacy_embeddings has no device override, so params.device defaults to
+    # "cpu"; the Python-3.9 model env (mseq_pipeline_py3.9) that runs the encode body ships a
+    # torch build with no CUDA support (torch.version.cuda is None) regardless. Claiming gpu=1
+    # here just serializes a CPU job behind real GPU work under --resources gpu=1. Do not re-add
+    # by pattern-matching the other model-heavy rules — verify device/torch build first.
     shell:
         """
         {params.model_run} -m data_pipeline.feature_extraction.legacy_embeddings.entrypoint \

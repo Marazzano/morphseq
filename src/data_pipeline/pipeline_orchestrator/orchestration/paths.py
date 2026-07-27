@@ -317,12 +317,18 @@ PIPELINE_STEPS: dict[str, dict] = {
     # consumes one well's ordered frame view at a time, then merges to an experiment-level table.
     # `prompt_seeds` is a per-well audit sidecar for the detection->segmentation handoff; it is not
     # required as a merged experiment artifact.
-    # execution=RUN_BATCH: SAM2 loads its model once and processes all run wells before exiting.
+    # execution=PER_WELL. This was EXECUTION_RUN_BATCH, asserting a plan that has since been
+    # abandoned on evidence. Measured 2026-07-25: SAM2's load is 3.2-3.6s against 621-1343s of real
+    # per-well work, a load/(load+work) ratio of ~0.005 -- so amortizing the load saves ~0.5-2%.
+    # (An earlier benchmark claimed <0.1s/well; it had selected a 1-frame well. See
+    # docs/MODEL_LOAD_BENCHMARKS.md.) A resident-server adapter for SAM2 exists and is proven
+    # output-identical, but is deliberately NOT wired: not worth the moving part at 2%.
+    # The rule has always fanned out per well; this tag now says so.
     "frame_masks": {
         "stage": "object_extraction",
         "product_dir": "frame_masks",
         "fanout": PER_WELL_THEN_MERGE,
-        "execution": EXECUTION_RUN_BATCH,
+        "execution": EXECUTION_PER_WELL,
         "artifacts": {
             "frame_masks": {
                 PATH_MODE_PER_WELL: "{well_id}_frame_masks.csv",
@@ -428,6 +434,14 @@ PIPELINE_STEPS: dict[str, dict] = {
     # execution=RUN_BATCH: the legacy VAE loads once (in the Python-3.9 model env) and writes
     # ALL run-well shards before exiting — model load dominates per-well encode cost. The encode
     # body runs under the model interpreter (MODEL_RUN), not the normal RUN env.
+    #
+    # STILL ASPIRATIONAL (2026-07-25). The rule fans out per well, so this tag does not yet
+    # describe reality — but unlike frame_masks (retagged PER_WELL on measurement), batching here
+    # is genuinely the right answer and is already half-built: legacy_embeddings/entrypoint.py
+    # accepts a LIST of (inventory, output) pairs and loads once; the rule just hands it a single
+    # pair. Wiring the rule to the existing batch entrypoint is the whole fix — no server needed,
+    # and a GPU server would be pointless anyway since this stage is CPU-only (its py3.9 torch
+    # build has no CUDA). This is the live remaining item from PLANNED_REVISIONS.md §1.
     "latent_embeddings": {
         "stage": "feature_extraction",
         "product_dir": "latent_embeddings",

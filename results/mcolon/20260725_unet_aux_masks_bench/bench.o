@@ -1,0 +1,86 @@
+GPU 0: NVIDIA L40S (UUID: GPU-c1c62450-2268-fff4-e0cd-5531d928fef5)
+======================================================================
+STAGING: mirroring real snip_inventory + PNGs into isolated per-well roots
+======================================================================
+  20260319_A01: staged 210 snip_inventory rows -> /net/trapnell/vol1/home/mdcolon/proj/morphseq/.claude/worktrees/agent-afed7356581c76751/results/mcolon/20260725_unet_aux_masks_bench/scratch/staged_inputs/20260319_A01
+  20260319_B01: staged 210 snip_inventory rows -> /net/trapnell/vol1/home/mdcolon/proj/morphseq/.claude/worktrees/agent-afed7356581c76751/results/mcolon/20260725_unet_aux_masks_bench/scratch/staged_inputs/20260319_B01
+  20260319_C01: staged 105 snip_inventory rows -> /net/trapnell/vol1/home/mdcolon/proj/morphseq/.claude/worktrees/agent-afed7356581c76751/results/mcolon/20260725_unet_aux_masks_bench/scratch/staged_inputs/20260319_C01
+
+======================================================================
+PER-WELL (existing path): fresh subprocess per well, reloads 4 UNets each time
+======================================================================
+  20260319_A01: 96.37s
+  20260319_B01: 101.36s
+  20260319_C01: 80.00s
+
+======================================================================
+SERVED (resident server): load once, N requests
+======================================================================
+2026-07-25 21:18:44,538 INFO model_servers.harness: loading adapter 'SnipAuxiliaryMasksAdapter' ...
+2026-07-25 21:19:45,662 INFO bfio.init: VERSION = 2.3.0
+
+2026-07-25 21:19:45,662 INFO bfio.init: The bioformats_package.jar is not present.Can only use Python backend for reading/writing images.
+2026-07-25 21:19:47,271 WARNING bfio.backends: Java backend is not available. This could be due to a missing dependency (jpype).
+2026-07-25 21:19:54,441 INFO model_servers.harness: adapter loaded in 69.90s
+2026-07-25 21:19:54,442 INFO model_servers.harness: listening on /tmp/unet_bench_2064302.sock (pid=2064302)
+  server load() time: 69.94s (loads all 4 UNet checkpoints once)
+2026-07-25 21:19:57,592 INFO model_servers.harness: request 3a57687f-edb6-4abf-ac21-965a298f9fdb: dispatching
+2026-07-25 21:20:10,237 INFO model_servers.harness: request 3a57687f-edb6-4abf-ac21-965a298f9fdb: ok (12.64s)
+  20260319_A01: 12.65s (request time only, model already loaded)
+2026-07-25 21:20:13,296 INFO model_servers.harness: request 23fbb63c-057e-48b1-bc52-c67d13cba1bb: dispatching
+2026-07-25 21:20:17,849 INFO model_servers.harness: request 23fbb63c-057e-48b1-bc52-c67d13cba1bb: ok (4.55s)
+  20260319_B01: 4.55s (request time only, model already loaded)
+2026-07-25 21:20:19,733 INFO model_servers.harness: request d417f99a-a13f-41f1-ad99-50681ddb1e41: dispatching
+2026-07-25 21:20:22,004 INFO model_servers.harness: request d417f99a-a13f-41f1-ad99-50681ddb1e41: ok (2.27s)
+  20260319_C01: 2.27s (request time only, model already loaded)
+2026-07-25 21:20:22,236 INFO model_servers.harness: shut down cleanly
+
+======================================================================
+EQUIVALENCE CHECK
+======================================================================
+  20260319_A01: {
+  "well_id": "20260319_A01",
+  "rows_perwell": 840,
+  "rows_served": 840,
+  "row_count_match": true,
+  "non_path_columns_equal": true,
+  "all_valid_perwell": true,
+  "all_valid_served": true,
+  "masks_compared": 840,
+  "masks_byte_identical": true
+}
+  20260319_B01: {
+  "well_id": "20260319_B01",
+  "rows_perwell": 840,
+  "rows_served": 840,
+  "row_count_match": true,
+  "non_path_columns_equal": true,
+  "all_valid_perwell": true,
+  "all_valid_served": true,
+  "masks_compared": 840,
+  "masks_byte_identical": true
+}
+  20260319_C01: {
+  "well_id": "20260319_C01",
+  "rows_perwell": 420,
+  "rows_served": 420,
+  "row_count_match": true,
+  "non_path_columns_equal": true,
+  "all_valid_perwell": true,
+  "all_valid_served": true,
+  "masks_compared": 420,
+  "masks_byte_identical": true
+}
+
+======================================================================
+THROUGHPUT SUMMARY
+======================================================================
+PER-WELL total wall clock (3 wells, 3x model reload): 280.39s
+  per-well breakdown: {'20260319_A01': 96.37208555894904, '20260319_B01': 101.35613126703538, '20260319_C01': 79.99718763586134}
+SERVED total wall clock (1x model load + 3 requests): 97.47s
+  load time: 69.94s, request-only total: 27.52s
+  request breakdown: {'20260319_A01': 12.645791881950572, '20260319_B01': 4.5542436700779945, '20260319_C01': 2.2716834789607674}
+Speedup (this run, N=3): 2.88x
+
+ALL OUTPUTS MATCH: True
+EXIT_CODE:0

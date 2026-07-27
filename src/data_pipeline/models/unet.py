@@ -30,21 +30,31 @@ import torch
 
 
 def _ensure_src_on_path() -> None:
-    """Add the repo src/ dir to sys.path so FishModel is importable."""
-    # Walk up from this file to find src/
+    """Add the repo ROOT (parent of src/) to sys.path so `import src.core...` resolves.
+
+    The import right after this call is `from src.core.functions... import FishModel` — a
+    dotted path rooted at the `src` package itself, which requires the directory that
+    CONTAINS `src/` (the repo root) on sys.path, not `src/` itself. Adding `src/` (as this
+    function used to) only makes `import data_pipeline...`-style imports work; it does
+    nothing for `import src....`, and the previous version of this function appeared to work
+    only because callers happened to run with cwd == repo root, where sys.path's implicit ''
+    entry supplied the repo root for free.
+    """
+    # Walk up from this file to find the src/ dir, then add ITS PARENT (the repo root).
     here = Path(__file__).resolve()
     for parent in here.parents:
         candidate = parent / "src"
         if candidate.is_dir():
-            src_str = str(candidate)
-            if src_str not in sys.path:
-                sys.path.insert(0, src_str)
+            repo_root_str = str(parent)
+            if repo_root_str not in sys.path:
+                sys.path.insert(0, repo_root_str)
             return
-    # Fallback: we are already inside src/data_pipeline/..., so src/ is 3 levels up
-    src_dir = here.parents[3]
-    src_str = str(src_dir)
-    if src_str not in sys.path:
-        sys.path.insert(0, src_str)
+    # Fallback: we are already inside src/data_pipeline/models/unet.py, so the repo root
+    # (parent of src/) is 3 levels up.
+    repo_root = here.parents[3]
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
 
 
 def load_fish_unet_model(checkpoint_path: Path, device: str = "cpu") -> torch.nn.Module:
