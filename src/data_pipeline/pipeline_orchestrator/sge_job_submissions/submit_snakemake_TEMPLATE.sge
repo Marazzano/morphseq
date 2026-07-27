@@ -24,6 +24,17 @@
 
 set -euo pipefail
 
+# Group-writable output on a SHARED tree. Every directory the pipeline creates comes from
+# mkdir(parents=True), which honours the UMASK of whoever launched the job -- not the mode of the
+# parent directory. The default 022 strips group-write, so a run by user A produces experiment
+# directories user B cannot write, and B's run then fails inside A's experiment. That is exactly
+# the state the tree was in on 2026-07-26: ~550 nlammers-owned experiment dirs at drwxr-sr-x,
+# group-readable but not group-writable, and only their OWNER could chmod them.
+#
+# 002 keeps group-write on. Combined with the setgid bit already set on the output tree (new files
+# inherit trapnelllab), any lab member can write into any experiment, whoever created it.
+umask 002
+
 # Remove this entire block in copied submit scripts after you have edited the
 # #$ directives and command settings. Leaving it in place prevents accidental
 # submission of the template.
@@ -45,9 +56,14 @@ fi
 
 CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
 CONDA_ENV="segmentation_grounded_sam"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKFLOW_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${WORKFLOW_DIR}/../../.." && pwd)"
+# Absolute, NOT derived from BASH_SOURCE. SGE copies the submit script into its spool directory
+# before executing it, so ${BASH_SOURCE[0]} resolves to /var/spool/uge/<node>/... and every path
+# derived from it lands in the wrong tree. Likewise `#$ -cwd` does NOT put you in the submit
+# directory at job start. Both bit for real (job 22798919 died with
+#   FileNotFoundError: '/var/spool/uge/t005/env.yaml'
+# reading env.yaml before the `cd` below). Pin the root; do not re-derive it.
+REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+WORKFLOW_DIR="${REPO_ROOT}/src/data_pipeline/pipeline_orchestrator"
 SRC_ROOT="${REPO_ROOT}/src"
 LOG_DIR="${REPO_ROOT}/logs"
 SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
@@ -112,11 +128,24 @@ EOF
   exit 2
 fi
 
+# --resources gpu=1 is REQUIRED for any run touching a GPU rule, not optional. The rules'
+# `resources: gpu=1` declarations are INERT without a CLI budget -- Snakemake treats the resource
+# as unlimited and will happily schedule several model jobs onto one card. This repo has no
+# Snakemake profile, so the flag has to be here.
+#
+# Placement matters: it must NOT sit immediately before the bare positional target. Its greedy
+# nargs="*" swallows the target token and Snakemake 7.32.4 dies with
+#   ValueError: not enough values to unpack (expected 2, got 1)
+# Keep another --flag between it and "${TARGET}".
+#
+# If this run uses a resident model server (a `service(...)` rule), CORES must be >= 2: the
+# service job holds a core for the whole run, so --cores 1 fails with
+#   Excess Resources: _cores: 2/1
 "${SNAKEMAKE}" \
   --configfile "${CONFIG_FILES[@]}" \
   --directory "${SMK_WORKDIR}" \
   --cores "${CORES}" \
-  # --rerun-triggers mtime \
+  --resources gpu=1 \
   --keep-going \
   --printshellcmds \
   "${TARGET}"

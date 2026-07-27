@@ -8,7 +8,46 @@ Status legend: 🔴 not started · 🟡 partial/workaround in place · 🟢 done
 
 ---
 
-## 1. Batching (`run_batch`) for model-heavy steps — 🔴 HIGH PRIORITY
+## 1. Batching (`run_batch`) for model-heavy steps — 🟢 SOLVED DIFFERENTLY (see box) · 🔴 one item left
+
+> **RESOLVED 2026-07-25 by resident model servers, not by batching.** The cost this section
+> targets — thousands of model reloads — is fixed for the two steps where it mattered, via a
+> different mechanism. A server loads the model once per run and per-well jobs become thin socket
+> clients, so **the DAG is untouched**: still one job per well, same shards, same merge. Batching
+> would instead have collapsed 576 jobs into 1.
+>
+> Measured A/B, all outputs proven identical to the per-well path:
+>
+> | Step | Per-well | Served | Speedup |
+> |---|---|---|---|
+> | `snip_auxiliary_masks` (4× UNet) | 280.39s | 97.47s | **2.88×** (2,100 mask PNGs byte-identical) |
+> | `frame_detections` (GDINO) | 262.79s | 86.32s | ~3× (CPU floor; cell-for-cell identical) |
+> | `frame_masks` (SAM2) | 1963.97s | 1919.76s | 1.02× — **not wired**, see below |
+>
+> Both served steps are behind config toggles (`frame_detections.use_model_server`,
+> `unet_snip.use_model_server`), default off pending an end-to-end run. See
+> `MODEL_SERVER_WIRING.md` and `MODEL_LOAD_BENCHMARKS.md`.
+>
+> **`frame_masks` was retagged `EXECUTION_RUN_BATCH` → `EXECUTION_PER_WELL`.** Its load is
+> 3.2–3.6s against 621–1343s of real per-well work (ratio ~0.005), so neither batching nor
+> serving is worth it. The earlier `<0.1s/well` benchmark had selected a 1-frame well. A working
+> SAM2 adapter exists and is proven output-identical; it is deliberately unwired at 2%.
+>
+> **TECH DEBT deliberately not taken on:** the registry has no field recording "this step is
+> served" — that fact lives only in the config toggles. `execution` means *job count*, and a
+> served step genuinely is `PER_WELL` (N jobs, model elsewhere), so overloading the enum would
+> conflate two independent axes. Add a separate field if serving ever becomes a per-step rather
+> than per-run choice.
+>
+> **STILL OPEN — `latent_embeddings`.** This is the one place batching is still the right answer,
+> and it is half-built: `legacy_embeddings/entrypoint.py` already accepts a *list* of
+> `(inventory, output)` pairs and loads once; the rule just hands it a single pair. No server is
+> needed (the stage is CPU-only — its py3.9 torch build has no CUDA). It remains tagged
+> `RUN_BATCH`, which is why `test_output_shape_from_registry.py` still fails for it: the guard is
+> correctly flagging a rule that hand-writes `{well_id}` while claiming batch execution. That
+> failure should stay until the rule is wired to the existing batch entrypoint.
+
+## Original problem statement (retained for context)
 
 **Problem.** Every model-heavy step runs as one Snakemake job *per well*: `conda run` →
 cold-load model → process one well → exit. Across ~576 wells that is thousands of full model
@@ -84,14 +123,35 @@ shards → `ValueError: no shards to concatenate`.
 **State.** Audited all merge rules: only two lacked `per_well_validated`.
 - `merge_snip_inventory` — 🟢 **fixed** (branch `pipeline-merge-validated-fix`): added
   `_snip_inventory_validated_for_run` + `per_well_validated=` input, mirroring `merge_frame_masks`.
-- `merge_frame_detections` — 🔴 **cannot** be fixed the same way: `frame_detections` has **no
-  validate rule** and writes no `.validated` sentinels, so depending on them would break the DAG.
-  Its merge is `all`-only (detection is consumed per-well by SAM2). Needs a
-  `validate_frame_detections_for_well` rule first, then the `per_well_validated` edge.
+- `merge_frame_detections` — 🟢 **fixed since this was written.** `validate_frame_detections_for_well`
+  now exists and `merge_frame_detections` declares `per_well_validated=_frame_detections_validated_for_run`,
+  matching the other merge rules. Verified 2026-07-25; this entry was stale.
 
 ---
 
-## 4. GPU resource declaration on rules — 🔴
+## 4. GPU resource declaration on rules — 🟢 DONE (2026-07-25, commits 28fe3d7f + SGE scripts)
+
+`resources: gpu=1` now declared on the 5 rules that genuinely hold GPU memory: the four known
+model-heavy ones plus **`materialize_image_product_for_well`**, which was missing from every prior
+list — it runs `LoG_focus_stacker` (real torch conv2d) and was found by searching for GPU work
+rather than trusting the model-step names. `encode_latent_embeddings_for_well` deliberately does
+NOT declare it (CPU-only stage; claiming the slot would serialize it behind real GPU work).
+
+Two things learned:
+- **The declaration alone is inert.** Snakemake only enforces `resources:` when a budget is
+  supplied via `--resources gpu=1` at the CLI or a profile; this repo has no profile, and the
+  `resources:` block in `config.yaml` is an unread config-dict key, not the CLI mechanism. The
+  flag was added to 22 SGE submit scripts and the QUICK_RUN_READ_ME examples.
+- **Flag placement matters.** `--resources gpu=1` immediately before a bare positional target
+  crashes Snakemake 7.32.4 (`ValueError: not enough values to unpack`) because its greedy
+  `nargs="*"` swallows the target token. Keep another `--flag` after it.
+
+**Interaction with model servers:** a served step INVERTS this. The service rule declares `gpu=1`;
+the per-well client must NOT — the client holds no GPU memory, and both declaring it means the
+service takes the only unit, nothing is schedulable, and Snakemake blocks forever without an
+error. Note also that services need `--cores >= 2` (the service holds a core for the whole run).
+
+## 4b. Original §4 note (retained)
 
 Model-heavy rules declare no `resources: gpu=1`, so nothing stops Snakemake from scheduling many
 GPU jobs at once and OOM-ing a single card. Currently worked around on the CLI

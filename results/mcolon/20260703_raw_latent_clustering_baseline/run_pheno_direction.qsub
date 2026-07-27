@@ -1,0 +1,25 @@
+#!/bin/bash
+#$ -N pbx_pheno_dir
+#$ -q trapnell-short.q
+#$ -pe serial 4
+#$ -l mfree=8G
+#$ -l h_rt=04:00:00
+#$ -cwd
+#$ -o results/mcolon/20260703_raw_latent_clustering_baseline/logs/
+#$ -e results/mcolon/20260703_raw_latent_clustering_baseline/logs/
+#$ -V
+
+set -euo pipefail
+
+MORPHSEQ_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+BASE="$MORPHSEQ_ROOT/results/mcolon/20260703_raw_latent_clustering_baseline"
+SCRIPT="$BASE/35_phenotype_direction_projection_clustering.py"
+PY="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+
+mkdir -p "$BASE/logs"
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 NUMBA_NUM_THREADS=4
+
+echo "[$(date)] host=$(hostname) job=${JOB_ID:-local} : PBX phenotype-direction projection clustering"
+"$PY" "$SCRIPT"
+echo "[$(date)] done"

@@ -1,0 +1,35 @@
+#!/bin/bash
+#$ -N tfap2_raw_condense
+#$ -q trapnell-short.q
+#$ -pe serial 4
+#$ -l mfree=8G
+#$ -l h_rt=04:00:00
+#$ -cwd
+#$ -o results/mcolon/20260714_tfap2_followup_raw/logs/
+#$ -e results/mcolon/20260714_tfap2_followup_raw/logs/
+#$ -V
+
+set -euo pipefail
+
+MORPHSEQ_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+BASE="$MORPHSEQ_ROOT/results/mcolon/20260714_tfap2_followup_raw"
+PY="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+
+mkdir -p "$BASE/logs"
+export PYTHONUNBUFFERED=1
+
+# The condensation solver is single-threaded pure-numpy; UMAP init is the only
+# multi-threadable stage. Requesting 4 slots lets numpy's BLAS + UMAP's numba use
+# a handful of cores for the distance-matrix / embedding math. Cap the thread
+# pools to the slot count so we stay within the SGE reservation (mfree is
+# per-slot: 4 x 8G = 32G total).
+export OMP_NUM_THREADS=4
+export OPENBLAS_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export NUMBA_NUM_THREADS=4
+
+echo "[$(date)] host=$(hostname) job=${JOB_ID:-local} : raw tfap2 load -> condense -> multiview"
+"$PY" "$BASE/0_load_tfap2_latents.py"
+"$PY" "$BASE/1_condense_raw_tfap2.py"
+"$PY" "$BASE/2_make_multiview.py"
+echo "[$(date)] done"

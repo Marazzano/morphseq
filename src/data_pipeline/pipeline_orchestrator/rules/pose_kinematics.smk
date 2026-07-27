@@ -105,7 +105,8 @@ rule merge_pose_kinematics:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
+from data_pipeline.feature_extraction.pose_kinematics.contract import POSE_KINEMATICS_TABLE_COLUMNS
 shards = collect_well_shard_paths('{DATA_ROOT}', 'pose_kinematics', 'pose_kinematics', '{wildcards.experiment}')
-concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=POSE_KINEMATICS_TABLE_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """

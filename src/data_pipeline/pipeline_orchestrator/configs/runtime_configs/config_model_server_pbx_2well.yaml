@@ -1,0 +1,67 @@
+# MODEL-SERVER END-TO-END PROOF — 2 wells, YX1 20260408_pbx, both servers ON.
+#
+# The first run to exercise the resident model servers through the REAL Snakemake rules. Both
+# adapters were already proven output-identical to their per-well paths in isolation
+# (GroundingDINO: 3 wells cell-for-cell; 4x UNet: 3 wells, 2,100 mask PNGs byte-identical), and
+# both DAGs resolve correctly in dry-run. What has NEVER been tested is the service -> client
+# handoff inside a live pipeline run: service startup, socket readiness, client dispatch, teardown.
+#
+# COLD START. This experiment has NO existing pipeline output, and its source is a single 438 GB
+# ND2 (36-72 hpf). The front half (ingest -> stitch -> materialize) must read and index that file
+# before any served step runs, so most of this run's wall clock is NOT the part under test.
+#
+# RUN (note --cores 4; a service job holds a core for the whole run, so --cores 1 CANNOT work):
+#   cd src/data_pipeline/pipeline_orchestrator
+#   snakemake --configfile config.yaml \
+#     --configfile configs/runtime_configs/config_model_server_pbx_2well.yaml \
+#     --cores 4 --resources gpu=1 --rerun-triggers mtime --keep-going \
+#     <target>
+#
+# EXPECTED DAG SHAPE (check with -n first):
+#   service_grounding_dino              1    <- ONE service, not one per well
+#   service_unet_aux_masks              1
+#   frame_detections_per_well_served    2
+#   build_snip_auxiliary_masks_for_well_served  2
+# Seeing the non-_served rule names instead means a toggle below is not taking effect.
+#
+# WHAT PROVES SUCCESS:
+#   1. Exactly ONE "adapter loaded in Xs" line per service in the logs -- not one per well.
+#      That single line IS the amortization; if it repeats, the servers are not being reused.
+#   2. Per-well shards identical to a run with both toggles false.
+#   3. No silent hang. A hang with nothing scheduled means a client rule has acquired
+#      `resources: gpu=1`, deadlocking against the service that holds the same unit.
+
+experiments:
+  - 20260408_pbx
+
+microscope: "YX1"
+
+# Two wells only. A01/A02 are the conventional first wells; if discovery reports they do not
+# exist, pick any two from discovered_wells.txt rather than assuming this plate's layout.
+target_wells:
+  20260408_pbx:
+    - A01
+    - A02
+
+# The plate sheet was misspelled on disk (20260408_pbx_well_metadta.xlsx) and was renamed to
+# 20260408_pbx_well_metadata.xlsx on 2026-07-25 so rule ingest_plate_metadata can find it.
+#
+# NOTE: `plate_metadata: {enabled: false}` -- documented as the workaround in
+# config_smoke_keyence_20250612_24hpf.yaml for exactly this typo -- IS DEAD CODE. Nothing reads
+# that key; rule ingest_plate_metadata hardcodes "{experiment}_well_metadata.xlsx" as a required
+# input with no gate. Do not rely on it. (Third dead config key found this pass, after
+# `experiments: null` and config.yaml's unread `resources:` block.)
+plate_metadata:
+  enabled: true
+
+# THE TOGGLES UNDER TEST. Both default to false in config.yaml; this file is the opt-in.
+frame_detections:
+  use_model_server: true
+
+unet_snip:
+  use_model_server: true
+
+# One timepoint per well. This is a dev cap to keep a 438 GB source tractable, not policy --
+# the served steps behave identically at any time-index count.
+image_materialization:
+  smoke_max_time_indices: 1

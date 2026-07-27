@@ -95,7 +95,8 @@ rule merge_stage_predictions:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
+from data_pipeline.feature_extraction.stage_predictions.contract import STAGE_PREDICTION_TABLE_COLUMNS
 shards = collect_well_shard_paths('{DATA_ROOT}', 'stage_predictions', 'stage_predictions', '{wildcards.experiment}')
-concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=STAGE_PREDICTION_TABLE_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """

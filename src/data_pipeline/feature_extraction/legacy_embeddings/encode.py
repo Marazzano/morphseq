@@ -32,6 +32,8 @@ from data_pipeline.feature_extraction.legacy_embeddings.transforms import snip_t
 class EncoderProtocol(Protocol):
     """Structural interface for any inference encoder used by ``encode_snips``."""
 
+    latent_dim: int
+
     def encode_batch(self, x: torch.Tensor) -> dict[str, torch.Tensor | None]:
         """Run inference on a batch.
 
@@ -69,6 +71,19 @@ def encode_snips(
         optionally ``z_sigma_00``, ``z_sigma_01``, ... (log-variance, not std dev).
         Row order matches ``snip_inputs`` order.
     """
+    if not snip_inputs:
+        latent_dim = getattr(encoder, "latent_dim", None)
+        if not isinstance(latent_dim, int) or latent_dim <= 0:
+            raise ValueError(
+                "Cannot construct an empty latent-embeddings shard because the loaded "
+                "encoder does not expose a positive integer latent_dim."
+            )
+        empty = {"snip_id": pd.Series(dtype="string")}
+        empty.update(
+            {f"z_mu_{j:02d}": pd.Series(dtype="float32") for j in range(latent_dim)}
+        )
+        return pd.DataFrame(empty)
+
     rows: list[dict] = []
 
     with torch.no_grad():

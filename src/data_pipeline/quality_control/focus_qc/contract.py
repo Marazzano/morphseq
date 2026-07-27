@@ -48,6 +48,12 @@ def validate_focus_qc(
             f"Expected {FOCUS_QC_TABLE_COLUMNS}."
         )
 
+    # An empty well (0 snips) has nothing to validate — a 0-row CSV round-trip always comes back
+    # as `object` dtype (no True/False tokens to infer bool from), so the dtype/numeric checks
+    # below would otherwise reject a legitimately-empty, correctly-schemaed well.
+    if df.empty:
+        return
+
     if df["focus_flag"].isna().any():
         bad = df.loc[df["focus_flag"].isna(), "snip_id"].head(5).tolist()
         raise ValueError(

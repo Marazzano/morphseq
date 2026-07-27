@@ -153,8 +153,9 @@ rule merge_snip_inventory:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import SNIP_INVENTORY_COLUMNS
 from pathlib import Path
 shards = collect_well_shard_paths('{DATA_ROOT}', 'snip_inventory', 'snip_inventory', '{wildcards.experiment}')
-concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=SNIP_INVENTORY_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """

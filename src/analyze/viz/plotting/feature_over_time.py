@@ -333,6 +333,22 @@ def plot_feature_over_time(
     color_preset : ColorPreset, optional
         Explicit reusable color preset object. This is the preferred path for
         project palettes and talk figures.
+
+        ``ColorPreset.order`` also controls DRAW / LAYER order: groups are drawn
+        in the order listed, and later-drawn series render ON TOP of earlier ones.
+        So to keep one group underneath (e.g. wildtype behind het/homo), list it
+        FIRST. Without a preset, groups fall back to alphabetical order, which is
+        usually not the layering you want. Example::
+
+            preset = ColorPreset(
+                colors={"wildtype": "#2166AC", "heterozygous": "#F7B267",
+                        "homozygous": "#B2182B"},
+                order=["wildtype", "heterozygous", "homozygous"],  # wt underneath
+            )
+            plot_feature_over_time(df, color_by="zygosity", color_preset=preset, ...)
+
+        The legend follows the same order. Pass ``color_preset`` instead of
+        ``color_lookup`` when you need this control.
     color_mode : str, default='auto'
         Fallback color strategy when no preset is supplied. Use 'auto' or
         'genotype' for genotype-aware defaults, or 'palette' for generic
@@ -405,13 +421,18 @@ def plot_feature_over_time(
     style.repeat_yticklabels = bool(repeat_yticklabels)
     style.legend_loc = legend_loc
 
-    # Handle multi-feature: if features is a list, treat each as a row facet (no fake column)
-    if isinstance(features, (list, tuple)):
-        feature_list = list(features)
-        facet_row_for_filter = None
-    else:
-        feature_list = [features]
-        facet_row_for_filter = facet_row
+    # Multi-feature mode maps each feature onto a row facet, so it cannot coexist with an
+    # explicit facet_row. Key the mode off the feature COUNT, not the container type: a
+    # single-element list is a scalar in disguise and must still honor facet_row (otherwise
+    # facet_row is silently dropped -- see the empty-row bug it used to cause).
+    feature_list = list(features) if isinstance(features, (list, tuple)) else [features]
+    multi_feature = len(feature_list) > 1
+    if multi_feature and facet_row is not None:
+        raise ValueError(
+            "features maps onto the row facet in multi-feature mode; pass a single feature "
+            "to use facet_row, or drop facet_row to facet by feature."
+        )
+    facet_row_for_filter = None if multi_feature else facet_row
 
     # Optional embryo-level filtering is separate from group-level coloring.
     if include_ids is not None:
@@ -439,7 +460,7 @@ def plot_feature_over_time(
     )
 
     # Determine facet values
-    if isinstance(features, (list, tuple)):
+    if multi_feature:
         # Multi-feature mode: rows are feature names
         row_vals = feature_list
     else:
@@ -458,8 +479,9 @@ def plot_feature_over_time(
     for row_val, col_val, filter_dict, subplot_key in iter_facet_cells(
         facet_row_for_filter, facet_col, row_vals, col_vals
     ):
-        # In multi-feature mode, row_val is the feature name
-        if isinstance(features, (list, tuple)):
+        # In multi-feature mode, row_val is the feature name; otherwise row_val is the
+        # facet_row value and the single feature is fixed.
+        if multi_feature:
             current_feature = row_val
         else:
             current_feature = feature_list[0]
@@ -497,14 +519,11 @@ def plot_feature_over_time(
         subplots.append(subplot)
 
     # Title
-    if isinstance(features, (list, tuple)):
-        feature_title = ', '.join(feature_list)
-    else:
-        feature_title = features
+    feature_title = ', '.join(feature_list)
 
-    # Assemble FigureData with facet labels
-    # For multi-feature mode, use feature names as row labels
-    if isinstance(features, (list, tuple)):
+    # Assemble FigureData with facet labels. In multi-feature mode rows are features; otherwise
+    # rows are the facet_row values (a single-element feature list must NOT hijack row labels).
+    if multi_feature:
         row_labels = feature_list
     else:
         row_labels = [str(v) for v in row_vals if v is not None] if facet_row else None

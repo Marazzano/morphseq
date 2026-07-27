@@ -1,0 +1,70 @@
+# MODEL-SERVER CONFIRMATION — ONE well (A01) -- bisection, YX1 20260408_pbx, both servers ON.
+#
+# Scales config_model_server_pbx_2well.yaml (which proved the service -> client handoff on 2
+# wells) to the full plate. The 2-well run answered "does the handoff work at all"; this one
+# answers "does ONE resident load still serve every well of a real plate" — the amortization
+# claim itself, which only shows up at N.
+#
+# WHY THIS IS THE RUN THAT MATTERS. The benched UNet A/B (3 wells, GPU) measured load 69.94s
+# against real work of 12.6 + 4.6 + 2.3s — load dominates work by ~10x. Per-well that is 3
+# reloads (280.39s) vs 1 load + 3 requests (97.47s), 2.88x. At 96 wells the per-well path pays
+# ~70s x 96 ~= 1.9h of pure reloading per model; the served path pays it once.
+#
+# RUN (--cores 4: a service job holds a core for the whole run, so --cores 1 CANNOT work):
+#   cd src/data_pipeline/pipeline_orchestrator
+#   snakemake --configfile config.yaml \
+#     --configfile configs/runtime_configs/config_model_server_pbx_all_wells.yaml \
+#     --cores 4 --resources gpu=1 --rerun-triggers mtime --keep-going \
+#     <target>
+#
+# EXPECTED DAG SHAPE (check with -n FIRST — this is a long run to get wrong):
+#   service_grounding_dino                       1    <- ONE service, not one per well
+#   service_unet_aux_masks                       1
+#   frame_detections_per_well_served            96
+#   build_snip_auxiliary_masks_for_well_served  96
+# Seeing the non-_served rule names means a toggle below is not taking effect. Seeing more than
+# one service job means the amortization is not happening and there is no point running this.
+#
+# WHAT PROVES SUCCESS:
+#   1. Exactly ONE "adapter loaded in Xs" line per service across the WHOLE log — with 96 wells
+#      a per-well reload is unmissable (96 lines, ~1.9h). That single line IS the result.
+#   2. Per-well shards identical to a toggles-false run.
+#   3. No silent hang. A hang with nothing scheduled means a client rule has acquired
+#      `resources: gpu=1`, deadlocking against the service holding the same unit.
+
+experiments:
+  - 20260408_pbx
+
+microscope: "YX1"
+
+# ONE well. Bisection run: the 96-well job hangs with the service listening and zero clients
+# finishing, and nothing in isolation reproduces it (service() passes clean-room at 96 clients with
+# gpu=1/threads:0/conda run/chained services). One well makes the served step reachable in minutes
+# instead of ~40, so the client either starts or it does not, visibly.
+target_wells:
+  20260408_pbx:
+    - A01
+
+# (original note) NO target_wells key means "run every discovered well" (well_runner:
+# run_well_ids_for_experiment returns all discovered wells when config names none) — 96 for this
+# plate per acquisition/20260408_pbx/well_identities/discovered_wells.txt. Listing all 96 by hand
+# would be a second source of truth that could silently disagree with discovery.
+
+# The plate sheet was misspelled on disk (20260408_pbx_well_metadta.xlsx) and was renamed to
+# 20260408_pbx_well_metadata.xlsx on 2026-07-25 so rule ingest_plate_metadata can find it.
+plate_metadata:
+  enabled: true
+
+# THE TOGGLES UNDER TEST. Both default to false in config.yaml; this file is the opt-in.
+frame_detections:
+  use_model_server: true
+
+unet_snip:
+  use_model_server: true
+
+# One timepoint per well, carried over from the 2-well proof. This is a DEV CAP on a 438 GB
+# source, not policy — the served steps behave identically at any time-index count, and what is
+# under test is the per-well load count, not per-well work volume. Raise or delete this key for a
+# production run; expect wall clock to scale with it.
+image_materialization:
+  smoke_max_time_indices: 1

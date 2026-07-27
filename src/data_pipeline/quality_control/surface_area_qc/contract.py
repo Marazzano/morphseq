@@ -48,6 +48,12 @@ def validate_surface_area_qc(
             f"Expected {SURFACE_AREA_QC_TABLE_COLUMNS}."
         )
 
+    # An empty well (0 snips) has nothing to validate — a 0-row CSV round-trip always comes back
+    # as `object` dtype (no True/False tokens to infer bool from), so the dtype check below would
+    # otherwise reject a legitimately-empty, correctly-schemaed well.
+    if df.empty:
+        return
+
     if df["sa_outlier_flag"].isna().any():
         bad = df.loc[df["sa_outlier_flag"].isna(), "snip_id"].head(5).tolist()
         raise ValueError(
