@@ -49,7 +49,8 @@ rule split_dropin_inventory:
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks split-dropin-inventory \
           --manifest-csv "{input.manifest}" \
           --well-id "{wildcards.well_id}" \
-          --output-csv "{output.shard}"
+          --output-csv "{output.shard}" \
+          --image-root "{DROPIN_IMAGE_ROOT}"
         """
 
 

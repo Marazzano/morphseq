@@ -19,7 +19,9 @@ import pandas as pd
 from data_pipeline.shared.identifiers import build_well_id
 
 
-def select_dropin_well_shard(manifest_csv: Path, well_id: str, output_csv: Path) -> Path:
+def select_dropin_well_shard(
+    manifest_csv: Path, well_id: str, output_csv: Path, image_root: Path
+) -> Path:
     """Select exactly ONE well's rows from the ingress manifest → ``output_csv``.
 
     This is the race-free per-well producer: each per-well rule writes precisely its declared shard
@@ -47,13 +49,16 @@ def select_dropin_well_shard(manifest_csv: Path, well_id: str, output_csv: Path)
     row_well_ids = df.apply(
         lambda r: build_well_id(experiment_id, str(r["well_index"]).strip()), axis=1
     )
-    selected = df.loc[row_well_ids == str(well_id)]
+    selected = df.loc[row_well_ids == str(well_id)].copy()
     if selected.empty:
         raise ValueError(
             f"[split_dropin_inventory] no rows in {manifest_csv} resolve to well_id {well_id!r}. "
             "Check the manifest's experiment_id / well_index atoms."
         )
 
+    selected["image_path"] = selected["image_path"].map(
+        lambda value: str(Path(value) if Path(value).is_absolute() else image_root / Path(value))
+    )
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     selected.to_csv(output_csv, index=False)

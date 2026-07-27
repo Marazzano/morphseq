@@ -200,6 +200,7 @@ def cmd_split_dropin_inventory(args: argparse.Namespace) -> None:
         manifest_csv=Path(args.manifest_csv),
         well_id=str(args.well_id),
         output_csv=Path(args.output_csv),
+        image_root=Path(args.image_root),
     )
 
 
@@ -1349,6 +1350,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_split.add_argument("--manifest-csv", type=Path, required=True)
     p_split.add_argument("--well-id", required=True)
     p_split.add_argument("--output-csv", type=Path, required=True)
+    p_split.add_argument("--image-root", type=Path, required=True)
     p_split.set_defaults(func=cmd_split_dropin_inventory)
 
     p_scaffold = sub.add_parser("scaffold-dropin-inventory")

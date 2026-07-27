@@ -79,6 +79,7 @@ fi
     --directory "${SMK_WORKDIR}" \
     --cores "${CORES}" \
     --rerun-triggers mtime \
+    --forcerun split_dropin_inventory \
     --keep-going \
     --printshellcmds \
     "${TARGET}"

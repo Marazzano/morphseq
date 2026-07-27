@@ -131,6 +131,7 @@ rule write_snip_qc_resolved_sources_for_well:
 rule build_snip_qc_for_well:
     """Build the per-well snip_qc verdict from the resolved flag sources + snip_inventory."""
     input:
+        source_shards=lambda wc: _snipqc_source_shards(wc.experiment, wc.well_id),
         resolved_sources=str(_snipqc_resolved_sources("{experiment}", well_id="{well_id}")),
         snip_inventory=str(_snipqc_snip_inventory("{experiment}", well_id="{well_id}")),
         snip_inventory_validated=str(_snipqc_snip_inventory_validated("{experiment}", well_id="{well_id}")),
