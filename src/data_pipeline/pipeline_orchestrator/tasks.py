@@ -47,6 +47,27 @@ def cmd_normalize_plate(args: argparse.Namespace) -> None:
     validate_plate_metadata_csv(input_csv=args.output_csv, output_flag=args.output_flag)
 
 
+def cmd_resolve_experiment_ids(args: argparse.Namespace) -> None:
+    """Expand a mixed list of experiment_ids + collections into a flat experiment_id list.
+
+    Thin dispatcher for the collection run-target seam (EXPERIMENT_GROUP_PLATE_MODEL.md):
+    a `_coll` entry fans out to its member `{coll}_{plate}` ids, bare ids pass through. Writes
+    the deduped list one-per-line (the flat EXP_FILE the SGE array template consumes) and prints
+    the count N (for `qsub -t 1-N`). Resolution mints nothing itself — it delegates to the
+    identifiers grammar (DRY).
+    """
+    from data_pipeline.acquisition.metadata_ingest.experiment_collection import resolve_experiment_ids
+
+    entries = [e.strip() for e in str(args.entries).split(",") if e.strip()]
+    ids = resolve_experiment_ids(entries, raw_root=args.raw_root, microscope=args.microscope)
+
+    out = Path(args.output_list)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(ids) + "\n")
+    # N goes to stdout ALONE (no log prefix) so a submit script can `N=$(... resolve ...)`.
+    print(len(ids))
+
+
 def cmd_extract_scope(args: argparse.Namespace) -> None:
     # The inventory stores full absolute source paths; readers re-anchor them under input_root at
     # consume time, so ingest needs no input_root.
@@ -1237,6 +1258,16 @@ def cmd_merge_latent_embeddings(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_resolve = sub.add_parser("resolve-experiment-ids")
+    p_resolve.add_argument("--entries", required=True,
+                           help="comma-separated mix of experiment_ids and _coll collection names")
+    p_resolve.add_argument("--raw-root", type=Path, required=True,
+                           help="raw image root containing the collection dirs")
+    p_resolve.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_resolve.add_argument("--output-list", type=Path, required=True,
+                           help="path to write the flat experiment_id list (the SGE EXP_FILE)")
+    p_resolve.set_defaults(func=cmd_resolve_experiment_ids)
 
     p_norm = sub.add_parser("ingest-plate-metadata", aliases=["normalize-plate"])
     p_norm.add_argument("--input-file", type=Path, required=True)
