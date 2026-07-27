@@ -1122,10 +1122,11 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
 
 
 def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
-    """Mint the per-well physical_embryo_registry shard from a per-well frame_masks shard.
+    """Mint the per-well physical_embryo_registry shard from a frame_masks + frame_inventory shard.
 
-    Thin dispatcher: read frame_masks CSV -> Stage-2 builder (which validates before returning)
-    -> write the registry CSV. No domain logic here.
+    Thin dispatcher: read frame_masks + frame_inventory CSVs -> Stage-2 builder (which reads
+    per-well n_sources and validates before returning) -> write the registry CSV. No domain
+    logic here.
     """
     import pandas as pd
 
@@ -1133,7 +1134,10 @@ def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
         build_physical_embryo_registry,
     )
 
-    registry = build_physical_embryo_registry(pd.read_csv(args.frame_masks_csv))
+    registry = build_physical_embryo_registry(
+        pd.read_csv(args.frame_masks_csv),
+        pd.read_csv(args.frame_inventory_csv),
+    )
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     registry.to_csv(args.output_csv, index=False)
 
@@ -1693,6 +1697,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_per_build = sub.add_parser("build-physical-embryo-registry")
     p_per_build.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_per_build.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_per_build.add_argument("--output-csv", type=Path, required=True)
     p_per_build.set_defaults(func=cmd_build_physical_embryo_registry)
 
