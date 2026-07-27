@@ -366,8 +366,15 @@ class TestRegistryIntrospection:
     def test_execution_mode_helper_returns_correct_value(self):
         # per-well step: snip_inventory is one job per well
         assert execution_mode("snip_inventory") == EXECUTION_PER_WELL
-        # run-batch step: frame_masks loads SAM2 once for all run wells
-        assert execution_mode("frame_masks") == EXECUTION_RUN_BATCH
+        # frame_masks was RUN_BATCH until 2026-07-25 (ffa80250), when resident model servers
+        # replaced batching as the answer to per-well model reloads: a server changes WHERE the
+        # model lives, not how many jobs Snakemake runs, so the rule is honestly PER_WELL.
+        assert execution_mode("frame_masks") == EXECUTION_PER_WELL
+        # latent_embeddings is the last RUN_BATCH holdout — its rule is still wired per-well, so
+        # this asserts the registry's CLAIM, not a verified execution shape. It is CPU-bound
+        # (no GPU init to amortize), which is why it was not given a server; see
+        # model_servers/__init__.py.
+        assert execution_mode("latent_embeddings") == EXECUTION_RUN_BATCH
 
     def test_run_batch_steps_are_per_well_then_merge(self):
         # A batch execution step that doesn't produce per-well shards is incoherent.

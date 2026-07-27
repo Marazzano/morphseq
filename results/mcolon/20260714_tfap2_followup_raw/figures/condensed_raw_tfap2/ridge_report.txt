@@ -1,0 +1,51 @@
+TFAP2 raw-latent condensation — seam QC (ridge_score)
+========================================================
+fixed bandwidth h = 0.161  (held constant across x0 and condensed)
+
+frac_one_sided = obs with no neighbor within h at t-1 (broad seam)
+frac_two_sided = obs isolated at BOTH t-1 and t+1 (honest ridge)
+
+array         frac_one_sided  frac_two_sided
+x0                    0.6635          0.4642
+condensed             0.1489          0.0363
+
+per-time frac_one_sided (condensed) — batch-entry bins should spike:
+  t_idx=0   hpf=10     frac_one_sided=nan
+  t_idx=1   hpf=12     frac_one_sided=nan
+  t_idx=2   hpf=14     frac_one_sided=nan
+  t_idx=3   hpf=16     frac_one_sided=nan
+  t_idx=4   hpf=18     frac_one_sided=nan
+  t_idx=5   hpf=20     frac_one_sided=nan
+  t_idx=6   hpf=22     frac_one_sided=nan
+  t_idx=7   hpf=24     frac_one_sided=nan
+  t_idx=8   hpf=26     frac_one_sided=nan
+  t_idx=9   hpf=28     frac_one_sided=nan
+  t_idx=10  hpf=30     frac_one_sided=nan
+  t_idx=11  hpf=32     frac_one_sided=nan
+  t_idx=12  hpf=34     frac_one_sided=nan
+  t_idx=13  hpf=36     frac_one_sided=nan
+  t_idx=14  hpf=38     frac_one_sided=nan
+  t_idx=15  hpf=40     frac_one_sided=nan
+  t_idx=16  hpf=42     frac_one_sided=nan
+  t_idx=17  hpf=44     frac_one_sided=nan
+  t_idx=18  hpf=46     frac_one_sided=nan
+  t_idx=19  hpf=48     frac_one_sided=nan
+  t_idx=20  hpf=50     frac_one_sided=nan
+  t_idx=21  hpf=52     frac_one_sided=nan
+  t_idx=22  hpf=54     frac_one_sided=nan
+  t_idx=23  hpf=56     frac_one_sided=nan
+  t_idx=24  hpf=58     frac_one_sided=nan
+  t_idx=25  hpf=60     frac_one_sided=nan
+  t_idx=26  hpf=62     frac_one_sided=nan
+  t_idx=27  hpf=64     frac_one_sided=nan
+  t_idx=28  hpf=66     frac_one_sided=nan
+  t_idx=29  hpf=68     frac_one_sided=nan
+  t_idx=30  hpf=70     frac_one_sided=nan
+  t_idx=31  hpf=72     frac_one_sided=nan
+  t_idx=32  hpf=74     frac_one_sided=nan
+  t_idx=33  hpf=76     frac_one_sided=nan
+  t_idx=34  hpf=78     frac_one_sided=nan
+  t_idx=35  hpf=80     frac_one_sided=nan
+  t_idx=36  hpf=82     frac_one_sided=nan
+  t_idx=37  hpf=84     frac_one_sided=nan
+  t_idx=38  hpf=86     frac_one_sided=nan

@@ -62,6 +62,12 @@ def validate_snip_qc(
             f"{label}: missing required column(s): {', '.join(missing)}. Expected {SNIP_QC_TABLE_COLUMNS}."
         )
 
+    # An empty well (0 snips) has nothing to validate — a 0-row CSV round-trip always comes back
+    # as `object` dtype (no True/False tokens to infer bool from), so the dtype check below would
+    # otherwise reject a legitimately-empty, correctly-schemaed well.
+    if df.empty:
+        return
+
     if df["use_snip"].isna().any():
         raise ValueError(f"{label}: use_snip has null value(s); it must be non-null boolean.")
     if df["use_snip"].dtype != bool:

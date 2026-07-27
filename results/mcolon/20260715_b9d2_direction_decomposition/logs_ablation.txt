@@ -1,0 +1,17 @@
+Loaded 14260 frames; GRP embryos=69, WT embryos=40; 80 dims
+
+=== ablation 'full': 80 dims (dropped none) ===
+
+=== ablation 'drop71': 79 dims (dropped ['z_mu_b_71']) ===
+
+=== ablation 'drop33': 79 dims (dropped ['z_mu_b_33']) ===
+
+=== ablation 'drop_both': 78 dims (dropped ['z_mu_b_71', 'z_mu_b_33']) ===
+
+Saved figure -> /net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20260715_b9d2_direction_decomposition/figures/ablation_auroc_over_time.png
+
+=== mean AUROC over time bins (cost vs full) ===
+  full       mean AUROC=0.736   Δ vs full=+0.000
+  drop71     mean AUROC=0.715   Δ vs full=-0.022
+  drop33     mean AUROC=0.738   Δ vs full=+0.001
+  drop_both  mean AUROC=0.720   Δ vs full=-0.016

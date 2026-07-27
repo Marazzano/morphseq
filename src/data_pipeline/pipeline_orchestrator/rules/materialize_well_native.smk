@@ -68,6 +68,11 @@ rule materialize_image_product_for_well:
             if MICROSCOPE == "Keyence"
             else ""
         ),
+    # gpu=1: this process runs LoG_focus_stacker's conv2d on the GPU and holds that memory for the
+    # job's duration (real torch compute, not incidental import — see the comment on MATERIALIZATION_RUN
+    # above). Do not copy onto a future model-server client rule.
+    resources:
+        gpu=1,
     shell:
         # MATERIALIZATION_RUN, not RUN: this task calls materialize_stitched_images ->
         # LoG_focus_stacker, a genuine torch/conv2d GPU compute path (Phase 0 finding — see

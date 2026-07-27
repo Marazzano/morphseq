@@ -34,6 +34,8 @@ _RESOLVE = "data_pipeline.feature_extraction.legacy_embeddings.entrypoint.resolv
 class _FakeEncoder:
     """EncoderProtocol stand-in; counts how many times it was constructed via the loader."""
 
+    latent_dim = LATENT_DIM
+
     def encode_batch(self, x: torch.Tensor) -> dict[str, torch.Tensor | None]:
         b = x.shape[0]
         mu = torch.arange(b * LATENT_DIM, dtype=torch.float32).reshape(b, LATENT_DIM)
@@ -53,11 +55,14 @@ def _make_well(tmp_path: Path, well_id: str, n_snips: int) -> Path:
         png.write_bytes(buf.getvalue())
         rows.append({
             "snip_id": f"{well_id}_s{i:02d}",
-            "processed_snip_path": png.name,  # relative to the CSV's own directory
+            "processed_snip_path": f"{well_id}/{png.name}",  # relative to output_root
             "is_valid_snip": True,
         })
     csv = well_dir / f"{well_id}_snip_inventory.csv"
-    pd.DataFrame(rows).to_csv(csv, index=False)
+    pd.DataFrame(
+        rows,
+        columns=["snip_id", "processed_snip_path", "is_valid_snip"],
+    ).to_csv(csv, index=False)
     return csv
 
 
@@ -72,6 +77,7 @@ def test_run_legacy_embeddings_writes_one_validated_parquet_per_well(tmp_path):
         run_legacy_embeddings(
             snip_inventory_csvs=[csv_a, csv_b],
             output_parquets=[out_a, out_b],
+            output_root=tmp_path,
             models_root=tmp_path / "models",
             model_name=MODEL_NAME,
             model_input_shape=MODEL_INPUT_SHAPE,
@@ -99,7 +105,38 @@ def test_run_legacy_embeddings_mismatched_input_output_counts_raises(tmp_path):
         run_legacy_embeddings(
             snip_inventory_csvs=[csv_a],
             output_parquets=[tmp_path / "a.parquet", tmp_path / "b.parquet"],
+            output_root=tmp_path,
             models_root=tmp_path / "models",
             model_name=MODEL_NAME,
             model_input_shape=MODEL_INPUT_SHAPE,
         )
+
+
+def test_run_legacy_embeddings_writes_and_merges_empty_well(tmp_path):
+    csv_nonempty = _make_well(tmp_path, "20250912_B01", n_snips=2)
+    csv_empty = _make_well(tmp_path, "20250912_F06", n_snips=0)
+    out_nonempty = tmp_path / "out" / "20250912_B01_latents.parquet"
+    out_empty = tmp_path / "out" / "20250912_F06_latents.parquet"
+
+    with patch(_RESOLVE, return_value=tmp_path / "fake_model_dir"), \
+         patch(_LOADER, return_value=_FakeEncoder()):
+        run_legacy_embeddings(
+            snip_inventory_csvs=[csv_nonempty, csv_empty],
+            output_parquets=[out_nonempty, out_empty],
+            output_root=tmp_path,
+            models_root=tmp_path / "models",
+            model_name=MODEL_NAME,
+            model_input_shape=MODEL_INPUT_SHAPE,
+            device="cpu",
+        )
+
+    empty = pd.read_parquet(out_empty)
+    assert empty.empty
+    validate_latent_embeddings(empty, source=str(out_empty))
+
+    merged = pd.concat(
+        [pd.read_parquet(out_nonempty), empty],
+        ignore_index=True,
+    )
+    validate_latent_embeddings(merged, source="merged latent embeddings")
+    assert len(merged) == 2

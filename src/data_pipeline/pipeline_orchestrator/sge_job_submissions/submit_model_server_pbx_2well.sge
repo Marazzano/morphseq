@@ -1,0 +1,89 @@
+#!/bin/bash
+# END-TO-END MODEL-SERVER PROOF — 2 wells, YX1 20260408_pbx, both resident servers ON.
+#
+# First run to exercise the resident model servers through the real Snakemake rules.
+# Both adapters are proven output-identical in isolation; what is under test here is the
+# service -> client handoff in a live run: service startup, socket readiness, client
+# dispatch, teardown.
+#
+# SUCCESS = exactly ONE "adapter loaded in Xs" line per service in the .err log. If that
+# line repeats per well, the servers are not being reused and the whole point is lost.
+
+#$ -N msrv_pbx
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=24G
+#$ -pe serial 4
+#$ -o /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/msrv_pbx.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/msrv_pbx.$JOB_ID.err
+
+set -euo pipefail
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+# Absolute, not derived from BASH_SOURCE. SGE copies the submit script into its spool directory
+# before executing it, so $BASH_SOURCE points at /var/spool/uge/<node>/... and every path derived
+# from it lands in the wrong tree. This is the same root cause as the env.yaml failure below.
+REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+WORKFLOW_DIR="${REPO_ROOT}/src/data_pipeline/pipeline_orchestrator"
+SRC_ROOT="${REPO_ROOT}/src"
+LOG_DIR="${REPO_ROOT}/logs"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+
+# CORES=4, not 1. A Snakemake service job holds a core for the entire run, so a served
+# step needs >= 2 or the run dies with "Excess Resources: _cores: 2/1" before the gpu
+# resource is even consulted.
+CORES=4
+TARGET="all"
+EXPERIMENT="20260408_pbx"
+CONFIG_FILES=(
+  "${WORKFLOW_DIR}/config.yaml"
+  "${WORKFLOW_DIR}/configs/runtime_configs/config_model_server_pbx_2well.yaml"
+)
+
+PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
+# NOTE the absolute path. Under `#$ -cwd` the job actually starts in SGE's spool directory
+# (/var/spool/uge/<node>), NOT the submit directory, and this read happens before the `cd` below.
+# A relative "env.yaml" here dies with FileNotFoundError on the spool path -- which is exactly how
+# job 22798919 failed. The template has the same latent ordering hazard.
+OUTPUT_ROOT="$("${PYTHON}" -c "import yaml; print(yaml.safe_load(open('${WORKFLOW_DIR}/env.yaml'))['paths']['output_root'])" 2>/dev/null)"
+if [[ -z "${OUTPUT_ROOT}" ]]; then
+  echo "ERROR: could not read paths.output_root from ${WORKFLOW_DIR}/env.yaml" >&2
+  exit 3
+fi
+SMK_WORKDIR="${OUTPUT_ROOT}/work_directories/${EXPERIMENT}"
+
+mkdir -p "${LOG_DIR}" "${SMK_WORKDIR}"
+cd "${WORKFLOW_DIR}"
+
+echo "=== ${JOB_NAME:-msrv_pbx} START $(date) on $(hostname) ==="
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L || echo "WARNING: nvidia-smi -L failed; no GPU visible on this node"
+
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+
+LOCK_DIR="${SMK_WORKDIR}/.snakemake/locks"
+LOCK_FILE="$(find "${LOCK_DIR}" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
+if [[ -n "${LOCK_FILE}" ]]; then
+  echo "ERROR: Snakemake lock present at ${LOCK_FILE}; another run may own ${EXPERIMENT}." >&2
+  echo "Check 'qstat -u ${USER}', then --unlock if stale." >&2
+  exit 2
+fi
+
+# --resources gpu=1 is REQUIRED, not optional: the rules' `resources: gpu=1` declarations are
+# inert without a CLI budget, and it is what stops the service and a GPU rule from co-scheduling
+# onto one card. Note it must NOT sit immediately before the bare positional target -- its greedy
+# nargs="*" swallows the target token and Snakemake 7.32.4 dies with
+# "ValueError: not enough values to unpack". Keep another --flag after it.
+"${SNAKEMAKE}" \
+  --configfile "${CONFIG_FILES[@]}" \
+  --directory "${SMK_WORKDIR}" \
+  --cores "${CORES}" \
+  --resources gpu=1 \
+  --rerun-triggers mtime \
+  --keep-going \
+  --printshellcmds \
+  "${TARGET}"
+
+echo "=== ${JOB_NAME:-msrv_pbx} FINISHED $(date) ==="

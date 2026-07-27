@@ -45,6 +45,11 @@ def validate_death_detection_qc(
         scope_label=scope_label,
     )
     _require_columns(df, DEATH_DETECTION_QC_TABLE_COLUMNS, scope_label)
+    # An empty well (0 snips) has nothing to validate — a 0-row CSV round-trip always comes back
+    # as `object` dtype (no True/False tokens to infer bool from), so the dtype check inside
+    # _require_non_null_bool would otherwise reject a legitimately-empty, correctly-schemaed well.
+    if df.empty:
+        return
     for col in DEATH_DETECTION_QC_PAYLOAD_COLUMNS:
         _require_non_null_bool(df, col, scope_label)
 

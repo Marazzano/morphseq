@@ -10,6 +10,8 @@ Contract-driven pipeline:
 """
 
 from pathlib import Path
+import hashlib   # model-server socket naming (see rules/frame_detections.smk)
+import tempfile  # model-server socket naming (AF_UNIX ~108-byte path limit)
 import yaml
 
 from data_pipeline.pipeline_orchestrator.orchestration import (
@@ -181,7 +183,11 @@ EXPERIMENT_METADATA_DIR = ACQUISITION_DIR
 BUILT_IMAGE_DATA_DIR    = ACQUISITION_DIR
 
 # Experiment identifiers
-EXPERIMENTS = config.get("experiments", ["20250912"])
+# `or`, not a .get() default: config.yaml declares `experiments:` as a documented placeholder with
+# no value, which YAML parses as None. The key is PRESENT, so a .get() default never fires and the
+# None reaches the iteration sites (rule all, rule analysis_ready) as a TypeError. Same idiom as
+# _configured_wells_for_experiment's `config.get(key) or {}`.
+EXPERIMENTS = config.get("experiments") or ["20250912"]
 MICROSCOPE = str(config.get("microscope", "YX1"))
 
 # --- Front-end producer selection (mode-EXCLUSIVE) --------------------------------------------

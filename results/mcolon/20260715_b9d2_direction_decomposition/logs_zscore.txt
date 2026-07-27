@@ -1,0 +1,7 @@
+Loaded 23074 frames, 80 z_mu_b dims
+Saved figure -> /net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20260715_b9d2_direction_decomposition/figures/zscored_ndims_for_90pct_over_time.png
+
+=== median # dims for 90% (z-scored) ===
+  CE      Cohen's d²: 46   classifier²: 33
+  HTA     Cohen's d²: 39   classifier²: 34
+  pooled  Cohen's d²: 48   classifier²: 36

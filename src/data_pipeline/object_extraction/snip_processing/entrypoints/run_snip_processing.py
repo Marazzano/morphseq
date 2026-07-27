@@ -23,6 +23,9 @@ import pandas as pd
 import skimage.io as skio
 
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
+    SNIP_INVENTORY_COLUMNS,
+)
 from data_pipeline.shared.identifiers.constructors import (
     build_embryo_id,
     build_snip_id,
@@ -31,7 +34,6 @@ from data_pipeline.shared.identifiers.parsers import parse_image_id
 from data_pipeline.object_extraction.snip_processing.augmentation import augment_snip
 from data_pipeline.object_extraction.snip_processing.extraction import crop_to_embryo_bounds, extract_embryo_crop
 from data_pipeline.object_extraction.snip_processing.rotation import apply_rotation_to_snip
-
 
 def _physical_embryo_id_by_track(
     physical_embryo_registry: pd.DataFrame,
@@ -237,7 +239,12 @@ def run_snip_processing(
 
         rows.append(out)
 
-    result_df = pd.DataFrame(rows)
+    # rows == [] is a legitimate outcome (well had zero valid masks, e.g. empty/dead well) —
+    # pd.DataFrame([]) would produce a ZERO-COLUMN frame that crashes downstream pd.read_csv()
+    # with EmptyDataError. Force the schema so an empty well still writes a valid, headered,
+    # zero-row snip_inventory — the file itself IS the provenance record ("processed, found
+    # nothing"); backtrack to that well's frame_masks/frame_detections shards to see why.
+    result_df = pd.DataFrame(rows, columns=list(SNIP_INVENTORY_COLUMNS))
     output_csv = Path(output_csv)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     result_df.to_csv(output_csv, index=False)

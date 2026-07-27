@@ -10,6 +10,7 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
     PHYSICAL_EMBRYO_ID_SPINE_COLUMNS,
     SNIP_FRAME_PROVENANCE_COLUMNS,
     SNIP_ID_SPINE_COLUMNS,
+    SNIP_INVENTORY_COLUMNS,
     validate_snip_grain_identity_columns,
     validate_snip_inventory_contract,
 )
@@ -170,6 +171,12 @@ def _snip_inventory_row(**kw):
         "processed_snip_path": "snips/out.png",
         "embryo_mask": "snips/out_mask.png",
         "embryo_mask_snip_path": "snips/out_mask.png",
+        "crop_x_min_px": 0,
+        "crop_y_min_px": 0,
+        "crop_x_max_px": 255,
+        "crop_y_max_px": 575,
+        "crop_width_px": 256,
+        "crop_height_px": 576,
         "is_valid_snip": True,
         "error_message": "",
     })
@@ -179,6 +186,16 @@ def _snip_inventory_row(**kw):
 def test_snip_inventory_contract_passes_on_complete_shard():
     df = pd.DataFrame([_snip_inventory_row(time_index=t) for t in range(3)])
     validate_snip_inventory_contract(df)  # must not raise
+
+
+def test_empty_snip_inventory_round_trips_through_csv_with_canonical_schema(tmp_path):
+    path = tmp_path / "empty_snip_inventory.csv"
+    pd.DataFrame(columns=SNIP_INVENTORY_COLUMNS).to_csv(path, index=False)
+
+    reloaded = pd.read_csv(path)
+    assert reloaded.empty
+    assert tuple(reloaded.columns) == SNIP_INVENTORY_COLUMNS
+    validate_snip_inventory_contract(reloaded)
 
 
 def test_snip_inventory_contract_rejects_missing_product_column():

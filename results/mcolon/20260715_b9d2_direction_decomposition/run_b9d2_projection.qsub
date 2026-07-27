@@ -1,0 +1,21 @@
+#!/bin/bash
+#$ -N b9d2_proj
+#$ -q trapnell-short.q
+#$ -pe serial 4
+#$ -l mfree=6G
+#$ -l h_rt=06:00:00
+#$ -cwd
+#$ -o results/mcolon/20260715_b9d2_direction_decomposition/logs/
+#$ -e results/mcolon/20260715_b9d2_direction_decomposition/logs/
+#$ -V
+
+set -euo pipefail
+MORPHSEQ_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+BASE="$MORPHSEQ_ROOT/results/mcolon/20260715_b9d2_direction_decomposition"
+PY="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+mkdir -p "$BASE/logs"
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 NUMBA_NUM_THREADS=4
+echo "[$(date)] host=$(hostname) job=${JOB_ID:-local} : b9d2 direction-projection clustering (failure vs benchmark)"
+"$PY" "$BASE/9_direction_projection_clustering.py"
+echo "[$(date)] done"
