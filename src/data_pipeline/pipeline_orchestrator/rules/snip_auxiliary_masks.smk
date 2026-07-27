@@ -101,6 +101,7 @@ if SNIP_AUX_SERVED:
             snip_inventory=str(_sam_snip_inventory("{experiment}", well_id="{well_id}")),
             snip_inventory_validated=str(_sam_snip_inventory_validated("{experiment}", well_id="{well_id}")),
             socket=_snip_aux_socket_pattern(),
+        threads: 0  # see model_servers/socket_paths.py, trap 4
         output:
             manifest=str(_sam_artifact(
                 "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
