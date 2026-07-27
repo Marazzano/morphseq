@@ -23,7 +23,7 @@ under DATA_ROOT is ~157 bytes on the shared tree. Short parent + short leaf keep
 experiment id near 70 bytes. The socket is a transient IPC endpoint, not a data artifact -- server
 and client always share a node, since AF_UNIX cannot cross one -- so /tmp is correct, not a hack.
 
-WIRING A SERVED STEP -- the four traps, all of which fail SILENTLY or late:
+WIRING A SERVED STEP -- the five traps, all of which fail SILENTLY or late:
 
 1. THE CLIENT MUST NOT DECLARE `resources: gpu=1`. The client holds no GPU memory; it sends paths
    over a socket and blocks. The SERVICE holds the GPU. If both declare gpu=1 the service takes
@@ -54,6 +54,24 @@ WIRING A SERVED STEP -- the four traps, all of which fail SILENTLY or late:
    UUID regenerated per run) and an explicit `group:` name is overridden by the service grouping.
    Raising --cores instead papers over a wrong declaration and decouples Snakemake's accounting
    from the slots the scheduler actually granted.
+
+5. THE RUN NEEDS `--latency-wait` > THE MODEL LOAD TIME. This is the one that actually blocked
+   every served run, and it is invisible without --printshellcmds: Snakemake gives a job
+   `--latency-wait` seconds (DEFAULT 5) to produce its output file, then declares the GROUP failed.
+   A served client cannot answer in 5s -- it is waiting on a 33-70s model load -- so the group is
+   killed BEFORE the server has even finished loading:
+
+       Waiting at most 5 seconds for missing files.
+       [22:11:27] Error in group 01deaa58-...        <- group failed
+       [22:11:37] harness: loading adapter ...       <- server starts 10s LATER
+       [22:12:09] harness: adapter loaded in 32.83s
+
+   The run then hangs until the service is SIGTERMed, with the log frozen on "listening on ..." and
+   cpu ~= 0 against minutes of wallclock -- which reads exactly like a deadlock and is not one.
+   Jobs 22825862 / 22827486 / 22829477 all died this way.
+
+   `--latency-wait 300` fixes it. Verified: one well, real GroundingDINO, exit 0, 3/3 steps, one
+   adapter load, one served request (16.45s), real detections written.
 """
 
 from __future__ import annotations
