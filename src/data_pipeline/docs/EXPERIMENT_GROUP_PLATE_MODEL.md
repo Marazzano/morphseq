@@ -105,26 +105,48 @@ frame inventory         union under {coll}_{plate}; source knowable via provenan
 object_extraction on    keys on (well_id, time_index); source invisible
 ```
 
-### The ONE exception — `physical_embryo_id` (bridge rule, LOCKED 2026-07-24)
+### `physical_embryo_id` merge policy (LOCKED 2026-07-25 — supersedes source_group draft)
 
-Tracking can't link a well's animal across the t45→t72 read gap (no motion continuity
-between separate acquisitions). So embryo identity is the one thing that could fracture at
-the source boundary. Resolve it by **cardinality, not tracking**:
+Frames from separate snapshot acquisitions arrive at the tracker under ONE `well_id` as
+consecutive `time_index` values (Merge-A), so SAM2 tracks over time exactly like a
+timelapse — **the primary path needs no source awareness.** The only fact that cannot be
+re-derived downstream is *how many raw acquisitions were merged into a well*: a snapshot's
+`(time_index 0, 1)` is indistinguishable from a timelapse's first two frames. So the
+**union records `n_sources` per well in the frame_inventory** (a count, not a source label —
+weaker than identity, keeps the "source invisible after the seam" spirit).
+
+The registry consumes `frame_masks` **and** `frame_inventory` (to read `n_sources`) and
+applies one visible policy, `EmbryoMergePolicy`:
 
 ```
-physical_embryo_registry, per well, across its sources (t45, t72, ...):
-  if EVERY source has exactly ONE embryo in that well:
-      → the correspondence is the ONLY one possible → BRIDGE:
-        one physical_embryo_id spanning all sources (t45 & t72 share it, like a timelapse)
-  else (any source has ≥2 embryos):
-      → which-maps-to-which is inherently AMBIGUOUS → do NOT guess:
-        mint per-source physical_embryo_ids (fracture)
+per well:  n_sources = frame_inventory lookup ;  n_tracks = distinct track_id in well
+  n_sources == 1                    → NORMAL    one physical_embryo_id per track (today's behavior)
+  n_sources > 1  AND  n_tracks == 1 → BRIDGE    ONE physical_embryo_id across timepoints
+                                                  (only one correspondence possible — like a timelapse)
+  n_sources > 1  AND  n_tracks > 1  → FRACTURE  which-maps-to-which is AMBIGUOUS → do NOT guess:
+                                                  disjoint _e blocks per source
+                                                  (source0: e01,e02 ; source1: e03,e04 ; …)
 ```
 
-Bridge exactly when cardinality makes identity unambiguous; fracture exactly when it isn't.
-This is a local rule at the registry mint site (C2 step 3) — it already knows all of a
-well's tracks. Nothing upstream (acquisition, frame inventory) or downstream (they read
-`physical_embryo_id` as given) changes.
+**Grammar UNCHANGED:** `physical_embryo_id = {well_id}_e{NN}`. Fracture just offsets the `_e`
+counter per source; no id-format variant, no hpf in the name (time already lives on
+`time_index` / `start_age_hpf` — don't duplicate it into the id).
+
+**Visible at every layer:** an `EmbryoMergePolicy` enum in code; `merge_policy`
+(`normal`/`bridged`/`fractured`) + `n_sources` **columns on the registry output** (audit a
+non-obvious identity decision in-place); this policy table in the spec; a one-liner in
+PIPELINE_OVERVIEW C2.
+
+**Known layout consequence (flagged for validation, NOT a bug):** a FRACTURED embryo exists
+at a single `time_index`, so its `embryo_id`/`snip_id` chain is single-timepoint. This is
+structurally fine — mid-course timelapse embryos (appear/die partway) already do this — but
+any downstream code that ASSUMES every physical_embryo spans the full timecourse must
+tolerate it. Validate this holds; do not "fix" it by forcing a full chain.
+
+This is a local rule at the registry mint site (C2 step 3). Upstream: only the union +
+frame_inventory gain `n_sources`. Downstream reads `physical_embryo_id` as given — no
+snip_processing/report join changes (there is no cross-source track_id collision, because
+tracking runs over one time-ordered series per well).
 
 ## Scope rule (MVP)
 
