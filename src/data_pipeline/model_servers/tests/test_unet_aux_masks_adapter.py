@@ -115,8 +115,46 @@ def test_config_parses_to_four_independent_specs_without_loading_models():
     assert len(checkpoint_paths) == 4, "all four checkpoint paths must be distinct (no shared weights)"
 
 
+@pytest.fixture
+def staged_output_root(tmp_path):
+    """A WRITABLE output_root holding this well's snips at their production-relative paths.
+
+    handle() derives the mask WRITE location from output_root
+    (`masks_dir = output_root / "object_extraction"`), so passing the real shared root makes
+    every write fail: that tree is owned by nlammers, mode 2755, and no other user can write it.
+    The original version of these tests did exactly that and all 840 rows came back
+    is_valid_auxiliary_mask=False with PermissionError [Errno 13] in error_message -- which looked
+    like an adapter bug but is purely a fixture problem, and would fail identically for the
+    in-process path.
+
+    `processed_snip_path` in snip_inventory is stored RELATIVE to output_root, so mirroring the
+    referenced PNGs under a tmp root preserves the path contract exactly while giving the test
+    somewhere it may write. Same approach the throughput benchmark used
+    (results/mcolon/20260725_unet_aux_masks_bench/bench.py::stage_well_inputs), and for the same
+    reason.
+    """
+    import shutil
+
+    import pandas as pd
+
+    root = tmp_path / "staged_root"
+    df = pd.read_csv(REAL_SNIP_INVENTORY_CSV)
+    for rel in df["processed_snip_path"].dropna():
+        src = REAL_OUTPUT_ROOT / rel
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_file() and not dst.exists():
+            shutil.copyfile(src, dst)
+
+    csv_dir = root / "object_extraction" / REAL_WELL_ID.split("_")[0] / "snips" / "per_well" / REAL_WELL_ID
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = csv_dir / f"{REAL_WELL_ID}_snip_inventory.csv"
+    df.to_csv(csv_path, index=False)
+    return root, csv_path
+
+
 @pytest.mark.skipif(not _HAS_REAL_DATA, reason="real models_root / snip_inventory not present on this filesystem")
-def test_load_then_handle_produces_valid_manifest_on_real_well(tmp_path):
+def test_load_then_handle_produces_valid_manifest_on_real_well(tmp_path, staged_output_root):
     """Full load() + handle() against real checkpoints (CPU) and a real, small well.
 
     This is a slower integration-style test (loads 4 real checkpoints on CPU), gated
