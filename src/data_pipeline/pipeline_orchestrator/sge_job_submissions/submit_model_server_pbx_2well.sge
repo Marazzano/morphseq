@@ -82,6 +82,7 @@ fi
   --cores "${CORES}" \
   --resources gpu=1 \
   --rerun-triggers mtime \
+  --latency-wait 300 \
   --keep-going \
   --printshellcmds \
   "${TARGET}"
