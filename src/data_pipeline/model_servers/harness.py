@@ -14,7 +14,10 @@ request's `adapter.handle()` call is wrapped in try/except. An exception in one
 request is converted to an error Response and logged; it never propagates out of
 the request loop and never kills the process or corrupts state for the next well.
 
-This is a PROTOTYPE. It is not wired into the Snakemake DAG.
+Queueing contract: connections are accepted concurrently but `adapter.handle()` runs
+ONE AT A TIME (`_dispatch_lock`). One model on one GPU cannot serve N requests at
+once, and Snakemake cannot throttle service consumers from the rule side, so the
+queue lives here. Clients block on their reply, so this is invisible to them.
 """
 
 from __future__ import annotations
@@ -45,6 +48,10 @@ class ModelServer:
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
         self._threads_lock = threading.Lock()
+        # THE REQUEST QUEUE. A Lock IS the queue here: threads blocked on acquire() wait their
+        # turn and the model ingests them one at a time. No separate queue.Queue + worker is
+        # needed -- that would be the same behaviour with more moving parts.
+        self._dispatch_lock = threading.Lock()
 
     # -- lifecycle -----------------------------------------------------------------
 
@@ -143,16 +150,31 @@ class ModelServer:
     def _serve_one_request(self, conn: socket.socket) -> None:
         frame = recv_frame(conn)
         request = Request.from_json(frame)
-        logger.info("request %s: dispatching", request.request_id)
-        t0 = time.monotonic()
-        try:
-            self.adapter.handle(request.payload)
-        except Exception as e:  # noqa: BLE001 - isolation contract: never let a bad request kill the server
-            logger.exception("request %s: adapter.handle raised", request.request_id)
-            response = Response(request_id=request.request_id, ok=False, error=f"{type(e).__name__}: {e}")
-        else:
-            response = Response(request_id=request.request_id, ok=True, error=None)
-        dt = time.monotonic() - t0
+        logger.info("request %s: queued", request.request_id)
+        # QUEUE HERE. One model, one GPU: concurrent handle() calls contend for the same card and
+        # thrash or OOM. Threads pile up on this lock and the model ingests them one at a time.
+        # Snakemake CANNOT throttle this for us -- a service() group must be
+        # schedulable all at once, so `threads:` on the client is forced to 0 (else the group's
+        # summed _cores exceeds any sane budget) and a custom `resources:` on the client deadlocks
+        # the group outright. Both verified. With no client-side limit, all 96 clients connect at
+        # once: job 22831848 logged 95 "dispatching" lines in a single minute, zero "ok", and every
+        # client died with "connection closed while reading frame".
+        #
+        # Clients already block on the reply, so queueing here is invisible to them and costs
+        # nothing: the GPU was only ever going to do one inference at a time.
+        with self._dispatch_lock:
+            logger.info("request %s: dispatching", request.request_id)
+            t0 = time.monotonic()
+            try:
+                self.adapter.handle(request.payload)
+            except Exception as e:  # noqa: BLE001 - isolation contract: never let a bad request kill the server
+                logger.exception("request %s: adapter.handle raised", request.request_id)
+                response = Response(
+                    request_id=request.request_id, ok=False, error=f"{type(e).__name__}: {e}"
+                )
+            else:
+                response = Response(request_id=request.request_id, ok=True, error=None)
+            dt = time.monotonic() - t0
         logger.info("request %s: %s (%.2fs)", request.request_id, "ok" if response.ok else "FAILED", dt)
         send_frame(conn, response.to_json())
 
