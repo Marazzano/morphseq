@@ -103,6 +103,11 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     "validate_snip_qc_for_well",
     "validate_stage_predictions_for_well",
     "validate_surface_area_qc_for_well",
+    # latent_embeddings is the one step still DECLARING run_batch while its rule fans out per
+    # well. It is exempt here only because step_outputs() does not exist (see the note above this
+    # list) -- not because the pairing is correct. It is CPU-bound, so unlike the GPU steps it was
+    # not given a resident server; the honest fix is to retag the registry row PER_WELL.
+    "encode_latent_embeddings_for_well",
     "write_resolved_product_plan_for_well",
     "write_snip_qc_resolved_sources_for_well",
 })

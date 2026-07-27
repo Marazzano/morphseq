@@ -6,6 +6,8 @@ is an aggregate view for audit/reporting; downstream per-well consumers (frame_m
 wired) depend on the per-well shard directly.
 """
 
+from data_pipeline.model_servers.socket_paths import service_socket_pattern
+
 FRAME_DETECTIONS_STEP = "frame_detections"
 FRAME_DETECTIONS_ARTIFACT = "frame_detections"
 
@@ -16,33 +18,16 @@ FRAME_DETECTIONS_ARTIFACT = "frame_detections"
 # only checks that `output` exists and the command exited 0; it does not care which process wrote
 # the file. See docs/MODEL_SERVER_WIRING.md.
 #
-# TWO THINGS THAT WILL BITE YOU:
-#   1. The client rule must NOT declare `resources: gpu=1`. The client holds no GPU memory -- it
-#      sends two paths over a socket and blocks. The SERVICE holds the GPU. If both declare gpu=1
-#      the service takes the only unit, no client is ever schedulable, and Snakemake blocks
-#      forever WITHOUT an error (it correctly concludes nothing is runnable).
-#   2. Services are incompatible with --cores 1: the service job occupies a core for the whole
-#      run, so service + client needs >= 2 cores, else "Excess Resources: _cores: 2/1".
+# Before editing either rule, read model_servers/socket_paths.py -- it lists the three traps
+# (client must not claim gpu=1; services need >= 2 cores; gate by definition, not ruleorder),
+# every one of which fails silently.
 FRAME_DETECTIONS_SERVED = bool(config.get("frame_detections", {}).get("use_model_server", False))
 
-def _frame_detections_socket(experiment: str) -> Path:
-    """Socket path for this experiment's GroundingDINO service.
-
-    NOT under DATA_ROOT. AF_UNIX socket paths are capped at ~108 bytes by the kernel
-    (sockaddr_un.sun_path), and DATA_ROOT alone is ~90 bytes on the shared nlammers tree --
-    the natural path
-        {DATA_ROOT}/object_extraction/frame_detections/{experiment}/grounding_dino.sock
-    is 157 bytes and fails at bind() with an unhelpful error. The DAG builds fine; the service
-    just dies on startup, so this is a runtime-only trap.
-
-    A short /tmp path avoids it. This is sound because the socket is a transient IPC endpoint,
-    not a data artifact: server and client always run on the same node (AF_UNIX cannot cross
-    nodes anyway), and the file is recreated per run. Hashing the experiment keeps the name
-    short and collision-free while staying per-experiment, so concurrent runs on different
-    experiments cannot share a socket.
-    """
-    digest = hashlib.sha1(str(experiment).encode()).hexdigest()[:12]
-    return Path(tempfile.gettempdir()) / f"morphseq_gdino_{digest}.sock"
+def _frame_detections_socket_pattern() -> str:
+    """The socket pattern for this service -- see model_servers.socket_paths for WHY it is a
+    wildcard and not a hash. Both the service `output:` and the client `input:` call this, which
+    is what makes them agree; that agreement is the whole contract."""
+    return service_socket_pattern("gdino")
 
 
 def _frame_detections_artifact(experiment: str, *, path_mode: str, well_id: str | None = None):
@@ -75,7 +60,7 @@ if FRAME_DETECTIONS_SERVED:
         readiness handshake; there is no other one.
         """
         output:
-            socket=service(str(_frame_detections_socket("{experiment}"))),
+            socket=service(_frame_detections_socket_pattern()),
         params:
             device=lambda wc: str(config.get("frame_detections", {}).get("device", "cuda")),
             gdino_repo=lambda wc: str(MODELS_DIR / "GroundingDINO"),
@@ -112,7 +97,7 @@ if FRAME_DETECTIONS_SERVED:
             frame_inventory_validated=str(_frame_inventory_validated(
                 "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
             )),
-            socket=lambda wc: str(_frame_detections_socket(wc.experiment)),
+            socket=_frame_detections_socket_pattern(),
         output:
             detections=str(_frame_detections_artifact(
                 "{experiment}",
@@ -178,21 +163,9 @@ else:
             """
 
 
-# ruleorder is NOT sufficient here, and assuming it was is what made the first end-to-end run
-# (SGE job 22798948) silently execute the in-process rule with the toggle ON.
-#
-# ruleorder only breaks a tie Snakemake considers AMBIGUOUS. These two rules are not ambiguous:
-# the served one declares an extra input (the service socket), so Snakemake treats them as
-# genuinely different jobs and simply picks the one whose inputs it can satisfy without starting a
-# service. The gate evaluated True, the ruleorder was correct, and the wrong rule ran anyway --
-# with no warning, which is the worst version of this failure.
-#
-# The fix is to make the two rules produce genuinely different things unless the toggle says
-# otherwise: see the `if FRAME_DETECTIONS_SERVED:` guards on the rule definitions above. Only ONE
-# of the two per-well rules is DEFINED for a given run, so there is no choice left to get wrong.
-# (Cost: `snakemake --list` shows only the active variant, and the served rule is invisible to the
-# test suite when the toggle is off. That is an acceptable price for a gate that cannot silently
-# pick the wrong branch.)
+# The served/in-process gate is the `if FRAME_DETECTIONS_SERVED:` / `else:` split above, NOT
+# ruleorder -- only one rule is ever DEFINED. See model_servers/socket_paths.py, trap 3, for why
+# ruleorder silently ran the wrong rule (SGE job 22798948).
 
 
 rule validate_frame_detections_for_well:

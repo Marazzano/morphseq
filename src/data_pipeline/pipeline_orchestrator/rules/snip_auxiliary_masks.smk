@@ -7,6 +7,8 @@ snip_processing (replaces the retired full-frame auxiliary_masks step). Per-well
 -> merge, mirroring the feature-product template.
 """
 
+from data_pipeline.model_servers.socket_paths import service_socket_pattern
+
 SNIP_AUX_STEP = "snip_auxiliary_masks"
 
 # --- resident model server (opt-in) -----------------------------------------------------------
@@ -16,23 +18,15 @@ SNIP_AUX_STEP = "snip_auxiliary_masks"
 # byte-identical. Over 576 wells that is ~11h of repeated loading collapsing to ~70s.
 # See docs/MODEL_LOAD_BENCHMARKS.md and docs/MODEL_SERVER_WIRING.md.
 #
-# TWO THINGS THAT WILL BITE YOU (same as frame_detections.smk):
-#   1. The client rule must NOT declare `resources: gpu=1` -- the SERVICE holds the GPU. If both
-#      declare it, the service takes the only unit, no client is schedulable, and Snakemake
-#      blocks forever WITHOUT an error.
-#   2. Services need >= 2 cores (the service job holds one for the whole run), so --cores 1 fails
-#      with "Excess Resources: _cores: 2/1".
+# Before editing either rule, read model_servers/socket_paths.py -- it lists the three traps that
+# all fail silently.
 SNIP_AUX_SERVED = bool(config.get("unet_snip", {}).get("use_model_server", False))
 
-def _snip_aux_socket(experiment: str) -> Path:
-    """Short /tmp socket path -- NOT under DATA_ROOT.
-
-    AF_UNIX caps sun_path at ~108 bytes and DATA_ROOT alone is ~90 on the shared tree, so a
-    data-tree socket path overruns it and dies at bind() while the DAG builds happily. The
-    harness now guards this explicitly; see ModelServer.MAX_SOCKET_PATH_BYTES.
-    """
-    digest = hashlib.sha1(str(experiment).encode()).hexdigest()[:12]
-    return Path(tempfile.gettempdir()) / f"morphseq_unetaux_{digest}.sock"
+def _snip_aux_socket_pattern() -> str:
+    """The socket pattern for this service -- see model_servers.socket_paths for WHY it is a
+    wildcard and not a hash. Both the service `output:` and the client `input:` call this, which
+    is what makes them agree; that agreement is the whole contract."""
+    return service_socket_pattern("unetaux")
 
 
 def _sam_artifact(experiment, *, path_mode, well_id=None):
@@ -80,7 +74,7 @@ if SNIP_AUX_SERVED:
         connects is guaranteed a ready model. That ordering is the readiness handshake.
         """
         output:
-            socket=service(str(_snip_aux_socket("{experiment}"))),
+            socket=service(_snip_aux_socket_pattern()),
         params:
             unet_config_json=_snip_aux_unet_config_json,
             device=lambda wc: str(config.get("unet_snip", {}).get("device", DEVICE)),
@@ -106,7 +100,7 @@ if SNIP_AUX_SERVED:
         input:
             snip_inventory=str(_sam_snip_inventory("{experiment}", well_id="{well_id}")),
             snip_inventory_validated=str(_sam_snip_inventory_validated("{experiment}", well_id="{well_id}")),
-            socket=lambda wc: str(_snip_aux_socket(wc.experiment)),
+            socket=_snip_aux_socket_pattern(),
         output:
             manifest=str(_sam_artifact(
                 "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
@@ -158,12 +152,8 @@ else:
             """
 
 
-# NOT ruleorder. ruleorder only breaks a tie Snakemake considers AMBIGUOUS, and these two rules
-# are not ambiguous -- the served one declares an extra input (the service socket), so Snakemake
-# treats them as different jobs and just picks the one it can satisfy without starting a service.
-# That is exactly how SGE job 22798948 ran the in-process rule with the toggle ON, silently.
-# Defining only ONE of them leaves no choice to get wrong. Cost: `--list` shows only the active
-# variant. See rules/frame_detections.smk for the same treatment.
+# The served/in-process gate is the `if SNIP_AUX_SERVED:` / `else:` split above, NOT ruleorder --
+# only one rule is ever DEFINED. See model_servers/socket_paths.py, trap 3.
 
 
 rule validate_snip_auxiliary_masks_for_well:
