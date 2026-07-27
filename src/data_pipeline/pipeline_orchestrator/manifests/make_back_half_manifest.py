@@ -47,9 +47,9 @@ FRONT_MANIFEST = Path(__file__).with_name("front_half_archive.txt")
 
 # Highest priority first; an experiment lands in the first group whose prefix it matches.
 PRIORITY_PREFIXES = (
+    "20250612",
     "20240813",
     "20260702",
-    "20250612",
     "20260320",
     "20260324",
     "20260331",

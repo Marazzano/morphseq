@@ -1,9 +1,9 @@
-# back_half (analysis_ready) manifest — generated 2026-07-26
+# back_half (analysis_ready) manifest — generated 2026-07-27
 #
 # FORMAT:  <experiment> <scope>   (SGE array task N == Nth non-comment line; scope is
 #          passed as --config microscope=<scope>)
 # ORDER:   priority groups first, in this order:
-#          20240813, 20260702, 20250612, 20260320, 20260324, 20260331, 20260414, 20260415
+#          20250612, 20240813, 20260702, 20260320, 20260324, 20260331, 20260414, 20260415
 #          tasks 1-33 are priority; 34-86 are the remainder.
 # CONTENT: only experiments whose front_half shards are ALL validated (parity check).
 #
@@ -18,7 +18,7 @@
 #   20250529_36hpf_ctrl_atf6                       NOT_STARTED  shards=0 validated=0
 #   20250529_36hpf_wfs1_ctcf                       NOT_STARTED  shards=0 validated=0
 #   20260124                                       NOT_STARTED  shards=0 validated=0
-#   20260408_pbx                                   NO_SCOPE     shards=2 validated=2
+#   20260408_pbx                                   NO_SCOPE     shards=96 validated=96
 #   20260724_seahub_CHEM13_shard001                NO_SCOPE     shards=96 validated=96
 #   20260724_seahub_CHEM13_shard002                NO_SCOPE     shards=88 validated=88
 #   20260724_seahub_CHEM15_shard001                NO_SCOPE     shards=96 validated=96
@@ -29,7 +29,7 @@
 #   20260724_seahub_CHEM16_shard001                NO_SCOPE     shards=96 validated=96
 #   20260724_seahub_CHEM16_shard002                NO_SCOPE     shards=96 validated=96
 #   20260724_seahub_CHEM16_shard003                NO_SCOPE     shards=96 validated=96
-#   20260724_seahub_CHEM16_shard004                NO_SCOPE     shards=96 validated=96
+#   20260724_seahub_CHEM16_shard004                PARTIAL      shards=96 validated=95
 #   20260724_seahub_CHEM16_shard005                NO_SCOPE     shards=96 validated=96
 #   20260724_seahub_CHEM16_shard006                NO_SCOPE     shards=96 validated=96
 #   20260724_seahub_CHEM16_shard007                NO_SCOPE     shards=48 validated=48
@@ -89,6 +89,12 @@
 #   20260724_seahub_GENE5_shard003                 NO_SCOPE     shards=74 validated=74
 #
 # Regenerate with make_back_half_manifest.py — do not hand-edit.
+20250612_24hpf_ctrl_atf6 Keyence
+20250612_24hpf_wfs1_ctcf Keyence
+20250612_30hpf_ctrl_atf6 Keyence
+20250612_30hpf_wfs1_ctcf Keyence
+20250612_36hpf_ctrl_atf6 Keyence
+20250612_36hpf_wfs1_ctcf Keyence
 20240813_24hpf Keyence
 20240813_30hpf Keyence
 20240813_36hpf Keyence
@@ -99,12 +105,6 @@
 20260702_hotchem_30hpf_plate02 Keyence
 20260702_hotchem_36hpf_plate01 Keyence
 20260702_hotchem_36hpf_plate02 Keyence
-20250612_24hpf_ctrl_atf6 Keyence
-20250612_24hpf_wfs1_ctcf Keyence
-20250612_30hpf_ctrl_atf6 Keyence
-20250612_30hpf_wfs1_ctcf Keyence
-20250612_36hpf_ctrl_atf6 Keyence
-20250612_36hpf_wfs1_ctcf Keyence
 20260320_cilia_crispant_48hpf Keyence
 20260324_cep290_18hpf_24hpf_plate02 Keyence
 20260324_cep290_18hpf_plate01 Keyence
