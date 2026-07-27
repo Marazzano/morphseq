@@ -59,6 +59,17 @@ CONFIG_FILES=(
 EXPERIMENTS="<exp1>,<exp2>"
 
 cd "${WORKFLOW_DIR}"
+# Group-writable output on a SHARED tree. Every directory the pipeline creates comes from
+# mkdir(parents=True), which honours the UMASK of whoever launched the job -- not the mode of the
+# parent directory. The default 022 strips group-write, so a run by user A produces experiment
+# directories user B cannot write, and B's run then fails inside A's experiment. That is exactly
+# the state the tree was in on 2026-07-26: ~550 nlammers-owned experiment dirs at drwxr-sr-x,
+# group-readable but not group-writable, and only their OWNER could chmod them.
+#
+# 002 keeps group-write on. Combined with the setgid bit already set on the output tree (new files
+# inherit trapnelllab), any lab member can write into any experiment, whoever created it.
+umask 002
+
 mkdir -p "${LOG_DIR}"
 export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
 
