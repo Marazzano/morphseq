@@ -24,7 +24,15 @@ transcriptional stage = column `pseudostage` (aka seq_stage_hpf).
     time_predictions.csv, keyed by sequencing `sample`, then merged onto morph
     via morphseq_metadata.csv.  Not re-fit here.
 
-Arrhenius expected-stage reference:  6 + (timepoint-6)*(0.055*temperature - 0.57)
+Arrhenius expected-stage reference
+    The true reference (per hf2_seq_morph_arrhenius.ipynb, results/nlammers/20250319)
+    is an Arrhenius developmental-rate model:
+        stage(t, T) = A * t * exp(-E / (R * T_kelvin))
+    with R = 8.314, E = 65.2 kJ/mol (Toulany et al. 2023), T_kelvin = temperature_C
+    + 273.15, and the single scale A fit by least-squares to the 19/25/28.5C cohorts.
+    ``fit_arrhenius`` returns A; ``arrhenius_expected_stage`` evaluates the model.
+    (A separate *linear approximation* 6 + (t-6)*(0.055*T - 0.57) exists in the
+    20260504 seq notebooks; it is NOT the Arrhenius reference and is not used here.)
 """
 
 from __future__ import annotations
@@ -78,9 +86,12 @@ def _default_data_root() -> Path:
 
 CACHE_DIR = _default_data_root()
 
-#: Base directory for figure output.  Figures land in a sub-directory of the
-#: notebook folder so they live next to the analysis, not in the data tree.
-FIG_BASE = Path(__file__).resolve().parent / "figures"
+#: Base directory for figure output.  Figures are written to the shared data
+#: results tree (env MORPHSEQ_FIG_ROOT overrides), NOT next to the notebook.
+FIG_BASE = Path(
+    os.environ.get("MORPHSEQ_FIG_ROOT",
+                   "/Users/nick/Projects/data/morphseq/results/20260805")
+)
 
 
 def fig_dir() -> Path:
@@ -119,12 +130,81 @@ MORPH_DIST_COL = "morph_dist_spline"    # distance from WT spline (morph "noise"
 MORPH_STAGE_LABEL = "morphology-inferred stage (hpf)"
 SEQ_STAGE_LABEL = "transcription-inferred stage (hpf)"
 
+#: Control temperature used to standardize the transcriptional vs morphological
+#: stage offset (the 28.5C cohort is the physiological control).
+OFFSET_REF_TEMP = 28.5
 
-def arrhenius_expected_stage(timepoint, temperature):
-    """Linear-Arrhenius expected stage used as the reference diagonal/line."""
+
+def seq_morph_offset(df, *, seq_col=SEQ_STAGE_COL, morph_col=MORPH_STAGE_COL,
+                     temperature_col="temperature", ref_temp=OFFSET_REF_TEMP):
+    """Mean (seq - morph) stage offset at the control temperature.
+
+    Subtracting this from the transcriptional stage puts the control cohort on
+    the y=x line, standardizing the two staging axes.  Returns 0.0 if the
+    control cohort or either column is missing (no-op standardization).
+    """
+    if seq_col not in df.columns or morph_col not in df.columns:
+        return 0.0
+    ref = df.loc[pd.to_numeric(df[temperature_col], errors="coerce") == ref_temp]
+    diff = pd.to_numeric(ref[seq_col], errors="coerce") - pd.to_numeric(ref[morph_col], errors="coerce")
+    diff = diff.dropna()
+    return float(diff.mean()) if len(diff) else 0.0
+
+
+# Arrhenius developmental-rate model (hf2_seq_morph_arrhenius.ipynb).
+#   stage = A * t * exp(-E / (R * T_kelvin))
+# BOTH A and E are fit by scipy.least_squares (source used x0=[1, 200], with E in
+# J/mol).  E is NOT pinned to a literature value -- it is a free parameter; the
+# effective activation energy that best describes the data is what we plot.
+ARRHENIUS_R = 8.314          # gas constant, J/(mol*K)
+ARRHENIUS_E0 = 200.0         # E initial guess, J/mol (source x0)
+ARRHENIUS_A0 = 1.0           # A initial guess (source x0)
+ARRHENIUS_FIT_TEMPS = (25.0, 28.5, 32.0)  # cohorts used to fit A and E (no 19C)
+KELVIN = 273.15
+
+
+def _arrhenius_rate(temperature_c, E, R=ARRHENIUS_R):
+    """exp(-E / (R * T_kelvin)); E in J/mol (matches source parameterization)."""
+    t_k = pd.to_numeric(temperature_c, errors="coerce") + KELVIN
+    return np.exp(-E / (R * t_k))
+
+
+def fit_arrhenius(df, stage_col, *, temperature_col="temperature",
+                  timepoint_col="timepoint", fit_temps=ARRHENIUS_FIT_TEMPS):
+    """Fit BOTH A and E in stage = A * t * exp(-E/(R*T)) by least-squares,
+    using only the control cohorts (default 25/28.5/32C).
+
+    Replicates ``least_squares`` on ``A*t*exp(-E/RT) - stage`` from the source
+    notebook (x0=[1, 200]).  Returns (A, E) as floats, or (nan, nan) if there is
+    nothing to fit.
+    """
+    from scipy.optimize import least_squares
+
+    d = df.loc[pd.to_numeric(df[temperature_col], errors="coerce").isin(fit_temps)]
+    t = pd.to_numeric(d[timepoint_col], errors="coerce")
+    stage = pd.to_numeric(d[stage_col], errors="coerce")
+    t_k = pd.to_numeric(d[temperature_col], errors="coerce") + KELVIN
+    mask = np.isfinite(t) & np.isfinite(stage) & np.isfinite(t_k)
+    t, stage, t_k = t[mask].to_numpy(), stage[mask].to_numpy(), t_k[mask].to_numpy()
+    if t.size == 0:
+        return float("nan"), float("nan")
+
+    def residual(params):
+        A, E = params
+        return A * t * np.exp(-E / (ARRHENIUS_R * t_k)) - stage
+
+    res = least_squares(residual, x0=[ARRHENIUS_A0, ARRHENIUS_E0])
+    return float(res.x[0]), float(res.x[1])
+
+
+def arrhenius_expected_stage(timepoint, temperature, params):
+    """Evaluate the fitted Arrhenius model stage = A * t * exp(-E/(R*T)).
+
+    ``params`` is the (A, E) tuple returned by ``fit_arrhenius``.
+    """
+    A, E = params
     timepoint = pd.to_numeric(timepoint, errors="coerce")
-    temperature = pd.to_numeric(temperature, errors="coerce")
-    return 6 + (timepoint - 6) * (0.055 * temperature - 0.57)
+    return A * timepoint * _arrhenius_rate(temperature, E)
 
 
 # --------------------------------------------------------------------------- #
@@ -238,6 +318,47 @@ def temperature_timepoint_scatter(
     if add_legend:
         add_timepoint_legend(ax, plot_df["timepoint"])
     return mappable
+
+
+def temperature_scatter_fixed_marker(
+    ax, x, y, temp, marker, *, s=90, alpha=0.95, linewidth=0.6,
+    facecolor_alpha=1.0, edgecolor="black", **kwargs,
+):
+    """Scatter colored by temperature with a single fixed marker symbol.
+
+    Used to overlay a second stage estimate (e.g. transcriptional) that must
+    stay temperature-colored like the morph markers, distinguished ONLY by its
+    symbol.  Set ``facecolor_alpha`` < 1 for a lighter "open-ish" look while
+    still carrying the temperature color (unlike a pure open marker, which loses
+    it).  Returns the ScalarMappable for an optional shared colorbar.
+    """
+    plot_df = pd.DataFrame({
+        "x": pd.to_numeric(x, errors="coerce"),
+        "y": pd.to_numeric(y, errors="coerce"),
+        "temp": pd.to_numeric(temp, errors="coerce"),
+    }).dropna()
+    norm = temperature_norm()
+    cmap = plt.get_cmap(TEMP_CMAP)
+    colors = cmap(norm(plot_df["temp"].to_numpy()))
+    colors[:, 3] = facecolor_alpha
+    ax.scatter(plot_df["x"], plot_df["y"], facecolors=colors, marker=marker,
+               s=s, edgecolors=edgecolor, linewidths=linewidth, alpha=alpha,
+               **kwargs)
+    mappable = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    mappable.set_array([])
+    return mappable
+
+
+def add_stage_type_legend(ax, entries, *, title="stage estimate", loc="best"):
+    """Legend keying symbol -> stage type (e.g. triangle=morph, diamond=seq),
+    drawn in neutral grey so it reads as a symbol key, not a temperature."""
+    handles = [
+        Line2D([0], [0], marker=m, linestyle="none", markerfacecolor="#cccccc",
+               markeredgecolor="#333333", markeredgewidth=0.8, markersize=8, label=lab)
+        for m, lab in entries
+    ]
+    ax.legend(handles=handles, title=title, frameon=False, loc=loc,
+              fontsize=8, title_fontsize=8)
 
 
 def add_identity(ax, x=None, y=None, **kwargs):
