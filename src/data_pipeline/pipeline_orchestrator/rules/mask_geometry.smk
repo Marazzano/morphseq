@@ -102,8 +102,9 @@ rule merge_mask_geometry:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
+from data_pipeline.feature_extraction.mask_geometry.contract import MASK_GEOMETRY_TABLE_COLUMNS
 shards = collect_well_shard_paths('{DATA_ROOT}', 'mask_geometry', 'mask_geometry', '{wildcards.experiment}')
-concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=MASK_GEOMETRY_TABLE_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
 

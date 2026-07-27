@@ -179,8 +179,9 @@ rule merge_snip_qc:
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
     collect_well_shard_paths, concat_well_shards_to_file,
 )
+from data_pipeline.quality_control.snip_qc.contract import SNIP_QC_TABLE_COLUMNS
 shards = collect_well_shard_paths('{DATA_ROOT}', 'snip_qc', 'verdict', '{wildcards.experiment}')
-concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'snip_id'])
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=SNIP_QC_TABLE_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
 
