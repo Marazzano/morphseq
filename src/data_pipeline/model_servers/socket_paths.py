@@ -23,7 +23,7 @@ under DATA_ROOT is ~157 bytes on the shared tree. Short parent + short leaf keep
 experiment id near 70 bytes. The socket is a transient IPC endpoint, not a data artifact -- server
 and client always share a node, since AF_UNIX cannot cross one -- so /tmp is correct, not a hack.
 
-WIRING A SERVED STEP -- the three traps, all of which fail SILENTLY:
+WIRING A SERVED STEP -- the four traps, all of which fail SILENTLY or late:
 
 1. THE CLIENT MUST NOT DECLARE `resources: gpu=1`. The client holds no GPU memory; it sends paths
    over a socket and blocks. The SERVICE holds the GPU. If both declare gpu=1 the service takes
@@ -40,6 +40,20 @@ WIRING A SERVED STEP -- the three traps, all of which fail SILENTLY:
    ON, silently, for exactly this reason. Wrap each rule in `if <STEP>_SERVED:` / `else:` so only
    one is ever DEFINED and there is no choice left to get wrong. (Cost: `snakemake --list` shows
    only the active variant.)
+
+4. THE CLIENT RULE MUST DECLARE `threads: 0`. service() groups the service with EVERY consumer and
+   SUMS _cores across the group -- exactly as it does for a pipe group, where members really do
+   run simultaneously. Clients do not: each opens a socket, sends paths, blocks while the service
+   computes, and exits. At the default threads:1 the sum is 1 + N, so a 96-well plate demands
+   --cores 97 and dies with "Excess Resources: _cores: 97/4" -- and only when the group is
+   SCHEDULED, so a long front half runs first (job 22825862 died at 49%, ~40 min in). Nothing
+   catches it at dry-run.
+
+   `threads: 0` is the honest declaration, not a trick: a blocked socket client uses no CPU. It is
+   also the only thing that works -- --group-components cannot target the group (its id is a random
+   UUID regenerated per run) and an explicit `group:` name is overridden by the service grouping.
+   Raising --cores instead papers over a wrong declaration and decouples Snakemake's accounting
+   from the slots the scheduler actually granted.
 """
 
 from __future__ import annotations

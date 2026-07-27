@@ -31,19 +31,16 @@ SRC_ROOT="${REPO_ROOT}/src"
 LOG_DIR="${REPO_ROOT}/logs"
 SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
 
-# CORES must be > the number of served WELLS, not a small constant. A service() output makes
-# Snakemake put the service AND EVERY CONSUMER in one resource group and SUM _cores across it:
-# 1 service + 96 clients = 97. Job 22825862 died at 49% with
-#     Error grouping resources ... Excess Resources: _cores: 97/4
-# after ~40 min of front-half work -- and only once it reached the served steps, which is why the
-# 2-well proof (needing 3) never saw it.
+# CORES=4. A service job holds a core for the whole run, so a served step needs >= 2.
 #
-# --cores is a SCHEDULING budget, not a physical allocation: `-pe serial 4` still grants 4 real
-# slots, and `--resources gpu=1` still serializes the GPU work, so nothing is oversubscribed.
-# Verified on an 8-client toy workflow: --cores 8 fails, --cores 9 plans and runs clean.
-#
-# Derived from the well count so it cannot drift: N wells + 1 service + slack.
-# (set below, once OUTPUT_ROOT and EXPERIMENT exist)
+# It does NOT need to scale with the well count. service() makes Snakemake group the service with
+# every consumer and SUM _cores across the group, so with clients at the default threads:1 that is
+# 1 + 96 = 97 and the run dies mid-flight with "Excess Resources: _cores: 97/4" (job 22825862, at
+# 49%). The fix is `threads: 0` on the CLIENT rules -- honest, since a client only opens a socket
+# and blocks while the service computes -- not a bigger budget here. An earlier version of this
+# script set CORES=WELL_COUNT+4, which papered over the wrong declaration and decoupled Snakemake's
+# accounting from the 4 slots SGE actually grants.
+CORES=4
 # NOT "all": rule all requests the MERGED analysis_ready artifact, and the merge is
 # presence-based (well_runner 2b) -- it stacks whatever validated shards exist, so it is already
 # satisfied by the 2 wells the earlier proof built and would schedule only 3 report jobs. Request
@@ -67,11 +64,6 @@ if [[ -z "${OUTPUT_ROOT}" ]]; then
   exit 3
 fi
 SMK_WORKDIR="${OUTPUT_ROOT}/work_directories/${EXPERIMENT}"
-
-WELL_COUNT="$(grep -cve '^[[:space:]]*$' "${OUTPUT_ROOT}/acquisition/${EXPERIMENT}/well_identities/discovered_wells.txt")"
-CORES=$(( WELL_COUNT + 4 ))
-if (( WELL_COUNT < 1 )); then echo "ERROR: no discovered wells for ${EXPERIMENT}" >&2; exit 5; fi
-echo "wells: ${WELL_COUNT}  ->  --cores ${CORES}"
 
 mkdir -p "${LOG_DIR}" "${SMK_WORKDIR}"
 cd "${WORKFLOW_DIR}"

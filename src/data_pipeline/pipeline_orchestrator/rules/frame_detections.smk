@@ -98,6 +98,7 @@ if FRAME_DETECTIONS_SERVED:
                 "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
             )),
             socket=_frame_detections_socket_pattern(),
+        threads: 0  # see model_servers/socket_paths.py, trap 4
         output:
             detections=str(_frame_detections_artifact(
                 "{experiment}",
