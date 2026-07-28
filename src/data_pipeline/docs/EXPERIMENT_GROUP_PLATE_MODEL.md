@@ -210,10 +210,20 @@ reused as-is.
 
 PLAN (each step committed):
 1. Collection ingest lands `SCOPE_ACQUISITION_INVENTORY_CSV` (done) + emits a
-   `position_well_mapping.csv` derived from the union (well_id/position already present).
-2. `ingest_scope_metadata` rule stays ONE rule; its task detects a collection id and delegates
-   to the collection ingest, emitting the acquisition inventory (+ mapping). Single-experiment
-   path untouched.
+   `position_well_mapping.csv` derived from the union (well_id/position already present). DONE.
+   Detection primitives `is_collection_plate_id` / `parse_collection_name_from_plate_id`. DONE.
+2. DAG topology branch (the remaining seam — sharper than "one dispatch"): a collection SKIPS the
+   scope→map→apply chain entirely. Traced: `SCOPE_METADATA_CSV` (the scope_csv) is consumed ONLY by
+   `map_positions_to_wells` + `apply_position_to_well_mapping` — NOT by materialize_well_native or
+   frame_detections (grep-verified empty). And the collection already produces
+   `POSITION_WELL_MAPPING_CSV` from the union. So the collection's sub-path is:
+     union → {acquisition_inventory, position_well_mapping} → materialize_well_native → …
+   bypassing scope/map/apply. The cleanest Snakemake pattern is the SAME one the front-end already
+   uses for native-vs-dropin: mode/type-exclusive rule wiring — a collection experiment gets its
+   `POSITION_WELL_MAPPING_CSV` + acquisition_inventory from ONE collection-ingest rule, and the
+   scope→map→apply rules simply don't apply to it. (A prior attempt to overload the single
+   `ingest_scope_metadata` rule was reverted — forcing a collection to also emit a scope_csv view is
+   wrong: nothing on its path consumes it.)
 3. GPU run: `through_line` on 2 wells of chem28c via the native path → detection→tracking→
    registry. SETTLES the SAM2 track_id-collision question (bridge vs fracture).
 4. Finalize FRACTURE keying per step-3 result; un-draft #21; merge.
