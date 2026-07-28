@@ -29,7 +29,7 @@ Tiny doctrine:
 
 BREAKING CHANGE (snip world update):
     build_embryo_id(well_id, local_track_id)  →  build_embryo_id(physical_embryo_id, image_id)
-    build_snip_id(embryo_id, time_int)        →  build_snip_id(embryo_id, image_id)
+    build_snip_id(embryo_id, time_index)      →  build_snip_id(embryo_id, image_id)
     NEW: build_physical_embryo_id(well_id, local_embryo_index)
 
     Production callers using the old signatures fail loudly at import time and must migrate.
@@ -78,7 +78,7 @@ def build_well_id(experiment_id: str, well_index: str) -> str:
 def build_image_id(
     well_id: str,
     channel_id: str,
-    time_int: int,
+    time_index: int,
     *,
     z_index: int | None = None,
 ) -> str:
@@ -88,7 +88,7 @@ def build_image_id(
     A real ``z_index`` identifies one materialized z-stack plane.
     """
     if z_index is None:
-        return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
+        return f"{str(well_id)}_{str(channel_id)}_t{int(time_index):04d}"
     if isinstance(z_index, bool):
         raise ValueError("z_index must be an integer or None.")
     try:
@@ -97,7 +97,7 @@ def build_image_id(
         raise ValueError("z_index must be an integer or None.") from exc
     if z < 0:
         raise ValueError("z_index must be zero or greater.")
-    return f"{str(well_id)}_{str(channel_id)}_z{z:04d}_t{int(time_int):04d}"
+    return f"{str(well_id)}_{str(channel_id)}_z{z:04d}_t{int(time_index):04d}"
 
 
 def build_mask_id(base_id: str, local_mask_index: int) -> str:

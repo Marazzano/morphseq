@@ -216,7 +216,7 @@ def compile_keyence_data(
         n_stitch_samples: Number of samples for master params
 
     Output structure:
-        built_image_data/{exp_name}/stitched_ff_images/{well}/{channel}/{well}_{channel}_t{time_int:04d}.tif
+        built_image_data/{exp_name}/stitched_ff_images/{well}/{channel}/{well}_{channel}_t{time_index:04d}.tif
 
     Note: This assumes FF tiles have already been generated in ff_tile_root.
           Full integration with FF generation will come in later pipeline stages.
@@ -267,7 +267,7 @@ def compile_keyence_data(
 
         well_name = parts[0]
         try:
-            time_int = int(parts[1])
+            time_index = int(parts[1])
         except ValueError:
             log.warning("Could not parse time from: %s", folder_name)
             continue
@@ -276,7 +276,7 @@ def compile_keyence_data(
         channel_name = "BF"
 
         # Output path
-        output_path = output_dir / well_name / channel_name / f"{well_name}_{channel_name}_t{time_int:04d}.tif"
+        output_path = output_dir / well_name / channel_name / f"{well_name}_{channel_name}_t{time_index:04d}.tif"
 
         if output_path.exists() and not overwrite:
             skipped += 1

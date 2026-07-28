@@ -91,7 +91,7 @@ def compute_kinematics(
 def extract_pose_kinematics_batch(
     tracking_df: pd.DataFrame,
     mask_dir: Path | None = None,
-    sort_by: list = ['embryo_id', 'time_int'],
+    sort_by: list = ['embryo_id', 'time_index'],
     pixel_size_col: str = 'micrometers_per_pixel',
     mask_path_col: str = 'exported_mask_path',
 ) -> pd.DataFrame:

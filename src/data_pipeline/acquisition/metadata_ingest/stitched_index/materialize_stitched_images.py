@@ -31,7 +31,7 @@ from data_pipeline.acquisition.metadata_ingest.scope.keyence.raw_plane_parsing i
 )
 from data_pipeline.acquisition.metadata_ingest.time_helpers import add_elapsed_time_columns
 from data_pipeline.acquisition.metadata_ingest.time_helpers import add_frame_interval_unit_columns
-from data_pipeline.acquisition.metadata_ingest.time_helpers import ensure_time_int_column
+from data_pipeline.acquisition.metadata_ingest.time_helpers import ensure_time_index_column
 from data_pipeline.shared.identifiers import build_image_id
 from data_pipeline.acquisition.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.utils.cuda_diagnostics import resolve_device
@@ -138,15 +138,15 @@ def _select_yx1_channel_index(channel_names: list[str]) -> int:
 def _materialize_yx1_image(
     nd: nd2.ND2File,
     dask_arr,
-    time_int: int,
+    time_index: int,
     series_index: int,
     channel_index: int,
     device: str,
 ) -> np.ndarray:
     if dask_arr.ndim == 6:
-        stack = dask_arr[time_int, series_index, :, channel_index, :, :].compute()
+        stack = dask_arr[time_index, series_index, :, channel_index, :, :].compute()
     elif dask_arr.ndim == 5:
-        stack = dask_arr[time_int, series_index, :, :, :].compute()
+        stack = dask_arr[time_index, series_index, :, :, :].compute()
     else:
         raise ValueError(f"Unexpected ND2 dimensions: {dask_arr.ndim}")
 
@@ -316,7 +316,7 @@ def materialize_stitched_images(
     done_flag: Path | None = None,
 ) -> pd.DataFrame:
     """Materialize stitched images for selected wells and emit stitched-image index."""
-    scope_df = ensure_time_int_column(
+    scope_df = ensure_time_index_column(
         pd.read_csv(scope_csv),
         stage_name="materialize_stitched_images.scope_csv",
     )
@@ -340,8 +340,8 @@ def materialize_stitched_images(
     scope_df = add_frame_interval_unit_columns(scope_df)
 
     scope_df = (
-        scope_df.sort_values(["well_index", "channel_id", "time_int"])
-        .drop_duplicates(subset=["experiment_id", "well_id", "well_index", "channel_id", "time_int"], keep="first")
+        scope_df.sort_values(["well_index", "channel_id", "time_index"])
+        .drop_duplicates(subset=["experiment_id", "well_id", "well_index", "channel_id", "time_index"], keep="first")
         .copy()
     )
 
@@ -376,8 +376,7 @@ def materialize_stitched_images(
             well_index = str(row["well_index"])
             channel_id = str(row.get("channel_id", row.get("channel", "BF")))
             well_id = str(row["well_id"])
-            time_int = int(row["time_int"])
-            time_int = int(row.get("time_int", time_int))
+            time_index = int(row["time_index"])
             frame_interval_s = _safe_float(row.get("frame_interval_s", np.nan))
             frame_interval_min = _safe_float(row.get("frame_interval_min", np.nan))
             frame_interval_hr = _safe_float(row.get("frame_interval_hr", np.nan))
@@ -388,7 +387,7 @@ def materialize_stitched_images(
 
             image_id = row.get("image_id")
             if pd.isna(image_id) or not str(image_id):
-                image_id = build_image_id(well_id, channel_id, time_int)
+                image_id = build_image_id(well_id, channel_id, time_index)
             image_id = str(image_id)
 
             output_path = stitched_root / well_index / channel_id / f"{image_id}.{image_extension}"
@@ -416,7 +415,7 @@ def materialize_stitched_images(
                     image = _materialize_yx1_image(
                         nd=nd,
                         dask_arr=dask_arr,
-                        time_int=time_int,
+                        time_index=time_index,
                         series_index=position_index,
                         channel_index=channel_index,
                         device=yx1_device,
@@ -430,14 +429,14 @@ def materialize_stitched_images(
                         output_path,
                         width,
                         height,
-                        time_int,
+                        time_index,
                         overwrite=overwrite,
                         image_extension=image_extension,
                     )
                 source_artifact = yx1_source
                 source_kind = "yx1_nd2_zstack"
             elif microscope == "Keyence":
-                tile_stacks = keyence_lookup.get((well_index, time_int), {})
+                tile_stacks = keyence_lookup.get((well_index, time_index), {})
                 if tile_stacks:
                     if keyence_method == "log":
                         mpp = float(row.get("micrometers_per_pixel", np.nan))
@@ -492,7 +491,7 @@ def materialize_stitched_images(
                         output_path,
                         width,
                         height,
-                        time_int,
+                        time_index,
                         overwrite=overwrite,
                         image_extension=image_extension,
                     )
@@ -503,7 +502,7 @@ def materialize_stitched_images(
                     output_path,
                     width,
                     height,
-                    time_int,
+                    time_index,
                     overwrite=overwrite,
                     image_extension=image_extension,
                 )
@@ -516,10 +515,9 @@ def materialize_stitched_images(
                     "experiment_id": experiment,
                     "well_id": well_id,
                     "well_index": well_index,
-                    "time_int": time_int,
+                    "time_index": time_index,
                     "channel_id": channel_id,
                     "image_id": image_id,
-                    "time_int": time_int,
                     "microscope_id": microscope,
                     "stitched_image_path": str(stitched_rel),
                     "materialization_status": status,
@@ -560,10 +558,9 @@ def materialize_stitched_images(
         "experiment_id",
         "well_id",
         "well_index",
-        "time_int",
+        "time_index",
         "channel_id",
         "image_id",
-        "time_int",
         "microscope_id",
     ]
     ordered = [col for col in front_cols if col in stitched_index_df.columns]

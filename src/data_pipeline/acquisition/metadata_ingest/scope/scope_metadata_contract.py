@@ -15,7 +15,7 @@ REQUIRED_COLUMNS_SCOPE_METADATA = [
     # Raw acquisition identity (pre-mapping; well_id is minted later at the join)
     'experiment_id',
     'raw_position_label',
-    'time_int',
+    'time_index',
 
     # Stage XY (µm) — per series, T=0; enables CSV→CSV well mapping downstream
     'x_um',

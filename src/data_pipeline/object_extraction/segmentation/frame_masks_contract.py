@@ -76,7 +76,7 @@ def adapt_legacy_mask_rle_to_frame_masks(mask_rle_df: pd.DataFrame) -> pd.DataFr
                     "experiment_id": str(row["experiment_id"]),
                     "well_id": well_id,
                     "image_id": str(image_id),
-                    "time_index": int(row.get("time_index", row.get("time_int"))),
+                    "time_index": int(row["time_index"]),
                     "z_index": row.get("z_index", pd.NA),
                     "channel_id": str(row.get("channel_id", "")),
                     "image_path": str(row.get("image_path", "")),

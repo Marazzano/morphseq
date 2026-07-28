@@ -1,6 +1,6 @@
 """analysis_ready — STUB (not yet wired into the DAG).
 
-The legacy analysis_ready subsystem (flat ``snip_id``/``time_int`` vocabulary, off-DAG loaders /
+The legacy analysis_ready subsystem (flat ``snip_id``/legacy-time-column vocabulary, off-DAG loaders /
 validators / assemble) was retired: it duplicated the identity spine and re-declared feature/QC
 columns that their products already own. This stub is what replaces it.
 

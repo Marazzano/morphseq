@@ -10,7 +10,7 @@ import pandas as pd
 
 from data_pipeline.acquisition.metadata_ingest.time_helpers import add_elapsed_time_columns
 from data_pipeline.acquisition.metadata_ingest.time_helpers import add_frame_interval_unit_columns
-from data_pipeline.acquisition.metadata_ingest.time_helpers import ensure_time_int_column
+from data_pipeline.acquisition.metadata_ingest.time_helpers import ensure_time_index_column
 from data_pipeline.acquisition.metadata_ingest.position_well_mapping import validate_position_well_mapping
 from data_pipeline.shared.identifiers import build_image_id
 
@@ -23,7 +23,7 @@ def apply_position_to_well_mapping(
     selected_wells: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     """Map scope rows to plate wells and canonical IDs for downstream contracts."""
-    scope_df = ensure_time_int_column(
+    scope_df = ensure_time_index_column(
         pd.read_csv(scope_metadata_csv),
         stage_name="scope_metadata_position_mapping_input",
     )
@@ -93,7 +93,7 @@ def apply_position_to_well_mapping(
 
     mapped_df["image_id"] = [
         build_image_id(well_id, channel, int(t))
-        for well_id, channel, t in zip(mapped_df["well_id"].astype(str), mapped_df["channel_id"].astype(str), mapped_df["time_int"].astype(int))
+        for well_id, channel, t in zip(mapped_df["well_id"].astype(str), mapped_df["channel_id"].astype(str), mapped_df["time_index"].astype(int))
     ]
 
     mapped_df = add_elapsed_time_columns(
@@ -110,7 +110,7 @@ def apply_position_to_well_mapping(
         "experiment_id",
         "well_id",
         "well_index",
-        "time_int",
+        "time_index",
         "channel_id",
         "image_id",
         "experiment_time_s",
