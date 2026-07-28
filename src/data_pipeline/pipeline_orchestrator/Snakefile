@@ -414,20 +414,33 @@ rule ingest_plate_metadata:
 
 
 
+# A COLLECTION plate ({collection}_coll_{plate}) has no per-experiment raw dir — its raw lives in
+# the _coll DIRECTORY (holding the source children). Route the rule's raw input to the _coll dir for
+# a collection, the per-experiment dir otherwise. Resolved at DAG-plan time so Snakemake finds it.
+from data_pipeline.shared.identifiers import (
+    is_collection_plate_id as _is_collection_plate_id,
+    parse_collection_name_from_plate_id as _parse_collection_name_from_plate_id,
+)
+
+def _scope_raw_input_dir(wc):
+    exp = wc.experiment
+    if _is_collection_plate_id(exp):
+        return str(RAW_IMAGES_DIR / MICROSCOPE / _parse_collection_name_from_plate_id(exp))
+    return str(RAW_IMAGES_DIR / MICROSCOPE / exp)
+
+
 rule ingest_scope_metadata:
     """
-    Extract scope metadata from the configured microscope's raw image files.
+    Extract scope metadata from the microscope's raw image files → the acquisition inventory.
 
-    Reads raw metadata to extract:
-    - Micrometers per pixel (calibration)
-    - Frame interval (timing)
-    - Image dimensions
-    - Channel information
-    - Series/well mapping
-    - Timestamps
+    SINGLE experiment: one scope read of one raw dir. COLLECTION plate: the collection-ingest verb
+    reads each source child under the _coll dir and UNIONs them into one acquisition inventory
+    (Merge-A) + a derived position_well_mapping. Both paths emit the same acquisition_inventory_csv;
+    the collection additionally emits its position mapping (see the map_positions rule for how the
+    single path produces that). The shell dispatches on is_collection_plate_id.
     """
     input:
-        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}"
+        raw_images_dir = _scope_raw_input_dir
     output:
         # Both scopes emit the maximal acquisition inventory (record-only): YX1 from its one ND2 read,
         # Keyence from a raw-plane TIFF scan. The inventory is the never-collapsed system of record.
@@ -438,19 +451,33 @@ rule ingest_scope_metadata:
         )
     params:
         experiment_id = "{experiment}",
+        raw_root = str(RAW_IMAGES_DIR / MICROSCOPE),
+        is_collection = lambda wc: _is_collection_plate_id(wc.experiment),
         acquisition_inventory_arg = (
             lambda wc, output: f'--acquisition-inventory-csv "{output.acquisition_inventory_csv}"'
             if MICROSCOPE in ("YX1", "Keyence")
             else ""
         ),
     shell:
+        # Collection → union the source children into the acquisition inventory (+ emit a scope_csv
+        # view so the rule's output contract is met); single → the standard one scope read. Both emit
+        # scope_csv + acquisition_inventory_csv, so downstream rules are identical.
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-scope-metadata \
-          --raw-images-dir "{input.raw_images_dir}" \
-          --experiment "{params.experiment_id}" \
-          --microscope "{MICROSCOPE}" \
-          --output-csv "{output.scope_csv}" \
-          {params.acquisition_inventory_arg}
+        if [ "{params.is_collection}" = "True" ]; then
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-collection-acquisition \
+            --experiment "{params.experiment_id}" \
+            --raw-root "{params.raw_root}" \
+            --microscope "{MICROSCOPE}" \
+            --output-csv "{output.acquisition_inventory_csv}" \
+            --scope-metadata-csv "{output.scope_csv}"
+        else
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-scope-metadata \
+            --raw-images-dir "{input.raw_images_dir}" \
+            --experiment "{params.experiment_id}" \
+            --microscope "{MICROSCOPE}" \
+            --output-csv "{output.scope_csv}" \
+            {params.acquisition_inventory_arg}
+        fi
         """
 
 
@@ -469,18 +496,29 @@ rule map_positions_to_wells:
         provenance_json = POSITION_WELL_MAPPING_PROVENANCE,
     params:
         experiment_id = "{experiment}",
+        is_collection = lambda wc: _is_collection_plate_id(wc.experiment),
         ref_xy_csv = str(YX1_REF_XY_CSV) if YX1_REF_XY_CSV else "",
         raw_images_parent = str(RAW_IMAGES_DIR / MICROSCOPE),
     shell:
+        # COLLECTION: the union already resolved well_id↔position, so the mapping is DERIVED from the
+        # unioned inventory (scope_csv holds it) — not a re-solve from raw positions. SINGLE: the
+        # normal per-scope position solve.
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-positions-to-wells \
-          --experiment "{params.experiment_id}" \
-          --microscope "{MICROSCOPE}" \
-          --scope-csv "{input.scope_csv}" \
-          --ref-xy-csv "{params.ref_xy_csv}" \
-          --raw-images-parent "{params.raw_images_parent}" \
-          --output-mapping-csv "{output.mapping_csv}" \
-          --output-provenance-json "{output.provenance_json}"
+        if [ "{params.is_collection}" = "True" ]; then
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks derive-collection-position-mapping \
+            --acquisition-inventory-csv "{input.scope_csv}" \
+            --output-mapping-csv "{output.mapping_csv}" \
+            --output-provenance-json "{output.provenance_json}"
+        else
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-positions-to-wells \
+            --experiment "{params.experiment_id}" \
+            --microscope "{MICROSCOPE}" \
+            --scope-csv "{input.scope_csv}" \
+            --ref-xy-csv "{params.ref_xy_csv}" \
+            --raw-images-parent "{params.raw_images_parent}" \
+            --output-mapping-csv "{output.mapping_csv}" \
+            --output-provenance-json "{output.provenance_json}"
+        fi
         """
 
 

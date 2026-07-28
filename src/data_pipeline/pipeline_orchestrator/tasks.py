@@ -74,18 +74,56 @@ def cmd_ingest_collection_acquisition(args: argparse.Namespace) -> None:
     Thin dispatcher: find the plate's raw source children, read each once via the per-scope
     acquisition-inventory builder, union them into one inventory keyed by the merged
     experiment_id, write the CSV. All domain logic lives in the ingest module (DRY).
+
+    Optionally also writes the derived position_well_mapping and a scope_metadata view. The
+    scope-metadata view is the SAME unioned inventory written to the ``ingest_scope_metadata``
+    rule's ``scope_csv`` slot: a collection bypasses the per-experiment scope→map→apply chain (its
+    well_id is already resolved in the union), so this only satisfies that rule's output contract —
+    the collection's real downstream input is the acquisition inventory + position mapping.
     """
     from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest import (
         ingest_collection_acquisition_inventory,
     )
 
-    ingest_collection_acquisition_inventory(
+    unioned = ingest_collection_acquisition_inventory(
         experiment_id=args.experiment,
         raw_root=args.raw_root,
         microscope=args.microscope,
         output_csv=args.output_csv,
         position_well_mapping_csv=getattr(args, "position_well_mapping_csv", None),
     )
+    scope_metadata_csv = getattr(args, "scope_metadata_csv", None)
+    if scope_metadata_csv is not None:
+        Path(scope_metadata_csv).parent.mkdir(parents=True, exist_ok=True)
+        unioned.to_csv(scope_metadata_csv, index=False)
+
+
+def cmd_derive_collection_position_mapping(args: argparse.Namespace) -> None:
+    """Derive the position→well mapping for a collection from its unioned acquisition inventory.
+
+    Thin dispatcher: a collection's well_id↔position is already resolved inside the union, so the
+    mapping is a DERIVE (select + dedup), not a re-solve from raw positions. Delegates to
+    ``derive_position_well_mapping`` and writes the canonical mapping + a small provenance json.
+    """
+    import json
+    import pandas as pd
+    from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest import (
+        derive_position_well_mapping,
+    )
+
+    mapping = derive_position_well_mapping(pd.read_csv(args.acquisition_inventory_csv))
+    out_mapping = Path(args.output_mapping_csv)
+    out_mapping.parent.mkdir(parents=True, exist_ok=True)
+    mapping.to_csv(out_mapping, index=False)
+
+    out_prov = Path(args.output_provenance_json)
+    out_prov.parent.mkdir(parents=True, exist_ok=True)
+    out_prov.write_text(json.dumps(
+        {"mapping_method": "collection_union",
+         "source": str(args.acquisition_inventory_csv),
+         "n_rows": int(len(mapping))},
+        indent=2,
+    ) + "\n")
 
 
 def cmd_classify_experiment(args: argparse.Namespace) -> None:
@@ -1320,7 +1358,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_coll_acq.add_argument("--position-well-mapping-csv", type=Path, default=None,
                             help="optional: also derive+write the canonical position->well mapping "
                                  "(the second artifact the native materializer needs)")
+    p_coll_acq.add_argument("--scope-metadata-csv", type=Path, default=None,
+                            help="optional: also write the unioned inventory to the scope_csv slot "
+                                 "(satisfies the ingest_scope_metadata rule's output contract; a "
+                                 "collection bypasses the scope->map->apply chain)")
     p_coll_acq.set_defaults(func=cmd_ingest_collection_acquisition)
+
+    p_coll_map = sub.add_parser("derive-collection-position-mapping")
+    p_coll_map.add_argument("--acquisition-inventory-csv", type=Path, required=True,
+                            help="the collection's unioned acquisition inventory (well_id resolved)")
+    p_coll_map.add_argument("--output-mapping-csv", type=Path, required=True)
+    p_coll_map.add_argument("--output-provenance-json", type=Path, required=True)
+    p_coll_map.set_defaults(func=cmd_derive_collection_position_mapping)
 
     p_classify = sub.add_parser("classify-experiment")
     p_classify.add_argument("--experiment", required=True,
