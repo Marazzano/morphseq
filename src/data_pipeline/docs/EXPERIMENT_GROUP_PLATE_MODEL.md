@@ -143,6 +143,22 @@ structurally fine — mid-course timelapse embryos (appear/die partway) already 
 any downstream code that ASSUMES every physical_embryo spans the full timecourse must
 tolerate it. Validate this holds; do not "fix" it by forcing a full chain.
 
+**OPEN QUESTION — does SAM2 collide `track_id` across the merged gap? (GPU-run gated)**
+The FRACTURE branch groups a well's tracks by `time_index` and keys `local_embryo_index` on
+`track_id`. This is only correct if `track_id` is UNIQUE across the merged well. Two cases:
+- If SAM2, fed the well as ONE time-ordered video (`sam2_frame_view` sorts all `time_index`
+  into one sequence), assigns GLOBALLY-unique object ids across the whole series → track_ids
+  don't collide → current FRACTURE keying is correct, and a well with a real embryo at each
+  timepoint likely TRACKS THROUGH (→ n_tracks==1 → BRIDGE, the common expected case).
+- If SAM2 instead RESTARTS numbering per source (t0 and t1 both emit `track0000` for different
+  animals) → the same `track_id` string appears twice as different animals → keying on
+  `track_id` alone COLLAPSES them (wrong). Then FRACTURE must key on `(time_index, track_id)`.
+
+Which happens is EMPIRICAL — only the GPU detection→tracking→registry run on a real merged
+collection settles it. Until then the FRACTURE keying is provisional. (A synthetic frame_masks
+with hand-forced `track0000` at both timepoints reproduces the collapse, confirming the risk is
+real IF SAM2 restarts numbering.) Do not finalize FRACTURE keying before the GPU run.
+
 This is a local rule at the registry mint site (C2 step 3). Upstream: only the union +
 frame_inventory gain `n_sources`. Downstream reads `physical_embryo_id` as given — no
 snip_processing/report join changes (there is no cross-source track_id collision, because
