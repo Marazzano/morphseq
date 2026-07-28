@@ -81,6 +81,34 @@ def is_collection(name: str) -> bool:
     return str(name).strip().endswith(_COLLECTION_SUFFIX)
 
 
+_COLLECTION_ID_MARKER = _COLLECTION_SUFFIX + "_"  # "_coll_" — the marker INSIDE a plate id
+
+
+def is_collection_plate_id(experiment_id: str) -> bool:
+    """Return True iff ``experiment_id`` is a merged collection plate id (``{collection}_coll_{plate}``).
+
+    Distinct from ``is_collection`` (which tests a collection *name*, ending in ``_coll``): a plate
+    id has the ``_coll_`` marker INSIDE it (``cilia_snapshots_coll_plate01``). Used at the DAG seam
+    to decide whether an experiment is a single scope read or a collection UNION.
+    """
+    return _COLLECTION_ID_MARKER in str(experiment_id).strip()
+
+
+def parse_collection_name_from_plate_id(experiment_id: str) -> str:
+    """``{collection}_coll_{plate}`` -> ``{collection}_coll`` (the raw dir name to glob).
+
+    Inverse-facing helper for acquisition ingest: the collection dir is the id up to and
+    including the ``_coll`` marker. Fails loud if the id is not a collection plate id.
+    """
+    text = str(experiment_id).strip()
+    if _COLLECTION_ID_MARKER not in text:
+        raise ValueError(
+            f"parse_collection_name_from_plate_id: {experiment_id!r} is not a collection plate id "
+            f"(no '{_COLLECTION_ID_MARKER}' marker)."
+        )
+    return text[: text.index(_COLLECTION_ID_MARKER)] + _COLLECTION_SUFFIX
+
+
 def parse_plate_token(child_name: str) -> str:
     """Extract the ``plate_token`` from a collection child name.
 

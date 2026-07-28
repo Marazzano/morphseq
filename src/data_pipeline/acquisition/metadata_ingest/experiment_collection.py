@@ -25,6 +25,8 @@ from data_pipeline.acquisition.metadata_ingest.experiment_identity import (
 from data_pipeline.shared.identifiers import (
     compose_collection_experiment_id,
     is_collection,
+    is_collection_plate_id,
+    parse_collection_name_from_plate_id,
     parse_plate_token,
 )
 
@@ -86,13 +88,12 @@ def find_collection_plate_sources(experiment_id: str, raw_root: Path) -> tuple[s
     how ids were minted (DRY). Fails loud if the id is not a collection plate id or no
     source children match.
     """
-    marker = "_coll_"
-    if marker not in experiment_id:
+    if not is_collection_plate_id(experiment_id):
         raise ValueError(
             f"find_collection_plate_sources: {experiment_id!r} is not a collection plate id "
             f"(expected '{{collection}}_coll_{{plate_token}}'). Not a merged collection experiment."
         )
-    collection_name = experiment_id[: experiment_id.index(marker)] + "_coll"
+    collection_name = parse_collection_name_from_plate_id(experiment_id)
     collection_dir = raw_root / collection_name
     if not collection_dir.is_dir():
         raise ValueError(

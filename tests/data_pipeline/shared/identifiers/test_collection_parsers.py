@@ -12,10 +12,32 @@ import pytest
 from data_pipeline.shared.identifiers import (
     compose_collection_experiment_id,
     is_collection,
+    is_collection_plate_id,
+    parse_collection_name_from_plate_id,
     parse_declared_hpf,
     parse_event_label,
     parse_plate_token,
 )
+
+
+def test_is_collection_plate_id_detects_the_inner_marker():
+    # A collection PLATE id has "_coll_" INSIDE it (distinct from is_collection's suffix test).
+    assert is_collection_plate_id("cilia_snapshots_coll_plate01") is True
+    assert is_collection_plate_id("chem28c_coll_plate02") is True
+    # A single experiment id and a bare collection NAME are not plate ids.
+    assert is_collection_plate_id("20240418") is False
+    assert is_collection_plate_id("cilia_snapshots_coll") is False  # name, no inner _coll_
+
+
+def test_parse_collection_name_from_plate_id_round_trips_with_compose():
+    plate_id = compose_collection_experiment_id("cilia_snapshots_coll", "20260607_plate01_t45hpf")
+    assert plate_id == "cilia_snapshots_coll_plate01"
+    assert parse_collection_name_from_plate_id(plate_id) == "cilia_snapshots_coll"
+
+
+def test_parse_collection_name_from_plate_id_rejects_non_plate_id():
+    with pytest.raises(ValueError, match="not a collection plate id"):
+        parse_collection_name_from_plate_id("20240418")
 
 COLL = "cilia_snapshots_coll"
 
