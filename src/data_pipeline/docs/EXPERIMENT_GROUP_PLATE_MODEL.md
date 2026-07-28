@@ -180,6 +180,28 @@ own name** (file stem or dir name).
 A directory WITHOUT the `_coll` marker is a legacy single experiment: folder-name (Keyence)
 / `.nd2`-stem (YX1) → experiment_id, exactly as today. Dual-mode by the marker.
 
+## DAG wiring — status & the remaining seam (2026-07-27)
+
+BUILT and real-data-proven (Keyence chem28c_coll):
+- `resolve_experiment_ids` + `resolve-experiment-ids` CLI (collection → flat id list, SGE EXP_FILE).
+- `find_collection_plate_sources` (inverse: `{coll}_{plate}` → its raw source children).
+- `collection_acquisition_ingest` module + `ingest-collection-acquisition` CLI verb: finds
+  sources → per-scope acquisition-inventory builder per source → UNION → one valid inventory
+  (6336 rows, n_sources=2, passes the real Keyence validator).
+
+REMAINING SEAM (the deep part, blocks the GPU `through_line` run):
+The collection path **collapses scope-read + acquisition-inventory into ONE union step**, but
+the single-experiment DAG has them as SEPARATE artifacts (`scope_metadata_csv` THEN
+`acquisition_inventory_csv`, consumed by `map_positions_to_wells` etc.). To run a collection
+through the existing Snakefile, the collection ingest must EITHER (a) also emit the
+`scope_metadata_csv` shape the downstream rules expect, OR (b) the front-end rules must accept
+the unioned acquisition inventory directly for collection experiments. This is a real
+reconciliation of two artifact shapes — do it carefully so the single-experiment path is
+untouched. Recommended: the `ingest_scope_metadata` rule stays ONE rule; its task detects a
+collection experiment (`is_collection`-style on the id) and delegates to the collection ingest,
+emitting BOTH artifacts. Until this lands, the GPU run (Stage 3, which settles the SAM2
+track_id-collision question) cannot execute end-to-end through the DAG.
+
 ## Older draft levels (SUPERSEDED by the merge model above — kept for history)
 
 The earlier framing below treated each event as its own experiment_id sharing a parsed
