@@ -72,21 +72,33 @@ to every downstream step that branches. Steps must NOT independently re-infer co
 
 ---
 
-## Age = a separate per-timepoint product (additive; NO plate_metadata schema surgery)
+## Age = a separate per-timepoint companion in the PLATE-METADATA (biology) kingdom
 
-`start_age_hpf` is really a per-TIMEPOINT fact (t28 → age 28 applies to every well at t0),
-historically fused into per-well plate_metadata. For collections, ingest ALSO emits a separate
-**`time_index → start_age_hpf` mapping product** alongside plate_metadata. **plate_metadata itself is
-UNCHANGED** — no null trap, no contract change.
+`start_age_hpf` is **biology/experimental-design metadata** (how the experiment was set up), so it
+stays in the plate-metadata kingdom — it must NOT go into frame_inventory (that's the microscope's
+"what's on disk" record; polluting it erodes the biology-vs-acquisition boundary). But it's really a
+per-TIMEPOINT fact (t28 → age 28 at t0), which the per-well plate_metadata can't hold.
 
-The ONE consumer is `stage_predictions/compute.py` (`predicted_stage_hpf = start_age_hpf +
-elapsed/3600 × rate(temp)`), which today reads `start_age_hpf` from `plate_by_well[well_id]`. It
-branches on the DECLARED `is_collection`:
-- **collection** → read `start_age_hpf` from the mapping by `time_index`;
-- **non-collection** → existing per-well plate_metadata path, **byte-identical**.
+**Decision (Y2, evidence-backed): a separate companion product `plate_age_by_timepoint` keyed
+`(well_id, time_index)`, emitted by the plate-metadata step for collections. The base plate_metadata
+table stays BYTE-IDENTICAL (one row per well).**
 
-Prefer-then-fallback; single experiments untouched. (Do not refactor age out of plate_metadata for
-singles — add the mapping additively.)
+Why NOT put `(well_id, time_index)` rows in plate_metadata itself (Y1 — rejected): 13 files touch
+plate_metadata; the two real ROW readers both hard-assume **one row per well_id** —
+`stage_predictions/compute.py` does `plate_metadata_df.set_index("well_id")` (duplicate well_id →
+non-unique index → `.loc` returns multiple rows → breaks), and `analysis_ready/assemble.py`
+broadcasts plate biology to snips by a `well_id` left-join (duplicate well_id → silent row fan-out).
+Changing plate_metadata's grain breaks both. So keep plate_metadata one-row-per-well; the
+per-timepoint age is its own companion file.
+
+**Blast radius of Y2: ONE code file + one new companion product.**
+- `plate_metadata` table + its 12 other consumers (incl. analysis_ready): UNCHANGED.
+- `stage_predictions/compute.py` (the ONE consumer of the age): it already loads frame_inventory
+  (per-image, has `time_index`) AND plate_metadata (`set_index("well_id")`, stays valid). It branches
+  on the DECLARED `is_collection`: collection → look up `start_age_hpf` in the companion by
+  `(well_id, time_index)`; non-collection → `plate_by_well[well_id]` as today, **byte-identical**.
+
+Prefer-then-fallback; single experiments untouched.
 
 ---
 
@@ -179,7 +191,8 @@ flat EXP_FILE + prints N for `qsub -t 1-N`; the array template is unchanged.
 
 **REMAINING — build order (design locked, not yet built):**
 1. **Early classify step** → experiment-level `is_collection` artifact; thread it to branching rules.
-2. **Collection ingest emits** the `time_index → start_age_hpf` mapping product.
+2. **Plate-metadata step emits** the `plate_age_by_timepoint` companion (`(well_id, time_index) →
+   start_age_hpf`) for collections. Base plate_metadata table UNCHANGED (one row per well).
 3. **Stage/validation consume** the declared fact + the mapping (collection) / plate_metadata (single).
 4. **Revert the detour:** remove `pool_well_acquisition_rows_across_sources` from
    `select_well_acquisition_rows.py` (that "pool at materialization" relocation was abandoned —
