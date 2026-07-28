@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 _XML_SUFFIX_BYTES = 32768
 
 
-def _extract_time_int_from_path(file_path: Path) -> int:
+def _extract_time_index_from_path(file_path: Path) -> int:
     """
     Infer Keyence time index with legacy-compatible semantics.
 
@@ -465,8 +465,8 @@ def extract_keyence_scope_metadata(
 
             # Legacy-compatible time parsing:
             # - T#### directory or _T####_ token => true timepoint
-            # - otherwise single-timepoint acquisition (time_int=0)
-            time_int = _extract_time_int_from_path(tiff_path)
+            # - otherwise single-timepoint acquisition (time_index=0)
+            time_index = _extract_time_index_from_path(tiff_path)
 
             # Build row
             well_id = build_well_id(experiment_id, well_index)
@@ -476,8 +476,8 @@ def extract_keyence_scope_metadata(
                 'position_index': position_index,
                 'well_index': well_index,
                 'well_id': well_id,
-                'time_int': time_int,
-                'image_id': build_image_id(well_id, normalized_channel, time_int),
+                'time_index': time_index,
+                'image_id': build_image_id(well_id, normalized_channel, time_index),
 
                 # Spatial calibration
                 'micrometers_per_pixel': micrometers_per_pixel,
@@ -515,7 +515,7 @@ def extract_keyence_scope_metadata(
     df = pd.DataFrame(rows)
 
     # Sort by well and time
-    df = df.sort_values(['well_index', 'time_int']).reset_index(drop=True)
+    df = df.sort_values(['well_index', 'time_index']).reset_index(drop=True)
 
     # Compute frame_interval_s
     # Group by well and compute time differences

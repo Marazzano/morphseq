@@ -87,7 +87,7 @@ def _write_stitched_ff(
     output_dir: Path,
     well_name: str,
     channel_name: str,
-    time_int: int,
+    time_index: int,
     image: np.ndarray,
     overwrite: bool = False
 ):
@@ -95,12 +95,12 @@ def _write_stitched_ff(
     Write stitched FF image to standardized location.
 
     Output structure:
-    built_image_data/{exp}/stitched_ff_images/{well}/{channel}/{well}_{channel}_t{time_int:04d}.tif
+    built_image_data/{exp}/stitched_ff_images/{well}/{channel}/{well}_{channel}_t{time_index:04d}.tif
     """
     well_dir = output_dir / well_name / channel_name
     well_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = well_dir / f"{well_name}_{channel_name}_t{time_int:04d}.tif"
+    output_path = well_dir / f"{well_name}_{channel_name}_t{time_index:04d}.tif"
 
     if output_path.exists() and not overwrite:
         return
@@ -132,7 +132,7 @@ def compile_yx1_data(
         z_buffer: Whether to trim Z-stack (specific to exp 20231206)
 
     Output structure:
-        built_image_data/{exp_name}/stitched_ff_images/{well}/{channel}/{well}_{channel}_t{time_int:04d}.tif
+        built_image_data/{exp_name}/stitched_ff_images/{well}/{channel}/{well}_{channel}_t{time_index:04d}.tif
     """
 
     exp_path = raw_data_root / exp_name

@@ -7,13 +7,13 @@ from typing import Sequence
 import pandas as pd
 
 
-def ensure_time_int_column(
+def ensure_time_index_column(
     df: pd.DataFrame,
     *,
-    time_col: str = "time_int",
+    time_col: str = "time_index",
     stage_name: str = "table",
 ) -> pd.DataFrame:
-    """Ensure time_int exists and is integer-valued."""
+    """Ensure time_index exists and is integer-valued."""
     out = df.copy()
     has_time = time_col in out.columns
 
@@ -26,9 +26,9 @@ def ensure_time_int_column(
     if (time_vals % 1 != 0).any():
         raise ValueError(f"Column '{time_col}' must contain integer values in {stage_name}")
 
-    time_int = time_vals.astype(int)
+    time_index = time_vals.astype(int)
 
-    out[time_col] = time_int
+    out[time_col] = time_index
     return out
 
 
@@ -48,18 +48,18 @@ def add_elapsed_time_columns(
     if missing_group:
         raise ValueError(f"Missing group columns for elapsed-time computation: {missing_group}")
 
-    out = ensure_time_int_column(
+    out = ensure_time_index_column(
         out,
         stage_name="elapsed_time_inputs",
     )
 
     out[out_seconds] = pd.NA
     use_cols = list(group_cols)
-    order_cols = use_cols + ["time_int"]
+    order_cols = use_cols + ["time_index"]
     out = out.sort_values(order_cols).copy()
 
-    time_numeric = pd.to_numeric(out["time_int"], errors="coerce")
-    time_origin = out.groupby(use_cols)["time_int"].transform("min")
+    time_numeric = pd.to_numeric(out["time_index"], errors="coerce")
+    time_origin = out.groupby(use_cols)["time_index"].transform("min")
     elapsed_from_frame = (time_numeric - time_origin).astype(float)
 
     if frame_interval_col in out.columns:

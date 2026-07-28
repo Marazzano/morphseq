@@ -62,7 +62,7 @@ YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS: tuple[str, ...] = (
 
 # The maximal per-coordinate schema = the SHARED Tier-1 core + the YX1 Tier-2 extras. Standardized
 # ``*_index`` axis vocabulary — the inventory is a NEW artifact, born with target names (the legacy
-# scope_metadata keeps time_int/z_position until the Scope-2 collapse).
+# scope_metadata keeps z_position until the Scope-2 collapse).
 YX1_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
     *REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
     *YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS,
@@ -266,11 +266,10 @@ def _derive_elapsed_time_s(df: pd.DataFrame) -> pd.DataFrame:
 
     Reuses ``time_helpers.add_elapsed_time_columns`` (the one scope-neutral time derivation) pointed at
     the YX1 raw atom ``acquisition_time_s`` and grouped per ``position_index`` (YX1 position ≡ well,
-    1:1). The helper sorts on an internal ``time_int`` and also emits min/hr columns; we alias
-    ``time_index`` → ``time_int`` for it and keep only the canonical ``elapsed_time_s``.
+    1:1). The helper sorts on the ``time_index`` column (already present on the YX1 inventory) and
+    also emits min/hr columns; we keep only the canonical ``elapsed_time_s``.
     """
     work = df.copy()
-    work["time_int"] = work["time_index"]
     # The helper sorts rows internally but preserves the original index labels, so reindexing back
     # onto df.index restores row order while carrying each row's derived value.
     work = add_elapsed_time_columns(

@@ -16,7 +16,7 @@ def test_apply_position_to_well_mapping_joins_identity_by_position(tmp_path):
         {
             "experiment_id": "20250912",
             "raw_position_label": "2",
-            "time_int": 0,
+            "time_index": 0,
             "channel": "BF",
             "experiment_time_s": 0.0,
         }
@@ -65,7 +65,7 @@ def test_apply_position_to_well_mapping_preserves_preidentified_keyence_wells(tm
                     "position_index": position_index // 3,
                     "well_index": well_index,
                     "well_id": well_id,
-                    "time_int": 0,
+                    "time_index": 0,
                     "channel": "BF",
                     "experiment_time_s": 0.0,
                 }
