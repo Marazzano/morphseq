@@ -180,7 +180,47 @@ own name** (file stem or dir name).
 A directory WITHOUT the `_coll` marker is a legacy single experiment: folder-name (Keyence)
 / `.nd2`-stem (YX1) → experiment_id, exactly as today. Dual-mode by the marker.
 
-## DAG wiring — status & the remaining seam (2026-07-27)
+## ✅ CORRECTED + LOCATED MODEL (2026-07-27, mdcolon) — POOL AT MATERIALIZATION→FRAME_INVENTORY
+
+The acquisition-level union merged TOO EARLY. Correct model (mdcolon, LOCKED):
+
+**Acquisition inventory stays PER-SOURCE — the honest "what's on disk" record**, keeping the
+source + raw path for every image. Do NOT merge at acquisition. **The pooling happens per WELL at
+materialization → frame_inventory:** a well can have multiple sources (multiple images/acquisitions
+feeding it); to materialize a coherent frame_inventory for that well you pull the CORRECT
+acquisition inventories (the sources that contribute to the well) and pool their rows.
+
+```
+source t28hpf acquisition_inventory  (raw paths + source recorded — "on disk")  ┐
+source t52hpf acquisition_inventory  (raw paths + source recorded — "on disk")  ┤
+                                                                                 │  POOL per well at
+                                                                                 │  materialization:
+                                                                                 ▼
+   well A01 frame_inventory: time_index 0 (from t28 source) + time_index 1 (from t52 source),
+                             n_sources=2, EACH row keeps its source + raw path so materialize
+                             pulls the right pixels.
+```
+
+`n_sources` = how many source acquisitions feed the well. Because acquisition inventory kept the
+source+raw path per image, materialization knows exactly which raw pixels to pull for each pooled
+frame.
+
+**WHERE IT HOOKS (located):** `image_materialization/select_well_acquisition_rows.py`. Today it
+takes ONE acquisition inventory → selects one well's rows → feeds `run_materialize_well`. The
+collection extends it to **multi-source**: pull the well's rows across the N source acquisition
+inventories, offset `time_index` per source, stamp `n_sources`, keep `source_*_path` per row. The
+`cmd_materialize_well` adapter (`_selected_well_acquisition_rows_for_materialization`) reads N source
+acquisition CSVs instead of one. `run_materialize_well` then builds the pooled frame_inventory shard.
+
+**BUILD CONSEQUENCE:** the acquisition-level union (`collection_acquisition_union.py` /
+`collection_acquisition_ingest.py`) is SUPERSEDED — its layout logic (time_index offset, n_sources,
+shared well_id) RELOCATES into `select_well_acquisition_rows`' multi-source mode. Each source is
+ingested + mapped normally (its own scope→map→acquisition_inventory); the collection is NOT a
+scope-read unit (which is why the DAG dry-run correctly hit MissingInput on ingest_scope_metadata
+for the collection id — it has no raw dir of its own). The registry merge-policy + n_sources
+contract + time_index_claimed fix all STAY.
+
+## DAG wiring — status & the remaining seam (2026-07-27) [SUPERSEDED by the correction above]
 
 BUILT and real-data-proven (Keyence chem28c_coll):
 - `resolve_experiment_ids` + `resolve-experiment-ids` CLI (collection → flat id list, SGE EXP_FILE).
