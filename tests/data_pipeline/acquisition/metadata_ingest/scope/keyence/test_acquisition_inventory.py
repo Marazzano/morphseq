@@ -180,6 +180,9 @@ def test_duplicate_cell_key_fails_loud():
         "objective_magnification": "4x",
         "orientation": "unknown",
         "source_tiff_path": "/tmp/a.tif",
+        "stage_x_nm": 0,
+        "stage_y_nm": 0,
+        "stage_z_nm": 0,
     }
     df = pd.DataFrame([base, dict(base)])  # two identical cells
     with pytest.raises(ValueError, match="not unique on the cell key"):

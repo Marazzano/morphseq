@@ -41,6 +41,7 @@ def _row(well_id: str, channel: str, time_index: int, *, src: str, w: int = 16, 
         "downsample_factor": 1,
         "downsample_method": "none",
         "jpeg_quality": pd.NA,
+        "flip_polarity": True,
     }
 
 
