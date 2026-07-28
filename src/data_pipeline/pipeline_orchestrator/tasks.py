@@ -68,6 +68,25 @@ def cmd_resolve_experiment_ids(args: argparse.Namespace) -> None:
     print(len(ids))
 
 
+def cmd_ingest_collection_acquisition(args: argparse.Namespace) -> None:
+    """Build ONE acquisition inventory for a merged collection plate ({coll}_{plate}).
+
+    Thin dispatcher: find the plate's raw source children, read each once via the per-scope
+    acquisition-inventory builder, union them into one inventory keyed by the merged
+    experiment_id, write the CSV. All domain logic lives in the ingest module (DRY).
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest import (
+        ingest_collection_acquisition_inventory,
+    )
+
+    ingest_collection_acquisition_inventory(
+        experiment_id=args.experiment,
+        raw_root=args.raw_root,
+        microscope=args.microscope,
+        output_csv=args.output_csv,
+    )
+
+
 def cmd_extract_scope(args: argparse.Namespace) -> None:
     # The inventory stores full absolute source paths; readers re-anchor them under input_root at
     # consume time, so ingest needs no input_root.
@@ -1268,6 +1287,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_resolve.add_argument("--output-list", type=Path, required=True,
                            help="path to write the flat experiment_id list (the SGE EXP_FILE)")
     p_resolve.set_defaults(func=cmd_resolve_experiment_ids)
+
+    p_coll_acq = sub.add_parser("ingest-collection-acquisition")
+    p_coll_acq.add_argument("--experiment", required=True,
+                            help="merged collection plate id ({collection}_{plate_token})")
+    p_coll_acq.add_argument("--raw-root", type=Path, required=True,
+                            help="raw image root containing the _coll dir (scope-anchored)")
+    p_coll_acq.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_coll_acq.add_argument("--output-csv", type=Path, required=True,
+                            help="destination for the unioned acquisition inventory CSV")
+    p_coll_acq.set_defaults(func=cmd_ingest_collection_acquisition)
 
     p_norm = sub.add_parser("ingest-plate-metadata", aliases=["normalize-plate"])
     p_norm.add_argument("--input-file", type=Path, required=True)

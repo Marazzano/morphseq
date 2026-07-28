@@ -9,7 +9,10 @@ Run: PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_
 
 import pytest
 
+import pytest
+
 from data_pipeline.acquisition.metadata_ingest.experiment_collection import (
+    find_collection_plate_sources,
     resolve_experiment_ids,
 )
 
@@ -24,6 +27,30 @@ def _make_collection(raw_root, coll_name, children, *, as_files=False, suffix=".
         else:
             (coll_dir / child).mkdir()
     return coll_dir
+
+
+# ── Inverse: {coll}_{plate} → its source children (acquisition ingest needs this) ──
+
+def test_find_collection_plate_sources_returns_that_plates_children_only(tmp_path):
+    _make_collection(
+        tmp_path,
+        "cilia_snapshots_coll",
+        [
+            "20260607_plate01_t45hpf",
+            "20260608_plate01_t72hpf",
+            "20260607_plate02_t45hpf",  # a DIFFERENT plate — must NOT be returned
+        ],
+    )
+    coll, children = find_collection_plate_sources(
+        "cilia_snapshots_coll_plate01", tmp_path
+    )
+    assert coll == "cilia_snapshots_coll"
+    assert children == ["20260607_plate01_t45hpf", "20260608_plate01_t72hpf"]
+
+
+def test_find_collection_plate_sources_rejects_non_collection_id(tmp_path):
+    with pytest.raises(ValueError, match="not a collection plate id"):
+        find_collection_plate_sources("20240418", tmp_path)
 
 
 # ── Core: 2 plates x 2 t-events → 2 experiment_ids ────────────────────────────

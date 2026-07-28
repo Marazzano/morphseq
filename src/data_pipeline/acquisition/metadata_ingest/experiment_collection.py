@@ -73,6 +73,51 @@ def resolve_experiment_ids(
     return resolved
 
 
+def find_collection_plate_sources(experiment_id: str, raw_root: Path) -> tuple[str, list[str]]:
+    """Given a ``{collection}_{plate_token}`` experiment_id, return its source children.
+
+    The INVERSE of ``compose_collection_experiment_id``: acquisition ingest needs, for one
+    merged plate experiment, the list of raw source-child names (each a
+    ``{date}_{plate_token}[_{event_label}]`` folder/file) that MERGE into it. Globs the
+    ``_coll`` dir and keeps the children whose composed id equals ``experiment_id``.
+
+    Returns ``(collection_name, [child_name, ...])`` sorted deterministically. The
+    membership test reuses ``compose_collection_experiment_id`` so it can never drift from
+    how ids were minted (DRY). Fails loud if the id is not a collection plate id or no
+    source children match.
+    """
+    marker = "_coll_"
+    if marker not in experiment_id:
+        raise ValueError(
+            f"find_collection_plate_sources: {experiment_id!r} is not a collection plate id "
+            f"(expected '{{collection}}_coll_{{plate_token}}'). Not a merged collection experiment."
+        )
+    collection_name = experiment_id[: experiment_id.index(marker)] + "_coll"
+    collection_dir = raw_root / collection_name
+    if not collection_dir.is_dir():
+        raise ValueError(
+            f"find_collection_plate_sources: collection dir {collection_dir!s} for "
+            f"{experiment_id!r} is not a directory."
+        )
+
+    children: list[str] = []
+    for child in sorted(collection_dir.iterdir()):
+        child_name = child.name if child.is_dir() else child.stem
+        try:
+            composed = compose_collection_experiment_id(collection_name, child_name)
+        except ValueError:
+            continue  # child lacks a plate token (stray sidecar) — skip
+        if composed == experiment_id:
+            children.append(child_name)
+
+    if not children:
+        raise ValueError(
+            f"find_collection_plate_sources: no source children under {collection_dir!s} "
+            f"compose to {experiment_id!r}. Check the plate token in the child names."
+        )
+    return collection_name, children
+
+
 def _expand_collection(collection_name: str, raw_root: Path) -> list[str]:
     """Expand one ``_coll`` directory into its distinct plate experiment_ids.
 
