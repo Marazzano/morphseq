@@ -5,39 +5,29 @@ Computes area, perimeter, length, width, and other contour-based metrics.
 Extracted from build03A_process_images.py get_embryo_stats function (lines 750-770).
 """
 
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Dict
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from typing import Dict, Optional
 from sklearn.decomposition import PCA
 import skimage.io as io
 from skimage.measure import find_contours
+
+from data_pipeline.object_extraction.segmentation.shared.mask_processing import clean_embryo_mask
 
 
 def compute_mask_geometry(
     mask: np.ndarray,
     pixel_size_um: float,
 ) -> Dict:
-    """
-    Compute geometry metrics from binary mask.
-
-    Args:
-        mask: Binary embryo mask (H x W)
-        pixel_size_um: Pixel size in micrometers
-
-    Returns:
-        Dictionary with geometry metrics in micrometers
-    """
-    # Ensure binary mask
-    mask_binary = (mask > 0).astype(np.uint8)
-
-    # Area in pixels
+    """Compute geometry metrics from binary mask."""
+    mask_binary = clean_embryo_mask(mask).astype(np.uint8)
     area_px = np.sum(mask_binary)
-
-    # Convert to micrometers squared
     area_um2 = area_px * (pixel_size_um ** 2)
 
-    # Centroid in pixels
     if area_px > 0:
         yy, xx = np.indices(mask_binary.shape)
         centroid_x_px = np.sum(xx[mask_binary == 1]) / area_px
@@ -46,35 +36,25 @@ def compute_mask_geometry(
         centroid_x_px = 0.0
         centroid_y_px = 0.0
 
-    # Convert centroid to micrometers
     centroid_x_um = centroid_x_px * pixel_size_um
     centroid_y_um = centroid_y_px * pixel_size_um
 
-    # Length and width via PCA
     if area_px > 1:
         yy, xx = np.indices(mask_binary.shape)
         mask_coords = np.c_[xx[mask_binary == 1], yy[mask_binary == 1]]
-
         pca = PCA(n_components=2)
         coords_rotated = pca.fit_transform(mask_coords)
-
-        # Principal axes span
-        length_px, width_px = (
-            np.max(coords_rotated, axis=0) - np.min(coords_rotated, axis=0)
-        )
-
+        length_px, width_px = np.max(coords_rotated, axis=0) - np.min(coords_rotated, axis=0)
         length_um = length_px * pixel_size_um
         width_um = width_px * pixel_size_um
     else:
         length_um = 0.0
         width_um = 0.0
 
-    # Perimeter from contour
     perimeter_um = 0.0
     try:
         contours = find_contours(mask_binary, level=0.5)
         if contours:
-            # Use longest contour
             longest_contour = max(contours, key=len)
             perimeter_px = len(longest_contour)
             perimeter_um = perimeter_px * pixel_size_um
@@ -93,65 +73,36 @@ def compute_mask_geometry(
 
 def extract_geometry_metrics_batch(
     tracking_df: pd.DataFrame,
-    mask_dir: Path,
+    mask_dir: Path | None = None,
     pixel_size_col: str = 'micrometers_per_pixel',
+    mask_path_col: str = 'exported_mask_path',
 ) -> pd.DataFrame:
-    """
-    Extract geometry metrics for batch of snips.
-
-    Args:
-        tracking_df: Segmentation tracking DataFrame with snip_id and paths
-        mask_dir: Directory containing mask images
-        pixel_size_col: Column name for pixel size
-
-    Returns:
-        DataFrame with geometry metrics per snip_id
-    """
+    """Extract geometry metrics for batch of snips."""
     results = []
-
-    for idx, row in tracking_df.iterrows():
+    for _, row in tracking_df.iterrows():
         snip_id = row['snip_id']
-
-        # Load mask
-        mask_path = mask_dir / f"{snip_id}_mask.png"
+        # Legacy batch path. Resolve the mask path directly and fail loud if absent — the retired
+        # path_contracts.require_existing_path raised on call, so it is not used here.
+        mask_path = row.get(mask_path_col)
+        if mask_path is None or (isinstance(mask_path, float) and pd.isna(mask_path)):
+            raise ValueError(
+                f"mask_geometry: snip_id={snip_id} has no {mask_path_col!r}."
+            )
+        mask_path = Path(str(mask_path))
         if not mask_path.exists():
-            # Try alternative naming
-            mask_path = mask_dir / f"{row['image_id']}_masks.png"
+            raise FileNotFoundError(
+                f"mask_geometry: mask file for snip_id={snip_id} not found at {mask_path}."
+            )
+        mask = io.imread(str(mask_path))
 
-        if not mask_path.exists():
-            results.append({
-                'snip_id': snip_id,
-                'area_um2': np.nan,
-                'perimeter_um': np.nan,
-                'length_um': np.nan,
-                'width_um': np.nan,
-                'centroid_x_um': np.nan,
-                'centroid_y_um': np.nan,
-            })
-            continue
+        if pixel_size_col not in row.index or pd.isna(row[pixel_size_col]):
+            raise ValueError(f"mask_geometry: missing required pixel size column '{pixel_size_col}' for snip_id={snip_id}")
+        pixel_size = float(row[pixel_size_col])
+        if not np.isfinite(pixel_size) or pixel_size <= 0:
+            raise ValueError(f"mask_geometry: invalid pixel size {pixel_size!r} for snip_id={snip_id}")
 
-        try:
-            mask = io.imread(mask_path)
-
-            # Extract pixel size
-            pixel_size = row[pixel_size_col] if pixel_size_col in row else 1.0
-
-            # Compute metrics
-            metrics = compute_mask_geometry(mask, pixel_size)
-            metrics['snip_id'] = snip_id
-
-            results.append(metrics)
-
-        except Exception as e:
-            print(f"Warning: Failed to process {snip_id}: {e}")
-            results.append({
-                'snip_id': snip_id,
-                'area_um2': np.nan,
-                'perimeter_um': np.nan,
-                'length_um': np.nan,
-                'width_um': np.nan,
-                'centroid_x_um': np.nan,
-                'centroid_y_um': np.nan,
-            })
+        metrics = compute_mask_geometry(mask, pixel_size)
+        metrics['snip_id'] = snip_id
+        results.append(metrics)
 
     return pd.DataFrame(results)

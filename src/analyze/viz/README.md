@@ -15,6 +15,13 @@ Domain-agnostic visualization tools for time series data. These plotting functio
 - Error bands (SD, SE, IQR, MAD)
 - Customizable colors and styling
 
+### `plotting/plotting_3d.py` - Interactive 3D Scatter Plots
+- `plot_3d_scatter()`: 3D scatter plot with optional trajectory lines and mean trajectories
+- Supports categorical and continuous coloring
+- **Multi-view dropdown** via `color_views` — render multiple coloring perspectives in one HTML,
+  toggled by a Plotly dropdown menu (no page reload, no separate files)
+- Optional trajectory lines per embryo and mean trajectory per group
+
 ## Key Features
 
 ### Backend Flexibility
@@ -35,6 +42,54 @@ Domain-agnostic visualization tools for time series data. These plotting functio
 - Smooth trend lines
 
 ## Usage Examples
+
+### 3D Scatter — Single View
+```python
+from src.analyze.viz.plotting import plot_3d_scatter
+
+fig = plot_3d_scatter(
+    df,
+    coords=['PCA_1', 'PCA_2', 'PCA_3'],
+    color_by='genotype',
+    color_palette={'wildtype': '#2166AC', 'homozygous': '#B2182B'},
+    point_size=3,
+    output_path='pca.html',
+)
+```
+
+### 3D Scatter — Multi-view Dropdown
+Pass `color_views` to embed multiple coloring perspectives in one HTML file.
+Each entry is a dict with `label`, `color_by`, and either `continuous=True`
+(Viridis colorscale) or `palette` (categorical `{value: hex}`).
+
+```python
+fig = plot_3d_scatter(
+    df,
+    coords=['PCA_1', 'PCA_2', 'PCA_3'],
+    color_views=[
+        {"label": "HPF",
+         "color_by": "predicted_stage_hpf",
+         "continuous": True,
+         "colorbar_title": "hpf",
+         "colorbar_thickness": 12,   # pixels wide (default 12)
+         "colorbar_len": 0.35},      # fraction of axis height (default 0.4)
+        {"label": "genotype",
+         "color_by": "zygosity",
+         "palette": {"wildtype": "#2166AC", "homozygous": "#B2182B"}},
+        {"label": "source",
+         "color_by": "source",
+         "palette": {"reference": "#cccccc", "query": "#d62728"}},
+    ],
+    point_size=3,
+    output_path='pca_multiview.html',
+)
+```
+
+The first view is shown on load; the dropdown (top-left) switches between views
+without reloading. All views share the same camera position.
+
+When `color_views` is `None` (default), `plot_3d_scatter` behaves exactly as
+before — no breaking change.
 
 ### Basic Time Series Plot
 ```python
@@ -70,6 +125,23 @@ fig = plot_feature_over_time(
 )
 ```
 
+### Style Presets
+```python
+from src.analyze.viz.plotting import (
+    default_style,
+    paper_style,
+    presentation_style,
+)
+
+base = default_style()
+paper = paper_style()
+talk = presentation_style()
+```
+
+Use these presets when you want a standard layout without spelling out every
+trace and spacing knob. If you need to tune one thing, pass `style=` and then
+override the field you care about.
+
 ### Custom Colors
 ```python
 # Custom color palette
@@ -79,6 +151,7 @@ fig = plot_feature_over_time(
     time_col='time',
     color_by='category',
     color_palette=['#FF5733', '#33FF57', '#3357FF'],
+    label_map={'a': 'A', 'b': 'B'},
     show_individual=True,
     backend='both',  # Generate both HTML and PNG
     output_path='custom_colors.html'
@@ -100,7 +173,8 @@ viz/
 ├── __init__.py
 └── plotting/
     ├── __init__.py
-    └── feature_over_time.py  # Generic time series plotting
+    ├── feature_over_time.py  # Generic time series plotting
+    └── plotting_3d.py        # Interactive 3D scatter + multi-view dropdown
 ```
 
 ## Relationship to Other Modules
@@ -149,6 +223,29 @@ from src.analyze.viz.plotting import plot_feature_over_time
 
 # Domain-specific (multi-metric trajectories)
 from src.analyze.viz.plotting import plot_feature_over_time
+```
+
+### Example API
+```python
+from src.analyze.viz.plotting import plot_feature_over_time, presentation_style
+
+fig = plot_feature_over_time(
+    df,
+    features="curvature",
+    time_col="predicted_stage_hpf",
+    color_by="genotype",
+    color_lookup={
+        "cep290_homozygous": "#B2182B",
+        "cep290_wildtype": "#888888",
+    },
+    label_map={
+        "cep290_homozygous": "Homozygous",
+        "cep290_wildtype": "Wildtype",
+    },
+    style=presentation_style(),
+    backend="matplotlib",
+    ylim=(0, 1),
+)
 ```
 
 ## Related Modules

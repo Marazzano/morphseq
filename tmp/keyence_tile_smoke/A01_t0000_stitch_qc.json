@@ -1,0 +1,147 @@
+{
+  "raw_dir": "data_pipeline_output/inputs/raw_image_data/Keyence/20260702_hotchem_36hpf_plate02",
+  "well_index": "A01",
+  "time_index": 0,
+  "tile_count": 3,
+  "tile_paths": {
+    "1": "tmp/keyence_tile_smoke/A01_t0000_tile1_maxproj.png",
+    "2": "tmp/keyence_tile_smoke/A01_t0000_tile2_maxproj.png",
+    "3": "tmp/keyence_tile_smoke/A01_t0000_tile3_maxproj.png"
+  },
+  "orientations": {
+    "vertical": {
+      "master_params": {
+        "path": "tmp/keyence_tile_smoke/A01_t0000_master_params_vertical.json",
+        "source": "synthetic_raster_geometry",
+        "tile_shape_yx": [
+          180,
+          240
+        ],
+        "metadata": {
+          "shape": [
+            3,
+            1
+          ],
+          "size": 3,
+          "tile_shape": [
+            180,
+            240
+          ]
+        },
+        "coords": {
+          "0": [
+            0.0,
+            0.0
+          ],
+          "1": [
+            180.0,
+            0.0
+          ],
+          "2": [
+            360.0,
+            0.0
+          ]
+        }
+      },
+      "stitched_path": "tmp/keyence_tile_smoke/A01_t0000_stitched_vertical_ds4.png",
+      "stitch_downsample": 4,
+      "shape_yx": [
+        428,
+        236
+      ],
+      "fallback_used": "master",
+      "qc_passed": true,
+      "qc_reasons": [],
+      "qc_metrics": {
+        "max_abs_shift_px": 360.0,
+        "max_cross_axis_shift_px": 0.0,
+        "tile_count": 3.0,
+        "max_master_deviation_px": 0.0
+      },
+      "tile_transforms": {
+        "1": {
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "source": "align"
+        },
+        "2": {
+          "dx_px": 0.0,
+          "dy_px": 180.0,
+          "source": "align"
+        },
+        "3": {
+          "dx_px": 0.0,
+          "dy_px": 360.0,
+          "source": "align"
+        }
+      }
+    },
+    "horizontal": {
+      "master_params": {
+        "path": "tmp/keyence_tile_smoke/A01_t0000_master_params_horizontal.json",
+        "source": "synthetic_raster_geometry",
+        "tile_shape_yx": [
+          180,
+          240
+        ],
+        "metadata": {
+          "shape": [
+            1,
+            3
+          ],
+          "size": 3,
+          "tile_shape": [
+            180,
+            240
+          ]
+        },
+        "coords": {
+          "0": [
+            0.0,
+            0.0
+          ],
+          "1": [
+            0.0,
+            240.0
+          ],
+          "2": [
+            0.0,
+            480.0
+          ]
+        }
+      },
+      "stitched_path": "tmp/keyence_tile_smoke/A01_t0000_stitched_horizontal_ds4.png",
+      "stitch_downsample": 4,
+      "shape_yx": [
+        428,
+        180
+      ],
+      "fallback_used": "master",
+      "qc_passed": true,
+      "qc_reasons": [],
+      "qc_metrics": {
+        "max_abs_shift_px": 480.0,
+        "max_cross_axis_shift_px": 0.0,
+        "tile_count": 3.0,
+        "max_master_deviation_px": 0.0
+      },
+      "tile_transforms": {
+        "1": {
+          "dx_px": 0.0,
+          "dy_px": 0.0,
+          "source": "align"
+        },
+        "2": {
+          "dx_px": 240.0,
+          "dy_px": 0.0,
+          "source": "align"
+        },
+        "3": {
+          "dx_px": 480.0,
+          "dy_px": 0.0,
+          "source": "align"
+        }
+      }
+    }
+  }
+}

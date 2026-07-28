@@ -1,0 +1,40 @@
+# Runtime overlay for the 20260702 hotchem Keyence run.
+# Usage (composed over base config.yaml; later --configfile wins):
+#   snakemake --configfile config.yaml --configfile config_runtime_20260702_hotchem.yaml \
+#     front_half --rerun-triggers mtime --cores 1
+#
+# For a cheap first smoke, comment out five of the six experiments below and run front_half.
+
+experiments:
+  - 20260702_hotchem_24hpf_plate01
+  - 20260702_hotchem_24hpf_plate02
+  - 20260702_hotchem_30hpf_plate01
+  - 20260702_hotchem_30hpf_plate02
+  - 20260702_hotchem_36hpf_plate01
+  - 20260702_hotchem_36hpf_plate02
+
+microscope: "Keyence"
+
+# Keyence supports only projection (z_stack raises NotImplementedError), so override the
+# base config's projection+z_stack product set to projection-only.
+image_materialization:
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+
+# Plate metadata is needed for through_line/analysis_ready/all. Set enabled:false to run
+# front_half before the well_metadata sheets are finalized (see metadata fixes in chat).
+plate_metadata:
+  enabled: true
+
+# Keyence has no z_stack, so drop the two z_stack-dependent QC flags (focus, motion_blur).
+# snip_qc then aggregates only the z_stack-free steps: death_detection, surface_area, mask_quality.
+snip_qc:
+  exclusion_flags:
+    - viability_dead_flag
+    - persistence_dead_flag
+    - sa_outlier_flag
+    - edge_flag
+    - discontinuous_mask_flag
+    - overlapping_mask_flag

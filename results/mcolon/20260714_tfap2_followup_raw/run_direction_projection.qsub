@@ -1,0 +1,22 @@
+#!/bin/bash
+#$ -N tfap2_dir_proj
+#$ -q trapnell-short.q
+#$ -pe serial 4
+#$ -l mfree=6G
+#$ -l h_rt=08:00:00
+#$ -cwd
+#$ -o results/mcolon/20260714_tfap2_followup_raw/logs/
+#$ -e results/mcolon/20260714_tfap2_followup_raw/logs/
+#$ -V
+
+set -euo pipefail
+# mfree is per-slot: 4 slots x 6G = 24G total.
+MORPHSEQ_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+BASE="$MORPHSEQ_ROOT/results/mcolon/20260714_tfap2_followup_raw"
+PY="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+mkdir -p "$BASE/logs"
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4 NUMBA_NUM_THREADS=4
+echo "[$(date)] host=$(hostname) job=${JOB_ID:-local} : tfap2 direction-projection clustering (15 vs inj_ctrl, z-scored)"
+"$PY" "$BASE/4_direction_projection_clustering.py"
+echo "[$(date)] done"

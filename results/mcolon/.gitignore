@@ -15,10 +15,12 @@
 # ============================================================================
 # NumPy arrays
 **/*.npy
+**/*.npz
 
 # Pickled objects
 **/*.pkl
 **/*.pickle
+**/*.joblib
 
 # PyTorch models and checkpoints
 **/*.pt
@@ -53,11 +55,18 @@
 **/*.tsv
 **/*.json
 
+# Fitted R objects / session checkpoints (large — e.g. hooke ccm .rds are ~6GB)
+**/*.rds
+**/*.RData
+
 # Avoid accidental package scaffolding from experiment scratch dirs
 **/__init__.py
 
 # Logs
 **/*.log
+
+# Generated plaintext summaries inside experiment result trees
+**/results/**/*.txt
 
 # Python cache
 **/__pycache__/

@@ -22,6 +22,7 @@
 #   BUILD03_SKIP_GEOMETRY_QC=1  # skip geometry QC computation (fast mode, all embryos marked usable)
 #   RUN_SNIP_EXPORT=1           # export snips only (use existing Build03 metadata)
 #   RUN_BUILD04=0               # skip Build04 action
+#   MSEQ_SKIP_CURVATURE=1       # skip curvature metrics in Build04 (fast; keeps curvature cols NaN)
 #   RUN_BUILD06=0               # skip Build06 action
 #   SAM2_WORKERS=8              # SAM2 worker count (default 8)
 #   SAM2_CONFIDENCE=0.45        # SAM2 confidence threshold
@@ -38,8 +39,44 @@ MODEL_NAME="20241107_ds_sweep01_optimum"
 ENV_NAME="segmentation_grounded_sam"
 PYTHON_EXEC="${PYTHON_EXEC:-/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/${ENV_NAME}/bin/python}"
 
+# Ensure the per-experiment well-metadata Excel is discoverable by Build01.
+# Build01 validation prefers:
+#   <data-root>/metadata/well_metadata/<exp>_well_metadata.xlsx
+#   <data-root>/metadata/plate_metadata/<exp>_well_metadata.xlsx
+# Some runs also keep a copy under:
+#   <data-root>/metadata/build03_output/<exp>_well_metadata.xlsx
+_ensure_well_metadata_excel() {
+  local exp_name="$1"
+
+  local dest_dir="${DATA_ROOT}/metadata/well_metadata"
+  local dest_path="${dest_dir}/${exp_name}_well_metadata.xlsx"
+
+  # If already in the standard place(s), nothing to do.
+  if [[ -f "${dest_path}" || -f "${DATA_ROOT}/metadata/plate_metadata/${exp_name}_well_metadata.xlsx" ]]; then
+    return 0
+  fi
+
+  # Try known alternate locations.
+  local -a candidates=(
+    "${DATA_ROOT}/metadata/build03_output/${exp_name}_well_metadata.xlsx"
+    "${DATA_ROOT}/metadata/build03_output/${exp_name}_well_metadata.xlsm"
+  )
+  for src in "${candidates[@]}"; do
+    if [[ -f "${src}" ]]; then
+      mkdir -p "${dest_dir}"
+      # Copy/update into the standard location so Build01 can validate and ingest it.
+      cp -u "${src}" "${dest_path}"
+      echo "[sam2-onwards] ✓ Well metadata Excel staged for Build01: ${dest_path} (from ${src})"
+      return 0
+    fi
+  done
+
+  # No-op if missing; Build01 will emit a detailed validation error.
+  return 0
+}
+
 # Default experiment list (used if not running as array job)
-DEFAULT_EXPERIMENTS="20260219"
+DEFAULT_EXPERIMENTS="20251207_pbx,20260213,20260223,20260224,20260304,20260306,20260319,20260320"
 
 # Tunable defaults — override by exporting the variable before invoking this script.
 # Example: RUN_SAM2=0 SAM2_WORKERS=2 EXP_LIST=20250305 bash run_build03_onwards_force.sh
@@ -51,14 +88,20 @@ DEFAULT_EXPERIMENTS="20260219"
 : "${SAM2_IOU:=0.5}"
 
 # Pipeline stage toggles (1=run, 0=skip)
-: "${RUN_METADATA_REBUILD:=1}"
+: "${RUN_METADATA_REBUILD:=0}"
 : "${RUN_BUILD02:=0}"
 : "${RUN_SAM2:=0}"
-: "${RUN_BUILD03:=1}"
+: "${RUN_BUILD03:=0}"
 : "${BUILD03_SKIP_GEOMETRY_QC:=0}"  # 0=compute full geometry QC (default), 1=fast mode (skip QC, mark all embryos usable)
-: "${RUN_BUILD04:=1}"
+: "${RUN_BUILD04:=0}"
 : "${RUN_BUILD06:=1}"
 : "${RUN_SNIP_EXPORT:=0}"
+
+# Build04 curvature knobs
+# Default to skipping curvature for quick reruns. Set MSEQ_SKIP_CURVATURE=0 to compute curvature.
+: "${MSEQ_SKIP_CURVATURE:=1}"
+: "${MSEQ_CURVATURE_WORKERS:=}"      # optional override (e.g. 8)
+: "${MSEQ_CURVATURE_FALLBACK:=skip}" # skip | sequential
 
 # Build02 knobs
 
@@ -120,7 +163,12 @@ if [[ -n "${SGE_TASK_ID:-}" ]]; then
   fi
 else
   # Running interactively or non-array job
-  EXPERIMENT="${DEFAULT_EXPERIMENTS}"
+  if [[ -n "${EXP_FILE:-}" && -f "${EXP_FILE}" ]]; then
+    mapfile -t _EXPS < "${EXP_FILE}"
+    EXPERIMENT="$(IFS=','; echo "${_EXPS[*]}")"
+  else
+    EXPERIMENT="${EXP_LIST:-${DEFAULT_EXPERIMENTS}}"
+  fi
 fi
 
 echo "[sam2-onwards] Processing experiment(s): ${EXPERIMENT}"
@@ -197,6 +245,7 @@ echo "🚀 Starting SAM2 onwards pipeline for ${EXPERIMENT}..."
 
 if [[ "${RUN_METADATA_REBUILD}" == "1" ]]; then
   for exp_name in "${SELECTED_EXPERIMENTS[@]}"; do
+    _ensure_well_metadata_excel "${exp_name}"
     echo "🔄 Pre-step: Build01 metadata-only for ${exp_name}"
     "${PYTHON_EXEC}" -m src.run_morphseq_pipeline.cli build01 \
       --data-root "${DATA_ROOT}" \
@@ -284,6 +333,10 @@ fi
 
 if [[ "${RUN_BUILD04}" == "1" ]]; then
   echo "🔄 Step 3: Running Build04 for ${EXPERIMENT}..."
+  # Build04 can be very expensive if curvature is enabled; default to skipping it.
+  export MSEQ_SKIP_CURVATURE
+  export MSEQ_CURVATURE_FALLBACK
+  [[ -n "${MSEQ_CURVATURE_WORKERS}" ]] && export MSEQ_CURVATURE_WORKERS
   "${PYTHON_EXEC}" -m src.run_morphseq_pipeline.cli pipeline \
     --data-root "${DATA_ROOT}" \
     --experiments "${EXPERIMENT}" \
@@ -335,3 +388,5 @@ echo "🎉 SAM2 onwards pipeline completed for ${EXPERIMENT}!"
   #   --data-root morphseq_playground \
   #   --experiments 20250501,20250912,20251020,20251104,20251106,20251113,20251119,20251121,20251125 \
   #   --action build03 --force
+
+

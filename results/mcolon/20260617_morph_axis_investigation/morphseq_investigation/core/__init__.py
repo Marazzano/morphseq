@@ -1,0 +1,69 @@
+"""Core geometry and density utilities for modal organization analysis."""
+
+from .density_composition import (  # noqa: F401
+    CanonicalGrid,
+    BridgeRegionTruth,
+    ComponentTruth,
+    ComposedDensityTruth,
+    ComposedDensityValidation,
+    DensityComponentSpec,
+    DensityGrid,
+    DensityRealization,
+    DensitySpec,
+    build_density_spec,
+    compose_density_truth,
+    infer_canonical_grid,
+    validate_composed_density_truth,
+    validate_density_spec,
+    realize_from_truth,
+    realize_density,
+)
+from .bandwidth_tuning import (  # noqa: F401
+    BandwidthCandidate,
+    BridgeRegionMeasurement,
+    DEFAULT_CONNECTIVITY_MASS,
+    DEFAULT_KNN_K,
+    DEFAULT_MULTIPLIERS,
+    DEFAULT_RULE_NAMES,
+    DensityGeometryMeasurement,
+    RULE_NAME_ALIASES,
+    bandwidth_geometry_scales,
+    evaluate_isotropic_gaussian_kde_from_dist2,
+    measure_density_geometry,
+    precompute_squared_distances,
+    propose_bandwidth_candidates,
+)
+from .peak_counting import (  # noqa: F401
+    PeakCandidateDetail,
+    PeakCountDetail,
+    PeakDetectionResult,
+    SUPPORTED_METHODS,
+    assign_cells_to_peaks,
+    assign_points_to_peaks,
+    detect_peaks,
+    count_mass_significant_modes,
+    peak_count_detail,
+)
+from .resolved_peak_metrics import (  # noqa: F401
+    EmpiricalNullResult,
+    PeakGeometry,
+    RESOLVED_PEAK_METRICS,
+    ResolvedPeak,
+    ResolvedPeakDistribution,
+    ResolvedPeakDistributionSummary,
+    ResolvedPeakMetricDefinition,
+    ResolvedPeakRunContext,
+    resolve_empirical_peak_distribution,
+    resolve_truth_peak_distribution,
+    run_empirical_null_test,
+    summarize_resolved_peak_distribution,
+)
+from .distribution_records import (  # noqa: F401
+    DistributionAnalysisContext,
+    DistributionComparison,
+    DistributionRecord,
+    compute_observed_metrics,
+    compute_peak_stats,
+    compute_resolved_peaks,
+)
+from .peak_acceptance import PeakAcceptancePolicy  # noqa: F401

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#$ -cwd
+#$ -N critical_conn_gate
+#$ -t 1-8
+#$ -l h_rt=04:00:00
+#$ -l h_vmem=8G
+#$ -o results/mcolon/20260617_morph_axis_investigation/logs/support_connectivity
+#$ -e results/mcolon/20260617_morph_axis_investigation/logs/support_connectivity
+
+set -euo pipefail
+
+CANDIDATES=(
+  largest_k3_mass90
+  largest_k5_mass90
+  major_k3_min05_cov85
+  major_k5_min05_cov85
+  major_k3_min10_cov85
+  major_k5_min10_cov85
+  major_k3_min10_cov90
+  major_k5_min10_cov90
+)
+
+idx=$((SGE_TASK_ID - 1))
+CANDIDATE="${CANDIDATES[$idx]}"
+
+conda run -n segmentation_grounded_sam --no-capture-output python \
+  results/mcolon/20260617_morph_axis_investigation/critical_connection_validation.py \
+  --sample-size 40 \
+  --n-seeds 5 \
+  --n-resample 100 \
+  --n-workers 1 \
+  --candidates "${CANDIDATE}" \
+  --output-prefix "critical_connection_${CANDIDATE}"

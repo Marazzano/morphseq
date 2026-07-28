@@ -10,8 +10,8 @@ def test_frame_snapshot_hash_is_deterministic_and_escapes() -> None:
     df = pd.DataFrame(
         {
             "image_id": ["i2", "i1"],
-            "source_image_path": ["/a|b\nc", "/x\\y"],
-            "source_micrometers_per_pixel": [0.6500000001, 0.65],
+            "image_path": ["/a|b\nc", "/x\\y"],
+            "image_micrometers_per_pixel": [0.6500000001, 0.65],
             "channel_id": ["BF", "BF"],
             "image_width_px": [10.0, 10],
             "image_height_px": [20, 20.0],
@@ -27,8 +27,8 @@ def test_frame_snapshot_hash_fails_on_nulls() -> None:
     df = pd.DataFrame(
         {
             "image_id": ["i1"],
-            "source_image_path": [None],
-            "source_micrometers_per_pixel": [0.65],
+            "image_path": [None],
+            "image_micrometers_per_pixel": [0.65],
             "channel_id": ["BF"],
             "image_width_px": [10],
             "image_height_px": [20],

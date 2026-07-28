@@ -2,9 +2,11 @@
 Plot feature over time with optional faceting.
 
 100% DOMAIN-AGNOSTIC: No trajectory_analysis imports.
-Caller provides color_lookup with domain-specific logic.
+Optional label and color lookups can be supplied by the caller, but the
+default behavior stays palette-first.
 """
 
+from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -13,7 +15,11 @@ from typing import Optional, List, Any, Union, Dict, Set, Tuple
 # Generic imports ONLY
 from analyze.utils.data_processing import get_trajectories_for_group, get_global_axis_ranges
 from analyze.utils.stats import compute_trend_line
-from analyze.viz.styling import STANDARD_PALETTE, resolve_color_lookup
+from analyze.viz.styling import (
+    STANDARD_PALETTE,
+    ColorPreset,
+    resolve_color_lookup,
+)
 
 # Engine imports
 from .faceting_engine import (
@@ -23,16 +29,53 @@ from .faceting_engine import (
 )
 
 
+@dataclass(frozen=True)
+class IdTraceStyle:
+    """Optional per-ID trace emphasis layered on top of group-level plotting."""
+
+    color: Optional[str] = None
+    alpha: float = 1.0
+    width: float = 2.8
+    linestyle: str = "-"
+    zorder: int = 8
+    label: Optional[str] = None
+
+
+EmbryoTraceStyle = IdTraceStyle
+
+
+def _coerce_embryo_trace_style(value: Any) -> IdTraceStyle:
+    """Normalize style config from a dataclass or plain dict."""
+    if isinstance(value, IdTraceStyle):
+        return value
+    if isinstance(value, dict):
+        return IdTraceStyle(
+            color=value.get("color"),
+            alpha=float(value.get("alpha", 1.0)),
+            width=float(value.get("width", 2.8)),
+            linestyle=str(value.get("linestyle", "-")),
+            zorder=int(value.get("zorder", 8)),
+            label=value.get("label"),
+        )
+    raise TypeError(
+        "id_style_lookup values must be IdTraceStyle instances or dicts with "
+        "keys like color/alpha/width/zorder/label."
+    )
+
+
 def _build_color_lookup(
     df: pd.DataFrame,
     color_by: Optional[str],
+    label_map: Optional[Dict[Any, str]] = None,
     color_lookup: Optional[Dict[Any, str]] = None,
     palette: Optional[List[str]] = None,
+    color_preset: Optional[ColorPreset] = None,
+    color_mode: str = "auto",
 ) -> Dict[Any, str]:
-    """Build or use provided color lookup (NO domain logic).
+    """Build or use provided color lookup (auto genotype-aware by default).
     
     Private helper. If color_lookup provided, use it.
-    Otherwise, auto-assign from palette.
+    Otherwise, resolve via preset or the requested color mode.
     """
     if color_by is None or color_by not in df.columns:
         return {}
@@ -42,8 +85,9 @@ def _build_color_lookup(
         unique_vals,
         color_lookup=color_lookup,
         palette=palette or STANDARD_PALETTE,
-        enforce_distinct=True,
-        warn_on_collision=True,
+        color_preset=color_preset,
+        color_mode=color_mode,
+        label_map=label_map,
     )
 
 
@@ -59,26 +103,40 @@ def _plot_features_over_time_subplot(
     legend_tracker: Set[str],
     *,
     show_individual: bool = True,
+    show_trend: bool = True,
     show_error_band: bool = False,
     error_type: str = 'iqr',
     trend_statistic: str = 'median',
     trend_smooth_sigma: float = 1.5,
-    trend_linestyle: str = 'solid',
+    trend_linestyle: str = 'dotted',
     bin_width: float = 0.5,
     smooth_method: Optional[str] = 'gaussian',
     smooth_params: Optional[Dict] = None,
+    highlight_ids: Optional[Set[str]] = None,
+    id_style_lookup: Optional[Dict[str, IdTraceStyle]] = None,
+    label_map: Optional[Dict[Any, str]] = None,
+    style: Optional[StyleSpec] = None,
+    color_preset: Optional["ColorPreset"] = None,
 ) -> SubplotData:
     """Plot Features Over Time Subplot (internal IR builder for one facet cell)."""
+    style = style or default_style()
     # Determine color groups
     if color_by and color_by in df.columns:
         mask = pd.Series(True, index=df.index)
         for k, v in filter_dict.items():
             mask &= (df[k] == v)
-        groups = sorted(df.loc[mask, color_by].dropna().unique())
+        groups_raw = list(df.loc[mask, color_by].dropna().unique())
+        if color_preset is not None and color_preset.order:
+            groups = [v for v in color_preset.order if v in groups_raw]
+            groups.extend([v for v in groups_raw if v not in groups])
+        else:
+            groups = sorted(groups_raw)
     else:
         groups = [None]
     
     traces: List[TraceData] = []
+    highlight_ids = highlight_ids or set()
+    id_style_lookup = id_style_lookup or {}
     
     for group_val in groups:
         group_filter = filter_dict.copy()
@@ -94,7 +152,9 @@ def _plot_features_over_time_subplot(
         if not trajectories:
             continue
 
-        color = color_lookup.get(group_val, STANDARD_PALETTE[0])
+        label_value = label_map.get(str(group_val), str(group_val)) if label_map else str(group_val)
+        color_key = label_value if label_map else group_val
+        color = color_lookup.get(color_key, STANDARD_PALETTE[0])
         
         # Individual traces
         if show_individual:
@@ -103,8 +163,8 @@ def _plot_features_over_time_subplot(
                     x=traj['times'], y=traj['metrics'],
                     style=TraceStyle(
                         color=color,
-                        alpha=0.2,
-                        width=0.8,
+                        alpha=style.individual_alpha,
+                        width=style.individual_width,
                         zorder=2,
                     ),
                     show_legend=False,
@@ -112,7 +172,7 @@ def _plot_features_over_time_subplot(
                 ))
         
         # Legend: show once per group across all subplots
-        label = str(group_val) if group_val is not None else trend_statistic
+        label = label_value if group_val is not None else trend_statistic
         legend_key = f"{y_col}_{group_val}" if group_val is not None else f"{y_col}_agg"
         show_legend = legend_key not in legend_tracker
         if show_legend:
@@ -133,7 +193,7 @@ def _plot_features_over_time_subplot(
                     x=band_t, y=band_c,
                     band_lower=band_c - band_e,
                     band_upper=band_c + band_e,
-                    style=TraceStyle(color=color, alpha=0.2, width=0, zorder=3),
+                    style=TraceStyle(color=color, alpha=style.band_alpha, width=0, zorder=3),
                     render_as='band',
                     show_legend=False,
                 ))
@@ -143,16 +203,54 @@ def _plot_features_over_time_subplot(
             all_times, all_metrics, bin_width,
             statistic=trend_statistic, smooth_sigma=trend_smooth_sigma,
         )
-        if trend_t is not None and len(trend_t) > 0:
+        if show_trend and trend_t is not None and len(trend_t) > 0:
             mpl_ls, _ = resolve_linestyle(trend_linestyle)
             traces.append(TraceData(
                 x=np.array(trend_t), y=np.array(trend_v),
-                style=TraceStyle(color=color, alpha=1.0, width=2.2, linestyle=mpl_ls, zorder=5),
+                style=TraceStyle(color=color, alpha=style.trend_alpha, width=style.trend_width, linestyle=mpl_ls, zorder=5),
                 label=label,
                 legend_group=legend_key,
                 show_legend=show_legend,
                 hover_meta={'header': f"{trend_statistic.capitalize()}: {label}", 'detail': f"<b>{y_col}:</b> %{{y:.3f}}"},
             ))
+
+        # Emphasized embryo traces are drawn last so they sit on top of the
+        # normal individual traces and group-level summaries.
+        for traj in trajectories:
+            embryo_id = str(traj['embryo_id'])
+            if embryo_id not in highlight_ids and embryo_id not in id_style_lookup:
+                continue
+
+            style_override = id_style_lookup.get(embryo_id, IdTraceStyle())
+            highlight_color = style_override.color or color
+            mpl_ls, _ = resolve_linestyle(style_override.linestyle)
+
+            highlight_label = style_override.label
+            show_highlight_legend = False
+            legend_group = None
+            if highlight_label:
+                legend_group = f"highlight_{highlight_label}"
+                if legend_group not in legend_tracker:
+                    legend_tracker.add(legend_group)
+                    show_highlight_legend = True
+
+            traces.append(
+                TraceData(
+                    x=traj['times'],
+                    y=traj['metrics'],
+                    style=TraceStyle(
+                        color=highlight_color,
+                        alpha=float(style_override.alpha),
+                        width=float(style_override.width),
+                        linestyle=mpl_ls,
+                        zorder=int(style_override.zorder),
+                    ),
+                    label=highlight_label,
+                    legend_group=legend_group,
+                    show_legend=show_highlight_legend,
+                    hover_meta={'header': f"ID: {embryo_id}", 'detail': f"<b>{y_col}:</b> %{{y:.3f}}"},
+                )
+            )
     
     return SubplotData(
         key=subplot_key,
@@ -169,17 +267,21 @@ def plot_feature_over_time(
     id_col: str = 'embryo_id',
     color_by: Optional[str] = None,
     color_lookup: Optional[Dict[Any, str]] = None,  # ← USER PROVIDES domain-specific colors
+    label_map: Optional[Dict[Any, str]] = None,
+    color_preset: Optional[ColorPreset] = None,
+    color_mode: str = 'auto',
     # Faceting (consistent API)
     facet_row: Optional[str] = None,
     facet_col: Optional[str] = None,
     layout: Optional[FacetSpec] = None,
     # Display
     show_individual: bool = True,
+    show_trend: bool = True,
     show_error_band: bool = False,
     error_type: str = 'iqr',
     trend_statistic: str = 'median',
     trend_smooth_sigma: float = 1.5,
-    trend_linestyle: str = 'solid',  # 'solid', 'dashed', 'dotted' (or '-', '--', ':')
+    trend_linestyle: str = 'dotted',  # 'solid', 'dashed', 'dotted' (or '-', '--', ':')
     bin_width: float = 0.5,
     smooth_method: Optional[str] = 'gaussian',
     smooth_params: Optional[Dict] = None,
@@ -195,14 +297,21 @@ def plot_feature_over_time(
     repeat_ylabels: bool = False,
     repeat_xticklabels: bool = True,
     repeat_yticklabels: bool = True,
+    # Legend placement: any matplotlib loc string (e.g. 'upper right', 'lower left'),
+    # or 'outside' to place the legend to the right of the axes.
+    legend_loc: str = 'upper right',
     # Manual axis limits (blanket applied to all subplots)
     xlim: Optional[Tuple[float, float]] = None,
     ylim: Optional[Tuple[float, float]] = None,
+    include_ids: Optional[List[str]] = None,
+    exclude_ids: Optional[List[str]] = None,
+    highlight_ids: Optional[List[str]] = None,
+    id_style_lookup: Optional[Dict[str, Union[IdTraceStyle, Dict[str, Any]]]] = None,
 ) -> Any:
     """Plot feature(s) over time, optionally faceted.
     
-    100% DOMAIN-AGNOSTIC: Caller provides color_lookup for domain-specific coloring.
-    If color_lookup=None, auto-assigns colors from palette.
+    100% DOMAIN-AGNOSTIC: Defaults are genotype-aware via the shared resolver,
+    but callers can supply an explicit `color_lookup` or `color_preset`.
     
     Parameters
     ----------
@@ -221,6 +330,29 @@ def plot_feature_over_time(
     color_lookup : Dict[Any, str], optional
         Pre-built mapping from values in color_by column to hex colors.
         Use this to inject domain-specific coloring (e.g., genotype colors).
+    color_preset : ColorPreset, optional
+        Explicit reusable color preset object. This is the preferred path for
+        project palettes and talk figures.
+
+        ``ColorPreset.order`` also controls DRAW / LAYER order: groups are drawn
+        in the order listed, and later-drawn series render ON TOP of earlier ones.
+        So to keep one group underneath (e.g. wildtype behind het/homo), list it
+        FIRST. Without a preset, groups fall back to alphabetical order, which is
+        usually not the layering you want. Example::
+
+            preset = ColorPreset(
+                colors={"wildtype": "#2166AC", "heterozygous": "#F7B267",
+                        "homozygous": "#B2182B"},
+                order=["wildtype", "heterozygous", "homozygous"],  # wt underneath
+            )
+            plot_feature_over_time(df, color_by="zygosity", color_preset=preset, ...)
+
+        The legend follows the same order. Pass ``color_preset`` instead of
+        ``color_lookup`` when you need this control.
+    color_mode : str, default='auto'
+        Fallback color strategy when no preset is supplied. Use 'auto' or
+        'genotype' for genotype-aware defaults, or 'palette' for generic
+        palette-first behavior.
     facet_row : str, optional
         Column to facet by rows
     facet_col : str, optional
@@ -259,6 +391,13 @@ def plot_feature_over_time(
         Repeat tick-label *numbers* on every subplot (useful with shared axes). Default True.
     xlim, ylim : (float, float), optional
         If provided, apply these limits to all subplots (useful for consistent scaling).
+    include_ids, exclude_ids : list[str], optional
+        Optional embryo ID filters applied before trajectory extraction.
+    highlight_ids : list[str], optional
+        Embryo IDs to emphasize with a second drawing pass.
+    id_style_lookup : dict[str, IdTraceStyle | dict], optional
+        Per-embryo styling overrides for highlighted traces. Supported fields:
+        `color`, `alpha`, `width`, `linestyle`, `zorder`, `label`.
     
     Returns
     -------
@@ -280,20 +419,48 @@ def plot_feature_over_time(
     style.repeat_ylabels = bool(repeat_ylabels)
     style.repeat_xticklabels = bool(repeat_xticklabels)
     style.repeat_yticklabels = bool(repeat_yticklabels)
+    style.legend_loc = legend_loc
 
-    # Handle multi-feature: if features is a list, treat each as a row facet (no fake column)
-    if isinstance(features, (list, tuple)):
-        feature_list = list(features)
-        facet_row_for_filter = None
-    else:
-        feature_list = [features]
-        facet_row_for_filter = facet_row
+    # Multi-feature mode maps each feature onto a row facet, so it cannot coexist with an
+    # explicit facet_row. Key the mode off the feature COUNT, not the container type: a
+    # single-element list is a scalar in disguise and must still honor facet_row (otherwise
+    # facet_row is silently dropped -- see the empty-row bug it used to cause).
+    feature_list = list(features) if isinstance(features, (list, tuple)) else [features]
+    multi_feature = len(feature_list) > 1
+    if multi_feature and facet_row is not None:
+        raise ValueError(
+            "features maps onto the row facet in multi-feature mode; pass a single feature "
+            "to use facet_row, or drop facet_row to facet by feature."
+        )
+    facet_row_for_filter = None if multi_feature else facet_row
 
-    # Build color lookup (generic or user-provided)
-    color_lookup = _build_color_lookup(df, color_by, color_lookup, color_palette)
+    # Optional embryo-level filtering is separate from group-level coloring.
+    if include_ids is not None:
+        include_id_set = {str(x) for x in include_ids}
+        df = df[df[id_col].astype(str).isin(include_id_set)].copy()
+    if exclude_ids is not None:
+        exclude_id_set = {str(x) for x in exclude_ids}
+        df = df[~df[id_col].astype(str).isin(exclude_id_set)].copy()
+
+    normalized_highlight_ids: Set[str] = {str(x) for x in highlight_ids} if highlight_ids is not None else set()
+    normalized_id_styles: Dict[str, IdTraceStyle] = {}
+    if id_style_lookup:
+        normalized_id_styles = {str(k): _coerce_embryo_trace_style(v) for k, v in id_style_lookup.items()}
+        normalized_highlight_ids.update(normalized_id_styles.keys())
+
+    # Build color lookup (explicit lookup wins, then preset, then mode)
+    color_lookup = _build_color_lookup(
+        df,
+        color_by,
+        label_map,
+        color_lookup,
+        color_palette,
+        color_preset=color_preset,
+        color_mode=color_mode,
+    )
 
     # Determine facet values
-    if isinstance(features, (list, tuple)):
+    if multi_feature:
         # Multi-feature mode: rows are feature names
         row_vals = feature_list
     else:
@@ -312,8 +479,9 @@ def plot_feature_over_time(
     for row_val, col_val, filter_dict, subplot_key in iter_facet_cells(
         facet_row_for_filter, facet_col, row_vals, col_vals
     ):
-        # In multi-feature mode, row_val is the feature name
-        if isinstance(features, (list, tuple)):
+        # In multi-feature mode, row_val is the feature name; otherwise row_val is the
+        # facet_row value and the single feature is fixed.
+        if multi_feature:
             current_feature = row_val
         else:
             current_feature = feature_list[0]
@@ -329,6 +497,7 @@ def plot_feature_over_time(
             subplot_key=subplot_key,
             legend_tracker=legend_tracker,
             show_individual=show_individual,
+            show_trend=show_trend,
             show_error_band=show_error_band,
             error_type=error_type,
             trend_statistic=trend_statistic,
@@ -337,6 +506,11 @@ def plot_feature_over_time(
             bin_width=bin_width,
             smooth_method=smooth_method,
             smooth_params=smooth_params,
+            highlight_ids=normalized_highlight_ids,
+            id_style_lookup=normalized_id_styles,
+            label_map=label_map,
+            style=style,
+            color_preset=color_preset,
         )
         if xlim is not None:
             subplot.xlim = tuple(float(v) for v in xlim)
@@ -345,14 +519,11 @@ def plot_feature_over_time(
         subplots.append(subplot)
 
     # Title
-    if isinstance(features, (list, tuple)):
-        feature_title = ', '.join(feature_list)
-    else:
-        feature_title = features
+    feature_title = ', '.join(feature_list)
 
-    # Assemble FigureData with facet labels
-    # For multi-feature mode, use feature names as row labels
-    if isinstance(features, (list, tuple)):
+    # Assemble FigureData with facet labels. In multi-feature mode rows are features; otherwise
+    # rows are the facet_row values (a single-element feature list must NOT hijack row labels).
+    if multi_feature:
         row_labels = feature_list
     else:
         row_labels = [str(v) for v in row_vals if v is not None] if facet_row else None

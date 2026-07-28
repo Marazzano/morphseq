@@ -1,0 +1,12 @@
+=== test_2well_hotchem START Wed Jul  8 15:29:56 PDT 2026 on t001.grid.gs.washington.edu ===
+CUDA_VISIBLE_DEVICES=<unset>
+GPU 0: NVIDIA A100-PCIE-40GB (UUID: GPU-c466a255-535a-8f9c-798d-63f27f60ae17)
+final text_encoder_type: bert-base-uncased
+final text_encoder_type: bert-base-uncased
+Project root: /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq
+Output root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output
+Inputs root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq
+Models root:  /net/trapnell/vol1/home/nlammers/projects/data/morphseq/models
+Runner:       conda (conda env: segmentation_grounded_sam)
+Experiments:  ['20260702_hotchem_24hpf_plate01']
+Microscope:   Keyence

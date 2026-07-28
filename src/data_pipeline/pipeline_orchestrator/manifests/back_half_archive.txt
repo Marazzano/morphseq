@@ -1,0 +1,170 @@
+# back_half (analysis_ready) manifest — generated 2026-07-23
+#
+# FORMAT:  <experiment> <scope>   (SGE array task N == Nth non-comment line; scope is
+#          passed as --config microscope=<scope>)
+# ORDER:   priority groups first, in this order:
+#          20240813, 20260702, 20250612, 20260320, 20260324, 20260331, 20260414, 20260415
+#          tasks 1-36 are priority; 37-148 are the remainder.
+# CONTENT: only experiments whose front_half shards are ALL validated (parity check).
+#
+# ELIGIBLE: 148    EXCLUDED: 8
+#
+# EXCLUDED (front_half incomplete — fix before adding these):
+#   20250520                                       NOT_STARTED  shards=0 validated=0
+#   20250529_24hpf_ctrl_atf6                       NOT_STARTED  shards=0 validated=0
+#   20250529_24hpf_wfs1_ctcf                       NOT_STARTED  shards=0 validated=0
+#   20250529_30hpf_ctrl_atf6                       NOT_STARTED  shards=0 validated=0
+#   20250529_30hpf_wfs1_ctcf                       NOT_STARTED  shards=0 validated=0
+#   20250529_36hpf_ctrl_atf6                       NOT_STARTED  shards=0 validated=0
+#   20250529_36hpf_wfs1_ctcf                       NOT_STARTED  shards=0 validated=0
+#   20260124                                       NOT_STARTED  shards=0 validated=0
+#
+# Regenerate with make_back_half_manifest.py — do not hand-edit.
+20240813_24hpf Keyence
+20240813_30hpf Keyence
+20240813_36hpf Keyence
+20240813_extras Keyence
+20260702_hotchem_24hpf_plate01 Keyence
+20260702_hotchem_24hpf_plate02 Keyence
+20260702_hotchem_30hpf_plate01 Keyence
+20260702_hotchem_30hpf_plate02 Keyence
+20260702_hotchem_36hpf_plate01 Keyence
+20260702_hotchem_36hpf_plate02 Keyence
+20250612_24hpf_ctrl_atf6 Keyence
+20250612_24hpf_wfs1_ctcf Keyence
+20250612_30hpf_ctrl_atf6 Keyence
+20250612_30hpf_wfs1_ctcf Keyence
+20250612_36hpf_ctrl_atf6 Keyence
+20250612_36hpf_wfs1_ctcf Keyence
+20260320 YX1
+20260320_cilia_crispant_48hpf Keyence
+20260324_cep290_18hpf_24hpf_plate02 Keyence
+20260324_cep290_18hpf_plate01 Keyence
+20260324_cep290_24hpf_plate01 Keyence
+20260324_cep290_24hpf_plate02 Keyence
+20260324_cep290_30hpf_plate01 Keyence
+20260324_cep290_30hpf_plate02 Keyence
+20260331_b9d2_18hpf_plate01 Keyence
+20260331_b9d2_18hpf_plate02 Keyence
+20260414_b9d2_14hpf_plate01 Keyence
+20260414_b9d2_14hpf_plate02 Keyence
+20260414_b9d2_30hpf_plate01 Keyence
+20260414_b9d2_30hpf_plate02 Keyence
+20260414_sci_b9d2_48hpf_plate01 YX1
+20260415_b9d2_30to48hpf_plate01_t02 Keyence
+20260415_b9d2_30to48hpf_plate02_t02 Keyence
+20260415_cep290_18hpf_plate03 Keyence
+20260415_cep290_30to48hpf_plate02_t01 Keyence
+20260415_sci_cep290_48hpf_plate01 YX1
+20230525 Keyence
+20230531 Keyence
+20230602 Keyence
+20230613 Keyence
+20230615 Keyence
+20230620 Keyence
+20230622 Keyence
+20230627 Keyence
+20230629 Keyence
+20230831 Keyence
+20231110 YX1
+20231206 YX1
+20231218 YX1
+20240306 YX1
+20240307 YX1
+20240404 YX1
+20240411 YX1
+20240418 YX1
+20240509 YX1
+20240509_18ss Keyence
+20240509_24hpf Keyence
+20240510 Keyence
+20240522 YX1
+20240530 YX1
+20240626 YX1
+20240717 Keyence
+20240718 Keyence
+20240724 Keyence
+20240725 Keyence
+20240726 Keyence
+20240812 YX1
+20241022 YX1
+20241023 YX1
+20250126 YX1
+20250215 YX1
+20250305 YX1
+20250415 YX1
+20250416 YX1
+20250425 YX1
+20250501 YX1
+20250512 YX1
+20250515_part2 YX1
+20250519 YX1
+20250622_chem_28C_T00_1425 Keyence
+20250622_chem_28C_T01_1658 Keyence
+20250622_chem_34C_T00_1256 Keyence
+20250622_chem_34C_T01_1632 Keyence
+20250622_chem_35C_T00_1223_check Keyence
+20250622_chem_35C_T01_1605 Keyence
+20250623_chem_28C_T02_1259 Keyence
+20250623_chem_34C_T02_1231 Keyence
+20250623_chem_35C_T02_1204 Keyence
+20250624_chem02_28C_T00_1356 Keyence
+20250624_chem02_28C_T01_1808 Keyence
+20250624_chem02_34C_T00_1243 Keyence
+20250624_chem02_34C_T01_1739 Keyence
+20250624_chem02_35C_T00_1216 Keyence
+20250624_chem02_35C_T01_1711 Keyence
+20250625_chem02_28C_T02_1332 Keyence
+20250625_chem02_34C_T02_1301 Keyence
+20250625_chem02_35C_T02_1228 Keyence
+20250703_chem3_28C_T00_1325 Keyence
+20250703_chem3_34C_T00_1131 Keyence
+20250703_chem3_34C_T01_1457 Keyence
+20250703_chem3_35C_T00_1101 Keyence
+20250703_chem3_35C_T01_1437 Keyence
+20250711 YX1
+20250716_chem4_28C_T00_1158 Keyence
+20250716_chem4_28C_T01_1400 Keyence
+20250716_chem4_34C_T00_1014 Keyence
+20250716_chem4_35C_T00_1045 Keyence
+20250721_chem5_28C_T00_1257 Keyence
+20250721_chem5_28C_T01_1401 Keyence
+20250721_chem5_35C_T00_1023 Keyence
+20250912 YX1
+20251017_part1 YX1
+20251017_part2 YX1
+20251020 YX1
+20251104 YX1
+20251106 YX1
+20251112 YX1
+20251113 YX1
+20251119 YX1
+20251121 YX1
+20251125 YX1
+20251205 YX1
+20251207_pbx YX1
+20251212 YX1
+20260122 YX1
+20260202 YX1
+20260206 YX1
+20260208 YX1
+20260210 YX1
+20260213 YX1
+20260219 YX1
+20260223 YX1
+20260224 YX1
+20260228 YX1
+20260304 YX1
+20260306 YX1
+20260319 YX1
+20260319_cilia_crispant_18hpf Keyence
+20260319_cilia_crispant_24hpf Keyence
+20260319_cilia_crispant_30hpf Keyence
+20260326_wt_ref YX1
+20260410_otx_pilot YX1
+20260416_cep290_30to48hpf_plate01_t02 Keyence
+20260416_cep290_30to48hpf_plate02_t02 Keyence
+20260417_irx_pilot YX1
+20260418_irx_pilot YX1
+20260501_zfpm_pilot YX1
+20260502_zfpm_pilot YX1

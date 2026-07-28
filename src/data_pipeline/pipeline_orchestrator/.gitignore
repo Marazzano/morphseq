@@ -1,0 +1,10 @@
+# Per-machine environment file (paths + interpreter). Copy env.example.yaml -> env.yaml
+# on each machine and edit; never commit env.yaml. See Scope 3 of the well-id throughline plan.
+env.yaml
+
+# Snakemake working state
+.snakemake/
+
+# Per-experiment Snakemake work directories (isolated .snakemake lock/DAG trees so runs on
+# different experiments can execute concurrently from this one WORKFLOW_DIR). Local-only.
+work_directories/

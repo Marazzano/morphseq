@@ -1,0 +1,21 @@
+#!/bin/bash
+#$ -cwd
+#$ -N support_method_diag
+#$ -pe serial 16
+#$ -l h_rt=08:00:00
+#$ -l h_vmem=6G
+#$ -o results/mcolon/20260617_morph_axis_investigation/logs/support_method_diagnostics/support_method_diag.$JOB_ID.out
+#$ -e results/mcolon/20260617_morph_axis_investigation/logs/support_method_diagnostics/support_method_diag.$JOB_ID.err
+
+set -euo pipefail
+
+mkdir -p results/mcolon/20260617_morph_axis_investigation/logs/support_method_diagnostics
+
+conda run -n segmentation_grounded_sam --no-capture-output python \
+  results/mcolon/20260617_morph_axis_investigation/support_method_diagnostics.py \
+  --sample-size 40 \
+  --n-seeds 5 \
+  --n-resample 100 \
+  --n-workers 16 \
+  --kdes scott knn_k10_bw0.6 \
+  --output-prefix support_method_diagnostics

@@ -1,0 +1,5 @@
+template/
+*.sge
+*.sh
+# Track shared templates; copied run scripts stay local.
+!submit_*_TEMPLATE.sge

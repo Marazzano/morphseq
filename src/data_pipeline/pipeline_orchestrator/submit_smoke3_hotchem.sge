@@ -1,0 +1,40 @@
+#!/bin/bash
+# 3-well smoke test: 20260702_hotchem_24hpf_plate01, wells A01 / C04 / H07.
+# Runs ONLY through materialization (target: front_half) to validate two fixes:
+#   - tile->well assignment (select_well_acquisition_rows trusts the inventory's well_id)
+#   - Keyence tile orientation defaults to horizontal unless explicitly vertical
+#
+# Expect a landscape 3-tile stitch (~2400x720 pre-downsample), not a 945x1710 portrait.
+# No --keep-going: the first failure should stop the run and show its traceback.
+#
+# Submit from src/data_pipeline/pipeline_orchestrator:  qsub submit_smoke3_hotchem.sge
+
+#$ -N hotchem_smoke3
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=10G
+#$ -pe serial 3
+#$ -o hotchem_smoke3.$JOB_ID.out
+#$ -e hotchem_smoke3.$JOB_ID.err
+
+set -euo pipefail
+trap 'status=$?; echo "=== hotchem_smoke3 FINISHED $(date) on $(hostname) - exit ${status} ==="; exit "${status}"' EXIT
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+SRC_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src"
+
+echo "=== hotchem_smoke3 front_half START $(date) on $(hostname) ==="
+nvidia-smi -L || echo "WARNING: no GPU visible"
+
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
+# Target must precede --configfile: --configfile is greedy and would swallow it.
+"${SNAKEMAKE}" front_half \
+  --cores 3 \
+  --printshellcmds \
+  --configfile config.yaml config_runtime_20260702_hotchem.yaml config_smoke_3well.yaml

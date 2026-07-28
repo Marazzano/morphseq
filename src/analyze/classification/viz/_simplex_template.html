@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#666; --line:#e2e2e2; --panel:#fafafa; --warn:#C0392B; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#15171a; --fg:#e8e8e8; --muted:#9aa0a6; --line:#2c3034; --panel:#1c1f23; --warn:#E74C3C; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--fg);
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:18px; max-width:940px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:14px 16px; margin-bottom:18px; transition:border-color .25s, box-shadow .25s; }
+  .panel.bad { border-color:var(--warn); animation:throb 1.6s ease-in-out infinite; }
+  @keyframes throb {
+    0%,100% { box-shadow:0 0 0 0 rgba(192,57,43,0); }
+    50%     { box-shadow:0 0 0 3px rgba(192,57,43,.22); }
+  }
+  .srow { display:flex; align-items:center; gap:12px; padding:5px 0; flex-wrap:wrap; }
+  .sname { width:150px; font-weight:600; display:flex; align-items:center; gap:7px; }
+  .dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+  .auc { font-size:11px; color:var(--muted); font-weight:500; }
+  input[type=range] { width:min(300px,34vw); }
+  select { font:inherit; padding:4px 7px; border-radius:6px;
+           border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .v { font-variant-numeric:tabular-nums; font-weight:700; min-width:42px; }
+  .alone { font-size:11.5px; color:var(--muted); min-width:76px; }
+  .cby { font-size:11.5px; color:var(--muted); display:flex; align-items:center;
+         gap:4px; cursor:pointer; user-select:none; }
+  .cby input { margin:0; cursor:pointer; }
+  .note { display:flex; align-items:center; gap:6px; font-size:11.5px;
+          color:var(--muted); margin-top:8px; min-height:17px; }
+  .note.bad { color:var(--warn); font-weight:600; }
+  .isym { display:inline-flex; align-items:center; justify-content:center;
+          width:14px; height:14px; border-radius:50%; border:1.2px solid currentColor;
+          font-size:10px; font-style:italic; font-weight:700; flex:0 0 auto; }
+  .opts { display:flex; gap:18px; align-items:center; flex-wrap:wrap;
+          border-top:1px solid var(--line); margin-top:10px; padding-top:10px; }
+  .chk { display:flex; align-items:center; gap:6px; }
+  .layout { display:grid; grid-template-columns:minmax(0,1fr) 290px; gap:20px; align-items:start; }
+  @media (max-width:1000px){ .layout{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+          padding:14px; overflow-x:auto; }
+  .card h2 { font-size:12.5px; margin:0 0 9px; color:var(--muted); font-weight:600;
+             text-transform:uppercase; letter-spacing:.04em; }
+  svg { display:block; max-width:100%; height:auto; }
+  .axis { stroke:var(--line); } .tick { fill:var(--muted); font-size:10px; }
+  .albl { fill:var(--muted); font-size:11px; }
+  .pdiv { stroke:var(--muted); stroke-width:1; stroke-dasharray:4 3; opacity:.75; }
+  .prate { fill:var(--muted); font-size:10.5px; font-weight:700; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th,td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  td.n { text-align:right; font-variant-numeric:tabular-nums; }
+  .swatch { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; }
+  .hint { color:var(--muted); font-size:12px; margin-top:9px; }
+  .facet-row { display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; }
+  .facet-row svg { flex:0 0 auto; }
+  #tip { position:fixed; pointer-events:none; z-index:50; display:none;
+         background:var(--fg); color:var(--bg); padding:7px 10px; border-radius:6px;
+         font-size:12px; line-height:1.45; box-shadow:0 3px 12px rgba(0,0,0,.28); }
+  #tip .k { opacity:.7; }
+</style>
+</head>
+<body>
+<h1>__TITLE__</h1>
+<div class="sub">__SUBTITLE__</div>
+
+<div class="panel" id="ctl">
+  <div id="sliders"></div>
+  <div class="note" id="warn"></div>
+  <div class="opts">
+    <span class="chk"><label for="facet">facet by</label>
+      <select id="facet">
+        <option value="zyg">zygosity</option>
+        <option value="pred">predicted class</option>
+      </select></span>
+    <span class="chk"><label for="colorby">color by</label>
+      <select id="colorby"></select></span>
+    <span class="chk"><input type="checkbox" id="dim" checked>
+      <label for="dim">fade filtered-out</label></span>
+    <span class="chk"><input type="checkbox" id="split" checked>
+      <label for="split">split into panels</label></span>
+  </div>
+</div>
+
+<div id="tip"></div>
+<div class="layout">
+  <div class="card" id="plots"></div>
+  <div>
+    <div class="card">
+      <h2>Embryos remaining</h2>
+      <svg id="bars" width="258" height="180"></svg>
+      <table id="tbl"></table>
+      <div class="hint" id="tot"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = __PAYLOAD__;
+const SVGNS='http://www.w3.org/2000/svg';
+/* Panel geometry. W is the unsplit width; faceted panels size to fill it (see buildPlots). */
+const W=640,H=210,M={t:16,r:14,b:38,l:60};
+const CLASSES=DATA.classes;
+const WT_CLASS=DATA.nonPenetrantClass;   // predicted==this => NOT penetrant
+const TRACE_WIDTH=1.9, TRACE_HOVER_WIDTH=4.0, TRACE_ALPHA=0.55;
+
+function el(t,a){const n=document.createElementNS(SVGNS,t);for(const k in a)n.setAttribute(k,a[k]);return n;}
+function extent(a){let lo=Infinity,hi=-Infinity;for(const v of a){if(v<lo)lo=v;if(v>hi)hi=v;}return [lo,hi];}
+
+const NF=DATA.featureLabels.length;
+const allT=[],allY=DATA.featureLabels.map(()=>[]);
+for(const e of DATA.embryos){
+  for(const v of e.t)allT.push(v);
+  for(let f=0;f<NF;f++)for(const v of e.y[f])allY[f].push(v);
+}
+const DOM={t:extent(allT),y:allY.map(extent)};
+const mk=(d,lo,hi)=>{const[a,b]=d,s=(b-a)||1;return v=>lo+(v-a)/s*(hi-lo);};
+
+/* ---- sliders: one per class, each with its own direction ---- */
+const state = {};
+CLASSES.forEach(c => { state[c.key] = {thr:0, dir:'ge'}; });
+
+function buildColorSelect(){
+  const sel=document.getElementById('colorby');
+  sel.innerHTML='<option value="zyg">zygosity</option>'
+    + '<option value="pred">predicted class</option>'
+    + CLASSES.map(c=>`<option value="p:${c.key}">shade: P(${c.name})</option>`).join('');
+}
+
+function buildSliders(){
+  const host=document.getElementById('sliders');
+  host.innerHTML='';
+  CLASSES.forEach(c=>{
+    const row=document.createElement('div'); row.className='srow';
+    const aucTxt = (c.auc===null||c.auc===undefined) ? '' : `AUC ${c.auc.toFixed(2)}`;
+    row.innerHTML =
+      `<span class="sname"><span class="dot" style="background:${c.color}"></span>`
+      + `P(${c.name}) <span class="auc">${aucTxt}</span></span>`
+      + `<select data-k="${c.key}" class="dirsel">`
+      + `<option value="ge">&ge;</option><option value="le">&le;</option></select>`
+      + `<input type="range" data-k="${c.key}" class="thr" min="0" max="1" step="0.01" value="0">`
+      + `<span class="v" id="v-${c.key}">0.00</span>`
+      + `<span class="alone" id="a-${c.key}"></span>`
+      + `<label class="cby" title="color traces by P(${c.name})">`
+      + `<input type="radio" name="cby" value="p:${c.key}"> shade</label>`;
+    host.appendChild(row);
+  });
+  /* A plain radio can never be un-picked, so shade mode would be a one-way door.
+     Intercept mousedown (fires before the browser sets .checked) to detect a click on the
+     already-active radio and turn it back off. */
+  host.querySelectorAll('input[name="cby"]').forEach(r=>{
+    r.addEventListener('mousedown',ev=>{
+      if(!r.checked) return;
+      ev.preventDefault();
+      r.checked=false;
+      document.getElementById('colorby').value=DATA.defaultColorBy;
+      rebuild();
+    });
+    r.addEventListener('change',()=>{ syncColorMode(); rebuild(); });
+  });
+  host.querySelectorAll('.thr').forEach(s=>s.addEventListener('input',e=>{
+    state[e.target.dataset.k].thr=parseFloat(e.target.value); update();
+  }));
+  host.querySelectorAll('.dirsel').forEach(s=>s.addEventListener('change',e=>{
+    const k=e.target.dataset.k;
+    state[k].dir=e.target.value;
+    // Reset to the end that keeps everything, so flipping never blanks the view.
+    state[k].thr = (e.target.value==='ge')?0:1;
+    host.querySelector(`.thr[data-k="${k}"]`).value=state[k].thr;
+    update();
+  }));
+}
+
+const passOne=(e,k)=>{const s=state[k];return s.dir==='ge'?(e.p[k]>=s.thr):(e.p[k]<=s.thr);};
+const passAll=e=>CLASSES.every(c=>passOne(e,c.key));
+const isPenetrant=e=>e.pred!==WT_CLASS;
+
+function groupsOf(mode){
+  return mode==='zyg' ? DATA.zygOrder : CLASSES.map(c=>c.name);
+}
+function keyOf(e,mode){ return mode==='zyg'?e.zyg:e.pred; }
+function hex2rgb(h){const n=parseInt(h.slice(1),16);return [n>>16&255,n>>8&255,n&255];}
+/* Shade from a pale neutral to the class colour as P(class) goes 0 -> 1, so a whole panel
+   can be read as a probability gradient rather than a categorical split. */
+function shade(hex,p){
+  const [r,g,b]=hex2rgb(hex), t=Math.max(0,Math.min(1,p)), base=232;
+  const m=v=>Math.round(base+(v-base)*(0.18+0.82*t));
+  return `rgb(${m(r)},${m(g)},${m(b)})`;
+}
+function colorOf(e,mode){
+  if(mode==='zyg') return DATA.zygColor[e.zyg]||'#888';
+  if(mode.startsWith('p:')){
+    const k=mode.slice(2), c=CLASSES.find(c=>c.key===k);
+    return shade(c?c.color:'#444', e.p[k]);
+  }
+  const c=CLASSES.find(c=>c.name===e.pred); return c?c.color:'#888';
+}
+
+/* Fraction of this panel's embryos the CLASSIFIER calls penetrant. Not a measured biological
+   penetrance -- the label on the divider says so explicitly. */
+function predictedPenetrantRate(subset){
+  if(!subset.length) return null;
+  let n=0; for(const [e] of subset) if(isPenetrant(e)) n++;
+  return n/subset.length;
+}
+
+function drawPanel(host,fi,subset,title,w){
+  const x=mk(DOM.t,M.l,w-M.r), y=mk(DOM.y[fi],H-M.b,M.t);
+  const svg=el('svg',{viewBox:`0 0 ${w} ${H}`,width:w,height:H});
+  if(title){const t=el('text',{x:w/2,y:12,'text-anchor':'middle',class:'albl'});
+    t.style.fontWeight='700';t.textContent=title;svg.appendChild(t);}
+  svg.appendChild(el('path',{d:`M${M.l},${M.t} L${M.l},${H-M.b} L${w-M.r},${H-M.b}`,
+    fill:'none',class:'axis','stroke-width':'1'}));
+  for(let i=0;i<=4;i++){
+    const tv=DOM.t[0]+(DOM.t[1]-DOM.t[0])*i/4;
+    const tx=el('text',{x:x(tv),y:H-M.b+14,'text-anchor':'middle',class:'tick'});
+    tx.textContent=tv.toFixed(0);svg.appendChild(tx);
+    const yv=DOM.y[fi][0]+(DOM.y[fi][1]-DOM.y[fi][0])*i/4;
+    const ty=el('text',{x:M.l-6,y:y(yv)+3,'text-anchor':'end',class:'tick'});
+    ty.textContent=(DOM.y[fi][1]>100)?yv.toFixed(0):yv.toFixed(2);svg.appendChild(ty);
+  }
+  const xl=el('text',{x:(M.l+w-M.r)/2,y:H-4,'text-anchor':'middle',class:'albl'});
+  xl.textContent=DATA.timeLabel;svg.appendChild(xl);
+  const g=el('g',{}),hits=el('g',{});svg.appendChild(g);svg.appendChild(hits);
+  const cmode=document.getElementById('colorby').value;
+  for(const [e,ei] of subset){
+    const ys=e.y[fi];let d='';
+    for(let i=0;i<e.t.length;i++)d+=(i?'L':'M')+x(e.t[i]).toFixed(1)+','+y(ys[i]).toFixed(1);
+    const p=el('path',{d,fill:'none',stroke:colorOf(e,cmode),
+      'stroke-width':String(TRACE_WIDTH),'stroke-linecap':'round','stroke-linejoin':'round'});
+    p.dataset.ei=ei;g.appendChild(p);
+    const h=el('path',{d,fill:'none',stroke:'transparent','stroke-width':'10','pointer-events':'stroke'});
+    h.dataset.ei=ei;h.classList.add('hit');hits.appendChild(h);
+  }
+
+  /* Penetrance divider: split the panel band vertically at the predicted-penetrant fraction
+     and print the rate on the line itself. Drawn last so it sits above the traces. */
+  const rate=predictedPenetrantRate(subset);
+  if(rate!==null){
+    const yy=M.t+(H-M.b-M.t)*(1-rate);
+    svg.appendChild(el('line',{x1:M.l,x2:w-M.r,y1:yy.toFixed(1),y2:yy.toFixed(1),class:'pdiv'}));
+    const lt=el('text',{x:w-M.r-3,y:(yy-3).toFixed(1),'text-anchor':'end',class:'prate'});
+    lt.textContent=`predicted penetrant: ${Math.round(rate*100)}%`;
+    svg.appendChild(lt);
+  }
+  host.appendChild(svg);
+}
+
+function buildPlots(){
+  const host=document.getElementById('plots');host.innerHTML='';
+  const split=document.getElementById('split').checked;
+  const fmode=document.getElementById('facet').value;
+  const idx=DATA.embryos.map((e,i)=>[e,i]);
+  DATA.featureLabels.forEach((lab,fi)=>{
+    const h2=document.createElement('h2');h2.textContent=lab;host.appendChild(h2);
+    if(!split){drawPanel(host,fi,idx,null,W);return;}
+    const row=document.createElement('div');row.className='facet-row';host.appendChild(row);
+    const gs=groupsOf(fmode);
+    // Panels divide the full width between the facet groups, with a floor so a
+    // many-group facet stays legible (and scrolls) instead of collapsing.
+    const pw=Math.max(205,Math.floor(W/gs.length)+40);
+    gs.forEach(gname=>
+      drawPanel(row,fi,idx.filter(([e])=>keyOf(e,fmode)===gname),gname,pw));
+  });
+}
+
+/* Bars are always keyed to the FACET groups, independent of the trace colouring, so a
+   shade mode doesn't leave them unpainted. */
+function groupColor(g){
+  if(document.getElementById('facet').value==='zyg') return DATA.zygColor[g]||'#888';
+  return (CLASSES.find(c=>c.name===g)||{}).color||'#888';
+}
+
+function buildBars(){
+  const svg=document.getElementById('bars');svg.innerHTML='';
+  const gs=groupsOf(document.getElementById('facet').value);
+  const BW=238,BH=26,GAP=12;
+  svg.setAttribute('height',gs.length*(BH+GAP)+8);
+  gs.forEach((g,i)=>{
+    const yy=i*(BH+GAP)+4;
+    svg.appendChild(el('rect',{x:0,y:yy,width:BW,height:BH,fill:'currentColor',opacity:'0.07',rx:'3'}));
+    const b=el('rect',{x:0,y:yy,height:BH,rx:'3',fill:groupColor(g)});
+    b.id='bar-'+i;svg.appendChild(b);
+    const l=el('text',{x:6,y:yy+BH/2+4,class:'albl',fill:'#fff'});
+    l.style.fontWeight='600';l.id='lbl-'+i;svg.appendChild(l);
+  });
+}
+
+function update(){
+  const fade=document.getElementById('dim').checked;
+  const fmode=document.getElementById('facet').value;
+
+  CLASSES.forEach(c=>{
+    document.getElementById('v-'+c.key).textContent=state[c.key].thr.toFixed(2);
+    const n=DATA.embryos.filter(e=>passOne(e,c.key)).length;
+    document.getElementById('a-'+c.key).textContent=`${n} alone`;
+  });
+
+  // Impossible-region hint: mutually exclusive >= constraints summing past 1.
+  const geSum=CLASSES.reduce((s,c)=>s+(state[c.key].dir==='ge'?state[c.key].thr:0),0);
+  const bad=geSum>1.0+1e-9;
+  document.getElementById('ctl').classList.toggle('bad',bad);
+  const warn=document.getElementById('warn');
+  warn.classList.toggle('bad',bad);
+  warn.innerHTML=bad
+    ? `<span class="isym">i</span> probabilities must sum to 1 — these thresholds add to ${geSum.toFixed(2)}, so no embryo can satisfy them`
+    : `<span class="isym">i</span> probabilities sum to 1 across the ${CLASSES.length} class${CLASSES.length===1?'':'es'}`;
+
+  const keep=DATA.embryos.map(passAll);
+  document.querySelectorAll('#plots path[data-ei]:not(.hit)').forEach(p=>{
+    const on=keep[+p.dataset.ei];
+    p.style.display=(!on&&!fade)?'none':'';
+    p.setAttribute('opacity',on?String(TRACE_ALPHA):'0.06');
+  });
+  document.querySelectorAll('#plots path.hit').forEach(h=>{
+    h.style.display=keep[+h.dataset.ei]?'':'none';
+  });
+
+  const gs=groupsOf(fmode),counts={},tot={};
+  DATA.embryos.forEach((e,i)=>{const g=keyOf(e,fmode);
+    tot[g]=(tot[g]||0)+1; if(keep[i])counts[g]=(counts[g]||0)+1;});
+  const BW=238;
+  let rows='<tr><th>'+(fmode==='zyg'?'zygosity':'predicted')+'</th><th class="n">kept</th><th class="n">of</th><th class="n">%</th></tr>';
+  gs.forEach((g,i)=>{
+    const n=counts[g]||0,t=tot[g]||0,f=t?n/t:0;
+    const b=document.getElementById('bar-'+i); if(b)b.setAttribute('width',(BW*f).toFixed(1));
+    const l=document.getElementById('lbl-'+i); if(l)l.textContent=`${g}  ${n}/${t}`;
+    rows+=`<tr><td><span class="swatch" style="background:${groupColor(g)}"></span>${g}</td>`
+        + `<td class="n">${n}</td><td class="n">${t}</td><td class="n">${(f*100).toFixed(0)}%</td></tr>`;
+  });
+  document.getElementById('tbl').innerHTML=rows;
+  document.getElementById('tot').textContent=
+    `${keep.filter(Boolean).length} of ${DATA.embryos.length} embryos pass all filters`;
+}
+
+const tip=document.getElementById('tip');let hov=null;
+const vis=ei=>document.querySelectorAll(`#plots path[data-ei="${ei}"]:not(.hit)`);
+function setHov(ei){
+  if(hov===ei)return;
+  if(hov!==null)vis(hov).forEach(p=>p.setAttribute('stroke-width',String(TRACE_WIDTH)));
+  hov=ei; if(ei!==null)vis(ei).forEach(p=>p.setAttribute('stroke-width',String(TRACE_HOVER_WIDTH)));
+}
+document.getElementById('plots').addEventListener('mousemove',ev=>{
+  const h=ev.target.closest('path.hit');
+  if(!h){tip.style.display='none';setHov(null);return;}
+  const e=DATA.embryos[+h.dataset.ei];setHov(+h.dataset.ei);
+  const pr=CLASSES.map(c=>`<span class="k">P(${c.name}):</span> ${e.p[c.key].toFixed(3)}`).join('<br>');
+  tip.innerHTML=`<b>${e.id}</b><br><span class="k">zygosity:</span> ${e.zyg}<br>`
+    +`<span class="k">curated:</span> ${e.curated||'n/a'}<br>`
+    +`<span class="k">predicted:</span> ${e.pred}<br>${pr}`
+    +`<br><span class="k">${e.inTrain?'out-of-fold':'applied (not trained)'}</span>`;
+  tip.style.display='block';
+  const pad=14,r=tip.getBoundingClientRect();
+  let x=ev.clientX+pad,y=ev.clientY+pad;
+  if(x+r.width>innerWidth)x=ev.clientX-r.width-pad;
+  if(y+r.height>innerHeight)y=ev.clientY-r.height-pad;
+  tip.style.left=x+'px';tip.style.top=y+'px';
+});
+document.getElementById('plots').addEventListener('mouseleave',()=>{tip.style.display='none';setHov(null);});
+
+/* The per-slider "shade" radios and the color-by dropdown drive the same setting; keep them
+   in sync so neither silently overrides the other. */
+function syncColorMode(){
+  const r=document.querySelector('input[name="cby"]:checked');
+  if(r) document.getElementById('colorby').value=r.value;
+}
+function clearShadeRadios(){
+  document.querySelectorAll('input[name="cby"]').forEach(r=>{r.checked=false;});
+}
+
+function rebuild(){ buildPlots(); buildBars(); update(); }
+buildColorSelect();
+document.getElementById('colorby').value=DATA.defaultColorBy;
+buildSliders();
+document.getElementById('dim').addEventListener('change',update);
+document.getElementById('split').addEventListener('change',rebuild);
+document.getElementById('facet').addEventListener('change',rebuild);
+document.getElementById('colorby').addEventListener('change',()=>{clearShadeRadios();syncShadeFromSelect();rebuild();});
+/* Selecting a shade mode from the dropdown should light the matching slider radio. */
+function syncShadeFromSelect(){
+  const v=document.getElementById('colorby').value;
+  document.querySelectorAll('input[name="cby"]').forEach(r=>{r.checked=(r.value===v);});
+}
+rebuild();
+</script>
+</body>
+</html>

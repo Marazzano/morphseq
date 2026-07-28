@@ -1,0 +1,656 @@
+"""
+condensed_time_slice_viewer.py
+-------------
+Condensed trajectory time-slice HTML viewer.
+
+Public API
+----------
+time_slice_html(positions, mask, time_values, ...) -> go.Figure
+    Two-panel interactive figure with a time-bin slider:
+      Left  — stacked 3D trajectory cloud (all time, dimmed) with the
+              current bin's points highlighted.
+      Right — 2D scatter of only the current time bin.
+    Outputs a self-contained HTML file; no server required.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+
+from analyze.viz.styling.color_utils import apply_label_map
+
+
+def time_slice_html(
+    positions: np.ndarray,
+    mask: np.ndarray,
+    time_values: np.ndarray,
+    labels: np.ndarray | None = None,
+    label_map: dict[str, str] | None = None,
+    color_map: dict[str, str] | None = None,
+    embryo_ids: np.ndarray | None = None,
+    output_path: str | Path | None = None,
+    title: str = "Time slice",
+    views: "list[dict] | None" = None,
+    add_slice_panel: bool = True,
+    subplot_titles: tuple[str, str] | None = None,
+    width: int = 1500,
+    height: int = 700,
+    trajectory_trace_alpha: float = 0.16,
+    current_time_marker_alpha: float = 1.0,
+    slice_marker_alpha: float = 0.75,
+    trajectory_marker_alpha: float = 0.15,
+    current_time_marker_size: int = 6,
+    slice_marker_size: int = 6,
+    trajectory_marker_size: int = 2,
+    alpha_bg: float | None = None,
+    alpha_bg_marker: float | None = None,
+    alpha_highlight: float | None = None,
+    alpha_2d: float | None = None,
+    marker_size_bg: int | None = None,
+    marker_size_highlight: int | None = None,
+    marker_size_2d: int | None = None,
+) -> "go.Figure":
+    """Build an interactive Plotly figure with a time-bin slider.
+
+    Parameters
+    ----------
+    positions : (N_e, T, 2)
+    mask : (N_e, T) bool
+    time_values : (T,) float — hpf values
+    labels : (N_e,) str, optional
+    label_map : raw label → display label mapping, optional
+    color_map : label → hex color string, auto-generated if None
+    embryo_ids : (N_e,) str, optional — shown in hover tooltip
+    output_path : if given, writes self-contained HTML and returns the Figure
+    title : figure title
+    add_slice_panel : if True (default), show a 2D cross-section panel on the
+        right that updates with the slider. If False, only the 3D overview is
+        shown, filling the full figure width.
+    subplot_titles : optional custom subplot titles. Defaults to
+        ("3D overview", "Current time slice") when the slice panel is enabled.
+    trajectory_trace_alpha : opacity of the background trajectory lines in the 3D overview
+    current_time_marker_alpha : opacity of highlighted current-time points in the 3D overview
+    slice_marker_alpha : opacity of points in the 2D slice panel
+    trajectory_marker_alpha : opacity of small background trajectory markers in the 3D overview
+    current_time_marker_size : size of highlighted current-time points in the 3D overview
+    slice_marker_size : size of points in the 2D slice panel
+    trajectory_marker_size : size of small background trajectory markers in the 3D overview
+    alpha_bg / alpha_bg_marker / alpha_highlight / alpha_2d : deprecated opacity aliases
+    marker_size_bg / marker_size_highlight / marker_size_2d : deprecated size aliases
+
+    Returns
+    -------
+    go.Figure — caller can further customise or call .write_html() themselves.
+    """
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        raise ImportError("plotly is required for time_slice_html")
+
+    # Multi-view mode: render one interactive viewer per named view and multiplex
+    # them into a single HTML with a top selector. Each view is a dict:
+    #   {"name": str, "labels": array, "color_map": dict}  (categorical), OR
+    #   {"name": str, "field": (N_e,T) float array, "colorscale": str,
+    #    "field_label": str}                                 (continuous colouring)
+    # Backward-compatible: when views is None, behaves exactly as before.
+    if views:
+        return _multiview_time_slice_html(
+            positions, mask, time_values, views,
+            embryo_ids=embryo_ids, output_path=output_path, title=title,
+            single_view_fn=time_slice_html,
+            base_kwargs=dict(
+                label_map=label_map, add_slice_panel=add_slice_panel,
+                subplot_titles=subplot_titles, width=width, height=height,
+            ),
+        )
+
+    positions = np.asarray(positions, dtype=float)
+    mask = np.asarray(mask, dtype=bool)
+    time_values = np.asarray(time_values, dtype=float)
+    N_e, T, _ = positions.shape
+    if alpha_bg is not None:
+        trajectory_trace_alpha = float(alpha_bg)
+    if alpha_bg_marker is not None:
+        trajectory_marker_alpha = float(alpha_bg_marker)
+    if alpha_highlight is not None:
+        current_time_marker_alpha = float(alpha_highlight)
+    if alpha_2d is not None:
+        slice_marker_alpha = float(alpha_2d)
+    if marker_size_bg is not None:
+        trajectory_marker_size = int(marker_size_bg)
+    if marker_size_highlight is not None:
+        current_time_marker_size = int(marker_size_highlight)
+    if marker_size_2d is not None:
+        slice_marker_size = int(marker_size_2d)
+
+    labels = apply_label_map(labels, label_map)
+    color_map = _resolve_color_map(labels, color_map, label_map=label_map)
+    unique_labels = list(color_map.keys()) if labels is not None else [None]
+
+    def _hover_text(i: int, z: float | None = None) -> str:
+        parts: list[str] = []
+        if labels is not None:
+            parts.append(f"<b>{str(labels[i])}</b>")
+        eid = str(embryo_ids[i]) if embryo_ids is not None else str(i)
+        parts.append(f"embryo: {eid}")
+        if z is not None:
+            parts.append(f"age: {z:.1f} hpf")
+        return "<br>".join(parts)
+
+    # Fixed axis limits.
+    obs_xy = positions[mask]
+    xy_pad = 0.05
+    x_range = obs_xy[:, 0].max() - obs_xy[:, 0].min() or 1.0
+    y_range = obs_xy[:, 1].max() - obs_xy[:, 1].min() or 1.0
+    xlim = [obs_xy[:, 0].min() - xy_pad * x_range, obs_xy[:, 0].max() + xy_pad * x_range]
+    ylim = [obs_xy[:, 1].min() - xy_pad * y_range, obs_xy[:, 1].max() + xy_pad * y_range]
+    zlim = [float(time_values[0]), float(time_values[-1])]
+
+    # -----------------------------------------------------------------------
+    # Subplot layout — 1 or 2 columns depending on add_slice_panel.
+    # -----------------------------------------------------------------------
+    if subplot_titles is None:
+        subplot_titles = ("3D overview", "Current time slice")
+
+    if add_slice_panel:
+        fig = make_subplots(
+            rows=1, cols=2,
+            specs=[[{"type": "scene"}, {"type": "xy"}]],
+            subplot_titles=subplot_titles,
+            horizontal_spacing=0.06,
+            column_widths=[0.55, 0.45],
+        )
+    else:
+        fig = make_subplots(
+            rows=1, cols=1,
+            specs=[[{"type": "scene"}]],
+            subplot_titles=(subplot_titles[0],),
+        )
+
+    for ann in fig.layout.annotations:
+        ann.font.size = 18
+
+    # -----------------------------------------------------------------------
+    # Legend proxy traces — keep clickable phenotype entries fully opaque even
+    # though the background trajectory cloud is intentionally dimmed.
+    # -----------------------------------------------------------------------
+    for lbl in unique_labels:
+        color = color_map.get(lbl, "#4C78A8") if lbl is not None else "#4C78A8"
+        fig.add_trace(go.Scatter3d(
+            x=[None], y=[None], z=[None],
+            mode="lines+markers",
+            name=str(lbl) if lbl is not None else "unknown",
+            legendgroup=str(lbl),
+            showlegend=True,
+            visible=True,
+            line=dict(color=color, width=3),
+            marker=dict(color=color, size=6, opacity=1.0),
+            hoverinfo="skip",
+        ), row=1, col=1)
+
+    # -----------------------------------------------------------------------
+    # Static background traces — all trajectories, dimmed.
+    # -----------------------------------------------------------------------
+    for lbl in unique_labels:
+        if lbl is not None:
+            emb_idx = np.where(labels == lbl)[0]
+            color = color_map.get(lbl, "#4C78A8")
+        else:
+            emb_idx = np.arange(N_e)
+            color = "#4C78A8"
+
+        xs, ys, zs, hover_texts = [], [], [], []
+        for i in emb_idx:
+            obs_t = np.where(mask[i])[0]
+            if len(obs_t) < 2:
+                continue
+            xs.extend(positions[i, obs_t, 0].tolist() + [None])
+            ys.extend(positions[i, obs_t, 1].tolist() + [None])
+            zs.extend(time_values[obs_t].tolist() + [None])
+            hover_texts.extend([_hover_text(i, float(time_values[t])) for t in obs_t] + [""])
+
+        fig.add_trace(go.Scatter3d(
+            x=xs, y=ys, z=zs,
+            mode="lines",
+            name=str(lbl) if lbl is not None else "unknown",
+            legendgroup=str(lbl),
+            showlegend=False,
+            line=dict(color=color, width=1.5),
+            opacity=trajectory_trace_alpha,
+            hoverinfo="skip",
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter3d(
+            x=xs, y=ys, z=zs,
+            mode="markers",
+            name=str(lbl) if lbl is not None else "unknown",
+            legendgroup=str(lbl),
+            showlegend=False,
+            marker=dict(
+                color=color,
+                size=trajectory_marker_size,
+                opacity=trajectory_marker_alpha,
+            ),
+            opacity=1.0,
+            text=hover_texts,
+            hovertemplate="%{text}<extra></extra>",
+        ), row=1, col=1)
+
+    n_bg = len(fig.data)
+
+    # -----------------------------------------------------------------------
+    # Per-frame animated traces.
+    # -----------------------------------------------------------------------
+    def _make_highlight_trace(lbl, xs, ys, zs, ids_h) -> "go.Scatter3d":
+        color = color_map.get(lbl, "#4C78A8") if lbl is not None else "#4C78A8"
+        return go.Scatter3d(
+            x=xs, y=ys, z=zs, mode="markers",
+            name=str(lbl) if lbl is not None else "unknown",
+            legendgroup=str(lbl), showlegend=False,
+            marker=dict(color=color, size=current_time_marker_size, opacity=current_time_marker_alpha,
+                        line=dict(color="white", width=0.5)),
+            text=ids_h,
+            hovertemplate="%{text}<extra></extra>",
+        )
+
+    def _make_scatter2d_trace(lbl, xs, ys, ids_h) -> "go.Scatter":
+        color = color_map.get(lbl, "#4C78A8") if lbl is not None else "#4C78A8"
+        return go.Scatter(
+            x=xs, y=ys, mode="markers",
+            name=str(lbl) if lbl is not None else "unknown",
+            legendgroup=str(lbl), showlegend=False,
+            marker=dict(color=color, size=slice_marker_size, opacity=slice_marker_alpha, line=dict(width=0)),
+            text=ids_h,
+            hovertemplate="%{text}<extra></extra>",
+        )
+
+    def _frame_traces(t_idx: int) -> list:
+        obs = np.where(mask[:, t_idx])[0]
+        z = float(time_values[t_idx])
+        hl, sc = [], []
+        for lbl in unique_labels:
+            idx = obs[labels[obs] == lbl] if lbl is not None else obs
+            xs = positions[idx, t_idx, 0].tolist()
+            ys = positions[idx, t_idx, 1].tolist()
+            ids_h = [_hover_text(i, z) for i in idx]
+            zs = [z] * len(idx)
+            hl.append(_make_highlight_trace(lbl, xs, ys, zs, ids_h))
+            if add_slice_panel:
+                sc.append(_make_scatter2d_trace(lbl, xs, ys, ids_h))
+        return hl + sc
+
+    # Seed first-frame placeholder traces.
+    first_traces = _frame_traces(0)
+    n_hl = len(unique_labels)
+    for i, tr in enumerate(first_traces):
+        col = 2 if (add_slice_panel and i >= n_hl) else 1
+        fig.add_trace(tr, row=1, col=col)
+
+    anim_trace_indices = list(range(n_bg, len(fig.data)))
+
+    # Build frames + slider steps.
+    frames, slider_steps = [], []
+    for t_idx in range(T):
+        z = float(time_values[t_idx])
+        frames.append(go.Frame(
+            data=_frame_traces(t_idx),
+            traces=anim_trace_indices,
+            name=str(t_idx),
+        ))
+        slider_steps.append(dict(
+            args=[[str(t_idx)], dict(frame=dict(duration=0, redraw=True), mode="immediate")],
+            label=f"{z:.0f}",
+            method="animate",
+        ))
+
+    fig.frames = frames
+
+    # -----------------------------------------------------------------------
+    # Layout
+    # -----------------------------------------------------------------------
+    scene_common = dict(
+        xaxis=dict(title="dim 1", range=xlim),
+        yaxis=dict(title="dim 2", range=ylim),
+        zaxis=dict(title="time (hpf)", range=zlim),
+        camera=dict(eye=dict(x=1.4, y=1.4, z=1.0)),
+        aspectmode="manual",
+        aspectratio=dict(x=1, y=1, z=1.2),
+    )
+
+    layout_kwargs: dict = dict(
+        title=title,
+        template="plotly_white",
+        width=width,
+        height=height,
+        legend=dict(
+            itemsizing="constant",
+            tracegroupgap=2,
+            groupclick="togglegroup",
+            bgcolor="rgba(255,255,255,0.92)",
+            bordercolor="rgba(40,40,40,0.45)",
+            borderwidth=1,
+        ),
+        scene=scene_common,
+        margin=dict(t=160, b=120),
+        sliders=[dict(
+            active=0,
+            currentvalue=dict(prefix="time: ", suffix=" hpf", font=dict(size=13), visible=True),
+            pad=dict(t=50, b=10, l=120),
+            steps=slider_steps,
+            x=0.08, len=0.92,
+        )],
+        updatemenus=[dict(
+            type="buttons", showactive=False,
+            y=0.0, x=0.0, xanchor="left", yanchor="bottom",
+            buttons=[
+                dict(label="▶ Play", method="animate",
+                     args=[None, dict(frame=dict(duration=400, redraw=True),
+                                      fromcurrent=True, mode="immediate")]),
+                dict(label="⏸ Pause", method="animate",
+                     args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                        mode="immediate")]),
+            ],
+        )],
+    )
+
+    if add_slice_panel:
+        layout_kwargs["xaxis"] = dict(title="dim 1", range=xlim, showgrid=True)
+        layout_kwargs["yaxis"] = dict(title="dim 2", range=ylim, showgrid=True)
+
+    fig.update_layout(**layout_kwargs)
+
+    # -----------------------------------------------------------------------
+    # Annotations: raise subplot titles above the plot; add dynamic hpf label
+    # below the right title (add_slice_panel only).
+    # -----------------------------------------------------------------------
+    title_y = 1.10
+    for ann in fig.layout.annotations:
+        ann.y = title_y
+        ann.yanchor = "bottom"
+
+    if add_slice_panel:
+        right_title_x = fig.layout.annotations[1].x
+        hpf_y = 1.03
+
+        def _hpf_annotation(z: float) -> dict:
+            return dict(
+                text=f"Time  <b>{z:.0f} hpf</b>",
+                x=right_title_x, y=hpf_y,
+                xref="paper", yref="paper",
+                xanchor="center", yanchor="bottom",
+                showarrow=False, font=dict(size=16),
+            )
+
+        fig.add_annotation(**_hpf_annotation(float(time_values[0])))
+
+        ann0 = dict(**{k: v for k, v in fig.layout.annotations[0].to_plotly_json().items()})
+        ann1 = dict(**{k: v for k, v in fig.layout.annotations[1].to_plotly_json().items()})
+        for frame in fig.frames:
+            z_frame = float(time_values[int(frame.name)])
+            frame.layout = go.Layout(annotations=[ann0, ann1, _hpf_annotation(z_frame)])
+
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.write_html(str(output_path), include_plotlyjs="cdn")
+        print(f"Saved time-slice HTML: {output_path}")
+
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Multi-view multiplexing
+# ---------------------------------------------------------------------------
+
+def _continuous_to_categorical(field, mask, n_bins=8, colorscale="Viridis"):
+    """Bin a continuous per-(embryo,time) field into labels + a sequential
+    color_map, so the existing categorical machinery renders a continuous view.
+    Returns (labels_per_embryo, color_map). Because labels are per-embryo (N_e,)
+    but the field is per-(embryo,time), we colour each embryo by its MEAN field
+    over observed bins (a compact, legible summary for the trajectory colour)."""
+    try:
+        import plotly.express as px
+        import plotly.colors as pc
+    except ImportError:
+        pc = None
+    field = np.asarray(field, dtype=float)
+    N_e = field.shape[0]
+    per_emb = np.array([np.nanmean(field[i][mask[i]]) if mask[i].any() else np.nan
+                        for i in range(N_e)])
+    finite = per_emb[np.isfinite(per_emb)]
+    if finite.size == 0:
+        return np.array(["na"] * N_e, dtype=object), {"na": "#808080"}
+    edges = np.quantile(finite, np.linspace(0, 1, n_bins + 1))
+    edges[-1] += 1e-9
+    labels = np.empty(N_e, dtype=object)
+    for i in range(N_e):
+        if not np.isfinite(per_emb[i]):
+            labels[i] = "na"
+        else:
+            b = int(np.clip(np.searchsorted(edges, per_emb[i], side="right") - 1, 0, n_bins - 1))
+            labels[i] = f"q{b}"
+    # sequential colours across the bins
+    if pc is not None:
+        samples = pc.sample_colorscale(colorscale, np.linspace(0, 1, n_bins))
+    else:
+        samples = ["#440154", "#3b528b", "#21918c", "#5ec962", "#fde725"] * 2
+    cmap = {f"q{b}": samples[b] for b in range(n_bins)}
+    cmap["na"] = "#cccccc"
+    return labels, cmap
+
+
+def _continuous_field_figure(positions, mask, time_values, field, *, embryo_ids,
+                             title, colorscale="Viridis", field_name="value",
+                             clip_pct=None, add_slice_panel=True, width=1500,
+                             height=700, trajectory_trace_alpha=0.16):
+    """Two-panel time-slice viewer coloured by a per-(embryo,time) continuous field
+    on a GLOBAL fixed colorbar. Each point's colour = its field value at THAT
+    timepoint (time is not collapsed); the same colour means the same value across
+    all bins, so a batch entry's differing feature value is directly visible.
+
+    Faint gray trajectory lines are drawn through the data for spatial context, at
+    ``trajectory_trace_alpha`` (the same knob as the categorical viewer)."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    positions = np.asarray(positions, float); mask = np.asarray(mask, bool)
+    time_values = np.asarray(time_values, float)
+    N_e, T, _ = positions.shape
+
+    vals_obs = field[mask]
+    vals_obs = vals_obs[np.isfinite(vals_obs)]
+    if vals_obs.size == 0:
+        cmin, cmax = 0.0, 1.0
+    elif clip_pct is not None:
+        cmin, cmax = np.percentile(vals_obs, [clip_pct, 100 - clip_pct])
+    else:
+        cmin, cmax = float(vals_obs.min()), float(vals_obs.max())
+    if cmax <= cmin:
+        cmax = cmin + 1e-9
+
+    obs_xy = positions[mask]; pad = 0.05
+    xr = (obs_xy[:, 0].max() - obs_xy[:, 0].min()) or 1.0
+    yr = (obs_xy[:, 1].max() - obs_xy[:, 1].min()) or 1.0
+    xlim = [obs_xy[:, 0].min() - pad * xr, obs_xy[:, 0].max() + pad * xr]
+    ylim = [obs_xy[:, 1].min() - pad * yr, obs_xy[:, 1].max() + pad * yr]
+    zlim = [float(time_values[0]), float(time_values[-1])]
+
+    if add_slice_panel:
+        fig = make_subplots(rows=1, cols=2, specs=[[{"type": "scene"}, {"type": "xy"}]],
+                            subplot_titles=("3D overview", "Current time slice"),
+                            horizontal_spacing=0.06, column_widths=[0.55, 0.45])
+    else:
+        fig = make_subplots(rows=1, cols=1, specs=[[{"type": "scene"}]],
+                            subplot_titles=("3D overview",))
+
+    def _hover(i, t):
+        eid = str(embryo_ids[i]) if embryo_ids is not None else str(i)
+        return f"{eid}<br>{time_values[t]:.0f} hpf<br>{field_name}={field[i,t]:.3f}"
+
+    # Faint gray trajectory lines for spatial context (same alpha knob as the
+    # categorical viewer). One polyline per embryo through its observed bins.
+    xs, ys, zs = [], [], []
+    for i in range(N_e):
+        ot = np.flatnonzero(mask[i])
+        if len(ot) < 2:
+            continue
+        xs.extend(positions[i, ot, 0].tolist() + [None])
+        ys.extend(positions[i, ot, 1].tolist() + [None])
+        zs.extend(time_values[ot].tolist() + [None])
+    fig.add_trace(go.Scatter3d(
+        x=xs, y=ys, z=zs, mode="lines",
+        line=dict(color="gray", width=1.5), opacity=trajectory_trace_alpha,
+        hoverinfo="skip", showlegend=False), row=1, col=1)
+
+    # Static 3D cloud (all observed points), value-coloured, with the colorbar.
+    ei, ti = np.nonzero(mask)
+    fig.add_trace(go.Scatter3d(
+        x=positions[ei, ti, 0], y=positions[ei, ti, 1], z=time_values[ti],
+        mode="markers",
+        marker=dict(size=2, color=field[ei, ti], colorscale=colorscale,
+                    cmin=cmin, cmax=cmax, opacity=0.35,
+                    colorbar=dict(title=field_name, x=0.46)),
+        text=[_hover(i, t) for i, t in zip(ei, ti)], hoverinfo="text",
+        showlegend=False), row=1, col=1)
+    n_bg = len(fig.data)
+
+    def _frame_traces(t_idx):
+        obs = np.flatnonzero(mask[:, t_idx]); z = float(time_values[t_idx])
+        tr = [go.Scatter3d(
+            x=positions[obs, t_idx, 0], y=positions[obs, t_idx, 1], z=[z] * len(obs),
+            mode="markers",
+            marker=dict(size=6, color=field[obs, t_idx], colorscale=colorscale,
+                        cmin=cmin, cmax=cmax, opacity=1.0,
+                        line=dict(color="white", width=0.5)),
+            text=[_hover(i, t_idx) for i in obs], hoverinfo="text", showlegend=False)]
+        if add_slice_panel:
+            tr.append(go.Scatter(
+                x=positions[obs, t_idx, 0], y=positions[obs, t_idx, 1], mode="markers",
+                marker=dict(size=7, color=field[obs, t_idx], colorscale=colorscale,
+                            cmin=cmin, cmax=cmax, showscale=False),
+                text=[_hover(i, t_idx) for i in obs], hoverinfo="text", showlegend=False))
+        return tr
+
+    for i, tr in enumerate(_frame_traces(0)):
+        fig.add_trace(tr, row=1, col=(2 if (add_slice_panel and i >= 1) else 1))
+    anim_idx = list(range(n_bg, len(fig.data)))
+
+    frames, steps = [], []
+    for t_idx in range(T):
+        frames.append(go.Frame(data=_frame_traces(t_idx), traces=anim_idx, name=str(t_idx)))
+        steps.append(dict(args=[[str(t_idx)], dict(frame=dict(duration=0, redraw=True),
+                     mode="immediate")], label=f"{time_values[t_idx]:.0f}", method="animate"))
+    fig.frames = frames
+
+    fig.update_layout(
+        title=title, template="plotly_white", width=width, height=height,
+        scene=dict(xaxis=dict(title="dim 1", range=xlim),
+                   yaxis=dict(title="dim 2", range=ylim),
+                   zaxis=dict(title="time (hpf)", range=zlim),
+                   camera=dict(eye=dict(x=1.4, y=1.4, z=1.0)),
+                   aspectmode="manual", aspectratio=dict(x=1, y=1, z=1.2)),
+        margin=dict(t=120, b=120),
+        sliders=[dict(active=0, currentvalue=dict(prefix="time: ", suffix=" hpf"),
+                      pad=dict(t=50, b=10, l=120), steps=steps, x=0.08, len=0.92)],
+        updatemenus=[dict(type="buttons", showactive=False, y=0.0, x=0.0,
+            xanchor="left", yanchor="bottom", buttons=[
+                dict(label="▶ Play", method="animate",
+                     args=[None, dict(frame=dict(duration=400, redraw=True),
+                                      fromcurrent=True, mode="immediate")]),
+                dict(label="⏸ Pause", method="animate",
+                     args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                        mode="immediate")])])])
+    if add_slice_panel:
+        fig.update_layout(xaxis=dict(title="dim 1", range=xlim),
+                          yaxis=dict(title="dim 2", range=ylim))
+    return fig
+
+
+def _multiview_time_slice_html(positions, mask, time_values, views, *, embryo_ids,
+                               output_path, title, single_view_fn, base_kwargs):
+    """Render each view via single_view_fn and multiplex into one HTML with a
+    top <select> that shows/hides each embedded figure div."""
+    from pathlib import Path as _Path
+
+    view_htmls, view_names = [], []
+    for vi, v in enumerate(views):
+        name = v.get("name", f"view {vi}")
+        if "field" in v:
+            # TRUE per-(embryo,time) continuous colouring on a GLOBAL fixed colorbar
+            # (a colour = a value everywhere, comparable across time), not a
+            # per-embryo temporal-mean category hack.
+            fig = _continuous_field_figure(
+                positions, mask, time_values, np.asarray(v["field"], dtype=float),
+                embryo_ids=embryo_ids, title=f"{title} — {name}",
+                colorscale=v.get("colorscale", "Viridis"),
+                field_name=name, clip_pct=v.get("clip_pct", None),
+                add_slice_panel=base_kwargs.get("add_slice_panel", True),
+                width=base_kwargs.get("width", 1500),
+                height=base_kwargs.get("height", 700))
+        else:
+            fig = single_view_fn(
+                positions, mask, time_values, labels=v["labels"],
+                color_map=v.get("color_map"), embryo_ids=embryo_ids,
+                output_path=None, title=f"{title} — {name}", **base_kwargs)
+        # embed each figure's div; load plotly.js only once (first div)
+        html = fig.to_html(include_plotlyjs=("cdn" if vi == 0 else False),
+                           full_html=False, div_id=f"view_{vi}")
+        view_htmls.append(html)
+        view_names.append(name)
+
+    options = "\n".join(
+        f'<option value="{i}">{n}</option>' for i, n in enumerate(view_names))
+    divs = "\n".join(
+        f'<div class="viewwrap" data-view="{i}" '
+        f'style="display:{"block" if i == 0 else "none"};">{h}</div>'
+        for i, (h, n) in enumerate(zip(view_htmls, view_names)))
+    page = f"""<!doctype html><html><head><meta charset="utf-8">
+<title>{title}</title></head><body>
+<div style="font-family:sans-serif;padding:8px 12px;">
+  <label style="font-size:15px;font-weight:600;">Colour by:&nbsp;</label>
+  <select id="viewsel" style="font-size:15px;padding:3px 6px;">{options}</select>
+</div>
+{divs}
+<script>
+const sel = document.getElementById('viewsel');
+sel.addEventListener('change', function() {{
+  document.querySelectorAll('.viewwrap').forEach(function(d) {{
+    d.style.display = (d.getAttribute('data-view') === sel.value) ? 'block' : 'none';
+  }});
+  window.dispatchEvent(new Event('resize'));
+}});
+</script></body></html>"""
+
+    if output_path is not None:
+        output_path = _Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(page)
+        print(f"Saved multi-view time-slice HTML ({len(view_names)} views): {output_path}")
+    return page
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_color_map(
+    labels: np.ndarray | None,
+    color_map: dict[str, str] | None,
+    label_map: dict[str, str] | None = None,
+) -> dict[str, str]:
+    if labels is None:
+        return {}
+    if color_map is not None:
+        if label_map:
+            return {label_map.get(str(k), str(k)): v for k, v in color_map.items()}
+        return {str(k): v for k, v in color_map.items()}
+    try:
+        import plotly.express as px
+        palette = px.colors.qualitative.Plotly
+    except ImportError:
+        palette = ["#4C78A8", "#F58518", "#E45756", "#72B7B2", "#54A24B",
+                   "#EECA3B", "#B279A2", "#FF9DA6", "#9D755D", "#BAB0AC"]
+    unique = sorted(np.unique(labels).tolist())
+    return {lbl: palette[i % len(palette)] for i, lbl in enumerate(unique)}
+

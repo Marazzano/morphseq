@@ -21,8 +21,8 @@ GENOTYPE_COLORS = ColorLookup(
 )
 
 B9D2_PHENOTYPE_COLORS = {
-    'CE': '#5B7C99',            # Slate blue
-    'HTA': '#7FA87F',           # Sage green
+    'CE': '#1b9e77',            # Green
+    'HTA': '#d95f02',           # Orange
     'BA_rescue': '#C4956A',     # Terracotta/tan
     'non_penetrant': '#9E9E9E', # Warm gray
 }

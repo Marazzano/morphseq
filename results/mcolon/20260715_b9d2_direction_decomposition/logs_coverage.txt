@@ -1,0 +1,19 @@
+Loaded 23074 frames, 80 z_mu_b dims
+Saved figures/coverage_variance_raw.png
+Saved figures/coverage_variance_zscored.png
+Saved figures/coverage_classifier_zscored.png
+Saved figures/coverage_classifier_raw.png
+
+=== median # dims for 10% / 50% / 90% coverage ===
+  variance_raw       CE       10%=1  50%=1  70%=1  90%=2
+  variance_raw       HTA      10%=1  50%=1  70%=1  90%=8
+  variance_raw       pooled   10%=1  50%=1  70%=1  90%=1
+  variance_zscored   CE       10%=1  50%=10  70%=22  90%=47
+  variance_zscored   HTA      10%=2  50%=15  70%=26  90%=46
+  variance_zscored   pooled   10%=2  50%=18  70%=32  90%=55
+  classifier_raw     CE       10%=1  50%=1  70%=8  90%=28
+  classifier_raw     HTA      10%=1  50%=8  70%=16  90%=33
+  classifier_raw     pooled   10%=1  50%=6  70%=14  90%=32
+  classifier_zscored CE       10%=1  50%=8  70%=16  90%=33
+  classifier_zscored HTA      10%=2  50%=9  70%=18  90%=34
+  classifier_zscored pooled   10%=2  50%=9  70%=18  90%=36

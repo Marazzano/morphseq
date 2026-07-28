@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import warnings
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -19,6 +20,7 @@ from sklearn.metrics import confusion_matrix, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
 import analyze.utils.resampling as resample
+from ..utils.binning import add_time_bins
 
 from .results import ComparisonSpec, MulticlassOVRResults
 
@@ -29,7 +31,6 @@ def _make_logistic_classifier(n_classes: int, random_state: int) -> LogisticRegr
         max_iter=1000,
         # liblinear avoids OpenMP SHM aborts in restricted environments.
         solver="liblinear",
-        multi_class="ovr",
         class_weight="balanced",
         random_state=random_state,
     )
@@ -51,6 +52,27 @@ def _resolve_feature_columns(df: pd.DataFrame, features: Union[str, List[str]]) 
     if missing:
         raise ValueError(f"Missing feature columns: {missing}")
     return cols
+
+
+def _is_default_legacy_request(
+    groups: Union[str, List[str]],
+    reference: Union[str, List[Union[str, Tuple[str, ...]]]],
+) -> bool:
+    """Return True for the legacy default multiclass request shape."""
+    return groups == "all" and reference == "rest"
+
+
+def _format_comparison_specs_summary(
+    comparison_specs: List[ComparisonSpec],
+    *,
+    limit: int = 6,
+) -> str:
+    """Format resolved legacy comparisons for concise verbose output."""
+    labels = [f"{spec.positive} vs {spec.negative}" for spec in comparison_specs]
+    if len(labels) <= limit:
+        return ", ".join(labels)
+    head = ", ".join(labels[:limit])
+    return f"{head}, ... ({len(labels)} total)"
 
 
 def _resolve_comparison_groups(
@@ -257,6 +279,9 @@ def _run_multiclass_classification(
 
     label_to_int = {label: i for i, label in enumerate(class_labels)}
     int_to_label = {i: label for label, i in label_to_int.items()}
+
+    if verbose:
+        print("  Per-class lines below are one-vs-rest readouts from a multiclass model.")
 
     for i, t in enumerate(time_bins):
         if verbose:
@@ -541,6 +566,12 @@ def run_multiclass_classification_test(
     verbose: bool = True,
 ) -> Dict[str, Any]:
     """Run multiclass OvR AUROC-based comparison for explicitly provided groups."""
+    warnings.warn(
+        "run_multiclass_classification_test() is deprecated. "
+        "Use run_classification() from analyze.classification instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
     class_labels = list(groups.keys())
     n_classes = len(class_labels)
     if n_classes < 2:
@@ -563,9 +594,12 @@ def run_multiclass_classification_test(
     df_filtered["_class_label"] = df_filtered[embryo_id_col].astype(str).map(embryo_to_class)
     feature_cols = _resolve_feature_columns(df_filtered, features)
 
-    df_filtered["_time_bin"] = (
-        np.floor(df_filtered[time_col] / bin_width) * bin_width
-    ).astype(int)
+    df_filtered = add_time_bins(
+        df_filtered,
+        time_col=time_col,
+        bin_width=bin_width,
+        bin_col="_time_bin",
+    )
 
     groupby_cols = [embryo_id_col, "_time_bin", "_class_label"]
     df_binned = df_filtered.groupby(groupby_cols, as_index=False)[feature_cols].mean()
@@ -662,6 +696,12 @@ def run_classification_test(
     null_save_mode: str = "summary",
 ) -> MulticlassOVRResults:
     """Run flexible group comparison tests and return a consolidated result object."""
+    warnings.warn(
+        "run_classification_test() is deprecated. "
+        "Use run_classification() from analyze.classification instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
     if null_save_mode not in {"summary", "full"}:
         raise ValueError("null_save_mode must be one of {'summary','full'}")
 
@@ -689,6 +729,7 @@ def run_classification_test(
         reference == "rest"
         and set(selected_groups) == set(all_group_values)
     )
+    is_default_request = _is_default_legacy_request(groups, reference)
 
     all_rows: List[dict[str, Any]] = []
     embryo_predictions_augmented: Optional[pd.DataFrame] = None
@@ -697,7 +738,10 @@ def run_classification_test(
 
     if is_all_rest_path:
         if verbose:
-            print("\nDetected groups='all' and reference='rest': running one unified multiclass model.")
+            print("\nMode: multiclass problem")
+            print(f"Default: {'yes' if is_default_request else 'no'}")
+            print("Reporting: one-vs-rest per class")
+            print(f"Resolved: {_format_comparison_specs_summary(comparison_specs)}")
 
         groups_map = {
             g: df.loc[df[groupby].astype(str) == g, embryo_id_col].dropna().astype(str).unique().tolist()
@@ -776,6 +820,12 @@ def run_classification_test(
             selected_groups,
         )
     else:
+        if verbose:
+            print("\nMode: binary comparison problem")
+            print("Default: no")
+            print("Reporting: one AUROC series per resolved comparison")
+            print(f"Resolved: {_format_comparison_specs_summary(comparison_specs)}")
+
         for spec in comparison_specs:
             if verbose:
                 print(f"\n--- Running: {spec.positive} vs {spec.negative} ---")

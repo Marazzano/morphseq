@@ -47,7 +47,7 @@ functions/.ipynb_checkpoints/
 src/functions/.ipynb_checkpoints/
 jupyter/.ipynb_checkpoints/
 src/functions/__pychache__/
-_Archive/visualization/__pychache__/
+visualization/__pychache__/
 .idea/
 src/__pycache__/
 src/functions/__pycache__/
@@ -63,7 +63,7 @@ src/_Archive/vae/trainers/__pycache__/
 src/_Archive/vae/auxiliary_scripts/__pycache__/
 src/_Archive/vae/trainers/base_trainer/__pycache__/
 
-_Archive/visualization/__pycache__/*
+visualization/__pycache__/*
 
 
 dev/seq/.RData
@@ -83,6 +83,8 @@ src/build/__pychache__/
 **/__pycache__/
 src/core/data/
 .aider*
+.codex
+.codex/
 
 # Ignore large test data files (but keep structure and documentation)
 test_data/**/*.tif
@@ -99,10 +101,10 @@ test_data/**/*.png
 *.pyc
 
 
-# `morphseq_playground/` is a large, machine-specific data root and should not be versioned.
-# We *do* track a small README inside it to document expected layout + symlink conventions.
-morphseq_playground/*
-!morphseq_playground/README.md
+morphseq_playground/**
+!morphseq_playground/**/
+!morphseq_playground/**/*.md
+!morphseq_playground/**/[Rr][Ee][Aa][Dd][Mm][Ee]*
 
 # Ignore log directories
 logs/
@@ -116,5 +118,38 @@ _Archive/
 **/output/phase0_*/
 **/scripts/output/
 
+# Pipeline tree lives on shared storage (nlammers/.../morphseq/pipeline/{input,output,models}).
+# The repo has a browsing symlink into it; ignore it so it is never committed.
+#   pipeline -> nlammers/.../pipeline   (browse input/output/models)
+pipeline
+pipeline/
+.snakemake/
+
+# Ignore image and cluster job log files
+*.png
+*.err
+*.out
+
+# Ignore image files repo-wide (case-insensitive extensions)
+*.[Pp][Nn][Gg]
+*.[Tt][Ii][Ff]
+*.[Tt][Ii][Ff][Ff]
+*.[Jj][Pp][Gg]
+*.[Jj][Pp][Ee][Gg]
+*.[Gg][Ii][Ff]
+*.[Bb][Mm][Pp]
+*.[Ww][Ee][Bb][Pp]
+*.[Ss][Vv][Gg]
+
 # mdcolon results-specific rules moved to results/mcolon/.gitignore
 # (see results/mcolon/.gitignore for details)
+
+# Local worktree artifacts: review images belong under tmp/, while durable
+# investigation scripts/notes continue to live under results/mcolon/.
+.vscode/
+tmp/
+src/data_pipeline/docs/_SCRATCHPAD_*.md
+
+# Scheduler output produced beside pipeline rule files during local runs.
+src/data_pipeline/pipeline_orchestrator/*.err
+src/data_pipeline/pipeline_orchestrator/*.out

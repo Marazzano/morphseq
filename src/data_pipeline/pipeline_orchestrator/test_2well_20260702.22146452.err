@@ -1,0 +1,211 @@
+Config file /net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/config.yaml is extended by additional config specified via the command line.
+Building DAG of jobs...
+Using shell: /bin/bash
+Provided cores: 1 (use --cores to define parallelism)
+Rules claiming more threads will be scaled down.
+Job stats:
+job                                        count
+---------------------------------------  -------
+all                                            1
+analysis_ready_report                          1
+analysis_ready_rollup_report                   1
+build_analysis_ready                           1
+build_curvature_metrics_for_well               2
+build_death_detection_for_well                 2
+build_focus_qc_for_well                        2
+build_fraction_alive_for_well                  2
+build_mask_geometry_for_well                   2
+build_mask_quality_qc_for_well                 2
+build_motion_blur_qc_for_well                  2
+build_pose_kinematics_for_well                 2
+build_snip_auxiliary_masks_for_well            2
+build_snip_qc_for_well                         2
+build_stage_predictions_for_well               2
+build_surface_area_qc_for_well                 2
+curvature_metrics_report                       1
+death_detection_report                         1
+encode_latent_embeddings_for_well              2
+feature_extraction_rollup_report               1
+mask_geometry_report                           1
+mask_quality_qc_report                         1
+merge_curvature_metrics                        1
+merge_death_detection_qc                       1
+merge_death_event                              1
+merge_fraction_alive                           1
+merge_latent_embeddings                        1
+merge_mask_geometry                            1
+merge_mask_quality_qc                          1
+merge_motion_blur_qc                           1
+merge_pose_kinematics                          1
+merge_snip_inventory                           1
+merge_snip_qc                                  1
+merge_stage_predictions                        1
+merge_surface_area_qc                          1
+motion_blur_qc_report                          1
+quality_control_rollup_report                  1
+snip_qc_report                                 1
+surface_area_qc_report                         1
+validate_curvature_metrics_for_well            2
+validate_death_detection_qc_for_well           2
+validate_death_event_for_well                  2
+validate_focus_qc_for_well                     2
+validate_fraction_alive_for_well               2
+validate_latent_embeddings_for_well            2
+validate_mask_geometry_for_well                2
+validate_mask_quality_qc_for_well              2
+validate_motion_blur_qc_for_well               2
+validate_pose_kinematics_for_well              2
+validate_snip_auxiliary_masks_for_well         2
+validate_snip_qc_for_well                      2
+validate_stage_predictions_for_well            2
+validate_surface_area_qc_for_well              2
+write_snip_qc_resolved_sources_for_well        2
+total                                         82
+
+Select jobs to execute...
+
+[Wed Jul  8 15:43:36 2026]
+rule build_snip_auxiliary_masks_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv
+    jobid: 99
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22146452.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks snip-auxiliary-masks           --snip-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv"           --output-root "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv"           --config-yaml "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/_snakemake_runtime/merged_config.yaml"           --models-root "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/models"
+        
+INFO:bfio.init:VERSION = 2.3.0
+
+INFO:bfio.init:The bioformats_package.jar is not present.Can only use Python backend for reading/writing images.
+WARNING:bfio.backends:Java backend is not available. This could be due to a missing dependency (jpype).
+[Wed Jul  8 15:47:32 2026]
+Finished job 99.
+1 of 82 steps (1%) done
+Select jobs to execute...
+
+[Wed Jul  8 15:47:32 2026]
+rule build_curvature_metrics_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_snip_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_snip_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_masks.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_physical_embryo_registry.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_physical_embryo_registry.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv
+    jobid: 52
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01
+    resources: tmpdir=/tmp/22146452.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks curvature-metrics           --snip-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_snip_inventory.csv"           --frame-masks-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_masks.csv"           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_frame_inventory.csv"           --physical-embryo-registry-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_physical_embryo_registry.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv"
+        
+[Wed Jul  8 15:47:51 2026]
+Finished job 52.
+2 of 82 steps (2%) done
+Select jobs to execute...
+
+[Wed Jul  8 15:47:51 2026]
+rule validate_curvature_metrics_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_physical_embryo_registry.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv.validated
+    jobid: 81
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv.validated; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A01
+    resources: tmpdir=/tmp/22146452.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks validate-curvature-metrics           --input-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv"           --physical-embryo-registry-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_physical_embryo_registry.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/curvature_metrics/per_well/20260702_hotchem_24hpf_plate01_A01/20260702_hotchem_24hpf_plate01_A01_curvature_metrics.csv.validated"
+        
+[Wed Jul  8 15:47:59 2026]
+Finished job 81.
+3 of 82 steps (4%) done
+Select jobs to execute...
+
+[Wed Jul  8 15:47:59 2026]
+rule validate_snip_auxiliary_masks_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv.validated
+    jobid: 100
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv.validated; Input files updated by another job: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22146452.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks validate-snip-auxiliary-masks           --input-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv"           --snip-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv"           --output-flag "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snip_auxiliary_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_auxiliary_masks.csv.validated"
+        
+[Wed Jul  8 15:48:03 2026]
+Finished job 100.
+4 of 82 steps (5%) done
+Select jobs to execute...
+
+[Wed Jul  8 15:48:03 2026]
+rule build_pose_kinematics_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/pose_kinematics/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_pose_kinematics.csv
+    jobid: 92
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/pose_kinematics/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_pose_kinematics.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22146452.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks pose-kinematics           --snip-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv"           --frame-masks-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv"           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv"           --physical-embryo-registry-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/feature_extraction/20260702_hotchem_24hpf_plate01/pose_kinematics/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_pose_kinematics.csv"
+        
+/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/feature_extraction/pose_kinematics_metrics.py:19: RuntimeWarning: data_pipeline.shared.path_contracts is deprecated and intentionally no longer resolves paths. Use pipeline_orchestrator/env.yaml for roots and pipeline_orchestrator/orchestration/paths.py for artifact paths. Pass concrete paths into loaders instead of using a shared hidden default.
+  from data_pipeline.shared.path_contracts import require_existing_path
+[Wed Jul  8 15:48:10 2026]
+Finished job 92.
+5 of 82 steps (6%) done
+Select jobs to execute...
+
+[Wed Jul  8 15:48:10 2026]
+rule build_motion_blur_qc_for_well:
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/quality_control/20260702_hotchem_24hpf_plate01/motion_blur_qc/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_motion_blur_qc.csv
+    jobid: 127
+    reason: Missing output files: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/quality_control/20260702_hotchem_24hpf_plate01/motion_blur_qc/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_motion_blur_qc.csv
+    wildcards: experiment=20260702_hotchem_24hpf_plate01, well_id=20260702_hotchem_24hpf_plate01_A02
+    resources: tmpdir=/tmp/22146452.1.trapnell-long.q
+
+
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks motion-blur-qc           --snip-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv"           --frame-masks-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv"           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv"           --physical-embryo-registry-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/quality_control/20260702_hotchem_24hpf_plate01/motion_blur_qc/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_motion_blur_qc.csv"
+        
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/quality_control/motion_blur_qc/compute.py", line 123, in compute_motion_blur_qc
+    z_planes, _z_rows = load_z_stack_images_from_image_id(
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/acquisition/image_materialization/materialized_image_readers.py", line 243, in load_z_stack_images_from_image_id
+    rows = resolve_z_stack_rows_from_image_id(
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/acquisition/image_materialization/materialized_image_readers.py", line 132, in resolve_z_stack_rows_from_image_id
+    raise ValueError(
+ValueError: resolve_z_stack_rows_from_image_id: no z_stack rows found for image_id='20260702_hotchem_24hpf_plate01_A02_BF_t0000' (well_id='20260702_hotchem_24hpf_plate01_A02', channel_id='BF', time_index=0), product_key='BF__z_stack'.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 1717, in <module>
+    main()
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 1713, in main
+    args.func(args)
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/tasks.py", line 767, in cmd_motion_blur_qc
+    run_motion_blur_qc(
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/quality_control/motion_blur_qc/entrypoint.py", line 30, in run_motion_blur_qc
+    df = compute_motion_blur_qc(snip_inventory, frame_masks, frame_inventory, config=config)
+  File "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/quality_control/motion_blur_qc/compute.py", line 131, in compute_motion_blur_qc
+    raise ValueError(
+ValueError: motion_blur_qc: could not load z stack for snip '20260702_hotchem_24hpf_plate01_A02_e01_BF_t0000' (image_id='20260702_hotchem_24hpf_plate01_A02_BF_t0000', product_key='BF__z_stack'): resolve_z_stack_rows_from_image_id: no z_stack rows found for image_id='20260702_hotchem_24hpf_plate01_A02_BF_t0000' (well_id='20260702_hotchem_24hpf_plate01_A02', channel_id='BF', time_index=0), product_key='BF__z_stack'.
+ERROR conda.cli.main_run:execute(125): `conda run env PYTHONPATH=/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src python -m data_pipeline.pipeline_orchestrator.tasks motion-blur-qc --snip-inventory-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv --frame-masks-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv --frame-inventory-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv --physical-embryo-registry-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv --output-csv /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/quality_control/20260702_hotchem_24hpf_plate01/motion_blur_qc/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_motion_blur_qc.csv` failed. (See above for error)
+[Wed Jul  8 15:48:14 2026]
+Error in rule build_motion_blur_qc_for_well:
+    jobid: 127
+    input: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv.validated, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv, /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv.validated
+    output: /net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/quality_control/20260702_hotchem_24hpf_plate01/motion_blur_qc/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_motion_blur_qc.csv
+    shell:
+        
+        /net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda run -n segmentation_grounded_sam --no-capture-output env PYTHONPATH="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq:/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src" python -m data_pipeline.pipeline_orchestrator.tasks motion-blur-qc           --snip-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/snips/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_snip_inventory.csv"           --frame-masks-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/frame_masks/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_masks.csv"           --frame-inventory-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/acquisition/20260702_hotchem_24hpf_plate01/frame_inventory/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_frame_inventory.csv"           --physical-embryo-registry-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/object_extraction/20260702_hotchem_24hpf_plate01/physical_embryo_registry/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_physical_embryo_registry.csv"           --output-csv "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline_output/quality_control/20260702_hotchem_24hpf_plate01/motion_blur_qc/per_well/20260702_hotchem_24hpf_plate01_A02/20260702_hotchem_24hpf_plate01_A02_motion_blur_qc.csv"
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: .snakemake/log/2026-07-08T154331.884723.snakemake.log

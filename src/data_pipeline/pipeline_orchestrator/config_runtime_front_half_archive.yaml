@@ -1,0 +1,32 @@
+# Runtime overlay — FULL ARCHIVE, front_half only (2026-07-16)
+#
+# Compose ON TOP of config.yaml:
+#   --configfile config.yaml config_runtime_front_half_archive.yaml
+# Later files win, so anything set here overrides the base.
+#
+# Scope: ingest -> map -> join -> discover -> materialize_well -> validate. Stops BEFORE
+# segmentation/features, so nothing here needs a GPU (verified: all 192 materialize jobs on the
+# 20260702 runs logged AUTO_MODE_CHOSEN -> CPU).
+#
+# `experiments` is deliberately NOT set here. The SGE array passes exactly one experiment per task
+# via --config experiments="[...]" so each task gets its own isolated work dir and log. Setting a
+# list here would fight that.
+
+image_materialization:
+  # Explicit, not inherited: this is the whole point of the run. 0 == no cap. If this is ever
+  # non-zero, every timeseries is silently truncated to the first N timepoints — which for YX1
+  # (T=83) would quietly discard ~99% of the data while still "succeeding".
+  smoke_max_time_indices: 0
+
+  # Products left at the config.yaml baseline (BF focus_stack projection + full BF z_stack).
+  # Write policy is owned by materialized_image_write_policy.py, NOT overridden here:
+  #   BF__z_stack                  -> jpg q85, target 6.5 µm/px (fractional factor per scope)
+  #   BF__projection__focus_stack  -> png, native resolution, lossless
+  # To move z-slices to lossless for an archive-only run, set BOTH keys (file_format alone silently
+  # resolved downsample_method to "none" before the 2026-07-16 fix; the guard is now in place, but
+  # naming both is still the clearer intent):
+  #   write_policies:
+  #     BF__z_stack:
+  #       file_format: png
+  #       jpeg_quality: null
+  #       downsample_method: area_resize

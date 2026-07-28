@@ -1,0 +1,36 @@
+#!/bin/bash
+#$ -N cross_exp_qc
+#$ -q trapnell-long.q
+#$ -pe serial 1
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=32G
+#$ -l h_rt=36:00:00
+#$ -cwd
+#$ -o results/mcolon/20260625_cross_experiment_focus_motion_qc/logs/
+#$ -e results/mcolon/20260625_cross_experiment_focus_motion_qc/logs/
+#$ -V
+
+set -euo pipefail
+
+MORPHSEQ_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+BASE="$MORPHSEQ_ROOT/results/mcolon/20260625_cross_experiment_focus_motion_qc"
+SCRIPT="$BASE/cross_experiment_qc_audit.py"
+PY="/net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/python"
+
+EXPERIMENTS="${EXPERIMENTS:-20250305,20251125,20260206}"
+METRIC_TYPE="${METRIC_TYPE:-both}"
+EXAMPLES_PER_DECILE="${EXAMPLES_PER_DECILE:-6}"
+
+mkdir -p "$BASE/logs" "$BASE/tables" "$BASE/figures"
+
+echo "[$(date)] host=$(hostname) job=$JOB_ID experiments=$EXPERIMENTS metric_type=$METRIC_TYPE"
+nvidia-smi || true
+
+"$PY" "$SCRIPT" \
+  --experiments "$EXPERIMENTS" \
+  --metric-type "$METRIC_TYPE" \
+  --out-dir "$BASE" \
+  --recompute-missing \
+  --examples-per-experiment-decile "$EXAMPLES_PER_DECILE"
+
+echo "[$(date)] done"

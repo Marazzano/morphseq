@@ -5,29 +5,28 @@ Computes centroid position, bounding box, orientation, displacement, and speed.
 Extracted from build03A_process_images.py get_embryo_stats function (lines 820-833).
 """
 
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Dict, Optional
+
 import numpy as np
 import pandas as pd
-from typing import Dict, Optional
+import skimage.io as io
 from skimage.measure import regionprops
+
+from data_pipeline.object_extraction.segmentation.shared.mask_processing import clean_embryo_mask
+from data_pipeline.shared.path_contracts import require_existing_path
+
+from .mask_geometry_metrics import compute_mask_geometry
 
 
 def compute_pose_features(
     mask: np.ndarray,
     pixel_size_um: float,
 ) -> Dict:
-    """
-    Compute pose features from binary mask.
-
-    Args:
-        mask: Binary embryo mask (H x W)
-        pixel_size_um: Pixel size in micrometers
-
-    Returns:
-        Dictionary with pose metrics
-    """
-    mask_binary = (mask > 0).astype(np.uint8)
-
-    # Use regionprops for robust measurements
+    """Compute pose features from binary mask."""
+    mask_binary = clean_embryo_mask(mask).astype(np.uint8)
     props = regionprops(mask_binary)
 
     if not props:
@@ -42,14 +41,8 @@ def compute_pose_features(
         }
 
     prop = props[0]
-
-    # Orientation angle (radians)
     orientation = prop.orientation
-
-    # Bounding box in pixels
     min_row, min_col, max_row, max_col = prop.bbox
-
-    # Convert to micrometers
     bbox_width_um = (max_col - min_col) * pixel_size_um
     bbox_height_um = (max_row - min_row) * pixel_size_um
 
@@ -70,18 +63,7 @@ def compute_kinematics(
     current_time_s: float,
     previous_time_s: Optional[float],
 ) -> Dict:
-    """
-    Compute kinematic features between consecutive frames.
-
-    Args:
-        current_centroid_um: (x, y) centroid in micrometers
-        previous_centroid_um: Previous (x, y) centroid in micrometers
-        current_time_s: Current time in seconds
-        previous_time_s: Previous time in seconds
-
-    Returns:
-        Dictionary with kinematics metrics
-    """
+    """Compute kinematic features between consecutive frames."""
     if previous_centroid_um is None or previous_time_s is None:
         return {
             'displacement_um': np.nan,
@@ -91,19 +73,11 @@ def compute_kinematics(
             'delta_time_s': np.nan,
         }
 
-    # Compute displacement
     delta_x = current_centroid_um[0] - previous_centroid_um[0]
     delta_y = current_centroid_um[1] - previous_centroid_um[1]
     displacement = np.sqrt(delta_x**2 + delta_y**2)
-
-    # Compute time delta
     delta_time = current_time_s - previous_time_s
-
-    # Compute speed (avoid division by zero)
-    if delta_time > 0:
-        speed = displacement / delta_time
-    else:
-        speed = np.nan
+    speed = displacement / delta_time if delta_time > 0 else np.nan
 
     return {
         'displacement_um': float(displacement),
@@ -116,56 +90,77 @@ def compute_kinematics(
 
 def extract_pose_kinematics_batch(
     tracking_df: pd.DataFrame,
-    sort_by: list = ['embryo_id', 'frame_index'],
+    mask_dir: Path | None = None,
+    sort_by: list = ['embryo_id', 'time_int'],
+    pixel_size_col: str = 'micrometers_per_pixel',
+    mask_path_col: str = 'exported_mask_path',
 ) -> pd.DataFrame:
-    """
-    Extract pose and kinematics metrics for batch of snips.
+    """Extract pose and kinematics metrics for batch of snips."""
+    def _resolve_time(row: pd.Series) -> float:
+        for col in ('experiment_time_s', 'time_s'):
+            if col in row.index and pd.notna(row[col]):
+                return float(row[col])
+        raise ValueError(f"pose_kinematics: missing required time column for snip_id={row.get('snip_id')}")
 
-    Args:
-        tracking_df: Tracking DataFrame with centroid, time, and metadata
-        sort_by: Columns to sort by for temporal ordering
+    sort_cols = list(sort_by)
+    if 'experiment_time_s' in tracking_df.columns and 'experiment_time_s' not in sort_cols:
+        sort_cols = ['embryo_id', 'experiment_time_s']
+    elif 'time_s' in tracking_df.columns and 'time_s' not in sort_cols:
+        sort_cols = ['embryo_id', 'time_s']
 
-    Returns:
-        DataFrame with pose and kinematics metrics per snip_id
-    """
-    # Sort by embryo and time
-    df_sorted = tracking_df.sort_values(by=sort_by).reset_index(drop=True)
-
+    df_sorted = tracking_df.sort_values(by=sort_cols).reset_index(drop=True)
     results = []
 
     for idx, row in df_sorted.iterrows():
         snip_id = row['snip_id']
         embryo_id = row['embryo_id']
+        mask_path = require_existing_path(
+            row.get(mask_path_col),
+            context='pose_kinematics',
+            field_name=mask_path_col,
+            row_id=str(snip_id),
+        )
+        mask = io.imread(mask_path)
 
-        # Current frame data
-        current_centroid = (row.get('centroid_x_um', np.nan), row.get('centroid_y_um', np.nan))
-        current_time = row.get('time_s', np.nan)
+        if pixel_size_col not in row.index or pd.isna(row[pixel_size_col]):
+            raise ValueError(f"pose_kinematics: missing required pixel size column '{pixel_size_col}' for snip_id={snip_id}")
+        pixel_size = float(row[pixel_size_col])
+        if not np.isfinite(pixel_size) or pixel_size <= 0:
+            raise ValueError(f"pose_kinematics: invalid pixel size {pixel_size!r} for snip_id={snip_id}")
 
-        # Extract pose features from current frame
+        pose_stats = compute_mask_geometry(mask, float(pixel_size))
+        orientation_stats = compute_pose_features(mask, float(pixel_size))
+        current_centroid = (pose_stats.get('centroid_x_um', np.nan), pose_stats.get('centroid_y_um', np.nan))
         pose_features = {
             'snip_id': snip_id,
-            'orientation_angle': row.get('orientation_angle', np.nan),
-            'bbox_width_um': row.get('bbox_width_um', np.nan),
-            'bbox_height_um': row.get('bbox_height_um', np.nan),
+            'orientation_angle': orientation_stats.get('orientation_angle', np.nan),
+            'bbox_width_um': pose_stats.get('width_um', np.nan),
+            'bbox_height_um': pose_stats.get('length_um', np.nan),
         }
 
-        # Find previous frame for same embryo
-        prev_idx = None
-        if idx > 0 and df_sorted.loc[idx - 1, 'embryo_id'] == embryo_id:
-            prev_idx = idx - 1
-
-        # Compute kinematics
+        current_time = _resolve_time(row)
+        prev_idx = idx - 1 if idx > 0 and df_sorted.loc[idx - 1, 'embryo_id'] == embryo_id else None
         if prev_idx is not None:
             prev_row = df_sorted.loc[prev_idx]
-            prev_centroid = (prev_row.get('centroid_x_um', np.nan), prev_row.get('centroid_y_um', np.nan))
-            prev_time = prev_row.get('time_s', np.nan)
-
-            kinematics = compute_kinematics(
-                current_centroid,
-                prev_centroid,
-                current_time,
-                prev_time,
+            prev_mask_path = require_existing_path(
+                prev_row.get(mask_path_col),
+                context='pose_kinematics',
+                field_name=mask_path_col,
+                row_id=str(prev_row.get('snip_id')),
             )
+            prev_mask = io.imread(prev_mask_path)
+            if pixel_size_col not in prev_row.index or pd.isna(prev_row[pixel_size_col]):
+                raise ValueError(f"pose_kinematics: missing required pixel size column '{pixel_size_col}' for snip_id={prev_row.get('snip_id')}")
+            prev_pixel_size = float(prev_row[pixel_size_col])
+            if not np.isfinite(prev_pixel_size) or prev_pixel_size <= 0:
+                raise ValueError(f"pose_kinematics: invalid pixel size {prev_pixel_size!r} for snip_id={prev_row.get('snip_id')}")
+            prev_pose_stats = compute_mask_geometry(prev_mask, float(prev_pixel_size))
+            prev_centroid = (
+                prev_pose_stats.get('centroid_x_um', np.nan),
+                prev_pose_stats.get('centroid_y_um', np.nan),
+            )
+            prev_time = _resolve_time(prev_row)
+            kinematics = compute_kinematics(current_centroid, prev_centroid, current_time, prev_time)
         else:
             kinematics = {
                 'displacement_um': np.nan,
@@ -175,8 +170,6 @@ def extract_pose_kinematics_batch(
                 'delta_time_s': np.nan,
             }
 
-        # Combine features
-        result = {**pose_features, **kinematics}
-        results.append(result)
+        results.append({**pose_features, **kinematics})
 
     return pd.DataFrame(results)

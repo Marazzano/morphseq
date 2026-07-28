@@ -1,0 +1,174 @@
+#!/bin/bash
+# TEMPLATE ONLY - COPY THIS FILE, DO NOT EDIT OR OVERWRITE IT.
+#
+# This template is intentionally guarded. A copied job exits before running
+# Snakemake until you remove the TEMPLATE_GUARD block below.
+#
+# Copy from src/data_pipeline/pipeline_orchestrator/sge_job_submissions:
+#   cp submit_snakemake_TEMPLATE.sge submit_<run_name>.sge
+#
+# Then edit:
+#   - job name and log filenames in the #$ directives
+#   - QUEUE / memory / cores / GPU request
+#   - CONFIG_FILES
+#   - TARGET
+
+#$ -N TEMPLATE_DO_NOT_RUN
+#$ -cwd
+#$ -q trapnell-long.q
+#$ -l gpgpu=TRUE,cuda=1
+#$ -l mfree=24G
+#$ -pe serial 4
+#$ -o /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/TEMPLATE_DO_NOT_RUN.$JOB_ID.out
+#$ -e /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/TEMPLATE_DO_NOT_RUN.$JOB_ID.err
+
+set -euo pipefail
+
+# Group-writable output on a SHARED tree. Every directory the pipeline creates comes from
+# mkdir(parents=True), which honours the UMASK of whoever launched the job -- not the mode of the
+# parent directory. The default 022 strips group-write, so a run by user A produces experiment
+# directories user B cannot write, and B's run then fails inside A's experiment. That is exactly
+# the state the tree was in on 2026-07-26: ~550 nlammers-owned experiment dirs at drwxr-sr-x,
+# group-readable but not group-writable, and only their OWNER could chmod them.
+#
+# 002 keeps group-write on. Combined with the setgid bit already set on the output tree (new files
+# inherit trapnelllab), any lab member can write into any experiment, whoever created it.
+umask 002
+
+# Remove this entire block in copied submit scripts after you have edited the
+# #$ directives and command settings. Leaving it in place prevents accidental
+# submission of the template.
+TEMPLATE_GUARD="REMOVE_THIS_BLOCK_BEFORE_SUBMITTING"
+if [[ -n "${TEMPLATE_GUARD}" ]]; then
+  cat >&2 <<'EOF'
+ERROR: This is the Snakemake SGE template, not a real submit script.
+
+Copy it first, edit the copy, and remove the TEMPLATE_GUARD block before qsub.
+
+Example:
+  cp sge_job_submissions/submit_snakemake_TEMPLATE.sge \
+    sge_job_submissions/submit_my_run.sge
+  sed -n '1,120p' sge_job_submissions/submit_my_run.sge
+  qsub sge_job_submissions/submit_my_run.sge
+EOF
+  exit 64
+fi
+
+CONDA_BASE="/net/trapnell/vol1/home/mdcolon/software/miniconda3"
+CONDA_ENV="segmentation_grounded_sam"
+# Absolute, NOT derived from BASH_SOURCE. SGE copies the submit script into its spool directory
+# before executing it, so ${BASH_SOURCE[0]} resolves to /var/spool/uge/<node>/... and every path
+# derived from it lands in the wrong tree. Likewise `#$ -cwd` does NOT put you in the submit
+# directory at job start. Both bit for real (job 22798919 died with
+#   FileNotFoundError: '/var/spool/uge/t005/env.yaml'
+# reading env.yaml before the `cd` below). Pin the root; do not re-derive it.
+REPO_ROOT="/net/trapnell/vol1/home/mdcolon/proj/morphseq"
+WORKFLOW_DIR="${REPO_ROOT}/src/data_pipeline/pipeline_orchestrator"
+SRC_ROOT="${REPO_ROOT}/src"
+LOG_DIR="${REPO_ROOT}/logs"
+SNAKEMAKE="${CONDA_BASE}/envs/${CONDA_ENV}/bin/snakemake"
+
+CORES=4
+TARGET="all"
+# EXPERIMENT is the single source of truth for this run: the Snakemake work directory is DERIVED
+# from it (below), so every experiment systematically gets its OWN isolated .snakemake lock/DAG
+# tree. This lets concurrent runs on DIFFERENT experiments share this one WORKFLOW_DIR without
+# colliding on a single lock. Set it to the experiment this job runs.
+EXPERIMENT="<experiment_id>"
+CONFIG_FILES=(
+  "${WORKFLOW_DIR}/config.yaml"
+  "${WORKFLOW_DIR}/configs/runtime_configs/config_runtime_<run_name>.yaml"
+)
+
+# Per-experiment Snakemake work directory, co-located with the shared output tree so incremental
+# DAG state + the lock are shared across users/machines. --directory relocates ONLY .snakemake
+# bookkeeping; outputs/config/includes are unaffected. output_root comes from env.yaml.
+PYTHON="${CONDA_BASE}/envs/${CONDA_ENV}/bin/python"
+OUTPUT_ROOT="$("${PYTHON}" -c "import yaml; print(yaml.safe_load(open('${WORKFLOW_DIR}/env.yaml'))['paths']['output_root'])")"
+SMK_WORKDIR="${OUTPUT_ROOT}/work_directories/${EXPERIMENT}"
+
+mkdir -p "${LOG_DIR}" "${SMK_WORKDIR}"
+cd "${WORKFLOW_DIR}"
+
+echo "=== ${JOB_NAME:-snakemake_sge} START $(date) on $(hostname) ==="
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L || echo "WARNING: nvidia-smi -L failed; no GPU visible on this node"
+
+# The Snakefile imports `data_pipeline` at parse time.
+export PYTHONPATH="${SRC_ROOT}:${PYTHONPATH:-}"
+
+LOCK_DIR="${SMK_WORKDIR}/.snakemake/locks"
+LOCK_FILE="$(find "${LOCK_DIR}" -mindepth 1 -maxdepth 1 -type f -print -quit 2>/dev/null || true)"
+if [[ -n "${LOCK_FILE}" ]]; then
+  cat >&2 <<EOF
+ERROR: Snakemake lock detected before starting ${JOB_NAME:-snakemake_sge}.
+
+Lock directory:
+  ${LOCK_DIR}
+
+At least one lock file exists:
+  ${LOCK_FILE}
+
+This usually means another Snakemake run is still active on experiment
+${EXPERIMENT}, or a previous run exited without clearing its lock. This SGE script
+refuses to start because two schedulers against the SAME experiment's outputs can
+corrupt them. (Runs on DIFFERENT experiments are isolated by their own SMK_WORKDIR
+and do not trip this.)
+
+Check active jobs first:
+  qstat -u "${USER}"
+
+If no active run owns experiment ${EXPERIMENT}, clear its stale lock with:
+  env PYTHONPATH="${SRC_ROOT}" "${SNAKEMAKE}" --configfile ${CONFIG_FILES[*]} \
+    --directory "${SMK_WORKDIR}" --unlock
+
+Then resubmit:
+  qsub "$0"
+EOF
+  exit 2
+fi
+
+# --resources gpu=1 is REQUIRED for any run touching a GPU rule, not optional. The rules'
+# `resources: gpu=1` declarations are INERT without a CLI budget -- Snakemake treats the resource
+# as unlimited and will happily schedule several model jobs onto one card. This repo has no
+# Snakemake profile, so the flag has to be here.
+#
+# Placement matters: it must NOT sit immediately before the bare positional target. Its greedy
+# nargs="*" swallows the target token and Snakemake 7.32.4 dies with
+#   ValueError: not enough values to unpack (expected 2, got 1)
+# Keep another --flag between it and "${TARGET}".
+#
+# If this run uses a resident model server (a `service(...)` rule), CORES must be >= 2: the
+# service job holds a core for the whole run, so --cores 1 fails with
+#   Excess Resources: _cores: 2/1
+"${SNAKEMAKE}" \
+  --configfile "${CONFIG_FILES[@]}" \
+  --directory "${SMK_WORKDIR}" \
+  --cores "${CORES}" \
+  --resources gpu=1 \
+  --keep-going \
+  --printshellcmds \
+  "${TARGET}"
+
+echo "=== ${JOB_NAME:-snakemake_sge} FINISHED $(date) ==="
+
+# Simple command examples:
+#
+# Copy the template:
+#   cp sge_job_submissions/submit_snakemake_TEMPLATE.sge \
+#     sge_job_submissions/submit_my_run.sge
+#
+# Submit from this directory:
+#   qsub sge_job_submissions/submit_my_run.sge
+#
+# Check job state:
+#   qstat -j <JOB_ID>
+#
+# Follow logs from the repo root:
+#   tail -f /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/<job_name>.<JOB_ID>.err
+#   tail -f /net/trapnell/vol1/home/mdcolon/proj/morphseq/logs/<job_name>.<JOB_ID>.out
+#
+# Clear a stale lock only after confirming no active run owns it:
+#   env PYTHONPATH=/net/trapnell/vol1/home/mdcolon/proj/morphseq/src \
+#     /net/trapnell/vol1/home/mdcolon/software/miniconda3/envs/segmentation_grounded_sam/bin/snakemake \
+#     --configfile config.yaml configs/runtime_configs/config_runtime_<run_name>.yaml --unlock
