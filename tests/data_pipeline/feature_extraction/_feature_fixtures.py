@@ -49,7 +49,7 @@ def make_inputs(*, time_indices=(0, 1, 2), mask_side=10):
         })
         mask_rows.append({"mask_id": mask_id, "image_id": image_id, "mask_rle": json.dumps(rle)})
         inv_rows.append({
-            "image_id": image_id, "source_micrometers_per_pixel": PIXEL_SIZE_UM,
+            "image_id": image_id, "image_micrometers_per_pixel": PIXEL_SIZE_UM,
             "elapsed_time_s": float(t * 100),
         })
 
