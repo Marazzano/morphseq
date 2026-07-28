@@ -23,13 +23,20 @@ from .constructors import build_snip_id
 from .constructors import build_track_id
 from .constructors import build_well_id
 from .constructors import sanitize_experiment_id
+from .parsers import compose_collection_experiment_id
+from .parsers import is_collection
+from .parsers import is_collection_plate_id
+from .parsers import parse_collection_name_from_plate_id
 from .parsers import normalize_embryo_local_track_id  # deprecated alias for parse_embryo_local_track_id
+from .parsers import parse_declared_hpf
 from .parsers import parse_embryo_id
 from .parsers import parse_embryo_local_track_id
 from .parsers import parse_image_id
 from .parsers import parse_image_id_with_z_index
 from .parsers import parse_mask_id
 from .parsers import parse_physical_embryo_id
+from .parsers import parse_event_label
+from .parsers import parse_plate_token
 from .parsers import parse_snip_id
 from .parsers import parse_track_id
 from .parsers import parse_well_row_col
@@ -52,7 +59,14 @@ __all__ = [
     "build_well_id",
     "sanitize_experiment_id",
     # parsers
+    "compose_collection_experiment_id",
+    "is_collection",
+    "is_collection_plate_id",
+    "parse_collection_name_from_plate_id",
     "normalize_embryo_local_track_id",  # deprecated; use parse_embryo_local_track_id
+    "parse_declared_hpf",
+    "parse_event_label",
+    "parse_plate_token",
     "parse_embryo_id",
     "parse_embryo_local_track_id",
     "parse_image_id",

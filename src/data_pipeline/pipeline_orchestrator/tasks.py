@@ -47,6 +47,66 @@ def cmd_normalize_plate(args: argparse.Namespace) -> None:
     validate_plate_metadata_csv(input_csv=args.output_csv, output_flag=args.output_flag)
 
 
+def cmd_resolve_experiment_ids(args: argparse.Namespace) -> None:
+    """Expand a mixed list of experiment_ids + collections into a flat experiment_id list.
+
+    Thin dispatcher for the collection run-target seam (EXPERIMENT_GROUP_PLATE_MODEL.md):
+    a `_coll` entry fans out to its member `{coll}_{plate}` ids, bare ids pass through. Writes
+    the deduped list one-per-line (the flat EXP_FILE the SGE array template consumes) and prints
+    the count N (for `qsub -t 1-N`). Resolution mints nothing itself — it delegates to the
+    identifiers grammar (DRY).
+    """
+    from data_pipeline.acquisition.metadata_ingest.experiment_collection import resolve_experiment_ids
+
+    entries = [e.strip() for e in str(args.entries).split(",") if e.strip()]
+    ids = resolve_experiment_ids(entries, raw_root=args.raw_root, microscope=args.microscope)
+
+    out = Path(args.output_list)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(ids) + "\n")
+    # N goes to stdout ALONE (no log prefix) so a submit script can `N=$(... resolve ...)`.
+    print(len(ids))
+
+
+def cmd_ingest_collection_acquisition(args: argparse.Namespace) -> None:
+    """Build ONE acquisition inventory for a merged collection plate ({coll}_{plate}).
+
+    Thin dispatcher: find the plate's raw source children, read each once via the per-scope
+    acquisition-inventory builder, union them into one inventory keyed by the merged
+    experiment_id, write the CSV. All domain logic lives in the ingest module (DRY).
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest import (
+        ingest_collection_acquisition_inventory,
+    )
+
+    ingest_collection_acquisition_inventory(
+        experiment_id=args.experiment,
+        raw_root=args.raw_root,
+        microscope=args.microscope,
+        output_csv=args.output_csv,
+        position_well_mapping_csv=getattr(args, "position_well_mapping_csv", None),
+    )
+
+
+def cmd_classify_experiment(args: argparse.Namespace) -> None:
+    """Write the early-DAG collection-classify artifact for one experiment.
+
+    Thin dispatcher: derive the declared fact (is_collection + the time_index→start_age_hpf map)
+    and write the JSON. All domain logic (the classify + the union-consistent ordering) lives in
+    the classify module (DRY). See EXPERIMENT_GROUP_PLATE_MODEL.md ("CLASSIFY ONCE").
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_classification import (
+        write_collection_classification,
+    )
+
+    write_collection_classification(
+        experiment_id=args.experiment,
+        raw_root=args.raw_root,
+        microscope=args.microscope,
+        output_json=args.output_json,
+    )
+
+
 def cmd_extract_scope(args: argparse.Namespace) -> None:
     # The inventory stores full absolute source paths; readers re-anchor them under input_root at
     # consume time, so ingest needs no input_root.
@@ -588,6 +648,7 @@ def cmd_stage_predictions(args: argparse.Namespace) -> None:
         frame_inventory_csv=args.frame_inventory_csv,
         plate_metadata_csv=args.plate_metadata_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        collection_classification_json=args.collection_classification_json,
         output_csv=args.output_csv,
     )
 
@@ -1122,10 +1183,11 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
 
 
 def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
-    """Mint the per-well physical_embryo_registry shard from a per-well frame_masks shard.
+    """Mint the per-well physical_embryo_registry shard from a frame_masks + frame_inventory shard.
 
-    Thin dispatcher: read frame_masks CSV -> Stage-2 builder (which validates before returning)
-    -> write the registry CSV. No domain logic here.
+    Thin dispatcher: read frame_masks + frame_inventory CSVs -> Stage-2 builder (which reads
+    per-well n_sources and validates before returning) -> write the registry CSV. No domain
+    logic here.
     """
     import pandas as pd
 
@@ -1133,7 +1195,10 @@ def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
         build_physical_embryo_registry,
     )
 
-    registry = build_physical_embryo_registry(pd.read_csv(args.frame_masks_csv))
+    registry = build_physical_embryo_registry(
+        pd.read_csv(args.frame_masks_csv),
+        pd.read_csv(args.frame_inventory_csv),
+    )
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     registry.to_csv(args.output_csv, index=False)
 
@@ -1233,6 +1298,39 @@ def cmd_merge_latent_embeddings(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p_resolve = sub.add_parser("resolve-experiment-ids")
+    p_resolve.add_argument("--entries", required=True,
+                           help="comma-separated mix of experiment_ids and _coll collection names")
+    p_resolve.add_argument("--raw-root", type=Path, required=True,
+                           help="raw image root containing the collection dirs")
+    p_resolve.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_resolve.add_argument("--output-list", type=Path, required=True,
+                           help="path to write the flat experiment_id list (the SGE EXP_FILE)")
+    p_resolve.set_defaults(func=cmd_resolve_experiment_ids)
+
+    p_coll_acq = sub.add_parser("ingest-collection-acquisition")
+    p_coll_acq.add_argument("--experiment", required=True,
+                            help="merged collection plate id ({collection}_{plate_token})")
+    p_coll_acq.add_argument("--raw-root", type=Path, required=True,
+                            help="raw image root containing the _coll dir (scope-anchored)")
+    p_coll_acq.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_coll_acq.add_argument("--output-csv", type=Path, required=True,
+                            help="destination for the unioned acquisition inventory CSV")
+    p_coll_acq.add_argument("--position-well-mapping-csv", type=Path, default=None,
+                            help="optional: also derive+write the canonical position->well mapping "
+                                 "(the second artifact the native materializer needs)")
+    p_coll_acq.set_defaults(func=cmd_ingest_collection_acquisition)
+
+    p_classify = sub.add_parser("classify-experiment")
+    p_classify.add_argument("--experiment", required=True,
+                            help="experiment id to classify ({collection}_coll_{plate} or a single id)")
+    p_classify.add_argument("--raw-root", type=Path, required=True,
+                            help="raw image root containing the _coll dir (read only for a collection)")
+    p_classify.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_classify.add_argument("--output-json", type=Path, required=True,
+                            help="destination for the collection_classification.json artifact")
+    p_classify.set_defaults(func=cmd_classify_experiment)
 
     p_norm = sub.add_parser("ingest-plate-metadata", aliases=["normalize-plate"])
     p_norm.add_argument("--input-file", type=Path, required=True)
@@ -1504,6 +1602,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_stage.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_stage.add_argument("--plate-metadata-csv", type=Path, required=True)
     p_stage.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_stage.add_argument("--collection-classification-json", type=Path, required=True,
+                         help="the experiment's collection-classify artifact (declares is_collection "
+                              "+ the time_index->start_age_hpf map)")
     p_stage.add_argument("--output-csv", type=Path, required=True)
     p_stage.set_defaults(func=cmd_stage_predictions)
 
@@ -1693,6 +1794,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_per_build = sub.add_parser("build-physical-embryo-registry")
     p_per_build.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_per_build.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_per_build.add_argument("--output-csv", type=Path, required=True)
     p_per_build.set_defaults(func=cmd_build_physical_embryo_registry)
 

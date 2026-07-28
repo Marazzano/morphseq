@@ -13,6 +13,8 @@ import pandas as pd
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     DOWNSTREAM_FRAME_IDENTITY_BLOCK,
     FRAME_IDENTITY_NULLABLE,
+    FRAME_INVENTORY_PROVENANCE_COLUMNS,
+    LEGACY_N_SOURCES_DEFAULT,
     REQUIRED_FRAME_INVENTORY_COLUMNS,
     DERIVED_FRAME_INVENTORY_COLUMNS,
     FrameInventorySpec,
@@ -20,6 +22,7 @@ from data_pipeline.acquisition.image_materialization.frame_inventory_contract im
     WellHandoff,
     assert_derived_ids_consistent,
     assert_product_columns_consistent,
+    backfill_n_sources,
     derive_well_id,
     derive_image_id,
     frame_inventory_image_ids,
@@ -27,6 +30,7 @@ from data_pipeline.acquisition.image_materialization.frame_inventory_contract im
     frame_inventory_product_keys,
     validate_frame_identity_block,
     validate_frame_inventory_identity_contract,
+    validate_n_sources,
 )
 from data_pipeline.acquisition.image_materialization.materialized_image_write_policy import (
     MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,
@@ -356,3 +360,81 @@ def test_identity_contract_runs_product_consistency():
     df = pd.DataFrame([_z_row(projection_method="focus_stack")])
     with pytest.raises(ValueError, match="z_stack"):
         validate_frame_inventory_identity_contract(df)
+
+
+# ---------------------------------------------------------------------------
+# 5. n_sources — the per-well merge-count PROVENANCE column
+# ---------------------------------------------------------------------------
+
+
+def _n_sources_df(n_sources=2, *, n_frames=2, well_id="20250912_B01") -> pd.DataFrame:
+    return pd.DataFrame([
+        {
+            "experiment_id": "20250912",
+            "well_index": "B01",
+            "well_id": well_id,
+            "channel_id": "BF",
+            "time_index": t,
+            "n_sources": n_sources,
+        }
+        for t in range(n_frames)
+    ])
+
+
+def test_n_sources_is_a_required_provenance_column():
+    assert FRAME_INVENTORY_PROVENANCE_COLUMNS == ("n_sources",)
+    assert "n_sources" in REQUIRED_FRAME_INVENTORY_COLUMNS
+    # It is NOT identity (not a derived id) and NOT one of the write-policy payload fields.
+    assert "n_sources" not in DERIVED_FRAME_INVENTORY_COLUMNS
+
+
+def test_legacy_default_is_one():
+    assert LEGACY_N_SOURCES_DEFAULT == 1
+
+
+def test_backfill_adds_missing_n_sources_as_one():
+    df = _n_sources_df().drop(columns=["n_sources"])
+    out = backfill_n_sources(df)
+    assert set(out["n_sources"].unique()) == {1}
+    # The original frame is untouched (backfill returns a copy).
+    assert "n_sources" not in df.columns
+
+
+def test_backfill_leaves_present_column_untouched():
+    df = _n_sources_df(n_sources=3)
+    out = backfill_n_sources(df)
+    assert set(out["n_sources"].unique()) == {3}
+
+
+def test_validate_n_sources_accepts_valid_counts():
+    validate_n_sources(_n_sources_df(n_sources=1))  # legacy / single
+    validate_n_sources(_n_sources_df(n_sources=2))  # merged snapshot collection
+
+
+def test_validate_n_sources_missing_column_fails_loud():
+    with pytest.raises(ValueError, match="n_sources.*absent|absent.*n_sources"):
+        validate_n_sources(_n_sources_df().drop(columns=["n_sources"]))
+
+
+def test_validate_n_sources_null_fails_loud():
+    df = _n_sources_df()
+    df.loc[0, "n_sources"] = pd.NA
+    with pytest.raises(ValueError, match="null"):
+        validate_n_sources(df)
+
+
+def test_validate_n_sources_below_one_fails_loud():
+    with pytest.raises(ValueError, match=">= 1"):
+        validate_n_sources(_n_sources_df(n_sources=0))
+
+
+def test_validate_n_sources_non_integer_fails_loud():
+    with pytest.raises(ValueError, match="integer"):
+        validate_n_sources(_n_sources_df(n_sources=2.5))
+
+
+def test_validate_n_sources_varies_within_well_fails_loud():
+    df = _n_sources_df(n_sources=2)
+    df.loc[0, "n_sources"] = 3  # same well_id, disagreeing count
+    with pytest.raises(ValueError, match="varies within well_id"):
+        validate_n_sources(df)

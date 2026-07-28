@@ -55,8 +55,29 @@ REQUIRED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
     "image_micrometers_per_pixel",  # calibration µm/px of the materialized image, required > 0
     "image_width_px",              # on-disk/post-downsample width (self-check against image header)
     "image_height_px",             # on-disk/post-downsample height (self-check against image header)
+    "n_sources",                   # PROVENANCE: # of raw acquisitions merged into this well (>=1)
     *MATERIALIZED_IMAGE_WRITE_POLICY_COLUMNS,  # writer-owned bytes-on-disk policy fields
 )
+
+# ---------------------------------------------------------------------------
+# PROVENANCE family — where/how-many the row's inputs came from (not identity, not payload).
+# ---------------------------------------------------------------------------
+
+# ``n_sources`` — per-well COUNT of how many raw acquisitions were MERGED into this well by the
+# collection acquisition union (Merge-A; see docs/EXPERIMENT_GROUP_PLATE_MODEL.md
+# "physical_embryo_id merge policy"). It is the ONLY fact about the merge that cannot be
+# re-derived downstream: a merged snapshot's (time_index 0, 1) is indistinguishable from a
+# timelapse's first two frames. It is a per-well fact carried on every per-frame row of that well
+# (constant within a well_id). Value 1 = single acquisition (legacy / timelapse / one snapshot);
+# value > 1 = a merged snapshot collection well. The physical_embryo registry reads it to pick its
+# EmbryoMergePolicy (normal / bridged / fractured). NOT a source LABEL — a count, weaker than
+# identity, keeps the "source invisible after the seam" spirit.
+FRAME_INVENTORY_PROVENANCE_COLUMNS: tuple[str, ...] = (
+    "n_sources",
+)
+
+# The default n_sources for a legacy inventory that predates this column: one acquisition per well.
+LEGACY_N_SOURCES_DEFAULT: int = 1
 
 # The carried-through time block — OWNED by the acquisition inventory (derived there from the
 # scope-specific raw atom), CARRIED unchanged by the materializer. Downstream reads ``elapsed_time_s``.
@@ -187,6 +208,78 @@ def _row_z_index_or_none(row: pd.Series) -> int | None:
     if "z_index" not in row.index or pd.isna(row["z_index"]):
         return None
     return int(row["z_index"])
+
+
+# ---------------------------------------------------------------------------
+# Provenance guards — n_sources (per-well merge count)
+# ---------------------------------------------------------------------------
+
+
+def backfill_n_sources(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with ``n_sources`` present, defaulting a MISSING column to 1 (legacy).
+
+    Legacy inventories (single-acquisition experiments authored before the collection union) never
+    carried ``n_sources`` — for them the count is definitionally 1. This backfills that column so an
+    old inventory validates unchanged. It only fills a column that is ENTIRELY absent; a column that
+    is present-but-invalid (null / non-int / < 1) is NOT silently repaired — ``validate_n_sources``
+    fails loud on it. Callers run this immediately before schema validation.
+    """
+    if "n_sources" in df.columns:
+        return df
+    out = df.copy()
+    out["n_sources"] = LEGACY_N_SOURCES_DEFAULT
+    return out
+
+
+def validate_n_sources(df: pd.DataFrame, scope_label: str = "frame_inventory") -> None:
+    """Fail loud unless every ``n_sources`` value is a non-null integer >= 1 (per-well constant).
+
+    ``n_sources`` is the per-well count of merged raw acquisitions (PROVENANCE family). This guard
+    checks the value contract — present, integer-valued, >= 1 — and that it is CONSTANT within each
+    well_id (it is a per-well fact carried on every frame row). A missing column is a caller error
+    here: run ``backfill_n_sources`` first if the inventory may be legacy.
+    """
+    if "n_sources" not in df.columns:
+        raise ValueError(
+            f"[{scope_label}] required provenance column 'n_sources' is absent. It is the per-well "
+            "count of merged raw acquisitions (>=1; legacy single-source = 1). Run "
+            "backfill_n_sources(df) before validating a possibly-legacy inventory."
+        )
+
+    col = df["n_sources"]
+    if col.isna().any():
+        n = int(col.isna().sum())
+        raise ValueError(
+            f"[{scope_label}] 'n_sources' has {n} null value(s). Every frame carries its well's "
+            "merge count (>=1); backfill legacy inventories to 1, never leave it null."
+        )
+
+    as_num = pd.to_numeric(col, errors="coerce")
+    non_int = as_num.isna() | (as_num != as_num.round())
+    if non_int.any():
+        sample = df.loc[non_int, "n_sources"].head(3).tolist()
+        raise ValueError(
+            f"[{scope_label}] 'n_sources' must be integer-valued; got non-integer(s) {sample}. "
+            "It counts raw acquisitions merged into the well — a whole number >= 1."
+        )
+
+    below_one = as_num < 1
+    if below_one.any():
+        sample = df.loc[below_one, "n_sources"].head(3).tolist()
+        raise ValueError(
+            f"[{scope_label}] 'n_sources' must be >= 1; got {sample}. Every well has at least one "
+            "source acquisition (legacy/timelapse/one snapshot = 1)."
+        )
+
+    # Per-well constant: n_sources is a per-well fact, not per-frame — it may not vary within a well.
+    if "well_id" in df.columns:
+        per_well = df.groupby("well_id")["n_sources"].nunique()
+        bad = per_well[per_well > 1]
+        if not bad.empty:
+            raise ValueError(
+                f"[{scope_label}] 'n_sources' varies within well_id(s) {bad.index.tolist()}; it is a "
+                "per-well fact and MUST be constant across every frame row of a well."
+            )
 
 
 # ---------------------------------------------------------------------------

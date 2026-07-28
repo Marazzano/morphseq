@@ -153,6 +153,19 @@ PIPELINE_STEPS: dict[str, dict] = {
         "artifacts": {"csv": "plate_metadata.csv"},
     },
 
+    # ── COLLECTION CLASSIFY (early-DAG "what is this experiment?" fact) ───────
+    # One small per-experiment JSON — the single source of truth for is_collection + the
+    # time_index→start_age_hpf map (the age escape hatch RIDES here; no separate age product).
+    # Every step that must branch on collection-ness consumes THIS artifact; none re-derives it.
+    # See docs/EXPERIMENT_GROUP_PLATE_MODEL.md ("CLASSIFY ONCE, CONSUME EVERYWHERE").
+    "collection_classification": {
+        "stage": "acquisition",
+        "product_dir": "ingest_metadata",
+        "fanout": EXPERIMENT,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {"classification": "collection_classification.json"},
+    },
+
     # ── SCOPE LINEAGE (raw microscope file — acquisition facts) ───────────────
     # ingest_scope_metadata emits two artifacts from ONE raw read; both ride one step-level
     # product_dir because both belong under ingest_metadata/ (no artifact-level override needed).

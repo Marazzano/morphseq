@@ -28,6 +28,11 @@ def _stage_registry(experiment, *, well_id):
 def _stage_registry_validated(experiment, *, well_id):
     return rule_validated("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
+def _stage_collection_classification(experiment):
+    # The DECLARED collection fact (experiment-grain). compute branches on its is_collection:
+    # a collection reads start_age_hpf by time_index; a single experiment stays byte-identical.
+    return rule_artifact("collection_classification", "classification", experiment, path_mode=PATH_MODE_EXPERIMENT)
+
 
 def _stage_artifacts_for_run(wc):
     return run_well_shard_paths(
@@ -44,6 +49,7 @@ rule build_stage_predictions_for_well:
         plate_metadata=PLATE_METADATA_CSV,
         physical_embryo_registry=str(_stage_registry("{experiment}", well_id="{well_id}")),
         physical_embryo_registry_validated=str(_stage_registry_validated("{experiment}", well_id="{well_id}")),
+        collection_classification=str(_stage_collection_classification("{experiment}")),
     output:
         stage_predictions=str(_stage_artifact(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
@@ -55,6 +61,7 @@ rule build_stage_predictions_for_well:
           --frame-inventory-csv "{input.frame_inventory}" \
           --plate-metadata-csv "{input.plate_metadata}" \
           --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
+          --collection-classification-json "{input.collection_classification}" \
           --output-csv "{output.stage_predictions}"
         """
 

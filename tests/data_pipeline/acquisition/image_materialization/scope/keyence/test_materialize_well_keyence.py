@@ -95,6 +95,9 @@ def _make_inventory(
                     "objective_magnification": "4x",
                     "orientation": orientation,
                     "source_tiff_path": str(raw_path),
+                    "stage_x_nm": 0,
+                    "stage_y_nm": 0,
+                    "stage_z_nm": 0,
                 }
             )
     return pd.DataFrame(rows)
