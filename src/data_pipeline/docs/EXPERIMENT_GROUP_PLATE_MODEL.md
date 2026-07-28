@@ -189,18 +189,34 @@ BUILT and real-data-proven (Keyence chem28c_coll):
   sources → per-scope acquisition-inventory builder per source → UNION → one valid inventory
   (6336 rows, n_sources=2, passes the real Keyence validator).
 
-REMAINING SEAM (the deep part, blocks the GPU `through_line` run):
-The collection path **collapses scope-read + acquisition-inventory into ONE union step**, but
-the single-experiment DAG has them as SEPARATE artifacts (`scope_metadata_csv` THEN
-`acquisition_inventory_csv`, consumed by `map_positions_to_wells` etc.). To run a collection
-through the existing Snakefile, the collection ingest must EITHER (a) also emit the
-`scope_metadata_csv` shape the downstream rules expect, OR (b) the front-end rules must accept
-the unioned acquisition inventory directly for collection experiments. This is a real
-reconciliation of two artifact shapes — do it carefully so the single-experiment path is
-untouched. Recommended: the `ingest_scope_metadata` rule stays ONE rule; its task detects a
-collection experiment (`is_collection`-style on the id) and delegates to the collection ingest,
-emitting BOTH artifacts. Until this lands, the GPU run (Stage 3, which settles the SAM2
-track_id-collision question) cannot execute end-to-end through the DAG.
+DAG ROUTE — the NATIVE path (2026-07-27, dropin idea REJECTED):
+Dropin was the wrong instinct (it ASSUMES already-materialized images — the collection's raw
+Keyence tiles are un-stitched/un-projected, so they genuinely need materialization). The
+correct route reuses the **native** path, because `materialize_image_product_for_well` consumes
+`SCOPE_ACQUISITION_INVENTORY_CSV` + `POSITION_WELL_MAPPING_CSV` + a resolved plan (+ Keyence
+stitch map) — NOT the raw scope read and NOT scope_metadata. The collection already produces the
+acquisition inventory; well_id↔position is already resolved inside the union. So:
+
+```
+collection union → SCOPE_ACQUISITION_INVENTORY_CSV (+ trivial POSITION_WELL_MAPPING) →
+                   materialize_well_native (stitch+project+write real pixels, image_path/write-policy) →
+                   frame_inventory → discover_wells → detection → tracking → registry  (GPU run)
+                   └──────────── existing native path, UNCHANGED ──────────────┘
+```
+
+The ONLY change is HOW the acquisition inventory is produced (union vs single scope read), which
+is upstream of everything material — so the entire native materialize→object_extraction chain is
+reused as-is.
+
+PLAN (each step committed):
+1. Collection ingest lands `SCOPE_ACQUISITION_INVENTORY_CSV` (done) + emits a
+   `position_well_mapping.csv` derived from the union (well_id/position already present).
+2. `ingest_scope_metadata` rule stays ONE rule; its task detects a collection id and delegates
+   to the collection ingest, emitting the acquisition inventory (+ mapping). Single-experiment
+   path untouched.
+3. GPU run: `through_line` on 2 wells of chem28c via the native path → detection→tracking→
+   registry. SETTLES the SAM2 track_id-collision question (bridge vs fracture).
+4. Finalize FRACTURE keying per step-3 result; un-draft #21; merge.
 
 ## Older draft levels (SUPERSEDED by the merge model above — kept for history)
 

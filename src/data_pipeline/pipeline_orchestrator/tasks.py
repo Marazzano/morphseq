@@ -84,6 +84,7 @@ def cmd_ingest_collection_acquisition(args: argparse.Namespace) -> None:
         raw_root=args.raw_root,
         microscope=args.microscope,
         output_csv=args.output_csv,
+        position_well_mapping_csv=getattr(args, "position_well_mapping_csv", None),
     )
 
 
@@ -1296,6 +1297,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_coll_acq.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
     p_coll_acq.add_argument("--output-csv", type=Path, required=True,
                             help="destination for the unioned acquisition inventory CSV")
+    p_coll_acq.add_argument("--position-well-mapping-csv", type=Path, default=None,
+                            help="optional: also derive+write the canonical position->well mapping "
+                                 "(the second artifact the native materializer needs)")
     p_coll_acq.set_defaults(func=cmd_ingest_collection_acquisition)
 
     p_norm = sub.add_parser("ingest-plate-metadata", aliases=["normalize-plate"])

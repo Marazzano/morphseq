@@ -29,6 +29,15 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union impo
 from data_pipeline.acquisition.metadata_ingest.experiment_collection import (
     find_collection_plate_sources,
 )
+from data_pipeline.acquisition.metadata_ingest.position_well_mapping.position_well_mapping_contract import (
+    REQUIRED_POSITION_WELL_MAPPING_COLUMNS,
+    validate_position_well_mapping,
+)
+
+# The union already resolves well_id↔position (each source's acquisition-inventory builder minted
+# well_id), so the collection's position mapping is a DERIVATION, not a re-map — recorded as this
+# mapping_method so downstream can see it came from the union, not a scope position solve.
+_COLLECTION_MAPPING_METHOD = "collection_union"
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────
@@ -68,12 +77,37 @@ _SCOPE_READERS = {"Keyence": _read_keyence_source, "YX1": _read_yx1_source}
 # Orchestration — find sources, union, write
 # ─────────────────────────────────────────────────────────────────────────────────────
 
+def derive_position_well_mapping(unioned: pd.DataFrame) -> pd.DataFrame:
+    """Derive the canonical position→well mapping from the unioned inventory.
+
+    The union already carries ``experiment_id``, ``position_index``, ``well_index`` and the
+    ``well_id`` its per-source builder minted, so the collection's mapping is a SELECT+dedup —
+    NOT a re-map. ``mapping_method`` records that it came from the union. The result satisfies
+    the same ``validate_position_well_mapping`` contract the native materializer consumes, so
+    the collection reuses the native path unchanged.
+    """
+    needed = ["experiment_id", "position_index", "well_index", "well_id"]
+    missing = [c for c in needed if c not in unioned.columns]
+    if missing:
+        raise ValueError(
+            f"derive_position_well_mapping: unioned inventory missing {missing}; cannot derive "
+            "the position mapping. (Expected the per-source acquisition-inventory builder to mint "
+            "well_id + position_index.)"
+        )
+    mapping = unioned[needed].drop_duplicates().reset_index(drop=True)
+    mapping["mapping_method"] = _COLLECTION_MAPPING_METHOD
+    mapping = mapping[list(REQUIRED_POSITION_WELL_MAPPING_COLUMNS)]
+    validate_position_well_mapping(mapping)
+    return mapping
+
+
 def ingest_collection_acquisition_inventory(
     *,
     experiment_id: str,
     raw_root: Path,
     microscope: str,
     output_csv: Path,
+    position_well_mapping_csv: Path | None = None,
 ) -> pd.DataFrame:
     """Build ONE acquisition inventory for a merged collection plate and write it.
 
@@ -82,6 +116,9 @@ def ingest_collection_acquisition_inventory(
         raw_root: raw image root containing the ``_coll`` dir (scope-anchored by the caller).
         microscope: "Keyence" | "YX1" — selects the per-source reader.
         output_csv: destination for the unioned acquisition inventory CSV.
+        position_well_mapping_csv: if given, also derive + write the canonical position→well
+            mapping (the second artifact the native materializer needs). The mapping is derived
+            from the union (well_id already resolved), NOT re-solved from raw positions.
 
     Returns the unioned inventory (also written to ``output_csv``).
     """
@@ -110,4 +147,10 @@ def ingest_collection_acquisition_inventory(
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     unioned.to_csv(output_csv, index=False)
+
+    if position_well_mapping_csv is not None:
+        mapping = derive_position_well_mapping(unioned)
+        position_well_mapping_csv.parent.mkdir(parents=True, exist_ok=True)
+        mapping.to_csv(position_well_mapping_csv, index=False)
+
     return unioned
