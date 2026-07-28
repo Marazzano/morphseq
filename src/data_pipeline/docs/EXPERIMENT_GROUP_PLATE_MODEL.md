@@ -63,42 +63,59 @@ Determine at the **start of the DAG** whether an experiment is a collection; pas
 to every downstream step that branches. Steps must NOT independently re-infer collection status from
 `experiment_id`, `n_sources`, nulls, or filesystem structure.
 
-- **Early DAG step** → a small experiment-level metadata artifact carrying `is_collection`
-  (+ basic collection facts). The single source of truth.
+- **Early DAG step** → a small experiment-level **collection-classify artifact**, the single source
+  of truth for "what this collection is." Always present (for every experiment). It carries:
+  ```json
+  { "experiment_id": "chem28c_coll_plate01",
+    "is_collection": true,
+    "sources": ["20250622_plate01_t28hpf", "20250623_plate01_t52hpf"],
+    "start_age_by_time_index": {"0": 28, "1": 52} }
+  ```
+  For a single experiment: `{ "is_collection": false }` — consumers ignore it and behave exactly as
+  today.
 - `is_collection_plate_id()` (in `shared/identifiers/`) may CREATE the initial fact; downstream steps
   CONSUME the declared artifact, never re-derive.
 - `n_sources` (per-well, in frame_inventory) describes frame-level multiplicity — but is NOT the
   canonical definition of collection-ness. The artifact is.
+- **Any step that must branch just reads this one artifact and decides.** No conditional DAG inputs,
+  no re-inference, no scattered logic.
 
 ---
 
-## Age = a separate per-timepoint companion in the PLATE-METADATA (biology) kingdom
+## Age = the timepoint→age map RIDES IN the classify artifact (no new product)
 
-`start_age_hpf` is **biology/experimental-design metadata** (how the experiment was set up), so it
-stays in the plate-metadata kingdom — it must NOT go into frame_inventory (that's the microscope's
-"what's on disk" record; polluting it erodes the biology-vs-acquisition boundary). But it's really a
-per-TIMEPOINT fact (t28 → age 28 at t0), which the per-well plate_metadata can't hold.
+`start_age_hpf` is **biology/experimental-design metadata** — it must NOT go into frame_inventory
+(the microscope's "what's on disk" record; polluting it erodes the biology/acquisition boundary).
+And it must NOT change plate_metadata's grain (see rejected options below). But for a collection it's
+a per-TIMEPOINT fact the per-well plate_metadata can't hold.
 
-**Decision (Y2, evidence-backed): a separate companion product `plate_age_by_timepoint` keyed
-`(well_id, time_index)`, emitted by the plate-metadata step for collections. The base plate_metadata
-table stays BYTE-IDENTICAL (one row per well).**
+**Decision: no new product. The `time_index → start_age_hpf` map RIDES IN the collection-classify
+artifact** (`start_age_by_time_index`, above). The classify step already parses the sources'
+`t<NN>hpf` tokens to decide `is_collection`, so the age map falls out for free — same concept ("what
+this collection is"), one place. For a snapshot the map is tiny (`{0: 28, 1: 52}`, identical across
+wells), so a per-`(well_id, time_index)` product would be 96×2 rows of 2 facts — the philosophy
+doc's "why is this a product if it's one 2-fact map with one consumer?" says don't.
 
-Why NOT put `(well_id, time_index)` rows in plate_metadata itself (Y1 — rejected): 13 files touch
-plate_metadata; the two real ROW readers both hard-assume **one row per well_id** —
-`stage_predictions/compute.py` does `plate_metadata_df.set_index("well_id")` (duplicate well_id →
-non-unique index → `.loc` returns multiple rows → breaks), and `analysis_ready/assemble.py`
-broadcasts plate biology to snips by a `well_id` left-join (duplicate well_id → silent row fan-out).
-Changing plate_metadata's grain breaks both. So keep plate_metadata one-row-per-well; the
-per-timepoint age is its own companion file.
+**Consumption:** `stage_predictions/compute.py` (the ONE consumer) reads the classify artifact it
+already gets from the classify step and branches on `is_collection`:
+- **collection** → `start_age_hpf = start_age_by_time_index[time_index]` (the snip carries `time_index`);
+- **non-collection** → `plate_by_well[well_id]["start_age_hpf"]` as today, **byte-identical**.
 
-**Blast radius of Y2: ONE code file + one new companion product.**
-- `plate_metadata` table + its 12 other consumers (incl. analysis_ready): UNCHANGED.
-- `stage_predictions/compute.py` (the ONE consumer of the age): it already loads frame_inventory
-  (per-image, has `time_index`) AND plate_metadata (`set_index("well_id")`, stays valid). It branches
-  on the DECLARED `is_collection`: collection → look up `start_age_hpf` in the companion by
-  `(well_id, time_index)`; non-collection → `plate_by_well[well_id]` as today, **byte-identical**.
+No new stage-rule input beyond the classify artifact it already consumes to know `is_collection`.
+No conditional DAG edge. plate_metadata + frame_inventory + all their consumers: UNCHANGED.
 
-Prefer-then-fallback; single experiments untouched.
+**Rejected alternatives (why the classify-artifact route wins):**
+- *Age in frame_inventory* — rejected: age is biology, not acquisition; erodes the kingdom boundary.
+- *Per-`(well_id, time_index)` rows in plate_metadata (Y1)* — rejected by evidence: 13 files touch
+  plate_metadata; the two ROW readers hard-assume one-row-per-well —
+  `stage_predictions/compute.py` does `set_index("well_id")` (duplicate well_id → non-unique index →
+  breaks) and `analysis_ready/assemble.py` broadcasts by a `well_id` join (duplicate → row fan-out).
+- *A separate `plate_age_by_timepoint` companion CSV (Y2)* — rejected as overweight: a new product
+  (contract + path + validation + DAG output) for a 2-fact, one-consumer map. The classify artifact
+  already carries it.
+
+**Blast radius: ONE code file** — `stage_predictions/compute.py` reads the classify artifact and
+branches. Everything else untouched.
 
 ---
 
@@ -190,14 +207,16 @@ flat EXP_FILE + prints N for `qsub -t 1-N`; the array template is unchanged.
 - Detection primitives `is_collection_plate_id` / `parse_collection_name_from_plate_id`.
 
 **REMAINING — build order (design locked, not yet built):**
-1. **Early classify step** → experiment-level `is_collection` artifact; thread it to branching rules.
-2. **Plate-metadata step emits** the `plate_age_by_timepoint` companion (`(well_id, time_index) →
-   start_age_hpf`) for collections. Base plate_metadata table UNCHANGED (one row per well).
-3. **Stage/validation consume** the declared fact + the mapping (collection) / plate_metadata (single).
-4. **Revert the detour:** remove `pool_well_acquisition_rows_across_sources` from
+1. **Early classify step** → the collection-classify artifact (`is_collection`, `sources`,
+   `start_age_by_time_index`). The age map rides here — NO separate age product. Thread the
+   artifact to every branching rule.
+2. **`stage_predictions/compute.py` reads the classify artifact + branches:** collection →
+   `start_age_by_time_index[time_index]`; single → `plate_by_well[well_id]` as today. The ONLY code
+   file that changes for age. plate_metadata + frame_inventory untouched.
+3. **Revert the detour:** remove `pool_well_acquisition_rows_across_sources` from
    `select_well_acquisition_rows.py` (that "pool at materialization" relocation was abandoned —
    collapse stays at acquisition ingest, where `collection_acquisition_ingest` already does it).
-5. **Wire DAG + GPU run** on 2 wells of chem28c → detection→tracking→registry. SETTLES the SAM2
+4. **Wire DAG + GPU run** on 2 wells of chem28c → detection→tracking→registry. SETTLES the SAM2
    `track_id` question. Then finalize FRACTURE keying, un-draft #21, merge.
 
 **DAG note (from a dry-run):** targeting a collection id hit `MissingInputException` on
