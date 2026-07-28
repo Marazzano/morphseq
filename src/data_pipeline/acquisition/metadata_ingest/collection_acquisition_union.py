@@ -236,6 +236,16 @@ def union_collection_acquisition_inventories(
         original_time_index = pd.to_numeric(part["time_index"], errors="raise").astype(int)
         part["time_index"] = original_time_index + time_index_block_offset
 
+        # The raw time atom ``time_index_claimed`` is part of the acquisition-inventory cell-key
+        # uniqueness check, so it must ride the SAME block offset — otherwise two single-snapshot
+        # sources (both claiming 0) collide on the cell key after the union. Offset in lockstep with
+        # time_index; leave absent for scopes that don't carry the atom.
+        if "time_index_claimed" in part.columns:
+            part["time_index_claimed"] = (
+                pd.to_numeric(part["time_index_claimed"], errors="raise").astype(int)
+                + time_index_block_offset
+            )
+
         # Age escape hatch: this source's declared age is its start_age_hpf (None → NaN, honestly).
         part["start_age_hpf"] = source.declared_hpf
 

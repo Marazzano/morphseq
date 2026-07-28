@@ -144,6 +144,33 @@ def test_two_snapshot_sources_become_one_inventory_shared_well_distinct_time():
         assert gone not in out.columns
 
 
+def test_time_index_claimed_atom_is_offset_in_lockstep_with_time_index():
+    """The raw ``time_index_claimed`` atom rides the SAME block offset as ``time_index``.
+
+    Regression (found on real Keyence data): both single-snapshot sources carry
+    ``time_index_claimed == 0``; the acquisition-inventory cell-key uniqueness check includes that
+    atom, so if the union offsets only ``time_index`` and not ``time_index_claimed`` the two
+    timepoints of a well COLLIDE on the cell key. The atom must be re-namespaced per source.
+    """
+    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
+        df = _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+        df["time_index_claimed"] = 0  # every single-snapshot source claims 0 (the collision setup)
+        return df
+
+    sources = [
+        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
+        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),
+    ]
+    out = union_collection_acquisition_inventories(
+        collection_name=_COLLECTION, sources=sources, read_source=read_source
+    )
+
+    # The atom is offset to match its block: block 0 → 0, block 1 → 1 (not both 0).
+    assert set(out["time_index_claimed"].unique()) == {0, 1}
+    # And it tracks time_index exactly (same offset applied), so the cell key stays unique.
+    assert (out["time_index_claimed"] == out["time_index"]).all()
+
+
 def test_start_age_hpf_is_per_source_from_declared_hpf():
     """start_age_hpf = parse_declared_hpf(event_label) per source (the age escape hatch)."""
 
