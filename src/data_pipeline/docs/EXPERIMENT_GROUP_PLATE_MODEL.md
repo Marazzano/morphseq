@@ -1,460 +1,204 @@
-# Experiment Collection / Plate / Event model (DRAFT SPEC)
+# Experiment Collection / Plate / Event model (SPEC)
 
-Status: **draft — pinning the model, not yet implemented. MVP, no config changes.**
+Status: **design LOCKED 2026-07-27. Acquisition/identity + registry work BUILT and real-data-proven
+on branch `feat/experiment-collections` (PR #21, draft). DAG wiring + GPU run remain.**
 Owner: mdcolon. Started 2026-07-23.
+
+> This doc was rewritten 2026-07-27 to remove a trail of superseded framings. The reasoning trail is
+> preserved in git history + PR #21 commits; this file states only the CURRENT truth.
 
 ## Why
 
-Today `experiment_id` is atomic and doubles as the plate: one raw folder = one
-`experiment_id` = one plate = one `well_metadata.xlsx`. That silently assumed
-**one imaging event per plate**. It breaks for snapshot + timelapse experiments
-where the *same physical plate* is imaged several times — and even **across multiple
-dates** (`t45hpf` on one day, `t72hpf` the next). Downstream code (e.g.
-`results/.../1_attach_phenotype_labels.py::_acq_priority`) currently re-derives the
-grouping and acquisition role by **string-sniffing** embryo ids (`_sci_`, `_t02_`,
-`_t01_`) and hardcodes a `30to48 -> 48` rule. This model removes that.
+Today `experiment_id` is atomic and doubles as the plate: one raw folder = one `experiment_id` = one
+plate = one `well_metadata.xlsx`. That silently assumed **one imaging event per plate**. It breaks
+for snapshot experiments where the *same physical plate* is imaged several times, even across dates
+(`t28hpf` one day, `t52hpf` the next). Downstream code (e.g.
+`results/.../1_attach_phenotype_labels.py::_acq_priority`) re-derives grouping + acquisition role by
+**string-sniffing** embryo ids (`_sci_`, `_t02_`, `_t01_`) and hardcodes a `30to48 → 48` rule. This
+model removes that.
 
-## Core principle (LOCKED 2026-07-24 — MERGE model)
+---
 
-**A collection's PLATE is an experiment. Its t-events are TIMEPOINTS inside that
-experiment.** The plate condenses into one `experiment_id = {collection}_{plate_token}`;
-the different `t<NN>hpf` acquisitions of that plate **merge** into it as distinct time
-coordinates on the same wells — a snapshot collection becomes a *coarse timelapse*. This
-is the "same well_id, different time" unification: snapshot and timelapse become the same
-object.
+## Core model
 
-```
-raw/cilia_snapshots_coll/                    (ONE scope per collection — never mixed)
-  20260607_plate01_t45hpf/  ┐
-  20260608_plate01_t72hpf/  ┴─ GROUP BY PLATE + MERGE ACROSS TIME
-                                   │
-                                   ▼
-   experiment_id = cilia_snapshots_coll_plate01
-     well A01:  frame @ t45hpf (time_index 0),  frame @ t72hpf (time_index 1)
-     well_id   = cilia_snapshots_coll_plate01_A01     (shared across timepoints)
-     well_metadata: cilia_snapshots_coll_plate01_well_metadata.xlsx
-```
-
-Key consequences:
-- **experiment_id = `{collection}_{plate_token}`** — the plate token IS the id; date and
-  `t<NN>hpf` are NOT kept in identity. (There is no separate "plate_id parsed up from
-  experiment_id" — the earlier draft's parse-up framing is REPLACED by this merge.)
-- **`t<NN>hpf` becomes the TIME axis**, not QC metadata. `declared_hpf` finally earns its
-  keep here: it is the frame's time coordinate. (`sci`/no-`t` → a plain single timepoint.)
-- **`well_id` and everything below the frame inventory are UNCHANGED** — it's just an
-  experiment with multiple timepoints, which the pipeline already handles for timelapse.
-
-## Two kinds of "merge" — we do the CHEAP one (LOCKED 2026-07-24)
-
-Separate **identity/processing merge** from **pixel/acquisition merge**. We want the first,
-NOT the second:
-
-- **Merge-A (identity — WHAT WE DO):** the t-events share `experiment_id = {coll}_{plate}`
-  so they run as one unit, share one well_metadata, one output tree, get compared together.
-  But each t-event's raw source is **still read independently** (one-read-per-source) and
-  contributes its own frames, stamped into the same id with a distinct `time_index`.
-- **Merge-B (pixels — AVOIDED):** fusing N raw sources into a single reconciled read.
-  Unnecessary, because the **age escape hatch** (below) makes stage correct without a
-  shared elapsed clock.
-
-**The age escape hatch.** `predicted_stage_hpf = start_age_hpf + elapsed/3600 × rate(temp)`
-(`stage_predictions/compute.py`). Stage does NOT need a fused time axis — it needs
-`start_age_hpf`. So `t<NN>hpf` sets `start_age_hpf` **per timepoint**, and each source
-keeps its own `elapsed_time_s`. No pixel fusion required for correctness.
+**A collection's PLATE is ONE experiment. Its `t<NN>hpf` acquisitions are TIMEPOINTS inside it.**
+The plate condenses into `experiment_id = {collection}_{plate_token}`; the sources merge into it as
+distinct `time_index` values on shared `well_id`s — a snapshot collection becomes a *coarse
+timelapse*. Snapshot and timelapse become the same object downstream.
 
 ```
-experiment_id = cilia_snapshots_coll_plate01                (ONE id — processed together)
-
-  frames from raw 20260607_plate01_t45hpf/ → time_index 0, start_age_hpf 45   (read independently)
-  frames from raw 20260608_plate01_t72hpf/ → time_index 1, start_age_hpf 72   (read independently)
-  well_id = cilia_snapshots_coll_plate01_A01   (shared across timepoints)
-  well_metadata: cilia_snapshots_coll_plate01_well_metadata.xlsx   (ONE sheet, shared biology)
-
-  stage @ t0 = 45 + elapsed₀ ·rate ;  stage @ t1 = 72 + elapsed₁ ·rate     ✓ no merge needed
+raw/chem28c_coll/                         (_coll marker; ONE scope per collection — never mixed)
+  20250622_plate01_t28hpf/  ┐  COLLAPSE at acquisition ingest:
+  20250623_plate01_t52hpf/  ┘  read+map EACH source, pool into ONE acquisition inventory
+                               │
+                               ▼
+   experiment_id = chem28c_coll_plate01
+     well A01:  frame @ time_index 0 (from t28 source),  frame @ time_index 1 (from t52 source)
+     well_id   = chem28c_coll_plate01_A01                (shared across timepoints)
 ```
 
-**The invariant relaxes mildly**, not radically: from "one experiment = one raw read" to
-"one experiment = one inventory, ASSEMBLED from one-read-per-source." Each source is still
-read exactly once; the acquisition inventory for `{coll}_{plate}` is their **union under
-one id**, each source keeping its own read and contributing a distinct `time_index`.
+- **experiment_id = `{collection}_{plate_token}`** — the plate token IS the id; date + `t<NN>hpf`
+  are NOT kept in identity (they become the time axis + the age, respectively).
+- **`well_id` and everything below the frame inventory are UNCHANGED** — just an experiment with
+  multiple timepoints, which the pipeline already handles for timelapse.
 
-```
-COLLECTION EXPANDER   group children by plate_token → experiment_id = {coll}_{plate}
-   + ACQ UNION         read EACH source independently; stamp t<NN>hpf → (time_index, start_age_hpf);
-                       union the per-source inventories under {coll}_{plate}
-   + PLATE_META BUILD   shared biology sheet + per-timepoint start_age_hpf from the token
-──────────────────────  frame inventory onward: UNCHANGED (one exp, multiple timepoints) ──
-```
+### Collapse happens at ACQUISITION INGEST (not later)
+The `_coll` dir becomes one experiment_id AT acquisition ingest. Each source is read + position-
+mapped per-source INSIDE the ingest, then pooled into one acquisition inventory. This is what
+`collection_acquisition_ingest` already does — real-data-proven on Keyence chem28c: 6336 rows,
+`n_sources=2`, shared well_id, `time_index` 0/1, passes the real Keyence acquisition validator.
+(The `time_index_claimed` raw atom rides the same per-source block offset — see the fix below.)
 
-Key change to plate_metadata: `start_age_hpf` becomes **per-(well, timepoint)** rather than
-one-per-experiment — which the stage formula already tolerates (it reads plate_metadata by
-`well_id`; extend to `(well_id, time_index)`).
+### Merge identity, NOT pixels
+Each source is read independently (one-read-per-source); the acquisition inventory for the
+collection is their **union under one id**, each source contributing a distinct `time_index` block.
+No pixel fusion. Stage correctness does NOT need a fused elapsed clock — it needs `start_age_hpf`
+per timepoint (see "Age" below).
 
-## Where does the source stop being visible? (the seam)
+---
 
-Merge-A becomes **seamless at the frame inventory handoff** — the designed scope→well seam
-(overview A1). Provenance columns (`image_path`, `scope_name`) still *record* each frame's
-source for audit, but NO downstream stage *keys* on them — object_extraction onward reads
-the frame spine (`well_id`, `time_index`, `image_id`). So from object extraction on, nothing
-can tell t45 and t72 came from separate files: they're just time_index 0 and 1 of one well.
+## The governing principle: CLASSIFY ONCE, CONSUME EVERYWHERE
 
-```
-acquisition inventory   source explicit (per-source read)
-frame inventory         union under {coll}_{plate}; source knowable via provenance cols only
-──────────────────────  THE SEAM ──────────────────────
-object_extraction on    keys on (well_id, time_index); source invisible
-```
+Determine at the **start of the DAG** whether an experiment is a collection; pass that DECLARED fact
+to every downstream step that branches. Steps must NOT independently re-infer collection status from
+`experiment_id`, `n_sources`, nulls, or filesystem structure.
 
-### `physical_embryo_id` merge policy (LOCKED 2026-07-25 — supersedes source_group draft)
+- **Early DAG step** → a small experiment-level metadata artifact carrying `is_collection`
+  (+ basic collection facts). The single source of truth.
+- `is_collection_plate_id()` (in `shared/identifiers/`) may CREATE the initial fact; downstream steps
+  CONSUME the declared artifact, never re-derive.
+- `n_sources` (per-well, in frame_inventory) describes frame-level multiplicity — but is NOT the
+  canonical definition of collection-ness. The artifact is.
 
-Frames from separate snapshot acquisitions arrive at the tracker under ONE `well_id` as
-consecutive `time_index` values (Merge-A), so SAM2 tracks over time exactly like a
-timelapse — **the primary path needs no source awareness.** The only fact that cannot be
-re-derived downstream is *how many raw acquisitions were merged into a well*: a snapshot's
-`(time_index 0, 1)` is indistinguishable from a timelapse's first two frames. So the
-**union records `n_sources` per well in the frame_inventory** (a count, not a source label —
-weaker than identity, keeps the "source invisible after the seam" spirit).
+---
 
-The registry consumes `frame_masks` **and** `frame_inventory` (to read `n_sources`) and
-applies one visible policy, `EmbryoMergePolicy`:
+## Age = a separate per-timepoint product (additive; NO plate_metadata schema surgery)
+
+`start_age_hpf` is really a per-TIMEPOINT fact (t28 → age 28 applies to every well at t0),
+historically fused into per-well plate_metadata. For collections, ingest ALSO emits a separate
+**`time_index → start_age_hpf` mapping product** alongside plate_metadata. **plate_metadata itself is
+UNCHANGED** — no null trap, no contract change.
+
+The ONE consumer is `stage_predictions/compute.py` (`predicted_stage_hpf = start_age_hpf +
+elapsed/3600 × rate(temp)`), which today reads `start_age_hpf` from `plate_by_well[well_id]`. It
+branches on the DECLARED `is_collection`:
+- **collection** → read `start_age_hpf` from the mapping by `time_index`;
+- **non-collection** → existing per-well plate_metadata path, **byte-identical**.
+
+Prefer-then-fallback; single experiments untouched. (Do not refactor age out of plate_metadata for
+singles — add the mapping additively.)
+
+---
+
+## `physical_embryo_id` merge policy (registry — BUILT)
+
+Frames from separate snapshot acquisitions arrive at the tracker under ONE `well_id` as consecutive
+`time_index` values, so SAM2 tracks over time like a timelapse. The only fact that can't be
+re-derived downstream is *how many acquisitions merged into a well* — recorded as `n_sources`
+(per-well) in the frame_inventory (a count, not a source label).
+
+The registry consumes `frame_masks` + `frame_inventory` (`n_sources`) and applies `EmbryoMergePolicy`:
 
 ```
 per well:  n_sources = frame_inventory lookup ;  n_tracks = distinct track_id in well
   n_sources == 1                    → NORMAL    one physical_embryo_id per track (today's behavior)
   n_sources > 1  AND  n_tracks == 1 → BRIDGE    ONE physical_embryo_id across timepoints
-                                                  (only one correspondence possible — like a timelapse)
-  n_sources > 1  AND  n_tracks > 1  → FRACTURE  which-maps-to-which is AMBIGUOUS → do NOT guess:
-                                                  disjoint _e blocks per source
-                                                  (source0: e01,e02 ; source1: e03,e04 ; …)
+  n_sources > 1  AND  n_tracks > 1  → FRACTURE  ambiguous → do NOT guess: disjoint _e blocks per source
 ```
 
-**Grammar UNCHANGED:** `physical_embryo_id = {well_id}_e{NN}`. Fracture just offsets the `_e`
-counter per source; no id-format variant, no hpf in the name (time already lives on
-`time_index` / `start_age_hpf` — don't duplicate it into the id).
+Grammar UNCHANGED (`physical_embryo_id = {well_id}_e{NN}`; fracture just offsets the `_e` counter per
+source). Visible: `EmbryoMergePolicy` enum + `merge_policy`/`n_sources` columns on the registry
+output + PIPELINE_OVERVIEW C2 one-liner.
 
-**Visible at every layer:** an `EmbryoMergePolicy` enum in code; `merge_policy`
-(`normal`/`bridged`/`fractured`) + `n_sources` **columns on the registry output** (audit a
-non-obvious identity decision in-place); this policy table in the spec; a one-liner in
-PIPELINE_OVERVIEW C2.
+**Known layout consequence (validate, NOT a bug):** a FRACTURED embryo is single-`time_index`, so its
+`embryo_id`/`snip_id` chain is single-timepoint — fine (mid-course timelapse embryos already do this).
+Don't "fix" by forcing a full chain.
 
-**Known layout consequence (flagged for validation, NOT a bug):** a FRACTURED embryo exists
-at a single `time_index`, so its `embryo_id`/`snip_id` chain is single-timepoint. This is
-structurally fine — mid-course timelapse embryos (appear/die partway) already do this — but
-any downstream code that ASSUMES every physical_embryo spans the full timecourse must
-tolerate it. Validate this holds; do not "fix" it by forcing a full chain.
+### OPEN QUESTION — does SAM2 collide `track_id` across the merged gap? (GPU-gated)
+FRACTURE keys `local_embryo_index` on `track_id`, correct ONLY if `track_id` is unique across the
+merged well. If SAM2 (fed the well as ONE sorted video via `sam2_frame_view`) assigns globally-unique
+ids → correct, and a real embryo-per-timepoint likely TRACKS THROUGH (→ n_tracks==1 → BRIDGE). If
+SAM2 restarts numbering per source (both emit `track0000`) → keying on `track_id` alone COLLAPSES two
+animals → FRACTURE must key on `(time_index, track_id)`. **Empirical — only the GPU run settles it.**
+FRACTURE keying is provisional until then. (Synthetic masks with forced `track0000` at both
+timepoints reproduce the collapse, confirming the risk is real IF SAM2 restarts numbering.)
 
-**OPEN QUESTION — does SAM2 collide `track_id` across the merged gap? (GPU-run gated)**
-The FRACTURE branch groups a well's tracks by `time_index` and keys `local_embryo_index` on
-`track_id`. This is only correct if `track_id` is UNIQUE across the merged well. Two cases:
-- If SAM2, fed the well as ONE time-ordered video (`sam2_frame_view` sorts all `time_index`
-  into one sequence), assigns GLOBALLY-unique object ids across the whole series → track_ids
-  don't collide → current FRACTURE keying is correct, and a well with a real embryo at each
-  timepoint likely TRACKS THROUGH (→ n_tracks==1 → BRIDGE, the common expected case).
-- If SAM2 instead RESTARTS numbering per source (t0 and t1 both emit `track0000` for different
-  animals) → the same `track_id` string appears twice as different animals → keying on
-  `track_id` alone COLLAPSES them (wrong). Then FRACTURE must key on `(time_index, track_id)`.
+---
 
-Which happens is EMPIRICAL — only the GPU detection→tracking→registry run on a real merged
-collection settles it. Until then the FRACTURE keying is provisional. (A synthetic frame_masks
-with hand-forced `track0000` at both timepoints reproduces the collapse, confirming the risk is
-real IF SAM2 restarts numbering.) Do not finalize FRACTURE keying before the GPU run.
+## Naming grammar
 
-This is a local rule at the registry mint site (C2 step 3). Upstream: only the union +
-frame_inventory gain `n_sources`. Downstream reads `physical_embryo_id` as given — no
-snip_processing/report join changes (there is no cross-source track_id collision, because
-tracking runs over one time-ordered series per well).
-
-## Scope rule (MVP)
-
-A collection lives inside **ONE scope dir — scopes never mix**. So the expander doesn't
-sniff scope; the (already-known) scope says what a child is:
-- **Keyence:** each child is a **folder** (its `.tif` planes underneath) — extends the
-  legacy folder-name-is-experiment semantics.
-- **YX1:** keep the collection **flat — children are `.nd2` files, no sub-folders**.
-
-The marker that a child is an experiment (either scope): a **plate token in the child's
-own name** (file stem or dir name).
-
-## Legacy layout (no `_coll`) — unchanged
-
-A directory WITHOUT the `_coll` marker is a legacy single experiment: folder-name (Keyence)
-/ `.nd2`-stem (YX1) → experiment_id, exactly as today. Dual-mode by the marker.
-
-## ✅ FINAL DESIGN (2026-07-27, mdcolon — stated plainly; supersedes ALL prior corrections below)
-
-Two earlier framings in this doc are SUPERSEDED: (1) the acquisition-level union was NOT "too
-early" — collapse-to-one-experiment at **acquisition ingest** is correct and re-endorsed; (2) the
-"pool at materialization" relocation was a detour — revert the pooling added to
-`select_well_acquisition_rows.py`.
-
-### Collapse at acquisition ingest (Concern 1 — identity)
-The `_coll` dir becomes ONE experiment_id at acquisition ingest; sources are read+mapped per-source
-INSIDE the ingest, then pooled into one acquisition inventory (this is what
-`collection_acquisition_ingest` already does, real-data-proven: 6336 rows, n_sources=2). From the
-frame_inventory onward the pipeline treats it as one normal experiment with multiple timepoints.
-
-### Classify ONCE, consume everywhere (the governing principle)
-Determine at the START of the DAG whether an experiment is a collection; pass that DECLARED fact to
-every downstream step that branches. Steps must NOT independently re-infer collection status from
-`experiment_id`, `n_sources`, nulls, or filesystem.
-- **Early DAG step** → a small experiment-level metadata artifact carrying `is_collection` (+ basic
-  collection facts). Single source of truth.
-- `is_collection_plate_id()` may CREATE the initial fact; downstream steps CONSUME the declared
-  result, never re-derive.
-- `n_sources` stays as frame-level multiplicity — but is NOT the canonical definition of
-  collection-ness (the artifact is).
-
-### Age = a separate per-timepoint product (Concern 2 — biology, additive, no schema surgery)
-`start_age_hpf` is really a per-TIMEPOINT fact (t28→age 28 applies to every well at t0), historically
-fused into per-well plate_metadata. For collections, ingest ALSO emits a separate
-`time_index → start_age_hpf` mapping ALONGSIDE plate_metadata — plate_metadata itself UNCHANGED (no
-null trap, no contract change). The stage model / validation branch on the DECLARED is_collection:
-collection → read start_age_hpf from the mapping by time_index; non-collection → existing
-plate_metadata path, byte-identical. Prefer-then-fallback; single = untouched.
-
-### Build order (nothing built tonight — design locked)
-1. Early classify step → experiment-level `is_collection` artifact; thread it to branching rules.
-2. Collection ingest emits the `time_index → start_age_hpf` mapping product.
-3. Stage/validation consume the declared fact + the mapping (collection) / plate_metadata (single).
-4. Revert the `select_well_acquisition_rows` pooling detour + retire the acquisition-union-vs-ingest
-   naming confusion (keep `collection_acquisition_ingest` as the collapse-at-ingest home).
-5. Wire DAG + GPU run (settles the SAM2 track_id question).
-
+### `_coll` dir + dated child folders
 ```
-source t28hpf acquisition_inventory  (raw paths + source recorded — "on disk")  ┐
-source t52hpf acquisition_inventory  (raw paths + source recorded — "on disk")  ┤
-                                                                                 │  POOL per well at
-                                                                                 │  materialization:
-                                                                                 ▼
-   well A01 frame_inventory: time_index 0 (from t28 source) + time_index 1 (from t52 source),
-                             n_sources=2, EACH row keeps its source + raw path so materialize
-                             pulls the right pixels.
+raw/chem28c_coll/                     ← collection (marker _coll), NO date of its own
+  20250622_plate01_t28hpf/            ← {date}_{plate_token}_{event_label}
+  20250623_plate01_t52hpf/            ← same plate, later date → SAME plate_token
 ```
+Collection membership is **structural** (under the `_coll` dir). Plate membership across dates is by
+the `plate_token`. This kills the fragile suffix-stripping and the `_acq_priority` sniffing.
 
-`n_sources` = how many source acquisitions feed the well. Because acquisition inventory kept the
-source+raw path per image, materialization knows exactly which raw pixels to pull for each pooled
-frame.
-
-**WHERE IT HOOKS (located):** `image_materialization/select_well_acquisition_rows.py`. Today it
-takes ONE acquisition inventory → selects one well's rows → feeds `run_materialize_well`. The
-collection extends it to **multi-source**: pull the well's rows across the N source acquisition
-inventories, offset `time_index` per source, stamp `n_sources`, keep `source_*_path` per row. The
-`cmd_materialize_well` adapter (`_selected_well_acquisition_rows_for_materialization`) reads N source
-acquisition CSVs instead of one. `run_materialize_well` then builds the pooled frame_inventory shard.
-
-**BUILD CONSEQUENCE:** the acquisition-level union (`collection_acquisition_union.py` /
-`collection_acquisition_ingest.py`) is SUPERSEDED — its layout logic (time_index offset, n_sources,
-shared well_id) RELOCATES into `select_well_acquisition_rows`' multi-source mode. Each source is
-ingested + mapped normally (its own scope→map→acquisition_inventory); the collection is NOT a
-scope-read unit (which is why the DAG dry-run correctly hit MissingInput on ingest_scope_metadata
-for the collection id — it has no raw dir of its own). The registry merge-policy + n_sources
-contract + time_index_claimed fix all STAY.
-
-## DAG wiring — status & the remaining seam (2026-07-27) [SUPERSEDED by the correction above]
-
-BUILT and real-data-proven (Keyence chem28c_coll):
-- `resolve_experiment_ids` + `resolve-experiment-ids` CLI (collection → flat id list, SGE EXP_FILE).
-- `find_collection_plate_sources` (inverse: `{coll}_{plate}` → its raw source children).
-- `collection_acquisition_ingest` module + `ingest-collection-acquisition` CLI verb: finds
-  sources → per-scope acquisition-inventory builder per source → UNION → one valid inventory
-  (6336 rows, n_sources=2, passes the real Keyence validator).
-
-DAG ROUTE — the NATIVE path (2026-07-27, dropin idea REJECTED):
-Dropin was the wrong instinct (it ASSUMES already-materialized images — the collection's raw
-Keyence tiles are un-stitched/un-projected, so they genuinely need materialization). The
-correct route reuses the **native** path, because `materialize_image_product_for_well` consumes
-`SCOPE_ACQUISITION_INVENTORY_CSV` + `POSITION_WELL_MAPPING_CSV` + a resolved plan (+ Keyence
-stitch map) — NOT the raw scope read and NOT scope_metadata. The collection already produces the
-acquisition inventory; well_id↔position is already resolved inside the union. So:
-
-```
-collection union → SCOPE_ACQUISITION_INVENTORY_CSV (+ trivial POSITION_WELL_MAPPING) →
-                   materialize_well_native (stitch+project+write real pixels, image_path/write-policy) →
-                   frame_inventory → discover_wells → detection → tracking → registry  (GPU run)
-                   └──────────── existing native path, UNCHANGED ──────────────┘
-```
-
-The ONLY change is HOW the acquisition inventory is produced (union vs single scope read), which
-is upstream of everything material — so the entire native materialize→object_extraction chain is
-reused as-is.
-
-PLAN (each step committed):
-1. Collection ingest lands `SCOPE_ACQUISITION_INVENTORY_CSV` (done) + emits a
-   `position_well_mapping.csv` derived from the union (well_id/position already present). DONE.
-   Detection primitives `is_collection_plate_id` / `parse_collection_name_from_plate_id`. DONE.
-2. DAG topology branch (the remaining seam — sharper than "one dispatch"): a collection SKIPS the
-   scope→map→apply chain entirely. Traced: `SCOPE_METADATA_CSV` (the scope_csv) is consumed ONLY by
-   `map_positions_to_wells` + `apply_position_to_well_mapping` — NOT by materialize_well_native or
-   frame_detections (grep-verified empty). And the collection already produces
-   `POSITION_WELL_MAPPING_CSV` from the union. So the collection's sub-path is:
-     union → {acquisition_inventory, position_well_mapping} → materialize_well_native → …
-   bypassing scope/map/apply. The cleanest Snakemake pattern is the SAME one the front-end already
-   uses for native-vs-dropin: mode/type-exclusive rule wiring — a collection experiment gets its
-   `POSITION_WELL_MAPPING_CSV` + acquisition_inventory from ONE collection-ingest rule, and the
-   scope→map→apply rules simply don't apply to it. (A prior attempt to overload the single
-   `ingest_scope_metadata` rule was reverted — forcing a collection to also emit a scope_csv view is
-   wrong: nothing on its path consumes it.)
-3. GPU run: `through_line` on 2 wells of chem28c via the native path → detection→tracking→
-   registry. SETTLES the SAM2 track_id-collision question (bridge vs fracture).
-4. Finalize FRACTURE keying per step-3 result; un-draft #21; merge.
-
-## Older draft levels (SUPERSEDED by the merge model above — kept for history)
-
-The earlier framing below treated each event as its own experiment_id sharing a parsed
-`plate_id`. The MERGE model replaces it: events don't stay separate, they fold into
-`{coll}_{plate}`. Retained only so the reasoning trail is visible.
-
-```
-collection        cilia_snapshots_coll        marked by the _coll suffix on the dir
-   └─ plate_id       cilia_snapshots_coll_plate01   the PHYSICAL plate  ← well_metadata binds HERE
-        └─ event        20260607 / plate01 / t45hpf  one acquisition → experiment_id → wells → snips
-             declared_hpf   45                        event's DECLARED (planned) age  (sci → None)
-             date           20260607                  event acquisition fact — NOT identity
-```
-
-- **collection** — a directory whose name ends in **`_coll`**. The marker is the
-  *detection signal*: `_coll` present ⟹ "collection mode, look inside for plates+events".
-  Folders WITHOUT `_coll` are legacy single experiments (unchanged behavior). The
-  collection has **no date** of its own.
-- **plate_id** — the physical plate = `{collection}_{plate_token}`. **Date-independent**
-  by construction (date is never in it), so `20260607_plate01_*` and
-  `20260608_plate01_*` under the same collection are ONE plate. Biology (genotype,
-  geometry) is a property of this level. **One `well_metadata` per plate_id.**
-- **event** — one acquisition of one plate. Maps to `experiment_id`;
-  `well_id = build_well_id(experiment_id, well_index)` is stamped per event. Snips stay
-  per-event (no cross-date re-identification claim).
-- **declared_hpf** — the event's *declared/planned* age, from the event label:
-  `t<NN>hpf` present → NN (snapshot at that age); **no `t` suffix → None** (a plain
-  event, no declared age). There is NO reserved timelapse token — `sci` was just an
-  experiment name, not special. (Stitching separate timelapses together is out of scope
-  for the MVP.) `declared_hpf` is NEVER per-embryo truth — `predicted_stage_hpf` stays
-  the measured truth.
-
-## Raw layout — collection dir, dated child folders
-
-```
-raw/
-  cilia_snapshots_coll/                 ← collection (marker _coll), NO date on it
-    20260607_plate01_t45hpf/            ← date=0607, plate01, event t45hpf
-    20260608_plate01_t72hpf/            ← date=0608, plate01, event t72hpf  ← SAME plate, later date
-    20260607_plate02_t45hpf/            ← date=0607, plate02
-    20260608_plate02_t72hpf/
-```
-
-Collection membership is **structural** (you're under the `_coll` dir). Plate membership
-across dates is by the **plate_token**, which is identical wherever that plate appears.
-This kills the fragile suffix-stripping AND the `_acq_priority` sniffing.
-
-## Child folder name grammar (positional, inside a `_coll` dir)
-
+### Child name → keys (positional; parsed in `shared/identifiers/`, never string-split in consumers)
 ```
 {date}_{plate_token}_{event_label}
-
-date        20260607   → event acquisition fact (→ frame inventory acquisition_time_s)
-plate_token plate01    → plate identity (namespaced by the collection)
-event_label t45hpf     → declared_hpf = 45   (no `t` suffix → None)
+  date        20250622  → acquisition fact (→ frame_inventory acquisition_time_s)
+  plate_token plate01   → plate identity (namespaced by the collection)
+  event_label t28hpf    → declared_hpf = 28   (no `t` suffix → None)
 ```
+`experiment_id = {collection}_{plate_token}` (date + event DROPPED — all a plate's t-events share it).
+Built parsers: `is_collection`, `is_collection_plate_id`, `parse_plate_token`, `parse_event_label`,
+`parse_declared_hpf`, `parse_collection_name_from_plate_id`, `compose_collection_experiment_id`.
 
-## Derived keys
+### Scope rule (MVP)
+One scope per collection — scopes never mix. Keyence child = a folder (its `.tif` planes underneath);
+YX1 child = a flat `.nd2` file. The marker that a child is a source: a plate token in its own name.
 
-```
-experiment_id = {collection}_{date}_{plate_token}_{event_label}
-              = cilia_snapshots_coll_20260607_plate01_t45hpf     (globally unique, self-describing)
+### Legacy (no `_coll`) — unchanged
+A dir WITHOUT the `_coll` marker is a legacy single experiment: folder-name (Keyence) / `.nd2`-stem
+(YX1) → experiment_id, exactly as today. Dual-mode by the marker.
 
-  parse ▶ experiment_collection = cilia_snapshots_coll
-  parse ▶ plate_id              = cilia_snapshots_coll_plate01   (DATE DROPPED)
-  parse ▶ event_label           = t45hpf
-            └─ declared_hpf      = 45   (None for sci/timelapse)
-  parse ▶ acquisition_date      = 20260607   (event fact, not identity)
-```
+---
 
-`well_id` and everything below it (`image_id`, `physical_embryo_id`, `embryo_id`,
-`snip_id`) are **UNCHANGED** — they still hang off a single `experiment_id`. This model
-only adds derivable keys *above* `well_id`.
+## Collection as a RUN TARGET — one resolver, two callers (BUILT)
 
-New parsers live in `shared/identifiers/` (never string-split in consumer code):
-- `parse_experiment_collection(experiment_id) -> str | None`  (None ⟹ legacy single)
-- `parse_plate_id(experiment_id) -> str`
-- `parse_event_label(experiment_id) -> str | None`
-- `parse_declared_hpf(experiment_id) -> int | None`
-- `parse_acquisition_date(experiment_id) -> str | None`
+A collection is a coarse *handle* expanded to `experiment_id`s before anything runs — needed by BOTH
+the SGE array submitter AND the pipeline. `resolve_experiment_ids(mixed, raw_root)`: a `_coll` entry
+expands (glob children, group by plate_token → `{coll}_{plate}` ids); a bare id passes through the
+singular `resolve_experiment_id`. DRY (mints nothing itself). `resolve-experiment-ids` CLI writes the
+flat EXP_FILE + prints N for `qsub -t 1-N`; the array template is unchanged.
 
-## Binding: well_metadata ⇄ plate
+---
 
-Excel files live in the **flat central store** `metadata/plate_metadata/` (NOT next to
-raw images). One file per plate_id, reused by every event of that plate on any date:
+## What's BUILT (PR #21, real-data-proven) vs REMAINING
 
-```
-metadata/plate_metadata/
-  cilia_snapshots_coll_plate01__well_metadata.xlsx   ← ALL plate01 events (both dates) load this
-  cilia_snapshots_coll_plate02__well_metadata.xlsx
-```
+**BUILT + green (183+ tests; Stage 0–2 proven on real Keyence chem28c):**
+- Grammar parsers + `resolve_experiment_ids` + `resolve-experiment-ids` CLI.
+- `collection_acquisition_ingest` (collapse at ingest → union → one valid acquisition inventory)
+  + `derive_position_well_mapping` + `ingest-collection-acquisition` CLI.
+- Registry `EmbryoMergePolicy` (NORMAL/BRIDGE/FRACTURE) + `n_sources`/`merge_policy` columns.
+- Real-data fix: union offsets `time_index_claimed` in lockstep with `time_index` (cell-key collision).
+- Detection primitives `is_collection_plate_id` / `parse_collection_name_from_plate_id`.
 
-Ingest, given an event `experiment_id`, parses `plate_id`, loads
-`{plate_id}__well_metadata.xlsx`. `process_plate_layout` still stamps `well_id` per
-**event** `experiment_id`; only the *biology source* is shared. One authored sheet,
-many events (and dates) inherit it. This is the redundancy killer:
-`_t01`/`_t02`-per-plate Excels collapse to one.
+**REMAINING — build order (design locked, not yet built):**
+1. **Early classify step** → experiment-level `is_collection` artifact; thread it to branching rules.
+2. **Collection ingest emits** the `time_index → start_age_hpf` mapping product.
+3. **Stage/validation consume** the declared fact + the mapping (collection) / plate_metadata (single).
+4. **Revert the detour:** remove `pool_well_acquisition_rows_across_sources` from
+   `select_well_acquisition_rows.py` (that "pool at materialization" relocation was abandoned —
+   collapse stays at acquisition ingest, where `collection_acquisition_ingest` already does it).
+5. **Wire DAG + GPU run** on 2 wells of chem28c → detection→tracking→registry. SETTLES the SAM2
+   `track_id` question. Then finalize FRACTURE keying, un-draft #21, merge.
 
-## Collection as a RUN TARGET — one resolver, two callers (LOCKED 2026-07-24)
+**DAG note (from a dry-run):** targeting a collection id hit `MissingInputException` on
+`ingest_scope_metadata` because the collection id has no raw dir of its own. That's expected — the
+early classify step + collection-ingest rule must produce the collection's acquisition inventory
+(from its `_coll` dir), and the collection must NOT be routed as a plain per-experiment scope read.
+The clean Snakemake pattern is type-exclusive rule wiring (like the existing native-vs-dropin
+FRONT_END_MODE): a collection experiment's acquisition inventory + position mapping come from the
+collection-ingest rule; downstream materialize→object_extraction is the UNCHANGED native path.
 
-The pipeline runs on `experiment_id`s. A collection is just a coarser *handle* that must
-be **expanded to experiment_ids before anything runs** — and BOTH the SGE array submitter
-AND the pipeline need this same expansion (a plate ≈ an experiment_id to the pipeline,
-since `well_id`s are unique to it). So expansion is ONE shared primitive, not an SGE hack.
+---
 
-```
-                  ┌──────────────────────────────────┐
- mixed input ────▶│  resolve_experiment_ids(list)    │────▶  flat experiment_id list
-(ids + colls)     │  expand collections, passthru ids│           │
-                  └──────────────────────────────────┘           ├─▶ SGE: N = len(list), qsub -t 1-N
-                                                                  ├─▶ Snakemake --config experiments=[...]
-                                                                  └─▶ each experiment runs as today
-```
-
-**Detection:** an input entry ending in **`_coll`** is a collection → expand; anything
-else is a literal `experiment_id` → pass through. Pure suffix test (collection names ARE
-experiment-id-shaped strings today), no filesystem probe to classify.
-
-**Expansion source:** glob the raw child folders `raw/<name>_coll/*/`, mint one
-`experiment_id` per child. Source of truth = disk, always current, no manifest to
-maintain.
-
-**DRY — the wrapper CONSUMES the existing singular primitive, never re-mints:**
-```
-resolve_experiment_ids(mixed)          ← PLURAL wrapper (NEW): expand _coll + passthrough
-   └─ resolve_experiment_id(folder)    ← singular (EXISTS, experiment_identity.py): folder → 1 id
-        └─ sanitize_experiment_id       ← string grammar (EXISTS, shared/identifiers)
-```
-The wrapper only decides *which folders to feed* the singular resolver; it contains NO
-id-construction logic, so nothing can drift. (Analogue of the config rule: a collection
-may NAME a set of experiments but never INVENTS identity — it expands to ids that run
-exactly as today.)
-
-**SGE impact:** the array template is UNCHANGED (it already eats a flat `EXP_FILE`). A
-thin submit wrapper calls `resolve_experiment_ids`, writes the list, sets `N = len`,
-and `qsub -t 1-N -v EXP_FILE=...`. The human no longer hand-counts N.
-
-## What this deliberately does NOT do (MVP boundary)
-
-- No config changes. Detection is by folder `_coll` marker + name grammar, not config.
-- No new spine identifier. `plate_id`/`collection` are DERIVED keys parsed from
-  `experiment_id`, not columns threaded through every contract/validator.
-- Snapshot siblings keep separate `physical_embryo_id`s.
-- The unit the pipeline runs on stays the event (`experiment_id`).
-
-## OPEN QUESTIONS (before implementation)
-
-1. **Legacy coexistence.** The ~40 existing FLAT folders/Excels
-   (`20260416_..._plate01_t02`, `..._plate01_t02_well_metadata.xlsx`) have no `_coll`
-   marker. Parsers must run **dual-mode**: `_coll` present ⟹ new grammar; absent ⟹
-   legacy single experiment. Do old flat snapshot experiments stay as-is (legacy), or
-   get migrated into `_coll` collections? MVP leans: leave legacy alone, new data uses
-   `_coll`.
-2. **event_label vocabulary.** Closed set: `sci` = timelapse (declared_hpf None);
-   `t<NN>hpf` = snapshot at NN. Anything else? Is event always the LAST token, plate the
-   one before it, date the first?
-3. **plate_token format.** `plate01` vs `p01` — pick one, enforce it in the parser.
-4. **Who consumes `declared_hpf`.** Which QC rules actually need expected age today —
-   trace `quality_control/` before wiring the column.
-```
+## MVP boundary (what this deliberately does NOT do)
+- No new spine identifier — `plate_token`/`collection` are derived from `experiment_id`, not threaded
+  through every contract.
+- plate_metadata schema unchanged (age is a separate product).
+- Single (non-collection) experiments are byte-identical to today throughout.
