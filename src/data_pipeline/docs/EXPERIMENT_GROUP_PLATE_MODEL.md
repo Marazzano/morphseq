@@ -180,15 +180,45 @@ own name** (file stem or dir name).
 A directory WITHOUT the `_coll` marker is a legacy single experiment: folder-name (Keyence)
 / `.nd2`-stem (YX1) → experiment_id, exactly as today. Dual-mode by the marker.
 
-## ✅ CORRECTED + LOCATED MODEL (2026-07-27, mdcolon) — POOL AT MATERIALIZATION→FRAME_INVENTORY
+## ✅ FINAL DESIGN (2026-07-27, mdcolon — stated plainly; supersedes ALL prior corrections below)
 
-The acquisition-level union merged TOO EARLY. Correct model (mdcolon, LOCKED):
+Two earlier framings in this doc are SUPERSEDED: (1) the acquisition-level union was NOT "too
+early" — collapse-to-one-experiment at **acquisition ingest** is correct and re-endorsed; (2) the
+"pool at materialization" relocation was a detour — revert the pooling added to
+`select_well_acquisition_rows.py`.
 
-**Acquisition inventory stays PER-SOURCE — the honest "what's on disk" record**, keeping the
-source + raw path for every image. Do NOT merge at acquisition. **The pooling happens per WELL at
-materialization → frame_inventory:** a well can have multiple sources (multiple images/acquisitions
-feeding it); to materialize a coherent frame_inventory for that well you pull the CORRECT
-acquisition inventories (the sources that contribute to the well) and pool their rows.
+### Collapse at acquisition ingest (Concern 1 — identity)
+The `_coll` dir becomes ONE experiment_id at acquisition ingest; sources are read+mapped per-source
+INSIDE the ingest, then pooled into one acquisition inventory (this is what
+`collection_acquisition_ingest` already does, real-data-proven: 6336 rows, n_sources=2). From the
+frame_inventory onward the pipeline treats it as one normal experiment with multiple timepoints.
+
+### Classify ONCE, consume everywhere (the governing principle)
+Determine at the START of the DAG whether an experiment is a collection; pass that DECLARED fact to
+every downstream step that branches. Steps must NOT independently re-infer collection status from
+`experiment_id`, `n_sources`, nulls, or filesystem.
+- **Early DAG step** → a small experiment-level metadata artifact carrying `is_collection` (+ basic
+  collection facts). Single source of truth.
+- `is_collection_plate_id()` may CREATE the initial fact; downstream steps CONSUME the declared
+  result, never re-derive.
+- `n_sources` stays as frame-level multiplicity — but is NOT the canonical definition of
+  collection-ness (the artifact is).
+
+### Age = a separate per-timepoint product (Concern 2 — biology, additive, no schema surgery)
+`start_age_hpf` is really a per-TIMEPOINT fact (t28→age 28 applies to every well at t0), historically
+fused into per-well plate_metadata. For collections, ingest ALSO emits a separate
+`time_index → start_age_hpf` mapping ALONGSIDE plate_metadata — plate_metadata itself UNCHANGED (no
+null trap, no contract change). The stage model / validation branch on the DECLARED is_collection:
+collection → read start_age_hpf from the mapping by time_index; non-collection → existing
+plate_metadata path, byte-identical. Prefer-then-fallback; single = untouched.
+
+### Build order (nothing built tonight — design locked)
+1. Early classify step → experiment-level `is_collection` artifact; thread it to branching rules.
+2. Collection ingest emits the `time_index → start_age_hpf` mapping product.
+3. Stage/validation consume the declared fact + the mapping (collection) / plate_metadata (single).
+4. Revert the `select_well_acquisition_rows` pooling detour + retire the acquisition-union-vs-ingest
+   naming confusion (keep `collection_acquisition_ingest` as the collapse-at-ingest home).
+5. Wire DAG + GPU run (settles the SAM2 track_id question).
 
 ```
 source t28hpf acquisition_inventory  (raw paths + source recorded — "on disk")  ┐
