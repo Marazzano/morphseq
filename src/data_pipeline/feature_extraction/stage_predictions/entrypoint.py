@@ -16,14 +16,27 @@ def run_stage_predictions(
     frame_inventory_csv: Path,
     plate_metadata_csv: Path,
     physical_embryo_registry_csv: Path,
+    collection_classification_json: Path,
     output_csv: Path,
 ) -> None:
+    from data_pipeline.acquisition.metadata_ingest.collection_classification import (
+        read_collection_classification,
+    )
+
     snip_inventory = pd.read_csv(snip_inventory_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
     plate_metadata = pd.read_csv(plate_metadata_csv)
     registry = pd.read_csv(physical_embryo_registry_csv)
+    # The DECLARED collection fact (always present — one per experiment). compute branches on its
+    # is_collection: collection reads age by time_index, single is byte-identical to before.
+    collection_classification = read_collection_classification(collection_classification_json)
 
-    df = compute_stage_prediction_features(snip_inventory, frame_inventory, plate_metadata)
+    df = compute_stage_prediction_features(
+        snip_inventory,
+        frame_inventory,
+        plate_metadata,
+        collection_classification=collection_classification,
+    )
     validate_stage_prediction_features(df, physical_embryo_registry_df=registry, check_sources=True)
 
     output_csv = Path(output_csv)
