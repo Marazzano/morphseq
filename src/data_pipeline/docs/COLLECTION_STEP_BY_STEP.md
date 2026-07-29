@@ -30,7 +30,8 @@ Test case: `chem28c_coll_plate01` (Keyence), 2 sources (t28hpf, t52hpf), 2 wells
 
 **Two outputs, two consumer worlds (preserve what each ingests):**
 - `scope_metadata` (scope_csv) → `map_positions` + `apply` — needs per-position GEOMETRY
-  (`raw_position_label`, `x_um`, `y_um` — the YX1 mapping key) + `channel`.
+  (`raw_position_label`, `x_um`, `y_um` — the YX1 mapping key) + `channel_id` (the clean token;
+  currently named `channel` in scope_csv — a laggard, see the convergence note) + `raw_channel_name`.
 - `acquisition_inventory` → `build_keyence_stitch_map` + `materialize` — needs image-level
   `source_path` (pixels) + acquisition axes.
 These are NOT interchangeable (the earlier "dump acquisition inventory into scope_csv" was wrong,
@@ -72,7 +73,8 @@ Because all four take these from the ONE artifact, source identity is part of th
 `source_id` + assigned `time_index`. `collection_acquisition_ingest` already unions the acquisition
 inventory — REPOINT it to be artifact-driven (read `sources`, not re-glob) and ALSO produce the real
 scope_metadata union (not a fake). channel→channel_id convergence is a SEPARATE cleanup, no longer a
-blocker (real scope_csv has `channel`, so apply won't crash).
+blocker (a real scope_csv union carries the clean-token column — named `channel` today, converging
+to `channel_id` — so apply won't crash on it).
 
 ## Step 2 — map_positions_to_wells (Snakefile:484)  [status: DESIGN LOCKED 2026-07-28]
 
@@ -156,11 +158,17 @@ UNCHANGED; the collection logic is the per-file loop + concat (driven by the art
 
 ---
 
-## Cross-cutting: channel → channel_id convergence  [status: TODO, its own commit]
-Scope metadata calls the clean token `channel`; acquisition_inventory calls it `channel_id`
-(SAME value "BF"). `raw_channel_name` is the distinct raw string. Converge scope's `channel` →
-`channel_id` (one canonical token, already the declared converged name; `_to_channel_id`/`channel_map`
-is already the ONE generator). 7 live files. Fixes the apply crash's proximate cause.
+## Cross-cutting: bare `channel` is a MISNAMED `channel_id` — converge it  [status: TODO, own commit]
+There is NO legitimate bare `channel` column. There are exactly TWO channel columns:
+- **`channel_id`** — the clean token ("BF"). Scope metadata currently calls this `channel` (a
+  laggard name); it holds the SAME value the acquisition_inventory calls `channel_id`.
+- **`raw_channel`** / `raw_channel_name` — the raw microscope value ("BrightField").
+
+So the fix is a RENAME, not reconciling two concepts: scope metadata's `channel` → `channel_id`
+(the already-declared canonical token; `_to_channel_id`/`channel_map` is already the ONE generator).
+`raw_channel_name` is untouched. Do NOT treat `channel` as a distinct thing — it's `channel_id`
+under an old name. ~7 live files. Separate commit; not a collection blocker (a real scope_csv union
+carries whichever name is current, and this rename converges it).
 
 ## Known drift already fixed (not collection work): calibration col + stage_x/y/z_nm fixtures.
 ## Known pre-existing, out of scope: 2 z_stack keyence tests (StopIteration, stitch-count change).
