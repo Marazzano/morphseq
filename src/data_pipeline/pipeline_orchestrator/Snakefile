@@ -239,8 +239,8 @@ PLATE_METADATA_VALIDATED = validated_path(
 # The early-DAG "what is this experiment?" fact (CLASSIFY ONCE, CONSUME EVERYWHERE). Generated for
 # EVERY experiment (inert for singles) so downstream rules can depend on it unconditionally, and
 # every disk-touching collection step READS its per-source provenance instead of re-globbing _coll.
-COLLECTION_CLASSIFICATION_JSON = artifact_path(
-    DATA_ROOT, "collection_classification", "classification", FRONT_END_EXPERIMENT
+COLLECTION_PROVENANCE_JSON = artifact_path(
+    DATA_ROOT, "collection_provenance", "provenance", FRONT_END_EXPERIMENT
 )
 SCOPE_METADATA_CSV = artifact_path(
     DATA_ROOT,
@@ -435,7 +435,7 @@ def _scope_raw_input_dir(wc):
     return str(RAW_IMAGES_DIR / MICROSCOPE / exp)
 
 
-rule classify_experiment:
+rule build_collection_provenance:
     """
     CLASSIFY ONCE — emit the per-experiment collection-provenance artifact at the START of the DAG.
 
@@ -448,17 +448,17 @@ rule classify_experiment:
     frame_inventory the only remaining consumer is stage_predictions (the age map).
     """
     output:
-        classification_json = COLLECTION_CLASSIFICATION_JSON
+        provenance_json = COLLECTION_PROVENANCE_JSON
     params:
         experiment_id = "{experiment}",
         raw_root = str(RAW_IMAGES_DIR / MICROSCOPE),
     shell:
         """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks classify-experiment \
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks build-collection-provenance \
           --experiment "{params.experiment_id}" \
           --raw-root "{params.raw_root}" \
           --microscope "{MICROSCOPE}" \
-          --output-json "{output.classification_json}"
+          --output-json "{output.provenance_json}"
         """
 
 
@@ -480,7 +480,7 @@ rule ingest_scope_metadata:
     input:
         raw_images_dir = _scope_raw_input_dir,
         # The keystone: who-is-what (source files + their time_index). Never re-globbed.
-        classification_json = COLLECTION_CLASSIFICATION_JSON,
+        provenance_json = COLLECTION_PROVENANCE_JSON,
     output:
         # Both scopes emit the maximal acquisition inventory (record-only): YX1 from its one ND2 read,
         # Keyence from a raw-plane TIFF scan. The inventory is the never-collapsed system of record.
@@ -508,7 +508,7 @@ rule ingest_scope_metadata:
             --experiment "{params.experiment_id}" \
             --raw-root "{params.raw_root}" \
             --microscope "{MICROSCOPE}" \
-            --classification-json "{input.classification_json}" \
+            --provenance-json "{input.provenance_json}" \
             --output-csv "{output.acquisition_inventory_csv}" \
             --scope-metadata-csv "{output.scope_csv}"
         else
@@ -532,7 +532,7 @@ rule map_positions_to_wells:
     """
     input:
         scope_csv = SCOPE_METADATA_CSV,
-        classification_json = COLLECTION_CLASSIFICATION_JSON,
+        provenance_json = COLLECTION_PROVENANCE_JSON,
     output:
         mapping_csv = POSITION_WELL_MAPPING_CSV,
         provenance_json = POSITION_WELL_MAPPING_PROVENANCE,
@@ -553,7 +553,7 @@ rule map_positions_to_wells:
           {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-collection-positions-to-wells \
             --experiment "{params.experiment_id}" \
             --microscope "{MICROSCOPE}" \
-            --classification-json "{input.classification_json}" \
+            --provenance-json "{input.provenance_json}" \
             --scope-csv "{input.scope_csv}" \
             --raw-dir "{params.collection_raw_dir}" \
             --ref-xy-csv "{params.ref_xy_csv}" \

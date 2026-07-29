@@ -3,16 +3,16 @@
 No mask reading: stage is predicted from start_age_hpf + temperature and elapsed_time_s
 (frame_inventory, by image_id). Reuses the legacy pure predict_stage_hpf.
 
-``start_age_hpf`` source depends on the DECLARED collection-classify fact (CLASSIFY ONCE, CONSUME
+``start_age_hpf`` source depends on the DECLARED collection-provenance fact (CLASSIFY ONCE, CONSUME
 EVERYWHERE — see docs/EXPERIMENT_GROUP_PLATE_MODEL.md). This is the ONE consumer that branches on it:
 
   - COLLECTION (``is_collection`` true) → ``start_age_by_source_ordinal[str(source_ordinal)]`` — a
     snapshot collection is a coarse timelapse whose per-source age can't live in per-well
-    plate_metadata, so the age RIDES IN the classify artifact keyed by the SOURCE ORDINAL (one
+    plate_metadata, so the age RIDES IN the provenance artifact keyed by the SOURCE ORDINAL (one
     declared ``t<NN>hpf`` per raw source acquisition). Today the snip's merged ``time_index`` is
     used as that key, which is correct only while every source contributes one frame; see
     TODO(collection-source-ordinal-through-snips) below.
-  - SINGLE (non-collection, or no classify artifact) → ``plate_by_well[well_id]["start_age_hpf"]``,
+  - SINGLE (non-collection, or no provenance artifact) → ``plate_by_well[well_id]["start_age_hpf"]``,
     BYTE-IDENTICAL to the pre-collection behavior.
 
 ``temperature`` always comes from plate_metadata by well_id (a per-well fact, unchanged either way).
@@ -46,7 +46,7 @@ def _elapsed_time_s(frame_inventory_by_image: pd.DataFrame, image_id: str, snip_
 
 def _start_age_hpf_for_snip(
     *,
-    collection_classification: dict | None,
+    collection_provenance: dict | None,
     plate: pd.Series,
     time_index: object,
     well_id: str,
@@ -54,11 +54,11 @@ def _start_age_hpf_for_snip(
 ) -> float:
     """Resolve ``start_age_hpf`` for one snip, branching on the DECLARED collection fact.
 
-    Collection → the per-timepoint age from ``start_age_by_time_index[str(time_index)]`` (the union
-    time_index keys the map). Single (no classify artifact, or ``is_collection`` false) → the
+    Collection → the per-source age from ``start_age_by_source_ordinal``. Single (no provenance
+    artifact, or ``is_collection`` false) → the
     per-well ``plate_metadata`` value, byte-identical to the pre-collection path.
     """
-    is_collection = bool(collection_classification.get("is_collection")) if collection_classification else False
+    is_collection = bool(collection_provenance.get("is_collection")) if collection_provenance else False
 
     if not is_collection:
         # SINGLE path — unchanged. plate_metadata's start_age_hpf, validated by the caller.
@@ -66,10 +66,10 @@ def _start_age_hpf_for_snip(
 
     # The age map is keyed by SOURCE ORDINAL (one declared t<NN>hpf per raw source acquisition).
     # Prefer the canonical field; fall back to the legacy alias for an artifact written before the
-    # rename. See TODO(collection-legacy-age-map) in collection_classification.
-    age_map = collection_classification.get("start_age_by_source_ordinal")
+    # rename. See TODO(collection-legacy-age-map) in collection_provenance.
+    age_map = collection_provenance.get("start_age_by_source_ordinal")
     if age_map is None:
-        age_map = collection_classification["start_age_by_time_index"]
+        age_map = collection_provenance["start_age_by_time_index"]
 
     # KNOWN LIMITATION (all-snapshot collections only). The snip carries the MERGED time_index,
     # while the map is keyed by source_ordinal. Those coincide only when every source contributes
@@ -80,7 +80,7 @@ def _start_age_hpf_for_snip(
     # frame_inventory into the snip inventory, then key this lookup on the snip's source_ordinal.
     key = str(int(time_index))
     if key not in age_map or age_map[key] is None:
-        experiment_id = collection_classification.get("experiment_id", well_id)
+        experiment_id = collection_provenance.get("experiment_id", well_id)
         raise ValueError(
             f"stage_predictions: collection {experiment_id!r} declares no start_age_hpf for "
             f"source_ordinal {key} (snip {snip_id!r}, merged time_index {key}). Either the "
@@ -97,14 +97,14 @@ def compute_stage_prediction_features(
     frame_inventory_df: pd.DataFrame,
     plate_metadata_df: pd.DataFrame,
     *,
-    collection_classification: dict | None = None,
+    collection_provenance: dict | None = None,
     model_version: str = MODEL_VERSION,
 ) -> pd.DataFrame:
     """Return one stage_prediction_features row per snip.
 
-    ``collection_classification`` is the DECLARED collection-classify payload (or ``None`` for a
+    ``collection_provenance`` is the DECLARED collection-provenance payload (or ``None`` for a
     single experiment / the pre-collection call path). When it declares ``is_collection`` true, each
-    snip's ``start_age_hpf`` is read from ``start_age_by_time_index`` by the snip's ``time_index``;
+    snip's ``start_age_hpf`` is read from ``start_age_by_source_ordinal``;
     otherwise it is the per-well ``plate_metadata`` value (byte-identical to before).
     """
     frame_inventory_by_image = frame_inventory_df.set_index("image_id")
@@ -123,20 +123,20 @@ def compute_stage_prediction_features(
             )
         plate = plate_by_well.loc[well_id]
         # temperature is always a per-well plate_metadata fact. start_age_hpf is per-well ONLY for a
-        # single experiment; for a collection it comes from the classify artifact by time_index, so
+        # single experiment; for a collection it comes from the provenance artifact, so
         # a collection well legitimately need not carry start_age_hpf here.
         if "temperature" not in plate.index or pd.isna(plate["temperature"]):
             raise ValueError(
                 f"stage_predictions: plate_metadata for well {well_id!r} is missing 'temperature'."
             )
-        if not (collection_classification and collection_classification.get("is_collection")):
+        if not (collection_provenance and collection_provenance.get("is_collection")):
             if "start_age_hpf" not in plate.index or pd.isna(plate["start_age_hpf"]):
                 raise ValueError(
                     f"stage_predictions: plate_metadata for well {well_id!r} is missing 'start_age_hpf'."
                 )
 
         start_age_hpf = _start_age_hpf_for_snip(
-            collection_classification=collection_classification,
+            collection_provenance=collection_provenance,
             plate=plate,
             time_index=snip["time_index"],
             well_id=well_id,

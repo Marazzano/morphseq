@@ -13,7 +13,7 @@ This test is the GATE: it fails once no production consumer reads the legacy fie
 signal that ``start_age_by_time_index`` can be deleted from the producer + contract. When this
 test fails with "legacy field is no longer read", do the removal and delete this file.
 
-See TODO(collection-legacy-age-map) in collection_classification.py.
+See TODO(collection-legacy-age-map) in collection_provenance.py.
 
 Run: PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_collection_legacy_age_map_gate.py
 """
@@ -28,8 +28,8 @@ _LEGACY_FIELD = "start_age_by_time_index"
 # The producer + its contract necessarily still NAME the legacy field (they emit/validate it), so
 # they are not evidence of a consumer. Everything else under src/ that reads it is.
 _PRODUCER_FILES = {
-    "collection_classification.py",
-    "collection_classification_contract.py",
+    "collection_provenance.py",
+    "collection_provenance_contract.py",
 }
 
 # A READ looks like `payload["start_age_by_time_index"]` or `.get("start_age_by_time_index")`.
@@ -82,8 +82,8 @@ def test_gate_fires_once_legacy_field_is_unread():
     readers = _legacy_readers()
     assert readers, (
         f"The legacy field {_LEGACY_FIELD!r} is no longer read by any consumer under src/. "
-        "REMOVE IT NOW: delete it from collection_classification.py (both payload branches), from "
-        "REQUIRED_COLLECTION_CLASSIFICATION_KEYS + the mirror check in "
-        "collection_classification_contract.py, and delete this test file. "
+        "REMOVE IT NOW: delete it from collection_provenance.py (both payload branches), from "
+        "REQUIRED_COLLECTION_PROVENANCE_KEYS + the mirror check in "
+        "collection_provenance_contract.py, and delete this test file. "
         "See TODO(collection-legacy-age-map)."
     )

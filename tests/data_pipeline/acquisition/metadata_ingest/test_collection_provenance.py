@@ -7,7 +7,7 @@ Pins the CONTRACT of the early-DAG classify fact:
   - the writer round-trips through the validator.
 
 Uses tmp_path _coll dirs (never real data). Run:
-  PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_collection_classification.py
+  PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_collection_provenance.py
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ import json
 import pytest
 
 from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import PlateSource
-from data_pipeline.acquisition.metadata_ingest.collection_classification import (
-    classify_experiment,
-    read_collection_classification,
-    write_collection_classification,
+from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+    build_collection_provenance,
+    read_collection_provenance,
+    write_collection_provenance,
 )
-from data_pipeline.acquisition.metadata_ingest.collection_classification_contract import (
-    validate_collection_classification,
+from data_pipeline.acquisition.metadata_ingest.collection_provenance_contract import (
+    validate_collection_provenance,
 )
 
 
@@ -44,7 +44,7 @@ def test_classify_collection_declares_sources_and_age_map(tmp_path):
         ["20250622_plate01_t28hpf", "20250623_plate01_t52hpf",
          "20250622_plate02_t28hpf"],  # a different plate — excluded
     )
-    payload = classify_experiment("chem28c_coll_plate01", tmp_path)
+    payload = build_collection_provenance("chem28c_coll_plate01", tmp_path)
     assert payload["experiment_id"] == "chem28c_coll_plate01"
     assert payload["is_collection"] is True
     # sources are PROVENANCE RECORDS ordered by PlateSource.sort_key (declared_hpf then date):
@@ -68,7 +68,7 @@ def test_classify_time_index_matches_acquisition_union_ordering(tmp_path):
     """
     children = ["20250623_plate01_t52hpf", "20250622_plate01_t28hpf"]  # unsorted on disk
     _make_collection(tmp_path, "chem28c_coll", children)
-    payload = classify_experiment("chem28c_coll_plate01", tmp_path)
+    payload = build_collection_provenance("chem28c_coll_plate01", tmp_path)
 
     ordered = sorted(
         (PlateSource(source_id=c, scope="Keyence") for c in children),
@@ -87,7 +87,7 @@ def test_classify_undeclared_age_is_null_not_absent(tmp_path):
         "sci_snaps_coll",
         ["20250622_plate01_t28hpf", "20250623_plate01_sci"],
     )
-    payload = classify_experiment("sci_snaps_coll_plate01", tmp_path)
+    payload = build_collection_provenance("sci_snaps_coll_plate01", tmp_path)
     # 28 declared sorts first (ordinal 0); undeclared sorts last (ordinal 1) with a null age.
     assert payload["start_age_by_time_index"] == {"0": 28, "1": None}
 
@@ -95,7 +95,7 @@ def test_classify_undeclared_age_is_null_not_absent(tmp_path):
 # ── Single (non-collection): inert payload ─────────────────────────────────────
 
 def test_classify_single_experiment_is_inert(tmp_path):
-    payload = classify_experiment("20250912", tmp_path)
+    payload = build_collection_provenance("20250912", tmp_path)
     assert payload == {
         "experiment_id": "20250912",
         "is_collection": False,
@@ -111,8 +111,8 @@ def test_write_and_read_round_trip(tmp_path):
     _make_collection(
         tmp_path, "chem28c_coll", ["20250622_plate01_t28hpf", "20250623_plate01_t52hpf"]
     )
-    out = tmp_path / "out" / "collection_classification.json"
-    written = write_collection_classification(
+    out = tmp_path / "out" / "collection_provenance.json"
+    written = write_collection_provenance(
         experiment_id="chem28c_coll_plate01",
         raw_root=tmp_path,
         microscope="Keyence",
@@ -120,14 +120,14 @@ def test_write_and_read_round_trip(tmp_path):
     )
     on_disk = json.loads(out.read_text())
     assert on_disk == written
-    assert read_collection_classification(out) == written
+    assert read_collection_provenance(out) == written
 
 
 # ── Contract validator: fail-loud shape checks ─────────────────────────────────
 
 def test_validator_rejects_non_bool_is_collection():
     with pytest.raises(ValueError, match="is_collection.*bool"):
-        validate_collection_classification({
+        validate_collection_provenance({
             "experiment_id": "x", "is_collection": "true",
             "sources": [], "start_age_by_source_ordinal": {},
             "start_age_by_time_index": {},
@@ -136,7 +136,7 @@ def test_validator_rejects_non_bool_is_collection():
 
 def test_validator_rejects_non_int_age_key():
     with pytest.raises(ValueError, match="stringified ints"):
-        validate_collection_classification({
+        validate_collection_provenance({
             "experiment_id": "x", "is_collection": True,
             "sources": [{"file": "20250622_plate01_t28hpf", "raw_path": "/r/t28",
                          "declared_hpf": 28, "source_ordinal": 0, "time_index": 0}],
@@ -147,12 +147,12 @@ def test_validator_rejects_non_int_age_key():
 
 def test_validator_rejects_missing_key():
     with pytest.raises(ValueError, match="missing required key"):
-        validate_collection_classification({"experiment_id": "x", "is_collection": False})
+        validate_collection_provenance({"experiment_id": "x", "is_collection": False})
 
 
 def test_validator_rejects_noninert_single():
     with pytest.raises(ValueError, match="must be inert"):
-        validate_collection_classification({
+        validate_collection_provenance({
             "experiment_id": "x", "is_collection": False,
             "sources": [{"file": "20250622_plate01_t28hpf", "raw_path": "/r/t28",
                          "declared_hpf": 28, "source_ordinal": 0, "time_index": 0}],

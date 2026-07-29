@@ -1,7 +1,7 @@
 """Collection-classify artifact contract — the single source of truth for "what a collection is".
 
 This is the schema + authoritative validator for the small per-experiment JSON emitted by the
-early classify step (``collection_classification.classify_experiment``). It is NOT a table — it is
+early classify step (``collection_provenance.build_collection_provenance``). It is NOT a table — it is
 one JSON object per experiment — so the contract is proportionate: it pins the required keys, their
 types, and the ``start_age_by_time_index`` map shape (stringified-int keys → int/None ages). It is
 still the ONE authoritative validator for this artifact (philosophy doc: one contract → one
@@ -31,7 +31,7 @@ For a NON-collection experiment the payload is inert (consumers ignore it and be
 ``start_age_by_time_index`` keys are the union ``time_index`` block-start ordinals (stringified for
 JSON) and values are the declared age in hpf (int), or ``None`` when a source declared no age (honest
 absence — not omitted). The ``time_index`` keys are consistent WITH the acquisition union's ordering
-by construction; that guarantee lives in the producer (``collection_classification``), which reuses
+by construction; that guarantee lives in the producer (``collection_provenance``), which reuses
 ``PlateSource.sort_key`` — this contract only checks the key/value SHAPE.
 """
 
@@ -42,7 +42,7 @@ from __future__ import annotations
 # Contract — required keys + payload types
 # ─────────────────────────────────────────────────────────────────────────────────────
 
-REQUIRED_COLLECTION_CLASSIFICATION_KEYS: tuple[str, ...] = (
+REQUIRED_COLLECTION_PROVENANCE_KEYS: tuple[str, ...] = (
     "experiment_id",
     "is_collection",
     "sources",
@@ -54,10 +54,10 @@ REQUIRED_COLLECTION_CLASSIFICATION_KEYS: tuple[str, ...] = (
 )
 
 
-def validate_collection_classification(
+def validate_collection_provenance(
     payload: dict,
     *,
-    scope_label: str = "collection_classification",
+    scope_label: str = "collection_provenance",
 ) -> None:
     """Fail loud unless ``payload`` follows the collection-classify artifact contract.
 
@@ -70,11 +70,11 @@ def validate_collection_classification(
     Raises:
         ValueError: on any contract violation, with a message that names the fix.
     """
-    for key in REQUIRED_COLLECTION_CLASSIFICATION_KEYS:
+    for key in REQUIRED_COLLECTION_PROVENANCE_KEYS:
         if key not in payload:
             raise ValueError(
                 f"[{scope_label}] missing required key {key!r}. Expected keys: "
-                f"{list(REQUIRED_COLLECTION_CLASSIFICATION_KEYS)}."
+                f"{list(REQUIRED_COLLECTION_PROVENANCE_KEYS)}."
             )
 
     experiment_id = payload["experiment_id"]

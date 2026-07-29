@@ -39,8 +39,8 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union impo
     PlateSource,
     assert_source_order_unambiguous,
 )
-from data_pipeline.acquisition.metadata_ingest.collection_classification_contract import (
-    validate_collection_classification,
+from data_pipeline.acquisition.metadata_ingest.collection_provenance_contract import (
+    validate_collection_provenance,
 )
 from data_pipeline.acquisition.metadata_ingest.collection_discovery import (
     discover_plate_sources,
@@ -52,7 +52,7 @@ from data_pipeline.shared.identifiers import is_collection_plate_id
 # Classify — derive the declared fact (the ONE place allowed to derive)
 # ─────────────────────────────────────────────────────────────────────────────────────
 
-def classify_experiment(
+def build_collection_provenance(
     experiment_id: str,
     raw_root: str | Path,
     microscope: str = "Keyence",
@@ -68,7 +68,7 @@ def classify_experiment(
             uses only the source NAME, so this does not change ``time_index`` assignment).
 
     Returns:
-        The validated payload dict (see ``collection_classification_contract``): for a collection,
+        The validated payload dict (see ``collection_provenance_contract``): for a collection,
         ``is_collection=True`` with its ``sources`` and ``start_age_by_time_index`` (time_index →
         declared hpf, None where undeclared); for a single experiment, the inert
         ``is_collection=False`` payload.
@@ -85,7 +85,7 @@ def classify_experiment(
             # TODO(collection-legacy-age-map): see the collection branch below.
             "start_age_by_time_index": {},
         }
-        validate_collection_classification(payload)
+        validate_collection_provenance(payload)
         return payload
 
     collection_name, source_ids = discover_plate_sources(experiment_id, Path(raw_root))
@@ -139,7 +139,7 @@ def classify_experiment(
         # that test is the removal gate.
         "start_age_by_time_index": dict(start_age_by_source_ordinal),
     }
-    validate_collection_classification(payload)
+    validate_collection_provenance(payload)
     return payload
 
 
@@ -147,7 +147,7 @@ def classify_experiment(
 # Write — persist the declared fact as the artifact downstream consumes
 # ─────────────────────────────────────────────────────────────────────────────────────
 
-def write_collection_classification(
+def write_collection_provenance(
     *,
     experiment_id: str,
     raw_root: str | Path,
@@ -159,19 +159,19 @@ def write_collection_classification(
     Returns the (validated) payload it wrote. The path comes from ``paths.py`` at the call site;
     this writer only owns the classify + serialization.
     """
-    payload = classify_experiment(experiment_id, raw_root, microscope)
+    payload = build_collection_provenance(experiment_id, raw_root, microscope)
     output_json = Path(output_json)
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(payload, indent=2) + "\n")
     return payload
 
 
-def read_collection_classification(input_json: str | Path) -> dict:
+def read_collection_provenance(input_json: str | Path) -> dict:
     """Read + validate a collection-classify artifact (the consume boundary).
 
     Downstream steps call this to CONSUME the declared fact; it re-validates the shape so a
     hand-edited or corrupt artifact fails loud where it is read, not deep in a consumer.
     """
     payload = json.loads(Path(input_json).read_text())
-    validate_collection_classification(payload)
+    validate_collection_provenance(payload)
     return payload

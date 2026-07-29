@@ -158,12 +158,12 @@ PIPELINE_STEPS: dict[str, dict] = {
     # time_index→start_age_hpf map (the age escape hatch RIDES here; no separate age product).
     # Every step that must branch on collection-ness consumes THIS artifact; none re-derives it.
     # See docs/EXPERIMENT_GROUP_PLATE_MODEL.md ("CLASSIFY ONCE, CONSUME EVERYWHERE").
-    "collection_classification": {
+    "collection_provenance": {
         "stage": "acquisition",
         "product_dir": "ingest_metadata",
         "fanout": EXPERIMENT,
         "execution": EXECUTION_PER_WELL,
-        "artifacts": {"classification": "collection_classification.json"},
+        "artifacts": {"provenance": "collection_provenance.json"},
     },
 
     # ── SCOPE LINEAGE (raw microscope file — acquisition facts) ───────────────

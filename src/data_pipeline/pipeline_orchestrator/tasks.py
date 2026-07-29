@@ -86,13 +86,13 @@ def cmd_ingest_collection_acquisition(args: argparse.Namespace) -> None:
         ingest_collection_acquisition_inventory,
         ingest_collection_scope_metadata,
     )
-    from data_pipeline.acquisition.metadata_ingest.collection_classification import (
-        read_collection_classification,
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        read_collection_provenance,
     )
 
     # Artifact-driven: the provenance JSON is the SINGLE source of truth for which sources exist
     # and where they are. Both unions consume it; neither re-globs the _coll dir.
-    payload = read_collection_classification(args.classification_json)
+    payload = read_collection_provenance(args.provenance_json)
 
     unioned = ingest_collection_acquisition_inventory(
         experiment_id=args.experiment,
@@ -117,14 +117,14 @@ def cmd_map_collection_positions_to_wells(args: argparse.Namespace) -> None:
     per-scope map functions it calls are UNCHANGED. Sources (and their time_index) are read from the
     classify artifact — never re-globbed.
     """
-    from data_pipeline.acquisition.metadata_ingest.collection_classification import (
-        read_collection_classification,
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        read_collection_provenance,
     )
     from data_pipeline.acquisition.metadata_ingest.collection_position_mapping import (
         map_collection_positions_to_wells,
     )
 
-    payload = read_collection_classification(args.classification_json)
+    payload = read_collection_provenance(args.provenance_json)
     map_collection_positions_to_wells(
         experiment_id=args.experiment,
         sources=payload["sources"],
@@ -137,18 +137,18 @@ def cmd_map_collection_positions_to_wells(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_classify_experiment(args: argparse.Namespace) -> None:
+def cmd_build_collection_provenance(args: argparse.Namespace) -> None:
     """Write the early-DAG collection-classify artifact for one experiment.
 
     Thin dispatcher: derive the declared fact (is_collection + the time_index→start_age_hpf map)
     and write the JSON. All domain logic (the classify + the union-consistent ordering) lives in
     the classify module (DRY). See EXPERIMENT_GROUP_PLATE_MODEL.md ("CLASSIFY ONCE").
     """
-    from data_pipeline.acquisition.metadata_ingest.collection_classification import (
-        write_collection_classification,
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        write_collection_provenance,
     )
 
-    write_collection_classification(
+    write_collection_provenance(
         experiment_id=args.experiment,
         raw_root=args.raw_root,
         microscope=args.microscope,
@@ -697,7 +697,7 @@ def cmd_stage_predictions(args: argparse.Namespace) -> None:
         frame_inventory_csv=args.frame_inventory_csv,
         plate_metadata_csv=args.plate_metadata_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
-        collection_classification_json=args.collection_classification_json,
+        collection_provenance_json=args.collection_provenance_json,
         output_csv=args.output_csv,
     )
 
@@ -1370,7 +1370,7 @@ def build_parser() -> argparse.ArgumentParser:
                             help="optional: also build the REAL unioned scope_metadata (per-position "
                                  "geometry + channel, what map_positions/apply ingest). A different "
                                  "artifact from the inventory, from the same per-source read")
-    p_coll_acq.add_argument("--classification-json", type=Path, required=True,
+    p_coll_acq.add_argument("--provenance-json", type=Path, required=True,
                             help="the collection provenance artifact (which sources exist, their "
                                  "raw_path and source_ordinal). REQUIRED: it is the single source of "
                                  "truth for both unions; this step never globs the _coll dir")
@@ -1383,8 +1383,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_coll_map.add_argument("--experiment", required=True,
                             help="merged collection plate id — what well_id is keyed to")
     p_coll_map.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
-    p_coll_map.add_argument("--classification-json", type=Path, required=True,
-                            help="the collection_classification.json artifact (sources + time_index)")
+    p_coll_map.add_argument("--provenance-json", type=Path, required=True,
+                            help="the collection_provenance.json artifact (sources + time_index)")
     p_coll_map.add_argument("--scope-csv", type=Path, required=True,
                             help="the UNIONED scope metadata; re-split per source by time_index")
     p_coll_map.add_argument("--raw-dir", type=Path, required=True,
@@ -1395,15 +1395,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_coll_map.add_argument("--output-provenance-json", type=Path, required=True)
     p_coll_map.set_defaults(func=cmd_map_collection_positions_to_wells)
 
-    p_classify = sub.add_parser("classify-experiment")
+    p_classify = sub.add_parser("build-collection-provenance")
     p_classify.add_argument("--experiment", required=True,
                             help="experiment id to classify ({collection}_coll_{plate} or a single id)")
     p_classify.add_argument("--raw-root", type=Path, required=True,
                             help="raw image root containing the _coll dir (read only for a collection)")
     p_classify.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
     p_classify.add_argument("--output-json", type=Path, required=True,
-                            help="destination for the collection_classification.json artifact")
-    p_classify.set_defaults(func=cmd_classify_experiment)
+                            help="destination for the collection_provenance.json artifact")
+    p_classify.set_defaults(func=cmd_build_collection_provenance)
 
     p_norm = sub.add_parser("ingest-plate-metadata", aliases=["normalize-plate"])
     p_norm.add_argument("--input-file", type=Path, required=True)
@@ -1675,9 +1675,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_stage.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_stage.add_argument("--plate-metadata-csv", type=Path, required=True)
     p_stage.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
-    p_stage.add_argument("--collection-classification-json", type=Path, required=True,
-                         help="the experiment's collection-classify artifact (declares is_collection "
-                              "+ the time_index->start_age_hpf map)")
+    p_stage.add_argument("--collection-provenance-json", type=Path, required=True,
+                         help="the experiment's collection-provenance artifact (declares is_collection "
+                              "+ the source_ordinal->start_age_hpf map)")
     p_stage.add_argument("--output-csv", type=Path, required=True)
     p_stage.set_defaults(func=cmd_stage_predictions)
 
