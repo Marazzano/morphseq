@@ -47,8 +47,14 @@ def test_classify_collection_declares_sources_and_age_map(tmp_path):
     payload = classify_experiment("chem28c_coll_plate01", tmp_path)
     assert payload["experiment_id"] == "chem28c_coll_plate01"
     assert payload["is_collection"] is True
-    # sources ordered by SourceChild.sort_key (declared_hpf then date): 28 before 52.
-    assert payload["sources"] == ["20250622_plate01_t28hpf", "20250623_plate01_t52hpf"]
+    # sources are PROVENANCE RECORDS ordered by SourceChild.sort_key (declared_hpf then date):
+    # 28 before 52. Each carries file / raw_path / declared_hpf / time_index.
+    assert [s["file"] for s in payload["sources"]] == [
+        "20250622_plate01_t28hpf", "20250623_plate01_t52hpf"
+    ]
+    assert [s["time_index"] for s in payload["sources"]] == [0, 1]
+    assert [s["declared_hpf"] for s in payload["sources"]] == [28, 52]
+    assert all(s["file"] in s["raw_path"] for s in payload["sources"])  # raw_path points at the file
     # time_index keys are the block ordinals of THAT ordering — matches the acquisition union.
     assert payload["start_age_by_time_index"] == {"0": 28, "1": 52}
 
@@ -70,7 +76,8 @@ def test_classify_time_index_matches_acquisition_union_ordering(tmp_path):
     )
     expected = {str(i): s.declared_hpf for i, s in enumerate(ordered)}
     assert payload["start_age_by_time_index"] == expected
-    assert payload["sources"] == [s.child_name for s in ordered]
+    assert [s["file"] for s in payload["sources"]] == [s.child_name for s in ordered]
+    assert [s["time_index"] for s in payload["sources"]] == list(range(len(ordered)))
 
 
 def test_classify_undeclared_age_is_null_not_absent(tmp_path):
@@ -129,7 +136,8 @@ def test_validator_rejects_non_int_age_key():
     with pytest.raises(ValueError, match="stringified ints"):
         validate_collection_classification({
             "experiment_id": "x", "is_collection": True,
-            "sources": ["20250622_plate01_t28hpf"],
+            "sources": [{"file": "20250622_plate01_t28hpf", "raw_path": "/r/t28",
+                         "declared_hpf": 28, "time_index": 0}],
             "start_age_by_time_index": {"first": 28},
         })
 
@@ -143,5 +151,7 @@ def test_validator_rejects_noninert_single():
     with pytest.raises(ValueError, match="must be inert"):
         validate_collection_classification({
             "experiment_id": "x", "is_collection": False,
-            "sources": ["20250622_plate01_t28hpf"], "start_age_by_time_index": {},
+            "sources": [{"file": "20250622_plate01_t28hpf", "raw_path": "/r/t28",
+                         "declared_hpf": 28, "time_index": 0}],
+            "start_age_by_time_index": {},
         })

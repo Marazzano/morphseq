@@ -83,7 +83,8 @@ def classify_experiment(
         validate_collection_classification(payload)
         return payload
 
-    _, child_names = find_collection_plate_sources(experiment_id, Path(raw_root))
+    collection_name, child_names = find_collection_plate_sources(experiment_id, Path(raw_root))
+    collection_dir = Path(raw_root) / collection_name
 
     # REUSE the acquisition union's ordering so time_index here == time_index in the inventory.
     ordered_sources = sorted(
@@ -91,15 +92,27 @@ def classify_experiment(
         key=SourceChild.sort_key,
     )
 
-    start_age_by_time_index = {
-        str(time_index): source.declared_hpf
+    # One PROVENANCE RECORD per source: file + on-disk raw_path + declared_hpf + time_index. This is
+    # the single source of truth every disk-touching step reads (it never re-globs the _coll dir).
+    # time_index is the block ordinal of the union's ordering — identical to the acquisition
+    # inventory's time_index by construction.
+    sources = [
+        {
+            "file": source.child_name,
+            "raw_path": str(collection_dir / source.child_name),
+            "declared_hpf": source.declared_hpf,
+            "time_index": time_index,
+        }
         for time_index, source in enumerate(ordered_sources)
+    ]
+    start_age_by_time_index = {
+        str(rec["time_index"]): rec["declared_hpf"] for rec in sources
     }
 
     payload = {
         "experiment_id": experiment_id,
         "is_collection": True,
-        "sources": [source.child_name for source in ordered_sources],
+        "sources": sources,
         "start_age_by_time_index": start_age_by_time_index,
     }
     validate_collection_classification(payload)

@@ -11,8 +11,15 @@ Shape (see docs/EXPERIMENT_GROUP_PLATE_MODEL.md, "CLASSIFY ONCE, CONSUME EVERYWH
 
     { "experiment_id": "chem28c_coll_plate01",
       "is_collection": true,
-      "sources": ["20250622_plate01_t28hpf", "20250623_plate01_t52hpf"],
+      "sources": [
+        {"file": "20250622_plate01_t28hpf", "raw_path": ".../t28hpf", "declared_hpf": 28, "time_index": 0},
+        {"file": "20250623_plate01_t52hpf", "raw_path": ".../t52hpf", "declared_hpf": 52, "time_index": 1}
+      ],
       "start_age_by_time_index": {"0": 28, "1": 52} }
+
+Each ``sources`` record is the on-disk PROVENANCE for one source file — the single source of truth
+disk-touching steps read instead of re-globbing the ``_coll`` dir: ``file`` (child name), ``raw_path``
+(absolute), ``declared_hpf`` (int or None), and ``time_index`` (the union block ordinal).
 
 For a NON-collection experiment the payload is inert (consumers ignore it and behave as today)::
 
@@ -81,11 +88,39 @@ def validate_collection_classification(
         )
 
     sources = payload["sources"]
-    if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
+    if not isinstance(sources, list):
         raise ValueError(
-            f"[{scope_label}] 'sources' must be a list of raw source-child name strings, got "
-            f"{sources!r}."
+            f"[{scope_label}] 'sources' must be a list of per-source provenance records, got "
+            f"{type(sources).__name__}."
         )
+    _SOURCE_RECORD_KEYS = ("file", "raw_path", "declared_hpf", "time_index")
+    for i, rec in enumerate(sources):
+        if not isinstance(rec, dict):
+            raise ValueError(
+                f"[{scope_label}] 'sources[{i}]' must be a provenance record dict with keys "
+                f"{_SOURCE_RECORD_KEYS}, got {type(rec).__name__}."
+            )
+        missing = [k for k in _SOURCE_RECORD_KEYS if k not in rec]
+        if missing:
+            raise ValueError(
+                f"[{scope_label}] 'sources[{i}]' missing keys {missing}. Each source record needs "
+                f"{_SOURCE_RECORD_KEYS} (the on-disk provenance a disk step reads)."
+            )
+        if not isinstance(rec["file"], str) or not isinstance(rec["raw_path"], str):
+            raise ValueError(
+                f"[{scope_label}] 'sources[{i}]' file/raw_path must be strings, got "
+                f"file={rec['file']!r}, raw_path={rec['raw_path']!r}."
+            )
+        if not isinstance(rec["time_index"], int) or isinstance(rec["time_index"], bool):
+            raise ValueError(
+                f"[{scope_label}] 'sources[{i}].time_index' must be an int (union block ordinal), "
+                f"got {rec['time_index']!r}."
+            )
+        if rec["declared_hpf"] is not None and not isinstance(rec["declared_hpf"], int):
+            raise ValueError(
+                f"[{scope_label}] 'sources[{i}].declared_hpf' must be int or None, got "
+                f"{rec['declared_hpf']!r}."
+            )
 
     age_map = payload["start_age_by_time_index"]
     if not isinstance(age_map, dict):
