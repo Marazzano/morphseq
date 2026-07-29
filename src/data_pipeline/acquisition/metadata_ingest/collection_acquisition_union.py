@@ -19,10 +19,11 @@ inventory the scope extractor already built). The union:
   1. Enumerates the plate's source children.
   2. Reads each source independently — via an injected ``read_source`` callable so the caller
      (and tests) control the one-read-per-source contract; this module does no ND2/TIFF I/O.
-  3. Stamps each source with a distinct ``time_index`` BLOCK (ordinal across sources, ordered by
-     ``declared_hpf`` then ``date``) and records ``start_age_hpf`` = ``parse_declared_hpf`` per
-     source. A source that is itself a multi-timepoint timelapse keeps its internal time ordering
-     inside its block, so time_index stays globally unique across the union.
+  3. Stamps each source with a distinct ``time_index`` BLOCK (ordered by ``declared_hpf`` — each
+     source must declare a DISTINCT age, else the order is ambiguous and we raise) and records
+     ``start_age_hpf`` = ``parse_declared_hpf`` per source. A source that is itself a multi-timepoint
+     timelapse keeps its internal time ordering inside its block, so time_index stays globally
+     unique across the union.
   4. Restamps ``experiment_id`` → ``{coll}_{plate}`` on every row, and (where the scope resolves
      ``well_id`` at ingest, e.g. Keyence) REBUILDS ``well_id`` off the unioned experiment_id so
      A01@t45 and A01@t72 share ``well_id = {coll}_{plate}_A01``.
@@ -45,7 +46,6 @@ or scope-specific extraction logic (it consumes their OUTPUT, not their code).
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -74,40 +74,19 @@ UNION_TIME_AXIS_COLUMNS: tuple[str, ...] = (
     "start_age_hpf",     # declared age at this source's time_index block (age escape hatch)
 )
 
-# The 8-digit date is the split anchor of a collection child name; kept only for source ordering.
-_CHILD_DATE_RE = re.compile(r"^(\d{8})_")
-
-
-def _parse_child_date(child_name: str) -> str:
-    """Return the 8-digit acquisition-date prefix of a collection child name (ordering only).
-
-    ``"20260607_plate01_t45hpf" -> "20260607"``. Fails loud on a non-conforming name so a
-    mis-shaped child cannot silently sort to an arbitrary position.
-    """
-    match = _CHILD_DATE_RE.match(str(child_name).strip())
-    if not match:
-        raise ValueError(
-            f"collection_acquisition_union: cannot parse acquisition date from child "
-            f"{child_name!r}. Expected a name like '{{date}}_{{plate_token}}[_{{event_label}}]' "
-            "with date = 8 digits (e.g. 20260607_plate01_t45hpf)."
-        )
-    return match.group(1)
-
-
 @dataclass(frozen=True)
 class SourceChild:
     """One raw source of a plate — a collection child folder/file to be read exactly once.
 
     ``child_name`` is the raw child name (``{date}_{plate_token}[_{event_label}]``) from which
-    plate_token, date and declared_hpf are parsed. ``scope`` is the microscope label (provenance).
+    plate_token and declared_hpf are parsed. ``scope`` is the microscope label (provenance).
+
+    The name's date prefix is NOT part of this class's behavior: ordering keys on the declared age
+    alone (see ``sort_key``), so acquisition-date trivia never leaks into identity.
     """
 
     child_name: str
     scope: str
-
-    @property
-    def date(self) -> str:
-        return _parse_child_date(self.child_name)
 
     @property
     def declared_hpf(self) -> int | None:
@@ -117,28 +96,54 @@ class SourceChild:
     def plate_token(self) -> str:
         return parse_plate_token(self.child_name)
 
-    def sort_key(self) -> tuple[int, int, str, str]:
-        """Order sources by declared_hpf, then date, then child_name (a TOTAL order).
+    def sort_key(self) -> tuple[int, int]:
+        """Order sources by ``declared_hpf`` — the declared age IS the temporal order.
 
-        ``(has_declared_hpf_flag, declared_hpf, date, child_name)``: sources WITH a declared age come
-        first in age order; sources with no declared age (``sci``/absent) sort after, by date.
+        ``(has_declared_hpf_flag, declared_hpf)``: sources WITH a declared age come first in age
+        order; sources with no declared age (``sci``/absent) sort after.
 
-        ``child_name`` is the final tiebreaker and is what makes the order TOTAL. Two sources of one
-        plate legitimately share an age — a rescan, a repeat, or two runs at the same declared hpf —
-        and they may also share a date (``..._t28hpf`` and ``..._t28hpf_b``). Without this component
-        their keys are identical, so ``sorted`` (being stable) would fall back to whatever order the
-        filesystem glob produced, making ``source_ordinal`` differ between runs on the SAME data.
-        That is not cosmetic: the age map is keyed by ordinal and every source-aware join uses it, so
-        an unstable ordinal silently repoints ages and mappings at the wrong source. Child names are
-        unique within a collection dir (they ARE directory entries), so this always breaks the tie.
-
-        Same-age sources are fully supported: they get DISTINCT ordinals (and therefore distinct
-        merged time_index blocks) while sharing the same ``start_age_hpf``.
+        This key IS the rule that assigns ``source_ordinal``, so it must identify each source
+        UNAMBIGUOUSLY. The acquisition date is deliberately NOT part of it: the declared age is the
+        biological coordinate the collection is built on, and ordering by a filename date would leak
+        acquisition trivia into identity. Two sources declaring the SAME age are therefore ambiguous
+        — ``assert_source_order_unambiguous`` raises rather than guessing.
         """
         hpf = self.declared_hpf
-        if hpf is not None:
-            return (0, hpf, self.date, self.child_name)
-        return (1, 0, self.date, self.child_name)
+        return (0, hpf) if hpf is not None else (1, 0)
+
+
+def assert_source_order_unambiguous(sources: Sequence[SourceChild]) -> None:
+    """Fail loud if two sources of one plate declare the SAME age.
+
+    ``declared_hpf`` is the rule that assigns ``source_ordinal``, and that ordinal is load-bearing:
+    the classify artifact's age map is keyed by it, and every source-aware join (scope metadata,
+    acquisition inventory, position mapping) uses it. Two sources declaring the same age give no
+    declared basis for which comes first, so ``sorted`` — being stable — would fall back to whatever
+    order the filesystem glob returned. The same data could then get different ordinals on different
+    runs, silently repointing ages and position mappings at the wrong source.
+
+    We refuse to guess. Inventing a tiebreaker (a filename date, the child name) would make the run
+    reproducible while still being an arbitrary choice about acquisition order that only a human can
+    make — so this raises and names the colliding children instead.
+    """
+    by_hpf: dict[int | None, list[str]] = {}
+    for source in sources:
+        by_hpf.setdefault(source.declared_hpf, []).append(source.child_name)
+
+    collisions = {hpf: names for hpf, names in by_hpf.items() if len(names) > 1}
+    if collisions:
+        detail = "; ".join(
+            f"declared_hpf={hpf!r}: {sorted(names)}" for hpf, names in sorted(
+                collisions.items(), key=lambda kv: (kv[0] is None, kv[0])
+            )
+        )
+        raise ValueError(
+            "collection_acquisition_union: source order is AMBIGUOUS — two or more sources of one "
+            f"plate declare the same age ({detail}). source_ordinal is assigned by declared_hpf, "
+            "and it keys the age map plus every source-aware join, so each source must declare a "
+            "DISTINCT t<NN>hpf. Fix the raw child names so their declared ages distinguish them; "
+            "the pipeline will not infer acquisition order from directory order."
+        )
 
 
 # The experiment/well_id restamp lives in `collection_merge_primitives.rebuild_well_id_for_plate` — ONE
@@ -193,6 +198,10 @@ def union_collection_acquisition_inventories(
 
     # The plate token IS the id (MERGE model). Mint it once via the shared constructor (never here).
     experiment_id = compose_collection_experiment_id(collection_name, sources[0].child_name)
+
+    # source_ordinal is assigned by declared age, so the ages must be distinct. Fail before any
+    # read: an ambiguous ordinal would silently repoint the age map and every source-aware join.
+    assert_source_order_unambiguous(sources)
 
     ordered = sorted(sources, key=SourceChild.sort_key)
     n_sources = len(ordered)  # per-well merge count — the only source fact that survives the seam.

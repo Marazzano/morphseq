@@ -319,7 +319,11 @@ def test_empty_sources_fail_loud():
 
 
 def test_duplicate_source_read_fails_loud():
-    """The same source child may not be handed in twice — one read per source."""
+    """The same source child may not be handed in twice — one read per source.
+
+    A repeated child necessarily repeats its declared age, so the ambiguity guard rejects it first
+    (before any read). Either way the union refuses; this pins that it refuses.
+    """
 
     def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
         return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
@@ -328,7 +332,29 @@ def test_duplicate_source_read_fails_loud():
         SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
         SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
     ]
-    with pytest.raises(ValueError, match="exactly once"):
+    with pytest.raises(ValueError, match="AMBIGUOUS|exactly once"):
+        union_collection_acquisition_inventories(
+            collection_name=_COLLECTION, sources=sources, read_source=read_source
+        )
+
+
+def test_repeated_child_among_valid_sources_fails_loud():
+    """A repeated child is rejected even when other sources are perfectly well-formed.
+
+    Since a repeated child_name repeats its declared age, the ambiguity guard is what fires — the
+    point here is that one bad pair poisons an otherwise valid source list rather than being
+    silently deduped into a shorter union.
+    """
+
+    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+
+    sources = [
+        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
+        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),  # fine on its own
+        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),  # repeat of the first
+    ]
+    with pytest.raises(ValueError, match="AMBIGUOUS"):
         union_collection_acquisition_inventories(
             collection_name=_COLLECTION, sources=sources, read_source=read_source
         )

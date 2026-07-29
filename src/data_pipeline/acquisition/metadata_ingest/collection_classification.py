@@ -35,7 +35,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import SourceChild
+from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import (
+    SourceChild,
+    assert_source_order_unambiguous,
+)
 from data_pipeline.acquisition.metadata_ingest.collection_classification_contract import (
     validate_collection_classification,
 )
@@ -88,11 +91,14 @@ def classify_experiment(
     collection_name, child_names = find_collection_plate_sources(experiment_id, Path(raw_root))
     collection_dir = Path(raw_root) / collection_name
 
-    # REUSE the acquisition union's ordering so time_index here == time_index in the inventory.
-    ordered_sources = sorted(
-        (SourceChild(child_name=name, scope=microscope) for name in child_names),
-        key=SourceChild.sort_key,
-    )
+    # REUSE the acquisition union's ordering so source_ordinal here == source_ordinal downstream.
+    candidate_sources = [
+        SourceChild(child_name=name, scope=microscope) for name in child_names
+    ]
+    # Ordering keys on declared_hpf, so each source must declare a DISTINCT age. Checked HERE, at the
+    # earliest DAG step, so an ambiguous collection fails at classify rather than deep in a union.
+    assert_source_order_unambiguous(candidate_sources)
+    ordered_sources = sorted(candidate_sources, key=SourceChild.sort_key)
 
     # One PROVENANCE RECORD per source: file + on-disk raw_path + declared_hpf + source_ordinal.
     # This is the single source of truth every disk-touching step reads (it never re-globs the
