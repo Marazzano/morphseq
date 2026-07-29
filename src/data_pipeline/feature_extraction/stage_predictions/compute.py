@@ -6,9 +6,12 @@ No mask reading: stage is predicted from start_age_hpf + temperature and elapsed
 ``start_age_hpf`` source depends on the DECLARED collection-classify fact (CLASSIFY ONCE, CONSUME
 EVERYWHERE — see docs/EXPERIMENT_GROUP_PLATE_MODEL.md). This is the ONE consumer that branches on it:
 
-  - COLLECTION (``is_collection`` true) → ``start_age_by_time_index[str(time_index)]`` — a snapshot
-    collection is a coarse timelapse whose per-timepoint age can't live in per-well plate_metadata,
-    so the age RIDES IN the classify artifact keyed by the union ``time_index``.
+  - COLLECTION (``is_collection`` true) → ``start_age_by_source_ordinal[str(source_ordinal)]`` — a
+    snapshot collection is a coarse timelapse whose per-source age can't live in per-well
+    plate_metadata, so the age RIDES IN the classify artifact keyed by the SOURCE ORDINAL (one
+    declared ``t<NN>hpf`` per raw source acquisition). Today the snip's merged ``time_index`` is
+    used as that key, which is correct only while every source contributes one frame; see
+    TODO(collection-source-ordinal-through-snips) below.
   - SINGLE (non-collection, or no classify artifact) → ``plate_by_well[well_id]["start_age_hpf"]``,
     BYTE-IDENTICAL to the pre-collection behavior.
 
@@ -61,14 +64,30 @@ def _start_age_hpf_for_snip(
         # SINGLE path — unchanged. plate_metadata's start_age_hpf, validated by the caller.
         return float(plate["start_age_hpf"])
 
-    age_map = collection_classification["start_age_by_time_index"]
+    # The age map is keyed by SOURCE ORDINAL (one declared t<NN>hpf per raw source acquisition).
+    # Prefer the canonical field; fall back to the legacy alias for an artifact written before the
+    # rename. See TODO(collection-legacy-age-map) in collection_classification.
+    age_map = collection_classification.get("start_age_by_source_ordinal")
+    if age_map is None:
+        age_map = collection_classification["start_age_by_time_index"]
+
+    # KNOWN LIMITATION (all-snapshot collections only). The snip carries the MERGED time_index,
+    # while the map is keyed by source_ordinal. Those coincide only when every source contributes
+    # exactly one frame — true for today's snapshot collections. If a source is itself a timelapse,
+    # merged time_index runs past the number of sources and the lookup below is wrong, so we fail
+    # loud with the reason rather than silently reading a neighbouring source's age.
+    # TODO(collection-source-ordinal-through-snips): thread source_ordinal from the union through
+    # frame_inventory into the snip inventory, then key this lookup on the snip's source_ordinal.
     key = str(int(time_index))
     if key not in age_map or age_map[key] is None:
         experiment_id = collection_classification.get("experiment_id", well_id)
         raise ValueError(
-            f"stage_predictions: collection {experiment_id!r} declares no start_age_hpf "
-            f"for time_index {key} (snip {snip_id!r}). The collection-classify artifact's "
-            "start_age_by_time_index must cover every timepoint with a declared t<NN>hpf age."
+            f"stage_predictions: collection {experiment_id!r} declares no start_age_hpf for "
+            f"source_ordinal {key} (snip {snip_id!r}, merged time_index {key}). Either the "
+            "classify artifact does not cover every source with a declared t<NN>hpf age, or a "
+            "source is a timelapse spanning multiple merged time_index values — in which case the "
+            "snip's source_ordinal must be threaded through frame_inventory (see "
+            "TODO(collection-source-ordinal-through-snips)) instead of reusing time_index."
         )
     return float(age_map[key])
 

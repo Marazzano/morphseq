@@ -100,6 +100,7 @@ def test_classify_single_experiment_is_inert(tmp_path):
         "experiment_id": "20250912",
         "is_collection": False,
         "sources": [],
+        "start_age_by_source_ordinal": {},
         "start_age_by_time_index": {},
     }
 
@@ -128,7 +129,8 @@ def test_validator_rejects_non_bool_is_collection():
     with pytest.raises(ValueError, match="is_collection.*bool"):
         validate_collection_classification({
             "experiment_id": "x", "is_collection": "true",
-            "sources": [], "start_age_by_time_index": {},
+            "sources": [], "start_age_by_source_ordinal": {},
+            "start_age_by_time_index": {},
         })
 
 
@@ -137,7 +139,8 @@ def test_validator_rejects_non_int_age_key():
         validate_collection_classification({
             "experiment_id": "x", "is_collection": True,
             "sources": [{"file": "20250622_plate01_t28hpf", "raw_path": "/r/t28",
-                         "declared_hpf": 28, "time_index": 0}],
+                         "declared_hpf": 28, "source_ordinal": 0, "time_index": 0}],
+            "start_age_by_source_ordinal": {"first": 28},
             "start_age_by_time_index": {"first": 28},
         })
 
@@ -152,6 +155,7 @@ def test_validator_rejects_noninert_single():
         validate_collection_classification({
             "experiment_id": "x", "is_collection": False,
             "sources": [{"file": "20250622_plate01_t28hpf", "raw_path": "/r/t28",
-                         "declared_hpf": 28, "time_index": 0}],
+                         "declared_hpf": 28, "source_ordinal": 0, "time_index": 0}],
+            "start_age_by_source_ordinal": {},
             "start_age_by_time_index": {},
         })

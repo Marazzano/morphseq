@@ -46,6 +46,10 @@ REQUIRED_COLLECTION_CLASSIFICATION_KEYS: tuple[str, ...] = (
     "experiment_id",
     "is_collection",
     "sources",
+    "start_age_by_source_ordinal",
+    # TODO(collection-legacy-age-map): drop once every consumer reads
+    # start_age_by_source_ordinal. Kept required (not merely tolerated) so the artifact stays
+    # readable by not-yet-migrated consumers; its keys are source ordinals despite the name.
     "start_age_by_time_index",
 )
 
@@ -93,7 +97,15 @@ def validate_collection_classification(
             f"[{scope_label}] 'sources' must be a list of per-source provenance records, got "
             f"{type(sources).__name__}."
         )
-    _SOURCE_RECORD_KEYS = ("file", "raw_path", "declared_hpf", "time_index")
+    # `source_ordinal` is WHICH SOURCE — the machine join key and the age map's key. `time_index`
+    # is retained as a legacy alias holding the same value (see the TODO on the required keys).
+    _SOURCE_RECORD_KEYS = (
+        "file",
+        "raw_path",
+        "declared_hpf",
+        "source_ordinal",
+        "time_index",
+    )
     for i, rec in enumerate(sources):
         if not isinstance(rec, dict):
             raise ValueError(
@@ -111,10 +123,19 @@ def validate_collection_classification(
                 f"[{scope_label}] 'sources[{i}]' file/raw_path must be strings, got "
                 f"file={rec['file']!r}, raw_path={rec['raw_path']!r}."
             )
-        if not isinstance(rec["time_index"], int) or isinstance(rec["time_index"], bool):
+        for ordinal_key in ("source_ordinal", "time_index"):
+            value = rec[ordinal_key]
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(
+                    f"[{scope_label}] 'sources[{i}].{ordinal_key}' must be an int (the source "
+                    f"ordinal — WHICH source, not a frame index), got {value!r}."
+                )
+        if rec["source_ordinal"] != rec["time_index"]:
             raise ValueError(
-                f"[{scope_label}] 'sources[{i}].time_index' must be an int (union block ordinal), "
-                f"got {rec['time_index']!r}."
+                f"[{scope_label}] 'sources[{i}]' has source_ordinal={rec['source_ordinal']!r} but "
+                f"time_index={rec['time_index']!r}. `time_index` is a LEGACY ALIAS of "
+                "source_ordinal in this artifact and must hold the same value; the merged frame "
+                "coordinate lives in the unioned tables, not here."
             )
         if rec["declared_hpf"] is not None and not isinstance(rec["declared_hpf"], int):
             raise ValueError(
@@ -122,29 +143,42 @@ def validate_collection_classification(
                 f"{rec['declared_hpf']!r}."
             )
 
-    age_map = payload["start_age_by_time_index"]
-    if not isinstance(age_map, dict):
+    # Both age maps are keyed by SOURCE ORDINAL. (The legacy name says time_index; its keys are
+    # ordinals all the same — that mismatch is why it is being retired.)
+    age_map = payload["start_age_by_source_ordinal"]
+    legacy_age_map = payload["start_age_by_time_index"]
+    for map_name, candidate in (
+        ("start_age_by_source_ordinal", age_map),
+        ("start_age_by_time_index", legacy_age_map),
+    ):
+        if not isinstance(candidate, dict):
+            raise ValueError(
+                f"[{scope_label}] {map_name!r} must be a dict "
+                "{stringified source_ordinal: age_hpf}, got "
+                f"{type(candidate).__name__}."
+            )
+        for ordinal_key, age in candidate.items():
+            if not (isinstance(ordinal_key, str) and ordinal_key.lstrip("-").isdigit()):
+                raise ValueError(
+                    f"[{scope_label}] {map_name!r} keys must be stringified ints (the source "
+                    f"ordinals), got key {ordinal_key!r}."
+                )
+            if age is not None and not isinstance(age, int):
+                raise ValueError(
+                    f"[{scope_label}] {map_name}[{ordinal_key!r}] must be an int hpf or None "
+                    f"(undeclared age), got {type(age).__name__} ({age!r})."
+                )
+    if age_map != legacy_age_map:
         raise ValueError(
-            f"[{scope_label}] 'start_age_by_time_index' must be a dict "
-            "{stringified time_index: age_hpf}, got "
-            f"{type(age_map).__name__}."
+            f"[{scope_label}] 'start_age_by_time_index' must mirror "
+            f"'start_age_by_source_ordinal' while it remains for compatibility; got "
+            f"{legacy_age_map!r} vs {age_map!r}."
         )
-    for time_index_key, age in age_map.items():
-        if not (isinstance(time_index_key, str) and time_index_key.lstrip("-").isdigit()):
-            raise ValueError(
-                f"[{scope_label}] 'start_age_by_time_index' keys must be stringified ints "
-                f"(the union time_index block ordinals), got key {time_index_key!r}."
-            )
-        if age is not None and not isinstance(age, int):
-            raise ValueError(
-                f"[{scope_label}] 'start_age_by_time_index[{time_index_key!r}]' must be an int hpf "
-                f"or None (undeclared age), got {type(age).__name__} ({age!r})."
-            )
 
     # A single (non-collection) experiment carries no sources and no age map — consumers ignore it.
-    if not is_collection and (sources or age_map):
+    if not is_collection and (sources or age_map or legacy_age_map):
         raise ValueError(
             f"[{scope_label}] {experiment_id!r} is_collection=False but carries "
-            f"sources={sources!r} / start_age_by_time_index={age_map!r}. A non-collection payload "
-            "must be inert (empty sources + empty age map)."
+            f"sources={sources!r} / start_age_by_source_ordinal={age_map!r}. A non-collection "
+            "payload must be inert (empty sources + empty age maps)."
         )

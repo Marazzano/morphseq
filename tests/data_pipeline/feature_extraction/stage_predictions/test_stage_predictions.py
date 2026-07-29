@@ -39,17 +39,19 @@ def test_missing_plate_row_fails_loud():
 # ── Collection age branch (CLASSIFY ONCE): start_age_hpf by time_index ─────────
 
 def _collection_classification():
-    # Snapshot collection: time_index 0 → 28 hpf, time_index 1 → 52 hpf, time_index 2 → 52 hpf.
-    # (make_inputs emits time_indices 0,1,2; give every one a declared age.)
+    # Snapshot collection: source_ordinal 0 → 28 hpf, 1 → 52 hpf, 2 → 52 hpf. (make_inputs emits
+    # time_indices 0,1,2; for an all-snapshot collection the merged time_index equals the source
+    # ordinal, which is why this consumer can still key on it — see the KNOWN LIMITATION in
+    # compute._start_age_hpf_for_snip.)
     return {
         "experiment_id": "chem28c_coll_plate01",
         "is_collection": True,
         "sources": ["a", "b", "c"],
-        "start_age_by_time_index": {"0": 28, "1": 52, "2": 52},
+        "start_age_by_source_ordinal": {"0": 28, "1": 52, "2": 52},
     }
 
 
-def test_collection_reads_start_age_by_time_index():
+def test_collection_reads_start_age_by_source_ordinal():
     snip, _, inv, _ = make_inputs()
     # plate_metadata still supplies temperature; a collection well need NOT carry start_age_hpf.
     plate = make_plate_metadata().drop(columns=["start_age_hpf"])
@@ -67,8 +69,8 @@ def test_collection_missing_age_for_timepoint_fails_loud():
     snip, _, inv, _ = make_inputs()
     plate = make_plate_metadata().drop(columns=["start_age_hpf"])
     classification = _collection_classification()
-    classification["start_age_by_time_index"] = {"0": 28, "1": 52}  # missing t=2
-    with pytest.raises(ValueError, match="no start_age_hpf for time_index 2"):
+    classification["start_age_by_source_ordinal"] = {"0": 28, "1": 52}  # missing ordinal 2
+    with pytest.raises(ValueError, match="no start_age_hpf for source_ordinal 2"):
         compute_stage_prediction_features(
             snip, inv, plate, collection_classification=classification
         )
@@ -81,10 +83,32 @@ def test_single_is_byte_identical_with_or_without_inert_classification():
     plate = make_plate_metadata()
     inert = {
         "experiment_id": "20250912", "is_collection": False,
-        "sources": [], "start_age_by_time_index": {},
+        "sources": [], "start_age_by_source_ordinal": {},
+        "start_age_by_time_index": {},
     }
     baseline = compute_stage_prediction_features(snip, inv, plate)
     with_inert = compute_stage_prediction_features(
         snip, inv, plate, collection_classification=inert
     )
     pd.testing.assert_frame_equal(baseline, with_inert)
+
+
+def test_collection_falls_back_to_legacy_age_map():
+    """An artifact written before the rename carries only start_age_by_time_index.
+
+    The reader must still resolve ages from it (the keys were always source ordinals). Guards the
+    compatibility path until TODO(collection-legacy-age-map) removes the field.
+    """
+    snip, _, inv, _ = make_inputs()
+    plate = make_plate_metadata().drop(columns=["start_age_hpf"])
+    legacy_only = {
+        "experiment_id": "chem28c_coll_plate01",
+        "is_collection": True,
+        "sources": ["a", "b", "c"],
+        "start_age_by_time_index": {"0": 28, "1": 52, "2": 52},
+    }
+    df = compute_stage_prediction_features(
+        snip, inv, plate, collection_classification=legacy_only
+    )
+    by_t = df.set_index("time_index")["predicted_stage_hpf"]
+    assert abs(by_t.loc[0] - 28.0) < 1e-9

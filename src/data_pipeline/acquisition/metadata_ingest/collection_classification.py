@@ -78,6 +78,8 @@ def classify_experiment(
             "experiment_id": experiment_id,
             "is_collection": False,
             "sources": [],
+            "start_age_by_source_ordinal": {},
+            # TODO(collection-legacy-age-map): see the collection branch below.
             "start_age_by_time_index": {},
         }
         validate_collection_classification(payload)
@@ -92,28 +94,44 @@ def classify_experiment(
         key=SourceChild.sort_key,
     )
 
-    # One PROVENANCE RECORD per source: file + on-disk raw_path + declared_hpf + time_index. This is
-    # the single source of truth every disk-touching step reads (it never re-globs the _coll dir).
-    # time_index is the block ordinal of the union's ordering — identical to the acquisition
-    # inventory's time_index by construction.
+    # One PROVENANCE RECORD per source: file + on-disk raw_path + declared_hpf + source_ordinal.
+    # This is the single source of truth every disk-touching step reads (it never re-globs the
+    # _coll dir).
+    #
+    # source_ordinal is WHICH SOURCE (0, 1, 2 …) in the union's ordering — the machine join key,
+    # and what the age map is keyed by. It is NOT the frame coordinate: one source_ordinal can span
+    # MANY merged time_index values (a timelapse source), so the two can never be the same field.
+    # They coincide only when every source is a single snapshot.
+    #
+    # `time_index` is retained per record as a LEGACY alias of source_ordinal (same value) so
+    # existing readers keep working; see the legacy note on the age map below.
     sources = [
         {
             "file": source.child_name,
             "raw_path": str(collection_dir / source.child_name),
             "declared_hpf": source.declared_hpf,
-            "time_index": time_index,
+            "source_ordinal": source_ordinal,
+            "time_index": source_ordinal,  # legacy alias; equals source_ordinal
         }
-        for time_index, source in enumerate(ordered_sources)
+        for source_ordinal, source in enumerate(ordered_sources)
     ]
-    start_age_by_time_index = {
-        str(rec["time_index"]): rec["declared_hpf"] for rec in sources
+    start_age_by_source_ordinal = {
+        str(rec["source_ordinal"]): rec["declared_hpf"] for rec in sources
     }
 
     payload = {
         "experiment_id": experiment_id,
         "is_collection": True,
         "sources": sources,
-        "start_age_by_time_index": start_age_by_time_index,
+        # CANONICAL: keyed by source_ordinal, which is what the ages actually vary over (one
+        # declared t<NN>hpf per raw source acquisition).
+        "start_age_by_source_ordinal": start_age_by_source_ordinal,
+        # TODO(collection-legacy-age-map): remove `start_age_by_time_index` once every consumer
+        # reads start_age_by_source_ordinal. The name is misleading — its keys are source ordinals,
+        # NOT merged frame indices, so looking up a merged time_index in it is only correct while
+        # every source is a single snapshot. A test asserts no in-repo consumer still reads it;
+        # that test is the removal gate.
+        "start_age_by_time_index": dict(start_age_by_source_ordinal),
     }
     validate_collection_classification(payload)
     return payload
