@@ -258,6 +258,26 @@ was SKIPPED and the channel axis stood in for the Z stack — focus-stacking wou
 All four ND2 readers go through it (extractor, materializer, `_get_stack`, generate_xy_reference).
 Keyence is untouched — its dimensions come from TIFF path tokens, already name-anchored.
 
+## Cross-cutting: channel_index is a RECORDED FACT, not a name match  [status: DONE 2026-07-29]
+`channel_index` (the position on the raw array's channel axis) is a fact of the FILE. The scope
+adapter mints the 1:1:1 triple `channel_index ↔ raw_channel_name ↔ channel_id` once into the
+acquisition inventory (guarded by `assert_channel_mapping_consistent`); consumers LOOK IT UP via
+`scope/shared/acquisition_channels.resolve_channel_index`.
+
+The violation found: `_determine_bf_channel` was a SECOND channel vocabulary competing with the
+scope's `channel_map.py` — it matched "BF"/"EYES - Dia"/"Empty" by name, knew nothing of
+"BF-no bin", and therefore could not resolve the real fluorescence plate at all; it raised and told
+callers to set `YX1_BF_CHANNEL_INDEX` (a haunted global that silently reassigns channel identity).
+Deleted, along with the env override. The materializer now resolves the requested product's
+`channel_id`, so it serves BF/RFP/any future product rather than being hardcoded to brightfield.
+
+LAYERING: the resolver is NOT in `shared/channel_vocabulary.py`. That module owns the LANGUAGE
+(which `channel_id` tokens exist). "BF" means the same thing everywhere; that "BF" is index 0 in one
+ND2 and 1 in another is acquisition metadata — so the DataFrame query lives with the acquisition
+facts. The precise rule: supported consumers use the recorded mapping; a LEGACY reader with no
+inventory may translate raw names through the ONE canonical `channel_map.py` and must fail loud when
+ambiguous. Private alias tables and env overrides are never acceptable.
+
 ## Known drift already fixed (not collection work): calibration col + stage_x/y/z_nm fixtures.
 ## Known pre-existing, out of scope: 12 image_materialization tests (Keyence stitch-map + shard
 ## merge) fail identically with and without this work — verified by stashing the changes.
