@@ -38,9 +38,19 @@ These are NOT interchangeable (the earlier "dump acquisition inventory into scop
 and caused the `channel` crash). Both originate from the same per-source scope read, but each keeps
 the columns ITS consumer ingests.
 
+**CRUCIAL: acquisition facts DIFFER per source — do NOT assume shared.** Each source is its own
+acquisition with its OWN x_um/y_um (plate re-seated → different stage frame), OWN calibration
+(micrometers_per_pixel, image dims), OWN timing (absolute_start_time, frame_interval_s). There is NO
+"the plate's scope metadata" — there is each source's, and they legitimately differ. So scope
+metadata is RECORDED PER source/time_index: the concat is "more rows keyed by time_index," but each
+block is a DISTINCT acquisition's real facts, NOT redundant tags on shared values. (This is exactly
+why YX1 must map per-source: each source's x/y is its own — you can't map once and reuse.)
+
 **The design (same philosophy as Step 2):** read each source ONCE; produce its normal
-scope_metadata + acquisition_inventory; stamp BOTH with the same source identity; concat into one
-experiment-level scope_metadata and one experiment-level acquisition_inventory (experiment = PLATE).
+scope_metadata + acquisition_inventory (its own acquisition-specific values); stamp BOTH with the
+same source identity (source_id, source_path, time_index); concat into one experiment-level
+scope_metadata and one experiment-level acquisition_inventory (experiment = PLATE), keyed by
+time_index. Each source's block preserves that source's own geometry/calibration/timing.
 
 **Canonical source identity — the KEYSTONE (same key in every source-aware artifact):**
 ```
