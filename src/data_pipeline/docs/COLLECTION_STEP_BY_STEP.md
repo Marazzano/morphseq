@@ -26,15 +26,53 @@ Test case: `chem28c_coll_plate01` (Keyence), 2 sources (t28hpf, t52hpf), 2 wells
   `{file, raw_path, declared_hpf, time_index}` (contract + validator updated; verified on real
   chem28c `_coll`). This is the keystone artifact Step 2 reads for the files + their time_index.
 
-## Step 1 — ingest_scope_metadata (Snakefile:432)  [status: WRONG GRAIN — rework]
-- Today (single): reads one raw dir → scope_metadata (`channel_id`* + x/y/timing) +
-  acquisition_inventory. *NOTE channel-name convergence (channel→channel_id) still pending.
-- Nuance: read the N source files (from provenance) → union into the plate's scope_metadata +
-  acquisition_inventory, time_index per source, sources tracked.
-- Surgery: `collection_acquisition_ingest` already unions per-source inventories — REPOINT its
-  input to be provenance-driven (read the artifact's `sources`, not re-glob). Confirm it produces
-  BOTH the acquisition_inventory AND a real scope_metadata-shaped output (see the crash: apply
-  needs scope shape). Open sub-question: scope_metadata vs acquisition_inventory column parity.
+## Step 1 — ingest_scope_metadata (Snakefile:432)  [status: DESIGN LOCKED 2026-07-28]
+
+**Two outputs, two consumer worlds (preserve what each ingests):**
+- `scope_metadata` (scope_csv) → `map_positions` + `apply` — needs per-position GEOMETRY
+  (`raw_position_label`, `x_um`, `y_um` — the YX1 mapping key) + `channel`.
+- `acquisition_inventory` → `build_keyence_stitch_map` + `materialize` — needs image-level
+  `source_path` (pixels) + acquisition axes.
+These are NOT interchangeable (the earlier "dump acquisition inventory into scope_csv" was wrong,
+and caused the `channel` crash). Both originate from the same per-source scope read, but each keeps
+the columns ITS consumer ingests.
+
+**The design (same philosophy as Step 2):** read each source ONCE; produce its normal
+scope_metadata + acquisition_inventory; stamp BOTH with the same source identity; concat into one
+experiment-level scope_metadata and one experiment-level acquisition_inventory (experiment = PLATE).
+
+**Canonical source identity — the KEYSTONE (same key in every source-aware artifact):**
+```
+source_id    ← the source child name (e.g. 20250622_plate01_t28hpf). STABLE internal key.
+source_path  ← raw path (provenance + pixel access; = today's per-row source_file/tiff path).
+time_index   ← the temporal coordinate (the ONE thing Step 1 ASSIGNS — read from the artifact).
+```
+Separate roles on purpose: `source_id` is identity (stable), `source_path` is provenance (moves if
+data moves), `time_index` is temporal. For snapshots one source == one time_index; if a source is
+itself a timelapse, one `source_id` spans a RANGE of time_index — so source_id is NOT derived from
+time_index.
+
+**Step 1 INGESTS the collection artifact** to know who-is-what: `sources[].file → source_id`,
+`sources[].raw_path → source_path`, `sources[].time_index → time_index`. Step 1 doesn't invent or
+re-derive time_index — it READS it from the artifact and stamps it. Nothing re-globbed.
+
+**Scope difference to tolerate:** Keyence resolves well at ingest (scope_csv HAS well_index/well_id);
+YX1 does not (well_id minted later at map/apply). The union must tolerate well_id present-or-absent.
+
+**THE KEYSTONE INVARIANT** (the real point — not just "both have source tags"):
+```
+(source_id, time_index) mean the SAME thing in:
+  collection artifact  →  scope_metadata  →  position_mapping  →  acquisition_inventory
+```
+Because all four take these from the ONE artifact, source identity is part of the explicit JOIN KEY
+(e.g. map/apply/materialize join on (source_id / time_index, raw_position_label)) — NOT an ad-hoc
+"loop per file" hint scattered in each consumer.
+
+**Refactor note:** today's per-row `source_file` (the tiff PATH) is renamed to `source_path`; add
+`source_id` + assigned `time_index`. `collection_acquisition_ingest` already unions the acquisition
+inventory — REPOINT it to be artifact-driven (read `sources`, not re-glob) and ALSO produce the real
+scope_metadata union (not a fake). channel→channel_id convergence is a SEPARATE cleanup, no longer a
+blocker (real scope_csv has `channel`, so apply won't crash).
 
 ## Step 2 — map_positions_to_wells (Snakefile:484)  [status: DESIGN LOCKED 2026-07-28]
 
