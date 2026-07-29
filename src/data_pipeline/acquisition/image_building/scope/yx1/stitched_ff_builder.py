@@ -47,9 +47,39 @@ def _read_nd2(path: Path) -> nd2.ND2File:
 
 
 def _get_stack(
-    dask_arr, t: int, w: int, n_z_keep: int | None = None
+    dask_arr,
+    t: int,
+    w: int,
+    n_z_keep: int | None = None,
+    *,
+    axes=None,
+    array_axis_order: tuple[str, ...] | None = None,
+    channel: int = 0,
 ) -> np.ndarray:
-    """Return Z×Y×X BF stack (no channels)."""
+    """Return Z×Y×X BF stack (no channels).
+
+    ``axes`` + ``array_axis_order`` select by axis NAME (see
+    ``metadata_ingest/scope/yx1/nd2_axes.py``). Pass them whenever the ND2 is open: positional
+    indexing assumes ``(T, W, Z, C, Y, X)``, which is wrong for any other layout — on a
+    ``(P, Z, C, Y, X)`` snapshot it reads the position as T, a z-plane as the position, and leaves
+    the channel axis standing in for the Z stack, so focus-stacking would silently run over
+    ``[BF, fluorescence]`` as if they were focal planes.
+
+    Omitting them falls back to the legacy positional slice, which is correct ONLY for a
+    6-D ``(T, W, Z, C, Y, X)`` or 5-D ``(T, W, Z, Y, X)`` array.
+    """
+    if axes is not None and array_axis_order is not None:
+        from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_axes import select_zyx_stack
+
+        stack = select_zyx_stack(
+            dask_arr, axes, array_axis_order, position=w, time=t, channel=channel
+        )
+        nz = stack.shape[0]
+        buf = max((nz - n_z_keep) // 2, 0) if n_z_keep else 0
+        if buf:
+            stack = stack[buf : nz - buf, :, :]
+        return stack.compute() if hasattr(stack, "compute") else np.asarray(stack)
+
     nz = dask_arr.shape[2]
     buf = max((nz - n_z_keep) // 2, 0) if n_z_keep else 0
     return (

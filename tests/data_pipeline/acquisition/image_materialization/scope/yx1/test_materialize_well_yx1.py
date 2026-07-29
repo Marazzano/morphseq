@@ -157,9 +157,13 @@ class TestMaterializeFFProjection:
 class TestMaterializeYX1Well:
     def _make_mock_nd2(self, n_t: int = 3, n_w: int = 5, n_z: int = 4,
                        h: int = 8, w: int = 8):
-        """Return a mock nd2.ND2File whose dask array has shape (T, W, Z, Y, X)."""
+        """Return a mock nd2.ND2File declaring a (T, P, Z, Y, X) layout.
+
+        The stub must declare `sizes` and `experiment` because axis handling is now BY NAME (see
+        metadata_ingest/scope/yx1/nd2_axes.py) — a mock with no named axes is rejected, which is the
+        point: positional guessing is what silently mis-read real files.
+        """
         dask_arr = MagicMock()
-        # _get_stack slices dask_arr[t, w, :, :, :] → shape (Z, Y, X)
         dask_arr.ndim = 5
         fake_stack = np.ones((n_z, h, w), dtype=np.uint16)
         dask_arr.__getitem__ = MagicMock(return_value=MagicMock(compute=lambda: fake_stack))
@@ -170,6 +174,15 @@ class TestMaterializeYX1Well:
         nd_mock = MagicMock()
         nd_mock.to_dask.return_value = dask_arr
         nd_mock.frame_metadata.return_value.channels = [channel_mock]
+        # Named axes, in array order, and the matching sequence loops. No C axis: this stub's array
+        # is single-channel, so frameCount == T * P * Z.
+        nd_mock.sizes = {"T": n_t, "P": n_w, "Z": n_z, "Y": h, "X": w}
+        nd_mock.experiment = [
+            type("TimeLoop", (), {})(),
+            type("XYPosLoop", (), {})(),
+            type("ZStackLoop", (), {})(),
+        ]
+        nd_mock.metadata.contents.frameCount = n_t * n_w * n_z
         return nd_mock
 
     def _run(

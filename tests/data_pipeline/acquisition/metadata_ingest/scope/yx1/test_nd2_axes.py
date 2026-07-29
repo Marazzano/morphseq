@@ -159,3 +159,100 @@ def test_unknown_axis_label_fails_loud():
 def test_both_P_and_W_is_ambiguous():
     with pytest.raises(ValueError, match="BOTH 'P' and 'W'"):
         read_nd2_axes({"P": 4, "W": 4, "Y": 8, "X": 8})
+
+
+# ── select_zyx_stack: the PIXEL path (wrong axes here corrupt images, not just metadata) ──
+
+
+import numpy as np
+
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_axes import select_zyx_stack
+
+
+def _labelled_array(order, sizes):
+    """An array whose every voxel encodes its own coordinate, so mis-slicing is detectable."""
+    shape = tuple(sizes[a] for a in order)
+    arr = np.zeros(shape, dtype=np.int64)
+    for idx in np.ndindex(*shape):
+        coord = dict(zip(order, idx))
+        # Encode P/Z/C/T distinctly; Y/X are ignored so every pixel of a plane shares the code.
+        arr[idx] = (
+            coord.get("P", 0) * 1_000_000
+            + coord.get("T", 0) * 10_000
+            + coord.get("Z", 0) * 100
+            + coord.get("C", 0)
+        )
+    return arr
+
+
+def test_snapshot_with_channels_returns_the_REAL_z_stack():
+    """The real pbx layout (P, Z, C, Y, X).
+
+    Positional indexing (`arr[t, w, :, :, :]`) returns shape (C, Y, X) here — a 2-plane
+    "z-stack" that is actually the CHANNEL axis, so focus-stacking would run over
+    [BF, fluorescence] as if they were focal planes. Verified against the real ND2:
+    old path gave (2, 2304, 2304); named-axis path gives (9, 2304, 2304).
+    """
+    order = ("P", "Z", "C", "Y", "X")
+    sizes = {"P": 4, "Z": 9, "C": 2, "Y": 3, "X": 3}
+    arr = _labelled_array(order, sizes)
+    axes = read_nd2_axes(sizes, ["XYPosLoop", "ZStackLoop"])
+
+    stack = select_zyx_stack(arr, axes, order, position=2, channel=1)
+    assert stack.shape == (9, 3, 3), "must be the 9 focal planes, not the 2 channels"
+    # Every plane carries its own z code, at the requested position and channel.
+    for z in range(9):
+        assert stack[z, 0, 0] == 2 * 1_000_000 + z * 100 + 1
+
+
+def test_channels_are_separated_not_stacked():
+    order = ("P", "Z", "C", "Y", "X")
+    sizes = {"P": 2, "Z": 4, "C": 2, "Y": 2, "X": 2}
+    arr = _labelled_array(order, sizes)
+    axes = read_nd2_axes(sizes, ["XYPosLoop", "ZStackLoop"])
+
+    bf = select_zyx_stack(arr, axes, order, position=0, channel=0)
+    rfp = select_zyx_stack(arr, axes, order, position=0, channel=1)
+    assert bf.shape == rfp.shape == (4, 2, 2)
+    assert not np.array_equal(bf, rfp), "distinct channels must not return identical pixels"
+
+
+def test_timelapse_layout_selects_the_right_frame():
+    order = ("T", "P", "Z", "C", "Y", "X")
+    sizes = {"T": 3, "P": 2, "Z": 5, "C": 2, "Y": 2, "X": 2}
+    arr = _labelled_array(order, sizes)
+    axes = read_nd2_axes(sizes, ["TimeLoop", "XYPosLoop", "ZStackLoop"])
+
+    stack = select_zyx_stack(arr, axes, order, position=1, time=2, channel=0)
+    assert stack.shape == (5, 2, 2)
+    assert stack[0, 0, 0] == 1 * 1_000_000 + 2 * 10_000
+
+
+def test_layout_without_channels_still_works():
+    order = ("T", "P", "Z", "Y", "X")
+    sizes = {"T": 2, "P": 2, "Z": 3, "Y": 2, "X": 2}
+    arr = _labelled_array(order, sizes)
+    axes = read_nd2_axes(sizes, ["TimeLoop", "XYPosLoop", "ZStackLoop"])
+    stack = select_zyx_stack(arr, axes, order, position=1, time=1)
+    assert stack.shape == (3, 2, 2)
+
+
+def test_unusual_axis_order_is_handled():
+    """Z outermost — positional code would be badly wrong; named slicing is unaffected."""
+    order = ("Z", "P", "C", "Y", "X")
+    sizes = {"Z": 6, "P": 3, "C": 2, "Y": 2, "X": 2}
+    arr = _labelled_array(order, sizes)
+    axes = read_nd2_axes(sizes, ["ZStackLoop", "XYPosLoop"])
+    stack = select_zyx_stack(arr, axes, order, position=2, channel=1)
+    assert stack.shape == (6, 2, 2)
+    for z in range(6):
+        assert stack[z, 0, 0] == 2 * 1_000_000 + z * 100 + 1
+
+
+def test_missing_z_axis_fails_loud():
+    order = ("P", "C", "Y", "X")
+    sizes = {"P": 2, "C": 2, "Y": 2, "X": 2}
+    arr = _labelled_array(order, sizes)
+    axes = read_nd2_axes(sizes, ["XYPosLoop"])
+    with pytest.raises(ValueError, match="no 'Z' axis"):
+        select_zyx_stack(arr, axes, order, position=0)

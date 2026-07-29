@@ -32,6 +32,10 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_axes import (
+    array_axis_order_of,
+    axes_of,
+)
 from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder import (
     _determine_bf_channel,
     _get_stack,
@@ -343,11 +347,37 @@ def materialize_yx1_product_for_well(
         channel_names = [c.channel.name for c in nd.frame_metadata(0).channels]
         bf_idx = _determine_bf_channel(channel_names)
 
-        # Select BF channel axis if present (shape T,W,Z,C,Y,X → T,W,Z,Y,X).
-        if dask_arr.ndim == 6:
-            dask_arr = dask_arr[:, :, :, bf_idx, :, :]
+        # Axis selection is by NAME (see metadata_ingest/scope/yx1/nd2_axes.py). The BF channel is
+        # picked per-slice inside _get_stack instead of by pre-slicing axis 3, because that
+        # pre-slice was gated on `ndim == 6` and so was SKIPPED for a 5-D (P, Z, C, Y, X) snapshot —
+        # leaving the channel axis in place to masquerade as the Z stack, which would make
+        # focus-stacking run over [BF, fluorescence] as if they were focal planes.
+        axes = axes_of(nd)
+        array_axis_order = array_axis_order_of(nd)
+        log.info(
+            "ND2 axes: T=%d P=%d Z=%d C=%d (array order %s, BF channel index %d)",
+            axes.n_t, axes.n_p, axes.n_z, axes.n_c, array_axis_order, bf_idx,
+        )
 
         time_indices = sorted(well_acquisition_inventory_df["time_index"].unique())
+
+        # MERGED time_index -> SOURCE-NATIVE frame index. For a single experiment these are the same
+        # value. For a COLLECTION they are not: the union block-offsets each source's frames onto one
+        # plate-wide axis, so a well's merged time_index 96 may be its source's native frame 0. The
+        # output identity (image_id, paths) uses the MERGED index; the ND2 lookup must use the NATIVE
+        # one, or a collection would read pixels from the wrong frame — or off the end of the file.
+        # `raw_time_index` is the union's record of the source-native value (see
+        # metadata_ingest/collection_merge_primitives.py).
+        if "raw_time_index" in well_acquisition_inventory_df.columns:
+            native_by_merged = {
+                int(merged): int(native)
+                for merged, native in well_acquisition_inventory_df.groupby("time_index")[
+                    "raw_time_index"
+                ].first().items()
+            }
+        else:
+            native_by_merged = {int(t): int(t) for t in time_indices}
+
         if smoke_max_time_indices is not None and smoke_max_time_indices > 0:
             # ┌─────────────────────────────────────────────────────────────────────────────────┐
             # │ DEVELOPMENT-ONLY SCAFFOLDING — NOT a frame-selection policy.                       │
@@ -389,7 +419,15 @@ def materialize_yx1_product_for_well(
 
         # --- Materialization loop: per time_index → product frame(s) → write image → record rows --
         for t in time_indices:
-            stack = _get_stack(dask_arr, t=t, w=position_index)
+            # The ND2 lookup uses the SOURCE-NATIVE frame index; `t` (merged) keys the output identity.
+            stack = _get_stack(
+                dask_arr,
+                t=native_by_merged[int(t)],
+                w=position_index,
+                axes=axes,
+                array_axis_order=array_axis_order,
+                channel=bf_idx,
+            )
             t_times = time_lookup[t]
             if resolved_product.image_product_type == "projection":
                 ff, focus_index_map = materialize_ff_projection(stack, device=device)

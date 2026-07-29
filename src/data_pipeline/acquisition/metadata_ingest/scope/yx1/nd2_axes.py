@@ -240,6 +240,80 @@ def read_nd2_axes(
     )
 
 
+def select_zyx_stack(
+    array,
+    axes: Nd2Axes,
+    array_axis_order: Sequence[str],
+    *,
+    position: int,
+    time: int = 0,
+    channel: int = 0,
+):
+    """Slice a (Z, Y, X) stack for ONE (position, time, channel) out of an ND2 array.
+
+    ``nd.to_dask()``/``nd.asarray()`` return an array whose axis order is the file's own — e.g.
+    ``(P, Z, C, Y, X)`` for a snapshot with channels, or ``(T, P, Z, C, Y, X)`` for a timelapse.
+    Indexing it positionally (``array[t, w, :, :, :]``) is only correct for ONE of those layouts. On
+    the pbx pilot ``(P, Z, C, Y, X)`` that expression reads position as T, z-plane as the position,
+    and leaves the 2-channel axis standing in for the Z stack — so focus-stacking would run over
+    ``[BF, tdTomato]`` as if they were focal planes. Silent pixel corruption, not a crash.
+
+    This builds the slice from axis NAMES, so any layout works and a missing axis is simply absent.
+
+    Args:
+        array: the ND2 array (dask or numpy) as returned by ``to_dask()``/``asarray()``.
+        axes: the file's named axes.
+        array_axis_order: the array's axis labels in order, e.g. ``("P", "Z", "C", "Y", "X")``.
+        position/time/channel: the coordinate to extract.
+
+    Returns:
+        The ``(Z, Y, X)`` stack — single-channel, with Z first, whatever the file's layout.
+    """
+    coordinate = {"T": time, "P": position, "W": position, "C": channel}
+    order = tuple(str(axis) for axis in array_axis_order)
+
+    for spatial in _SPATIAL_KEYS:
+        if spatial not in order:
+            raise ValueError(
+                f"select_zyx_stack: array axis order {order} has no {spatial!r} axis; expected the "
+                "ND2 array's own axis labels (e.g. ('P','Z','C','Y','X'))."
+            )
+    if "Z" not in order:
+        raise ValueError(
+            f"select_zyx_stack: array axis order {order} has no 'Z' axis, so there is no focal stack "
+            "to slice. A single-plane acquisition must be handled by the caller."
+        )
+
+    selector = []
+    for axis in order:
+        if axis in ("Y", "X", "Z"):
+            selector.append(slice(None))  # keep the stack + pixel grid
+        elif axis in coordinate:
+            selector.append(coordinate[axis])
+        else:
+            raise ValueError(
+                f"select_zyx_stack: unrecognized array axis {axis!r} in order {order}."
+            )
+
+    stack = array[tuple(selector)]
+    # After integer-indexing every non-(Z,Y,X) axis, exactly (Z, Y, X) remains.
+    if stack.ndim != 3:
+        raise ValueError(
+            f"select_zyx_stack: expected a 3-D (Z, Y, X) stack after selection but got ndim="
+            f"{stack.ndim} from array order {order}. The axis model does not fit this array."
+        )
+    return stack
+
+
+def array_axis_order_of(nd) -> tuple[str, ...]:
+    """The axis labels of ``nd.to_dask()``/``nd.asarray()``, in order — from ``nd.sizes``.
+
+    ``nd.sizes`` is an ordered mapping matching the array's own axis order, so its keys ARE the
+    array's axis labels. Use this with ``select_zyx_stack`` rather than assuming a layout.
+    """
+    return tuple(str(key) for key in nd.sizes)
+
+
 def axes_of(nd) -> Nd2Axes:
     """Read ``Nd2Axes`` from an OPEN ``nd2.ND2File`` — the entry point callers should use.
 
