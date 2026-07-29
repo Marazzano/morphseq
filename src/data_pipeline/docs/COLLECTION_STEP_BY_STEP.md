@@ -26,7 +26,7 @@ Test case: `chem28c_coll_plate01` (Keyence), 2 sources (t28hpf, t52hpf), 2 wells
   `{file, raw_path, declared_hpf, time_index}` (contract + validator updated; verified on real
   chem28c `_coll`). This is the keystone artifact Step 2 reads for the files + their time_index.
 
-## Step 1 — ingest_scope_metadata (Snakefile:432)  [status: DESIGN LOCKED 2026-07-28]
+## Step 1 — ingest_scope_metadata (Snakefile:432)  [status: DONE 2026-07-29]
 
 **Two outputs, two consumer worlds (preserve what each ingests):**
 - `scope_metadata` (scope_csv) → `map_positions` + `apply` — needs per-position GEOMETRY
@@ -106,7 +106,7 @@ scope_metadata union (not a fake). channel→channel_id convergence is a SEPARAT
 blocker (a real scope_csv union carries the clean-token column — named `channel` today, converging
 to `channel_id` — so apply won't crash on it).
 
-## Step 2 — map_positions_to_wells (Snakefile:484)  [status: DESIGN LOCKED 2026-07-28]
+## Step 2 — map_positions_to_wells (Snakefile:484)  [status: DONE 2026-07-29]
 
 **Why per-file, not map-once:** for Keyence the well is a folder marker (`XY01/_A01`) — fixed on
 disk, same in every source. But for **YX1 the well is derived from stage `x_um/y_um` matched to a
@@ -153,16 +153,31 @@ position_well_mapping.csv  (ONE artifact per experiment)
 per-scope map function (run per file, plate id).
 
 **The collection step, in one line:** read the collection artifact for the files + their
-time_index/source_file → run the existing per-scope map on each (plate id) → concat, stamping
-time_index + source_file per block → one `position_well_mapping.csv`. The map functions are
+source_ordinal/source_file → run the existing per-scope map on each (plate id) → concat, stamping
+source_ordinal + source_file per block → one `position_well_mapping.csv`. The map functions are
 UNCHANGED; the collection logic is the per-file loop + concat (driven by the artifact).
 
-## Step 3 — apply_position_to_well_mapping (Snakefile:525)  [status: BLOCKER SEEN]
+**CORRECTION to the design above (2026-07-29):** the mapping is keyed on `source_ordinal`, NOT
+`time_index`. The mapping is a per-SOURCE fact (which well sits at which stage position for that
+acquisition), and one source can span MANY merged `time_index` values — keying on time_index would
+force one mapping row per frame and reintroduce exactly the source-vs-frame conflation this work
+removes. Every frame of a source inherits its source's mapping. `source_file` stays as readable
+provenance.
+
+## Step 3 — apply_position_to_well_mapping (Snakefile:525)  [status: DONE 2026-07-29]
 - Today: joins scope_metadata + mapping → scope_metadata_mapped (well_id, image_id).
-- Nuance: crashed on `channel` (collection scope_csv had `channel_id`, not `channel`). Also: its
-  output `scope_metadata_mapped` feeds ONLY the LEGACY `materialize_stitched_images`, NOT native
-  materialize. Confirm whether the collection path needs apply at all, or only the native path.
-- Surgery: TBD — depends on channel convergence + whether legacy stitch is live.
+- The `channel` crash is GONE: it was caused by writing the acquisition inventory into the scope_csv
+  slot (that table has no `channel`/geometry). Step 1 now emits a REAL scope_metadata union, so the
+  column is present and no channel convergence was needed to unblock this.
+- SECOND blocker, found by the YX1 run: the merge branch used
+  `validate="many_to_one"` on `(experiment_id, position_index)`. A collection mapping repeats
+  position_index once per source, so the right side is not unique → `MergeError` for ANY multi-source
+  YX1 plate. Keyence sidesteps that branch (`scope_has_identity`), which is why it stayed hidden.
+- Surgery: the merge is now SOURCE-KEYED on `(experiment_id, position_index, source_ordinal)`, gated
+  on the column being present so single experiments are byte-identical. dtypes coerced with
+  `errors="raise"` (a CSV round-trip can leave one side object/float64 → silent zero matches), and
+  the uncovered-position error previews the full join key.
+- Verified on BOTH real collections (Keyence chem28c, YX1 pbx 3-source).
 
 ## Step 4 — materialize (materialize_well_native.smk:44)  [status: LIKELY UNCHANGED]
 - Today: BY WELL — `select_well_acquisition_rows` slices one well's rows → stitch/project/write →
@@ -182,9 +197,16 @@ UNCHANGED; the collection logic is the per-file loop + concat (driven by the art
 - Unchanged spine (well_id, time_index). Registry applies EmbryoMergePolicy (n_sources → normal/
   bridge/fracture). BUILT. The open SAM2 track_id-collision question is settled only by the GPU run.
 
-## Step 7 — stage_predictions  [status: BUILT]
-- The ONLY post-frame_inventory provenance consumer. Reads classify artifact →
-  start_age_by_time_index[time_index]. BUILT + tested (byte-identical for singles).
+## Step 7 — stage_predictions  [status: BUILT / one KNOWN LIMITATION]
+- The ONLY post-frame_inventory provenance consumer. Reads the classify artifact's age map.
+- Now reads `start_age_by_source_ordinal` (canonical), falling back to the legacy
+  `start_age_by_time_index`. The legacy name was misleading: its keys were ALWAYS source ordinals,
+  never merged frame indices.
+- KNOWN LIMITATION (all-snapshot collections only): the snip carries the MERGED `time_index`, while
+  the map is keyed by `source_ordinal`. Those coincide only when every source contributes one frame.
+  It now fails loud naming the reason instead of silently reading a neighbouring source's age.
+  TODO(collection-source-ordinal-through-snips): thread `source_ordinal` from the union through
+  frame_inventory into snips, then key the lookup on it.
 
 ---
 
@@ -200,5 +222,42 @@ So the fix is a RENAME, not reconciling two concepts: scope metadata's `channel`
 under an old name. ~7 live files. Separate commit; not a collection blocker (a real scope_csv union
 carries whichever name is current, and this rename converges it).
 
+## Cross-cutting: source_ordinal vs time_index — DO NOT conflate  [status: DONE 2026-07-29]
+Two different things, previously one column:
+- **`source_ordinal`** — WHICH SOURCE (0, 1, 2 …). The machine JOIN KEY; keys the age map. Assigned
+  by `declared_hpf` alone (no date, no filename tiebreaker). Two sources declaring the SAME age are
+  AMBIGUOUS → `assert_source_order_unambiguous` raises rather than letting glob order decide.
+- **`time_index`** — the merged FRAME coordinate. One `source_ordinal` can span MANY `time_index`
+  values (a timelapse source), so neither is derived from the other. They coincide only when every
+  source is a single snapshot, which is why the conflation went unnoticed.
+- **`raw_time_index`** — the source-native frame index, preserved for audit. `remap_source_time_indices`
+  (collection_merge_primitives) is the ONE helper both unions use, so the scope-metadata union and the
+  acquisition-inventory union cannot drift. Remapping is by RANK, so sparse/1-based source numbering
+  becomes a dense merged axis.
+- Guarded by tests/…/test_collection_cross_artifact_consistency.py: `source_ordinal` identical across
+  all four artifacts, and `(source_ordinal, raw_time_index) → time_index` identical in both unions.
+
+## Cross-cutting: ND2 axes are read BY NAME  [status: DONE 2026-07-29]
+Pre-existing bug, exposed by the real YX1 collection and NOT collection-specific (any 5-D ND2 with
+no T axis was affected, single experiments included). `nd.shape` is positional and was unpacked as
+`(T, W, Z)`; the pbx pilot is `(P, Z, C, Y, X)`, so 96 POSITIONS were read as 96 timepoints, 9 focal
+planes as 9 positions, and 2 channels as 2 planes — 1728 plausible-looking rows and "2 wells".
+
+Worse on the PIXEL path: `_get_stack` gated channel-selection on `ndim == 6`, so for this 5-D file it
+was SKIPPED and the channel axis stood in for the Z stack — focus-stacking would have run over
+`[BF, tdTomato]` as focal planes (verified: old slice returned (2, 2304, 2304), correct is
+(9, 2304, 2304)).
+
+`scope/yx1/nd2_axes.py` is now the ONE reader and documents the model:
+- **SEQUENCE axes** (`nd.experiment`: TimeLoop/XYPosLoop/ZStackLoop) are what `frame_metadata(i)`
+  addresses; `frameCount == product of loop counts`. **C is NOT a sequence axis** — one frame carries
+  all its channels.
+- **WITHIN-FRAME axes** (C, Y, X) describe a frame's contents.
+- So: row grain = `sizes` (P×Z×C); frame address = loops (P×Z). `axes_of()` cross-checks its derived
+  frame count against the ND2's declared `frameCount` as a tripwire.
+All four ND2 readers go through it (extractor, materializer, `_get_stack`, generate_xy_reference).
+Keyence is untouched — its dimensions come from TIFF path tokens, already name-anchored.
+
 ## Known drift already fixed (not collection work): calibration col + stage_x/y/z_nm fixtures.
-## Known pre-existing, out of scope: 2 z_stack keyence tests (StopIteration, stitch-count change).
+## Known pre-existing, out of scope: 12 image_materialization tests (Keyence stitch-map + shard
+## merge) fail identically with and without this work — verified by stashing the changes.
