@@ -57,6 +57,69 @@ per timepoint (see "Age" below).
 
 ---
 
+## ONE experiment_id, ONE provenance artifact (the keystone — LOCKED 2026-07-28)
+
+The plate IS one `experiment_id` from the start. The source files are a **provenance detail**, NOT
+separate experiments. There is NO per-file experiment_id and NO DAG fan-in/fan-out — the DAG runs
+one experiment per plate, and the steps that touch disk handle the N source files INTERNALLY,
+driven by one artifact.
+
+**Discovery generates the collection provenance artifact ONCE — the single source of truth for the
+plate's on-disk composition.** Every disk-touching step READS it (never re-globs the `_coll` dir):
+
+```json
+{ "experiment_id": "chem28c_coll_plate01",
+  "is_collection": true,
+  "sources": [
+    {"file": "20250622_plate01_t28hpf", "raw_path": ".../t28hpf", "declared_hpf": 28, "time_index": 0},
+    {"file": "20250623_plate01_t52hpf", "raw_path": ".../t52hpf", "declared_hpf": 52, "time_index": 1}
+  ],
+  "start_age_by_time_index": {"0": 28, "1": 52} }
+```
+
+This is the classify artifact GROWN into the full collection-provenance record (adds per-source
+file / raw_path / time_index). "Classify once, consume everywhere" applied to file provenance.
+
+### The DAG (one experiment_id throughout; files handled inside disk-touching steps)
+
+```
+DISCOVERY  → collection provenance artifact for chem28c_coll_plate01   (ONE artifact, ONE id)
+     │
+ingest_scope_metadata (chem28c_coll_plate01)
+     reads provenance → reads EACH source file → the plate's scope metadata / acquisition inventory
+     (time_index per source; sources tracked via source_*_path — as the normal inventory always does)
+     │
+map_positions / apply (chem28c_coll_plate01)
+     each source's positions resolve → well_id (per-file INTERNALLY, ONE experiment output).
+     You cannot route a position to a well without the mapping, so mapping resolves per source
+     first; the output is one experiment's rows keyed by well_id + time_index.
+     │
+materialize — BY WELL — pulls the well's rows ACROSS its sources (provenance/source_*_path says
+     which file's pixels); writes the per-well frame_inventory (time_index 0,1,…)
+     │
+── frame_inventory ──  AFTER HERE, provenance has done its job: time_index carries everything.
+     │                 The ONLY remaining consumer of the provenance artifact is STAGE computation
+     │                 (start_age_by_time_index → per-timepoint start_age_hpf). Detection, SAM2,
+     │                 registry, QC, analysis all key on (well_id, time_index) — source invisible.
+     ▼
+detection → SAM2 tracking → physical_embryo_registry → … → stage_predictions (reads provenance for age)
+```
+
+### Provenance consumers — the full list (short by design)
+- **ingest_scope_metadata / map / apply / materialize** — read provenance to know the source files
+  and compose them into the plate's per-well frame_inventory. (Acquisition layer only.)
+- **stage_predictions** — the ONLY post-frame_inventory consumer: reads `start_age_by_time_index`
+  for per-timepoint `start_age_hpf`.
+- Everything else keys on the frame spine `(well_id, time_index)` — provenance is invisible to it.
+
+### DRY: the collection nuance is scope-agnostic below the well seam
+By the time sources are composed, every file (Keyence or YX1) has resolved `well_id` via its normal
+per-scope scope→map→apply. The collection composition keys on `well_id` + `time_index` + source —
+scope-free — so it is ONE shared helper, not a per-scope fork. Scope-specific code ends at
+well-resolved rows (philosophy doc); the collection merge lives below that line, shared by both.
+
+---
+
 ## The governing principle: CLASSIFY ONCE, CONSUME EVERYWHERE
 
 Determine at the **start of the DAG** whether an experiment is a collection; pass that DECLARED fact
