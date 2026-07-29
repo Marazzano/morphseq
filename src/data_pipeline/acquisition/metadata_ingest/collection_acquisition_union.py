@@ -51,10 +51,11 @@ from typing import Callable, Sequence
 
 import pandas as pd
 
-from data_pipeline.acquisition.metadata_ingest.collection_time_axis import (
+from data_pipeline.acquisition.metadata_ingest.collection_merge_primitives import (
+    rebuild_well_id_for_plate,
     remap_source_time_indices,
 )
-from data_pipeline.shared.identifiers.constructors import build_well_id, sanitize_experiment_id
+from data_pipeline.shared.identifiers.constructors import sanitize_experiment_id
 from data_pipeline.shared.identifiers.parsers import (
     compose_collection_experiment_id,
     parse_declared_hpf,
@@ -126,25 +127,9 @@ class SourceChild:
         return (0, hpf, self.date) if hpf is not None else (1, 0, self.date)
 
 
-def _restamp_experiment_and_well_id(
-    df: pd.DataFrame, *, experiment_id: str
-) -> pd.DataFrame:
-    """Restamp ``experiment_id`` on every row and REBUILD ``well_id`` off it when present.
-
-    A scope that resolves ``well_id`` at ingest (Keyence: ``build_well_id(per_source_exp, well)``)
-    carries a well_id bound to the PER-SOURCE experiment_id. To make A01@t45 and A01@t72 share one
-    well_id we rebuild it off the unioned experiment_id using the scope's own ``well_index`` (the
-    raw well label, which is source-independent). A scope that has not resolved a well yet (YX1 —
-    ``well_id`` attached later by the position→well mapping) has no ``well_id`` column, so nothing
-    is rebuilt and the later mapping simply sees the unioned experiment_id.
-    """
-    out = df.copy()
-    out["experiment_id"] = experiment_id
-    if "well_id" in out.columns and "well_index" in out.columns:
-        out["well_id"] = out["well_index"].map(
-            lambda w: build_well_id(experiment_id, w)
-        )
-    return out
+# The experiment/well_id restamp lives in `collection_merge_primitives.rebuild_well_id_for_plate` — ONE
+# implementation shared with the scope-metadata union's Keyence re-key, so the two cannot diverge on
+# how a source-bound well_id becomes plate-bound.
 
 
 def union_collection_acquisition_inventories(
@@ -231,7 +216,7 @@ def union_collection_acquisition_inventories(
                 "missing required column 'time_index'."
             )
 
-        part = _restamp_experiment_and_well_id(per_source, experiment_id=experiment_id)
+        part = rebuild_well_id_for_plate(per_source, experiment_id)
 
         # Place this source's frames on the merged time axis via the SHARED helper (the scope
         # metadata union calls the same one, so the two artifacts cannot drift on what time_index

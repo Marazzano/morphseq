@@ -60,7 +60,7 @@ from typing import Callable, Sequence
 
 import pandas as pd
 
-from data_pipeline.acquisition.metadata_ingest.collection_time_axis import (
+from data_pipeline.acquisition.metadata_ingest.collection_merge_primitives import (
     remap_source_time_indices,
 )
 
@@ -121,18 +121,20 @@ def union_collection_scope_metadata(
     # The merged time axis grows as sources are appended; each source's block starts here.
     running_time_offset = 0
 
-    # Sources are processed in ARTIFACT ORDER (by source_ordinal), so the merged time axis follows
-    # the same ordering the acquisition union uses — that is what keeps the two artifacts in step.
-    for record in sorted(sources, key=lambda r: int(r["source_ordinal"])):
-        missing = [
-            k for k in ("file", "raw_path", "source_ordinal") if k not in record
-        ]
+    # Validate the shape BEFORE sorting — the sort key dereferences source_ordinal, so an
+    # incomplete record must fail with a message that names the fix, not a bare KeyError.
+    for record in sources:
+        missing = [k for k in ("file", "raw_path", "source_ordinal") if k not in record]
         if missing:
             raise ValueError(
                 f"collection_scope_union: source record {record!r} is missing {missing}. Each "
                 "record comes from the collection-classify artifact and must carry "
                 "file/raw_path/source_ordinal."
             )
+
+    # Sources are processed in ARTIFACT ORDER (by source_ordinal), so the merged time axis follows
+    # the same ordering the acquisition union uses — that is what keeps the two artifacts in step.
+    for record in sorted(sources, key=lambda r: int(r["source_ordinal"])):
 
         source_id = str(record["file"])
         source_path = str(record["raw_path"])
@@ -165,12 +167,6 @@ def union_collection_scope_metadata(
         # The PLATE id on every row: the collection is ONE experiment.
         part["experiment_id"] = experiment_id
 
-        # Per-scope re-key: whatever identity THIS scope minted against the source id gets rebound
-        # to the plate. What needs rebinding differs by scope, so the scope owns the rule (see the
-        # rekey_to_plate arg); this union stays scope-agnostic.
-        if rekey_to_plate is not None:
-            part = rekey_to_plate(part, experiment_id)
-
         # NAME COLLISION, resolved explicitly. The scope extractors already emit a per-row
         # `source_file` = the IMAGE path (one tiff/plane per row) — pure provenance, no consumers.
         # The collection's source identity needs a per-SOURCE path (the child dir), and the worklist
@@ -195,6 +191,17 @@ def union_collection_scope_metadata(
         part, running_time_offset = remap_source_time_indices(
             part, running_time_offset, scope_label=f"collection_scope_union[{source_id}]"
         )
+
+        # Per-scope re-key: whatever identity THIS scope minted against the source id gets rebound
+        # to the plate. What needs rebinding differs by scope, so the scope owns the rule (see the
+        # rekey_to_plate arg); this union stays scope-agnostic.
+        #
+        # ORDER MATTERS: this runs AFTER the time remap, because a rebuilt composite id must use the
+        # MERGED coordinate. Keyence's image_id is (well_id, channel_id, time_index) — re-keying
+        # before the remap would stamp every source's image_id with its own pre-merge time_index, so
+        # two snapshot sources would both come out ..._t0000 and collide.
+        if rekey_to_plate is not None:
+            part = rekey_to_plate(part, experiment_id)
 
         parts.append(part)
 

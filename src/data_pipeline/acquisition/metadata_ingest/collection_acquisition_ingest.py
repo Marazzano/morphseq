@@ -29,16 +29,10 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union impo
 from data_pipeline.acquisition.metadata_ingest.experiment_collection import (
     find_collection_plate_sources,
 )
-from data_pipeline.acquisition.metadata_ingest.position_well_mapping.position_well_mapping_contract import (
-    REQUIRED_POSITION_WELL_MAPPING_COLUMNS,
-    validate_position_well_mapping,
+from data_pipeline.acquisition.metadata_ingest.collection_merge_primitives import (
+    rebuild_well_id_for_plate,
 )
-
-# The union already resolves well_id↔position (each source's acquisition-inventory builder minted
-# well_id), so the collection's position mapping is a DERIVATION, not a re-map — recorded as this
-# mapping_method so downstream can see it came from the union, not a scope position solve.
-_COLLECTION_MAPPING_METHOD = "collection_union"
-
+from data_pipeline.shared.identifiers import build_image_id
 
 # ─────────────────────────────────────────────────────────────────────────────────────
 # Per-scope read_source — read ONE source child into a validated acquisition inventory
@@ -59,6 +53,162 @@ def _read_keyence_source(child_dir: Path, child_experiment_id: str) -> pd.DataFr
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────────────────
+# Per-scope scope-metadata readers (Step 1) — the OTHER artifact, same per-source read
+# ─────────────────────────────────────────────────────────────────────────────────────
+# scope_metadata and acquisition_inventory are NOT interchangeable: scope_metadata carries the
+# per-position GEOMETRY (raw_position_label, x_um, y_um) + channel that map_positions/apply ingest.
+# Writing the acquisition inventory into the scope_csv slot is what crashed `apply` on `channel`.
+
+def _read_keyence_scope_metadata(
+    source_path: Path, source_id: str, output_csv: Path
+) -> pd.DataFrame:
+    from data_pipeline.acquisition.metadata_ingest.scope.keyence.extract_scope_metadata import (
+        extract_keyence_scope_metadata,
+    )
+
+    # The Keyence extractor resolves its wells under `raw_data_dir / experiment_id`, so it takes the
+    # collection dir + the source child name. The PLATE re-stamp happens in the union.
+    return extract_keyence_scope_metadata(
+        raw_data_dir=source_path.parent,
+        experiment_id=source_id,
+        output_csv=output_csv,
+    )
+
+
+def _read_yx1_scope_metadata(
+    source_path: Path, source_id: str, output_csv: Path
+) -> pd.DataFrame:
+    from data_pipeline.acquisition.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import (
+        extract_yx1_scope_metadata,
+    )
+
+    return extract_yx1_scope_metadata(
+        raw_data_dir=source_path.parent,
+        experiment_id=source_id,
+        output_csv=output_csv,
+    )
+
+
+_SCOPE_METADATA_READERS = {
+    "Keyence": _read_keyence_scope_metadata,
+    "YX1": _read_yx1_scope_metadata,
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────
+# Per-scope PLATE RE-KEY — rebind whatever identity a scope minted against the source id
+# ─────────────────────────────────────────────────────────────────────────────────────
+# Scopes differ in WHAT identity they resolve at ingest, so this is a per-scope concern and does
+# NOT belong in the scope-agnostic union:
+#
+#   Keyence resolves the well at ingest (from the XY##/_A01 folder marker) and mints well_index,
+#           well_id and image_id from the experiment_id it is HANDED. We hand it the SOURCE name
+#           (its raw dir is `raw_data_dir / experiment_id`), so all three come out source-bound and
+#           must be rebound to the plate.
+#   YX1     resolves nothing at ingest — no well_index/well_id/image_id at all (well_id is attached
+#           later by apply_position_to_well_mapping). Nothing to re-key.
+
+def _rekey_keyence_scope_metadata_to_plate(
+    block: pd.DataFrame, experiment_id: str
+) -> pd.DataFrame:
+    """Rebind Keyence's ingest-minted ids from the source id to the PLATE id.
+
+    The ``well_id`` half is the SHARED ``rebuild_well_id_for_plate`` (the acquisition union calls the
+    same helper, so the two cannot diverge on how a source-bound well_id becomes plate-bound). The
+    only Keyence-specific part is ``image_id``: scope metadata carries it, the acquisition inventory
+    does not, so it exists to rebuild only here.
+
+    ``image_id`` is later OVERWRITTEN by ``apply_position_to_well_mapping``, but leaving a stale
+    source-keyed value in the unioned artifact would make it internally inconsistent for anything
+    that reads scope metadata before ``apply``.
+    """
+    if "well_index" not in block.columns:
+        raise ValueError(
+            "_rekey_keyence_scope_metadata_to_plate: Keyence scope metadata is missing "
+            "'well_index'. It is the source-independent raw well label the plate-keyed well_id is "
+            "rebuilt from; without it the merged plate cannot share wells across sources."
+        )
+
+    out = rebuild_well_id_for_plate(block, experiment_id)
+
+    # image_id = (well_id, channel_id, time_index). Keyence scope metadata names the channel token
+    # `channel` (the laggard name for channel_id — the pipeline's canonical token).
+    if "image_id" in out.columns:
+        channel_col = "channel_id" if "channel_id" in out.columns else "channel"
+        missing_for_image_id = [c for c in (channel_col, "time_index") if c not in out.columns]
+        if missing_for_image_id:
+            raise ValueError(
+                "_rekey_keyence_scope_metadata_to_plate: cannot rebuild 'image_id' — missing "
+                f"{missing_for_image_id}. image_id is (well_id, channel_id, time_index); leaving "
+                "the source-keyed value would make the unioned scope metadata inconsistent."
+            )
+        out["image_id"] = [
+            build_image_id(well_id, str(channel), int(time_index))
+            for well_id, channel, time_index in zip(
+                out["well_id"], out[channel_col], out["time_index"]
+            )
+        ]
+    return out
+
+
+# Keyence has real work; YX1 legitimately has none. Same dispatch shape as the reader dicts.
+_SCOPE_METADATA_REKEYS = {
+    "Keyence": _rekey_keyence_scope_metadata_to_plate,
+    "YX1": None,
+}
+
+
+def ingest_collection_scope_metadata(
+    *,
+    experiment_id: str,
+    sources: list[dict],
+    microscope: str,
+    output_csv: Path,
+    scratch_dir: Path | None = None,
+) -> pd.DataFrame:
+    """Build ONE experiment-level scope_metadata for a collection plate (Step 1) and write it.
+
+    Reads each source's scope metadata ONCE (its own geometry/calibration/timing), then delegates the
+    per-source-lossless concat + source-identity stamping to ``union_collection_scope_metadata``.
+    ``sources`` comes from the collection-classify artifact — nothing is re-globbed.
+    """
+    from data_pipeline.acquisition.metadata_ingest.collection_scope_union import (
+        union_collection_scope_metadata,
+    )
+
+    if microscope not in _SCOPE_METADATA_READERS:
+        raise ValueError(
+            f"ingest_collection_scope_metadata: unsupported microscope {microscope!r}; expected one "
+            f"of {sorted(_SCOPE_METADATA_READERS)}."
+        )
+    read_scope = _SCOPE_METADATA_READERS[microscope]
+
+    scratch = Path(scratch_dir) if scratch_dir else Path(output_csv).parent / "_per_source"
+    scratch.mkdir(parents=True, exist_ok=True)
+
+    def read_source(record: dict, _experiment_id: str) -> pd.DataFrame:
+        source_id = str(record["file"])
+        return read_scope(
+            Path(record["raw_path"]),
+            source_id,
+            scratch / f"scope_metadata_raw__{source_id}.csv",
+        )
+
+    unioned = union_collection_scope_metadata(
+        experiment_id=experiment_id,
+        sources=sources,
+        read_source=read_source,
+        # Per-scope: rebind ids this scope minted against the source id (Keyence) — or nothing
+        # (YX1, which mints no well identity at ingest).
+        rekey_to_plate=_SCOPE_METADATA_REKEYS[microscope],
+    )
+    output_csv = Path(output_csv)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    unioned.to_csv(output_csv, index=False)
+    return unioned
+
+
 def _read_yx1_source(child_file_or_dir: Path, child_experiment_id: str) -> pd.DataFrame:
     from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
         build_yx1_acquisition_inventory,
@@ -77,28 +227,12 @@ _SCOPE_READERS = {"Keyence": _read_keyence_source, "YX1": _read_yx1_source}
 # Orchestration — find sources, union, write
 # ─────────────────────────────────────────────────────────────────────────────────────
 
-def derive_position_well_mapping(unioned: pd.DataFrame) -> pd.DataFrame:
-    """Derive the canonical position→well mapping from the unioned inventory.
-
-    The union already carries ``experiment_id``, ``position_index``, ``well_index`` and the
-    ``well_id`` its per-source builder minted, so the collection's mapping is a SELECT+dedup —
-    NOT a re-map. ``mapping_method`` records that it came from the union. The result satisfies
-    the same ``validate_position_well_mapping`` contract the native materializer consumes, so
-    the collection reuses the native path unchanged.
-    """
-    needed = ["experiment_id", "position_index", "well_index", "well_id"]
-    missing = [c for c in needed if c not in unioned.columns]
-    if missing:
-        raise ValueError(
-            f"derive_position_well_mapping: unioned inventory missing {missing}; cannot derive "
-            "the position mapping. (Expected the per-source acquisition-inventory builder to mint "
-            "well_id + position_index.)"
-        )
-    mapping = unioned[needed].drop_duplicates().reset_index(drop=True)
-    mapping["mapping_method"] = _COLLECTION_MAPPING_METHOD
-    mapping = mapping[list(REQUIRED_POSITION_WELL_MAPPING_COLUMNS)]
-    validate_position_well_mapping(mapping)
-    return mapping
+# NOTE (Step 2, docs/COLLECTION_STEP_BY_STEP.md): the position→well mapping is NO LONGER derived
+# from the unioned inventory. Deriving it assumed the well↔position relation is shared across
+# sources, which is true for Keyence (the well is a folder marker) but FALSE for YX1, where the well
+# comes from stage x/y matched to a reference grid and every source has its own stage frame (the
+# plate is re-seated across the gap). The mapping now lives in `collection_position_mapping`, which
+# runs the existing per-scope map function once per source and concatenates the blocks.
 
 
 def ingest_collection_acquisition_inventory(
@@ -107,7 +241,6 @@ def ingest_collection_acquisition_inventory(
     raw_root: Path,
     microscope: str,
     output_csv: Path,
-    position_well_mapping_csv: Path | None = None,
 ) -> pd.DataFrame:
     """Build ONE acquisition inventory for a merged collection plate and write it.
 
@@ -116,11 +249,11 @@ def ingest_collection_acquisition_inventory(
         raw_root: raw image root containing the ``_coll`` dir (scope-anchored by the caller).
         microscope: "Keyence" | "YX1" — selects the per-source reader.
         output_csv: destination for the unioned acquisition inventory CSV.
-        position_well_mapping_csv: if given, also derive + write the canonical position→well
-            mapping (the second artifact the native materializer needs). The mapping is derived
-            from the union (well_id already resolved), NOT re-solved from raw positions.
 
     Returns the unioned inventory (also written to ``output_csv``).
+
+    The position→well mapping is NOT produced here — it is Step 2's own artifact, built by
+    ``collection_position_mapping`` from a per-source map run (see the note above).
     """
     if microscope not in _SCOPE_READERS:
         raise ValueError(
@@ -147,10 +280,4 @@ def ingest_collection_acquisition_inventory(
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     unioned.to_csv(output_csv, index=False)
-
-    if position_well_mapping_csv is not None:
-        mapping = derive_position_well_mapping(unioned)
-        position_well_mapping_csv.parent.mkdir(parents=True, exist_ok=True)
-        mapping.to_csv(position_well_mapping_csv, index=False)
-
     return unioned

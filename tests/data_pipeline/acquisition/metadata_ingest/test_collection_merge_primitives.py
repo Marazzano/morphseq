@@ -9,7 +9,7 @@ use, so they cannot drift on what ``time_index`` means):
   * the returned offset makes consecutive sources occupy disjoint, adjacent blocks
   * fail-loud on a missing / null / non-numeric source time_index
 
-Run: PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_collection_time_axis.py
+Run: PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_collection_merge_primitives.py
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from data_pipeline.acquisition.metadata_ingest.collection_time_axis import (
+from data_pipeline.acquisition.metadata_ingest.collection_merge_primitives import (
     remap_source_time_indices,
 )
 

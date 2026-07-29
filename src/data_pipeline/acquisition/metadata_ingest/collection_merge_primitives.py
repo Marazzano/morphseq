@@ -1,4 +1,13 @@
-"""Collection TIME AXIS — the ONE place that maps source-native time onto merged time.
+"""Collection MERGE PRIMITIVES — the ONE place source-bound facts become plate-bound facts.
+
+Two primitives, both shared by the scope-metadata union and the acquisition-inventory union so the
+two artifacts cannot drift:
+
+  * ``remap_source_time_indices`` — source-native frame index → merged frame index (below).
+  * ``rebuild_well_id_for_plate`` — a ``well_id`` minted against a SOURCE id → the PLATE id.
+
+--------------------------------------------------------------------------------------
+TIME AXIS — the ONE place that maps source-native time onto merged time.
 
 A collection plate is assembled from N independent source acquisitions. Each source numbers its
 own frames from its own origin, so two snapshot sources both call their single frame ``0``. The
@@ -26,6 +35,32 @@ Import direction: pure pandas; imports nothing from the pipeline. Callers are th
 from __future__ import annotations
 
 import pandas as pd
+
+from data_pipeline.shared.identifiers import build_well_id
+
+
+def rebuild_well_id_for_plate(
+    frame: pd.DataFrame, experiment_id: str
+) -> pd.DataFrame:
+    """Rebind ``well_id`` from a per-SOURCE experiment id to the merged PLATE id.
+
+    A scope that resolves the well at ingest (Keyence, from the ``XY##/_A01`` folder marker) mints
+    ``well_id = build_well_id(source_experiment_id, well_index)``, so its ``well_id`` is source-bound.
+    Rebuilding it off the plate id — using the source-INDEPENDENT ``well_index`` (the raw ``A01``
+    label) — is what makes A01@t28 and A01@t52 ONE well, which is the whole point of merging a plate.
+
+    A scope that resolves no well at ingest (YX1 — ``well_id`` is attached later by
+    ``apply_position_to_well_mapping``) has no ``well_id`` column, so this is a no-op for it.
+
+    Always stamps ``experiment_id``. Uses the shared constructor, never string surgery.
+    """
+    out = frame.copy()
+    out["experiment_id"] = experiment_id
+    if "well_id" in out.columns and "well_index" in out.columns:
+        out["well_id"] = out["well_index"].astype(str).map(
+            lambda well_index: build_well_id(experiment_id, well_index)
+        )
+    return out
 
 
 def remap_source_time_indices(

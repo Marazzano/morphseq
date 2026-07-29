@@ -62,14 +62,25 @@ def validate_position_well_mapping(
             f"First offenders: {sample}"
         )
 
-    duplicate_position = checked.duplicated(
-        subset=["experiment_id", "position_index"], keep=False
-    )
+    # Uniqueness is per SOURCE BLOCK. A collection plate concatenates one mapping block per raw
+    # source, so the same physical position_index legitimately recurs once per source — what must
+    # never repeat is (position_index) WITHIN one source. `time_index` is the source key (it equals
+    # the collection artifact's sources[].time_index), so it joins the uniqueness subset whenever
+    # present. A single experiment has one block (time_index=0) and behaves exactly as before.
+    uniqueness_subset = ["experiment_id", "position_index"]
+    if "time_index" in checked.columns:
+        checked["time_index"] = pd.to_numeric(
+            checked["time_index"], errors="raise"
+        ).astype(int)
+        uniqueness_subset.append("time_index")
+
+    duplicate_position = checked.duplicated(subset=uniqueness_subset, keep=False)
     if duplicate_position.any():
+        report_cols = uniqueness_subset + ["well_index", "well_id"]
         sample = checked.loc[
-            duplicate_position, ["experiment_id", "position_index", "well_index", "well_id"]
+            duplicate_position, report_cols
         ].head(10).to_dict(orient="records")
         raise ValueError(
-            f"[{scope_label}] duplicate experiment_id + position_index rows. "
+            f"[{scope_label}] duplicate {' + '.join(uniqueness_subset)} rows. "
             f"First offenders: {sample}"
         )
