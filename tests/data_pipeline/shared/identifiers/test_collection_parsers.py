@@ -254,3 +254,29 @@ def test_missing_date_still_fails_loud():
     for parse in (parse_plate_token, parse_event_label):
         with pytest.raises(ValueError, match="8 digits"):
             parse("plate01_t45hpf")
+
+
+# ── Ambiguity is REJECTED, not guessed (review follow-up) ─────────────────────────────
+
+
+def test_two_distinct_plate_tokens_is_ambiguous():
+    # Nothing in the name says which is the plate identity; taking the first would mis-key the
+    # experiment silently.
+    with pytest.raises(ValueError, match="multiple plate tokens"):
+        parse_plate_token("20260624_plate01_backup_plate02_t33hpf")
+
+
+def test_repeated_identical_plate_token_is_fine():
+    assert parse_plate_token("20260624_plate01_rescan_plate01_t33hpf") == "plate01"
+
+
+def test_non_plate_shaped_token_falls_back_positionally():
+    # "pilot" is not plate<N>-shaped, so the original positional reading applies.
+    assert parse_plate_token("20260624_pilot_t33hpf") == "pilot"
+    assert parse_declared_hpf("20260624_pilot_t33hpf") == 33
+
+
+def test_non_age_event_label_is_preserved():
+    assert parse_plate_token("20260624_plate01_notes") == "plate01"
+    assert parse_event_label("20260624_plate01_notes") == "notes"
+    assert parse_declared_hpf("20260624_plate01_notes") is None

@@ -154,10 +154,19 @@ def parse_plate_token(child_name: str) -> str:
             "(e.g. 20260607_plate01_t45hpf)."
         )
 
-    # Anchored token wins: it is the plate identity wherever it sits in the name.
-    anchored = _PLATE_TOKEN_RE.search(text)
+    # Anchored token wins: it is the plate identity wherever it sits in the name. MULTIPLE distinct
+    # plate tokens are AMBIGUOUS — nothing in the name says which is the plate identity, and silently
+    # taking the first would mis-key the experiment. (A repeated identical token is fine.)
+    anchored = _PLATE_TOKEN_RE.findall(text)
     if anchored:
-        return anchored.group(1).lower()
+        distinct = sorted({token.lower() for token in anchored})
+        if len(distinct) > 1:
+            raise ValueError(
+                f"parse_plate_token: {child_name!r} contains multiple plate tokens {distinct}. "
+                "The plate token IS the experiment identity, so this is ambiguous — rename the raw "
+                "child so exactly one plate<N> token appears."
+            )
+        return distinct[0]
 
     # Fallback: the original positional reading (first token after the date).
     match = _COLLECTION_CHILD_RE.match(text)

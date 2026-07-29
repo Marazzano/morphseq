@@ -21,14 +21,19 @@ also how the acquisition inventory already holds N sources. The DAG artifact cou
 downstream reads one file::
 
     position_well_mapping.csv  (ONE artifact per experiment)
-      experiment_id         position_index  well_index  well_id                   time_index  source_file
-      chem28c_coll_plate01  1               A01         chem28c_coll_plate01_A01  0           20250622_plate01_t28hpf
-      chem28c_coll_plate01  1               A01         chem28c_coll_plate01_A01  1           20250623_plate01_t52hpf
+      experiment_id         position_index  well_index  well_id                   source_ordinal  source_file
+      chem28c_coll_plate01  1               A01         chem28c_coll_plate01_A01  0               20250622_plate01_t28hpf
+      chem28c_coll_plate01  1               A01         chem28c_coll_plate01_A01  1               20250623_plate01_t52hpf
 
 ``well_id`` is PLATE-keyed (``chem28c_coll_plate01_A01``) so A01@t28 and A01@t52 are the same well —
-that is the whole point of merging the plate. ``time_index`` (REQUIRED, the key) tags which source
-block a row belongs to and EQUALS the artifact's ``sources[].time_index``; ``source_file`` is
-human-readable provenance.
+that is the whole point of merging the plate. ``source_ordinal`` (REQUIRED, the KEY) tags which
+source block a row belongs to and EQUALS the artifact's ``sources[].source_ordinal``; ``source_file``
+is human-readable provenance.
+
+The key is deliberately NOT ``time_index``: the mapping is a per-SOURCE fact (which well sits at
+which stage position for that acquisition), and ONE source can span MANY merged ``time_index`` values
+(a timelapse source). Keying on time_index would force one mapping row per frame and reintroduce the
+source-vs-frame conflation this design removes. Every frame of a source inherits its source's mapping.
 
 Import direction: MAY import the per-scope map functions (it orchestrates them) + shared identifiers;
 MUST NOT import Snakemake/tasks.
@@ -47,9 +52,10 @@ from data_pipeline.acquisition.metadata_ingest.position_well_mapping import (
 )
 from data_pipeline.shared.identifiers import build_well_id
 
-# The two columns the collection concat ADDS to the per-source mapping. Both are always present
-# (a single experiment gets one block: time_index=0 + its own raw as source_file).
-COLLECTION_MAPPING_COLUMNS: tuple[str, ...] = ("time_index", "source_file")
+# The two columns the collection concat ADDS to the per-source mapping.
+#   source_ordinal — WHICH SOURCE. The JOIN KEY (see the docstring above for why it is not time_index).
+#   source_file    — readable provenance.
+COLLECTION_MAPPING_COLUMNS: tuple[str, ...] = ("source_ordinal", "source_file")
 
 
 def _rekey_well_id_to_plate(mapping: pd.DataFrame, *, experiment_id: str) -> pd.DataFrame:
@@ -87,9 +93,9 @@ def map_collection_positions_to_wells(
         experiment_id: the merged ``{collection}_{plate_token}`` id (the PLATE) — what ``well_id``
             is keyed to.
         sources: the collection artifact's ``sources`` records (``file`` / ``raw_path`` /
-            ``time_index``). Read from the artifact; never re-globbed, never re-derived.
+            ``source_ordinal``). Read from the artifact; never re-globbed, never re-derived.
         scope_metadata_csv: the UNIONED scope metadata (Step 1). Split back into per-source blocks
-            by ``time_index`` — each source is mapped against its OWN geometry.
+            by ``source_ordinal`` — each source is mapped against its OWN geometry.
         output_mapping_csv: destination for the ONE concatenated mapping artifact.
         output_provenance_json: destination for the mapping provenance summary.
         microscope: "Keyence" | "YX1" — selects the per-scope map function.

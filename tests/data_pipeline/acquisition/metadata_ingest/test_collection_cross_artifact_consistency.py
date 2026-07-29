@@ -279,3 +279,85 @@ def test_union_refuses_same_age_sources_before_reading():
 def test_single_source_is_never_ambiguous():
     assert_source_order_unambiguous(_children("20250622_plate01_t28hpf"))
     assert_source_order_unambiguous(_children("20250622_plate01_sci"))
+
+
+# ── SPARSE source frame numbering across BOTH artifacts ───────────────────────────────
+# The fixtures above emit dense raw times (range(n_frames)), where remap-by-rank and
+# `raw + offset` are indistinguishable — so they cannot detect a regression in COMPACTION.
+# Keyence derives time from on-disk T#### tokens, so a partial/resumed acquisition yields sparse
+# raw indices (e.g. 2, 4). Both unions must compact them to the SAME dense merged axis; if one
+# compacted and the other offset, geometry and pixels would name different canonical frames.
+
+_SPARSE_FRAMES = {
+    "20250622_plate01_t28hpf": [2, 4],        # sparse: a resumed acquisition
+    "20250623_plate01_t52hpf": [1, 2, 3],     # 1-based
+    "20250624_plate01_t76hpf": [0],
+}
+
+
+def _sparse_source_frame(child, *, for_inventory):
+    rows = []
+    for well_number in (1, 2):
+        well_index = f"A0{well_number}"
+        for raw_time in _SPARSE_FRAMES[child]:
+            row = {
+                "experiment_id": child,
+                "well_index": well_index,
+                "well_id": f"{child}_{well_index}",
+                "time_index": raw_time,
+                "position_index": well_number,
+                "raw_position_label": str(well_number),
+                "channel": "BF",
+            }
+            if for_inventory:
+                row["time_index_claimed"] = raw_time
+                row["channel_id"] = "BF"
+            else:
+                row["image_id"] = f"{child}_{well_index}_BF_t{raw_time:04d}"
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _build_both_unions_sparse():
+    scope = union_collection_scope_metadata(
+        experiment_id=PLATE,
+        sources=_classify_sources(),
+        read_source=lambda rec, _exp: _sparse_source_frame(rec["file"], for_inventory=False),
+        rekey_to_plate=_rekey_keyence_scope_metadata_to_plate,
+    )
+    inventory = union_collection_acquisition_inventories(
+        collection_name=COLLECTION,
+        sources=[SourceChild(child_name=child, scope="Keyence") for child, _ in CHILDREN],
+        read_source=lambda source, _exp: _sparse_source_frame(
+            source.child_name, for_inventory=True
+        ),
+    )
+    return scope, inventory
+
+
+def test_sparse_raw_times_compact_IDENTICALLY_in_both_artifacts():
+    """THE compaction guard. Fails if either union stops remapping by rank."""
+    scope, inventory = _build_both_unions_sparse()
+    assert _time_relation(scope) == _time_relation(inventory)
+
+
+def test_sparse_raw_times_yield_a_DENSE_merged_axis():
+    scope, inventory = _build_both_unions_sparse()
+    # 2 + 3 + 1 = 6 distinct frames -> merged 0..5 with NO holes, despite sparse/1-based input.
+    for df in (scope, inventory):
+        assert sorted(df["time_index"].unique()) == [0, 1, 2, 3, 4, 5]
+
+
+def test_sparse_raw_values_are_preserved_for_audit():
+    scope, _ = _build_both_unions_sparse()
+    by_ordinal = scope.groupby("source_ordinal")["raw_time_index"].apply(lambda s: sorted(set(s)))
+    assert by_ordinal.loc[0] == [2, 4]      # the source's own numbering, unchanged
+    assert by_ordinal.loc[1] == [1, 2, 3]
+    assert by_ordinal.loc[2] == [0]
+
+
+def test_sparse_source_leaves_no_hole_for_the_next_source():
+    scope, _ = _build_both_unions_sparse()
+    blocks = scope.groupby("source_ordinal")["time_index"].apply(lambda s: (min(s), max(s)))
+    # Block widths are the DISTINCT frame counts (2, 3, 1) — not max(raw)+1.
+    assert list(blocks) == [(0, 1), (2, 4), (5, 5)]

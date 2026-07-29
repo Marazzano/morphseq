@@ -75,55 +75,66 @@ def cmd_ingest_collection_acquisition(args: argparse.Namespace) -> None:
     acquisition-inventory builder, union them into one inventory keyed by the merged
     experiment_id, write the CSV. All domain logic lives in the ingest module (DRY).
 
-    Optionally also writes the derived position_well_mapping and a scope_metadata view. The
-    scope-metadata view is the SAME unioned inventory written to the ``ingest_scope_metadata``
-    rule's ``scope_csv`` slot: a collection bypasses the per-experiment scope→map→apply chain (its
-    well_id is already resolved in the union), so this only satisfies that rule's output contract —
-    the collection's real downstream input is the acquisition inventory + position mapping.
+    ALSO writes the REAL unioned scope_metadata when ``--scope-metadata-csv`` is given. That is a
+    genuinely different artifact, not a view of the inventory: scope_metadata carries the
+    per-position geometry (raw_position_label, x_um, y_um) + channel that map_positions/apply
+    ingest, while the acquisition inventory carries image-level source paths + acquisition axes.
+    Both come from the SAME per-source read; each keeps the columns its consumer needs. (Writing the
+    inventory into the scope_csv slot is what used to crash ``apply`` on the missing ``channel``.)
     """
     from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest import (
         ingest_collection_acquisition_inventory,
+        ingest_collection_scope_metadata,
     )
+    from data_pipeline.acquisition.metadata_ingest.collection_classification import (
+        read_collection_classification,
+    )
+
+    # Artifact-driven: the provenance JSON is the SINGLE source of truth for which sources exist
+    # and where they are. Both unions consume it; neither re-globs the _coll dir.
+    payload = read_collection_classification(args.classification_json)
 
     unioned = ingest_collection_acquisition_inventory(
         experiment_id=args.experiment,
-        raw_root=args.raw_root,
+        sources=payload["sources"],
         microscope=args.microscope,
         output_csv=args.output_csv,
-        position_well_mapping_csv=getattr(args, "position_well_mapping_csv", None),
     )
     scope_metadata_csv = getattr(args, "scope_metadata_csv", None)
     if scope_metadata_csv is not None:
-        Path(scope_metadata_csv).parent.mkdir(parents=True, exist_ok=True)
-        unioned.to_csv(scope_metadata_csv, index=False)
+        ingest_collection_scope_metadata(
+            experiment_id=args.experiment,
+            sources=payload["sources"],
+            microscope=args.microscope,
+            output_csv=Path(scope_metadata_csv),
+        )
 
 
-def cmd_derive_collection_position_mapping(args: argparse.Namespace) -> None:
-    """Derive the position→well mapping for a collection from its unioned acquisition inventory.
+def cmd_map_collection_positions_to_wells(args: argparse.Namespace) -> None:
+    """Map EACH collection source independently, then concat into ONE plate-keyed mapping.
 
-    Thin dispatcher: a collection's well_id↔position is already resolved inside the union, so the
-    mapping is a DERIVE (select + dedup), not a re-solve from raw positions. Delegates to
-    ``derive_position_well_mapping`` and writes the canonical mapping + a small provenance json.
+    Thin dispatcher: the per-source loop + concat live in ``collection_position_mapping``; the
+    per-scope map functions it calls are UNCHANGED. Sources (and their time_index) are read from the
+    classify artifact — never re-globbed.
     """
-    import json
-    import pandas as pd
-    from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest import (
-        derive_position_well_mapping,
+    from data_pipeline.acquisition.metadata_ingest.collection_classification import (
+        read_collection_classification,
+    )
+    from data_pipeline.acquisition.metadata_ingest.collection_position_mapping import (
+        map_collection_positions_to_wells,
     )
 
-    mapping = derive_position_well_mapping(pd.read_csv(args.acquisition_inventory_csv))
-    out_mapping = Path(args.output_mapping_csv)
-    out_mapping.parent.mkdir(parents=True, exist_ok=True)
-    mapping.to_csv(out_mapping, index=False)
-
-    out_prov = Path(args.output_provenance_json)
-    out_prov.parent.mkdir(parents=True, exist_ok=True)
-    out_prov.write_text(json.dumps(
-        {"mapping_method": "collection_union",
-         "source": str(args.acquisition_inventory_csv),
-         "n_rows": int(len(mapping))},
-        indent=2,
-    ) + "\n")
+    payload = read_collection_classification(args.classification_json)
+    map_collection_positions_to_wells(
+        experiment_id=args.experiment,
+        sources=payload["sources"],
+        scope_metadata_csv=Path(args.scope_csv),
+        output_mapping_csv=Path(args.output_mapping_csv),
+        output_provenance_json=Path(args.output_provenance_json),
+        microscope=args.microscope,
+        raw_root=Path(args.raw_dir),
+        ref_xy_csv=Path(args.ref_xy_csv) if getattr(args, "ref_xy_csv", None) else None,
+    )
 
 
 def cmd_classify_experiment(args: argparse.Namespace) -> None:
@@ -1355,21 +1366,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_coll_acq.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
     p_coll_acq.add_argument("--output-csv", type=Path, required=True,
                             help="destination for the unioned acquisition inventory CSV")
-    p_coll_acq.add_argument("--position-well-mapping-csv", type=Path, default=None,
-                            help="optional: also derive+write the canonical position->well mapping "
-                                 "(the second artifact the native materializer needs)")
     p_coll_acq.add_argument("--scope-metadata-csv", type=Path, default=None,
-                            help="optional: also write the unioned inventory to the scope_csv slot "
-                                 "(satisfies the ingest_scope_metadata rule's output contract; a "
-                                 "collection bypasses the scope->map->apply chain)")
+                            help="optional: also build the REAL unioned scope_metadata (per-position "
+                                 "geometry + channel, what map_positions/apply ingest). A different "
+                                 "artifact from the inventory, from the same per-source read")
+    p_coll_acq.add_argument("--classification-json", type=Path, required=True,
+                            help="the collection provenance artifact (which sources exist, their "
+                                 "raw_path and source_ordinal). REQUIRED: it is the single source of "
+                                 "truth for both unions; this step never globs the _coll dir")
     p_coll_acq.set_defaults(func=cmd_ingest_collection_acquisition)
 
-    p_coll_map = sub.add_parser("derive-collection-position-mapping")
-    p_coll_map.add_argument("--acquisition-inventory-csv", type=Path, required=True,
-                            help="the collection's unioned acquisition inventory (well_id resolved)")
+    # Each source is mapped INDEPENDENTLY (its own stage frame), then concatenated into ONE
+    # plate-keyed artifact tagged by time_index. Supersedes the old derive-from-union shortcut,
+    # which could not be correct for YX1 (re-seated plate → different stage frame per source).
+    p_coll_map = sub.add_parser("map-collection-positions-to-wells")
+    p_coll_map.add_argument("--experiment", required=True,
+                            help="merged collection plate id — what well_id is keyed to")
+    p_coll_map.add_argument("--microscope", default="Keyence", choices=["Keyence", "YX1"])
+    p_coll_map.add_argument("--classification-json", type=Path, required=True,
+                            help="the collection_classification.json artifact (sources + time_index)")
+    p_coll_map.add_argument("--scope-csv", type=Path, required=True,
+                            help="the UNIONED scope metadata; re-split per source by time_index")
+    p_coll_map.add_argument("--raw-dir", type=Path, required=True,
+                            help="the collection's raw _coll dir (holds the source children)")
+    p_coll_map.add_argument("--ref-xy-csv", type=Path, default=None,
+                            help="YX1 reference plate grid (required for YX1, unused for Keyence)")
     p_coll_map.add_argument("--output-mapping-csv", type=Path, required=True)
     p_coll_map.add_argument("--output-provenance-json", type=Path, required=True)
-    p_coll_map.set_defaults(func=cmd_derive_collection_position_mapping)
+    p_coll_map.set_defaults(func=cmd_map_collection_positions_to_wells)
 
     p_classify = sub.add_parser("classify-experiment")
     p_classify.add_argument("--experiment", required=True,

@@ -5,8 +5,8 @@ The DAG runs on ``experiment_id``. For a MERGED collection plate
 (the ``{date}_{plate_token}[_{event_label}]`` folders/files under the ``_coll`` dir).
 This module is the acquisition-stage entry point that:
 
-  1. finds the plate's source children (``find_collection_plate_sources`` — the inverse
-     of the id composer),
+  1. READS the plate's sources from the collection-provenance artifact (it never globs the
+     ``_coll`` dir — discovery does that ONCE, when the artifact is built),
   2. reads EACH source ONCE via the real per-scope acquisition-inventory builder (the
      layer that mints ``channel_id`` / ``elapsed_time_s`` — NOT the raw scope extractor),
   3. UNIONs them into one acquisition inventory keyed by ``{collection}_{plate}``
@@ -26,13 +26,13 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union impo
     SourceChild,
     union_collection_acquisition_inventories,
 )
-from data_pipeline.acquisition.metadata_ingest.experiment_collection import (
-    find_collection_plate_sources,
-)
 from data_pipeline.acquisition.metadata_ingest.collection_merge_primitives import (
     rebuild_well_id_for_plate,
 )
-from data_pipeline.shared.identifiers import build_image_id
+from data_pipeline.shared.identifiers import (
+    build_image_id,
+    parse_collection_name_from_plate_id,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────────────
 # Per-scope read_source — read ONE source child into a validated acquisition inventory
@@ -83,15 +83,11 @@ def _read_yx1_scope_metadata(
         extract_yx1_scope_metadata,
     )
 
-    # Point at THIS source's ND2 file, not the collection dir: a _coll dir holds one ND2 per source
-    # (the same plate at several ages), so handing over the directory would be ambiguous. The
-    # artifact's raw_path names the source; `.nd2` is appended when the path omits the suffix.
+    # Point at THIS source's ND2 FILE, not the collection dir: a _coll dir holds one ND2 per source
+    # (the same plate at several ages), so a directory would be ambiguous. `source_path` is the
+    # artifact's recorded raw_path. A YX1 source is an .nd2 FILE; tolerate a
+    # suffix-less record (older artifacts) but never probe disk to choose between candidates.
     nd2_path = source_path if source_path.suffix.lower() == ".nd2" else source_path.with_suffix(".nd2")
-    if not nd2_path.exists():
-        raise FileNotFoundError(
-            f"_read_yx1_scope_metadata: no ND2 for source {source_id!r} at {nd2_path}. The "
-            "collection-classify artifact's raw_path must name this source's ND2."
-        )
     return extract_yx1_scope_metadata(
         raw_data_dir=nd2_path,
         experiment_id=source_id,
@@ -239,10 +235,6 @@ def _read_yx1_source(child_file_or_dir: Path, child_experiment_id: str) -> pd.Da
         if child_file_or_dir.suffix.lower() == ".nd2"
         else child_file_or_dir.with_suffix(".nd2")
     )
-    if not nd2_path.exists():
-        raise FileNotFoundError(
-            f"_read_yx1_source: no ND2 for source {child_experiment_id!r} at {nd2_path}."
-        )
 
     # The scope CSV is a required output of the extractor but the acquisition union does not consume
     # it here (the scope union produces the real one from its own read); write both to scratch and
@@ -277,7 +269,7 @@ _SCOPE_READERS = {"Keyence": _read_keyence_source, "YX1": _read_yx1_source}
 def ingest_collection_acquisition_inventory(
     *,
     experiment_id: str,
-    raw_root: Path,
+    sources: list[dict],
     microscope: str,
     output_csv: Path,
 ) -> pd.DataFrame:
@@ -285,11 +277,19 @@ def ingest_collection_acquisition_inventory(
 
     Args:
         experiment_id: the merged ``{collection}_{plate_token}`` id.
-        raw_root: raw image root containing the ``_coll`` dir (scope-anchored by the caller).
+        sources: the collection-provenance artifact's ``sources`` records (``file`` / ``raw_path`` /
+            ``source_ordinal``). The artifact is the SINGLE source of truth for which sources exist
+            and where they are — this function never globs the ``_coll`` dir.
         microscope: "Keyence" | "YX1" — selects the per-source reader.
         output_csv: destination for the unioned acquisition inventory CSV.
 
     Returns the unioned inventory (also written to ``output_csv``).
+
+    KEYSTONE RULE: discovery globs ``_coll`` exactly ONCE (when the provenance artifact is built);
+    every disk-touching step downstream READS that artifact. This function used to re-glob and even
+    re-probe disk for a ``.nd2`` suffix, which made the source manifest advisory rather than
+    authoritative — the two ingest paths could disagree if files were added, removed, or renamed
+    between steps. Both the scope-metadata union and this one now consume the same ``sources``.
 
     The position→well mapping is NOT produced here — it is Step 2's own artifact, built by
     ``collection_position_mapping`` from a per-source map run (see the note above).
@@ -299,22 +299,31 @@ def ingest_collection_acquisition_inventory(
             f"ingest_collection_acquisition_inventory: unsupported microscope {microscope!r}; "
             f"expected one of {sorted(_SCOPE_READERS)}."
         )
+    if not sources:
+        raise ValueError(
+            f"ingest_collection_acquisition_inventory: no sources for {experiment_id!r}. Read them "
+            "from the collection-provenance artifact's 'sources'."
+        )
     read_one = _SCOPE_READERS[microscope]
 
-    collection_name, child_names = find_collection_plate_sources(experiment_id, raw_root)
-    collection_dir = raw_root / collection_name
+    # The collection dir name is a pure parse of the plate id — no filesystem probe.
+    collection_name = parse_collection_name_from_plate_id(experiment_id)
+
+    # `raw_path` from the artifact IS the resolved on-disk location (a Keyence dir or a YX1 .nd2),
+    # recorded at discovery. No suffix guessing, no existence probing to pick a path.
+    raw_path_by_source_id = {str(rec["file"]): Path(rec["raw_path"]) for rec in sources}
 
     def read_source(source: SourceChild, _child_experiment_id: str) -> pd.DataFrame:
-        # Keyence children are dirs (name); YX1 children are .nd2 files (stem). The child
-        # path is the collection child; read it into a per-source acquisition inventory.
-        child_path = collection_dir / source.child_name
-        if not child_path.exists():
-            child_path = collection_dir / f"{source.child_name}.nd2"
-        return read_one(child_path, source.child_name)
+        return read_one(raw_path_by_source_id[source.child_name], source.child_name)
 
-    sources = [SourceChild(child_name=name, scope=microscope) for name in child_names]
+    ordered_source_ids = [
+        str(rec["file"]) for rec in sorted(sources, key=lambda r: int(r["source_ordinal"]))
+    ]
+    source_children = [
+        SourceChild(child_name=name, scope=microscope) for name in ordered_source_ids
+    ]
     unioned = union_collection_acquisition_inventories(
-        collection_name=collection_name, sources=sources, read_source=read_source
+        collection_name=collection_name, sources=source_children, read_source=read_source
     )
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
