@@ -163,3 +163,94 @@ def test_compose_is_sanitized():
 def test_compose_rejects_bad_child():
     with pytest.raises(ValueError):
         compose_collection_experiment_id(COLL, "plate01_no_date")
+
+
+# ── Descriptive-middle child names (real acquisitions) ────────────────────────────────
+# Real collection children carry a free-form descriptive middle between the date and the
+# plate token, e.g. the YX1 collection 20260624_2x_td_bf_pbx_coll:
+#   20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+# A purely POSITIONAL read takes "pbx" as the plate token and finds no age token, which
+# silently mis-keys the experiment id and nulls the whole age map. The parsers therefore
+# anchor on token SHAPE (plate<N> / t<NN>hpf) wherever it appears in the name.
+
+_DESCRIPTIVE = "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf"
+
+
+def test_plate_token_from_descriptive_middle():
+    # NOT "pbx" — the plate token is found by shape, not by position.
+    assert parse_plate_token(_DESCRIPTIVE) == "plate01"
+
+
+def test_event_label_from_descriptive_middle():
+    assert parse_event_label(_DESCRIPTIVE) == "t33hpf"
+
+
+def test_declared_hpf_from_descriptive_middle():
+    assert parse_declared_hpf(_DESCRIPTIVE) == 33
+
+
+def test_descriptive_sources_of_one_plate_share_id():
+    # The three real sources are one plate imaged at three ages → ONE experiment_id.
+    ids = {
+        compose_collection_experiment_id("20260624_2x_td_bf_pbx_coll", child)
+        for child in (
+            "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf",
+            "20260625_pbx_flouresence_bf_pilot_plate01_t52hpf",
+            "20260626_pbx_flouresence_bf_pilot_plate01_t77hpf",
+        )
+    }
+    assert ids == {"20260624_2x_td_bf_pbx_coll_plate01"}
+
+
+def test_descriptive_ages_are_all_distinct():
+    ages = [
+        parse_declared_hpf("20260624_pbx_flouresence_bf_pilot_plate01_t33hpf"),
+        parse_declared_hpf("20260625_pbx_flouresence_bf_pilot_plate01_t52hpf"),
+        parse_declared_hpf("20260626_pbx_flouresence_bf_pilot_plate01_t77hpf"),
+    ]
+    assert ages == [33, 52, 77]
+
+
+def test_plate_token_shape_match_is_case_normalized():
+    # Casing is not identity: PLATE01 and plate01 are the same plate.
+    assert parse_plate_token("20260607_PLATE01_t45hpf") == "plate01"
+
+
+def test_plate_token_not_matched_inside_a_longer_word():
+    # "microplate01x" must not be mistaken for the plate token — the anchored pattern is
+    # bounded by underscores/ends, so this falls back to the positional read.
+    assert parse_plate_token("20260607_microplate01x") == "microplate01x"
+
+
+def test_trailing_age_token_wins_over_one_in_the_middle():
+    # The event label is conventionally the trailing token; a middle that happens to look
+    # age-shaped must not shadow it.
+    assert parse_event_label("20260607_t99hpf_pilot_plate01_t45hpf") == "t45hpf"
+    assert parse_declared_hpf("20260607_t99hpf_pilot_plate01_t45hpf") == 45
+
+
+# ── The simple positional forms must be COMPLETELY unchanged (strict generalization) ──
+
+
+def test_simple_forms_unchanged():
+    assert parse_plate_token("20250622_plate01_t28hpf") == "plate01"
+    assert parse_event_label("20250622_plate01_t28hpf") == "t28hpf"
+    assert parse_declared_hpf("20250622_plate01_t28hpf") == 28
+    # No event at all.
+    assert parse_plate_token("20260607_plate01") == "plate01"
+    assert parse_event_label("20260607_plate01") is None
+    assert parse_declared_hpf("20260607_plate01") is None
+    # Non-age event label (e.g. sci) still parses as a label with no declared age.
+    assert parse_event_label("20260607_plate01_sci") == "sci"
+    assert parse_declared_hpf("20260607_plate01_sci") is None
+
+
+def test_non_plate_shaped_token_still_uses_positional_fallback():
+    # A plate token that is not "plate<N>"-shaped keeps the original positional meaning.
+    assert parse_plate_token("20260607_dish7_t45hpf") == "dish7"
+
+
+def test_missing_date_still_fails_loud():
+    for parse in (parse_plate_token, parse_event_label):
+        with pytest.raises(ValueError, match="8 digits"):
+            parse("plate01_t45hpf")

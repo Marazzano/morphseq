@@ -65,7 +65,26 @@ _COLLECTION_SUFFIX = "_coll"
 
 # child name: {date}_{plate_token}[_{event_label}], date is the 8-digit split anchor.
 # Group 1 = plate_token, group 3 = event_label (may be absent → None).
+#
+# NOTE: this positional reading assumes the plate token is the FIRST underscore-delimited
+# token after the date. Real acquisitions also carry a free-form descriptive middle, e.g.
+#   20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+# where positionally group 1 would be "pbx" (a project label, not the plate) and group 3
+# "flouresence_bf_pilot_plate01_t33hpf" (which no declared-hpf pattern matches). So the
+# token-anchored patterns below take PRECEDENCE, and this positional form is the fallback
+# for names that carry no recognizable plate/age token.
 _COLLECTION_CHILD_RE = re.compile(r"^\d{8}_([^_]+)(_(.+))?$")
+
+# ANCHORED tokens — matched by SHAPE anywhere in the name, not by position. These are what
+# make a descriptive middle harmless. Both are anchored to token boundaries (start/underscore
+# … underscore/end) so they cannot match inside a longer word.
+#   plate token: plate01, plate1, PLATE02 → the PLATE identity
+_PLATE_TOKEN_RE = re.compile(r"(?:^|_)(plate\d+)(?:_|$)", flags=re.IGNORECASE)
+#   declared-age token: t45hpf → the age axis. Trailing/anywhere; the LAST one wins.
+_AGE_TOKEN_RE = re.compile(r"(?:^|_)(t\d+hpf)(?:_|$)", flags=re.IGNORECASE)
+
+# The 8-digit date prefix every collection child must carry (the split anchor).
+_CHILD_DATE_PREFIX_RE = re.compile(r"^\d{8}_")
 
 # event_label declared-age token: t<NN>hpf → NN.
 _DECLARED_HPF_RE = re.compile(r"^t(\d+)hpf$")
@@ -112,12 +131,35 @@ def parse_collection_name_from_plate_id(experiment_id: str) -> str:
 def parse_plate_token(child_name: str) -> str:
     """Extract the ``plate_token`` from a collection child name.
 
-    A child name is positional: ``{date}_{plate_token}[_{event_label}]`` where date is
-    the 8-digit split anchor. ``"20260607_plate01_t45hpf" -> "plate01"``;
-    ``"20260607_plate01" -> "plate01"``. Fails loud on a name that does not match the
+    The token is found by SHAPE (``plate<N>``) anywhere in the name, so a free-form
+    descriptive middle is harmless::
+
+        "20260607_plate01_t45hpf"                          -> "plate01"
+        "20260607_plate01"                                 -> "plate01"
+        "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf"  -> "plate01"   (not "pbx")
+
+    Falls back to the positional reading (``{date}_{plate_token}[_{event_label}]``) for
+    names that carry no ``plate<N>``-shaped token, preserving the original behavior for
+    plate tokens that are named differently. Fails loud on a name that does not match the
     collection child grammar (e.g. a missing/non-8-digit date).
+
+    Returned lowercased when matched by shape so the token is a stable identity component
+    regardless of source casing (``PLATE01`` and ``plate01`` are the same plate).
     """
     text = str(child_name).strip()
+    if not _CHILD_DATE_PREFIX_RE.match(text):
+        raise ValueError(
+            f"parse_plate_token: cannot parse {child_name!r}. Expected a collection child "
+            "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
+            "(e.g. 20260607_plate01_t45hpf)."
+        )
+
+    # Anchored token wins: it is the plate identity wherever it sits in the name.
+    anchored = _PLATE_TOKEN_RE.search(text)
+    if anchored:
+        return anchored.group(1).lower()
+
+    # Fallback: the original positional reading (first token after the date).
     match = _COLLECTION_CHILD_RE.match(text)
     if not match:
         raise ValueError(
@@ -131,10 +173,35 @@ def parse_plate_token(child_name: str) -> str:
 def parse_event_label(child_name: str) -> str | None:
     """Extract the optional ``event_label`` from a collection child name.
 
-    ``"20260607_plate01_t45hpf" -> "t45hpf"``; ``"20260607_plate01" -> None`` (no event).
-    Fails loud on a name that does not match the collection child grammar.
+    The declared-age token is found by SHAPE (``t<NN>hpf``) so a free-form descriptive
+    middle is harmless::
+
+        "20260607_plate01_t45hpf"                           -> "t45hpf"
+        "20260607_plate01"                                  -> None        (no event)
+        "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf"   -> "t33hpf"
+
+    Falls back to the positional reading (everything after ``{date}_{plate_token}_``) for
+    names whose event label is not age-shaped (e.g. ``sci``), preserving the original
+    behavior. Fails loud on a name that does not match the collection child grammar.
+
+    Returned lowercased when matched by shape, so ``T45HPF`` and ``t45hpf`` agree.
     """
     text = str(child_name).strip()
+    if not _CHILD_DATE_PREFIX_RE.match(text):
+        raise ValueError(
+            f"parse_event_label: cannot parse {child_name!r}. Expected a collection child "
+            "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
+            "(e.g. 20260607_plate01_t45hpf)."
+        )
+
+    # Anchored age token wins wherever it sits. The LAST match is the event: a descriptive
+    # middle could itself contain an age-shaped word, and the event label is conventionally
+    # the trailing token.
+    anchored = list(_AGE_TOKEN_RE.finditer(text))
+    if anchored:
+        return anchored[-1].group(1).lower()
+
+    # Fallback: the original positional reading (may be a non-age label like "sci", or None).
     match = _COLLECTION_CHILD_RE.match(text)
     if not match:
         raise ValueError(
