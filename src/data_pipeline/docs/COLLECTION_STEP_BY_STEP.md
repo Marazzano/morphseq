@@ -52,6 +52,21 @@ same source identity (source_id, source_path, time_index); concat into one exper
 scope_metadata and one experiment-level acquisition_inventory (experiment = PLATE), keyed by
 time_index. Each source's block preserves that source's own geometry/calibration/timing.
 
+**The union HOLDS the per-source metadata; Step 2 re-splits by `time_index` to recover it.** The
+union is NOT a lossy collapse — it is the labeled container of every source's distinct metadata,
+concatenated and tagged by `time_index`:
+```
+unioned scope_metadata:
+  time_index 0 → t28's rows (t28's OWN x/y, calibration, timing)
+  time_index 1 → t52's rows (t52's OWN x/y, calibration, timing)   ← distinct values, preserved
+```
+So Step 2's map does `groupby("time_index")` → gets each source's block back → maps it against that
+source's own geometry. Nothing is reconstructed — the per-source data was never collapsed, just
+concatenated with its tag. This is the fork RESOLVED: ONE unioned artifact (not N per-source files —
+keeps the DAG one-artifact-per-experiment), and consumers recover per-source via the `time_index`
+key. The guarantee that makes this safe: the union is **per-source-lossless** (each block keeps its
+source's real acquisition facts; do NOT dedup/collapse x/y assuming they're shared across sources).
+
 **Canonical source identity — the KEYSTONE (same key in every source-aware artifact):**
 ```
 source_id    ← the source child name (e.g. 20250622_plate01_t28hpf). STABLE internal key.
