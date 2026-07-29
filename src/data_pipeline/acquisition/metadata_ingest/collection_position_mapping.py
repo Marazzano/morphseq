@@ -109,33 +109,37 @@ def map_collection_positions_to_wells(
         )
 
     scope_union = pd.read_csv(scope_metadata_csv)
-    if "time_index" not in scope_union.columns:
+    if "source_ordinal" not in scope_union.columns:
         raise ValueError(
             f"map_collection_positions_to_wells: unioned scope metadata {scope_metadata_csv} has no "
-            "'time_index' column — Step 1 must stamp it (it is the source key that lets Step 2 "
-            "re-split the union into per-source blocks)."
+            "'source_ordinal' column — Step 1 must stamp it (it is the source key that lets Step 2 "
+            "re-split the union into per-source blocks). NOTE: splitting on time_index would be "
+            "wrong — a timelapse source spans MANY time_index values but is ONE source to map."
         )
 
     scratch = Path(scratch_dir) if scratch_dir else Path(output_mapping_csv).parent / "_per_source"
     scratch.mkdir(parents=True, exist_ok=True)
 
-    # Re-split the union by time_index: each block IS that source's own scope metadata (its own x/y,
-    # calibration, timing). Nothing is reconstructed — Step 1 concatenated, it did not collapse.
-    blocks_by_time_index = {
-        int(time_index): block for time_index, block in scope_union.groupby("time_index")
+    # Re-split the union by SOURCE, not by frame. Each block IS that source's own scope metadata
+    # (its own x/y, calibration, timing). Nothing is reconstructed — Step 1 concatenated, it did not
+    # collapse. Splitting on source_ordinal (rather than time_index) is what makes a timelapse
+    # source one mapping unit instead of one-per-frame.
+    blocks_by_source_ordinal = {
+        int(source_ordinal): block
+        for source_ordinal, block in scope_union.groupby("source_ordinal")
     }
 
     mapped_blocks: list[pd.DataFrame] = []
     for record in sources:
         source_id = str(record["file"])
-        time_index = int(record["time_index"])
+        source_ordinal = int(record["source_ordinal"])
 
-        block = blocks_by_time_index.get(time_index)
+        block = blocks_by_source_ordinal.get(source_ordinal)
         if block is None or block.empty:
             raise ValueError(
                 f"map_collection_positions_to_wells: unioned scope metadata has no rows for "
-                f"time_index={time_index} (source {source_id!r}). Step 1 must emit one block per "
-                f"source; found blocks for {sorted(blocks_by_time_index)}."
+                f"source_ordinal={source_ordinal} (source {source_id!r}). Step 1 must emit one "
+                f"block per source; found blocks for {sorted(blocks_by_source_ordinal)}."
             )
 
         # Hand the per-scope map function this source's OWN scope metadata block.
@@ -154,9 +158,12 @@ def map_collection_positions_to_wells(
             ref_xy_csv=ref_xy_csv,
         )
 
-        # Re-key to the PLATE, then stamp the source identity onto the block.
+        # Re-key to the PLATE, then stamp the source identity onto the block. `source_ordinal` is
+        # the JOIN KEY (which source); `source_file` is readable provenance. Deliberately NO
+        # time_index: the mapping is per SOURCE, and every frame of that source — however many
+        # merged time_index values it spans — inherits the same position→well mapping.
         per_source = _rekey_well_id_to_plate(per_source, experiment_id=experiment_id)
-        per_source["time_index"] = time_index
+        per_source["source_ordinal"] = source_ordinal
         per_source["source_file"] = source_id
         mapped_blocks.append(per_source)
 

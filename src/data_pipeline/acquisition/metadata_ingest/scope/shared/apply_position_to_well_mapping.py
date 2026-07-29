@@ -66,22 +66,52 @@ def apply_position_to_well_mapping(
                 f"Missing wells preview: {sorted(missing_wells)[:10]}"
             )
     else:
-        identity_cols = ["experiment_id", "position_index", "well_index", "well_id"]
+        # SOURCE-AWARE JOIN. A collection plate's mapping holds one block per raw source, so the
+        # same position_index recurs once per source and `(experiment_id, position_index)` alone is
+        # NOT unique on the right — pandas raises MergeError under validate="many_to_one".
+        # `source_ordinal` disambiguates it.
+        #
+        # The key is the SOURCE, not the frame: one source can span many merged time_index values,
+        # and every frame of that source inherits the same position→well mapping. Joining on
+        # time_index instead would demand one mapping row per frame.
+        #
+        # Gated on BOTH sides carrying the column, so a single (non-collection) experiment joins on
+        # exactly the original keys and behaves byte-identically.
+        merge_keys = ["experiment_id", "position_index"]
+        if "source_ordinal" in mapping_df.columns:
+            if "source_ordinal" not in mapped_df.columns:
+                raise ValueError(
+                    "position_well_mapping.csv carries 'source_ordinal' (a collection mapping, one "
+                    "block per raw source) but the scope metadata does not. Both sides must speak "
+                    "the same source key — the collection scope union stamps source_ordinal; a "
+                    "mapping and scope table from different pipelines cannot be joined."
+                )
+            # Coerce BOTH sides: a CSV round-trip can leave one int64 and the other object/float64,
+            # which silently yields ZERO matches and then a misleading "does not cover" error.
+            for frame in (mapped_df, mapping_df):
+                frame["source_ordinal"] = pd.to_numeric(
+                    frame["source_ordinal"], errors="raise"
+                ).astype(int)
+            merge_keys.append("source_ordinal")
+
+        identity_cols = merge_keys + ["well_index", "well_id"]
         mapped_df = mapped_df.merge(
             mapping_df[identity_cols],
-            on=["experiment_id", "position_index"],
+            on=merge_keys,
             how="left",
             validate="many_to_one",
         )
 
         missing_identity = mapped_df["well_id"].isna()
         if missing_identity.any():
+            # Preview the FULL join key, so the message names what actually failed to match rather
+            # than listing positions that are present under a different source.
             sample = mapped_df.loc[
-                missing_identity, ["experiment_id", "position_index"]
+                missing_identity, merge_keys
             ].drop_duplicates().head(10).to_dict(orient="records")
             raise ValueError(
-                "position_well_mapping.csv does not cover all scope metadata positions. "
-                f"Missing preview: {sample}"
+                "position_well_mapping.csv does not cover all scope metadata positions "
+                f"(joined on {merge_keys}). Missing preview: {sample}"
             )
 
     mapped_df["channel_id"] = mapped_df.get("channel", "BF").astype(str)
