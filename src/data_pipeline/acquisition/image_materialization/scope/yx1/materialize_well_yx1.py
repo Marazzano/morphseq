@@ -37,7 +37,6 @@ from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_axes import (
     axes_of,
 )
 from data_pipeline.acquisition.image_building.scope.yx1.stitched_ff_builder import (
-    _determine_bf_channel,
     _get_stack,
 )
 from data_pipeline.acquisition.image_building.shared.display_polarity import apply_display_polarity
@@ -62,6 +61,9 @@ from data_pipeline.acquisition.image_materialization.materialized_image_write_po
     resolve_image_write_policy,
     suffix_for_policy,
     write_image,
+)
+from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_channels import (
+    resolve_channel_index,
 )
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
     validate_yx1_acquisition_inventory,
@@ -344,19 +346,35 @@ def materialize_yx1_product_for_well(
     nd = nd2.ND2File(nd2_path)
     try:
         dask_arr = nd.to_dask()
-        channel_names = [c.channel.name for c in nd.frame_metadata(0).channels]
-        bf_idx = _determine_bf_channel(channel_names)
 
-        # Axis selection is by NAME (see metadata_ingest/scope/yx1/nd2_axes.py). The BF channel is
+        # CHANNEL INDEX IS READ, NEVER RE-DERIVED. The scope adapter minted the
+        # channel_index/raw_channel_name/channel_id triple into the acquisition inventory (a 1:1:1
+        # mapping guarded by assert_channel_mapping_consistent); this looks the requested product's
+        # channel_id up in it. Matching channel NAMES here would invent a second channel vocabulary
+        # that drifts from the scope's channel_map.py.
+        channel_index = resolve_channel_index(
+            well_acquisition_inventory_df, resolved_product.channel_id
+        )
+
+        # Axis selection is by NAME (see metadata_ingest/scope/yx1/nd2_axes.py). The channel is
         # picked per-slice inside _get_stack instead of by pre-slicing axis 3, because that
         # pre-slice was gated on `ndim == 6` and so was SKIPPED for a 5-D (P, Z, C, Y, X) snapshot —
         # leaving the channel axis in place to masquerade as the Z stack, which would make
         # focus-stacking run over [BF, fluorescence] as if they were focal planes.
         axes = axes_of(nd)
         array_axis_order = array_axis_order_of(nd)
+        # The recorded index must fit THIS file — catches a stale/mismatched inventory here rather
+        # than as a cryptic dask index error deep in the read.
+        if not 0 <= channel_index < axes.n_c:
+            raise ValueError(
+                f"Acquisition inventory maps channel {resolved_product.channel_id!r} to "
+                f"channel_index {channel_index}, but {nd2_path} has {axes.n_c} channel(s). The "
+                "inventory does not match the file it points at; re-run scope ingest."
+            )
         log.info(
-            "ND2 axes: T=%d P=%d Z=%d C=%d (array order %s, BF channel index %d)",
-            axes.n_t, axes.n_p, axes.n_z, axes.n_c, array_axis_order, bf_idx,
+            "ND2 axes: T=%d P=%d Z=%d C=%d (array order %s, channel_id %s -> channel_index %d)",
+            axes.n_t, axes.n_p, axes.n_z, axes.n_c, array_axis_order,
+            resolved_product.channel_id, channel_index,
         )
 
         time_indices = sorted(well_acquisition_inventory_df["time_index"].unique())
@@ -426,7 +444,7 @@ def materialize_yx1_product_for_well(
                 w=position_index,
                 axes=axes,
                 array_axis_order=array_axis_order,
-                channel=bf_idx,
+                channel=channel_index,
             )
             t_times = time_lookup[t]
             if resolved_product.image_product_type == "projection":

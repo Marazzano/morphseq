@@ -177,20 +177,35 @@ def compile_yx1_data(
 
     # Read ND2 file
     nd = _read_nd2(exp_path)
-    shape_twzcxy = nd.shape  # T,W,Z,C,Y,X
-    n_t, n_w, n_z = shape_twzcxy[:3]
-    log.info("ND2 shape: n_t=%d, n_w=%d, n_z=%d", n_t, n_w, n_z)
+    # Axes BY NAME (see metadata_ingest/scope/yx1/nd2_axes.py) — `nd.shape` is positional and its
+    # layout varies per acquisition, so unpacking it as (T, W, Z) mis-reads any other layout.
+    axes = axes_of(nd)
+    array_axis_order = array_axis_order_of(nd)
+    n_t, n_w, n_z = axes.n_t, axes.n_p, axes.n_z
+    log.info(
+        "ND2 axes: T=%d P=%d Z=%d C=%d (array order %s)",
+        n_t, n_w, n_z, axes.n_c, array_axis_order,
+    )
 
-    dask_arr = nd.to_dask()  # (T,W,Z,C,Y,X)
+    dask_arr = nd.to_dask()
     channel_names = [c.channel.name for c in nd.frame_metadata(0).channels]
 
-    # Determine BF channel index
-    bf_idx = _determine_bf_channel(channel_names)
-    log.info("Using BF channel index: %d (%s)", bf_idx, channel_names[bf_idx] if bf_idx < len(channel_names) else "unknown")
-
-    # Select BF channel if multi-channel
-    if len(shape_twzcxy) == 6:
-        dask_arr = dask_arr[:, :, :, bf_idx, :, :]
+    # This legacy compile path has no acquisition inventory to read `channel_index` from, and the
+    # pipeline's live YX1 materializer (materialize_well_yx1) is the supported route — it resolves the
+    # index from the minted triple. Rather than re-introduce name-matching here, translate the raw
+    # names through the scope's ONE canonical map and require an unambiguous brightfield channel.
+    channel_ids = [YX1_CHANNEL_MAP.to_canonical(name) for name in channel_names]
+    bf_positions = [i for i, cid in enumerate(channel_ids) if cid == "BF"]
+    if len(bf_positions) != 1:
+        raise ValueError(
+            f"stitched_ff_builder: expected exactly ONE brightfield channel, found "
+            f"{len(bf_positions)} in {list(zip(channel_names, channel_ids))}. Fix the scope's "
+            "channel_map.py (the one canonical raw->channel_id generator); this legacy path does "
+            "not guess. The supported route is materialize_well_yx1, which reads channel_index from "
+            "the acquisition inventory."
+        )
+    bf_idx = bf_positions[0]
+    log.info("Brightfield channel_index=%d (raw %r)", bf_idx, channel_names[bf_idx])
 
     # Build lookup of ND2 well index -> well name
     well_name_lookup = {int(series)-1: name for name, series in well_series_mapping.items()}
@@ -238,49 +253,24 @@ def compile_yx1_data(
              processed, skipped, total_frames)
 
 
-def _determine_bf_channel(channel_names: list[str]) -> int:
-    """
-    Determine BF channel index from channel names.
-
-    Handles various YX1 naming conventions:
-    - 'BF' (standard)
-    - 'EYES - Dia' (common alternative)
-    - 'Empty' (mislabeled)
-    - Single channel (assume BF)
-    - Environment variable override: YX1_BF_CHANNEL_INDEX
-    """
-    # Check environment variable override
-    import os
-    env_bf = os.environ.get("YX1_BF_CHANNEL_INDEX")
-    if env_bf is not None:
-        try:
-            return int(env_bf)
-        except Exception:
-            raise ValueError(f"Invalid YX1_BF_CHANNEL_INDEX env var: {env_bf}")
-
-    # Try exact 'BF' (case-insensitive)
-    lower = [str(n).lower() for n in channel_names]
-    if "bf" in lower:
-        return lower.index("bf")
-
-    # Try known single-channel labels
-    try_labels = ["eyes - dia", "empty"]
-    for i, name in enumerate(lower):
-        if name in try_labels:
-            if name != "bf":
-                log.warning("Using non-standard BF channel: '%s'", channel_names[i])
-            return i
-
-    # Fallback: if only one channel, use it
-    if len(channel_names) == 1:
-        log.warning("Single channel detected, assuming BF: '%s'", channel_names[0])
-        return 0
-
-    # Give up
-    raise ValueError(
-        f"Could not locate BF channel. Available: {channel_names}. "
-        f"Set YX1_BF_CHANNEL_INDEX to override."
-    )
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# REMOVED: _determine_bf_channel (+ the YX1_BF_CHANNEL_INDEX env override).
+#
+# It was a SECOND channel vocabulary, competing with the scope's own `channel_map.py`. It matched
+# "BF" / "EYES - Dia" / "Empty" by name and knew nothing of e.g. "BF-no bin", so on a real
+# fluorescence plate it matched nothing, was not single-channel, and RAISED — telling the caller to
+# set an env var (a haunted global that silently reassigns channel identity process-wide).
+#
+# `channel_index` is a FACT OF THE FILE. The scope adapter mints the
+# channel_index / raw_channel_name / channel_id triple once into the acquisition inventory (1:1:1,
+# guarded by assert_channel_mapping_consistent).
+#
+# The rule, stated precisely: SUPPORTED pipeline consumers must use the recorded inventory mapping
+# (`scope/shared/acquisition_channels.resolve_channel_index`) — see materialize_well_yx1. A LEGACY
+# reader with no inventory (like `compile_yx1_data` below) may derive an index only by translating raw
+# names through the scope's ONE canonical channel_map.py, and must fail loud if that is ambiguous.
+# What is never acceptable is a private alias table or an environment override.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
 if __name__ == "__main__":
