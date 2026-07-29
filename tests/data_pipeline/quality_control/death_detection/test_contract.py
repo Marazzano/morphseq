@@ -85,10 +85,16 @@ def test_event_with_embryo_id_fails():
         validate_death_event(df)
 
 
-def test_event_null_annotation_fails():
+def test_event_null_stage_annotation_passes():
     df = _event_df()
     df["death_event_stage_hpf"] = [None]
-    with pytest.raises(ValueError, match="null/non-numeric"):
+    validate_death_event(df)
+
+
+def test_event_non_numeric_stage_annotation_fails():
+    df = _event_df()
+    df["death_event_stage_hpf"] = ["unknown"]
+    with pytest.raises(ValueError, match="non-numeric"):
         validate_death_event(df)
 
 

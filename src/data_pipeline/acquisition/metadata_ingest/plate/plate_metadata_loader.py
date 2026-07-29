@@ -223,7 +223,10 @@ def ingest_plate_grid_sheet_to_long(raw_df: pd.DataFrame, *, page_name: str) -> 
     """
     _assert_grid_has_enough_shape(raw_df, page_name)
 
-    row_labels_raw = raw_df.iloc[:_N_ROWS, 0].tolist()
+    row_labels_raw = _normalize_trailing_blank_h_label(
+        raw_df.iloc[:_N_ROWS, 0].tolist(),
+        row_count=len(raw_df),
+    )
     _assert_rows_are_A_to_H_in_sequence(row_labels_raw, page_name)
 
     col_headers_raw = list(raw_df.columns[1: _N_COLS + 1])
@@ -394,6 +397,22 @@ def _assert_rows_are_A_to_H_in_sequence(row_labels_raw: list, page_name: str) ->
             f"row labels are {seen!r} but must be exactly {expected!r} in sequence. "
             "Check for extra, missing, or out-of-order rows in the sheet."
         )
+
+
+def _normalize_trailing_blank_h_label(row_labels_raw: list, *, row_count: int) -> list:
+    """Repair the narrow legacy grid dialect ``A..G, blank`` to ``A..H``.
+
+    The adapter applies only to an exactly eight-row grid whose first seven labels are exactly
+    A–G and whose final label is genuinely blank. All other malformed layouts retain the strict
+    validator's fail-loud behavior.
+    """
+    if row_count != _N_ROWS or len(row_labels_raw) != _N_ROWS:
+        return row_labels_raw
+    first_seven = [str(value).strip().upper() for value in row_labels_raw[:7]]
+    final_is_blank = pd.isna(row_labels_raw[7]) or str(row_labels_raw[7]).strip() == ""
+    if first_seven == list(_PLATE_ROWS[:7]) and final_is_blank:
+        return [*row_labels_raw[:7], "H"]
+    return row_labels_raw
 
 
 def _assert_cols_are_1_to_12_in_sequence(col_headers_raw: list, page_name: str) -> None:

@@ -864,7 +864,7 @@ def cmd_death_detection(args: argparse.Namespace) -> None:
     run_death_detection(
         fraction_alive_csv=args.fraction_alive_csv,
         frame_inventory_csv=args.frame_inventory_csv,
-        stage_predictions_csv=args.stage_predictions_csv,
+        plate_metadata_csv=args.plate_metadata_csv,
         snip_inventory_csv=args.snip_inventory_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_qc_csv=args.output_qc_csv,
@@ -1617,7 +1617,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_dd = sub.add_parser("death-detection")
     p_dd.add_argument("--fraction-alive-csv", type=Path, required=True)
     p_dd.add_argument("--frame-inventory-csv", type=Path, required=True)
-    p_dd.add_argument("--stage-predictions-csv", type=Path, required=True)
+    p_dd.add_argument("--plate-metadata-csv", type=Path, required=True)
     p_dd.add_argument("--snip-inventory-csv", type=Path, required=True)
     p_dd.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_dd.add_argument("--output-qc-csv", type=Path, required=True)

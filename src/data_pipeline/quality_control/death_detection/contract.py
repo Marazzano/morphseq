@@ -75,12 +75,25 @@ def validate_death_event(
             f"{scope_label}: death_event is an animal-level table and must NOT carry embryo_id "
             "(that would over-specify it to a channel the animal does not have)."
         )
-    for col in DEATH_EVENT_PAYLOAD_COLUMNS:
-        values = pd.to_numeric(df[col], errors="coerce")
-        if values.isna().any():
-            raise ValueError(f"{scope_label}: {col!r} has null/non-numeric value(s).")
-        if not np.isfinite(values.to_numpy(dtype=float)).all():
-            raise ValueError(f"{scope_label}: {col!r} has non-finite value(s).")
+    death_time = pd.to_numeric(df["death_event_time_index"], errors="coerce")
+    if death_time.isna().any():
+        raise ValueError(
+            f"{scope_label}: 'death_event_time_index' has null/non-numeric value(s)."
+        )
+    if not np.isfinite(death_time.to_numpy(dtype=float)).all():
+        raise ValueError(f"{scope_label}: 'death_event_time_index' has non-finite value(s).")
+
+    # Stage is an annotation. Missing start age or temperature deliberately produces a null stage
+    # without discarding an otherwise valid death event.
+    stage_raw = df["death_event_stage_hpf"]
+    stage = pd.to_numeric(stage_raw, errors="coerce")
+    if (stage_raw.notna() & stage.isna()).any():
+        raise ValueError(
+            f"{scope_label}: 'death_event_stage_hpf' has non-numeric value(s)."
+        )
+    finite_stage = stage.dropna().to_numpy(dtype=float)
+    if not np.isfinite(finite_stage).all():
+        raise ValueError(f"{scope_label}: 'death_event_stage_hpf' has non-finite value(s).")
 
 
 def _require_columns(df: pd.DataFrame, required: list[str], scope_label: str) -> None:
