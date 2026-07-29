@@ -15,7 +15,12 @@ YX1_CHANNEL_MAP = ScopeChannelMap(
         "Empty":       "BF",
         "EYES - Dia":  "BF",
         "BF":          "BF",
+        # Unbinned brightfield — the acquisition setting differs, the channel does not. Binning is a
+        # pixel-level detail recorded elsewhere (image dims / calibration), not a channel identity.
+        "BF-no bin":   "BF",
         "EYES - GFP":  "GFP",
+        # tdTomato is a red fluorophore, so it shares the RFP canonical id with "EYES - RFP".
+        "tdtomato":    "RFP",
         "EYES - RFP":  "RFP",
     },
 )

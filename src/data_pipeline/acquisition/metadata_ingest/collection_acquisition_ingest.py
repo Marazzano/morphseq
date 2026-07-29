@@ -83,8 +83,17 @@ def _read_yx1_scope_metadata(
         extract_yx1_scope_metadata,
     )
 
+    # Point at THIS source's ND2 file, not the collection dir: a _coll dir holds one ND2 per source
+    # (the same plate at several ages), so handing over the directory would be ambiguous. The
+    # artifact's raw_path names the source; `.nd2` is appended when the path omits the suffix.
+    nd2_path = source_path if source_path.suffix.lower() == ".nd2" else source_path.with_suffix(".nd2")
+    if not nd2_path.exists():
+        raise FileNotFoundError(
+            f"_read_yx1_scope_metadata: no ND2 for source {source_id!r} at {nd2_path}. The "
+            "collection-classify artifact's raw_path must name this source's ND2."
+        )
     return extract_yx1_scope_metadata(
-        raw_data_dir=source_path.parent,
+        raw_data_dir=nd2_path,
         experiment_id=source_id,
         output_csv=output_csv,
     )
@@ -210,14 +219,44 @@ def ingest_collection_scope_metadata(
 
 
 def _read_yx1_source(child_file_or_dir: Path, child_experiment_id: str) -> pd.DataFrame:
-    from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
-        build_yx1_acquisition_inventory,
+    """Read ONE YX1 source into its acquisition inventory.
+
+    ``build_yx1_acquisition_inventory`` is a PURE row-builder over facts already gathered from the
+    ND2 — it does no file I/O — so the inventory is obtained the way the single-experiment path gets
+    it: from ``extract_yx1_scope_metadata``, which emits it as a side output of the SAME one read.
+
+    The path handed over is this source's ND2 FILE, not the ``_coll`` directory: that dir holds one
+    ND2 per source, so a directory would be ambiguous.
+    """
+    import tempfile
+
+    from data_pipeline.acquisition.metadata_ingest.scope.yx1.extract_yx1_scope_metadata import (
+        extract_yx1_scope_metadata,
     )
 
-    return build_yx1_acquisition_inventory(
-        experiment_id=child_experiment_id,
-        raw_data_dir=child_file_or_dir,
+    nd2_path = (
+        child_file_or_dir
+        if child_file_or_dir.suffix.lower() == ".nd2"
+        else child_file_or_dir.with_suffix(".nd2")
     )
+    if not nd2_path.exists():
+        raise FileNotFoundError(
+            f"_read_yx1_source: no ND2 for source {child_experiment_id!r} at {nd2_path}."
+        )
+
+    # The scope CSV is a required output of the extractor but the acquisition union does not consume
+    # it here (the scope union produces the real one from its own read); write both to scratch and
+    # return the inventory.
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch_dir = Path(scratch)
+        inventory_csv = scratch_dir / "acquisition_inventory.csv"
+        extract_yx1_scope_metadata(
+            raw_data_dir=nd2_path,
+            experiment_id=child_experiment_id,
+            output_csv=scratch_dir / "scope_metadata.csv",
+            acquisition_inventory_csv=inventory_csv,
+        )
+        return pd.read_csv(inventory_csv)
 
 
 _SCOPE_READERS = {"Keyence": _read_keyence_source, "YX1": _read_yx1_source}
