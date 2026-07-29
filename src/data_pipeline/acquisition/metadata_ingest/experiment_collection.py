@@ -83,7 +83,7 @@ def find_collection_plate_sources(experiment_id: str, raw_root: Path) -> tuple[s
     ``{date}_{plate_token}[_{event_label}]`` folder/file) that MERGE into it. Globs the
     ``_coll`` dir and keeps the children whose composed id equals ``experiment_id``.
 
-    Returns ``(collection_name, [child_name, ...])`` sorted deterministically. The
+    Returns ``(collection_name, [source_id, ...])`` sorted deterministically. The
     membership test reuses ``compose_collection_experiment_id`` so it can never drift from
     how ids were minted (DRY). Fails loud if the id is not a collection plate id or no
     source children match.
@@ -103,13 +103,13 @@ def find_collection_plate_sources(experiment_id: str, raw_root: Path) -> tuple[s
 
     children: list[str] = []
     for child in sorted(collection_dir.iterdir()):
-        child_name = child.name if child.is_dir() else child.stem
+        source_id = child.name if child.is_dir() else child.stem
         try:
-            composed = compose_collection_experiment_id(collection_name, child_name)
+            composed = compose_collection_experiment_id(collection_name, source_id)
         except ValueError:
             continue  # child lacks a plate token (stray sidecar) — skip
         if composed == experiment_id:
-            children.append(child_name)
+            children.append(source_id)
 
     if not children:
         raise ValueError(
@@ -139,13 +139,13 @@ def _expand_collection(collection_name: str, raw_root: Path) -> list[str]:
     for child in sorted(collection_dir.iterdir()):
         # Keyence children are folders (name IS the child name); YX1 children are .nd2
         # files (the stem carries the token). Use the stem for files, name for dirs.
-        child_name = child.name if child.is_dir() else child.stem
+        source_id = child.name if child.is_dir() else child.stem
         # Skip children that do not carry a plate token (e.g. stray sidecar files).
         try:
-            parse_plate_token(child_name)
+            parse_plate_token(source_id)
         except ValueError:
             continue
-        experiment_id = compose_collection_experiment_id(collection_name, child_name)
+        experiment_id = compose_collection_experiment_id(collection_name, source_id)
         if experiment_id not in seen:
             seen.add(experiment_id)
             experiment_ids.append(experiment_id)

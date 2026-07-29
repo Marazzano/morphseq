@@ -236,6 +236,12 @@ PLATE_METADATA_CSV = artifact_path(
 PLATE_METADATA_VALIDATED = validated_path(
     DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
 )
+# The early-DAG "what is this experiment?" fact (CLASSIFY ONCE, CONSUME EVERYWHERE). Generated for
+# EVERY experiment (inert for singles) so downstream rules can depend on it unconditionally, and
+# every disk-touching collection step READS its per-source provenance instead of re-globbing _coll.
+COLLECTION_CLASSIFICATION_JSON = artifact_path(
+    DATA_ROOT, "collection_classification", "classification", FRONT_END_EXPERIMENT
+)
 SCOPE_METADATA_CSV = artifact_path(
     DATA_ROOT,
     "ingest_scope_metadata",
@@ -429,18 +435,52 @@ def _scope_raw_input_dir(wc):
     return str(RAW_IMAGES_DIR / MICROSCOPE / exp)
 
 
+rule classify_experiment:
+    """
+    CLASSIFY ONCE — emit the per-experiment collection-provenance artifact at the START of the DAG.
+
+    One small JSON per experiment: {is_collection, sources:[{file, raw_path, declared_hpf,
+    time_index}], start_age_by_time_index}. For a single experiment the payload is inert
+    (is_collection=false, empty sources) so consumers behave exactly as today.
+
+    This is the KEYSTONE artifact: every disk-touching collection step READS its per-source
+    provenance (files + their time_index) instead of re-globbing the _coll dir, and after
+    frame_inventory the only remaining consumer is stage_predictions (the age map).
+    """
+    output:
+        classification_json = COLLECTION_CLASSIFICATION_JSON
+    params:
+        experiment_id = "{experiment}",
+        raw_root = str(RAW_IMAGES_DIR / MICROSCOPE),
+    shell:
+        """
+        {RUN} -m data_pipeline.pipeline_orchestrator.tasks classify-experiment \
+          --experiment "{params.experiment_id}" \
+          --raw-root "{params.raw_root}" \
+          --microscope "{MICROSCOPE}" \
+          --output-json "{output.classification_json}"
+        """
+
+
 rule ingest_scope_metadata:
     """
     Extract scope metadata from the microscope's raw image files → the acquisition inventory.
 
-    SINGLE experiment: one scope read of one raw dir. COLLECTION plate: the collection-ingest verb
-    reads each source child under the _coll dir and UNIONs them into one acquisition inventory
-    (Merge-A) + a derived position_well_mapping. Both paths emit the same acquisition_inventory_csv;
-    the collection additionally emits its position mapping (see the map_positions rule for how the
-    single path produces that). The shell dispatches on is_collection_plate_id.
+    SINGLE experiment: one scope read of one raw dir. COLLECTION plate: read EACH source child ONCE
+    and union BOTH artifacts — the scope_metadata (per-position geometry + channel, what
+    map_positions/apply ingest) and the acquisition_inventory (image-level source paths + axes, what
+    the stitch map/materialize ingest). They are NOT interchangeable, so each keeps the columns its
+    consumer needs; both blocks are tagged with the canonical source identity
+    (source_id / source_path / time_index) read from the classify artifact.
+
+    The union is PER-SOURCE-LOSSLESS: each source keeps its OWN x/y, calibration and timing (the
+    plate is re-seated across the gap, so those legitimately differ). Step 2 recovers each source's
+    block by grouping on time_index.
     """
     input:
-        raw_images_dir = _scope_raw_input_dir
+        raw_images_dir = _scope_raw_input_dir,
+        # The keystone: who-is-what (source files + their time_index). Never re-globbed.
+        classification_json = COLLECTION_CLASSIFICATION_JSON,
     output:
         # Both scopes emit the maximal acquisition inventory (record-only): YX1 from its one ND2 read,
         # Keyence from a raw-plane TIFF scan. The inventory is the never-collapsed system of record.
@@ -459,15 +499,16 @@ rule ingest_scope_metadata:
             else ""
         ),
     shell:
-        # Collection → union the source children into the acquisition inventory (+ emit a scope_csv
-        # view so the rule's output contract is met); single → the standard one scope read. Both emit
-        # scope_csv + acquisition_inventory_csv, so downstream rules are identical.
+        # Collection → read each source child ONCE; union the REAL scope_metadata (geometry+channel)
+        # and the acquisition inventory, both artifact-driven. Single → the standard one scope read.
+        # Both paths emit scope_csv + acquisition_inventory_csv, so downstream rules are identical.
         """
         if [ "{params.is_collection}" = "True" ]; then
           {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-collection-acquisition \
             --experiment "{params.experiment_id}" \
             --raw-root "{params.raw_root}" \
             --microscope "{MICROSCOPE}" \
+            --classification-json "{input.classification_json}" \
             --output-csv "{output.acquisition_inventory_csv}" \
             --scope-metadata-csv "{output.scope_csv}"
         else
@@ -491,6 +532,7 @@ rule map_positions_to_wells:
     """
     input:
         scope_csv = SCOPE_METADATA_CSV,
+        classification_json = COLLECTION_CLASSIFICATION_JSON,
     output:
         mapping_csv = POSITION_WELL_MAPPING_CSV,
         provenance_json = POSITION_WELL_MAPPING_PROVENANCE,
@@ -499,14 +541,22 @@ rule map_positions_to_wells:
         is_collection = lambda wc: _is_collection_plate_id(wc.experiment),
         ref_xy_csv = str(YX1_REF_XY_CSV) if YX1_REF_XY_CSV else "",
         raw_images_parent = str(RAW_IMAGES_DIR / MICROSCOPE),
+        collection_raw_dir = _scope_raw_input_dir,
     shell:
-        # COLLECTION: the union already resolved well_id↔position, so the mapping is DERIVED from the
-        # unioned inventory (scope_csv holds it) — not a re-solve from raw positions. SINGLE: the
-        # normal per-scope position solve.
+        # COLLECTION: each source MUST be mapped independently — for YX1 the well comes from stage
+        # x/y matched to a reference, and each source is its own ND2 with its own stage frame (plate
+        # re-seated), so source-t28's position_index=1 and source-t52's are DIFFERENT acquisitions.
+        # We run the EXISTING per-scope map function once per source (unchanged), then concat into
+        # ONE plate-keyed artifact with time_index tagging each source block. SINGLE: unchanged.
         """
         if [ "{params.is_collection}" = "True" ]; then
-          {RUN} -m data_pipeline.pipeline_orchestrator.tasks derive-collection-position-mapping \
-            --acquisition-inventory-csv "{input.scope_csv}" \
+          {RUN} -m data_pipeline.pipeline_orchestrator.tasks map-collection-positions-to-wells \
+            --experiment "{params.experiment_id}" \
+            --microscope "{MICROSCOPE}" \
+            --classification-json "{input.classification_json}" \
+            --scope-csv "{input.scope_csv}" \
+            --raw-dir "{params.collection_raw_dir}" \
+            --ref-xy-csv "{params.ref_xy_csv}" \
             --output-mapping-csv "{output.mapping_csv}" \
             --output-provenance-json "{output.provenance_json}"
         else

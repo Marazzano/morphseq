@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import (
-    SourceChild,
+    PlateSource,
     union_collection_acquisition_inventories,
 )
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
@@ -105,13 +105,13 @@ def test_two_snapshot_sources_become_one_inventory_shared_well_distinct_time():
     """t45 + t72 snapshots of plate01 → ONE experiment_id, shared well_id, distinct time_index."""
     read_calls: list[str] = []
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        read_calls.append(source.child_name)
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        read_calls.append(source.source_id)
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),  # deliberately out of age order
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260608_plate01_t72hpf", scope="Keyence"),  # deliberately out of age order
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
     ]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
@@ -152,14 +152,14 @@ def test_time_index_claimed_atom_is_offset_in_lockstep_with_time_index():
     atom, so if the union offsets only ``time_index`` and not ``time_index_claimed`` the two
     timepoints of a well COLLIDE on the cell key. The atom must be re-namespaced per source.
     """
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        df = _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        df = _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
         df["time_index_claimed"] = 0  # every single-snapshot source claims 0 (the collision setup)
         return df
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
-        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260608_plate01_t72hpf", scope="Keyence"),
     ]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
@@ -174,12 +174,12 @@ def test_time_index_claimed_atom_is_offset_in_lockstep_with_time_index():
 def test_start_age_hpf_is_per_source_from_declared_hpf():
     """start_age_hpf = parse_declared_hpf(event_label) per source (the age escape hatch)."""
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
-        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260608_plate01_t72hpf", scope="Keyence"),
     ]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
@@ -194,12 +194,12 @@ def test_start_age_hpf_is_per_source_from_declared_hpf():
 def test_no_per_frame_source_labels_but_scope_audit_path_survives():
     """Per-frame source LABELS are dropped; each scope's own source_*_path audit column rides through."""
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
-        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260608_plate01_t72hpf", scope="Keyence"),
     ]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
@@ -218,15 +218,15 @@ def test_no_per_frame_source_labels_but_scope_audit_path_survives():
 def test_timelapse_source_keeps_contiguous_time_block():
     """A multi-timepoint source occupies a contiguous block; the next source starts past it."""
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        n_t = 3 if source.child_name.endswith("t45hpf") else 1
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        n_t = 3 if source.source_id.endswith("t45hpf") else 1
         return _yx1_like_source_df(
-            experiment_id=experiment_id, source_tag=source.child_name, n_t=n_t
+            experiment_id=experiment_id, source_tag=source.source_id, n_t=n_t
         )
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="YX1"),  # 3 timepoints → block {0,1,2}
-        SourceChild("20260608_plate01_t72hpf", scope="YX1"),  # 1 timepoint  → block {3}
+        PlateSource("20260607_plate01_t45hpf", scope="YX1"),  # 3 timepoints → block {0,1,2}
+        PlateSource("20260608_plate01_t72hpf", scope="YX1"),  # 1 timepoint  → block {3}
     ]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
@@ -246,12 +246,12 @@ def test_timelapse_source_keeps_contiguous_time_block():
 def test_unioned_yx1_inventory_still_satisfies_the_real_validator():
     """The unioned table satisfies the SAME acquisition contract the pipeline already validates."""
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _yx1_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _yx1_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="YX1"),
-        SourceChild("20260608_plate01_t72hpf", scope="YX1"),
+        PlateSource("20260607_plate01_t45hpf", scope="YX1"),
+        PlateSource("20260608_plate01_t72hpf", scope="YX1"),
     ]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
@@ -267,10 +267,10 @@ def test_unioned_yx1_inventory_still_satisfies_the_real_validator():
 def test_single_source_gives_n_sources_one():
     """A plate with ONE acquisition → n_sources == 1 on every row (the legacy/timelapse case)."""
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
-    sources = [SourceChild("20260607_plate01_t45hpf", scope="Keyence")]
+    sources = [PlateSource("20260607_plate01_t45hpf", scope="Keyence")]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
     )
@@ -280,12 +280,12 @@ def test_single_source_gives_n_sources_one():
 def test_n_sources_is_per_well_constant_across_the_union():
     """n_sources is a per-well fact — the SAME value on every frame row of the merged well."""
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
-        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260608_plate01_t72hpf", scope="Keyence"),
     ]
     out = union_collection_acquisition_inventories(
         collection_name=_COLLECTION, sources=sources, read_source=read_source
@@ -298,12 +298,12 @@ def test_n_sources_is_per_well_constant_across_the_union():
 def test_mixed_plate_tokens_fail_loud():
     """Sources from different plates must not be unioned into one experiment_id."""
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
-        SourceChild("20260607_plate02_t45hpf", scope="Keyence"),  # different plate!
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260607_plate02_t45hpf", scope="Keyence"),  # different plate!
     ]
     with pytest.raises(ValueError, match="multiple plate tokens"):
         union_collection_acquisition_inventories(
@@ -325,12 +325,12 @@ def test_duplicate_source_read_fails_loud():
     (before any read). Either way the union refuses; this pins that it refuses.
     """
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
     ]
     with pytest.raises(ValueError, match="AMBIGUOUS|exactly once"):
         union_collection_acquisition_inventories(
@@ -341,18 +341,18 @@ def test_duplicate_source_read_fails_loud():
 def test_repeated_child_among_valid_sources_fails_loud():
     """A repeated child is rejected even when other sources are perfectly well-formed.
 
-    Since a repeated child_name repeats its declared age, the ambiguity guard is what fires — the
+    Since a repeated source_id repeats its declared age, the ambiguity guard is what fires — the
     point here is that one bad pair poisons an otherwise valid source list rather than being
     silently deduped into a shorter union.
     """
 
-    def read_source(source: SourceChild, experiment_id: str) -> pd.DataFrame:
-        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.child_name)
+    def read_source(source: PlateSource, experiment_id: str) -> pd.DataFrame:
+        return _keyence_like_source_df(experiment_id=experiment_id, source_tag=source.source_id)
 
     sources = [
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),
-        SourceChild("20260608_plate01_t72hpf", scope="Keyence"),  # fine on its own
-        SourceChild("20260607_plate01_t45hpf", scope="Keyence"),  # repeat of the first
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),
+        PlateSource("20260608_plate01_t72hpf", scope="Keyence"),  # fine on its own
+        PlateSource("20260607_plate01_t45hpf", scope="Keyence"),  # repeat of the first
     ]
     with pytest.raises(ValueError, match="AMBIGUOUS"):
         union_collection_acquisition_inventories(

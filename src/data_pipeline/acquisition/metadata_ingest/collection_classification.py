@@ -20,8 +20,8 @@ classify step already parses the sources' ``t<NN>hpf`` tokens to decide ``is_col
 ``time_index → start_age_hpf`` map falls out for free.
 
 CRITICAL correctness point — ``time_index`` must match the acquisition union. The union
-(``collection_acquisition_union``) orders sources by ``SourceChild.sort_key`` (declared_hpf, then
-date) and assigns each a ``time_index`` BLOCK ordinal. This module REUSES that exact ``SourceChild``
+(``collection_acquisition_union``) orders sources by ``PlateSource.sort_key`` (declared_hpf, then
+date) and assigns each a ``time_index`` BLOCK ordinal. This module REUSES that exact ``PlateSource``
 + ``sort_key`` so the ``time_index`` keys here are identical to the ``time_index`` values the union
 stamps — the age lookup downstream can never drift from acquisition. (MVP snapshot: each source is
 one frame → one ``time_index`` per source → block start == ordinal == the union's ``time_index``.)
@@ -36,7 +36,7 @@ import json
 from pathlib import Path
 
 from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import (
-    SourceChild,
+    PlateSource,
     assert_source_order_unambiguous,
 )
 from data_pipeline.acquisition.metadata_ingest.collection_classification_contract import (
@@ -63,9 +63,9 @@ def classify_experiment(
         experiment_id: the experiment to classify — a merged ``{collection}_coll_{plate_token}`` id
             or a legacy single-experiment id.
         raw_root: raw image root containing the ``_coll`` dir (only read for a collection, to find
-            its source children).
-        microscope: microscope label — provenance carried onto each ``SourceChild`` (the ordering
-            uses only the child NAME, so this does not change ``time_index`` assignment).
+            its sources).
+        microscope: microscope label — provenance carried onto each ``PlateSource`` (the ordering
+            uses only the source NAME, so this does not change ``time_index`` assignment).
 
     Returns:
         The validated payload dict (see ``collection_classification_contract``): for a collection,
@@ -88,17 +88,17 @@ def classify_experiment(
         validate_collection_classification(payload)
         return payload
 
-    collection_name, child_names = find_collection_plate_sources(experiment_id, Path(raw_root))
+    collection_name, source_ids = find_collection_plate_sources(experiment_id, Path(raw_root))
     collection_dir = Path(raw_root) / collection_name
 
     # REUSE the acquisition union's ordering so source_ordinal here == source_ordinal downstream.
     candidate_sources = [
-        SourceChild(child_name=name, scope=microscope) for name in child_names
+        PlateSource(source_id=name, scope=microscope) for name in source_ids
     ]
     # Ordering keys on declared_hpf, so each source must declare a DISTINCT age. Checked HERE, at the
     # earliest DAG step, so an ambiguous collection fails at classify rather than deep in a union.
     assert_source_order_unambiguous(candidate_sources)
-    ordered_sources = sorted(candidate_sources, key=SourceChild.sort_key)
+    ordered_sources = sorted(candidate_sources, key=PlateSource.sort_key)
 
     # One PROVENANCE RECORD per source: file + on-disk raw_path + declared_hpf + source_ordinal.
     # This is the single source of truth every disk-touching step reads (it never re-globs the
@@ -113,8 +113,8 @@ def classify_experiment(
     # existing readers keep working; see the legacy note on the age map below.
     sources = [
         {
-            "file": source.child_name,
-            "raw_path": str(collection_dir / source.child_name),
+            "file": source.source_id,
+            "raw_path": str(collection_dir / source.source_id),
             "declared_hpf": source.declared_hpf,
             "source_ordinal": source_ordinal,
             "time_index": source_ordinal,  # legacy alias; equals source_ordinal

@@ -2,7 +2,7 @@
 
 Pins the CONTRACT of the early-DAG classify fact:
   - a collection → is_collection True, its sources, and start_age_by_time_index whose time_index
-    keys match the acquisition union ordering (SourceChild.sort_key: declared_hpf then date);
+    keys match the acquisition union ordering (PlateSource.sort_key: declared_hpf then date);
   - a single experiment → the inert is_collection False payload;
   - the writer round-trips through the validator.
 
@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import SourceChild
+from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import PlateSource
 from data_pipeline.acquisition.metadata_ingest.collection_classification import (
     classify_experiment,
     read_collection_classification,
@@ -47,7 +47,7 @@ def test_classify_collection_declares_sources_and_age_map(tmp_path):
     payload = classify_experiment("chem28c_coll_plate01", tmp_path)
     assert payload["experiment_id"] == "chem28c_coll_plate01"
     assert payload["is_collection"] is True
-    # sources are PROVENANCE RECORDS ordered by SourceChild.sort_key (declared_hpf then date):
+    # sources are PROVENANCE RECORDS ordered by PlateSource.sort_key (declared_hpf then date):
     # 28 before 52. Each carries file / raw_path / declared_hpf / time_index.
     assert [s["file"] for s in payload["sources"]] == [
         "20250622_plate01_t28hpf", "20250623_plate01_t52hpf"
@@ -62,21 +62,21 @@ def test_classify_collection_declares_sources_and_age_map(tmp_path):
 def test_classify_time_index_matches_acquisition_union_ordering(tmp_path):
     """The critical correctness point: the classify time_index ordinals equal the union's.
 
-    Both this module and collection_acquisition_union sort by SourceChild.sort_key, so the block
+    Both this module and collection_acquisition_union sort by PlateSource.sort_key, so the block
     ordinal a source is assigned here is the SAME time_index the union stamps. We assert the
-    classify keys against an independent re-derivation via SourceChild.sort_key.
+    classify keys against an independent re-derivation via PlateSource.sort_key.
     """
     children = ["20250623_plate01_t52hpf", "20250622_plate01_t28hpf"]  # unsorted on disk
     _make_collection(tmp_path, "chem28c_coll", children)
     payload = classify_experiment("chem28c_coll_plate01", tmp_path)
 
     ordered = sorted(
-        (SourceChild(child_name=c, scope="Keyence") for c in children),
-        key=SourceChild.sort_key,
+        (PlateSource(source_id=c, scope="Keyence") for c in children),
+        key=PlateSource.sort_key,
     )
     expected = {str(i): s.declared_hpf for i, s in enumerate(ordered)}
     assert payload["start_age_by_time_index"] == expected
-    assert [s["file"] for s in payload["sources"]] == [s.child_name for s in ordered]
+    assert [s["file"] for s in payload["sources"]] == [s.source_id for s in ordered]
     assert [s["time_index"] for s in payload["sources"]] == list(range(len(ordered)))
 
 

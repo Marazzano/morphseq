@@ -23,7 +23,7 @@ from pathlib import Path
 import pandas as pd
 
 from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import (
-    SourceChild,
+    PlateSource,
     union_collection_acquisition_inventories,
 )
 from data_pipeline.acquisition.metadata_ingest.collection_merge_primitives import (
@@ -313,14 +313,14 @@ def ingest_collection_acquisition_inventory(
     # recorded at discovery. No suffix guessing, no existence probing to pick a path.
     raw_path_by_source_id = {str(rec["file"]): Path(rec["raw_path"]) for rec in sources}
 
-    def read_source(source: SourceChild, _child_experiment_id: str) -> pd.DataFrame:
-        return read_one(raw_path_by_source_id[source.child_name], source.child_name)
+    def read_source(source: PlateSource, _child_experiment_id: str) -> pd.DataFrame:
+        return read_one(raw_path_by_source_id[source.source_id], source.source_id)
 
     ordered_source_ids = [
         str(rec["file"]) for rec in sorted(sources, key=lambda r: int(r["source_ordinal"]))
     ]
     source_children = [
-        SourceChild(child_name=name, scope=microscope) for name in ordered_source_ids
+        PlateSource(source_id=name, scope=microscope) for name in ordered_source_ids
     ]
     unioned = union_collection_acquisition_inventories(
         collection_name=collection_name, sources=source_children, read_source=read_source

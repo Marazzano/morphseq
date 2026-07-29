@@ -16,7 +16,7 @@ The relaxed invariant (spec §"The invariant relaxes mildly"):
 Each source is read EXACTLY ONCE (this module NEVER fuses pixels — it consumes the per-source
 inventory the scope extractor already built). The union:
 
-  1. Enumerates the plate's source children.
+  1. Enumerates the plate's sources.
   2. Reads each source independently — via an injected ``read_source`` callable so the caller
      (and tests) control the one-read-per-source contract; this module does no ND2/TIFF I/O.
   3. Stamps each source with a distinct ``time_index`` BLOCK (ordered by ``declared_hpf`` — each
@@ -75,26 +75,26 @@ UNION_TIME_AXIS_COLUMNS: tuple[str, ...] = (
 )
 
 @dataclass(frozen=True)
-class SourceChild:
-    """One raw source of a plate — a collection child folder/file to be read exactly once.
+class PlateSource:
+    """One raw source of a plate — a folder/file under the _coll dir, read exactly once.
 
-    ``child_name`` is the raw child name (``{date}_{plate_token}[_{event_label}]``) from which
+    ``source_id`` is the raw source name (``{date}_{plate_token}[_{event_label}]``) from which
     plate_token and declared_hpf are parsed. ``scope`` is the microscope label (provenance).
 
     The name's date prefix is NOT part of this class's behavior: ordering keys on the declared age
     alone (see ``sort_key``), so acquisition-date trivia never leaks into identity.
     """
 
-    child_name: str
+    source_id: str
     scope: str
 
     @property
     def declared_hpf(self) -> int | None:
-        return parse_declared_hpf(self.child_name)
+        return parse_declared_hpf(self.source_id)
 
     @property
     def plate_token(self) -> str:
-        return parse_plate_token(self.child_name)
+        return parse_plate_token(self.source_id)
 
     def sort_key(self) -> tuple[int, int]:
         """Order sources by ``declared_hpf`` — the declared age IS the temporal order.
@@ -112,7 +112,7 @@ class SourceChild:
         return (0, hpf) if hpf is not None else (1, 0)
 
 
-def assert_source_order_unambiguous(sources: Sequence[SourceChild]) -> None:
+def assert_source_order_unambiguous(sources: Sequence[PlateSource]) -> None:
     """Fail loud if two sources of one plate declare the SAME age.
 
     ``declared_hpf`` is the rule that assigns ``source_ordinal``, and that ordinal is load-bearing:
@@ -128,7 +128,7 @@ def assert_source_order_unambiguous(sources: Sequence[SourceChild]) -> None:
     """
     by_hpf: dict[int | None, list[str]] = {}
     for source in sources:
-        by_hpf.setdefault(source.declared_hpf, []).append(source.child_name)
+        by_hpf.setdefault(source.declared_hpf, []).append(source.source_id)
 
     collisions = {hpf: names for hpf, names in by_hpf.items() if len(names) > 1}
     if collisions:
@@ -154,14 +154,14 @@ def assert_source_order_unambiguous(sources: Sequence[SourceChild]) -> None:
 def union_collection_acquisition_inventories(
     *,
     collection_name: str,
-    sources: Sequence[SourceChild],
-    read_source: Callable[[SourceChild, str], pd.DataFrame],
+    sources: Sequence[PlateSource],
+    read_source: Callable[[PlateSource, str], pd.DataFrame],
 ) -> pd.DataFrame:
     """Assemble ONE acquisition inventory for a ``{coll}_{plate}`` plate from N source reads.
 
     Args:
         collection_name: the ``_coll`` collection directory name (namespaces the plate id).
-        sources: the plate's source children — MUST all share one plate_token (asserted). Order is
+        sources: the plate's sources — MUST all share one plate_token (asserted). Order is
             irrelevant; this function sorts by ``declared_hpf`` then ``date`` to assign time_index
             blocks.
         read_source: injected one-read-per-source reader. Called EXACTLY ONCE per source as
@@ -184,7 +184,7 @@ def union_collection_acquisition_inventories(
     if not sources:
         raise ValueError(
             f"collection_acquisition_union: no sources given for collection "
-            f"{collection_name!r}; a plate must have at least one source child."
+            f"{collection_name!r}; a plate must have at least one source."
         )
 
     # All sources of ONE plate must share the plate_token — otherwise this is not one experiment.
@@ -197,45 +197,45 @@ def union_collection_acquisition_inventories(
         )
 
     # The plate token IS the id (MERGE model). Mint it once via the shared constructor (never here).
-    experiment_id = compose_collection_experiment_id(collection_name, sources[0].child_name)
+    experiment_id = compose_collection_experiment_id(collection_name, sources[0].source_id)
 
     # source_ordinal is assigned by declared age, so the ages must be distinct. Fail before any
     # read: an ambiguous ordinal would silently repoint the age map and every source-aware join.
     assert_source_order_unambiguous(sources)
 
-    ordered = sorted(sources, key=SourceChild.sort_key)
+    ordered = sorted(sources, key=PlateSource.sort_key)
     n_sources = len(ordered)  # per-well merge count — the only source fact that survives the seam.
 
     unioned_parts: list[pd.DataFrame] = []
     time_index_block_offset = 0
-    seen_children: set[str] = set()
+    seen_source_ids: set[str] = set()
     # time_index value -> source ordinal that owns it; guards block disjointness WITHOUT a per-frame
     # source label (which we no longer emit). Two sources sharing a time_index would collide here.
     time_index_owner: dict[int, int] = {}
 
     for source_ordinal, source in enumerate(ordered):
-        if source.child_name in seen_children:
+        if source.source_id in seen_source_ids:
             raise ValueError(
-                f"collection_acquisition_union: source child {source.child_name!r} appears twice "
+                f"collection_acquisition_union: source {source.source_id!r} appears twice "
                 f"for {experiment_id!r}. Each source must be read exactly once."
             )
-        seen_children.add(source.child_name)
+        seen_source_ids.add(source.source_id)
 
         # ── ONE read per source ────────────────────────────────────────────────────────────────
         per_source = read_source(source, experiment_id)
         if not isinstance(per_source, pd.DataFrame):
             raise TypeError(
-                f"collection_acquisition_union: read_source for {source.child_name!r} returned "
+                f"collection_acquisition_union: read_source for {source.source_id!r} returned "
                 f"{type(per_source).__name__}, expected a pandas DataFrame."
             )
         if per_source.empty:
             raise ValueError(
-                f"collection_acquisition_union: read_source for {source.child_name!r} returned an "
+                f"collection_acquisition_union: read_source for {source.source_id!r} returned an "
                 "empty inventory — a source with no frames cannot contribute a timepoint."
             )
         if "time_index" not in per_source.columns:
             raise ValueError(
-                f"collection_acquisition_union: per-source inventory for {source.child_name!r} is "
+                f"collection_acquisition_union: per-source inventory for {source.source_id!r} is "
                 "missing required column 'time_index'."
             )
 
@@ -249,7 +249,7 @@ def union_collection_acquisition_inventories(
         part, time_index_block_offset = remap_source_time_indices(
             part,
             time_index_block_offset,
-            scope_label=f"collection_acquisition_union[{source.child_name}]",
+            scope_label=f"collection_acquisition_union[{source.source_id}]",
         )
         # The helper records the source-native value it remapped from, so the native→merged
         # relation is recoverable without re-reading the pre-remap frame.
@@ -265,7 +265,7 @@ def union_collection_acquisition_inventories(
             unmapped = sorted(set(claimed) - set(native_to_merged))
             if unmapped:
                 raise ValueError(
-                    f"collection_acquisition_union: source {source.child_name!r} has "
+                    f"collection_acquisition_union: source {source.source_id!r} has "
                     f"time_index_claimed value(s) {unmapped} that do not appear in its time_index "
                     f"{sorted(native_to_merged)}. The raw time atom must track the frame axis it "
                     "belongs to; a divergence means the per-source inventory is inconsistent."
@@ -276,7 +276,7 @@ def union_collection_acquisition_inventories(
         part["start_age_hpf"] = source.declared_hpf
 
         # WHICH SOURCE — the machine join key, the same value the classify artifact and the scope
-        # metadata union carry (both derive it from SourceChild.sort_key ordering). Distinct from
+        # metadata union carry (both derive it from PlateSource.sort_key ordering). Distinct from
         # time_index: this source may span a whole block of merged timepoints.
         part["source_ordinal"] = source_ordinal
 

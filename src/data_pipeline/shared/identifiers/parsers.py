@@ -128,7 +128,7 @@ def parse_collection_name_from_plate_id(experiment_id: str) -> str:
     return text[: text.index(_COLLECTION_ID_MARKER)] + _COLLECTION_SUFFIX
 
 
-def parse_plate_token(child_name: str) -> str:
+def parse_plate_token(source_id: str) -> str:
     """Extract the ``plate_token`` from a collection child name.
 
     The token is found by SHAPE (``plate<N>``) anywhere in the name, so a free-form
@@ -146,10 +146,10 @@ def parse_plate_token(child_name: str) -> str:
     Returned lowercased when matched by shape so the token is a stable identity component
     regardless of source casing (``PLATE01`` and ``plate01`` are the same plate).
     """
-    text = str(child_name).strip()
+    text = str(source_id).strip()
     if not _CHILD_DATE_PREFIX_RE.match(text):
         raise ValueError(
-            f"parse_plate_token: cannot parse {child_name!r}. Expected a collection child "
+            f"parse_plate_token: cannot parse {source_id!r}. Expected a collection child "
             "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
             "(e.g. 20260607_plate01_t45hpf)."
         )
@@ -162,7 +162,7 @@ def parse_plate_token(child_name: str) -> str:
         distinct = sorted({token.lower() for token in anchored})
         if len(distinct) > 1:
             raise ValueError(
-                f"parse_plate_token: {child_name!r} contains multiple plate tokens {distinct}. "
+                f"parse_plate_token: {source_id!r} contains multiple plate tokens {distinct}. "
                 "The plate token IS the experiment identity, so this is ambiguous — rename the raw "
                 "child so exactly one plate<N> token appears."
             )
@@ -172,14 +172,14 @@ def parse_plate_token(child_name: str) -> str:
     match = _COLLECTION_CHILD_RE.match(text)
     if not match:
         raise ValueError(
-            f"parse_plate_token: cannot parse {child_name!r}. Expected a collection child "
+            f"parse_plate_token: cannot parse {source_id!r}. Expected a collection child "
             "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
             "(e.g. 20260607_plate01_t45hpf)."
         )
     return match.group(1)
 
 
-def parse_event_label(child_name: str) -> str | None:
+def parse_event_label(source_id: str) -> str | None:
     """Extract the optional ``event_label`` from a collection child name.
 
     The declared-age token is found by SHAPE (``t<NN>hpf``) so a free-form descriptive
@@ -195,10 +195,10 @@ def parse_event_label(child_name: str) -> str | None:
 
     Returned lowercased when matched by shape, so ``T45HPF`` and ``t45hpf`` agree.
     """
-    text = str(child_name).strip()
+    text = str(source_id).strip()
     if not _CHILD_DATE_PREFIX_RE.match(text):
         raise ValueError(
-            f"parse_event_label: cannot parse {child_name!r}. Expected a collection child "
+            f"parse_event_label: cannot parse {source_id!r}. Expected a collection child "
             "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
             "(e.g. 20260607_plate01_t45hpf)."
         )
@@ -214,7 +214,7 @@ def parse_event_label(child_name: str) -> str | None:
     match = _COLLECTION_CHILD_RE.match(text)
     if not match:
         raise ValueError(
-            f"parse_event_label: cannot parse {child_name!r}. Expected a collection child "
+            f"parse_event_label: cannot parse {source_id!r}. Expected a collection child "
             "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
             "(e.g. 20260607_plate01_t45hpf)."
         )
@@ -242,7 +242,7 @@ def parse_declared_hpf(event_label_or_name: str | None) -> int | None:
     return int(match.group(1))
 
 
-def compose_collection_experiment_id(collection_name: str, child_name: str) -> str:
+def compose_collection_experiment_id(collection_name: str, source_id: str) -> str:
     """Compose ``experiment_id = {collection}_{plate_token}`` for a collection child.
 
     The plate token IS the id: date and event_label are DROPPED (the MERGE model — all
@@ -255,7 +255,7 @@ def compose_collection_experiment_id(collection_name: str, child_name: str) -> s
     """
     from data_pipeline.shared.identifiers.constructors import sanitize_experiment_id
 
-    plate_token = parse_plate_token(child_name)
+    plate_token = parse_plate_token(source_id)
     return sanitize_experiment_id(f"{str(collection_name).strip()}_{plate_token}")
 
 

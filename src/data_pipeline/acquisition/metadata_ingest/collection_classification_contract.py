@@ -32,7 +32,7 @@ For a NON-collection experiment the payload is inert (consumers ignore it and be
 JSON) and values are the declared age in hpf (int), or ``None`` when a source declared no age (honest
 absence — not omitted). The ``time_index`` keys are consistent WITH the acquisition union's ordering
 by construction; that guarantee lives in the producer (``collection_classification``), which reuses
-``SourceChild.sort_key`` — this contract only checks the key/value SHAPE.
+``PlateSource.sort_key`` — this contract only checks the key/value SHAPE.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def validate_collection_classification(
     Checks the required keys exist, ``experiment_id`` is a non-empty string, ``is_collection`` is a
     real bool, ``sources`` is a list of strings, and ``start_age_by_time_index`` maps stringified-int
     keys to int-or-None ages. Consistency of the ``time_index`` keys WITH the acquisition union
-    ordering is the producer's guarantee (it reuses ``SourceChild.sort_key``); this validator pins
+    ordering is the producer's guarantee (it reuses ``PlateSource.sort_key``); this validator pins
     the SHAPE, not the ordering.
 
     Raises:

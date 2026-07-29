@@ -110,7 +110,7 @@ def test_parse_declared_hpf_from_event_label():
     assert parse_declared_hpf("t45hpf") == 45
 
 
-def test_parse_declared_hpf_from_full_child_name():
+def test_parse_declared_hpf_from_full_source_id():
     assert parse_declared_hpf("20260607_plate01_t45hpf") == 45
 
 

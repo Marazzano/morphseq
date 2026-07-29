@@ -28,7 +28,7 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest imp
     _rekey_keyence_scope_metadata_to_plate,
 )
 from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import (
-    SourceChild,
+    PlateSource,
     union_collection_acquisition_inventories,
 )
 from data_pipeline.acquisition.metadata_ingest.collection_scope_union import (
@@ -99,9 +99,9 @@ def _build_both_unions():
     )
     inventory = union_collection_acquisition_inventories(
         collection_name=COLLECTION,
-        sources=[SourceChild(child_name=child, scope="Keyence") for child, _ in CHILDREN],
+        sources=[PlateSource(source_id=child, scope="Keyence") for child, _ in CHILDREN],
         read_source=lambda source, _exp: _per_source_frame(
-            source.child_name, frames[source.child_name], for_inventory=True
+            source.source_id, frames[source.source_id], for_inventory=True
         ),
     )
     return scope, inventory
@@ -204,7 +204,7 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union impo
 
 
 def _children(*names):
-    return [SourceChild(child_name=n, scope="Keyence") for n in names]
+    return [PlateSource(source_id=n, scope="Keyence") for n in names]
 
 
 def _one_frame(child):
@@ -264,8 +264,8 @@ def test_union_refuses_same_age_sources_before_reading():
     reads = []
 
     def read_source(source, _experiment_id):
-        reads.append(source.child_name)
-        return _one_frame(source.child_name)
+        reads.append(source.source_id)
+        return _one_frame(source.source_id)
 
     with pytest.raises(ValueError, match="AMBIGUOUS"):
         union_collection_acquisition_inventories(
@@ -327,9 +327,9 @@ def _build_both_unions_sparse():
     )
     inventory = union_collection_acquisition_inventories(
         collection_name=COLLECTION,
-        sources=[SourceChild(child_name=child, scope="Keyence") for child, _ in CHILDREN],
+        sources=[PlateSource(source_id=child, scope="Keyence") for child, _ in CHILDREN],
         read_source=lambda source, _exp: _sparse_source_frame(
-            source.child_name, for_inventory=True
+            source.source_id, for_inventory=True
         ),
     )
     return scope, inventory
