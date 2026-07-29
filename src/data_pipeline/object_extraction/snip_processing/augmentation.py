@@ -48,6 +48,12 @@ def generate_background_noise(
     """
     np.random.seed(seed)
 
+    # A constant background is a valid input (notably for center-padded SeaHub frames).
+    # scipy's standardized truncation bounds divide by the scale, so handle this
+    # degenerate distribution explicitly.
+    if background_std == 0:
+        return np.full(shape, max(float(background_mean), 0.0), dtype=float)
+
     # Generate truncated normal distribution (no negative values)
     a = -background_mean / background_std  # Lower bound in standard deviations
     b = 4  # Upper bound (4 std above mean)

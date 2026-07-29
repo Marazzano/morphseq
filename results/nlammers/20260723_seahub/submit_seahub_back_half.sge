@@ -78,6 +78,7 @@ fi
     --configfile "${WORKFLOW_DIR}/config.yaml" "${RUNTIME_CONFIG}" \
     --directory "${SMK_WORKDIR}" \
     --cores "${CORES}" \
+    --resources gpu=1 \
     --rerun-triggers mtime \
     --forcerun split_dropin_inventory \
     --keep-going \

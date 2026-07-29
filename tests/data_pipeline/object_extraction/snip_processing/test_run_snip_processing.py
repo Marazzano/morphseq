@@ -33,12 +33,19 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 )
 from data_pipeline.shared.identifiers import build_image_id, build_well_id
 from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import run_snip_processing
+from data_pipeline.object_extraction.snip_processing.augmentation import generate_background_noise
 
 
 WELL_ID = build_well_id("20250912", "B01")
 N_FRAMES = 3
 N_OBJECTS = 2
 IMG_W, IMG_H = 64, 64
+
+
+def test_generate_background_noise_accepts_zero_variance():
+    noise = generate_background_noise((4, 5), background_mean=0.0, background_std=0.0)
+    assert noise.shape == (4, 5)
+    assert np.all(noise == 0.0)
 
 
 def _make_frame_inventory(tmp_images: Path) -> pd.DataFrame:
