@@ -1,0 +1,28 @@
+{
+  "generated_at": "2026-07-28T09:37:51.174764-07:00",
+  "pipeline_root": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output",
+  "manifest": "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/src/data_pipeline/pipeline_orchestrator/manifests/front_half_archive.txt",
+  "manifest_dataset_count": 162,
+  "read_dataset_count": 55,
+  "error_dataset_count": 0,
+  "analyzed_timepoint_count": 451037,
+  "observed_flags": [
+    "discontinuous_mask_flag",
+    "edge_flag",
+    "focus_flag",
+    "motion_blur_flag",
+    "overlapping_mask_flag",
+    "persistence_dead_flag",
+    "sa_outlier_flag",
+    "viability_dead_flag"
+  ],
+  "unknown_flags": [],
+  "bf_channel_policy": "Use BF rows when an explicit BF channel or _BF_ snip IDs are present; otherwise retain all rows.",
+  "limitations": [
+    "Only datasets with a readable merged snip-QC table at snapshot time are included.",
+    "Completed-QC datasets may not represent unfinished datasets.",
+    "Persisted QC artifacts may have been produced under different historical configs.",
+    "physical_embryo_id can include tracking fragments or spurious detections.",
+    "Counterfactual policies are descriptive sensitivity analyses, not recommendations."
+  ]
+}
