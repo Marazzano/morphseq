@@ -14,12 +14,12 @@ Test case: `chem28c_coll_plate01` (Keyence), 2 sources (t28hpf, t52hpf), 2 wells
 
 ---
 
-## Step 0 — DISCOVERY: generate the collection provenance artifact  [status: DONE 2026-07-28]
-- Today: `resolve_experiment_ids` expands `_coll` → `{coll}_{plate}` ids; `classify_experiment`
-  writes the classify artifact (`is_collection`, `sources`, `start_age_by_time_index`).
+## Step 0 — DISCOVERY: generate the collection provenance artifact  [status: DONE 2026-07-29]
+- Today: `resolve_experiment_ids` expands `_coll` → `{coll}_{plate}` ids; `build_collection_provenance`
+  writes the provenance artifact (`is_collection`, `sources`, `start_age_by_time_index`).
 - Nuance: the artifact must GROW to carry per-source `{file, raw_path, declared_hpf, time_index}`
   (the full on-disk provenance) — the single source of truth every disk step reads.
-- Surgery: extend `collection_classification` payload + contract with the per-source records
+- Surgery: extend `collection_provenance` payload + contract with the per-source records
   (file, raw_path, time_index). `find_collection_plate_sources` already finds the files;
   `SourceChild.sort_key` already gives the ordering → time_index. Generate at discovery.
 - DONE 2026-07-28: the artifact now carries per-source provenance records
@@ -198,7 +198,7 @@ provenance.
   bridge/fracture). BUILT. The open SAM2 track_id-collision question is settled only by the GPU run.
 
 ## Step 7 — stage_predictions  [status: BUILT / one KNOWN LIMITATION]
-- The ONLY post-frame_inventory provenance consumer. Reads the classify artifact's age map.
+- The ONLY post-frame_inventory provenance consumer. Reads the provenance artifact's age map.
 - Now reads `start_age_by_source_ordinal` (canonical), falling back to the legacy
   `start_age_by_time_index`. The legacy name was misleading: its keys were ALWAYS source ordinals,
   never merged frame indices.
@@ -281,3 +281,39 @@ ambiguous. Private alias tables and env overrides are never acceptable.
 ## Known drift already fixed (not collection work): calibration col + stage_x/y/z_nm fixtures.
 ## Known pre-existing, out of scope: 12 image_materialization tests (Keyence stitch-map + shard
 ## merge) fail identically with and without this work — verified by stashing the changes.
+
+## Cross-cutting: vocabulary + layering settled 2026-07-29  [status: DONE]
+
+Four commits, in this order (correctness before cosmetics):
+
+**A. Provenance is AUTHORITATIVE.** `ingest_collection_acquisition_inventory` used to re-glob the
+`_coll` dir and re-probe disk for a `.nd2` suffix, so the source manifest was advisory rather than
+authoritative — the two ingest paths could disagree if files were added/removed/renamed between
+steps. Both unions now consume the artifact's `sources` (file / raw_path / source_ordinal).
+
+**B. `SourceChild` → `PlateSource`** (`child_name` → `source_id`). "Child" named a filesystem
+relation; the object is one raw acquisition contributing to a plate.
+
+**C. ONE filesystem interpretation.** `experiment_collection.py` had TWO independent
+`iterdir → parse → group` loops (one filtering by composed id, one grouping). Consolidated onto a
+private `_discover_collection_plates`; both public callers are thin views:
+`resolve_experiment_ids` → its KEYS, `discover_plate_sources` → its VALUES. Renamed
+`collection_discovery.py` to pair with the provenance producer as *discover → freeze*. Exactly one
+`iterdir` remains in the collection layer.
+
+  identifiers interpret NAMES (verified: `shared/identifiers` touches no disk)
+  discovery interprets the FILESYSTEM (the only `iterdir`)
+  provenance FREEZES discovery into an artifact
+  downstream steps CONSUME provenance
+
+**D. `collection_classification` → `collection_provenance`** — module, contract, functions,
+constants, PIPELINE_STEPS key, artifact key + filename, rule name, CLI verb, and flags. The old
+name framed the product as a verdict, which is what let the misleading `start_age_by_time_index`
+live in it. Old artifacts regenerate.
+
+**The `_coll` marker is single-source.** Defined once (`_COLLECTION_SUFFIX`, with
+`_COLLECTION_ID_MARKER` derived); no production module detects it inline. A guard test scans `src/`
+for `endswith("_coll")` / `"_coll" in ...` / `.split("_coll")` and names the offending file:line —
+inline detection is subtle because a consumer testing the suffix disagrees with the grammar the
+moment the marker or its placement moves (suffix-on-a-name and the `_coll_` marker INSIDE a plate id
+are different questions).
