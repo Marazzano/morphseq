@@ -51,6 +51,9 @@ from typing import Callable, Sequence
 
 import pandas as pd
 
+from data_pipeline.acquisition.metadata_ingest.collection_time_axis import (
+    remap_source_time_indices,
+)
 from data_pipeline.shared.identifiers.constructors import build_well_id, sanitize_experiment_id
 from data_pipeline.shared.identifiers.parsers import (
     compose_collection_experiment_id,
@@ -230,32 +233,53 @@ def union_collection_acquisition_inventories(
 
         part = _restamp_experiment_and_well_id(per_source, experiment_id=experiment_id)
 
-        # Block-offset the unioned time_index so sources never collide (snapshot → one block;
-        # timelapse → a contiguous block of its own). The source's original per-source time_index is
-        # NOT preserved as a column — SAM2 tracks over the unioned block, no source label survives.
-        original_time_index = pd.to_numeric(part["time_index"], errors="raise").astype(int)
-        part["time_index"] = original_time_index + time_index_block_offset
+        # Place this source's frames on the merged time axis via the SHARED helper (the scope
+        # metadata union calls the same one, so the two artifacts cannot drift on what time_index
+        # means). Snapshot → one slot; timelapse → a contiguous block of its own. raw_time_index
+        # preserves the source-native value; the merged axis is dense even if the source's own
+        # numbering is sparse or 1-based.
+        part, time_index_block_offset = remap_source_time_indices(
+            part,
+            time_index_block_offset,
+            scope_label=f"collection_acquisition_union[{source.child_name}]",
+        )
+        # The helper records the source-native value it remapped from, so the native→merged
+        # relation is recoverable without re-reading the pre-remap frame.
+        native_to_merged = dict(zip(part["raw_time_index"], part["time_index"]))
 
-        # The raw time atom ``time_index_claimed`` is part of the acquisition-inventory cell-key
-        # uniqueness check, so it must ride the SAME block offset — otherwise two single-snapshot
-        # sources (both claiming 0) collide on the cell key after the union. Offset in lockstep with
-        # time_index; leave absent for scopes that don't carry the atom.
+        # ``time_index_claimed`` is the raw time atom inside the acquisition-inventory CELL KEY, so
+        # it must follow the SAME remap — otherwise two single-snapshot sources (both claiming 0)
+        # collide on the cell key after the union. Mapped through the same native→merged relation
+        # rather than offset arithmetic, so sparse source numbering stays consistent with
+        # time_index. Absent for scopes that don't carry the atom.
         if "time_index_claimed" in part.columns:
-            part["time_index_claimed"] = (
-                pd.to_numeric(part["time_index_claimed"], errors="raise").astype(int)
-                + time_index_block_offset
-            )
+            claimed = pd.to_numeric(part["time_index_claimed"], errors="raise").astype(int)
+            unmapped = sorted(set(claimed) - set(native_to_merged))
+            if unmapped:
+                raise ValueError(
+                    f"collection_acquisition_union: source {source.child_name!r} has "
+                    f"time_index_claimed value(s) {unmapped} that do not appear in its time_index "
+                    f"{sorted(native_to_merged)}. The raw time atom must track the frame axis it "
+                    "belongs to; a divergence means the per-source inventory is inconsistent."
+                )
+            part["time_index_claimed"] = claimed.map(native_to_merged).astype(int)
 
         # Age escape hatch: this source's declared age is its start_age_hpf (None → NaN, honestly).
         part["start_age_hpf"] = source.declared_hpf
+
+        # WHICH SOURCE — the machine join key, the same value the classify artifact and the scope
+        # metadata union carry (both derive it from SourceChild.sort_key ordering). Distinct from
+        # time_index: this source may span a whole block of merged timepoints.
+        part["source_ordinal"] = source_ordinal
 
         # Record which source ordinal owns each unioned time_index (disjointness guard below).
         for tv in part["time_index"].unique():
             time_index_owner.setdefault(int(tv), source_ordinal)
 
         unioned_parts.append(part)
-        # Next source starts one past this source's max time_index (its full block width).
-        time_index_block_offset = int(original_time_index.max()) + 1 + time_index_block_offset
+        # `time_index_block_offset` was already advanced to the next free merged slot by the
+        # remapper (its block width is the DISTINCT timepoint count, so a sparse source leaves no
+        # hole for the following source).
 
     unioned = pd.concat(unioned_parts, ignore_index=True)
 
