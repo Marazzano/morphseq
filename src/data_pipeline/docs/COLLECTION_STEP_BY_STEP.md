@@ -60,14 +60,19 @@ re-derive time_index — it READS it from the artifact and stamps it. Nothing re
 **Scope difference to tolerate:** Keyence resolves well at ingest (scope_csv HAS well_index/well_id);
 YX1 does not (well_id minted later at map/apply). The union must tolerate well_id present-or-absent.
 
+**THE KEY is `time_index`** (reads best; consistent with Step 2's mapping). `time_index` is the
+canonical join/composition key in EVERY source-aware artifact; `source_id` (stable identity) and
+`source_path` (provenance/pixels) ride alongside every row but are not the join key.
+
 **THE KEYSTONE INVARIANT** (the real point — not just "both have source tags"):
 ```
-(source_id, time_index) mean the SAME thing in:
+time_index (+ source_id / source_path riding along) means the SAME thing in:
   collection artifact  →  scope_metadata  →  position_mapping  →  acquisition_inventory
 ```
-Because all four take these from the ONE artifact, source identity is part of the explicit JOIN KEY
-(e.g. map/apply/materialize join on (source_id / time_index, raw_position_label)) — NOT an ad-hoc
-"loop per file" hint scattered in each consumer.
+Because all four take these from the ONE artifact, `time_index` is part of the explicit JOIN KEY
+(map/apply/materialize join on `(time_index, raw_position_label)`) — NOT an ad-hoc "loop per file"
+hint scattered in each consumer. (`source_id` disambiguates provenance/audit; the join keys on
+`time_index`.)
 
 **Refactor note:** today's per-row `source_file` (the tiff PATH) is renamed to `source_path`; add
 `source_id` + assigned `time_index`. `collection_acquisition_ingest` already unions the acquisition
