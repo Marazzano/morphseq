@@ -188,3 +188,100 @@ def test_claimed_time_atom_tracks_the_merged_axis():
     """`time_index_claimed` is inside the inventory's cell key, so it must ride the same remap."""
     _scope, inventory = _build_both_unions()
     assert (inventory["time_index_claimed"] == inventory["time_index"]).all()
+
+
+# ── TWO SOURCES AT THE SAME DECLARED AGE ──────────────────────────────────────────────
+# A plate can legitimately be acquired twice at one declared age: a rescan, a repeat, or two runs
+# at the same t<NN>hpf. That must NOT collide — the sources are distinct acquisitions that happen
+# to share an age. They get distinct ordinals and distinct merged time_index blocks, while sharing
+# one start_age_hpf. And crucially the ordinal assignment must be REPRODUCIBLE: it keys the age map
+# and every source-aware join, so it cannot depend on filesystem glob order.
+
+_SAME_AGE_CHILDREN = (
+    "20250622_plate01_t28hpf",
+    "20250623_plate01_t28hpf",  # same age, later date
+)
+# Same age AND same date — only the child name distinguishes them.
+_SAME_AGE_SAME_DATE_CHILDREN = (
+    "20250622_plate01_t28hpf",
+    "20250622_plate01_t28hpf_b",
+)
+
+
+def _one_frame(child):
+    return pd.DataFrame(
+        [
+            {
+                "experiment_id": child,
+                "well_index": "A01",
+                "well_id": f"{child}_A01",
+                "time_index": 0,
+                "time_index_claimed": 0,
+                "position_index": 1,
+                "channel_id": "BF",
+            }
+        ]
+    )
+
+
+def _union_children(children):
+    return union_collection_acquisition_inventories(
+        collection_name=COLLECTION,
+        sources=[SourceChild(child_name=c, scope="Keyence") for c in children],
+        read_source=lambda source, _exp: _one_frame(source.child_name),
+    )
+
+
+def test_same_age_sources_get_distinct_ordinals_and_timepoints():
+    unioned = _union_children(_SAME_AGE_CHILDREN)
+    assert sorted(unioned["source_ordinal"]) == [0, 1]
+    # Distinct merged timepoints — two acquisitions are two timepoints even at one declared age.
+    assert sorted(unioned["time_index"]) == [0, 1]
+    # ...but the SAME declared age, which is the whole point.
+    assert set(unioned["start_age_hpf"]) == {28}
+    # One shared well across both.
+    assert set(unioned["well_id"]) == {f"{PLATE}_A01"}
+    assert set(unioned["n_sources"]) == {2}
+
+
+def test_same_age_same_date_sources_do_not_collide():
+    unioned = _union_children(_SAME_AGE_SAME_DATE_CHILDREN)
+    assert sorted(unioned["source_ordinal"]) == [0, 1]
+    assert sorted(unioned["time_index"]) == [0, 1]
+    assert set(unioned["start_age_hpf"]) == {28}
+
+
+def test_ordinal_assignment_is_reproducible_regardless_of_input_order():
+    """The sort key must be TOTAL.
+
+    With identical (age, date) keys, a non-total key leaves `sorted` stable-but-input-dependent, so
+    the same data would get different ordinals on different runs — silently repointing the age map
+    and every source-aware join at the wrong source.
+    """
+    forward = _union_children(_SAME_AGE_SAME_DATE_CHILDREN)
+    reversed_input = _union_children(tuple(reversed(_SAME_AGE_SAME_DATE_CHILDREN)))
+
+    # Compare the ordinal -> merged-time relation; it must be identical either way.
+    assert _time_relation(forward) == _time_relation(reversed_input)
+    # And the same holds for the same-age-different-date case.
+    assert _time_relation(_union_children(_SAME_AGE_CHILDREN)) == _time_relation(
+        _union_children(tuple(reversed(_SAME_AGE_CHILDREN)))
+    )
+
+
+def test_same_age_ordinal_follows_child_name_deterministically():
+    """Pins WHICH source gets which ordinal, so the assignment is auditable, not just stable."""
+    from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union import SourceChild
+
+    children = [SourceChild(child_name=c, scope="Keyence") for c in _SAME_AGE_SAME_DATE_CHILDREN]
+    # Reversed input still sorts to child-name order.
+    ordered = [s.child_name for s in sorted(reversed(children), key=SourceChild.sort_key)]
+    assert ordered == list(_SAME_AGE_SAME_DATE_CHILDREN)
+
+
+def test_undeclared_age_sources_still_order_by_date_then_name():
+    unioned = _union_children(("20250622_plate01_sci", "20250623_plate01_sci"))
+    assert sorted(unioned["source_ordinal"]) == [0, 1]
+    assert sorted(unioned["time_index"]) == [0, 1]
+    # Honest absence: no declared age on either.
+    assert unioned["start_age_hpf"].isna().all()

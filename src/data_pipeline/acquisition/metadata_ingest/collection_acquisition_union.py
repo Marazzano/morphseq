@@ -117,14 +117,28 @@ class SourceChild:
     def plate_token(self) -> str:
         return parse_plate_token(self.child_name)
 
-    def sort_key(self) -> tuple[int, int, str]:
-        """Order sources by declared_hpf then date (undeclared age sorts LAST, stable by date).
+    def sort_key(self) -> tuple[int, int, str, str]:
+        """Order sources by declared_hpf, then date, then child_name (a TOTAL order).
 
-        ``(has_declared_hpf_flag, declared_hpf, date)``: sources WITH a declared age come first in
-        age order; sources with no declared age (``sci``/absent) sort after, by date.
+        ``(has_declared_hpf_flag, declared_hpf, date, child_name)``: sources WITH a declared age come
+        first in age order; sources with no declared age (``sci``/absent) sort after, by date.
+
+        ``child_name`` is the final tiebreaker and is what makes the order TOTAL. Two sources of one
+        plate legitimately share an age — a rescan, a repeat, or two runs at the same declared hpf —
+        and they may also share a date (``..._t28hpf`` and ``..._t28hpf_b``). Without this component
+        their keys are identical, so ``sorted`` (being stable) would fall back to whatever order the
+        filesystem glob produced, making ``source_ordinal`` differ between runs on the SAME data.
+        That is not cosmetic: the age map is keyed by ordinal and every source-aware join uses it, so
+        an unstable ordinal silently repoints ages and mappings at the wrong source. Child names are
+        unique within a collection dir (they ARE directory entries), so this always breaks the tie.
+
+        Same-age sources are fully supported: they get DISTINCT ordinals (and therefore distinct
+        merged time_index blocks) while sharing the same ``start_age_hpf``.
         """
         hpf = self.declared_hpf
-        return (0, hpf, self.date) if hpf is not None else (1, 0, self.date)
+        if hpf is not None:
+            return (0, hpf, self.date, self.child_name)
+        return (1, 0, self.date, self.child_name)
 
 
 # The experiment/well_id restamp lives in `collection_merge_primitives.rebuild_well_id_for_plate` — ONE
