@@ -4,15 +4,15 @@ Uses tmp_path fixture directories (never real data). Exercises the public wrappe
 only; the wrapper CONSUMES the singular resolver + shared composer, so these tests
 assert on behavior (which ids come out), not on any re-derived grammar.
 
-Run: PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_experiment_collection.py
+Run: PYTHONPATH=src pytest tests/data_pipeline/acquisition/metadata_ingest/test_collection_discovery.py
 """
 
 import pytest
 
 import pytest
 
-from data_pipeline.acquisition.metadata_ingest.experiment_collection import (
-    find_collection_plate_sources,
+from data_pipeline.acquisition.metadata_ingest.collection_discovery import (
+    discover_plate_sources,
     resolve_experiment_ids,
 )
 
@@ -31,7 +31,7 @@ def _make_collection(raw_root, coll_name, children, *, as_files=False, suffix=".
 
 # ── Inverse: {coll}_{plate} → its source children (acquisition ingest needs this) ──
 
-def test_find_collection_plate_sources_returns_that_plates_children_only(tmp_path):
+def test_discover_plate_sources_returns_that_plates_children_only(tmp_path):
     _make_collection(
         tmp_path,
         "cilia_snapshots_coll",
@@ -41,16 +41,16 @@ def test_find_collection_plate_sources_returns_that_plates_children_only(tmp_pat
             "20260607_plate02_t45hpf",  # a DIFFERENT plate — must NOT be returned
         ],
     )
-    coll, children = find_collection_plate_sources(
+    coll, children = discover_plate_sources(
         "cilia_snapshots_coll_plate01", tmp_path
     )
     assert coll == "cilia_snapshots_coll"
     assert children == ["20260607_plate01_t45hpf", "20260608_plate01_t72hpf"]
 
 
-def test_find_collection_plate_sources_rejects_non_collection_id(tmp_path):
+def test_discover_plate_sources_rejects_non_collection_id(tmp_path):
     with pytest.raises(ValueError, match="not a collection plate id"):
-        find_collection_plate_sources("20240418", tmp_path)
+        discover_plate_sources("20240418", tmp_path)
 
 
 # ── Core: 2 plates x 2 t-events → 2 experiment_ids ────────────────────────────
@@ -190,3 +190,96 @@ def test_empty_collection_fails_loud(tmp_path):
 
 def test_empty_entries_returns_empty(tmp_path):
     assert resolve_experiment_ids([], tmp_path) == []
+
+
+# ── ONE filesystem interpretation: both public callers must AGREE ─────────────────────
+# resolve_experiment_ids (run-target resolution) and discover_plate_sources (per-plate provenance)
+# used to be two independent `iterdir -> parse -> group` loops. They now share one private
+# authority, so they cannot diverge on child filtering, parsing, grouping, or ordering. These tests
+# pin that promise rather than trusting that two siblings happen to agree today.
+
+from data_pipeline.acquisition.metadata_ingest.collection_discovery import (
+    discover_plate_sources,
+    resolve_experiment_ids,
+)
+
+
+def _collection(tmp_path, name, children, *, files=False):
+    coll = tmp_path / name
+    coll.mkdir(parents=True, exist_ok=True)
+    for child in children:
+        if files:
+            (coll / f"{child}.nd2").write_bytes(b"")
+        else:
+            (coll / child).mkdir()
+    return coll
+
+
+def _plates_via_each_caller(tmp_path, name, children, *, files=False):
+    """(ids from resolve_experiment_ids, ids implied by discover_plate_sources groups)."""
+    _collection(tmp_path, name, children, files=files)
+    resolved = resolve_experiment_ids([name], raw_root=tmp_path, microscope="Keyence")
+    # Every resolved id must be discoverable, and its sources must be non-empty.
+    discovered = {eid: discover_plate_sources(eid, tmp_path)[1] for eid in resolved}
+    return resolved, discovered
+
+
+def test_both_callers_agree_on_a_multi_plate_collection(tmp_path):
+    resolved, discovered = _plates_via_each_caller(
+        tmp_path,
+        "chem_coll",
+        [
+            "20250622_plate01_t28hpf",
+            "20250623_plate01_t52hpf",
+            "20250622_plate02_t28hpf",
+        ],
+    )
+    assert sorted(resolved) == sorted(discovered)
+    assert discovered["chem_coll_plate01"] == [
+        "20250622_plate01_t28hpf",
+        "20250623_plate01_t52hpf",
+    ]
+    assert discovered["chem_coll_plate02"] == ["20250622_plate02_t28hpf"]
+
+
+def test_both_callers_agree_on_yx1_file_sources(tmp_path):
+    resolved, discovered = _plates_via_each_caller(
+        tmp_path,
+        "pbx_coll",
+        ["20260624_pilot_plate01_t33hpf", "20260625_pilot_plate01_t52hpf"],
+        files=True,
+    )
+    assert resolved == ["pbx_coll_plate01"]
+    assert len(discovered["pbx_coll_plate01"]) == 2
+
+
+def test_malformed_children_are_skipped_by_BOTH_callers(tmp_path):
+    # Stray sidecars carry no plate token; neither caller may treat them as sources.
+    resolved, discovered = _plates_via_each_caller(
+        tmp_path,
+        "chem_coll",
+        ["20250622_plate01_t28hpf", "Thumbs.db", "notes", "readme_no_date"],
+    )
+    assert resolved == ["chem_coll_plate01"]
+    assert discovered["chem_coll_plate01"] == ["20250622_plate01_t28hpf"]
+
+
+def test_same_age_sources_are_still_DISCOVERED_by_both(tmp_path):
+    """Discovery groups them; rejecting same-age ordering is provenance's job, not discovery's.
+
+    Keeps the layers honest: discovery reports what is on disk, the provenance producer applies
+    assert_source_order_unambiguous.
+    """
+    resolved, discovered = _plates_via_each_caller(
+        tmp_path, "chem_coll", ["20250622_plate01_t28hpf", "20250623_plate01_t28hpf"]
+    )
+    assert resolved == ["chem_coll_plate01"]
+    assert len(discovered["chem_coll_plate01"]) == 2
+
+
+def test_empty_collection_fails_loud_in_both_callers(tmp_path):
+    _collection(tmp_path, "empty_coll", [])
+    with pytest.raises(ValueError, match="Nothing to discover"):
+        resolve_experiment_ids(["empty_coll"], raw_root=tmp_path, microscope="Keyence")
+    with pytest.raises(ValueError, match="Nothing to discover"):
+        discover_plate_sources("empty_coll_plate01", tmp_path)

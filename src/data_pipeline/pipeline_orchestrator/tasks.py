@@ -56,7 +56,7 @@ def cmd_resolve_experiment_ids(args: argparse.Namespace) -> None:
     the count N (for `qsub -t 1-N`). Resolution mints nothing itself — it delegates to the
     identifiers grammar (DRY).
     """
-    from data_pipeline.acquisition.metadata_ingest.experiment_collection import resolve_experiment_ids
+    from data_pipeline.acquisition.metadata_ingest.collection_discovery import resolve_experiment_ids
 
     entries = [e.strip() for e in str(args.entries).split(",") if e.strip()]
     ids = resolve_experiment_ids(entries, raw_root=args.raw_root, microscope=args.microscope)

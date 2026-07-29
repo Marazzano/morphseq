@@ -280,3 +280,51 @@ def test_non_age_event_label_is_preserved():
     assert parse_plate_token("20260624_plate01_notes") == "plate01"
     assert parse_event_label("20260624_plate01_notes") == "notes"
     assert parse_declared_hpf("20260624_plate01_notes") is None
+
+
+# ── The `_coll` marker is defined ONCE (guard against inline re-detection) ─────────────
+# Collection-ness must be decided by the grammar, never by an ad-hoc `"_coll" in name` test
+# scattered through consumers. Inline detection is subtle and problematic: a consumer that tests
+# the suffix itself will disagree with the grammar the moment the marker or its placement changes
+# (e.g. suffix-on-a-name vs the `_coll_` marker INSIDE a plate id — two different questions).
+
+
+def test_marker_is_defined_once_in_the_grammar():
+    from data_pipeline.shared.identifiers import parsers
+
+    # One literal, and the id-marker is DERIVED from it (not a second literal).
+    assert parsers._COLLECTION_SUFFIX == "_coll"
+    assert parsers._COLLECTION_ID_MARKER == parsers._COLLECTION_SUFFIX + "_"
+
+
+def test_no_production_module_detects_the_marker_inline():
+    """No source file outside the grammar may test/split on the `_coll` literal.
+
+    Docstrings and CLI help text may MENTION the format for humans; what is forbidden is code that
+    decides collection-ness or extracts the collection name itself. Consumers must call
+    is_collection / is_collection_plate_id / parse_collection_name_from_plate_id.
+    """
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[4] / "src" / "data_pipeline"
+    grammar = src / "shared" / "identifiers" / "parsers.py"
+    # Code that tests or slices on the marker — not prose that merely names the format.
+    offenders = []
+    inline = re.compile(
+        r"""(endswith\(\s*['"]_coll|"""          # suffix test
+        r"""['"]_coll['"]\s*(?:in|==)|"""        # membership / equality test
+        r"""(?:in|==)\s*['"]_coll['"]|"""
+        r"""\.split\(\s*['"]_coll)"""            # splitting the id on the marker
+    )
+    for path in src.rglob("*.py"):
+        if path == grammar or "_Archive" in path.parts or "_archive" in path.parts:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            code = line.split("#", 1)[0]
+            if inline.search(code):
+                offenders.append(f"{path.relative_to(src)}:{lineno}")
+    assert not offenders, (
+        "These modules detect the '_coll' marker inline instead of calling the grammar "
+        f"(is_collection / is_collection_plate_id / parse_collection_name_from_plate_id): {offenders}"
+    )

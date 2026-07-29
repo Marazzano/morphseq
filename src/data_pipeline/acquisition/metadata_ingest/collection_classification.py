@@ -42,8 +42,8 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union impo
 from data_pipeline.acquisition.metadata_ingest.collection_classification_contract import (
     validate_collection_classification,
 )
-from data_pipeline.acquisition.metadata_ingest.experiment_collection import (
-    find_collection_plate_sources,
+from data_pipeline.acquisition.metadata_ingest.collection_discovery import (
+    discover_plate_sources,
 )
 from data_pipeline.shared.identifiers import is_collection_plate_id
 
@@ -88,7 +88,7 @@ def classify_experiment(
         validate_collection_classification(payload)
         return payload
 
-    collection_name, source_ids = find_collection_plate_sources(experiment_id, Path(raw_root))
+    collection_name, source_ids = discover_plate_sources(experiment_id, Path(raw_root))
     collection_dir = Path(raw_root) / collection_name
 
     # REUSE the acquisition union's ordering so source_ordinal here == source_ordinal downstream.
