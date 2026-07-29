@@ -32,7 +32,6 @@ Public API (all used by 3_attach_morphseq_labels.py; nothing here calls itself):
     load_plate_maps()  -> {experiment: {imaging_well: HashLocation}}
     build_crosswalk()  -> DataFrame[experiment, imaging_well, hash_well, hash_plate, rt_block]
     collection_time_hpf(experiment, plate_start_age) -> sequencing timepoint (30to48 -> 48)
-    rt_block_for(gene, collection_time_hpf)          -> 'Bl2', ...  (cross-check only)
     parse_embryo_id(embryo_ID)                       -> HashCoordinate | None
     build_seq_index()  -> {HashCoordinate: embryo_ID}
     resolve_seq_embryo_id(hash_plate, hash_well, rt_block, seq_index) -> embryo_ID | None
@@ -54,10 +53,9 @@ QC_DIR = PROJECT_ROOT / "results/mcolon/20260607_sci_cilia_gene14_imaging_qc"
 EXCEL_DIR = QC_DIR / "source_plate_metadata_excels"
 SEQ_METADATA_TSV = Path("/net/seahub_zfish/vol1/data/preprocessed/GENE14/GENE14_embryo_metadata.tsv")
 
-# CROSS-CHECK ONLY (2026-07-28) -- the pipeline now reads rt_block from each plate's Excel
-# `rt_block` sheet, so this table is no longer on the resolution path. Kept one more cycle
-# because it agrees with the sheets on all 589 resolved rows; delete it, and rt_block_for(),
-# once that has held for a session or two.
+# HISTORICAL (2026-07-28) -- rt_block now comes from each plate's Excel `rt_block` sheet, so
+# this table is off the resolution path. Kept commented as the bench-map record it was derived
+# from; it agreed with the sheets on all 589 resolved rows.
 #
 # The bench RT plate map: {gene: {collection_time_hpf: rt_block}}. An RT block covers one
 # contiguous run of hash columns = one gene at one collection time, so block does NOT depend
@@ -68,45 +66,45 @@ SEQ_METADATA_TSV = Path("/net/seahub_zfish/vol1/data/preprocessed/GENE14/GENE14_
 #
 # The three crispant targets were pooled into ONE block, so they all read Bl1 at every
 # timepoint; "crispant" is the name the imaging labels use when the specific target is not
-# broken out, and it maps to that same pooled block.
-RT_BLOCK_BY_GENE_AND_TIMEPOINT: dict[str, dict[int, str]] = {
-    "cep290": {
-        18: "Bl2",
-        24: "Bl3",
-        30: "Bl4",
-        48: "Bl5",
-    },
-    "b9d2": {
-        14: "Bl6",
-        18: "Bl7",
-        30: "Bl8",
-        48: "Bl9",
-    },
-    "foxj1a": {
-        18: "Bl1",
-        24: "Bl1",
-        30: "Bl1",
-        48: "Bl1",
-    },
-    "ift88": {
-        18: "Bl1",
-        24: "Bl1",
-        30: "Bl1",
-        48: "Bl1",
-    },
-    "sspo": {
-        18: "Bl1",
-        24: "Bl1",
-        30: "Bl1",
-        48: "Bl1",
-    },
-    "crispant": {
-        18: "Bl1",
-        24: "Bl1",
-        30: "Bl1",
-        48: "Bl1",
-    },
-}
+# # broken out, and it maps to that same pooled block.
+# RT_BLOCK_BY_GENE_AND_TIMEPOINT: dict[str, dict[int, str]] = {
+#     "cep290": {
+#         18: "Bl2",
+#         24: "Bl3",
+#         30: "Bl4",
+#         48: "Bl5",
+#     },
+#     "b9d2": {
+#         14: "Bl6",
+#         18: "Bl7",
+#         30: "Bl8",
+#         48: "Bl9",
+#     },
+#     "foxj1a": {
+#         18: "Bl1",
+#         24: "Bl1",
+#         30: "Bl1",
+#         48: "Bl1",
+#     },
+#     "ift88": {
+#         18: "Bl1",
+#         24: "Bl1",
+#         30: "Bl1",
+#         48: "Bl1",
+#     },
+#     "sspo": {
+#         18: "Bl1",
+#         24: "Bl1",
+#         30: "Bl1",
+#         48: "Bl1",
+#     },
+#     "crispant": {
+#         18: "Bl1",
+#         24: "Bl1",
+#         30: "Bl1",
+#         48: "Bl1",
+#     },
+# }
 
 
 # ------------------------------------------------------------------ small named types
@@ -328,26 +326,12 @@ def build_seq_index(meta: pd.DataFrame | None = None) -> dict[HashCoordinate, st
     return seq_index
 
 
-def rt_block_for(gene: str, collection_time_hpf) -> str | None:
-    """(gene, collection time) -> RT block, per the bench RT plate map.
-
-    CROSS-CHECK ONLY -- the plate Excels now carry an `rt_block` sheet, so resolution reads the
-    block from there. Kept to verify the sheets against the bench map; see the note on
-    RT_BLOCK_BY_GENE_AND_TIMEPOINT.
-    """
-    if gene is None or collection_time_hpf is None or pd.isna(collection_time_hpf):
-        return None
-    blocks_by_timepoint = RT_BLOCK_BY_GENE_AND_TIMEPOINT.get(str(gene).lower(), {})
-    return blocks_by_timepoint.get(int(collection_time_hpf))
-
-
 def resolve_seq_embryo_id(hash_plate: str | None, hash_well: str | None, rt_block: str | None,
                           seq_index: dict[HashCoordinate, str]) -> str | None:
     """Look up one fully-resolved coordinate -> its sequencing embryo_ID, else None.
 
     An exact lookup and nothing else: the coordinate IS what embryo_ID is made of, so a hit is
-    exact and a miss is honest. Deriving the rt_block is the caller's job (rt_block_for), which
-    keeps "which block is this?" separate from "which embryo is at this coordinate?".
+    exact and a miss is honest. All three parts come from the plate Excels, which keeps "which block is this?" separate from "which embryo is at this coordinate?".
     """
     if not hash_plate or not hash_well or not rt_block:
         return None

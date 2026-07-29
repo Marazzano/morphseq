@@ -91,13 +91,14 @@ sequencing `timepoint` for these is 48.
 keying to the sequencing side. Without this, a `_t01` snapshot labeled 30 fails to match its
 embryo, which sequencing filed under collection 48.
 
-### 6. RT block is the third coordinate, and the plate maps do not record it
+### 6. RT block is the third coordinate and is recorded in each plate workbook
 
 An RT block covers one contiguous run of hash columns = one gene at one collection time. Block
 does **not** depend on hash plate (cep290@18 is Bl2 on both P02 and P18).
 
-Transcribed from the bench RT plate map and verified against the sequencing metadata — all 27
-(experimental gene, timepoint) groups are single-block:
+The `rt_block` sheet was added to every live plate workbook from the bench RT plate map and
+verified against the sequencing metadata. All 27 (experimental gene, timepoint) groups are
+single-block:
 
 | gene | 14hpf | 18hpf | 24hpf | 30hpf | 48hpf |
 |---|---|---|---|---|---|
@@ -118,7 +119,7 @@ erases which experiment the control came from, and the `strain` column recovers 
 imaging (experiment, well)
   --image_to_hash_map, or identity when blank-->  hash_well
   --hash_plate_num-->                             hash_plate
-  gene + collection_time (30to48 -> 48)-->        rt_block
+  --rt_block------------------------------------>  rt_block
 
 HashCoordinate(hash_plate, hash_well, rt_block)  ->  embryo_ID
 ```

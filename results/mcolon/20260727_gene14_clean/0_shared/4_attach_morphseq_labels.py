@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-3_attach_morphseq_labels.py  --  the ONLY script that writes labels onto the spine
+4_attach_morphseq_labels.py  --  the ONLY script that writes labels onto the spine
 =============================================================================
 Left-joins imaging-derived labels onto `embryo_table.tsv` (from step 0) and
 rewrites it as `embryo_table_labeled.tsv`.
@@ -34,7 +34,7 @@ PHENOTYPE ONLY, BY DESIGN
     argument, so adding it later is one more call, not a rewrite.
 
     conda run -n segmentation_grounded_sam --no-capture-output python \
-        0_shared/3_attach_morphseq_labels.py
+        0_shared/4_attach_morphseq_labels.py
 =============================================================================
 """
 import importlib.util
@@ -160,7 +160,7 @@ def resolve_labels(label_csv, label_col="predicted_label", out_col="morphseq_phe
 
 def main():
     print("=" * 74)
-    print("3_attach_morphseq_labels.py")
+    print("4_attach_morphseq_labels.py")
     print("=" * 74)
 
     for p in (SPINE_IN, PHENO_CSV, MORPH_CSV, REGISTRY_CSV):
@@ -212,7 +212,7 @@ def main():
     print("\n  phenotype by gene target:")
     print(out[out.morphseq_phenotype.notna()]
           .groupby(["target", "morphseq_phenotype"]).size().to_string())
-    print("\ndone. next: 4_celltype_gate.py")
+    print("\ndone. next: 5_celltype_gate.py")
 
 
 if __name__ == "__main__":

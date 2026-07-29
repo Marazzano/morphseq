@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-4_celltype_gate.py  --  the ONE cell-type filter
+5_celltype_gate.py  --  the ONE cell-type filter
 =============================================================================
 Answers exactly one question per (gene, timepoint, cell_type):
 
@@ -43,7 +43,7 @@ TWO MODES
                and writes the FULL gate. Run this after abundance_dact fits.
 
     conda run -n segmentation_grounded_sam --no-capture-output python \
-        0_shared/4_celltype_gate.py [--fits ../abundance_dact/output]
+        0_shared/5_celltype_gate.py [--fits ../abundance_dact/output]
 =============================================================================
 """
 import argparse

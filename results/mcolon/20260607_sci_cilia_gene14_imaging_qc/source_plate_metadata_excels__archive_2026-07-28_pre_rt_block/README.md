@@ -46,6 +46,37 @@ formula-driven sheets remain inspectable.
 - imaging→sequencing resolution: 589 rows from the Excel sheets, matching the independent
   `RT_BLOCK_BY_GENE_AND_TIMEPOINT` code table exactly (0 disagreements)
 
+## Post-migration correction (2026-07-28)
+
+A later end-to-end identity audit parsed each sequencing `embryo_ID`, joined it back to the
+MorphSeq physical embryo, and required the MorphSeq and sequencing collection times to agree.
+That audit disproved part of the migration-time verification above.
+
+The archived `image_to_hash_map` sheets contain 1,710 formulas in two styles:
+
+- 1,672 formulas using `&` plus `TEXT(...)`
+- 38 formulas using `CONCATENATE(...)`
+
+The migration evaluator handled the first style but not the second. All 38 `CONCATENATE`
+formulas had empty cached values, so they were baked as blank cells in two crispant workbooks:
+
+- `20260319_cilia_crispant_24hpf_well_metadata.xlsx`
+- `20260320_cilia_crispant_48hpf_well_metadata.xlsx`
+
+Those 38 hash-well values have been restored in the live workbooks. A formula-by-formula audit
+now confirms that the live static values match all 1,710 archived formulas (1,710/1,710).
+
+The same audit found two errors that were already present in the archived workbooks and were
+therefore not caused by the RT-block migration:
+
+- crispant 48 hpf imaging columns 4-7 said hash plate P18, but their parsed sequencing embryos
+  are on P04; the live workbook now uses P04 and hash columns 1-4.
+- the H row of `20260324_cep290_30hpf_plate01` lacked hash-plate values; the live workbook now
+  matches rows A-G at P02 / Bl4.
+
+The corrections and their assertions are recorded in
+`../source_plate_metadata_excels/fix_known_gene14_plate_map_errors.py`.
+
 ## Related
 
 Consumer and full design notes: `results/mcolon/20260727_gene14_clean/0_shared/`
