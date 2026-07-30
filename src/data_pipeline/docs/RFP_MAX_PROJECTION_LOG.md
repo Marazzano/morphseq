@@ -20,12 +20,40 @@ Branch: `feat/experiment-collections` (worktree `.coll_wt`). Base commit: `37375
 | 3. Resolver gates opened | **DONE** | `52777158` |
 | 4. Executor max branch + de-hardcode `"BF"` | **DONE** | `55074b1e` |
 | 7. Channel-absent diagnostic failure | **DONE — was already built** | — |
-| 6. `index_map_path` rename + `write_index_map` column | in progress | |
-| 8. Per-run RFP config + real pbx validation | pending | |
+| 6. `index_map_path` rename + `write_index_map` column | **DONE** | `2068be8f` |
+| 8. Per-run RFP config + real pbx validation | **DONE** | `66facf69` |
 
-Suite after step 4: **12 failed / 463 passed** — inherited failures byte-identical to baseline
-throughout; every commit was regression-checked with
+**ALL STEPS COMPLETE.** Final suite: **12 failed / 466 passed** — the 12 are byte-identical to the
+pre-change baseline throughout; every commit was regression-checked with
 `comm -13 .rfp_work/baseline_failures.txt <current>`.
+
+## VERIFIED ON REAL DATA (2026-07-29)
+
+Materialized well A01 of the pbx collection (source `20260624_..._t33hpf.nd2`) and compared against
+the ND2 itself:
+
+```
+ND2 axes: T=1 P=96 Z=9 C=2 (array order ('P','Z','C','Y','X'),
+          channel_id RFP -> channel_index 1)
+RFP source stack: (9, 2304, 2304)     <- NOT (2, ...), the channel-as-Z bug stays fixed
+```
+
+| check | result |
+|---|---|
+| written PNG == `np.max(RFP_stack, axis=0)` | **byte-exact** |
+| dtype / range | uint16, max 12505 (no uint8 rescale) |
+| is it really RFP? | differs from BF's max; RFP mean 815 vs BF mean 18193 |
+| polarity | 34% of pixels well ABOVE median vs 0.7% below → signal-on-dark, **not inverted** |
+| layout | `RFP/projection/max/{image_id}.png`, `index_map_path` NA, `write_index_map` False |
+| visual | bright tdTomato embryo on a dark well, well rim visible — looks like a real max projection |
+
+Preview (display-stretched 422–1911 for viewing only; the stored file is untouched uint16):
+`.rfp_work/rfp_max_A01_preview.png`.
+
+### Known interaction, NOT a regression
+The executor is per-SOURCE, so handing it all 3 sources of a collection at once trips the existing
+`Ambiguous source_nd2_path` guard. Isolating one source is correct usage and is how this was
+validated. Wiring per-source fanout for collection materialization is separate work.
 
 ### Step 7 needed NO work — it already existed
 
@@ -145,7 +173,27 @@ number as the regression gate.
 
 **[UNILATERAL] Did not fix the channel-map case-sensitivity gap.** See above. It is a real latent
 bug but outside this change's scope, and fixing it silently would widen the diff. Recorded here
-instead.
+instead. (Moot for pbx: its raw name is lowercase `tdtomato`, which matches the map key exactly.)
+
+**[UNILATERAL] Deleted three resolver tests rather than adapting them.**
+`test_non_bf_channel_rejected`, `test_non_focus_stack_rejected`, `test_non_bf_z_stack_rejected`
+asserted the BF-only rule that this change removes on purpose. Adapting them would have preserved a
+fiction; replacements pin the new contract and derive their cases from the vocabularies.
+
+**[UNILATERAL] Keyence keeps `write_index_map: True` hardcoded on its projection rows.** The Keyence
+backend always writes its canvas focus_index_map, so the row states the truth — but it does not yet
+honor a `write_index_map: False` request. Threading the plan flag through the Keyence executor is
+follow-up work; a comment marks the spot.
+
+**[UNILATERAL] Left `BF__z_stack`'s `downsample_factor: 4` config override alone.** It predates this
+work and, per the mutual-exclusion rule, beats the 6.5 µm/px product default — so BF z-slices are
+still on the blind-factor path that `PLAN_zslice_stitch_resolution.md` P1 wanted to replace. Out of
+scope here, but worth knowing it is still live.
+
+**[UNILATERAL] Legacy fallback in `_row_requested_index_map`.** When the `write_index_map` column is
+absent the rule falls back to the old "focus_stack carries one" behavior, so the 232 already-written
+inventories keep validating. This softens the hard rename the user approved; flagged because it is a
+back-compat branch that should eventually be removed once those inventories regenerate.
 
 ---
 
