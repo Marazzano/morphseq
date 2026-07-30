@@ -94,15 +94,21 @@ def test_classify_undeclared_age_is_null_not_absent(tmp_path):
 
 # ── Single (non-collection): inert payload ─────────────────────────────────────
 
-def test_classify_single_experiment_is_inert(tmp_path):
+def test_single_experiment_is_a_collection_of_one(tmp_path):
+    """UNIVERSAL SOURCE MANIFEST: every experiment declares its sources.
+
+    A single experiment is a collection of ONE source at ordinal 0, so `source_ordinal` is a real
+    fact everywhere and downstream needs no backfill. Its age stays per-WELL in plate_metadata (a
+    plate can hold wells of different ages), so there is no age map here.
+    """
     payload = build_collection_provenance("20250912", tmp_path)
-    assert payload == {
-        "experiment_id": "20250912",
-        "is_collection": False,
-        "sources": [],
-        "start_age_by_source_ordinal": {},
-        "start_age_by_time_index": {},
-    }
+    assert payload["is_collection"] is False
+    assert len(payload["sources"]) == 1
+    only = payload["sources"][0]
+    assert only["source_ordinal"] == 0
+    assert only["file"] == "20250912"
+    assert only["declared_hpf"] is None      # per-well, from plate_metadata
+    assert payload["start_age_by_source_ordinal"] == {}
 
 
 # ── Writer round-trips through the validator ───────────────────────────────────
@@ -150,12 +156,16 @@ def test_validator_rejects_missing_key():
         validate_collection_provenance({"experiment_id": "x", "is_collection": False})
 
 
-def test_validator_rejects_noninert_single():
-    with pytest.raises(ValueError, match="must be inert"):
+def test_validator_rejects_a_single_declaring_many_sources():
+    with pytest.raises(ValueError, match="exactly ONE source"):
         validate_collection_provenance({
             "experiment_id": "x", "is_collection": False,
-            "sources": [{"file": "20250622_plate01_t28hpf", "raw_path": "/r/t28",
-                         "declared_hpf": 28, "source_ordinal": 0, "time_index": 0}],
+            "sources": [
+                {"file": "a", "raw_path": "/r/a", "declared_hpf": 28,
+                 "source_ordinal": 0, "time_index": 0},
+                {"file": "b", "raw_path": "/r/b", "declared_hpf": 52,
+                 "source_ordinal": 1, "time_index": 1},
+            ],
             "start_age_by_source_ordinal": {},
             "start_age_by_time_index": {},
         })

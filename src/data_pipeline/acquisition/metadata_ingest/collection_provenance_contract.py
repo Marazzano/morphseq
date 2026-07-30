@@ -175,10 +175,25 @@ def validate_collection_provenance(
             f"{legacy_age_map!r} vs {age_map!r}."
         )
 
-    # A single (non-collection) experiment carries no sources and no age map — consumers ignore it.
-    if not is_collection and (sources or age_map or legacy_age_map):
-        raise ValueError(
-            f"[{scope_label}] {experiment_id!r} is_collection=False but carries "
-            f"sources={sources!r} / start_age_by_source_ordinal={age_map!r}. A non-collection "
-            "payload must be inert (empty sources + empty age maps)."
-        )
+    # UNIVERSAL SOURCE MANIFEST: every experiment declares its sources, so `source_ordinal` is a real
+    # fact everywhere and downstream needs no backfill. A single experiment is a collection of ONE.
+    if not is_collection:
+        if len(sources) != 1:
+            raise ValueError(
+                f"[{scope_label}] {experiment_id!r} is_collection=False so it must declare exactly "
+                f"ONE source (a single experiment is a collection of one, source_ordinal 0); got "
+                f"{len(sources)}."
+            )
+        if int(sources[0]["source_ordinal"]) != 0:
+            raise ValueError(
+                f"[{scope_label}] {experiment_id!r} is_collection=False so its only source must be "
+                f"source_ordinal 0; got {sources[0]['source_ordinal']!r}."
+            )
+        # Age stays per-WELL for a single experiment (plate_metadata), so no age map here. A
+        # collection's age varies per SOURCE, which is the only reason the map exists.
+        if age_map or legacy_age_map:
+            raise ValueError(
+                f"[{scope_label}] {experiment_id!r} is_collection=False but carries an age map "
+                f"({age_map!r}). A single experiment's start_age_hpf is per-well biology in "
+                "plate_metadata; only a collection's age varies per source."
+            )

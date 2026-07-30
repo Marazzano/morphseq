@@ -77,10 +77,26 @@ def build_collection_provenance(
 
     # is_collection is DECIDED here (the create site) via the identity grammar — never re-derived.
     if not is_collection_plate_id(experiment_id):
+        # A single experiment is a collection of ONE source. Declaring it that way (rather than an
+        # inert payload) means `source_ordinal` is a REAL fact on every experiment, so downstream
+        # never needs a backfill or an "is it present?" branch — the universal source manifest.
+        #
+        # The age is deliberately NOT here: for a single experiment age is per-WELL biology living in
+        # plate_metadata (a plate can hold wells of different ages). Only a collection's age varies
+        # per SOURCE, which is why just the collection branch carries an age map. The consumer
+        # branches on is_collection for the age SOURCE, but keys on source_ordinal either way.
         payload = {
             "experiment_id": experiment_id,
             "is_collection": False,
-            "sources": [],
+            "sources": [
+                {
+                    "file": experiment_id,
+                    "raw_path": str(Path(raw_root) / experiment_id),
+                    "declared_hpf": None,   # per-well, from plate_metadata
+                    "source_ordinal": 0,
+                    "time_index": 0,        # legacy alias; equals source_ordinal
+                }
+            ],
             "start_age_by_source_ordinal": {},
             # TODO(collection-legacy-age-map): see the collection branch below.
             "start_age_by_time_index": {},
