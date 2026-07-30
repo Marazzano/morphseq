@@ -137,10 +137,9 @@ def _rekey_keyence_scope_metadata_to_plate(
 
     out = rebuild_well_id_for_plate(block, experiment_id)
 
-    # image_id = (well_id, channel_id, time_index). Keyence scope metadata names the channel token
-    # `channel` (the laggard name for channel_id — the pipeline's canonical token).
+    # image_id = (well_id, channel_id, time_index).
     if "image_id" in out.columns:
-        channel_col = "channel_id" if "channel_id" in out.columns else "channel"
+        channel_col = "channel_id"
         missing_for_image_id = [c for c in (channel_col, "time_index") if c not in out.columns]
         if missing_for_image_id:
             raise ValueError(

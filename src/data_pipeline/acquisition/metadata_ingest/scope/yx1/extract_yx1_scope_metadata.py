@@ -258,7 +258,7 @@ def extract_yx1_scope_metadata(
                         'absolute_start_time': timestamps[0],
                         'experiment_time_s': time_s,
                         'microscope_id': 'YX1',
-                        'channel': channel,
+                        'channel_id': channel,
                         'z_position': 0,
                     }
                     rows.append(row)
@@ -267,7 +267,7 @@ def extract_yx1_scope_metadata(
     df = pd.DataFrame(rows)
 
     log.info(f"Created metadata with {len(df)} rows")
-    log.info(f"Positions: {df['raw_position_label'].nunique()}, Timepoints: {df['time_index'].nunique()}, Channels: {df['channel'].nunique()}")
+    log.info(f"Positions: {df['raw_position_label'].nunique()}, Timepoints: {df['time_index'].nunique()}, Channels: {df['channel_id'].nunique()}")
 
     # Validate schema
     validate_dataframe_schema(df, REQUIRED_COLUMNS_SCOPE_METADATA, "YX1 scope metadata")

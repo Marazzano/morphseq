@@ -20,6 +20,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_channels import (
+    CHANNEL_ID_COLUMN,
+)
+
 from data_pipeline.acquisition.metadata_ingest.scope.shared.apply_position_to_well_mapping import (
     apply_position_to_well_mapping,
 )
@@ -45,7 +49,7 @@ def _yx1_scope_rows(experiment_id, *, source_ordinal, positions, time_indices):
                     "raw_position_label": position,
                     "time_index": time_index,
                     "source_ordinal": source_ordinal,
-                    "channel": "BF",
+                    CHANNEL_ID_COLUMN: "BF",
                     "x_um": 1000.0 + position + 5000 * source_ordinal,
                     "y_um": 2000.0,
                 }
@@ -189,7 +193,7 @@ def test_single_experiment_join_is_unchanged(tmp_path):
     scope = pd.DataFrame(
         [
             {"experiment_id": SINGLE, "raw_position_label": 0, "time_index": t,
-             "channel": "BF", "x_um": 1.0, "y_um": 2.0}
+             CHANNEL_ID_COLUMN: "BF", "x_um": 1.0, "y_um": 2.0}
             for t in (0, 1, 2)
         ]
     )

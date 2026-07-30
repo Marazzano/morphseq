@@ -31,6 +31,9 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_union impo
     PlateSource,
     union_collection_acquisition_inventories,
 )
+from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_channels import (
+    CHANNEL_ID_COLUMN,
+)
 from data_pipeline.acquisition.metadata_ingest.collection_scope_union import (
     union_collection_scope_metadata,
 )
@@ -75,11 +78,11 @@ def _per_source_frame(child, n_frames, *, for_inventory):
                 "time_index": time_index,
                 "position_index": well_number,
                 "raw_position_label": str(well_number),
-                "channel": "BF",
+                CHANNEL_ID_COLUMN: "BF",
             }
             if for_inventory:
                 row["time_index_claimed"] = time_index
-                row["channel_id"] = "BF"
+                row[CHANNEL_ID_COLUMN] = "BF"
             else:
                 row["image_id"] = f"{child}_{well_index}_BF_t{time_index:04d}"
             rows.append(row)
@@ -217,7 +220,7 @@ def _one_frame(child):
                 "time_index": 0,
                 "time_index_claimed": 0,
                 "position_index": 1,
-                "channel_id": "BF",
+                CHANNEL_ID_COLUMN: "BF",
             }
         ]
     )
@@ -307,11 +310,11 @@ def _sparse_source_frame(child, *, for_inventory):
                 "time_index": raw_time,
                 "position_index": well_number,
                 "raw_position_label": str(well_number),
-                "channel": "BF",
+                CHANNEL_ID_COLUMN: "BF",
             }
             if for_inventory:
                 row["time_index_claimed"] = raw_time
-                row["channel_id"] = "BF"
+                row[CHANNEL_ID_COLUMN] = "BF"
             else:
                 row["image_id"] = f"{child}_{well_index}_BF_t{raw_time:04d}"
             rows.append(row)

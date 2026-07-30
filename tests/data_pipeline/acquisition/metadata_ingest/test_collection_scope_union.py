@@ -23,7 +23,11 @@ from data_pipeline.acquisition.metadata_ingest.collection_acquisition_ingest imp
     _rekey_keyence_scope_metadata_to_plate,
 )
 from data_pipeline.acquisition.metadata_ingest.collection_scope_union import (
+    SOURCE_IDENTITY_COLUMNS,
     union_collection_scope_metadata,
+)
+from data_pipeline.acquisition.metadata_ingest.scope.shared.acquisition_channels import (
+    CHANNEL_ID_COLUMN,
 )
 
 PLATE = "chem28c_coll_plate01"
@@ -57,7 +61,7 @@ def _keyence_block(source_index, *, x_um, n_wells=2, n_frames=1):
                     "image_id": f"source{source_index}_{well_index}_BF_t{time_index:04d}",
                     "raw_position_label": str(well_number),
                     "time_index": time_index,
-                    "channel": "BF",
+                    CHANNEL_ID_COLUMN: "BF",
                     # Per-source acquisition facts — MUST survive distinct.
                     "x_um": x_um + well_number,
                     "micrometers_per_pixel": 0.5 + source_index,
@@ -73,7 +77,7 @@ def _yx1_block(source_index, *, x_um, n_positions=2):
             "experiment_id": [f"source{source_index}"] * n_positions,
             "raw_position_label": [str(p) for p in range(n_positions)],
             "time_index": [0] * n_positions,
-            "channel": ["BF"] * n_positions,
+            CHANNEL_ID_COLUMN: ["BF"] * n_positions,
             "x_um": [x_um + p for p in range(n_positions)],
         }
     )
@@ -108,6 +112,18 @@ def test_all_rows_are_kept():
 
 
 # ── Source identity + merged time axis ────────────────────────────────────────────────
+
+
+def test_source_identity_columns_come_from_the_contract():
+    """The union must stamp exactly what SOURCE_IDENTITY_COLUMNS declares — imported, not restated."""
+    blocks = {0: _keyence_block(0, x_um=1000.0), 1: _keyence_block(1, x_um=9000.0)}
+    unioned = union_collection_scope_metadata(
+        experiment_id=PLATE,
+        sources=_sources(),
+        read_source=lambda rec, _exp: blocks[rec["source_ordinal"]],
+    )
+    missing = [c for c in SOURCE_IDENTITY_COLUMNS if c not in unioned.columns]
+    assert not missing, f"union did not stamp contract columns {missing}"
 
 
 def test_source_identity_is_stamped():

@@ -114,7 +114,16 @@ def apply_position_to_well_mapping(
                 f"(joined on {merge_keys}). Missing preview: {sample}"
             )
 
-    mapped_df["channel_id"] = mapped_df.get("channel", "BF").astype(str)
+    # scope_metadata carries the canonical token as `channel_id` (it was historically the laggard
+    # name `channel`; converged 2026-07-29). Fail loud rather than defaulting: silently assuming BF
+    # would mislabel a fluorescence channel. NOTE the old `.get("channel", "BF")` returned a scalar
+    # on absence and then raised on .astype — it was never a working fallback.
+    if "channel_id" not in mapped_df.columns:
+        raise ValueError(
+            "scope metadata is missing 'channel_id' (the canonical channel token minted by the "
+            f"scope adapter's channel_map). Present columns: {sorted(mapped_df.columns)}."
+        )
+    mapped_df["channel_id"] = mapped_df["channel_id"].astype(str)
 
     if "raw_channel_name" in mapped_df.columns:
         mapped_df["channel_name_raw"] = mapped_df["raw_channel_name"].astype(str)

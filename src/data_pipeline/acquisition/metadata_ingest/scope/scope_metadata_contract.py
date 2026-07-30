@@ -34,6 +34,6 @@ REQUIRED_COLUMNS_SCOPE_METADATA = [
 
     # Acquisition metadata
     'microscope_id',
-    'channel',
+    'channel_id',
     'z_position',
 ]

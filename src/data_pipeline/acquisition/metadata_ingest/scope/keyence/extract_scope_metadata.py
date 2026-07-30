@@ -494,7 +494,7 @@ def extract_keyence_scope_metadata(
 
                 # Acquisition metadata
                 'microscope_id': 'Keyence',
-                'channel': normalized_channel,
+                'channel_id': normalized_channel,
                 'z_position': 0,  # Keyence FF images are single Z
 
                 # Provenance
