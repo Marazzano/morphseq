@@ -46,7 +46,7 @@ def _registry_validated_for_run(wc):
 
 
 rule build_physical_embryo_registry_for_well:
-    """Mint one per-well registry shard from the per-well frame_masks shard.
+    """Mint one per-well registry shard from the per-well frame_masks + frame_inventory shards.
 
     One job per well (cheap CPU: drop-duplicates + the track_id -> physical_embryo_id mint chain).
     The task verb validates the shard before writing.
@@ -58,6 +58,15 @@ rule build_physical_embryo_registry_for_well:
         # its contract.
         frame_masks=str(_frame_masks_per_well_csv("{experiment}", well_id="{well_id}")),
         frame_masks_validated=str(_frame_masks_per_well_validated("{experiment}", well_id="{well_id}")),
+        # frame_inventory supplies the per-well `n_sources` count that selects the EmbryoMergePolicy
+        # (NORMAL / BRIDGE / FRACTURE). The verb REQUIRES it; omitting it made every run that reached
+        # this rule die on argparse.
+        frame_inventory=str(_frame_inventory_artifact(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
+        frame_inventory_validated=str(_frame_inventory_validated(
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+        )),
     output:
         registry=str(_registry_artifact(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
@@ -66,6 +75,7 @@ rule build_physical_embryo_registry_for_well:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks build-physical-embryo-registry \
           --frame-masks-csv "{input.frame_masks}" \
+          --frame-inventory-csv "{input.frame_inventory}" \
           --output-csv "{output.registry}"
         """
 

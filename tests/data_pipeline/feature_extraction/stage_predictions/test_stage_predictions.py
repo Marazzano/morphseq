@@ -57,20 +57,30 @@ def _collection_provenance(n_sources=3):
     }
 
 
-def _with_source_ordinals(snip, ordinals):
-    """Stamp source_ordinal on snip rows (frame provenance carried through frame_inventory)."""
-    out = snip.copy()
-    out["source_ordinal"] = list(ordinals)
-    return out
+def _acquisition_inventory(snip, ordinals):
+    """The acquisition inventory OWNS (well_id, time_index) -> source_ordinal.
+
+    frame_inventory carries no per-frame source label (a frame has exactly one source), so the
+    consumer JOINS this at the consume boundary. Built to mirror the snip rows under test.
+    """
+    return pd.DataFrame(
+        {
+            "well_id": snip["well_id"].tolist(),
+            "time_index": snip["time_index"].tolist(),
+            "source_ordinal": list(ordinals),
+        }
+    )
 
 
 def test_collection_reads_start_age_by_source_ordinal():
     snip, _, inv, _ = make_inputs()
     plate = make_plate_metadata().drop(columns=["start_age_hpf"])
     # make_inputs emits time_index 0,1,2; as SNAPSHOT sources ordinal == time_index.
-    snip = _with_source_ordinals(snip, [0, 1, 2])
+    acq = _acquisition_inventory(snip, [0, 1, 2])
     df = compute_stage_prediction_features(
-        snip, inv, plate, collection_provenance=_collection_provenance()
+        snip, inv, plate,
+        acquisition_inventory_df=acq,
+        collection_provenance=_collection_provenance(),
     )
     by_t = df.set_index("time_index")["predicted_stage_hpf"]
     assert abs(by_t.loc[0] - 28.0) < 1e-9
@@ -87,9 +97,11 @@ def test_TIMELAPSE_source_stages_every_frame_from_ITS_OWN_age():
     snip, _, inv, _ = make_inputs()
     plate = make_plate_metadata().drop(columns=["start_age_hpf"])
     # ONE timelapse source owning merged time_index 0,1,2.
-    snip = _with_source_ordinals(snip, [0, 0, 0])
+    acq = _acquisition_inventory(snip, [0, 0, 0])
     df = compute_stage_prediction_features(
-        snip, inv, plate, collection_provenance=_collection_provenance(n_sources=1)
+        snip, inv, plate,
+        acquisition_inventory_df=acq,
+        collection_provenance=_collection_provenance(n_sources=1),
     )
     by_t = df.set_index("time_index")["predicted_stage_hpf"]
     # Every frame ages from 28 within its own source; elapsed drives the increase, not the ordinal.
@@ -102,21 +114,38 @@ def test_TIMELAPSE_source_stages_every_frame_from_ITS_OWN_age():
 def test_collection_missing_age_for_source_fails_loud():
     snip, _, inv, _ = make_inputs()
     plate = make_plate_metadata().drop(columns=["start_age_hpf"])
-    snip = _with_source_ordinals(snip, [0, 1, 2])
+    acq = _acquisition_inventory(snip, [0, 1, 2])
     provenance = _collection_provenance()
     provenance["start_age_by_source_ordinal"] = {"0": 28, "1": 52}  # missing ordinal 2
     with pytest.raises(ValueError, match="no start_age_hpf for source_ordinal 2"):
         compute_stage_prediction_features(
-            snip, inv, plate, collection_provenance=provenance
+            snip, inv, plate,
+            acquisition_inventory_df=acq,
+            collection_provenance=provenance,
         )
 
 
-def test_collection_without_source_ordinal_fails_loud():
+def test_collection_without_the_acquisition_inventory_fails_loud():
+    """A collection cannot resolve its per-frame source without the inventory that owns the mapping."""
     snip, _, inv, _ = make_inputs()
     plate = make_plate_metadata().drop(columns=["start_age_hpf"])
     with pytest.raises(ValueError, match="no 'source_ordinal'"):
         compute_stage_prediction_features(
             snip, inv, plate, collection_provenance=_collection_provenance()
+        )
+
+
+def test_frame_mapped_to_two_source_ordinals_fails_loud():
+    """A frame belongs to exactly ONE source; the merge gives each source a disjoint time block."""
+    snip, _, inv, _ = make_inputs()
+    plate = make_plate_metadata().drop(columns=["start_age_hpf"])
+    acq = _acquisition_inventory(snip, [0, 1, 2])
+    contradictory = pd.concat([acq, acq.assign(source_ordinal=9)], ignore_index=True)
+    with pytest.raises(ValueError, match="multiple source_ordinals"):
+        compute_stage_prediction_features(
+            snip, inv, plate,
+            acquisition_inventory_df=contradictory,
+            collection_provenance=_collection_provenance(),
         )
 
 

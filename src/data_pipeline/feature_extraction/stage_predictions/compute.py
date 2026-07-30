@@ -45,6 +45,35 @@ def _elapsed_time_s(frame_inventory_by_image: pd.DataFrame, image_id: str, snip_
     )
 
 
+def _source_ordinal_by_frame(acquisition_inventory_df: pd.DataFrame) -> dict[tuple[str, int], int]:
+    """Map ``(well_id, time_index) -> source_ordinal`` from the acquisition inventory.
+
+    WHY A JOIN, not a carried column. frame_inventory deliberately carries NO per-frame source
+    LABEL — only the per-well ``n_sources`` COUNT survives the merge seam (see
+    collection_acquisition_union: "no downstream stage needs to know WHICH source a frame came
+    from"). A frame has exactly ONE source, so labelling every frame would add nothing that the
+    acquisition inventory does not already state. This reads the fact from its OWNER at the consume
+    boundary instead of propagating it downstream.
+
+    Returns an empty map when the column is absent (a single experiment's inventory need not carry
+    it — its only source is ordinal 0, and the caller does not consult this map for singles).
+    """
+    if "source_ordinal" not in acquisition_inventory_df.columns:
+        return {}
+    frame = acquisition_inventory_df[["well_id", "time_index", "source_ordinal"]].drop_duplicates()
+    by_frame: dict[tuple[str, int], int] = {}
+    for well_id, time_index, source_ordinal in frame.itertuples(index=False):
+        key = (str(well_id), int(time_index))
+        previous = by_frame.setdefault(key, int(source_ordinal))
+        if previous != int(source_ordinal):
+            raise ValueError(
+                f"stage_predictions: acquisition inventory maps frame {key} to multiple "
+                f"source_ordinals ({previous}, {int(source_ordinal)}). A frame belongs to exactly "
+                "ONE source; the merge assigns each source a disjoint time_index block."
+            )
+    return by_frame
+
+
 def _start_age_hpf_for_snip(
     *,
     collection_provenance: dict | None,
@@ -104,6 +133,7 @@ def compute_stage_prediction_features(
     frame_inventory_df: pd.DataFrame,
     plate_metadata_df: pd.DataFrame,
     *,
+    acquisition_inventory_df: pd.DataFrame | None = None,
     collection_provenance: dict | None = None,
     model_version: str = MODEL_VERSION,
 ) -> pd.DataFrame:
@@ -116,6 +146,9 @@ def compute_stage_prediction_features(
     """
     frame_inventory_by_image = frame_inventory_df.set_index("image_id")
     plate_by_well = plate_metadata_df.set_index("well_id")
+    source_ordinal_by_frame = _source_ordinal_by_frame(
+        acquisition_inventory_df if acquisition_inventory_df is not None else pd.DataFrame()
+    )
 
     rows: list[dict] = []
     for _, snip in snip_inventory_df.iterrows():
@@ -142,10 +175,12 @@ def compute_stage_prediction_features(
                     f"stage_predictions: plate_metadata for well {well_id!r} is missing 'start_age_hpf'."
                 )
 
+        # A frame belongs to ONE source; the acquisition inventory owns that mapping.
+        source_ordinal = source_ordinal_by_frame.get((well_id, int(snip["time_index"])))
         start_age_hpf = _start_age_hpf_for_snip(
             collection_provenance=collection_provenance,
             plate=plate,
-            source_ordinal=snip.get("source_ordinal"),
+            source_ordinal=source_ordinal,
             well_id=well_id,
             snip_id=snip_id,
         )

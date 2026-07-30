@@ -698,6 +698,7 @@ def cmd_stage_predictions(args: argparse.Namespace) -> None:
         plate_metadata_csv=args.plate_metadata_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         collection_provenance_json=args.collection_provenance_json,
+        acquisition_inventory_csv=getattr(args, "acquisition_inventory_csv", None),
         output_csv=args.output_csv,
     )
 
@@ -1675,6 +1676,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_stage.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_stage.add_argument("--plate-metadata-csv", type=Path, required=True)
     p_stage.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_stage.add_argument("--acquisition-inventory-csv", type=Path, default=None,
+                         help="the experiment's acquisition inventory — OWNS the per-frame "
+                              "source_ordinal mapping a collection's age lookup needs. Optional: a "
+                              "single experiment has one source (ordinal 0) and does not consult it")
     p_stage.add_argument("--collection-provenance-json", type=Path, required=True,
                          help="the experiment's collection-provenance artifact (declares is_collection "
                               "+ the source_ordinal->start_age_hpf map)")

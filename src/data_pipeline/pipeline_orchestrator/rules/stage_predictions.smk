@@ -50,6 +50,7 @@ rule build_stage_predictions_for_well:
         physical_embryo_registry=str(_stage_registry("{experiment}", well_id="{well_id}")),
         physical_embryo_registry_validated=str(_stage_registry_validated("{experiment}", well_id="{well_id}")),
         collection_provenance=str(_stage_collection_provenance("{experiment}")),
+        acquisition_inventory=SCOPE_ACQUISITION_INVENTORY_CSV,
     output:
         stage_predictions=str(_stage_artifact(
             "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
@@ -62,6 +63,7 @@ rule build_stage_predictions_for_well:
           --plate-metadata-csv "{input.plate_metadata}" \
           --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
           --collection-provenance-json "{input.collection_provenance}" \
+          --acquisition-inventory-csv "{input.acquisition_inventory}" \
           --output-csv "{output.stage_predictions}"
         """
 
