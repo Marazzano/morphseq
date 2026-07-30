@@ -60,7 +60,6 @@ from data_pipeline.acquisition.image_materialization import materialized_image_p
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     derive_image_id,
     derive_well_id,
-    well_n_sources,
 )
 from data_pipeline.acquisition.image_materialization.materialization_plan import ResolvedImageProduct
 from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
@@ -94,7 +93,6 @@ def _resolve_tiff(stored, *, input_root) -> "Path":
 # Same emitted schema as YX1 — the shared frame_inventory_contract governs both.
 _EMITTED_COLUMNS: tuple[str, ...] = (
     "experiment_id",
-    "n_sources",
     "well_index",
     "well_id",
     "channel_id",
@@ -637,14 +635,6 @@ def materialize_keyence_product_for_well(
 
     inv_df = pd.DataFrame(rows, columns=list(_EMITTED_COLUMNS))
 
-    # PROVENANCE stamp — the per-well merge COUNT, carried through from the acquisition inventory.
-    # n_sources is the ONE merge fact that cannot be re-derived downstream (a merged snapshot's
-    # time_index 0,1 is indistinguishable from a timelapse's first two frames), and the
-    # physical_embryo registry reads it to pick its EmbryoMergePolicy. It is a per-WELL constant, so
-    # it is stamped once on the assembled frame rather than threaded through every row builder.
-    # Previously absent here, so backfill_n_sources defaulted it to 1 and a merged collection well
-    # was silently recorded as UNMERGED.
-    inv_df["n_sources"] = well_n_sources(well_acquisition_inventory_df, well_id=well_id)
 
     missing = [c for c in _REQUIRED_IMAGE_CORE_COLUMNS if c not in inv_df.columns]
     if missing:

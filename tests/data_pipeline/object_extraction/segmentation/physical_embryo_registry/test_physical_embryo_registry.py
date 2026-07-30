@@ -22,13 +22,27 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.valid
 from data_pipeline.shared.identifiers import build_track_id, build_well_id
 
 
-# -- Frame-inventory helper (Agent B's shared contract: per-well n_sources column) -----
+# -- Collection-provenance helper (the OWNER of the n_sources merge count) --------------
 
 def _frame_inventory(well_ids, n_sources):
-    """A minimal frame_inventory carrying one n_sources row per well (constant within well)."""
-    return pd.DataFrame(
-        [{"well_id": well_id, "n_sources": n_sources} for well_id in dict.fromkeys(well_ids)]
-    )
+    """A minimal collection-provenance payload declaring ``n_sources`` sources.
+
+    n_sources = len(sources): the provenance artifact OWNS the merge count. It is NOT read from a
+    per-frame column — n_sources is an experiment-grain constant, so carrying it on every frame row
+    made frame_inventory a courier for a fact it does not own. Every experiment declares a
+    provenance artifact (a single experiment is a collection of ONE source).
+    """
+    return {
+        "experiment_id": "20250912",
+        "is_collection": n_sources > 1,
+        "sources": [
+            {"file": f"src{i}", "raw_path": f"/r/src{i}", "declared_hpf": None,
+             "source_ordinal": i, "time_index": i}
+            for i in range(n_sources)
+        ],
+        "start_age_by_source_ordinal": {},
+    }
+
 
 
 # -- Contract -----------------------------------------------------------------

@@ -1233,11 +1233,11 @@ def cmd_frame_masks(args: argparse.Namespace) -> None:
 
 
 def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
-    """Mint the per-well physical_embryo_registry shard from a frame_masks + frame_inventory shard.
+    """Mint the per-well physical_embryo_registry shard from frame_masks + collection provenance.
 
-    Thin dispatcher: read frame_masks + frame_inventory CSVs -> Stage-2 builder (which reads
-    per-well n_sources and validates before returning) -> write the registry CSV. No domain
-    logic here.
+    Thin dispatcher: read the frame_masks CSV + the provenance artifact -> Stage-2 builder (which
+    resolves n_sources from provenance and validates before returning) -> write the registry CSV.
+    No domain logic here.
     """
     import pandas as pd
 
@@ -1245,9 +1245,13 @@ def cmd_build_physical_embryo_registry(args: argparse.Namespace) -> None:
         build_physical_embryo_registry,
     )
 
+    from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+        read_collection_provenance,
+    )
+
     registry = build_physical_embryo_registry(
         pd.read_csv(args.frame_masks_csv),
-        pd.read_csv(args.frame_inventory_csv),
+        read_collection_provenance(args.collection_provenance_json),
     )
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)
     registry.to_csv(args.output_csv, index=False)
@@ -1872,7 +1876,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_per_build = sub.add_parser("build-physical-embryo-registry")
     p_per_build.add_argument("--frame-masks-csv", type=Path, required=True)
-    p_per_build.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_per_build.add_argument("--collection-provenance-json", type=Path, required=True,
+                             help="the experiment's collection-provenance artifact — OWNS the "
+                                  "n_sources merge count (len(sources)) that selects the "
+                                  "EmbryoMergePolicy")
     p_per_build.add_argument("--output-csv", type=Path, required=True)
     p_per_build.set_defaults(func=cmd_build_physical_embryo_registry)
 
