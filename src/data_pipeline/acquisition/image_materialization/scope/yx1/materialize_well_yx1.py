@@ -53,6 +53,7 @@ from data_pipeline.acquisition.image_materialization.frame_inventory_contract im
     derive_well_id,
 )
 from data_pipeline.acquisition.image_materialization.materialization_plan import (
+    IMPLEMENTED_PROJECTION_METHODS,
     ResolvedImageProduct,
     ResolvedMaterializationPlan,
 )
@@ -173,31 +174,60 @@ def materialize_max_projection(stack_zyx: np.ndarray) -> tuple[np.ndarray, np.nd
             the maximum — the max-projection analogue of ``focus_index_map``. Same convention: an
             axis offset into ``stack_zyx``, NOT an acquisition ``z_index`` label; the caller pairs it
             with an ordered ``z_indices`` array to recover labels.
+
+    **TIES RESOLVE TO THE LOWEST Z OFFSET** (``np.argmax`` returns the first occurrence). This is not
+    a detail: in fluorescence, dark background is frequently tied across EVERY plane, so those pixels
+    all record offset 0. Plane 0 did not "win" there in any meaningful sense — it was simply first.
+    Read a max index map as trustworthy only where the projection is above background; do not
+    interpret background offsets as a focal-plane measurement.
+
+    ``int32`` matches ``focus_index_map``'s dtype so one reader and one validator serve both, even
+    though a Z count that fits in ``uint16`` would suffice. Consistency is the deliberate choice.
     """
     return stack_zyx.max(axis=0), stack_zyx.argmax(axis=0).astype(np.int32)
 
 
-# Projection primitives wired for THIS backend, keyed by the canonical projection_method token.
-# The resolver gates on capability across scopes; this is what the YX1 executor can actually run.
-_PROJECTION_PRIMITIVES: frozenset[str] = frozenset({"focus_stack", "max"})
+# THE registry of wired projection primitives, keyed by canonical projection_method token.
+#
+# This is the SINGLE SOURCE OF TRUTH for "which methods can actually run". The resolver imports
+# IMPLEMENTED_PROJECTION_METHODS (derived from these keys) rather than restating the set, so a method
+# cannot be accepted by the resolver but missing from the executor — the two were previously two
+# hand-written copies of {"focus_stack", "max"} in two modules, which is drift waiting to happen.
+# Adding a method means adding ONE entry here; validation follows automatically.
+#
+# Every primitive returns (projection, index_map) so the caller needs no per-method branching for
+# provenance — whether the index map is WRITTEN is the plan's write_index_map choice. Primitives
+# taking no device just ignore the kwarg.
+_PROJECTION_PRIMITIVES = {
+    "focus_stack": lambda stack, device: materialize_ff_projection(stack, device=device),
+    "max": lambda stack, device: materialize_max_projection(stack),
+}
+
+# The declared capability set lives in materialization_plan (the resolver may not import backends).
+# This registry must cover it EXACTLY — asserted at import so a method declared implemented but never
+# wired, or wired but never declared, is a startup error rather than a runtime surprise.
+_declared = set(IMPLEMENTED_PROJECTION_METHODS)
+_wired = set(_PROJECTION_PRIMITIVES)
+if _declared != _wired:
+    raise RuntimeError(
+        "YX1 projection primitives disagree with IMPLEMENTED_PROJECTION_METHODS: "
+        f"declared-not-wired={sorted(_declared - _wired)}, "
+        f"wired-not-declared={sorted(_wired - _declared)}. Both must list the same methods."
+    )
+del _declared, _wired
 
 
 def _project_stack(
     stack_zyx: np.ndarray, *, projection_method: str, device: str
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Dispatch one Z-stack to the requested projection primitive.
-
-    Both primitives return ``(projection, index_map)`` so the caller needs no per-method branching
-    for provenance — whether the index map is WRITTEN is the plan's ``write_index_map`` choice.
-    """
-    if projection_method == "focus_stack":
-        return materialize_ff_projection(stack_zyx, device=device)
-    if projection_method == "max":
-        return materialize_max_projection(stack_zyx)
-    raise ValueError(
-        f"No YX1 projection primitive for projection_method={projection_method!r}; "
-        f"wired: {sorted(_PROJECTION_PRIMITIVES)}."
-    )
+    """Dispatch one Z-stack to the requested projection primitive."""
+    primitive = _PROJECTION_PRIMITIVES.get(projection_method)
+    if primitive is None:
+        raise ValueError(
+            f"No YX1 projection primitive for projection_method={projection_method!r}; "
+            f"wired: {sorted(IMPLEMENTED_PROJECTION_METHODS)}."
+        )
+    return primitive(stack_zyx, device)
 
 
 # ---------------------------------------------------------------------------
@@ -311,11 +341,11 @@ def materialize_yx1_product_for_well(
     # channel_id is NOT gated: any canonical channel the acquisition inventory actually contains is
     # materializable. resolve_channel_index() below fails loud if the requested channel is absent.
     if resolved_product.image_product_type == "projection":
-        if resolved_product.projection_method not in _PROJECTION_PRIMITIVES:
+        if resolved_product.projection_method not in IMPLEMENTED_PROJECTION_METHODS:
             raise ValueError(
                 f"YX1 projection materialization has no primitive for projection_method="
                 f"{resolved_product.projection_method!r}. Wired: "
-                f"{sorted(_PROJECTION_PRIMITIVES)}."
+                f"{sorted(IMPLEMENTED_PROJECTION_METHODS)}."
             )
     elif resolved_product.image_product_type == "z_stack":
         if resolved_product.projection_method is not None:

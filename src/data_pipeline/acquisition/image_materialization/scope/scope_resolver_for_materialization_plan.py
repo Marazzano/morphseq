@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 
 from data_pipeline.acquisition.image_materialization.materialization_plan import (
+    IMPLEMENTED_PROJECTION_METHODS,
     ImageMaterializationPlan,
     ImageProductRequest,
     ResolvedImageProduct,
@@ -43,13 +44,6 @@ from data_pipeline.acquisition.image_materialization.materialization_plan import
 )
 
 log = logging.getLogger(__name__)
-
-
-# Projection methods with a real primitive behind them. ``SUPPORTED_PROJECTION_METHODS`` in
-# materialization_plan.py is the GRAMMAR (what the vocabulary can express); this is CAPABILITY (what
-# the code can actually execute). "mean" is grammatical but unimplemented, so it is rejected here
-# rather than failing deeper with a confusing message.
-_IMPLEMENTED_PROJECTION_METHODS: frozenset[str] = frozenset({"focus_stack", "max"})
 
 
 def _assert_projection_method_implemented(
@@ -66,12 +60,12 @@ def _assert_projection_method_implemented(
     """
     if request.image_product_type != "projection":
         return
-    if request.projection_method not in _IMPLEMENTED_PROJECTION_METHODS:
+    if request.projection_method not in IMPLEMENTED_PROJECTION_METHODS:
         raise UnsupportedMaterializationRequest(
             f"[{scope_label}] projection_method={request.projection_method!r} is in the plan "
             f"vocabulary but has no implementation. Implemented: "
-            f"{sorted(_IMPLEMENTED_PROJECTION_METHODS)}. To add one, write the primitive and wire it "
-            "in the scope executor, then extend _IMPLEMENTED_PROJECTION_METHODS."
+            f"{sorted(IMPLEMENTED_PROJECTION_METHODS)}. To add one, write the primitive and wire it "
+            "in the scope executor, then extend IMPLEMENTED_PROJECTION_METHODS."
         )
 
 

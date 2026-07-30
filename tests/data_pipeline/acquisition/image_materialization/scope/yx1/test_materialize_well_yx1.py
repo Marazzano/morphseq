@@ -687,3 +687,60 @@ class TestMaterializeYX1Well:
                 smoke_max_time_indices=3,
             )
         assert len(df) == 3
+
+
+class TestProjectionCapabilityRegistry:
+    """Grammar vs capability must not drift apart in two hand-written copies.
+
+    Before this, {"focus_stack", "max"} was typed literally in BOTH the resolver and the executor,
+    so a method could be accepted by one and missing from the other. The registry is now the single
+    source of truth and the executor asserts coverage at import.
+    """
+
+    def test_registry_matches_declared_capability(self):
+        from data_pipeline.acquisition.image_materialization.materialization_plan import (
+            IMPLEMENTED_PROJECTION_METHODS,
+        )
+        from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
+            _PROJECTION_PRIMITIVES,
+        )
+        assert set(_PROJECTION_PRIMITIVES) == set(IMPLEMENTED_PROJECTION_METHODS)
+
+    def test_capability_is_a_subset_of_grammar(self):
+        """Something runnable but unsayable would be unreachable from any config."""
+        from data_pipeline.acquisition.image_materialization.materialization_plan import (
+            IMPLEMENTED_PROJECTION_METHODS,
+            SUPPORTED_PROJECTION_METHODS,
+        )
+        assert IMPLEMENTED_PROJECTION_METHODS <= SUPPORTED_PROJECTION_METHODS
+
+
+class TestMaxProjectionTies:
+    """np.argmax returns the FIRST occurrence, which matters for fluorescence backgrounds."""
+
+    def test_ties_resolve_to_the_lowest_z_offset(self):
+        from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
+            materialize_max_projection,
+        )
+        stack = np.zeros((5, 4, 4), dtype=np.uint16)
+        stack[:, 0, 0] = 700          # every plane tied
+        stack[3, 1, 1] = 900          # a real winner on plane 3
+
+        projection, index_map = materialize_max_projection(stack)
+
+        assert index_map[0, 0] == 0, "a tie must record the lowest stack-axis offset"
+        assert index_map[1, 1] == 3, "a real maximum records its own plane"
+        assert projection[0, 0] == 700
+
+    def test_all_zero_background_records_offset_zero_meaninglessly(self):
+        """Documents the trap: dark background is tied everywhere, so it all reads as plane 0.
+
+        Plane 0 did not win there in any physical sense. A max index map is only interpretable
+        where the projection is above background.
+        """
+        from data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1 import (
+            materialize_max_projection,
+        )
+        projection, index_map = materialize_max_projection(np.zeros((7, 3, 3), dtype=np.uint16))
+        assert np.all(index_map == 0)
+        assert np.all(projection == 0)

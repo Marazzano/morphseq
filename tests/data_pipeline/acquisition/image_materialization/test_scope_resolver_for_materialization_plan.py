@@ -3,6 +3,7 @@
 import pytest
 
 from data_pipeline.acquisition.image_materialization.materialization_plan import (
+    IMPLEMENTED_PROJECTION_METHODS,
     ImageMaterializationPlan,
     ImageProductRequest,
     SUPPORTED_CHANNELS,
@@ -11,17 +12,17 @@ from data_pipeline.acquisition.image_materialization.materialization_plan import
     UnsupportedScopeError,
 )
 from data_pipeline.acquisition.image_materialization.scope.scope_resolver_for_materialization_plan import (
-    _IMPLEMENTED_PROJECTION_METHODS,
     resolve_materialization_plan,
     _resolve_keyence_xy_composition,
 )
 from data_pipeline.shared.channel_vocabulary import BRIGHTFIELD_CHANNELS
 
-# Derived from the contracts, never re-typed here: the vocabulary owner is
-# materialization_plan / channel_vocabulary, and the capability owner is the resolver. If a channel is
-# added or a method gains an implementation, these sets follow automatically.
+# Derived from the contracts, never re-typed here. Both the vocabulary (SUPPORTED_*) and the
+# capability set (IMPLEMENTED_PROJECTION_METHODS) are owned by materialization_plan; the resolver
+# imports the latter rather than restating it, and the YX1 executor asserts its primitive registry
+# covers it exactly. Adding a channel or implementing a method extends coverage automatically.
 _FLUORESCENCE_CHANNELS = sorted(SUPPORTED_CHANNELS - set(BRIGHTFIELD_CHANNELS))
-_UNIMPLEMENTED_METHODS = sorted(SUPPORTED_PROJECTION_METHODS - _IMPLEMENTED_PROJECTION_METHODS)
+_UNIMPLEMENTED_METHODS = sorted(SUPPORTED_PROJECTION_METHODS - IMPLEMENTED_PROJECTION_METHODS)
 
 
 def _plan(**overrides):
@@ -97,7 +98,7 @@ class TestYX1RequiredAxes:
         assert product.xy_composition == "identity"
 
     @pytest.mark.parametrize("channel_id", sorted(SUPPORTED_CHANNELS))
-    @pytest.mark.parametrize("projection_method", sorted(_IMPLEMENTED_PROJECTION_METHODS))
+    @pytest.mark.parametrize("projection_method", sorted(IMPLEMENTED_PROJECTION_METHODS))
     def test_every_channel_resolves_with_every_implemented_method(
         self, channel_id, projection_method
     ):

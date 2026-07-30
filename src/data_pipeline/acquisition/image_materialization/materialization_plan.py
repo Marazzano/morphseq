@@ -33,8 +33,21 @@ SUPPORTED_CHANNELS: frozenset[str] = frozenset(VALID_CHANNEL_NAMES)
 # Image product SHAPE (encoded in the path tree); method lives in frame_inventory, not the path.
 SUPPORTED_IMAGE_PRODUCT_TYPES: frozenset[str] = frozenset({"projection", "z_stack"})
 
-# How a Z-stack collapses to one 2D frame.
+# How a Z-stack collapses to one 2D frame. This is GRAMMAR: what a config may legally SAY.
 SUPPORTED_PROJECTION_METHODS: frozenset[str] = frozenset({"focus_stack", "max", "mean"})
+
+# The subset that has a real primitive behind it — CAPABILITY: what the code can actually RUN.
+#
+# Grammar and capability are different questions, and conflating them is why a config asking for
+# "mean" used to pass plan validation and then fail a layer deeper with a confusing message.
+#
+# THE SINGLE SOURCE OF TRUTH, imported by both the scope resolver (which rejects an unimplemented
+# method) and the YX1 executor (whose _PROJECTION_PRIMITIVES registry must cover exactly this set,
+# asserted by test). It lives here rather than in a backend because the resolver may not import
+# backends, and duplicating the set in two modules is drift waiting to happen.
+#
+# Adding a method: write the primitive, register it in the executor, then add the token here.
+IMPLEMENTED_PROJECTION_METHODS: frozenset[str] = frozenset({"focus_stack", "max"})
 
 # REQUEST vocabulary for XY composition (what a config/user may ask for).
 #   auto     — let the scope decide (the recommended default)
