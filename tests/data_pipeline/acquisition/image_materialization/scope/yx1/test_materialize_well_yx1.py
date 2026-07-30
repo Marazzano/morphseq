@@ -374,13 +374,13 @@ class TestMaterializeYX1Well:
         inv = _make_inventory(n_times=2)
         df, _, _ = self._run(inv, tmp_path, candidate=True)
         # every projection row carries a populated focus_index_map_path, 1:1 with its image_id
-        assert df["focus_index_map_path"].notna().all()
+        assert df["index_map_path"].notna().all()
         for _, row in df.iterrows():
             expected = focus_index_map_path(
                 tmp_path, experiment_id=row["experiment_id"], well_id=WELL_ID,
                 channel_id=row["channel_id"], time_index=row["time_index"], candidate=True,
             )
-            assert row["focus_index_map_path"] == str(expected)
+            assert row["index_map_path"] == str(expected)
             # the .npz was actually written (np.savez is NOT mocked in _run) and is loadable
             data = np.load(expected)
             assert "focus_index_map" in data
@@ -389,7 +389,7 @@ class TestMaterializeYX1Well:
     def test_focus_index_map_npz_has_offsets_bounded_by_z_indices(self, tmp_path):
         inv = _make_inventory(n_times=1)
         df, _, _ = self._run(inv, tmp_path, candidate=True)
-        npz_path = df.iloc[0]["focus_index_map_path"]
+        npz_path = df.iloc[0]["index_map_path"]
         data = np.load(npz_path)
         fim = data["focus_index_map"]
         z_indices = data["z_indices"]
@@ -418,7 +418,7 @@ class TestMaterializeYX1Well:
     def test_rfp_max_writes_no_index_map_when_plan_declines_it(self, tmp_path):
         inv = _make_two_channel_inventory(n_times=2)
         df, _, _ = self._run(inv, tmp_path, resolved_plan=RFP_MAX_PLAN)
-        assert df["focus_index_map_path"].isna().all()
+        assert df["index_map_path"].isna().all()
 
     def test_channel_identity_invariant_catches_a_reintroduced_literal(self, tmp_path):
         """The guard must FIRE, not just exist.
@@ -478,7 +478,7 @@ class TestMaterializeYX1Well:
         stack[2, 1, 1] = 5000  # plane 2 wins at (1,1)
         df, _, _ = self._run(inv, tmp_path, resolved_plan=plan, stack=stack)
 
-        npz_path = df.iloc[0]["focus_index_map_path"]
+        npz_path = df.iloc[0]["index_map_path"]
         assert not pd.isna(npz_path)
         data = np.load(npz_path)
         index_map, z_indices = data["focus_index_map"], data["z_indices"]
@@ -515,7 +515,7 @@ class TestMaterializeYX1Well:
         assert (df["image_product_type"] == "z_stack").all()
         assert df["projection_method"].isna().all()
         # z_stack rows carry NO focus-stack provenance.
-        assert df["focus_index_map_path"].isna().all()
+        assert df["index_map_path"].isna().all()
         assert set(df["image_id"]) == {
             f"{WELL_ID}_BF_z0000_t0000",
             f"{WELL_ID}_BF_z0002_t0000",

@@ -209,7 +209,7 @@ def test_emits_final_image_metadata_and_oriented_focus_map(tmp_path):
     with Image.open(row["image_path"]) as im:
         assert im.size == (2, 4)
 
-    fim = np.load(row["focus_index_map_path"])["focus_index_map"]
+    fim = np.load(row["index_map_path"])["focus_index_map"]
     np.testing.assert_array_equal(
         fim,
         np.array(
@@ -336,7 +336,7 @@ def test_z_stack_stitches_and_emits_one_inventory_row_per_plane(tmp_path):
     assert df["z_index"].tolist() == [0, 1]
     assert df["image_product_type"].tolist() == ["z_stack", "z_stack"]
     assert df["projection_method"].isna().all()
-    assert df["focus_index_map_path"].isna().all()
+    assert df["index_map_path"].isna().all()
     assert df["image_id"].str.contains(r"_z000[01]_t0000$").all()
     assert df["raw_tile_count"].tolist() == [2, 2]
     # z_stack now carries the canonical display polarity like every other product (default True).

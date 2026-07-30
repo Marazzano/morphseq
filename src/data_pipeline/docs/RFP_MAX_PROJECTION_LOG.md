@@ -10,18 +10,51 @@ Branch: `feat/experiment-collections` (worktree `.coll_wt`). Base commit: `37375
 
 ## Status
 
-| Step | State |
-|---|---|
-| Baseline test capture | DONE — 12 failed / 436 passed |
-| RFP test subject identified | DONE — pbx 3-source YX1 collection |
-| 1. `write_index_map` plan field + schema v2 | pending |
-| 2. Polarity base default flip | pending |
-| 3. Resolver gates opened | pending |
-| 4. Executor max branch + de-hardcode `"BF"` | pending |
-| 5. Exact-pixel uint16 test | pending |
-| 6. `index_map_path` rename + `write_index_map` column | pending |
-| 7. Channel-absent diagnostic failure | pending |
-| 8. Per-run RFP config + real pbx validation | pending |
+| Step | State | Commit |
+|---|---|---|
+| Baseline test capture | DONE — 12 failed / 436 passed | — |
+| RFP test subject identified | DONE — pbx 3-source YX1 collection | — |
+| 1. `write_index_map` plan field + schema v2 | **DONE** | `9ad37f19` |
+| 2. Polarity base default flip + RFP write policy | **DONE** | `9e9d04ca` |
+| 5. Exact-pixel uint16 test | **DONE** (landed with #2) | `9e9d04ca` |
+| 3. Resolver gates opened | **DONE** | `52777158` |
+| 4. Executor max branch + de-hardcode `"BF"` | **DONE** | `55074b1e` |
+| 7. Channel-absent diagnostic failure | **DONE — was already built** | — |
+| 6. `index_map_path` rename + `write_index_map` column | in progress | |
+| 8. Per-run RFP config + real pbx validation | pending | |
+
+Suite after step 4: **12 failed / 463 passed** — inherited failures byte-identical to baseline
+throughout; every commit was regression-checked with
+`comm -13 .rfp_work/baseline_failures.txt <current>`.
+
+### Step 7 needed NO work — it already existed
+
+`resolve_channel_index()` in `metadata_ingest/scope/shared/acquisition_channels.py` already raises
+exactly the diagnostic error the plan specified: it names the absent channel, lists the channels that
+ARE present, and points at both fixes ("the requested product names a channel this file does not
+contain, or the scope's `channel_map.py` is missing a raw-name mapping"). It also covers the third
+case (a channel mapping to multiple indices → "fix the producer"). Already tested in
+`tests/.../scope/shared/test_acquisition_channels.py`, whose fixture is literally named `PBX_TRIPLE`
+and is BF+RFP.
+
+Confirmed reachable from the executor: it fired correctly (unprompted) during step-4 testing when a
+BF-only inventory was handed an RFP product. Nothing to add — the plan's §4b was already satisfied by
+the channel-facts layer the collections branch built.
+
+### Notable choices inside the completed steps
+
+- **`write_index_map` is NOT part of the product key.** The key indexes `_PRODUCT_DEFAULTS`, path
+  directories, and every `.validated` artifact on disk; a provenance flag is not a different product.
+- **Schema bumped to v2 and the loader *requires* the key** (`payload["write_index_map"]`, not
+  `.get`). A stale v1 plan must fail loud, not load with a defaulted flag.
+- **Keyence keeps a narrowed executor guard.** `max` is genuinely unwired for Keyence (it would need
+  a per-tile max reduce feeding `stitch_frame_tiles`), so the guard stays — but relabelled as an
+  executor limit rather than a scope rule.
+- **Three resolver tests were DELETED, not adapted** (`test_non_bf_channel_rejected`,
+  `test_non_focus_stack_rejected`, `test_non_bf_z_stack_rejected`). They asserted the retired BF-only
+  rule; adapting them would have preserved a fiction. Replacements derive their parametrize cases from
+  `SUPPORTED_CHANNELS` / `_IMPLEMENTED_PROJECTION_METHODS` / `BRIGHTFIELD_CHANNELS` per the
+  import-contracts-don't-mint-in-place rule, so new channels or methods extend coverage automatically.
 
 ---
 

@@ -95,7 +95,8 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "image_product_type",
     "projection_method",
     "image_path",
-    "focus_index_map_path",
+    "index_map_path",
+    "write_index_map",
     "image_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
@@ -530,12 +531,13 @@ def materialize_yx1_product_for_well(
                             f"index_map shape {index_map.shape} does not match the "
                             f"(Y, X) of stack {stack.shape} for well {well_id} time_index={t}."
                         )
-                    fim_path = materialized_image_paths.focus_index_map_path(
+                    fim_path = materialized_image_paths.index_map_path(
                         built_image_data_dir,
                         experiment_id=experiment_id,
                         well_id=well_id,
                         channel_id=resolved_product.channel_id,
                         time_index=t,
+                        projection_method=resolved_product.projection_method,
                         candidate=candidate,
                     )
                     fim_path.parent.mkdir(parents=True, exist_ok=True)
@@ -559,7 +561,8 @@ def materialize_yx1_product_for_well(
                     image_product_type="projection",
                     projection_method=resolved_product.projection_method,
                     image_path=out_path,
-                    focus_index_map_path=fim_path,
+                    index_map_path=fim_path,
+                    write_index_map=bool(resolved_product.write_index_map),
                     image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                     image_width_px=out_w,
                     image_height_px=out_h,
@@ -608,7 +611,8 @@ def materialize_yx1_product_for_well(
                         image_product_type="z_stack",
                         projection_method=pd.NA,
                         image_path=out_path,
-                        focus_index_map_path=None,  # z_stack rows carry no focus provenance
+                        index_map_path=None,  # z_stack writes every plane; nothing to index
+                        write_index_map=False,
                         image_micrometers_per_pixel=_materialized_um_per_px(um_per_px, write_policy),
                         image_width_px=out_w,
                         image_height_px=out_h,
@@ -704,7 +708,8 @@ def _frame_inventory_row(
     image_product_type: str,
     projection_method: object,
     image_path: Path,
-    focus_index_map_path: object,
+    index_map_path: object,
+    write_index_map: bool,
     image_micrometers_per_pixel: float,
     image_width_px: int,
     image_height_px: int,
@@ -731,10 +736,13 @@ def _frame_inventory_row(
         "image_path": str(image_path),
         # Construction-provenance path (NOT a primary image): the focus_stack focus_index_map .npz,
         # populated for projection/focus_stack rows, NA otherwise.
-        "focus_index_map_path": (
-            pd.NA if focus_index_map_path is None or focus_index_map_path is pd.NA
-            else str(focus_index_map_path)
+        "index_map_path": (
+            pd.NA if index_map_path is None or index_map_path is pd.NA
+            else str(index_map_path)
         ),
+        # The row states whether its product ASKED for the sidecar, so the validator can enforce
+        # "path populated iff requested" from the table alone (it never sees the resolved plan).
+        "write_index_map": bool(write_index_map),
         "image_micrometers_per_pixel": image_micrometers_per_pixel,
         "image_width_px": image_width_px,
         "image_height_px": image_height_px,

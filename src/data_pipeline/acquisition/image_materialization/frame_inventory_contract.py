@@ -100,10 +100,18 @@ DERIVED_FRAME_INVENTORY_COLUMNS: tuple[str, ...] = (
 # image_path), NOT a product, and NOT a second image identity. Declared here so the assembler
 # treats them as known nullable columns rather than schema drift.
 #
-#   focus_index_map_path — the focus_stack focus_index_map .npz (focus_index_map + z_indices arrays):
-#     populated for projection/focus_stack rows; NA for z_stack and non-focus_stack projection rows.
+#   index_map_path — the projection's index-map .npz (per-pixel stack-axis offsets + z_indices):
+#     populated exactly when the resolved product declared write_index_map, NA otherwise. Renamed
+#     from focus_index_map_path (2026-07-29) because the sidecar is no longer focus-specific — a max
+#     projection has a meaningful argmax map too.
+#
+#   write_index_map — whether THIS row's product asked for the sidecar above. Carried on the row
+#     because the frame_inventory validator sees only the table (its shard-only context is
+#     deliberate), so it cannot consult the resolved plan; without this column the "path populated
+#     iff requested" invariant is unreachable and the rule has to hardcode a method instead.
 CONSTRUCTION_PROVENANCE_COLUMNS: tuple[str, ...] = (
-    "focus_index_map_path",
+    "index_map_path",
+    "write_index_map",
 )
 
 # Required-to-exist columns whose values may be null by product/format. ``jpeg_quality`` is present

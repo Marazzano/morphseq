@@ -313,6 +313,21 @@ def _is_nullish(value: object) -> bool:
     return str(value).strip() == ""
 
 
+def _row_requested_index_map(row: pd.Series) -> bool:
+    """Did THIS row's product ask for an index-map sidecar?
+
+    Reads the row's own ``write_index_map`` flag rather than inferring from the projection method —
+    the flag is the plan's declared choice, and any projection method can have a meaningful index map.
+
+    Legacy fallback: if the column is absent (shards written before the flag existed), fall back to
+    "is this projection/focus_stack", which was the old implicit rule. That keeps pre-existing
+    inventories validating unchanged instead of failing on a column they could not have carried.
+    """
+    if "write_index_map" in row.index and not pd.isna(row.get("write_index_map")):
+        return bool(row["write_index_map"])
+    return _row_is_focus_stack_projection(row)
+
+
 def _row_is_focus_stack_projection(row: pd.Series) -> bool:
     """Legacy-tolerant: a row is focus_stack projection if it is projection/focus_stack.
 
@@ -333,43 +348,49 @@ def _row_is_focus_stack_projection(row: pd.Series) -> bool:
 def _validate_focus_index_map_provenance(
     df: pd.DataFrame, *, image_root: Path | None, scope_label: str
 ) -> None:
-    """L4b — validate the focus_index_map construction-provenance .npz.
+    """L4b — validate the index-map construction-provenance .npz.
 
     Context available here is the shard rows + the .npz files (NOT the acquisition inventory), so the
     inventory-aware ``z_indices == ordered acquisition labels`` check is intentionally NOT performed
     here — see ``validate_focus_index_map_against_inventory`` for that (called only where the
-    acquisition inventory is in hand). Here we check, per row:
+    acquisition inventory is in hand).
 
-      - projection/focus_stack rows: ``focus_index_map_path`` present; the ``.npz`` resolves + loads;
-        it carries ``focus_index_map`` + ``z_indices``; ``focus_index_map`` is an integer-valued
-        2D array with shape ``(image_height_px, image_width_px)``; ``focus_index_map.min() >= 0``
-        and ``focus_index_map.max() < len(z_indices)``.
-      - z_stack and non-focus_stack projection rows: ``focus_index_map_path`` must be NA (provenance
-        is not an image and rides only with the focus_stack projection it explains).
+    The rule is keyed on the row's ``write_index_map`` flag, NOT on the projection method. Any
+    projection has a meaningful index map (focus_stack: sharpest-LoG plane; max: argmax plane), so
+    whether one exists is the product plan's declared choice. The flag rides on the row because this
+    validator only ever sees the table — it cannot consult the resolved plan, which is why keying off
+    the plan directly was not an option. Per row:
+
+      - ``write_index_map`` true: ``index_map_path`` present; the ``.npz`` resolves + loads; it carries
+        ``focus_index_map`` + ``z_indices``; the map is an integer-valued 2D array with shape
+        ``(image_height_px, image_width_px)``, ``min() >= 0`` and ``max() < len(z_indices)``.
+      - ``write_index_map`` false/absent: ``index_map_path`` must be NA (provenance is not an image,
+        and an unrequested sidecar means the writer and the plan disagree).
 
     If the column is entirely absent (legacy shards), the check is skipped (back-compat).
     """
     import numpy as np
 
-    if "focus_index_map_path" not in df.columns:
+    if "index_map_path" not in df.columns:
         return
 
     for idx, row in df.iterrows():
-        raw = row.get("focus_index_map_path")
+        raw = row.get("index_map_path")
         has_path = not (raw is None or pd.isna(raw) or str(raw).strip() == "")
-        if not _row_is_focus_stack_projection(row):
+        if not _row_requested_index_map(row):
             if has_path:
                 raise ValueError(
-                    f"[{scope_label}] row {idx} is not projection/focus_stack but carries a "
-                    f"focus_index_map_path ({raw!r}). Provenance rides only with the focus_stack "
-                    "projection it explains; z_stack / non-focus_stack rows must leave it NA."
+                    f"[{scope_label}] row {idx} did not request an index map "
+                    f"(write_index_map is not true) but carries index_map_path ({raw!r}). Either the "
+                    "product plan or the writer is wrong — provenance must ride only with a product "
+                    "that asked for it."
                 )
             continue
 
         if not has_path:
             raise ValueError(
-                f"[{scope_label}] projection/focus_stack row {idx} is missing focus_index_map_path. "
-                "Every focus_stack projection must carry its focus_index_map provenance .npz."
+                f"[{scope_label}] row {idx} declares write_index_map=True but is missing "
+                "index_map_path. A product that requests the index map must carry its .npz."
             )
         resolved = _resolve_image_path(str(raw), image_root=image_root, scope_label=scope_label)
         if resolved.suffix.lower() != ".npz":
@@ -442,12 +463,12 @@ def validate_focus_index_map_against_inventory(
     """
     import numpy as np
 
-    if "focus_index_map_path" not in df.columns:
+    if "index_map_path" not in df.columns:
         return
     for idx, row in df.iterrows():
         if not _row_is_focus_stack_projection(row):
             continue
-        raw = row.get("focus_index_map_path")
+        raw = row.get("index_map_path")
         if raw is None or pd.isna(raw):
             continue
         resolved = _resolve_image_path(str(raw), image_root=image_root, scope_label=scope_label)

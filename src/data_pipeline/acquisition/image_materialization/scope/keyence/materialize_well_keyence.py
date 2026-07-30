@@ -21,7 +21,7 @@ Projection provenance (``focus_index_map``):
   The per-tile focus_index_map from ``focus_stack_group`` is painted onto a canvas-sized
   ``focus_index_map`` using the tile transforms from ``stitch_frame_tiles``.  The canvas map is
   written as a ``.npz`` (``focus_index_map`` + ``z_indices``) at the path returned by
-  ``materialized_image_paths.focus_index_map_path``; the ``focus_index_map_path`` column in the
+  ``materialized_image_paths.index_map_path``; the ``index_map_path`` column in the
   frame-inventory row points at this file (same contract as YX1).
 
 Import rules: imports image primitives from ``image_building/``, path helpers from
@@ -107,7 +107,8 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "image_micrometers_per_pixel",
     "image_width_px",
     "image_height_px",
-    "focus_index_map_path",
+    "index_map_path",
+    "write_index_map",
     "raw_tile_path",
     "raw_tile_manifest_path",
     "raw_tile_width_px",
@@ -433,7 +434,8 @@ def materialize_keyence_product_for_well(
                     ),
                     "image_width_px": image_width_px,
                     "image_height_px": image_height_px,
-                    "focus_index_map_path": pd.NA,
+                    "index_map_path": pd.NA,
+                    "write_index_map": False,
                     "raw_tile_path": raw_tile_path,
                     "raw_tile_manifest_path": raw_tile_manifest_path,
                     "raw_tile_width_px": img_w,
@@ -618,7 +620,10 @@ def materialize_keyence_product_for_well(
             "image_micrometers_per_pixel": image_micrometers_per_pixel,
             "image_width_px": image_width_px,
             "image_height_px": image_height_px,
-            "focus_index_map_path": str(fim_path),
+            "index_map_path": str(fim_path),
+            # Keyence focus_stack always writes its canvas index map; when the plan gains real
+            # control here, thread resolved_product.write_index_map through instead.
+            "write_index_map": True,
             "raw_tile_path": raw_tile_path,
             "raw_tile_manifest_path": raw_tile_manifest_path,
             "raw_tile_width_px": img_w,
