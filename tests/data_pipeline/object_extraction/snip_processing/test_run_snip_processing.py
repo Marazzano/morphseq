@@ -24,6 +24,9 @@ from data_pipeline.object_extraction.segmentation.sam2_video.run_sam2_video impo
     Sam2WellInput,
     run_sam2_video_for_wells,
 )
+from data_pipeline.acquisition.metadata_ingest.collection_provenance import (
+    build_collection_provenance,
+)
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.build_physical_embryo_registry import (
     build_physical_embryo_registry,
 )
@@ -42,11 +45,17 @@ IMG_W, IMG_H = 64, 64
 
 
 def _make_frame_inventory(tmp_images: Path) -> pd.DataFrame:
+    # Fixture images must be byte-stable across runs, or a pixel regression test pins the RNG
+    # rather than the pipeline. Use a LOCAL Generator, never np.random.seed(): the code under test
+    # calls the global np.random.seed() itself (309 in _estimate_background, 42 in
+    # generate_background_noise), so a globally-seeded fixture would have its state clobbered
+    # mid-test and its determinism would silently depend on call ordering.
+    rng = np.random.default_rng(20250912)
     rows = []
     for t in range(N_FRAMES):
         image_id = build_image_id(WELL_ID, "BF", t)
         img_path = tmp_images / f"{image_id}.png"
-        img = np.random.randint(50, 200, (IMG_H, IMG_W), dtype=np.uint8)
+        img = rng.integers(50, 200, (IMG_H, IMG_W), dtype=np.uint8)
         skio.imsave(str(img_path), img, check_contrast=False)
         rows.append({
             "experiment_id": "20250912",
@@ -106,7 +115,12 @@ def _write_inputs(tmp_path, *, include_registry=True):
     frame_masks.to_csv(frame_masks_csv, index=False)
     frame_inventory.to_csv(frame_inventory_csv, index=False)
     if include_registry:
-        build_physical_embryo_registry(frame_masks).to_csv(registry_csv, index=False)
+        # Provenance comes from the real CREATE site, not a hand-rolled dict: "20250912" is not a
+        # `_coll_` id, so build_collection_provenance returns the inert single-source payload
+        # (n_sources == 1 -> NORMAL merge policy), which is the legacy behavior this fixture wants.
+        # It only joins raw_root into a string and never reads disk, so tmp_path need not exist.
+        provenance = build_collection_provenance("20250912", tmp_path / "raw")
+        build_physical_embryo_registry(frame_masks, provenance).to_csv(registry_csv, index=False)
 
     return frame_masks, frame_masks_csv, frame_inventory_csv, registry_csv
 
@@ -209,6 +223,109 @@ def test_run_snip_processing_writes_valid_headered_inventory_for_empty_well(tmp_
     assert result.empty
     assert tuple(result.columns) == SNIP_INVENTORY_COLUMNS
     validate_snip_inventory_contract(result)
+
+
+def test_run_snip_processing_snip_pixels_are_stable(tmp_path):
+    """Pin the produced snip PIXELS, so a refactor that silently changes them fails here.
+
+    This is the regression gate for the snip-product refactor: the geometry/render split, the
+    dtype threading through crop_to_embryo_bounds, and the recipe seam must leave the default
+    BF path producing exactly the bytes it produces today.
+
+    Two assertions at different strengths, deliberately:
+
+    * **Decoded-array equality is the load-bearing one.** It is what "the pixels did not change"
+      actually means, and it is immune to PNG encoder/metadata churn.
+    * **File byte-hash is a secondary signal.** It can shift on an encoder or metadata change with
+      the pixels untouched; if it breaks ALONE, investigate before assuming a defect.
+
+    Both depend on the two GLOBAL np.random seeds the pipeline sets for itself — 309 in
+    ``_estimate_background`` (sampled over ``valid_masks.index``) and 42 in
+    ``generate_background_noise``. Because the background estimate is drawn from the *row set and
+    ordering* of ``valid_masks``, ANY change to how that frame is built or iterated changes every
+    output byte in the well. That coupling is the reason this test exists.
+    """
+    import hashlib
+
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    output_csv = tmp_path / "snip_inventory.csv"
+
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        output_csv=output_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+    )
+
+    df = pd.read_csv(output_csv).sort_values("snip_id")
+    assert df["is_valid_snip"].astype(bool).all(), "fixture must produce only valid snips"
+
+    # sha256 of the written PNG bytes, keyed by snip_id. Captured from this fixture with the
+    # seeded generator above; verified identical across independent runs in separate tmpdirs.
+    expected_png_sha256 = {
+        "20250912_B01_e01_BF_t0000": "5423e8ad98703767",
+        "20250912_B01_e01_BF_t0001": "360306703062e181",
+        "20250912_B01_e01_BF_t0002": "ebc3544d0080c269",
+        "20250912_B01_e02_BF_t0000": "aeeb5494dece1942",
+        "20250912_B01_e02_BF_t0001": "be6bfc91c0945945",
+        "20250912_B01_e02_BF_t0002": "875270930d4455b4",
+    }
+    assert set(df["snip_id"]) == set(expected_png_sha256), (
+        "fixture produced a different snip set than the pinned baseline"
+    )
+
+    mismatched_bytes = []
+    for _, row in df.iterrows():
+        snip_id = str(row["snip_id"])
+        png = tmp_path / str(row["processed_snip_path"])
+
+        # Load-bearing: the decoded array must be exactly what it was. dtype and shape are
+        # asserted explicitly because a silent dtype change (the H1 truncation hazard) would
+        # otherwise only surface as an opaque hash mismatch.
+        decoded = skio.imread(str(png))
+        assert decoded.dtype == np.uint8, f"{snip_id}: expected uint8, got {decoded.dtype}"
+        assert decoded.shape == (64, 64), f"{snip_id}: unexpected shape {decoded.shape}"
+
+        byte_digest = hashlib.sha256(png.read_bytes()).hexdigest()[:16]
+        if byte_digest != expected_png_sha256[snip_id]:
+            mismatched_bytes.append((snip_id, expected_png_sha256[snip_id], byte_digest))
+
+    assert not mismatched_bytes, (
+        "snip PNG bytes changed from the pinned baseline "
+        "(snip_id, expected, actual):\n  "
+        + "\n  ".join(f"{s}: {e} -> {a}" for s, e, a in mismatched_bytes)
+        + "\n\nIf ONLY this assertion fails and the decoded arrays are unchanged, suspect a PNG "
+          "encoder/metadata change rather than a pipeline defect. If the background statistics "
+          "also moved, suspect a change to the valid_masks row set or iteration order (see the "
+          "global-seed coupling in the docstring)."
+    )
+
+
+def test_run_snip_processing_background_estimate_is_stable(tmp_path):
+    """Pin ``_estimate_background``, the upstream input to every rendered byte.
+
+    Separated from the pixel test so a failure says WHICH layer moved: if this fails too, the
+    background statistics changed (row set / iteration order / seed); if only the pixel test
+    fails, the render path changed while its inputs held.
+    """
+    from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import (
+        _estimate_background,
+    )
+
+    _, frame_masks_csv, frame_inventory_csv, _ = _write_inputs(tmp_path, include_registry=False)
+    frame_masks = pd.read_csv(frame_masks_csv)
+    valid_masks = frame_masks[frame_masks["is_valid_mask"].astype(bool)].copy()
+    inventory_index = pd.read_csv(frame_inventory_csv).set_index("image_id")
+
+    bg_mean, bg_std = _estimate_background(valid_masks, inventory_index)
+
+    assert bg_mean == pytest.approx(124.44167564655173, rel=0, abs=1e-9)
+    assert bg_std == pytest.approx(43.340736738744425, rel=0, abs=1e-9)
 
 
 def test_run_snip_processing_fails_loud_on_missing_registry_match(tmp_path):
