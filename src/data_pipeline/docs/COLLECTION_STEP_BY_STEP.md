@@ -206,20 +206,23 @@ provenance.
   `n_sources`, so `backfill_n_sources` defaulted it to 1 and the merged well looked UNMERGED. With
   the silent 1 the policy was 'normal' and the question could not be settled.
 
-## Step 7 — stage_predictions  [status: BUILT / one KNOWN LIMITATION]
+## Step 7 — stage_predictions  [status: DONE 2026-07-29 — keyed on source_ordinal]
 - The ONLY post-frame_inventory provenance consumer. Reads the provenance artifact's age map.
 - Now reads `start_age_by_source_ordinal` (canonical), falling back to the legacy
   `start_age_by_time_index`. The legacy name was misleading: its keys were ALWAYS source ordinals,
   never merged frame indices.
-- KNOWN LIMITATION (all-snapshot collections only): the snip carries the MERGED `time_index`, while
-  the map is keyed by `source_ordinal`. Those coincide only when every source contributes one frame.
-  It now fails loud naming the reason instead of silently reading a neighbouring source's age.
-  TODO(collection-source-ordinal-through-snips): thread `source_ordinal` from the union through
-  frame_inventory into snips, then key the lookup on it.
+- FIXED: the age is now keyed on `source_ordinal`, resolved by JOINING the acquisition inventory
+  (which owns the per-frame source mapping). frame_inventory deliberately carries NO per-frame source
+  label — a frame has exactly one source, so labelling every frame would restate what the inventory
+  already says. A timelapse source now stages every frame from ITS OWN declared age; keying on the
+  merged `time_index` gave source A's second frame source B's age (a 48-hour error).
+- `elapsed_time_s` is already SOURCE-LOCAL (each source is read independently before the union
+  concatenates), verified on real YX1 data — so `start_age_hpf[ordinal] + elapsed * rate` is correct
+  without further work.
 
 ---
 
-## Cross-cutting: bare `channel` is a MISNAMED `channel_id` — converge it  [status: TODO, own commit]
+## Cross-cutting: bare `channel` is a MISNAMED `channel_id` — converge it  [status: DONE 2026-07-29]
 There is NO legitimate bare `channel` column. There are exactly TWO channel columns:
 - **`channel_id`** — the clean token ("BF"). Scope metadata currently calls this `channel` (a
   laggard name); it holds the SAME value the acquisition_inventory calls `channel_id`.
