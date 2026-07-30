@@ -173,10 +173,14 @@ def materialize_keyence_product_for_well(
             f"{resolved_product.xy_composition!r}. Keyence is multi-tile — this indicates a resolver bug."
         )
     if resolved_product.image_product_type == "projection":
+        # EXECUTOR limit, not scope policy: only the focus-stack projection is wired for Keyence.
+        # Method GRAMMAR and general capability are checked in the resolver; this guards what THIS
+        # backend has actually implemented. Wiring max here means feeding the per-tile stacks through
+        # a max reduce and then stitch_frame_tiles, the same shape as the focus path.
         if resolved_product.projection_method != "focus_stack":
             raise ValueError(
-                f"Keyence projection materialization requires projection_method='focus_stack'; "
-                f"got {resolved_product.projection_method!r}."
+                f"Keyence projection materialization has only focus_stack wired; got "
+                f"{resolved_product.projection_method!r}. (The YX1 backend implements 'max'.)"
             )
     elif resolved_product.image_product_type == "z_stack":
         if resolved_product.projection_method is not None:
