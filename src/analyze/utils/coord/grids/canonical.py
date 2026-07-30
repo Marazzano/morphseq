@@ -33,7 +33,7 @@ from ..types import (
     Frame,
 )
 from .back_direction import compute_back_direction
-from ..transforms import GridTransform, TransformChain
+from image_geometry import GridTransform, TransformChain
 
 
 @dataclass

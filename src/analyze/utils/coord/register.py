@@ -15,7 +15,7 @@ try:
 except Exception:  # pragma: no cover
     cv2 = None
 
-from .transforms import GridTransform, TransformChain
+from image_geometry import GridTransform, TransformChain
 from .types import RegisterResult
 
 

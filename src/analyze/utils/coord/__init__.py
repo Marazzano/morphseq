@@ -17,5 +17,5 @@ from .types import (
     Frame,
     RegisterResult,
 )
-from .transforms import GridTransform, TransformChain
+from image_geometry import GridTransform, TransformChain
 from .grids.canonical import to_canonical_grid_mask_batch
