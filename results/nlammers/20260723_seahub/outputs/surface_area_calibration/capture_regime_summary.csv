@@ -1,0 +1,4 @@
+capture_regime,stage_range_hpf,n_stages,n_fovs,n_embryos,strict_wt_stage_balanced_um_per_px,strict_wt_stage_min_um_per_px,strict_wt_stage_max_um_per_px,legacy_curve_stage_balanced_um_per_px
+early (12-24 hpf),12-24,5,16,128,4.250471607060187,4.010410818934311,5.686785632477263,4.3628255794460244
+transition (36 hpf),36-36,1,3,24,6.896676326865059,6.896676326865059,6.896676326865059,6.936772108377966
+late (48-96 hpf),48-96,3,28,224,7.557491954909988,7.471020982050083,7.775949629553352,8.217921021199222

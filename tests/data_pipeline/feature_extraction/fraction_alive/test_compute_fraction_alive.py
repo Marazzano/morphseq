@@ -4,7 +4,10 @@ full-frame embryo vs snip-resolution via mask mismatch."""
 import math
 
 import numpy as np
+import pandas as pd
 
+from data_pipeline.feature_extraction.fraction_alive.compute import compute_fraction_alive_features
+from data_pipeline.feature_extraction.fraction_alive.contract import FRACTION_ALIVE_TABLE_COLUMNS
 from data_pipeline.feature_extraction.fraction_alive._legacy_compute import compute_fraction_alive
 
 SNIP_FRAME = (576, 256)
@@ -67,3 +70,38 @@ def test_fallback_alignment_without_snip_frame_shape() -> None:
     frac = compute_fraction_alive(embryo, via)
 
     assert 0.0 <= frac <= 1.0
+
+
+def test_invalid_snip_without_embryo_mask_is_skipped() -> None:
+    snip_inventory = pd.DataFrame(
+        [{
+            "experiment_id": "20250912",
+            "well_id": "20250912_B01",
+            "physical_embryo_id": "20250912_B01_e01",
+            "embryo_id": "20250912_B01_e01_BF",
+            "snip_id": "20250912_B01_e01_BF_t0000",
+            "image_id": "20250912_B01_BF_t0000",
+            "time_index": 0,
+            "channel_id": "BF",
+            "is_valid_snip": False,
+            "embryo_mask": np.nan,
+            "embryo_mask_snip_path": np.nan,
+        }]
+    )
+    auxiliary_masks = pd.DataFrame(
+        columns=[
+            "snip_id",
+            "auxiliary_mask_type",
+            "auxiliary_mask_path",
+            "is_valid_auxiliary_mask",
+        ]
+    )
+
+    result = compute_fraction_alive_features(
+        snip_inventory,
+        auxiliary_masks,
+        snip_frame_shape=SNIP_FRAME,
+    )
+
+    assert result.empty
+    assert list(result.columns) == FRACTION_ALIVE_TABLE_COLUMNS

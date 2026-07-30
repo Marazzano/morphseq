@@ -125,6 +125,29 @@ def test_invalid_snips_produce_no_rows(tmp_path):
     assert len(result) == 0
 
 
+def test_null_and_non_path_snip_paths_produce_no_rows(tmp_path):
+    inv = _make_snip_inventory(tmp_path, n=1, valid=True)
+    invalid_paths = [np.nan, pd.NA, None, "", "   ", 7.8]
+    invalid_rows = pd.concat(
+        [inv.assign(snip_id=f"invalid_{i}", processed_snip_path=value) for i, value in enumerate(invalid_paths)],
+        ignore_index=True,
+    )
+    inv = pd.concat([inv, invalid_rows], ignore_index=True)
+
+    result = run_unet_for_snip_inventory(
+        snip_inventory=inv,
+        predictors=_fake_predictors(),
+        output_dir=tmp_path / "output",
+        model_id="unet_test",
+        model_backend="unet_snip",
+        checkpoint_paths={},
+        artifact_shape=ARTIFACT_SHAPE,
+    )
+
+    assert len(result) == len(ALLOWED_AUXILIARY_MASK_TYPES)
+    assert result["snip_id"].eq(inv.iloc[0]["snip_id"]).all()
+
+
 def test_predictor_failure_row_is_invalid(tmp_path):
     inv = _make_snip_inventory(tmp_path, n=1, valid=True)
 

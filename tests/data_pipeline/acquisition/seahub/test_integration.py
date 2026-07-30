@@ -138,6 +138,9 @@ def test_bundle_materializes_valid_single_z_dropin(tmp_path):
     assert config["dropin"]["plate_metadata_csv"] == experiment[
         "plate_metadata_csv"
     ]
+    assert config["frame_detections"]["use_model_server"] is True
+    assert config["frame_masks"]["use_model_server"] is True
+    assert config["unet_snip"]["use_model_server"] is True
 
 
 def test_plan_once_then_materialize_one_cluster_shard(tmp_path):

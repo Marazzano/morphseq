@@ -79,8 +79,8 @@ fi
     --directory "${SMK_WORKDIR}" \
     --cores "${CORES}" \
     --resources gpu=1 \
+    --latency-wait 300 \
     --rerun-triggers mtime \
-    --forcerun split_dropin_inventory \
     --keep-going \
     --printshellcmds \
     "${TARGET}"
