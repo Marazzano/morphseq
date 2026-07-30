@@ -104,6 +104,7 @@ def _resolve_yx1_product(request: ImageProductRequest) -> ResolvedImageProduct:
         image_product_type=request.image_product_type,
         projection_method=request.projection_method,
         xy_composition=xy,
+        write_index_map=request.write_index_map,
     )
 
 
@@ -141,6 +142,7 @@ def _resolve_keyence_product(request: ImageProductRequest) -> ResolvedImageProdu
         image_product_type=request.image_product_type,
         projection_method=request.projection_method,
         xy_composition=xy,
+        write_index_map=request.write_index_map,
     )
 
 

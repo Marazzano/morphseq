@@ -20,7 +20,10 @@ from data_pipeline.acquisition.image_materialization.scope.scope_resolver_for_ma
     resolve_materialization_plan,
 )
 
-RESOLVED_PRODUCT_PLAN_SCHEMA_VERSION = 1
+# v2 (2026-07-29): added ``write_index_map`` to the resolved product. Bumped rather than defaulted
+# because the loader hard-rejects a version mismatch — a stale v1 plan JSON on disk must fail loud and
+# be regenerated rather than silently load with a defaulted provenance flag.
+RESOLVED_PRODUCT_PLAN_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,7 @@ def load_resolved_product_plan_for_well(
         image_product_type=product_payload["image_product_type"],
         projection_method=product_payload.get("projection_method"),
         xy_composition=product_payload["xy_composition"],
+        write_index_map=bool(product_payload["write_index_map"]),
     )
     plan = ResolvedProductPlanForWell(
         experiment_id=str(payload["experiment_id"]),
@@ -166,6 +170,7 @@ def _resolved_product_plan_to_payload(plan: ResolvedProductPlanForWell) -> dict:
             "image_product_type": plan.product.image_product_type,
             "projection_method": plan.product.projection_method,
             "xy_composition": plan.product.xy_composition,
+            "write_index_map": plan.product.write_index_map,
         },
     }
 
