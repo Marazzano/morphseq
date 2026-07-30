@@ -1,5 +1,6 @@
 """Tests for materialize_well_yx1 — mocked ND2 + image ops, no GPU required."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -17,8 +18,13 @@ from data_pipeline.acquisition.image_materialization.materialized_image_paths im
     z_stack_frame_path,
 )
 from data_pipeline.acquisition.image_materialization.materialization_plan import (
+    ImageMaterializationPlan,
+    ImageProductRequest,
     ResolvedImageProduct,
     ResolvedMaterializationPlan,
+)
+from data_pipeline.acquisition.image_materialization.scope.scope_resolver_for_materialization_plan import (
+    resolve_materialization_plan,
 )
 from data_pipeline.shared.identifiers.constructors import build_well_id
 
@@ -26,26 +32,36 @@ EXP = "20250912"
 WELL_INDEX = "B01"
 WELL_ID = build_well_id(EXP, WELL_INDEX)  # never mint ids by hand, even in tests
 
-# The one accepted YX1 product, already resolved (identity XY composition).
-IDENTITY_PLAN = ResolvedMaterializationPlan(
-    products=(
-        ResolvedImageProduct(
-            channel_id="BF",
-            image_product_type="projection",
-            projection_method="focus_stack",
-            xy_composition="identity",
-        ),
+
+def _resolved_plan(**overrides) -> ResolvedMaterializationPlan:
+    """Build a resolved plan through the REAL resolver rather than minting one by hand.
+
+    Hand-built ``ResolvedImageProduct``s silently pick up dataclass defaults (this bit us on
+    ``write_index_map``), and they can encode combinations the resolver would never emit. Going
+    through the resolver means these fixtures track the production request→resolved path.
+    """
+    request = dict(
+        channel_id="BF",
+        image_product_type="projection",
+        projection_method="focus_stack",
+        xy_composition="auto",
+        write_index_map=True,
     )
+    request.update(overrides)
+    return resolve_materialization_plan(
+        scope_name="yx1",
+        requested_plan=ImageMaterializationPlan(products=(ImageProductRequest(**request),)),
+    )
+
+
+# BF focus-stack projection, index map written (the long-standing YX1 default).
+IDENTITY_PLAN = _resolved_plan()
+Z_STACK_PLAN = _resolved_plan(
+    image_product_type="z_stack", projection_method=None, write_index_map=False
 )
-Z_STACK_PLAN = ResolvedMaterializationPlan(
-    products=(
-        ResolvedImageProduct(
-            channel_id="BF",
-            image_product_type="z_stack",
-            projection_method=None,
-            xy_composition="identity",
-        ),
-    )
+# The product this change adds: fluorescence max projection, no index-map sidecar.
+RFP_MAX_PLAN = _resolved_plan(
+    channel_id="RFP", projection_method="max", write_index_map=False
 )
 
 
@@ -53,6 +69,9 @@ def _make_inventory(
     n_times: int = 3,
     position_index: int = 2,
     source_nd2_path: str = "/fake/exp.nd2",
+    channel_id: str = "BF",
+    channel_index: int = 0,
+    raw_channel_name: str = "EYES - Dia",
 ) -> pd.DataFrame:
     # Schema-complete acquisition shard (the consume-side validator re-checks the full contract).
     # In production this is the acquisition_inventory CSV merged with position_well_mapping; the test
@@ -62,9 +81,11 @@ def _make_inventory(
         "raw_position_label": str(position_index),
         "position_index": position_index,
         "z_index": 0,
-        "channel_index": 0,
-        "channel_id": "BF",
-        "raw_channel_name": "EYES - Dia",
+        # The channel TRIPLE (index/raw name/canonical id) is what resolve_channel_index reads; it is
+        # never re-derived by name, so all three must move together.
+        "channel_index": channel_index,
+        "channel_id": channel_id,
+        "raw_channel_name": raw_channel_name,
         "time_index": list(range(n_times)),
         "acquisition_time_s": [100.0 * t for t in range(n_times)],
         # elapsed_time_s is rebased per position to its first frame (t=0 → 0.0); single position here.
@@ -81,6 +102,22 @@ def _make_inventory(
         # joined identity columns the materializer also receives:
         "well_index": WELL_INDEX,
     })
+
+
+def _make_two_channel_inventory(n_times: int = 2, position_index: int = 2) -> pd.DataFrame:
+    """A BF + RFP acquisition — the shape of the real pbx fluorescence pilot (n_c=2).
+
+    Both channels share the same time_index set, as _assert_channels_rectangular requires.
+    """
+    bf = _make_inventory(n_times=n_times, position_index=position_index)
+    rfp = _make_inventory(
+        n_times=n_times,
+        position_index=position_index,
+        channel_id="RFP",
+        channel_index=1,
+        raw_channel_name="EYES - RFP",
+    )
+    return pd.concat([bf, rfp], ignore_index=True)
 
 
 def _make_z_inventory(
@@ -156,32 +193,43 @@ class TestMaterializeFFProjection:
 
 class TestMaterializeYX1Well:
     def _make_mock_nd2(self, n_t: int = 3, n_w: int = 5, n_z: int = 4,
-                       h: int = 8, w: int = 8):
-        """Return a mock nd2.ND2File declaring a (T, P, Z, Y, X) layout.
+                       h: int = 8, w: int = 8, n_c: int = 1):
+        """Return a mock nd2.ND2File declaring a (T, P, Z[, C], Y, X) layout.
 
         The stub must declare `sizes` and `experiment` because axis handling is now BY NAME (see
         metadata_ingest/scope/yx1/nd2_axes.py) — a mock with no named axes is rejected, which is the
         point: positional guessing is what silently mis-read real files.
+
+        ``n_c > 1`` adds a real C axis so the executor's "recorded channel_index fits this file"
+        guard is exercised rather than bypassed. C is deliberately NOT a sequence axis (one frame
+        carries all its channels), so frameCount stays T * P * Z either way.
         """
         dask_arr = MagicMock()
-        dask_arr.ndim = 5
+        dask_arr.ndim = 5 if n_c == 1 else 6
         fake_stack = np.ones((n_z, h, w), dtype=np.uint16)
         dask_arr.__getitem__ = MagicMock(return_value=MagicMock(compute=lambda: fake_stack))
 
-        channel_mock = MagicMock()
-        channel_mock.channel.name = "BF"
+        channel_mocks = []
+        for name in (["BF"] if n_c == 1 else ["BF", "EYES - RFP"][:n_c]):
+            channel_mock = MagicMock()
+            channel_mock.channel.name = name
+            channel_mocks.append(channel_mock)
 
         nd_mock = MagicMock()
         nd_mock.to_dask.return_value = dask_arr
-        nd_mock.frame_metadata.return_value.channels = [channel_mock]
-        # Named axes, in array order, and the matching sequence loops. No C axis: this stub's array
-        # is single-channel, so frameCount == T * P * Z.
-        nd_mock.sizes = {"T": n_t, "P": n_w, "Z": n_z, "Y": h, "X": w}
+        nd_mock.frame_metadata.return_value.channels = channel_mocks
+        # Named axes, in array order, and the matching sequence loops.
+        sizes = {"T": n_t, "P": n_w, "Z": n_z}
+        if n_c > 1:
+            sizes["C"] = n_c
+        sizes.update({"Y": h, "X": w})
+        nd_mock.sizes = sizes
         nd_mock.experiment = [
             type("TimeLoop", (), {})(),
             type("XYPosLoop", (), {})(),
             type("ZStackLoop", (), {})(),
         ]
+        # C is within-frame, so it does NOT multiply the frame count.
         nd_mock.metadata.contents.frameCount = n_t * n_w * n_z
         return nd_mock
 
@@ -217,6 +265,9 @@ class TestMaterializeYX1Well:
             n_z=stack.shape[0],
             h=stack.shape[1],
             w=stack.shape[2],
+            # Derived from the inventory so the mock file and the recorded channel triple cannot
+            # drift apart — a hardcoded n_c would hide the channel_index-fits-file guard.
+            n_c=int(inventory_df["channel_index"].nunique()),
         )
 
         _mod = "data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1"
@@ -344,6 +395,97 @@ class TestMaterializeYX1Well:
         z_indices = data["z_indices"]
         assert fim.min() >= 0
         assert fim.max() < len(z_indices)
+
+    # --- Fluorescence max projection (RFP) --------------------------------------------------
+    # NOTE: _run patches materialize_ff_projection but NOT materialize_max_projection, so the max
+    # path below executes the real primitive on the real (mocked) stack.
+
+    def test_rfp_max_projection_records_its_own_channel_and_method(self, tmp_path):
+        """The identity spine must follow the RESOLVED product, not a hardcoded 'BF'."""
+        inv = _make_two_channel_inventory(n_times=2)
+        df, mock_proj, _ = self._run(inv, tmp_path, resolved_plan=RFP_MAX_PLAN)
+
+        assert (df["channel_id"] == "RFP").all()
+        assert (df["projection_method"] == "max").all()
+        # focus_stack must NOT have run for a max product
+        mock_proj.assert_not_called()
+        # image_id carries the channel token, and the file lives under the RFP tree
+        for _, row in df.iterrows():
+            assert "_RFP_" in row["image_id"]
+            assert "RFP" in Path(row["image_path"]).parts
+            assert "max" in Path(row["image_path"]).parts
+
+    def test_rfp_max_writes_no_index_map_when_plan_declines_it(self, tmp_path):
+        inv = _make_two_channel_inventory(n_times=2)
+        df, _, _ = self._run(inv, tmp_path, resolved_plan=RFP_MAX_PLAN)
+        assert df["focus_index_map_path"].isna().all()
+
+    def test_channel_identity_invariant_catches_a_reintroduced_literal(self, tmp_path):
+        """The guard must FIRE, not just exist.
+
+        Simulates the exact regression it defends against: a hardcoded channel leaking back into id
+        minting, so pixels are written for RFP but recorded under a BF image_id. Without the
+        invariant this produces a table that validates and images that open — corrupt, but silent.
+        """
+        _mod = "data_pipeline.acquisition.image_materialization.scope.yx1.materialize_well_yx1"
+        inv = _make_two_channel_inventory(n_times=1)
+
+        def _always_bf(well_id, _channel_id, time_index, **kwargs):
+            from data_pipeline.shared.identifiers.constructors import build_image_id
+            return build_image_id(well_id, "BF", time_index, **kwargs)
+
+        with patch(f"{_mod}.derive_image_id", side_effect=_always_bf):
+            with pytest.raises(RuntimeError, match="channel identity mismatch"):
+                self._run(inv, tmp_path, resolved_plan=RFP_MAX_PLAN)
+
+    def test_max_projection_pixels_are_the_per_pixel_z_maximum(self, tmp_path):
+        """End-to-end through the executor: written pixels == max over Z of the source stack."""
+        stack = np.zeros((4, 8, 8), dtype=np.uint16)
+        stack[0] = 100
+        stack[2, 3, 3] = 60000        # a punctum on plane 2
+        stack[3, 5, 5] = 40000        # another on plane 3
+        inv = _make_two_channel_inventory(n_times=1)
+        df, _, _ = self._run(inv, tmp_path, resolved_plan=RFP_MAX_PLAN, stack=stack)
+
+        with Image.open(df.iloc[0]["image_path"]) as im:
+            written = np.asarray(im)
+        expected = stack.max(axis=0)
+
+        assert written.dtype == np.uint16, "fluorescence must not be narrowed to uint8"
+        np.testing.assert_array_equal(written, expected)
+        # the puncta survived at full intensity — not averaged away, not inverted
+        assert written[3, 3] == 60000
+        assert written[5, 5] == 40000
+
+    def test_rfp_max_index_map_written_when_plan_asks(self, tmp_path):
+        """write_index_map=True must produce a loadable (index_map, z_indices) pair for max too.
+
+        Uses a multi-z inventory so z_indices has one label per stack plane — the offsets in
+        index_map are only translatable if that pairing holds.
+        """
+        plan = _resolved_plan(channel_id="RFP", projection_method="max", write_index_map=True)
+        z_indices_declared = (0, 1, 2, 3)
+        inv = pd.concat(
+            [
+                _make_z_inventory(n_times=1, z_indices=z_indices_declared),
+                _make_z_inventory(n_times=1, z_indices=z_indices_declared).assign(
+                    channel_id="RFP", channel_index=1, raw_channel_name="EYES - RFP"
+                ),
+            ],
+            ignore_index=True,
+        )
+        stack = np.zeros((len(z_indices_declared), 8, 8), dtype=np.uint16)
+        stack[2, 1, 1] = 5000  # plane 2 wins at (1,1)
+        df, _, _ = self._run(inv, tmp_path, resolved_plan=plan, stack=stack)
+
+        npz_path = df.iloc[0]["focus_index_map_path"]
+        assert not pd.isna(npz_path)
+        data = np.load(npz_path)
+        index_map, z_indices = data["focus_index_map"], data["z_indices"]
+        assert index_map[1, 1] == 2, "index map must record the argmax stack-axis offset"
+        assert len(z_indices) == len(z_indices_declared)
+        assert index_map.min() >= 0
+        assert index_map.max() < len(z_indices)
 
     def test_z_stack_emits_inventory_planes_not_array_shape(self, tmp_path):
         nd2_file = tmp_path / "exp.nd2"
