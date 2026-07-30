@@ -11,6 +11,7 @@ Contract-driven pipeline:
 
 from pathlib import Path
 import hashlib   # model-server socket naming (see rules/frame_detections.smk)
+import os        # atomic content-addressed merged-config write (see CONFIG_YAML below)
 import tempfile  # model-server socket naming (AF_UNIX ~108-byte path limit)
 import yaml
 
@@ -131,15 +132,28 @@ INPUTS_DIR = Path(env["paths"]["input_root"])
 MODELS_DIR = Path(env["paths"]["models_root"])
 
 # Task entrypoints need the same config Snakemake used to build wildcards. Persist the merged
-# runtime config (base config.yaml plus any --configfile overlays) and pass that to tasks instead of
-# the base config file, otherwise a product overlay can plan BF__z_stack while the task re-loads the
-# default projection-only config.
+# runtime config (base config.yaml plus any --configfile/--config overlays) and pass THAT to tasks
+# instead of the base config file, otherwise a product overlay can plan BF__z_stack while the task
+# re-loads the default projection-only config.
+#
+# CONTENT-ADDRESSED NAME (not a fixed "merged_config.yaml"): tasks read this file LAZILY at execution
+# time — it is a params: value, not a tracked input:, so Snakemake never locks or versions it — and
+# the path lives under the shared DATA_ROOT. A fixed name is therefore a cross-run race: a
+# concurrently-parsing run with a DIFFERENT config (e.g. a SeaHub projection-only run vs a Keyence
+# z_stack run) overwrites the single file, and the other run's still-pending tasks then re-read the
+# wrong config and die ("BF__z_stack is not active"). Keying the filename by a hash of the merged
+# config TEXT isolates differing configs automatically, while identical configs safely share one
+# file. The write is atomic (temp + rename) so a task can never observe a torn/partial file even when
+# two runs with the same config write concurrently.
 RUNTIME_CONFIG_DIR = DATA_ROOT / "_snakemake_runtime"
 RUNTIME_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-CONFIG_YAML = RUNTIME_CONFIG_DIR / "merged_config.yaml"
 CONFIG_TEXT = yaml.safe_dump(dict(config), sort_keys=True)
+_CONFIG_DIGEST = hashlib.sha1(CONFIG_TEXT.encode("utf-8")).hexdigest()[:12]
+CONFIG_YAML = RUNTIME_CONFIG_DIR / f"merged_config_{_CONFIG_DIGEST}.yaml"
 if not CONFIG_YAML.exists() or CONFIG_YAML.read_text(encoding="utf-8") != CONFIG_TEXT:
-    CONFIG_YAML.write_text(CONFIG_TEXT, encoding="utf-8")
+    _CONFIG_TMP = CONFIG_YAML.with_name(f"{CONFIG_YAML.name}.{os.getpid()}.tmp")
+    _CONFIG_TMP.write_text(CONFIG_TEXT, encoding="utf-8")
+    os.replace(_CONFIG_TMP, CONFIG_YAML)  # atomic on POSIX; last identical-content writer wins harmlessly
 
 # Snakemake-facing path helpers — thin string-returning facade over paths.py.
 # These close over DATA_ROOT so included .smk files get readable one-liners.

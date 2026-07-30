@@ -669,6 +669,11 @@ def _runtime_overlay(
                 }
             ]
         },
+        # SeaHub shards contain up to 96 one-frame embryo wells. Keep the canonical
+        # per-well products, but amortize model initialization across the shard.
+        "frame_detections": {"use_model_server": True},
+        "frame_masks": {"use_model_server": True},
+        "unet_snip": {"use_model_server": True},
     }
 
 

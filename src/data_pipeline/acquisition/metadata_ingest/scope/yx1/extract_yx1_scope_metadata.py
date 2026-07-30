@@ -32,7 +32,23 @@ def _find_nd2_file(raw_data_dir: Path) -> Path:
     return nd2_files[0]
 
 
-def _extract_timestamps(nd: nd2.ND2File, n_t: int, n_w: int, n_z: int, n_c: int = 1) -> np.ndarray:
+def _metadata_sequence_index(
+    *,
+    time_index: int,
+    position_index: int,
+    n_positions: int,
+    n_z: int,
+) -> int:
+    """Return the ND2 frame-metadata index for one T/P/Z coordinate.
+
+    ``nd2.ND2File.frame_metadata`` indexes the experiment loops, not every axis in
+    ``ND2File.shape``. Channels are bundled into a metadata record's ``channels``
+    collection, so C must not contribute to this flattened index.
+    """
+    return (int(time_index) * int(n_positions) + int(position_index)) * int(n_z)
+
+
+def _extract_timestamps(nd: nd2.ND2File, n_t: int, n_w: int, n_z: int) -> np.ndarray:
     """
     Extract timestamps from ND2 file with gap imputation.
 
@@ -49,7 +65,12 @@ def _extract_timestamps(nd: nd2.ND2File, n_t: int, n_w: int, n_z: int, n_c: int 
     times = np.full((n_t,), np.nan, dtype=float)
 
     for t in range(n_t):
-        seq = t * n_w * n_z * max(n_c, 1)  # First well, first z-slice, first channel
+        seq = _metadata_sequence_index(
+            time_index=t,
+            position_index=0,
+            n_positions=n_w,
+            n_z=n_z,
+        )
         try:
             times[t] = nd.frame_metadata(seq).channels[0].time.relativeTimeMs / 1000.0
         except Exception:
@@ -145,7 +166,7 @@ def extract_yx1_scope_metadata(
         shape = nd.shape
         n_t, n_w, n_z = shape[:3]
         n_c = int(shape[3]) if len(shape) >= 6 else 1
-        log.info(f"ND2 shape: T={n_t}, W={n_w}, Z={n_z}")
+        log.info(f"ND2 shape: T={n_t}, W={n_w}, Z={n_z}, C={n_c}")
 
         # Get spatial calibration
         voxel_size = nd.voxel_size()
@@ -170,7 +191,7 @@ def extract_yx1_scope_metadata(
             objective = "Unknown"
 
         # Extract timestamps
-        timestamps = _extract_timestamps(nd, n_t, n_w, n_z, n_c=n_c)
+        timestamps = _extract_timestamps(nd, n_t, n_w, n_z)
 
         # Calculate frame interval
         if len(timestamps) >= 2:
@@ -184,7 +205,12 @@ def extract_yx1_scope_metadata(
         stage_xy: dict[int, tuple[float, float]] = {}
         for w_idx in range(n_w):
             # Frame index at T=0 for position w_idx
-            idx = w_idx * n_z * max(n_c, 1)
+            idx = _metadata_sequence_index(
+                time_index=0,
+                position_index=w_idx,
+                n_positions=n_w,
+                n_z=n_z,
+            )
             try:
                 md = nd.frame_metadata(idx)
                 ch0 = getattr(md, "channels", [None])[0]

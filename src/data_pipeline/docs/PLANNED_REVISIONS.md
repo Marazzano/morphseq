@@ -8,7 +8,7 @@ Status legend: 🔴 not started · 🟡 partial/workaround in place · 🟢 done
 
 ---
 
-## 1. Batching (`run_batch`) for model-heavy steps — 🟢 SOLVED DIFFERENTLY (see box) · 🔴 one item left
+## 1. Batching (`run_batch`) for model-heavy steps — 🟢 DONE
 
 > **RESOLVED 2026-07-25 by resident model servers, not by batching.** The cost this section
 > targets — thousands of model reloads — is fixed for the two steps where it mattered, via a
@@ -22,7 +22,7 @@ Status legend: 🔴 not started · 🟡 partial/workaround in place · 🟢 done
 > |---|---|---|---|
 > | `snip_auxiliary_masks` (4× UNet) | 280.39s | 97.47s | **2.88×** (2,100 mask PNGs byte-identical) |
 > | `frame_detections` (GDINO) | 262.79s | 86.32s | ~3× (CPU floor; cell-for-cell identical) |
-> | `frame_masks` (SAM2) | 1963.97s | 1919.76s | 1.02× — **not wired**, see below |
+> | `frame_masks` (SAM2) | 1963.97s | 1919.76s | 1.02× on long time series; wired opt-in for one-frame SeaHub wells |
 >
 > Both served steps are behind config toggles (`frame_detections.use_model_server`,
 > `unet_snip.use_model_server`), default off pending an end-to-end run. See
@@ -30,8 +30,9 @@ Status legend: 🔴 not started · 🟡 partial/workaround in place · 🟢 done
 >
 > **`frame_masks` was retagged `EXECUTION_RUN_BATCH` → `EXECUTION_PER_WELL`.** Its load is
 > 3.2–3.6s against 621–1343s of real per-well work (ratio ~0.005), so neither batching nor
-> serving is worth it. The earlier `<0.1s/well` benchmark had selected a 1-frame well. A working
-> SAM2 adapter exists and is proven output-identical; it is deliberately unwired at 2%.
+> serving is worth it for long time series. The earlier `<0.1s/well` benchmark had selected a
+> 1-frame well—which is representative of SeaHub. The proven SAM2 adapter is therefore wired
+> behind `frame_masks.use_model_server` and enabled only by SeaHub runtime overlays.
 >
 > **TECH DEBT deliberately not taken on:** the registry has no field recording "this step is
 > served" — that fact lives only in the config toggles. `execution` means *job count*, and a
@@ -39,13 +40,10 @@ Status legend: 🔴 not started · 🟡 partial/workaround in place · 🟢 done
 > conflate two independent axes. Add a separate field if serving ever becomes a per-step rather
 > than per-run choice.
 >
-> **STILL OPEN — `latent_embeddings`.** This is the one place batching is still the right answer,
-> and it is half-built: `legacy_embeddings/entrypoint.py` already accepts a *list* of
-> `(inventory, output)` pairs and loads once; the rule just hands it a single pair. No server is
-> needed (the stage is CPU-only — its py3.9 torch build has no CUDA). It remains tagged
-> `RUN_BATCH`, which is why `test_output_shape_from_registry.py` still fails for it: the guard is
-> correctly flagging a rule that hand-writes `{well_id}` while claiming batch execution. That
-> failure should stay until the rule is wired to the existing batch entrypoint.
+> **DONE 2026-07-29 — `latent_embeddings`.** One run-level rule now passes every discovered
+> snip inventory to the existing batch entrypoint. It loads the CPU VAE once, atomically writes
+> the unchanged per-well parquet + `.validated` files, then writes an experiment-level completion
+> gate before the ordinary merge runs.
 
 ## Original problem statement (retained for context)
 
@@ -54,7 +52,7 @@ cold-load model → process one well → exit. Across ~576 wells that is thousan
 reloads (GroundingDINO, SAM2, 4× UNet), which dominates wall-clock. Observed: a serial
 (`--cores 1`) full run did ~⅓ of the wells in ~16 h.
 
-**Current state — `EXECUTION_RUN_BATCH` is an intent label, not wired behavior.** The registry
+**Historical state before the 2026-07-29 fix — `EXECUTION_RUN_BATCH` was an intent label.** The registry
 defines `EXECUTION_RUN_BATCH`, tags `frame_masks` and `latent_embeddings` with it, and even exposes
 an accessor `execution_model_for_step()` (paths.py). **But the field is consumed by nothing:**
 - `execution_model_for_step()` is *called nowhere* — no rule or code path branches on
@@ -134,7 +132,7 @@ shards → `ValueError: no shards to concatenate`.
 `resources: gpu=1` now declared on the 5 rules that genuinely hold GPU memory: the four known
 model-heavy ones plus **`materialize_image_product_for_well`**, which was missing from every prior
 list — it runs `LoG_focus_stacker` (real torch conv2d) and was found by searching for GPU work
-rather than trusting the model-step names. `encode_latent_embeddings_for_well` deliberately does
+rather than trusting the model-step names. `encode_latent_embeddings_for_run` deliberately does
 NOT declare it (CPU-only stage; claiming the slot would serialize it behind real GPU work).
 
 Two things learned:

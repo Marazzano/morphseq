@@ -1237,7 +1237,27 @@ def cmd_merge_latent_embeddings(args: argparse.Namespace) -> None:
         validate_latent_embeddings,
     )
 
-    merged = pd.concat([pd.read_parquet(p) for p in args.inputs], ignore_index=True)
+    inputs = list(args.inputs or [])
+    if not inputs:
+        if args.data_root is None or not args.experiment_id:
+            raise ValueError(
+                "merge-latent-embeddings requires either --inputs or both "
+                "--data-root and --experiment-id"
+            )
+        from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
+            collect_well_shard_paths,
+        )
+
+        inputs = collect_well_shard_paths(
+            args.data_root,
+            "latent_embeddings",
+            "latents",
+            args.experiment_id,
+        )
+    if not inputs:
+        raise ValueError("merge-latent-embeddings found no validated per-well shards")
+
+    merged = pd.concat([pd.read_parquet(p) for p in inputs], ignore_index=True)
     validate_latent_embeddings(merged, source=str(args.output_parquet))
     args.output_parquet.parent.mkdir(parents=True, exist_ok=True)
     merged.to_parquet(args.output_parquet, index=False)
@@ -1748,7 +1768,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_le_validate.set_defaults(func=cmd_validate_latent_embeddings)
 
     p_le_merge = sub.add_parser("merge-latent-embeddings")
-    p_le_merge.add_argument("--inputs", type=Path, nargs="+", required=True)
+    p_le_merge.add_argument("--inputs", type=Path, nargs="+")
+    p_le_merge.add_argument("--data-root", type=Path)
+    p_le_merge.add_argument("--experiment-id")
     p_le_merge.add_argument("--output-parquet", type=Path, required=True)
     p_le_merge.set_defaults(func=cmd_merge_latent_embeddings)
 

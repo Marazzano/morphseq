@@ -1,0 +1,9 @@
+# Full-pipeline (front+back -> analysis_ready) run for the 6 Keyence hotfish plates from 20260724.
+# One experiment per line: "<experiment> <microscope>". Consumed by submit_back_half_archive.sge
+# (target=analysis_ready pulls the whole DAG, so materialization runs too for these fresh experiments).
+20260724_hotfish_24hpf_plate01 Keyence
+20260724_hotfish_24hpf_plate02 Keyence
+20260724_hotfish_30hpf_plate01 Keyence
+20260724_hotfish_30hpf_plate02 Keyence
+20260724_hotfish_36hpf_plate01 Keyence
+20260724_hotfish_36hpf_plate02 Keyence
