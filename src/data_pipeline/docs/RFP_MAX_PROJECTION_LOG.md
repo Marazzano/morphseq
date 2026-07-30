@@ -70,6 +70,40 @@ worth a follow-up since the failure mode is a confusing hard stop on a channel t
 
 ---
 
+## Deferred: per-channel display colors (analysis layer, NOT this change)
+
+User asked what color RFP should render as for snip/raw display. **Out of scope for
+`data_pipeline`** — the write policy deliberately knows nothing about what a channel *means*, and
+colors belong in `src/analyze/viz/styling/color_mapping_config.py` (existing home of
+`GENOTYPE_SUFFIX_COLORS` / `B9D2_PHENOTYPE_COLORS`). No `CHANNEL_COLORS` exists there today.
+
+Proposed, keyed by fluorophore color so the mapping states a physical fact rather than a naming
+convention. **[UNILATERAL — provisional, user said "choose one now but I can come back to it"]**
+RFP = `#E63946` (imperial red): unmistakably red, distinct from the genotype crimson `#B2182B`,
+legible on light and dark.
+
+```python
+CHANNEL_COLORS = {
+    'BF':  '#4D4D4D',   # neutral gray — brightfield is not a fluorophore
+    'RFP': '#E63946',
+    'GFP': '#2CA02C',
+    'BFP': '#3B76D9',
+    'CFP': '#17BECF',
+    'YFP': '#E8B92E',   # darkened from pure yellow for white-bg legibility
+}
+```
+
+Alternatives considered for RFP: `#D62728` (matplotlib default, muted/safe), `#FF3B30` (most
+fluorescent-looking, closest to real tdTomato, can vibrate on white), `#C1121F` (print-friendly but
+competes with the genotype crimson).
+
+Open concerns when this lands: YFP's amber collides somewhat with genotype `heterozygous` `#F7B267`;
+and CFP/BFP/GFP sit close in colorblind space, so plotting three fluorescent channels together needs
+a re-check. Should key off `VALID_CHANNEL_NAMES` so the two vocabularies cannot drift. Ship as its own
+commit, separate from the materialization work.
+
+---
+
 ## Decisions taken WITHOUT user input
 
 **[UNILATERAL] Baseline count of record is 12, not ~15.** The plan cites ~15 pre-existing failures

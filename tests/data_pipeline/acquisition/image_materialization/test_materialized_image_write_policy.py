@@ -262,3 +262,82 @@ def test_write_image_round_trip_per_format(tmp_path, policy, ext, expected_dtype
     )
     assert arr.shape == (expected_h, expected_w)
     assert arr.dtype == expected_dtype
+
+
+# ---------------------------------------------------------------------------
+# Polarity default reversal (2026-07-29): _BASE_DEFAULT flipped True -> False so the UNSAFE case
+# must be opted into. These pin the reversal: brightfield must still invert, everything else must
+# not. Inverting brightfield silently breaks snip_processing (it assumes dark background); inverting
+# fluorescence silently corrupts intensity.
+# ---------------------------------------------------------------------------
+
+_YX1_NATIVE_UM_PER_PX = 3.2308
+
+
+def test_base_default_does_not_flip_polarity():
+    """An unlisted product must fail SAFE (no inversion), not inherit brightfield behavior."""
+    policy = resolve_image_write_policy(None, "GFP__projection__mean")
+    assert policy.flip_polarity is False
+
+
+@pytest.mark.parametrize(
+    "product_key,native_um_per_px",
+    [
+        ("BF__z_stack", _YX1_NATIVE_UM_PER_PX),
+        ("BF__projection__focus_stack", None),
+    ],
+)
+def test_brightfield_products_still_invert_after_default_reversal(product_key, native_um_per_px):
+    """REGRESSION GUARD for the _BASE_DEFAULT flip: every BF product pins flip_polarity=True.
+
+    If this fails, brightfield is being written non-inverted and snip_processing breaks downstream.
+    """
+    policy = resolve_image_write_policy(None, product_key, native_um_per_px)
+    assert policy.flip_polarity is True, (
+        f"{product_key} must pin flip_polarity=True explicitly; _BASE_DEFAULT is False."
+    )
+
+
+def test_rfp_max_is_quantitative_native_uint16_no_flip():
+    """The RFP max product must preserve intensity: native scale, uint16, lossless, no inversion."""
+    policy = resolve_image_write_policy(None, "RFP__projection__max", _YX1_NATIVE_UM_PER_PX)
+
+    assert policy.flip_polarity is False
+    assert policy.pixel_dtype == "uint16"
+    assert policy.file_format == "png"
+    assert policy.jpeg_quality is None
+    # No target um/px: the factor must stay 1 regardless of the scope's native calibration, or a
+    # bright punctum would be averaged against its dark surroundings.
+    assert policy.downsample_factor == 1
+    assert policy.downsample_method == "none"
+
+
+def test_max_projection_written_png_is_exactly_the_input_max(tmp_path):
+    """THE load-bearing pixel test: a uint16 max projection must survive the write path EXACTLY.
+
+    One assertion catches every silent-corruption mode this path can introduce: uint8 narrowing,
+    polarity inversion, clipping, spatial resize, and per-image normalization. Values are chosen
+    above 255 so an accidental uint8 round-trip cannot pass.
+    """
+    rng = np.random.default_rng(20260729)
+    stack_zyx = rng.integers(300, 65535, size=(9, 32, 24), dtype=np.uint16)
+    # Distinct per-plane maxima so an off-by-one in the Z axis is detectable, and a known extreme
+    # that must arrive unclipped.
+    for z in range(stack_zyx.shape[0]):
+        stack_zyx[z, z, 0] = 1000 + z
+    stack_zyx[4, 10, 10] = 65535
+
+    expected = stack_zyx.max(axis=0)
+    assert expected.dtype == np.uint16
+    assert expected.max() == 65535
+
+    policy = resolve_image_write_policy(None, "RFP__projection__max", _YX1_NATIVE_UM_PER_PX)
+    out_path = tmp_path / "20250912_A01_RFP_t0000.png"
+    write_image(expected, out_path, policy)
+
+    with Image.open(out_path) as im:
+        written = np.asarray(im)
+
+    assert written.dtype == np.uint16, "uint8 narrowing would destroy quantitative intensity"
+    assert written.shape == expected.shape, "no spatial resize is permitted at native scale"
+    np.testing.assert_array_equal(written, expected)

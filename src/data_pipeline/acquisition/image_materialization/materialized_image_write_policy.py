@@ -59,11 +59,14 @@ _BASE_DEFAULT = {
     "target_micrometers_per_pixel": None,
     "pixel_dtype": "uint8",
     "jpeg_quality": None,
-    # Canonical materialized polarity: invert to bright-embryo/dark-background for EVERY product
-    # (projection AND z_stack), both microscopes — downstream snip_processing assumes dark bg.
-    # Explicit + per-product overridable here rather than a hidden constant. See
-    # image_building/shared/display_polarity.py.
-    "flip_polarity": True,
+    # DEFAULT IS FALSE SO THE UNSAFE CASE MUST BE OPTED INTO. Inverting is a BRIGHTFIELD-specific
+    # need (snip_processing assumes bright-embryo/dark-background), not a universal one: fluorescence
+    # is already signal-on-dark, and flipping it yields dark signal on a bright field, corrupting any
+    # intensity readout. Since channel x method is unrestricted, unanticipated-but-legal products
+    # exist (e.g. RFP__projection__focus_stack); a True default would silently invert them. Every
+    # brightfield product therefore pins flip_polarity=True explicitly in _PRODUCT_DEFAULTS below.
+    # See image_building/shared/display_polarity.py.
+    "flip_polarity": False,
 }
 
 # Physical resolution every z-slice product is materialized at, regardless of scope. Matches the
@@ -80,6 +83,8 @@ _PRODUCT_DEFAULTS = {
         "downsample_method": "area_resize",
         "pixel_dtype": "uint8",
         "jpeg_quality": 85,
+        # Brightfield inverts. Pinned explicitly because _BASE_DEFAULT is False (fail-safe).
+        "flip_polarity": True,
     },
     "BF__projection__focus_stack": {
         # The FF stays at NATIVE resolution: it is the detection/segmentation source and the snip
@@ -89,6 +94,24 @@ _PRODUCT_DEFAULTS = {
         "downsample_method": "none",
         "pixel_dtype": "uint8",
         "jpeg_quality": None,
+        # Brightfield inverts. Pinned explicitly because _BASE_DEFAULT is False (fail-safe).
+        "flip_polarity": True,
+    },
+    "RFP__projection__max": {
+        # NATIVE resolution + uint16, deliberately: this product is for QUANTITATIVE fluorescence.
+        # area_resize averages a bright punctum with its dark surroundings, so peak intensity is not
+        # preserved ([[0,0],[0,100]] -> 25); uint8 would compress 65,536 levels into 256. Do NOT add
+        # target_micrometers_per_pixel here — it would reintroduce spatial averaging.
+        "file_format": "png",
+        "downsample_factor": 1,
+        "downsample_method": "none",
+        "pixel_dtype": "uint16",
+        # Required: _validate_policy rejects a non-null quality for any non-jpg format, and jpg is
+        # invalid for uint16 regardless. Lossy compression on quantitative signal is corruption.
+        "jpeg_quality": None,
+        # Redundant with _BASE_DEFAULT, kept as explicit documentation of intent: fluorescence is
+        # already signal-on-dark and must never be inverted.
+        "flip_polarity": False,
     },
 }
 
