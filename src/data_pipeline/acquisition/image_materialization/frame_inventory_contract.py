@@ -215,6 +215,33 @@ def _row_z_index_or_none(row: pd.Series) -> int | None:
 # ---------------------------------------------------------------------------
 
 
+def well_n_sources(well_acquisition_inventory_df: pd.DataFrame, *, well_id: str) -> int:
+    """Read the per-well ``n_sources`` merge count from a well's acquisition-inventory rows.
+
+    The CONSUME-side counterpart of the union's stamp: the union writes ``n_sources`` per well, the
+    materializer carries it onto the frame_inventory shard. It lives here, with the contract that
+    declares the column, so both scope materializers read it ONE way.
+
+    A per-well constant (every frame row of a well carries the same value), so rows that disagree
+    mean the union mis-stamped it — fail loud rather than picking one. An absent column is a legacy
+    single-acquisition inventory, which is definitionally 1.
+    """
+    if "n_sources" not in well_acquisition_inventory_df.columns:
+        return LEGACY_N_SOURCES_DEFAULT
+    values = {
+        int(v) for v in pd.to_numeric(
+            well_acquisition_inventory_df["n_sources"], errors="raise"
+        ).unique()
+    }
+    if len(values) != 1:
+        raise ValueError(
+            f"acquisition inventory gives well {well_id!r} multiple n_sources values "
+            f"{sorted(values)}. It is a per-well count of merged raw acquisitions; the union stamps "
+            "it constant across the well."
+        )
+    return values.pop()
+
+
 def backfill_n_sources(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy with ``n_sources`` present, defaulting a MISSING column to 1 (legacy).
 
