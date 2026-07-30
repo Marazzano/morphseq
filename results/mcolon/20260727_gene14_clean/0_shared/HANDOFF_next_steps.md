@@ -1,5 +1,11 @@
 # HANDOFF — GENE14 `0_shared` pipeline
 
+> **Superseded:** The mapping plan below was replaced by
+> `map_morphseq_to_sequencing.ipynb`, which uses the experiment Excel files as the
+> identity seam and writes the full audit map plus the preferred MorphSeq labels.
+> Neutral cell counts now live in `cell_type_counts/`; contrast and reliability
+> logic lives separately in `abundance_dact/`.
+
 Written 2026-07-28. Read this before touching anything in `0_shared/`.
 
 The identity plumbing (imaging well → sequencing `embryo_ID`) now works and is committed. What

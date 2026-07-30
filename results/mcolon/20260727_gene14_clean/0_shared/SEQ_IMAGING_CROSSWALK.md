@@ -1,5 +1,8 @@
 # Imaging ↔ sequencing crosswalk for GENE14
 
+> **Historical note:** This design was superseded by
+> `map_morphseq_to_sequencing.ipynb`. The standalone resolver scripts were removed.
+
 Design notes for `2_seq_imaging_crosswalk.py`. The code holds the rules; this file holds the
 reasoning, the failure modes, and the history, so the mapping never has to be re-derived by hand.
 

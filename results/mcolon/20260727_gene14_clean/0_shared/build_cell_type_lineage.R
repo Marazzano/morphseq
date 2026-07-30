@@ -1,12 +1,11 @@
 #!/usr/bin/env Rscript
-# 1_cell_type_lineage.R  --  what IS this cell type?
+# build_cell_type_lineage.R  --  what IS this cell type?
 # =============================================================================
 # Writes cell_type_lineage.tsv: one row per cell type, carrying every grouping
 # vocabulary available, so a figure can pick whichever axis it needs.
 #
-# Separate from 0_load_mcclintock.R on purpose: that script answers "how many
-# cells were there", this one answers "what is this cell type". Only the heatmap
-# needs this one.
+# This answers "what is this cell type?" The abundance count builder separately
+# answers "how many cells of this type were found in each embryo?"
 #
 # TWO SOURCES, because they are different vocabularies
 #   1. the CDS coldata  -> germ_layer, projection_group, short_name_broad, CL/UBERON ids
@@ -23,7 +22,7 @@
 #   graph's own lineage vocabulary, which is why the heatmap blocks rows by it.
 #   Both are written here; the heatmap chooses.
 #
-#   Rscript 0_shared/1_cell_type_lineage.R
+#   Rscript 0_shared/build_cell_type_lineage.R
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -91,4 +90,4 @@ n_data_only <- sum(!lineage$cell_type %in% sulston$cell_type)
 log_ts("  in data but not in the graph (-> Unknown): ", n_data_only)
 print(lineage %>% count(sulston_group, sort = TRUE), n = 40)
 
-log_ts("done. next: 2_seq_imaging_crosswalk.py / 3_attach_morphseq_labels.py")
+log_ts("done")
