@@ -36,6 +36,11 @@ CELLTYPE_COUNTS_FILE <- file.path(
   "cell_type_counts",
   "per_embryo_celltype_counts.tsv"
 )
+MORPHSEQ_MAP_FILE <- file.path(
+  PROJECT_DIR,
+  "0_shared",
+  "morphseq_embryo_sequence_map.csv"
+)
 MCCLINTOCK_CDS <- paste0(
   "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/",
   "v3.1.0/mcclintock/GENE14/run_1/filter_embryos/embryo_filtered_cds"
@@ -70,6 +75,47 @@ celltype_counts <- readr::read_tsv(
   show_col_types = FALSE
 )
 
+# Keep one preferred MorphSeq phenotype label per sequencing embryo.
+phenotype_labels <- readr::read_csv(
+  MORPHSEQ_MAP_FILE,
+  col_select = c(
+    pred_seq_embryo_ID,
+    predicted_phenotype,
+    is_preferred_morphseq_embryo,
+    in_mcclintock
+  ),
+  col_types = readr::cols(
+    pred_seq_embryo_ID = readr::col_character(),
+    predicted_phenotype = readr::col_character(),
+    is_preferred_morphseq_embryo = readr::col_logical(),
+    in_mcclintock = readr::col_logical()
+  )
+) |>
+  dplyr::filter(
+    .data$is_preferred_morphseq_embryo %in% TRUE,
+    .data$in_mcclintock %in% TRUE,
+    !is.na(.data$predicted_phenotype)
+  ) |>
+  dplyr::transmute(
+    embryo_ID = .data$pred_seq_embryo_ID,
+    predicted_phenotype = .data$predicted_phenotype
+  )
+
+if (anyDuplicated(phenotype_labels$embryo_ID)) {
+  stop("Each sequencing embryo must have at most one preferred phenotype.")
+}
+
+celltype_counts <- celltype_counts |>
+  dplyr::left_join(phenotype_labels, by = "embryo_ID") |>
+  dplyr::mutate(
+    # Controls keep their sequencing perturbation name. Phenotyped mutants use
+    # their MorphSeq label, such as High_to_Low or CE.
+    phenotype_group = dplyr::coalesce(
+      .data$predicted_phenotype,
+      .data$perturbation
+    )
+  )
+
 cat(
   dplyr::n_distinct(celltype_counts$embryo_ID), "embryos x",
   dplyr::n_distinct(celltype_counts$cell_type), "cell types\n"
@@ -93,20 +139,25 @@ audit_one_contrast <- function(celltype_counts, contrast) {
   perturbation_name <- contrast$perturbation
   control_name <- contrast$control
   timepoint_hpf <- contrast$timepoint
+  group_column <- contrast$group_column
+
+  if (!group_column %in% names(celltype_counts)) {
+    stop("The cell-type counts are missing group column: ", group_column)
+  }
 
   embryos <- celltype_counts |>
     dplyr::filter(
       .data$timepoint == .env$timepoint_hpf,
-      .data$perturbation %in%
+      .data[[group_column]] %in%
         c(.env$perturbation_name, .env$control_name)
     ) |>
     dplyr::distinct(
       .data$embryo_ID,
-      .data$perturbation,
+      analysis_group = .data[[group_column]],
       .data$rt_block
     )
 
-  # After distinct(), multiple rows for one embryo mean that its perturbation
+  # After distinct(), multiple rows for one embryo mean that its analysis group
   # or RT-block assignment conflicts across the input table.
   metadata_rows_per_embryo <- embryos |>
     dplyr::count(.data$embryo_ID, name = "n_metadata_rows")
@@ -116,14 +167,14 @@ audit_one_contrast <- function(celltype_counts, contrast) {
   if (nrow(embryos_with_conflicting_metadata) > 0) {
     stop(
       contrast_name,
-      " contains embryos with conflicting perturbation or RT-block metadata."
+      " contains embryos with conflicting group or RT-block metadata."
     )
   }
 
   perturbation_embryos <- embryos |>
-    dplyr::filter(.data$perturbation == .env$perturbation_name)
+    dplyr::filter(.data$analysis_group == .env$perturbation_name)
   control_embryos <- embryos |>
-    dplyr::filter(.data$perturbation == .env$control_name)
+    dplyr::filter(.data$analysis_group == .env$control_name)
 
   perturbation_rt_blocks <- unique(
     stats::na.omit(perturbation_embryos$rt_block)
@@ -172,6 +223,7 @@ audit_one_contrast <- function(celltype_counts, contrast) {
 
   tibble::tibble(
     contrast_name = contrast_name,
+    group_column = group_column,
     perturbation = perturbation_name,
     control = control_name,
     timepoint = timepoint_hpf,
@@ -228,6 +280,7 @@ if (params$mode == "fit_one") {
 contrasts_to_fit |>
   dplyr::select(
     contrast_name,
+    group_column,
     perturbation,
     control,
     timepoint
@@ -242,6 +295,16 @@ explicitly requested.
 ```{r load-model-input, eval=params$mode %in% c("fit_one", "fit_all")}
 message("Loading McClintock CDS...")
 cds <- monocle3::load_monocle_objects(MCCLINTOCK_CDS)
+
+# Attach the same preferred phenotype labels used in the embryo count table.
+phenotype_group <- phenotype_labels$predicted_phenotype[
+  match(colData(cds)$embryo_ID, phenotype_labels$embryo_ID)
+]
+phenotype_group <- dplyr::coalesce(
+  phenotype_group,
+  as.character(colData(cds)$perturbation)
+)
+colData(cds)$phenotype_group <- phenotype_group
 
 # Platt requires a batch column. We intentionally fit no batch effect here:
 # every sample receives the same level, so batch_one is a no-op covariate.
@@ -290,7 +353,7 @@ for (i in seq_len(nrow(contrasts_to_fit))) {
   sample_metadata <- colData(cell_count_set)
   keep <- (
     sample_metadata$timepoint == contrast$timepoint &
-    sample_metadata$perturbation %in%
+    sample_metadata[[contrast$group_column]] %in%
       c(contrast$perturbation, contrast$control)
   )
   contrast_ccs <- cell_count_set[, keep]
@@ -304,7 +367,7 @@ for (i in seq_len(nrow(contrasts_to_fit))) {
   model <- platt:::fit_genotype_ccm(
     genotype = contrast$perturbation,
     ccs = contrast_ccs,
-    perturbation_col = "perturbation",
+    perturbation_col = contrast$group_column,
     ctrl_ids = contrast$control,
     interval_col = "timepoint",
     batch_col = "batch_one",
@@ -349,6 +412,7 @@ for (i in seq_len(nrow(contrasts_to_fit))) {
     ) |>
     dplyr::mutate(
       contrast_name = contrast$contrast_name,
+      group_column = contrast$group_column,
       perturbation = contrast$perturbation,
       control = contrast$control,
       timepoint = contrast$timepoint,
@@ -398,6 +462,7 @@ for (i in seq_len(nrow(contrast_audit))) {
 
   expected_identity <- list(
     contrast_name = contrast$contrast_name,
+    group_column = contrast$group_column,
     perturbation = contrast$perturbation,
     control = contrast$control,
     timepoint = contrast$timepoint
@@ -424,6 +489,7 @@ for (i in seq_len(nrow(contrast_audit))) {
 
   detection_summary <- summarize_celltype_detection(
     celltype_counts = celltype_counts,
+    group_column = contrast$group_column,
     perturbation_name = contrast$perturbation,
     control_name = contrast$control,
     timepoint_hpf = contrast$timepoint

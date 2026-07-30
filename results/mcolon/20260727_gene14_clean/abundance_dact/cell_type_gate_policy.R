@@ -11,18 +11,24 @@ CELLTYPE_GATE_POLICY <- list(
 
 summarize_celltype_detection <- function(
     celltype_counts,
+    group_column,
     perturbation_name,
     control_name,
     timepoint_hpf
 ) {
+  if (!group_column %in% names(celltype_counts)) {
+    stop("Cell-type counts are missing group column: ", group_column)
+  }
+
   contrast_counts <- celltype_counts |>
     dplyr::filter(
       .data$timepoint == .env$timepoint_hpf,
-      .data$perturbation %in% c(.env$perturbation_name, .env$control_name)
+      .data[[group_column]] %in%
+        c(.env$perturbation_name, .env$control_name)
     ) |>
     dplyr::mutate(
       arm = dplyr::if_else(
-        .data$perturbation == .env$perturbation_name,
+        .data[[group_column]] == .env$perturbation_name,
         "perturbation",
         "control"
       )

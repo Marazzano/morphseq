@@ -2,7 +2,8 @@
 
 This analysis asks:
 
-> Does a perturbation change the abundance of a cell type relative to its control?
+> Does a perturbation or MorphSeq phenotype change the abundance of a cell type
+> relative to its control?
 
 The analysis runs one comparison at one developmental time point. We call each
 comparison a **contrast**.
@@ -13,7 +14,7 @@ For example:
 foxj1a versus ctrl-inj at 18 hpf
 ```
 
-## The three input files
+## The four input files
 
 ### 1. `contrast_plan.R`
 
@@ -23,6 +24,7 @@ Each row gives:
 
 ```text
 contrast name
+group column
 perturbation
 control
 time point
@@ -31,6 +33,11 @@ control note
 ```
 
 Edit this file when adding or changing a biological comparison.
+
+The file contains two readable tables:
+
+- `perturbation_contrast_plan` compares the original sequencing groups.
+- `phenotype_contrast_plan` compares preferred MorphSeq phenotype labels.
 
 ### 2. `../cell_type_counts/per_embryo_celltype_counts.tsv`
 
@@ -43,7 +50,12 @@ How many control embryos contained this cell type?
 What was the mean number of cells per embryo?
 ```
 
-### 3. `cell_type_gate_policy.R`
+### 3. `../0_shared/morphseq_embryo_sequence_map.csv`
+
+This connects each preferred MorphSeq phenotype prediction to its sequencing
+embryo ID.
+
+### 4. `cell_type_gate_policy.R`
 
 This contains the shared reliability rule.
 
@@ -154,6 +166,24 @@ Choose one mode:
 
 The default is `check_plan`, so knitting the notebook without changing anything
 is safe and does not start an expensive model.
+
+## How to run every contrast on the cluster
+
+From the repository root:
+
+```bash
+results/mcolon/20260727_gene14_clean/abundance_dact/submit_differential_abundance.sh
+```
+
+This submits one array task per contrast, with at most three tasks running at
+once. After every fit finishes, a dependent job assembles the final table.
+Existing raw checkpoints are skipped.
+
+Cluster logs are written to:
+
+```text
+output/logs/
+```
 
 ## Where to make changes
 
