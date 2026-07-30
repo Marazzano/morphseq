@@ -597,38 +597,6 @@ rule apply_position_to_well_mapping:
 # ============================================================================
 
 
-rule materialize_stitched_images:
-    input:
-        raw_images_dir = RAW_IMAGES_DIR / MICROSCOPE / "{experiment}",
-        mapping_csv = POSITION_WELL_MAPPING_CSV,
-        scope_csv = SCOPE_METADATA_MAPPED_CSV,
-    output:
-        stitched_index = EXPERIMENT_METADATA_DIR / "{experiment}" / "stitched_image_index.csv",
-        done = BUILT_IMAGE_DATA_DIR / "{experiment}" / ".materialize_stitched_images.done"
-    params:
-        experiment_id = "{experiment}",
-        selected_wells = lambda wc: _selected_wells_csv(wc.experiment),
-        device = lambda wc: str(config.get("image_building", {}).get("device", "cuda")),
-        overwrite = lambda wc: int(bool(config.get("image_building", {}).get("overwrite", False))),
-        z_buffer = lambda wc: int(bool(config.get("image_building", {}).get("yx1", {}).get("z_buffer", False))),
-    shell:
-        """
-        {RUN} -m data_pipeline.pipeline_orchestrator.tasks materialize-stitched \
-          --experiment "{params.experiment_id}" \
-          --microscope "{MICROSCOPE}" \
-          --raw-images-dir "{input.raw_images_dir}" \
-          --scope-csv "{input.scope_csv}" \
-          --mapping-csv "{input.mapping_csv}" \
-          --output-root "{BUILT_IMAGE_DATA_DIR}" \
-          --output-stitched-index-csv "{output.stitched_index}" \
-          --selected-wells "{params.selected_wells}" \
-          --output-image-extension "jpg" \
-          --device-preference "{params.device}" \
-          --overwrite "{params.overwrite}" \
-          --done-flag "{output.done}"
-        """
-
-
 # Native discovery checkpoint — registered ONLY in native mode. In dropin mode the
 # dropin_handoff.smk twin defines `discover_wells` writing the SAME DISCOVERED_WELLS_TXT, so exactly
 # one checkpoint named `discover_wells` exists and `checkpoints.discover_wells.get(...)` resolves in

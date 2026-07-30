@@ -74,7 +74,7 @@ rule materialize_image_product_for_well:
     resources:
         gpu=1,
     shell:
-        # MATERIALIZATION_RUN, not RUN: this task calls materialize_stitched_images ->
+        # MATERIALIZATION_RUN, not RUN: this task runs the per-well materializer ->
         # LoG_focus_stacker, a genuine torch/conv2d GPU compute path (Phase 0 finding — see
         # spec §1 "materialization is a THIRD compute zone"). Under runner == "conda" this is
         # identical to RUN (materialization has no separate conda env today); under

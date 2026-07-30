@@ -69,10 +69,6 @@ class PreComputeStitchParams:
     per_frame_params_path: Path | None = None
 
 
-# Legacy alias — remove once materialize_stitched_images.py is strangled.
-FallbackParams = PreComputeStitchParams
-
-
 @dataclass(frozen=True)
 class FrameTileResult:
     stitched: np.ndarray
@@ -107,7 +103,7 @@ def legacy_canvas_shape(
 def stitch_frame_tiles(
     tile_specs: Sequence[TileSpec],
     config: FrameTilingConfig,
-    fallback: FallbackParams | None = None,
+    fallback: PreComputeStitchParams | None = None,
     use_transforms: dict[str, TileTransform] | None = None,
 ) -> FrameTileResult:
     """Stitch one frame's tiles into a mosaic.
@@ -189,7 +185,7 @@ def stitch_frame_tiles(
             fallback_used="none",
         )
 
-    fallback = fallback or FallbackParams()
+    fallback = fallback or PreComputeStitchParams()
 
     # Load master coords (if available) up front — used both as a fallback stitch source and as
     # the plausibility reference (ground truth) for QC on ANY per-frame align result. Comparing

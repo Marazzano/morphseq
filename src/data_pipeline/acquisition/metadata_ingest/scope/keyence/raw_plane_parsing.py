@@ -6,7 +6,7 @@ Keyence raw data on disk is **per-Z-plane, per-channel, per-tile TIFFs** named
 single tensor file whose axes encode it.
 
 This module owns that grammar so the acquisition inventory (the system of record) and the legacy
-``stitched_index/materialize_stitched_images.py`` materializer share **one parser** during the
+the per-well Keyence materializer share **one parser** during the
 strangler overlap. The functions were lifted verbatim from the legacy materializer; the only
 addition is ``_parse_keyence_time_z_channel`` which ALSO returns ``channel_index`` (the legacy
 ``_parse_keyence_time_and_z`` matched ``_CH\\d+`` but discarded the number and the materializer
@@ -175,7 +175,7 @@ def _parse_keyence_time_and_z(path: Path) -> tuple[int, int] | None:
     """Legacy 2-tuple ``(time_index, z_index)`` parser — kept byte-compatible for the materializer.
 
     Thin wrapper over ``_parse_keyence_time_z_channel`` that drops the channel index, preserving the
-    exact return shape the legacy ``materialize_stitched_images`` + ``test_keyence_parsing_semantics``
+    exact return shape the legacy stitch path + ``test_keyence_parsing_semantics``
     depend on. New code should call ``_parse_keyence_time_z_channel`` instead.
     """
     parsed = _parse_keyence_time_z_channel(path)

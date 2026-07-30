@@ -224,36 +224,6 @@ def cmd_apply_position_to_well_mapping(args: argparse.Namespace) -> None:
     args.output_flag.write_text("ok\n")
 
 
-def cmd_materialize_stitched(args: argparse.Namespace) -> None:
-    # Function-local: materialize_stitched_images.py imports torch at module level. This is a
-    # DELIBERATE GPU compute dependency, not incidental — LoG focus-stacking (log_focus.py) runs
-    # a real conv2d over the Z-stack and is intentionally torch-accelerated; that isn't going away.
-    # Deferred purely so `tasks.py` (imported once, module-wide, by every Snakemake rule) stays
-    # importable in envs that don't need this specific command — orchestration/contract code has
-    # no business requiring torch just to dispatch. This command itself still runs on the model
-    # side once the pipeline/backend split (spec Phases 2-3) gives it a proper backend env; it does
-    # not become torch-free.
-    from data_pipeline.acquisition.metadata_ingest.stitched_index.materialize_stitched_images import (
-        materialize_stitched_images,
-    )
-
-    materialize_stitched_images(
-        experiment=args.experiment,
-        microscope=args.microscope,
-        raw_images_dir=args.raw_images_dir,
-        scope_csv=args.scope_csv,
-        mapping_csv=args.mapping_csv,
-        output_root=args.output_root,
-        output_stitched_index_csv=args.output_stitched_index_csv,
-        selected_wells=_parse_selected_wells(args.selected_wells),
-        overwrite=_parse_bool(args.overwrite),
-        output_image_extension=args.output_image_extension,
-        device_preference=args.device_preference,
-        keyence_projection_method=args.keyence_projection_method,
-        keyence_ff_filter_res_um=args.keyence_ff_filter_res_um,
-        done_flag=args.done_flag,
-    )
-
 
 def cmd_validate_frame_inventory(args: argparse.Namespace) -> None:
     validate_frame_inventory(
@@ -1457,22 +1427,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply.add_argument("--selected-wells", default="")
     p_apply.set_defaults(func=cmd_apply_position_to_well_mapping)
 
-    p_mat = sub.add_parser("materialize-stitched")
-    p_mat.add_argument("--experiment", required=True)
-    p_mat.add_argument("--microscope", choices=["YX1", "Keyence"], required=True)
-    p_mat.add_argument("--raw-images-dir", type=Path, required=True)
-    p_mat.add_argument("--scope-csv", type=Path, required=True)
-    p_mat.add_argument("--mapping-csv", type=Path, required=False)
-    p_mat.add_argument("--output-root", type=Path, required=True)
-    p_mat.add_argument("--output-stitched-index-csv", type=Path, required=True)
-    p_mat.add_argument("--selected-wells", default="")
-    p_mat.add_argument("--output-image-extension", default="jpg")
-    p_mat.add_argument("--device-preference", default="cuda")
-    p_mat.add_argument("--keyence-projection-method", default="log")
-    p_mat.add_argument("--keyence-ff-filter-res-um", type=float, default=3.0)
-    p_mat.add_argument("--overwrite", default="false")
-    p_mat.add_argument("--done-flag", type=Path, required=False)
-    p_mat.set_defaults(func=cmd_materialize_stitched)
 
     p_discover = sub.add_parser("discover-wells")
     p_discover.add_argument("--mapped-csv", type=Path, required=True)
