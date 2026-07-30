@@ -81,10 +81,18 @@ image_materialization:
   smoke_max_time_indices: 0
   # Product selection. Defaults to focus_stack projection + full z_stack retention (promoted
   # from opt-in overlay to baseline 2026-07-04).
+  #
+  # BF-ONLY BY DESIGN. Do NOT add a fluorescence product here: this config runs against every
+  # experiment, and a requested-but-unacquired channel is a HARD failure (resolve_channel_index),
+  # so a global RFP entry would break every brightfield-only experiment. Fluorescence products
+  # belong in a per-run config for the experiments that actually have them — see
+  # config_runtime_pbx_fluorescence.yaml. Note `products` is a REPLACEMENT, not a merge: a run
+  # config that overrides it must relist every BF product it still wants.
   products:
     - channel_id: BF
       image_product_type: projection
       projection_method: focus_stack
+      write_index_map: true      # focus_index_map .npz — long-standing behavior, now explicit
     - channel_id: BF
       image_product_type: z_stack
   # Product write policy: product selection stays in image_materialization.products; this map only
