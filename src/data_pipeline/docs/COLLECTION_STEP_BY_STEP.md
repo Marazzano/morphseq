@@ -179,7 +179,7 @@ provenance.
   the uncovered-position error previews the full join key.
 - Verified on BOTH real collections (Keyence chem28c, YX1 pbx 3-source).
 
-## Step 4 — materialize (materialize_well_native.smk:44)  [status: LIKELY UNCHANGED]
+## Step 4 — materialize (materialize_well_native.smk:44)  [status: DONE 2026-07-29 — verified, real GPU run]
 - Today: BY WELL — `select_well_acquisition_rows` slices one well's rows → stitch/project/write →
   per-well frame_inventory. Consumes acquisition_inventory + position_well_mapping.
 - Nuance: a collection well's rows span N sources (time_index 0,1) with per-row source_*_path;
@@ -188,14 +188,23 @@ provenance.
 - Verify: `select_well_acquisition_rows` returns all a well's rows across sources; materialize
   writes one frame_inventory shard with distinct time_index.
 
-## Step 5 — frame_inventory → discover_wells (checkpoint, Snakefile:587)  [status: TODO verify]
+## Step 5 — frame_inventory → discover_wells (checkpoint, Snakefile:587)  [status: DONE 2026-07-29]
 - The seam. After here provenance is done (except stage). discover_wells writes DISCOVERED_WELLS_TXT
   from the acquisition inventory. Verify a collection's wells discover correctly (one well per
   well_id, not per source).
 
-## Step 6 — detection → SAM2 → physical_embryo_registry  [status: BUILT (policy) / GPU-untested]
+## Step 6 — detection → SAM2 → physical_embryo_registry  [status: DONE 2026-07-29 — GPU-verified, BRIDGED]
 - Unchanged spine (well_id, time_index). Registry applies EmbryoMergePolicy (n_sources → normal/
-  bridge/fracture). BUILT. The open SAM2 track_id-collision question is settled only by the GPU run.
+  bridge/fracture).
+- **THE SAM2 QUESTION IS ANSWERED: BRIDGED.** Real GPU run to the registry (rc=0):
+  `merge_policy: {'bridged': 2}`, `n_sources: [2]`, ONE physical_embryo_id per well
+  (A01_e01, A02_e01). SAM2 did NOT collide track_id across the merged 27h snapshot gap — it
+  tracked each embryo through, so the registry bridged the sources rather than fracturing.
+- TWO pre-existing bugs had to be fixed first, both invisible until a collection ran the back half:
+  (a) `build_physical_embryo_registry_for_well` never passed `--frame-inventory-csv`, which the verb
+  REQUIRES — every run reaching Step 6 died on argparse; (b) neither materializer emitted
+  `n_sources`, so `backfill_n_sources` defaulted it to 1 and the merged well looked UNMERGED. With
+  the silent 1 the policy was 'normal' and the question could not be settled.
 
 ## Step 7 — stage_predictions  [status: BUILT / one KNOWN LIMITATION]
 - The ONLY post-frame_inventory provenance consumer. Reads the provenance artifact's age map.
