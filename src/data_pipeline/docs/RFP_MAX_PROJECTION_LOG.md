@@ -131,7 +131,43 @@ worth a follow-up since the failure mode is a confusing hard stop on a channel t
 
 ---
 
-## Deferred: per-channel display colors (analysis layer, NOT this change)
+## Follow-up SHIPPED: `CHANNEL_ID_COLORS` + two-channel composite (`d5236157`)
+
+The "deferred" note below is superseded — and its proposed LOCATION was wrong.
+
+**Colors live in `shared/channel_vocabulary.py`, not `analyze/viz/styling/`.** That module is in
+`shared/` *because* it is cross-cutting (every scope adapter plus `shared/identifiers/parsers.py`
+import it), and "RFP renders red" is a fact about what the canonical token means. Putting colors in
+the analysis tree would split one vocabulary in two and let the halves drift — the exact failure
+`channel_vocabulary.py`'s own docstring warns about. Named **`CHANNEL_ID_COLORS`** to match the key
+it uses (`channel_id`, never a raw dialect name like `tdtomato`) and its neighbours
+`CHANNEL_ID_COLUMN` / `VALID_CHANNEL_NAMES`.
+
+`viz/channel_composite.py` renders a grayscale base channel + a color-tinted overlay channel,
+generic over `(base_channel_id, overlay_channel_id)`. Channels are stretched **independently** —
+with a ~22× mean gap, one shared stretch erases the fluorescence entirely.
+
+### Two display behaviors found while testing, now pinned by tests
+- **A signal sparser than the stretch window is displayed as NOTHING.** One hot pixel in 4096 sits
+  above p99.5 and is clipped away. A display limit, not data loss — but do not read "no signal" off a
+  composite without checking.
+- **A bright base saturates to white** and looks like the tint failed. That is correct additive
+  compositing; `base_gain` is the knob.
+
+### What the real images show (well A01, `.rfp_work/panel_{1,2,3}_*.png`)
+BF is **inverted** (`flip_polarity=True`, embryo dark on bright) while RFP is **signal-on-dark**
+(`flip_polarity=False`) — visibly different data, each handled per its own policy, which is the
+human-readable version of the channel-selection proof. Red is localized on the embryo:
+embryo-region contrast p99.9/median = **5.6×**.
+
+> **Caveat for anyone measuring RFP intensity: the well RIM is bright in the RFP channel**
+> (rim mean 1019 vs mid-well 575 vs embryo-region 709) — plastic scatter / autofluorescence, not
+> biology. It is real signal in the stored data, so any quantitative RFP readout needs a well mask
+> first. Flagged, not fixed.
+
+---
+
+## Superseded: per-channel display colors (original deferred note)
 
 User asked what color RFP should render as for snip/raw display. **Out of scope for
 `data_pipeline`** — the write policy deliberately knows nothing about what a channel *means*, and
