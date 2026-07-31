@@ -270,6 +270,58 @@ class TestCenteringModesAreSeparable:
         )
         assert latched.rotation_matrix_2x3 != continuous.rotation_matrix_2x3
 
+    def test_latched_holds_the_centering_REFERENCE_not_only_the_quantizer(self):
+        """`legacy_latched` must reproduce WHICH MASK the center is measured on, not just int().
+
+        Legacy measured the center on the rescaled, ROTATED mask; the continuous path measures it on
+        the source mask BEFORE rotation. mean-of-occupied-index-range is not rotation-equivariant, so
+        for a rotated embryo those are different points — tens of pixels apart on real data.
+
+        A diagonal mask makes the difference observable: PCA gives it a non-zero angle, so if latched
+        were still deriving its center from the source mask (merely truncated), its placement would
+        track the continuous one. It must not.
+        """
+        mask = np.zeros(SOURCE_SHAPE, dtype=np.uint8)
+        for i in range(-6, 7):  # a thick diagonal bar -> well-defined ~45 degree orientation
+            np.fill_diagonal(mask[max(0, 10 + i):, max(0, 10 - i):], 1)
+        canonical = _canonical(mask)
+        assert abs(np.rad2deg(canonical.rotation_angle_rad)) > 5, "fixture must actually be rotated"
+
+        latched = transform_for_product(
+            canonical, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_LATCHED,
+        )
+        continuous = transform_for_product(
+            canonical, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_CONTINUOUS,
+        )
+        # The two references disagree, so the composed translations must differ by more than the
+        # sub-pixel amount an int() truncation alone could ever produce.
+        dx = abs(latched.rotation_matrix_2x3[0][2] - continuous.rotation_matrix_2x3[0][2])
+        dy = abs(latched.rotation_matrix_2x3[1][2] - continuous.rotation_matrix_2x3[1][2])
+        assert max(dx, dy) > 1.0, (
+            f"latched and continuous translations differ by only ({dx:.3f}, {dy:.3f}) — latched is "
+            "not measuring its center on the ROTATED mask, so it is reproducing legacy's quantizer "
+            "without legacy's reference and the kernel commit is not isolated"
+        )
+
+    def test_latched_without_a_source_mask_fails_loud(self):
+        # The mask rides along on the canonical transform purely to serve this mode. A hand-built
+        # transform cannot silently fall back to the source-grid center.
+        import dataclasses
+
+        bare = dataclasses.replace(_canonical(), source_mask=None)
+        with pytest.raises(SnipTransformError, match="needs the source mask"):
+            transform_for_product(
+                bare, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,
+                centering=CENTERING_LATCHED,
+            )
+
+    def test_source_mask_does_not_affect_recipe_equality(self):
+        # The mask is carried for the legacy branch only; it must not make two derivations of the
+        # same embryo-time compare unequal, or sibling registerability breaks.
+        assert_transforms_equivalent(_canonical(), _canonical())
+
     def test_legacy_mode_is_named_so_call_sites_cannot_miss_it(self):
         # A flag reading as a neutral option is how dual behavior becomes permanent and quietly
         # splits a dataset. The word "legacy" must appear wherever the mode is written down.

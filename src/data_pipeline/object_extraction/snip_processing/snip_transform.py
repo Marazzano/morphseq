@@ -45,7 +45,7 @@ import the entrypoint, orchestration, tasks, or Snakemake rules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -79,14 +79,29 @@ BORDER_VALUE = 0.0
 # Centering mode. TRANSITIONAL — exists so the resample-kernel migration and the centering repair
 # can land as SEPARATE, independently attributable commits rather than one fused pixel change.
 #
-#   "latched"     reproduces the legacy placement: int(mean(occupied indices)) on the rescaled grid.
-#                 Wrong, and known to translate the whole canvas by a pixel when a sub-grey-level
-#                 input change tips a boundary pixel (~10% of real snips).
-#   "continuous"  the repair: the center is carried in physical units, mapped under the pixel-center
-#                 convention, and folded into the affine so placement is exact by construction.
+# THE MODE SELECTS TWO THINGS TOGETHER, deliberately: the centering REFERENCE (which mask the center
+# is measured on) and the QUANTIZER (whether that center is truncated to whole pixels). Those are
+# exactly the pair the centering commit changes, so they must move together or neither commit
+# isolates what it claims to.
 #
-# `latched` is retained only until the centering commit lands, and is deleted with it. It is NOT a
-# supported configuration — no config surface reaches it, and a test pins that.
+#   "legacy_latched"  REFERENCE: the rescaled, ROTATED mask, measured on the bounds-expanded canvas
+#                     cv2 produces — i.e. what crop_to_embryo_bounds sees (extraction.py:103-116).
+#                     QUANTIZER: int() truncation of that center.
+#                     Wrong on both counts, and known to translate the whole canvas by a pixel when a
+#                     sub-grey-level input change tips a boundary pixel (~10% of real snips).
+#   "continuous"      REFERENCE: the SOURCE-grid mask, measured BEFORE rotation and carried in
+#                     physical units. QUANTIZER: none — the center is folded into the affine so
+#                     placement is exact by construction.
+#
+# The reference change is the substantive one. Measuring pre-rotation in source coordinates is what
+# makes ONE canonical recipe expressible on ANY product grid: a post-rotation center lives on that
+# product's rotated canvas and cannot be shared, which would break the BF/RFP sibling
+# registerability this seam exists to provide. mean-of-occupied-index-range is NOT
+# rotation-equivariant, so the two references genuinely differ for any non-axis-aligned embryo —
+# this is a real placement change, not a rounding detail.
+#
+# `legacy_latched` is retained only until the centering commit lands, and is deleted with it. It is
+# NOT a supported configuration — no config surface reaches it, and a test pins that.
 CENTERING_LATCHED = "legacy_latched"
 CENTERING_CONTINUOUS = "continuous"
 DEFAULT_CENTERING = CENTERING_LATCHED
@@ -131,6 +146,14 @@ class CanonicalSnipTransform:
     rotation_angle_rad: float
     crop_center_um_xy: tuple[float, float]
     snip_frame_shape_hw: tuple[int, int]
+
+    # TRANSITIONAL, and excluded from equality on purpose (compare=False). CENTERING_LATCHED must
+    # measure its center on the rescaled+ROTATED mask to reproduce legacy, which means the mask has
+    # to survive as far as transform_for_product. It is NOT part of the physical recipe — two
+    # products of the same embryo-time must still compare equal under assert_transforms_equivalent,
+    # and the continuous path never reads it. Deleted with the legacy branch; see
+    # TODO(remove-legacy-latched-centering).
+    source_mask: np.ndarray | None = field(default=None, compare=False, repr=False)
 
     @property
     def source_field_of_view_um_wh(self) -> tuple[float, float]:
@@ -264,7 +287,79 @@ def derive_snip_transform(
         rotation_angle_rad=rotation_angle_rad,
         crop_center_um_xy=(center_x_px * source_um_per_px, center_y_px * source_um_per_px),
         snip_frame_shape_hw=(int(snip_frame_shape_hw[0]), int(snip_frame_shape_hw[1])),
+        source_mask=mask_binary,
     )
+
+
+def _legacy_bounds_expanded_rotation(
+    *, rescaled_shape_hw: tuple[int, int], angle_deg: float
+) -> np.ndarray:
+    """The rotation legacy applied: about the rescaled canvas center, onto expanded bounds.
+
+    Mirrors ``rotation.rotate_image`` exactly, including its ``int()`` bound truncation. TRANSITIONAL
+    — exists only to let CENTERING_LATCHED reproduce legacy placement; deleted with that branch.
+    """
+    height, width = rescaled_shape_hw
+    image_center = (width / 2, height / 2)
+    rotation_mat = cv2.getRotationMatrix2D(image_center, angle_deg, 1.0)
+    abs_cos = abs(rotation_mat[0, 0])
+    abs_sin = abs(rotation_mat[0, 1])
+    bound_w = int(height * abs_sin + width * abs_cos)
+    bound_h = int(height * abs_cos + width * abs_sin)
+    rotation_mat[0, 2] += bound_w / 2 - image_center[0]
+    rotation_mat[1, 2] += bound_h / 2 - image_center[1]
+    return rotation_mat
+
+
+def _legacy_rotated_bbox_center(
+    *,
+    canonical: CanonicalSnipTransform,
+    rescaled_shape_hw: tuple[int, int],
+    angle_deg: float,
+) -> tuple[float, float]:
+    """Legacy's crop center: int(mean(occupied indices)) on the rescaled, ROTATED mask.
+
+    Reproduces ``extraction.crop_to_embryo_bounds`` lines 103-116 on a mask that has been through
+    ``extract_embryo_crop``'s bilinear resize and ``apply_rotation_to_snip``'s bounds-expanded
+    rotation. The bilinear-resize-then-threshold is legacy's actual behavior (it resized the mask as
+    float and compared ``> 0.5``), and it is reproduced rather than corrected because the whole point
+    of this mode is to hold placement fixed while the kernel and render path change.
+
+    TRANSITIONAL — deleted with CENTERING_LATCHED; see TODO(remove-legacy-latched-centering).
+    """
+    if canonical.source_mask is None:
+        raise SnipTransformError(
+            "transform_for_product: centering=legacy_latched needs the source mask to reproduce "
+            "the legacy post-rotation centering reference, but this CanonicalSnipTransform carries "
+            "none. Build it with derive_snip_transform (which retains the mask) rather than "
+            "constructing it directly, or use centering=continuous."
+        )
+
+    rescaled_h, rescaled_w = rescaled_shape_hw
+    # Legacy resized the mask as float with bilinear interpolation, then thresholded at 0.5.
+    mask_rescaled = cv2.resize(
+        canonical.source_mask.astype(np.float64),
+        (rescaled_w, rescaled_h),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    rotation_mat = _legacy_bounds_expanded_rotation(
+        rescaled_shape_hw=rescaled_shape_hw, angle_deg=angle_deg
+    )
+    # Recompute the expanded bounds the same way rotate_image does.
+    abs_cos = abs(rotation_mat[0, 0])
+    abs_sin = abs(rotation_mat[0, 1])
+    bound_w = int(rescaled_h * abs_sin + rescaled_w * abs_cos)
+    bound_h = int(rescaled_h * abs_cos + rescaled_w * abs_sin)
+    mask_rotated = cv2.warpAffine(mask_rescaled, rotation_mat, (bound_w, bound_h))
+
+    y_indices = np.where(np.max(mask_rotated, axis=1) > 0.5)[0]
+    x_indices = np.where(np.max(mask_rotated, axis=0) > 0.5)[0]
+    if y_indices.size == 0 or x_indices.size == 0:
+        # Legacy returned an all-zero snip here. Centering on the canvas center reproduces that
+        # outcome for a mask that has vanished, without a special-cased render path.
+        return ((bound_w - 1) / 2, (bound_h - 1) / 2)
+
+    return (float(int(np.mean(x_indices))), float(int(np.mean(y_indices))))
 
 
 def transform_for_product(
@@ -343,15 +438,27 @@ def transform_for_product(
     center_x_rescaled = realized_scale_x * (center_x_src + 0.5) - 0.5
     center_y_rescaled = realized_scale_y * (center_y_src + 0.5) - 0.5
 
+    out_h, out_w = canonical.snip_frame_shape_hw
+    angle_deg = float(np.rad2deg(canonical.rotation_angle_rad))
+
     # TODO(remove-legacy-latched-centering): delete this branch, CENTERING_LATCHED, and the
     # `centering` parameter once the stratified acceptance run is accepted and snips are
     # regenerated. Then `continuous` is not a mode, it is simply how placement works.
     if centering == CENTERING_LATCHED:
-        # TRANSITIONAL: reproduce the legacy quantizer so the kernel migration can be judged on the
-        # kernel alone. int() truncates toward zero, exactly as extraction.py:114-115 does, which is
-        # what converts a sub-pixel input change into a whole-pixel canvas translation.
-        center_x_rescaled = float(int(center_x_rescaled))
-        center_y_rescaled = float(int(center_y_rescaled))
+        # TRANSITIONAL: reproduce the legacy centering REFERENCE as well as its quantizer, so the
+        # kernel + render-path migration can be judged without a placement change mixed in.
+        #
+        # Legacy measured the center on the mask AFTER rescale AND rotation, on the bounds-expanded
+        # canvas (extraction.py:103-116). Because mean-of-occupied-index-range is not
+        # rotation-equivariant, measuring it on the SOURCE mask instead — as the continuous path
+        # correctly does — moves the embryo by up to tens of pixels for a non-axis-aligned subject.
+        # Reproducing legacy therefore requires actually rotating the mask here, not just
+        # truncating a source-derived center.
+        center_x_rescaled, center_y_rescaled = _legacy_rotated_bbox_center(
+            canonical=canonical,
+            rescaled_shape_hw=(rescaled_h, rescaled_w),
+            angle_deg=angle_deg,
+        )
     elif centering != CENTERING_CONTINUOUS:
         raise SnipTransformError(
             f"transform_for_product: unknown centering={centering!r}; "
@@ -365,11 +472,22 @@ def transform_for_product(
     #
     # Canvas center is (n-1)/2 under the pixel-center convention: for n=4 the center of pixels
     # 0..3 is 1.5, not 2.0. This is where odd/even bugs live, so it is stated rather than implied.
-    out_h, out_w = canonical.snip_frame_shape_hw
-    angle_deg = float(np.rad2deg(canonical.rotation_angle_rad))
-    rotation_mat = cv2.getRotationMatrix2D((center_x_rescaled, center_y_rescaled), angle_deg, 1.0)
-    rotation_mat[0, 2] += (out_w - 1) / 2 - center_x_rescaled
-    rotation_mat[1, 2] += (out_h - 1) / 2 - center_y_rescaled
+    if centering == CENTERING_LATCHED:
+        # The latched center was measured on the bounds-expanded ROTATED canvas, so the rotation
+        # must be composed the way legacy composed it — rotate about the rescaled canvas center
+        # onto the expanded canvas, then translate that measured point to the snip center — rather
+        # than rotating about the center itself.
+        rotation_mat = _legacy_bounds_expanded_rotation(
+            rescaled_shape_hw=(rescaled_h, rescaled_w), angle_deg=angle_deg
+        )
+        # Legacy's crop used int(output/2) offsets from the measured center, and wrote into a
+        # zero canvas — an integer translation, so it is exact to express as one here.
+        rotation_mat[0, 2] += int(out_w / 2) - center_x_rescaled
+        rotation_mat[1, 2] += int(out_h / 2) - center_y_rescaled
+    else:
+        rotation_mat = cv2.getRotationMatrix2D((center_x_rescaled, center_y_rescaled), angle_deg, 1.0)
+        rotation_mat[0, 2] += (out_w - 1) / 2 - center_x_rescaled
+        rotation_mat[1, 2] += (out_h - 1) / 2 - center_y_rescaled
 
     # The affine writes straight onto the snip canvas, so there is no bounds-expanded intermediate
     # and no separate crop translation. The window IS the canvas.

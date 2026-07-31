@@ -267,13 +267,24 @@ def test_run_snip_processing_snip_pixels_are_stable(tmp_path):
 
     # sha256 of the written PNG bytes, keyed by snip_id. Captured from this fixture with the
     # seeded generator above; verified identical across independent runs in separate tmpdirs.
+    #
+    # RE-PINNED DELIBERATELY when the entrypoint moved onto the snip transform seam. That commit
+    # varies TWO things at once — the resample kernel (skimage `rescale`/`resize` -> cv2, which
+    # applies INTER_AREA on downscale) and the render path (the affine now writes straight onto the
+    # snip canvas, eliminating the bounds-expanded rotation intermediate and its separate crop).
+    #
+    # Centering is deliberately held at `legacy_latched`, which reproduces BOTH legacy's centering
+    # REFERENCE (the center measured on the rescaled, ROTATED mask) and its int() QUANTIZER — so
+    # placement is not an intended contributor here and these bytes reflect kernel + render path.
+    # The continuous-centering repair moves the reference to the source, pre-rotation mask and
+    # re-pins these values again separately.
     expected_png_sha256 = {
-        "20250912_B01_e01_BF_t0000": "5423e8ad98703767",
-        "20250912_B01_e01_BF_t0001": "360306703062e181",
-        "20250912_B01_e01_BF_t0002": "ebc3544d0080c269",
-        "20250912_B01_e02_BF_t0000": "aeeb5494dece1942",
-        "20250912_B01_e02_BF_t0001": "be6bfc91c0945945",
-        "20250912_B01_e02_BF_t0002": "875270930d4455b4",
+        "20250912_B01_e01_BF_t0000": "711abd84c13c6beb",
+        "20250912_B01_e01_BF_t0001": "a30b945f0a4a8e34",
+        "20250912_B01_e01_BF_t0002": "a54aae17275a3cdc",
+        "20250912_B01_e02_BF_t0000": "9ce06e208d9f962d",
+        "20250912_B01_e02_BF_t0001": "bb3c224b6c51ec9d",
+        "20250912_B01_e02_BF_t0002": "a3f70b9cfb3a71b7",
     }
     assert set(df["snip_id"]) == set(expected_png_sha256), (
         "fixture produced a different snip set than the pinned baseline"

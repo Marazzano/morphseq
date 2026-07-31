@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import skimage.exposure
 import skimage.io as skio
 
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
@@ -32,8 +33,13 @@ from data_pipeline.shared.identifiers.constructors import (
 )
 from data_pipeline.shared.identifiers.parsers import parse_image_id
 from data_pipeline.object_extraction.snip_processing.augmentation import augment_snip
-from data_pipeline.object_extraction.snip_processing.extraction import crop_to_embryo_bounds, extract_embryo_crop
-from data_pipeline.object_extraction.snip_processing.rotation import apply_rotation_to_snip
+from data_pipeline.object_extraction.snip_processing.snip_transform import (
+    CENTERING_LATCHED,
+    apply_transform_to_image,
+    apply_transform_to_mask,
+    derive_snip_transform,
+    transform_for_product,
+)
 
 def _physical_embryo_id_by_track(
     physical_embryo_registry: pd.DataFrame,
@@ -187,18 +193,40 @@ def run_snip_processing(
             if image.ndim == 3:
                 image = image[:, :, 0]
 
-            # No yolk mask yet — falls back gracefully in rotation + extraction.
-            yolk_mask = np.zeros_like(embryo_mask)
+            # Legacy `extract_embryo_crop` coerced a non-uint8 source to uint8 BEFORE resampling.
+            # That coercion is photometric, not geometric, so it stays here at the read boundary
+            # rather than moving into the transform seam (which is deliberately dtype-agnostic).
+            if image.dtype != np.uint8:
+                image = skimage.exposure.rescale_intensity(
+                    image, in_range="image", out_range=(0, 255),
+                ).astype(np.uint8)
 
-            image_rescaled, mask_rescaled, yolk_rescaled = extract_embryo_crop(
-                image, embryo_mask, yolk_mask, output_shape, pixel_size_um, target_pixel_size_um,
+            # Render through the transform seam: derive the physical recipe from the MASK alone,
+            # resolve it onto this frame's pixel grid, then rasterize image and mask through the
+            # SAME resolved transform so they stay registered by construction.
+            #
+            # centering=CENTERING_LATCHED is deliberate and TRANSITIONAL: it reproduces the legacy
+            # int() centering quantizer so that this commit varies only the resample kernel
+            # (skimage -> cv2 INTER_AREA) and the render path (direct-to-canvas, no bounds-expanded
+            # intermediate + separate crop). Flipping to CENTERING_CONTINUOUS is a separate commit,
+            # so the two pixel changes stay independently attributable.
+            #
+            # No yolk mask yet — the angle falls back to the mass-distribution heuristic.
+            canonical = derive_snip_transform(
+                embryo_mask,
+                source_um_per_px=pixel_size_um,
+                target_um_per_px=target_pixel_size_um,
+                snip_frame_shape_hw=output_shape,
+                yolk_mask=None,
             )
-            image_rotated, mask_rotated, yolk_rotated, _ = apply_rotation_to_snip(
-                image_rescaled, mask_rescaled, yolk_rescaled,
+            resolved = transform_for_product(
+                canonical,
+                product_shape_hw=(int(image.shape[0]), int(image.shape[1])),
+                product_um_per_px=pixel_size_um,
+                centering=CENTERING_LATCHED,
             )
-            image_cropped, mask_cropped, _ = crop_to_embryo_bounds(
-                image_rotated, mask_rotated, yolk_rotated, output_shape,
-            )
+            image_cropped = apply_transform_to_image(image, resolved, dtype=np.uint8)
+            mask_cropped = apply_transform_to_mask(embryo_mask, resolved)
 
             augmented, _ = augment_snip(
                 image_cropped,
