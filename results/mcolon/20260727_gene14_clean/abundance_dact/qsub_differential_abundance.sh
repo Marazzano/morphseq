@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-#$ -q trapnell-login.q
+#$ -q trapnell-long.q
 #$ -l mfree=24G
-#$ -l h_rt=12:00:00
+#$ -l h_rt=24:00:00
 #$ -j y
 #$ -pe serial 8
 #$ -cwd
 #$ -V
 
-# Run one contrast, or assemble all completed contrasts, by rendering the
-# readable differential-abundance notebook with explicit parameters.
+# Fit one related group of contrasts, or assemble all completed contrasts, by
+# rendering the readable differential-abundance notebook with explicit parameters.
 
 set -euo pipefail
 
@@ -33,41 +33,48 @@ mkdir -p "$TMPDIR"
 trap 'rm -rf -- "$TMPDIR"' EXIT
 cd "$TMPDIR"
 
-DACT_MODE="${DACT_MODE:-fit_one}"
+DACT_MODE="${DACT_MODE:-fit_group}"
 export DACT_MODE RMD_FILE PLAN_FILE REPORT_DIR PROJECT_DIR
 
-if [[ "$DACT_MODE" == "fit_one" ]]; then
+if [[ "$DACT_MODE" == "fit_group" ]]; then
   if [[ -z "${SGE_TASK_ID:-}" ]]; then
-    echo "fit_one mode requires an SGE array task ID." >&2
+    echo "fit_group mode requires an SGE array task ID." >&2
     exit 1
   fi
 
-  export DACT_CONTRAST_NAME
-  DACT_CONTRAST_NAME=$(
-    "$RSCRIPT" -e \
-      'source(Sys.getenv("PLAN_FILE")); cat(contrast_plan$contrast_name[[as.integer(Sys.getenv("SGE_TASK_ID"))]])'
+  export DACT_FIT_GROUP
+  DACT_FIT_GROUP=$(
+    "$RSCRIPT" -e '
+      source(Sys.getenv("PLAN_FILE"))
+      fit_groups <- unique(contrast_plan$fit_group)
+      task_number <- as.integer(Sys.getenv("SGE_TASK_ID"))
+      cat(fit_groups[[task_number]])
+    '
   )
-  export DACT_REPORT_NAME="fit_${DACT_CONTRAST_NAME}.html"
+  export DACT_REPORT_NAME="fit_${DACT_FIT_GROUP}.html"
 else
-  export DACT_CONTRAST_NAME=""
+  export DACT_FIT_GROUP=""
   export DACT_REPORT_NAME="differential_abundance.html"
 fi
 
 echo "mode=$DACT_MODE"
-echo "contrast=${DACT_CONTRAST_NAME:-all}"
+echo "fit_group=${DACT_FIT_GROUP:-all}"
 echo "host=$(hostname) slots=${NSLOTS:-NA} start=$(date)"
 
 "$RSCRIPT" -e '
-  contrast_name <- Sys.getenv("DACT_CONTRAST_NAME")
-  if (!nzchar(contrast_name)) {
-    contrast_name <- NULL
+  fit_group <- Sys.getenv("DACT_FIT_GROUP")
+  if (!nzchar(fit_group)) {
+    fit_group <- NULL
   }
 
   rmarkdown::render(
     input = Sys.getenv("RMD_FILE"),
     params = list(
       mode = Sys.getenv("DACT_MODE"),
-      contrast_name = contrast_name
+      contrast_name = NULL,
+      fit_group = fit_group,
+      overwrite_existing =
+        tolower(Sys.getenv("DACT_OVERWRITE", "false")) == "true"
     ),
     output_file = Sys.getenv("DACT_REPORT_NAME"),
     output_dir = Sys.getenv("REPORT_DIR"),

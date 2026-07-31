@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Submit one resumable array task per planned contrast. When every fit finishes,
-# a final dependent job assembles the raw checkpoints into one result table.
+# Submit one resumable array task per gene-and-timepoint fit group. When every
+# group finishes, a final dependent job assembles the checkpoints.
 
 set -euo pipefail
 
@@ -14,18 +14,18 @@ RSCRIPT=/net/gs/vol3/software/modules-sw/R/4.4.1/Linux/Ubuntu22.04/x86_64/bin/Rs
 
 mkdir -p "$LOG_DIR"
 
-NUMBER_OF_CONTRASTS=$(
+NUMBER_OF_FIT_GROUPS=$(
   PLAN_FILE="$PLAN_FILE" "$RSCRIPT" -e \
-    'source(Sys.getenv("PLAN_FILE")); cat(nrow(contrast_plan))'
+    'source(Sys.getenv("PLAN_FILE")); cat(length(unique(contrast_plan$fit_group)))'
 )
 
 FIT_JOB=$(
   qsub -terse \
     -N gene14_dact_fit \
-    -t "1-$NUMBER_OF_CONTRASTS" \
+    -t "1-$NUMBER_OF_FIT_GROUPS" \
     -tc 3 \
     -o "$LOG_DIR" \
-    -v DACT_MODE=fit_one,PLAN_FILE="$PLAN_FILE" \
+    -v DACT_MODE=fit_group,DACT_OVERWRITE=true,PLAN_FILE="$PLAN_FILE" \
     "$JOB_SCRIPT"
 )
 
@@ -42,6 +42,6 @@ ASSEMBLY_JOB=$(
     "$JOB_SCRIPT"
 )
 
-echo "Submitted $NUMBER_OF_CONTRASTS contrast tasks: $FIT_JOB"
+echo "Submitted $NUMBER_OF_FIT_GROUPS grouped fit tasks: $FIT_JOB"
 echo "Submitted dependent assembly job: $ASSEMBLY_JOB"
 echo "Logs: $LOG_DIR"

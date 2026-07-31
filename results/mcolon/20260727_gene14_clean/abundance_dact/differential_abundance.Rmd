@@ -4,14 +4,16 @@ output: html_document
 params:
   mode: "check_plan"
   contrast_name: !r NULL
+  fit_group: !r NULL
+  overwrite_existing: false
 ---
 
 This notebook asks:
 
 > Does a perturbation change the abundance of a cell type relative to its control?
 
-It can check the contrast plan, fit one contrast, fit all contrasts, or assemble
-completed fits.
+It can check the contrast plan, fit one contrast, fit one related group of
+contrasts, fit all contrasts, or assemble completed fits.
 
 The default mode is `check_plan`; fitting occurs only when explicitly requested.
 `fit_all` fits every missing contrast and then assembles the final table.
@@ -25,6 +27,9 @@ library(readr)
 library(tibble)
 library(tidyr)
 
+# TODO after cluster jobs 23191601 and 23191602 finish:
+# Read these canonical input paths from ../project_config.json so the R and
+# Python analyses share one source of truth.
 PROJECT_DIR <- paste0(
   "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
   "mcolon/20260727_gene14_clean"
@@ -53,12 +58,21 @@ FINAL_OUTPUT_FILE <- file.path(OUTPUT_DIR, "differential_abundance.tsv")
 source(file.path(ABUNDANCE_DIR, "contrast_plan.R"))
 source(file.path(ABUNDANCE_DIR, "cell_type_gate_policy.R"))
 
-allowed_modes <- c("check_plan", "fit_one", "fit_all", "assemble")
+allowed_modes <- c(
+  "check_plan",
+  "fit_one",
+  "fit_group",
+  "fit_all",
+  "assemble"
+)
 if (!params$mode %in% allowed_modes) {
   stop("mode must be one of: ", paste(allowed_modes, collapse = ", "))
 }
 if (params$mode == "fit_one" && is.null(params$contrast_name)) {
   stop("fit_one mode requires a contrast_name.")
+}
+if (params$mode == "fit_group" && is.null(params$fit_group)) {
+  stop("fit_group mode requires a fit_group.")
 }
 
 dir.create(RAW_MODEL_RESULTS_DIR, recursive = TRUE, showWarnings = FALSE)
@@ -157,8 +171,9 @@ audit_one_contrast <- function(celltype_counts, contrast) {
       .data$rt_block
     )
 
-  # After distinct(), multiple rows for one embryo mean that its analysis group
-  # or RT-block assignment conflicts across the input table.
+  # This is a within-embryo check. Each embryo must have one analysis group and
+  # one RT block. The perturbation and control arms may still use different RT
+  # blocks; that cross-block comparison is checked separately below.
   metadata_rows_per_embryo <- embryos |>
     dplyr::count(.data$embryo_ID, name = "n_metadata_rows")
   embryos_with_conflicting_metadata <- metadata_rows_per_embryo |>
@@ -167,7 +182,7 @@ audit_one_contrast <- function(celltype_counts, contrast) {
   if (nrow(embryos_with_conflicting_metadata) > 0) {
     stop(
       contrast_name,
-      " contains embryos with conflicting group or RT-block metadata."
+      " contains an embryo assigned to multiple groups or RT blocks."
     )
   }
 
@@ -223,6 +238,7 @@ audit_one_contrast <- function(celltype_counts, contrast) {
 
   tibble::tibble(
     contrast_name = contrast_name,
+    fit_group = contrast$fit_group,
     group_column = group_column,
     perturbation = perturbation_name,
     control = control_name,
@@ -257,21 +273,29 @@ When `mode = "check_plan"`, the notebook stops here.
 
 ## Step 3: Fit differential abundance
 
-This step runs only in `fit_one` or `fit_all` mode.
+This step runs only in `fit_one`, `fit_group`, or `fit_all` mode.
 
-Existing raw model checkpoints are skipped, so fitting is resumable.
+Existing raw model checkpoints are skipped unless `overwrite_existing = true`.
 
 ### Step 3A: Choose the contrasts
 
-First, show exactly which contrasts will be fitted.
+First, show exactly which contrasts will be fitted. A fit group contains related
+contrasts that can reuse one loaded cell-type CDS.
 
-```{r select-contrasts, eval=params$mode %in% c("fit_one", "fit_all")}
+```{r select-contrasts, eval=params$mode %in% c("fit_one", "fit_group", "fit_all")}
 if (params$mode == "fit_one") {
   contrasts_to_fit <- contrast_audit |>
     dplyr::filter(.data$contrast_name == params$contrast_name)
 
   if (nrow(contrasts_to_fit) != 1L) {
     stop("Unknown contrast_name: ", params$contrast_name)
+  }
+} else if (params$mode == "fit_group") {
+  contrasts_to_fit <- contrast_audit |>
+    dplyr::filter(.data$fit_group == params$fit_group)
+
+  if (nrow(contrasts_to_fit) == 0L) {
+    stop("Unknown fit_group: ", params$fit_group)
   }
 } else {
   contrasts_to_fit <- contrast_audit
@@ -280,6 +304,7 @@ if (params$mode == "fit_one") {
 contrasts_to_fit |>
   dplyr::select(
     contrast_name,
+    fit_group,
     group_column,
     perturbation,
     control,
@@ -292,7 +317,7 @@ contrasts_to_fit |>
 This is the large single-cell dataset. It is loaded only when fitting was
 explicitly requested.
 
-```{r load-model-input, eval=params$mode %in% c("fit_one", "fit_all")}
+```{r load-model-input, eval=params$mode %in% c("fit_one", "fit_group", "fit_all")}
 message("Loading McClintock CDS...")
 cds <- monocle3::load_monocle_objects(MCCLINTOCK_CDS)
 
@@ -337,7 +362,7 @@ fit_genotype_ccm()
 get_perturbation_effects()
 ```
 
-```{r fit-contrasts, eval=params$mode %in% c("fit_one", "fit_all")}
+```{r fit-contrasts, eval=params$mode %in% c("fit_one", "fit_group", "fit_all")}
 for (i in seq_len(nrow(contrasts_to_fit))) {
   contrast <- contrasts_to_fit[i, ]
   saved_result <- file.path(
@@ -345,9 +370,12 @@ for (i in seq_len(nrow(contrasts_to_fit))) {
     paste0(contrast$contrast_name, ".tsv")
   )
 
-  if (file.exists(saved_result)) {
+  if (file.exists(saved_result) && !params$overwrite_existing) {
     message("Already complete: ", contrast$contrast_name)
     next
+  }
+  if (file.exists(saved_result)) {
+    message("Recomputing: ", contrast$contrast_name)
   }
 
   sample_metadata <- colData(cell_count_set)
@@ -412,6 +440,7 @@ for (i in seq_len(nrow(contrasts_to_fit))) {
     ) |>
     dplyr::mutate(
       contrast_name = contrast$contrast_name,
+      fit_group = contrast$fit_group,
       group_column = contrast$group_column,
       perturbation = contrast$perturbation,
       control = contrast$control,
@@ -462,6 +491,7 @@ for (i in seq_len(nrow(contrast_audit))) {
 
   expected_identity <- list(
     contrast_name = contrast$contrast_name,
+    fit_group = contrast$fit_group,
     group_column = contrast$group_column,
     perturbation = contrast$perturbation,
     control = contrast$control,
@@ -497,8 +527,7 @@ for (i in seq_len(nrow(contrast_audit))) {
 
   assembled_results[[i]] <- add_celltype_reliability(
     model_results = model_results,
-    detection_summary = detection_summary,
-    gate_policy = CELLTYPE_GATE_POLICY
+    detection_summary = detection_summary
   )
 }
 ```

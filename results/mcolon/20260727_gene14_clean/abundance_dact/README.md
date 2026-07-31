@@ -161,11 +161,15 @@ Choose one mode:
 |---|---|
 | `check_plan` | Checks every planned contrast without fitting |
 | `fit_one` | Fits the contrast named in `contrast_name` |
+| `fit_group` | Loads the CDS once and fits every contrast in `fit_group` |
 | `fit_all` | Fits every unfinished contrast, then assembles the final table |
 | `assemble` | Combines previously completed model results |
 
 The default is `check_plan`, so knitting the notebook without changing anything
 is safe and does not start an expensive model.
+
+Set `overwrite_existing = true` to recompute and replace existing raw
+checkpoints. Otherwise completed contrasts are skipped.
 
 ## How to run every contrast on the cluster
 
@@ -175,9 +179,10 @@ From the repository root:
 results/mcolon/20260727_gene14_clean/abundance_dact/submit_differential_abundance.sh
 ```
 
-This submits one array task per contrast, with at most three tasks running at
-once. After every fit finishes, a dependent job assembles the final table.
-Existing raw checkpoints are skipped.
+This submits one array task per gene-and-timepoint fit group, with at most three
+groups running at once. Each task loads the cell-type CDS once and fits all
+contrasts in its group. After every group finishes, a dependent job assembles
+the final table. Cluster submissions recompute and overwrite raw checkpoints.
 
 Cluster logs are written to:
 

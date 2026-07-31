@@ -35,7 +35,7 @@ summarize_celltype_detection <- function(
     )
 
   duplicated_measurements <- contrast_counts |>
-    dplyr::count(.data$embryo_ID, .data$cell_type) |>
+    dplyr::count(.data$embryo_ID, .data$cell_type) |> #cout how many measurements per embryo and cell type in contrast counts
     dplyr::filter(.data$n != 1)
 
   if (nrow(duplicated_measurements) > 0) {
@@ -71,6 +71,7 @@ summarize_celltype_detection <- function(
     )
   }
 
+# return only the columns needed for downstream calculations, in a consistent order
   detection |>
     dplyr::select(
       cell_type,
@@ -86,26 +87,13 @@ summarize_celltype_detection <- function(
 
 add_celltype_reliability <- function(
     model_results,
-    detection_summary,
-    gate_policy
+    detection_summary
 ) {
-  required_policy_values <- c(
-    "minimum_control_detection",
-    "minimum_control_log_abundance"
-  )
-  missing_policy_values <- setdiff(
-    required_policy_values,
-    names(gate_policy)
-  )
-  if (length(missing_policy_values) > 0) {
-    stop(
-      "Gate policy is missing required values: ",
-      paste(missing_policy_values, collapse = ", ")
-    )
-  }
-
-  minimum_control_detection <- gate_policy$minimum_control_detection
-  minimum_control_log_abundance <- gate_policy$minimum_control_log_abundance
+  # The shared policy above is the only source of reliability thresholds.
+  minimum_control_detection <-
+    CELLTYPE_GATE_POLICY$minimum_control_detection
+  minimum_control_log_abundance <-
+    CELLTYPE_GATE_POLICY$minimum_control_log_abundance
 
   required_model_columns <- c(
     "cell_type",

@@ -10,6 +10,8 @@ suppressPackageStartupMessages({
   library(tidyr)
 })
 
+# TODO after cluster jobs 23191601 and 23191602 finish:
+# Read HERE and MCCLINTOCK_COLDATA from ../project_config.json.
 HERE <- "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/20260727_gene14_clean"
 MCCLINTOCK_COLDATA <- paste0(
   "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/",
