@@ -34,7 +34,11 @@ Segmentation, visualization, file loading, morphology features, biological regis
 Concretely, these stayed in `analyze.utils.coord` because they encode analysis-specific products:
 the canonical embryo grid, the yolk-aware aligner, `Frame` (which carries a yolk mask), and the
 `Canonical*` / `RegisterResult` containers. A test asserts they never appear here
-(`tests/test_promotion_contract.py::test_analysis_specific_types_did_NOT_move`).
+(`tests/image_geometry/test_promotion_contract.py::test_analysis_specific_types_did_NOT_move`).
+
+Tests live in `tests/image_geometry/`, not beside the package — `src/` holds the installable code
+only. Note that directory must NOT have an `__init__.py`: it would shadow the real `image_geometry`
+package and break every import in it. `tests/data_pipeline/` follows the same rule.
 
 ## Two parallel truths
 
