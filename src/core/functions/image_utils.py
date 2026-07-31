@@ -14,33 +14,24 @@ from skimage.morphology import disk, binary_closing, remove_small_objects
 from skimage.measure import label, regionprops, find_contours
 import scipy
 
+from image_geometry import bounds_expanded_rotation_matrix
+
 
 def rotate_image(mat, angle):
     """
     Rotates an image (angle in degrees) and expands image to avoid cropping
+
+    The bound-expansion arithmetic now comes from ``image_geometry``, which is byte-for-byte
+    identical to the block that used to be inlined here (verified across dtypes, shapes, angles and
+    3-channel input, including the ``int()`` bound truncation). Behavior is unchanged for the legacy
+    ``src.functions.image_utils`` star-import consumers in ``src/build``.
     """
-
     height, width = mat.shape[:2]  # image shape has 3 dimensions
-    image_center = (
-    width / 2, height / 2)  # getRotationMatrix2D needs coordinates in reverse order (width, height) compared to shape
-
-    rotation_mat = cv2.getRotationMatrix2D(image_center, angle, 1.)
-
-    # rotation calculates the cos and sin, taking absolutes of those.
-    abs_cos = abs(rotation_mat[0, 0])
-    abs_sin = abs(rotation_mat[0, 1])
-
-    # find the new width and height bounds
-    bound_w = int(height * abs_sin + width * abs_cos)
-    bound_h = int(height * abs_cos + width * abs_sin)
-
-    # subtract old image center (bringing image back to origo) and adding the new image center coordinates
-    rotation_mat[0, 2] += bound_w / 2 - image_center[0]
-    rotation_mat[1, 2] += bound_h / 2 - image_center[1]
-
+    rotation_mat, bounds_wh = bounds_expanded_rotation_matrix(
+        shape_hw=(height, width), angle_deg=angle
+    )
     # rotate image with the new bounds and translated rotation matrix
-    rotated_mat = cv2.warpAffine(mat, rotation_mat, (bound_w, bound_h))
-    return rotated_mat
+    return cv2.warpAffine(mat, rotation_mat, bounds_wh)
 
 
 def process_masks(im_mask, im_yolk, row, close_radius=15):

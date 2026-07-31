@@ -73,6 +73,39 @@ except Exception:  # pragma: no cover
 
 Interp = Literal["nearest", "linear"]
 
+
+def resize_interpolation_flags(
+    *, in_shape_yx: tuple[int, int], out_shape_yx: tuple[int, int], is_mask: bool, anti_alias: bool = True
+) -> int:
+    """THE resize interpolation policy — one decision, shared by every resize seam.
+
+    Masks are nearest unconditionally: a categorical raster must never be blended into fractional
+    values. For images, ``INTER_AREA`` when shrinking (the anti-aliasing prefilter) and
+    ``INTER_LINEAR`` when growing (nothing to prefilter when adding samples).
+
+    "SHRINKING" IS DECIDED PER AXIS — ``out_h < in_h or out_w < in_w`` — not by comparing total
+    pixel AREA. The two disagree exactly when one axis decimates while the other grows (e.g.
+    100x100 -> 300x60), and the disagreement is observable: measured on random texture, INTER_AREA
+    and INTER_LINEAR differ by up to ~240 grey levels across such resizes, so this is a real
+    pixel-level choice and not a cosmetic one.
+
+    Per-axis wins because ALIASING IS A PER-AXIS PHENOMENON. Decimating x folds x's high
+    frequencies into false low-frequency structure regardless of what y is doing; growing y cannot
+    undo that, and an area-based test would skip the prefilter precisely when one axis needs it
+    most. The area test asks "is this overall smaller", which is a question about memory, not about
+    sampling.
+
+    No current caller performs an anisotropic resize (every consumer scales by a single uniform
+    factor), so unifying on per-axis changes no existing pixel — it only fixes the behavior that
+    would appear the first time someone does resize anisotropically.
+    """
+    if is_mask:
+        return cv2.INTER_NEAREST
+    shrinking = out_shape_yx[0] < in_shape_yx[0] or out_shape_yx[1] < in_shape_yx[1]
+    if anti_alias and shrinking:
+        return cv2.INTER_AREA
+    return cv2.INTER_LINEAR
+
 # Step-kind tokens — the CLOSED set of execution semantics.
 RESIZE = "resize"
 CROP_PAD = "crop_pad"
@@ -349,6 +382,21 @@ def support_mask_for(chain: TransformChain, in_shape_yx: tuple[int, int]) -> np.
     return (chain.apply_to_mask(ones) > 0).astype(np.uint8)
 
 
+def _assert_output_shape(out: np.ndarray, target_hw: tuple[int, int], *, what: str) -> None:
+    """Postcondition: the rendered raster is EXACTLY the declared output shape.
+
+    A step declares ``out_shape_yx`` and the engine has, until now, simply trusted cv2 to honor it.
+    A wrong-order or partial resize then propagates silently into downstream coordinate math, where
+    it surfaces as a subtly misplaced embryo rather than as an error. Adopted from the mask/image
+    resize seam, which had this check and whose doctrine this layer now carries.
+    """
+    if tuple(out.shape[:2]) != tuple(target_hw):
+        raise AssertionError(
+            f"{what} post-condition failed: output shape {out.shape[:2]!r} != target "
+            f"{tuple(target_hw)!r}. (Likely an axis-order bug between (H, W) and OpenCV's (W, H).)"
+        )
+
+
 def _apply_step(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.ndarray:
     """Execute one step. Dispatch is on `kind`; interpolation is decided by raster semantics.
 
@@ -377,21 +425,27 @@ def _apply_step(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.ndarr
         return out
 
     if t.kind == RESIZE:
-        if is_mask:
-            flags = cv2.INTER_NEAREST
-        elif t.params.get("anti_alias", True) and (h_out < arr.shape[0] or w_out < arr.shape[1]):
-            # THE anti-alias branch. INTER_AREA is meaningful only on cv2.resize (warpAffine
-            # ignores it), and only when shrinking.
-            flags = cv2.INTER_AREA
-        else:
-            flags = cv2.INTER_LINEAR
-        return cv2.resize(arr.astype(np.float32), (w_out, h_out), interpolation=flags)
+        # THE anti-alias decision, shared with the mask/image resize seam so the two can never
+        # drift. INTER_AREA is meaningful only on cv2.resize (warpAffine ignores it).
+        flags = resize_interpolation_flags(
+            in_shape_yx=arr.shape[:2],
+            out_shape_yx=(h_out, w_out),
+            is_mask=is_mask,
+            anti_alias=bool(t.params.get("anti_alias", True)),
+        )
+        # cv2's dsize is (width, height) — the reverse of numpy's (H, W). This swap is the whole
+        # bug class the postcondition below exists to catch.
+        out = cv2.resize(arr.astype(np.float32), (w_out, h_out), interpolation=flags)
+        _assert_output_shape(out, (h_out, w_out), what="resize step")
+        return out
 
     if t.kind == AFFINE:
         flags = cv2.INTER_NEAREST if (is_mask or t.interp == "nearest") else cv2.INTER_LINEAR
-        return cv2.warpAffine(
+        out = cv2.warpAffine(
             arr.astype(np.float32), t.affine_2x3.astype(np.float32), (w_out, h_out), flags=flags
         )
+        _assert_output_shape(out, (h_out, w_out), what="affine step")
+        return out
 
     # Unreachable while `kind` validation and this dispatch agree. If they ever diverge — a kind
     # added to the closed set but not wired here — fail rather than silently warping.
