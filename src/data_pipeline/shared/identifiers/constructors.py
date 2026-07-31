@@ -196,6 +196,30 @@ def build_snip_id(embryo_id: str, image_id: str) -> str:
     return f"{str(embryo_id)}_t{time_index:04d}"
 
 
+def build_snip_transform_id(physical_embryo_id: str, time_index: int) -> str:
+    """Return the CHANNEL-INDEPENDENT identity of a snip's geometric transform.
+
+    A transform is a property of an animal at a time — where it is and which way it points — and is
+    derived from the segmentation MASK, never from image pixels. So its identity is
+    ``physical_embryo_id x time_index`` with NO channel segment: ``BF__clahe_blend``,
+    ``RFP__no_change``, and any future ``GFP__no_change`` snip of the same embryo-time all reference
+    the SAME transform row.
+
+    That channel-independence is the whole point. Naming the transform after one channel's snip would
+    make an RFP row point at "a file named for BF", and would let sibling products each hold a COPY
+    of identical geometry that can drift apart — silently breaking the pixel-registerability the
+    transform exists to guarantee. One id, referenced by every sibling, makes that unrepresentable.
+
+    Example: ``("20250416_D09_e01", 32)`` → ``"20250416_D09_e01_t0032"``
+    """
+    _require_non_empty_text(physical_embryo_id, field_name="physical_embryo_id")
+    _require_non_negative_int(time_index, field_name="time_index")
+    # Parse for its side effect: a malformed physical_embryo_id must fail here, not silently
+    # produce a well-formed-looking id that joins to nothing.
+    parse_physical_embryo_id(physical_embryo_id)
+    return f"{str(physical_embryo_id)}_t{int(time_index):04d}"
+
+
 def _require_non_empty_text(value: str, *, field_name: str) -> None:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field_name} must be a non-empty string.")

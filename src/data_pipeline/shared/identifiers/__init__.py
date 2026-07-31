@@ -20,6 +20,7 @@ from .constructors import build_mask_id
 from .constructors import build_no_mask_id
 from .constructors import build_physical_embryo_id
 from .constructors import build_snip_id
+from .constructors import build_snip_transform_id
 from .constructors import build_track_id
 from .constructors import build_well_id
 from .constructors import sanitize_experiment_id
@@ -55,6 +56,7 @@ __all__ = [
     "build_no_mask_id",
     "build_physical_embryo_id",
     "build_snip_id",
+    "build_snip_transform_id",
     "build_track_id",
     "build_well_id",
     "sanitize_experiment_id",

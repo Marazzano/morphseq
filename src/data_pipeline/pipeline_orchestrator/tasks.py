@@ -543,6 +543,7 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
         output_width_px=args.output_width_px,
         background_noise_scale=args.background_noise_scale,
         blend_radius_um=args.blend_radius_um,
+        snip_transform_table_path=getattr(args, "snip_transform_table_path", None),
     )
 
 
@@ -1570,6 +1571,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--output-width-px", type=int, default=256)
     p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
     p_sp.add_argument("--blend-radius-um", type=float, default=20.0)
+    # The per-well transform table: one row per embryo-time, referenced by snip_inventory's
+    # snip_transform_id. Optional at the CLI so existing callers keep working; when omitted no
+    # table is written and the FK column is the only record that a transform existed.
+    p_sp.add_argument("--snip-transform-table-path", type=Path, default=None)
     p_sp.set_defaults(func=cmd_snip_processing)
 
     p_mg = sub.add_parser("mask-geometry")

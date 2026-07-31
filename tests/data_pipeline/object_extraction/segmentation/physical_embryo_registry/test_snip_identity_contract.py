@@ -179,6 +179,33 @@ def _snip_inventory_row(**kw):
         "crop_height_px": 576,
         "is_valid_snip": True,
         "error_message": "",
+        # Construction provenance: HOW this snip was geometrically built. The full replayable
+        # evidence lives in the per-well snip transform table, referenced by snip_transform_id.
+        "crop_x_min_um": 0.0,
+        "crop_y_min_um": 0.0,
+        "crop_x_max_um": 1996.8,
+        "crop_y_max_um": 4492.8,
+        "orientation_policy": "pca_major_axis_yolk_down",
+        "orientation_source": "embryo_mass_distribution",
+        "no_yolk_policy": "fallback_mass_distribution",
+        "rotation_angle_rad": 0.0,
+        "flip_x": False,
+        "crop_center_um_x": 998.4,
+        "crop_center_um_y": 2246.4,
+        "source_height_px": 2189,
+        "source_width_px": 1152,
+        "source_um_per_px": 3.230785,
+        "target_um_per_px": 7.8,
+        "output_height_px": 576,
+        "output_width_px": 256,
+        "border_mode": "constant",
+        "image_interpolation": "linear",
+        "mask_interpolation": "nearest",
+        "realized_scale_y": 0.414344,
+        "realized_scale_x": 0.414344,
+        "centering": "legacy_latched",
+        # Channel-independent FK: sibling products of this embryo-time share this id.
+        "snip_transform_id": f"{row['physical_embryo_id']}_t{row['time_index']:04d}",
     })
     return row
 

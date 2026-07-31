@@ -246,10 +246,62 @@ SNIP_INVENTORY_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "error_message",
 )
 
+# CONSTRUCTION-PROVENANCE columns: how the snip in this row was geometrically built. They explain
+# the pixels; they are not identity, not a product, and not a second image.
+#
+# On the ROW (rather than only in the transform table) because these answer "what happened here"
+# without a join — by far the common question. The FULL evidence, including the replayable step
+# chain, lives in the per-well snip transform table: one row per embryo-time, referenced below.
+#
+#   snip_transform_id     — FK into the per-well snip transform table. CHANNEL-INDEPENDENT: sibling
+#                           products of one embryo-time (BF__clahe_blend, RFP__no_change, …) carry
+#                           the SAME id and reference ONE row. Not a path, and not optional — every
+#                           snip has a transform. One shared row is what makes sibling geometry
+#                           drift unrepresentable; per-product copies could silently diverge.
+#
+#   orientation_policy / orientation_source / no_yolk_policy — the orientation DECISION and how it
+#                           was reached, so a later yolk-aware pass knows what it is replacing.
+#   centering             — legacy_latched | continuous. WHICH centering produced these pixels; the
+#                           single most important field for interpreting a snip across the migration.
+#   realized_scale_y/x    — the ratio the resize engine actually applied (integer output dims), which
+#                           is not the requested ratio and is what coordinate mappings must use.
+SNIP_TRANSFORM_PROVENANCE_COLUMNS: tuple[str, ...] = (
+    # The crop window in PHYSICAL units, paired with the long-dead crop_*_px payload columns which
+    # this change finally populates. Both are kept: product pixels alone cannot express one recipe
+    # across calibrations, and physical alone is not auditable against the written file.
+    "crop_x_min_um",
+    "crop_y_min_um",
+    "crop_x_max_um",
+    "crop_y_max_um",
+    "orientation_policy",
+    "orientation_source",
+    "no_yolk_policy",
+    "rotation_angle_rad",
+    "flip_x",
+    "crop_center_um_x",
+    "crop_center_um_y",
+    "source_height_px",
+    "source_width_px",
+    "source_um_per_px",
+    "target_um_per_px",
+    "output_height_px",
+    "output_width_px",
+    "border_mode",
+    "image_interpolation",
+    "mask_interpolation",
+    "realized_scale_y",
+    "realized_scale_x",
+    "centering",
+    "snip_transform_id",
+)
+
 # Canonical writer schema for snip_inventory shards, including zero-row shards.
 # Writers import this tuple instead of maintaining a second copy of the contract.
 SNIP_INVENTORY_COLUMNS: tuple[str, ...] = (
-    SNIP_ID_SPINE_COLUMNS + SNIP_FRAME_PROVENANCE_COLUMNS + SNIP_INVENTORY_PAYLOAD_COLUMNS
+    SNIP_ID_SPINE_COLUMNS
+    + SNIP_FRAME_PROVENANCE_COLUMNS
+    + SNIP_INVENTORY_PAYLOAD_COLUMNS
+    + SNIP_TRANSFORM_PROVENANCE_COLUMNS
 )
 
 
