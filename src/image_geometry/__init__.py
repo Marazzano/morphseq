@@ -26,6 +26,16 @@ Conventions:
 """
 
 from .boxes import BoxYX, CoordConvention
+from .candidates import (
+    CANDIDATE_KEYS,
+    CANDIDATE_KEYS_NO_FLIP,
+    PlacedCandidate,
+    candidate_keys,
+    centered_placement_affine,
+    enumerate_orientation_candidates,
+    pca_major_axis_angle_deg,
+    vertical_flip_partner,
+)
 from .transforms import (
     AFFINE,
     CROP_PAD,
@@ -63,4 +73,15 @@ __all__ = [
     "CROP_PAD",
     "FLIP_X",
     "RESIZE",
+    # Orientation-candidate MECHANICS. A PCA axis fixes an elongated object's pose only up
+    # to a 180-degree rotation and a mirror; these enumerate that closed four-way choice.
+    # CHOOSING among them is domain policy and lives in embryo_geometry, not here.
+    "CANDIDATE_KEYS",
+    "CANDIDATE_KEYS_NO_FLIP",
+    "PlacedCandidate",
+    "candidate_keys",
+    "centered_placement_affine",
+    "enumerate_orientation_candidates",
+    "pca_major_axis_angle_deg",
+    "vertical_flip_partner",
 ]
