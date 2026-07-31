@@ -11,7 +11,7 @@ The internal engine is `CanonicalGridMapper`.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Tuple
 import warnings
 
@@ -33,7 +33,7 @@ from ..types import (
     Frame,
 )
 from .back_direction import compute_back_direction
-from image_geometry import GridTransform, TransformChain
+from image_geometry import TransformChain, affine_step, flip_x_step
 
 
 @dataclass
@@ -611,36 +611,24 @@ def _build_stage1_chain(
     best_flip: bool,
     M_shift: np.ndarray,
 ) -> TransformChain:
-    h, w = grid_shape_yx
     transforms = [
-        GridTransform(
+        affine_step(
             name="rotate_scale_center",
             affine_2x3=np.asarray(M_final, dtype=np.float64),
             in_shape_yx=grid_shape_yx,
             out_shape_yx=grid_shape_yx,
             interp="nearest",
-            params={"affine_convention": "opencv_xy"},
         )
     ]
     if best_flip:
-        transforms.append(
-            GridTransform(
-                name="flip_x",
-                affine_2x3=np.array([[ -1.0, 0.0, float(w - 1)], [0.0, 1.0, 0.0]], dtype=np.float64),
-                in_shape_yx=grid_shape_yx,
-                out_shape_yx=grid_shape_yx,
-                interp="nearest",
-                params={"affine_convention": "opencv_xy"},
-            )
-        )
+        transforms.append(flip_x_step(shape_yx=grid_shape_yx, interp="nearest"))
     transforms.append(
-        GridTransform(
+        affine_step(
             name="translate_anchor",
             affine_2x3=np.asarray(M_shift, dtype=np.float64),
             in_shape_yx=grid_shape_yx,
             out_shape_yx=grid_shape_yx,
             interp="nearest",
-            params={"affine_convention": "opencv_xy"},
         )
     )
     return TransformChain(transforms=transforms)
@@ -804,13 +792,13 @@ def to_canonical_grid_image(
 
     chain = TransformChain(
         transforms=[
-            GridTransform(
+            affine_step(
                 name="scale_center",
                 affine_2x3=np.asarray(M, dtype=np.float64),
                 in_shape_yx=(h_in, w_in),
                 out_shape_yx=(h_out, w_out),
                 interp="linear" if interpolation == "linear" else "nearest",
-                params={"scale": float(scale), "affine_convention": "opencv_xy"},
+                params={"scale": float(scale)},
             )
         ]
     )
@@ -888,15 +876,11 @@ def to_canonical_grid_frame(
         # If we have a segmentation-derived chain, apply it; otherwise reuse image-only mapping.
         if frame.mask is not None:
             out_img = TransformChain(
+                # Re-render the SAME chain with image semantics. Each step keeps its own `kind`
+                # (execution) and `name` (provenance) — only the requested interpolation changes,
+                # so this must copy rather than rebuild through a per-kind constructor.
                 transforms=[
-                    GridTransform(
-                        name=t.name,
-                        affine_2x3=t.affine_2x3,
-                        in_shape_yx=t.in_shape_yx,
-                        out_shape_yx=t.out_shape_yx,
-                        interp="linear",
-                        params=dict(t.params),
-                    )
+                    replace(t, interp="linear", params=dict(t.params))
                     for t in chain.transforms
                 ]
             ).apply_to_image(np.asarray(frame.image))

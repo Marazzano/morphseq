@@ -27,15 +27,19 @@ Conventions:
 
 from .boxes import BoxYX, CoordConvention
 from .transforms import (
+    AFFINE,
     CROP_PAD,
     FLIP_X,
     RESIZE,
     GridTransform,
     Interp,
+    StepKind,
     TransformChain,
     affine_step,
     crop_pad_step,
+    flip_x_step,
     resize_step,
+    support_mask_for,
 )
 
 __all__ = [
@@ -43,13 +47,19 @@ __all__ = [
     "CoordConvention",
     "GridTransform",
     "Interp",
+    "StepKind",
     "TransformChain",
     # Step-kind constructors — build a chain from these rather than raw GridTransforms, so the
     # raster semantics of each step are explicit.
     "affine_step",
     "crop_pad_step",
+    "flip_x_step",
     "resize_step",
+    # Distinguishes real measurements from synthesized zero padding — required before any
+    # quantitative measurement that could sample outside the source raster.
+    "support_mask_for",
     # Step-kind tokens, for dispatch and assertions.
+    "AFFINE",
     "CROP_PAD",
     "FLIP_X",
     "RESIZE",

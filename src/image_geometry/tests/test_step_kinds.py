@@ -11,11 +11,15 @@ import numpy as np
 import pytest
 
 from image_geometry import (
+    AFFINE,
     CROP_PAD,
+    FLIP_X,
     RESIZE,
+    GridTransform,
     TransformChain,
     affine_step,
     crop_pad_step,
+    flip_x_step,
     resize_step,
 )
 
@@ -149,8 +153,86 @@ class TestCompositeAffine:
 
 class TestStepKindMetadata:
     def test_steps_carry_their_kind(self):
-        assert resize_step(in_shape_yx=(10, 10), out_shape_yx=(5, 5)).name == RESIZE
-        assert crop_pad_step(in_shape_yx=(10, 10), y0=0, x0=0, out_shape_yx=(5, 5)).name == CROP_PAD
+        assert resize_step(in_shape_yx=(10, 10), out_shape_yx=(5, 5)).kind == RESIZE
+        assert crop_pad_step(in_shape_yx=(10, 10), y0=0, x0=0, out_shape_yx=(5, 5)).kind == CROP_PAD
+        assert flip_x_step(shape_yx=(10, 10)).kind == FLIP_X
+        assert affine_step(
+            affine_2x3=np.eye(2, 3), in_shape_yx=(10, 10), out_shape_yx=(10, 10)
+        ).kind == AFFINE
+
+    def test_name_is_caller_supplied_provenance(self):
+        """`name` must not be owned by the constructor — provenance is the caller's to state."""
+        assert resize_step(
+            in_shape_yx=(10, 10), out_shape_yx=(5, 5), name="downscale_to_canonical_um"
+        ).name == "downscale_to_canonical_um"
+        assert crop_pad_step(
+            in_shape_yx=(10, 10), y0=0, x0=0, out_shape_yx=(5, 5), name="place_on_canvas"
+        ).name == "place_on_canvas"
+        assert flip_x_step(shape_yx=(10, 10), name="mirror_to_canonical_facing").name == (
+            "mirror_to_canonical_facing"
+        )
+        # Defaults still describe the kind, so unnamed steps stay readable.
+        assert resize_step(in_shape_yx=(10, 10), out_shape_yx=(5, 5)).name == "resize"
+
+
+class TestKindGovernsExecution:
+    """`kind` is execution; `name` is provenance. The two must never be able to trade places."""
+
+    def test_unknown_kind_is_rejected_at_construction(self):
+        with pytest.raises(ValueError, match="unknown kind"):
+            GridTransform(
+                kind="reszie",  # the typo that a permissive fallback would have silently warped
+                name="resize",
+                affine_2x3=np.eye(2, 3),
+                in_shape_yx=(10, 10),
+                out_shape_yx=(5, 5),
+                interp="linear",
+                params={},
+            )
+
+    def test_unhandled_kind_raises_rather_than_falling_through_to_affine(self):
+        """A kind admitted by validation but not wired into dispatch must fail loudly.
+
+        Simulated by bypassing __post_init__ via object.__setattr__ on the frozen dataclass —
+        the state the codebase would be in the moment someone adds a token to _VALID_KINDS and
+        forgets the dispatch arm.
+        """
+        step = affine_step(affine_2x3=np.eye(2, 3), in_shape_yx=(10, 10), out_shape_yx=(10, 10))
+        object.__setattr__(step, "kind", "shear_but_unwired")
+        with pytest.raises(AssertionError, match="Unhandled step kind"):
+            TransformChain([step]).apply_to_image(np.zeros((10, 10), np.uint8))
+
+    def test_a_lying_name_does_not_change_execution(self):
+        """A step NAMED "resize" but KINDED affine must warp, not resample — and vice versa.
+
+        This is the whole point of the split: if execution followed `name`, these two would swap
+        behavior, and a downscale would silently lose its anti-alias prefilter.
+        """
+        img = _checkerboard()
+
+        # kind=resize, name lies "affine" -> must anti-alias like a resize.
+        lying_resize = resize_step(in_shape_yx=(400, 400), out_shape_yx=(166, 166), name="affine")
+        honest_resize = resize_step(in_shape_yx=(400, 400), out_shape_yx=(166, 166))
+        assert np.array_equal(
+            TransformChain([lying_resize]).apply_to_image(img),
+            TransformChain([honest_resize]).apply_to_image(img),
+        )
+        # And it really did prefilter: the checkerboard collapses toward flat grey.
+        assert TransformChain([lying_resize]).apply_to_image(img).std() < 5.0
+
+        # kind=affine, name lies "resize" -> must warp, aliasing freely.
+        scale = np.array([[166 / 400, 0.0, 0.0], [0.0, 166 / 400, 0.0]])
+        lying_affine = affine_step(
+            affine_2x3=scale, in_shape_yx=(400, 400), out_shape_yx=(166, 166), name="resize"
+        )
+        warped = TransformChain([lying_affine]).apply_to_image(img)
+        assert warped.std() > 20.0, "a name of 'resize' must not buy an anti-alias prefilter"
+
+    def test_flip_x_kind_flips_regardless_of_its_affine(self):
+        """flip_x executes by indexing; its recorded affine is coordinate truth, not the operation."""
+        arr = np.arange(20, dtype=np.uint8).reshape(4, 5)
+        out = TransformChain([flip_x_step(shape_yx=(4, 5))]).apply_to_mask(arr)
+        assert np.array_equal(out, arr[:, ::-1])
 
     def test_resize_records_its_scale_and_prefilter(self):
         step = resize_step(in_shape_yx=(100, 200), out_shape_yx=(50, 50))
