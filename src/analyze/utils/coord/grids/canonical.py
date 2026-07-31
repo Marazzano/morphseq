@@ -131,6 +131,18 @@ class CanonicalAligner:
         return cv2.warpAffine(mask.astype(np.float32), M, (w, h), flags=cv2.INTER_NEAREST)
 
     def _bbox(self, mask: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+        """INCLUSIVE ``(min_y, max_y, min_x, max_x)`` of pixels ``> 0.5``.
+
+        NOT ``BoxYX.from_mask``, and deliberately not delegated to it, on two independent counts:
+
+        1. INCLUSIVE maxima, not half-open. The caller clamps shifts against ``(W - 1) - max_x``,
+           so a half-open maximum would move every clamp bound by one pixel.
+        2. Threshold ``> 0.5``, because this runs on masks that ``_warp`` has already resampled into
+           float space, where fractional edge values are interpolation smear rather than content.
+
+        ``BoxYX.from_mask(mask, threshold=0.5)`` would match on (2) but not (1). Converting would be
+        a placement change, and this aligner's placement math is out of scope.
+        """
         ys, xs = np.where(mask > 0.5)
         if ys.size == 0:
             return None

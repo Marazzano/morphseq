@@ -115,9 +115,24 @@ class BoxYX:
         )
 
     @staticmethod
-    def from_mask(mask: np.ndarray) -> Optional["BoxYX"]:
-        """Tight bbox of nonzero pixels. Returns None if mask is empty."""
-        ys, xs = np.where(mask > 0)
+    def from_mask(mask: np.ndarray, *, threshold: float = 0.0) -> Optional["BoxYX"]:
+        """Tight bbox of pixels ``> threshold``. Returns None if nothing exceeds it.
+
+        THE THRESHOLD IS SEMANTIC, NOT A TUNING KNOB, and the default deliberately preserves the
+        historical ``> 0`` behavior:
+
+        * ``threshold=0.0`` — for a CRISP mask (bool, 0/1, or 0/255) where any nonzero pixel is
+          foreground. This is the honest reading of a mask that has not been resampled.
+        * ``threshold=0.5`` — for a FLOAT mask that has been through interpolation, where bilinear
+          resampling has smeared the boundary into fractional values. Taking ``> 0`` there would
+          include every pixel touched by the interpolation kernel's tail, inflating the box by
+          roughly the kernel radius on every side.
+
+        Callers pass the value matching their raster's provenance. Unifying the two would silently
+        change box extents for one class of caller, so the parameter is explicit and required at the
+        call sites that need 0.5.
+        """
+        ys, xs = np.where(mask > threshold)
         if ys.size == 0:
             return None
         return BoxYX(

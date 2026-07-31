@@ -26,6 +26,7 @@ Conventions:
 """
 
 from .boxes import BoxYX, CoordConvention
+from .rotation import bounds_expanded_rotation_matrix, expanded_rotation_bounds_wh
 from .transforms import (
     AFFINE,
     CROP_PAD,
@@ -38,6 +39,7 @@ from .transforms import (
     affine_step,
     crop_pad_step,
     flip_x_step,
+    resize_interpolation_flags,
     resize_step,
     support_mask_for,
 )
@@ -55,6 +57,9 @@ __all__ = [
     "crop_pad_step",
     "flip_x_step",
     "resize_step",
+    # THE shared resize interpolation policy (masks nearest; images area-on-shrink, per axis).
+    # Both this package's step engine and the mask/image resize seam decide through it.
+    "resize_interpolation_flags",
     # Distinguishes real measurements from synthesized zero padding — required before any
     # quantitative measurement that could sample outside the source raster.
     "support_mask_for",
@@ -63,4 +68,8 @@ __all__ = [
     "CROP_PAD",
     "FLIP_X",
     "RESIZE",
+    # Bounds-expanding rotation arithmetic — a matrix and a canvas size, never pixels. The caller
+    # owns the resampling kernel.
+    "bounds_expanded_rotation_matrix",
+    "expanded_rotation_bounds_wh",
 ]

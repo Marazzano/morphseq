@@ -50,7 +50,13 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from image_geometry import TransformChain, affine_step, resize_step
+from image_geometry import (
+    TransformChain,
+    affine_step,
+    bounds_expanded_rotation_matrix,
+    expanded_rotation_bounds_wh,
+    resize_step,
+)
 
 from data_pipeline.object_extraction.snip_processing.rotation import get_embryo_rotation_angle
 
@@ -296,18 +302,18 @@ def _legacy_bounds_expanded_rotation(
 ) -> np.ndarray:
     """The rotation legacy applied: about the rescaled canvas center, onto expanded bounds.
 
-    Mirrors ``rotation.rotate_image`` exactly, including its ``int()`` bound truncation. TRANSITIONAL
-    — exists only to let CENTERING_LATCHED reproduce legacy placement; deleted with that branch.
+    Mirrors ``rotation.rotate_image`` exactly, including its ``int()`` bound truncation — both now
+    share ``image_geometry.bounds_expanded_rotation_matrix``, so "exactly" is enforced by
+    construction rather than by four copies staying in sync. TRANSITIONAL — exists only to let
+    CENTERING_LATCHED reproduce legacy placement; deleted with that branch.
+
+    Only the matrix is returned; the expanded bounds are recovered by the caller via
+    ``expanded_rotation_bounds_wh``. The RESAMPLING stays at the call site on purpose: this path must
+    keep legacy's bilinear-on-a-binary-mask behavior, which a shared render helper would "fix".
     """
-    height, width = rescaled_shape_hw
-    image_center = (width / 2, height / 2)
-    rotation_mat = cv2.getRotationMatrix2D(image_center, angle_deg, 1.0)
-    abs_cos = abs(rotation_mat[0, 0])
-    abs_sin = abs(rotation_mat[0, 1])
-    bound_w = int(height * abs_sin + width * abs_cos)
-    bound_h = int(height * abs_cos + width * abs_sin)
-    rotation_mat[0, 2] += bound_w / 2 - image_center[0]
-    rotation_mat[1, 2] += bound_h / 2 - image_center[1]
+    rotation_mat, _bounds_wh = bounds_expanded_rotation_matrix(
+        shape_hw=rescaled_shape_hw, angle_deg=angle_deg
+    )
     return rotation_mat
 
 
@@ -345,11 +351,15 @@ def _legacy_rotated_bbox_center(
     rotation_mat = _legacy_bounds_expanded_rotation(
         rescaled_shape_hw=rescaled_shape_hw, angle_deg=angle_deg
     )
-    # Recompute the expanded bounds the same way rotate_image does.
-    abs_cos = abs(rotation_mat[0, 0])
-    abs_sin = abs(rotation_mat[0, 1])
-    bound_w = int(rescaled_h * abs_sin + rescaled_w * abs_cos)
-    bound_h = int(rescaled_h * abs_cos + rescaled_w * abs_sin)
+    # The expanded bounds that go with THAT matrix. Derived from the matrix's own top row rather
+    # than recomputed from the angle, so the two can never disagree by a truncated pixel.
+    bound_w, bound_h = expanded_rotation_bounds_wh(
+        shape_hw=(rescaled_h, rescaled_w),
+        abs_cos=abs(rotation_mat[0, 0]),
+        abs_sin=abs(rotation_mat[0, 1]),
+    )
+    # Bilinear on a binary mask is legacy's DEFECT, reproduced deliberately — see this function's
+    # docstring. Do not route through TransformChain.apply_to_mask, which would force nearest.
     mask_rotated = cv2.warpAffine(mask_rescaled, rotation_mat, (bound_w, bound_h))
 
     y_indices = np.where(np.max(mask_rotated, axis=1) > 0.5)[0]
