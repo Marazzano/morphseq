@@ -26,7 +26,17 @@ Conventions:
 """
 
 from .boxes import BoxYX, CoordConvention
-from .transforms import GridTransform, Interp, TransformChain
+from .transforms import (
+    CROP_PAD,
+    FLIP_X,
+    RESIZE,
+    GridTransform,
+    Interp,
+    TransformChain,
+    affine_step,
+    crop_pad_step,
+    resize_step,
+)
 
 __all__ = [
     "BoxYX",
@@ -34,4 +44,13 @@ __all__ = [
     "GridTransform",
     "Interp",
     "TransformChain",
+    # Step-kind constructors — build a chain from these rather than raw GridTransforms, so the
+    # raster semantics of each step are explicit.
+    "affine_step",
+    "crop_pad_step",
+    "resize_step",
+    # Step-kind tokens, for dispatch and assertions.
+    "CROP_PAD",
+    "FLIP_X",
+    "RESIZE",
 ]
