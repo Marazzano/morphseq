@@ -14,18 +14,78 @@ the next consumer:
 Two engines answering the same biological question will drift. This module is the one
 engine. What it does NOT do is quietly declare one of the existing answers canonical:
 
-THERE ARE CURRENTLY *THREE* DISTINCT RULES IN PRODUCTION, NOT ONE.
+THERE ARE CURRENTLY *FOUR* DISTINCT RULES IN PRODUCTION, NOT ONE.
 
-    1. yolk-left AP + back-above-yolk DV        (CanonicalAligner, yolk present)
-    2. -(com_y + com_x) "mass toward upper-left" (CanonicalAligner, yolk missing)
-    3. vert_ratio >= 0.5                         (snip pipeline, yolk missing)
+    yolk present:
+      1. yolk-left AP (canvas argmin) + back-above-yolk DV  (CanonicalAligner)
+      4. embryo COM vs yolk COM along the body axis          (snip pipeline)
+    yolk missing:
+      2. -(com_y + com_x) "mass toward upper-left"           (CanonicalAligner)
+      3. vert_ratio >= 0.5                                   (snip pipeline)
 
-and there is a fourth in the snip pipeline for the yolk-present case (yolk above the
-embryo centroid), which is a different anatomical claim from rule 1. Rules 2 and 3 are
-BOTH "the no-yolk policy" -- of different callers, and they do not agree. So the fallback
-is a parameter here, from a closed set, and every decision reports which one ran and why.
-Converging on a single fallback then becomes a later, deliberate, attributable change
-rather than something that happens by accident inside an extraction.
+Rules 2 and 3 are BOTH "the no-yolk policy", of different callers, and they do not agree.
+Rules 1 and 4 are BOTH "the yolk-present policy", and they do not agree either. So BOTH
+policy slots are parameters here, each from a closed set, and every decision reports which
+one ran and why. Converging on a single rule then becomes a later, deliberate,
+attributable change rather than something that happens by accident inside an extraction.
+
+RULE 1's AP HALF READS THE WRONG FRAME
+--------------------------------------
+It is tempting to rank rule 1 above rule 4 because it is the more elaborate and is
+yolk-aware. It is yolk-aware, but it reads the yolk in CANVAS COORDINATES: "pick the
+candidate whose yolk centroid has the smallest x on the output grid". That is a statement
+about the rendering, not about the animal. Rule 4 compares two landmarks that are both ON
+THE EMBRYO -- a signed vector between embryo COM and yolk COM -- and is therefore
+frame-independent, and structurally the better rule.
+
+This is not merely aesthetic. Measured over 132 synthetic cases (see
+``test_orientation_policy.py``):
+
+    rule 1: after the DV step, its own AP predicate still holds in  66/132 cases
+    rule 4: after the DV step, its own AP predicate still holds in 132/132 cases
+
+Under rule 1, DV silently breaks AP in exactly half the cases -- the two are not jointly
+satisfiable and the later one wins. Under rule 4 they ARE jointly satisfiable, because a
+vertical flip negates the y-components of both landmarks together and so PRESERVES the
+sign of the AP vector (verified: 528/528 partner pairs). AP and DV become independent
+axes instead of two rules fighting over one answer.
+
+BUT THE TWO RULES SELECT THE SAME POSE TODAY -- a negative result worth stating plainly.
+``enumerate_orientation_candidates`` rotates about the mask centroid and lands it at the
+canvas centre, so all four candidates share an embryo COM and their yolk-x values form two
+mirror pairs symmetric about it (measured asymmetry: 0.0000 px). Under that symmetry the
+canvas centre IS the embryo COM, so "leftmost yolk on the canvas" and "yolk anterior to
+embryo COM" partition the candidates identically. Rule 1 is accidentally right.
+
+So rule 1's frame-dependence is a LATENT defect, not an active one, and switching a caller
+to rule 4 should be a no-op on this call path. The defect surfaces only for a caller that
+evaluates candidates without centring the embryo, or that compares poses across
+differently-placed embryos -- and rule 1's correctness silently depends on a centring
+invariant that nothing states or enforces. That is the case for keeping rule 4, and it is
+weaker than "rule 1 is producing wrong answers today", which would not be true.
+
+Rule 4 is nonetheless still a latch (``>= 0``, no deadband). Its margin is reported as
+``ap_com_margin_px``, a DIFFERENT quantity from ``ap_margin_px`` -- see below.
+
+THE AP AXIS IS NOT THE SAME AXIS IN BOTH STACKS
+-----------------------------------------------
+This is the likely mechanism by which the two stacks drifted apart, and it is invisible
+unless you check which way the body ends up pointing.
+
+``rotation.py`` compares index ``[0]`` -- the ROW, y -- which looks like a dorsal/ventral
+test. It is not. skimage's ``regionprops.orientation`` is measured FROM THE VERTICAL, so
+rotating by ``-orientation`` leaves the body's LONG axis along y (measured: post-rotation
+extent is ~218 rows tall by ~61 columns wide across every test angle). So its ``[0]``
+comparison is along the long axis, and rule 4 constrains AP.
+
+``CanonicalAligner`` rotates the long axis onto x for its landscape canvas, and its AP
+test reads ``yolk_yx[1]`` -- the COLUMN, x. Also the long axis, also AP.
+
+So both yolk-present rules DO constrain the same anatomical axis, AP -- but they express
+it through OPPOSITE array indices, because the two stacks leave the body pointing in
+perpendicular directions. Comparing ``[0]`` in one stack against ``[0]`` in the other
+compares AP against DV. Any future unification must convert through the anatomical axis,
+never by matching index positions.
 
 THIS IS AN EXTRACTION, NOT A POLICY CHANGE. Each caller can request the policy it uses
 today and get the decision it makes today, byte for byte. What is new is that the evidence
@@ -42,13 +102,17 @@ ASPECT RATIO, not of the embryo -- that logic stays with the renderer.
 
 NO CALIBRATED CONFIDENCE NUMBER IS EMITTED
 ------------------------------------------
-The margins are RAW and not commensurable. ``ap_margin_px`` is pixels of yolk-x
-separation, ``dv_margin_px`` is ``|back_y - yolk_y|`` in pixels, ``vert_ratio_margin`` is
-``|vert_ratio - 0.5|`` and dimensionless. A 10px AP margin is not "the same amount of
-evidence" as a 0.03 vert-ratio margin, and combining them would need calibration against
-embryo size, yolk radius, and empirical error rates that nobody has done. So no
-probability and no score is returned -- only the measurements, for a caller to threshold
-deliberately.
+The margins are RAW and not commensurable -- not even the two AP ones. ``ap_margin_px`` is
+the winner-vs-runner-up gap in CANVAS yolk-x under rule 1; ``ap_com_margin_px`` is
+``|embryo_com - yolk_com|`` along the body axis under rule 4. Both are "pixels" and both
+are "the AP margin", but they measure different geometry -- a gap between CANDIDATES
+versus a distance between LANDMARKS on the animal -- so they are separate fields and must
+never be substituted for one another. ``dv_margin_px`` is ``|back_y - yolk_y|``, and
+``vert_ratio_margin`` is ``|vert_ratio - 0.5|``, dimensionless. A 10px margin of one kind
+is not "the same amount of evidence" as 10px of another, let alone as 0.03 of a
+vert-ratio, and combining them would need calibration against embryo size, yolk radius,
+and empirical error rates that nobody has done. So no probability and no score is
+returned -- only the measurements, for a caller to threshold deliberately.
 
 AMBIGUITIES FOUND WHILE STATING THE RULES PRECISELY
 ---------------------------------------------------
@@ -59,20 +123,25 @@ AMBIGUITIES FOUND WHILE STATING THE RULES PRECISELY
    ``vert_ratio`` of 0.4967 / 0.5068 / 0.4843 -- three coin flips reported as three
    confident decisions. That is why the margins are returned.
 
-2. STEP 2 CAN UNDO STEP 1. The vertical-flip partner mirrors horizontally too, so
-   enforcing dorsal-up can move the yolk to the RIGHT, violating the rule Step 1 just
-   applied. The two rules are not jointly satisfiable in general and DV silently wins.
-   ``dv_override_ap_choice`` reports it. Yolk-left is therefore NOT an invariant of the
-   output, despite being stated as the rule.
+2. UNDER RULE 1 ONLY, STEP 2 CAN UNDO STEP 1. The vertical-flip partner mirrors
+   horizontally too, so enforcing dorsal-up can move the yolk to the RIGHT, violating the
+   rule Step 1 just applied. The two are not jointly satisfiable and DV silently wins, in
+   exactly half the measured cases. Yolk-left is therefore NOT an invariant of rule 1's
+   output, despite being stated as the rule. ``dv_override_ap_choice`` reports it.
+
+   This is a defect of the CANVAS FRAME, not of two-step selection as such: rule 4's AP
+   predicate survives its own DV step in every measured case. Choosing the right frame
+   dissolves the conflict rather than trading it for another.
 
 3. The DV test is ``> 0``, so ``back_y == yolk_y`` exactly -- the back level with the
    yolk, carrying no dorsal information -- silently keeps Step 1's answer instead of
    flagging the axis as undetermined. ``dv_margin_px == 0.0`` makes it visible.
 
-4. THE TWO YOLK-PRESENT RULES DISAGREE IN KIND. CanonicalAligner asks where the BACK is
-   relative to the YOLK; the snip pipeline asks where the YOLK is relative to the EMBRYO
-   CENTROID. These are different anatomical claims and can select opposite poses on the
-   same animal. Both are preserved; neither is declared correct here.
+4. THE TWO YOLK-PRESENT RULES DISAGREE IN KIND, AND ONE IS BETTER. CanonicalAligner picks
+   the candidate whose yolk sits leftmost ON THE CANVAS; the snip pipeline compares the
+   yolk to the EMBRYO CENTROID, a signed relation between two points on the animal. Both
+   are preserved and selectable, but they are not equally principled: only the second is
+   frame-independent. See "RULE 1's AP HALF READS THE WRONG FRAME" above.
 
 5. "Yolk present" is decided AFTER warping, per candidate, in CanonicalAligner. A yolk
    nonempty in source coordinates but warped off the output grid degrades to the fallback
@@ -110,8 +179,17 @@ from image_geometry.candidates import (
 # never silent reinterpretations of an existing one.
 # ---------------------------------------------------------------------------
 
-#: The anatomical rule: yolk-left for AP, then back-above-yolk for DV.
+#: CanonicalAligner's yolk-present rule: AP by argmin over yolk-x IN CANVAS COORDINATES,
+#: then back-above-yolk for DV. The AP half reads the yolk's position on the output grid,
+#: so it is a property of the RENDERING, not of the animal.
 YOLK_BACK = "yolk_back"
+#: The snip pipeline's yolk-present rule, and the anatomically correct one: AP by the
+#: SIGNED comparison of two landmarks ON THE EMBRYO (embryo COM vs yolk COM along the
+#: body axis). Frame-independent. See the AP AXIS section in the module docstring.
+YOLK_VS_EMBRYO_COM = "yolk_vs_embryo_com"
+
+YOLK_PRESENT_POLICIES = (YOLK_BACK, YOLK_VS_EMBRYO_COM)
+
 #: What CanonicalAligner does today when the yolk is missing: -(com_y + com_x).
 LEGACY_UPPER_LEFT_COM = "legacy_upper_left_com"
 #: What the snip pipeline does today: the vert_ratio >= 0.5 latch.
@@ -165,8 +243,13 @@ class EmbryoOrientationDecision:
         Whether each cue was actually available. ``back_used`` is False whenever the back
         point degenerated to a centroid fallback.
     ap_margin_px:
-        Winner-vs-runner-up gap on yolk-x. Pixels, in the frame the candidates were
-        evaluated on. Small means the AP call was a coin flip.
+        RULE 1 ONLY. Winner-vs-runner-up gap on yolk-x, in CANVAS pixels of the evaluation
+        frame. Small means the AP call was a coin flip. Not comparable to
+        ``ap_com_margin_px`` despite both being pixels and both being "the AP margin".
+    ap_com_margin_px:
+        RULE 4 ONLY. ``abs(embryo_com - yolk_com)`` along the body axis, in pixels. A
+        distance between two landmarks ON THE ANIMAL, so it is frame-independent -- unlike
+        ``ap_margin_px``. Still a latch with no deadband; this is how far from it you were.
     dv_margin_px:
         ``abs(back_y - yolk_y)`` in the selected candidate. Pixels. Zero means the DV axis
         carried no information and Step 1's answer was kept by default.
@@ -198,6 +281,7 @@ class EmbryoOrientationDecision:
     back_used: bool = False
 
     ap_margin_px: Optional[float] = None
+    ap_com_margin_px: Optional[float] = None
     dv_margin_px: Optional[float] = None
     vert_ratio: Optional[float] = None
     vert_ratio_margin: Optional[float] = None
@@ -212,6 +296,9 @@ class EmbryoOrientationDecision:
     # the existing consumers already record.
     yolk_yx: Optional[tuple[float, float]] = None
     back_yx: Optional[tuple[float, float]] = None
+    #: Embryo centroid -- rule 4's second AP landmark, and the one that makes its test
+    #: frame-independent. Populated only where it was actually used.
+    embryo_com_yx: Optional[tuple[float, float]] = None
 
     def final_rotation_deg(self, *, target_angle_deg: float = 0.0) -> float:
         """Compose the rotation against a caller-chosen target axis.
@@ -227,10 +314,14 @@ class EmbryoOrientationDecision:
 class EmbryoOrientationPolicy:
     """Knobs of the orientation policy, separate from the raster it is applied to.
 
-    ``no_yolk_policy`` is REQUIRED to be explicit at the call site rather than defaulted,
-    because the two callers disagree and a default would silently pick a winner. It
-    defaults here only to CanonicalAligner's behavior so the analysis path is unchanged;
-    the pipeline must pass ``legacy_vert_ratio``.
+    BOTH policy slots are explicit, because in both cases the two existing callers disagree
+    and a default would silently crown a winner. They default to CanonicalAligner's
+    behavior so the analysis path is unchanged; the pipeline must pass
+    ``yolk_present_policy="yolk_vs_embryo_com"`` and ``no_yolk_policy="legacy_vert_ratio"``.
+
+    Note that ``yolk_present_policy`` defaulting to ``yolk_back`` is a COMPATIBILITY
+    choice, not an endorsement: ``yolk_vs_embryo_com`` is the better rule (frame-
+    independent, and jointly satisfiable with the DV step). See the module docstring.
 
     ``allow_flip=False`` removes the mirror candidates, which also disables the Step-2 DV
     correction -- the vertical-flip partner of a non-mirrored candidate IS a mirrored one,
@@ -238,6 +329,7 @@ class EmbryoOrientationPolicy:
     """
 
     no_yolk_policy: str = LEGACY_UPPER_LEFT_COM
+    yolk_present_policy: str = YOLK_BACK
     allow_flip: bool = True
     back_sample_radius_k: float = 1.75
 
@@ -245,6 +337,11 @@ class EmbryoOrientationPolicy:
         if self.no_yolk_policy not in NO_YOLK_POLICIES:
             raise ValueError(
                 f"no_yolk_policy must be one of {NO_YOLK_POLICIES!r}, got {self.no_yolk_policy!r}"
+            )
+        if self.yolk_present_policy not in YOLK_PRESENT_POLICIES:
+            raise ValueError(
+                f"yolk_present_policy must be one of {YOLK_PRESENT_POLICIES!r}, "
+                f"got {self.yolk_present_policy!r}"
             )
 
 
@@ -399,6 +496,7 @@ def orientation_policy(
     yolk: Optional[np.ndarray] = None,
     *,
     no_yolk_policy: str = LEGACY_UPPER_LEFT_COM,
+    yolk_present_policy: str = YOLK_BACK,
     candidate_shape_yx: Optional[tuple[int, int]] = None,
     scale: float = 1.0,
     policy: Optional[EmbryoOrientationPolicy] = None,
@@ -419,6 +517,11 @@ def orientation_policy(
         ``legacy_upper_left_com`` (CanonicalAligner's) or ``legacy_vert_ratio`` (the snip
         pipeline's). These do not agree; the caller must choose deliberately. Ignored when
         ``policy`` is given.
+    yolk_present_policy:
+        Which yolk-present rule to apply -- ``yolk_back`` (CanonicalAligner's canvas-frame
+        AP argmin plus back-above-yolk DV) or ``yolk_vs_embryo_com`` (the snip pipeline's
+        signed embryo-COM-vs-yolk-COM AP test, which is frame-independent and the better
+        rule). These do not agree either. Ignored when ``policy`` is given.
     candidate_shape_yx:
         The frame the rot/flip candidates are evaluated on. This is an EVALUATION detail,
         not a rendering target -- the decision itself is canvas-independent -- but it does
@@ -441,7 +544,9 @@ def orientation_policy(
         Rotation adjustment, mirror flag, and the evidence. Nothing is rendered; apply the
         decision in whatever frame you need.
     """
-    pol = policy or EmbryoOrientationPolicy(no_yolk_policy=no_yolk_policy)
+    pol = policy or EmbryoOrientationPolicy(
+        no_yolk_policy=no_yolk_policy, yolk_present_policy=yolk_present_policy
+    )
 
     arr = np.asarray(mask)
     if arr.size == 0 or arr.sum() == 0:
@@ -483,21 +588,27 @@ def orientation_policy(
         allow_flip=pol.allow_flip,
     )
 
-    # Per-candidate landmarks. Preserved quirk: when the warped yolk is unusable the
-    # "yolk" landmark silently becomes the EMBRYO centroid (AMBIGUITIES note 5).
-    landmarks: dict[tuple[int, bool], tuple[tuple[float, float], tuple[float, float], dict]] = {}
+    # Per-candidate landmarks: (yolk_yx, back_yx, back_debug, embryo_com_yx).
+    # Preserved quirk: when the warped yolk is unusable the "yolk" landmark silently
+    # becomes the EMBRYO centroid (AMBIGUITIES note 5). The embryo COM is tracked
+    # separately regardless, because rule 4 needs it as a landmark in its own right.
+    landmarks: dict[
+        tuple[int, bool],
+        tuple[tuple[float, float], tuple[float, float], dict, tuple[float, float]],
+    ] = {}
     for cand in candidates:
         yolk_w = cand.companion
         usable = use_yolk and yolk_w is not None and yolk_w.sum() > 0
         feature = yolk_w if usable else cand.mask
         yolk_yx = _center_of_mass(feature, empty_default_yx=grid_center_yx)
+        embryo_com_yx = _center_of_mass(cand.mask, empty_default_yx=grid_center_yx)
         back_yx, back_dbg = compute_back_point(
             cand.mask,
             yolk_w if use_yolk else None,
             back_sample_radius_k=pol.back_sample_radius_k,
             empty_default_yx=grid_center_yx,
         )
-        landmarks[cand.key] = (yolk_yx, back_yx, back_dbg)
+        landmarks[cand.key] = (yolk_yx, back_yx, back_dbg, embryo_com_yx)
 
     # "Yolk present" is judged AFTER warping, per candidate (AMBIGUITIES note 5).
     has_yolk_on_grid = use_yolk and yolk is not None and any(
@@ -506,6 +617,10 @@ def orientation_policy(
 
     keys = list(candidate_keys(allow_flip=pol.allow_flip))
     if has_yolk_on_grid:
+        if pol.yolk_present_policy == YOLK_VS_EMBRYO_COM:
+            return _decide_yolk_vs_embryo_com(
+                keys=keys, landmarks=landmarks, angle_deg=float(angle_deg)
+            )
         return _decide_yolk_back(
             keys=keys, landmarks=landmarks, angle_deg=float(angle_deg), policy=pol
         )
@@ -547,7 +662,7 @@ def _decide_yolk_back(
 
     # --- Step 2: DV axis. Back above yolk means back_y - yolk_y < 0.
     sel = ap_key
-    yolk_yx, back_yx, back_dbg = landmarks[sel]
+    yolk_yx, back_yx, back_dbg, _ = landmarks[sel]
     dv_override = False
     if back_yx[0] - yolk_yx[0] > 0:
         partner = vertical_flip_partner(sel)
@@ -555,7 +670,7 @@ def _decide_yolk_back(
         # cannot be applied -- the mirror it needs does not exist.
         if partner in landmarks:
             sel = partner
-            yolk_yx, back_yx, back_dbg = landmarks[sel]
+            yolk_yx, back_yx, back_dbg, _ = landmarks[sel]
             dv_override = True
 
     status = back_dbg.get("selected")
@@ -581,6 +696,68 @@ def _decide_yolk_back(
     )
 
 
+def _decide_yolk_vs_embryo_com(
+    *,
+    keys: list[tuple[int, bool]],
+    landmarks: dict,
+    angle_deg: float,
+) -> EmbryoOrientationDecision:
+    """Rule 4: AP from the SIGNED embryo-COM-vs-yolk-COM relation, then back-above-yolk DV.
+
+    This is ``rotation.py:79`` generalized to the candidate enumeration. The original asks
+    ``(embryo_com[0] - yolk_com[0]) >= 0`` on a frame where the body axis is VERTICAL, so
+    the comparison is along the long axis. Here the candidates are evaluated on a landscape
+    frame where the long axis is x, so the same anatomical test reads index ``[1]``. Same
+    axis, different index -- see "THE AP AXIS IS NOT THE SAME AXIS IN BOTH STACKS".
+
+    Both landmarks lie ON THE ANIMAL, so unlike rule 1 the predicate does not depend on
+    where the canvas happens to put the embryo. That also makes it compatible with the DV
+    step: a vertical flip negates both y-components together, leaving the sign of the AP
+    vector untouched, so AP and DV constrain independent axes and cannot fight. Measured:
+    the AP predicate survives the DV step in 132/132 cases, versus 66/132 under rule 1.
+
+    Selection among candidates satisfying AP is by first-wins contract order, matching the
+    original's binary keep-or-add-180 structure -- it never ranked candidates.
+    """
+    ap_ok = [k for k in keys if (landmarks[k][3][1] - landmarks[k][0][1]) >= 0]
+    # The predicate is a strict dichotomy over a closed candidate set, so it cannot be
+    # unsatisfiable; falling back to all keys would silently mask a real bug if it were.
+    assert ap_ok, "no candidate satisfies the AP predicate; the candidate set is malformed"
+    sel = ap_ok[0]
+
+    yolk_yx, back_yx, back_dbg, embryo_com_yx = landmarks[sel]
+    dv_override = False
+    if back_yx[0] - yolk_yx[0] > 0:
+        partner = vertical_flip_partner(sel)
+        if partner in landmarks:
+            sel = partner
+            yolk_yx, back_yx, back_dbg, embryo_com_yx = landmarks[sel]
+            dv_override = True
+
+    status = back_dbg.get("selected")
+    support = back_dbg.get("n_pixels_in_disk")
+    return EmbryoOrientationDecision(
+        major_axis_angle_deg=angle_deg,
+        axis_convention=PCA_AXIS,
+        rotation_adjustment_deg=float(sel[0]),
+        flip_x=bool(sel[1]),
+        orientation_source=YOLK_VS_EMBRYO_COM,
+        yolk_used=True,
+        back_used=status == "yolk_surrounding_centroid",
+        # Rule 4's own margin. Deliberately NOT ap_margin_px: that field means a
+        # candidate-separation gap in canvas coordinates and is not this quantity.
+        ap_com_margin_px=float(abs(embryo_com_yx[1] - yolk_yx[1])),
+        dv_margin_px=float(abs(back_yx[0] - yolk_yx[0])),
+        back_estimation_status=status,
+        back_support_pixels=None if support is None else int(support),
+        selected_candidate_index=keys.index(sel),
+        dv_override_ap_choice=dv_override,
+        yolk_yx=(float(yolk_yx[0]), float(yolk_yx[1])),
+        back_yx=(float(back_yx[0]), float(back_yx[1])),
+        embryo_com_yx=(float(embryo_com_yx[0]), float(embryo_com_yx[1])),
+    )
+
+
 def _decide_upper_left_com(
     *,
     keys: list[tuple[int, bool]],
@@ -600,13 +777,13 @@ def _decide_upper_left_com(
     best_key = None
     best_score = None
     for k in keys:
-        yolk_yx, back_yx, _ = landmarks[k]
+        yolk_yx, back_yx, _dbg, _com = landmarks[k]
         score = (back_yx[1] + back_yx[0]) - (yolk_yx[1] + yolk_yx[0])
         if best_score is None or score > best_score:
             best_score, best_key = score, k
 
     assert best_key is not None
-    yolk_yx, back_yx, back_dbg = landmarks[best_key]
+    yolk_yx, back_yx, back_dbg, _ = landmarks[best_key]
     return EmbryoOrientationDecision(
         major_axis_angle_deg=angle_deg,
         axis_convention=PCA_AXIS,

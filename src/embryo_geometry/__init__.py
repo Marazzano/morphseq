@@ -13,8 +13,11 @@ The split is the point:
 Decisions returned here are canvas-independent: no grid shape, no um/px, no anchor. Each
 caller composes its own final rotation.
 
-There is more than one fallback in production and they disagree, so the fallback is an
-explicit parameter from a closed set, not a hidden default. See ``orientation`` for the
+There are FOUR rules in production, not one: two for the yolk-present case and two for the
+yolk-missing case, and within each pair they disagree. So BOTH slots are explicit
+parameters from closed sets, never hidden defaults. The yolk-present default
+(``yolk_back``) is a COMPATIBILITY choice, not an endorsement -- ``yolk_vs_embryo_com``
+compares two landmarks on the animal and is the better rule. See ``orientation`` for the
 full account.
 
 This package must not import ``data_pipeline`` or ``analyze``; both are clients.
@@ -31,6 +34,8 @@ from .orientation import (
     REGIONPROPS_AXIS,
     YOLK_BACK,
     YOLK_DISABLED,
+    YOLK_PRESENT_POLICIES,
+    YOLK_VS_EMBRYO_COM,
     YOLK_WARPED_OFF_GRID,
     EmbryoOrientationDecision,
     EmbryoOrientationPolicy,
@@ -47,6 +52,8 @@ __all__ = [
     "compute_back_point",
     # Closed vocabularies -- branch on these, never on free text.
     "YOLK_BACK",
+    "YOLK_VS_EMBRYO_COM",
+    "YOLK_PRESENT_POLICIES",
     "LEGACY_UPPER_LEFT_COM",
     "LEGACY_VERT_RATIO",
     "NO_YOLK_POLICIES",
