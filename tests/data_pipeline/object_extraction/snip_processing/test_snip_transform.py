@@ -14,6 +14,7 @@ from data_pipeline.object_extraction.snip_processing.snip_transform import (
     CENTERING_CONTINUOUS,
     CENTERING_LATCHED,
     CanonicalSnipTransform,
+    SnipGridSpec,
     SnipTransformError,
     apply_transform_to_image,
     apply_transform_to_mask,
@@ -51,7 +52,7 @@ class TestDerive:
         # The whole sibling-DAG argument rests on this: no image argument exists to pass.
         canonical = _canonical()
         assert isinstance(canonical, CanonicalSnipTransform)
-        assert canonical.source_shape_hw == SOURCE_SHAPE
+        assert canonical.grid.geometry_source_shape_yx == SOURCE_SHAPE
 
     def test_crop_center_is_physical_not_pixels(self):
         # A center in um is portable across grids; the legacy integer pixel centroid was not.
@@ -80,7 +81,7 @@ class TestDerive:
 
     def test_field_of_view_is_physical_extent(self):
         canonical = _canonical()
-        w_um, h_um = canonical.source_field_of_view_um_wh
+        w_um, h_um = canonical.geometry_source_field_of_view_um_wh
         assert w_um == pytest.approx(64 * SOURCE_UM_PER_PX)
         assert h_um == pytest.approx(64 * SOURCE_UM_PER_PX)
 
@@ -139,12 +140,14 @@ class TestTransformForProduct:
         # Physically: one axis was resampled independently of the other, so a resize would stretch
         # the embryo. The FOV check alone cannot see this.
         canonical = CanonicalSnipTransform(
-            source_shape_hw=(64, 32),
-            source_um_per_px=2.0,
-            target_um_per_px=2.0,
+            grid=SnipGridSpec(
+                geometry_source_shape_yx=(64, 32),
+                geometry_source_um_per_px_yx=(2.0, 2.0),
+                default_output_um_per_px_yx=(2.0, 2.0),
+                default_output_shape_yx=SNIP_SHAPE,
+            ),
             rotation_angle_rad=0.0,
             crop_center_um_xy=(32.0, 64.0),
-            snip_frame_shape_hw=SNIP_SHAPE,
         )
         with pytest.raises(SnipTransformError, match="aspect ratio disagrees"):
             transform_for_product(
@@ -305,21 +308,40 @@ class TestCenteringModesAreSeparable:
             "without legacy's reference and the kernel commit is not isolated"
         )
 
-    def test_latched_without_a_source_mask_fails_loud(self):
-        # The mask rides along on the canonical transform purely to serve this mode. A hand-built
-        # transform cannot silently fall back to the source-grid center.
+    def test_latched_without_a_resolved_center_fails_loud(self):
+        # The legacy centering reference is resolved at DERIVATION time and rides along as a scalar
+        # pair. A hand-built transform that lacks it must not silently fall back to the source-grid
+        # center -- that would render legacy-mode pixels using continuous-mode placement, which is
+        # exactly the confound the two modes exist to keep apart.
         import dataclasses
 
-        bare = dataclasses.replace(_canonical(), source_mask=None)
-        with pytest.raises(SnipTransformError, match="needs the source mask"):
+        bare = dataclasses.replace(_canonical(), latched_center_xy_rescaled=None)
+        with pytest.raises(SnipTransformError, match="resolved legacy centering reference"):
             transform_for_product(
                 bare, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,
                 centering=CENTERING_LATCHED,
             )
 
-    def test_source_mask_does_not_affect_recipe_equality(self):
-        # The mask is carried for the legacy branch only; it must not make two derivations of the
-        # same embryo-time compare unequal, or sibling registerability breaks.
+    def test_canonical_transform_carries_no_raster(self):
+        # THE GATE REQUIREMENT: snip_geometry persists this object and render jobs deserialize it,
+        # so it must contain no array. `source_mask` used to live here as field(compare=False) --
+        # an input inside the output type, annotated "ignore when comparing", which is the tell it
+        # did not belong. Its one consumer (the legacy centering reference) is now resolved during
+        # derivation into a scalar pair.
+        import dataclasses
+
+        for f in dataclasses.fields(CanonicalSnipTransform):
+            value = getattr(_canonical(), f.name)
+            assert not isinstance(value, np.ndarray), (
+                f"CanonicalSnipTransform.{f.name} holds an ndarray; the canonical transform must "
+                "serialize without carrying a raster or it cannot cross the geometry gate"
+            )
+
+    def test_two_derivations_of_one_embryo_time_compare_equal(self):
+        # Sibling registerability: the recipe is a pure function of the mask, so two derivations
+        # must be indistinguishable. Under the gate this is a determinism check rather than the
+        # thing guaranteeing registration -- but a failure here means the gate is storing a value
+        # that depends on something other than its inputs.
         assert_transforms_equivalent(_canonical(), _canonical())
 
     def test_legacy_mode_is_named_so_call_sites_cannot_miss_it(self):
@@ -429,8 +451,8 @@ class TestCenteringIsContinuous:
             # Source bbox center -> rescaled grid, under the pixel-center convention.
             sx = resolved.rescaled_shape_hw[1] / resolved.product_shape_hw[1]
             sy = resolved.rescaled_shape_hw[0] / resolved.product_shape_hw[0]
-            cx_src = canonical.crop_center_um_xy[0] / canonical.source_um_per_px
-            cy_src = canonical.crop_center_um_xy[1] / canonical.source_um_per_px
+            cx_src = canonical.crop_center_um_xy[0] / canonical.grid.geometry_source_um_per_px_yx[1]
+            cy_src = canonical.crop_center_um_xy[1] / canonical.grid.geometry_source_um_per_px_yx[0]
             point = np.array([sx * (cx_src + 0.5) - 0.5, sy * (cy_src + 0.5) - 0.5, 1.0])
 
             mapped = np.asarray(resolved.rotation_matrix_2x3) @ point
@@ -453,7 +475,7 @@ class TestCenteringIsContinuous:
                 centering=CENTERING_CONTINUOUS,
             )
             sx = resolved.rescaled_shape_hw[1] / resolved.product_shape_hw[1]
-            cx_src = canonical.crop_center_um_xy[0] / canonical.source_um_per_px
+            cx_src = canonical.crop_center_um_xy[0] / canonical.grid.geometry_source_um_per_px_yx[1]
             mapped_x = (
                 np.asarray(resolved.rotation_matrix_2x3)
                 @ np.array([sx * (cx_src + 0.5) - 0.5, 0.0, 1.0])

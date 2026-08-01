@@ -301,9 +301,9 @@ def run_snip_processing(
             out["flip_x"] = False
             out["crop_center_um_x"] = float(canonical.crop_center_um_xy[0])
             out["crop_center_um_y"] = float(canonical.crop_center_um_xy[1])
-            out["source_height_px"] = int(canonical.source_shape_hw[0])
-            out["source_width_px"] = int(canonical.source_shape_hw[1])
-            out["source_um_per_px"] = float(canonical.source_um_per_px)
+            out["source_height_px"] = int(canonical.grid.geometry_source_shape_yx[0])
+            out["source_width_px"] = int(canonical.grid.geometry_source_shape_yx[1])
+            out["source_um_per_px"] = float(canonical.grid.geometry_source_um_per_px_yx[0])
             out["border_mode"] = resolved.border_mode
             out["image_interpolation"] = IMAGE_INTERPOLATION
             out["mask_interpolation"] = MASK_INTERPOLATION

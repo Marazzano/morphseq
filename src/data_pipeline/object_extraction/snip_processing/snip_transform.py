@@ -33,11 +33,20 @@ path bilinearly resized binary masks into fractional values and then repaired th
 ``> 0.5`` thresholds. The same PHYSICAL transform does not require identical interpolation; it
 requires identical physical coordinates, rotation, crop center, target extent, and output grid.
 
-"DERIVED ONCE" MEANS ONE IMPLEMENTATION, NOT ONE INVOCATION. Separate Snakemake product jobs cannot
-share an in-memory object. Derivation is deterministic from identical mask inputs, so each product
-job re-derives the same canonical transform rather than consuming a persisted geometry artifact. The
-DRY property that matters is one implementation; ``assert_transforms_equivalent`` makes the
-determinism directly testable.
+DERIVED ONCE, LITERALLY ONCE — THE GEOMETRY GATE. An earlier design had each product job re-derive
+the canonical transform from the same BF mask, on the grounds that derivation is deterministic so one
+*implementation* sufficed. That reasoning has a hole: determinism is only as strong as the inputs
+being identical, and nothing enforced that. Two product jobs straddling a ``frame_masks``
+regeneration, a mask revision, or an orientation-policy change would derive different geometry and
+produce SILENTLY UNREGISTERABLE siblings — no error, discovered later in a composite overlay.
+
+So derivation happens exactly once per embryo-time, in ``snip_geometry_per_well``, which persists the
+canonical transform. Render jobs deserialize it and call ``transform_for_product`` for their own
+grid; they MUST NOT call ``derive_snip_transform``. A layering test pins that. The gate makes sibling
+registerability a structural property rather than something a test asserts about synthetic masks.
+
+``assert_transforms_equivalent`` remains useful for round-trip and determinism checks, but it is no
+longer what guarantees sibling registration.
 
 Import direction: this module may import numpy/cv2/skimage and the shared mask helpers. It MUST NOT
 import the entrypoint, orchestration, tasks, or Snakemake rules.
@@ -131,41 +140,89 @@ class SnipTransformError(ValueError):
 
 
 @dataclass(frozen=True)
+class SnipGridSpec:
+    """The grids a canonical transform is defined against.
+
+    FACTORED OUT so the shared structural facts have ONE definition. Previously
+    ``CanonicalSnipTransform`` carried them flat while ``ResolvedSnipTransform`` independently
+    restated its own product-grid fields — two schemas describing overlapping facts, which is where
+    drift starts. Input-vs-output is NOT itself a DRY violation (they are different stages:
+    everything-needed-to-decide vs the-decision); it becomes one when both sides define the same
+    structural fields separately.
+
+    NAMES SAY WHICH GRID. "source" had two possible owners — the mask the geometry was derived from,
+    and the product raster being rendered. An RFP renderer reading a field called ``source_shape_hw``
+    could reasonably read it either way, so the geometry-derivation grid is spelled out:
+
+        geometry_source_*   the BF MASK grid the recipe was derived from
+        default_output_*    the SHARED output grid the geometry stage requested
+
+    ``default_output_*`` is a DEFAULT, not a commitment: one canonical recipe can be expressed on
+    several output grids, so the actual ``output_grid_id`` is minted per product, not here.
+
+    CALIBRATIONS ARE PER-AXIS ``_yx`` PAIRS, NOT SCALARS. A scalar bakes square pixels into the one
+    seam whose entire purpose is generality across product grids — and an axis-dependent downsample
+    or a write-policy ``orientation`` could introduce anisotropy. All current YX1 data is
+    square-pixel, which is a reason to ASSERT isotropy where an algorithm needs it, not to assume it
+    in the type.
+    """
+
+    geometry_source_shape_yx: tuple[int, int]
+    geometry_source_um_per_px_yx: tuple[float, float]
+    default_output_um_per_px_yx: tuple[float, float]
+    default_output_shape_yx: tuple[int, int]
+
+    @property
+    def geometry_source_field_of_view_um_wh(self) -> tuple[float, float]:
+        """Physical extent of the derivation grid, as (width_um, height_um)."""
+        height_px, width_px = self.geometry_source_shape_yx
+        um_y, um_x = self.geometry_source_um_per_px_yx
+        return (width_px * um_x, height_px * um_y)
+
+
+@dataclass(frozen=True)
 class CanonicalSnipTransform:
     """The PHYSICAL snip recipe — what to crop and how to rotate, in units that survive a grid change.
 
-    Every field is either physical (micrometers), angular, or a property of the OUTPUT grid. Nothing
-    here is expressed in the pixels of the source product, which is what makes it portable.
+    Every field is physical (micrometers), angular, or a property of the requested output grid.
+    Nothing here is expressed in the pixels of a source PRODUCT, which is what makes it portable —
+    and, since the geometry gate persists this object and render jobs deserialize it, what makes it
+    serializable without carrying a raster.
 
     ``crop_center_um_xy`` is deliberately physical rather than the legacy integer pixel centroid: the
     legacy center was computed AFTER rescaling and rotation, so it only meant something on that one
     intermediate grid and could not be carried to another product.
 
-    ``source_shape_hw`` / ``source_um_per_px`` describe the grid the transform was DERIVED from (the
-    segmentation mask's grid). They are retained for provenance and to let ``transform_for_product``
-    check physical field-of-view agreement — not because the recipe depends on that grid.
+    NO ``source_mask`` FIELD. It used to live here as ``field(compare=False)`` — an input array
+    inside the output type, annotated "ignore this when comparing," which is the tell that it did not
+    belong. It existed only so CENTERING_LATCHED could measure its center on the rescaled+rotated
+    mask. That center is now resolved at DERIVATION time into ``latched_center_xy_rescaled`` (see
+    below), so the mask is not needed downstream and this object serializes cleanly.
     """
 
-    source_shape_hw: tuple[int, int]
-    source_um_per_px: float
-    target_um_per_px: float
+    grid: SnipGridSpec
     rotation_angle_rad: float
     crop_center_um_xy: tuple[float, float]
-    snip_frame_shape_hw: tuple[int, int]
 
-    # TRANSITIONAL, and excluded from equality on purpose (compare=False). CENTERING_LATCHED must
-    # measure its center on the rescaled+ROTATED mask to reproduce legacy, which means the mask has
-    # to survive as far as transform_for_product. It is NOT part of the physical recipe — two
-    # products of the same embryo-time must still compare equal under assert_transforms_equivalent,
-    # and the continuous path never reads it. Deleted with the legacy branch; see
+    # TRANSITIONAL. The legacy centering reference, already resolved. CENTERING_LATCHED measured its
+    # center on the mask AFTER rescale AND rotation, on the bounds-expanded canvas; because
+    # mean-of-occupied-index-range is not rotation-equivariant, that differs from the source-grid
+    # center by up to tens of pixels for a non-axis-aligned subject.
+    #
+    # IT IS PRODUCT-INVARIANT, which is what lets it be resolved once here rather than per product:
+    # the rescaled grid it is expressed on is `round(product_shape * product_um_per_px /
+    # target_um_per_px)` — a function of physical FOV and target calibration ONLY, not of the
+    # product's native grid. Since transform_for_product already enforces FOV agreement to within
+    # FIELD_OF_VIEW_RELATIVE_TOLERANCE, every sibling product resolves to the same rescaled shape.
+    #
+    # None on the continuous path, which never reads it. Deleted with CENTERING_LATCHED; see
     # TODO(remove-legacy-latched-centering).
-    source_mask: np.ndarray | None = field(default=None, compare=False, repr=False)
+    latched_center_xy_rescaled: tuple[float, float] | None = None
 
     @property
-    def source_field_of_view_um_wh(self) -> tuple[float, float]:
+    def geometry_source_field_of_view_um_wh(self) -> tuple[float, float]:
         """Physical extent of the grid this transform was derived from, as (width_um, height_um)."""
-        height_px, width_px = self.source_shape_hw
-        return (width_px * self.source_um_per_px, height_px * self.source_um_per_px)
+        return self.grid.geometry_source_field_of_view_um_wh
 
 
 @dataclass(frozen=True)
@@ -201,7 +258,7 @@ class ResolvedSnipTransform:
 
     @property
     def output_shape_hw(self) -> tuple[int, int]:
-        return self.canonical.snip_frame_shape_hw
+        return self.canonical.grid.default_output_shape_yx
 
     def to_chain(self) -> TransformChain:
         """The two-step raster chain this transform executes: anti-aliased resize, then affine.
@@ -286,14 +343,32 @@ def derive_snip_transform(
     center_y_px = float(np.mean(y_indices))
     center_x_px = float(np.mean(x_indices))
 
+    grid = SnipGridSpec(
+        geometry_source_shape_yx=(int(mask_binary.shape[0]), int(mask_binary.shape[1])),
+        geometry_source_um_per_px_yx=(float(source_um_per_px), float(source_um_per_px)),
+        default_output_um_per_px_yx=(float(target_um_per_px), float(target_um_per_px)),
+        default_output_shape_yx=(int(snip_frame_shape_hw[0]), int(snip_frame_shape_hw[1])),
+    )
+
+    # TRANSITIONAL: resolve the legacy centering reference HERE, while the mask is in hand, so the
+    # canonical transform never has to carry a raster. The rescaled grid this is expressed on is
+    # product-invariant (see CanonicalSnipTransform.latched_center_xy_rescaled), so one resolution
+    # serves every sibling product. Deleted with CENTERING_LATCHED.
+    latched_center = _resolve_latched_center(
+        mask_binary=mask_binary,
+        rescaled_shape_hw=_rescaled_shape_for(
+            shape_hw=(int(mask_binary.shape[0]), int(mask_binary.shape[1])),
+            um_per_px=float(source_um_per_px),
+            target_um_per_px=float(target_um_per_px),
+        ),
+        angle_deg=float(np.rad2deg(rotation_angle_rad)),
+    )
+
     return CanonicalSnipTransform(
-        source_shape_hw=(int(mask_binary.shape[0]), int(mask_binary.shape[1])),
-        source_um_per_px=float(source_um_per_px),
-        target_um_per_px=float(target_um_per_px),
+        grid=grid,
         rotation_angle_rad=rotation_angle_rad,
         crop_center_um_xy=(center_x_px * source_um_per_px, center_y_px * source_um_per_px),
-        snip_frame_shape_hw=(int(snip_frame_shape_hw[0]), int(snip_frame_shape_hw[1])),
-        source_mask=mask_binary,
+        latched_center_xy_rescaled=latched_center,
     )
 
 
@@ -317,9 +392,28 @@ def _legacy_bounds_expanded_rotation(
     return rotation_mat
 
 
-def _legacy_rotated_bbox_center(
+def _rescaled_shape_for(
+    *, shape_hw: tuple[int, int], um_per_px: float, target_um_per_px: float
+) -> tuple[int, int]:
+    """The grid a raster is rescaled onto to reach ``target_um_per_px``.
+
+    SHARED by derivation and product resolution deliberately: it is a function of physical FOV and
+    target calibration only, so every product covering the same field of view resolves to the SAME
+    rescaled shape. That invariance is what lets the latched centering reference be resolved once at
+    derivation instead of per product — and having one implementation is what keeps the two from
+    disagreeing by a rounded pixel.
+    """
+    height_px, width_px = shape_hw
+    requested_scale = um_per_px / target_um_per_px
+    return (
+        max(1, int(round(height_px * requested_scale))),
+        max(1, int(round(width_px * requested_scale))),
+    )
+
+
+def _resolve_latched_center(
     *,
-    canonical: CanonicalSnipTransform,
+    mask_binary: np.ndarray,
     rescaled_shape_hw: tuple[int, int],
     angle_deg: float,
 ) -> tuple[float, float]:
@@ -331,20 +425,15 @@ def _legacy_rotated_bbox_center(
     float and compared ``> 0.5``), and it is reproduced rather than corrected because the whole point
     of this mode is to hold placement fixed while the kernel and render path change.
 
+    Called at DERIVATION time, where the mask is legitimately in hand — so the resulting center rides
+    on the canonical transform as a resolved scalar pair and no raster crosses the geometry gate.
+
     TRANSITIONAL — deleted with CENTERING_LATCHED; see TODO(remove-legacy-latched-centering).
     """
-    if canonical.source_mask is None:
-        raise SnipTransformError(
-            "transform_for_product: centering=legacy_latched needs the source mask to reproduce "
-            "the legacy post-rotation centering reference, but this CanonicalSnipTransform carries "
-            "none. Build it with derive_snip_transform (which retains the mask) rather than "
-            "constructing it directly, or use centering=continuous."
-        )
-
     rescaled_h, rescaled_w = rescaled_shape_hw
     # Legacy resized the mask as float with bilinear interpolation, then thresholded at 0.5.
     mask_rescaled = cv2.resize(
-        canonical.source_mask.astype(np.float64),
+        mask_binary.astype(np.float64),
         (rescaled_w, rescaled_h),
         interpolation=cv2.INTER_LINEAR,
     )
@@ -403,7 +492,7 @@ def transform_for_product(
 
     product_fov_w = product_w * product_um_per_px
     product_fov_h = product_h * product_um_per_px
-    source_fov_w, source_fov_h = canonical.source_field_of_view_um_wh
+    source_fov_w, source_fov_h = canonical.geometry_source_field_of_view_um_wh
 
     for axis, product_fov, source_fov in (
         ("width", product_fov_w, source_fov_w),
@@ -419,7 +508,8 @@ def transform_for_product(
                 "an unexpected orientation or target_micrometers_per_pixel in its write policy."
             )
 
-    source_aspect = canonical.source_shape_hw[1] / canonical.source_shape_hw[0]
+    source_shape_yx = canonical.grid.geometry_source_shape_yx
+    source_aspect = source_shape_yx[1] / source_shape_yx[0]
     product_aspect = product_w / product_h
     if abs(product_aspect - source_aspect) > ASPECT_RATIO_RELATIVE_TOLERANCE * source_aspect:
         raise SnipTransformError(
@@ -431,9 +521,13 @@ def transform_for_product(
     # Rescale to the target physical pixel size. The REALIZED ratio is what the resize engine
     # actually applies (integer output dims), and it is what every coordinate mapping below must
     # use — mapping with the REQUESTED factor reintroduces a systematic sub-pixel bias.
-    requested_scale = product_um_per_px / canonical.target_um_per_px
-    rescaled_h = max(1, int(round(product_h * requested_scale)))
-    rescaled_w = max(1, int(round(product_w * requested_scale)))
+    target_um_per_px = canonical.grid.default_output_um_per_px_yx[0]
+    requested_scale = product_um_per_px / target_um_per_px
+    rescaled_h, rescaled_w = _rescaled_shape_for(
+        shape_hw=(product_h, product_w),
+        um_per_px=product_um_per_px,
+        target_um_per_px=target_um_per_px,
+    )
     realized_scale_y = rescaled_h / product_h
     realized_scale_x = rescaled_w / product_w
 
@@ -443,12 +537,13 @@ def transform_for_product(
     # a uniform shift of every snip, so aggregate image metrics stay clean while every embryo moves
     # relative to the historical embedding space. See image_geometry's
     # test_resize_coordinate_convention.py, which pins this across both engines.
-    center_x_src = canonical.crop_center_um_xy[0] / canonical.source_um_per_px
-    center_y_src = canonical.crop_center_um_xy[1] / canonical.source_um_per_px
+    source_um_y, source_um_x = canonical.grid.geometry_source_um_per_px_yx
+    center_x_src = canonical.crop_center_um_xy[0] / source_um_x
+    center_y_src = canonical.crop_center_um_xy[1] / source_um_y
     center_x_rescaled = realized_scale_x * (center_x_src + 0.5) - 0.5
     center_y_rescaled = realized_scale_y * (center_y_src + 0.5) - 0.5
 
-    out_h, out_w = canonical.snip_frame_shape_hw
+    out_h, out_w = canonical.grid.default_output_shape_yx
     angle_deg = float(np.rad2deg(canonical.rotation_angle_rad))
 
     # TODO(remove-legacy-latched-centering): delete this branch, CENTERING_LATCHED, and the
@@ -462,13 +557,18 @@ def transform_for_product(
         # canvas (extraction.py:103-116). Because mean-of-occupied-index-range is not
         # rotation-equivariant, measuring it on the SOURCE mask instead — as the continuous path
         # correctly does — moves the embryo by up to tens of pixels for a non-axis-aligned subject.
-        # Reproducing legacy therefore requires actually rotating the mask here, not just
-        # truncating a source-derived center.
-        center_x_rescaled, center_y_rescaled = _legacy_rotated_bbox_center(
-            canonical=canonical,
-            rescaled_shape_hw=(rescaled_h, rescaled_w),
-            angle_deg=angle_deg,
-        )
+        #
+        # That reference is now resolved at DERIVATION time (it is product-invariant), so this branch
+        # reads a scalar pair rather than re-rotating a mask. That is what lets the canonical
+        # transform cross the geometry gate without carrying a raster.
+        if canonical.latched_center_xy_rescaled is None:
+            raise SnipTransformError(
+                "transform_for_product: centering=legacy_latched needs the resolved legacy centering "
+                "reference, but this CanonicalSnipTransform carries none. Build it with "
+                "derive_snip_transform (which resolves it) rather than constructing it directly, or "
+                "use centering=continuous."
+            )
+        center_x_rescaled, center_y_rescaled = canonical.latched_center_xy_rescaled
     elif centering != CENTERING_CONTINUOUS:
         raise SnipTransformError(
             f"transform_for_product: unknown centering={centering!r}; "
@@ -516,10 +616,10 @@ def transform_for_product(
         crop_y0_px=crop_y0,
         crop_x1_px=crop_x0 + out_w,
         crop_y1_px=crop_y0 + out_h,
-        crop_x0_um=crop_x0 * canonical.target_um_per_px,
-        crop_y0_um=crop_y0 * canonical.target_um_per_px,
-        crop_x1_um=(crop_x0 + out_w) * canonical.target_um_per_px,
-        crop_y1_um=(crop_y0 + out_h) * canonical.target_um_per_px,
+        crop_x0_um=crop_x0 * target_um_per_px,
+        crop_y0_um=crop_y0 * target_um_per_px,
+        crop_x1_um=(crop_x0 + out_w) * target_um_per_px,
+        crop_y1_um=(crop_y0 + out_h) * target_um_per_px,
         border_mode=BORDER_MODE,
         border_value=BORDER_VALUE,
         centering=centering,
