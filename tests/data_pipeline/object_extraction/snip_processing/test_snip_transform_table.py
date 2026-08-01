@@ -31,6 +31,7 @@ from data_pipeline.object_extraction.snip_processing.snip_transform_table import
     SNIP_TRANSFORM_TABLE_COLUMNS,
     SnipTransformTableError,
     build_snip_transform_row,
+    canonical_from_row,
     chain_from_row,
     derivation_inputs_from_row,
     read_snip_transform_table,
@@ -84,6 +85,90 @@ def _row(resolved, **overrides):
     )
     kwargs.update(overrides)
     return build_snip_transform_row(**kwargs)
+
+
+class TestCanonicalRoundTrip:
+    """THE GATE'S READ PATH: snip_geometry writes, render jobs reconstruct.
+
+    Under the geometry gate a render job never derives geometry -- it deserializes the canonical
+    transform and resolves it for its own product grid. Every guarantee the gate makes therefore
+    rests on the reconstruction being EXACT. These are the three equalities that pin it.
+    """
+
+    def test_canonical_survives_the_row_exactly(self):
+        # Exact, not approximate. The recipe's floats are typed float64 columns rather than JSON
+        # precisely so this holds bit-for-bit; a tolerance here would let writer drift accumulate
+        # silently until two siblings rendered a pixel apart.
+        canonical, resolved = _resolved()
+        assert canonical_from_row(_row(resolved)) == canonical
+
+    def test_round_trip_survives_a_real_csv(self):
+        # In production the row makes a trip through a file, which is where float formatting and
+        # null handling actually get tested. Both centering modes go through, since the canonical
+        # recipe is product-independent: derive_snip_transform always resolves the latched
+        # reference, and `centering` is a transform_for_product argument, not a property of the
+        # recipe.
+        from io import StringIO
+
+        for centering in (CENTERING_LATCHED, CENTERING_CONTINUOUS):
+            canonical, resolved = _resolved(centering=centering)
+            reread = pd.read_csv(StringIO(pd.DataFrame([_row(resolved)]).to_csv(index=False)))
+            assert canonical_from_row(reread.iloc[0]) == canonical, centering
+
+    def test_a_null_latched_center_survives_pandas_nan(self):
+        # pandas turns a missing float64 cell into NaN, not None -- and NaN != NaN, so a naive
+        # reader would break exact equality on any row that carries no latched reference. Such rows
+        # do not arise from derive_snip_transform today, but they will the moment the legacy branch
+        # is deleted, and a reader that silently produced (nan, nan) would render garbage rather
+        # than fail.
+        from io import StringIO
+
+        row = _row(_resolved()[1])
+        row["latched_center_x_rescaled"] = None
+        row["latched_center_y_rescaled"] = None
+        reread = pd.read_csv(StringIO(pd.DataFrame([row]).to_csv(index=False)))
+        assert canonical_from_row(reread.iloc[0]).latched_center_xy_rescaled is None
+
+    def test_reconstructed_transform_resolves_identically(self):
+        # The second equality: a reconstructed canonical must resolve to the same product transform.
+        # Reconstructing the recipe but resolving it differently would still misregister siblings.
+        canonical, resolved = _resolved()
+        rebuilt = canonical_from_row(_row(resolved))
+        again = transform_for_product(
+            rebuilt,
+            product_shape_hw=SOURCE_SHAPE,
+            product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_LATCHED,
+        )
+        assert again.rotation_matrix_2x3 == resolved.rotation_matrix_2x3
+        assert again.rescaled_shape_hw == resolved.rescaled_shape_hw
+        assert again.output_shape_hw == resolved.output_shape_hw
+
+    def test_reconstructed_transform_renders_identical_pixels(self):
+        # The third equality, and the one that actually matters: same pixels, image AND mask paths.
+        # The first two could both pass while a render still diverged.
+        canonical, resolved = _resolved()
+        rebuilt = transform_for_product(
+            canonical_from_row(_row(resolved)),
+            product_shape_hw=SOURCE_SHAPE,
+            product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_LATCHED,
+        )
+        image, mask = _image(), _mask()
+        np.testing.assert_array_equal(
+            apply_transform_to_image(image, rebuilt), apply_transform_to_image(image, resolved)
+        )
+        np.testing.assert_array_equal(
+            apply_transform_to_mask(mask, rebuilt), apply_transform_to_mask(mask, resolved)
+        )
+
+    def test_a_row_missing_the_recipe_fails_loud(self):
+        # A render job that cannot rebuild the recipe must stop, not fall back to deriving one --
+        # falling back is precisely the side door the gate exists to close.
+        row = _row(_resolved()[1])
+        del row["crop_center_um_x"]
+        with pytest.raises(SnipTransformTableError, match="reconstructable canonical transform"):
+            canonical_from_row(row)
 
 
 class TestTransformIdIsChannelIndependent:

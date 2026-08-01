@@ -50,6 +50,7 @@ entrypoint, orchestration, tasks, or Snakemake rules.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,10 @@ import numpy as np
 import pandas as pd
 
 from data_pipeline.model_servers.atomic_write import atomic_write_via
+from data_pipeline.object_extraction.snip_processing.snip_transform import (
+    CanonicalSnipTransform,
+    SnipGridSpec,
+)
 from image_geometry import TransformChain
 from image_geometry.transforms import GridTransform
 
@@ -84,6 +89,17 @@ SNIP_TRANSFORM_TABLE_COLUMNS: tuple[str, ...] = (
     "orientation_source",
     "flip_x",
     "rotation_angle_rad",
+    # THE CANONICAL RECIPE AS TYPED FLOAT64 COLUMNS, NOT JSON. `from_row` must reconstruct a
+    # CanonicalSnipTransform that compares EXACTLY equal to the original, and JSON does not
+    # round-trip float64 exactly unless written at repr-precision -- so an "exact" assert over a
+    # JSON payload would be quietly false. Typed columns also make the recipe queryable without
+    # parsing. JSON stays for the resolved chain and derivation evidence, neither compared exactly.
+    "crop_center_um_x",
+    "crop_center_um_y",
+    # TRANSITIONAL, nullable: the resolved legacy centering reference. Null on the continuous path.
+    # Deleted with CENTERING_LATCHED; see TODO(remove-legacy-latched-centering).
+    "latched_center_x_rescaled",
+    "latched_center_y_rescaled",
     "centering",
     "schema_version",
     "resolved_transform_chain_json",
@@ -230,6 +246,18 @@ def build_snip_transform_row(
         "orientation_source": str(orientation_source),
         "flip_x": bool(flip_x),
         "rotation_angle_rad": float(canonical.rotation_angle_rad),
+        "crop_center_um_x": float(canonical.crop_center_um_xy[0]),
+        "crop_center_um_y": float(canonical.crop_center_um_xy[1]),
+        "latched_center_x_rescaled": (
+            None
+            if canonical.latched_center_xy_rescaled is None
+            else float(canonical.latched_center_xy_rescaled[0])
+        ),
+        "latched_center_y_rescaled": (
+            None
+            if canonical.latched_center_xy_rescaled is None
+            else float(canonical.latched_center_xy_rescaled[1])
+        ),
         "centering": str(resolved.centering),
         "schema_version": int(SNIP_TRANSFORM_SCHEMA_VERSION),
         "resolved_transform_chain_json": json.dumps(resolved_chain, sort_keys=False),
@@ -319,4 +347,67 @@ def derivation_inputs_from_row(row: Any) -> dict[str, Any]:
         raise SnipTransformTableError(
             f"derivation_inputs_from_row: row has no usable transform_derivation_inputs_json "
             f"({exc}). A different transform cannot be derived from it."
+        ) from exc
+
+
+def _optional_float(value: Any) -> float | None:
+    """None for a SQL/pandas null, else float. Distinguishes 'absent' from 0.0."""
+    if value is None:
+        return None
+    # pandas reads a missing float64 cell as NaN, not None, and NaN != NaN would silently break the
+    # exact round-trip equality this module promises.
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(as_float) else as_float
+
+
+def canonical_from_row(row: Any) -> CanonicalSnipTransform:
+    """Rebuild the CanonicalSnipTransform from a table row — THE GATE'S READ PATH.
+
+    This is what makes the geometry gate work: ``snip_geometry`` derives once and writes; every
+    render job calls this and then ``transform_for_product`` for its own grid. No render job derives
+    geometry, and none needs the mask.
+
+    EXACT reconstruction, not approximate. The recipe's floats are stored as typed float64 columns
+    rather than inside a JSON payload precisely so this round-trips bit-for-bit:
+
+        derive(mask) == canonical_from_row(build_snip_transform_row(...))
+
+    A tolerance-based comparison would let a slow drift in the writer pass unnoticed until two
+    siblings rendered a pixel apart.
+    """
+    try:
+        grid = SnipGridSpec(
+            geometry_source_shape_yx=(int(row["source_shape_h"]), int(row["source_shape_w"])),
+            geometry_source_um_per_px_yx=(
+                float(row["source_um_per_px_y"]),
+                float(row["source_um_per_px_x"]),
+            ),
+            default_output_um_per_px_yx=(
+                float(row["target_um_per_px_y"]),
+                float(row["target_um_per_px_x"]),
+            ),
+            default_output_shape_yx=(int(row["snip_shape_h"]), int(row["snip_shape_w"])),
+        )
+        latched_x = _optional_float(row["latched_center_x_rescaled"])
+        latched_y = _optional_float(row["latched_center_y_rescaled"])
+        return CanonicalSnipTransform(
+            grid=grid,
+            rotation_angle_rad=float(row["rotation_angle_rad"]),
+            crop_center_um_xy=(
+                float(row["crop_center_um_x"]),
+                float(row["crop_center_um_y"]),
+            ),
+            latched_center_xy_rescaled=(
+                None if latched_x is None or latched_y is None else (latched_x, latched_y)
+            ),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SnipTransformTableError(
+            f"canonical_from_row: row does not carry a reconstructable canonical transform ({exc}). "
+            "A render job cannot resolve a product grid without it, so this row cannot be used."
         ) from exc
