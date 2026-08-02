@@ -107,6 +107,25 @@ def test_resolve_returns_one_source_per_step():
     assert set(resolved[0].flag_columns) == {"edge_flag", "discontinuous_mask_flag"}
 
 
+def test_death_flags_resolve_with_shared_applicability_companion():
+    resolved = resolve_snip_qc_flag_sources(
+        ("viability_dead_flag", "persistence_dead_flag"),
+        output_root=Path("/data"),
+        experiment_id="exp01",
+        well_id="A01",
+    )
+
+    assert len(resolved) == 1
+    assert resolved[0].step == "death_detection_qc"
+    assert resolved[0].flag_columns == (
+        "persistence_dead_flag",
+        "viability_dead_flag",
+    )
+    assert resolved[0].applicability_columns == (
+        "death_detection_qc_applicability",
+    )
+
+
 def test_resolve_groups_flags_by_step():
     resolved = resolve_snip_qc_flag_sources(
         SNIP_QC_EXCLUSION_FLAGS,
@@ -128,6 +147,7 @@ def test_resolve_groups_flags_by_step():
         for column in source.applicability_columns
     }
     assert applicability == {
+        "death_detection_qc_applicability",
         "surface_area_qc_applicability",
         "focus_qc_applicability",
         "motion_blur_qc_applicability",

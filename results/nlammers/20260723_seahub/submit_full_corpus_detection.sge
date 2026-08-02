@@ -2,7 +2,8 @@
 # Full-corpus SeaHub GroundingDINO detection, one source experiment per task.
 #
 # Submit with:
-#   qsub -t 1-20 -tc 1 -l gpgpu=TRUE,cuda=1 submit_full_corpus_detection.sge
+#   qsub -v SEAHUB_RUN_ID=20260731_prod01 -t 1-20 -tc 1 \
+#     -l gpgpu=TRUE,cuda=1 submit_full_corpus_detection.sge
 
 #$ -N seahub_gdino
 #$ -cwd
@@ -17,8 +18,12 @@ set -euo pipefail
 
 REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
 WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
-RECONCILED="${WORK_DIR}/outputs/full_corpus_20260724/integration/reconciled_fovs.csv"
-OUTPUT_ROOT="${WORK_DIR}/outputs/full_corpus_20260724/detection"
+source "${WORK_DIR}/seahub_run_env.sh"
+seahub_configure_run \
+    "${WORK_DIR}" \
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived"
+RECONCILED="${SEAHUB_RUN_ROOT}/integration/reconciled_fovs.csv"
+OUTPUT_ROOT="${SEAHUB_RUN_ROOT}/detection"
 CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
 
 if [[ -z "${SGE_TASK_ID:-}" || "${SGE_TASK_ID}" == "undefined" ]]; then
@@ -26,6 +31,10 @@ if [[ -z "${SGE_TASK_ID:-}" || "${SGE_TASK_ID}" == "undefined" ]]; then
     exit 2
 fi
 
+if [[ ! -f "${RECONCILED}" ]]; then
+    echo "ERROR: reconciled FOV table does not exist: ${RECONCILED}" >&2
+    exit 2
+fi
 mkdir -p "${REPO_ROOT}/logs" "${OUTPUT_ROOT}"
 cd "${REPO_ROOT}"
 
@@ -35,6 +44,7 @@ if [[ -n "${SGE_HGR_cuda:-}" ]]; then
 fi
 echo "=== SeaHub detection START $(date) ==="
 echo "host=$(hostname) job=${JOB_ID:-unknown} task=${SGE_TASK_ID}"
+echo "run_id=${SEAHUB_RUN_ID} run_root=${SEAHUB_RUN_ROOT}"
 echo "SGE_HGR_cuda=${SGE_HGR_cuda:-<unset>}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 nvidia-smi -L

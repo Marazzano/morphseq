@@ -33,7 +33,12 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 )
 from data_pipeline.shared.identifiers import build_image_id, build_well_id
 from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import run_snip_processing
-from data_pipeline.object_extraction.snip_processing.augmentation import generate_background_noise
+from data_pipeline.object_extraction.snip_processing.augmentation import (
+    augment_snip,
+    blend_with_background_noise,
+    generate_background_noise,
+)
+from data_pipeline.object_extraction.snip_processing.defaults import DEFAULT_BLEND_RADIUS_UM
 
 
 WELL_ID = build_well_id("20250912", "B01")
@@ -46,6 +51,56 @@ def test_generate_background_noise_accepts_zero_variance():
     noise = generate_background_noise((4, 5), background_mean=0.0, background_std=0.0)
     assert noise.shape == (4, 5)
     assert np.all(noise == 0.0)
+
+
+def test_legacy_blend_default_attenuates_boundary_highlights():
+    image = np.full((128, 128), 255, dtype=np.uint8)
+    mask = np.zeros_like(image)
+    mask[32:96, 44:84] = 1
+
+    default_blend = blend_with_background_noise(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+        blend_radius_um=DEFAULT_BLEND_RADIUS_UM,
+        pixel_size_um=6.5,
+    )
+    narrow_blend = blend_with_background_noise(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+        blend_radius_um=20.0,
+        pixel_size_um=6.5,
+    )
+
+    assert DEFAULT_BLEND_RADIUS_UM == 75.0
+    assert default_blend.mean() < narrow_blend.mean()
+    assert np.count_nonzero(default_blend >= 250) < np.count_nonzero(narrow_blend >= 250)
+
+
+def test_augment_snip_omitted_blend_uses_checkpoint_compatible_default():
+    image = np.arange(128 * 128, dtype=np.uint8).reshape(128, 128)
+    mask = np.zeros_like(image)
+    mask[32:96, 44:84] = 1
+
+    implicit, implicit_clahe = augment_snip(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+    )
+    explicit, explicit_clahe = augment_snip(
+        image,
+        mask,
+        background_mean=0.0,
+        background_std=0.0,
+        blend_radius_um=75.0,
+    )
+
+    np.testing.assert_array_equal(implicit, explicit)
+    np.testing.assert_array_equal(implicit_clahe, explicit_clahe)
 
 
 def _make_frame_inventory(tmp_images: Path) -> pd.DataFrame:
@@ -130,7 +185,7 @@ def test_run_snip_processing_produces_inventory(tmp_path):
         output_csv=output_csv,
         snips_dir=snips_dir,
         output_root=tmp_path,
-        target_pixel_size_um=2.17,
+        target_pixel_size_um=6.5,
         output_height_px=64,
         output_width_px=64,
     )
@@ -150,6 +205,8 @@ def test_run_snip_processing_produces_inventory(tmp_path):
     ]
     missing = [c for c in required if c not in df.columns]
     assert not missing, f"missing columns: {missing}"
+    assert set(df["source_micrometers_per_pixel"]) == {2.17}
+    assert set(df["snip_micrometers_per_pixel"]) == {6.5}
 
     # All snips should be valid.
     failures = df[~df["is_valid_snip"].astype(bool)]

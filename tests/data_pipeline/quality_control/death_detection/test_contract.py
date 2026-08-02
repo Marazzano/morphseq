@@ -39,6 +39,7 @@ def _qc_df():
                 "snip_id": snip_id,
                 "viability_dead_flag": False,
                 "persistence_dead_flag": True,
+                "death_detection_qc_applicability": "exclusion",
             }
         ],
         columns=DEATH_DETECTION_QC_TABLE_COLUMNS,
@@ -72,6 +73,12 @@ def test_qc_non_bool_flag_fails():
     df["viability_dead_flag"] = [1]
     with pytest.raises(ValueError, match="boolean dtype"):
         validate_death_detection_qc(df)
+
+
+def test_qc_diagnostic_only_retains_observed_flags():
+    df = _qc_df()
+    df["death_detection_qc_applicability"] = "diagnostic_only"
+    validate_death_detection_qc(df)
 
 
 def test_event_valid_passes():

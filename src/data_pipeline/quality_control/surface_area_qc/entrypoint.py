@@ -23,6 +23,7 @@ def run_surface_area_qc(
     mask_geometry_csv: Path,
     stage_predictions_csv: Path,
     snip_inventory_csv: Path,
+    frame_inventory_csv: Path,
     physical_embryo_registry_csv: Path,
     output_csv: Path,
     config_overrides: dict | None = None,
@@ -33,12 +34,18 @@ def run_surface_area_qc(
     mask_geometry = pd.read_csv(mask_geometry_csv)
     stage_predictions = pd.read_csv(stage_predictions_csv)
     snip_inventory = pd.read_csv(snip_inventory_csv)
+    frame_inventory = pd.read_csv(frame_inventory_csv)
     registry = pd.read_csv(physical_embryo_registry_csv)
 
     surface_area_reference = load_packaged_surface_area_reference(config.reference_version)
 
     df = compute_surface_area_qc_flags(
-        mask_geometry, stage_predictions, snip_inventory, surface_area_reference, config=config
+        mask_geometry,
+        stage_predictions,
+        snip_inventory,
+        surface_area_reference,
+        config=config,
+        frame_inventory_df=frame_inventory,
     )
 
     # Registry is the verifier: every QC row must root in a registered animal.

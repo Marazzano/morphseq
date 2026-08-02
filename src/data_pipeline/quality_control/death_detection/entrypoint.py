@@ -49,7 +49,9 @@ def run_death_detection(
     flags, inflections = compute_death_detection_flags(fraction_alive, frame_timing, config=config)
 
     # ── per-snip death flag table ──
-    qc_df = reconcile_death_flags_to_snip_grain(flags, snip_inventory)
+    qc_df = reconcile_death_flags_to_snip_grain(
+        flags, snip_inventory, frame_inventory_df=frame_inventory
+    )
     validate_death_detection_qc(qc_df, physical_embryo_registry_df=registry, check_sources=True)
     _write_csv(qc_df, output_qc_csv)
 

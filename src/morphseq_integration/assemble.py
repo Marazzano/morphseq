@@ -33,6 +33,7 @@ import pandas as pd
 
 from . import legacy_morph as lm
 from .crosswalk import STATUS_PAIRED, build_crosswalk
+from .exclusions import apply_exclusions
 from .experiment_key import ExperimentKey
 from .identifiers import strip_rt_block
 from .paths import PipelinePaths
@@ -222,6 +223,7 @@ def build_master_table(
     legacy_root: str | Path | None = None,
     seahub_root: str | Path | None = None,
     verify_pairing: bool = True,
+    exclusions: str = "drop",
 ) -> pd.DataFrame:
     """Build the master morph-seq table for the given (default: all keyed) experiments.
 
@@ -229,11 +231,20 @@ def build_master_table(
         experiment_ids: Restrict to these imaging experiments; each needs a key entry.
         verify_pairing: Run ``verify_seq_pairing`` first. Leave on — it is cheap and it is the check
             that validates the whole identity bridge.
+        exclusions: How to treat curated image-QC exclusions (``excluded_wells.csv``).
+            ``"drop"`` (default) removes them, ``"flag"`` adds a ``curated_excluded`` column,
+            ``"keep"`` ignores the table entirely. Dropping is the default so every downstream
+            analysis — morphology and sequencing alike — sees the same well set without having to
+            remember to filter.
 
     Returns:
         ``IDENTITY_COLUMNS``, then the sequencing payload, then the legacy latent block. One row per
         imaging well of every requested experiment.
     """
+    if exclusions not in ("drop", "flag", "keep"):
+        raise ValueError(
+            f"[morphseq_integration] exclusions must be 'drop', 'flag', or 'keep', got {exclusions!r}."
+        )
     crosswalk = build_crosswalk(experiment_ids, key=key, paths=paths)
     if verify_pairing:
         verify_seq_pairing(crosswalk, seahub_root=seahub_root)
@@ -268,6 +279,11 @@ def build_master_table(
 
     master["n_morph_embryos"] = master["n_morph_embryos"].fillna(0).astype(int)
     master["well_embryo_selection"] = master["well_embryo_selection"].fillna("")
+
+    # Applied AFTER verify_seq_pairing: that gate asserts all 576 minted ids equal the sequencing
+    # corpus, and filtering first would make it fail for the wrong reason.
+    if exclusions != "keep":
+        master = apply_exclusions(master, mode=exclusions)
 
     leading = [column for column in IDENTITY_COLUMNS if column in master.columns]
     rest = [column for column in master.columns if column not in leading]

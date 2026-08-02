@@ -89,6 +89,15 @@ def main() -> None:
         )
 
     task_output = output_root / "tasks" / experiment_id
+    if task_output.exists():
+        existing = sorted(task_output.iterdir())
+        if existing:
+            preview = ", ".join(path.name for path in existing[:5])
+            raise FileExistsError(
+                "Refusing to reuse a nonempty SeaHub detection partition "
+                f"{task_output}. Existing entries include: {preview}. Use a fresh "
+                "SEAHUB_RUN_ID; do not mix partitions across attempts."
+            )
     print(
         f"Task {task_id}/{len(experiments)}: {experiment_id}, "
         f"{len(partition)} included FOVs -> {task_output}",

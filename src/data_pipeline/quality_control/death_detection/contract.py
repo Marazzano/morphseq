@@ -1,7 +1,7 @@
 """death_detection contracts — TWO tables, TWO grains.
 
   - death_detection_qc: per ``snip_id`` — SNIP_ID_SPINE_COLUMNS + viability_dead_flag +
-    persistence_dead_flag. Product-pure: no death-time/stage columns.
+    persistence_dead_flag + applicability. Product-pure: no death-time/stage columns.
   - death_event: per ``physical_embryo_id`` (the animal — channel- and time-independent, so NO
     embryo_id) — PHYSICAL_EMBRYO_ID_SPINE_COLUMNS + death_event_time_index + death_event_stage_hpf.
 
@@ -21,7 +21,15 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 )
 
 # ── per-snip death flag table ────────────────────────────────────────────────────────────────
-DEATH_DETECTION_QC_PAYLOAD_COLUMNS: tuple[str, ...] = ("viability_dead_flag", "persistence_dead_flag")
+DEATH_DETECTION_QC_FLAG_COLUMNS: tuple[str, ...] = (
+    "viability_dead_flag",
+    "persistence_dead_flag",
+)
+DEATH_DETECTION_QC_APPLICABILITY_COLUMN = "death_detection_qc_applicability"
+DEATH_DETECTION_QC_PAYLOAD_COLUMNS: tuple[str, ...] = (
+    *DEATH_DETECTION_QC_FLAG_COLUMNS,
+    DEATH_DETECTION_QC_APPLICABILITY_COLUMN,
+)
 DEATH_DETECTION_QC_TABLE_COLUMNS: list[str] = list(SNIP_ID_SPINE_COLUMNS + DEATH_DETECTION_QC_PAYLOAD_COLUMNS)
 
 # ── per-physical_embryo death_event table ──────────────────────────────────────────────────────
@@ -50,8 +58,26 @@ def validate_death_detection_qc(
     # _require_non_null_bool would otherwise reject a legitimately-empty, correctly-schemaed well.
     if df.empty:
         return
-    for col in DEATH_DETECTION_QC_PAYLOAD_COLUMNS:
+    for col in DEATH_DETECTION_QC_FLAG_COLUMNS:
         _require_non_null_bool(df, col, scope_label)
+
+    from data_pipeline.quality_control.applicability import (
+        ALLOWED_QC_APPLICABILITY,
+        QC_APPLICABILITY_NOT_APPLICABLE,
+    )
+
+    applicability = df[DEATH_DETECTION_QC_APPLICABILITY_COLUMN].astype(str)
+    unknown = sorted(set(applicability) - ALLOWED_QC_APPLICABILITY)
+    if unknown:
+        raise ValueError(
+            f"{scope_label}: {DEATH_DETECTION_QC_APPLICABILITY_COLUMN} has unknown "
+            f"value(s) {unknown}."
+        )
+    if applicability.eq(QC_APPLICABILITY_NOT_APPLICABLE).any():
+        raise ValueError(
+            f"{scope_label}: death evidence is computed from fraction_alive; use "
+            "'diagnostic_only' when it must not exclude a snip."
+        )
 
 
 def validate_death_event(

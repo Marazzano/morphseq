@@ -137,6 +137,35 @@ confidence (for example, `P6 0.233`).
 
 ## Running
 
+Production SGE scripts require an explicit, unique run identifier; there is no
+fallback to a prior dated output tree. For example:
+
+```bash
+qsub -v SEAHUB_RUN_ID=20260731_prod01 ...
+```
+
+The identifier selects matching fresh detection and bundle roots. It should
+begin with the operational date (`YYYYMMDD`); otherwise also pass
+`SEAHUB_OPERATIONAL_DATE=YYYYMMDD`. Reusing a nonempty bundle, detection
+partition, or merged detection output fails loudly.
+
+After the full-corpus GroundingDINO partitions have been merged, generate the
+mask-area census used for SeaHub scale calibration with one GPU:
+
+```bash
+qsub -v SEAHUB_RUN_ID=20260731_prod01 \
+  -hold_jid <groundingdino-merge-job-id> \
+  results/nlammers/20260723_seahub/submit_seahub_sam2_areas.sge
+```
+
+This runs one box-prompted SAM2 call per source FOV and writes only
+`scale_calibration/sam2_areas/sam2_mask_areas.csv` under the matching run root.
+The CSV is replaced atomically after every FOV, so a terminated job retains a
+valid partial checkpoint. The output directory must be fresh and empty.
+After that job succeeds, submit `submit_seahub_plan_and_launch.sge` with
+`-hold_jid <sam2-area-job-id>` and the same `SEAHUB_RUN_ID`; planning requires
+both the completed CSV and its `_SUCCESS` sentinel.
+
 Open the notebook with the `morphseq-env` kernel. Its registry and
 reconciliation cells are safe to run directly. The expensive model cell is
 guarded by `RUN_SEGMENTATION = False`; set it to `True` after selecting the

@@ -38,6 +38,7 @@ from data_pipeline.shared.identifiers import (
 from data_pipeline.shared.identifiers.constructors import sanitize_experiment_id
 
 from .reconciliation import PASS_THROUGH_FAILURE_STATUSES, apply_inclusion_policy
+from .scale_calibration import CALIBRATION_OUTPUT_COLUMNS
 
 EXPECTED_EMBRYOS_PER_FOV = 8
 WELLS_PER_SHARD = 96
@@ -53,6 +54,14 @@ _DETECTION_CARRY_COLUMNS = (
     "raw_detection_count",
     "nms_detection_count",
     "selected_detection_count",
+)
+_ALLOWED_CALIBRATION_STATUSES = frozenset(
+    {"placeholder", "calibrated"}
+)
+_CALIBRATION_MERGE_COLUMNS = tuple(
+    column
+    for column in CALIBRATION_OUTPUT_COLUMNS
+    if column not in {"source_fov_id", "source_stage_value", "stage_hpf"}
 )
 
 
@@ -76,10 +85,11 @@ class SeaHubIntegrationConfig:
             raise ValueError("operational_date must be an 8-digit YYYYMMDD token.")
         if float(self.micrometers_per_pixel) <= 0:
             raise ValueError("micrometers_per_pixel must be > 0.")
-        if self.calibration_status != "placeholder":
+        if self.calibration_status not in _ALLOWED_CALIBRATION_STATUSES:
             raise ValueError(
-                "SeaHub currently has no measured calibration; calibration_status "
-                "must remain 'placeholder' until a calibration is supplied."
+                "Unknown SeaHub calibration_status "
+                f"{self.calibration_status!r}; expected one of "
+                f"{sorted(_ALLOWED_CALIBRATION_STATUSES)}."
             )
         if not 1 <= int(self.jpeg_quality) <= 100:
             raise ValueError("jpeg_quality must be in [1, 100].")
@@ -97,6 +107,7 @@ class SeaHubBundleResult:
     well_provenance: pd.DataFrame
     detection_failures: pd.DataFrame
     dropped_fovs: pd.DataFrame
+    fov_scale_calibration: pd.DataFrame
     experiment_manifest: pd.DataFrame
     canvas_width_px: int | None
     canvas_height_px: int | None
@@ -315,6 +326,169 @@ def build_embryo_ingest(
     return embryo_df, failure_df
 
 
+def _included_source_fov_table(policy: pd.DataFrame) -> pd.DataFrame:
+    included = policy[policy["include_for_seahub"].astype(bool)].copy()
+    included["source_fov_id"] = _source_fov_ids(
+        included, label="included reconciled_fovs"
+    )
+    if included["source_fov_id"].duplicated().any():
+        duplicates = sorted(
+            included.loc[
+                included["source_fov_id"].duplicated(keep=False),
+                "source_fov_id",
+            ].unique()
+        )
+        raise ValueError(
+            "Included SeaHub source FOV identities must be unique before scale "
+            f"calibration; duplicates include {duplicates[:5]}."
+        )
+    return included
+
+
+def _validated_fov_scale_calibration(
+    policy: pd.DataFrame,
+    calibration: pd.DataFrame | None,
+    *,
+    config: SeaHubIntegrationConfig,
+) -> pd.DataFrame:
+    """Return one auditable scale row for every included source FOV.
+
+    Direct API callers may omit calibration and retain the explicit legacy 7.8
+    placeholder.  The production CLI requires a mask manifest and supplies the
+    provisional mask-derived table, so production cannot silently take this path.
+    """
+    included = _included_source_fov_table(policy)
+    included_ids = included["source_fov_id"].astype(str).tolist()
+    if calibration is None:
+        return pd.DataFrame(
+            {
+                "source_fov_id": included_ids,
+                "stage_hpf": pd.to_numeric(
+                    included.get("stage_hpf"), errors="coerce"
+                ),
+                "image_micrometers_per_pixel": float(
+                    config.micrometers_per_pixel
+                ),
+                "calibration_status": config.calibration_status,
+                "scale_estimation_status": "configured_placeholder",
+                "calibration_method": "configured_constant",
+                "calibration_issue": (
+                    "SeaHub pixel calibration is unverified; revisit the configured "
+                    f"{float(config.micrometers_per_pixel):g} um/px value."
+                ),
+            }
+        )
+
+    table = calibration.copy()
+    table["source_fov_id"] = _source_fov_ids(
+        table, label="fov_scale_calibration"
+    )
+    if table["source_fov_id"].duplicated().any():
+        duplicates = sorted(
+            table.loc[
+                table["source_fov_id"].duplicated(keep=False), "source_fov_id"
+            ].unique()
+        )
+        raise ValueError(
+            "fov_scale_calibration must contain one row per source FOV; "
+            f"duplicates include {duplicates[:5]}."
+        )
+    required = {
+        "image_micrometers_per_pixel",
+        "calibration_status",
+        "scale_estimation_status",
+        "calibration_method",
+        "calibration_issue",
+    }
+    missing_columns = sorted(required - set(table.columns))
+    if missing_columns:
+        raise ValueError(
+            "fov_scale_calibration is missing required column(s): "
+            f"{missing_columns}."
+        )
+
+    by_id = table.set_index("source_fov_id", drop=False)
+    missing_ids = sorted(set(included_ids) - set(by_id.index.astype(str)))
+    if missing_ids:
+        raise ValueError(
+            "fov_scale_calibration does not cover every included source FOV; "
+            f"missing {len(missing_ids)}, examples={missing_ids[:5]}."
+        )
+    table = by_id.loc[included_ids].reset_index(drop=True)
+
+    scale = pd.to_numeric(table["image_micrometers_per_pixel"], errors="coerce")
+    if scale.isna().any() or not scale.map(math.isfinite).all() or scale.le(0).any():
+        raise ValueError(
+            "fov_scale_calibration image_micrometers_per_pixel must be finite and > 0."
+        )
+    table["image_micrometers_per_pixel"] = scale.astype(float)
+    status = table["calibration_status"].fillna("").astype(str).str.strip()
+    unknown_status = sorted(set(status) - _ALLOWED_CALIBRATION_STATUSES)
+    if unknown_status:
+        raise ValueError(
+            "fov_scale_calibration contains unknown calibration_status value(s): "
+            f"{unknown_status}."
+        )
+
+    # Catch a calibration table accidentally reused after stage reconciliation changed.
+    if "stage_hpf" in table.columns and "stage_hpf" in included.columns:
+        expected_stage = pd.to_numeric(included["stage_hpf"], errors="coerce").reset_index(
+            drop=True
+        )
+        observed_stage = pd.to_numeric(table["stage_hpf"], errors="coerce").reset_index(
+            drop=True
+        )
+        comparable = expected_stage.notna() & observed_stage.notna()
+        mismatch = comparable & ~pd.Series(
+            [
+                math.isclose(float(expected), float(observed), abs_tol=1e-6)
+                for expected, observed in zip(expected_stage, observed_stage)
+            ]
+        )
+        if mismatch.any():
+            offenders = table.loc[mismatch, "source_fov_id"].astype(str).tolist()
+            raise ValueError(
+                "fov_scale_calibration stage_hpf disagrees with reconciliation for "
+                f"source FOV(s): {offenders[:5]}."
+            )
+    return table
+
+
+def _attach_fov_scale(
+    embryos: pd.DataFrame,
+    calibration: pd.DataFrame,
+) -> pd.DataFrame:
+    """Broadcast exactly one source-FOV scale unchanged to its eight embryos."""
+    if embryos.empty:
+        return embryos.copy()
+    carry = [
+        "source_fov_id",
+        *[
+            column
+            for column in _CALIBRATION_MERGE_COLUMNS
+            if column in calibration.columns
+        ],
+    ]
+    merged = embryos.merge(
+        calibration[carry],
+        on="source_fov_id",
+        how="left",
+        validate="many_to_one",
+        indicator="_scale_join",
+    )
+    if not merged["_scale_join"].eq("both").all():
+        missing = sorted(
+            merged.loc[
+                ~merged["_scale_join"].eq("both"), "source_fov_id"
+            ].astype(str).unique()
+        )
+        raise ValueError(
+            "Scale calibration failed to join onto detected SeaHub embryos; "
+            f"missing source FOVs include {missing[:5]}."
+        )
+    return merged.drop(columns="_scale_join")
+
+
 def _well_index_for_offset(offset: int) -> str:
     row = chr(ord("A") + int(offset) // 12)
     column = int(offset) % 12 + 1
@@ -504,12 +678,21 @@ def _materialize_experiment_images(
 def _frame_inventory(
     embryos: pd.DataFrame,
     *,
+    experiment_root: Path,
     canvas_width_px: int,
     canvas_height_px: int,
     config: SeaHubIntegrationConfig,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for _, embryo in embryos.iterrows():
+        pixel_size = float(
+            embryo.get(
+                "image_micrometers_per_pixel", config.micrometers_per_pixel
+            )
+        )
+        calibration_status = str(
+            embryo.get("calibration_status", config.calibration_status)
+        )
         rows.append(
             {
                 "experiment_id": embryo["experiment_id"],
@@ -523,10 +706,14 @@ def _frame_inventory(
                 "projection_method": "focus_stack",
                 "elapsed_time_s": 0.0,
                 "acquisition_time_s": 0.0,
-                "image_path": str(_relative_materialized_path(embryo)),
-                "image_micrometers_per_pixel": float(
-                    config.micrometers_per_pixel
+                # Downstream model services consume the recorded path directly and
+                # do not consistently carry the drop-in image_root.  SeaHub therefore
+                # makes this contract stronger than the generic frame inventory:
+                # every materialized image path is absolute.
+                "image_path": str(
+                    (experiment_root / _relative_materialized_path(embryo)).resolve()
                 ),
+                "image_micrometers_per_pixel": pixel_size,
                 "image_width_px": int(canvas_width_px),
                 "image_height_px": int(canvas_height_px),
                 "orientation": "none",
@@ -539,7 +726,16 @@ def _frame_inventory(
                 "source_scope": "seahub",
                 "image_kind": "single_z",
                 "z_position": pd.NA,
-                "calibration_status": config.calibration_status,
+                "calibration_status": calibration_status,
+                "scale_estimation_status": embryo.get(
+                    "scale_estimation_status", "configured_placeholder"
+                ),
+                "calibration_method": embryo.get(
+                    "calibration_method", "configured_constant"
+                ),
+                "calibration_reference_version": embryo.get(
+                    "calibration_reference_version", pd.NA
+                ),
                 "canvas_fill_value": int(config.canvas_fill_value),
             }
         )
@@ -568,6 +764,27 @@ def _plate_metadata(
         collection_name = _first_present(
             embryo, "metadata_collection_name", "collection_name"
         )
+        pixel_size = float(
+            embryo.get(
+                "image_micrometers_per_pixel", config.micrometers_per_pixel
+            )
+        )
+        calibration_status = str(
+            embryo.get("calibration_status", config.calibration_status)
+        )
+        calibration_issue = embryo.get("calibration_issue")
+        if _is_missing(calibration_issue):
+            calibration_issue = (
+                "Mask-derived SeaHub scale is provisional rather than direct "
+                "physical metrology; revisit before absolute-size analysis."
+                if str(
+                    embryo.get("scale_estimation_status", "")
+                ).startswith("mask_area_")
+                else (
+                    "SeaHub pixel calibration is unverified; revisit "
+                    f"{pixel_size:g} um/px."
+                )
+            )
         row = {
             "experiment_id": embryo["experiment_id"],
             "well_id": embryo["well_id"],
@@ -600,9 +817,18 @@ def _plate_metadata(
             "source_relative_path": embryo.get("relative_path"),
             "image_kind": "single_z",
             "z_position": pd.NA,
-            "micrometers_per_pixel": float(config.micrometers_per_pixel),
-            "calibration_status": config.calibration_status,
-            "calibration_issue": "SeaHub pixel calibration is unverified; revisit 7.8 um/px.",
+            "micrometers_per_pixel": pixel_size,
+            "calibration_status": calibration_status,
+            "scale_estimation_status": embryo.get(
+                "scale_estimation_status", "configured_placeholder"
+            ),
+            "calibration_method": embryo.get(
+                "calibration_method", "configured_constant"
+            ),
+            "calibration_reference_version": embryo.get(
+                "calibration_reference_version", pd.NA
+            ),
+            "calibration_issue": calibration_issue,
             "operational_integration_date": config.operational_date,
             "collection_date": _first_present(
                 embryo, "metadata_collection_date", "collection_date"
@@ -683,22 +909,44 @@ def build_seahub_dropin_bundle(
     *,
     output_root: str | Path,
     config: SeaHubIntegrationConfig | None = None,
+    fov_scale_calibration: pd.DataFrame | None = None,
     materialize_images: bool = True,
 ) -> SeaHubBundleResult:
     """Build and validate a complete per-experiment SeaHub drop-in bundle."""
     config = config or SeaHubIntegrationConfig()
-    output_root = Path(output_root)
+    output_root = Path(output_root).expanduser().resolve()
+    if output_root.exists():
+        if not output_root.is_dir():
+            raise FileExistsError(
+                f"SeaHub output root exists and is not a directory: {output_root}"
+            )
+        existing = sorted(output_root.iterdir())
+        if existing:
+            preview = ", ".join(path.name for path in existing[:5])
+            raise FileExistsError(
+                "SeaHub output root must be fresh and empty; refusing to reuse "
+                f"{output_root}. Existing entries include: {preview}. Choose a new "
+                "run/output root or explicitly quarantine the old run first."
+            )
     output_root.mkdir(parents=True, exist_ok=True)
 
     policy = apply_inclusion_policy(reconciled_fovs)
     dropped = policy[~policy["include_for_seahub"].astype(bool)].copy()
+    scale_calibration = _validated_fov_scale_calibration(
+        policy, fov_scale_calibration, config=config
+    )
     embryo_ingest, detection_failures = build_embryo_ingest(
         policy, detection_manifest
     )
+    embryo_ingest = _attach_fov_scale(embryo_ingest, scale_calibration)
     assigned = assign_operational_identity(embryo_ingest, config=config)
 
     integration_dir = output_root / "integration"
     integration_dir.mkdir(parents=True, exist_ok=True)
+    policy.to_csv(integration_dir / "reconciled_fovs.csv", index=False)
+    scale_calibration.to_csv(
+        integration_dir / "fov_scale_calibration.csv", index=False
+    )
     embryo_ingest.to_csv(integration_dir / "embryo_ingest.csv", index=False)
     detection_failures.to_csv(
         integration_dir / "detection_failures.csv", index=False
@@ -724,6 +972,7 @@ def build_seahub_dropin_bundle(
             well_provenance=assigned,
             detection_failures=detection_failures,
             dropped_fovs=dropped,
+            fov_scale_calibration=scale_calibration,
             experiment_manifest=empty_manifest,
             canvas_width_px=None,
             canvas_height_px=None,
@@ -747,6 +996,7 @@ def build_seahub_dropin_bundle(
             "relative_path",
             "filename",
             *_BBOX_COLUMNS,
+            *_CALIBRATION_MERGE_COLUMNS,
         )
         if column in assigned.columns
     ]
@@ -772,6 +1022,7 @@ def build_seahub_dropin_bundle(
 
         frame_inventory = _frame_inventory(
             experiment_rows,
+            experiment_root=experiment_root,
             canvas_width_px=canvas_width_px,
             canvas_height_px=canvas_height_px,
             config=config,
@@ -785,7 +1036,9 @@ def build_seahub_dropin_bundle(
             validate_frame_inventory(
                 frame_inventory_csv,
                 frame_inventory_csv.with_suffix(".csv.validated"),
-                image_root=experiment_root,
+                # Absolute paths are deliberate for SeaHub.  Passing no image_root
+                # makes the shared validator reject any accidental relative path.
+                image_root=None,
                 check_sources=True,
                 validation_scope="merged",
             )
@@ -834,6 +1087,7 @@ def build_seahub_dropin_bundle(
         well_provenance=well_provenance,
         detection_failures=detection_failures,
         dropped_fovs=dropped,
+        fov_scale_calibration=scale_calibration,
         experiment_manifest=experiment_manifest,
         canvas_width_px=canvas_width_px,
         canvas_height_px=canvas_height_px,
@@ -908,7 +1162,9 @@ def materialize_planned_experiment(
     validate_frame_inventory(
         frame_inventory_csv,
         output_flag,
-        image_root=experiment_root,
+        # Absolute paths are deliberate for SeaHub.  Passing no image_root makes
+        # the shared validator reject stale relative-path inventories.
+        image_root=None,
         check_sources=True,
         validation_scope="merged",
     )

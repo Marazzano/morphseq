@@ -1,0 +1,10 @@
+reference_version,stage_hpf,stage_prior_um_per_px,strict_wt_reference_n,strict_wt_p50_area_um2,prior_n_fovs,prior_n_embryos,reference_source
+v1,12.0,5.686785632477263,181,468565.6392,1,8,20260730_seahub_strict_wt_surface_area_calibration
+v1,14.0,4.250471607060187,203,476034.2569,3,24,20260730_seahub_strict_wt_surface_area_calibration
+v1,15.0,4.010410818934311,273,500940.1977,1,8,20260730_seahub_strict_wt_surface_area_calibration
+v1,18.0,4.059952011280242,289,608000.6188,4,32,20260730_seahub_strict_wt_surface_area_calibration
+v1,24.0,4.630303402285915,301,785964.5283,7,56,20260730_seahub_strict_wt_surface_area_calibration
+v1,36.0,6.896676326865059,285,935560.6316,3,24,20260730_seahub_strict_wt_surface_area_calibration
+v1,48.0,7.557491954909988,118,1090671.7169,8,64,20260730_seahub_strict_wt_surface_area_calibration
+v1,72.0,7.471020982050083,21,1033776.9768,11,88,20260730_seahub_strict_wt_surface_area_calibration
+v1,96.0,7.775949629553352,5,1068921.6363,9,72,20260730_seahub_strict_wt_surface_area_calibration

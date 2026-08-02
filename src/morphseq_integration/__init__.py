@@ -40,6 +40,11 @@ from .crosswalk import (
     summarize,
     validate_crosswalk,
 )
+from .exclusions import (
+    apply_exclusions,
+    excluded_well_ids,
+    load_excluded_wells,
+)
 from .experiment_key import ExperimentKey, load_experiment_key
 from .hash_map import experiments_with_hash_map, load_experiment_hash_map
 from .identifiers import (
@@ -68,6 +73,7 @@ __all__ = [
     "STATUS_PAIRED",
     "ExperimentKey",
     "PipelinePaths",
+    "apply_exclusions",
     "attach_legacy_metadata",
     "available_experiments",
     "build_crosswalk",
@@ -75,8 +81,10 @@ __all__ = [
     "build_seq_sample_id",
     "coverage_summary",
     "default_paths",
+    "excluded_well_ids",
     "experiments_with_hash_map",
     "format_hash_plate",
+    "load_excluded_wells",
     "load_experiment_hash_map",
     "load_experiment_key",
     "load_legacy_latents",

@@ -568,3 +568,95 @@ def axis_image_strip(
     return strip.loc[
         :, ["cohort", "axis", column, "snip_id", "well_id", "image_path", "image_exists"]
     ]
+
+
+# ---------------------------------------------------------------------------
+# Cohort-local PCs in the shared denoised subspace (the PLN regression inputs)
+# ---------------------------------------------------------------------------
+
+N_SHARED_DIMS = 5      # first 5 of the 10-component GENE7-native fit
+N_COHORT_PCS = 2       # per-cohort axes carried into the regressions
+
+
+def _orient(components: np.ndarray, scores: np.ndarray) -> "tuple[np.ndarray, np.ndarray]":
+    """Fix the arbitrary sign of each eigenvector deterministically.
+
+    PCA components are defined only up to sign, so without a convention cohort A's PC1 may point
+    toward severity and cohort B's away from it — making loadings incomparable across cohorts and
+    the sign of a regression coefficient meaningless. Convention here: the largest-magnitude loading
+    is positive. Stable (it does not depend on a reference direction the axis may be orthogonal to)
+    and reproducible.
+    """
+    flipped_components = components.copy()
+    flipped_scores = scores.copy()
+    for index in range(components.shape[0]):
+        dominant = np.argmax(np.abs(components[index]))
+        if components[index, dominant] < 0:
+            flipped_components[index] *= -1.0
+            flipped_scores[:, index] *= -1.0
+    return flipped_components, flipped_scores
+
+
+def cohort_local_pcs(
+    basis: GlobalBasis,
+    *,
+    n_shared_dims: int = N_SHARED_DIMS,
+    n_cohort_pcs: int = N_COHORT_PCS,
+    min_wells: int = 6,
+) -> "tuple[pd.DataFrame, pd.DataFrame]":
+    """Per-cohort PCs computed INSIDE the shared subspace.
+
+    Each cohort gets its own PCA over the first ``n_shared_dims`` global axes, centered on that
+    cohort's own mean, so the resulting coordinate measures intra-cohort variation rather than the
+    cohort's position. Signs are fixed by ``_orient``.
+
+    Returns:
+        ``(scores, loadings)`` — ``scores`` has one row per embryo with ``cohort_PC1..k`` plus
+        identity columns; ``loadings`` is long-form (cohort x axis x shared dimension).
+    """
+    shared_columns = [c for c in GLOBAL_COLUMNS if c in basis.scores.columns][:n_shared_dims]
+    score_rows, loading_rows = [], []
+
+    for keys, members in basis.scores.groupby(list(COHORT_KEYS), sort=True):
+        if len(members) < min_wells:
+            continue
+        label = cohort_label(keys)
+        matrix = members.loc[:, shared_columns].to_numpy(float)
+        n_fit = min(n_cohort_pcs, min(matrix.shape) - 1) or 1
+        pca = PCA(n_components=n_fit, random_state=RANDOM_SEED)
+        coordinates = pca.fit_transform(matrix)
+        components, coordinates = _orient(pca.components_, coordinates)
+
+        block = pd.DataFrame(
+            coordinates, columns=[f"cohort_PC{i + 1}" for i in range(n_fit)], index=members.index
+        )
+        for column in ("snip_id", "well_id", "physical_embryo_id", "experiment_id", "target",
+                       "temperature", "timepoint_seq", "seq_sample_id", "perturbation_group"):
+            if column in members.columns:
+                block[column] = members[column].to_numpy()
+        block["cohort"] = label
+        block["cohort_n_wells"] = len(members)
+        score_rows.append(block)
+
+        total = matrix.var(axis=0, ddof=1).sum()
+        for axis_index in range(n_fit):
+            for dim_index, loading in enumerate(components[axis_index]):
+                loading_rows.append(
+                    {
+                        "cohort": label,
+                        "target": keys[0],
+                        "temperature": keys[1],
+                        "timepoint": keys[2],
+                        "n_wells": len(members),
+                        "axis": f"cohort_PC{axis_index + 1}",
+                        "shared_dim": shared_columns[dim_index],
+                        "loading": float(loading),
+                        "variance_ratio": float(pca.explained_variance_[axis_index] / total)
+                        if total > 0
+                        else np.nan,
+                    }
+                )
+
+    scores = pd.concat(score_rows, ignore_index=True) if score_rows else pd.DataFrame()
+    loadings = pd.DataFrame(loading_rows)
+    return scores, loadings

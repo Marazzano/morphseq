@@ -5,11 +5,75 @@ from argparse import Namespace
 from unittest.mock import patch
 
 import pandas as pd
+import yaml
 
 from data_pipeline.pipeline_orchestrator import tasks
 from data_pipeline.acquisition.image_materialization.resolved_product_plans import (
     write_resolved_product_plan_for_well,
 )
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
+
+
+def test_snip_processing_parser_uses_checkpoint_compatible_defaults():
+    parser = tasks.build_parser()
+    args = parser.parse_args([
+        "snip-processing",
+        "--frame-masks-csv", "frame_masks.csv",
+        "--frame-inventory-csv", "frame_inventory.csv",
+        "--physical-embryo-registry-csv", "physical_embryo_registry.csv",
+        "--output-csv", "snip_inventory.csv",
+        "--snips-dir", "snips",
+        "--output-root", "output",
+    ])
+
+    assert args.target_pixel_size_um == DEFAULT_TARGET_PIXEL_SIZE_UM == 6.5
+    assert args.blend_radius_um == DEFAULT_BLEND_RADIUS_UM == 75.0
+
+
+def test_base_config_pins_checkpoint_compatible_snip_settings():
+    config_path = Path(tasks.__file__).with_name("config.yaml")
+    snip_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))["snip_processing"]
+
+    assert snip_config["target_pixel_size_um"] == DEFAULT_TARGET_PIXEL_SIZE_UM == 6.5
+    assert snip_config["blend_radius_um"] == DEFAULT_BLEND_RADIUS_UM == 75.0
+
+
+def test_surface_area_qc_plumbs_frame_inventory_from_cli_to_entrypoint():
+    parser = tasks.build_parser()
+    args = parser.parse_args([
+        "surface-area-qc",
+        "--mask-geometry-csv", "mask_geometry.csv",
+        "--stage-predictions-csv", "stage_predictions.csv",
+        "--snip-inventory-csv", "snip_inventory.csv",
+        "--frame-inventory-csv", "frame_inventory.csv",
+        "--physical-embryo-registry-csv", "physical_embryo_registry.csv",
+        "--output-csv", "surface_area_qc.csv",
+    ])
+
+    with patch(
+        "data_pipeline.quality_control.surface_area_qc.entrypoint.run_surface_area_qc"
+    ) as run_surface_area_qc:
+        args.func(args)
+
+    run_surface_area_qc.assert_called_once_with(
+        mask_geometry_csv=Path("mask_geometry.csv"),
+        stage_predictions_csv=Path("stage_predictions.csv"),
+        snip_inventory_csv=Path("snip_inventory.csv"),
+        frame_inventory_csv=Path("frame_inventory.csv"),
+        physical_embryo_registry_csv=Path("physical_embryo_registry.csv"),
+        output_csv=Path("surface_area_qc.csv"),
+    )
+
+
+def test_surface_area_qc_rule_supplies_frame_inventory_cli_argument():
+    rule_path = Path(tasks.__file__).with_name("rules") / "surface_area_qc.smk"
+    rule_text = rule_path.read_text(encoding="utf-8")
+
+    assert 'frame_inventory=str(_saqc_frame_inventory(' in rule_text
+    assert '--frame-inventory-csv "{input.frame_inventory}"' in rule_text
 
 
 def test_materialize_well_parses_local_well_label():

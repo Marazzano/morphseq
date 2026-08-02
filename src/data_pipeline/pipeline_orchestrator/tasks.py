@@ -27,6 +27,10 @@ from data_pipeline.acquisition.metadata_ingest.frame_inventory import (
     merge_frame_inventory_shards,
     validate_frame_inventory,
 )
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
 
 
 def _parse_bool(value: str | bool) -> bool:
@@ -708,6 +712,7 @@ def cmd_surface_area_qc(args: argparse.Namespace) -> None:
         mask_geometry_csv=args.mask_geometry_csv,
         stage_predictions_csv=args.stage_predictions_csv,
         snip_inventory_csv=args.snip_inventory_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
         physical_embryo_registry_csv=args.physical_embryo_registry_csv,
         output_csv=args.output_csv,
     )
@@ -1476,11 +1481,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--output-csv", type=Path, required=True)
     p_sp.add_argument("--snips-dir", type=Path, required=True)
     p_sp.add_argument("--output-root", type=Path, required=True)
-    p_sp.add_argument("--target-pixel-size-um", type=float, default=7.8)
+    p_sp.add_argument(
+        "--target-pixel-size-um", type=float, default=DEFAULT_TARGET_PIXEL_SIZE_UM
+    )
     p_sp.add_argument("--output-height-px", type=int, default=576)
     p_sp.add_argument("--output-width-px", type=int, default=256)
     p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
-    p_sp.add_argument("--blend-radius-um", type=float, default=20.0)
+    p_sp.add_argument("--blend-radius-um", type=float, default=DEFAULT_BLEND_RADIUS_UM)
     p_sp.set_defaults(func=cmd_snip_processing)
 
     p_mg = sub.add_parser("mask-geometry")
@@ -1576,6 +1583,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_saqc.add_argument("--mask-geometry-csv", type=Path, required=True)
     p_saqc.add_argument("--stage-predictions-csv", type=Path, required=True)
     p_saqc.add_argument("--snip-inventory-csv", type=Path, required=True)
+    p_saqc.add_argument("--frame-inventory-csv", type=Path, required=True)
     p_saqc.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
     p_saqc.add_argument("--output-csv", type=Path, required=True)
     p_saqc.set_defaults(func=cmd_surface_area_qc)

@@ -1,0 +1,89 @@
+{
+  "experiment_id": "20250612_24hpf_ctrl_atf6",
+  "inputs": {
+    "pre_fix_merged_latents": "/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq/results/nlammers/20260731_snip_compatibility_rerun/before/20250612_24hpf_ctrl_atf6_latents.parquet",
+    "post_fix_merged_latents": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/output/feature_extraction/20250612_24hpf_ctrl_atf6/latent_embeddings/20250612_24hpf_ctrl_atf6_latents.parquet",
+    "legacy_checkpoint_table": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/legacy/20241107_ds_sweep01_optimum/morph_latents_20250612_24hpf_ctrl_atf6.csv"
+  },
+  "dimension_mapping": {
+    "current": "z_mu_00..z_mu_99",
+    "legacy_0_19": "z_mu_n_00..z_mu_n_19",
+    "legacy_20_99": "z_mu_b_20..z_mu_b_99",
+    "pairing": "current e01 to legacy e00 by A01-H12 well"
+  },
+  "dataset_inventory": {
+    "pre_fix": {
+      "input_rows": 97,
+      "primary_embryo_rows": 96,
+      "unique_primary_wells": 96
+    },
+    "post_fix": {
+      "input_rows": 97,
+      "primary_embryo_rows": 96,
+      "unique_primary_wells": 96
+    },
+    "legacy": {
+      "input_rows": 95,
+      "primary_embryo_rows": 95,
+      "unique_primary_wells": 95
+    }
+  },
+  "comparisons": {
+    "pre_vs_legacy": {
+      "n_paired_wells": 95,
+      "n_dimensions": 100,
+      "n_dimensions_with_finite_correlation": 100,
+      "median_per_dimension_correlation": 0.4921477059112426,
+      "standardized_rmse": 1.8286790154360695,
+      "pairwise_distance_correlation": 0.3636980718119613,
+      "standardization_reference": "legacy"
+    },
+    "post_vs_legacy": {
+      "n_paired_wells": 95,
+      "n_dimensions": 100,
+      "n_dimensions_with_finite_correlation": 100,
+      "median_per_dimension_correlation": 0.5103419923806435,
+      "standardized_rmse": 1.9562180169432661,
+      "pairwise_distance_correlation": 0.3598034352436937,
+      "standardization_reference": "legacy"
+    },
+    "pre_vs_post": {
+      "n_paired_wells": 96,
+      "n_dimensions": 100,
+      "n_dimensions_with_finite_correlation": 100,
+      "median_per_dimension_correlation": 0.8743123492395048,
+      "standardized_rmse": 0.7191910514130638,
+      "pairwise_distance_correlation": 0.9164115520490906,
+      "standardization_reference": "pre_fix"
+    }
+  },
+  "comparisons_biological_20_99": {
+    "pre_vs_legacy": {
+      "n_paired_wells": 95,
+      "n_dimensions": 80,
+      "n_dimensions_with_finite_correlation": 80,
+      "median_per_dimension_correlation": 0.5254849388926024,
+      "standardized_rmse": 1.7739992209151314,
+      "pairwise_distance_correlation": 0.33810336588941703,
+      "standardization_reference": "legacy_biological_20_99"
+    },
+    "post_vs_legacy": {
+      "n_paired_wells": 95,
+      "n_dimensions": 80,
+      "n_dimensions_with_finite_correlation": 80,
+      "median_per_dimension_correlation": 0.5340191646392883,
+      "standardized_rmse": 1.9673963605989213,
+      "pairwise_distance_correlation": 0.34598602595712896,
+      "standardization_reference": "legacy_biological_20_99"
+    },
+    "pre_vs_post": {
+      "n_paired_wells": 96,
+      "n_dimensions": 80,
+      "n_dimensions_with_finite_correlation": 80,
+      "median_per_dimension_correlation": 0.8846839469653776,
+      "standardized_rmse": 0.6671166331886546,
+      "pairwise_distance_correlation": 0.8834514134372126,
+      "standardization_reference": "pre_fix_biological_20_99"
+    }
+  }
+}

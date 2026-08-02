@@ -32,6 +32,10 @@ from data_pipeline.shared.identifiers.constructors import (
 )
 from data_pipeline.shared.identifiers.parsers import parse_image_id
 from data_pipeline.object_extraction.snip_processing.augmentation import augment_snip
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
 from data_pipeline.object_extraction.snip_processing.extraction import crop_to_embryo_bounds, extract_embryo_crop
 from data_pipeline.object_extraction.snip_processing.rotation import apply_rotation_to_snip
 
@@ -96,11 +100,11 @@ def run_snip_processing(
     output_csv: Path,
     snips_dir: Path,
     output_root: Path,
-    target_pixel_size_um: float = 7.8,
+    target_pixel_size_um: float = DEFAULT_TARGET_PIXEL_SIZE_UM,
     output_height_px: int = 576,
     output_width_px: int = 256,
     background_noise_scale: float = 0.1,
-    blend_radius_um: float = 20.0,
+    blend_radius_um: float = DEFAULT_BLEND_RADIUS_UM,
 ) -> None:
     frame_masks = pd.read_csv(frame_masks_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
@@ -166,6 +170,8 @@ def run_snip_processing(
             "crop_y_max_px": None,
             "crop_width_px": output_width_px,
             "crop_height_px": output_height_px,
+            "source_micrometers_per_pixel": None,
+            "snip_micrometers_per_pixel": float(target_pixel_size_um),
             "is_valid_snip": False,
             "error_message": None,
         }
@@ -178,6 +184,7 @@ def run_snip_processing(
             image_path = Path(str(inv_row["image_path"]))
             pixel_size_um = float(inv_row["image_micrometers_per_pixel"])
             out["image_path"] = str(inv_row["image_path"])
+            out["source_micrometers_per_pixel"] = pixel_size_um
 
             # Decode RLE mask from frame_masks row.
             rle = json.loads(str(mask_row["mask_rle"]))

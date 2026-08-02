@@ -11,6 +11,10 @@ mass-distribution heuristic and extraction uses a zero yolk mask.
 from data_pipeline.object_extraction.snip_processing.snip_frame_shape import (
     resolve_snip_frame_shape as _resolve_snip_frame_shape,
 )
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+    DEFAULT_TARGET_PIXEL_SIZE_UM,
+)
 
 SNIP_INVENTORY_STEP = "snip_inventory"
 
@@ -84,7 +88,9 @@ rule snip_processing_per_well:
     params:
         snips_dir=lambda wc: _snip_inventory_snips_dir(wc.experiment, wc.well_id),
         target_pixel_size_um=lambda wc: float(
-            config.get("snip_processing", {}).get("target_pixel_size_um", 7.8)
+            config.get("snip_processing", {}).get(
+                "target_pixel_size_um", DEFAULT_TARGET_PIXEL_SIZE_UM
+            )
         ),
         # Crop output (H, W) comes from the single snip_frame_shape source of truth so the snip
         # image, the saved embryo mask, and the per-snip via mask all share one grid.
@@ -94,7 +100,9 @@ rule snip_processing_per_well:
             config.get("snip_processing", {}).get("background_noise_scale", 0.1)
         ),
         blend_radius_um=lambda wc: float(
-            config.get("snip_processing", {}).get("blend_radius_um", 20.0)
+            config.get("snip_processing", {}).get(
+                "blend_radius_um", DEFAULT_BLEND_RADIUS_UM
+            )
         ),
     shell:
         """

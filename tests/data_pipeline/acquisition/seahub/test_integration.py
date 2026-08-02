@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import yaml
 from PIL import Image
 
@@ -12,6 +13,16 @@ from data_pipeline.acquisition.seahub.integration import (
     build_embryo_ingest,
     build_seahub_dropin_bundle,
     materialize_planned_experiment,
+)
+from data_pipeline.acquisition.seahub.cli import (
+    _read_scale_mask_manifest,
+    build_parser,
+)
+from data_pipeline.acquisition.seahub.production_safety import (
+    preflight_materialized_experiment,
+)
+from data_pipeline.acquisition.seahub.scale_calibration import (
+    calibrate_reconciled_source_fovs,
 )
 
 
@@ -60,6 +71,18 @@ def _detections(*, source_fov_id: str = "abc123", count: int = 8) -> pd.DataFram
             }
         )
     return pd.DataFrame(rows)
+
+
+def _scale_calibration(source_path: Path) -> pd.DataFrame:
+    masks = pd.DataFrame(
+        {
+            "image_id": ["abc123"] * 8,
+            "embryo_position": list(range(1, 9)),
+            "mask_score": [0.95] * 8,
+            "mask_area_px": [30_000.0] * 8,
+        }
+    )
+    return calibrate_reconciled_source_fovs(_fov(source_path), masks)
 
 
 def test_detection_count_failure_never_emits_partial_embryos(tmp_path):
@@ -122,6 +145,8 @@ def test_bundle_materializes_valid_single_z_dropin(tmp_path):
     assert frame["z_position"].isna().all()
     assert set(frame["image_micrometers_per_pixel"]) == {7.8}
     assert set(frame["calibration_status"]) == {"placeholder"}
+    assert frame["image_path"].map(lambda value: Path(value).is_absolute()).all()
+    assert frame["image_path"].map(lambda value: Path(value).is_file()).all()
     assert plate["well_id"].nunique() == 8
     assert set(plate["embryos_per_well"]) == {1}
     assert plate["reconciliation_failure_passed_through"].all()
@@ -143,6 +168,107 @@ def test_bundle_materializes_valid_single_z_dropin(tmp_path):
     assert config["unet_snip"]["use_model_server"] is True
 
 
+def test_bundle_broadcasts_one_mask_inferred_scale_to_all_fov_embryos(tmp_path):
+    source = tmp_path / "fov.jpg"
+    Image.new("RGB", (160, 80), (230, 230, 230)).save(source)
+    calibration = _scale_calibration(source)
+
+    result = build_seahub_dropin_bundle(
+        _fov(source),
+        _detections(),
+        output_root=tmp_path / "calibrated_bundle",
+        fov_scale_calibration=calibration,
+    )
+
+    assert len(result.fov_scale_calibration) == 1
+    expected_scale = calibration.iloc[0]["image_micrometers_per_pixel"]
+    experiment = result.experiment_manifest.iloc[0]
+    frame = pd.read_csv(experiment["frame_inventory_csv"])
+    plate = pd.read_csv(experiment["plate_metadata_csv"])
+    persisted = pd.read_csv(
+        tmp_path
+        / "calibrated_bundle"
+        / "integration"
+        / "fov_scale_calibration.csv"
+    )
+
+    assert len(frame) == 8
+    assert frame["image_micrometers_per_pixel"].nunique() == 1
+    assert frame["image_micrometers_per_pixel"].iloc[0] == pytest.approx(
+        expected_scale
+    )
+    assert set(frame["calibration_status"]) == {"placeholder"}
+    assert set(frame["scale_estimation_status"]) == {"mask_area_regularized"}
+    assert plate["micrometers_per_pixel"].tolist() == pytest.approx(
+        [expected_scale] * 8
+    )
+    assert persisted.iloc[0]["source_fov_id"] == "abc123"
+    assert persisted.iloc[0]["n_valid_masks"] == 8
+
+
+def test_bundle_rejects_stale_scale_stage(tmp_path):
+    source = tmp_path / "fov.jpg"
+    Image.new("RGB", (160, 80), (230, 230, 230)).save(source)
+    calibration = _scale_calibration(source)
+    calibration["stage_hpf"] = 48.0
+
+    with pytest.raises(ValueError, match="stage_hpf disagrees"):
+        build_seahub_dropin_bundle(
+            _fov(source),
+            _detections(),
+            output_root=tmp_path / "bad_scale_bundle",
+            fov_scale_calibration=calibration,
+            materialize_images=False,
+        )
+
+
+def test_production_bundle_cli_requires_scale_mask_manifest():
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "build-bundle",
+                "--reconciled-fovs-csv",
+                "reconciled.csv",
+                "--detection-manifest-csv",
+                "detections.csv",
+                "--output-root",
+                "bundle",
+            ]
+        )
+
+    args = parser.parse_args(
+        [
+            "build-bundle",
+            "--reconciled-fovs-csv",
+            "reconciled.csv",
+            "--detection-manifest-csv",
+            "detections.csv",
+            "--scale-mask-manifest-csv",
+            "scale_masks.csv",
+            "--output-root",
+            "bundle",
+        ]
+    )
+    assert args.scale_mask_manifest_csv == Path("scale_masks.csv")
+
+
+def test_scale_mask_reader_rejects_partial_checkpoint(tmp_path):
+    manifest_path = tmp_path / "sam2_mask_areas.csv"
+    pd.DataFrame(
+        {
+            "source_fov_id": ["fov-1"],
+            "mask_area_px": [1000],
+            "checkpoint_complete": [False],
+            "processed_fov_count": [1],
+            "total_fov_count": [2],
+        }
+    ).to_csv(manifest_path, index=False)
+
+    with pytest.raises(ValueError, match="partial checkpoint"):
+        _read_scale_mask_manifest(manifest_path)
+
+
 def test_plan_once_then_materialize_one_cluster_shard(tmp_path):
     source = tmp_path / "fov.jpg"
     Image.new("RGB", (160, 80), (230, 230, 230)).save(source)
@@ -154,6 +280,13 @@ def test_plan_once_then_materialize_one_cluster_shard(tmp_path):
     )
     experiment = result.experiment_manifest.iloc[0]
     frame_csv = Path(experiment["frame_inventory_csv"])
+    planned_frame = pd.read_csv(frame_csv)
+    assert planned_frame["image_path"].map(
+        lambda value: Path(value).is_absolute()
+    ).all()
+    assert not planned_frame["image_path"].map(
+        lambda value: Path(value).exists()
+    ).any()
     assert not frame_csv.with_suffix(".csv.validated").exists()
     flag = materialize_planned_experiment(
         bundle_root=tmp_path / "bundle",
@@ -164,3 +297,47 @@ def test_plan_once_then_materialize_one_cluster_shard(tmp_path):
     assert (
         Path(experiment["image_root"]) / frame.iloc[0]["image_path"]
     ).exists()
+    assert preflight_materialized_experiment(
+        bundle_root=tmp_path / "bundle",
+        experiment_id=experiment["experiment_id"],
+    ).is_file()
+
+
+def test_bundle_refuses_nonempty_output_root(tmp_path):
+    source = tmp_path / "fov.jpg"
+    Image.new("RGB", (160, 80), (230, 230, 230)).save(source)
+    output_root = tmp_path / "reused_bundle"
+    output_root.mkdir()
+    (output_root / "stale.csv").write_text("old run\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="must be fresh and empty"):
+        build_seahub_dropin_bundle(
+            _fov(source),
+            _detections(),
+            output_root=output_root,
+            materialize_images=False,
+        )
+
+
+def test_production_preflight_rejects_relative_image_path(tmp_path):
+    source = tmp_path / "fov.jpg"
+    Image.new("RGB", (160, 80), (230, 230, 230)).save(source)
+    result = build_seahub_dropin_bundle(
+        _fov(source),
+        _detections(),
+        output_root=tmp_path / "bundle",
+    )
+    experiment = result.experiment_manifest.iloc[0]
+    frame_csv = Path(experiment["frame_inventory_csv"])
+    frame = pd.read_csv(frame_csv)
+    absolute = Path(frame.loc[0, "image_path"])
+    frame.loc[0, "image_path"] = str(
+        absolute.relative_to(Path(experiment["image_root"]))
+    )
+    frame.to_csv(frame_csv, index=False)
+
+    with pytest.raises(ValueError, match="require absolute image_path"):
+        preflight_materialized_experiment(
+            bundle_root=tmp_path / "bundle",
+            experiment_id=experiment["experiment_id"],
+        )

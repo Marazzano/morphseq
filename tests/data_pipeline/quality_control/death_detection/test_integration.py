@@ -114,6 +114,7 @@ def test_both_grains_emitted_correctly(tmp_path):
     assert list(qc.columns) == DEATH_DETECTION_QC_TABLE_COLUMNS
     assert qc["snip_id"].is_unique and len(qc) == 12  # 2 animals x 6 frames
     assert qc["viability_dead_flag"].dtype == bool and qc["persistence_dead_flag"].dtype == bool
+    assert set(qc["death_detection_qc_applicability"]) == {"exclusion"}
     # the validator (registry verifier) must pass
     validate_death_detection_qc(qc, physical_embryo_registry_df=pd.read_csv(paths["registry"]), check_sources=True)
     # only the dying animal carries persistence-true snips
@@ -138,3 +139,47 @@ def test_both_grains_emitted_correctly(tmp_path):
     assert event["death_event_stage_hpf"].iloc[0] == pytest.approx(
         predict_stage_hpf(24.0, death_d * 3600.0, 28.0)
     )
+
+
+def test_single_frame_single_z_death_calls_are_retained_but_diagnostic_only(tmp_path):
+    paths = _build_inputs(tmp_path)
+
+    fraction_alive = pd.read_csv(paths["fraction_alive"])
+    fraction_alive = fraction_alive[fraction_alive["time_index"].eq(0)].copy()
+    fraction_alive.loc[fraction_alive.index[0], "fraction_alive"] = 0.1
+    fraction_alive.to_csv(paths["fraction_alive"], index=False)
+
+    snip_inventory = pd.read_csv(paths["snip_inventory"])
+    snip_inventory = snip_inventory[snip_inventory["time_index"].eq(0)].copy()
+    snip_inventory.to_csv(paths["snip_inventory"], index=False)
+
+    frame_inventory = pd.read_csv(paths["frame_inventory"])
+    frame_inventory = frame_inventory[frame_inventory["time_index"].eq(0)].copy()
+    frame_inventory["image_id"] = [
+        build_image_id(WELL, CHANNEL, int(t)) for t in frame_inventory["time_index"]
+    ]
+    frame_inventory["image_product_type"] = "projection"
+    frame_inventory["source_scope"] = "seahub"
+    frame_inventory["image_kind"] = "single_z"
+    frame_inventory["z_position"] = None
+    frame_inventory["calibration_status"] = "placeholder"
+    frame_inventory.to_csv(paths["frame_inventory"], index=False)
+
+    out_qc = tmp_path / "death_detection_qc.csv"
+    run_death_detection(
+        fraction_alive_csv=paths["fraction_alive"],
+        frame_inventory_csv=paths["frame_inventory"],
+        plate_metadata_csv=paths["plate_metadata"],
+        snip_inventory_csv=paths["snip_inventory"],
+        physical_embryo_registry_csv=paths["registry"],
+        output_qc_csv=out_qc,
+        output_death_event_csv=tmp_path / "death_event.csv",
+        config_overrides={"lead_time_hr": 0.0},
+    )
+
+    qc = pd.read_csv(out_qc)
+    assert len(qc) == 2
+    assert qc["viability_dead_flag"].any()
+    assert not qc["persistence_dead_flag"].any()
+    assert set(qc["death_detection_qc_applicability"]) == {"diagnostic_only"}
+    validate_death_detection_qc(qc)

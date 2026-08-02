@@ -1,6 +1,8 @@
 #!/bin/bash
 # Plan the corpus-wide bundle, then submit materialization and full-pipeline arrays.
-# Submit this job with -hold_jid <full-corpus detection merge job id>.
+# Submit this job with:
+#   qsub -v SEAHUB_RUN_ID=20260731_prod01 \
+#     -hold_jid <SAM2 area-census job id> submit_seahub_plan_and_launch.sge
 
 #$ -N seahub_plan
 #$ -cwd
@@ -16,20 +18,34 @@ set -euo pipefail
 REPO_ROOT="/net/trapnell/vol1/home/nlammers/projects/repositories/morphseq"
 SRC_ROOT="${REPO_ROOT}/src"
 WORK_DIR="${REPO_ROOT}/results/nlammers/20260723_seahub"
-RECONCILED="${WORK_DIR}/outputs/full_corpus_20260724/integration/reconciled_fovs.csv"
-DETECTIONS="${WORK_DIR}/outputs/full_corpus_20260724/detection/embryo_manifest.csv"
-BUNDLE_ROOT="/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived/20260724/bundle"
+source "${WORK_DIR}/seahub_run_env.sh"
+seahub_configure_run \
+    "${WORK_DIR}" \
+    "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/seahub/derived"
+RECONCILED="${SEAHUB_RUN_ROOT}/integration/reconciled_fovs.csv"
+DETECTIONS="${SEAHUB_RUN_ROOT}/detection/embryo_manifest.csv"
+SCALE_MASKS_DIR="${SEAHUB_RUN_ROOT}/scale_calibration/sam2_areas"
+SCALE_MASKS="${SCALE_MASKS_DIR}/sam2_mask_areas.csv"
+SCALE_MASKS_SUCCESS="${SCALE_MASKS_DIR}/_SUCCESS"
+BUNDLE_ROOT="${SEAHUB_BUNDLE_ROOT}"
 CONDA="/net/trapnell/vol1/home/nlammers/micromamba/bin/conda"
 
 cd "${REPO_ROOT}"
+for REQUIRED in "${RECONCILED}" "${DETECTIONS}" "${SCALE_MASKS}" "${SCALE_MASKS_SUCCESS}"; do
+    if [[ ! -f "${REQUIRED}" ]]; then
+        echo "ERROR: SeaHub planning input is missing: ${REQUIRED}" >&2
+        exit 2
+    fi
+done
 echo "=== SeaHub bundle planning START $(date) ==="
 "${CONDA}" run -n morphseq-env --no-capture-output \
     env PYTHONPATH="${SRC_ROOT}" \
     python -m data_pipeline.acquisition.seahub build-bundle \
     --reconciled-fovs-csv "${RECONCILED}" \
     --detection-manifest-csv "${DETECTIONS}" \
+    --scale-mask-manifest-csv "${SCALE_MASKS}" \
     --output-root "${BUNDLE_ROOT}" \
-    --operational-date 20260724 \
+    --operational-date "${SEAHUB_OPERATIONAL_DATE}" \
     --plan-only
 
 EXPERIMENTS="${BUNDLE_ROOT}/integration/experiments.txt"
@@ -41,7 +57,7 @@ SHARD_COUNT="$(grep -cvE '^[[:space:]]*$' "${EXPERIMENTS}")"
 echo "Planned ${SHARD_COUNT} operational shards."
 
 MATERIALIZE_SUBMISSION="$(
-    qsub -t "1-${SHARD_COUNT}" -tc 8 \
+    qsub -v "${SEAHUB_QSUB_ENV}" -t "1-${SHARD_COUNT}" -tc 8 \
         "${WORK_DIR}/submit_seahub_materialize.sge"
 )"
 echo "${MATERIALIZE_SUBMISSION}"
@@ -55,7 +71,7 @@ if [[ -z "${MATERIALIZE_JOB_ID}" ]]; then
 fi
 
 BACK_HALF_SUBMISSION="$(
-    qsub -hold_jid "${MATERIALIZE_JOB_ID}" \
+    qsub -v "${SEAHUB_QSUB_ENV}" -hold_jid "${MATERIALIZE_JOB_ID}" \
         -t "1-${SHARD_COUNT}" -tc 1 -l gpgpu=TRUE,cuda=1 \
         "${WORK_DIR}/submit_seahub_back_half.sge"
 )"
@@ -70,7 +86,7 @@ if [[ -z "${BACK_HALF_JOB_ID}" ]]; then
 fi
 
 VERIFY_SUBMISSION="$(
-    qsub -hold_jid "${BACK_HALF_JOB_ID}" \
+    qsub -v "${SEAHUB_QSUB_ENV}" -hold_jid "${BACK_HALF_JOB_ID}" \
         "${WORK_DIR}/submit_seahub_verify.sge"
 )"
 echo "${VERIFY_SUBMISSION}"
@@ -91,6 +107,10 @@ SUBMISSION_RECORD="${BUNDLE_ROOT}/integration/submitted_jobs.txt"
     echo "verify_job_id=${VERIFY_JOB_ID}"
     echo "shard_count=${SHARD_COUNT}"
     echo "submitted_at=$(date --iso-8601=seconds)"
+    echo "run_id=${SEAHUB_RUN_ID}"
+    echo "operational_date=${SEAHUB_OPERATIONAL_DATE}"
+    echo "run_root=${SEAHUB_RUN_ROOT}"
+    echo "bundle_root=${SEAHUB_BUNDLE_ROOT}"
 } > "${SUBMISSION_RECORD}"
 
 echo "=== SeaHub full pipeline CHAINED $(date) ==="

@@ -98,6 +98,38 @@ def test_too_large_flagged():
     assert out["sa_outlier_flag"].tolist() == [True]
 
 
+def test_single_z_area_flag_is_retained_but_diagnostic_only():
+    snip_id, embryo_id, image_id = _snip(0)
+    universe = _universe([(snip_id, embryo_id)])
+    universe["image_id"] = image_id
+    mask_geometry = pd.DataFrame([{"snip_id": snip_id, "area_um2": 300.0}])
+    stage_df = pd.DataFrame([{"snip_id": snip_id, "predicted_stage_hpf": 30.0}])
+    frame_inventory = pd.DataFrame(
+        [
+            {
+                "image_id": image_id,
+                "source_scope": "seahub",
+                "image_kind": "single_z",
+                "z_position": None,
+                "calibration_status": "placeholder",
+            }
+        ]
+    )
+
+    out = compute_surface_area_qc_flags(
+        mask_geometry,
+        stage_df,
+        universe,
+        _FLAT_REF,
+        config=resolve_config(),
+        frame_inventory_df=frame_inventory,
+    )
+
+    assert out["sa_outlier_flag"].tolist() == [True]
+    assert out["surface_area_qc_applicability"].tolist() == ["diagnostic_only"]
+    validate_surface_area_qc(out)
+
+
 def test_too_small_flagged():
     # area 50 < 0.7 * p5(100) = 70 -> flagged
     out = _build(areas={0: 50.0}, stages={0: 30.0})

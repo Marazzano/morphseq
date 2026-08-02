@@ -12,6 +12,10 @@ import scipy.ndimage
 from scipy.stats import truncnorm
 from typing import Tuple
 
+from data_pipeline.object_extraction.snip_processing.defaults import (
+    DEFAULT_BLEND_RADIUS_UM,
+)
+
 
 def apply_clahe(image: np.ndarray) -> np.ndarray:
     """
@@ -123,7 +127,7 @@ def augment_snip(
     mask: np.ndarray,
     background_mean: float,
     background_std: float,
-    blend_radius_um: float = 20.0,
+    blend_radius_um: float = DEFAULT_BLEND_RADIUS_UM,
     pixel_size_um: float = 2.17,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """

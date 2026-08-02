@@ -36,6 +36,8 @@ GENE7_EXPERIMENTS = [
 ]
 
 EXPECTED_PAIRED_WELLS = 6 * 96  # every hash well of all six plates
+N_CURATED_EXCLUSIONS = 14  # image-QC exclusions, see excluded_wells.csv
+EXPECTED_ANALYZED_WELLS = EXPECTED_PAIRED_WELLS - N_CURATED_EXCLUSIONS
 
 
 def _have_pipeline() -> bool:
@@ -260,19 +262,39 @@ class TestLegacyPipelineReconciliation:
 class TestMasterTable:
     @pytest.fixture(scope="class")
     def master(self) -> pd.DataFrame:
+        """The analysis-facing table: curated image-QC exclusions already dropped."""
         return build_master_table(GENE7_EXPERIMENTS)
 
-    def test_one_row_per_imaging_well(self, master):
-        assert len(master) == EXPECTED_PAIRED_WELLS
+    @pytest.fixture(scope="class")
+    def master_all(self) -> pd.DataFrame:
+        """Every paired well, exclusions retained — for checking the exclusion step itself."""
+        return build_master_table(GENE7_EXPERIMENTS, exclusions="keep")
+
+    def test_one_row_per_imaging_well(self, master_all):
+        assert len(master_all) == EXPECTED_PAIRED_WELLS
+        assert master_all["well_id"].is_unique
+
+    def test_curated_exclusions_are_dropped_by_default(self, master, master_all):
+        """Exclusions apply to BOTH modalities, so the analyzed well set is identical everywhere."""
+        from morphseq_integration import excluded_well_ids
+
+        assert len(master) == EXPECTED_ANALYZED_WELLS
         assert master["well_id"].is_unique
+        assert not (set(master["well_id"]) & excluded_well_ids())
+        assert len(master_all) - len(master) == N_CURATED_EXCLUSIONS
+
+    def test_flag_mode_retains_and_marks(self):
+        flagged = build_master_table(GENE7_EXPERIMENTS, exclusions="flag")
+        assert len(flagged) == EXPECTED_PAIRED_WELLS
+        assert int(flagged["curated_excluded"].sum()) == N_CURATED_EXCLUSIONS
 
     def test_every_well_has_sequencing(self, master):
         assert master["has_seq"].all()
 
-    def test_morphology_coverage_is_high_and_accounted_for(self, master):
+    def test_morphology_coverage_is_high_and_accounted_for(self, master_all):
         """Wells without legacy morphology are wells the legacy build excluded, not join failures."""
-        assert master["has_morph"].sum() == 567
-        assert (~master["has_morph"]).sum() == 9
+        assert master_all["has_morph"].sum() == 567
+        assert (~master_all["has_morph"]).sum() == 9
 
     def test_no_morph_without_seq(self, master):
         """Sequencing covers every hash well, so a morph-only row would mean a broken join."""
@@ -288,9 +310,9 @@ class TestMasterTable:
         for column in ("use_snip", "qc_fail_reasons", "sa_outlier_flag", "focus_flag"):
             assert column not in master.columns
 
-    def test_experimental_design_is_balanced(self, master):
+    def test_experimental_design_is_balanced(self, master_all):
         """Independent sanity check on the join: 4 targets x 3 temperature arms x 3 timepoints."""
-        design = pd.crosstab(master["target"], master["timepoint"])
+        design = pd.crosstab(master_all["target"], master_all["timepoint"])
         assert sorted(design.columns) == [24, 30, 36]
         assert (design.loc[[t for t in design.index if t.endswith("hot")]] == 24).all().all()
         assert (design.loc[[t for t in design.index if t.endswith("cold")]] == 12).all().all()
@@ -303,6 +325,6 @@ class TestMasterTable:
     def test_coverage_summary_is_honest(self, master):
         summary = coverage_summary(master)
         assert len(summary) == len(GENE7_EXPERIMENTS)
-        assert summary["n_wells"].sum() == EXPECTED_PAIRED_WELLS
+        assert summary["n_wells"].sum() == EXPECTED_ANALYZED_WELLS
         assert summary["n_both"].sum() == master["has_morph"].sum()
         assert (summary["n_both"] <= summary["n_wells"]).all()

@@ -1304,6 +1304,52 @@ def _set_pca_axis_labels(ax, explained_variance: np.ndarray) -> None:
     ax.set_ylabel(f"PC2 ({explained_variance[1] * 100:.1f}% var)")
 
 
+def _render_latent_pca_unavailable(
+    *,
+    title: str,
+    output_path: Path,
+    n_complete: int,
+    n_latents: int,
+) -> Path:
+    """Write the declared PCA artifact when the selected cohort is too small for 2-D PCA.
+
+    Reports are terminal diagnostics. A cohort with zero, one, or two complete latent rows is a
+    legitimate outcome after QC and must not invalidate otherwise complete analysis-ready data.
+    Keeping a real PNG (rather than silently omitting the panel) also lets Snakemake distinguish
+    this expected no-data state from a failed or interrupted renderer.
+    """
+    fig, ax = plt.subplots(figsize=(8.5, 6.8))
+    ax.axis("off")
+    ax.text(
+        0.5,
+        0.56,
+        "PCA unavailable",
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        fontsize=18,
+        fontweight="bold",
+    )
+    ax.text(
+        0.5,
+        0.45,
+        f"Only {n_complete} row{'s' if n_complete != 1 else ''} with complete latents; "
+        "at least 3 are required.\n"
+        f"Latent columns: {n_latents}",
+        transform=ax.transAxes,
+        ha="center",
+        va="center",
+        fontsize=11,
+        color="#555555",
+    )
+    ax.set_title(title)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    return output_path
+
+
 def plot_latent_pca_qc_state(
     df: pd.DataFrame,
     latent_cols: list[str],
@@ -1316,6 +1362,15 @@ def plot_latent_pca_qc_state(
     """PCA all complete latent rows once, then color every point by whether the snip passed QC."""
     if qc_pass_col not in df.columns:
         raise ValueError(f"plot_latent_pca_qc_state: missing QC pass column {qc_pass_col!r}.")
+
+    n_complete = len(df.dropna(subset=latent_cols))
+    if n_complete < 3:
+        return _render_latent_pca_unavailable(
+            title=title,
+            output_path=output_path,
+            n_complete=n_complete,
+            n_latents=len(latent_cols),
+        )
 
     work, explained = _latent_pca_coordinates(df, latent_cols, random_state=random_state)
     pass_mask = work[qc_pass_col].fillna(False).astype(bool)
@@ -1358,9 +1413,17 @@ def plot_latent_pca_continuous(
     random_state: int = 0,
 ) -> Path:
     """PCA complete latent rows and color the projection by a continuous column."""
-    work, explained = _latent_pca_coordinates(
-        df.dropna(subset=[continuous_col]), latent_cols, random_state=random_state
-    )
+    eligible = df.dropna(subset=[continuous_col])
+    n_complete = len(eligible.dropna(subset=latent_cols))
+    if n_complete < 3:
+        return _render_latent_pca_unavailable(
+            title=title,
+            output_path=output_path,
+            n_complete=n_complete,
+            n_latents=len(latent_cols),
+        )
+
+    work, explained = _latent_pca_coordinates(eligible, latent_cols, random_state=random_state)
 
     fig, ax = plt.subplots(figsize=(8.5, 6.8))
     sc = ax.scatter(
@@ -1396,9 +1459,17 @@ def plot_latent_pca_categorical(
     random_state: int = 0,
 ) -> Path:
     """PCA complete latent rows and color the projection by a categorical column."""
-    work, explained = _latent_pca_coordinates(
-        df.dropna(subset=[category_col]), latent_cols, random_state=random_state
-    )
+    eligible = df.dropna(subset=[category_col])
+    n_complete = len(eligible.dropna(subset=latent_cols))
+    if n_complete < 3:
+        return _render_latent_pca_unavailable(
+            title=title,
+            output_path=output_path,
+            n_complete=n_complete,
+            n_latents=len(latent_cols),
+        )
+
+    work, explained = _latent_pca_coordinates(eligible, latent_cols, random_state=random_state)
     work["_category"] = work[category_col].astype(str)
 
     fig, ax = plt.subplots(figsize=(8.5, 6.8))

@@ -3,9 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from PIL import Image
 
 from data_pipeline.viz.reporting import (
+    plot_latent_pca_categorical,
+    plot_latent_pca_continuous,
+    plot_latent_pca_qc_state,
     plot_metric_histogram,
     plot_metric_vs_reference,
     render_quartile_gallery,
@@ -163,3 +167,53 @@ def test_render_quartile_gallery_vs_band_writes_file(tmp_path: Path) -> None:
     assert result == output_path
     assert output_path.exists()
     assert output_path.stat().st_size > 0
+
+
+@pytest.mark.parametrize("n_complete", [0, 1, 2])
+@pytest.mark.parametrize("renderer", ["qc", "continuous", "categorical"])
+def test_latent_pca_renderers_write_placeholder_for_tiny_cohort(
+    tmp_path: Path, n_complete: int, renderer: str
+) -> None:
+    """Post-QC cohorts too small for PCA still produce every declared report artifact."""
+    df = pd.DataFrame(
+        {
+            "z_mu_b_000": [float(i) if i < n_complete else None for i in range(2)],
+            "z_mu_b_001": [float(i + 1) if i < n_complete else None for i in range(2)],
+            "use_snip": [True, True],
+            "predicted_stage_hpf": [12.0, 14.0],
+            "genotype": ["WT", "WT"],
+        }
+    )
+    output_path = tmp_path / f"{renderer}_{n_complete}.png"
+    latent_cols = ["z_mu_b_000", "z_mu_b_001"]
+
+    if renderer == "qc":
+        result = plot_latent_pca_qc_state(
+            df,
+            latent_cols,
+            qc_pass_col="use_snip",
+            title="tiny QC cohort",
+            output_path=output_path,
+        )
+    elif renderer == "continuous":
+        result = plot_latent_pca_continuous(
+            df,
+            latent_cols,
+            continuous_col="predicted_stage_hpf",
+            title="tiny stage cohort",
+            output_path=output_path,
+        )
+    else:
+        result = plot_latent_pca_categorical(
+            df,
+            latent_cols,
+            category_col="genotype",
+            title="tiny genotype cohort",
+            output_path=output_path,
+        )
+
+    assert result == output_path
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+    with Image.open(output_path) as rendered:
+        assert rendered.format == "PNG"
