@@ -113,7 +113,17 @@ FLIP_X = "flip_x"
 AFFINE = "affine"
 
 StepKind = Literal["resize", "crop_pad", "flip_x", "affine"]
-_VALID_KINDS = frozenset({RESIZE, CROP_PAD, FLIP_X, AFFINE})
+
+
+def _valid_kinds() -> frozenset[str]:
+    """The kinds that can actually execute, DERIVED from the executor registry.
+
+    A function rather than a module constant only because the registry is defined further down (the
+    executors need the helpers above it). The point is that this is not a second list to maintain:
+    ``GridTransform`` validation and ``_apply_step`` dispatch read the same mapping, so a kind that
+    validates is by construction a kind that runs.
+    """
+    return frozenset(_STEP_EXECUTORS)
 
 
 @dataclass(frozen=True)
@@ -142,9 +152,10 @@ class GridTransform:
     params: dict
 
     def __post_init__(self) -> None:
-        if self.kind not in _VALID_KINDS:
+        valid = _valid_kinds()
+        if self.kind not in valid:
             raise ValueError(
-                f"GridTransform: unknown kind={self.kind!r}. Valid kinds: {sorted(_VALID_KINDS)}. "
+                f"GridTransform: unknown kind={self.kind!r}. Valid kinds: {sorted(valid)}. "
                 "`kind` selects execution semantics and is closed; use `name` for free-form "
                 "provenance."
             )
@@ -397,60 +408,100 @@ def _assert_output_shape(out: np.ndarray, target_hw: tuple[int, int], *, what: s
         )
 
 
+def _apply_flip_x(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.ndarray:
+    """Reverse column order. EXACT — no pixel value is invented, so a mask stays itself."""
+    return cv2.flip(arr, 1)
+
+
+def _apply_crop_pad(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.ndarray:
+    """Window into a zero canvas. EXACT: pure indexing, no interpolation, dtype preserved."""
+    h_out, w_out = t.out_shape_yx
+    y0 = int(t.params["y0"])
+    x0 = int(t.params["x0"])
+    out = np.zeros((h_out, w_out), dtype=arr.dtype)
+    src_y0, src_x0 = max(y0, 0), max(x0, 0)
+    src_y1, src_x1 = min(y0 + h_out, arr.shape[0]), min(x0 + w_out, arr.shape[1])
+    if src_y1 <= src_y0 or src_x1 <= src_x0:
+        return out
+    out[src_y0 - y0:src_y1 - y0, src_x0 - x0:src_x1 - x0] = arr[src_y0:src_y1, src_x0:src_x1]
+    return out
+
+
+def _apply_resize(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.ndarray:
+    """Change sampling density. THE ONLY STEP THAT CAN ANTI-ALIAS.
+
+    This is why `resize` is a separate kind rather than a scale folded into an affine: a composite
+    matrix describes WHERE coordinates go but not HOW pixels should be sampled on the way, and
+    ``cv2.warpAffine`` silently ignores ``INTER_AREA``. Fusing a downscale would preserve coordinate
+    geometry while losing correct sampling — aliasing, with no error.
+    """
+    h_out, w_out = t.out_shape_yx
+    # THE anti-alias decision, shared with the mask/image resize seam so the two can never drift.
+    flags = resize_interpolation_flags(
+        in_shape_yx=arr.shape[:2],
+        out_shape_yx=(h_out, w_out),
+        is_mask=is_mask,
+        anti_alias=bool(t.params.get("anti_alias", True)),
+    )
+    # cv2's dsize is (width, height) — the reverse of numpy's (H, W). This swap is the whole bug
+    # class the postcondition below exists to catch.
+    out = cv2.resize(arr.astype(np.float32), (w_out, h_out), interpolation=flags)
+    _assert_output_shape(out, (h_out, w_out), what="resize step")
+    return out
+
+
+def _apply_affine(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.ndarray:
+    """Map coordinates through interpolation: rotation, translation, reflection, placement.
+
+    These fuse into ONE step deliberately — separating rotation from translation would interpolate
+    twice and soften the image for nothing. The output bounds supply crop and padding semantics, so
+    a placement affine needs no separate crop step.
+    """
+    h_out, w_out = t.out_shape_yx
+    flags = cv2.INTER_NEAREST if (is_mask or t.interp == "nearest") else cv2.INTER_LINEAR
+    out = cv2.warpAffine(
+        arr.astype(np.float32), t.affine_2x3.astype(np.float32), (w_out, h_out), flags=flags
+    )
+    _assert_output_shape(out, (h_out, w_out), what="affine step")
+    return out
+
+
+#: THE SINGLE SOURCE OF TRUTH for what a step kind is. Validation and dispatch both consult this
+#: mapping, so "declared" and "wired" cannot drift apart — there is only one list.
+#:
+#: NOTE the deliberate absence of a SUPPORTED/IMPLEMENTED pair here. `materialization_plan.py` has
+#: that split for a real reason: a CONFIG may legally name `projection_method: mean` while no
+#: primitive implements it, so grammar is genuinely broader than capability and plan validation must
+#: fail with a good message rather than a layer deeper. Nothing external names a step kind — chains
+#: are built in code by resize_step()/affine_step(), never parsed from config — so there is no
+#: "legal to name but unimplemented" state to represent. Two sets plus an assert forcing them equal
+#: would be one set written twice, and the duplication would BE the drift mechanism the assert was
+#: meant to prevent.
+_STEP_EXECUTORS = {
+    RESIZE: _apply_resize,
+    AFFINE: _apply_affine,
+    CROP_PAD: _apply_crop_pad,
+    FLIP_X: _apply_flip_x,
+}
+
+
 def _apply_step(arr: np.ndarray, t: GridTransform, *, is_mask: bool) -> np.ndarray:
     """Execute one step. Dispatch is on `kind`; interpolation is decided by raster semantics.
 
     `name` is provenance and is never read here — a step named "resize" whose kind is `affine`
-    warps, and vice versa. The closed dispatch below ends in an explicit raise: a newly added kind
-    that nobody wired up must fail loudly, not fall through to the affine branch and emit
-    plausible, aliased pixels.
+    warps, and vice versa. A kind with no executor raises rather than falling through to a default:
+    silently warping when someone expected an exact crop would emit plausible, aliased pixels.
     """
     if cv2 is None:
         raise ImportError("cv2 is required to apply transforms.")
-    h_out, w_out = t.out_shape_yx
-
-    if t.kind == FLIP_X:
-        return cv2.flip(arr, 1)
-
-    if t.kind == CROP_PAD:
-        # Pure indexing. No interpolation, so a mask stays exactly itself.
-        y0 = int(t.params["y0"])
-        x0 = int(t.params["x0"])
-        out = np.zeros((h_out, w_out), dtype=arr.dtype)
-        src_y0, src_x0 = max(y0, 0), max(x0, 0)
-        src_y1, src_x1 = min(y0 + h_out, arr.shape[0]), min(x0 + w_out, arr.shape[1])
-        if src_y1 <= src_y0 or src_x1 <= src_x0:
-            return out
-        out[src_y0 - y0:src_y1 - y0, src_x0 - x0:src_x1 - x0] = arr[src_y0:src_y1, src_x0:src_x1]
-        return out
-
-    if t.kind == RESIZE:
-        # THE anti-alias decision, shared with the mask/image resize seam so the two can never
-        # drift. INTER_AREA is meaningful only on cv2.resize (warpAffine ignores it).
-        flags = resize_interpolation_flags(
-            in_shape_yx=arr.shape[:2],
-            out_shape_yx=(h_out, w_out),
-            is_mask=is_mask,
-            anti_alias=bool(t.params.get("anti_alias", True)),
-        )
-        # cv2's dsize is (width, height) — the reverse of numpy's (H, W). This swap is the whole
-        # bug class the postcondition below exists to catch.
-        out = cv2.resize(arr.astype(np.float32), (w_out, h_out), interpolation=flags)
-        _assert_output_shape(out, (h_out, w_out), what="resize step")
-        return out
-
-    if t.kind == AFFINE:
-        flags = cv2.INTER_NEAREST if (is_mask or t.interp == "nearest") else cv2.INTER_LINEAR
-        out = cv2.warpAffine(
-            arr.astype(np.float32), t.affine_2x3.astype(np.float32), (w_out, h_out), flags=flags
-        )
-        _assert_output_shape(out, (h_out, w_out), what="affine step")
-        return out
-
-    # Unreachable while `kind` validation and this dispatch agree. If they ever diverge — a kind
-    # added to the closed set but not wired here — fail rather than silently warping.
-    raise AssertionError(f"Unhandled step kind: {t.kind!r}")
+    try:
+        executor = _STEP_EXECUTORS[t.kind]
+    except KeyError:
+        raise AssertionError(f"Unhandled step kind: {t.kind!r}") from None
+    return executor(arr, t, is_mask=is_mask)
 
 
-# Backwards-compatible alias: this was the private entrypoint before typed step kinds existed.
-_apply_affine = _apply_step
+# NOTE: `_apply_affine` used to be a module-level alias for the whole dispatcher, kept from before
+# typed step kinds existed. It is now the AFFINE executor, so the alias is gone -- leaving it would
+# have rebound the name to the dispatcher and made `_apply_affine` mean "apply any step". No
+# importer existed outside this module.
