@@ -138,6 +138,69 @@ class TestOneRecipeSpeaksEveryProductGrid:
         iou = np.logical_and(a, b).sum() / np.logical_or(a, b).sum()
         assert iou > 0.95, f"cross-calibration IoU {iou:.4f}; the two products disagree physically"
 
+    @pytest.mark.parametrize("centering", [CENTERING_LATCHED, CENTERING_CONTINUOUS])
+    @pytest.mark.parametrize("downsample", [1, 2, 4])
+    def test_every_centering_mode_is_portable_across_calibrations(self, centering, downsample):
+        # NO CENTERING MODE MAY KEEP ITS OWN COORDINATE DIALECT. The transitional legacy branch
+        # reads a pre-resolved center instead of converting crop_center_um_xy, which is a SECOND
+        # path through the seam -- and a second path is exactly where the product-calibration bug
+        # hid. Both modes must land the same physical crop on every grid.
+        mask = self._big_mask()
+        canonical = self._canonical_for(mask)
+        raster = mask[::downsample, ::downsample].copy()
+        shape = (1200 // downsample, 1600 // downsample)
+        resolved = transform_for_product(
+            canonical, product_shape_hw=shape, product_um_per_px=3.2 * downsample,
+            centering=centering,
+        )
+        snip = apply_transform_to_mask(raster, resolved)
+
+        # THE SILENT-FAILURE GATE. The bug this class was written for produced a fully empty snip
+        # with no error anywhere. A standard product must never render nothing.
+        assert snip.sum() > 0, (
+            f"{centering} at {downsample}x rendered an EMPTY snip -- the transform placed the "
+            "embryo entirely off-canvas"
+        )
+
+        reference = apply_transform_to_mask(
+            mask,
+            transform_for_product(
+                canonical, product_shape_hw=(1200, 1600), product_um_per_px=3.2,
+                centering=centering,
+            ),
+        )
+        a, b = reference > 0, snip > 0
+        ya, xa = np.where(a)
+        yb, xb = np.where(b)
+        # Rasterization tolerance, not byte equality: a 4x-coarser source has already lost spatial
+        # precision, so demanding identical masks would be demanding the wrong thing.
+        assert abs(ya.mean() - yb.mean()) <= 1.0
+        assert abs(xa.mean() - xb.mean()) <= 1.0
+        assert np.logical_and(a, b).sum() / np.logical_or(a, b).sum() > 0.95
+
+    def test_the_latched_center_is_not_a_geometry_source_pixel_escape_hatch(self):
+        # WHY THE TRANSITIONAL FIELD IS TOLERABLE. `latched_center_xy_rescaled` is expressed on the
+        # RESCALED grid, which is product-invariant (a function of physical FOV and target
+        # calibration only), NOT in geometry-source pixels. That is what makes the legacy mode
+        # portable despite bypassing the um conversion.
+        #
+        # It cannot simply be folded into crop_center_um_xy: legacy measures its center on the
+        # ROTATED canvas while the continuous path measures on the source, and those are different
+        # quantities -- for a rotated embryo they differ by hundreds of micrometers, an axis swap
+        # rather than a quantizer step. The field goes away with the legacy branch, not before.
+        canonical = self._canonical_for(self._big_mask())
+        rescaled_w = transform_for_product(
+            canonical, product_shape_hw=(1200, 1600), product_um_per_px=3.2,
+            centering=CENTERING_LATCHED,
+        ).rescaled_shape_hw[1]
+        latched_x = canonical.latched_center_xy_rescaled[0]
+        assert 0 <= latched_x <= rescaled_w, (
+            "the latched center must live on the shared rescaled grid; a value outside it would be "
+            "expressed in some product's own pixels and would not survive a calibration change"
+        )
+        # A geometry-source-pixel value would sit near 774 (1600-wide grid), not ~317 (656-wide).
+        assert latched_x < rescaled_w, "latched center looks like a geometry-source pixel value"
+
     def test_the_matrices_genuinely_differ(self):
         # The complement, and the reason a single affine cannot be "the" transform: a matrix is
         # expressed IN a coordinate system. If these came out equal, the test above would be
