@@ -20,7 +20,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import skimage.exposure
 import skimage.io as skio
 
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
@@ -55,6 +54,15 @@ from data_pipeline.object_extraction.snip_processing.snip_transform_table import
 ORIENTATION_POLICY = "pca_major_axis_yolk_down"
 ORIENTATION_SOURCE_MASS_DISTRIBUTION = "embryo_mass_distribution"
 NO_YOLK_POLICY = "fallback_mass_distribution"
+
+
+class SnipRecipeDtypeError(ValueError):
+    """A source frame's dtype does not match what the rendering recipe requires.
+
+    Raised per row rather than per job on purpose: the caller catches Exception per mask and marks
+    ``is_valid_snip=False`` with a reason, so one non-uint8 frame invalidates its own snip and is
+    reported, instead of taking down a well that also holds perfectly good BF rows.
+    """
 
 def _physical_embryo_id_by_track(
     physical_embryo_registry: pd.DataFrame,
@@ -245,13 +253,39 @@ def run_snip_processing(
             if image.ndim == 3:
                 image = image[:, :, 0]
 
-            # Legacy `extract_embryo_crop` coerced a non-uint8 source to uint8 BEFORE resampling.
-            # That coercion is photometric, not geometric, so it stays here at the read boundary
-            # rather than moving into the transform seam (which is deliberately dtype-agnostic).
+            # HAZARD ZERO BARRIER. This used to be:
+            #
+            #     if image.dtype != np.uint8:
+            #         image = rescale_intensity(image, in_range="image", out_range=(0, 255))
+            #
+            # which used DTYPE AS A PROXY FOR RECIPE: uint8 was assumed to be a display frame, and
+            # anything else was silently converted into one. `in_range="image"` is per-frame min/max
+            # autoscaling, so every frame got a DIFFERENT affine map keyed to its own extremes --
+            # meaning a 2-copy and a 0-copy embryo in different frames land on the same 0-255 span.
+            # That is not attenuation of dosage signal, it is exact erasure, and it is silent.
+            #
+            # The guard `dtype != uint8` meant it never fired on today's 8-bit BF and would ALWAYS
+            # fire on a uint16 fluorescence frame -- i.e. it was dormant precisely until the moment
+            # it would destroy the measurement this pipeline is being built to make.
+            #
+            # The rule is now recipe-driven and there is NO generic dtype fallback:
+            #
+            #     clahe_blend  requires uint8 (apply_clahe documents and returns uint8, and the
+            #                  noise blend is tuned for 8-bit BF)
+            #     no_change    preserves source dtype and scale        <- arrives with P2
+            #     unknown      fails loudly
+            #
+            # Until the recipe seam is reachable, this entrypoint IS the legacy BF path, so it
+            # asserts its own precondition rather than quietly coercing. Refusing is the whole
+            # point: a loud failure is recoverable, a silently rescaled uint16 frame is not.
             if image.dtype != np.uint8:
-                image = skimage.exposure.rescale_intensity(
-                    image, in_range="image", out_range=(0, 255),
-                ).astype(np.uint8)
+                raise SnipRecipeDtypeError(
+                    f"snip_processing: legacy BF snip rendering requires a uint8 source; got "
+                    f"{image.dtype} from {image_path}. Non-uint8 frames must be rendered through a "
+                    "dtype-preserving snip recipe (no_change), not coerced here -- the previous "
+                    "per-frame rescale_intensity(in_range='image') destroyed absolute intensity "
+                    "and therefore any cross-embryo comparison."
+                )
 
             # Render through the transform seam: derive the physical recipe from the MASK alone,
             # resolve it onto this frame's pixel grid, then rasterize image and mask through the

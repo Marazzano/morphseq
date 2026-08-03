@@ -358,3 +358,58 @@ def test_run_snip_processing_fails_loud_on_missing_registry_match(tmp_path):
             output_height_px=64,
             output_width_px=64,
         )
+
+
+def test_uint16_source_is_refused_not_silently_rescaled(tmp_path):
+    """HAZARD ZERO. A non-uint8 frame must fail, never be autoscaled into a display frame.
+
+    The removed code used DTYPE AS A PROXY FOR RECIPE::
+
+        if image.dtype != np.uint8:
+            image = rescale_intensity(image, in_range="image", out_range=(0, 255))
+
+    ``in_range="image"`` is per-frame min/max autoscaling, so each frame got its own affine map
+    keyed to its own extremes -- a 2-copy and a 0-copy embryo in different frames land on the same
+    0-255 span. That is exact erasure of relative intensity, and it is silent. The guard meant it
+    never fired on 8-bit BF and would ALWAYS fire on uint16 fluorescence: dormant precisely until
+    it would destroy the measurement this pipeline exists to make.
+
+    The failure is per ROW (the entrypoint catches per mask and marks is_valid_snip=False), so one
+    bad frame invalidates its own snip instead of taking down a well full of good BF rows.
+    """
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+
+    # Rewrite every source frame as uint16 with values far above the 8-bit range, so a rescale
+    # would be both obvious and destructive.
+    inventory = pd.read_csv(frame_inventory_csv)
+    for path in inventory["image_path"]:
+        rng = np.random.default_rng(7)
+        skio.imsave(
+            str(path),
+            rng.integers(3000, 12000, (IMG_H, IMG_W), dtype=np.uint16),
+            check_contrast=False,
+        )
+
+    out_csv = tmp_path / "snip_inventory.csv"
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        output_csv=out_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+    )
+
+    df = pd.read_csv(out_csv)
+    assert not df["is_valid_snip"].astype(bool).any(), (
+        "a uint16 source produced a 'valid' snip -- it was silently rescaled into a display frame"
+    )
+    reasons = " ".join(str(r) for r in df["error_message"].fillna(""))
+    assert "uint8" in reasons, f"failure was not attributed to the dtype barrier: {reasons!r}"
+
+    # And no pixels were written for them: a rescaled uint16 snip on disk is the artifact that
+    # would later be measured as if it carried real intensity.
+    assert not list((tmp_path / "snips").rglob("*.png"))
