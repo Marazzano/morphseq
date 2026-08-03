@@ -86,6 +86,99 @@ class TestDerive:
         assert h_um == pytest.approx(64 * SOURCE_UM_PER_PX)
 
 
+class TestOneRecipeSpeaksEveryProductGrid:
+    """THE REASON THE TWO-LEVEL SPLIT EXISTS, tested against a genuinely different grid.
+
+    Every other test in this file resolves against a product that SHARES the mask's calibration --
+    BF and RFP both ship 3.2 um/px today, so comparing them proves the recipe is reused but proves
+    nothing about portability. The gap between "two products" and "two different GRIDS" is exactly
+    where a real bug lived: transform_for_product converted the physical crop center to pixels using
+    the GEOMETRY SOURCE's calibration rather than the product's own, which is invisible whenever the
+    two agree and puts the center off-canvas by the calibration ratio the moment they do not. A
+    4x-downsampled z_stack rendered completely empty, silently.
+    """
+
+    @staticmethod
+    def _big_mask():
+        # A realistic acquisition grid, so the 4x downsample below is a plausible z_stack product
+        # rather than a toy that could hide a scale error in the rounding.
+        mask = np.zeros((1200, 1600), dtype=np.uint8)
+        mask[500:800, 700:850] = 1
+        return mask
+
+    def _canonical_for(self, mask):
+        return derive_snip_transform(
+            mask, source_um_per_px=3.2, target_um_per_px=7.8, snip_frame_shape_hw=(576, 256)
+        )
+
+    def test_same_physical_crop_from_grids_4x_apart(self):
+        # The same physical scene rasterized at two calibrations: full resolution, and every 4th
+        # pixel. One canonical recipe must land both on the same physical region.
+        mask = self._big_mask()
+        canonical = self._canonical_for(mask)
+        rendered = {}
+        for name, (raster, shape, um) in {
+            "native": (mask, (1200, 1600), 3.2),
+            "ds4": (mask[::4, ::4].copy(), (300, 400), 12.8),
+        }.items():
+            resolved = transform_for_product(
+                canonical, product_shape_hw=shape, product_um_per_px=um,
+                centering=CENTERING_CONTINUOUS,
+            )
+            rendered[name] = apply_transform_to_mask(raster, resolved)
+            assert rendered[name].sum() > 0, f"{name} rendered an empty snip"
+
+        a, b = rendered["native"] > 0, rendered["ds4"] > 0
+        ya, xa = np.where(a)
+        yb, xb = np.where(b)
+        # One pixel of tolerance: the ds4 source has 4x coarser pixels, so its mask boundary
+        # genuinely quantizes differently. Anything larger is a placement error, not rounding.
+        assert abs(ya.mean() - yb.mean()) <= 1.0
+        assert abs(xa.mean() - xb.mean()) <= 1.0
+        iou = np.logical_and(a, b).sum() / np.logical_or(a, b).sum()
+        assert iou > 0.95, f"cross-calibration IoU {iou:.4f}; the two products disagree physically"
+
+    def test_the_matrices_genuinely_differ(self):
+        # The complement, and the reason a single affine cannot be "the" transform: a matrix is
+        # expressed IN a coordinate system. If these came out equal, the test above would be
+        # passing for the trivial reason that nothing was actually re-expressed.
+        canonical = self._canonical_for(self._big_mask())
+        native = transform_for_product(
+            canonical, product_shape_hw=(1200, 1600), product_um_per_px=3.2,
+            centering=CENTERING_CONTINUOUS,
+        )
+        ds4 = transform_for_product(
+            canonical, product_shape_hw=(300, 400), product_um_per_px=12.8,
+            centering=CENTERING_CONTINUOUS,
+        )
+        assert native.scale_factor != pytest.approx(ds4.scale_factor)
+        # ... while both resample onto the SAME shared grid, which is what makes them registerable.
+        assert native.rescaled_shape_hw == ds4.rescaled_shape_hw
+
+    def test_the_center_uses_the_products_own_calibration(self):
+        # The bug, pinned directly. The physical center converted into the product's pixels must
+        # scale with THAT product's calibration; using the derivation grid's would put a
+        # 4x-coarser product's center 4x too far out.
+        canonical = self._canonical_for(self._big_mask())
+        center_um_x = canonical.crop_center_um_xy[0]
+        ds4 = transform_for_product(
+            canonical, product_shape_hw=(300, 400), product_um_per_px=12.8,
+            centering=CENTERING_CONTINUOUS,
+        )
+        expected_src_px = center_um_x / 12.8
+        realized = ds4.rescaled_shape_hw[1] / 400
+        expected_rescaled = realized * (expected_src_px + 0.5) - 0.5
+        # The center must sit INSIDE the shared grid; under the bug it was ~4x beyond it.
+        assert 0 <= expected_rescaled <= ds4.rescaled_shape_hw[1]
+
+        # Read it back out of the affine rather than a field: the continuous branch solves
+        # b = t - R*c, so with no rotation the translation is (canvas_center - embryo_center) and
+        # the embryo center is recoverable. That is the number the bug corrupted.
+        out_w = ds4.output_shape_hw[1]
+        recovered = (out_w - 1) / 2 - ds4.rotation_matrix_2x3[0][2]
+        assert recovered == pytest.approx(expected_rescaled, abs=1e-6)
+
+
 class TestTransformForProduct:
     def test_same_grid_resolves(self):
         resolved = transform_for_product(

@@ -537,9 +537,14 @@ def transform_for_product(
     # a uniform shift of every snip, so aggregate image metrics stay clean while every embryo moves
     # relative to the historical embedding space. See image_geometry's
     # test_resize_coordinate_convention.py, which pins this across both engines.
-    source_um_y, source_um_x = canonical.grid.geometry_source_um_per_px_yx
-    center_x_src = canonical.crop_center_um_xy[0] / source_um_x
-    center_y_src = canonical.crop_center_um_xy[1] / source_um_y
+    # DIVIDE BY *THIS PRODUCT'S* CALIBRATION, NOT THE GEOMETRY SOURCE'S. The center is physical, and
+    # converting it into pixels is precisely the step that speaks one product's dialect -- that is
+    # what the whole two-level split exists to do. Using the derivation grid's calibration here was a
+    # real bug: it is INVISIBLE whenever a product shares the mask's calibration (BF, RFP -- every
+    # product that exists today), and puts the center off-canvas by the calibration ratio the moment
+    # one does not. A 4x-downsampled z_stack rendered completely empty, silently.
+    center_x_src = canonical.crop_center_um_xy[0] / product_um_per_px
+    center_y_src = canonical.crop_center_um_xy[1] / product_um_per_px
     center_x_rescaled = realized_scale_x * (center_x_src + 0.5) - 0.5
     center_y_rescaled = realized_scale_y * (center_y_src + 0.5) - 0.5
 
