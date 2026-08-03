@@ -196,7 +196,7 @@ class CanonicalSnipTransform:
     NO ``source_mask`` FIELD. It used to live here as ``field(compare=False)`` — an input array
     inside the output type, annotated "ignore this when comparing," which is the tell that it did not
     belong. It existed only so CENTERING_LATCHED could measure its center on the rescaled+rotated
-    mask. That center is now resolved at DERIVATION time into ``latched_center_xy_rescaled`` (see
+    mask. That center is now resolved at DERIVATION time into ``legacy_center_on_target_rescaled_rotated_grid_xy`` (see
     below), so the mask is not needed downstream and this object serializes cleanly.
     """
 
@@ -217,7 +217,7 @@ class CanonicalSnipTransform:
     #
     # None on the continuous path, which never reads it. Deleted with CENTERING_LATCHED; see
     # TODO(remove-legacy-latched-centering).
-    latched_center_xy_rescaled: tuple[float, float] | None = None
+    legacy_center_on_target_rescaled_rotated_grid_xy: tuple[float, float] | None = None
 
     @property
     def geometry_source_field_of_view_um_wh(self) -> tuple[float, float]:
@@ -352,7 +352,7 @@ def derive_snip_transform(
 
     # TRANSITIONAL: resolve the legacy centering reference HERE, while the mask is in hand, so the
     # canonical transform never has to carry a raster. The rescaled grid this is expressed on is
-    # product-invariant (see CanonicalSnipTransform.latched_center_xy_rescaled), so one resolution
+    # product-invariant (see CanonicalSnipTransform.legacy_center_on_target_rescaled_rotated_grid_xy), so one resolution
     # serves every sibling product. Deleted with CENTERING_LATCHED.
     latched_center = _resolve_latched_center(
         mask_binary=mask_binary,
@@ -368,7 +368,7 @@ def derive_snip_transform(
         grid=grid,
         rotation_angle_rad=rotation_angle_rad,
         crop_center_um_xy=(center_x_px * source_um_per_px, center_y_px * source_um_per_px),
-        latched_center_xy_rescaled=latched_center,
+        legacy_center_on_target_rescaled_rotated_grid_xy=latched_center,
     )
 
 
@@ -461,28 +461,83 @@ def _resolve_latched_center(
     return (float(int(np.mean(x_indices))), float(int(np.mean(y_indices))))
 
 
+def _resolve_product_calibration(product_um_per_px: float | tuple[float, float]) -> float:
+    """Collapse a product calibration to one scale, REFUSING to do so when that would be a lie.
+
+    The seam accepts a ``(y, x)`` pair because ``SnipGridSpec`` stores calibrations per axis, and a
+    signature that took a scalar would advertise a portability the compiler does not deliver: the
+    canonical layer says "pixels may be anisotropic" while the resolver silently treated them as
+    square. That mismatch is the same species as the product-calibration bug — an assumption that is
+    invisible until a product violates it.
+
+    ANISOTROPY IS REJECTED RATHER THAN APPROXIMATED, because supporting it is not a type change.
+    A physical rotation cannot be implemented by feeding the angle to an ordinary pixel-space
+    rotation matrix when ``sy != sx``: that distorts the rotation. The correct composition routes
+    through physical coordinates,
+
+        source pixels -> physical -> rotate/translate -> destination pixels
+
+    i.e. ``M = P_dst @ R_physical @ P_src^-1`` with separate per-axis scales in ``P_src``. Every
+    scalar downstream (FOV validation, resize shape, realized scale, the rotation center) assumes one
+    scale today. Until that lands, failing loud is the honest behavior; a rectangular pixel quietly
+    treated as square yields a plausible, subtly stretched snip.
+
+    All current YX1 data is square-pixel, so this guard does not fire in production — it exists so
+    the day it would matter is a loud error rather than a silent distortion.
+    """
+    if isinstance(product_um_per_px, (int, float)):
+        um_y = um_x = float(product_um_per_px)
+    else:
+        um_y, um_x = (float(product_um_per_px[0]), float(product_um_per_px[1]))
+
+    # Positivity first: a non-positive calibration is nonsense on its own terms, and letting it
+    # through would surface as a confusing field-of-view complaint about a 0um product.
+    if um_y <= 0 or um_x <= 0:
+        raise SnipTransformError(
+            f"transform_for_product: product_um_per_px must be positive; got "
+            f"{product_um_per_px!r}."
+        )
+
+    if not np.isclose(um_y, um_x, rtol=1e-9, atol=0.0):
+        raise SnipTransformError(
+            f"transform_for_product: anisotropic product pixels are not supported — got "
+            f"um_per_px_yx=({um_y!r}, {um_x!r}). Compiling a physical rotation onto a rectangular "
+            "pixel grid requires composing through physical coordinates "
+            "(M = P_dst @ R_physical @ P_src^-1); feeding the angle to a pixel-space rotation would "
+            "distort it. Rejecting rather than approximating, since a silently stretched snip is "
+            "worse than a failed job."
+        )
+    return um_y
+
+
 def transform_for_product(
     canonical: CanonicalSnipTransform,
     *,
     product_shape_hw: tuple[int, int],
-    product_um_per_px: float,
+    product_um_per_px: float | tuple[float, float],
     centering: str = DEFAULT_CENTERING,
 ) -> ResolvedSnipTransform:
-    """Express a canonical recipe on one product's pixel grid, VALIDATING that this is honest.
+    """Compile a canonical recipe into one product's pixel dialect, VALIDATING that this is honest.
+
+    THE COMPILER. ``CanonicalSnipTransform`` is the program — physical intent, product-independent.
+    This turns it into the raster machine code for one source grid: an explicit resize followed by a
+    single fused affine that rotates, translates, and writes directly onto the snip canvas. Two
+    products of the same embryo-time compile to DIFFERENT matrices that place the same physical crop.
 
     This is not a reshape. A nearest-neighbor resize can make two unrelated canvases look aligned
     while quietly stretching one, so physical field-of-view agreement is checked explicitly: the
     product must cover the same physical extent as the grid the transform was derived from.
 
+    ``product_um_per_px`` accepts a ``(y, x)`` pair or a scalar. ANISOTROPIC PIXELS ARE REJECTED, not
+    silently squared — see ``_resolve_product_calibration``.
+
     Raises:
-        SnipTransformError: on non-positive calibration, or when the product's physical field of
-            view or aspect ratio disagrees with the derivation grid beyond tolerance. Failing loud
-            here is the point — silently proceeding produces a plausible, misregistered snip.
+        SnipTransformError: on non-positive calibration, anisotropic product pixels, or when the
+            product's physical field of view or aspect ratio disagrees with the derivation grid
+            beyond tolerance. Failing loud here is the point — silently proceeding produces a
+            plausible, misregistered snip.
     """
-    if product_um_per_px <= 0:
-        raise SnipTransformError(
-            f"transform_for_product: product_um_per_px must be positive; got {product_um_per_px!r}."
-        )
+    product_um_per_px = _resolve_product_calibration(product_um_per_px)
 
     product_h, product_w = int(product_shape_hw[0]), int(product_shape_hw[1])
     if product_h <= 0 or product_w <= 0:
@@ -566,14 +621,14 @@ def transform_for_product(
         # That reference is now resolved at DERIVATION time (it is product-invariant), so this branch
         # reads a scalar pair rather than re-rotating a mask. That is what lets the canonical
         # transform cross the geometry gate without carrying a raster.
-        if canonical.latched_center_xy_rescaled is None:
+        if canonical.legacy_center_on_target_rescaled_rotated_grid_xy is None:
             raise SnipTransformError(
                 "transform_for_product: centering=legacy_latched needs the resolved legacy centering "
                 "reference, but this CanonicalSnipTransform carries none. Build it with "
                 "derive_snip_transform (which resolves it) rather than constructing it directly, or "
                 "use centering=continuous."
             )
-        center_x_rescaled, center_y_rescaled = canonical.latched_center_xy_rescaled
+        center_x_rescaled, center_y_rescaled = canonical.legacy_center_on_target_rescaled_rotated_grid_xy
     elif centering != CENTERING_CONTINUOUS:
         raise SnipTransformError(
             f"transform_for_product: unknown centering={centering!r}; "

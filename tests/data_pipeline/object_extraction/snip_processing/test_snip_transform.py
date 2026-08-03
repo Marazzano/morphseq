@@ -179,7 +179,7 @@ class TestOneRecipeSpeaksEveryProductGrid:
         assert np.logical_and(a, b).sum() / np.logical_or(a, b).sum() > 0.95
 
     def test_the_latched_center_is_not_a_geometry_source_pixel_escape_hatch(self):
-        # WHY THE TRANSITIONAL FIELD IS TOLERABLE. `latched_center_xy_rescaled` is expressed on the
+        # WHY THE TRANSITIONAL FIELD IS TOLERABLE. `legacy_center_on_target_rescaled_rotated_grid_xy` is expressed on the
         # RESCALED grid, which is product-invariant (a function of physical FOV and target
         # calibration only), NOT in geometry-source pixels. That is what makes the legacy mode
         # portable despite bypassing the um conversion.
@@ -193,13 +193,44 @@ class TestOneRecipeSpeaksEveryProductGrid:
             canonical, product_shape_hw=(1200, 1600), product_um_per_px=3.2,
             centering=CENTERING_LATCHED,
         ).rescaled_shape_hw[1]
-        latched_x = canonical.latched_center_xy_rescaled[0]
+        latched_x = canonical.legacy_center_on_target_rescaled_rotated_grid_xy[0]
         assert 0 <= latched_x <= rescaled_w, (
             "the latched center must live on the shared rescaled grid; a value outside it would be "
             "expressed in some product's own pixels and would not survive a calibration change"
         )
         # A geometry-source-pixel value would sit near 774 (1600-wide grid), not ~317 (656-wide).
         assert latched_x < rescaled_w, "latched center looks like a geometry-source pixel value"
+
+    def test_anisotropic_pixels_are_rejected_not_silently_squared(self):
+        # THE ABSTRACTION MUST NOT ADVERTISE WHAT IT CANNOT DELIVER. SnipGridSpec stores
+        # calibrations per axis, so the canonical layer says "pixels may be anisotropic" -- while
+        # the resolver used to take a scalar and treat them as square. That is the same species as
+        # the product-calibration bug: an assumption invisible until a product violates it.
+        #
+        # Rejecting is correct rather than lazy. Compiling a physical rotation onto a rectangular
+        # pixel grid needs M = P_dst @ R_physical @ P_src^-1 with separate per-axis scales; feeding
+        # the angle to a pixel-space rotation distorts it, and every scalar downstream (FOV check,
+        # resize shape, realized scale, rotation center) assumes one scale today.
+        canonical = self._canonical_for(self._big_mask())
+        with pytest.raises(SnipTransformError, match="anisotropic product pixels"):
+            transform_for_product(
+                canonical, product_shape_hw=(1200, 1600), product_um_per_px=(3.2, 4.1)
+            )
+
+    def test_an_isotropic_pair_is_accepted_and_matches_the_scalar_form(self):
+        # The seam takes a (y, x) pair because the type does; an isotropic pair must be exactly
+        # equivalent to the scalar it collapses to, or the honest signature would change behavior.
+        canonical = self._canonical_for(self._big_mask())
+        as_pair = transform_for_product(
+            canonical, product_shape_hw=(1200, 1600), product_um_per_px=(3.2, 3.2),
+            centering=CENTERING_CONTINUOUS,
+        )
+        as_scalar = transform_for_product(
+            canonical, product_shape_hw=(1200, 1600), product_um_per_px=3.2,
+            centering=CENTERING_CONTINUOUS,
+        )
+        assert as_pair.rotation_matrix_2x3 == as_scalar.rotation_matrix_2x3
+        assert as_pair.rescaled_shape_hw == as_scalar.rescaled_shape_hw
 
     def test_the_matrices_genuinely_differ(self):
         # The complement, and the reason a single affine cannot be "the" transform: a matrix is
@@ -471,7 +502,7 @@ class TestCenteringModesAreSeparable:
         # exactly the confound the two modes exist to keep apart.
         import dataclasses
 
-        bare = dataclasses.replace(_canonical(), latched_center_xy_rescaled=None)
+        bare = dataclasses.replace(_canonical(), legacy_center_on_target_rescaled_rotated_grid_xy=None)
         with pytest.raises(SnipTransformError, match="resolved legacy centering reference"):
             transform_for_product(
                 bare, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,

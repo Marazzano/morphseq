@@ -124,10 +124,11 @@ class TestCanonicalRoundTrip:
         from io import StringIO
 
         row = _row(_resolved()[1])
-        row["latched_center_x_rescaled"] = None
-        row["latched_center_y_rescaled"] = None
+        row["legacy_center_on_target_rescaled_rotated_grid_x"] = None
+        row["legacy_center_on_target_rescaled_rotated_grid_y"] = None
         reread = pd.read_csv(StringIO(pd.DataFrame([row]).to_csv(index=False)))
-        assert canonical_from_row(reread.iloc[0]).latched_center_xy_rescaled is None
+        rebuilt = canonical_from_row(reread.iloc[0])
+        assert rebuilt.legacy_center_on_target_rescaled_rotated_grid_xy is None
 
     def test_reconstructed_transform_resolves_identically(self):
         # The second equality: a reconstructed canonical must resolve to the same product transform.

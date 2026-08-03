@@ -96,10 +96,15 @@ SNIP_TRANSFORM_TABLE_COLUMNS: tuple[str, ...] = (
     # parsing. JSON stays for the resolved chain and derivation evidence, neither compared exactly.
     "crop_center_um_x",
     "crop_center_um_y",
-    # TRANSITIONAL, nullable: the resolved legacy centering reference. Null on the continuous path.
-    # Deleted with CENTERING_LATCHED; see TODO(remove-legacy-latched-centering).
-    "latched_center_x_rescaled",
-    "latched_center_y_rescaled",
+    # TRANSITIONAL, nullable, and named at length ON PURPOSE. This is the integer-latched center
+    # measured on the legacy EXPANDED, ROTATED canvas AFTER resizing to the target calibration -- it
+    # is product-invariant (that grid derives from physical FOV + target calibration) but it is NOT a
+    # physical source coordinate. It MUST NOT be converted into or interpreted as crop_center_um_xy:
+    # inverting it back through the rescale disagrees by hundreds of micrometers for a rotated
+    # embryo, because rotation changed the canvas axes and origin. A short name invites exactly that
+    # 'deduplication'. Deleted with CENTERING_LATCHED; see TODO(remove-legacy-latched-centering).
+    "legacy_center_on_target_rescaled_rotated_grid_x",
+    "legacy_center_on_target_rescaled_rotated_grid_y",
     "centering",
     "schema_version",
     "resolved_transform_chain_json",
@@ -248,15 +253,15 @@ def build_snip_transform_row(
         "rotation_angle_rad": float(canonical.rotation_angle_rad),
         "crop_center_um_x": float(canonical.crop_center_um_xy[0]),
         "crop_center_um_y": float(canonical.crop_center_um_xy[1]),
-        "latched_center_x_rescaled": (
+        "legacy_center_on_target_rescaled_rotated_grid_x": (
             None
-            if canonical.latched_center_xy_rescaled is None
-            else float(canonical.latched_center_xy_rescaled[0])
+            if canonical.legacy_center_on_target_rescaled_rotated_grid_xy is None
+            else float(canonical.legacy_center_on_target_rescaled_rotated_grid_xy[0])
         ),
-        "latched_center_y_rescaled": (
+        "legacy_center_on_target_rescaled_rotated_grid_y": (
             None
-            if canonical.latched_center_xy_rescaled is None
-            else float(canonical.latched_center_xy_rescaled[1])
+            if canonical.legacy_center_on_target_rescaled_rotated_grid_xy is None
+            else float(canonical.legacy_center_on_target_rescaled_rotated_grid_xy[1])
         ),
         "centering": str(resolved.centering),
         "schema_version": int(SNIP_TRANSFORM_SCHEMA_VERSION),
@@ -393,8 +398,8 @@ def canonical_from_row(row: Any) -> CanonicalSnipTransform:
             ),
             default_output_shape_yx=(int(row["snip_shape_h"]), int(row["snip_shape_w"])),
         )
-        latched_x = _optional_float(row["latched_center_x_rescaled"])
-        latched_y = _optional_float(row["latched_center_y_rescaled"])
+        latched_x = _optional_float(row["legacy_center_on_target_rescaled_rotated_grid_x"])
+        latched_y = _optional_float(row["legacy_center_on_target_rescaled_rotated_grid_y"])
         return CanonicalSnipTransform(
             grid=grid,
             rotation_angle_rad=float(row["rotation_angle_rad"]),
@@ -402,7 +407,7 @@ def canonical_from_row(row: Any) -> CanonicalSnipTransform:
                 float(row["crop_center_um_x"]),
                 float(row["crop_center_um_y"]),
             ),
-            latched_center_xy_rescaled=(
+            legacy_center_on_target_rescaled_rotated_grid_xy=(
                 None if latched_x is None or latched_y is None else (latched_x, latched_y)
             ),
         )
