@@ -34,6 +34,7 @@ from ..types import (
 )
 from .back_direction import compute_back_direction
 from image_geometry import (
+    COORDINATE_CONVENTION_VERSION,
     TransformChain,
     affine_step,
     flip_x_step,
@@ -822,6 +823,9 @@ class CanonicalGridMapper:
                 "coord_frame_id": "canonical_grid",
                 "coord_frame_version": 1,
                 "coord_convention": "yx",
+                # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+                # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+                "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
                 "canonical_grid": {
                     "um_per_px": self.grid.um_per_px,
                     "shape_yx": list(self.grid.shape_yx),
@@ -868,6 +872,9 @@ class CanonicalGridMapper:
             "coord_frame_id": "canonical_grid",
             "coord_frame_version": 1,
             "coord_convention": "yx",
+            # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+            # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+            "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
             "canonical_grid": {
                 "um_per_px": self.grid.um_per_px,
                 "shape_yx": list(self.grid.shape_yx),
@@ -920,6 +927,9 @@ def to_canonical_grid_image(
             "coord_frame_id": "canonical_grid",
             "coord_frame_version": 1,
             "coord_convention": "yx",
+            # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+            # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+            "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
             "canonical_grid": {
                 "um_per_px": grid.um_per_px,
                 "shape_yx": list(grid.shape_yx),
@@ -961,6 +971,8 @@ def to_canonical_grid_image(
         "coord_frame_id": "canonical_grid",
         "coord_frame_version": 1,
         "coord_convention": "yx",
+        # Structural cache key -- see the note above; absent or mismatched means INCOMPATIBLE.
+        "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
         "canonical_grid": {
             "um_per_px": grid.um_per_px,
             "shape_yx": list(grid.shape_yx),
@@ -1015,6 +1027,9 @@ def to_canonical_grid_frame(
             "coord_frame_id": "canonical_grid",
             "coord_frame_version": 1,
             "coord_convention": "yx",
+            # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+            # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+            "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
             "canonical_grid": {
                 "um_per_px": grid.um_per_px,
                 "shape_yx": list(grid.shape_yx),

@@ -473,3 +473,58 @@ class TestCanonicalAlignerHonorsTheSameConvention:
             "canonical.py must use image_geometry's correction, not a private copy -- "
             "duplicating it is how the mirrored defect was created"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. The convention is STAMPED, so stale caches fail structurally.
+# ---------------------------------------------------------------------------
+
+
+class TestCoordinateConventionVersion:
+    """A shared, opaque cache key -- the only staleness signal that works here.
+
+    The v1 -> v2 change moves every coordinate sub-pixel. A v1 artifact has the right shape,
+    the right dtype, a sane area and a clean IoU; it is simply offset. Nothing structural
+    distinguishes it, so mtime- or shape-based staleness checks pass on data that is wrong.
+    An explicit version string is the only thing a consumer can compare that actually fails.
+    """
+
+    def test_the_version_names_the_convention(self):
+        from image_geometry import COORDINATE_CONVENTION_VERSION
+
+        # Named for the SEMANTICS, not for a file or a release, because several unrelated
+        # consumers (canonical grid, UOT couplings, derived caches) share the same key.
+        assert COORDINATE_CONVENTION_VERSION == "pixel_center_v2"
+
+    def test_canonical_mask_metadata_carries_the_version(self):
+        from analyze.utils.coord.grids.canonical import to_canonical_grid_mask
+        from image_geometry import COORDINATE_CONVENTION_VERSION
+
+        mask = np.zeros((200, 300), np.uint8)
+        yy, xx = np.mgrid[0:200, 0:300]
+        mask[((xx - 150) ** 2 / 90**2 + (yy - 100) ** 2 / 30**2) < 1] = 1
+        res = to_canonical_grid_mask(mask, um_per_px=3.2308)
+        assert res.meta["coordinate_convention_version"] == COORDINATE_CONVENTION_VERSION
+
+    def test_canonical_image_metadata_carries_the_version(self):
+        from analyze.utils.coord.grids.canonical import to_canonical_grid_image
+        from image_geometry import COORDINATE_CONVENTION_VERSION
+
+        img = (_ramp(128) * 2).astype(np.uint8)
+        res = to_canonical_grid_image(img, um_per_px=3.2308)
+        assert res.meta["coordinate_convention_version"] == COORDINATE_CONVENTION_VERSION
+
+    def test_absence_is_the_v1_signal(self):
+        """Old artifacts predate the key entirely, so consumers must treat missing as v1.
+
+        Pinned as a CONTRACT rather than an implementation detail: a consumer that reads with
+        ``meta.get(key, "pixel_center_v1")`` is correct, one that defaults to the current
+        version silently accepts every wrong cache ever written.
+        """
+        from image_geometry import COORDINATE_CONVENTION_VERSION
+
+        legacy_meta: dict = {"coord_frame_id": "canonical_grid", "coord_frame_version": 1}
+        assert (
+            legacy_meta.get("coordinate_convention_version", "pixel_center_v1")
+            != COORDINATE_CONVENTION_VERSION
+        )

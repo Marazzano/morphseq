@@ -86,6 +86,26 @@ class PlacedCandidate:
         return (int(self.rot_add_deg), bool(self.flip_x))
 
 
+#: The coordinate convention these transforms implement, as an OPAQUE CACHE KEY.
+#:
+#: Named for the CONVENTION, not for a file or a release. Every consumer that shares these
+#: semantics -- the canonical grid, the UOT couplings computed on top of it, and anything that
+#: caches coordinates derived from either -- stamps this same string, so the name has to stay
+#: meaningful to all of them rather than describing where it happens to be defined.
+#:
+#: WHY A VERSION STRING AND NOT A TIMESTAMP. The v1 -> v2 change moves every coordinate by a
+#: sub-pixel amount (see ``pixel_center_affine``). A v1 cache is not stale, it is WRONG, and it
+#: is wrong in a way that is invisible: the arrays have the right shape, the right dtype, sane
+#: areas and clean IoUs -- they are simply offset by (scale-1)/2 relative to anything computed
+#: after the fix. Timestamp- or mtime-based staleness fails silently against that, and so does
+#: any check that only looks at shapes. Consumers must compare this string for EQUALITY and
+#: treat a mismatch (or its ABSENCE, which means v1) as structurally incompatible.
+#:
+#: v1, unnamed and never stamped: the naive rule x_out = scale * x_src.
+#: v2 "pixel_center_v2": x_out = scale * (x_src + 0.5) - 0.5, agreeing with cv2.resize.
+COORDINATE_CONVENTION_VERSION: str = "pixel_center_v2"
+
+
 def pixel_center_affine(affine_2x3: np.ndarray) -> np.ndarray:
     """Re-express a naive-convention 2x3 affine so it maps PIXEL CENTERS.
 

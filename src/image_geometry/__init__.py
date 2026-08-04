@@ -28,6 +28,7 @@ Conventions:
 from .boxes import BoxYX, CoordConvention
 from .candidates import (
     CANDIDATE_KEYS,
+    COORDINATE_CONVENTION_VERSION,
     CANDIDATE_KEYS_NO_FLIP,
     PlacedCandidate,
     candidate_keys,
@@ -82,6 +83,10 @@ __all__ = [
     # Orientation-candidate MECHANICS. A PCA axis fixes an elongated object's pose only up
     # to a 180-degree rotation and a mirror; these enumerate that closed four-way choice.
     # CHOOSING among them is domain policy and lives in embryo_geometry, not here.
+    # The coordinate-convention cache key. Stamp it into any persisted artifact whose
+    # contents depend on these transforms; a mismatch or absence means INCOMPATIBLE,
+    # not merely old.
+    "COORDINATE_CONVENTION_VERSION",
     "CANDIDATE_KEYS",
     "CANDIDATE_KEYS_NO_FLIP",
     "PlacedCandidate",
