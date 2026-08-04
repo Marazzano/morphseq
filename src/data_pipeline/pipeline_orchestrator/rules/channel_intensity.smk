@@ -107,6 +107,13 @@ rule merge_channel_intensity:
     Consumes {input.per_well} directly rather than re-deriving the shard list: the rule already
     declares exactly the files it needs, and computing a second list in the shell body would be a
     second source of truth that could disagree with the DAG's own edges.
+
+    required_columns IS THE POINT OF THE CONTRACT IMPORT. pd.concat will happily UNION two drifted
+    schemas into a table full of NaN without complaining, so a shard from an older extractor would
+    silently become a column of nulls. Supplying the owner's contract turns that into a loud
+    failure -- and it matters most for embryo_clipped_px, since a merge that dropped saturation
+    would hide exactly the compression that destroys a dosage comparison while looking like clean
+    data.
     """
     input:
         per_well=_channel_intensity_artifacts_for_run,
@@ -116,8 +123,9 @@ rule merge_channel_intensity:
         """
         {RUN} -c "
 from data_pipeline.pipeline_orchestrator.orchestration.well_runner import concat_well_shards_to_file
+from data_pipeline.object_extraction.channel_intensity.contract import CHANNEL_INTENSITY_COLUMNS
 from pathlib import Path
 shards = [Path(p) for p in '{input.per_well}'.split()]
-concat_well_shards_to_file(shards, '{output.merged}', sort_columns=['experiment_id', 'well_id', 'time_index'])
+concat_well_shards_to_file(shards, '{output.merged}', required_columns=CHANNEL_INTENSITY_COLUMNS, sort_columns=['experiment_id', 'well_id', 'time_index'])
 "
         """

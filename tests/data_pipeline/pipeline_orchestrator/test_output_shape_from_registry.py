@@ -70,6 +70,15 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # they come off together with their in-process twins when it does.
     "build_snip_auxiliary_masks_for_well_served",
     "frame_detections_per_well_served",
+    # channel_intensity_per_well joined on 2026-08-04. Grandfathered for the SAME reason as every
+    # other entry -- step_outputs() does not exist yet, so there is currently no way for a new
+    # per-well rule to comply with the doctrine this module states (see the STATUS note above).
+    # It agrees with the registry, which is the property that actually matters here:
+    # channel_intensity declares EXECUTION_PER_WELL and the rule fans out per well. Its extra
+    # {source_image_product_key} wildcard is a PRODUCT dimension, not a second well dimension --
+    # intensity off a CLAHE'd raster is a different quantity from intensity off a quantitative one,
+    # so the source product belongs in the key.
+    "channel_intensity_per_well",
     "build_snip_qc_for_well",
     "build_stage_predictions_for_well",
     "build_surface_area_qc_for_well",
