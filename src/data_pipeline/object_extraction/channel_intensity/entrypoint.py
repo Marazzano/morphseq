@@ -101,6 +101,19 @@ def run_channel_intensity(
 
         um_per_px = float(frame["image_micrometers_per_pixel"])
         for mask_row in neighbors:
+            # VALIDITY IS ASYMMETRIC BETWEEN THE TWO ROLES A MASK PLAYS, and conflating them is a
+            # real bug that this run produced. As a NEIGHBOUR, an is_valid_mask=False row is still
+            # kept -- an invalid mask is a fish emitting photons into someone else's background, and
+            # filtering it there would admit exactly the contamination QC flagged. As a measurement
+            # TARGET it must be skipped: a row whose segmentation failed has no embryo to measure.
+            #
+            # Measured on B02: mask m0000 is a full-frame 2304x2304 blob, area 4,987,142 px (~100x
+            # a real embryo at 47k-116k), mask_confidence 0.0, is_valid_mask False. Measured as a
+            # target it produced a dim, well-sized "embryo" at every timepoint -- three rows of pure
+            # background dressed as data, sitting in exactly the dim end of the dosage range where
+            # they would corrupt any class boundary drawn there.
+            if not bool(mask_row.get("is_valid_mask", True)):
+                continue
             target = _decode(mask_row)
             if not target.any():
                 continue
