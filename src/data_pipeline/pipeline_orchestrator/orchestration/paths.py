@@ -468,6 +468,38 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── OBJECT EXTRACTION — native-grid channel intensity ────────────────────
+    # `channel_intensity` measures per-embryo fluorescence on the NATIVE uint16 raster: an annulus
+    # background ring and the embryo interior, both as fixed-bin histograms.
+    #
+    # NOT UNDER THE SNIP PACKAGE, deliberately. A snip is rendered through INTER_AREA, which mixes
+    # photons across pixel boundaries and biases both saturation counts and distribution tails, and
+    # it constant-fills outside the source, contaminating any annulus near a frame edge. So this
+    # step reads no rendered snip and needs no snip transform — it carries snip_transform_id as a
+    # join key only. Filing it under snip_materialization would assert exactly what it denies.
+    #
+    # HISTOGRAMS, NOT SUMMARY STATISTICS, because the background null is POOLED over a well's annuli
+    # and mean/median/MAD are not sufficient statistics — you cannot recover a pooled mode from
+    # them. A fixed-bin histogram is the only compact per-embryo emission that pools EXACTLY, by
+    # elementwise summation. It is also what lets the null be re-estimated later without re-reading
+    # a single pixel.
+    #
+    # Fanout is per-well x SOURCE PRODUCT: intensity measured off a CLAHE'd raster is not the same
+    # quantity as intensity off a quantitative one, so the source product belongs in the key rather
+    # than being something a reader has to infer.
+    "channel_intensity": {
+        "stage": "object_extraction",
+        "product_dir": "channel_intensity",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "channel_intensity": {
+                PATH_MODE_PER_WELL: "{source_image_product_key}/channel_intensity.csv",
+                PATH_MODE_MERGED: "{experiment_id}_channel_intensity.csv",
+            },
+        },
+    },
+
     # ── OBJECT EXTRACTION — snip auxiliary masks ─────────────────────────────
     # `snip_auxiliary_masks` runs the UNet auxiliary-mask families (via/yolk/focus/bubble/
     # foreground) per snip crop, AFTER physical_embryo_registry/snip_processing. One row per
