@@ -320,3 +320,37 @@ exposure is controlled".
 **The earlier conclusion stands where it matters:** dosage still cannot be called from this data,
 exposure must still be carried per frame, and the dim embryos still sit at SNR < 1.2 where
 normalization cannot recover information that was never digitized.
+
+---
+
+# The exposure chain is COMPLETE
+
+    ND2 text metadata -> acquisition_inventory -> frame_inventory -> channel_intensity
+
+Every hop landed and is verified. `analyze_dosage.py` already prefers `exposure_ms` off the row and
+falls back to the measured constants only when the column is absent, announcing which it used — so
+once the pbx artifacts are regenerated, the analysis normalizes per-ms with no code change and no
+hand-entered numbers.
+
+The columns degrade to NaN (never a default) on artifacts that predate capture, which is what lets
+the analysis distinguish "300 ms" from "unknown". Verified: running extraction against the current
+`.pbx_smoke` frame_inventory yields all three columns present and all NaN, no crash.
+
+## What is now blocking, in order
+
+1. **Regenerate the pbx artifacts** so exposure flows through for real. Everything needed is
+   committed; this is a pipeline run, not a code change.
+2. **Full-plate run, compared WITHIN a single timepoint.** Same file, same exposure, same session —
+   96 wells instead of 4.
+3. **Then the information question.** With exposure controlled and enough embryos, ask whether the
+   classes carry equal information after normalization — the original question, finally askable
+   against data that can answer it.
+
+## Standing caveats
+
+- the residual within-embryo variation after exposure normalization is ~3.2x (median), still far
+  larger than a 2x dosage effect; its cause (stage, focus, z through a max projection) is unknown
+- the dim end of the observed range sits at SNR < 1.2, at the noise floor, where no normalization
+  recovers information that was never digitized
+- B02's recovery showed the brightest embryo is also the most temporally stable, which is the shape
+  a real dosage signal should have — but 4 embryos cannot establish a ladder
