@@ -28,6 +28,9 @@ from __future__ import annotations
 from data_pipeline.acquisition.image_materialization.image_product_keys import (
     parse_image_product_key,
 )
+from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import (
+    SNIP_PRODUCT_KEY_COLUMN,
+)
 
 #: The BF product every legacy consumer means when it says "the snip". The compatibility resolver
 #: filters to this rather than letting each caller assume "first row per snip_id" — row order is a
@@ -123,3 +126,38 @@ def snip_product_key_for_row(row: object) -> str | None:
     if text == "" or text.lower() in ("nan", "<na>", "none"):
         return None
     return text
+
+
+def select_default_snip_product(
+    inventory,
+    *,
+    default_snip_product_key: str = DEFAULT_BF_SNIP_PRODUCT_KEY,
+):
+    """Filter a multi-product inventory down to the one product legacy consumers mean.
+
+    THE COMPATIBILITY SEAM, AND IT IS CENTRALIZED ON PURPOSE. Once a well holds several products,
+    a consumer that still thinks in terms of "the snip for this snip_id" is asking an ambiguous
+    question. The dangerous version of this helper is the one nobody writes: each of ~40 downstream
+    readers independently doing ``df.drop_duplicates("snip_id")`` or taking ``.iloc[0]``, which
+    silently means "whichever product happened to be written first". Row order is a roulette wheel
+    the moment a second product exists, and the resulting bug — a QC metric computed on RFP pixels
+    because the merge ordering changed — looks like a data problem, not a code problem.
+
+    Pre-migration shards have no product column at all; those pass through unchanged, so this is
+    safe to call from a consumer that may see either shape.
+
+    TODO(deprecate-legacy-snip-symlinks): delete once consumers select their product explicitly.
+    """
+    if SNIP_PRODUCT_KEY_COLUMN not in getattr(inventory, "columns", ()):
+        return inventory
+
+    present = set(inventory[SNIP_PRODUCT_KEY_COLUMN].dropna().astype(str))
+    if present and default_snip_product_key not in present:
+        raise ValueError(
+            f"select_default_snip_product: {default_snip_product_key!r} is not present in this "
+            f"inventory; found {sorted(present)}. Returning some other product would silently hand "
+            "a legacy caller pixels it did not ask for."
+        )
+    return inventory[
+        inventory[SNIP_PRODUCT_KEY_COLUMN].astype(str) == default_snip_product_key
+    ].copy()

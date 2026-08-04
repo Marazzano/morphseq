@@ -196,9 +196,28 @@ def validate_snip_grain_identity_columns(
                     )
 
     # Uniqueness is the caller's assertion of one-row-per-grain, never guessed.
-    unique_key = grain
-    if df[unique_key].duplicated().any():
-        dupes = df.loc[df[unique_key].duplicated(keep=False), unique_key].head(5).tolist()
+    #
+    # PRODUCT-AWARE AT SNIP GRAIN. One physical embryo-time can be rendered into several products
+    # (BF__projection__focus_stack__clahe_blend, RFP__projection__max__no_change, ...), so bare
+    # snip_id uniqueness would reject a legitimate multi-product table. snip_id stays the PHYSICAL
+    # embryo-time identity; product identity is a separate column and a separate path level. The
+    # product is deliberately NOT encoded into snip_id — doing so would make cross-channel joins
+    # awkward for every downstream consumer. Mirrors (image_id, product_key) on frame_inventory, for
+    # the same reason.
+    #
+    # In practice each upstream product yields one snip, so the compound key rarely does work today.
+    # It is still the correct grain: the moment it DOES matter, a bare-snip_id rule would have
+    # rejected valid data rather than caught a defect.
+    unique_key = [grain]
+    if grain == "snip_id" and SNIP_PRODUCT_KEY_COLUMN in df.columns:
+        unique_key.append(SNIP_PRODUCT_KEY_COLUMN)
+
+    if df.duplicated(subset=unique_key).any():
+        dupes = (
+            df.loc[df.duplicated(subset=unique_key, keep=False), unique_key]
+            .head(5)
+            .to_dict("records")
+        )
         raise ValueError(
             f"{scope_label}: {unique_key} must be unique at {grain} grain; examples: {dupes}"
         )
@@ -229,11 +248,25 @@ def validate_snip_grain_identity_columns(
 # spine) — today every snip is tracker-derived so it is non-null in practice, but the contract stays
 # present-but-nullable to pre-allow a future manual/drop-in/untracked snip path WITHOUT a contract
 # change. Do not "tighten" to non-null without retiring that allowance.
+#: Which rendered product a row describes. Part of the snip-grain uniqueness key alongside
+#: ``snip_id`` — see validate_snip_grain_identity_columns.
+SNIP_PRODUCT_KEY_COLUMN = "snip_product_key"
+
 SNIP_INVENTORY_PAYLOAD_COLUMNS: tuple[str, ...] = (
     "mask_id",
     "track_id",
     "image_path",
+    # THE AUTHORITATIVE location of this row's pixels, under the product-keyed directory. Paths are
+    # stored relative to the data root and resolved centrally (snip_processing/io.py), so what
+    # changes at migration is the string written here, not how anyone resolves it.
     "processed_snip_path",
+    # THE COMPATIBILITY ALIAS: the historical flat path, kept as a real column so a consumer that
+    # needs the old layout reads it explicitly rather than reconstructing it by string surgery on
+    # the canonical path. Recording both is what makes the eventual symlink deprecation a
+    # column-drop instead of an archaeology project.
+    # TODO(deprecate-legacy-snip-symlinks): remove with the symlink layer.
+    "legacy_flat_snip_path",
+    SNIP_PRODUCT_KEY_COLUMN,
     "embryo_mask",
     "embryo_mask_snip_path",
     "crop_x_min_px",

@@ -168,7 +168,13 @@ def _snip_inventory_row(**kw):
         "mask_id": f"{row['image_id']}_m0001",
         "track_id": f"{row['well_id']}_track0000",
         "image_path": "images/src.png",
-        "processed_snip_path": "snips/out.png",
+        # The authoritative product-keyed location, plus the compatibility alias and the product
+        # identity that together make a multi-product inventory readable.
+        "processed_snip_path": (
+            "snips/BF__projection__focus_stack__clahe_blend/20250912_B01_e01/out.png"
+        ),
+        "legacy_flat_snip_path": "snips/20250912_B01_e01/out.png",
+        "snip_product_key": "BF__projection__focus_stack__clahe_blend",
         "embryo_mask": "snips/out_mask.png",
         "embryo_mask_snip_path": "snips/out_mask.png",
         "crop_x_min_px": 0,
@@ -249,3 +255,29 @@ def test_snip_inventory_contract_rejects_duplicate_snip_id():
     df = pd.DataFrame([_snip_inventory_row(time_index=0), _snip_inventory_row(time_index=0)])
     with pytest.raises(ValueError, match="unique"):
         validate_snip_inventory_contract(df)
+
+
+def test_one_snip_id_may_appear_once_per_product():
+    """Snip-grain uniqueness is (snip_id, snip_product_key), not bare snip_id.
+
+    One physical embryo-time renders into several products -- BF clahe_blend, RFP no_change, ... --
+    so a bare snip_id rule would REJECT a legitimate multi-product table rather than catch a defect.
+    snip_id stays the physical embryo-time identity; the product is a separate column and a separate
+    path level, deliberately NOT encoded into snip_id (that would make every cross-channel join
+    awkward). Mirrors (image_id, product_key) on frame_inventory.
+    """
+    bf = _snip_inventory_row()
+    rfp = dict(bf)
+    rfp["snip_product_key"] = "RFP__projection__max__no_change"
+    rfp["processed_snip_path"] = "snips/RFP__projection__max__no_change/20250912_B01_e01/out.png"
+
+    # Same snip_id, two products: valid.
+    validate_snip_grain_identity_columns(
+        pd.DataFrame([bf, rfp]), grain="snip_id", scope_label="two_products"
+    )
+
+    # Same snip_id AND same product: a genuine duplicate, still rejected.
+    with pytest.raises(ValueError, match="must be unique"):
+        validate_snip_grain_identity_columns(
+            pd.DataFrame([bf, dict(bf)]), grain="snip_id", scope_label="true_duplicate"
+        )
