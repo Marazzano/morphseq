@@ -96,6 +96,11 @@ SNIP_TRANSFORM_TABLE_COLUMNS: tuple[str, ...] = (
     "snip_shape_w",
     "orientation_policy",
     "orientation_source",
+    # THE EMBRYO MASK, named by the row that defines it. The mask is the BF segmentation carried
+    # through this row's canonical transform -- a property of the embryo-time, not of any product --
+    # so snip_geometry writes it once and every consumer reads the path from here rather than
+    # rebuilding a filename from a convention it would then be coupled to.
+    "embryo_mask_snip_path",
     # RESERVED TRANSITIONAL METADATA. The column exists for schema continuity, but the compiler
     # does not implement a reflection: no code path reads it, and nothing sets it True. A field that
     # LOOKS executable and is ignored is a trapdoor -- an artifact could claim a flip the pixels
@@ -245,6 +250,7 @@ def build_snip_transform_row(
     orientation_source: str,
     no_yolk_policy: str,
     geometry_source_mask_sha256: str = "",
+    embryo_mask_snip_path: str = "",
     flip_x: bool = False,
 ) -> dict[str, Any]:
     """Assemble one transform row.
@@ -291,6 +297,7 @@ def build_snip_transform_row(
         # same value; the COLUMNS are per-axis so an anisotropic product needs no schema change.
         "source_um_per_px_y": float(canonical.grid.geometry_source_um_per_px_yx[0]),
         "source_um_per_px_x": float(canonical.grid.geometry_source_um_per_px_yx[1]),
+        "embryo_mask_snip_path": str(embryo_mask_snip_path),
         "target_um_per_px_y": float(canonical.grid.default_output_um_per_px_yx[0]),
         "target_um_per_px_x": float(canonical.grid.default_output_um_per_px_yx[1]),
         "snip_shape_h": int(canonical.grid.default_output_shape_yx[0]),

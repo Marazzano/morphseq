@@ -29,10 +29,13 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import skimage.io as skio
 
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.object_extraction.snip_processing.snip_transform import (
+    apply_transform_to_mask,
     derive_snip_transform,
+    transform_for_product,
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform_table import (
     build_snip_transform_row,
@@ -74,6 +77,11 @@ def run_snip_geometry(
     inventory_index = frame_inventory.set_index("image_id")
     physical_embryo_id_by_track = _physical_embryo_id_by_track(registry)
     snip_frame_shape_hw = (int(output_height_px), int(output_width_px))
+    # ONE PLACE FOR MASKS, beside the transforms that define them and NOT inside any product
+    # directory. Mirrors the snip-grain convention the auxiliary families use
+    # (per_well/{well}/masks/{mask_type}/), so the embryo mask lands where a reader already looks
+    # for masks rather than beside the pixels it happens to be aligned with.
+    mask_dir = Path(output_path).parent / "masks" / "embryo_mask"
 
     rows: dict[str, dict[str, Any]] = {}
     for _, mask_row in valid_masks.iterrows():
@@ -115,6 +123,30 @@ def run_snip_geometry(
             target_um_per_px=float(target_pixel_size_um),
             snip_frame_shape_hw=snip_frame_shape_hw,
         )
+        # THE EMBRYO MASK, WRITTEN ONCE, HERE. It is the BF segmentation mask carried through the
+        # canonical transform -- derived from the same mask and the same recipe this step already
+        # owns, and about the embryo rather than about any channel. Writing it in the render loop
+        # (where it used to live) produced one byte-identical copy PER PRODUCT, and worse, derived
+        # it N times: nothing structurally stopped two products from disagreeing, which is the exact
+        # drift this gate exists to close for placement.
+        #
+        # No product dimension and no grid policy. The canonical transform is grid-independent, so
+        # any consumer wanting another grid re-resolves it -- that is what transform_for_product is
+        # for. This writes the mask on the grid the materialization plan asked for, the same grid
+        # this step already derives transforms against.
+        resolved = transform_for_product(
+            canonical,
+            product_shape_hw=embryo_mask.shape[:2],
+            product_um_per_px=pixel_size_um,
+        )
+        mask_path = mask_dir / f"{snip_transform_id}_mask.png"
+        mask_path.parent.mkdir(parents=True, exist_ok=True)
+        skio.imsave(
+            str(mask_path),
+            (apply_transform_to_mask(embryo_mask, resolved) > 0).astype(np.uint8) * 255,
+            check_contrast=False,
+        )
+
         rows[snip_transform_id] = build_snip_transform_row(
             snip_transform_id=snip_transform_id,
             physical_embryo_id=physical_embryo_id,
@@ -128,6 +160,9 @@ def run_snip_geometry(
             # Over the DECODED mask: a re-encode changes the RLE string without changing a pixel,
             # so hashing the string would fail on a no-op rewrite.
             geometry_source_mask_sha256=mask_content_fingerprint(embryo_mask),
+            # The row NAMES its own mask, so a consumer never rebuilds the filename from a
+            # convention it would then be coupled to.
+            embryo_mask_snip_path=str(mask_path),
         )
 
     output_path = Path(output_path)

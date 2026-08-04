@@ -588,11 +588,15 @@ def run_snip_processing(
             # uint16 source silently written as uint8 would look correct in every other column.
             out["pixel_dtype"] = str(skio.imread(str(processed_path)).dtype)
 
-            # Persist the cropped embryo mask in the SAME snip coordinate space as the snip image
-            # (same crop transform, so they are pixel-aligned by construction). This is the embryo
-            # mask fraction_alive ANDs against the per-snip via mask — no model, no re-prediction.
-            embryo_mask_path = embryo_snips_dir / f"{snip_id}_embryo.png"
-            skio.imsave(str(embryo_mask_path), (mask_cropped > 0).astype(np.uint8) * 255, check_contrast=False)
+            # THE MASK IS NOT WRITTEN HERE. It is the BF segmentation mask under the canonical
+            # transform -- a property of the embryo-time, not of any product -- so snip_geometry
+            # writes it ONCE and this path only names it. Writing it in this loop produced one
+            # byte-identical copy per product and, worse, derived it N times: nothing structurally
+            # stopped two products from disagreeing.
+            #
+            # mask_cropped is still computed above because the snip RENDER uses it; what moved is
+            # the persisted artifact, not the crop.
+            embryo_mask_path = Path(str(transform_row["embryo_mask_snip_path"]))
 
             # Compatibility aliases at the pre-migration flat paths, for the DEFAULT BF PRODUCT
             # ONLY. The flat layout has no product dimension, so exactly one product can own it --
@@ -610,16 +614,12 @@ def run_snip_processing(
                 physical_embryo_id=physical_embryo_id,
                 filename=f"{snip_id}.png",
             )
+            # Only the SNIP gets a legacy flat alias now. The mask alias pointed at a per-product
+            # copy that no longer exists; consumers reach the mask through
+            # embryo_mask_snip_path on the inventory row, which is the seam that made this move
+            # cheap in the first place.
             for canonical_path, legacy in () if not owns_legacy_alias else (
                 (processed_path, legacy_processed_path),
-                (
-                    embryo_mask_path,
-                    legacy_flat_snip_path(
-                        snips_dir=snips_dir,
-                        physical_embryo_id=physical_embryo_id,
-                        filename=f"{snip_id}_embryo.png",
-                    ),
-                ),
             ):
                 link_legacy_flat_path(
                     canonical_path=canonical_path,

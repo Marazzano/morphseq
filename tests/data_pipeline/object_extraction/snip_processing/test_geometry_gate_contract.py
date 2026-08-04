@@ -129,10 +129,18 @@ class TestTheGateIsReachableOnlyThroughTheTable:
         assert "write_snip_transform_table" in _imported_names(GEOMETRY_ENTRYPOINT)
 
     def test_geometry_reads_no_image_pixels(self):
-        # snip_geometry needs masks and calibration only. If it started reading frames it would
+        # snip_geometry needs masks and calibration only. If it started READING frames it would
         # acquire a dependency on materialized products, and the RFP render could no longer run in
         # parallel with the BF one -- both would queue behind the same image reads.
-        assert "skio" not in _imported_names(GEOMETRY_ENTRYPOINT), (
-            "run_snip_geometry imports an image reader. Geometry comes from the MASK alone; that "
-            "is what lets sibling product jobs run in parallel."
-        )
+        #
+        # THE BAN IS ON READING, NOT ON THE IMPORT. This test used to assert `"skio" not in
+        # imports`, which was a proxy that stopped being accurate once the gate began WRITING the
+        # embryo mask: writing a raster derived from the mask it already decoded adds no dependency
+        # on any materialized image product, and the parallelism argument above is untouched. An
+        # import check cannot tell a read from a write, so it is the call that is banned.
+        source = GEOMETRY_ENTRYPOINT.read_text(encoding="utf-8")
+        for reader in ("skio.imread", "cv2.imread", "imageio.imread"):
+            assert reader not in source, (
+                f"run_snip_geometry calls {reader}. Geometry comes from the MASK alone; reading a "
+                "materialized image here would make sibling product jobs queue behind it."
+            )
