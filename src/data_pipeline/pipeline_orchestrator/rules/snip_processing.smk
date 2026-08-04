@@ -284,12 +284,14 @@ rule merge_snip_inventory:
     shell:
         """
         {RUN} -c "
-from data_pipeline.pipeline_orchestrator.orchestration.well_runner import (
-    collect_well_shard_paths, concat_well_shards_to_file,
-)
+from data_pipeline.pipeline_orchestrator.orchestration.well_runner import concat_well_shards_to_file
 from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_identity_contract import SNIP_INVENTORY_COLUMNS
 from pathlib import Path
-shards = collect_well_shard_paths('{DATA_ROOT}', 'snip_inventory', 'snip_inventory', '{wildcards.experiment}')
+# THE SHARDS SNAKEMAKE ALREADY RESOLVED, not a re-derivation. collect_well_shard_paths builds
+# per-well paths from the registry and knows nothing about the product dimension, so it cannot fill
+# {{snip_product_key}} -- and re-deriving a list the rule already has as input: is a second source
+# of truth regardless. input.per_well is wells x products by construction.
+shards = [Path(p) for p in '{input.per_well}'.split()]
 concat_well_shards_to_file(shards, '{output.merged}', required_columns=SNIP_INVENTORY_COLUMNS, sort_columns=['experiment_id', 'well_id', 'snip_id'])
 "
         """
