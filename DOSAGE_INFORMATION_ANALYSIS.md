@@ -99,3 +99,74 @@ per-class correction — and the honest answer is to say which classes can be po
 - **Only 4 wells in the smoke run.** Sufficient to prove the measurement path; NOT sufficient for a
   dosage conclusion. The full plate (96 wells x 3 timepoints) is needed before any claim about
   information content.
+
+---
+
+# RESULT — first run on real RFP pixels (2026-08-04, 4 wells)
+
+The measurement path works end to end: 12 valid embryo-times measured on the native uint16 RFP
+raster, background-corrected against a pooled per-well annulus mode. Zero saturated pixels anywhere,
+so no ceiling compression. **The dosage question is not answerable from this data, for a reason that
+is itself the finding.**
+
+## The blocking finding: intensity is not stable within one embryo
+
+Copy number is FIXED for an embryo. So within-embryo variation across its own timelapse is a pure
+noise floor for any dosage measurement — whatever it is, dosage differences must exceed it to be
+readable.
+
+| embryo | bg-corrected mean by timepoint (DN) | fold range |
+|---|---|---|
+| A01 | 1102 → 473 → 309 | **3.6x** |
+| A02 | 1747 → 149 → 154 | **11.8x** |
+| B01 | 356 → 38 → 71 | **9.3x** |
+| B02 | no background estimate (see below) | — |
+
+- median WITHIN-embryo fold range: **9.3x**
+- BETWEEN-embryo fold range: **45.8x**
+
+These are the same order of magnitude. **A 1-vs-2-copy difference is a 2x effect, and it is buried
+under a ~9x within-embryo swing.** Clustering brightness into three classes here would partition
+timepoints and acquisition conditions, not genotypes — and it would do so while producing three
+clean-looking clusters, which is the dangerous part.
+
+Every embryo is brightest at t0 and drops sharply afterwards. That monotone-decreasing shape across
+all four wells is the signature of **photobleaching or a per-timepoint exposure change**, not
+biology — a pan-nuclear marker tracking cell number should INCREASE as cells divide. Whatever it is,
+it is confounded with the exact axis dosage would be read on.
+
+## What must be resolved before dosage can be asked again
+
+1. **Exposure and gain are still not in frame_inventory.** This was flagged as a confound before the
+   run; it is now the leading candidate for the t0 cliff and can no longer be deferred. Until
+   exposure is carried per frame, a brightness drop is uninterpretable — it cannot be distinguished
+   from bleaching or from a real change.
+2. **Compare at matched timepoint only.** Within-timepoint between-embryo spread is the only
+   comparison this data supports. With 4 wells that is 4 embryos per timepoint — far too few, which
+   is why the full plate is not optional.
+3. **Then re-ask the information question.** The entropy machinery is built and runs; it was not
+   reported here because with the between-embryo signal confounded by time, an entropy comparison
+   across "classes" would be comparing timepoints wearing genotype labels.
+
+## Secondary finding: a failed segmentation destroys its neighbour's background
+
+B02 carries a full-frame 2304x2304 mask (area 4,987,142 px, ~100x a real embryo, confidence 0.0,
+is_valid_mask False). It is correctly RETAINED as a neighbour — an invalid mask is still a fish
+emitting photons — but because it covers the whole frame, dilating the neighbour union erased 100%
+of the real embryo's annulus: `annulus_px` 0, `annulus_excluded_px` 132,627, pooled null NaN.
+
+So B02 has no background estimate at all, caused entirely by a different mask's failure. Options
+recorded in the commit; capping exclusion area is most likely right but needs a threshold chosen
+against more than one well.
+
+## What IS established
+
+- native uint16 survives to measurement (no per-frame rescale, no 8-bit conversion)
+- zero saturation, so the bright end is not compressed
+- pooled annulus mode gives a stable background (~368-400 DN across wells)
+- background drift across time is 192-352 DN, which is NOT negligible against the dimmest
+  embryos (38-154 DN bg-corrected) — the per-timepoint null already computed should be preferred
+  over the pooled one for those rows
+- SNR spans 0.24 to 13.7, so the dim end genuinely sits AT the noise floor. That is the floor
+  compression this document predicted, and it is real: those embryos cannot carry the same
+  information as the bright ones no matter how they are normalized.
