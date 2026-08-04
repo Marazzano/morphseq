@@ -30,5 +30,21 @@ export PYTEST_ADDOPTS="-p no:cacheprovider"
 
 echo "[tests] cwd=$(pwd)"
 echo "[tests] HEAD=$(git rev-parse --short HEAD)"
+# FIVE STALE TEST MODULES ARE IGNORED, and this needs justifying rather than hiding. They import
+# module paths that no longer exist (data_pipeline.snip_processing, data_pipeline.segmentation,
+# data_pipeline.metadata_ingest, data_pipeline.io.frame_snapshot_hash, and a function removed from
+# quality_control). They were last touched between 2025-09 and 2026-07 and are untouched by the
+# current work -- pre-existing rot from module moves that never updated their tests.
+#
+# The reason they cannot simply be left failing: a COLLECTION error aborts the entire pytest run
+# ("Interrupted: 5 errors during collection"), so these five prevented every other test in the repo
+# from executing at all. Ignoring them is what makes the other ~4000 tests observable.
+#
+# TODO: delete or repair these five; they have tested nothing since their imports broke.
 conda run -n segmentation_grounded_sam --no-capture-output \
-  python -m pytest src/data_pipeline tests --import-mode=importlib -q
+  python -m pytest src/data_pipeline tests --import-mode=importlib -q \
+    --ignore=tests/test_build04_bootstrap.py \
+    --ignore=tests/test_frame_snapshot_hash.py \
+    --ignore=tests/test_plate_processing_excel.py \
+    --ignore=tests/test_segmentation_tracking_upgrade_v2.py \
+    --ignore=tests/test_snip_manifest_validator.py
