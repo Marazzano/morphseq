@@ -10,6 +10,7 @@ from data_pipeline.pipeline_orchestrator.orchestration.paths import (
     known_artifacts,
 )
 from data_pipeline.viz.stage_report import (
+    _product_of,
     build_stage_rollup_report,
     report_steps_for_stage,
     stage_report_pngs,
@@ -22,9 +23,21 @@ def _write_png(path: Path) -> None:
 
 
 def test_report_steps_discovers_from_registry_in_order() -> None:
-    steps = report_steps_for_stage("quality_control")
+    """The report list is DERIVED from PIPELINE_STEPS, in registry order.
 
-    assert steps == ["surface_area_qc_report", "death_detection_report", "snip_qc_report"]
+    Asserted against the registry rather than a frozen literal: this test is about the discovery
+    and ordering rule, not about which QC reports happen to exist today. A hardcoded list here goes
+    stale (and fails) the moment a real report step is registered.
+    """
+    expected = [
+        step
+        for step, meta in PIPELINE_STEPS.items()
+        if meta["stage"] == "quality_control"
+        and step.endswith("_report")
+        and not step.endswith("_rollup_report")
+    ]
+    assert expected  # guard: the registry really does declare QC reports
+    assert report_steps_for_stage("quality_control") == expected
 
 
 def test_report_steps_excludes_rollup_reports() -> None:
@@ -51,8 +64,10 @@ def test_stage_report_pngs_drops_nonexistent_paths(tmp_path: Path) -> None:
     # no files on disk -> every group present but with empty png lists
     groups = stage_report_pngs(tmp_path, "feature_extraction", "20250912")
 
+    # Products are DERIVED from the registry's feature_extraction report steps, not hardcoded —
+    # a frozen literal here goes stale as soon as another report step is registered.
     products = [product for product, _ in groups]
-    assert products == ["mask_geometry"]
+    assert products == [_product_of(s) for s in report_steps_for_stage("feature_extraction")]
     assert all(pngs == [] for _, pngs in groups)
 
 
@@ -66,10 +81,13 @@ def test_stage_report_pngs_resolves_existing_registry_paths(tmp_path: Path) -> N
 
     groups = stage_report_pngs(tmp_path, "feature_extraction", "20250912")
 
-    assert len(groups) == 1
-    product, pngs = groups[0]
-    assert product == "mask_geometry"
-    assert sorted(pngs) == sorted(written)
+    # Only THIS step's PNGs were written, so its group carries them and every sibling report step
+    # in the stage contributes an empty group. Keyed by product, not by a hardcoded group count.
+    by_product = dict(groups)
+    assert sorted(by_product[_product_of(step)]) == sorted(written)
+    for other in report_steps_for_stage("feature_extraction"):
+        if other != step:
+            assert by_product[_product_of(other)] == []
 
 
 def test_build_stage_rollup_writes_html_and_pdf_with_images(tmp_path: Path) -> None:
