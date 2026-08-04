@@ -387,3 +387,89 @@ class TestCandidateEnumerationHonorsTheConvention:
         affine = cands[0].affine_2x3
         assert np.allclose(affine[:, :2], np.eye(2), atol=1e-9)
         assert np.allclose(affine[:, 2], [0.0, 0.0], atol=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# 6. The ANALYSIS side must satisfy the SAME invariant, derived the same way.
+# ---------------------------------------------------------------------------
+
+
+class TestCanonicalAlignerHonorsTheSameConvention:
+    """``analyze...canonical.CanonicalAligner`` is the other half of the mirrored defect.
+
+    READ THIS BEFORE ADDING ANYTHING HERE. These assertions compare ``CanonicalAligner`` to the
+    ANALYTIC rule at the top of this file -- never to ``image_geometry.candidates``. Comparing
+    the two implementations is precisely what ``test_orientation_equivalence.py`` does, and
+    precisely why the defect went undetected for as long as it did: both sides were naive, so
+    they agreed. This class exists so that each side is independently anchored, which is what
+    makes their agreement downstream evidence of anything at all.
+    """
+
+    @staticmethod
+    def _aligner(shape=(256, 576)):
+        from analyze.utils.coord.grids.canonical import CanonicalAligner
+
+        return CanonicalAligner(target_shape_hw=shape)
+
+    @pytest.mark.parametrize("sf", SCALES)
+    @pytest.mark.parametrize("x_src", [0.0, 7.0, 31.0])
+    def test_placement_affine_maps_centers_to_expected_centers(self, sf, x_src):
+        aligner = self._aligner()
+        affine = aligner._placement_affine(0.0, 0.0, 0.0, sf)
+        # Strip the canvas centering (W/2, H/2 with cx=cy=0), a pure translation.
+        x_out = affine[0, 0] * x_src + affine[0, 2] - aligner.W / 2
+        assert x_out == pytest.approx(forward(x_src, sf), abs=1e-9), (
+            f"sf={sf}: canonical placement mapped {x_src} to {x_out}, expected "
+            f"{forward(x_src, sf)} (naive would give {naive_forward(x_src, sf)})"
+        )
+
+    @pytest.mark.parametrize("sf", [0.25, 0.5, 0.3231])
+    def test_placement_affine_is_not_the_naive_rule(self, sf):
+        """The negative twin. Measured in OUTPUT px, where the offset is exactly (sf-1)/2."""
+        aligner = self._aligner()
+        affine = aligner._placement_affine(0.0, 0.0, 0.0, sf)
+        x_out = affine[0, 0] * 7.0 + affine[0, 2] - aligner.W / 2
+        offset = x_out - naive_forward(7.0, sf)
+        assert offset == pytest.approx((sf - 1.0) / 2.0, abs=1e-9), (
+            f"sf={sf}: offset from the naive rule is {offset}, expected exactly {(sf-1)/2}"
+        )
+        assert abs(offset) > 1.0 / 32.0, "the offset must exceed one warpAffine quantum"
+
+    def test_placement_affine_leaves_pure_translation_alone(self):
+        aligner = self._aligner()
+        affine = aligner._placement_affine(10.0, 20.0, 0.0, 1.0)
+        expected = np.array(
+            [[1.0, 0.0, aligner.W / 2 - 10.0], [0.0, 1.0, aligner.H / 2 - 20.0]]
+        )
+        assert np.allclose(affine, expected, atol=1e-9)
+
+    @pytest.mark.parametrize("out_n", [16, 32])
+    def test_canonical_affine_samples_where_resize_samples(self, out_n):
+        """Same independent-oracle check as TestResizeAffineAgreement, analysis side."""
+        sf = out_n / N
+        aligner = self._aligner(shape=(out_n, out_n))
+        ramp = _ramp()
+        resized = cv2.resize(ramp, (out_n, out_n), interpolation=cv2.INTER_LINEAR)[0, :]
+        affine = aligner._placement_affine(0.0, 0.0, 0.0, sf).copy()
+        affine[0, 2] -= out_n / 2
+        affine[1, 2] -= out_n / 2
+        warped = cv2.warpAffine(
+            ramp, affine.astype(np.float32), (out_n, out_n), flags=cv2.INTER_LINEAR
+        )[0, :]
+        for j in (0, 1, 2, out_n - 1):
+            assert warped[j] == pytest.approx(resized[j], abs=warp_quantum(sf))
+
+    def test_both_sides_import_one_correction_not_two(self):
+        """The STRUCTURAL guard against the defect reappearing.
+
+        The original bug was two independent copies of the placement arithmetic drifting into
+        the same wrong convention. A behavioral test cannot prevent a third copy from being
+        added; this one asserts the analysis side is literally bound to the shared function.
+        """
+        from analyze.utils.coord.grids import canonical as canon
+        from image_geometry.candidates import pixel_center_affine
+
+        assert canon._pixel_center_affine is pixel_center_affine, (
+            "canonical.py must use image_geometry's correction, not a private copy -- "
+            "duplicating it is how the mirrored defect was created"
+        )

@@ -33,36 +33,24 @@ from ..types import (
     Frame,
 )
 from .back_direction import compute_back_direction
-from image_geometry import TransformChain, affine_step, flip_x_step, resize_step
+from image_geometry import (
+    TransformChain,
+    affine_step,
+    flip_x_step,
+    pixel_center_affine,
+    resize_step,
+)
 from image_geometry.transforms import resize_interpolation_flags
 
 
-def _pixel_center_affine(M: np.ndarray) -> np.ndarray:
-    """Re-express a 2x3 affine so it maps PIXEL CENTERS, matching every resize seam.
-
-    THE DEFECT THIS REPAIRS. ``cv2.warpAffine`` and ``cv2.resize`` do not agree on what an
-    integer coordinate means, and the disagreement is silent. Measured on a linear ramp at
-    sf=0.25, output pixel ``j`` samples source ``j/sf`` under ``warpAffine`` but ``(j+0.5)/sf-0.5``
-    under ``resize``. The first is the naive rule ``x_out = sf * x_src``; the second is the
-    pixel-center rule ``x_out = sf * (x_src + 0.5) - 0.5`` pinned by
-    ``tests/image_geometry/test_resize_coordinate_convention.py``. They differ by exactly
-    ``(sf-1)/2`` — at the production scale (3.2308 -> 10.0 um/px, sf~0.323) that is a systematic
-    -0.34 px shift applied identically to every embryo.
-
-    WHY THAT IS WORSE THAN NOISE. A bias shared by every sample is invisible to every aggregate
-    QC statistic — areas, IoUs and pixel diffs all stay clean — while the whole population sits
-    off-grid relative to the resize-based coordinates it is compared against.
-
-    THE CORRECTION. For output = A @ src + t under the naive rule, the pixel-center rule requires
-    ``(out + 0.5) = A @ (src + 0.5) + t``, so the translation column gains ``A @ [0.5, 0.5] - 0.5``.
-    Rotation and flip are half-pixel-neutral only when A is a pure rotation about the array center;
-    in general the correction is nonzero, so it is applied unconditionally rather than gated on a
-    scale test.
-    """
-    M = np.asarray(M, dtype=np.float64).copy()
-    half = np.array([0.5, 0.5], dtype=np.float64)
-    M[:, 2] += M[:, :2] @ half - half
-    return M
+#: THE half-pixel correction, imported rather than reimplemented.
+#:
+#: An earlier revision of this file carried a private copy. That is exactly the mechanism that
+#: produced the original defect: this module and ``image_geometry.candidates`` each held their own
+#: naive placement arithmetic, drifted together, and the equivalence suite that was supposed to
+#: catch it instead pinned the two wrong copies to each other. One definition, one convention.
+#: The invariant it must satisfy lives in tests/image_geometry/test_pixel_center_invariant.py.
+_pixel_center_affine = pixel_center_affine
 
 
 def _prescale_for_downscale(
@@ -350,18 +338,18 @@ class CanonicalAligner:
 
         for rot_add in rot_options:
             for do_flip in flip_options:
-                # DELIBERATELY the raw fused affine, NOT the pixel-center/anti-aliased placement
-                # used for output. These warps are throwaway: this routine returns only a rotation,
-                # a flip, and two diagnostic landmarks — no output pixel is derived from them.
-                # The extracted `orientation_policy` twin of this selector is pinned equivalent to
-                # it at abs=1e-6 by the orientation-equivalence suite. That twin builds candidates
-                # through image_geometry.candidates, which uses the raw convention, so "correcting"
-                # the geometry here would break the equivalence while changing no canonical output.
-                # Fixing both sides means editing image_geometry, which is under concurrent
-                # development and out of scope for this change.
-                M = cv2.getRotationMatrix2D((cx, cy), rotation_needed + rot_add, scale)
-                M[0, 2] += (self.W / 2) - cx
-                M[1, 2] += (self.H / 2) - cy
+                # Pixel-center convention, same as the output placement and same as the
+                # image_geometry candidate builder this selector is pinned against.
+                #
+                # An earlier revision left this loop on the raw naive affine, reasoning that the
+                # warps are throwaway (only a rotation, a flip and two diagnostic landmarks
+                # escape) and that correcting only this side would break the equivalence suite.
+                # The first half was true, the second half was the trap: image_geometry carried
+                # the IDENTICAL naive convention, so the suite was pinning two wrong clocks to
+                # each other. Both sides now satisfy the independent invariant in
+                # tests/image_geometry/test_pixel_center_invariant.py, so their agreement finally
+                # means something. Leaving this loop naive would reintroduce the asymmetry.
+                M = self._placement_affine(cx, cy, rotation_needed + rot_add, scale)
                 mask_w = self._warp(mask, M)
                 yolk_w = self._warp(yolk, M) if yolk is not None else None
                 if do_flip:
@@ -515,12 +503,12 @@ class CanonicalAligner:
         flip_options = [False, True] if self.allow_flip else [False]
         for rot_add in rot_options:
             for do_flip in flip_options:
-                # Raw fused affine on purpose — see the note in _coarse_candidate_select. This
-                # loop only scores candidates to pick (rot_add, do_flip); the winning placement is
-                # re-rendered below through _prescaled_placement.
-                M = cv2.getRotationMatrix2D((cx, cy), rotation_needed + rot_add, scale)
-                M[0, 2] += (self.W / 2) - cx
-                M[1, 2] += (self.H / 2) - cy
+                # Pixel-center convention — see the note in _coarse_candidate_select. This loop
+                # only scores candidates to pick (rot_add, do_flip); the winning placement is
+                # re-rendered below through _prescaled_placement, which anti-aliases as well.
+                # Scoring in a different convention than the one the winner is rendered in would
+                # mean choosing a pose on a raster that is never actually produced.
+                M = self._placement_affine(cx, cy, rotation_needed + rot_add, scale)
                 mask_w = self._warp(mask, M)
                 if do_flip:
                     mask_w = cv2.flip(mask_w, 1)
