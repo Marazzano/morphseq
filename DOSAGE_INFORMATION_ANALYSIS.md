@@ -285,3 +285,38 @@ the axis that matters, without anyone having to remember to look.
 `(time_index, channel_id)` — wired and unit-tested (30/30 in `test_materialize_well_yx1.py`), but the
 existing `.pbx_smoke` frame_inventory artifacts predate the change and still lack the columns. They
 will carry exposure on the next materialization run.
+
+---
+
+# UPDATE — B02 recovered, and it partly revises the verdict above
+
+The frame-sized-neighbour bug is fixed (a mask over half the frame is a segmentation failure, not an
+object). B02's real embryo is now measurable, and it is the most informative embryo in the set.
+
+| embryo | bg-corrected DN by timepoint | fold | per-ms | fold |
+|---|---|---|---|---|
+| A01 | 1102, 473, 309 | 3.6x | 1.84, 1.58, 1.03 | 1.8x |
+| A02 | 1747, 149, 154 | 11.8x | 2.91, 0.50, 0.51 | 5.9x |
+| B01 | 356, 38, 71 | 9.3x | 0.59, 0.13, 0.24 | 4.7x |
+| **B02** | **9944, 3727, 6657** | **2.7x** | **16.57, 12.42, 22.19** | **1.8x** |
+
+- median within-embryo: **9.3x -> 6.5x** raw, **3.2x** exposure-normalized
+- between-embryo: 45.8x -> **260.5x**
+- B02 pooled null: NaN -> **336.0 DN** over 444,949 px
+
+**The brightest embryo has the SMALLEST temporal variation.** That is the shape a real dosage signal
+should have: high copy number sits well clear of the noise floor and stays put, while the dim
+embryos' 5-6x swings are what being AT the floor looks like. The two tightest embryos (A01 and B02,
+both 1.8x normalized) sit at 1.03-1.84 and 12.42-22.19 DN/ms — roughly an order of magnitude apart,
+which is much larger than a 2x copy-number difference and suggests these are not simply 1-copy vs
+2-copy.
+
+This is a hypothesis, not a result: four embryos cannot establish a dosage ladder, and the
+between-embryo spread is now 260x, far more than copy number alone explains. But it is the first
+evidence pointing TOWARD dosage being readable rather than away, and it changes what the full-plate
+run should test — not "is there any signal" but "do embryos separate into discrete levels once
+exposure is controlled".
+
+**The earlier conclusion stands where it matters:** dosage still cannot be called from this data,
+exposure must still be carried per frame, and the dim embryos still sit at SNR < 1.2 where
+normalization cannot recover information that was never digitized.
