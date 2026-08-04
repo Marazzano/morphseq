@@ -34,6 +34,7 @@ from .candidates import (
     centered_placement_affine,
     enumerate_orientation_candidates,
     pca_major_axis_angle_deg,
+    pixel_center_affine,
     vertical_flip_partner,
 )
 from .rotation import bounds_expanded_rotation_matrix, expanded_rotation_bounds_wh
@@ -88,6 +89,11 @@ __all__ = [
     "centered_placement_affine",
     "enumerate_orientation_candidates",
     "pca_major_axis_angle_deg",
+    # THE half-pixel correction. cv2.resize maps pixel CENTERS; cv2.warpAffine applies the
+    # matrix it is given and corrects nothing, so any affine carrying a scale must be routed
+    # through this or the two seams land (scale-1)/2 px apart -- a constant, population-wide
+    # bias that no aggregate statistic can see.
+    "pixel_center_affine",
     "vertical_flip_partner",
     # Bounds-expanding rotation arithmetic — a matrix and a canvas size, never pixels. The caller
     # owns the resampling kernel.
