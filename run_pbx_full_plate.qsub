@@ -72,7 +72,13 @@ mkdir -p logs
 [[ -f "${CONFIG}" ]]      || { echo "[pbx-smoke] ERROR: no config at ${CONFIG}" >&2; exit 2; }
 
 [[ -f "${SMOKE_ROOT}/env.yaml" ]] || { echo "[pbx-smoke] ERROR: no ${SMOKE_ROOT}/env.yaml" >&2; exit 2; }
-cp "${LIVE_ENV}" "${ENV_BACKUP}"
+# CONDITIONAL: env.yaml is gitignored and may legitimately not exist (a manual run that cleaned up
+# after itself leaves none). Under `set -e` an unconditional cp here kills the job before a single
+# rule runs -- which is exactly how the first full-plate submission died. No env.yaml to back up
+# simply means there is nothing to restore afterwards.
+if [[ -f "${LIVE_ENV}" ]]; then
+  cp "${LIVE_ENV}" "${ENV_BACKUP}"
+fi
 cp "${SMOKE_ROOT}/env.yaml" "${LIVE_ENV}"
 echo "[pbx-smoke] env.yaml -> smoke roots (${SMOKE_ROOT})"
 
