@@ -543,7 +543,25 @@ def cmd_snip_processing(args: argparse.Namespace) -> None:
         output_width_px=args.output_width_px,
         background_noise_scale=args.background_noise_scale,
         blend_radius_um=args.blend_radius_um,
-        snip_transform_table_path=getattr(args, "snip_transform_table_path", None),
+        snip_transform_table_csv=getattr(args, "snip_transform_table_csv", None),
+        snip_product_key=args.snip_product_key,
+    )
+
+
+def cmd_snip_geometry(args: argparse.Namespace) -> None:
+    """Derive the canonical snip transform once per embryo-time. Thin dispatcher."""
+    from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_geometry import (
+        run_snip_geometry,
+    )
+
+    run_snip_geometry(
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        physical_embryo_registry_csv=args.physical_embryo_registry_csv,
+        output_path=args.output_path,
+        target_pixel_size_um=args.target_pixel_size_um,
+        output_height_px=args.output_height_px,
+        output_width_px=args.output_width_px,
     )
 
 
@@ -1571,11 +1589,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_sp.add_argument("--output-width-px", type=int, default=256)
     p_sp.add_argument("--background-noise-scale", type=float, default=0.1)
     p_sp.add_argument("--blend-radius-um", type=float, default=20.0)
-    # The per-well transform table: one row per embryo-time, referenced by snip_inventory's
-    # snip_transform_id. Optional at the CLI so existing callers keep working; when omitted no
-    # table is written and the FK column is the only record that a transform existed.
-    p_sp.add_argument("--snip-transform-table-path", type=Path, default=None)
+    # THE GATE'S INPUT. snip_geometry derived these; this job resolves them onto its own product
+    # grid and may not derive its own. Optional at the CLI only so pre-gate callers still parse --
+    # a render without it fails loud rather than silently deriving.
+    p_sp.add_argument("--snip-transform-table-csv", type=Path, default=None)
+    # Which product this job renders. One job renders ONE product, so the fanout is
+    # {well_id} x {snip_product_key} and each job owns a disjoint output subtree.
+    from data_pipeline.object_extraction.snip_processing.snip_product_keys import (
+        DEFAULT_BF_SNIP_PRODUCT_KEY,
+    )
+
+    p_sp.add_argument(
+        "--snip-product-key", type=str, default=DEFAULT_BF_SNIP_PRODUCT_KEY
+    )
     p_sp.set_defaults(func=cmd_snip_processing)
+
+    # THE GATE. Per-well only, deliberately no product wildcard: one embryo-time has one canonical
+    # transform, and a product dimension here would derive it N times.
+    p_sg = sub.add_parser("snip-geometry")
+    p_sg.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_sg.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_sg.add_argument("--physical-embryo-registry-csv", type=Path, required=True)
+    p_sg.add_argument("--output-path", type=Path, required=True)
+    p_sg.add_argument("--target-pixel-size-um", type=float, default=7.8)
+    p_sg.add_argument("--output-height-px", type=int, default=576)
+    p_sg.add_argument("--output-width-px", type=int, default=256)
+    p_sg.set_defaults(func=cmd_snip_geometry)
 
     p_mg = sub.add_parser("mask-geometry")
     p_mg.add_argument("--snip-inventory-csv", type=Path, required=True)

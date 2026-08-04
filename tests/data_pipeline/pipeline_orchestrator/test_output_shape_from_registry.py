@@ -81,6 +81,11 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # ordinary hand-written-wildcard case like every other entry here.
     "frame_masks_per_well",
     "materialize_image_product_for_well",
+    # snip_geometry_per_well joined on 2026-08-03 with the geometry gate. Grandfathered for the same
+    # reason as everything else here -- step_outputs() does not exist yet -- and NOT because its
+    # fanout is a special case. It is per-well by registry declaration (PER_WELL_THEN_MERGE), and
+    # deliberately carries no product wildcard: one embryo-time has one canonical transform.
+    "snip_geometry_per_well",
     "snip_processing_per_well",
     "split_dropin_inventory",
     "validate_curvature_metrics_for_well",
