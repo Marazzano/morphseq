@@ -373,10 +373,27 @@ def materialize_yx1_product_for_well(
             f"{sorted(well_acquisition_inventory_df['position_index'].unique())}. "
             "Inventory must map exactly one position_index to one well."
         )
-    if well_acquisition_inventory_df["source_nd2_path"].nunique() != 1:
+    # NO source_nd2_path GUARD. A single experiment has one ND2 per well; a COLLECTION has one per
+    # SOURCE, and the whole point of the union is to process them as one plate. This used to require
+    # nunique() == 1, which made YX1 collections unmaterializable -- the only collection that ever
+    # ran was Keyence, whose backend iterates rows and never made the assumption.
+    #
+    # What stays guarded is what genuinely must be constant: position_index (above) plus the
+    # calibration and dimensions read below. Verified on the pbx collection -- across its 3 sources,
+    # position_index / micrometers_per_pixel / image_width_px / image_height_px each have exactly
+    # ONE distinct value per well, and only source_nd2_path varies. So the scalars stay scalars and
+    # only the FILE binding moves into the loop.
+    if well_acquisition_inventory_df["micrometers_per_pixel"].nunique() != 1:
         raise ValueError(
-            f"Ambiguous source_nd2_path for well {well_id!r}: "
-            f"{sorted(well_acquisition_inventory_df['source_nd2_path'].unique())}."
+            f"Ambiguous micrometers_per_pixel for well {well_id!r}: "
+            f"{sorted(well_acquisition_inventory_df['micrometers_per_pixel'].unique())}. Sources "
+            "merged into one collection must share a calibration, or their frames are not "
+            "comparable and the downsample factor below would be wrong for some of them."
+        )
+    if well_acquisition_inventory_df[["image_width_px", "image_height_px"]].drop_duplicates().shape[0] != 1:
+        raise ValueError(
+            f"Ambiguous image dimensions for well {well_id!r}: "
+            f"{well_acquisition_inventory_df[['image_width_px', 'image_height_px']].drop_duplicates().to_dict('records')}."
         )
 
     # Consume-boundary contract check: re-validate the acquisition inventory in source-checking mode
@@ -398,21 +415,42 @@ def materialize_yx1_product_for_well(
         config, product_key, native_micrometers_per_pixel=um_per_px
     )
     ext = suffix_for_policy(write_policy)
-    # The ND2 source comes from the inventory (the record of what was acquired), not a CLI arg.
-    # Stored as a full path; re-anchored onto input_root if it has moved.
-    nd2_path = resolve_under_input_root(
-        well_acquisition_inventory_df["source_nd2_path"].iloc[0],
-        input_root=input_root,
-        scope_label=_SCOPE_LABEL,
-        full_root_fallback=True,
-    )
+    # ONE ND2 PER SOURCE, keyed by the MERGED time_index the output identity uses. A single
+    # experiment yields one entry; a collection yields one per source. Resolved up front so a
+    # moved/missing file fails before any tensor read, and so the open below is a dict lookup
+    # rather than a per-frame path resolution.
+    #
+    # Stored as full paths; re-anchored onto input_root if the tree has moved.
+    nd2_path_by_merged_time = {
+        int(t): resolve_under_input_root(
+            str(rows["source_nd2_path"].iloc[0]),
+            input_root=input_root,
+            scope_label=_SCOPE_LABEL,
+            full_root_fallback=True,
+        )
+        for t, rows in well_acquisition_inventory_df.groupby("time_index")
+    }
+    # A time_index whose rows disagree about their source file means the union mis-assigned a
+    # frame -- two acquisitions claiming the same merged slot. Fail here, not with pixels from
+    # whichever file sorted first.
+    for t, rows in well_acquisition_inventory_df.groupby("time_index"):
+        if rows["source_nd2_path"].nunique() != 1:
+            raise ValueError(
+                f"time_index {int(t)} of well {well_id!r} maps to multiple source files: "
+                f"{sorted(rows['source_nd2_path'].unique())}. One merged frame comes from exactly "
+                "one acquisition; re-check the collection union."
+            )
+    nd2_path = next(iter(nd2_path_by_merged_time.values()))
 
     log.info(
         "materialize_yx1_product_for_well: experiment=%s well=%s product=%s position_index=%d nd2=%s device=%s candidate=%s",
         experiment_id, well_id, resolved_product.image_product_type, position_index, nd2_path, device, candidate,
     )
 
-    # --- ND2 source + tensor setup: open the one ND2, pick the BF channel axis ----------------
+    # --- ND2 source + tensor setup ------------------------------------------------------------
+    # AXES AND CHANNEL INDEX COME FROM THE FIRST SOURCE and are asserted against every other one
+    # below. A collection's sources are the same plate imaged repeatedly, so they share an axis
+    # layout and channel order; if they did not, the union that merged them was already wrong.
     nd = nd2.ND2File(nd2_path)
     try:
         dask_arr = nd.to_dask()
@@ -490,6 +528,24 @@ def materialize_yx1_product_for_well(
             print(msg, flush=True)
         rows: list[dict] = []
 
+        # Open each source ONCE per well, not once per frame. A collection well reads every
+        # timepoint of source 0, then source 1, and so on -- reopening per frame would pay the ND2
+        # metadata parse dozens of times. Handles are closed in the finally below.
+        _open_sources: dict[str, tuple] = {}
+
+        def _source_tensor(path):
+            key = str(path)
+            if key not in _open_sources:
+                if key == str(nd2_path):
+                    _open_sources[key] = (nd, dask_arr, axes, array_axis_order)
+                else:
+                    handle = nd2.ND2File(path)
+                    _open_sources[key] = (
+                        handle, handle.to_dask(), axes_of(handle), array_axis_order_of(handle),
+                    )
+            _handle, arr, ax, order = _open_sources[key]
+            return arr, ax, order
+
         # Per-time_index time-column lookup, carried through from the acquisition inventory (the
         # OWNER/deriver of the time block — see specs/acquisition_inventory_schema_policy.md). The
         # values are constant across z/channel within a time_index, so one row per time_index suffices.
@@ -507,13 +563,32 @@ def materialize_yx1_product_for_well(
 
         # --- Materialization loop: per time_index → product frame(s) → write image → record rows --
         for t in time_indices:
+            # PER-SOURCE FILE BINDING. A single experiment resolves the same path every iteration
+            # (dict hit, file already open). A COLLECTION switches file when the merged axis crosses
+            # a source boundary -- which is the whole reason this lookup exists rather than one ND2
+            # bound outside the loop.
+            t_nd2_path = nd2_path_by_merged_time[int(t)]
+            t_dask, t_axes, t_axis_order = _source_tensor(t_nd2_path)
+
+            # The axis layout must agree with the first source's, since channel_index and the
+            # position/z geometry were resolved against it. Disagreement means the union merged
+            # acquisitions that are not the same plate imaged the same way.
+            if (t_axes.n_c, t_axes.n_z, t_axes.n_p) != (axes.n_c, axes.n_z, axes.n_p):
+                raise ValueError(
+                    f"Source {t_nd2_path} has axes (C={t_axes.n_c}, Z={t_axes.n_z}, "
+                    f"P={t_axes.n_p}) but the first source of well {well_id!r} has "
+                    f"(C={axes.n_c}, Z={axes.n_z}, P={axes.n_p}). Sources merged into one "
+                    "collection must share an axis layout, or channel_index and position_index "
+                    "do not mean the same thing across them."
+                )
+
             # The ND2 lookup uses the SOURCE-NATIVE frame index; `t` (merged) keys the output identity.
             stack = _get_stack(
-                dask_arr,
+                t_dask,
                 t=native_by_merged[int(t)],
                 w=position_index,
-                axes=axes,
-                array_axis_order=array_axis_order,
+                axes=t_axes,
+                array_axis_order=t_axis_order,
                 channel=channel_index,
             )
             t_times = time_lookup[t]
@@ -597,7 +672,10 @@ def materialize_yx1_product_for_well(
                     image_width_px=out_w,
                     image_height_px=out_h,
                     write_policy=write_policy,
-                    raw_image_source_path=nd2_path,
+                    # THIS frame's source, not the well's first. For a collection they
+                    # differ, and a row claiming the wrong provenance is a lie that no
+                    # downstream check would catch.
+                    raw_image_source_path=t_nd2_path,
                     raw_image_width_px=img_w,
                     raw_image_height_px=img_h,
                     raw_micrometers_per_pixel=um_per_px,
@@ -647,7 +725,10 @@ def materialize_yx1_product_for_well(
                         image_width_px=out_w,
                         image_height_px=out_h,
                         write_policy=write_policy,
-                        raw_image_source_path=nd2_path,
+                        # THIS frame's source, not the well's first. For a collection they
+                    # differ, and a row claiming the wrong provenance is a lie that no
+                    # downstream check would catch.
+                    raw_image_source_path=t_nd2_path,
                         raw_image_width_px=img_w,
                         raw_image_height_px=img_h,
                         raw_micrometers_per_pixel=um_per_px,
@@ -657,6 +738,16 @@ def materialize_yx1_product_for_well(
                 log.info("  %d/%d frames written", len(rows), len(time_indices))
 
     finally:
+        # Close EVERY source this well opened, not just the first. A collection well opens one
+        # handle per source; leaking them across 96 wells would exhaust file descriptors. `nd` is
+        # registered in the cache under its own path on first lookup, but it is closed explicitly
+        # too -- an exception raised before the loop leaves the cache empty with `nd` still open.
+        for _handle, _arr, _ax, _order in locals().get("_open_sources", {}).values():
+            if _handle is not nd:
+                try:
+                    _handle.close()
+                except Exception:  # a failed close must not mask the real error
+                    log.warning("failed to close ND2 source for well %s", well_id, exc_info=True)
         nd.close()
 
     # --- Inventory assembly: build the frame-inventory shard + final required-columns check ---
