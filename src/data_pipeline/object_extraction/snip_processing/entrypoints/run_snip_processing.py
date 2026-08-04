@@ -33,6 +33,13 @@ from data_pipeline.shared.identifiers.constructors import (
 )
 from data_pipeline.shared.identifiers.parsers import parse_image_id
 from data_pipeline.object_extraction.snip_processing.augmentation import augment_snip
+from data_pipeline.object_extraction.snip_processing.legacy_snip_paths import (
+    legacy_flat_snip_path,
+    link_legacy_flat_path,
+)
+from data_pipeline.object_extraction.snip_processing.snip_product_keys import (
+    DEFAULT_BF_SNIP_PRODUCT_KEY,
+)
 from data_pipeline.object_extraction.snip_processing.snip_transform import (
     CENTERING_LATCHED,
     IMAGE_INTERPOLATION,
@@ -148,6 +155,13 @@ def run_snip_processing(
     snips_dir = Path(snips_dir)
     output_root = Path(output_root)
 
+    # The product this entrypoint renders. SINGLE-VALUED TODAY: this path is the historical BF
+    # clahe_blend renderer, and naming that explicitly is what lets the path, the inventory column,
+    # and the compatibility alias all agree. P2 turns it into a parameter.
+    snip_product_key = DEFAULT_BF_SNIP_PRODUCT_KEY
+    # Every alias created this run, for debugging external breakage without archaeology.
+    legacy_alias_manifest: list[dict[str, str]] = []
+
     _bg_mean, _bg_std = _estimate_background(valid_masks, inventory_index)
     background_mean = background_noise_scale * _bg_mean
     background_std = background_noise_scale * _bg_std
@@ -195,6 +209,11 @@ def run_snip_processing(
             "track_id": track_id,
             "image_path": None,
             "processed_snip_path": None,
+            # Product identity is known BEFORE rendering, so a failed row still says which product
+            # it was trying to be -- otherwise a failure is unattributable once several products
+            # share a well. The paths stay null: no bytes, no alias.
+            "snip_product_key": snip_product_key,
+            "legacy_flat_snip_path": None,
             "embryo_mask": None,
             "embryo_mask_snip_path": None,
             "crop_x_min_px": None,
@@ -358,7 +377,23 @@ def run_snip_processing(
                 pixel_size_um=float(target_pixel_size_um),
             )
 
-            embryo_snips_dir = snips_dir / physical_embryo_id
+            # EMBRYO FIRST, PRODUCT SECOND. The hierarchy states the ontology: this biological
+            # object, and these alternative raster products OF it. Product-first
+            # ({snip_product_key}/{physical_embryo_id}/) would read as "this rendering, and all the
+            # embryos put through it", which inverts what is shared and what varies — the embryo-time
+            # geometry is the shared fact, and BF / RFP / z_stack are sibling observations of it.
+            # It also makes the common inspection question ("show me every representation of this
+            # embryo") a single directory listing.
+            #
+            # Job ownership does not need to drive the leaf layout: each product job still owns a
+            # DISJOINT product subdirectory beneath each embryo, so concurrent
+            # mkdir(exist_ok=True) on the shared embryo directory is safe. Inventories stay
+            # product-first, because those ARE owned per job.
+            #
+            # THE PRODUCT DIRECTORY HOLDS THE BYTES. Writing flat and pointing the product path
+            # backward would leave the pre-migration layout as the authority and make the product
+            # hierarchy decorative; the alias below is a view onto these files, never the reverse.
+            embryo_snips_dir = snips_dir / physical_embryo_id / snip_product_key
             embryo_snips_dir.mkdir(parents=True, exist_ok=True)
             processed_path = embryo_snips_dir / f"{snip_id}.png"
             skio.imsave(str(processed_path), augmented, check_contrast=False)
@@ -368,6 +403,32 @@ def run_snip_processing(
             # mask fraction_alive ANDs against the per-snip via mask — no model, no re-prediction.
             embryo_mask_path = embryo_snips_dir / f"{snip_id}_embryo.png"
             skio.imsave(str(embryo_mask_path), (mask_cropped > 0).astype(np.uint8) * 255, check_contrast=False)
+
+            # Compatibility aliases at the pre-migration flat paths. Both artifacts get one, since a
+            # reader holding an old snip path may hold an old mask path too.
+            # TODO(deprecate-legacy-snip-symlinks): drop with the alias layer.
+            legacy_processed_path = legacy_flat_snip_path(
+                snips_dir=snips_dir,
+                physical_embryo_id=physical_embryo_id,
+                filename=f"{snip_id}.png",
+            )
+            for canonical, legacy in (
+                (processed_path, legacy_processed_path),
+                (
+                    embryo_mask_path,
+                    legacy_flat_snip_path(
+                        snips_dir=snips_dir,
+                        physical_embryo_id=physical_embryo_id,
+                        filename=f"{snip_id}_embryo.png",
+                    ),
+                ),
+            ):
+                link_legacy_flat_path(
+                    canonical_path=canonical,
+                    legacy_path=legacy,
+                    log_manifest=legacy_alias_manifest,
+                    snip_product_key=snip_product_key,
+                )
 
             # Record the transform ONCE per embryo-time, keyed by a channel-independent id. Two
             # channels of the same embryo-time derive the SAME recipe (the transform reads the mask,
@@ -393,8 +454,14 @@ def run_snip_processing(
             pending_transform_rows.append((snip_transform_id, transform_row))
 
             try:
+                out["snip_product_key"] = snip_product_key
+                out["legacy_flat_snip_path"] = legacy_processed_path.relative_to(
+                    output_root
+                ).as_posix()
                 out["processed_snip_path"] = processed_path.relative_to(output_root).as_posix()
             except ValueError:
+                out["snip_product_key"] = snip_product_key
+                out["legacy_flat_snip_path"] = str(legacy_processed_path)
                 out["processed_snip_path"] = str(processed_path)
             try:
                 embryo_mask_rel = embryo_mask_path.relative_to(output_root).as_posix()
