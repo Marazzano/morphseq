@@ -7,6 +7,13 @@ No GPU or real SAM2 is invoked.
 
 from __future__ import annotations
 
+import json
+
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import (
+    decode_binary_mask_rle,
+    encode_binary_mask_rle,
+)
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -130,6 +137,30 @@ def _write_inputs(tmp_path, *, include_registry=True):
     return frame_masks, frame_masks_csv, frame_inventory_csv, registry_csv
 
 
+def _run_geometry(tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv, **kw):
+    """Run THE GATE, then hand back the table every render job must read.
+
+    Every render test goes through this because that is now the only legal path: a render job that
+    could derive its own geometry would reopen exactly the drift the gate closes, so
+    run_snip_processing refuses rather than falling back.
+    """
+    from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_geometry import (
+        run_snip_geometry,
+    )
+
+    table = tmp_path / "snip_transforms.csv"
+    run_snip_geometry(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        output_path=table,
+        target_pixel_size_um=kw.get("target_pixel_size_um", 2.17),
+        output_height_px=kw.get("output_height_px", 64),
+        output_width_px=kw.get("output_width_px", 64),
+    )
+    return table
+
+
 def test_run_snip_processing_produces_inventory(tmp_path):
     frame_masks, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
     output_csv = tmp_path / "snip_inventory.csv"
@@ -139,6 +170,9 @@ def test_run_snip_processing_produces_inventory(tmp_path):
         frame_masks_csv=frame_masks_csv,
         frame_inventory_csv=frame_inventory_csv,
         physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=_run_geometry(
+            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+        ),
         output_csv=output_csv,
         snips_dir=snips_dir,
         output_root=tmp_path,
@@ -185,6 +219,9 @@ def test_run_snip_processing_joins_registry_physical_embryo_id(tmp_path):
         frame_masks_csv=frame_masks_csv,
         frame_inventory_csv=frame_inventory_csv,
         physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=_run_geometry(
+            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+        ),
         output_csv=output_csv,
         snips_dir=tmp_path / "snips",
         output_root=tmp_path,
@@ -216,6 +253,9 @@ def test_run_snip_processing_writes_valid_headered_inventory_for_empty_well(tmp_
         frame_masks_csv=frame_masks_csv,
         frame_inventory_csv=frame_inventory_csv,
         physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=_run_geometry(
+            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+        ),
         output_csv=output_csv,
         snips_dir=tmp_path / "snips",
         output_root=tmp_path,
@@ -259,6 +299,9 @@ def test_run_snip_processing_snip_pixels_are_stable(tmp_path):
         frame_masks_csv=frame_masks_csv,
         frame_inventory_csv=frame_inventory_csv,
         physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=_run_geometry(
+            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+        ),
         output_csv=output_csv,
         snips_dir=tmp_path / "snips",
         output_root=tmp_path,
@@ -400,6 +443,9 @@ def test_uint16_source_is_refused_not_silently_rescaled(tmp_path):
         frame_masks_csv=frame_masks_csv,
         frame_inventory_csv=frame_inventory_csv,
         physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=_run_geometry(
+            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+        ),
         output_csv=out_csv,
         snips_dir=tmp_path / "snips",
         output_root=tmp_path,
@@ -460,6 +506,9 @@ def test_a_second_product_renders_from_its_own_source(tmp_path):
         frame_masks_csv=frame_masks_csv,
         frame_inventory_csv=frame_inventory_csv,
         physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=_run_geometry(
+            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+        ),
         output_csv=out_csv,
         snips_dir=tmp_path / "snips",
         output_root=tmp_path,
@@ -484,3 +533,74 @@ def test_a_second_product_renders_from_its_own_source(tmp_path):
     snip = skio.imread(str([p for p in written if not p.name.endswith("_embryo.png")][0]))
     assert snip.dtype == np.uint16, f"no_change produced {snip.dtype}; dosage information is gone"
     assert snip.max() > 255, "values were compressed into the 8-bit range"
+
+
+def test_a_render_job_cannot_derive_its_own_geometry(tmp_path):
+    """THE GATE. Without the transform table, rendering must FAIL rather than fall back.
+
+    A silent fallback to derivation is the whole failure mode the gate closes: two product jobs
+    deriving independently can straddle a frame_masks regeneration and produce siblings that no
+    longer register, with no error anywhere.
+    """
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    out_csv = tmp_path / "snip_inventory.csv"
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        output_csv=out_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+    )
+    df = pd.read_csv(out_csv)
+    assert not df["is_valid_snip"].astype(bool).any()
+    reasons = " ".join(str(r) for r in df["error_message"].fillna(""))
+    assert "snip_geometry must run" in reasons, reasons
+
+
+def test_a_changed_mask_fails_the_freeze(tmp_path):
+    """MASK-HASH FREEZE. The gate fixes placement; this fixes the raster it was derived from.
+
+    Regenerating frame_masks between snip_geometry and a render job would otherwise pair OLD
+    geometry with a NEWER mask -- pixels placed by one segmentation, masked by another, silently.
+    """
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    table = _run_geometry(tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv)
+
+    # Mutate one mask's PIXELS (not just its encoding) after geometry was derived.
+    masks = pd.read_csv(frame_masks_csv)
+    rle = json.loads(str(masks.loc[0, "mask_rle"]))
+    decoded = decode_binary_mask_rle(rle)
+    decoded[decoded.shape[0] // 2, :] = True
+    masks.loc[0, "mask_rle"] = json.dumps(encode_binary_mask_rle(decoded))
+    masks.to_csv(frame_masks_csv, index=False)
+
+    out_csv = tmp_path / "snip_inventory.csv"
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=table,
+        output_csv=out_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+    )
+    df = pd.read_csv(out_csv)
+    reasons = " ".join(str(r) for r in df["error_message"].fillna(""))
+    assert "does not match what snip_geometry derived from" in reasons, reasons
+
+
+def test_siblings_share_one_transform_row(tmp_path):
+    """One embryo-time, one canonical transform -- referenced by every product, copied by none."""
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    table = pd.read_csv(_run_geometry(tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv))
+
+    assert not table["snip_transform_id"].duplicated().any()
+    # Channel-independent by construction: the id names an animal at a time, not a channel.
+    assert not table["snip_transform_id"].str.contains("_BF_|_RFP_").any()

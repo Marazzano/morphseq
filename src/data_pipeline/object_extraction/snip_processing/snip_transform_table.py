@@ -77,6 +77,12 @@ SNIP_TRANSFORM_TABLE_COLUMNS: tuple[str, ...] = (
     "time_index",
     "source_image_id",
     "mask_id",
+    # THE MASK-HASH FREEZE. The gate fixes placement; this fixes the raster the placement was
+    # derived FROM. Without it, a frame_masks regeneration between snip_geometry and a render job
+    # pairs old geometry with a newer mask -- pixels placed by one segmentation, masked by another,
+    # with no error. Hashed over the DECODED mask, never the RLE string: a re-encode changes the
+    # string without changing a pixel, which would produce false failures.
+    "geometry_source_mask_sha256",
     "source_shape_h",
     "source_shape_w",
     "source_um_per_px_y",
@@ -169,6 +175,7 @@ def build_snip_transform_row(
     orientation_policy: str,
     orientation_source: str,
     no_yolk_policy: str,
+    geometry_source_mask_sha256: str = "",
     flip_x: bool = False,
 ) -> dict[str, Any]:
     """Assemble one transform row.
@@ -237,6 +244,7 @@ def build_snip_transform_row(
         "time_index": int(time_index),
         "source_image_id": str(source_image_id),
         "mask_id": str(mask_id),
+        "geometry_source_mask_sha256": str(geometry_source_mask_sha256),
         "source_shape_h": int(canonical.grid.geometry_source_shape_yx[0]),
         "source_shape_w": int(canonical.grid.geometry_source_shape_yx[1]),
         # Per-axis calibration. Today the seam resolves one scalar per grid, so y and x carry the

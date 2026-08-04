@@ -15,6 +15,7 @@ mass-distribution heuristic and extraction uses a zero yolk mask.
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -53,13 +54,11 @@ from data_pipeline.object_extraction.snip_processing.snip_transform import (
     MASK_INTERPOLATION,
     apply_transform_to_image,
     apply_transform_to_mask,
-    derive_snip_transform,
     transform_for_product,
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform_table import (
-    SNIP_TRANSFORM_TABLE_COLUMNS,
-    build_snip_transform_row,
-    write_snip_transform_table,
+    canonical_from_row,
+    read_snip_transform_table,
 )
 
 # The orientation DECISION recorded on every row, so a later yolk-aware pass knows what it replaces.
@@ -174,7 +173,7 @@ def run_snip_processing(
     output_width_px: int = 256,
     background_noise_scale: float = 0.1,
     blend_radius_um: float = 20.0,
-    snip_transform_table_path: Path | None = None,
+    snip_transform_table_csv: Path | None = None,
     snip_product_key: str = DEFAULT_BF_SNIP_PRODUCT_KEY,
 ) -> None:
     frame_masks = pd.read_csv(frame_masks_csv)
@@ -215,11 +214,20 @@ def run_snip_processing(
     background_mean = background_noise_scale * _bg_mean
     background_std = background_noise_scale * _bg_std
 
+    # THE GATE'S INPUT. snip_geometry derived these once for this well; this job only resolves
+    # them onto its own product grid. Optional purely so existing callers/tests that predate the
+    # gate still work -- when absent, the per-row lookup fails loud rather than silently deriving.
+    transform_rows_by_id: dict[str, Any] = {}
+    if snip_transform_table_csv is not None:
+        _table = read_snip_transform_table(Path(snip_transform_table_csv))
+        transform_rows_by_id = {
+            str(r["snip_transform_id"]): r for _, r in _table.iterrows()
+        }
+
     rows: list[dict[str, Any]] = []
     # Collected inside the loop, reconciled after it. Reconciliation is keyed by snip_transform_id so
     # sibling products of one embryo-time collapse onto ONE row — that collapse is the mechanism
     # that makes duplicate (and therefore driftable) geometry unrepresentable.
-    pending_transform_rows: list[tuple[str, dict[str, Any]]] = []
 
     for _, mask_row in valid_masks.iterrows():
         image_id = str(mask_row["image_id"])
@@ -373,14 +381,34 @@ def run_snip_processing(
             # intermediate + separate crop). Flipping to CENTERING_CONTINUOUS is a separate commit,
             # so the two pixel changes stay independently attributable.
             #
-            # No yolk mask yet — the angle falls back to the mass-distribution heuristic.
-            canonical = derive_snip_transform(
-                embryo_mask,
-                source_um_per_px=pixel_size_um,
-                target_um_per_px=target_pixel_size_um,
-                snip_frame_shape_hw=output_shape,
-                yolk_mask=None,
-            )
+            # THE GATE'S READ PATH. Geometry is NOT derived here — it was derived once per
+            # embryo-time by snip_geometry and persisted. This job deserializes that recipe and
+            # resolves it onto its OWN product grid, which is the step that speaks this product's
+            # pixel dialect. A render job that re-derived would reopen exactly the drift the gate
+            # closes, so derive_snip_transform is deliberately not called on this path.
+            if snip_transform_id not in transform_rows_by_id:
+                raise KeyError(
+                    f"snip_transform_id {snip_transform_id!r} not found in the snip transform "
+                    f"table. snip_geometry must run for this well before any product renders; a "
+                    "render job may not derive its own geometry."
+                )
+            transform_row = transform_rows_by_id[snip_transform_id]
+
+            # MASK-HASH FREEZE. The gate fixes PLACEMENT; without this it would not fix the raster
+            # the placement was derived from. A frame_masks regeneration between snip_geometry and
+            # this job would otherwise pair old geometry with a newer mask — pixels placed by one
+            # segmentation, masked by another, silently. The hash is over the DECODED mask, not the
+            # RLE string: a re-encode changes the string without changing a pixel.
+            if sha256(embryo_mask.tobytes()).hexdigest() != str(
+                transform_row["geometry_source_mask_sha256"]
+            ):
+                raise ValueError(
+                    f"mask content for {snip_transform_id!r} does not match what snip_geometry "
+                    f"derived from (mask_id={mask_id!r}). frame_masks changed after the transform "
+                    "table was written — regenerate snip_geometry for this well."
+                )
+
+            canonical = canonical_from_row(transform_row)
             resolved = transform_for_product(
                 canonical,
                 product_shape_hw=(int(image.shape[0]), int(image.shape[1])),
@@ -503,22 +531,7 @@ def run_snip_processing(
             # append a duplicate — and if it ever does NOT match, that is sibling drift and must fail
             # loud instead of silently keeping one of the two.
             out["snip_transform_id"] = snip_transform_id
-            transform_row = build_snip_transform_row(
-                snip_transform_id=snip_transform_id,
-                physical_embryo_id=physical_embryo_id,
-                time_index=int(time_index),
-                resolved=resolved,
-                source_image_id=image_id,
-                mask_id=mask_id,
-                orientation_policy=ORIENTATION_POLICY,
-                orientation_source=ORIENTATION_SOURCE_MASS_DISTRIBUTION,
-                no_yolk_policy=NO_YOLK_POLICY,
-                flip_x=False,
-            )
-            # Deferred to after the loop: a sibling-drift disagreement is a CONTRACT violation, not
-            # a per-snip render failure, so it must not be caught by this row's except and buried in
-            # error_message as if that one snip were merely bad.
-            pending_transform_rows.append((snip_transform_id, transform_row))
+            # The transform row already exists -- snip_geometry wrote it. Nothing to record here.
 
             try:
                 out["snip_product_key"] = snip_product_key
@@ -559,29 +572,3 @@ def run_snip_processing(
     # the SAME recipe (the transform reads the mask, never image pixels), so a second arrival must
     # match the first exactly; a mismatch means the derivation is not channel-independent and the
     # snips would not be pixel-registerable, which is a contract violation rather than a bad row.
-    if snip_transform_table_path is not None:
-        transform_rows: dict[str, dict[str, Any]] = {}
-        for transform_id, transform_row in pending_transform_rows:
-            existing = transform_rows.get(transform_id)
-            if existing is None:
-                transform_rows[transform_id] = transform_row
-                continue
-            if existing["resolved_transform_chain_json"] != transform_row["resolved_transform_chain_json"]:
-                raise ValueError(
-                    f"snip_transform_id {transform_id!r} was derived twice with DIFFERENT geometry. "
-                    "Sibling products of one embryo-time must share one transform, so this means "
-                    "the derivation is not channel-independent and the snips would not be "
-                    "pixel-registerable. Check that both products carry the same mask and "
-                    "calibration."
-                )
-
-        # A well with zero valid masks still writes a headered, zero-row table: the file itself is
-        # the record that the well was processed and had no transforms, exactly as the zero-row
-        # snip_inventory above is.
-        write_snip_transform_table(
-            pd.DataFrame(
-                list(transform_rows.values()),
-                columns=list(SNIP_TRANSFORM_TABLE_COLUMNS),
-            ),
-            Path(snip_transform_table_path),
-        )

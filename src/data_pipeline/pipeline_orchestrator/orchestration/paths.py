@@ -421,6 +421,34 @@ PIPELINE_STEPS: dict[str, dict] = {
         },
     },
 
+    # ── OBJECT EXTRACTION — snip geometry (THE GATE) ─────────────────────────
+    # `snip_geometry` derives the canonical snip transform ONCE per embryo-time, from the BF
+    # segmentation mask, and persists it. Every snip product then RESOLVES that shared recipe onto
+    # its own pixel grid rather than deriving its own.
+    #
+    # WHY IT IS ITS OWN STEP. An earlier design had each product job re-derive from the same mask,
+    # justified by determinism. But determinism only holds if the inputs are identical, and nothing
+    # enforced that: two product jobs straddling a frame_masks regeneration, a mask revision, or an
+    # orientation-policy change would derive DIFFERENT geometry and produce silently unregisterable
+    # siblings — no error, discovered later in a composite overlay. The gate makes sibling
+    # registration a structural property instead of something a test asserts about synthetic masks.
+    #
+    # Fanout is per-well ONLY — deliberately no product wildcard. One embryo-time has one canonical
+    # transform; a product wildcard here would derive it N times, which is the exact thing this step
+    # exists to prevent.
+    "snip_geometry": {
+        "stage": "object_extraction",
+        "product_dir": "snip_geometry",
+        "fanout": PER_WELL_THEN_MERGE,
+        "execution": EXECUTION_PER_WELL,
+        "artifacts": {
+            "snip_transforms": {
+                PATH_MODE_PER_WELL: "{well_id}_snip_transforms.csv",
+                PATH_MODE_MERGED: "{experiment_id}_snip_transforms.csv",
+            },
+        },
+    },
+
     # ── OBJECT EXTRACTION — snip auxiliary masks ─────────────────────────────
     # `snip_auxiliary_masks` runs the UNet auxiliary-mask families (via/yolk/focus/bubble/
     # foreground) per snip crop, AFTER physical_embryo_registry/snip_processing. One row per
