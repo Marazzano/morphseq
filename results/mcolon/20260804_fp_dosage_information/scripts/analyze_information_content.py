@@ -50,7 +50,15 @@ for column in ("annulus_hist_counts", "embryo_hist_counts"):
 assert (raw["source_image_product_key"] == "RFP__projection__max").all(), "must be RFP pixels"
 
 CENTERS = (np.arange(2048) + 0.5) * HIST_BIN_WIDTH_DN
-nulls = {w: estimate_well_null(g.to_dict("records")) for w, g in raw.groupby("well_id")}
+# NULL PER (WELL, TIMEPOINT). Pooling a well's annuli across timepoints assumes the background is
+# stationary, which is false here: the three timepoints are three separate ND2s from three days at
+# two different exposures. MEASURED on A01 -- the pooled null gives 400 DN while t0's own background
+# is 656 DN, a 256 DN under-subtraction on a ~1100 DN signal (23% error), biased toward exactly the
+# timepoint whose exposure differs.
+nulls = {
+    key: estimate_well_null(g.to_dict("records"))
+    for key, g in raw.groupby(["well_id", "time_index"])
+}
 classes = pd.read_csv(str(Path(__file__).resolve().parents[1] / "output" / "dosage_per_timepoint.csv")) if Path(str(Path(__file__).resolve().parents[1] / "output" / "dosage_per_timepoint.csv")).exists() else None
 
 
@@ -71,7 +79,7 @@ def pixels_from_hist(counts) -> np.ndarray:
 
 rows = []
 for _, r in raw.iterrows():
-    null = nulls[r["well_id"]]
+    null = nulls[(r["well_id"], int(r["time_index"]))]
     px = pixels_from_hist(r["embryo_hist_counts"])
     bg = px - null["null_mode_dn"]          # background-corrected, NOT clipped at zero
     exposure = float(r.get("exposure_ms", np.nan))

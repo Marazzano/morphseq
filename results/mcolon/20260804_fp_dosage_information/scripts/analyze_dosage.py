@@ -70,22 +70,25 @@ def hist_mean(counts: list[int]) -> float:
     return float((counts * centers).sum() / counts.sum()) if counts.sum() else float("nan")
 
 
-# --- pooled null, per well -------------------------------------------------------------------
-print("\n=== POOLED BACKGROUND NULL (per well) ===")
+# --- null, per (well, TIMEPOINT) --------------------------------------------------------------
+# Pooling across timepoints assumes a stationary background. False here: three separate ND2s from
+# three days at two exposures. MEASURED on A01 -- pooled gives 400 DN while t0's own background is
+# 656 DN, a 256 DN under-subtraction on a ~1100 DN signal, biased toward exactly the timepoint whose
+# exposure differs.
+print("\n=== BACKGROUND NULL (per well x timepoint) ===")
 nulls = {}
-for well, group in raw.groupby("well_id"):
+for (well, t), group in raw.groupby(["well_id", "time_index"]):
     null = estimate_well_null(group.to_dict("records"))
-    nulls[well] = null
+    nulls[(well, int(t))] = null
     print(
-        f"{well}  mode={null['null_mode_dn']:8.1f}  sigma={null['null_robust_sigma_dn']:7.1f}  "
-        f"px={null['null_pooled_px']:>10,}  drift={null['null_drift_dn']:6.1f}  "
-        f"by_time={ {k: round(v, 1) for k, v in null['null_mode_dn_by_time'].items()} }"
+        f"{well} t{t}  mode={null['null_mode_dn']:8.1f}  sigma={null['null_robust_sigma_dn']:7.1f}  "
+        f"px={null['null_pooled_px']:>10,}"
     )
 
 # --- correction ------------------------------------------------------------------------------
 rows = []
 for _, row in raw.iterrows():
-    null = nulls[row["well_id"]]
+    null = nulls[(row["well_id"], int(row["time_index"]))]
     embryo_mean = hist_mean(row["embryo_hist_counts"])
     rows.append(
         {

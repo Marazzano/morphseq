@@ -55,11 +55,19 @@ def hist_mean(counts) -> float:
 # --- background, per well ---------------------------------------------------------------------
 # The null stays per WELL (pooled over that well's timepoints) because it estimates the optical
 # background of a physical well, which is a property of the well and its rim -- not of a timepoint.
-nulls = {w: estimate_well_null(g.to_dict("records")) for w, g in raw.groupby("well_id")}
+# NULL PER (WELL, TIMEPOINT). Pooling a well's annuli across timepoints assumes the background is
+# stationary, which is false here: the three timepoints are three separate ND2s from three days at
+# two different exposures. MEASURED on A01 -- the pooled null gives 400 DN while t0's own background
+# is 656 DN, a 256 DN under-subtraction on a ~1100 DN signal (23% error), biased toward exactly the
+# timepoint whose exposure differs.
+nulls = {
+    key: estimate_well_null(g.to_dict("records"))
+    for key, g in raw.groupby(["well_id", "time_index"])
+}
 
 rows = []
 for _, row in raw.iterrows():
-    null = nulls[row["well_id"]]
+    null = nulls[(row["well_id"], int(row["time_index"]))]
     mean_dn = hist_mean(row["embryo_hist_counts"])
     exposure = float(row.get("exposure_ms", float("nan")))
     bgsub = mean_dn - null["null_mode_dn"]

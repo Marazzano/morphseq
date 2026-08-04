@@ -75,11 +75,24 @@ print(f"=== {len(raw)} embryo-times, {raw.well_id.nunique()} wells ===")
 print(raw.groupby("genotype")["well_id"].nunique().to_string())
 
 CENTERS = (np.arange(2048) + 0.5) * HIST_BIN_WIDTH_DN
-nulls = {w: estimate_well_null(g.to_dict("records")) for w, g in raw.groupby("well_id")}
+# THE NULL IS PER (WELL, TIMEPOINT), NOT PER WELL. An earlier version pooled a well's annuli across
+# all three timepoints, justified as "background is a property of the physical well". That does not
+# hold here: the three timepoints are three SEPARATE ND2s acquired on three different days, and the
+# fluorescence exposure differs between them (600 ms at t33hpf vs 300 ms at t52/t77). Rim
+# autofluorescence in a 600 ms frame is simply not the same DN as in a 300 ms frame, so one pooled
+# estimate is wrong for every timepoint -- it over-subtracts the short exposures and under-subtracts
+# the long one, in the same direction as a dosage difference.
+#
+# Per (well, timepoint) also makes the background contemporaneous with the signal it corrects:
+# same well, same session, same lamp state, same media.
+nulls = {
+    key: estimate_well_null(g.to_dict("records"))
+    for key, g in raw.groupby(["well_id", "time_index"])
+}
 
 rows = []
 for _, r in raw.iterrows():
-    null = nulls[r["well_id"]]
+    null = nulls[(r["well_id"], int(r["time_index"]))]
     counts = np.asarray(r["embryo_hist_counts"], dtype=float)
     mean_dn = float((counts * CENTERS[: len(counts)]).sum() / counts.sum()) if counts.sum() else np.nan
     bgsub = mean_dn - null["null_mode_dn"]
