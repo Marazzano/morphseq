@@ -32,13 +32,17 @@ from data_pipeline.shared.identifiers.constructors import (
     build_snip_transform_id,
 )
 from data_pipeline.shared.identifiers.parsers import parse_image_id
-from data_pipeline.object_extraction.snip_processing.augmentation import augment_snip
 from data_pipeline.object_extraction.snip_processing.legacy_snip_paths import (
     legacy_flat_snip_path,
     link_legacy_flat_path,
 )
 from data_pipeline.object_extraction.snip_processing.snip_product_keys import (
     DEFAULT_BF_SNIP_PRODUCT_KEY,
+    parse_snip_product_key,
+)
+from data_pipeline.object_extraction.snip_processing.snip_recipes import (
+    assert_source_dtype_is_acceptable,
+    render_snip,
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform import (
     CENTERING_LATCHED,
@@ -63,13 +67,10 @@ ORIENTATION_SOURCE_MASS_DISTRIBUTION = "embryo_mass_distribution"
 NO_YOLK_POLICY = "fallback_mass_distribution"
 
 
-class SnipRecipeDtypeError(ValueError):
-    """A source frame's dtype does not match what the rendering recipe requires.
-
-    Raised per row rather than per job on purpose: the caller catches Exception per mask and marks
-    ``is_valid_snip=False`` with a reason, so one non-uint8 frame invalidates its own snip and is
-    reported, instead of taking down a well that also holds perfectly good BF rows.
-    """
+# NOTE: the dtype precondition moved to snip_recipes.SNIP_RECIPE_CONTRACTS, where each recipe
+# declares what it accepts. It raises SnipRecipeError, which the per-row handler catches and records
+# as is_valid_snip=False -- so one bad frame invalidates its own snip rather than taking down a well
+# that also holds good rows.
 
 def _physical_embryo_id_by_track(
     physical_embryo_registry: pd.DataFrame,
@@ -159,6 +160,9 @@ def run_snip_processing(
     # clahe_blend renderer, and naming that explicitly is what lets the path, the inventory column,
     # and the compatibility alias all agree. P2 turns it into a parameter.
     snip_product_key = DEFAULT_BF_SNIP_PRODUCT_KEY
+    # DERIVED from the key, never passed alongside it: the key already says which recipe this is,
+    # and a second parameter could disagree with it.
+    _source_image_product_key, snip_recipe = parse_snip_product_key(snip_product_key)
     # Every alias created this run, for debugging external breakage without archaeology.
     legacy_alias_manifest: list[dict[str, str]] = []
 
@@ -297,14 +301,12 @@ def run_snip_processing(
             # Until the recipe seam is reachable, this entrypoint IS the legacy BF path, so it
             # asserts its own precondition rather than quietly coercing. Refusing is the whole
             # point: a loud failure is recoverable, a silently rescaled uint16 frame is not.
-            if image.dtype != np.uint8:
-                raise SnipRecipeDtypeError(
-                    f"snip_processing: legacy BF snip rendering requires a uint8 source; got "
-                    f"{image.dtype} from {image_path}. Non-uint8 frames must be rendered through a "
-                    "dtype-preserving snip recipe (no_change), not coerced here -- the previous "
-                    "per-frame rescale_intensity(in_range='image') destroyed absolute intensity "
-                    "and therefore any cross-embryo comparison."
-                )
+            # The recipe states its own dtype precondition (snip_recipes.SNIP_RECIPE_CONTRACTS),
+            # so this is a DECLARATION rather than the dtype-as-proxy-for-recipe inference it
+            # replaced. clahe_blend requires uint8; no_change accepts anything and preserves it.
+            assert_source_dtype_is_acceptable(
+                image, snip_recipe=snip_recipe, source=str(image_path)
+            )
 
             # Render through the transform seam: derive the physical recipe from the MASK alone,
             # resolve it onto this frame's pixel grid, then rasterize image and mask through the
@@ -368,11 +370,14 @@ def run_snip_processing(
             )
             out["centering"] = resolved.centering
 
-            augmented, _ = augment_snip(
+            # Photometry is the recipe's job; geometry already happened above. no_change returns
+            # the cropped pixels untouched, so a uint16 source stays uint16 at full scale.
+            augmented = render_snip(
                 image_cropped,
-                mask_cropped,
-                background_mean,
-                background_std,
+                snip_recipe=snip_recipe,
+                mask=mask_cropped,
+                background_mean=background_mean,
+                background_std=background_std,
                 blend_radius_um=float(blend_radius_um),
                 pixel_size_um=float(target_pixel_size_um),
             )

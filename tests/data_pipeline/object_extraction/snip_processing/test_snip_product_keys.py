@@ -150,3 +150,59 @@ class TestRecipeContracts:
 
     def test_no_change_is_measurable(self):
         assert_recipe_is_quantitative(NO_CHANGE)
+
+
+class TestRenderDispatch:
+    """The recipe decides photometry; geometry already happened."""
+
+    def test_no_change_preserves_uint16_values_and_dtype(self):
+        # THE POINT OF P2. A 12000-DN pixel must read back as 12000, not be compressed into 8 bits.
+        from data_pipeline.object_extraction.snip_processing.snip_recipes import render_snip
+
+        source = np.array([[3000, 12000], [0, 65535]], dtype=np.uint16)
+        out = render_snip(source, snip_recipe=NO_CHANGE)
+        assert out.dtype == np.uint16
+        np.testing.assert_array_equal(out, source)
+
+    def test_no_change_does_not_copy_or_cast(self):
+        # A cast here would be exactly the silent dtype conversion the recipe promises not to do,
+        # and it would be invisible in a diff.
+        from data_pipeline.object_extraction.snip_processing.snip_recipes import render_snip
+
+        source = np.zeros((4, 4), dtype=np.uint16)
+        assert render_snip(source, snip_recipe=NO_CHANGE) is source
+
+    def test_clahe_blend_changes_pixels(self):
+        # The complement: if this returned its input unchanged, the dispatcher would be wired to
+        # the wrong renderer and every BF snip would silently lose its augmentation.
+        from data_pipeline.object_extraction.snip_processing.snip_recipes import render_snip
+
+        rng = np.random.default_rng(0)
+        image = rng.integers(50, 200, (32, 32), dtype=np.uint8)
+        mask = np.zeros((32, 32), dtype=np.uint8)
+        mask[8:24, 8:24] = 1
+        out = render_snip(
+            image, snip_recipe=CLAHE_BLEND, mask=mask,
+            background_mean=12.0, background_std=3.0,
+            blend_radius_um=20.0, pixel_size_um=7.8,
+        )
+        assert out.shape == image.shape
+        assert not np.array_equal(out, image)
+
+    def test_an_unknown_recipe_cannot_render(self):
+        from data_pipeline.object_extraction.snip_processing.snip_recipes import render_snip
+
+        with pytest.raises(SnipRecipeError, match="unknown snip_recipe"):
+            render_snip(np.zeros((2, 2), np.uint8), snip_recipe="asinh_scaled")
+
+    def test_every_contract_has_a_renderer(self):
+        # Pinned as a test as well as an import-time assert: a recipe with a contract but no
+        # renderer would pass plan validation and fail while rendering; a renderer with no contract
+        # would run without its dtype precondition ever being checked, which is the hazard-zero
+        # failure mode exactly.
+        from data_pipeline.object_extraction.snip_processing.snip_recipes import (
+            _SNIP_RECIPE_RENDERERS,
+            SNIP_RECIPE_CONTRACTS,
+        )
+
+        assert set(_SNIP_RECIPE_RENDERERS) == set(SNIP_RECIPE_CONTRACTS)

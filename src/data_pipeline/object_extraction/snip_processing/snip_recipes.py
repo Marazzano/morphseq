@@ -135,3 +135,78 @@ def assert_recipe_is_quantitative(snip_recipe: str) -> None:
             f"snip_recipe {snip_recipe!r} is photometric ({contract.summary}), so its pixels do not "
             "carry comparable intensity. Measure a non-photometric product instead."
         )
+
+
+def render_no_change(image: np.ndarray, **_ignored) -> np.ndarray:
+    """Identity. The geometry already happened; this recipe adds nothing.
+
+    Returned as-is rather than copied or cast: a cast here would be exactly the silent dtype
+    conversion the recipe promises not to do, and it would be invisible in a diff.
+    """
+    return image
+
+
+def render_clahe_blend(
+    image: np.ndarray,
+    *,
+    mask: np.ndarray,
+    background_mean: float,
+    background_std: float,
+    blend_radius_um: float,
+    pixel_size_um: float,
+    **_ignored,
+) -> np.ndarray:
+    """The historical BF path: CLAHE, then blend against synthetic background noise.
+
+    Photometric and proud of it -- this product is a model input, not a measurement. Imported
+    lazily so the recipe registry does not drag skimage's CLAHE into every module that merely wants
+    to KNOW what recipes exist.
+    """
+    from data_pipeline.object_extraction.snip_processing.augmentation import augment_snip
+
+    augmented, _clahe_only = augment_snip(
+        image,
+        mask,
+        background_mean,
+        background_std,
+        blend_radius_um=float(blend_radius_um),
+        pixel_size_um=float(pixel_size_um),
+    )
+    return augmented
+
+
+#: THE SINGLE SOURCE OF TRUTH for what a recipe DOES, keyed identically to SNIP_RECIPE_CONTRACTS
+#: (what a recipe REQUIRES). Two tables rather than one because they answer different questions and
+#: are consulted at different times -- the contract gates the source read, the renderer runs after
+#: geometry -- but they must cover the same recipes, which the assert below enforces at import.
+_SNIP_RECIPE_RENDERERS = {
+    NO_CHANGE: render_no_change,
+    CLAHE_BLEND: render_clahe_blend,
+}
+
+# Bidirectional, and at IMPORT time. A recipe with a contract but no renderer would pass plan
+# validation and fail a layer deeper while rendering; a renderer with no contract would run without
+# its dtype precondition ever being checked -- which is precisely the hazard-zero failure mode.
+_declared, _wired = set(SNIP_RECIPE_CONTRACTS), set(_SNIP_RECIPE_RENDERERS)
+if _declared != _wired:
+    raise RuntimeError(
+        "snip_recipes: contract/renderer tables disagree. "
+        f"declared-not-wired={sorted(_declared - _wired)}, "
+        f"wired-not-declared={sorted(_wired - _declared)}. Adding a recipe means writing the "
+        "renderer, registering it, and declaring its contract -- all three."
+    )
+
+
+def render_snip(image: np.ndarray, *, snip_recipe: str, **kwargs) -> np.ndarray:
+    """Apply one recipe's photometric transform to an already-cropped snip.
+
+    Geometry has happened by the time this runs; every recipe sees the same pixels and differs only
+    in what it does to their values.
+    """
+    try:
+        renderer = _SNIP_RECIPE_RENDERERS[str(snip_recipe)]
+    except KeyError:
+        raise SnipRecipeError(
+            f"unknown snip_recipe {snip_recipe!r}. Supported: {sorted(SUPPORTED_SNIP_RECIPES)}."
+        ) from None
+    return renderer(image, **kwargs)
