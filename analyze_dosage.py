@@ -161,16 +161,44 @@ print(info_df.to_string(index=False))
 # Copy number is FIXED per embryo. If intensity for one embryo swings across its own timelapse by
 # as much as it differs between embryos, then between-embryo brightness is not reading dosage and
 # no clustering on it can recover copy number.
+# EXPOSURE NORMALIZATION. Reads exposure_ms off the row when frame_inventory carries it (see
+# nd2_illumination.py); falls back to the MEASURED pbx values otherwise, stated explicitly rather
+# than silently, so a run against artifacts that predate the column is still interpretable and is
+# never mistaken for a run that had real per-frame exposure.
+_MEASURED_PBX_EXPOSURE_MS = {0: 600.0, 1: 300.0, 2: 300.0}
+if "exposure_ms" in raw.columns and raw["exposure_ms"].notna().any():
+    exposure_by_time = raw.groupby("time_index")["exposure_ms"].first().to_dict()
+    print("\n=== EXPOSURE: read from frame_inventory ===")
+else:
+    exposure_by_time = _MEASURED_PBX_EXPOSURE_MS
+    print("\n=== EXPOSURE: frame_inventory lacks exposure_ms; using MEASURED pbx values ===")
+    print("    (t0=600ms, t1=t2=300ms, read from the ND2 text metadata -- see"
+          " DOSAGE_INFORMATION_ANALYSIS.md)")
+print("   ", {k: float(v) for k, v in exposure_by_time.items()})
+
+corrected["exposure_ms"] = corrected["time_index"].map(exposure_by_time)
+corrected["bgsub_per_ms"] = corrected["embryo_mean_bgsub_dn"] / corrected["exposure_ms"]
+
 print("\n=== WITHIN-EMBRYO VARIATION ACROSS TIME (dosage is fixed; this should be small) ===")
 by_embryo = corrected.assign(track=corrected["mask_id"].str.replace(r"_t\d+_", "_", regex=True))
 for track, group in by_embryo.groupby("track"):
-    vals = group.sort_values("time_index")["embryo_mean_bgsub_dn"].to_numpy()
-    lo, hi = float(vals.min()), float(vals.max())
-    print(f"  {track[-28:]:28s} {np.array2string(vals, precision=0):>28s}  fold={hi / max(lo, 1e-9):6.1f}x")
+    ordered = group.sort_values("time_index")
+    vals = ordered["embryo_mean_bgsub_dn"].to_numpy()
+    norm = ordered["bgsub_per_ms"].to_numpy()
+    fold = float(vals.max()) / max(float(vals.min()), 1e-9)
+    fold_norm = float(np.nanmax(norm)) / max(float(np.nanmin(norm)), 1e-9)
+    print(
+        f"  {track[-24:]:24s} {np.array2string(vals, precision=0):>24s} fold={fold:5.1f}x"
+        f"  | /ms {np.array2string(norm, precision=2):>22s} fold={fold_norm:5.1f}x"
+    )
 
 within = by_embryo.groupby("track")["embryo_mean_bgsub_dn"].agg(lambda v: v.max() / max(v.min(), 1e-9))
+within_norm = by_embryo.groupby("track")["bgsub_per_ms"].agg(
+    lambda v: np.nanmax(v) / max(np.nanmin(v), 1e-9)
+)
 between = corrected["embryo_mean_bgsub_dn"].max() / max(corrected["embryo_mean_bgsub_dn"].min(), 1e-9)
 print(f"\n  median WITHIN-embryo fold range : {within.median():.1f}x")
+print(f"  median WITHIN-embryo, EXPOSURE-NORMALIZED : {within_norm.median():.1f}x")
 print(f"  BETWEEN-embryo fold range       : {between:.1f}x")
 print(
     "  If within is comparable to between, brightness is dominated by something that changes over\n"
