@@ -58,6 +58,17 @@ CHANNEL_INTENSITY_GEOMETRY_COLUMNS: tuple[str, ...] = (
     "image_micrometers_per_pixel",
 )
 
+# HOW THE PIXELS WERE ACQUIRED. Not in the required contract: these are NaN on any shard whose
+# frame_inventory predates exposure capture, and requiring them would make the entire installed base
+# of artifacts fail to merge -- the same required-vs-emitted mistake already made once on the
+# acquisition inventory. They are emitted on every new row and are what lets an analysis normalize
+# per-ms instead of guessing.
+CHANNEL_INTENSITY_ACQUISITION_COLUMNS: tuple[str, ...] = (
+    "exposure_ms",
+    "illumination_power",
+    "dia_iris_intensity",
+)
+
 CHANNEL_INTENSITY_COLUMNS: tuple[str, ...] = (
     *CHANNEL_INTENSITY_IDENTITY_COLUMNS,
     *CHANNEL_INTENSITY_MEASUREMENT_COLUMNS,

@@ -138,10 +138,20 @@ def run_channel_intensity(
                 mask_id=str(mask_row["mask_id"]),
                 source_image_product_key=source_image_product_key,
                 source_image_id=str(frame["image_id"]),
-                # Carried so a post-hoc exposure table can be joined. Exposure and gain are NOT in
-                # frame_inventory today, so cross-experiment dosage comparison stays unsupported.
                 image_micrometers_per_pixel=um_per_px,
                 elapsed_time_s=float(frame.get("elapsed_time_s", float("nan"))),
+                # ACQUISITION SETTINGS, COPIED ONTO THE MEASUREMENT ROW. Without these the analysis
+                # has to guess how the pixels were acquired, and guessing is how a 2x exposure
+                # change reads as a 2x dosage effect -- measured on this very experiment, where the
+                # fluorescence channel ran 600 ms one day and 300 ms the next two.
+                #
+                # NaN when the frame_inventory predates the columns, never a default: a fabricated
+                # exposure is indistinguishable from a measured one, and normalizing by a guess is
+                # exactly the silent error this is here to prevent.
+                **{
+                    column: float(frame.get(column, float("nan")))
+                    for column in ("exposure_ms", "illumination_power", "dia_iris_intensity")
+                },
             )
             rows.append(evidence)
 
