@@ -1338,6 +1338,15 @@ def cmd_merge_latent_embeddings(args: argparse.Namespace) -> None:
     merged.to_parquet(args.output_parquet, index=False)
 
 
+def _frame_inventory_validation_scopes() -> tuple[str, ...]:
+    """The validator's scope vocabulary, imported rather than restated."""
+    from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_validation_rules import (
+        VALIDATION_SCOPES,
+    )
+
+    return VALIDATION_SCOPES
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1459,7 +1468,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_fi_validate.add_argument("--image-root", type=Path, default=None)
     p_fi_validate.add_argument("--check-sources", default="false")
     p_fi_validate.add_argument(
-        "--validation-scope", choices=["per_well", "merged"], default="per_well"
+        # DERIVED from the validator's own vocabulary, never restated. A hardcoded list here is a
+        # second source of truth that drifts silently: adding per_well_product to the rules module
+        # left this literal stale, so the DAG passed a scope the parser rejected -- caught only by
+        # a real run, since no test drives this verb's argv.
+        "--validation-scope",
+        choices=list(_frame_inventory_validation_scopes()),
+        default="per_well",
     )
     p_fi_validate.set_defaults(func=cmd_validate_frame_inventory)
 

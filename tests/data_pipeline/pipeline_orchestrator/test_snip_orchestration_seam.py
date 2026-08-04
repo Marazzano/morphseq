@@ -184,3 +184,37 @@ class TestMalformedKeysFailBeforeRendering:
 
         with pytest.raises(ValueError):
             parse_snip_product_key(bad)
+
+
+class TestValidationScopesAreNotRestatedAtTheCLI:
+    """A hardcoded choices= list is a second source of truth, and it drifted.
+
+    Adding per_well_product to the validator left tasks.py's literal
+    ["per_well", "merged"] stale, so the DAG passed a scope its own parser rejected. Nothing caught
+    it -- the validator's tests exercise the function, and no test drove this verb's argv -- so it
+    surfaced only on a real cluster run, four jobs deep.
+    """
+
+    def test_every_validator_scope_is_accepted_by_the_parser(self):
+        from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_validation_rules import (
+            VALIDATION_SCOPES,
+        )
+
+        for scope in VALIDATION_SCOPES:
+            args = build_parser().parse_args([
+                "validate-frame-inventory",
+                "--input-csv", "/w/frame_inventory.csv",
+                "--output-flag", "/w/frame_inventory.csv.validated",
+                "--validation-scope", scope,
+            ])
+            assert args.validation_scope == scope
+
+    def test_an_unknown_scope_is_still_rejected(self):
+        # Deriving the list must not turn the argument into a free-form string.
+        with pytest.raises(SystemExit):
+            build_parser().parse_args([
+                "validate-frame-inventory",
+                "--input-csv", "/w/frame_inventory.csv",
+                "--output-flag", "/w/frame_inventory.csv.validated",
+                "--validation-scope", "per_galaxy",
+            ])
