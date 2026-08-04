@@ -2,12 +2,16 @@
 
 Encodes the visual grammar the notebook uses, so the notebook stays declarative:
 
-    colour   = rearing temperature (continuous, RdBu_r — cold blue, hot red)
+    colour   = rearing temperature (continuous, RdBu_r — cold blue, WHITE AT 28C, hot red)
     marker   = perturbation target (symbol per crispant target)
     black curve = the wildtype reference spline
 
 Temperature is the continuous variable of interest, so it gets the colour channel; target is
 categorical and gets symbols. That is the opposite of the usual default and is deliberate.
+
+The colour range is anchored at 28C rather than at the data's own min/max — see
+``gene7_config.temperature_limits``. White therefore means standard rearing temperature in every
+panel of every notebook, instead of drifting with whichever cohorts are in the current frame.
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ PCA_COLUMNS: tuple[str, ...] = tuple(f"PCA_{p:02}_bio" for p in range(5))
 SYMBOLS_2D: tuple[str, ...] = ("circle", "square", "diamond", "cross", "triangle-up", "x")
 SYMBOLS_3D: tuple[str, ...] = ("circle", "square", "diamond", "cross", "x")
 
-TEMPERATURE_SCALE = "RdBu_r"
+from gene7_config import REFERENCE_TEMPERATURE, TEMPERATURE_SCALE, temperature_limits
+
 SPLINE_COLOUR = "black"
 
 FONT = dict(family="Arial, sans-serif", size=15, color="black")
@@ -115,6 +120,7 @@ def plot_pca_2d(
 
     symbols = _symbol_map(groups, SYMBOLS_2D)
     temperatures = pd.to_numeric(frame["temperature"], errors="coerce")
+    temp_min, temp_max = temperature_limits(temperatures)
     for group in groups:
         subset = frame.loc[frame["perturbation_group"] == group]
         figure.add_trace(
@@ -128,10 +134,10 @@ def plot_pca_2d(
                     symbol=symbols[group],
                     color=pd.to_numeric(subset["temperature"], errors="coerce"),
                     colorscale=TEMPERATURE_SCALE,
-                    cmin=temperatures.min(),
-                    cmax=temperatures.max(),
+                    cmin=temp_min,
+                    cmax=temp_max,
                     line=dict(color="black", width=0.6),
-                    colorbar=dict(title="temp (C)", len=0.55, y=0.5),
+                    colorbar=dict(title=f"temp (C)<br>white={REFERENCE_TEMPERATURE:.0f}C", len=0.55, y=0.5),
                     showscale=(group == groups[0]),
                 ),
                 customdata=np.stack(
@@ -187,6 +193,7 @@ def plot_pca_3d(
     groups = sorted(frame["perturbation_group"].unique())
     symbols = _symbol_map(groups, SYMBOLS_3D)
     temperatures = pd.to_numeric(frame["temperature"], errors="coerce")
+    temp_min, temp_max = temperature_limits(temperatures)
 
     figure = go.Figure()
 
@@ -217,10 +224,10 @@ def plot_pca_3d(
                     symbol=symbols[group],
                     color=pd.to_numeric(subset["temperature"], errors="coerce"),
                     colorscale=TEMPERATURE_SCALE,
-                    cmin=temperatures.min(),
-                    cmax=temperatures.max(),
+                    cmin=temp_min,
+                    cmax=temp_max,
                     line=dict(color="black", width=0.5),
-                    colorbar=dict(title="temp (C)", len=0.5, y=0.5, x=1.02),
+                    colorbar=dict(title=f"temp (C)<br>white={REFERENCE_TEMPERATURE:.0f}C", len=0.5, y=0.5, x=1.02),
                     showscale=(group == groups[0]),
                 ),
                 customdata=np.stack(

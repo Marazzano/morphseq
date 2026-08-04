@@ -72,7 +72,8 @@ fi
 
 BACK_HALF_SUBMISSION="$(
     qsub -v "${SEAHUB_QSUB_ENV}" -hold_jid "${MATERIALIZE_JOB_ID}" \
-        -t "1-${SHARD_COUNT}" -tc 1 -l gpgpu=TRUE,cuda=1 \
+        -t "1-${SHARD_COUNT}" -tc "${SEAHUB_GPU_CONCURRENCY}" \
+        -l gpgpu=TRUE,cuda=1 \
         "${WORK_DIR}/submit_seahub_back_half.sge"
 )"
 echo "${BACK_HALF_SUBMISSION}"

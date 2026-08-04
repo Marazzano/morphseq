@@ -22,10 +22,11 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib import gridspec
 
+from gene7_config import REFERENCE_TEMPERATURE, TEMPERATURE_SCALE, temperature_limits
+
 CONTROL_COLOUR = "#3B6EA5"
 CRISPANT_COLOUR = "#C0392B"
 NULL_COLOUR = "0.55"
-TEMPERATURE_SCALE = "RdBu_r"
 
 FONT_FAMILY = "DejaVu Sans"
 
@@ -202,8 +203,6 @@ def dispersion_scatter(scores: pd.DataFrame, summary: pd.DataFrame, *, figsize=(
     them, putting points above the diagonal. Points on or below the line say the crispant group is
     as homogeneous as the control group, which would undercut the argument for a graded score.
     """
-    from scipy import stats
-
     rows = []
     for contrast, block in scores.groupby("contrast"):
         control = block.loc[block["is_crispant"] == 0, "s"]
@@ -225,11 +224,11 @@ def dispersion_scatter(scores: pd.DataFrame, summary: pd.DataFrame, *, figsize=(
 
     figure, axis = plt.subplots(figsize=figsize)
     markers = {t: m for t, m in zip(sorted(frame["target"].unique()), ("o", "s", "D", "^"))}
+    vmin, vmax = temperature_limits(frame["temperature"])
     for target, block in frame.groupby("target"):
         axis.scatter(
             block["sd_control"], block["sd_crispant"],
-            c=block["temperature"], cmap=TEMPERATURE_SCALE,
-            vmin=frame["temperature"].min(), vmax=frame["temperature"].max(),
+            c=block["temperature"], cmap=TEMPERATURE_SCALE, vmin=vmin, vmax=vmax,
             s=78, marker=markers[target], edgecolor="0.25", linewidth=0.7, zorder=3,
         )
 
@@ -242,22 +241,16 @@ def dispersion_scatter(scores: pd.DataFrame, summary: pd.DataFrame, *, figsize=(
     axis.set_xlabel("SD of $s$ within matched controls")
     axis.set_ylabel("SD of $s$ within crispants")
 
-    # The figure's whole claim is "points sit above the line", so it carries its own test: a
-    # Wilcoxon over the 36 log ratios, plus how many clear their own refit-label permutation null.
-    ratios = frame["log_sd_ratio"].dropna()
-    above = int((ratios > 0).sum())
-    wilcoxon_p = float(stats.wilcoxon(ratios)[1]) if len(ratios) > 5 else np.nan
-    individually = int((frame["q_dispersion"] < 0.1).sum())
+    # The figure's claim is "points sit above the line", so the readout states that tally directly:
+    # how many contrasts land above it, the typical fold difference, and how many clear their OWN
+    # refit-label permutation null. No pooled test is reported. A Wilcoxon over the log ratios used
+    # to sit here and was deleted: it treats 36 contrasts as 36 independent draws when they are four
+    # targets crossed with the same handful of conditions, sharing control wells, so its p-value
+    # counts the same clutch several times and is far smaller than the design supports. The
+    # permutation null is the honest per-contrast test, and consistency is the honest aggregate one.
     axis.set_title(
         "Are crispant clutches more heterogeneous than controls?\n"
         "(the mosaic-F0 premise, stated as a picture)", fontsize=11,
-    )
-    axis.text(
-        0.03, 0.985,
-        f"{above}/{len(ratios)} above the line\n"
-        f"Wilcoxon p = {wilcoxon_p:.1e}\n"
-        f"{individually}/{len(frame)} individually q<0.1",
-        transform=axis.transAxes, va="top", ha="left", fontsize=9, color="0.25",
     )
 
     handles = [
@@ -267,11 +260,10 @@ def dispersion_scatter(scores: pd.DataFrame, summary: pd.DataFrame, *, figsize=(
     ]
     axis.legend(handles=handles, title="target", loc="lower right", fontsize=9)
 
-    mappable = plt.cm.ScalarMappable(
-        cmap=TEMPERATURE_SCALE,
-        norm=plt.Normalize(frame["temperature"].min(), frame["temperature"].max()),
-    )
-    figure.colorbar(mappable, ax=axis, fraction=0.04, pad=0.02).set_label("temperature (C)")
+    mappable = plt.cm.ScalarMappable(cmap=TEMPERATURE_SCALE, norm=plt.Normalize(vmin, vmax))
+    bar = figure.colorbar(mappable, ax=axis, fraction=0.04, pad=0.02)
+    bar.set_label(f"temperature (C)\n(white = {REFERENCE_TEMPERATURE:.0f}C)")
+    bar.ax.axhline(REFERENCE_TEMPERATURE, color="0.35", linewidth=0.9)
     figure.tight_layout()
     return figure, frame
 
@@ -475,6 +467,7 @@ def confound_scatter(summary: pd.DataFrame, *, figsize=(11, 4.6)):
     figure, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
     markers = {t: m for t, m in zip(sorted(summary["target"].unique()), ("o", "s", "D", "^"))}
     random_median = float(summary["random_angle_median"].iloc[0])
+    vmin, vmax = temperature_limits(summary["temperature"])
 
     for axis, column, title in (
         (axes[0], "angle_to_stage", "angle to control stage axis"),
@@ -483,8 +476,7 @@ def confound_scatter(summary: pd.DataFrame, *, figsize=(11, 4.6)):
         for target, block in summary.groupby("target"):
             axis.scatter(
                 block[column], block["loo_auc"],
-                c=block["temperature"], cmap=TEMPERATURE_SCALE,
-                vmin=summary["temperature"].min(), vmax=summary["temperature"].max(),
+                c=block["temperature"], cmap=TEMPERATURE_SCALE, vmin=vmin, vmax=vmax,
                 s=76, marker=markers[target], edgecolor="0.25", linewidth=0.7, zorder=3,
             )
         axis.axhline(0.5, color=NULL_COLOUR, linestyle="--", linewidth=1.1, zorder=1)
@@ -506,11 +498,10 @@ def confound_scatter(summary: pd.DataFrame, *, figsize=(11, 4.6)):
         for t in sorted(summary["target"].unique())
     ]
     axes[0].legend(handles=handles, title="target", fontsize=9, loc="lower left")
-    mappable = plt.cm.ScalarMappable(
-        cmap=TEMPERATURE_SCALE,
-        norm=plt.Normalize(summary["temperature"].min(), summary["temperature"].max()),
-    )
-    figure.colorbar(mappable, ax=axes, fraction=0.02, pad=0.015).set_label("temperature (C)")
+    mappable = plt.cm.ScalarMappable(cmap=TEMPERATURE_SCALE, norm=plt.Normalize(vmin, vmax))
+    bar = figure.colorbar(mappable, ax=axes, fraction=0.02, pad=0.015)
+    bar.set_label(f"temperature (C)\n(white = {REFERENCE_TEMPERATURE:.0f}C)")
+    bar.ax.axhline(REFERENCE_TEMPERATURE, color="0.35", linewidth=0.9)
     figure.suptitle("Interpretation checks: what else is the discriminant parallel to?",
                     fontsize=12, y=1.02)
     return figure
@@ -619,6 +610,86 @@ def contrast_strip_figure(strip: pd.DataFrame, *, title: str, per_row: int = 12,
     return figure
 
 
+
+
+def strip_crop_box(paths, *, threshold: float = 0.15, pad: int = 8):
+    """Union bounding box of the embryos across a set of snips, as (top, bottom, left, right).
+
+    Shared across every tile that will be drawn, deliberately. Cropping each embryo to its own
+    extent would rescale them independently and destroy exactly the size and elongation differences
+    the strip exists to show -- and it would make two strips drawn separately (one per class)
+    incomparable.
+    """
+    from matplotlib import image as mpimg
+
+    top, bottom, left, right, shape = np.inf, -np.inf, np.inf, -np.inf, None
+    for path in paths:
+        frame = mpimg.imread(path)
+        frame = frame if frame.ndim == 2 else frame[..., :3].mean(-1)
+        shape = frame.shape
+        mask = frame > threshold
+        rows, columns = np.where(mask.any(1))[0], np.where(mask.any(0))[0]
+        if not len(rows) or not len(columns):
+            continue
+        top, bottom = min(top, rows.min()), max(bottom, rows.max())
+        left, right = min(left, columns.min()), max(right, columns.max())
+    height, width = shape
+    return (max(int(top) - pad, 0), min(int(bottom) + pad, height - 1),
+            max(int(left) - pad, 0), min(int(right) + pad, width - 1))
+
+
+def contrast_strip_tight(strip: pd.DataFrame, *, title: str, per_row: int = 12,
+                         crop_box=None, threshold: float = 0.15, pad: int = 8,
+                         tile_in: float = 1.05, cmap: str = "gray",
+                         score_format: str = "+.3f", subtitle: str | None = None):
+    """``contrast_strip_figure`` with the dead space cropped out.
+
+    The raw snips are 576 x 256 with the embryo occupying about 19% of the frame, so tiling them
+    whole spends most of the figure on background. Cropping first buys roughly a 5x gain in embryo
+    area at the same figure size.
+
+    Pass ``crop_box`` from :func:`strip_crop_box` computed over the WHOLE contrast when drawing one
+    class at a time, so the per-class strips stay on a common scale and can be read against each
+    other. Left to ``None`` the box is computed from whatever rows are passed in.
+
+    Scores are printed to three decimals by default. Two decimals is not enough: this contrast has
+    a control at s = -0.2678 and a crispant at s = -0.2695, which both render as "-0.27" and look
+    like a duplicate or a mislabelling when they are neither.
+    """
+    from matplotlib import image as mpimg
+
+    present = strip.loc[strip["image_exists"]].reset_index(drop=True)
+    if present.empty:
+        raise ValueError(f"no resolvable images for {title!r}")
+    if crop_box is None:
+        crop_box = strip_crop_box(present["image_path"], threshold=threshold, pad=pad)
+    top, bottom, left, right = crop_box
+
+    cropped = []
+    for path in present["image_path"]:
+        frame = mpimg.imread(path)
+        frame = frame if frame.ndim == 2 else frame[..., :3].mean(-1)
+        cropped.append(frame[top:bottom + 1, left:right + 1])
+    aspect = (bottom - top + 1) / (right - left + 1)
+
+    n_rows = int(np.ceil(len(present) / per_row))
+    figure = plt.figure(figsize=(per_row * tile_in, n_rows * tile_in * aspect * 1.16))
+    grid = gridspec.GridSpec(n_rows, per_row, figure=figure, wspace=0.02, hspace=0.16)
+
+    for position, row in present.iterrows():
+        axis = figure.add_subplot(grid[position // per_row, position % per_row])
+        axis.imshow(cropped[position], cmap=cmap, aspect="equal")
+        axis.set_xticks([]); axis.set_yticks([])
+        colour = CRISPANT_COLOUR if row["is_crispant"] else CONTROL_COLOUR
+        for spine in axis.spines.values():
+            spine.set_edgecolor(colour); spine.set_linewidth(2.2)
+        axis.set_title(format(row["s"], score_format), fontsize=8.2, color=colour, pad=2.0)
+
+    figure.suptitle(f"{title}\n{subtitle if subtitle is not None else 'ordered by signed distance $s$'}",
+                    fontsize=12, y=1.0 + 0.05 / n_rows)
+    return figure
+
+
 def save(figure, path) -> Path:
     """Write a figure to PNG and close it."""
     target = Path(path).with_suffix(".png")
@@ -626,3 +697,22 @@ def save(figure, path) -> Path:
     figure.savefig(target)
     plt.close(figure)
     return target
+def save_inline(figure, path, *, dpi: int = 200, bbox="tight") -> Path:
+    """Write a PNG WITHOUT closing the figure, so it still renders in a notebook cell.
+
+    ``save`` closes the figure, which suppresses the inline display -- correct for a headless
+    driver script, wrong inside a notebook. Use this one there.
+
+    Pass ``bbox=None`` when two figures are meant to be overlayable. The default "tight" crops each
+    one to its own drawn content, so a panel carrying a colourbar and an otherwise identical panel
+    without one come out at different scales even when their axes rectangles match exactly.
+    """
+    target = Path(path).with_suffix(".png")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    # savefig(bbox_inches=None) does NOT mean "no cropping" -- print_figure falls back to
+    # rcParams["savefig.bbox"], which the house style sets to "tight". Override the rcParam too,
+    # otherwise bbox=None silently still crops and same-figsize panels come out different widths.
+    with mpl.rc_context({"savefig.bbox": bbox}):
+        figure.savefig(target, dpi=dpi, bbox_inches=bbox)
+    return target
+

@@ -254,3 +254,14 @@ def save(figure, path) -> Path:
     figure.savefig(target)
     plt.close(figure)
     return target
+def save_inline(figure, path, *, dpi: int = 200) -> Path:
+    """Write a PNG WITHOUT closing the figure, so it still renders in a notebook cell.
+
+    ``save`` closes the figure, which suppresses the inline display -- correct for a headless
+    driver script, wrong inside a notebook. Use this one there.
+    """
+    target = Path(path).with_suffix(".png")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(target, dpi=dpi, bbox_inches="tight")
+    return target
+

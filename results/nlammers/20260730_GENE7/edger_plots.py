@@ -284,6 +284,297 @@ def geometry_plot(geometry: pd.DataFrame, quality: pd.DataFrame, *, figsize=(11.
     return figure
 
 
+def overlap_counts(arm_coefficients: pd.DataFrame, reference_coefficients: pd.DataFrame, *,
+                   arm: str, reference: str = "binary_z", q_threshold: float = 0.10,
+                   exclude: "list[str] | None" = None) -> pd.DataFrame:
+    """Per-contrast split of two arms' hit sets into reference-only / shared / arm-only.
+
+    The two arms may live in DIFFERENT coefficient tables -- that is the point. The unsupervised
+    arms are fit by a separate script into ``data/unsupervised/coefficients.csv`` while the binary
+    reference stays in ``data/edger/coefficients.csv``, and comparing them means joining on
+    (contrast, cell_type) across files. Pass the same frame twice for a within-file comparison.
+    """
+    exclude = set(exclude or ())
+    arm_block = arm_coefficients[arm_coefficients["arm"] == arm]
+    reference_block = reference_coefficients[reference_coefficients["arm"] == reference]
+
+    def hit_sets(block):
+        return {contrast: set(group.loc[group["q_value"] < q_threshold, "cell_type"])
+                for contrast, group in block.groupby("contrast")}
+
+    found, reference_hits = hit_sets(arm_block), hit_sets(reference_block)
+    tested = arm_block.groupby("contrast")["cell_type"].nunique()
+
+    rows = []
+    for contrast in sorted(set(found) & set(reference_hits)):
+        if contrast in exclude:
+            continue
+        got, want = found[contrast], reference_hits[contrast]
+        shared, union = got & want, got | want
+        rows.append({
+            "contrast": contrast,
+            "reference_only": len(want - got), "shared": len(shared), "arm_only": len(got - want),
+            "reference_total": len(want), "arm_total": len(got),
+            "jaccard": len(shared) / len(union) if union else np.nan,
+            "recovery": len(shared) / len(want) if want else np.nan,
+            "precision": len(shared) / len(got) if got else np.nan,
+            "n_tested": int(tested.get(contrast, 0)),
+        })
+    return pd.DataFrame(rows)
+
+
+def contrast_sort_key(contrasts: pd.Series) -> pd.DataFrame:
+    """Sort key for contrast labels: target gene, then timepoint, then temperature.
+
+    Labels look like ``"wfs1a,wfs1b vs ctrl | 34C | 36hpf"``. Sorting on the raw string interleaves
+    the three factors and makes a 35-row axis unreadable; this groups all of one target together,
+    then walks time, then temperature within it.
+    """
+    parsed = contrasts.str.extract(
+        r"^(?P<target>.+?)\s+vs\s+ctrl\s*\|\s*(?P<temperature>[\d.]+)C\s*\|\s*(?P<timepoint>[\d.]+)hpf")
+    parsed["temperature"] = pd.to_numeric(parsed["temperature"], errors="coerce")
+    parsed["timepoint"] = pd.to_numeric(parsed["timepoint"], errors="coerce")
+    parsed["target"] = parsed["target"].fillna(contrasts)
+    return parsed
+
+
+def order_by_design(frame: pd.DataFrame, column: str = "contrast") -> pd.DataFrame:
+    """Reorder rows by target gene, then timepoint, then temperature."""
+    keys = contrast_sort_key(frame[column])
+    return (frame.assign(**{f"_{k}": v for k, v in keys.items()})
+            .sort_values(["_target", "_timepoint", "_temperature"])
+            .drop(columns=[f"_{k}" for k in keys.columns])
+            .reset_index(drop=True))
+
+
+def hit_overlap_bars(arm_coefficients: pd.DataFrame, quality: pd.DataFrame, *, arm: str,
+                     reference_coefficients: pd.DataFrame | None = None,
+                     reference: str = "binary_z", arm_label: str | None = None,
+                     q_threshold: float = 0.10, exclude: "list[str] | None" = None,
+                     title: str | None = None, figsize=(10.4, 7.0),
+                     fade_unvalidated: bool = False, fade_alpha: float = 0.30):
+    """Bar-only view: who resolves what, contrast by contrast, in three disjoint colours.
+
+    The middle panel of ``hit_overlap_plot`` on its own, with a pooled summary bar underneath, sized
+    for a slide. Works for any arm against any reference, in the same table or across two -- so the
+    supervised (``s_z``) and unsupervised (``pooled_pc1``, ``within_pc1``) comparisons render
+    identically and can be put side by side.
+
+    ``fade_unvalidated=True`` keeps every contrast on the axis but draws the ones whose morphology
+    axis failed the §1 validity gate at ``fade_alpha``. This is the honest way to show the full set:
+    a contrast whose axis never generalised has an ``arm_only`` count that is not evidence of
+    anything, so hiding those rows overstates coverage while giving them equal visual weight
+    overstates the result. Faded rows still contribute to the pooled "all" bar underneath.
+    """
+    reference_coefficients = (arm_coefficients if reference_coefficients is None
+                              else reference_coefficients)
+    label = arm_label or ARM_LABELS.get(arm, arm)
+    frame = overlap_counts(arm_coefficients, reference_coefficients, arm=arm,
+                           reference=reference, q_threshold=q_threshold, exclude=exclude)
+    frame = frame.merge(quality[["contrast", "usable"]], on="contrast", how="left")
+    frame["usable"] = frame["usable"].fillna(False).astype(bool)
+    frame = order_by_design(frame)
+
+    REFERENCE_ONLY, SHARED, ARM_ONLY = "0.62", "#8FA9C4", CRISPANT_COLOUR
+
+    figure = plt.figure(figsize=figsize)
+    grid = gridspec.GridSpec(2, 1, height_ratios=[len(frame), 3.4], hspace=0.34, figure=figure)
+
+    axis = figure.add_subplot(grid[0, 0])
+    positions = np.arange(len(frame))
+
+    # Per-bar RGBA rather than one colour per series: barh takes a colour LIST, which is the only
+    # way to vary alpha row by row within a single stacked series.
+    def shade(colour):
+        if not fade_unvalidated:
+            return colour
+        return [mpl.colors.to_rgba(colour, 1.0 if u else fade_alpha) for u in frame["usable"]]
+
+    axis.barh(positions, frame["reference_only"], height=0.74, color=shade(REFERENCE_ONLY),
+              zorder=3)
+    axis.barh(positions, frame["shared"], height=0.74, left=frame["reference_only"],
+              color=shade(SHARED), zorder=3)
+    axis.barh(positions, frame["arm_only"], height=0.74,
+              left=frame["reference_only"] + frame["shared"], color=shade(ARM_ONLY), zorder=3)
+    axis.set_yticks(positions)
+    axis.set_yticklabels([f"{'* ' if u else '   '}{c}" for c, u in
+                          zip(frame["contrast"], frame["usable"])], fontsize=7.4)
+    if fade_unvalidated:
+        for tick, usable in zip(axis.get_yticklabels(), frame["usable"]):
+            tick.set_color("0.2" if usable else "0.62")
+    axis.invert_yaxis()
+    axis.set_xlabel("cell types per contrast", fontsize=9)
+    axis.tick_params(labelbottom=True, labelsize=8.5)
+
+    # Explicit handles: with per-bar colour lists the automatic legend would sample whichever row
+    # happened to come first and could show a faded swatch as if it were the series colour.
+    handles = [mpl.patches.Patch(facecolor=colour, label=f"{name}  ({int(frame[column].sum())})")
+               for column, colour, name in
+               (("reference_only", REFERENCE_ONLY, "binary only"),
+                ("shared", SHARED, "shared"),
+                ("arm_only", ARM_ONLY, f"{label} only"))]
+    # Deliberately NO extra "faded = ..." entry. The faded and standard versions are meant to
+    # OVERLAY, so the legend has to stay the same size and shape in both; a fourth row shifts
+    # everything against the reference figure. The fade is explained in the caption, not the legend.
+    axis.legend(handles=handles, fontsize=9.2, loc="lower right")
+    axis.set_title(title or f"Cell types resolved: binary indicator versus {label}"
+                            f"      (* = validated morphology axis)", fontsize=11.5, pad=10)
+
+    # Independent x-axis: the pooled totals are an order of magnitude longer than any single
+    # contrast, so a shared scale flattens the per-contrast rows. Both panels carry visible ticks.
+    pooled = figure.add_subplot(grid[1, 0])
+    subsets = (("usable", frame[frame["usable"]]), ("all", frame))
+    y = np.arange(len(subsets))
+    left = np.zeros(len(subsets))
+    for column, colour in (("reference_only", REFERENCE_ONLY), ("shared", SHARED),
+                           ("arm_only", ARM_ONLY)):
+        widths = np.array([float(block[column].sum()) for _, block in subsets])
+        pooled.barh(y, widths, left=left, height=0.55, color=colour, edgecolor="white",
+                    linewidth=1.0, zorder=3)
+        for position, width, offset in zip(y, widths, left):
+            if width >= 18:
+                pooled.text(offset + width / 2, position, f"{int(width)}", ha="center",
+                            va="center", fontsize=9.5,
+                            color="white" if colour == ARM_ONLY else "0.15", zorder=4)
+        left += widths
+    pooled.set_yticks(y)
+    pooled.set_yticklabels([f"{name} ({len(block)})" for name, block in subsets], fontsize=9)
+    pooled.set_xlabel(f"cell types passing q < {q_threshold:g}   (pooled — note the separate scale)")
+    pooled.spines["left"].set_visible(False)
+    pooled.tick_params(axis="y", length=0)
+    return figure, frame
+
+
+def _pooled_scale(frame: pd.DataFrame) -> float:
+    """Divisor that brings pooled totals onto the per-contrast axis."""
+    per_contrast_max = (frame["reference_only"] + frame["shared"] + frame["arm_only"]).max()
+    pooled_max = float(frame[["reference_only", "shared", "arm_only"]].sum().sum())
+    return max(1.0, round(pooled_max / max(per_contrast_max, 1)))
+
+
+def hit_overlap_plot(coefficients: pd.DataFrame, quality: pd.DataFrame, *, arm: str = "s_z",
+                     q_threshold: float = 0.10, figsize=(14.2, 6.4)):
+    """The same comparison as ``geometry_plot``, counted in resolved cell types instead of vectors.
+
+    ``geometry_plot`` asks whether the morphology arm's COEFFICIENT VECTOR points the same way as
+    the binary arm's and how long it is. This asks the downstream question a reader actually cares
+    about: **which cell types does each one resolve, and how much do those sets overlap?**
+
+    The two can disagree, and here they do. ``T_std`` is a sum of squared standardised scores, so it
+    is driven by the magnitude of the strongest effects; a hit count saturates, because a cell type
+    at q = 1e-36 counts exactly as much as one at q = 0.09. The binary arm produces far more extreme
+    individual effects while resolving a similar number of cell types.
+
+    Three disjoint categories per contrast, which is the whole point of the middle panel:
+
+        binary-only   resolved by the class label, missed by the morphology score
+        shared        resolved by both
+        morph-only    resolved by the morphology score, missed by the class label
+
+    NO NEGATIVE CONTROL EXISTS FOR THE MORPH-ONLY SET. Unlike the within-crispant slope in §5, which
+    has the matched within-control slope beside it, nothing here bounds how many of the morph-only
+    hits are FDR noise. At q < 0.10 the expected false count is ~10% of whatever the arm calls. The
+    comparison is fair -- same one-predictor design, same df, same cell-type filter, same fixed
+    dispersion, same BH family -- but "fair" is not the same as "verified".
+    """
+    binary_sets, arm_sets, rows = {}, {}, []
+    for contrast, block in coefficients.groupby("contrast"):
+        b = block[block["arm"] == "binary_z"]
+        a = block[block["arm"] == arm]
+        if not len(a):
+            continue
+        binary_sets[contrast] = set(b.loc[b["q_value"] < q_threshold, "cell_type"])
+        arm_sets[contrast] = set(a.loc[a["q_value"] < q_threshold, "cell_type"])
+        shared = binary_sets[contrast] & arm_sets[contrast]
+        union = binary_sets[contrast] | arm_sets[contrast]
+        rows.append({
+            "contrast": contrast,
+            "binary_only": len(binary_sets[contrast] - arm_sets[contrast]),
+            "shared": len(shared),
+            "morph_only": len(arm_sets[contrast] - binary_sets[contrast]),
+            "binary_total": len(binary_sets[contrast]),
+            "arm_total": len(arm_sets[contrast]),
+            "jaccard": len(shared) / len(union) if union else np.nan,
+            "recovery": len(shared) / len(binary_sets[contrast]) if binary_sets[contrast] else np.nan,
+            "n_tested": a["cell_type"].nunique(),
+        })
+    frame = (pd.DataFrame(rows).merge(quality[["contrast", "usable", "loo_auc"]], on="contrast")
+             .sort_values(["shared", "binary_total"], ascending=False).reset_index(drop=True))
+
+    BINARY_ONLY, SHARED, MORPH_ONLY = "0.62", "#8FA9C4", CRISPANT_COLOUR
+    label = ARM_LABELS.get(arm, arm)
+
+    figure = plt.figure(figsize=figsize)
+    grid = gridspec.GridSpec(1, 3, width_ratios=[0.95, 1.55, 0.6], wspace=0.5, figure=figure)
+
+    # --- left: hit counts head to head, one point per contrast ---
+    axis = figure.add_subplot(grid[0, 0])
+    top = 1.08 * max(frame["binary_total"].max(), frame["arm_total"].max())
+    axis.plot([0, top], [0, top], color=NULL_COLOUR, linestyle="--", linewidth=1.2, zorder=1,
+              label="equal counts")
+    for usable_flag, colour, name in ((True, CRISPANT_COLOUR, "usable axis"),
+                                      (False, "0.66", "not usable")):
+        block = frame[frame["usable"] == usable_flag]
+        axis.scatter(block["binary_total"], block["arm_total"], s=68,
+                     color=colour, edgecolor="0.25", linewidth=0.7, alpha=0.9, zorder=3,
+                     label=f"{name} ({len(block)})")
+    axis.set_xlim(-1, top); axis.set_ylim(-1, top)
+    axis.set_xlabel("cell types resolved by the binary indicator")
+    axis.set_ylabel(f"cell types resolved by {label}")
+    axis.set_title("Equal footing on cell types resolved", fontsize=10.5)
+    axis.legend(fontsize=8.5, loc="upper left")
+
+    # --- middle: the three disjoint sets, per contrast ---
+    bars = figure.add_subplot(grid[0, 1])
+    positions = np.arange(len(frame))
+    bars.barh(positions, frame["binary_only"], height=0.72, color=BINARY_ONLY, zorder=3,
+              label=f"binary only ({int(frame['binary_only'].sum())})")
+    bars.barh(positions, frame["shared"], height=0.72, left=frame["binary_only"],
+              color=SHARED, zorder=3, label=f"shared ({int(frame['shared'].sum())})")
+    bars.barh(positions, frame["morph_only"], height=0.72,
+              left=frame["binary_only"] + frame["shared"], color=MORPH_ONLY, zorder=3,
+              label=f"{label} only ({int(frame['morph_only'].sum())})")
+    bars.set_yticks(positions)
+    bars.set_yticklabels([f"{'* ' if u else '  '}{c}" for c, u in
+                          zip(frame["contrast"], frame["usable"])], fontsize=6.6)
+    bars.invert_yaxis()
+    bars.set_xlabel(f"cell types passing q < {q_threshold:g}  (union of the two arms)")
+    bars.set_title(f"Who resolves what, contrast by contrast   (* = usable axis)", fontsize=10.5)
+    bars.legend(fontsize=8.5, loc="lower right")
+
+    # --- right: pooled, all contrasts and the gated subset ---
+    pooled = figure.add_subplot(grid[0, 2])
+    subsets = (("all 36", frame), (f"usable ({int(frame['usable'].sum())})",
+                                   frame[frame["usable"]]))
+    y = np.arange(len(subsets))[::-1]
+    left = np.zeros(len(subsets))
+    for column, colour in (("binary_only", BINARY_ONLY), ("shared", SHARED),
+                           ("morph_only", MORPH_ONLY)):
+        widths = np.array([float(block[column].sum()) for _, block in subsets])
+        pooled.barh(y, widths, left=left, height=0.5, color=colour, edgecolor="white",
+                    linewidth=0.9, zorder=3)
+        for position, width, offset in zip(y, widths, left):
+            if width >= 25:
+                pooled.text(offset + width / 2, position, f"{int(width)}", ha="center",
+                            va="center", fontsize=9,
+                            color="white" if colour == MORPH_ONLY else "0.15", zorder=4)
+        left += widths
+    for position, (_, block) in zip(y, subsets):
+        pooled.text(left[list(y).index(position)] + 12, position,
+                    f"{int(block['binary_total'].sum())} vs {int(block['arm_total'].sum())}",
+                    va="center", fontsize=8.8, fontweight="bold", color="0.25")
+    pooled.set_yticks(y); pooled.set_yticklabels([name for name, _ in subsets], fontsize=9)
+    pooled.set_xlim(0, left.max() * 1.32)
+    pooled.set_xlabel("pooled cell types")
+    pooled.set_title("Pooled\n(binary total vs $s$ total)", fontsize=10)
+    pooled.spines["left"].set_visible(False)
+    pooled.tick_params(axis="y", length=0)
+
+    figure.suptitle(f"Binary indicator versus {label}, counted in resolved cell types",
+                    fontsize=12.5, y=1.01)
+    return figure, frame
+
+
 def quality_versus_gain(global_stats: pd.DataFrame, quality: pd.DataFrame, *, figsize=(6.4, 5.6)):
     """Does a better morphology axis buy a bigger regression gain?
 
@@ -722,6 +1013,123 @@ def hit_gain_plot(coefficients: pd.DataFrame, quality: pd.DataFrame, *,
     return figure, frame
 
 
+def slope_gain_bars(check: pd.DataFrame, quality: pd.DataFrame, *, q_threshold: float = 0.10,
+                    usable_only: bool = False, layers: str = "both",
+                    summary: pd.DataFrame | None = None, figsize=None):
+    """Gains over the plain binary contrast, split by HOW the gain arrives.
+
+    Everything is measured against one fixed baseline -- ``Model 1``, ``~ binary``, the analysis
+    anyone would run without morphology. Adding the within-group slope terms then buys cell types
+    through two distinct channels, and they deserve different amounts of trust:
+
+        baseline    B1          significant under ``~ binary`` alone
+        indirect    B2 \ B1     NOT significant under Model 1, but significant on the BINARY
+                                coefficient of ``~ binary + s_within:group``. Morphology did not
+                                detect these -- the slope columns absorbed within-group scatter, the
+                                quasi-likelihood dispersion fell, and the group contrast sharpened
+                                enough to carry them over FDR.
+        direct      S \ (B1uB2) significant ONLY for the within-crispant slope. The discovery claim.
+
+    The three are disjoint and sum to |B1 u B2 u S|, so bar length is total cell types resolved.
+
+    THERE IS DELIBERATELY NO "BOTH" CATEGORY. ``s_within`` is orthogonalised to ``binary`` by
+    construction, so the slope is structurally barred from sharing credit for the group difference;
+    an intersection of the two hit sets therefore understates the real overlap badly rather than
+    measuring it. Overlap between morphology and the label is a question for §2b, where the
+    predictor is the full ``s`` and no orthogonalisation has been applied.
+
+    ``layers="binary"`` draws the baseline alone -- the same rows, ordering and x-limits as
+    ``layers="both"``, so the two render as a build: the gains appear on top of an unchanged bar.
+
+    Rows are ordered by target gene, then timepoint, then temperature.
+
+    Needs ``binary_coefficient_check.csv`` (from ``check_binary_coefficient.R``), which carries the
+    Model 2 binary coefficient that ``coefficients.csv`` discards.
+    """
+    rows = []
+    for contrast, block in check.groupby("contrast"):
+        b1 = set(block.loc[block["q_binary_m1"] < q_threshold, "cell_type"])
+        b2 = set(block.loc[block["q_binary_m2"] < q_threshold, "cell_type"])
+        s_hits = set(block.loc[block["q_slope"] < q_threshold, "cell_type"])
+        control = set(block.loc[block.get("q_slope_control", 1.0) < q_threshold, "cell_type"]) \
+            if "q_slope_control" in block else set()
+        rows.append({
+            "contrast": contrast,
+            "baseline": len(b1),
+            "indirect": len(b2 - b1 - s_hits),
+            "direct": len(s_hits - b1),
+            "lost": len(b1 - b2),
+            "control_slope": len(control),
+            "n_tested": block["cell_type"].nunique(),
+        })
+    frame = pd.DataFrame(rows).merge(quality[["contrast", "usable"]], on="contrast", how="left")
+    frame["usable"] = frame["usable"].fillna(False).astype(bool)
+    # Axis limits come from the FULL set before any subsetting, so the all-contrast and gated
+    # versions -- and the binary-only and binary+morph layers -- all share one scale and can be
+    # overlaid or flipped between without anything moving.
+    full_total = (frame["baseline"] + frame["indirect"] + frame["direct"])
+    row_limit = 1.04 * full_total.max()
+    pooled_limit = 1.05 * float(full_total.sum())
+    if usable_only:
+        frame = frame[frame["usable"]].copy()
+    frame = order_by_design(frame)
+
+    BASELINE, INDIRECT, DIRECT = "0.62", "#F3A18E", "#C0392B"   # grey, light coral, dark coral
+    show_gains = layers != "binary"
+    if figsize is None:
+        figsize = (11.0, 0.26 * len(frame) + 3.4)
+
+    figure = plt.figure(figsize=figsize)
+    grid = gridspec.GridSpec(2, 1, height_ratios=[max(len(frame), 6), 2.6], hspace=0.34,
+                             figure=figure)
+    axis = figure.add_subplot(grid[0, 0])
+    positions = np.arange(len(frame))
+
+    axis.barh(positions, frame["baseline"], height=0.76, color=BASELINE, zorder=3,
+              label=f"binary contrast, $\\sim$ binary  ({int(frame['baseline'].sum())})")
+    if show_gains:
+        axis.barh(positions, frame["indirect"], height=0.76, left=frame["baseline"],
+                  color=INDIRECT, zorder=3,
+                  label=f"indirect — group contrast sharpened  (+{int(frame['indirect'].sum())})")
+        axis.barh(positions, frame["direct"], height=0.76,
+                  left=frame["baseline"] + frame["indirect"], color=DIRECT, zorder=3,
+                  label=f"direct — gradient only  (+{int(frame['direct'].sum())})")
+    axis.set_yticks(positions)
+    axis.set_yticklabels(
+        [f"{'* ' if u else '   '}{c}" for c, u in zip(frame["contrast"], frame["usable"])],
+        fontsize=7.2)
+    axis.invert_yaxis()
+    axis.set_xlim(0, row_limit)
+    axis.set_xlabel("cell types per contrast", fontsize=9)
+    axis.tick_params(labelbottom=True, labelsize=8.5)
+    axis.legend(fontsize=9, loc="lower right")
+    scope = "validated morphology axes only" if usable_only else "all contrasts   (* = validated axis)"
+    axis.set_title(("Cell types resolved by the binary contrast alone — " + scope) if not show_gains
+                   else ("What adding the morphology gradient buys — " + scope), fontsize=11.5, pad=10)
+
+    pooled = figure.add_subplot(grid[1, 0])
+    left = 0.0
+    segments = [("baseline", BASELINE)] + ([("indirect", INDIRECT), ("direct", DIRECT)]
+                                           if show_gains else [])
+    for column, colour in segments:
+        width = float(frame[column].sum())
+        pooled.barh([0], [width], left=[left], height=0.62, color=colour, edgecolor="white",
+                    linewidth=1.2, zorder=3)
+        if width:
+            pooled.text(left + width / 2, 0, f"{int(width)}", ha="center", va="center",
+                        fontsize=13, fontweight="bold",
+                        color="white" if colour == DIRECT else "0.15", zorder=4)
+        left += width
+    pooled.set_xlim(0, pooled_limit)
+    pooled.set_ylim(-0.6, 0.6)
+    pooled.set_yticks([0])
+    pooled.set_yticklabels([f"pooled\n({len(frame)} contrasts)"], fontsize=9.5)
+    pooled.set_xlabel(f"cell types passing q < {q_threshold:g}   (pooled — note the separate scale)")
+    pooled.spines["left"].set_visible(False)
+    pooled.tick_params(axis="y", length=0)
+    return figure, frame
+
+
 def volcano_within(coefficients: pd.DataFrame, *, arm: str = "s_within_crispant",
                    q_threshold: float = 0.10, figsize=(11.5, 5.2)):
     """Pooled volcano for the morphology term, with the negative control beside it.
@@ -768,6 +1176,119 @@ def volcano_within(coefficients: pd.DataFrame, *, arm: str = "s_within_crispant"
                     fontsize=12, y=1.02)
     figure.tight_layout()
     return figure
+
+
+def slope_versus_binary_q(check: pd.DataFrame, *, q_threshold: float = 0.10,
+                          near_miss: float = 0.25, figsize=(13.4, 5.6)):
+    """The slope hits, scored against the binary contrast's q-value for the same cell type.
+
+    Restricted to the cell types the within-crispant slope calls at ``q_threshold``. The question
+    is what the binary indicator made of those same cell types: were they marginal binary hits the
+    gradient nudged over the line, or effects the group contrast gives no hint of at all? The
+    horizontal position answers it directly, and the strata make the split countable.
+
+    TWO COMPARATORS, because the answer depends on which binary fit you mean and the difference is
+    not negligible:
+
+    ``Model 1``  ``~ binary`` on its own -- the analysis anyone would actually run, and the baseline
+                 the "NEW" count in the synthesis notebook is defined against.
+    ``Model 2``  the binary column of the SAME four-column design the slope comes from. Holding the
+                 design fixed isolates the coefficient from the model, so a cell type new here is
+                 new because of the gradient rather than because the comparator was refitted.
+
+    Model 2 is the stricter reading and gives the smaller count. Both are shown because they answer
+    different questions, and the gap between them is itself the audit result.
+
+    Requires ``data/edger/binary_coefficient_check.csv`` from ``check_binary_coefficient.R``; the
+    shipped ``coefficients.csv`` does not carry Model 2's binary coefficient.
+    """
+    hits = check[check["q_slope"] < q_threshold].copy()
+    hits["y"] = -np.log10(hits["q_slope"])
+
+    strata = (
+        (f"also a binary hit (q < {q_threshold:g})", "#8FA9C4", 26),
+        (f"near miss ({q_threshold:g} $\\leq$ q < {near_miss:g})", "#E08A2E", 34),
+        (f"no binary signal (q $\\geq$ {near_miss:g})", CRISPANT_COLOUR, 38),
+    )
+    comparators = (("q_binary_m1", "Model 1:  $\\sim$ binary  (the standard analysis)"),
+                   ("q_binary_m2", "Model 2:  binary column of the slope's own design"))
+
+    figure = plt.figure(figsize=figsize)
+    grid = gridspec.GridSpec(1, 3, width_ratios=[1.0, 1.0, 0.66], wspace=0.34, figure=figure)
+    scatter_axes = [figure.add_subplot(grid[0, index]) for index in (0, 1)]
+
+    # The two axes cover wildly different ranges -- the binary contrast reaches q ~ 1e-40 while the
+    # slope tops out near 1e-4 -- so they are scaled independently. Forcing a shared scale (or a 1:1
+    # line) would squash every slope hit into a strip and imply a comparison of magnitudes that is
+    # not on offer: these are different coefficients, not two estimates of one thing. The binary
+    # axis is capped and over-cap points drawn as triangles rather than silently piled on the edge.
+    cap = 12.0
+    y_top = 1.08 * hits["y"].max()
+    counts = {}
+
+    for axis, (column, title) in zip(scatter_axes, comparators):
+        raw = -np.log10(hits[column])
+        x = raw.clip(upper=cap)
+        over = raw > cap
+        band = np.select([hits[column] < q_threshold, hits[column] < near_miss],
+                         [0, 1], default=2)
+        counts[column] = [int((band == index).sum()) for index in range(3)]
+
+        axis.axvline(-np.log10(q_threshold), color=NULL_COLOUR, linestyle="--", linewidth=1.0,
+                     zorder=2)
+        for index, (label, colour, size) in enumerate(strata):
+            scale = 0.55 + 0.45 * hits["logfc_slope"].abs() / hits["logfc_slope"].abs().max()
+            for mask, marker, boost in ((band == index) & ~over, "o", 1.0),\
+                                       ((band == index) & over, ">", 1.5):
+                if not mask.any():
+                    continue
+                axis.scatter(x[mask], hits.loc[mask, "y"], s=size * scale[mask] * boost,
+                             marker=marker, color=colour, edgecolor="0.25", linewidth=0.35,
+                             alpha=0.88, zorder=4,
+                             label=f"{label}  —  {int((band == index).sum())}"
+                                   if marker == "o" else None)
+        axis.set_xlim(-0.25, cap + 0.6)
+        axis.set_ylim(-np.log10(q_threshold) - 0.1, y_top)
+        ticks = [t for t in axis.get_xticks() if 0 <= t < cap] + [cap]
+        axis.set_xticks(ticks)
+        axis.set_xticklabels([f"{t:g}" for t in ticks[:-1]] + [f"$\\geq${cap:g}"])
+        axis.set_xlabel(r"$-\log_{10}$ q,  binary indicator")
+        axis.set_title(title, fontsize=10.5)
+        axis.legend(fontsize=8.2, loc="upper right", title=f"n = {len(hits)} slope hits",
+                    title_fontsize=8.2)
+        axis.text(-np.log10(q_threshold) - 0.16, y_top, f"q = {q_threshold:g}  ",
+                  fontsize=7.6, color=NULL_COLOUR, ha="right", va="top", rotation=90)
+    scatter_axes[0].set_ylabel(r"$-\log_{10}$ q,  within-crispant slope")
+    scatter_axes[1].tick_params(labelleft=False)
+
+    # --- right: the same three strata as counts, so the two comparators can be read off ---
+    bar = figure.add_subplot(grid[0, 2])
+    positions = np.arange(len(comparators))[::-1]
+    left = np.zeros(len(comparators))
+    for index, (label, colour, _) in enumerate(strata):
+        widths = np.array([counts[column][index] for column, _ in comparators], dtype=float)
+        bar.barh(positions, widths, left=left, height=0.5, color=colour, edgecolor="white",
+                 linewidth=0.8, zorder=3)
+        for position, width, offset in zip(positions, widths, left):
+            if width >= 6:
+                bar.text(offset + width / 2, position, f"{int(width)}", ha="center", va="center",
+                         fontsize=9, color="white" if index == 2 else "0.15", zorder=4)
+        left += widths
+    for position, (column, _) in zip(positions, comparators):
+        new = counts[column][1] + counts[column][2]
+        bar.text(len(hits) + 3, position, f"NEW = {new}", va="center", fontsize=9.5,
+                 fontweight="bold", color=CRISPANT_COLOUR)
+    bar.set_yticks(positions)
+    bar.set_yticklabels(["Model 1", "Model 2"], fontsize=9.5)
+    bar.set_xlim(0, len(hits) * 1.34)
+    bar.set_xlabel(f"the {len(hits)} slope hits, split by binary q")
+    bar.set_title("How many are genuinely new?", fontsize=10.5)
+    bar.spines["left"].set_visible(False)
+    bar.tick_params(axis="y", length=0)
+
+    figure.suptitle("The within-crispant slope's hits, seen through the binary contrast",
+                    fontsize=12.5, y=1.02)
+    return figure, hits
 
 
 def cell_type_scatter(coefficients: pd.DataFrame, contrast: str, *, figsize=(5.8, 5.6)):
@@ -834,4 +1355,16 @@ def save(figure, path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(target)
     plt.close(figure)
+    return target
+
+
+def save_inline(figure, path, *, dpi: int = 200) -> Path:
+    """Write a PNG WITHOUT closing the figure, so it still renders in a notebook cell.
+
+    ``save`` closes the figure, which suppresses the inline display -- fine for a headless driver
+    script, wrong inside a notebook. Use this one there.
+    """
+    target = Path(path).with_suffix(".png")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(target, dpi=dpi, bbox_inches="tight")
     return target
