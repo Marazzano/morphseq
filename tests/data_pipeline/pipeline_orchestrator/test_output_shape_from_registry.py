@@ -90,7 +90,7 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # every other entry -- step_outputs() does not exist yet. It is a per-well compatibility view of
     # the default BF product, and it retires WITH the alias layer rather than being migrated.
     "legacy_default_snip_inventory_alias",
-    "snip_processing_per_well",
+    "snip_materialization_per_well",
     "split_dropin_inventory",
     "validate_curvature_metrics_for_well",
     "validate_death_detection_qc_for_well",

@@ -137,7 +137,7 @@ rule snip_geometry_per_well:
         """
 
 
-rule snip_processing_per_well:
+rule snip_materialization_per_well:
     """Extract per-embryo crops from validated frame_masks for one well.
 
     Reads frame_masks + frame_inventory shards, JOINS physical_embryo_id from
