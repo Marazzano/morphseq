@@ -354,3 +354,18 @@ the analysis distinguish "300 ms" from "unknown". Verified: running extraction a
   recovers information that was never digitized
 - B02's recovery showed the brightest embryo is also the most temporally stable, which is the shape
   a real dosage signal should have — but 4 embryos cannot establish a ladder
+
+## The last hop, proven without waiting on a pipeline re-run
+
+Stamping the real ND2 exposures onto a copy of the pbx `frame_inventory` and running extraction
+against it puts them on the measurement rows:
+
+| well | time_index | exposure_ms | illumination_power | iris |
+|---|---|---|---|---|
+| A01 | 0 | **600.0** | 100.0 | 18.1 |
+| A01 | 1 | **300.0** | 100.0 | 18.1 |
+| A01 | 2 | **300.0** | 100.0 | 18.1 |
+
+And applying `analyze_dosage.py`'s own branch condition to that output selects the row values
+(`{0: 600.0, 1: 300.0, 2: 300.0}`) rather than the fallback constants. So the loop closes by itself:
+regenerating the artifacts is sufficient, with no code change and no hand-entered numbers.
