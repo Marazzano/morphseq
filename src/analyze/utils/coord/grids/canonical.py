@@ -36,6 +36,34 @@ from .back_direction import compute_back_direction
 from image_geometry import TransformChain, affine_step, flip_x_step
 
 
+def _pixel_center_affine(M: np.ndarray) -> np.ndarray:
+    """Re-express a 2x3 affine so it maps PIXEL CENTERS, matching every resize seam.
+
+    THE DEFECT THIS REPAIRS. ``cv2.warpAffine`` and ``cv2.resize`` do not agree on what an
+    integer coordinate means, and the disagreement is silent. Measured on a linear ramp at
+    sf=0.25, output pixel ``j`` samples source ``j/sf`` under ``warpAffine`` but ``(j+0.5)/sf-0.5``
+    under ``resize``. The first is the naive rule ``x_out = sf * x_src``; the second is the
+    pixel-center rule ``x_out = sf * (x_src + 0.5) - 0.5`` pinned by
+    ``tests/image_geometry/test_resize_coordinate_convention.py``. They differ by exactly
+    ``(sf-1)/2`` — at the production scale (3.2308 -> 10.0 um/px, sf~0.323) that is a systematic
+    -0.34 px shift applied identically to every embryo.
+
+    WHY THAT IS WORSE THAN NOISE. A bias shared by every sample is invisible to every aggregate
+    QC statistic — areas, IoUs and pixel diffs all stay clean — while the whole population sits
+    off-grid relative to the resize-based coordinates it is compared against.
+
+    THE CORRECTION. For output = A @ src + t under the naive rule, the pixel-center rule requires
+    ``(out + 0.5) = A @ (src + 0.5) + t``, so the translation column gains ``A @ [0.5, 0.5] - 0.5``.
+    Rotation and flip are half-pixel-neutral only when A is a pure rotation about the array center;
+    in general the correction is nonzero, so it is applied unconditionally rather than gated on a
+    scale test.
+    """
+    M = np.asarray(M, dtype=np.float64).copy()
+    half = np.array([0.5, 0.5], dtype=np.float64)
+    M[:, 2] += M[:, :2] @ half - half
+    return M
+
+
 @dataclass
 class CanonicalGridConfig:
     """Legacy-style config for canonical grid standardization."""
@@ -128,7 +156,19 @@ class CanonicalAligner:
 
     def _warp(self, mask: np.ndarray, M: np.ndarray, *, out_shape_hw: Optional[tuple[int, int]] = None) -> np.ndarray:
         h, w = out_shape_hw if out_shape_hw is not None else (self.H, self.W)
-        return cv2.warpAffine(mask.astype(np.float32), M, (w, h), flags=cv2.INTER_NEAREST)
+        return cv2.warpAffine(mask.astype(np.float32), M.astype(np.float32), (w, h), flags=cv2.INTER_NEAREST)
+
+    def _placement_affine(
+        self, cx: float, cy: float, rotation_deg: float, scale: float
+    ) -> np.ndarray:
+        """Rotate+scale about the source centroid, then center into the canonical canvas.
+
+        Returned in the PIXEL-CENTER convention so it agrees with every resize seam.
+        """
+        M = cv2.getRotationMatrix2D((cx, cy), rotation_deg, scale)
+        M[0, 2] += (self.W / 2) - cx
+        M[1, 2] += (self.H / 2) - cy
+        return _pixel_center_affine(M)
 
     def _bbox(self, mask: np.ndarray) -> Optional[tuple[int, int, int, int]]:
         """INCLUSIVE ``(min_y, max_y, min_x, max_x)`` of pixels ``> 0.5``.
@@ -231,6 +271,15 @@ class CanonicalAligner:
 
         for rot_add in rot_options:
             for do_flip in flip_options:
+                # DELIBERATELY the raw fused affine, NOT the pixel-center/anti-aliased placement
+                # used for output. These warps are throwaway: this routine returns only a rotation,
+                # a flip, and two diagnostic landmarks — no output pixel is derived from them.
+                # The extracted `orientation_policy` twin of this selector is pinned equivalent to
+                # it at abs=1e-6 by the orientation-equivalence suite. That twin builds candidates
+                # through image_geometry.candidates, which uses the raw convention, so "correcting"
+                # the geometry here would break the equivalence while changing no canonical output.
+                # Fixing both sides means editing image_geometry, which is under concurrent
+                # development and out of scope for this change.
                 M = cv2.getRotationMatrix2D((cx, cy), rotation_needed + rot_add, scale)
                 M[0, 2] += (self.W / 2) - cx
                 M[1, 2] += (self.H / 2) - cy
@@ -387,6 +436,9 @@ class CanonicalAligner:
         flip_options = [False, True] if self.allow_flip else [False]
         for rot_add in rot_options:
             for do_flip in flip_options:
+                # Raw fused affine on purpose — see the note in _coarse_candidate_select. This
+                # loop only scores candidates to pick (rot_add, do_flip); the winning placement is
+                # re-rendered below through _prescaled_placement.
                 M = cv2.getRotationMatrix2D((cx, cy), rotation_needed + rot_add, scale)
                 M[0, 2] += (self.W / 2) - cx
                 M[1, 2] += (self.H / 2) - cy
@@ -400,9 +452,7 @@ class CanonicalAligner:
         _best_score, best_rot, best_flip = max(candidates, key=lambda x: x[0])
         final_rotation = rotation_needed + best_rot
 
-        M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
-        M_final[0, 2] += (self.W / 2) - cx
-        M_final[1, 2] += (self.H / 2) - cy
+        M_final = self._placement_affine(cx, cy, final_rotation, scale)
         aligned_mask = self._warp(mask, M_final)
         if best_flip:
             aligned_mask = cv2.flip(aligned_mask, 1)
@@ -465,6 +515,7 @@ class CanonicalAligner:
             M_final=M_final,
             best_flip=bool(best_flip),
             M_shift=M_shift,
+            src_shape_yx=tuple(mask.shape[:2]),
         )
         return final_mask, meta, chain
 
@@ -503,9 +554,7 @@ class CanonicalAligner:
             mask, yolk, rotation_needed, scale, cx, cy, use_yolk=True
         )
 
-        M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
-        M_final[0, 2] += (self.W / 2) - cx
-        M_final[1, 2] += (self.H / 2) - cy
+        M_final = self._placement_affine(cx, cy, final_rotation, scale)
         aligned_mask = self._warp(mask, M_final)
         aligned_yolk = self._warp(yolk, M_final)
         if best_flip:
@@ -585,6 +634,7 @@ class CanonicalAligner:
             M_final=M_final,
             best_flip=bool(best_flip),
             M_shift=M_shift,
+            src_shape_yx=tuple(mask.shape[:2]),
         )
         return final_mask, final_yolk_mask, meta, chain
 
@@ -622,12 +672,13 @@ def _build_stage1_chain(
     M_final: np.ndarray,
     best_flip: bool,
     M_shift: np.ndarray,
+    src_shape_yx: tuple[int, int],
 ) -> TransformChain:
     transforms = [
         affine_step(
             name="rotate_scale_center",
             affine_2x3=np.asarray(M_final, dtype=np.float64),
-            in_shape_yx=grid_shape_yx,
+            in_shape_yx=tuple(src_shape_yx),
             out_shape_yx=grid_shape_yx,
             interp="nearest",
         )
@@ -798,6 +849,7 @@ def to_canonical_grid_image(
     M = cv2.getRotationMatrix2D((cx, cy), 0.0, scale)
     M[0, 2] += (w_out / 2.0) - cx
     M[1, 2] += (h_out / 2.0) - cy
+    M = _pixel_center_affine(M)
 
     flags = cv2.INTER_LINEAR if interpolation == "linear" else cv2.INTER_NEAREST
     out_img = cv2.warpAffine(img.astype(np.float32), M.astype(np.float32), (w_out, h_out), flags=flags)
