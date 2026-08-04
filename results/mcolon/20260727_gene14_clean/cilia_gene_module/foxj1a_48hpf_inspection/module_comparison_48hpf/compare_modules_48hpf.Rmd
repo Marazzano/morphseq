@@ -1,0 +1,1083 @@
+---
+title: "Foxj1a response across five cilia modules at 48 hpf"
+output: html_document
+---
+
+This analysis compares the five approved cilia modules in the same foxj1a
+versus control-injected embryos. The embryo remains the biological replicate.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(igraph)
+library(platt)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+library(patchwork)
+
+knitr::opts_chunk$set(dev = "ragg_png", fig.bg = "white")
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+MODULE_DIR <- file.path(PROJECT_DIR, "cilia_gene_module")
+PARENT_DIR <- file.path(MODULE_DIR, "foxj1a_48hpf_inspection")
+HERE <- file.path(PARENT_DIR, "module_comparison_48hpf")
+DATA_DIR <- file.path(HERE, "data")
+FIGURE_DIR <- file.path(HERE, "figures")
+
+MODEL_RESULT_FILE <- file.path(
+  MODULE_DIR,
+  "output",
+  "differential_module_results",
+  "foxj1a_48hpf.tsv"
+)
+EMBRYO_SCORE_FILE <- file.path(
+  MODULE_DIR,
+  "output",
+  "embryo_celltype_cilia_module_scores.tsv"
+)
+FOXJ1A_BASELINE_FILE <- file.path(
+  PARENT_DIR,
+  "data",
+  "celltype_baseline_and_motile_response.tsv"
+)
+CELLTYPE_LINEAGE_FILE <- file.path(
+  PROJECT_DIR,
+  "0_shared",
+  "cell_type_lineage.tsv"
+)
+STATE_GRAPH_FILE <- paste0(
+  "/net/seahub_zfish/vol1/data/graphs/",
+  "v3.1.0/combined_graph.rds"
+)
+
+MODULES <- c(
+  "v1_all",
+  "gold_motile_cilia",
+  "v1_basal_body",
+  "v1_ciliary_tip",
+  "v1_transition_zone"
+)
+MODULE_LABELS <- c(
+  v1_all = "Broad cilia",
+  gold_motile_cilia = "Motile cilia",
+  v1_basal_body = "Basal body",
+  v1_ciliary_tip = "Ciliary tip",
+  v1_transition_zone = "Transition zone"
+)
+
+PERTURBATION <- "foxj1a"
+CONTROL <- "ctrl-inj"
+TIMEPOINT <- 48
+MINIMUM_CELLS <- 10L
+STANDARDIZED_EFFECT_LIMIT <- 2
+
+dir.create(DATA_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(FIGURE_DIR, recursive = TRUE, showWarnings = FALSE)
+
+save_plot_pair <- function(file_stem, plot, width, height) {
+  ggsave(
+    file.path(FIGURE_DIR, paste0(file_stem, ".pdf")),
+    plot,
+    width = width,
+    height = height,
+    limitsize = FALSE
+  )
+  ggsave(
+    file.path(FIGURE_DIR, paste0(file_stem, ".png")),
+    plot,
+    device = ragg::agg_png,
+    width = width,
+    height = height,
+    units = "in",
+    dpi = 200,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+arm_colors <- c(control = "#4C78A8", perturbation = "#E45756")
+```
+
+## Step 1: Read and summarize the five module results
+
+The original q-value corrects across all module and cell-type tests in this
+contrast. `q_within_module` is also reported as a descriptive, module-specific
+correction; it does not replace the primary correction.
+
+```{r read-results}
+module_results <- readr::read_tsv(
+  MODEL_RESULT_FILE,
+  show_col_types = FALSE
+) |>
+  dplyr::filter(.data$module_id %in% MODULES) |>
+  dplyr::group_by(.data$module_id) |>
+  dplyr::mutate(
+    q_within_module = p.adjust(.data$p_value, method = "BH")
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(
+    module_id = factor(.data$module_id, levels = MODULES),
+    module_label = factor(
+      MODULE_LABELS[as.character(.data$module_id)],
+      levels = unname(MODULE_LABELS[MODULES])
+    )
+  )
+
+module_summary <- module_results |>
+  dplyr::group_by(.data$module_id, .data$module_label) |>
+  dplyr::summarise(
+    n_cell_types = dplyr::n(),
+    n_decreased = sum(.data$score_difference < 0),
+    n_increased = sum(.data$score_difference > 0),
+    n_fdr = sum(.data$is_fdr_significant),
+    smallest_q = min(.data$q_value),
+    minimum_difference = min(.data$score_difference),
+    maximum_difference = max(.data$score_difference),
+    .groups = "drop"
+  )
+
+readr::write_tsv(
+  module_results,
+  file.path(DATA_DIR, "all_module_celltype_results.tsv")
+)
+readr::write_tsv(
+  module_summary,
+  file.path(DATA_DIR, "module_summary.tsv")
+)
+
+module_summary
+```
+
+## Step 2: Make one shared global graph layout
+
+The graph layout is calculated once. Untested atlas nodes remain visible in
+gray so every module is shown in the same developmental context.
+
+```{r graph-layout}
+celltype_lineage <- readr::read_tsv(
+  CELLTYPE_LINEAGE_FILE,
+  show_col_types = FALSE
+)
+state_graph <- readRDS(STATE_GRAPH_FILE)
+
+node_metadata <- tibble::tibble(id = igraph::V(state_graph)$name) |>
+  dplyr::left_join(
+    dplyr::select(celltype_lineage, cell_type, sulston_group),
+    by = c("id" = "cell_type")
+  ) |>
+  dplyr::mutate(
+    group_nodes_by = dplyr::coalesce(.data$sulston_group, "Unknown")
+  )
+
+graph_layout <- platt:::layout_state_graph(
+  G = state_graph,
+  node_metadata = node_metadata
+)
+
+graph_nodes <- as.data.frame(graph_layout$gvizl_coords)
+names(graph_nodes) <- c("x", "y")
+graph_nodes <- graph_nodes |>
+  tibble::rownames_to_column("cell_type")
+graph_edges <- graph_layout$bezier_df
+
+graph_module_nodes <- tidyr::crossing(
+  module_id = factor(MODULES, levels = MODULES),
+  graph_nodes
+) |>
+  dplyr::left_join(
+    module_results,
+    by = c("module_id", "cell_type")
+  ) |>
+  dplyr::mutate(
+    module_label = factor(
+      MODULE_LABELS[as.character(.data$module_id)],
+      levels = unname(MODULE_LABELS[MODULES])
+    )
+  )
+
+readr::write_tsv(
+  graph_module_nodes,
+  file.path(DATA_DIR, "global_graph_module_node_metrics.tsv")
+)
+```
+
+## Step 3: Raw score differences on the global graph
+
+Each module gets its own raw score scale because raw differences cannot be
+compared numerically between gene sets. Every scale is symmetrically capped at
+that module's 95th percentile absolute difference so one outlier cannot flatten
+the rest of its graph.
+
+```{r raw-difference-graphs, fig.width=16, fig.height=15}
+draw_raw_difference_graph <- function(module_name) {
+  nodes <- graph_module_nodes |>
+    dplyr::filter(.data$module_id == module_name)
+
+  color_limit <- stats::quantile(
+    abs(nodes$score_difference),
+    0.95,
+    na.rm = TRUE
+  )
+
+  labels <- nodes |>
+    dplyr::filter(!is.na(.data$score_difference)) |>
+    dplyr::arrange(.data$q_value, dplyr::desc(abs(.data$score_difference))) |>
+    dplyr::slice_head(n = 4)
+
+  ggplot() +
+    geom_path(
+      data = graph_edges,
+      aes(x = .data$x, y = .data$y, group = .data$edge_name),
+      color = "grey84",
+      linewidth = 0.18
+    ) +
+    geom_point(
+      data = nodes,
+      aes(x = .data$x, y = .data$y, fill = .data$score_difference),
+      shape = 21,
+      size = 3,
+      stroke = 0.25,
+      color = "grey35"
+    ) +
+    ggrepel::geom_text_repel(
+      data = labels,
+      aes(x = .data$x, y = .data$y, label = .data$cell_type),
+      size = 2.5,
+      max.overlaps = Inf,
+      min.segment.length = 0,
+      box.padding = 0.5,
+      seed = 1
+    ) +
+    scale_fill_gradient2(
+      low = "#2166AC",
+      mid = "white",
+      high = "#B2182B",
+      midpoint = 0,
+      limits = c(-color_limit, color_limit),
+      oob = scales::squish,
+      breaks = scales::breaks_pretty(n = 4),
+      labels = scales::label_number(accuracy = 0.001),
+      na.value = "grey90",
+      name = "score change",
+      guide = guide_colorbar(
+        title.position = "top",
+        barwidth = grid::unit(2.8, "in"),
+        barheight = grid::unit(0.15, "in")
+      )
+    ) +
+    theme_void(base_size = 10) +
+    theme(
+      plot.title = element_text(face = "bold", size = 13),
+      plot.subtitle = element_text(size = 9),
+      legend.position = "bottom",
+      legend.title = element_text(size = 9),
+      legend.text = element_text(size = 8)
+    ) +
+    labs(
+      title = unname(MODULE_LABELS[module_name]),
+      subtitle = paste0(
+        "foxj1a - control; color capped at |",
+        format(color_limit, digits = 2, scientific = TRUE),
+        "|"
+      )
+    )
+}
+
+raw_graphs <- lapply(MODULES, draw_raw_difference_graph)
+raw_difference_figure <- patchwork::wrap_plots(raw_graphs, ncol = 2) +
+  patchwork::plot_annotation(
+    title = "Raw cilia-module score changes across the cell-type graph",
+    subtitle = "Blue = lower after foxj1a perturbation; red = higher; each module has its own robust scale"
+  )
+
+save_plot_pair(
+  "01_raw_difference_global_graphs",
+  raw_difference_figure,
+  width = 16,
+  height = 15
+)
+
+raw_difference_figure
+```
+
+## Step 4: Standardized effects on one common scale
+
+This is the directly comparable view. A standardized effect of -1 means the
+perturbation mean is one pooled embryo-level standard deviation below control.
+
+```{r standardized-graph, fig.width=16, fig.height=10}
+standardized_edges <- tidyr::crossing(
+  module_label = factor(
+    unname(MODULE_LABELS[MODULES]),
+    levels = unname(MODULE_LABELS[MODULES])
+  ),
+  graph_edges
+)
+
+standardized_graph <- ggplot() +
+  geom_path(
+    data = standardized_edges,
+    aes(
+      x = .data$x,
+      y = .data$y,
+      group = interaction(.data$module_label, .data$edge_name)
+    ),
+    color = "grey85",
+    linewidth = 0.16
+  ) +
+  geom_point(
+    data = graph_module_nodes,
+    aes(
+      x = .data$x,
+      y = .data$y,
+      fill = .data$standardized_effect,
+      color = .data$is_fdr_significant
+    ),
+    shape = 21,
+    size = 2.5,
+    stroke = 0.45
+  ) +
+  facet_wrap(vars(.data$module_label), ncol = 2) +
+  scale_fill_gradient2(
+    low = "#2166AC",
+    mid = "white",
+    high = "#B2182B",
+    midpoint = 0,
+    limits = c(-STANDARDIZED_EFFECT_LIMIT, STANDARDIZED_EFFECT_LIMIT),
+    oob = scales::squish,
+    na.value = "grey90",
+    name = "standardized effect",
+    guide = guide_colorbar(
+      title.position = "top",
+      barwidth = grid::unit(3.5, "in")
+    )
+  ) +
+  scale_color_manual(
+    values = c(`TRUE` = "black", `FALSE` = "grey45"),
+    na.value = "grey75",
+    guide = "none"
+  ) +
+  theme_void(base_size = 10) +
+  theme(
+    strip.text = element_text(face = "bold", size = 11),
+    legend.position = "bottom"
+  ) +
+  labs(
+    title = "Five modules on a shared standardized-effect scale",
+    subtitle = "Blue = lower; red = higher; black outlines pass BH FDR; colors clipped at +/-2 SD"
+  )
+
+save_plot_pair(
+  "02_standardized_effect_global_graphs",
+  standardized_graph,
+  width = 16,
+  height = 10
+)
+
+standardized_graph
+```
+
+## Step 5: Effect size and statistical evidence
+
+This plot prevents a visually large color change from being mistaken for a
+well-supported result. Every panel uses exactly the same q-value axis. Labels
+mark every FDR hit plus the two smallest q-values in modules without a hit.
+
+```{r evidence-plot, fig.width=13, fig.height=9}
+evidence_labels <- module_results |>
+  dplyr::group_by(.data$module_id) |>
+  dplyr::arrange(.data$q_value, .by_group = TRUE) |>
+  dplyr::mutate(label_candidate = dplyr::row_number() <= 2) |>
+  dplyr::ungroup() |>
+  dplyr::filter(.data$is_fdr_significant | .data$label_candidate)
+
+evidence_plot <- ggplot(
+  module_results |>
+    dplyr::mutate(
+      effect_direction = dplyr::if_else(
+        .data$score_difference < 0,
+        "lower",
+        "higher"
+      )
+    ),
+  aes(
+    x = .data$standardized_effect,
+    y = -log10(.data$q_value),
+    color = .data$effect_direction
+  )
+) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey45"
+  ) +
+  geom_vline(xintercept = 0, color = "grey65") +
+  geom_point(size = 2, alpha = 0.8) +
+  ggrepel::geom_text_repel(
+    data = evidence_labels,
+    aes(label = .data$cell_type),
+    color = "black",
+    size = 2.5,
+    max.overlaps = Inf,
+    min.segment.length = 0,
+    seed = 1,
+    show.legend = FALSE
+  ) +
+  facet_wrap(vars(.data$module_label), ncol = 2) +
+  scale_color_manual(
+    values = c(lower = "#2166AC", higher = "#B2182B"),
+    name = "module score"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    legend.position = "bottom"
+  ) +
+  labs(
+    title = "Effect magnitude and evidence across modules",
+    subtitle = "Dashed line marks BH q = 0.05",
+    x = "standardized effect (foxj1a - control)",
+    y = "-log10(BH q)"
+  )
+
+save_plot_pair(
+  "03_standardized_effect_and_q",
+  evidence_plot,
+  width = 13,
+  height = 9
+)
+
+evidence_plot
+```
+
+### One overlaid view of the q-value distributions
+
+Cell types are ranked independently within each module. Because the y-axis is
+shared, vertical separation directly represents stronger statistical evidence.
+
+```{r ranked-q-profiles, fig.width=10, fig.height=6}
+ranked_q_values <- module_results |>
+  dplyr::group_by(.data$module_id, .data$module_label) |>
+  dplyr::arrange(.data$q_value, .by_group = TRUE) |>
+  dplyr::mutate(q_rank = dplyr::row_number()) |>
+  dplyr::ungroup()
+
+readr::write_tsv(
+  ranked_q_values |>
+    dplyr::select(module_id, module_label, cell_type, q_rank, q_value),
+  file.path(DATA_DIR, "ranked_q_values_by_module.tsv")
+)
+
+ranked_q_plot <- ggplot(
+  ranked_q_values,
+  aes(
+    x = .data$q_rank,
+    y = -log10(.data$q_value),
+    color = .data$module_label
+  )
+) +
+  geom_hline(
+    yintercept = -log10(0.05),
+    linetype = "dashed",
+    color = "grey35"
+  ) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.5) +
+  scale_color_manual(
+    values = c(
+      "Broad cilia" = "#7B3294",
+      "Motile cilia" = "#008837",
+      "Basal body" = "#E08214",
+      "Ciliary tip" = "#2166AC",
+      "Transition zone" = "#C51B7D"
+    ),
+    name = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  ) +
+  labs(
+    title = "Motile-cilia results separate from the other modules",
+    subtitle = "Each line ranks the 92 cell types from smallest to largest BH q; dashed line is q = 0.05",
+    x = "cell-type rank within module",
+    y = "-log10(BH q)"
+  )
+
+save_plot_pair(
+  "03b_ranked_q_value_profiles",
+  ranked_q_plot,
+  width = 10,
+  height = 6
+)
+
+ranked_q_plot
+```
+
+## Step 6: Does normal foxj1a expression mark each module?
+
+The motile module should be most active in cell types that normally express
+foxj1a. Cell types are divided into three transparent groups: no detected
+foxj1a, the lower half of positive expression, and the higher half of positive
+expression. The exact Pearson and Spearman correlations are still exported.
+
+```{r baseline-coupling, fig.width=13, fig.height=9}
+foxj1a_baseline <- readr::read_tsv(
+  FOXJ1A_BASELINE_FILE,
+  show_col_types = FALSE
+) |>
+  dplyr::select(.data$cell_type, .data$control_foxj1a_expression)
+
+baseline_coupling <- module_results |>
+  dplyr::left_join(foxj1a_baseline, by = "cell_type")
+
+baseline_correlations <- baseline_coupling |>
+  dplyr::group_by(.data$module_id, .data$module_label) |>
+  dplyr::summarise(
+    pearson = cor(
+      .data$control_foxj1a_expression,
+      .data$control_mean,
+      method = "pearson"
+    ),
+    spearman = cor(
+      .data$control_foxj1a_expression,
+      .data$control_mean,
+      method = "spearman"
+    ),
+    .groups = "drop"
+  )
+
+readr::write_tsv(
+  baseline_correlations,
+  file.path(DATA_DIR, "baseline_foxj1a_module_correlations.tsv")
+)
+
+baseline_annotations <- baseline_correlations |>
+  dplyr::mutate(
+    label = paste0(
+      "Pearson r = ", sprintf("%.2f", .data$pearson),
+      "\nSpearman rho = ", sprintf("%.2f", .data$spearman)
+    ),
+    x = Inf,
+    y = -Inf
+  )
+
+positive_expression_median <- stats::median(
+  foxj1a_baseline$control_foxj1a_expression[
+    foxj1a_baseline$control_foxj1a_expression > 0
+  ]
+)
+
+baseline_coupling <- baseline_coupling |>
+  dplyr::mutate(
+    foxj1a_expression_group = dplyr::case_when(
+      .data$control_foxj1a_expression == 0 ~ "not detected",
+      .data$control_foxj1a_expression <= positive_expression_median ~
+        "lower positive",
+      TRUE ~ "higher positive"
+    ),
+    foxj1a_expression_group = factor(
+      .data$foxj1a_expression_group,
+      levels = c("not detected", "lower positive", "higher positive")
+    )
+  )
+
+expression_group_counts <- baseline_coupling |>
+  dplyr::distinct(.data$cell_type, .data$foxj1a_expression_group) |>
+  dplyr::count(.data$foxj1a_expression_group, name = "n_cell_types")
+
+readr::write_tsv(
+  expression_group_counts,
+  file.path(DATA_DIR, "foxj1a_expression_group_counts.tsv")
+)
+
+baseline_plot <- ggplot(
+  baseline_coupling,
+  aes(
+    x = .data$foxj1a_expression_group,
+    y = .data$control_mean,
+    fill = .data$foxj1a_expression_group
+  )
+) +
+  geom_boxplot(width = 0.65, outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(
+    aes(color = .data$foxj1a_expression_group),
+    width = 0.12,
+    height = 0,
+    size = 1.6,
+    alpha = 0.75,
+    show.legend = FALSE
+  ) +
+  facet_wrap(vars(.data$module_label), ncol = 2, scales = "free_y") +
+  scale_fill_manual(
+    values = c(
+      "not detected" = "#D9D9D9",
+      "lower positive" = "#80CDC1",
+      "higher positive" = "#018571"
+    ),
+    guide = "none"
+  ) +
+  scale_color_manual(
+    values = c(
+      "not detected" = "#7A7A7A",
+      "lower positive" = "#35978F",
+      "higher positive" = "#01665E"
+    ),
+    guide = "none"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 20, hjust = 1)
+  ) +
+  labs(
+    title = "Module activity across foxj1a-expression groups",
+    subtitle = paste0(
+      "Each point is one cell type; positive expression split at the median (",
+      sprintf("%.3g", positive_expression_median),
+      ")"
+    ),
+    x = "mean control foxj1a expression group",
+    y = "mean control module score"
+  )
+
+save_plot_pair(
+  "04_baseline_foxj1a_module_coupling",
+  baseline_plot,
+  width = 13,
+  height = 9
+)
+
+baseline_plot
+```
+
+## Step 7: Show embryos for the strongest candidates
+
+The three smallest q-values from each module are shown, including all FDR hits.
+This is the quickest check for effects driven by one unusual embryo.
+
+```{r candidate-embryos, fig.width=14, fig.height=14}
+candidate_results <- module_results |>
+  dplyr::group_by(.data$module_id) |>
+  dplyr::arrange(.data$q_value, .by_group = TRUE) |>
+  dplyr::slice_head(n = 3) |>
+  dplyr::ungroup() |>
+  dplyr::select(
+    module_id,
+    module_label,
+    cell_type,
+    score_difference,
+    q_value,
+    is_fdr_significant
+  )
+
+embryo_scores <- readr::read_tsv(
+  EMBRYO_SCORE_FILE,
+  show_col_types = FALSE
+) |>
+  dplyr::filter(
+    .data$timepoint == TIMEPOINT,
+    .data$perturbation %in% c(PERTURBATION, CONTROL),
+    .data$n_cells >= MINIMUM_CELLS
+  ) |>
+  dplyr::mutate(
+    arm = dplyr::if_else(
+      .data$perturbation == PERTURBATION,
+      "perturbation",
+      "control"
+    ),
+    arm = factor(.data$arm, levels = c("control", "perturbation"))
+  )
+
+candidate_embryo_values <- embryo_scores |>
+  dplyr::inner_join(
+    candidate_results,
+    by = c("module_id", "cell_type")
+  ) |>
+  dplyr::mutate(
+    panel_label = paste0(
+      MODULE_LABELS[.data$module_id],
+      "\n",
+      stringr::str_wrap(.data$cell_type, width = 38),
+      "\ndelta = ", sprintf("%.3g", .data$score_difference),
+      "; q = ", format(.data$q_value, digits = 2, scientific = TRUE)
+    )
+  )
+
+readr::write_tsv(
+  dplyr::select(candidate_embryo_values, -panel_label),
+  file.path(DATA_DIR, "top_candidate_embryo_values.tsv")
+)
+
+candidate_embryo_plot <- ggplot(
+  candidate_embryo_values,
+  aes(x = .data$arm, y = .data$mean_module_score, color = .data$arm)
+) +
+  geom_jitter(width = 0.10, height = 0, size = 1.8, alpha = 0.85) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.5,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(vars(.data$panel_label), scales = "free_y", ncol = 3) +
+  scale_color_manual(values = arm_colors, guide = "none") +
+  theme_minimal(base_size = 9) +
+  theme(
+    axis.title.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 7.5)
+  ) +
+  labs(
+    title = "Strongest three cell-type results from each module",
+    subtitle = "Each point is one embryo; black bar is the group mean",
+    y = "mean module score"
+  )
+
+save_plot_pair(
+  "05_top_candidate_embryo_values",
+  candidate_embryo_plot,
+  width = 14,
+  height = 14
+)
+
+candidate_embryo_plot
+```
+
+## Step 8: Show which cell types recur across modules
+
+The rows are cilia modules and the columns are cell types. A node means that
+the module and cell-type result has raw `p < 0.05`. Repeated nodes within one
+column reveal cell types implicated by multiple modules.
+
+```{r module-overlap-upset, fig.width=26, fig.height=13}
+is_raw_p_05 <- module_results$p_value < 0.05
+is_raw_p_01 <- module_results$p_value < 0.01
+is_bh_q_05 <- module_results$q_value < 0.05
+
+if (any(is_bh_q_05 & !is_raw_p_01)) {
+  stop("The BH q < 0.05 set is not contained within raw p < 0.01.")
+}
+if (any(is_raw_p_01 & !is_raw_p_05)) {
+  stop("The raw p < 0.01 set is not contained within raw p < 0.05.")
+}
+
+threshold_counts <- tibble::tibble(
+  threshold = c("BH q < 0.05", "raw p < 0.01", "raw p < 0.05"),
+  n_results = c(sum(is_bh_q_05), sum(is_raw_p_01), sum(is_raw_p_05)),
+  n_added = c(
+    sum(is_bh_q_05),
+    sum(is_raw_p_01 & !is_bh_q_05),
+    sum(is_raw_p_05 & !is_raw_p_01)
+  )
+)
+
+readr::write_tsv(
+  threshold_counts,
+  file.path(DATA_DIR, "significance_threshold_counts.tsv")
+)
+
+# Keep every nominal candidate and record its strongest evidence tier.
+overlap_candidates <- module_results |>
+  dplyr::filter(.data$p_value < 0.05) |>
+  dplyr::mutate(
+    evidence_tier = dplyr::case_when(
+      .data$q_value < 0.05 ~ "BH q < 0.05",
+      .data$p_value < 0.01 ~ "raw p < 0.01 only",
+      TRUE ~ "raw p < 0.05 only"
+    ),
+    evidence_tier = factor(
+      .data$evidence_tier,
+      levels = c(
+        "BH q < 0.05",
+        "raw p < 0.01 only",
+        "raw p < 0.05 only"
+      )
+    ),
+    effect_direction = dplyr::if_else(
+      .data$score_difference < 0,
+      "decrease",
+      "increase"
+    )
+  )
+
+# Sort by recurrence first, then by the strongest p-value in that cell type.
+celltype_order <- overlap_candidates |>
+  dplyr::group_by(.data$cell_type) |>
+  dplyr::summarise(
+    n_modules = dplyr::n_distinct(.data$module_id),
+    strongest_p = min(.data$p_value),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(.data$n_modules),
+    .data$strongest_p,
+    .data$cell_type
+  )
+
+ordered_celltypes <- celltype_order$cell_type
+ordered_module_labels <- rev(unname(MODULE_LABELS[MODULES]))
+
+overlap_candidates <- overlap_candidates |>
+  dplyr::mutate(
+    cell_type = factor(.data$cell_type, levels = ordered_celltypes),
+    module_label = factor(
+      as.character(.data$module_label),
+      levels = ordered_module_labels
+    )
+  )
+
+# Small open circles show every possible module and cell-type combination.
+matrix_background <- tidyr::expand_grid(
+  cell_type = factor(ordered_celltypes, levels = ordered_celltypes),
+  module_label = factor(ordered_module_labels, levels = ordered_module_labels)
+)
+
+readr::write_tsv(
+  overlap_candidates,
+  file.path(DATA_DIR, "module_overlap_upset_matrix.tsv")
+)
+
+module_count_plot <- ggplot(
+  celltype_order |>
+    dplyr::mutate(
+      cell_type = factor(.data$cell_type, levels = ordered_celltypes)
+    ),
+  aes(x = .data$cell_type, y = .data$n_modules)
+) +
+  geom_col(width = 0.72, fill = "#4C78A8") +
+  geom_text(
+    aes(label = .data$n_modules),
+    vjust = -0.30,
+    size = 4
+  ) +
+  scale_y_continuous(
+    limits = c(0, 4.7),
+    expand = expansion(mult = c(0, 0))
+  ) +
+  theme_void() +
+  theme(
+    plot.margin = margin(t = 2, r = 5, b = 0, l = 5)
+  )
+
+module_matrix_plot <- ggplot(
+  matrix_background,
+  aes(x = .data$cell_type, y = .data$module_label)
+) +
+  geom_point(
+    shape = 21,
+    size = 1.8,
+    stroke = 0.35,
+    fill = "white",
+    color = "#D0D0D0"
+  ) +
+  geom_point(
+    data = overlap_candidates,
+    aes(
+      fill = .data$effect_direction,
+      size = .data$evidence_tier
+    ),
+    shape = 21,
+    color = "#303030",
+    stroke = 0.65
+  ) +
+  scale_fill_manual(
+    values = c(
+      decrease = "#2166AC",
+      increase = "#B2182B"
+    ),
+    name = "module-score change"
+  ) +
+  scale_size_manual(
+    values = c(
+      "BH q < 0.05" = 9,
+      "raw p < 0.01 only" = 6,
+      "raw p < 0.05 only" = 3.5
+    ),
+    name = "evidence"
+  ) +
+  guides(
+    fill = guide_legend(
+      override.aes = list(shape = 21, size = 5, color = "#303030")
+    ),
+    size = guide_legend(
+      override.aes = list(shape = 21, fill = "#808080", color = "#303030")
+    )
+  ) +
+  scale_x_discrete(
+    labels = function(labels) stringr::str_wrap(labels, width = 20)
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.title = element_blank(),
+    axis.text.x = element_text(
+      angle = 58,
+      hjust = 1,
+      vjust = 1,
+      size = 10,
+      lineheight = 0.92
+    ),
+    axis.text.y = element_text(size = 11),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "#ECECEC"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 10),
+    plot.margin = margin(t = 0, r = 5, b = 0, l = 5)
+  )
+
+module_overlap_plot <- module_count_plot / module_matrix_plot +
+  patchwork::plot_layout(heights = c(0.55, 2.0), guides = "collect") +
+  patchwork::plot_annotation(
+    title = "Cell types implicated across multiple cilia modules",
+    subtitle = paste0(
+      "Foxj1a at 48 hpf; columns are ordered by module recurrence and then ",
+      "statistical evidence. Blue decreases, red increases, and larger nodes ",
+      "have stronger evidence."
+    ),
+    theme = theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      plot.subtitle = element_text(size = 12)
+    )
+  ) &
+  theme(legend.position = "bottom")
+
+save_plot_pair(
+  "06_module_overlap_upset_matrix",
+  module_overlap_plot,
+  width = 20,
+  height = 9.5
+)
+
+module_overlap_plot
+```
+
+## Step 9: Inspect every nominal raw-p candidate
+
+The next artifact includes every module and cell-type result with raw
+`p < 0.05`. These are **nominal candidates**, not FDR-supported discoveries.
+The complete PDF has one page per module, and matching PNG pages make the
+results easy to inspect without rendering the PDF.
+
+```{r all-raw-p-candidates, fig.show='hide'}
+raw_p_candidates <- module_results |>
+  dplyr::filter(.data$p_value < 0.05) |>
+  dplyr::arrange(.data$module_id, .data$p_value) |>
+  dplyr::select(
+    module_id,
+    module_label,
+    cell_type,
+    score_difference,
+    p_value,
+    q_value,
+    is_fdr_significant
+  )
+
+raw_p_candidate_values <- embryo_scores |>
+  dplyr::inner_join(
+    raw_p_candidates,
+    by = c("module_id", "cell_type")
+  ) |>
+  dplyr::mutate(
+    panel_label = paste0(
+      stringr::str_wrap(.data$cell_type, width = 38),
+      "\ndelta = ", sprintf("%.3g", .data$score_difference),
+      "; p = ", format(.data$p_value, digits = 2, scientific = TRUE),
+      "; q = ", format(.data$q_value, digits = 2, scientific = TRUE)
+    )
+  )
+
+readr::write_tsv(
+  dplyr::select(raw_p_candidate_values, -panel_label),
+  file.path(DATA_DIR, "raw_p_05_candidate_embryo_values.tsv")
+)
+
+raw_candidate_plots <- list()
+
+for (module_name in MODULES) {
+  module_values <- raw_p_candidate_values |>
+    dplyr::filter(as.character(.data$module_id) == .env$module_name) |>
+    dplyr::mutate(
+      panel_label = factor(
+        .data$panel_label,
+        levels = unique(.data$panel_label[order(.data$p_value)])
+      )
+    )
+
+  module_plot <- ggplot(
+    module_values,
+    aes(x = .data$arm, y = .data$mean_module_score, color = .data$arm)
+  ) +
+    geom_jitter(width = 0.10, height = 0, size = 2.0, alpha = 0.85) +
+    stat_summary(
+      fun = mean,
+      geom = "crossbar",
+      width = 0.5,
+      color = "black",
+      linewidth = 0.4
+    ) +
+    facet_wrap(vars(.data$panel_label), scales = "free_y", ncol = 3) +
+    scale_color_manual(values = arm_colors, guide = "none") +
+    theme_minimal(base_size = 10) +
+    theme(
+      axis.title.x = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.text = element_text(size = 8)
+    ) +
+    labs(
+      title = paste0(
+        MODULE_LABELS[[module_name]],
+        ": all nominal candidates with raw p < 0.05"
+      ),
+      subtitle = paste0(
+        nrow(raw_p_candidates |> dplyr::filter(
+          as.character(.data$module_id) == .env$module_name
+        )),
+        " cell types; each point is one embryo; black bar is the group mean"
+      ),
+      y = "mean module score"
+    )
+
+  raw_candidate_plots[[module_name]] <- module_plot
+
+  ggsave(
+    file.path(
+      FIGURE_DIR,
+      paste0("07_raw_p_candidates_", module_name, ".png")
+    ),
+    module_plot,
+    device = ragg::agg_png,
+    width = 14,
+    height = 11,
+    units = "in",
+    dpi = 200,
+    bg = "white",
+    limitsize = FALSE
+  )
+}
+
+# One PDF page per module keeps all 39 panels readable in one artifact.
+grDevices::pdf(
+  file.path(FIGURE_DIR, "07_raw_p_candidate_embryo_values.pdf"),
+  width = 14,
+  height = 11,
+  onefile = TRUE
+)
+for (module_name in MODULES) {
+  print(raw_candidate_plots[[module_name]])
+}
+grDevices::dev.off()
+
+raw_p_candidates |>
+  dplyr::count(.data$module_label, name = "n_raw_p_candidates")
+```

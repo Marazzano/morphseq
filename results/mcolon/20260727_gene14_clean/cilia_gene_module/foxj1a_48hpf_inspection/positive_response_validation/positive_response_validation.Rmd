@@ -1,0 +1,508 @@
+---
+title: "Are positive motile-cilia responses larger than sampling noise?"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+This is a deliberately separate exploratory analysis. It asks whether cell
+types with a higher gold motile-cilia score after foxj1a perturbation look like
+plausible compensatory responses or like ordinary embryo-to-embryo variation.
+
+The word **adaptation is not used as a result** here. A positive change must be
+stable across embryos, larger than a control-only sampling null, and coherent
+across component genes before that interpretation becomes convincing.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(readr)
+library(ggplot2)
+library(patchwork)
+
+knitr::opts_chunk$set(
+  dev = "ragg_png",
+  fig.bg = "white"
+)
+
+PROJECT_DIR <- paste0(
+  "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/",
+  "mcolon/20260727_gene14_clean"
+)
+MODULE_DIR <- file.path(PROJECT_DIR, "cilia_gene_module")
+PARENT_DIR <- file.path(MODULE_DIR, "foxj1a_48hpf_inspection")
+HERE <- file.path(PARENT_DIR, "positive_response_validation")
+DATA_DIR <- file.path(HERE, "data")
+FIGURE_DIR <- file.path(HERE, "figures")
+
+dir.create(DATA_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(FIGURE_DIR, recursive = TRUE, showWarnings = FALSE)
+
+MODEL_RESULT_FILE <- file.path(
+  MODULE_DIR,
+  "output",
+  "differential_module_results",
+  "foxj1a_48hpf.tsv"
+)
+EMBRYO_SCORE_FILE <- file.path(
+  MODULE_DIR,
+  "output",
+  "embryo_celltype_cilia_module_scores.tsv"
+)
+
+PERTURBATION <- "foxj1a"
+CONTROL <- "ctrl-inj"
+TIMEPOINT <- 48
+MODULE <- "gold_motile_cilia"
+MINIMUM_CELLS <- 10L
+NUMBER_OF_CANDIDATES_TO_SHOW <- 6L
+
+arm_colors <- c(
+  control = "#4C78A8",
+  perturbation = "#E45756"
+)
+```
+
+## Step 1: Read the completed model and embryo scores
+
+The fitted model is not rerun. We reuse its effect, interval, and p-value, then
+look directly at the embryo means that entered the comparison.
+
+```{r read-data}
+model_results <- readr::read_tsv(
+  MODEL_RESULT_FILE,
+  show_col_types = FALSE
+)
+
+embryo_scores <- readr::read_tsv(
+  EMBRYO_SCORE_FILE,
+  show_col_types = FALSE
+) |>
+  dplyr::filter(
+    .data$timepoint == TIMEPOINT,
+    .data$module_id == MODULE,
+    .data$perturbation %in% c(PERTURBATION, CONTROL),
+    .data$n_cells >= MINIMUM_CELLS
+  ) |>
+  dplyr::mutate(
+    arm = dplyr::if_else(
+      .data$perturbation == PERTURBATION,
+      "perturbation",
+      "control"
+    ),
+    arm = factor(.data$arm, levels = c("control", "perturbation"))
+  )
+
+gold_results <- model_results |>
+  dplyr::filter(.data$module_id == MODULE) |>
+  dplyr::mutate(
+    # The model q-value corrects across all five modules and cell types.
+    # This second q-value asks the narrower gold-motile-only question.
+    gold_module_q_value = stats::p.adjust(.data$p_value, method = "BH")
+  )
+
+positive_results <- gold_results |>
+  dplyr::filter(.data$score_difference > 0) |>
+  dplyr::arrange(.data$p_value)
+
+cat(nrow(positive_results), "of", nrow(gold_results),
+    "tested cell types have a positive point estimate.\n")
+```
+
+## Step 2: Ask whether one embryo controls each result
+
+For every positive result, we remove one embryo at a time and recalculate the
+plain difference in group means. A candidate is fragile if its direction
+changes after removing just one embryo.
+
+```{r leave-one-embryo-out}
+leave_one_out_rows <- list()
+row_number <- 1L
+
+for (cell_type_name in positive_results$cell_type) {
+  cell_type_scores <- embryo_scores |>
+    dplyr::filter(.data$cell_type == cell_type_name)
+
+  for (embryo_to_remove in cell_type_scores$embryo_ID) {
+    remaining_scores <- cell_type_scores |>
+      dplyr::filter(.data$embryo_ID != embryo_to_remove)
+
+    group_means <- remaining_scores |>
+      dplyr::group_by(.data$arm) |>
+      dplyr::summarise(
+        mean_score = mean(.data$mean_module_score),
+        .groups = "drop"
+      )
+
+    leave_one_out_rows[[row_number]] <- tibble::tibble(
+      cell_type = cell_type_name,
+      removed_embryo_ID = embryo_to_remove,
+      removed_arm = as.character(
+        cell_type_scores$arm[cell_type_scores$embryo_ID == embryo_to_remove]
+      ),
+      score_difference_without_embryo =
+        group_means$mean_score[group_means$arm == "perturbation"] -
+        group_means$mean_score[group_means$arm == "control"]
+    )
+
+    row_number <- row_number + 1L
+  }
+}
+
+leave_one_out_results <- dplyr::bind_rows(leave_one_out_rows)
+
+leave_one_out_summary <- leave_one_out_results |>
+  dplyr::group_by(.data$cell_type) |>
+  dplyr::summarise(
+    minimum_leave_one_out_difference =
+      min(.data$score_difference_without_embryo),
+    maximum_leave_one_out_difference =
+      max(.data$score_difference_without_embryo),
+    fraction_leave_one_out_positive =
+      mean(.data$score_difference_without_embryo > 0),
+    direction_reverses_without_one_embryo =
+      any(.data$score_difference_without_embryo <= 0),
+    .groups = "drop"
+  )
+
+readr::write_tsv(
+  leave_one_out_results,
+  file.path(DATA_DIR, "leave_one_embryo_out_results.tsv")
+)
+```
+
+## Step 3: Build a control-only sampling-noise floor
+
+Within each cell type, the control embryos are divided into every possible pair
+of similarly sized pseudo-arms. We then measure the difference between those
+pseudo-arms. This answers a narrow question:
+
+> How large a difference can appear when we repeatedly divide control embryos?
+
+This is intentionally conservative because each pseudo-arm is smaller than the
+real experimental arms. It captures sampling noise, but **cannot capture the
+foxj1a-versus-control plate confounding**, because all pseudo-arms come from the
+same control plate.
+
+```{r control-only-null}
+control_split_rows <- list()
+split_number <- 1L
+
+for (cell_type_name in positive_results$cell_type) {
+  control_scores <- embryo_scores |>
+    dplyr::filter(
+      .data$cell_type == cell_type_name,
+      .data$arm == "control"
+    ) |>
+    dplyr::arrange(.data$embryo_ID)
+
+  n_control <- nrow(control_scores)
+
+  if (n_control < 6L) {
+    next
+  }
+
+  first_arm_size <- floor(n_control / 2)
+  first_arm_combinations <- utils::combn(
+    seq_len(n_control),
+    first_arm_size,
+    simplify = FALSE
+  )
+
+  # With equal arm sizes, complementary splits are duplicates. Keeping splits
+  # that contain embryo 1 leaves one copy of each comparison.
+  if (n_control %% 2L == 0L) {
+    first_arm_combinations <- first_arm_combinations[
+      vapply(first_arm_combinations, function(rows) 1L %in% rows, logical(1))
+    ]
+  }
+
+  for (first_arm_rows in first_arm_combinations) {
+    second_arm_rows <- setdiff(seq_len(n_control), first_arm_rows)
+
+    control_split_rows[[split_number]] <- tibble::tibble(
+      cell_type = cell_type_name,
+      split_id = split_number,
+      n_first_pseudo_arm = length(first_arm_rows),
+      n_second_pseudo_arm = length(second_arm_rows),
+      pseudo_arm_difference =
+        mean(control_scores$mean_module_score[first_arm_rows]) -
+        mean(control_scores$mean_module_score[second_arm_rows])
+    )
+
+    split_number <- split_number + 1L
+  }
+}
+
+control_split_null <- dplyr::bind_rows(control_split_rows)
+
+control_split_summary <- control_split_null |>
+  dplyr::group_by(.data$cell_type) |>
+  dplyr::summarise(
+    n_control_splits = dplyr::n(),
+    control_null_95 = stats::quantile(
+      abs(.data$pseudo_arm_difference),
+      0.95
+    ),
+    control_null_99 = stats::quantile(
+      abs(.data$pseudo_arm_difference),
+      0.99
+    ),
+    .groups = "drop"
+  )
+
+candidate_summary <- positive_results |>
+  dplyr::left_join(leave_one_out_summary, by = "cell_type") |>
+  dplyr::left_join(control_split_summary, by = "cell_type") |>
+  dplyr::rowwise() |>
+  dplyr::mutate(
+    empirical_control_split_p = {
+      null_values <- control_split_null$pseudo_arm_difference[
+        control_split_null$cell_type == .data$cell_type
+      ]
+
+      if (length(null_values) == 0L) {
+        NA_real_
+      } else {
+        (1 + sum(abs(null_values) >= abs(.data$score_difference))) /
+          (1 + length(null_values))
+      }
+    },
+    effect_over_control_null_95 =
+      abs(.data$score_difference) / .data$control_null_95
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(.data$p_value) |>
+  dplyr::mutate(evidence_rank = dplyr::row_number())
+
+readr::write_tsv(
+  control_split_null,
+  file.path(DATA_DIR, "control_only_split_null_values.tsv")
+)
+readr::write_tsv(
+  candidate_summary,
+  file.path(DATA_DIR, "positive_candidate_summary.tsv")
+)
+
+candidate_summary |>
+  dplyr::select(
+    evidence_rank,
+    cell_type,
+    score_difference,
+    confidence_interval_low,
+    confidence_interval_high,
+    p_value,
+    q_value,
+    gold_module_q_value,
+    empirical_control_split_p,
+    fraction_leave_one_out_positive,
+    direction_reverses_without_one_embryo
+  ) |>
+  head(12)
+```
+
+## Step 4: Show the leading positive candidates
+
+The six candidates with the smallest model p-values are shown. This ranking is
+for inspection only; it does not turn a nominal p-value into significance.
+
+```{r candidate-plots, fig.width=13, fig.height=10}
+top_candidates <- candidate_summary |>
+  dplyr::slice_head(n = NUMBER_OF_CANDIDATES_TO_SHOW)
+
+top_candidate_values <- embryo_scores |>
+  dplyr::inner_join(
+    dplyr::select(top_candidates, cell_type, evidence_rank),
+    by = "cell_type"
+  ) |>
+  dplyr::mutate(
+    panel_label = paste0(
+      .data$evidence_rank,
+      ". ",
+      .data$cell_type
+    )
+  )
+
+readr::write_tsv(
+  dplyr::select(top_candidate_values, -panel_label),
+  file.path(DATA_DIR, "top_candidate_embryo_values.tsv")
+)
+
+raw_embryo_plot <- ggplot(
+  top_candidate_values,
+  aes(
+    x = .data$arm,
+    y = .data$mean_module_score,
+    color = .data$arm
+  )
+) +
+  geom_jitter(width = 0.10, height = 0, size = 2.2, alpha = 0.85) +
+  stat_summary(
+    fun = mean,
+    geom = "crossbar",
+    width = 0.5,
+    color = "black",
+    linewidth = 0.35
+  ) +
+  facet_wrap(vars(.data$panel_label), scales = "free_y", ncol = 3) +
+  scale_color_manual(values = arm_colors, guide = "none") +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.title.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(size = 8)
+  ) +
+  labs(
+    title = "Leading positive motile-cilia responses",
+    subtitle = "Each point is one embryo; the black bar is the group mean",
+    y = "mean gold motile-cilia score"
+  )
+
+ggsave(
+  file.path(FIGURE_DIR, "01_top_candidate_embryo_values.pdf"),
+  raw_embryo_plot,
+  width = 13,
+  height = 8
+)
+ggsave(
+  file.path(FIGURE_DIR, "01_top_candidate_embryo_values.png"),
+  raw_embryo_plot,
+  device = ragg::agg_png,
+  width = 13,
+  height = 8,
+  dpi = 200,
+  bg = "white"
+)
+
+raw_embryo_plot
+```
+
+## Step 5: Compare each observed gain with its sampling-noise floor
+
+Points above the diagonal are larger than the 95th percentile of their own
+cell type's control-only split null. The second panel shows how much the effect
+moves when any single embryo is removed.
+
+```{r stability-plots, fig.width=13, fig.height=7}
+noise_floor_plot <- candidate_summary |>
+  dplyr::filter(!is.na(.data$control_null_95)) |>
+  ggplot(
+    aes(
+      x = .data$control_null_95,
+      y = .data$score_difference,
+      color = .data$empirical_control_split_p <= 0.05
+    )
+  ) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray45") +
+  geom_point(size = 2.6) +
+  scale_color_manual(
+    values = c(`FALSE` = "gray60", `TRUE` = "#E45756"),
+    name = "above control-only\nnoise floor"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  ) +
+  labs(
+    title = "Observed gain versus control-only sampling noise",
+    x = "95th percentile of\n|control pseudo-arm difference|",
+    y = "observed score gain"
+  )
+
+stability_plot <- candidate_summary |>
+  dplyr::slice_head(n = 12) |>
+  dplyr::mutate(
+    cell_type = factor(.data$cell_type, levels = rev(.data$cell_type))
+  ) |>
+  ggplot(aes(y = .data$cell_type)) +
+  geom_vline(xintercept = 0, color = "gray55") +
+  geom_segment(
+    aes(
+      x = .data$minimum_leave_one_out_difference,
+      xend = .data$maximum_leave_one_out_difference,
+      yend = .data$cell_type
+    ),
+    color = "gray45"
+  ) +
+  geom_point(aes(x = .data$score_difference), color = "#E45756", size = 2.5) +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid.minor = element_blank()) +
+  labs(
+    title = "Effect after removing any one embryo",
+    subtitle = "Red point is the full result; line is the leave-one-out range",
+    x = "motile-score difference",
+    y = NULL
+  )
+
+stability_figure <- noise_floor_plot + stability_plot +
+  patchwork::plot_layout(widths = c(0.9, 1.1))
+
+ggsave(
+  file.path(FIGURE_DIR, "02_noise_floor_and_stability.pdf"),
+  stability_figure,
+  width = 13,
+  height = 7
+)
+ggsave(
+  file.path(FIGURE_DIR, "02_noise_floor_and_stability.png"),
+  stability_figure,
+  device = ragg::agg_png,
+  width = 13,
+  height = 7,
+  dpi = 200,
+  bg = "white"
+)
+
+stability_figure
+```
+
+## Step 6: State what these compact artifacts cannot test
+
+The existing component-gene artifact contains spinal-cord radial glia only. It
+was created to validate the strong **negative** response and cannot establish
+gene-level coherence in the positive candidates. The compact cell-score RDS
+contains module scores but not individual gene expression, so it also cannot
+test `foxj1b` or other compensatory regulators.
+
+```{r data-availability}
+data_availability <- tibble::tribble(
+  ~question, ~available_without_large_cds, ~reason,
+  "Embryo-level positive module scores", TRUE,
+  "Available for every tested cell type in the compact embryo-score table.",
+  "Control-only sampling null", TRUE,
+  "Can be computed from the compact embryo-score table.",
+  "Positive-candidate component-gene coherence", FALSE,
+  "The existing gene table contains spinal-cord radial glia only.",
+  "Leave-one-gene-out module sensitivity", FALSE,
+  "Individual component genes are absent for the positive candidates.",
+  "foxj1b and compensatory regulator expression", FALSE,
+  "The compact cell-score object contains module scores, not gene expression.",
+  "Recurrence at another valid foxj1a time point", FALSE,
+  "Only the valid 48-hpf foxj1a module contrast has been fitted here."
+)
+
+readr::write_tsv(
+  data_availability,
+  file.path(DATA_DIR, "data_availability.tsv")
+)
+
+data_availability
+```
+
+## Interpretation rule
+
+A positive candidate becomes more credible when:
+
+1. its confidence interval excludes zero;
+2. its FDR-adjusted q-value is small;
+3. its gain exceeds the control-only noise floor;
+4. removing one embryo never reverses the direction; and
+5. many component genes rise together.
+
+The first four can be inspected here. The fifth requires a deliberately scoped
+gene-expression extraction for the selected candidates. Even then, the
+foxj1a/control plate confounding remains and requires independent replication
+or a plate-aware experimental comparison.

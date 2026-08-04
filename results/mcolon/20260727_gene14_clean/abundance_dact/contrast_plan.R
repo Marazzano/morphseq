@@ -40,17 +40,17 @@ perturbation_contrast_plan <- tibble::tribble(
 
 
 # MorphSeq phenotype groups
+#
+# cep290 phenotype predictions are biologically defined only from 30 hpf
+# onward. Earlier labels are not real phenotype assignments and must never be
+# used to construct differential-abundance contrasts.
 
 phenotype_contrast_plan <- tibble::tribble(
   ~contrast_name,                              ~fit_group,        ~group_column,     ~perturbation, ~control,        ~timepoint, ~expected_cross_rt_block, ~control_note,
-  "cep290_low_to_high_vs_negsib_18hpf",        "cep290_18hpf",    "phenotype_group", "Low_to_High", "cep290-negsib",         18, FALSE,                    "negative sibling",
-  "cep290_high_to_low_vs_negsib_24hpf",        "cep290_24hpf",    "phenotype_group", "High_to_Low", "cep290-negsib",         24, FALSE,                    "negative sibling",
-  "cep290_low_to_high_vs_negsib_24hpf",        "cep290_24hpf",    "phenotype_group", "Low_to_High", "cep290-negsib",         24, FALSE,                    "negative sibling",
   "cep290_high_to_low_vs_b9d2_negsib_30hpf",   "cep290_30hpf",    "phenotype_group", "High_to_Low", "b9d2-negsib",           30, TRUE,                     "borrowed control: cep290-negsib is absent",
   "cep290_low_to_high_vs_b9d2_negsib_30hpf",   "cep290_30hpf",    "phenotype_group", "Low_to_High", "b9d2-negsib",           30, TRUE,                     "borrowed control: cep290-negsib is absent",
   "cep290_high_to_low_vs_negsib_48hpf",        "cep290_48hpf",    "phenotype_group", "High_to_Low", "cep290-negsib",         48, FALSE,                    "negative sibling",
   "cep290_low_to_high_vs_negsib_48hpf",        "cep290_48hpf",    "phenotype_group", "Low_to_High", "cep290-negsib",         48, FALSE,                    "negative sibling",
-  "cep290_high_to_low_vs_low_to_high_24hpf",   "cep290_24hpf",    "phenotype_group", "High_to_Low", "Low_to_High",           24, FALSE,                    "phenotype comparison",
   "cep290_high_to_low_vs_low_to_high_30hpf",   "cep290_30hpf",    "phenotype_group", "High_to_Low", "Low_to_High",           30, FALSE,                    "phenotype comparison",
   "cep290_high_to_low_vs_low_to_high_48hpf",   "cep290_48hpf",    "phenotype_group", "High_to_Low", "Low_to_High",           48, FALSE,                    "phenotype comparison",
   "b9d2_ce_vs_negsib_14hpf",                   "b9d2_14hpf",      "phenotype_group", "CE",           "b9d2-negsib",           14, FALSE,                    "negative sibling",
