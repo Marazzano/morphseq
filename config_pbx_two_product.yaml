@@ -39,3 +39,10 @@ image_materialization:
       projection_method: max
       snips:
         - snip_recipe: no_change
+
+# Native-grid fluorescence intensity. NAMED EXPLICITLY, not "every product": intensity measured off
+# a CLAHE'd raster is not a measurement, and a BF projection carries no dosage. Listing only the
+# quantitative product keeps rows that look quantitative from being produced for ones that are not.
+channel_intensity:
+  source_image_products:
+    - RFP__projection__max
