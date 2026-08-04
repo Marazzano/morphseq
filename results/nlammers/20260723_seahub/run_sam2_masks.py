@@ -3,9 +3,10 @@
 The default visualization mode preserves the original validation products:
 full-frame masks, masked snips, overlays, contact sheets, and a mask manifest.
 
-``--areas-only`` is the full-corpus calibration mode. It makes one batched,
-box-prompted SAM2 prediction call per source FOV and writes only an atomically
-checkpointed ``sam2_mask_areas.csv``. No masks, overlays, or snips are retained.
+``--areas-only`` is the full-corpus production mode. It makes one batched,
+box-prompted SAM2 prediction call per source FOV and writes an atomically
+checkpointed ``sam2_mask_areas.csv`` plus one cleaned, full-FOV binary mask per
+embryo. Overlays, masked snips, and contact sheets are omitted in this mode.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from typing import Any, Sequence
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw
+from scipy import ndimage
 
 
 HERE = Path(__file__).resolve().parent
@@ -74,8 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--areas-only",
         action="store_true",
         help=(
-            "Full-corpus calibration mode: write only a checkpointed CSV of "
-            "mask areas and scores; do not retain masks or visualizations."
+            "Full-corpus production mode: write a checkpointed CSV plus cleaned "
+            "full-FOV binary masks; omit overlays, masked snips, and contact sheets."
         ),
     )
     return parser
@@ -100,9 +102,9 @@ def _prepare_output(output: Path, *, areas_only: bool) -> Path:
             )
 
     output.mkdir(parents=True, exist_ok=True)
+    (output / "masks").mkdir(parents=True, exist_ok=True)
     if not areas_only:
         for subdirectory in (
-            "masks",
             "mask_snips",
             "overlays",
             "mask_contact_sheets",
@@ -205,6 +207,179 @@ def _normalize_predictions(
     return masks_array > 0.0, scores_array
 
 
+def _rounded_prompt_box(
+    prompt_box: Sequence[float],
+    *,
+    image_shape: tuple[int, int] | None = None,
+) -> tuple[int, int, int, int]:
+    """Return a validated integer ``xyxy`` prompt box.
+
+    Rounding deliberately matches the historical area-manifest behavior so the
+    existing prompt coordinate and area columns retain their meaning.
+    """
+    values = np.asarray(prompt_box, dtype=float).reshape(-1)
+    if values.shape != (4,) or not np.isfinite(values).all():
+        raise ValueError(f"Invalid SAM2 prompt box: {prompt_box!r}")
+    x1, y1, x2, y2 = (int(round(value)) for value in values)
+    if image_shape is not None:
+        height, width = image_shape
+        x1 = min(max(x1, 0), int(width))
+        x2 = min(max(x2, 0), int(width))
+        y1 = min(max(y1, 0), int(height))
+        y2 = min(max(y2, 0), int(height))
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError(
+            "SAM2 prompt box must have positive area after rounding/clipping; "
+            f"got {(x1, y1, x2, y2)}."
+        )
+    return x1, y1, x2, y2
+
+
+def _prompt_area(prompt_box: Sequence[float]) -> int:
+    x1, y1, x2, y2 = _rounded_prompt_box(prompt_box)
+    return int((x2 - x1) * (y2 - y1))
+
+
+def _mask_bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
+    """Return a nonempty binary mask's half-open ``xyxy`` bounding box."""
+    binary = np.asarray(mask, dtype=bool)
+    if binary.ndim != 2:
+        raise ValueError(f"Mask bbox requires a 2-D mask; got {binary.shape}.")
+    ys, xs = np.nonzero(binary)
+    if not len(xs):
+        raise ValueError("Mask bbox requires a nonempty mask.")
+    return int(xs.min()), int(ys.min()), int(xs.max() + 1), int(ys.max() + 1)
+
+
+def _validate_cleaned_mask(
+    mask: np.ndarray,
+    *,
+    prompt_box: Sequence[float],
+    context: str,
+) -> None:
+    """Fail loud unless a cleaned embryo mask satisfies the production contract."""
+    binary = np.asarray(mask, dtype=bool)
+    if binary.ndim != 2:
+        raise ValueError(f"{context}: cleaned mask must be 2-D; got {binary.shape}.")
+    if not binary.any():
+        raise ValueError(f"{context}: cleaned mask is empty.")
+
+    _, component_count = ndimage.label(binary)
+    if int(component_count) != 1:
+        raise ValueError(
+            f"{context}: cleaned mask must contain exactly one connected component; "
+            f"found {component_count}."
+        )
+    if not np.array_equal(ndimage.binary_fill_holes(binary), binary):
+        raise ValueError(f"{context}: cleaned mask still contains holes.")
+
+    ratio = float(binary.sum() / _prompt_area(prompt_box))
+    if ratio >= 0.95:
+        raise ValueError(
+            f"{context}: cleaned mask-to-prompt area ratio {ratio:.6f} is >= 0.95; "
+            "rejecting a likely prompt-box/full-inset blowout."
+        )
+
+
+def _clean_prompt_associated_component(
+    raw_mask: np.ndarray,
+    *,
+    prompt_box: Sequence[float],
+    context: str = "SAM2 mask",
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Select the prompt-associated component, fill holes, and return audit fields.
+
+    Selection is deterministic: use the component containing the prompt center
+    when one exists; otherwise maximize prompt-box overlap, then component area,
+    then prefer the lowest component label as a stable final tie-break.
+    """
+    binary = np.asarray(raw_mask) > 0
+    if binary.ndim != 2:
+        raise ValueError(f"{context}: raw mask must be 2-D; got {binary.shape}.")
+
+    labels, component_count = ndimage.label(binary)
+    component_count = int(component_count)
+    if component_count == 0:
+        raise ValueError(f"{context}: raw SAM2 mask is empty.")
+
+    component_areas = np.bincount(labels.ravel(), minlength=component_count + 1)
+    component_areas[0] = 0
+    raw_area = int(binary.sum())
+
+    height, width = binary.shape
+    prompt_values = np.asarray(prompt_box, dtype=float).reshape(4)
+    center_x = min(
+        max(int(np.floor((prompt_values[0] + prompt_values[2]) / 2)), 0),
+        width - 1,
+    )
+    center_y = min(
+        max(int(np.floor((prompt_values[1] + prompt_values[3]) / 2)), 0),
+        height - 1,
+    )
+    center_label = int(labels[center_y, center_x])
+
+    if center_label > 0:
+        selected_label = center_label
+        selection_method = "prompt_center"
+    else:
+        x1, y1, x2, y2 = _rounded_prompt_box(
+            prompt_box,
+            image_shape=(height, width),
+        )
+        overlaps = np.bincount(
+            labels[y1:y2, x1:x2].ravel(),
+            minlength=component_count + 1,
+        )
+        overlaps[0] = 0
+        selected_label = max(
+            range(1, component_count + 1),
+            key=lambda label_id: (
+                int(overlaps[label_id]),
+                int(component_areas[label_id]),
+                -int(label_id),
+            ),
+        )
+        selection_method = "max_prompt_box_overlap"
+
+    selected = labels == selected_label
+    selected_area = int(selected.sum())
+    cleaned = np.asarray(ndimage.binary_fill_holes(selected), dtype=bool)
+    holes_filled = int(cleaned.sum()) - selected_area
+    removed_area = raw_area - selected_area
+
+    _validate_cleaned_mask(cleaned, prompt_box=prompt_box, context=context)
+    audit = {
+        "raw_mask_area_px": raw_area,
+        "component_count_raw": component_count,
+        # Compatibility alias for the original audit-field vocabulary.
+        "raw_component_count": component_count,
+        "removed_component_area_px": removed_area,
+        "holes_filled_px": holes_filled,
+        # Compatibility alias for the original audit-field vocabulary.
+        "holes_filled_area_px": holes_filled,
+        "component_selection_method": selection_method,
+    }
+    return cleaned, audit
+
+
+def _binary_mask_path(output: Path, source_fov_id: str, embryo_position: int) -> Path:
+    token = str(source_fov_id).strip()
+    if not token or Path(token).name != token or token in {".", ".."}:
+        raise ValueError(f"Unsafe source_fov_id for mask filename: {source_fov_id!r}")
+    return output / "masks" / f"{token}__embryo_{int(embryo_position):02d}_mask.png"
+
+
+def _write_binary_mask(mask: np.ndarray, output_path: Path) -> Path:
+    """Atomically persist a full-FOV mask as an 8-bit binary PNG."""
+    binary = np.asarray(mask, dtype=bool)
+    output_path = output_path.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_name(f".{output_path.name}.tmp")
+    Image.fromarray(binary.astype(np.uint8) * 255).save(temporary, format="PNG")
+    temporary.replace(output_path)
+    return output_path
+
+
 def _area_record(
     row: pd.Series,
     *,
@@ -213,23 +388,35 @@ def _area_record(
     mask_score: float,
     prompt_box: Sequence[float],
     prompt_box_source: str,
+    mask_path: str | Path,
+    mask_audit: dict[str, Any],
 ) -> dict[str, Any]:
-    x1, y1, x2, y2 = (int(round(value)) for value in prompt_box)
-    prompt_area = max(1, (x2 - x1) * (y2 - y1))
+    x1, y1, x2, y2 = _rounded_prompt_box(prompt_box)
+    prompt_area = _prompt_area(prompt_box)
     mask_area = int(mask.sum())
+    mask_x1, mask_y1, mask_x2, mask_y2 = _mask_bbox(mask)
+    cleaned_ratio = float(mask_area / prompt_area)
     record: dict[str, Any] = {
         "image_id": str(row["image_id"]),
         "source_fov_id": str(source_fov_id),
         "embryo_position": int(row["embryo_position"]),
+        "mask_path": str(Path(mask_path).resolve()),
         "mask_score": float(mask_score),
         "mask_area_px": mask_area,
+        "mask_bbox_x1_px": mask_x1,
+        "mask_bbox_y1_px": mask_y1,
+        "mask_bbox_x2_px": mask_x2,
+        "mask_bbox_y2_px": mask_y2,
         "prompt_box_source": prompt_box_source,
         "prompt_x1_px": x1,
         "prompt_y1_px": y1,
         "prompt_x2_px": x2,
         "prompt_y2_px": y2,
         "prompt_box_area_px": int(prompt_area),
-        "mask_to_prompt_area_ratio": float(mask_area / prompt_area),
+        # Historical name retained for calibration consumers.
+        "mask_to_prompt_area_ratio": cleaned_ratio,
+        "cleaned_to_prompt_area_ratio": cleaned_ratio,
+        **mask_audit,
     }
     for column in AREA_CARRY_COLUMNS:
         if column in row.index:
@@ -252,6 +439,74 @@ def _write_checkpoint(
     temporary = output_csv.with_name(f".{output_csv.name}.tmp")
     checkpoint.to_csv(temporary, index=False)
     temporary.replace(output_csv)
+
+
+def _validate_production_coverage(
+    rows: list[dict[str, Any]],
+    manifest: pd.DataFrame,
+    *,
+    output: Path,
+) -> None:
+    """Require exact 1:1 manifest and PNG coverage for production mask output."""
+    required_columns = {
+        "source_fov_id",
+        "embryo_position",
+        "mask_path",
+        "mask_area_px",
+        "mask_bbox_x1_px",
+        "mask_bbox_y1_px",
+        "mask_bbox_x2_px",
+        "mask_bbox_y2_px",
+        "raw_mask_area_px",
+        "component_count_raw",
+        "component_selection_method",
+        "removed_component_area_px",
+        "holes_filled_px",
+        "cleaned_to_prompt_area_ratio",
+        "mask_score",
+    }
+    records = pd.DataFrame.from_records(rows)
+    missing = sorted(required_columns.difference(records.columns))
+    if missing:
+        raise ValueError(f"Production SAM2 manifest is missing columns: {missing}")
+
+    expected_keys = [
+        (str(row["_source_fov_id"]), int(row["embryo_position"]))
+        for _, row in manifest.iterrows()
+    ]
+    actual_keys = [
+        (str(row["source_fov_id"]), int(row["embryo_position"]))
+        for _, row in records.iterrows()
+    ]
+    if len(set(expected_keys)) != len(expected_keys):
+        raise ValueError("Input manifest has duplicate source-FOV/embryo-position keys.")
+    if len(set(actual_keys)) != len(actual_keys):
+        raise ValueError("Production SAM2 manifest has duplicate mask keys.")
+    if set(actual_keys) != set(expected_keys):
+        missing_keys = sorted(set(expected_keys) - set(actual_keys))[:5]
+        extra_keys = sorted(set(actual_keys) - set(expected_keys))[:5]
+        raise ValueError(
+            "Production SAM2 mask coverage does not match the input manifest; "
+            f"missing={missing_keys}, extra={extra_keys}."
+        )
+
+    recorded_paths = [Path(value) for value in records["mask_path"]]
+    if not all(path.is_absolute() for path in recorded_paths):
+        raise ValueError("Production SAM2 mask_path values must all be absolute.")
+    if len(set(recorded_paths)) != len(recorded_paths):
+        raise ValueError("Production SAM2 mask_path values must be unique.")
+    if not all(path.is_file() for path in recorded_paths):
+        missing_paths = [str(path) for path in recorded_paths if not path.is_file()][:5]
+        raise FileNotFoundError(
+            f"Production SAM2 manifest references missing masks: {missing_paths}"
+        )
+
+    disk_paths = set((output / "masks").glob("*.png"))
+    if disk_paths != set(recorded_paths):
+        raise ValueError(
+            "Production SAM2 masks directory is not an exact 1:1 realization of "
+            "the manifest mask_path column."
+        )
 
 
 def _install_iopath_shim() -> None:
@@ -300,6 +555,7 @@ def _write_visualization_products(
     prompt_boxes: np.ndarray,
     masks: np.ndarray,
     scores: np.ndarray,
+    mask_audits: Sequence[dict[str, Any]],
     rows_out: list[dict[str, Any]],
     prompt_box_source: str,
 ) -> None:
@@ -330,7 +586,7 @@ def _write_visualization_products(
         snip_path = output / "mask_snips" / (
             f"{image_id}__embryo_{position:02d}.png"
         )
-        Image.fromarray((mask * 255).astype(np.uint8)).save(mask_path)
+        mask_path = _write_binary_mask(mask, mask_path)
 
         sub_image = image[crop_y1:crop_y2, crop_x1:crop_x2].copy()
         sub_mask = mask[crop_y1:crop_y2, crop_x1:crop_x2]
@@ -364,6 +620,8 @@ def _write_visualization_products(
             mask_score=float(scores[index]),
             prompt_box=prompt_boxes[index],
             prompt_box_source=prompt_box_source,
+            mask_path=mask_path,
+            mask_audit=mask_audits[index],
         )
         record.update(
             {
@@ -372,7 +630,6 @@ def _write_visualization_products(
                 "crop_y1_px": crop_y1,
                 "crop_x2_px": crop_x2,
                 "crop_y2_px": crop_y2,
-                "mask_path": str(mask_path),
                 "mask_snip_path": str(snip_path),
             }
         )
@@ -447,8 +704,32 @@ def main(argv: Sequence[str] | None = None) -> None:
             image_shape=(image_height, image_width),
         )
 
+        cleaned_masks: list[np.ndarray] = []
+        mask_audits: list[dict[str, Any]] = []
+        for local_index, (_, row) in enumerate(group.iterrows()):
+            context = (
+                f"source_fov_id={source_fov_id!r}, "
+                f"embryo_position={int(row['embryo_position'])}"
+            )
+            cleaned, audit = _clean_prompt_associated_component(
+                masks[local_index],
+                prompt_box=prompt_boxes[local_index],
+                context=context,
+            )
+            cleaned_masks.append(cleaned)
+            mask_audits.append(audit)
+        masks = np.stack(cleaned_masks, axis=0)
+
         if args.areas_only:
             for local_index, (_, row) in enumerate(group.iterrows()):
+                mask_path = _write_binary_mask(
+                    masks[local_index],
+                    _binary_mask_path(
+                        output,
+                        str(source_fov_id),
+                        int(row["embryo_position"]),
+                    ),
+                )
                 rows_out.append(
                     _area_record(
                         row,
@@ -457,6 +738,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                         mask_score=float(scores[local_index]),
                         prompt_box=prompt_boxes[local_index],
                         prompt_box_source=args.prompt_box_source,
+                        mask_path=mask_path,
+                        mask_audit=mask_audits[local_index],
                     )
                 )
             _write_checkpoint(
@@ -477,6 +760,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 prompt_boxes=prompt_boxes,
                 masks=masks,
                 scores=scores,
+                mask_audits=mask_audits,
                 rows_out=rows_out,
                 prompt_box_source=args.prompt_box_source,
             )
@@ -489,6 +773,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
 
     if args.areas_only:
+        _validate_production_coverage(rows_out, manifest, output=output)
         _write_checkpoint(
             rows_out,
             output_csv,

@@ -31,6 +31,19 @@ def test_snip_processing_parser_uses_checkpoint_compatible_defaults():
 
     assert args.target_pixel_size_um == DEFAULT_TARGET_PIXEL_SIZE_UM == 6.5
     assert args.blend_radius_um == DEFAULT_BLEND_RADIUS_UM == 75.0
+    assert tasks._parse_bool(args.apply_clahe) is True
+
+    args = parser.parse_args([
+        "snip-processing",
+        "--frame-masks-csv", "frame_masks.csv",
+        "--frame-inventory-csv", "frame_inventory.csv",
+        "--physical-embryo-registry-csv", "physical_embryo_registry.csv",
+        "--output-csv", "snip_inventory.csv",
+        "--snips-dir", "snips",
+        "--output-root", "output",
+        "--apply-clahe", "false",
+    ])
+    assert tasks._parse_bool(args.apply_clahe) is False
 
 
 def test_base_config_pins_checkpoint_compatible_snip_settings():
@@ -39,6 +52,7 @@ def test_base_config_pins_checkpoint_compatible_snip_settings():
 
     assert snip_config["target_pixel_size_um"] == DEFAULT_TARGET_PIXEL_SIZE_UM == 6.5
     assert snip_config["blend_radius_um"] == DEFAULT_BLEND_RADIUS_UM == 75.0
+    assert snip_config["apply_clahe"] is True
 
 
 def test_surface_area_qc_plumbs_frame_inventory_from_cli_to_entrypoint():

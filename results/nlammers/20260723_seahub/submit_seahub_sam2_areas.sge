@@ -1,5 +1,5 @@
 #!/bin/bash
-# Full-corpus SeaHub SAM2 mask-area census for scale calibration.
+# Full-corpus SeaHub SAM2 mask persistence + area census for scale calibration.
 # Submit only after the matching GroundingDINO merge has completed:
 #   qsub -v SEAHUB_RUN_ID=20260731_prod01 submit_seahub_sam2_areas.sge
 
@@ -25,6 +25,8 @@ seahub_configure_run \
 MANIFEST="${SEAHUB_RUN_ROOT}/detection/embryo_manifest.csv"
 MERGE_SUCCESS="${SEAHUB_RUN_ROOT}/detection/_MERGE_SUCCESS"
 OUTPUT_DIR="${SEAHUB_RUN_ROOT}/scale_calibration/sam2_areas"
+OUTPUT_CSV="${OUTPUT_DIR}/sam2_mask_areas.csv"
+MASK_DIR="${OUTPUT_DIR}/masks"
 CONDA="/net/trapnell/vol1/home/mdcolon/software/miniconda3/bin/conda"
 CONDA_ENV="segmentation_grounded_sam"
 
@@ -55,7 +57,7 @@ if [[ -n "${SGE_HGR_cuda:-}" ]]; then
     export CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((GPU_COUNT - 1)))"
 fi
 
-echo "=== SeaHub SAM2 area census START $(date) ==="
+echo "=== SeaHub SAM2 mask persistence + area census START $(date) ==="
 echo "host=$(hostname) job=${JOB_ID:-unknown}"
 echo "run_id=${SEAHUB_RUN_ID}"
 echo "manifest=${MANIFEST}"
@@ -72,8 +74,19 @@ nvidia-smi -L
     --prompt-box-source raw \
     --areas-only
 
+if [[ ! -s "${OUTPUT_CSV}" || ! -d "${MASK_DIR}" ]]; then
+    echo "ERROR: SAM2 production outputs are incomplete: ${OUTPUT_CSV}, ${MASK_DIR}" >&2
+    exit 2
+fi
+EXPECTED_MASK_COUNT="$(awk 'END {print NR - 1}' "${OUTPUT_CSV}")"
+ACTUAL_MASK_COUNT="$(find "${MASK_DIR}" -maxdepth 1 -type f -name '*.png' | wc -l)"
+if [[ "${ACTUAL_MASK_COUNT}" -ne "${EXPECTED_MASK_COUNT}" ]]; then
+    echo "ERROR: persisted SAM2 mask count ${ACTUAL_MASK_COUNT} != manifest row count ${EXPECTED_MASK_COUNT}." >&2
+    exit 2
+fi
+
 # The CSV itself is checkpointed during execution. This separate sentinel is
 # written only after the complete command exits successfully.
 touch "${OUTPUT_DIR}/_SUCCESS"
 
-echo "=== SeaHub SAM2 area census FINISHED $(date) ==="
+echo "=== SeaHub SAM2 mask persistence + area census FINISHED $(date) ==="
