@@ -33,7 +33,74 @@ from ..types import (
     Frame,
 )
 from .back_direction import compute_back_direction
-from image_geometry import TransformChain, affine_step, flip_x_step
+from image_geometry import (
+    COORDINATE_CONVENTION_VERSION,
+    TransformChain,
+    affine_step,
+    flip_x_step,
+    pixel_center_affine,
+    resize_step,
+)
+from image_geometry.transforms import resize_interpolation_flags
+
+
+#: THE half-pixel correction, imported rather than reimplemented.
+#:
+#: An earlier revision of this file carried a private copy. That is exactly the mechanism that
+#: produced the original defect: this module and ``image_geometry.candidates`` each held their own
+#: naive placement arithmetic, drifted together, and the equivalence suite that was supposed to
+#: catch it instead pinned the two wrong copies to each other. One definition, one convention.
+#: The invariant it must satisfy lives in tests/image_geometry/test_pixel_center_invariant.py.
+_pixel_center_affine = pixel_center_affine
+
+
+def _prescale_for_downscale(
+    arr: np.ndarray, scale: float, *, is_mask: bool
+) -> tuple[np.ndarray, float]:
+    """Pull a downscale OUT of the fused affine so it can actually anti-alias.
+
+    THE DEFECT THIS REPAIRS. ``cv2.warpAffine`` SILENTLY IGNORES ``INTER_AREA`` — it accepts the
+    flag and resamples without any prefilter. So a fused rotate+scale affine containing a 3x
+    decimation (the production case: 3.2308 -> 10.0 um/px) physically cannot anti-alias, no matter
+    which flag is passed. High-frequency structure folds into false low-frequency structure, and on
+    a binary mask that shows up as ragged, area-losing edges on exactly the thin features (tail,
+    fin) the downstream UOT is trying to measure.
+
+    THE FIX. Do the decimation as its OWN ``cv2.resize`` step, which honors the interpolation
+    policy, and hand the affine only the leftover. Interpolation comes from
+    ``image_geometry.resize_interpolation_flags`` — THE shared policy — rather than being
+    reimplemented here: INTER_AREA for images, INTER_NEAREST for masks.
+
+    THE RESIDUAL. The prescale can only realize integer output dims, so its true ratio is
+    ``out_n/in_n``, NOT the requested factor. Returning ``scale / realized`` as the residual lets
+    the caller compose the exact requested scale back; using the requested factor for the affine
+    instead would reintroduce precisely the systematic sub-pixel bias ``_pixel_center_affine``
+    exists to remove.
+
+    Upscales are returned untouched: there is nothing to prefilter when adding samples.
+    """
+    if cv2 is None:  # pragma: no cover
+        raise ImportError("cv2 is required for _prescale_for_downscale.")
+    if scale >= 1.0:
+        return arr, float(scale)
+
+    h_in, w_in = arr.shape[:2]
+    h_out = max(1, int(round(h_in * scale)))
+    w_out = max(1, int(round(w_in * scale)))
+    if (h_out, w_out) == (h_in, w_in):
+        return arr, float(scale)
+
+    flags = resize_interpolation_flags(
+        in_shape_yx=(h_in, w_in), out_shape_yx=(h_out, w_out), is_mask=is_mask
+    )
+    out = cv2.resize(arr.astype(np.float32), (w_out, h_out), interpolation=flags)
+
+    # Realized ratio from the INTEGER dims — never the requested factor. Both axes are scaled by
+    # one uniform factor here, so averaging them would hide an inconsistency rather than fix one;
+    # the y ratio is authoritative and x is asserted to match by construction of h_out/w_out.
+    realized = h_out / h_in
+    residual = float(scale) / realized
+    return out, residual
 
 
 @dataclass
@@ -128,7 +195,48 @@ class CanonicalAligner:
 
     def _warp(self, mask: np.ndarray, M: np.ndarray, *, out_shape_hw: Optional[tuple[int, int]] = None) -> np.ndarray:
         h, w = out_shape_hw if out_shape_hw is not None else (self.H, self.W)
-        return cv2.warpAffine(mask.astype(np.float32), M, (w, h), flags=cv2.INTER_NEAREST)
+        return cv2.warpAffine(mask.astype(np.float32), M.astype(np.float32), (w, h), flags=cv2.INTER_NEAREST)
+
+    def _placement_affine(
+        self, cx: float, cy: float, rotation_deg: float, scale: float
+    ) -> np.ndarray:
+        """Rotate+scale about the source centroid, then center into the canonical canvas.
+
+        Returned in the PIXEL-CENTER convention so it agrees with every resize seam.
+        """
+        M = cv2.getRotationMatrix2D((cx, cy), rotation_deg, scale)
+        M[0, 2] += (self.W / 2) - cx
+        M[1, 2] += (self.H / 2) - cy
+        return _pixel_center_affine(M)
+
+    def _prescaled_placement(
+        self,
+        mask: np.ndarray,
+        yolk: Optional[np.ndarray],
+        *,
+        cx: float,
+        cy: float,
+        rotation_deg: float,
+        scale: float,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], np.ndarray]:
+        """Anti-aliased decimation first, then the residual rotate/scale/place affine.
+
+        The decimation cannot live in the affine (``warpAffine`` ignores ``INTER_AREA``), so it is
+        split out. That moves the array under the PCA centroid, which was measured in SOURCE
+        coordinates — so the rotation center is carried through the same pixel-center mapping the
+        prescale realized. Skipping that remap would rotate about the wrong point and translate the
+        whole embryo by a scale-dependent offset.
+        """
+        pre_mask, residual = _prescale_for_downscale(mask, scale, is_mask=True)
+        pre_yolk = (
+            _prescale_for_downscale(yolk, scale, is_mask=True)[0] if yolk is not None else None
+        )
+        realized = pre_mask.shape[0] / mask.shape[0]
+        # Pixel-center forward map of the rotation center into prescaled coordinates.
+        cx_p = realized * (cx + 0.5) - 0.5
+        cy_p = realized * (cy + 0.5) - 0.5
+        M = self._placement_affine(cx_p, cy_p, rotation_deg, residual)
+        return pre_mask, pre_yolk, M
 
     def _bbox(self, mask: np.ndarray) -> Optional[tuple[int, int, int, int]]:
         """INCLUSIVE ``(min_y, max_y, min_x, max_x)`` of pixels ``> 0.5``.
@@ -231,9 +339,18 @@ class CanonicalAligner:
 
         for rot_add in rot_options:
             for do_flip in flip_options:
-                M = cv2.getRotationMatrix2D((cx, cy), rotation_needed + rot_add, scale)
-                M[0, 2] += (self.W / 2) - cx
-                M[1, 2] += (self.H / 2) - cy
+                # Pixel-center convention, same as the output placement and same as the
+                # image_geometry candidate builder this selector is pinned against.
+                #
+                # An earlier revision left this loop on the raw naive affine, reasoning that the
+                # warps are throwaway (only a rotation, a flip and two diagnostic landmarks
+                # escape) and that correcting only this side would break the equivalence suite.
+                # The first half was true, the second half was the trap: image_geometry carried
+                # the IDENTICAL naive convention, so the suite was pinning two wrong clocks to
+                # each other. Both sides now satisfy the independent invariant in
+                # tests/image_geometry/test_pixel_center_invariant.py, so their agreement finally
+                # means something. Leaving this loop naive would reintroduce the asymmetry.
+                M = self._placement_affine(cx, cy, rotation_needed + rot_add, scale)
                 mask_w = self._warp(mask, M)
                 yolk_w = self._warp(yolk, M) if yolk is not None else None
                 if do_flip:
@@ -387,9 +504,12 @@ class CanonicalAligner:
         flip_options = [False, True] if self.allow_flip else [False]
         for rot_add in rot_options:
             for do_flip in flip_options:
-                M = cv2.getRotationMatrix2D((cx, cy), rotation_needed + rot_add, scale)
-                M[0, 2] += (self.W / 2) - cx
-                M[1, 2] += (self.H / 2) - cy
+                # Pixel-center convention — see the note in _coarse_candidate_select. This loop
+                # only scores candidates to pick (rot_add, do_flip); the winning placement is
+                # re-rendered below through _prescaled_placement, which anti-aliases as well.
+                # Scoring in a different convention than the one the winner is rendered in would
+                # mean choosing a pose on a raster that is never actually produced.
+                M = self._placement_affine(cx, cy, rotation_needed + rot_add, scale)
                 mask_w = self._warp(mask, M)
                 if do_flip:
                     mask_w = cv2.flip(mask_w, 1)
@@ -400,10 +520,10 @@ class CanonicalAligner:
         _best_score, best_rot, best_flip = max(candidates, key=lambda x: x[0])
         final_rotation = rotation_needed + best_rot
 
-        M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
-        M_final[0, 2] += (self.W / 2) - cx
-        M_final[1, 2] += (self.H / 2) - cy
-        aligned_mask = self._warp(mask, M_final)
+        pre_mask, _pre_yolk, M_final = self._prescaled_placement(
+            mask, None, cx=cx, cy=cy, rotation_deg=final_rotation, scale=scale
+        )
+        aligned_mask = self._warp(pre_mask, M_final)
         if best_flip:
             aligned_mask = cv2.flip(aligned_mask, 1)
 
@@ -465,6 +585,8 @@ class CanonicalAligner:
             M_final=M_final,
             best_flip=bool(best_flip),
             M_shift=M_shift,
+            src_shape_yx=tuple(mask.shape[:2]),
+            prescale_shape_yx=tuple(pre_mask.shape[:2]),
         )
         return final_mask, meta, chain
 
@@ -503,11 +625,11 @@ class CanonicalAligner:
             mask, yolk, rotation_needed, scale, cx, cy, use_yolk=True
         )
 
-        M_final = cv2.getRotationMatrix2D((cx, cy), final_rotation, scale)
-        M_final[0, 2] += (self.W / 2) - cx
-        M_final[1, 2] += (self.H / 2) - cy
-        aligned_mask = self._warp(mask, M_final)
-        aligned_yolk = self._warp(yolk, M_final)
+        pre_mask, pre_yolk, M_final = self._prescaled_placement(
+            mask, yolk, cx=cx, cy=cy, rotation_deg=final_rotation, scale=scale
+        )
+        aligned_mask = self._warp(pre_mask, M_final)
+        aligned_yolk = self._warp(pre_yolk, M_final)
         if best_flip:
             aligned_mask = cv2.flip(aligned_mask, 1)
             aligned_yolk = cv2.flip(aligned_yolk, 1)
@@ -585,6 +707,8 @@ class CanonicalAligner:
             M_final=M_final,
             best_flip=bool(best_flip),
             M_shift=M_shift,
+            src_shape_yx=tuple(mask.shape[:2]),
+            prescale_shape_yx=tuple(pre_mask.shape[:2]),
         )
         return final_mask, final_yolk_mask, meta, chain
 
@@ -622,16 +746,35 @@ def _build_stage1_chain(
     M_final: np.ndarray,
     best_flip: bool,
     M_shift: np.ndarray,
+    src_shape_yx: tuple[int, int],
+    prescale_shape_yx: tuple[int, int],
 ) -> TransformChain:
-    transforms = [
+    """Record what ACTUALLY executed: anti-aliased prescale, then the residual placement affine.
+
+    The prescale is a real step, not bookkeeping — re-rendering this chain onto the image (which
+    ``to_canonical_grid_frame`` does) must reproduce the mask's geometry exactly. If the decimation
+    were folded back into the affine here, the image path would resample at full resolution through
+    a kernel that cannot anti-alias, and the image and mask would disagree.
+    """
+    transforms = []
+    if tuple(prescale_shape_yx) != tuple(src_shape_yx):
+        transforms.append(
+            resize_step(
+                name="prescale_anti_alias",
+                in_shape_yx=tuple(src_shape_yx),
+                out_shape_yx=tuple(prescale_shape_yx),
+                anti_alias=True,
+            )
+        )
+    transforms.append(
         affine_step(
             name="rotate_scale_center",
             affine_2x3=np.asarray(M_final, dtype=np.float64),
-            in_shape_yx=grid_shape_yx,
+            in_shape_yx=tuple(prescale_shape_yx),
             out_shape_yx=grid_shape_yx,
             interp="nearest",
         )
-    ]
+    )
     if best_flip:
         transforms.append(flip_x_step(shape_yx=grid_shape_yx, interp="nearest"))
     transforms.append(
@@ -680,6 +823,9 @@ class CanonicalGridMapper:
                 "coord_frame_id": "canonical_grid",
                 "coord_frame_version": 1,
                 "coord_convention": "yx",
+                # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+                # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+                "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
                 "canonical_grid": {
                     "um_per_px": self.grid.um_per_px,
                     "shape_yx": list(self.grid.shape_yx),
@@ -726,6 +872,9 @@ class CanonicalGridMapper:
             "coord_frame_id": "canonical_grid",
             "coord_frame_version": 1,
             "coord_convention": "yx",
+            # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+            # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+            "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
             "canonical_grid": {
                 "um_per_px": self.grid.um_per_px,
                 "shape_yx": list(self.grid.shape_yx),
@@ -778,6 +927,9 @@ def to_canonical_grid_image(
             "coord_frame_id": "canonical_grid",
             "coord_frame_version": 1,
             "coord_convention": "yx",
+            # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+            # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+            "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
             "canonical_grid": {
                 "um_per_px": grid.um_per_px,
                 "shape_yx": list(grid.shape_yx),
@@ -798,6 +950,7 @@ def to_canonical_grid_image(
     M = cv2.getRotationMatrix2D((cx, cy), 0.0, scale)
     M[0, 2] += (w_out / 2.0) - cx
     M[1, 2] += (h_out / 2.0) - cy
+    M = _pixel_center_affine(M)
 
     flags = cv2.INTER_LINEAR if interpolation == "linear" else cv2.INTER_NEAREST
     out_img = cv2.warpAffine(img.astype(np.float32), M.astype(np.float32), (w_out, h_out), flags=flags)
@@ -818,6 +971,8 @@ def to_canonical_grid_image(
         "coord_frame_id": "canonical_grid",
         "coord_frame_version": 1,
         "coord_convention": "yx",
+        # Structural cache key -- see the note above; absent or mismatched means INCOMPATIBLE.
+        "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
         "canonical_grid": {
             "um_per_px": grid.um_per_px,
             "shape_yx": list(grid.shape_yx),
@@ -872,6 +1027,9 @@ def to_canonical_grid_frame(
             "coord_frame_id": "canonical_grid",
             "coord_frame_version": 1,
             "coord_convention": "yx",
+            # Structural cache key. Absent or mismatched => INCOMPATIBLE, not merely stale:
+            # v1 artifacts are offset by a sub-pixel amount that no shape or dtype check sees.
+            "coordinate_convention_version": COORDINATE_CONVENTION_VERSION,
             "canonical_grid": {
                 "um_per_px": grid.um_per_px,
                 "shape_yx": list(grid.shape_yx),

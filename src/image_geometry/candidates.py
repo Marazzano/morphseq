@@ -86,6 +86,60 @@ class PlacedCandidate:
         return (int(self.rot_add_deg), bool(self.flip_x))
 
 
+#: The coordinate convention these transforms implement, as an OPAQUE CACHE KEY.
+#:
+#: Named for the CONVENTION, not for a file or a release. Every consumer that shares these
+#: semantics -- the canonical grid, the UOT couplings computed on top of it, and anything that
+#: caches coordinates derived from either -- stamps this same string, so the name has to stay
+#: meaningful to all of them rather than describing where it happens to be defined.
+#:
+#: WHY A VERSION STRING AND NOT A TIMESTAMP. The v1 -> v2 change moves every coordinate by a
+#: sub-pixel amount (see ``pixel_center_affine``). A v1 cache is not stale, it is WRONG, and it
+#: is wrong in a way that is invisible: the arrays have the right shape, the right dtype, sane
+#: areas and clean IoUs -- they are simply offset by (scale-1)/2 relative to anything computed
+#: after the fix. Timestamp- or mtime-based staleness fails silently against that, and so does
+#: any check that only looks at shapes. Consumers must compare this string for EQUALITY and
+#: treat a mismatch (or its ABSENCE, which means v1) as structurally incompatible.
+#:
+#: v1, unnamed and never stamped: the naive rule x_out = scale * x_src.
+#: v2 "pixel_center_v2": x_out = scale * (x_src + 0.5) - 0.5, agreeing with cv2.resize.
+COORDINATE_CONVENTION_VERSION: str = "pixel_center_v2"
+
+
+def pixel_center_affine(affine_2x3: np.ndarray) -> np.ndarray:
+    """Re-express a naive-convention 2x3 affine so it maps PIXEL CENTERS.
+
+    THE DEFECT THIS REPAIRS. A pixel with integer index ``x`` is a SAMPLE OF AREA centered at
+    ``x + 0.5``, not a point at ``x``. ``cv2.resize`` honors that -- it implements
+    ``x_out = sf * (x_src + 0.5) - 0.5``, pinned from first principles (and cross-checked
+    against skimage) in ``tests/image_geometry/test_resize_coordinate_convention.py``.
+    ``cv2.warpAffine`` applies whatever matrix it is handed and supplies NO correction of its
+    own, so a matrix built the naive way, ``x_out = sf * x_src``, samples ``(sf - 1) / 2``
+    away from where the identical scale expressed as a resize samples.
+
+    WHY THAT IS WORSE THAN NOISE, AND WHY IT SURVIVED SO LONG. The offset is constant and
+    direction-consistent: every object shifts by the SAME amount in the SAME direction. That
+    makes it invisible to every aggregate statistic -- area, IoU, mean error and pixel diffs
+    all stay clean -- while the whole population sits off-grid relative to the resize-based
+    coordinates it is compared against. It also survived a dedicated equivalence suite,
+    because that suite pinned this module against the canonical aligner, which carried the
+    identical defect. Two clocks five minutes slow agree perfectly.
+
+    THE DERIVATION. For ``out = A @ src + t`` under the naive rule, requiring instead that
+    pixel CENTERS map to pixel CENTERS means ``(out + 0.5) = A @ (src + 0.5) + t``, so the
+    translation column gains ``A @ [0.5, 0.5] - 0.5``.
+
+    APPLIED UNCONDITIONALLY, ON PURPOSE. For a pure translation ``A = I`` the correction is
+    identically zero, so gating it on a scale or rotation test would add a branch that can
+    only ever be wrong -- and a gate is exactly how this class of bias creeps back. The
+    invariant suite pins both the nonzero case and the translation no-op.
+    """
+    out = np.asarray(affine_2x3, dtype=np.float64).copy()
+    half = np.array([0.5, 0.5], dtype=np.float64)
+    out[:, 2] += out[:, :2] @ half - half
+    return out
+
+
 def centered_placement_affine(
     *,
     rotation_deg: float,
@@ -95,11 +149,14 @@ def centered_placement_affine(
 ) -> np.ndarray:
     """Rotate+scale about ``src_center_xy`` and land that center at the output center.
 
-    Reproduces the placement arithmetic used by the canonical aligner exactly, including
-    its integer-ish ``W / 2`` centering. That centering is off by half a pixel relative
-    to the true pixel-grid center ``(W - 1) / 2``; it is preserved here on purpose so
-    this module is a faithful extraction. Fixing placement is tracked separately -- do
-    not "improve" it here without re-running the equivalence proof.
+    Returned in the PIXEL-CENTER convention, so this seam agrees with every resize seam. See
+    ``pixel_center_affine`` for the defect that correction repairs and why an agreement test
+    could not detect it.
+
+    The ``W / 2`` centering is retained: it is off by half a pixel from the true pixel-grid
+    center ``(W - 1) / 2``, but that is an independent question about WHERE the object is
+    parked on the canvas, not about what a coordinate MEANS. Changing it would move every
+    object relative to the historical embedding space, so it is deliberately left alone here.
     """
     if cv2 is None:  # pragma: no cover
         raise ImportError("cv2 is required for centered_placement_affine.")
@@ -108,7 +165,7 @@ def centered_placement_affine(
     affine = cv2.getRotationMatrix2D((cx, cy), float(rotation_deg), float(scale))
     affine[0, 2] += (w_out / 2) - cx
     affine[1, 2] += (h_out / 2) - cy
-    return affine
+    return pixel_center_affine(affine)
 
 
 def enumerate_orientation_candidates(
@@ -164,11 +221,12 @@ def enumerate_orientation_candidates(
             src_center_xy=src_center_xy,
             out_shape_yx=(h_out, w_out),
         )
-        warped = cv2.warpAffine(src, affine, (w_out, h_out), flags=cv2.INTER_NEAREST)
+        affine_f32 = affine.astype(np.float32)
+        warped = cv2.warpAffine(src, affine_f32, (w_out, h_out), flags=cv2.INTER_NEAREST)
         warped_comp = (
             None
             if comp_src is None
-            else cv2.warpAffine(comp_src, affine, (w_out, h_out), flags=cv2.INTER_NEAREST)
+            else cv2.warpAffine(comp_src, affine_f32, (w_out, h_out), flags=cv2.INTER_NEAREST)
         )
         if do_flip:
             warped = cv2.flip(warped, 1)

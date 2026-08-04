@@ -28,12 +28,14 @@ Conventions:
 from .boxes import BoxYX, CoordConvention
 from .candidates import (
     CANDIDATE_KEYS,
+    COORDINATE_CONVENTION_VERSION,
     CANDIDATE_KEYS_NO_FLIP,
     PlacedCandidate,
     candidate_keys,
     centered_placement_affine,
     enumerate_orientation_candidates,
     pca_major_axis_angle_deg,
+    pixel_center_affine,
     vertical_flip_partner,
 )
 from .rotation import bounds_expanded_rotation_matrix, expanded_rotation_bounds_wh
@@ -81,6 +83,10 @@ __all__ = [
     # Orientation-candidate MECHANICS. A PCA axis fixes an elongated object's pose only up
     # to a 180-degree rotation and a mirror; these enumerate that closed four-way choice.
     # CHOOSING among them is domain policy and lives in embryo_geometry, not here.
+    # The coordinate-convention cache key. Stamp it into any persisted artifact whose
+    # contents depend on these transforms; a mismatch or absence means INCOMPATIBLE,
+    # not merely old.
+    "COORDINATE_CONVENTION_VERSION",
     "CANDIDATE_KEYS",
     "CANDIDATE_KEYS_NO_FLIP",
     "PlacedCandidate",
@@ -88,6 +94,11 @@ __all__ = [
     "centered_placement_affine",
     "enumerate_orientation_candidates",
     "pca_major_axis_angle_deg",
+    # THE half-pixel correction. cv2.resize maps pixel CENTERS; cv2.warpAffine applies the
+    # matrix it is given and corrects nothing, so any affine carrying a scale must be routed
+    # through this or the two seams land (scale-1)/2 px apart -- a constant, population-wide
+    # bias that no aggregate statistic can see.
+    "pixel_center_affine",
     "vertical_flip_partner",
     # Bounds-expanding rotation arithmetic — a matrix and a canvas size, never pixels. The caller
     # owns the resampling kernel.
