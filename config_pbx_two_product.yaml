@@ -13,12 +13,14 @@ microscope: YX1
 # SCOPED TO FOUR WELLS for the first pass. 96 positions x 3 timepoints x 2 channels is a lot of
 # SAM2 to spend before knowing whether the RFP product renders at all. Delete this block to run the
 # full plate once the seam is proven.
-target_wells:
-  20260624_2x_td_bf_pbx_coll_plate01:
-    - 20260624_2x_td_bf_pbx_coll_plate01_A01
-    - 20260624_2x_td_bf_pbx_coll_plate01_A02
-    - 20260624_2x_td_bf_pbx_coll_plate01_B01
-    - 20260624_2x_td_bf_pbx_coll_plate01_B02
+# target_wells REMOVED 2026-08-04. The 4-well restriction existed to prove the RFP seam before
+# spending SAM2 on 96 wells; the seam is proven (BF+RFP sharing one transform, exposure carried
+# end to end), so the block did what it was for. Its own comment said "delete this block to run
+# the full plate once the seam is proven".
+#
+# It also made the dosage analysis meaningless: A01/A02/B01/B02 are column 1 (ab, NON-transgenic)
+# and column 2 (tdtomato), so a "3-class dosage ladder" was being fitted to a control plus one
+# transgenic group.
 
 image_materialization:
   products:
