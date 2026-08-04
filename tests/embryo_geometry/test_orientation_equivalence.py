@@ -1,4 +1,4 @@
-"""THE LOAD-BEARING CHECK, and it is TWO-SIDED.
+"""THE EXTRACTION CHECK, and it is TWO-SIDED.
 
 This is an extraction, so the only acceptable behavioral difference is none -- for BOTH
 existing callers, which do not agree with each other:
@@ -10,6 +10,33 @@ existing callers, which do not agree with each other:
 
 Both sides must match on ``(rotation, flip_x)``. If one fails, the extraction changed
 policy -- find what diverged; do not adjust the expected value.
+
+WHAT THIS FILE CANNOT DETECT -- read before trusting a green run here.
+======================================================================
+Every assertion below compares one of OUR implementations against another of OUR
+implementations. That makes this file blind, BY CONSTRUCTION, to any defect the two sides
+SHARE. That is not hypothetical. ``image_geometry.candidates`` and
+``analyze...canonical.CanonicalAligner`` both built placement affines under the naive rule
+``x_out = scale * x_src``, when a pixel index is a sample CENTERED at ``x + 0.5`` and the
+correct rule is ``x_out = scale * (x_src + 0.5) - 0.5``. The two differ by ``(scale-1)/2``
+-- a systematic, direction-consistent shift applied to every embryo. This suite passed at
+abs=1e-6 the entire time, because both clocks were five minutes slow and therefore in
+perfect agreement with each other.
+
+The defect was found from outside and fixed on both sides (image_geometry in 8afce454,
+canonical.py in bfaedd02). Fixing ONE side first made 26 tests here fail; that is the
+SIGNATURE of a mirrored defect, and the correct response was to fix the second side, NOT to
+edit the expected values. Adjusting them would have restored agreement and re-hidden the
+bug permanently -- and the resulting diff would have looked nearly identical to the real fix.
+
+So: a failure here means the two sides DISAGREE. It does not tell you which one is RIGHT.
+Rightness is established only by ``tests/image_geometry/test_pixel_center_invariant.py``,
+which derives every expected value from the convention itself and never compares two of our
+implementations to each other. The two files are complementary and neither substitutes for
+the other: the invariant suite anchors each side to the intended geometry, and only then
+does the agreement asserted here carry information. If you are about to change a number in
+THIS file to make a test pass, stop -- the invariant suite is where the question you are
+actually asking gets answered.
 """
 
 from __future__ import annotations
@@ -248,3 +275,45 @@ def test_the_two_no_yolk_policies_actually_disagree():
         "The two production no-yolk rules agreed on every synthetic case. That would be "
         "surprising; re-check the fixtures before concluding the fallbacks are unifiable."
     )
+
+
+# ===========================================================================
+# The agreement above is only meaningful if both sides are independently anchored
+# ===========================================================================
+
+
+def test_both_sides_are_anchored_to_the_pixel_center_invariant():
+    """The guard that would have caught the mirrored defect FROM THIS FILE.
+
+    Everything else here asks "do the two implementations agree?". That question has a
+    passing answer even when both are wrong in the same way, which is exactly what happened
+    with the naive ``x_out = scale * x_src`` placement rule. This test asks the different
+    question: "is each side anchored to the intended convention?" -- by checking, for BOTH
+    sides, against a value derived from the convention rather than from either implementation.
+
+    Kept deliberately small. The thorough treatment is in
+    tests/image_geometry/test_pixel_center_invariant.py; this exists so that a reader who
+    only ever runs the equivalence suite cannot walk away believing agreement alone is proof.
+    """
+    from analyze.utils.coord.grids.canonical import CanonicalAligner
+    from image_geometry.candidates import centered_placement_affine
+
+    scale = 0.3231  # the production 3.2308 -> 10.0 um/px ratio
+    x_src = 7.0
+    # Derived from the convention itself, not read off either implementation.
+    expected = scale * (x_src + 0.5) - 0.5
+    naive = scale * x_src
+    assert abs(expected - naive) > 1.0 / 32.0, "test scale cannot resolve the defect"
+
+    aligner = CanonicalAligner(target_shape_hw=GRID_HW)
+    a_side = aligner._placement_affine(0.0, 0.0, 0.0, scale)
+    assert a_side[0, 0] * x_src + a_side[0, 2] - aligner.W / 2 == pytest.approx(
+        expected, abs=1e-9
+    ), "analysis side is not on the pixel-center convention"
+
+    b_side = centered_placement_affine(
+        rotation_deg=0.0, scale=scale, src_center_xy=(0.0, 0.0), out_shape_yx=GRID_HW
+    )
+    assert b_side[0, 0] * x_src + b_side[0, 2] - GRID_HW[1] / 2 == pytest.approx(
+        expected, abs=1e-9
+    ), "image_geometry side is not on the pixel-center convention"
