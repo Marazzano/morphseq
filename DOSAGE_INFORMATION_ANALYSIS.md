@@ -230,3 +230,38 @@ never digitized. If the dim class turns out to be 1-copy rather than an exposure
 analysis with 2-copy embryos is NOT safe.
 
 Establishing whether that dim end is 1-copy or is simply the 300 ms sessions requires fix (1).
+
+---
+
+# FIX IN PROGRESS — exposure is now read from the ND2
+
+Priority (1) above is underway.
+
+**Landed:**
+- `scope/yx1/nd2_illumination.py` — parses `exposure_ms`, `illumination_power`, `dia_iris_intensity`
+  per channel out of the ND2 free-text dump, with 8 alignment tests. Verified on all three pbx files:
+  BF 11 ms constant, tdtomato 600/300/300.
+- `exposure_ms` / `illumination_power` / `dia_iris_intensity` on the YX1 acquisition inventory,
+  populated from the same single ND2 open. NaN when unparsed — never a default, because a fabricated
+  exposure is indistinguishable from a measured one downstream.
+
+**Remaining:** thread the three columns through `image_materialization` onto `frame_inventory`, which
+is where `channel_intensity` reads. That crosses the emitted-column contract and both scope
+materializers, so it is a separate change.
+
+Once it lands, `channel_intensity` rows can carry exposure and the analysis can normalize per-ms
+instead of guessing — turning the 9.3x within-embryo swing into the 4.7x measured above, and making
+the residual (stage/focus/z) the next thing to characterize rather than an unknown mixed in with an
+instrument setting.
+
+## Note for the frame_inventory step: exposure is NOT a per-time value
+
+`materialize_well_yx1.py` builds a `time_lookup` keyed on `time_index` alone, valid because
+`elapsed_time_s` / `acquisition_time_s` are constant across z and channel within a timepoint.
+
+**Exposure is not.** It differs BY CHANNEL — 11 ms for BF and 600 ms for tdtomato in the same file.
+Reusing the `time_index`-only lookup shape would assign whichever channel happened to be first to
+every row, which for these files means stamping BF's 11 ms onto the RFP rows: an exposure column
+that is present, plausible, and wrong by 55x on exactly the channel it exists to describe.
+
+The lookup must be keyed `(time_index, channel_id)`.

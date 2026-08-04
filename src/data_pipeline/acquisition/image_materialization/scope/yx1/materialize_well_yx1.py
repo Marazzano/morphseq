@@ -112,6 +112,12 @@ _EMITTED_COLUMNS: tuple[str, ...] = (
     "raw_image_width_px",
     "raw_image_height_px",
     "raw_micrometers_per_pixel",
+    # ACQUISITION SETTINGS. Fluorescence intensity is only comparable across frames acquired the
+    # same way, and exposure is the setting most likely to move unrecorded. Carried here so an
+    # analysis can normalize instead of assuming -- see DOSAGE_INFORMATION_ANALYSIS.md.
+    "exposure_ms",
+    "illumination_power",
+    "dia_iris_intensity",
 )
 
 
@@ -555,6 +561,34 @@ def materialize_yx1_product_for_well(
             .set_index("time_index")[time_cols]
             .to_dict("index")
         )
+        # EXPOSURE IS PER (time_index, channel_id), NOT PER time_index. The time_lookup above is
+        # keyed on time alone because elapsed/acquisition time are constant across z and channel
+        # within a timepoint. Exposure is NOT: measured on the pbx files, BF ran at 11 ms and
+        # tdtomato at 600 ms in the SAME file. Reusing the time-only shape would stamp whichever
+        # channel came first onto every row -- here, BF's 11 ms onto the RFP rows: a column that is
+        # present, plausible, and wrong by 55x on exactly the channel it exists to describe.
+        _illumination_cols = [
+            c
+            for c in ("exposure_ms", "illumination_power", "dia_iris_intensity")
+            if c in well_acquisition_inventory_df.columns
+        ]
+        illumination_lookup: dict[tuple[int, str], dict] = {}
+        if _illumination_cols:
+            for (t_key, c_key), group in well_acquisition_inventory_df.groupby(
+                ["time_index", "channel_id"]
+            ):
+                illumination_lookup[(int(t_key), str(c_key))] = (
+                    group.iloc[0][_illumination_cols].to_dict()
+                )
+
+        def _illumination_for(time_index: int, channel_id: str) -> dict:
+            """Settings for one frame; NaN when the inventory predates these columns."""
+            found = illumination_lookup.get((int(time_index), str(channel_id)), {})
+            return {
+                column: found.get(column, float("nan"))
+                for column in ("exposure_ms", "illumination_power", "dia_iris_intensity")
+            }
+
         z_lookup = (
             well_acquisition_inventory_df.groupby("time_index")["z_index"]
             .apply(lambda s: sorted(int(z) for z in s.dropna().unique()))
@@ -662,6 +696,7 @@ def materialize_yx1_product_for_well(
                     image_id=image_id,
                     elapsed_time_s=t_times["elapsed_time_s"],
                     acquisition_time_s=t_times["acquisition_time_s"],
+                    **_illumination_for(int(t), resolved_product.channel_id),
                     z_index=pd.NA,
                     image_product_type="projection",
                     projection_method=resolved_product.projection_method,
@@ -715,6 +750,7 @@ def materialize_yx1_product_for_well(
                         image_id=image_id,
                         elapsed_time_s=t_times["elapsed_time_s"],
                         acquisition_time_s=t_times["acquisition_time_s"],
+                        **_illumination_for(int(t), resolved_product.channel_id),
                         z_index=int(z_index),
                         image_product_type="z_stack",
                         projection_method=pd.NA,
@@ -825,6 +861,9 @@ def _frame_inventory_row(
     image_id: str,
     elapsed_time_s: float,
     acquisition_time_s: float,
+    exposure_ms: float,
+    illumination_power: float,
+    dia_iris_intensity: float,
     z_index: object,
     image_product_type: str,
     projection_method: object,
@@ -851,6 +890,9 @@ def _frame_inventory_row(
         "image_id": image_id,
         "elapsed_time_s": elapsed_time_s,
         "acquisition_time_s": acquisition_time_s,
+        "exposure_ms": exposure_ms,
+        "illumination_power": illumination_power,
+        "dia_iris_intensity": dia_iris_intensity,
         "z_index": z_index,
         "image_product_type": image_product_type,
         "projection_method": projection_method,

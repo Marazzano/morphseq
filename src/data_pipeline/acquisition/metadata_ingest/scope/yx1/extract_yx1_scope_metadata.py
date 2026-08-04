@@ -15,6 +15,9 @@ from data_pipeline.acquisition.metadata_ingest.scope.scope_metadata_contract imp
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.channel_map import YX1_CHANNEL_MAP
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_axes import Nd2Axes, axes_of
 from data_pipeline.io.validators import validate_dataframe_schema
+from data_pipeline.acquisition.metadata_ingest.scope.yx1.nd2_illumination import (
+    read_channel_illumination,
+)
 from data_pipeline.acquisition.metadata_ingest.scope.yx1.acquisition_inventory import (
     build_yx1_acquisition_inventory,
 )
@@ -194,6 +197,21 @@ def extract_yx1_scope_metadata(
             for idx, raw_name in enumerate(channel_names)
         ]
 
+        # Exposure / illumination, read from the SAME single ND2 open. These are what make
+        # fluorescence intensity comparable across frames at all, and they change more often than
+        # anyone expects -- the pbx collection ran its fluorescence channel at 600 ms one day and
+        # 300 ms the next two, which is a 2x brightness artifact indistinguishable from a
+        # 1-vs-2-copy dosage difference unless the exposure is on the row.
+        channel_illumination = {
+            idx: {
+                "exposure_ms": entry.exposure_ms,
+                "illumination_power": entry.illumination_power,
+                "dia_iris_intensity": entry.dia_iris_intensity,
+            }
+            for idx, entry in enumerate(read_channel_illumination(nd, len(channel_names)))
+        }
+        log.info(f"Channel illumination: {channel_illumination}")
+
         # Get objective info
         try:
             objective = nd.frame_metadata(0).channels[0].microscope.objectiveName
@@ -287,6 +305,7 @@ def extract_yx1_scope_metadata(
             n_z=n_z,
             timestamps=timestamps,
             channels=channel_mapping,
+            channel_illumination=channel_illumination,
             stage_xy=stage_xy,
             micrometers_per_pixel=micrometers_per_pixel,
             image_width_px=image_width_px,

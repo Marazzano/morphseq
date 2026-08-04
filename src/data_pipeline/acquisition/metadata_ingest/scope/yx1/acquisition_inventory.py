@@ -58,6 +58,16 @@ YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS: tuple[str, ...] = (
     "objective_magnification",
     "n_z",                      # full Z depth of this acquisition (provenance)
     "source_nd2_path",          # the ONE ND2 (no per-plane path)
+    # ACQUISITION SETTINGS -- the difference between comparable and incomparable pixels. Fluorescence
+    # intensity means nothing across frames acquired with different exposure, and exposure is the
+    # setting most likely to change without being recorded as an experimental variable: it gets
+    # adjusted to make a good-looking image. MEASURED on the pbx collection, where the fluorescence
+    # channel ran at 600 ms on day 1 and 300 ms on days 2-3 -- a 2x artifact the same size as the
+    # 1-vs-2-copy dosage effect it would be mistaken for. Optional by contract (parsed from the ND2
+    # free-text dump, so a file that does not carry them yields NaN rather than failing ingest).
+    "exposure_ms",
+    "illumination_power",
+    "dia_iris_intensity",
 )
 
 # The maximal per-coordinate schema = the SHARED Tier-1 core + the YX1 Tier-2 extras. Standardized
@@ -205,6 +215,7 @@ def build_yx1_acquisition_inventory_rows(
     n_z: int,
     timestamps: Sequence[float],
     channels: Sequence[tuple[int, str, str]],
+    channel_illumination: Mapping[int, Mapping[str, float | None]] | None = None,
     stage_xy: Mapping[int, tuple[float, float]],
     micrometers_per_pixel: float,
     image_width_px: int,
@@ -220,6 +231,11 @@ def build_yx1_acquisition_inventory_rows(
     Args:
         channels: one ``(channel_index, normalized_channel, raw_channel_name)`` triple per ND2
             channel — the full channel mapping, recorded once.
+        channel_illumination: optional ``{channel_index: {exposure_ms, illumination_power,
+            dia_iris_intensity}}``. Passed as a SEPARATE map rather than widened into the
+            ``channels`` triple so that every existing caller keeps working unchanged and a file
+            without parseable settings simply omits it — these are provenance, not identity, and
+            must never become required to build a row.
         stage_xy: ``{position_index: (x_um, y_um)}`` from the ND2 frame metadata at T=0.
         timestamps: per-T acquisition time in seconds (length ``n_t``).
     """
@@ -235,6 +251,7 @@ def build_yx1_acquisition_inventory_rows(
 
             for z_index in range(n_z):
                 for channel_index, channel, raw_channel_name in channels:
+                    illumination = (channel_illumination or {}).get(int(channel_index), {})
                     rows.append(
                         {
                             "experiment_id": experiment_id,
@@ -255,6 +272,16 @@ def build_yx1_acquisition_inventory_rows(
                             "microscope_id": "YX1",
                             "n_z": int(n_z),
                             "source_nd2_path": source_nd2_path,
+                            # NaN, not a default. A fabricated exposure would be indistinguishable
+                            # from a measured one downstream, and normalizing by a guessed value is
+                            # exactly the silent error this column exists to prevent.
+                            "exposure_ms": illumination.get("exposure_ms", float("nan")),
+                            "illumination_power": illumination.get(
+                                "illumination_power", float("nan")
+                            ),
+                            "dia_iris_intensity": illumination.get(
+                                "dia_iris_intensity", float("nan")
+                            ),
                         }
                     )
 
