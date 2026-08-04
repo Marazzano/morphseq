@@ -56,6 +56,7 @@ from data_pipeline.object_extraction.snip_processing.snip_transform import (
     transform_for_product,
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform_table import (
+    build_resolved_chain_payload,
     canonical_from_row,
     mask_content_fingerprint,
     read_snip_transform_table,
@@ -536,6 +537,9 @@ def run_snip_processing(
                 resolved.rescaled_shape_hw[1] / resolved.product_shape_hw[1]
             )
             out["centering"] = resolved.centering
+            # THIS product's compiled chain. The shared transform row holds the product-independent
+            # recipe; the raster that was actually rendered is recorded here, beside the pixels.
+            out["resolved_transform_chain_json"] = build_resolved_chain_payload(resolved)
 
             # Photometry is the recipe's job; geometry already happened above. no_change returns
             # the cropped pixels untouched, so a uint16 source stays uint16 at full scale.

@@ -32,9 +32,7 @@ import pandas as pd
 
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
 from data_pipeline.object_extraction.snip_processing.snip_transform import (
-    CENTERING_LATCHED,
     derive_snip_transform,
-    transform_for_product,
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform_table import (
     build_snip_transform_row,
@@ -117,21 +115,11 @@ def run_snip_geometry(
             target_um_per_px=float(target_pixel_size_um),
             snip_frame_shape_hw=snip_frame_shape_hw,
         )
-        # Resolve against the DERIVATION grid to capture the reference chain. Each render job
-        # re-resolves for its own product grid; this row records the recipe, not any one product's
-        # raster expression of it.
-        resolved = transform_for_product(
-            canonical,
-            product_shape_hw=canonical.grid.geometry_source_shape_yx,
-            product_um_per_px=pixel_size_um,
-            centering=CENTERING_LATCHED,
-        )
-
         rows[snip_transform_id] = build_snip_transform_row(
             snip_transform_id=snip_transform_id,
             physical_embryo_id=physical_embryo_id,
             time_index=int(time_index),
-            resolved=resolved,
+            canonical=canonical,
             source_image_id=image_id,
             mask_id=str(mask_row["mask_id"]),
             orientation_policy=ORIENTATION_POLICY,

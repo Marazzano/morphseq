@@ -283,8 +283,15 @@ SNIP_INVENTORY_PAYLOAD_COLUMNS: tuple[str, ...] = (
 # the pixels; they are not identity, not a product, and not a second image.
 #
 # On the ROW (rather than only in the transform table) because these answer "what happened here"
-# without a join — by far the common question. The FULL evidence, including the replayable step
-# chain, lives in the per-well snip transform table: one row per embryo-time, referenced below.
+# without a join — by far the common question.
+#
+# THE REPLAYABLE CHAIN LIVES HERE, NOT ON THE SHARED TRANSFORM ROW. A canonical transform is
+# channel-independent and has NO single resolved chain: BF native, RFP native, and a
+# 4x-downsampled z_stack compile the same physical recipe into different chains — different source
+# shape and calibration, different resize dimensions, different realized scale, different affine
+# translation. Storing one on the shared row would make whichever product wrote it authoritative
+# for every other. So the shared row holds the RECIPE and this row holds THIS product's compiled
+# expression of it.
 #
 #   snip_transform_id     — FK into the per-well snip transform table. CHANNEL-INDEPENDENT: sibling
 #                           products of one embryo-time (BF__clahe_blend, RFP__no_change, …) carry
@@ -326,6 +333,11 @@ SNIP_TRANSFORM_PROVENANCE_COLUMNS: tuple[str, ...] = (
     "realized_scale_x",
     "centering",
     "snip_transform_id",
+    # This product's compiled chain, as JSON — the REPLAY payload. Ordered steps, not one composite
+    # matrix: a matrix is coordinate truth only and cannot express the anti-aliased resize
+    # prefilter, requested-vs-realized scale, crop/pad semantics, or the image-vs-mask
+    # interpolation split, all of which change pixels.
+    "resolved_transform_chain_json",
 )
 
 # Canonical writer schema for snip_inventory shards, including zero-row shards.

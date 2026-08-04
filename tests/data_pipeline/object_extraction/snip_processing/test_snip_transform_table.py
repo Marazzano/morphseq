@@ -30,6 +30,7 @@ from data_pipeline.object_extraction.snip_processing.snip_transform_table import
     SNIP_TRANSFORM_SCHEMA_VERSION,
     SNIP_TRANSFORM_TABLE_COLUMNS,
     SnipTransformTableError,
+    build_resolved_chain_payload,
     build_snip_transform_row,
     canonical_from_row,
     chain_from_row,
@@ -71,12 +72,27 @@ def _resolved(mask=None, centering=CENTERING_LATCHED):
     )
 
 
-def _row(resolved, **overrides):
+def _product_row(resolved, *, snip_transform_id="20250912_B01_e01_t0000", **overrides):
+    """A PRODUCT inventory row: the FK plus this product's compiled chain.
+
+    Separate from _row because the two grains carry different things. The canonical row is
+    channel-independent; the chain belongs here, where it describes the raster ONE product actually
+    rendered.
+    """
+    row = {
+        "snip_transform_id": snip_transform_id,
+        "resolved_transform_chain_json": build_resolved_chain_payload(resolved),
+    }
+    row.update(overrides)
+    return row
+
+
+def _row(canonical, **overrides):
     kwargs = dict(
         snip_transform_id="20250912_B01_e01_t0000",
         physical_embryo_id="20250912_B01_e01",
         time_index=0,
-        resolved=resolved,
+        canonical=canonical,
         source_image_id="20250912_B01_BF_t0000",
         mask_id="20250912_B01_BF_t0000_m00",
         orientation_policy="pca_major_axis_yolk_down",
@@ -100,7 +116,7 @@ class TestCanonicalRoundTrip:
         # precisely so this holds bit-for-bit; a tolerance here would let writer drift accumulate
         # silently until two siblings rendered a pixel apart.
         canonical, resolved = _resolved()
-        assert canonical_from_row(_row(resolved)) == canonical
+        assert canonical_from_row(_row(canonical)) == canonical
 
     def test_round_trip_survives_a_real_csv(self):
         # In production the row makes a trip through a file, which is where float formatting and
@@ -112,7 +128,7 @@ class TestCanonicalRoundTrip:
 
         for centering in (CENTERING_LATCHED, CENTERING_CONTINUOUS):
             canonical, resolved = _resolved(centering=centering)
-            reread = pd.read_csv(StringIO(pd.DataFrame([_row(resolved)]).to_csv(index=False)))
+            reread = pd.read_csv(StringIO(pd.DataFrame([_row(canonical)]).to_csv(index=False)))
             assert canonical_from_row(reread.iloc[0]) == canonical, centering
 
     def test_a_null_latched_center_survives_pandas_nan(self):
@@ -123,7 +139,7 @@ class TestCanonicalRoundTrip:
         # than fail.
         from io import StringIO
 
-        row = _row(_resolved()[1])
+        row = _row(_resolved()[0])
         row["legacy_center_on_target_rescaled_rotated_grid_x"] = None
         row["legacy_center_on_target_rescaled_rotated_grid_y"] = None
         reread = pd.read_csv(StringIO(pd.DataFrame([row]).to_csv(index=False)))
@@ -134,7 +150,7 @@ class TestCanonicalRoundTrip:
         # The second equality: a reconstructed canonical must resolve to the same product transform.
         # Reconstructing the recipe but resolving it differently would still misregister siblings.
         canonical, resolved = _resolved()
-        rebuilt = canonical_from_row(_row(resolved))
+        rebuilt = canonical_from_row(_row(canonical))
         again = transform_for_product(
             rebuilt,
             product_shape_hw=SOURCE_SHAPE,
@@ -150,7 +166,7 @@ class TestCanonicalRoundTrip:
         # The first two could both pass while a render still diverged.
         canonical, resolved = _resolved()
         rebuilt = transform_for_product(
-            canonical_from_row(_row(resolved)),
+            canonical_from_row(_row(canonical)),
             product_shape_hw=SOURCE_SHAPE,
             product_um_per_px=SOURCE_UM_PER_PX,
             centering=CENTERING_LATCHED,
@@ -166,7 +182,7 @@ class TestCanonicalRoundTrip:
     def test_a_row_missing_the_recipe_fails_loud(self):
         # A render job that cannot rebuild the recipe must stop, not fall back to deriving one --
         # falling back is precisely the side door the gate exists to close.
-        row = _row(_resolved()[1])
+        row = _row(_resolved()[0])
         del row["crop_center_um_x"]
         with pytest.raises(SnipTransformTableError, match="reconstructable canonical transform"):
             canonical_from_row(row)
@@ -188,85 +204,100 @@ class TestTransformIdIsChannelIndependent:
             build_snip_transform_id("not-a-physical-embryo-id", 0)
 
 
-class TestReplay:
-    """Guarantee 1: the persisted chain reproduces the ORIGINAL pixels exactly."""
+class TestTwoGrainsTwoGuarantees:
+    """The lifecycle, tested at its two REAL boundaries rather than as one fused round trip.
 
-    def test_round_trip_reproduces_the_snip_byte_for_byte(self, tmp_path):
+    The old tests conflated them: they wrote a canonical row and replayed pixels from it, which only
+    worked because the shared row wrongly carried one product's compiled chain. Separating them is
+    the point --
+
+        canonical row  -> RE-DERIVE: recompile geometry for ANY product
+        product row    -> REPLAY:    reproduce THAT product's exact raster
+    """
+
+    def test_the_canonical_row_recompiles_for_any_product(self):
+        # Guarantee 1. The canonical row is product-independent, so a reconstructed recipe must
+        # resolve identically for whichever grid asks.
+        canonical, resolved = _resolved()
+        rebuilt = canonical_from_row(_row(canonical))
+        again = transform_for_product(
+            rebuilt,
+            product_shape_hw=SOURCE_SHAPE,
+            product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_LATCHED,
+        )
+        assert again.rotation_matrix_2x3 == resolved.rotation_matrix_2x3
+        assert again.rescaled_shape_hw == resolved.rescaled_shape_hw
+
+    def test_the_product_row_replays_its_own_pixels(self):
+        # Guarantee 2, through the FULL lifecycle: derive -> persist canonical -> reconstruct ->
+        # resolve for a product -> persist that product's chain -> replay.
         image, mask = _image(), _mask()
-        _, resolved = _resolved(mask)
+        canonical, _ = _resolved(mask)
+
+        rebuilt = canonical_from_row(_row(canonical))
+        resolved = transform_for_product(
+            rebuilt,
+            product_shape_hw=SOURCE_SHAPE,
+            product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_LATCHED,
+        )
         original = apply_transform_to_image(image, resolved, dtype=np.uint8)
 
-        path = write_snip_transform_table(pd.DataFrame([_row(resolved)]), tmp_path / "t.parquet")
-        back = read_snip_transform_table(path)
-        replayed = chain_from_row(back.iloc[0]).apply_to_image(image).astype(np.uint8)
-
-        assert replayed.shape == original.shape
-        assert replayed.dtype == original.dtype
+        product_row = _product_row(resolved)
+        replayed = chain_from_row(product_row).apply_to_image(image).astype(np.uint8)
         assert np.array_equal(replayed, original), (
-            "the persisted chain did not reproduce the snip exactly — the table is not sufficient "
-            "provenance"
+            "the product row's chain did not reproduce its own raster -- the inventory is not "
+            "sufficient provenance"
         )
 
-    def test_round_trip_reproduces_the_mask_byte_for_byte(self, tmp_path):
-        # Masks take the SAME transform but nearest interpolation. If the row collapsed the
-        # image/mask interpolation split, this is where it surfaces.
+    def test_the_product_row_replays_the_mask_path_too(self):
+        # Image and mask take different interpolation, so replaying one proves nothing about the
+        # other.
         mask = _mask()
-        _, resolved = _resolved(mask)
+        canonical, resolved = _resolved(mask)
         original = apply_transform_to_mask(mask, resolved)
-
-        path = write_snip_transform_table(pd.DataFrame([_row(resolved)]), tmp_path / "t.parquet")
-        back = read_snip_transform_table(path)
-        replayed = chain_from_row(back.iloc[0]).apply_to_mask((mask > 0.5).astype(np.uint8))
-
-        assert np.array_equal(replayed.astype(np.uint8), original)
-
-    def test_csv_round_trip_also_replays(self, tmp_path):
-        # snip_inventory is CSV; the table must survive the neighbouring format too.
-        image = _image()
-        _, resolved = _resolved()
-        original = apply_transform_to_image(image, resolved, dtype=np.uint8)
-        path = write_snip_transform_table(pd.DataFrame([_row(resolved)]), tmp_path / "t.csv")
-        back = read_snip_transform_table(path)
-        assert np.array_equal(
-            chain_from_row(back.iloc[0]).apply_to_image(image).astype(np.uint8), original
+        replayed = chain_from_row(_product_row(resolved)).apply_to_mask(
+            (mask > 0.5).astype(np.uint8)
         )
+        assert np.array_equal(replayed, original)
 
-    def test_chain_records_every_step_not_just_a_composite(self):
-        """A single composite affine cannot express the resize prefilter. Pinned against."""
-        _, resolved = _resolved()
-        payload = json.loads(_row(resolved)["resolved_transform_chain_json"])
-        steps = payload["steps"]
-        assert len(steps) >= 2, "the resize and the affine must both be recorded"
-        assert [s["kind"] for s in steps][:2] == ["resize", "affine"]
-        for step in steps:
-            assert {"kind", "name", "affine_2x3", "in_shape_yx", "out_shape_yx", "interp", "params"} <= set(step)
-        assert "composite_affine_2x3_points_only" in payload
+    def test_the_chain_records_every_step_not_a_composite(self):
+        # A composite matrix is COORDINATE truth only: it cannot express the anti-aliased resize
+        # prefilter, so a snip replayed from one would alias with no error.
+        _canonical, resolved = _resolved()
+        payload = json.loads(_product_row(resolved)["resolved_transform_chain_json"])
+        kinds = [step["kind"] for step in payload["steps"]]
+        assert "resize" in kinds and "affine" in kinds, kinds
+        assert payload["realized_scale_yx"], "the REALIZED scale must be recorded, not the requested"
 
-    def test_resize_step_records_its_resolved_interpolation(self):
-        # Resolved at build time (area on downscale, linear on upscale); replay depends on the
-        # RESOLVED value rather than re-deciding at read time.
-        _, resolved = _resolved()
-        steps = json.loads(_row(resolved)["resolved_transform_chain_json"])["steps"]
-        assert steps[0]["params"]["image_interp"] in {"area", "linear"}
-        assert steps[0]["params"]["mask_interp"] == "nearest"
+    def test_the_canonical_row_carries_no_chain(self):
+        # THE OWNERSHIP RULE. A channel-independent row has no single resolved chain -- BF native,
+        # RFP native and a 4x z_stack compile the same recipe differently. Storing one here would
+        # make whichever product wrote it authoritative for all of them.
+        assert "resolved_transform_chain_json" not in _row(_resolved()[0])
+        assert "resolved_transform_chain_json" not in SNIP_TRANSFORM_TABLE_COLUMNS
 
-    def test_border_policy_and_realized_scale_are_recorded(self):
-        _, resolved = _resolved()
-        payload = json.loads(_row(resolved)["resolved_transform_chain_json"])
-        assert payload["border_mode"] == resolved.border_mode
-        assert len(payload["realized_scale_yx"]) == 2
-        # Realized, not requested: integer output dims make these differ in general.
-        assert payload["realized_scale_yx"][1] == pytest.approx(
-            resolved.rescaled_shape_hw[1] / resolved.product_shape_hw[1]
-        )
+
+class TestFlipXIsReserved:
+    def test_flip_x_true_is_rejected(self):
+        # The column exists for schema continuity, but no render path applies a reflection. A row
+        # claiming a flip its pixels never received is worse than no column at all.
+        row = _row(_resolved()[0])
+        row["flip_x"] = True
+        with pytest.raises(SnipTransformTableError, match="flip_x=True is not supported"):
+            validate_snip_transform_table(pd.DataFrame([row]))
+
+    def test_flip_x_false_passes(self):
+        validate_snip_transform_table(pd.DataFrame([_row(_resolved()[0])]))
 
 
 class TestRederive:
     """Guarantee 2: the INPUTS support building a DIFFERENT transform, not just replaying this one."""
 
     def test_row_carries_the_inputs_a_fresh_derivation_needs(self):
-        _, resolved = _resolved()
-        inputs = derivation_inputs_from_row(_row(resolved))
+        canonical, resolved = _resolved()
+        inputs = derivation_inputs_from_row(_row(canonical))
         for key in (
             "source_image_id", "mask_id", "source_shape_hw", "source_um_per_px",
             "target_um_per_px", "snip_frame_shape_hw", "crop_center_um_xy", "orientation",
@@ -280,7 +311,7 @@ class TestRederive:
         # be trusted to build a different one from a better mask.
         mask = _mask()
         canonical, resolved = _resolved(mask)
-        inputs = derivation_inputs_from_row(_row(resolved))
+        inputs = derivation_inputs_from_row(_row(canonical))
 
         rebuilt = derive_snip_transform(
             mask,
@@ -304,7 +335,7 @@ class TestRederive:
         mask[20:44, 30:34] = 1
         mask[36:44, 24:40] = 1
         canonical, resolved = _resolved(mask)
-        inputs = derivation_inputs_from_row(_row(resolved))
+        inputs = derivation_inputs_from_row(_row(canonical))
 
         # Yolk at the TOP, opposite the heavy end. With a yolk present the tiebreak uses the
         # yolk-vs-embryo COM instead of the mass distribution, and lands on the opposite branch:
@@ -328,48 +359,71 @@ class TestRederive:
             refined, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,
         ).output_shape_hw == SNIP_SHAPE
 
-    def test_centering_mode_is_recorded_so_pixels_are_interpretable(self):
+    def test_centering_mode_is_recorded_on_the_PRODUCT_row(self):
+        # Centering is a RESOLUTION choice, not a property of the canonical recipe -- it is an
+        # argument to transform_for_product, and two products of one embryo-time could in principle
+        # resolve differently. So the mode that produced a given raster belongs with that raster,
+        # which is the single most important field for interpreting a snip across the migration.
         _, latched = _resolved(centering=CENTERING_LATCHED)
         _, continuous = _resolved(centering=CENTERING_CONTINUOUS)
-        assert _row(latched)["centering"] == CENTERING_LATCHED
-        assert _row(continuous)["centering"] == CENTERING_CONTINUOUS
+        assert json.loads(_product_row(latched)["resolved_transform_chain_json"])["centering"] == (
+            CENTERING_LATCHED
+        )
+        assert json.loads(
+            _product_row(continuous)["resolved_transform_chain_json"]
+        )["centering"] == CENTERING_CONTINUOUS
 
 
 class TestSiblingsShareOneTransform:
-    def test_bf_and_rfp_reference_one_row_that_renders_both(self, tmp_path):
-        """The registerability guarantee, end to end.
+    def test_bf_and_rfp_reference_one_row_and_compile_it_separately(self, tmp_path):
+        """The registerability guarantee, with ownership correct.
 
-        Two channels of one embryo-time derive the same recipe from the same mask, so they collapse
-        onto ONE table row — and that single row must render BOTH channels' pixels.
+        Two channels of one embryo-time derive the SAME recipe from the same mask, so they collapse
+        onto ONE canonical row -- that collapse is what makes sibling geometry drift
+        unrepresentable. Each then compiles that shared recipe into its OWN chain, because a chain
+        is expressed in one product's coordinates and cannot be shared.
         """
         mask = _mask()
-        bf_image, rfp_image = _image(0), _image(1)
-        _, resolved = _resolved(mask)
-
+        canonical, _ = _resolved(mask)
         transform_id = build_snip_transform_id("20250912_B01_e01", 0)
-        # Both products build a row; they must be byte-identical, so the table holds exactly one.
-        bf_row = _row(resolved, snip_transform_id=transform_id, source_image_id="20250912_B01_BF_t0000")
-        rfp_row = _row(resolved, snip_transform_id=transform_id, source_image_id="20250912_B01_BF_t0000")
-        assert bf_row["resolved_transform_chain_json"] == rfp_row["resolved_transform_chain_json"]
 
-        path = write_snip_transform_table(pd.DataFrame([bf_row]), tmp_path / "t.parquet")
-        back = read_snip_transform_table(path)
-        assert len(back) == 1
+        # ONE canonical row. Both products reference it; neither owns a copy.
+        row = _row(canonical, snip_transform_id=transform_id)
+        path = write_snip_transform_table(pd.DataFrame([row]), tmp_path / "t.parquet")
+        shared = canonical_from_row(read_snip_transform_table(path).iloc[0])
 
-        chain = chain_from_row(back.iloc[0])
-        assert np.array_equal(
-            chain.apply_to_image(bf_image).astype(np.uint8),
-            apply_transform_to_image(bf_image, resolved, dtype=np.uint8),
+        # Each product compiles it for its own grid. Same recipe in, different chains out.
+        bf = transform_for_product(
+            shared, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_LATCHED,
         )
-        assert np.array_equal(
-            chain.apply_to_image(rfp_image).astype(np.uint8),
-            apply_transform_to_image(rfp_image, resolved, dtype=np.uint8),
+        rfp = transform_for_product(
+            shared, product_shape_hw=SOURCE_SHAPE, product_um_per_px=SOURCE_UM_PER_PX,
+            centering=CENTERING_LATCHED,
+        )
+
+        bf_image, rfp_image = _image(0), _image(1)
+        bf_snip = chain_from_row(_product_row(bf, snip_transform_id=transform_id)).apply_to_image(
+            bf_image
+        )
+        rfp_snip = chain_from_row(_product_row(rfp, snip_transform_id=transform_id)).apply_to_image(
+            rfp_image
+        )
+
+        # Same geometry: different pixels in, identical placement out.
+        assert bf_snip.shape == rfp_snip.shape
+        assert not np.array_equal(bf_snip, rfp_snip), "the fixture must feed different pixels"
+        np.testing.assert_array_equal(
+            chain_from_row(_product_row(bf, snip_transform_id=transform_id)).apply_to_image(
+                bf_image
+            ),
+            bf_snip,
         )
 
     def test_duplicate_transform_ids_are_rejected(self, tmp_path):
         # Two rows claiming one embryo-time is exactly the sibling drift this table prevents.
-        _, resolved = _resolved()
-        dupe = pd.DataFrame([_row(resolved), _row(resolved)])
+        canonical, resolved = _resolved()
+        dupe = pd.DataFrame([_row(canonical), _row(canonical)])
         with pytest.raises(SnipTransformTableError, match="must be unique"):
             write_snip_transform_table(dupe, tmp_path / "t.parquet")
 
@@ -388,8 +442,8 @@ class TestTableContract:
         assert len(read_snip_transform_table(path)) == 0
 
     def test_unknown_schema_version_fails_loud(self, tmp_path):
-        _, resolved = _resolved()
-        row = _row(resolved)
+        canonical, resolved = _resolved()
+        row = _row(canonical)
         row["schema_version"] = SNIP_TRANSFORM_SCHEMA_VERSION + 99
         with pytest.raises(SnipTransformTableError, match="schema_version"):
             validate_snip_transform_table(pd.DataFrame([row]))
@@ -408,7 +462,7 @@ class TestTableContract:
 class TestAtomicWrite:
     def test_failed_write_leaves_no_partial_table(self, tmp_path, monkeypatch):
         """A crash mid-write must leave NO file — consumers treat existence as done."""
-        _, resolved = _resolved()
+        canonical, resolved = _resolved()
         path = tmp_path / "t.parquet"
 
         def boom(self, *a, **k):
@@ -416,15 +470,15 @@ class TestAtomicWrite:
 
         monkeypatch.setattr(pd.DataFrame, "to_parquet", boom)
         with pytest.raises(RuntimeError, match="simulated writer failure"):
-            write_snip_transform_table(pd.DataFrame([_row(resolved)]), path)
+            write_snip_transform_table(pd.DataFrame([_row(canonical)]), path)
 
         assert not path.exists(), "a failed write left a table at the final path"
         assert not list(tmp_path.glob("*.tmp-*")), "a failed write left its temp file behind"
 
     def test_failed_write_does_not_clobber_an_existing_table(self, tmp_path, monkeypatch):
         # The stronger property: a failed RERUN must leave the previous good table intact.
-        _, resolved = _resolved()
-        path = write_snip_transform_table(pd.DataFrame([_row(resolved)]), tmp_path / "t.parquet")
+        canonical, resolved = _resolved()
+        path = write_snip_transform_table(pd.DataFrame([_row(canonical)]), tmp_path / "t.parquet")
         before = path.read_bytes()
 
         def boom(self, *a, **k):
@@ -432,14 +486,14 @@ class TestAtomicWrite:
 
         monkeypatch.setattr(pd.DataFrame, "to_parquet", boom)
         with pytest.raises(RuntimeError):
-            write_snip_transform_table(pd.DataFrame([_row(resolved)]), path)
+            write_snip_transform_table(pd.DataFrame([_row(canonical)]), path)
 
         assert path.read_bytes() == before, "a failed rerun corrupted the previous good table"
 
     def test_invalid_table_never_becomes_visible(self, tmp_path):
         # Validation happens BEFORE the rename, so an invalid table is never published at all.
-        _, resolved = _resolved()
+        canonical, resolved = _resolved()
         path = tmp_path / "t.parquet"
         with pytest.raises(SnipTransformTableError):
-            write_snip_transform_table(pd.DataFrame([_row(resolved), _row(resolved)]), path)
+            write_snip_transform_table(pd.DataFrame([_row(canonical), _row(canonical)]), path)
         assert not path.exists()

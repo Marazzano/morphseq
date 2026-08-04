@@ -75,8 +75,11 @@ SNIP_TRANSFORM_TABLE_COLUMNS: tuple[str, ...] = (
     "snip_transform_id",
     "physical_embryo_id",
     "time_index",
-    "source_image_id",
-    "mask_id",
+    # GEOMETRY source, named explicitly. Once an RFP renderer reads this row, a bare
+    # "source_image_id" is ambiguous: the RFP frame is the RENDER source, the BF frame is the
+    # GEOMETRY source, and they are different images of the same well and timepoint.
+    "geometry_source_image_id",
+    "geometry_source_mask_id",
     # THE MASK-HASH FREEZE. The gate fixes placement; this fixes the raster the placement was
     # derived FROM. Without it, a frame_masks regeneration between snip_geometry and a render job
     # pairs old geometry with a newer mask -- pixels placed by one segmentation, masked by another,
@@ -93,6 +96,12 @@ SNIP_TRANSFORM_TABLE_COLUMNS: tuple[str, ...] = (
     "snip_shape_w",
     "orientation_policy",
     "orientation_source",
+    # RESERVED TRANSITIONAL METADATA. The column exists for schema continuity, but the compiler
+    # does not implement a reflection: no code path reads it, and nothing sets it True. A field that
+    # LOOKS executable and is ignored is a trapdoor -- an artifact could claim a flip the pixels
+    # never got -- so validation rejects True rather than letting the claim stand. Either make it
+    # behavior-bearing (a reflection composes into the same destination affine, so it need not cost
+    # another resampling) or drop it in a schema migration; do not leave it merely reserved.
     "flip_x",
     "rotation_angle_rad",
     # THE CANONICAL RECIPE AS TYPED FLOAT64 COLUMNS, NOT JSON. `from_row` must reconstruct a
@@ -113,7 +122,12 @@ SNIP_TRANSFORM_TABLE_COLUMNS: tuple[str, ...] = (
     "legacy_center_on_target_rescaled_rotated_grid_y",
     "centering",
     "schema_version",
-    "resolved_transform_chain_json",
+    # NO resolved_transform_chain_json HERE, deliberately. This row is channel-independent, and
+    # there is no single resolved chain for it: BF native, RFP native, and a 4x z-stack compile the
+    # same recipe into DIFFERENT chains -- different source shape, calibration, resize dimensions,
+    # realized scale, and affine translation. Storing one on the shared row would make whichever
+    # product happened to write it authoritative for every other. The chain belongs on the PRODUCT
+    # inventory row, where it describes the raster that product actually rendered.
     "transform_derivation_inputs_json",
 )
 
@@ -182,12 +196,49 @@ def _step_from_dict(raw: dict[str, Any]) -> GridTransform:
     )
 
 
+def build_resolved_chain_payload(resolved: Any) -> str:
+    """The REPLAY payload for ONE product's rendering, as JSON.
+
+    Belongs on the PRODUCT inventory row, never on the shared transform row. A canonical transform
+    is channel-independent and has no single resolved chain: BF native, RFP native, and a
+    4x-downsampled z_stack compile the same physical recipe into different chains -- different
+    source shape and calibration, different resize dimensions, different realized scale, different
+    affine translation. Whichever product wrote it to the shared row would silently become
+    authoritative for all of them.
+
+    The full ordered chain is serialized rather than one composite matrix: a matrix is COORDINATE
+    truth only and cannot express the anti-aliased resize prefilter, requested-vs-realized scale,
+    crop/pad semantics, or the image-vs-mask interpolation split -- all of which change pixels.
+    """
+    canonical = resolved.canonical
+    chain = resolved.to_chain()
+    payload = {
+        "schema_version": SNIP_TRANSFORM_SCHEMA_VERSION,
+        "product_shape_hw": list(resolved.product_shape_hw),
+        "product_um_per_px": float(resolved.product_um_per_px),
+        "rescaled_shape_hw": list(resolved.rescaled_shape_hw),
+        "output_shape_hw": list(resolved.output_shape_hw),
+        "requested_scale": float(
+            resolved.product_um_per_px / canonical.grid.default_output_um_per_px_yx[0]
+        ),
+        "realized_scale_yx": [
+            float(resolved.rescaled_shape_hw[0] / resolved.product_shape_hw[0]),
+            float(resolved.rescaled_shape_hw[1] / resolved.product_shape_hw[1]),
+        ],
+        "border_mode": resolved.border_mode,
+        "border_value": float(resolved.border_value),
+        "centering": resolved.centering,
+        "steps": [_step_to_dict(s) for s in chain.transforms],
+    }
+    return json.dumps(payload, sort_keys=False)
+
+
 def build_snip_transform_row(
     *,
     snip_transform_id: str,
     physical_embryo_id: str,
     time_index: int,
-    resolved: Any,
+    canonical: Any,
     source_image_id: str,
     mask_id: str,
     orientation_policy: str,
@@ -198,42 +249,13 @@ def build_snip_transform_row(
 ) -> dict[str, Any]:
     """Assemble one transform row.
 
-    ``resolved`` is a ``ResolvedSnipTransform``; typed as Any to keep this module free of a circular
-    import back into ``snip_transform``.
+    ``canonical`` is a ``CanonicalSnipTransform``; typed as Any to keep this module free of a
+    circular import back into ``snip_transform``.
+
+    TAKES THE CANONICAL DIRECTLY, not a resolved transform. This row is product-independent, so
+    requiring a resolution would force the geometry step to pick some product's grid to resolve
+    against -- and whichever it picked would quietly become the reference for every other.
     """
-    canonical = resolved.canonical
-    chain = resolved.to_chain()
-
-    # REPLAY payload — the ordered steps that produced these pixels, plus the border policy and the
-    # realized (not requested) scale every coordinate mapping must use.
-    resolved_chain = {
-        "schema_version": SNIP_TRANSFORM_SCHEMA_VERSION,
-        "product_shape_hw": list(resolved.product_shape_hw),
-        "product_um_per_px": float(resolved.product_um_per_px),
-        "rescaled_shape_hw": list(resolved.rescaled_shape_hw),
-        "output_shape_hw": list(resolved.output_shape_hw),
-        "requested_scale": float(resolved.product_um_per_px / canonical.grid.default_output_um_per_px_yx[0]),
-        "realized_scale_yx": [
-            float(resolved.rescaled_shape_hw[0] / resolved.product_shape_hw[0]),
-            float(resolved.rescaled_shape_hw[1] / resolved.product_shape_hw[1]),
-        ],
-        "border_mode": resolved.border_mode,
-        "border_value": float(resolved.border_value),
-        "crop_px": {
-            "x0": int(resolved.crop_x0_px), "y0": int(resolved.crop_y0_px),
-            "x1": int(resolved.crop_x1_px), "y1": int(resolved.crop_y1_px),
-        },
-        "crop_um": {
-            "x0": float(resolved.crop_x0_um), "y0": float(resolved.crop_y0_um),
-            "x1": float(resolved.crop_x1_um), "y1": float(resolved.crop_y1_um),
-        },
-        "centering": resolved.centering,
-        "steps": [_step_to_dict(s) for s in chain.transforms],
-        # Recorded for mapping POINTS only. It is NOT sufficient to re-render and must never be used
-        # as if it were — the name says so at every read site.
-        "composite_affine_2x3_points_only": chain.composite_affine().tolist(),
-    }
-
     # RE-DERIVE payload — what a fresh derivation needs when it REPLACES the orientation decision.
     derivation_inputs = {
         "schema_version": SNIP_TRANSFORM_SCHEMA_VERSION,
@@ -260,8 +282,8 @@ def build_snip_transform_row(
         "snip_transform_id": str(snip_transform_id),
         "physical_embryo_id": str(physical_embryo_id),
         "time_index": int(time_index),
-        "source_image_id": str(source_image_id),
-        "mask_id": str(mask_id),
+        "geometry_source_image_id": str(source_image_id),
+        "geometry_source_mask_id": str(mask_id),
         "geometry_source_mask_sha256": str(geometry_source_mask_sha256),
         "source_shape_h": int(canonical.grid.geometry_source_shape_yx[0]),
         "source_shape_w": int(canonical.grid.geometry_source_shape_yx[1]),
@@ -289,9 +311,8 @@ def build_snip_transform_row(
             if canonical.legacy_center_on_target_rescaled_rotated_grid_xy is None
             else float(canonical.legacy_center_on_target_rescaled_rotated_grid_xy[1])
         ),
-        "centering": str(resolved.centering),
+        "centering": str(canonical.centering_mode) if hasattr(canonical, "centering_mode") else "",
         "schema_version": int(SNIP_TRANSFORM_SCHEMA_VERSION),
-        "resolved_transform_chain_json": json.dumps(resolved_chain, sort_keys=False),
         "transform_derivation_inputs_json": json.dumps(derivation_inputs, sort_keys=False),
     }
 
@@ -303,6 +324,16 @@ def validate_snip_transform_table(
     missing = [c for c in SNIP_TRANSFORM_TABLE_COLUMNS if c not in df.columns]
     if missing:
         raise SnipTransformTableError(f"{scope_label}: missing required columns: {missing}")
+
+    # flip_x=True would be a claim the compiler cannot honor. Descriptive error, not a bare assert:
+    # artifact validation runs outside tests, where an AssertionError says nothing useful.
+    if "flip_x" in df.columns and df["flip_x"].fillna(False).astype(bool).any():
+        offenders = df.loc[df["flip_x"].fillna(False).astype(bool), "snip_transform_id"].head(3)
+        raise SnipTransformTableError(
+            f"{scope_label}: flip_x=True is not supported by the snip transform compiler -- no "
+            f"render path applies a reflection, so these rows claim a flip their pixels never "
+            f"received. Offending snip_transform_id(s): {list(offenders)}."
+        )
 
     if df.empty:
         return
@@ -354,7 +385,12 @@ def read_snip_transform_table(path: Path) -> pd.DataFrame:
 
 
 def chain_from_row(row: Any) -> TransformChain:
-    """Rebuild the executable chain from a table row — the REPLAY path.
+    """Rebuild the executable chain from a PRODUCT INVENTORY row — the REPLAY path.
+
+    Takes a product row, NOT a canonical transform row. The canonical row is channel-independent
+    and has no single chain: BF native, RFP native, and a 4x z_stack compile the same recipe into
+    different chains. The chain describes one product's actual raster, so it lives with that
+    product.
 
     The rebuilt chain renders through the same ``image_geometry`` engine the original run used, so
     replay is byte-identical rather than merely close.

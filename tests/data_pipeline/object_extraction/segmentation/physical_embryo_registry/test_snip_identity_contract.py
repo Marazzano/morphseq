@@ -175,6 +175,9 @@ def _snip_inventory_row(**kw):
         ),
         "legacy_flat_snip_path": "snips/20250912_B01_e01/out.png",
         "snip_product_key": "BF__projection__focus_stack__clahe_blend",
+        # THIS product's compiled chain. The shared transform row holds the product-independent
+        # recipe; the raster actually rendered is recorded here, beside the pixels.
+        "resolved_transform_chain_json": "{}",
         "embryo_mask": "snips/out_mask.png",
         "embryo_mask_snip_path": "snips/out_mask.png",
         "crop_x_min_px": 0,
