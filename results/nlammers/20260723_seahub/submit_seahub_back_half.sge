@@ -61,6 +61,14 @@ done
 OUTPUT_ROOT="$("${PYTHON}" -c \
     "import yaml; print(yaml.safe_load(open('${WORKFLOW_DIR}/env.yaml'))['paths']['output_root'])")"
 SMK_WORKDIR="${OUTPUT_ROOT}/work_directories/${EXPERIMENT_ID}"
+EXISTING_NAMESPACE="$(
+    find "${OUTPUT_ROOT}" -mindepth 2 -maxdepth 2 \
+        -name "${EXPERIMENT_ID}" -print -quit 2>/dev/null || true
+)"
+if [[ -n "${EXISTING_NAMESPACE}" ]]; then
+    echo "ERROR: refusing stale or colliding pipeline namespace for ${EXPERIMENT_ID}: ${EXISTING_NAMESPACE}" >&2
+    exit 2
+fi
 mkdir -p "${SMK_WORKDIR}" "${REPO_ROOT}/logs"
 cd "${WORKFLOW_DIR}"
 

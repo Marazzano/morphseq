@@ -56,6 +56,48 @@ fi
 SHARD_COUNT="$(grep -cvE '^[[:space:]]*$' "${EXPERIMENTS}")"
 echo "Planned ${SHARD_COUNT} operational shards."
 
+# Fail closed before submitting any downstream jobs.  The bundle root is isolated
+# by SEAHUB_RUN_ID, but canonical pipeline outputs are keyed by experiment_id.  A
+# repeated operational date could otherwise allow stale artifacts or .validated
+# sentinels from an older run to satisfy the new DAG.
+PIPELINE_OUTPUT_ROOT="$(
+    "${CONDA}" run -n morphseq-env --no-capture-output \
+        python -c \
+        "import yaml; print(yaml.safe_load(open('${SRC_ROOT}/data_pipeline/pipeline_orchestrator/env.yaml'))['paths']['output_root'])"
+)"
+if [[ -z "${PIPELINE_OUTPUT_ROOT}" || "${PIPELINE_OUTPUT_ROOT}" != /* ]]; then
+    echo "ERROR: could not resolve an absolute pipeline output root." >&2
+    exit 2
+fi
+
+declare -A SEEN_EXPERIMENTS=()
+while IFS= read -r EXPERIMENT_ID; do
+    [[ -n "${EXPERIMENT_ID}" ]] || continue
+    if [[ "${EXPERIMENT_ID}" != "${SEAHUB_OPERATIONAL_DATE}_seahub_"* ]]; then
+        echo "ERROR: planned experiment is outside this SeaHub operational namespace: ${EXPERIMENT_ID}" >&2
+        exit 2
+    fi
+    if [[ -n "${SEEN_EXPERIMENTS[${EXPERIMENT_ID}]:-}" ]]; then
+        echo "ERROR: duplicate planned SeaHub experiment id: ${EXPERIMENT_ID}" >&2
+        exit 2
+    fi
+    SEEN_EXPERIMENTS["${EXPERIMENT_ID}"]=1
+
+    COLLISION="$(
+        find "${PIPELINE_OUTPUT_ROOT}" -mindepth 2 -maxdepth 2 \
+            -name "${EXPERIMENT_ID}" -print -quit 2>/dev/null || true
+    )"
+    if [[ -n "${COLLISION}" ]]; then
+        echo "ERROR: refusing to reuse an existing pipeline namespace for ${EXPERIMENT_ID}: ${COLLISION}" >&2
+        exit 2
+    fi
+done < "${EXPERIMENTS}"
+if [[ "${#SEEN_EXPERIMENTS[@]}" -ne "${SHARD_COUNT}" ]]; then
+    echo "ERROR: collision audit counted ${#SEEN_EXPERIMENTS[@]} experiments; expected ${SHARD_COUNT}." >&2
+    exit 2
+fi
+echo "Fresh-namespace audit passed for ${SHARD_COUNT} SeaHub experiments."
+
 MATERIALIZE_SUBMISSION="$(
     qsub -v "${SEAHUB_QSUB_ENV}" -t "1-${SHARD_COUNT}" -tc 8 \
         "${WORK_DIR}/submit_seahub_materialize.sge"
