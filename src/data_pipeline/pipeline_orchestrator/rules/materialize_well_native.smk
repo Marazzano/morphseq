@@ -116,7 +116,7 @@ rule validate_frame_inventory_product_for_well:
           --output-flag "{output.validated}" \
           --image-root "{BUILT_IMAGE_DATA_DIR}" \
           --check-sources "true" \
-          --validation-scope "per_well"
+          --validation-scope "per_well_product"
         """
 
 

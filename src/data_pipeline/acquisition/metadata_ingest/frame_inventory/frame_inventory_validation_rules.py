@@ -29,7 +29,16 @@ from data_pipeline.shared.identifiers import build_well_id
 
 log = logging.getLogger(__name__)
 
-VALIDATION_SCOPES = ("per_well", "merged")
+# per_well          one well, ALL its products -- the canonical assembled shard
+# per_well_product  one well, ONE product -- a single-product shard, pre-assembly
+# merged            many wells, per-well checks grouped by well_id
+#
+# per_well_product exists because a product shard cannot satisfy a CROSS-CHANNEL rule. An
+# RFP__projection__max shard contains only RFP rows by definition, so "BF must be present" and
+# "channels are rectangular" ask a single-channel file to prove something about a channel it does
+# not contain. Those checks belong to the ASSEMBLED per-well inventory, where every channel is
+# present; the shard is checked for what a shard can actually own.
+VALIDATION_SCOPES = ("per_well", "per_well_product", "merged")
 
 # Policy for a ragged secondary channel (a channel whose time set differs from BF's). "fail" is the
 # default fail-loud contract behavior; "warn" accepts it (a secondary-channel gap does not corrupt
@@ -67,7 +76,20 @@ def validate_grain(
     if validation_scope == "per_well":
         _assert_single_well(df, scope_label=scope_label)
         _validate_well_temporal_grain(
-            df, scope_label=scope_label, ragged_channel_policy=ragged_channel_policy
+            df,
+            scope_label=scope_label,
+            ragged_channel_policy=ragged_channel_policy,
+            checks=PER_WELL_CHECKS,
+        )
+        return
+
+    if validation_scope == "per_well_product":
+        _assert_single_well(df, scope_label=scope_label)
+        _validate_well_temporal_grain(
+            df,
+            scope_label=scope_label,
+            ragged_channel_policy=ragged_channel_policy,
+            checks=PER_WELL_PRODUCT_CHECKS,
         )
         return
 
@@ -107,7 +129,11 @@ def _derive_well_ids(df: pd.DataFrame) -> pd.Series:
 
 
 def _validate_well_temporal_grain(
-    df: pd.DataFrame, *, scope_label: str, ragged_channel_policy: str = RAGGED_CHANNEL_FAIL
+    df: pd.DataFrame,
+    *,
+    scope_label: str,
+    ragged_channel_policy: str = RAGGED_CHANNEL_FAIL,
+    checks: tuple = (),
 ) -> None:
     """Within ONE well: each PRODUCT STREAM is time-contiguous; BF channel present; elapsed_time_s.
 
@@ -131,12 +157,11 @@ def _validate_well_temporal_grain(
     df["product_key"] = frame_inventory_product_keys(df, scope_label=scope_label)
     df["channel_id"] = df["channel_id"].astype(str)
 
-    _assert_each_product_stream_contiguous(df, scope_label=scope_label)
-    _assert_required_channel_present(df, scope_label=scope_label)
-    _assert_channels_rectangular(
-        df, scope_label=scope_label, ragged_channel_policy=ragged_channel_policy
-    )
-    _assert_multitimepoint_has_elapsed_time(df, scope_label=scope_label)
+    for check in checks or PER_WELL_CHECKS:
+        if check is _assert_channels_rectangular:
+            check(df, scope_label=scope_label, ragged_channel_policy=ragged_channel_policy)
+        else:
+            check(df, scope_label=scope_label)
 
 
 def _distinct_times(group: pd.DataFrame) -> list[int]:
@@ -159,6 +184,17 @@ def _assert_each_product_stream_contiguous(df: pd.DataFrame, *, scope_label: str
                 f"0..N-1; found {stream_times} (expected {expected}). Renumber or fill the missing "
                 "frames for that product."
             )
+
+
+def _assert_single_product(df: pd.DataFrame, *, scope_label: str) -> None:
+    """A product shard carries exactly one product_key -- that is what makes it a shard."""
+    product_keys = sorted(df["product_key"].dropna().unique())
+    if len(product_keys) != 1:
+        raise ValueError(
+            f"[{scope_label}] a per_well_product shard must carry exactly one product_key; found "
+            f"{product_keys}. Validate the assembled per-well inventory with "
+            "validation_scope='per_well' instead."
+        )
 
 
 def _assert_required_channel_present(df: pd.DataFrame, *, scope_label: str) -> None:
@@ -507,3 +543,41 @@ def _resolve_image_path(
             f"({root}) via '..'. Paths may not climb out of the image root."
         )
     return resolved
+
+
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+# THE VALIDATION HIERARCHY — composed, not two independently maintained lists
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+# Both per-well scopes SHARE the row/time checks by construction. Written as two flat lists, the
+# narrower scope drifts into a weaker miscellaneous mode: someone adds a check to per_well, forgets
+# per_well_product, and the shard silently stops being validated for something it could have owned.
+# Composition makes "shared" the default and divergence the thing you have to write down.
+#
+# The split is not "which checks are convenient" but WHICH GRAIN CAN ANSWER THE QUESTION:
+#
+#   a product shard KNOWS          one well, one product, its own time axis, its own rows
+#   a product shard CANNOT KNOW    whether BF exists, whether channels are rectangular,
+#                                  whether products align -- it holds ONE channel by construction,
+#                                  so those ask a single-channel file to prove something about a
+#                                  channel it does not contain
+#
+# The cross-channel checks are not removed; they move to the first grain that can answer them, the
+# ASSEMBLED per-well inventory, where every channel is present.
+_COMMON_PER_WELL_CHECKS: tuple = (
+    _assert_each_product_stream_contiguous,
+    _assert_multitimepoint_has_elapsed_time,
+)
+
+#: One well, ONE product -- a shard as the DAG's well x image_product_key job produces it.
+#: Validated at the producing job's boundary, so malformed output is caught where it was made.
+PER_WELL_PRODUCT_CHECKS: tuple = (
+    *_COMMON_PER_WELL_CHECKS,
+    _assert_single_product,
+)
+
+#: One well, ALL its products -- the assembled inventory, where cross-channel questions are askable.
+PER_WELL_CHECKS: tuple = (
+    *_COMMON_PER_WELL_CHECKS,
+    _assert_required_channel_present,
+    _assert_channels_rectangular,
+)
