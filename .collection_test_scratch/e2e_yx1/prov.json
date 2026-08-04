@@ -1,0 +1,22 @@
+{
+  "experiment_id": "20260624_2x_td_bf_pbx_coll_plate01",
+  "microscope": "YX1",
+  "mapping_method": "collection_per_source_map",
+  "n_sources": 3,
+  "n_rows": 288,
+  "n_wells": 96,
+  "sources": [
+    {
+      "source_file": "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf",
+      "time_index": 0
+    },
+    {
+      "source_file": "20260625_pbx_flouresence_bf_pilot_plate01_t52hpf",
+      "time_index": 1
+    },
+    {
+      "source_file": "20260626_pbx_flouresence_bf_pilot_plate01_t77hpf",
+      "time_index": 2
+    }
+  ]
+}

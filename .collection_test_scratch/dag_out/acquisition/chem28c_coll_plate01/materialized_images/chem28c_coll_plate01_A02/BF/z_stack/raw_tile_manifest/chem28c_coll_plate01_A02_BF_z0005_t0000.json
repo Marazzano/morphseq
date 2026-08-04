@@ -1,0 +1,36 @@
+{
+  "channel_id": "BF",
+  "experiment_id": "chem28c_coll_plate01",
+  "schema_version": 1,
+  "tiles": [
+    {
+      "source_tiff_paths": [
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250622_plate01_t28hpf/XY02/embryo__XY02_00001_Z005_CH1.tif"
+      ],
+      "tile_id": "1",
+      "z_indices": [
+        5
+      ]
+    },
+    {
+      "source_tiff_paths": [
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250622_plate01_t28hpf/XY02/embryo__XY02_00002_Z005_CH1.tif"
+      ],
+      "tile_id": "2",
+      "z_indices": [
+        5
+      ]
+    },
+    {
+      "source_tiff_paths": [
+        "/net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/.collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250622_plate01_t28hpf/XY02/embryo__XY02_00003_Z005_CH1.tif"
+      ],
+      "tile_id": "3",
+      "z_indices": [
+        5
+      ]
+    }
+  ],
+  "time_index": 0,
+  "well_id": "chem28c_coll_plate01_A02"
+}

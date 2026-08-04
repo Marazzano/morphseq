@@ -265,3 +265,23 @@ every row, which for these files means stamping BF's 11 ms onto the RFP rows: an
 that is present, plausible, and wrong by 55x on exactly the channel it exists to describe.
 
 The lookup must be keyed `(time_index, channel_id)`.
+
+## Exposure capture VERIFIED through the real ingest entrypoint
+
+Run through `extract_yx1_scope_metadata` on two of the three raw collection sources (1728 inventory
+rows each), not through a hand-built fixture:
+
+| source | channel | exposure_ms | illumination_power | iris |
+|---|---|---|---|---|
+| t33hpf | BF | 11.0 | 100.0 | 7.5 |
+| t33hpf | **RFP** | **600.0** | 100.0 | 18.1 |
+| t52hpf | BF | 11.0 | 100.0 | 7.5 |
+| t52hpf | **RFP** | **300.0** | 100.0 | 18.1 |
+
+BF is constant across sources; RFP halves. The confound is now captured automatically at ingest, on
+the axis that matters, without anyone having to remember to look.
+
+`materialize_well_yx1` threads the same three columns onto frame_inventory rows keyed
+`(time_index, channel_id)` — wired and unit-tested (30/30 in `test_materialize_well_yx1.py`), but the
+existing `.pbx_smoke` frame_inventory artifacts predate the change and still lack the columns. They
+will carry exposure on the next materialization run.
