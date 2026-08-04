@@ -565,6 +565,28 @@ def cmd_snip_geometry(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_channel_intensity(args: argparse.Namespace) -> None:
+    """Measure per-embryo fluorescence on the native raster. Thin dispatcher."""
+    from data_pipeline.object_extraction.channel_intensity.entrypoint import (
+        run_channel_intensity,
+    )
+
+    # Pass only what was explicitly given, so an unset flag falls through to the entrypoint's own
+    # default rather than being overridden with a None.
+    radii = {
+        name: getattr(args, name)
+        for name in ("inner_radius_um", "outer_radius_um", "exclude_radius_um")
+        if getattr(args, name) is not None
+    }
+    run_channel_intensity(
+        frame_masks_csv=args.frame_masks_csv,
+        frame_inventory_csv=args.frame_inventory_csv,
+        output_csv=args.output_csv,
+        source_image_product_key=args.source_image_product_key,
+        **radii,
+    )
+
+
 def cmd_mask_geometry(args: argparse.Namespace) -> None:
     """Compute the per-well mask_geometry feature shard. Thin dispatcher; logic lives in the product."""
     from data_pipeline.feature_extraction.mask_geometry.entrypoint import run_mask_geometry
@@ -1630,6 +1652,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_sg.add_argument("--output-height-px", type=int, default=576)
     p_sg.add_argument("--output-width-px", type=int, default=256)
     p_sg.set_defaults(func=cmd_snip_geometry)
+
+    p_ci = sub.add_parser("channel-intensity")
+    p_ci.add_argument("--frame-masks-csv", type=Path, required=True)
+    p_ci.add_argument("--frame-inventory-csv", type=Path, required=True)
+    p_ci.add_argument("--output-csv", type=Path, required=True)
+    # REQUIRED, not defaulted. Intensity off a CLAHE'd raster is a different quantity from intensity
+    # off a quantitative one, so a default here would let a measurement silently describe pixels the
+    # caller did not mean.
+    p_ci.add_argument("--source-image-product-key", required=True)
+    # Radii in MICROMETERS: the annulus membership test is physical, so these need no restating when
+    # a product's calibration changes. Default None, resolved by the entrypoint that OWNS the
+    # constants -- tasks.py keeps module imports inside its dispatchers, and restating the numbers
+    # here would create a second place for them to drift (the exclusion radius is deliberately
+    # LARGER than the outer radius, a relationship a duplicated literal would eventually break).
+    p_ci.add_argument("--inner-radius-um", type=float, default=None)
+    p_ci.add_argument("--outer-radius-um", type=float, default=None)
+    p_ci.add_argument("--exclude-radius-um", type=float, default=None)
+    p_ci.set_defaults(func=cmd_channel_intensity)
 
     p_mg = sub.add_parser("mask-geometry")
     p_mg.add_argument("--snip-inventory-csv", type=Path, required=True)
