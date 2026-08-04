@@ -31,7 +31,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "src")
+# Anchor to the repo root: this script lives four levels down under results/, so relative paths
+# would resolve against whatever directory it happens to be invoked from.
+MORPHSEQ_ROOT = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(MORPHSEQ_ROOT / "src"))
 
 from data_pipeline.feature_extraction.channel_intensity.pooling import (  # noqa: E402
     HIST_BIN_WIDTH_DN,
@@ -39,7 +42,7 @@ from data_pipeline.feature_extraction.channel_intensity.pooling import (  # noqa
 )
 
 EXP = "20260624_2x_td_bf_pbx_coll_plate01"
-MERGED = Path(".pbx_smoke/out/object_extraction") / EXP / "channel_intensity" / f"{EXP}_channel_intensity.csv"
+MERGED = MORPHSEQ_ROOT / ".pbx_smoke/out/object_extraction" / EXP / "channel_intensity" / f"{EXP}_channel_intensity.csv"
 
 raw = pd.read_csv(MERGED)
 for column in ("annulus_hist_counts", "embryo_hist_counts"):
@@ -48,7 +51,7 @@ assert (raw["source_image_product_key"] == "RFP__projection__max").all(), "must 
 
 CENTERS = (np.arange(2048) + 0.5) * HIST_BIN_WIDTH_DN
 nulls = {w: estimate_well_null(g.to_dict("records")) for w, g in raw.groupby("well_id")}
-classes = pd.read_csv("dosage_per_timepoint.csv") if Path("dosage_per_timepoint.csv").exists() else None
+classes = pd.read_csv(str(Path(__file__).resolve().parents[1] / "output" / "dosage_per_timepoint.csv")) if Path(str(Path(__file__).resolve().parents[1] / "output" / "dosage_per_timepoint.csv")).exists() else None
 
 
 def entropy_bits(counts: np.ndarray) -> float:
@@ -170,5 +173,5 @@ for cls, group in info.groupby("dosage_class"):
     print(f"  class {int(cls)}: {group['dynamic_range_sigmas'].mean():7.2f} sigmas   "
           f"(SNR {group['snr'].mean():6.2f}, CV {group['cv'].mean():.2f})")
 
-info.to_csv("information_content.csv", index=False)
+info.to_csv(str(Path(__file__).resolve().parents[1] / "output" / "information_content.csv"), index=False)
 print("\nwrote information_content.csv")

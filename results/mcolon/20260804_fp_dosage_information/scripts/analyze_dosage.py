@@ -15,14 +15,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "src")
+# Anchor to the repo root: this script lives four levels down under results/, so relative paths
+# would resolve against whatever directory it happens to be invoked from.
+MORPHSEQ_ROOT = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(MORPHSEQ_ROOT / "src"))
 
 from data_pipeline.feature_extraction.channel_intensity.pooling import (  # noqa: E402
     HIST_BIN_WIDTH_DN,
     estimate_well_null,
 )
 
-OUT = Path(".pbx_smoke/out")
+OUT = MORPHSEQ_ROOT / ".pbx_smoke/out"
 EXP = "20260624_2x_td_bf_pbx_coll_plate01"
 PRODUCT = "RFP__projection__max"
 ROOT = OUT / "object_extraction" / EXP / "channel_intensity" / "per_well"

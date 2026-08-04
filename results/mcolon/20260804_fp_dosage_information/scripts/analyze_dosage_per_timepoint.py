@@ -24,14 +24,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, "src")
+# Anchor to the repo root: this script lives four levels down under results/, so relative paths
+# would resolve against whatever directory it happens to be invoked from.
+MORPHSEQ_ROOT = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(MORPHSEQ_ROOT / "src"))
 
 from data_pipeline.feature_extraction.channel_intensity.pooling import (  # noqa: E402
     HIST_BIN_WIDTH_DN,
     estimate_well_null,
 )
 
-OUT = Path(".pbx_smoke/out")
+OUT = MORPHSEQ_ROOT / ".pbx_smoke/out"
 EXP = "20260624_2x_td_bf_pbx_coll_plate01"
 PRODUCT = "RFP__projection__max"
 MERGED = OUT / "object_extraction" / EXP / "channel_intensity" / f"{EXP}_channel_intensity.csv"
@@ -140,5 +143,5 @@ for t, group in d.groupby("time_index"):
         ratios = "n/a (dimmest class at or below zero)"
     print(f"  t{t}: {ratios}   (means: {', '.join(f'{v:.2f}' for v in means)})")
 
-d.to_csv("dosage_per_timepoint.csv", index=False)
+d.to_csv(str(Path(__file__).resolve().parents[1] / "output" / "dosage_per_timepoint.csv"), index=False)
 print("\nwrote dosage_per_timepoint.csv")
