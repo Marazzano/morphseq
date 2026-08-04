@@ -338,6 +338,17 @@ SNIP_TRANSFORM_PROVENANCE_COLUMNS: tuple[str, ...] = (
     # prefilter, requested-vs-realized scale, crop/pad semantics, or the image-vs-mask
     # interpolation split, all of which change pixels.
     "resolved_transform_chain_json",
+    # WHICH image product's pixels these are. Derivable from snip_product_key, but stored because
+    # a join on the source product is the common analysis question and string-splitting a key at
+    # every call site is how parsing rules drift.
+    "source_image_product_key",
+    # The output raster coordinate system. Same snip_transform_id = same PHYSICAL geometry; same
+    # snip_transform_id AND same output_grid_id = PIXEL-registerable. Without it a consumer cannot
+    # tell which of the two promises it holds.
+    "output_grid_id",
+    # Read back FROM THE WRITTEN FILE, never from the plan -- the plan says what was intended, the
+    # file says what happened, and for a quantitative product the difference is the whole point.
+    "pixel_dtype",
 )
 
 # Canonical writer schema for snip_inventory shards, including zero-row shards.

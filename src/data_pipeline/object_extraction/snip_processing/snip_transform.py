@@ -461,6 +461,23 @@ def _resolve_latched_center(
     return (float(int(np.mean(x_indices))), float(int(np.mean(y_indices))))
 
 
+def output_grid_id(*, output_shape_yx, output_um_per_px_yx) -> str:
+    """A stable name for one output raster coordinate system.
+
+    "Siblings are registerable" means two different things, and this is what separates them. Sharing
+    a ``snip_transform_id`` means the same PHYSICAL geometry. Sharing a ``snip_transform_id`` AND an
+    ``output_grid_id`` means the rasters are PIXEL-registerable -- masks and images interchangeable
+    between them. Products that request a different target calibration are still physically related
+    but not pixel-comparable, and without this id a consumer cannot tell which promise it has.
+
+    Derived from shape and calibration rather than assigned, so two independently resolved products
+    that land on the same grid get the same id by construction.
+    """
+    h, w = int(output_shape_yx[0]), int(output_shape_yx[1])
+    um_y, um_x = float(output_um_per_px_yx[0]), float(output_um_per_px_yx[1])
+    return f"yx{h}x{w}_um{um_y:g}x{um_x:g}"
+
+
 def _resolve_product_calibration(product_um_per_px: float | tuple[float, float]) -> float:
     """Collapse a product calibration to one scale, REFUSING to do so when that would be a lie.
 

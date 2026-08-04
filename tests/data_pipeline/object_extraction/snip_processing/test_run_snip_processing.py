@@ -650,3 +650,114 @@ def test_siblings_share_one_transform_row(tmp_path):
     assert not table["snip_transform_id"].duplicated().any()
     # Channel-independent by construction: the id names an animal at a time, not a channel.
     assert not table["snip_transform_id"].str.contains("_BF_|_RFP_").any()
+
+
+def test_the_product_row_records_how_this_raster_was_made(tmp_path):
+    """Each product row must be self-describing about ITS OWN rendering.
+
+    The shared transform row holds the product-independent recipe; these columns hold what that
+    recipe compiled into for one product. Without them a consumer holding a snip cannot tell which
+    source product it came from, whether it is pixel-comparable to a sibling, or what dtype the
+    pixels actually landed as.
+    """
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    out_csv = tmp_path / "snip_inventory.csv"
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        snip_transform_table_csv=_run_geometry(
+            tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv
+        ),
+        output_csv=out_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+    )
+    row = pd.read_csv(out_csv).iloc[0]
+
+    assert row["source_image_product_key"] == "BF__projection__focus_stack"
+    assert row["snip_transform_id"], "the FK into the shared geometry row must be populated"
+    # PIXEL-registerability, distinct from physical: same transform id AND same grid id.
+    assert row["output_grid_id"] == "yx64x64_um2.17x2.17"
+    # Read back FROM THE WRITTEN FILE. A uint16 source silently written as uint8 would look correct
+    # in every other column.
+    assert row["pixel_dtype"] == "uint8"
+
+    chain = json.loads(row["resolved_transform_chain_json"])
+    assert [s["kind"] for s in chain["steps"]] == ["resize", "affine"]
+
+
+def test_siblings_share_a_transform_but_own_their_chains(tmp_path):
+    """The registerability guarantee at the artifact layer.
+
+    Two products of one embryo-time reference ONE geometry row -- that shared reference is what
+    makes drift unrepresentable -- while each records its own compiled chain and dtype, because a
+    chain is expressed in one product's coordinates and cannot be shared.
+    """
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    inventory = pd.read_csv(frame_inventory_csv)
+    rfp_rows = []
+    for _, r in inventory.iterrows():
+        rfp_id = build_image_id(WELL_ID, "RFP", int(r["time_index"]))
+        rfp_path = tmp_path / "images" / f"{rfp_id}.png"
+        rng = np.random.default_rng(31 + int(r["time_index"]))
+        skio.imsave(
+            str(rfp_path),
+            rng.integers(3000, 12000, (IMG_H, IMG_W), dtype=np.uint16),
+            check_contrast=False,
+        )
+        row = dict(r)
+        row.update({
+            "image_id": rfp_id, "channel_id": "RFP",
+            "projection_method": "max", "image_path": str(rfp_path),
+        })
+        rfp_rows.append(row)
+    pd.concat([inventory, pd.DataFrame(rfp_rows)], ignore_index=True).to_csv(
+        frame_inventory_csv, index=False
+    )
+
+    table = _run_geometry(tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv)
+    written = {}
+    for key in ("BF__projection__focus_stack__clahe_blend", "RFP__projection__max__no_change"):
+        out_csv = tmp_path / f"{key}.csv"
+        run_snip_processing(
+            frame_masks_csv=frame_masks_csv,
+            frame_inventory_csv=frame_inventory_csv,
+            physical_embryo_registry_csv=registry_csv,
+            snip_transform_table_csv=table,
+            output_csv=out_csv,
+            snips_dir=tmp_path / "snips",
+            output_root=tmp_path,
+            target_pixel_size_um=2.17,
+            output_height_px=64,
+            output_width_px=64,
+            snip_product_key=key,
+        )
+        written[key] = pd.read_csv(out_csv)
+
+    bf, rfp = written.values()
+    for name, df in written.items():
+        assert df["is_valid_snip"].astype(bool).all(), (
+            f"{name}: {df['error_message'].dropna().tolist()[:2]}"
+        )
+
+    # ONE shared geometry row per embryo-time.
+    assert set(bf["snip_transform_id"]) == set(rfp["snip_transform_id"])
+    # Same output grid -> PIXEL-registerable, not merely physically related.
+    assert set(bf["output_grid_id"]) == set(rfp["output_grid_id"])
+    # But each owns its dtype: the whole reason no_change exists.
+    assert bf["pixel_dtype"].iloc[0] == "uint8"
+    assert rfp["pixel_dtype"].iloc[0] == "uint16"
+
+    # EXACTLY ONE PRODUCT OWNS THE LEGACY ALIAS. The flat layout predates product keys and has no
+    # product dimension, so only the product legacy consumers meant can claim it. This was found by
+    # the collision guard rather than by design: with every product linking, the RFP job failed
+    # instead of silently repointing BF's alias at RFP pixels.
+    assert bf["legacy_flat_snip_path"].notna().all()
+    assert rfp["legacy_flat_snip_path"].isna().all(), (
+        "a non-default product claimed the legacy flat path; it is reachable only through its "
+        "product path and snip_product_key"
+    )

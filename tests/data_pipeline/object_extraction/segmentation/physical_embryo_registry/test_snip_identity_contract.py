@@ -178,6 +178,9 @@ def _snip_inventory_row(**kw):
         # THIS product's compiled chain. The shared transform row holds the product-independent
         # recipe; the raster actually rendered is recorded here, beside the pixels.
         "resolved_transform_chain_json": "{}",
+        "source_image_product_key": "BF__projection__focus_stack",
+        "output_grid_id": "yx576x256_um7.8x7.8",
+        "pixel_dtype": "uint8",
         "embryo_mask": "snips/out_mask.png",
         "embryo_mask_snip_path": "snips/out_mask.png",
         "crop_x_min_px": 0,

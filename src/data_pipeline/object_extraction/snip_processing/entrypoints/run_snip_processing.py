@@ -49,6 +49,7 @@ from data_pipeline.object_extraction.snip_processing.snip_recipes import (
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform import (
     CENTERING_LATCHED,
+    output_grid_id,
     IMAGE_INTERPOLATION,
     MASK_INTERPOLATION,
     apply_transform_to_image,
@@ -360,6 +361,10 @@ def run_snip_processing(
             # share a well. The paths stay null: no bytes, no alias.
             "snip_product_key": snip_product_key,
             "legacy_flat_snip_path": None,
+            "source_image_product_key": _source_image_product_key,
+            "output_grid_id": None,
+            "pixel_dtype": None,
+            "resolved_transform_chain_json": None,
             "embryo_mask": None,
             "embryo_mask_snip_path": None,
             "crop_x_min_px": None,
@@ -540,6 +545,11 @@ def run_snip_processing(
             # THIS product's compiled chain. The shared transform row holds the product-independent
             # recipe; the raster that was actually rendered is recorded here, beside the pixels.
             out["resolved_transform_chain_json"] = build_resolved_chain_payload(resolved)
+            out["source_image_product_key"] = _source_image_product_key
+            out["output_grid_id"] = output_grid_id(
+                output_shape_yx=resolved.output_shape_hw,
+                output_um_per_px_yx=canonical.grid.default_output_um_per_px_yx,
+            )
 
             # Photometry is the recipe's job; geometry already happened above. no_change returns
             # the cropped pixels untouched, so a uint16 source stays uint16 at full scale.
@@ -573,6 +583,10 @@ def run_snip_processing(
             embryo_snips_dir.mkdir(parents=True, exist_ok=True)
             processed_path = embryo_snips_dir / f"{snip_id}.png"
             skio.imsave(str(processed_path), augmented, check_contrast=False)
+            # FROM THE WRITTEN FILE, not from the plan. The plan says what was intended; the file
+            # says what happened, and for a quantitative product that difference is the point -- a
+            # uint16 source silently written as uint8 would look correct in every other column.
+            out["pixel_dtype"] = str(skio.imread(str(processed_path)).dtype)
 
             # Persist the cropped embryo mask in the SAME snip coordinate space as the snip image
             # (same crop transform, so they are pixel-aligned by construction). This is the embryo
@@ -580,15 +594,23 @@ def run_snip_processing(
             embryo_mask_path = embryo_snips_dir / f"{snip_id}_embryo.png"
             skio.imsave(str(embryo_mask_path), (mask_cropped > 0).astype(np.uint8) * 255, check_contrast=False)
 
-            # Compatibility aliases at the pre-migration flat paths. Both artifacts get one, since a
-            # reader holding an old snip path may hold an old mask path too.
+            # Compatibility aliases at the pre-migration flat paths, for the DEFAULT BF PRODUCT
+            # ONLY. The flat layout has no product dimension, so exactly one product can own it --
+            # and it must be the one legacy consumers meant when they wrote those paths. Letting
+            # every product try would have them fight over one alias, which the collision guard
+            # correctly rejects (that is how this was caught: the RFP job failed rather than
+            # silently repointing BF's alias at RFP pixels).
+            #
+            # Non-default products are reachable only through their product path and the
+            # snip_product_key column, which is the point of the migration.
             # TODO(deprecate-legacy-snip-symlinks): drop with the alias layer.
+            owns_legacy_alias = snip_product_key == DEFAULT_BF_SNIP_PRODUCT_KEY
             legacy_processed_path = legacy_flat_snip_path(
                 snips_dir=snips_dir,
                 physical_embryo_id=physical_embryo_id,
                 filename=f"{snip_id}.png",
             )
-            for canonical, legacy in (
+            for canonical_path, legacy in () if not owns_legacy_alias else (
                 (processed_path, legacy_processed_path),
                 (
                     embryo_mask_path,
@@ -600,7 +622,7 @@ def run_snip_processing(
                 ),
             ):
                 link_legacy_flat_path(
-                    canonical_path=canonical,
+                    canonical_path=canonical_path,
                     legacy_path=legacy,
                     log_manifest=legacy_alias_manifest,
                     snip_product_key=snip_product_key,
@@ -616,13 +638,17 @@ def run_snip_processing(
 
             try:
                 out["snip_product_key"] = snip_product_key
-                out["legacy_flat_snip_path"] = legacy_processed_path.relative_to(
-                    output_root
-                ).as_posix()
+                out["legacy_flat_snip_path"] = (
+                    legacy_processed_path.relative_to(output_root).as_posix()
+                    if owns_legacy_alias
+                    else None
+                )
                 out["processed_snip_path"] = processed_path.relative_to(output_root).as_posix()
             except ValueError:
                 out["snip_product_key"] = snip_product_key
-                out["legacy_flat_snip_path"] = str(legacy_processed_path)
+                out["legacy_flat_snip_path"] = (
+                    str(legacy_processed_path) if owns_legacy_alias else None
+                )
                 out["processed_snip_path"] = str(processed_path)
             try:
                 embryo_mask_rel = embryo_mask_path.relative_to(output_root).as_posix()
