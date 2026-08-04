@@ -39,10 +39,10 @@ def _dd_stage_predictions_validated(experiment, *, well_id):
     return rule_validated("stage_predictions", "stage_predictions", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _dd_snip_inventory(experiment, *, well_id):
-    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _dd_snip_inventory_validated(experiment, *, well_id):
-    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _dd_registry(experiment, *, well_id):
     return rule_artifact("physical_embryo_registry", "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)

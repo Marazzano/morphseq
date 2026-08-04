@@ -230,6 +230,26 @@ def _configured_image_product_keys() -> tuple[str, ...]:
 
 IMAGE_PRODUCT_KEYS = _configured_image_product_keys()
 
+
+def _configured_snip_product_keys() -> tuple[str, ...]:
+    """Which snip products this run renders, resolved at DAG-BUILD time.
+
+    Computed here rather than inside a rule so an unimplemented recipe or a snip declared on an
+    unmaterialized source fails while the graph is being built -- not three hours into a run, with
+    partial output on disk. Same reason IMAGE_PRODUCT_KEYS is a module-level tuple.
+
+    Reads the SAME config block the image plan reads: a snip product is declared as a `snips:` child
+    of the image product it crops, so its source is its parent and the two cannot disagree.
+    """
+    from data_pipeline.object_extraction.snip_processing.snip_product_plan import (
+        load_snip_product_plan,
+    )
+
+    return load_snip_product_plan(config).snip_product_keys
+
+
+SNIP_PRODUCT_KEYS = _configured_snip_product_keys()
+
 PLATE_METADATA_CSV = artifact_path(
     DATA_ROOT, "ingest_plate_metadata", "csv", FRONT_END_EXPERIMENT
 )

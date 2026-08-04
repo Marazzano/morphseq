@@ -14,10 +14,10 @@ def _stage_validated(experiment, *, path_mode, well_id=None):
     return rule_validated(STAGE_PREDICTIONS_STEP, "stage_predictions", experiment, path_mode=path_mode, well_id=well_id)
 
 def _stage_snip_inventory(experiment, *, well_id):
-    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_snip_inventory_validated(experiment, *, well_id):
-    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _stage_frame_inventory(experiment, *, well_id):
     return rule_artifact("frame_inventory", "inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)

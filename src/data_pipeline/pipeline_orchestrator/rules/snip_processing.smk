@@ -14,6 +14,10 @@ from data_pipeline.object_extraction.snip_processing.snip_frame_shape import (
 
 SNIP_INVENTORY_STEP = "snip_inventory"
 
+from data_pipeline.object_extraction.snip_processing.snip_product_keys import (
+    DEFAULT_BF_SNIP_PRODUCT_KEY,
+)
+
 # THE GEOMETRY GATE. snip_geometry derives the canonical transform ONCE per embryo-time from the BF
 # mask; every render job resolves that shared recipe onto its own product grid. Per-well fanout with
 # NO product dimension, deliberately: one embryo-time has one canonical transform, and a product
@@ -37,17 +41,44 @@ def _physical_embryo_registry_per_well(experiment: str, *, well_id: str):
 def _physical_embryo_registry_per_well_validated(experiment: str, *, well_id: str):
     return rule_validated(PHYSICAL_EMBRYO_REGISTRY_STEP, "physical_embryo_registry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
-def _snip_inventory_artifact(experiment: str, artifact: str, *, path_mode: str, well_id: str | None = None):
-    return rule_artifact(SNIP_INVENTORY_STEP, artifact, experiment, path_mode=path_mode, well_id=well_id)
+def _snip_inventory_artifact(experiment: str, artifact: str, *, path_mode: str, well_id: str | None = None, snip_product_key: str | None = None):
+    # The product key rides in format_vars -- the sanctioned channel for filename-level tokens that
+    # are not identity. paths.py only SUBSTITUTES it; it never mints one (the no-leakage rule).
+    fmt = {"snip_product_key": snip_product_key} if snip_product_key is not None else None
+    return rule_artifact(SNIP_INVENTORY_STEP, artifact, experiment, path_mode=path_mode, well_id=well_id, format_vars=fmt)
 
-def _snip_inventory_validated(experiment: str, *, path_mode: str, well_id: str | None = None):
-    return rule_validated(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=path_mode, well_id=well_id)
+
+def _legacy_default_snip_inventory(experiment: str, *, well_id: str):
+    """The product-free path ~24 existing call sites still read. A symlink, never a real file."""
+    return rule_artifact(
+        SNIP_INVENTORY_STEP, "legacy_default_snip_inventory", experiment,
+        path_mode=PATH_MODE_PER_WELL, well_id=well_id,
+    )
+
+def _snip_inventory_validated(experiment: str, *, path_mode: str, well_id: str | None = None, snip_product_key: str | None = None):
+    fmt = {"snip_product_key": snip_product_key} if snip_product_key is not None else None
+    return rule_validated(SNIP_INVENTORY_STEP, "snip_inventory", experiment, path_mode=path_mode, well_id=well_id, format_vars=fmt)
 
 def _snip_inventory_artifacts_for_run(wc):
-    return run_well_shard_paths(DATA_ROOT, SNIP_INVENTORY_STEP, "snip_inventory", wc.experiment, wells_for_experiment(wc))
+    # WELLS x PRODUCTS, over the AUTHORITATIVE shards -- never the compatibility alias, which would
+    # otherwise double-count BF through both paths.
+    return [
+        str(_snip_inventory_artifact(
+            wc.experiment, "snip_inventory",
+            path_mode=PATH_MODE_PER_WELL, well_id=w, snip_product_key=k,
+        ))
+        for w in wells_for_experiment(wc)
+        for k in SNIP_PRODUCT_KEYS
+    ]
 
 def _snip_inventory_validated_for_run(wc):
-    return [_snip_inventory_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w) for w in wells_for_experiment(wc)]
+    return [
+        str(_snip_inventory_validated(
+            wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w, snip_product_key=k,
+        ))
+        for w in wells_for_experiment(wc)
+        for k in SNIP_PRODUCT_KEYS
+    ]
 
 def _snip_inventory_snips_dir(experiment: str, well_id: str) -> str:
     """Per-well pixel directory: sits beside the shard CSV under per_well/{well_id}/."""
@@ -147,8 +178,10 @@ rule snip_processing_per_well:
             "{experiment}", "snip_inventory",
             path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
+            snip_product_key="{snip_product_key}",
         )),
     params:
+        snip_product_key=lambda wc: wc.snip_product_key,
         snips_dir=lambda wc: _snip_inventory_snips_dir(wc.experiment, wc.well_id),
         target_pixel_size_um=lambda wc: float(
             config.get("snip_processing", {}).get("target_pixel_size_um", 7.8)
@@ -171,6 +204,7 @@ rule snip_processing_per_well:
           --physical-embryo-registry-csv "{input.physical_embryo_registry}" \
           --output-csv "{output.snip_inventory}" \
           --snip-transform-table-csv "{input.snip_transforms}" \
+          --snip-product-key "{params.snip_product_key}" \
           --snips-dir "{params.snips_dir}" \
           --output-root "{DATA_ROOT}" \
           --target-pixel-size-um "{params.target_pixel_size_um}" \
@@ -181,6 +215,36 @@ rule snip_processing_per_well:
         """
 
 
+rule legacy_default_snip_inventory_alias:
+    """Point the product-free path at the DEFAULT BF product's inventory.
+
+    A separate rule rather than a post-write side effect inside the render job, so the dependency is
+    visible in the DAG: legacy consumers depend on THIS, which depends on the default BF shard. The
+    RFP job never sees the legacy path at all, which is what makes "exactly one product owns the
+    alias" structural instead of a convention.
+
+    TODO(deprecate-legacy-snip-inventory-alias): remove with the last product-unaware consumer.
+    """
+    input:
+        default_inventory=lambda wc: str(_snip_inventory_artifact(
+            wc.experiment, "snip_inventory",
+            path_mode=PATH_MODE_PER_WELL, well_id=wc.well_id,
+            snip_product_key=DEFAULT_BF_SNIP_PRODUCT_KEY,
+        )),
+    output:
+        legacy_inventory=str(_legacy_default_snip_inventory("{experiment}", well_id="{well_id}")),
+    run:
+        from data_pipeline.object_extraction.snip_processing.legacy_snip_paths import (
+            link_legacy_flat_path,
+        )
+
+        link_legacy_flat_path(
+            canonical_path=Path(input.default_inventory),
+            legacy_path=Path(output.legacy_inventory),
+            snip_product_key=DEFAULT_BF_SNIP_PRODUCT_KEY,
+        )
+
+
 rule validate_snip_inventory_for_well:
     """Validate the per-well snip_inventory shard and write a .validated sentinel."""
     input:
@@ -188,10 +252,12 @@ rule validate_snip_inventory_for_well:
             "{experiment}", "snip_inventory",
             path_mode=PATH_MODE_PER_WELL,
             well_id="{well_id}",
+            snip_product_key="{snip_product_key}",
         )),
     output:
         validated=str(_snip_inventory_validated(
-            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+            "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}",
+            snip_product_key="{snip_product_key}",
         )),
     shell:
         """

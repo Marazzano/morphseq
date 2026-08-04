@@ -86,6 +86,10 @@ _GRANDFATHERED: frozenset[str] = frozenset({
     # fanout is a special case. It is per-well by registry declaration (PER_WELL_THEN_MERGE), and
     # deliberately carries no product wildcard: one embryo-time has one canonical transform.
     "snip_geometry_per_well",
+    # legacy_default_snip_inventory_alias joined on 2026-08-03. Grandfathered for the same reason as
+    # every other entry -- step_outputs() does not exist yet. It is a per-well compatibility view of
+    # the default BF product, and it retires WITH the alias layer rather than being migrated.
+    "legacy_default_snip_inventory_alias",
     "snip_processing_per_well",
     "split_dropin_inventory",
     "validate_curvature_metrics_for_well",

@@ -18,10 +18,10 @@ def _saqc_validated(experiment, *, path_mode, well_id=None):
     return rule_validated(SURFACE_AREA_QC_STEP, "surface_area_qc", experiment, path_mode=path_mode, well_id=well_id)
 
 def _saqc_snip_inventory(experiment, *, well_id):
-    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _saqc_snip_inventory_validated(experiment, *, well_id):
-    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _saqc_mask_geometry(experiment, *, well_id):
     return rule_artifact("mask_geometry", "mask_geometry", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)

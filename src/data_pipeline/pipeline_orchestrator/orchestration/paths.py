@@ -414,9 +414,28 @@ PIPELINE_STEPS: dict[str, dict] = {
         "fanout": PER_WELL_THEN_MERGE,
         "execution": EXECUTION_PER_WELL,
         "artifacts": {
+            # AUTHORITATIVE, product-keyed and SYMMETRIC. One render job owns one shard, so the
+            # grammar is `well x product -> one inventory` with no default special-cased into it.
+            # Encoding defaultness in the authoritative name (BF plain, others suffixed) would put
+            # a two-branch path rule into every generic consumer forever.
+            #
+            # The product key rides in format_vars, the sanctioned channel for filename-level
+            # tokens that are not identity; the template may name a subdirectory.
             "snip_inventory": {
-                PATH_MODE_PER_WELL: "{well_id}_snip_inventory.csv",
+                PATH_MODE_PER_WELL: "{snip_product_key}/snip_inventory.csv",
                 PATH_MODE_MERGED: "{experiment_id}_snip_inventory.csv",
+            },
+            # COMPATIBILITY VIEW of the default BF product, as a relative symlink. ~24 call sites
+            # across 14 stages read this path today and genuinely mean "the default BF snips" --
+            # they are not choosing among BF, RFP and z_stack. Writing the default key into all of
+            # them would distribute one policy decision across 14 modules and make CHANGING the
+            # default another 24-site migration, without performing the semantic audit that would
+            # justify it. The policy stays in DEFAULT_BF_SNIP_PRODUCT_KEY, and consumers migrate
+            # deliberately, one at a time, as they become genuinely product-aware.
+            # TODO(deprecate-legacy-snip-inventory-alias): remove with the last product-unaware
+            # consumer.
+            "legacy_default_snip_inventory": {
+                PATH_MODE_PER_WELL: "{well_id}_snip_inventory.csv",
             },
         },
     },
