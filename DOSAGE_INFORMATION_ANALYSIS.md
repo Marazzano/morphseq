@@ -170,3 +170,63 @@ against more than one well.
 - SNR spans 0.24 to 13.7, so the dim end genuinely sits AT the noise floor. That is the floor
   compression this document predicted, and it is real: those embryos cannot carry the same
   information as the bright ones no matter how they are normalized.
+
+---
+
+# ROOT CAUSE FOUND — the exposure changed between timepoints
+
+The "timepoints" in this experiment are not a timelapse. They are **three separate ND2 files
+acquired on three different days**:
+
+```
+20260624_..._t33hpf.nd2   fluorescence Exposure: 600 ms
+20260625_..._t52hpf.nd2   fluorescence Exposure: 300 ms
+20260626_..._t77hpf.nd2   fluorescence Exposure: 300 ms
+```
+
+**t33hpf was acquired at 2x the exposure of the other two.** Laser power (Celesta line at 20.0) and
+DIA iris (7.5 / 18.1) are byte-identical across all three files, so exposure is the only acquisition
+parameter that moved — and t0 is exactly the timepoint that was mysteriously brightest in every
+single well.
+
+Exposure IS present in the ND2 text metadata (`Camera Settings: Exposure: N ms`). It is simply not
+carried through to `frame_inventory`, which is why the confound was invisible to the analysis and had
+to be recovered by reading the raw files.
+
+## Normalizing by exposure removes half the problem
+
+| embryo | raw fold range | per-ms normalized (DN/ms) | fold range |
+|---|---|---|---|
+| A01 | 3.6x | 1.84, 1.58, 1.03 | **1.8x** |
+| A02 | 11.8x | 2.91, 0.50, 0.52 | **5.9x** |
+| B01 | 9.3x | 0.59, 0.13, 0.24 | **4.7x** |
+
+median within-embryo fold range: **9.3x -> 4.7x**
+
+So exposure explains roughly half the within-embryo swing and the rest is still unexplained —
+plausibly real biology (stage), focus, or z-position, all of which move a max-projection.
+
+A 4.7x residual noise floor is still far too large to read a 2x dosage difference against. But this
+is now a tractable, identified problem rather than an unexplained one.
+
+## THE FIX, in priority order
+
+1. **Carry exposure (and laser power) per frame into `frame_inventory`.** It is in the ND2 text
+   metadata already; nothing needs to be re-acquired. This is the single highest-value change and it
+   unblocks everything else. Without it, ANY cross-timepoint fluorescence comparison in this project
+   is silently wrong by whatever factor the exposure differed — this experiment happened to differ by
+   exactly 2x, which is the same size as the dosage effect being hunted.
+2. **Compare only within a timepoint** until (1) lands. Same file, same exposure, same session.
+3. **Then re-ask dosage** on the full plate at a single timepoint, where 96 wells give enough
+   embryos for three classes to be distinguishable from three lumps.
+
+## Revised verdict on the original question
+
+"Is the same information there after normalization?" cannot be answered yet, but the run establishes
+its precondition is currently NOT met: **the dim end of the observed range sits at SNR 0.24-1.2, at
+the noise floor.** Those embryos cannot carry information equal to the SNR-13.7 bright end under any
+normalization — normalization rescales a distribution, it does not recover dynamic range that was
+never digitized. If the dim class turns out to be 1-copy rather than an exposure artefact, joint
+analysis with 2-copy embryos is NOT safe.
+
+Establishing whether that dim end is 1-copy or is simply the 300 ms sessions requires fix (1).
