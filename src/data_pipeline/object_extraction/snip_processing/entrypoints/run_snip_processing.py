@@ -20,6 +20,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import scipy.ndimage
 import skimage.io as skio
 
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
@@ -38,6 +39,47 @@ from data_pipeline.object_extraction.snip_processing.defaults import (
 )
 from data_pipeline.object_extraction.snip_processing.extraction import crop_to_embryo_bounds, extract_embryo_crop
 from data_pipeline.object_extraction.snip_processing.rotation import apply_rotation_to_snip
+
+
+_BACKGROUND_PIXELS_PER_IMAGE = 5000
+
+
+def _is_seahub_frame(inventory_row: pd.Series) -> bool:
+    """Return whether one frame-inventory row came from the SeaHub adapter."""
+    return str(inventory_row.get("source_scope", "")).strip().casefold() == "seahub"
+
+
+def _canvas_fill_value(inventory_row: pd.Series) -> float:
+    """Return the declared SeaHub canvas fill, safely defaulting to black."""
+    try:
+        value = float(inventory_row.get("canvas_fill_value", 0))
+    except (TypeError, ValueError):
+        return 0.0
+    return value if np.isfinite(value) else 0.0
+
+
+def _clean_seahub_mask(mask: np.ndarray) -> np.ndarray:
+    """Keep one filled SeaHub object as a final defense before snip transforms.
+
+    Frame-mask validation is still the primary contract. This adapter-specific
+    cleanup prevents a stray disconnected SAM component from expanding the PCA
+    rotation/crop bounds or surviving as a second object in the persisted snip
+    mask. Eight-connectivity treats diagonally touching pixels as one component,
+    matching ordinary image-mask connectivity.
+    """
+    binary = np.asarray(mask).astype(bool, copy=False)
+    labels, component_count = scipy.ndimage.label(
+        binary,
+        structure=scipy.ndimage.generate_binary_structure(2, 2),
+    )
+    if component_count == 0:
+        return np.zeros(binary.shape, dtype=np.uint8)
+
+    component_areas = np.bincount(labels.ravel())
+    component_areas[0] = 0
+    largest = labels == int(np.argmax(component_areas))
+    return scipy.ndimage.binary_fill_holes(largest).astype(np.uint8)
+
 
 def _physical_embryo_id_by_track(
     physical_embryo_registry: pd.DataFrame,
@@ -61,33 +103,71 @@ def _estimate_background(
 ) -> tuple[float, float]:
     """Sample background pixels (outside embryo mask) to estimate mean/std.
 
-    Matches the legacy build03A definition: pixels in the full-frame source
-    image where the embryo mask == 0.
+    Non-SeaHub frames preserve the legacy build03A behavior: take the first
+    5,000 full-frame pixels outside the embryo mask. SeaHub frames are centered
+    on a large constant canvas, so that prefix is almost always padding. For
+    SeaHub, remove the declared ``canvas_fill_value`` and draw up to 5,000
+    genuine outside-mask pixels uniformly without replacement. Both frame and
+    pixel sampling are deterministic under ``seed``.
     """
+    # Preserve the legacy global seed contract: downstream background-noise
+    # generation uses ``np.random`` too, so the full snip run remains
+    # reproducible rather than only this sampling helper.
     np.random.seed(seed)
     indices = valid_masks.index.tolist()
-    sample_idx = np.random.choice(indices, size=min(n_samples, len(indices)), replace=False)
+    sample_idx = np.random.choice(
+        indices,
+        size=min(n_samples, len(indices)),
+        replace=False,
+    )
 
     bkg_pixels: list[float] = []
+    seahub_fill_values: list[float] = []
+    saw_seahub_frame = False
     for i in sample_idx:
         row = valid_masks.loc[i]
         image_id = str(row["image_id"])
         if image_id not in inventory_index.index:
             continue
         try:
-            src = Path(str(inventory_index.loc[image_id]["image_path"]))
+            inventory_row = inventory_index.loc[image_id]
+            src = Path(str(inventory_row["image_path"]))
             img = skio.imread(str(src))
             if img.ndim == 3:
                 img = img[:, :, 0]
             rle = json.loads(str(row["mask_rle"]))
             mask = decode_binary_mask_rle(rle).astype(bool)
-            bkg = img[~mask].astype(float)
+
+            if _is_seahub_frame(inventory_row):
+                saw_seahub_frame = True
+                fill_value = _canvas_fill_value(inventory_row)
+                seahub_fill_values.append(fill_value)
+                mask = _clean_seahub_mask(mask).astype(bool)
+                bkg = img[(~mask) & (img != fill_value)].astype(float)
+                if bkg.size > _BACKGROUND_PIXELS_PER_IMAGE:
+                    pixel_idx = np.random.choice(
+                        bkg.size,
+                        size=_BACKGROUND_PIXELS_PER_IMAGE,
+                        replace=False,
+                    )
+                    bkg = bkg[pixel_idx]
+            else:
+                bkg = img[~mask].astype(float)
+                bkg = bkg[:_BACKGROUND_PIXELS_PER_IMAGE]
+
             if bkg.size > 0:
-                bkg_pixels.extend(bkg[:5000].tolist())
+                bkg_pixels.extend(bkg.tolist())
         except Exception:
             continue
 
     if not bkg_pixels:
+        if saw_seahub_frame:
+            # A crop can legitimately contain no non-fill background (for
+            # example a mask covering every pasted source pixel). Preserve a
+            # safe, constant background rather than falling back to the legacy
+            # mid-gray distribution.
+            fill_value = seahub_fill_values[0] if seahub_fill_values else 0.0
+            return float(fill_value), 0.0
         return 128.0, 30.0
     return float(np.mean(bkg_pixels)), float(np.std(bkg_pixels))
 
@@ -105,6 +185,7 @@ def run_snip_processing(
     output_width_px: int = 256,
     background_noise_scale: float = 0.1,
     blend_radius_um: float = DEFAULT_BLEND_RADIUS_UM,
+    apply_clahe: bool = True,
 ) -> None:
     frame_masks = pd.read_csv(frame_masks_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
@@ -189,6 +270,8 @@ def run_snip_processing(
             # Decode RLE mask from frame_masks row.
             rle = json.loads(str(mask_row["mask_rle"]))
             embryo_mask = decode_binary_mask_rle(rle).astype(np.uint8)
+            if _is_seahub_frame(inv_row):
+                embryo_mask = _clean_seahub_mask(embryo_mask)
 
             image = skio.imread(str(image_path))
             if image.ndim == 3:
@@ -214,6 +297,7 @@ def run_snip_processing(
                 background_std,
                 blend_radius_um=float(blend_radius_um),
                 pixel_size_um=float(target_pixel_size_um),
+                use_clahe=bool(apply_clahe),
             )
 
             embryo_snips_dir = snips_dir / physical_embryo_id

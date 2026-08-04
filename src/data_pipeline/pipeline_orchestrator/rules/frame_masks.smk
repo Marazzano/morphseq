@@ -1,8 +1,10 @@
 """Frame-masks product-family rules.
 
-Consumes the per-well frame_inventory shard and the per-well frame_detections shard,
-runs SAM2 video segmentation, and emits the per-well frame_masks shard. The merged
-experiment-level table is an aggregate view for audit/reporting.
+Consumes the per-well frame_inventory shard and the per-well frame_detections shard and
+emits the per-well frame_masks shard. In the default ``model`` mode it runs SAM2 video
+segmentation. In ``precomputed`` mode it selects authoritative canonical rows from an
+experiment-level ingress CSV; detections remain an independent audit input and can never
+replace those masks. The merged experiment-level table is an aggregate view for audit/reporting.
 
 SAM2 path contract — see models/sam2.py for the full explanation. The short version:
   - sam2_models_root must point to the directory that *contains* the sam2/ package subdir
@@ -19,9 +21,40 @@ from data_pipeline.model_servers.socket_paths import service_socket_pattern
 
 FRAME_MASKS_STEP = "frame_masks"
 
-# Opt-in resident SAM2 process. The per-well client rules and their outputs stay
-# unchanged; only model ownership moves from each client process into one service.
-FRAME_MASKS_SERVED = bool(config.get("frame_masks", {}).get("use_model_server", False))
+# Producer selection is mode-exclusive. Missing ``mode`` means the historical model path, so all
+# non-SeaHub scopes retain their current behavior. ``precomputed`` takes precedence over
+# ``use_model_server`` deliberately: a runtime may inherit use_model_server=true, but an
+# authoritative handoff must never start SAM2 or let it overwrite imported masks.
+FRAME_MASKS_CONFIG = config.get("frame_masks", {}) or {}
+FRAME_MASKS_MODE = str(FRAME_MASKS_CONFIG.get("mode", "model")).strip().lower()
+if FRAME_MASKS_MODE not in ("model", "precomputed"):
+    raise ValueError(
+        "config frame_masks.mode must be 'model' or 'precomputed', "
+        f"got {FRAME_MASKS_MODE!r}."
+    )
+
+FRAME_MASKS_PRECOMPUTED_CSV = str(FRAME_MASKS_CONFIG.get("precomputed_csv", "") or "")
+FRAME_MASKS_REQUIRE_DETECTION_AUDIT = bool(
+    FRAME_MASKS_CONFIG.get("require_detection_audit", False)
+)
+if FRAME_MASKS_MODE == "precomputed":
+    if not FRAME_MASKS_PRECOMPUTED_CSV:
+        raise ValueError(
+            "frame_masks.mode='precomputed' requires frame_masks.precomputed_csv."
+        )
+    if not Path(FRAME_MASKS_PRECOMPUTED_CSV).is_absolute():
+        raise ValueError(
+            "frame_masks.precomputed_csv must be an absolute per-experiment CSV path."
+        )
+    if not FRAME_MASKS_REQUIRE_DETECTION_AUDIT:
+        raise ValueError(
+            "frame_masks.mode='precomputed' requires "
+            "frame_masks.require_detection_audit=true."
+        )
+
+# Opt-in resident SAM2 process for model mode only. The per-well client rules and their outputs
+# stay unchanged; only model ownership moves from each client process into one service.
+FRAME_MASKS_SERVED = bool(FRAME_MASKS_CONFIG.get("use_model_server", False))
 
 
 def _frame_masks_socket_pattern() -> str:
@@ -41,7 +74,50 @@ def _frame_masks_validated_for_run(wc):
     return [_frame_masks_validated(wc.experiment, path_mode=PATH_MODE_PER_WELL, well_id=w) for w in wells_for_experiment(wc)]
 
 
-if FRAME_MASKS_SERVED:
+if FRAME_MASKS_MODE == "precomputed":
+    rule frame_masks_per_well_precomputed:
+        """Select authoritative precomputed masks; retain redundant detections as audit only."""
+        input:
+            precomputed=FRAME_MASKS_PRECOMPUTED_CSV,
+            frame_inventory=str(_frame_inventory_artifact(
+                "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+            )),
+            frame_inventory_validated=str(_frame_inventory_validated(
+                "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+            )),
+            # Requiring both files proves the redundant detector ran and passed its own canonical
+            # validation. The ingest task writes only rows selected from input.precomputed.
+            frame_detections=str(_frame_detections_artifact(
+                "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+            )),
+            frame_detections_validated=str(_frame_detections_validated(
+                "{experiment}", path_mode=PATH_MODE_PER_WELL, well_id="{well_id}"
+            )),
+        output:
+            frame_masks=str(_frame_masks_artifact(
+                "{experiment}", "frame_masks",
+                path_mode=PATH_MODE_PER_WELL,
+                well_id="{well_id}",
+            )),
+            prompt_seeds=str(_frame_masks_artifact(
+                "{experiment}", "prompt_seeds",
+                path_mode=PATH_MODE_PER_WELL,
+                well_id="{well_id}",
+            )),
+        shell:
+            """
+            {RUN} -m data_pipeline.pipeline_orchestrator.tasks ingest-precomputed-frame-masks \
+              --precomputed-frame-masks-csv "{input.precomputed}" \
+              --frame-inventory-csv "{input.frame_inventory}" \
+              --frame-detections-csv "{input.frame_detections}" \
+              --well-id "{wildcards.well_id}" \
+              --output-csv "{output.frame_masks}" \
+              --prompt-seeds-csv "{output.prompt_seeds}" \
+              --require-detection-audit true
+            """
+
+
+elif FRAME_MASKS_SERVED:
     rule service_sam2:
         """Load SAM2 once and serve every per-well segmentation request serially."""
         output:

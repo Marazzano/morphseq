@@ -104,6 +104,12 @@ rule snip_processing_per_well:
                 "blend_radius_um", DEFAULT_BLEND_RADIUS_UM
             )
         ),
+        # Legacy microscopy/checkpoint behavior stays ON by default. SeaHub's
+        # runtime overlay explicitly sets this false for already-normalized
+        # inverted 8-bit source images.
+        apply_clahe=lambda wc: str(
+            config.get("snip_processing", {}).get("apply_clahe", True)
+        ).lower(),
     shell:
         """
         {RUN} -m data_pipeline.pipeline_orchestrator.tasks snip-processing \
@@ -117,7 +123,8 @@ rule snip_processing_per_well:
           --output-height-px "{params.output_height_px}" \
           --output-width-px "{params.output_width_px}" \
           --background-noise-scale "{params.background_noise_scale}" \
-          --blend-radius-um "{params.blend_radius_um}"
+          --blend-radius-um "{params.blend_radius_um}" \
+          --apply-clahe "{params.apply_clahe}"
         """
 
 

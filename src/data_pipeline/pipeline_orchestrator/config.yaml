@@ -188,6 +188,10 @@ snip_processing:
   # produces a visually dark background that contrasts with the CLAHE-brightened
   # embryo interior. Increase toward 1.0 to match real background brightness.
   background_noise_scale: 0.1
+  # Preserve legacy Keyence/YX1 preprocessing by default. SeaHub runtime
+  # configs disable this because those inputs are already 8-bit display images
+  # whose dark source anatomy is amplified to saturation by another CLAHE pass.
+  apply_clahe: true
   # Physical soft-edge blend used by legacy production and the morphology-VAE input contract.
   # Neighbor contamination must be handled by masking source pixels outside the target embryo,
   # not by narrowing this taper without retraining the downstream models.

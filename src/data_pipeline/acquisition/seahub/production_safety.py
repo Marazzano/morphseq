@@ -11,6 +11,9 @@ import yaml
 from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_validation import (
     validate_frame_inventory,
 )
+from data_pipeline.object_extraction.segmentation.validate_frame_masks import (
+    validate_frame_masks,
+)
 
 
 def _resolved_manifest_path(value: Any, *, field: str) -> Path:
@@ -73,6 +76,15 @@ def preflight_materialized_experiment(
         "plate_metadata_csv": experiment_root / "plate_metadata.csv",
         "runtime_config_yaml": experiment_root / "runtime_config.yaml",
     }
+    raw_precomputed_masks = row.get("precomputed_frame_masks_csv")
+    if (
+        raw_precomputed_masks is not None
+        and not pd.isna(raw_precomputed_masks)
+        and str(raw_precomputed_masks).strip()
+    ):
+        expected["precomputed_frame_masks_csv"] = (
+            experiment_root / "dropin_frame_masks.csv"
+        )
     actual: dict[str, Path] = {}
     for field, expected_path in expected.items():
         actual[field] = _resolved_manifest_path(row.get(field), field=field)
@@ -88,6 +100,8 @@ def preflight_materialized_experiment(
         frame_inventory_csv.with_suffix(".csv.validated"),
         actual["plate_metadata_csv"].with_suffix(".csv.validated"),
     ]
+    if "precomputed_frame_masks_csv" in actual:
+        required_files.append(actual["precomputed_frame_masks_csv"])
     missing = [path for path in required_files if not path.is_file()]
     if missing:
         raise FileNotFoundError(
@@ -132,6 +146,55 @@ def preflight_materialized_experiment(
         configured = _resolved_manifest_path(dropin.get(field), field=f"dropin.{field}")
         _require_exact_path(
             actual=configured, expected=expected[field], field=f"dropin.{field}"
+        )
+
+    frame_masks_config = runtime.get("frame_masks", {})
+    if "precomputed_frame_masks_csv" in actual:
+        if not isinstance(frame_masks_config, dict):
+            raise ValueError("SeaHub runtime config frame_masks must be a mapping.")
+        if str(frame_masks_config.get("mode", "")).casefold() != "precomputed":
+            raise ValueError(
+                "SeaHub runtime must select frame_masks.mode=precomputed when "
+                "authoritative source masks are present."
+            )
+        if frame_masks_config.get("require_detection_audit") is not True:
+            raise ValueError(
+                "SeaHub precomputed-mask runtime must require the redundant "
+                "frame-detection audit."
+            )
+        configured_masks = _resolved_manifest_path(
+            frame_masks_config.get("precomputed_csv"),
+            field="frame_masks.precomputed_csv",
+        )
+        _require_exact_path(
+            actual=configured_masks,
+            expected=actual["precomputed_frame_masks_csv"],
+            field="frame_masks.precomputed_csv",
+        )
+        precomputed_masks = pd.read_csv(actual["precomputed_frame_masks_csv"])
+        validate_frame_masks(precomputed_masks, frame_inventory)
+        if set(precomputed_masks["image_id"].astype(str)) != set(
+            frame_inventory["image_id"].astype(str)
+        ):
+            raise ValueError(
+                "SeaHub precomputed frame masks do not cover the complete shard "
+                "frame inventory."
+            )
+        if (
+            len(precomputed_masks) != len(frame_inventory)
+            or precomputed_masks["image_id"].astype(str).duplicated().any()
+            or not precomputed_masks["is_valid_mask"].astype(bool).all()
+        ):
+            raise ValueError(
+                "SeaHub precomputed frame masks must contain exactly one valid "
+                "authoritative mask row per frame."
+            )
+
+    snip_config = runtime.get("snip_processing", {})
+    if not isinstance(snip_config, dict) or snip_config.get("apply_clahe") is not False:
+        raise ValueError(
+            "SeaHub runtime must explicitly disable CLAHE with "
+            "snip_processing.apply_clahe=false."
         )
 
     # Re-run the canonical strict gate with image_root=None.  This both opens every

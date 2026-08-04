@@ -129,9 +129,10 @@ def augment_snip(
     background_std: float,
     blend_radius_um: float = DEFAULT_BLEND_RADIUS_UM,
     pixel_size_um: float = 2.17,
+    use_clahe: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Complete augmentation pipeline: CLAHE + noise blending.
+    Complete augmentation pipeline: optional CLAHE + noise blending.
 
     Args:
         image: Cropped embryo image (uint8)
@@ -140,16 +141,30 @@ def augment_snip(
         background_std: Background intensity std
         blend_radius_um: Edge blending radius in micrometers
         pixel_size_um: Pixel size for blur conversion
+        use_clahe: Apply the legacy CLAHE normalization before blending. Defaults
+            to True to preserve the Keyence/YX1 and checkpoint-training contract.
+            SeaHub disables it because its already-8-bit inverted source images
+            otherwise acquire a strongly amplified near-white tail.
 
     Returns:
-        Tuple of (augmented_image, uncropped_clahe_only)
+        Tuple of (augmented_image, contrast_normalized_image). The second value
+        is the CLAHE image when ``use_clahe`` is True and the unchanged uint8
+        input image otherwise.
     """
-    # Apply CLAHE
-    clahe_image = apply_clahe(image)
+    # CLAHE remains the default because the established microscopy pipelines and
+    # morphology checkpoint were built around it. SeaHub can explicitly bypass
+    # this step: its materializer has already converted and inverted an 8-bit
+    # display image, and another full-range local equalization blows out dark
+    # source anatomy after inversion.
+    contrast_image = (
+        apply_clahe(image)
+        if use_clahe
+        else np.asarray(image, dtype=np.uint8)
+    )
 
     # Blend with background noise
     augmented = blend_with_background_noise(
-        clahe_image,
+        contrast_image,
         mask,
         background_mean,
         background_std,
@@ -157,4 +172,4 @@ def augment_snip(
         pixel_size_um
     )
 
-    return augmented, clahe_image
+    return augmented, contrast_image

@@ -11,15 +11,18 @@ by ``source_embryo_id`` and the source metadata copied onto every plate row.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import yaml
 from PIL import Image, ImageOps
+from scipy import ndimage
 
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     validate_frame_inventory_identity_contract,
@@ -30,8 +33,23 @@ from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_v
 from data_pipeline.acquisition.metadata_ingest.plate.plate_metadata_contract import (
     validate_plate_metadata,
 )
+from data_pipeline.object_extraction.segmentation.frame_masks_contract import (
+    FRAME_MASKS_REQUIRED_COLUMNS,
+    MAX_VALID_MASK_AREA_FRACTION,
+)
+from data_pipeline.object_extraction.segmentation.masks.mask_geometry import (
+    mask_geometry,
+)
+from data_pipeline.object_extraction.segmentation.masks.mask_rle import (
+    encode_binary_mask_rle,
+)
+from data_pipeline.object_extraction.segmentation.validate_frame_masks import (
+    validate_frame_masks,
+)
 from data_pipeline.shared.identifiers import (
     build_image_id,
+    build_mask_id,
+    build_track_id,
     build_well_id,
     normalize_well_index,
 )
@@ -63,6 +81,29 @@ _CALIBRATION_MERGE_COLUMNS = tuple(
     for column in CALIBRATION_OUTPUT_COLUMNS
     if column not in {"source_fov_id", "source_stage_value", "stage_hpf"}
 )
+_SOURCE_MASK_MANIFEST_COLUMNS = (
+    "mask_path",
+    "mask_score",
+    "mask_area_px",
+    "raw_mask_area_px",
+    "component_count_raw",
+    "raw_component_count",
+    "component_selection_method",
+    "removed_component_area_px",
+    "holes_filled_px",
+    "holes_filled_area_px",
+    "cleaned_to_prompt_area_ratio",
+    "mask_to_prompt_area_ratio",
+    "mask_bbox_x1_px",
+    "mask_bbox_y1_px",
+    "mask_bbox_x2_px",
+    "mask_bbox_y2_px",
+)
+_SOURCE_MASK_PROVENANCE_COLUMNS = tuple(
+    f"source_{column}" for column in _SOURCE_MASK_MANIFEST_COLUMNS
+)
+_SOURCE_MASK_RLE_FORMAT = "morphseq_rle_v1"
+_MIN_SOURCE_MASK_DETECTOR_CROP_OVERLAP = 0.50
 
 
 @dataclass(frozen=True)
@@ -489,6 +530,161 @@ def _attach_fov_scale(
     return merged.drop(columns="_scale_join")
 
 
+def _attach_source_masks(
+    embryos: pd.DataFrame,
+    source_mask_manifest: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Attach one persisted, cleaned source-FOV mask to every emitted embryo.
+
+    The production CLI passes the same complete SAM2 manifest used for provisional
+    scale calibration.  Keeping this argument optional preserves the legacy direct
+    API for tests and non-production callers, while production fails closed if any
+    detected embryo lacks an absolute persisted mask.
+    """
+    if source_mask_manifest is None or embryos.empty:
+        return embryos.copy()
+
+    masks = source_mask_manifest.copy()
+    masks["source_fov_id"] = _source_fov_ids(
+        masks, label="source_mask_manifest"
+    )
+    required = {
+        "embryo_position",
+        "mask_path",
+        "mask_area_px",
+        "mask_score",
+        "cleaned_to_prompt_area_ratio",
+        "mask_bbox_x1_px",
+        "mask_bbox_y1_px",
+        "mask_bbox_x2_px",
+        "mask_bbox_y2_px",
+    }
+    missing = sorted(required - set(masks.columns))
+    if missing:
+        raise ValueError(
+            "source_mask_manifest is missing required column(s): "
+            f"{missing}. Production SeaHub materialization requires persisted "
+            "source-FOV SAM2 masks, not an areas-only census."
+        )
+
+    positions = pd.to_numeric(masks["embryo_position"], errors="coerce")
+    if positions.isna().any() or not positions.mod(1).eq(0).all():
+        raise ValueError(
+            "source_mask_manifest embryo_position values must be non-null integers."
+        )
+    masks["embryo_position"] = positions.astype(int)
+    duplicate_key = masks.duplicated(
+        subset=["source_fov_id", "embryo_position"], keep=False
+    )
+    if duplicate_key.any():
+        offenders = (
+            masks.loc[duplicate_key, ["source_fov_id", "embryo_position"]]
+            .head(5)
+            .to_dict("records")
+        )
+        raise ValueError(
+            "source_mask_manifest must contain one mask per source embryo; "
+            f"duplicate keys include {offenders}."
+        )
+
+    carry = [
+        "source_fov_id",
+        "embryo_position",
+        *[
+            column
+            for column in _SOURCE_MASK_MANIFEST_COLUMNS
+            if column in masks.columns
+        ],
+    ]
+    mask_view = masks[carry].rename(
+        columns={
+            column: f"source_{column}"
+            for column in _SOURCE_MASK_MANIFEST_COLUMNS
+            if column in masks.columns
+        }
+    )
+    joined = embryos.merge(
+        mask_view,
+        on=["source_fov_id", "embryo_position"],
+        how="left",
+        validate="one_to_one",
+        indicator="_source_mask_join",
+    )
+    missing_join = ~joined["_source_mask_join"].eq("both")
+    if missing_join.any():
+        offenders = (
+            joined.loc[
+                missing_join, ["source_fov_id", "embryo_position"]
+            ]
+            .head(5)
+            .to_dict("records")
+        )
+        raise ValueError(
+            "source_mask_manifest does not cover every detected SeaHub embryo; "
+            f"missing keys include {offenders}."
+        )
+    joined = joined.drop(columns="_source_mask_join")
+
+    resolved_paths: list[str] = []
+    for raw_path in joined["source_mask_path"]:
+        if _is_missing(raw_path):
+            raise ValueError("source_mask_manifest contains a null/empty mask_path.")
+        mask_path = Path(str(raw_path)).expanduser()
+        if not mask_path.is_absolute():
+            raise ValueError(
+                "SeaHub source mask paths must be absolute; got "
+                f"{mask_path}."
+            )
+        if not mask_path.is_file():
+            raise FileNotFoundError(
+                f"SeaHub source mask does not exist: {mask_path}"
+            )
+        resolved_paths.append(str(mask_path.resolve()))
+    joined["source_mask_path"] = resolved_paths
+
+    numeric_contract = {
+        column: pd.to_numeric(joined[column], errors="coerce")
+        for column in (
+            "source_mask_area_px",
+            "source_mask_score",
+            "source_cleaned_to_prompt_area_ratio",
+            "source_mask_bbox_x1_px",
+            "source_mask_bbox_y1_px",
+            "source_mask_bbox_x2_px",
+            "source_mask_bbox_y2_px",
+        )
+    }
+    if any(
+        values.isna().any() or not np.isfinite(values.to_numpy(dtype=float)).all()
+        for values in numeric_contract.values()
+    ):
+        raise ValueError(
+            "source_mask_manifest cleaned-mask area, score, ratio, and bounding "
+            "boxes must be finite for every detected embryo."
+        )
+    if numeric_contract["source_mask_area_px"].le(0).any():
+        raise ValueError("source_mask_manifest mask_area_px must be positive.")
+    cleaned_ratio = numeric_contract["source_cleaned_to_prompt_area_ratio"]
+    if cleaned_ratio.le(0).any() or cleaned_ratio.ge(0.95).any():
+        raise ValueError(
+            "source_mask_manifest cleaned_to_prompt_area_ratio must be > 0 and "
+            "< 0.95; refusing an empty or likely prompt-box/full-inset mask."
+        )
+    if (
+        numeric_contract["source_mask_bbox_x2_px"]
+        .le(numeric_contract["source_mask_bbox_x1_px"])
+        .any()
+        or numeric_contract["source_mask_bbox_y2_px"]
+        .le(numeric_contract["source_mask_bbox_y1_px"])
+        .any()
+    ):
+        raise ValueError(
+            "source_mask_manifest cleaned-mask bounding boxes must have positive "
+            "width and height."
+        )
+    return joined
+
+
 def _well_index_for_offset(offset: int) -> str:
     row = chr(ord("A") + int(offset) // 12)
     column = int(offset) % 12 + 1
@@ -588,12 +784,39 @@ def _round_up(value: int, multiple: int) -> int:
 def _canvas_shape(
     embryos: pd.DataFrame, *, rounding_px: int
 ) -> tuple[int, int]:
-    widths = pd.to_numeric(embryos["crop_x2_px"]) - pd.to_numeric(
-        embryos["crop_x1_px"]
-    )
-    heights = pd.to_numeric(embryos["crop_y2_px"]) - pd.to_numeric(
-        embryos["crop_y1_px"]
-    )
+    x1 = pd.to_numeric(embryos["crop_x1_px"])
+    y1 = pd.to_numeric(embryos["crop_y1_px"])
+    x2 = pd.to_numeric(embryos["crop_x2_px"])
+    y2 = pd.to_numeric(embryos["crop_y2_px"])
+    source_mask_bbox_columns = {
+        "source_mask_bbox_x1_px",
+        "source_mask_bbox_y1_px",
+        "source_mask_bbox_x2_px",
+        "source_mask_bbox_y2_px",
+    }
+    if source_mask_bbox_columns.issubset(embryos.columns):
+        mask_x1 = pd.to_numeric(
+            embryos["source_mask_bbox_x1_px"], errors="coerce"
+        )
+        mask_y1 = pd.to_numeric(
+            embryos["source_mask_bbox_y1_px"], errors="coerce"
+        )
+        mask_x2 = pd.to_numeric(
+            embryos["source_mask_bbox_x2_px"], errors="coerce"
+        )
+        mask_y2 = pd.to_numeric(
+            embryos["source_mask_bbox_y2_px"], errors="coerce"
+        )
+        if pd.concat([mask_x1, mask_y1, mask_x2, mask_y2], axis=1).isna().any().any():
+            raise ValueError(
+                "Source-mask bounding boxes must be finite for every SeaHub embryo."
+            )
+        x1 = pd.concat([x1, mask_x1], axis=1).min(axis=1)
+        y1 = pd.concat([y1, mask_y1], axis=1).min(axis=1)
+        x2 = pd.concat([x2, mask_x2], axis=1).max(axis=1)
+        y2 = pd.concat([y2, mask_y2], axis=1).max(axis=1)
+    widths = x2 - x1
+    heights = y2 - y1
     if (widths <= 0).any() or (heights <= 0).any():
         raise ValueError("All SeaHub crop boxes must have positive width and height.")
     return (
@@ -613,6 +836,122 @@ def _relative_materialized_path(row: pd.Series) -> Path:
     )
 
 
+def _load_cleaned_source_mask(
+    row: pd.Series,
+    *,
+    expected_shape: tuple[int, int],
+) -> np.ndarray:
+    """Load and verify one authoritative full-FOV SeaHub mask."""
+    mask_path = Path(str(row["source_mask_path"]))
+    with Image.open(mask_path) as mask_image:
+        mask = np.asarray(mask_image.convert("L")) > 0
+    if mask.shape != expected_shape:
+        raise ValueError(
+            f"Source mask shape for {row['source_embryo_id']} is {mask.shape}; "
+            f"expected source image shape {expected_shape}: {mask_path}."
+        )
+    if not mask.any():
+        raise ValueError(
+            f"Source mask for {row['source_embryo_id']} is empty: {mask_path}."
+        )
+
+    _, component_count = ndimage.label(
+        mask, structure=np.ones((3, 3), dtype=np.uint8)
+    )
+    if int(component_count) != 1:
+        raise ValueError(
+            f"Cleaned source mask for {row['source_embryo_id']} has "
+            f"{int(component_count)} connected components; expected exactly one."
+        )
+    filled = ndimage.binary_fill_holes(mask)
+    if not np.array_equal(filled, mask):
+        raise ValueError(
+            f"Cleaned source mask for {row['source_embryo_id']} still contains "
+            "holes; source-mask cleanup must run before materialization."
+        )
+
+    declared_area = pd.to_numeric(
+        pd.Series([row.get("source_mask_area_px")]), errors="coerce"
+    ).iloc[0]
+    if pd.notna(declared_area) and int(round(float(declared_area))) != int(mask.sum()):
+        raise ValueError(
+            f"Persisted source mask area for {row['source_embryo_id']} does not "
+            f"match its manifest ({int(mask.sum())} vs {declared_area})."
+        )
+    mask_y, mask_x = np.where(mask)
+    actual_bbox = (
+        int(mask_x.min()),
+        int(mask_y.min()),
+        int(mask_x.max()) + 1,
+        int(mask_y.max()) + 1,
+    )
+    declared_bbox = tuple(
+        int(round(float(row[column])))
+        for column in (
+            "source_mask_bbox_x1_px",
+            "source_mask_bbox_y1_px",
+            "source_mask_bbox_x2_px",
+            "source_mask_bbox_y2_px",
+        )
+    )
+    if declared_bbox != actual_bbox:
+        raise ValueError(
+            f"Persisted source mask bounding box for {row['source_embryo_id']} "
+            f"does not match its manifest ({actual_bbox} vs {declared_bbox})."
+        )
+    return mask
+
+
+def _source_mask_frame_row(
+    row: pd.Series,
+    *,
+    mask_canvas: np.ndarray,
+    image_path: Path,
+) -> dict[str, Any]:
+    """Encode one authoritative source mask in the canonical frame-mask schema."""
+    geometry = mask_geometry(mask_canvas)
+    image_height_px, image_width_px = mask_canvas.shape
+    area_fraction = float(geometry["area_px"]) / float(
+        image_height_px * image_width_px
+    )
+    if area_fraction > MAX_VALID_MASK_AREA_FRACTION:
+        raise ValueError(
+            f"Source mask for {row['source_embryo_id']} covers "
+            f"{area_fraction:.1%} of its materialized frame; refusing a likely "
+            "rectangle/full-frame mask."
+        )
+    raw_score = pd.to_numeric(
+        pd.Series([row.get("source_mask_score")]), errors="coerce"
+    ).iloc[0]
+    mask_confidence = float(raw_score) if pd.notna(raw_score) else 1.0
+    image_id = str(row["image_id"])
+    well_id = str(row["well_id"])
+    return {
+        "experiment_id": str(row["experiment_id"]),
+        "well_id": well_id,
+        "image_id": image_id,
+        "time_index": int(row["time_index"]),
+        "z_index": pd.NA,
+        "channel_id": str(row.get("channel_id", "BF")),
+        "image_path": str(image_path.resolve()),
+        "image_width_px": int(image_width_px),
+        "image_height_px": int(image_height_px),
+        "prompt_detection_id": pd.NA,
+        "sam2_object_id": 0,
+        "mask_id": build_mask_id(image_id, 0),
+        "track_id": build_track_id(well_id, 0),
+        "mask_rle": json.dumps(encode_binary_mask_rle(mask_canvas)),
+        "mask_rle_format": _SOURCE_MASK_RLE_FORMAT,
+        **{column: float(value) for column, value in geometry.items()},
+        "mask_confidence": mask_confidence,
+        "is_valid_mask": True,
+        "segmentation_backend": "sam2_image_precomputed",
+        "segmentation_model_id": "sam2.1_hiera_large:seahub_source_fov",
+        "tracking_backend": "seahub_single_frame",
+        "track_id_source": "source_embryo_position",
+    }
+
+
 def _materialize_experiment_images(
     embryos: pd.DataFrame,
     *,
@@ -620,8 +959,10 @@ def _materialize_experiment_images(
     canvas_width_px: int,
     canvas_height_px: int,
     config: SeaHubIntegrationConfig,
-) -> None:
-    """Crop each source FOV once, then write its eight one-embryo frames."""
+) -> pd.DataFrame:
+    """Write one-embryo frames and their authoritative source-SAM2 masks."""
+    use_source_masks = "source_mask_path" in embryos.columns
+    frame_mask_rows: list[dict[str, Any]] = []
     for source_image_path, group in embryos.groupby(
         "source_image_path", sort=False, dropna=False
     ):
@@ -634,7 +975,19 @@ def _materialize_experiment_images(
             raise FileNotFoundError(f"SeaHub source image does not exist: {source_path}")
         with Image.open(source_path) as source:
             grayscale = source.convert("L")
-            for _, row in group.iterrows():
+            source_masks_by_row: dict[Any, np.ndarray] = {}
+            all_source_embryos: np.ndarray | None = None
+            if use_source_masks:
+                for row_index, row in group.iterrows():
+                    source_masks_by_row[row_index] = _load_cleaned_source_mask(
+                        row,
+                        expected_shape=(grayscale.height, grayscale.width),
+                    )
+                all_source_embryos = np.logical_or.reduce(
+                    list(source_masks_by_row.values())
+                )
+
+            for row_index, row in group.iterrows():
                 x1, y1, x2, y2 = (int(row[column]) for column in _BBOX_COLUMNS)
                 if x1 < 0 or y1 < 0 or x2 > grayscale.width or y2 > grayscale.height:
                     raise ValueError(
@@ -642,9 +995,63 @@ def _materialize_experiment_images(
                         f"{source_path}: {(x1, y1, x2, y2)} vs "
                         f"{grayscale.width}x{grayscale.height}."
                     )
+                mask_canvas: np.ndarray | None = None
+                if use_source_masks:
+                    source_mask = source_masks_by_row[row_index]
+                    detector_crop_overlap = int(source_mask[y1:y2, x1:x2].sum())
+                    detector_crop_overlap_fraction = (
+                        detector_crop_overlap / int(source_mask.sum())
+                    )
+                    if (
+                        detector_crop_overlap_fraction
+                        < _MIN_SOURCE_MASK_DETECTOR_CROP_OVERLAP
+                    ):
+                        raise ValueError(
+                            f"Source mask for {row['source_embryo_id']} overlaps only "
+                            f"{detector_crop_overlap_fraction:.1%} of its associated "
+                            "detector crop; refusing a likely mislabeled/wrong-neighbor "
+                            "mask."
+                        )
+                    mask_y, mask_x = np.where(source_mask)
+                    mask_x1 = int(mask_x.min())
+                    mask_y1 = int(mask_y.min())
+                    mask_x2 = int(mask_x.max()) + 1
+                    mask_y2 = int(mask_y.max()) + 1
+                    # The detector crop supplies useful local background for
+                    # normalization. Expand it only when necessary so the persisted
+                    # primary mask is never silently clipped.
+                    x1 = min(x1, mask_x1)
+                    y1 = min(y1, mask_y1)
+                    x2 = max(x2, mask_x2)
+                    y2 = max(y2, mask_y2)
+                    if (
+                        x2 - x1 > canvas_width_px
+                        or y2 - y1 > canvas_height_px
+                    ):
+                        raise ValueError(
+                            f"Detector crop plus full source mask for "
+                            f"{row['source_embryo_id']} is {(x2 - x1)}x{(y2 - y1)}, "
+                            f"larger than the planned {canvas_width_px}x"
+                            f"{canvas_height_px} corpus canvas."
+                        )
                 crop = grayscale.crop((x1, y1, x2, y2))
                 if config.flip_polarity:
                     crop = ImageOps.invert(crop)
+                if use_source_masks and all_source_embryos is not None:
+                    # Retain genuine local background for SeaHub normalization,
+                    # but blank any of the seven sibling embryos that happens to
+                    # enter this detector crop. This prevents neighbor anatomy
+                    # leaking through the downstream soft mask-edge taper.
+                    sibling_pixels = (
+                        all_source_embryos[y1:y2, x1:x2]
+                        & ~source_mask[y1:y2, x1:x2]
+                    )
+                    if sibling_pixels.any():
+                        crop_pixels = np.asarray(crop).copy()
+                        crop_pixels[sibling_pixels] = int(
+                            config.canvas_fill_value
+                        )
+                        crop = Image.fromarray(crop_pixels, mode="L")
                 canvas = Image.new(
                     "L",
                     (canvas_width_px, canvas_height_px),
@@ -653,6 +1060,20 @@ def _materialize_experiment_images(
                 left = (canvas_width_px - crop.width) // 2
                 top = (canvas_height_px - crop.height) // 2
                 canvas.paste(crop, (left, top))
+                if use_source_masks:
+                    cropped_mask = source_mask[y1:y2, x1:x2]
+                    mask_canvas = np.zeros(
+                        (canvas_height_px, canvas_width_px), dtype=bool
+                    )
+                    mask_canvas[
+                        top : top + cropped_mask.shape[0],
+                        left : left + cropped_mask.shape[1],
+                    ] = cropped_mask
+                    if int(mask_canvas.sum()) != int(source_mask.sum()):
+                        raise ValueError(
+                            f"Materialization clipped the source mask for "
+                            f"{row['source_embryo_id']}."
+                        )
                 output_path = experiment_root / _relative_materialized_path(row)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 if output_path.exists() and not config.overwrite_images:
@@ -667,12 +1088,23 @@ def _materialize_experiment_images(
                                 f"{canvas_width_px}x{canvas_height_px}. Rerun with "
                                 "overwrite_images=True after reviewing the stale file."
                             )
-                    continue
-                canvas.save(
-                    output_path,
-                    format="JPEG",
-                    quality=int(config.jpeg_quality),
-                )
+                else:
+                    canvas.save(
+                        output_path,
+                        format="JPEG",
+                        quality=int(config.jpeg_quality),
+                    )
+                if mask_canvas is not None:
+                    frame_mask_rows.append(
+                        _source_mask_frame_row(
+                            row,
+                            mask_canvas=mask_canvas,
+                            image_path=output_path,
+                        )
+                    )
+    return pd.DataFrame.from_records(
+        frame_mask_rows, columns=FRAME_MASKS_REQUIRED_COLUMNS
+    )
 
 
 def _frame_inventory(
@@ -740,6 +1172,39 @@ def _frame_inventory(
             }
         )
     return pd.DataFrame.from_records(rows)
+
+
+def _write_precomputed_frame_masks(
+    frame_masks: pd.DataFrame,
+    *,
+    frame_inventory: pd.DataFrame,
+    output_csv: Path,
+) -> None:
+    """Validate and atomically persist a shard's authoritative frame masks."""
+    if frame_masks.empty:
+        raise ValueError(
+            "Cannot write SeaHub precomputed frame masks: materialization returned "
+            "no authoritative masks."
+        )
+    validate_frame_masks(frame_masks, frame_inventory)
+    expected_ids = set(frame_inventory["image_id"].astype(str))
+    observed_ids = set(frame_masks["image_id"].astype(str))
+    if observed_ids != expected_ids:
+        missing = sorted(expected_ids - observed_ids)
+        extra = sorted(observed_ids - expected_ids)
+        raise ValueError(
+            "SeaHub precomputed masks must contain exactly one row for every "
+            f"materialized frame; missing={missing[:5]}, extra={extra[:5]}."
+        )
+    if len(frame_masks) != len(frame_inventory):
+        raise ValueError(
+            "SeaHub precomputed masks must contain exactly one authoritative mask "
+            f"per frame; masks={len(frame_masks)}, frames={len(frame_inventory)}."
+        )
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_csv.with_name(f".{output_csv.name}.tmp")
+    frame_masks.to_csv(temporary, index=False)
+    temporary.replace(output_csv)
 
 
 def _first_present(row: pd.Series, *columns: str) -> Any:
@@ -876,7 +1341,19 @@ def _runtime_overlay(
     frame_inventory_csv: Path,
     plate_metadata_csv: Path,
     image_root: Path,
+    precomputed_frame_masks_csv: Path | None = None,
 ) -> dict[str, Any]:
+    frame_masks: dict[str, Any] = {"use_model_server": True}
+    if precomputed_frame_masks_csv is not None:
+        frame_masks.update(
+            {
+                "mode": "precomputed",
+                "precomputed_csv": str(precomputed_frame_masks_csv.resolve()),
+                # Keep GroundingDINO as a required, independently persisted audit.
+                # Its boxes may never replace the authoritative source SAM2 mask.
+                "require_detection_audit": True,
+            }
+        )
     return {
         "experiments": [str(experiment_id)],
         "microscope": "SeaHub",
@@ -898,7 +1375,10 @@ def _runtime_overlay(
         # SeaHub shards contain up to 96 one-frame embryo wells. Keep the canonical
         # per-well products, but amortize model initialization across the shard.
         "frame_detections": {"use_model_server": True},
-        "frame_masks": {"use_model_server": True},
+        "frame_masks": frame_masks,
+        # Source SeaHub images have a distinct intensity distribution. Disable
+        # CLAHE only in this runtime overlay; Keyence/YX1 retain the global default.
+        "snip_processing": {"apply_clahe": False},
         "unet_snip": {"use_model_server": True},
     }
 
@@ -910,6 +1390,7 @@ def build_seahub_dropin_bundle(
     output_root: str | Path,
     config: SeaHubIntegrationConfig | None = None,
     fov_scale_calibration: pd.DataFrame | None = None,
+    source_mask_manifest: pd.DataFrame | None = None,
     materialize_images: bool = True,
 ) -> SeaHubBundleResult:
     """Build and validate a complete per-experiment SeaHub drop-in bundle."""
@@ -939,6 +1420,7 @@ def build_seahub_dropin_bundle(
         policy, detection_manifest
     )
     embryo_ingest = _attach_fov_scale(embryo_ingest, scale_calibration)
+    embryo_ingest = _attach_source_masks(embryo_ingest, source_mask_manifest)
     assigned = assign_operational_identity(embryo_ingest, config=config)
 
     integration_dir = output_root / "integration"
@@ -947,6 +1429,10 @@ def build_seahub_dropin_bundle(
     scale_calibration.to_csv(
         integration_dir / "fov_scale_calibration.csv", index=False
     )
+    if source_mask_manifest is not None:
+        source_mask_manifest.to_csv(
+            integration_dir / "source_mask_manifest.csv", index=False
+        )
     embryo_ingest.to_csv(integration_dir / "embryo_ingest.csv", index=False)
     detection_failures.to_csv(
         integration_dir / "detection_failures.csv", index=False
@@ -959,6 +1445,7 @@ def build_seahub_dropin_bundle(
                 "experiment_id",
                 "frame_inventory_csv",
                 "plate_metadata_csv",
+                "precomputed_frame_masks_csv",
                 "image_root",
                 "runtime_config_yaml",
                 "embryo_count",
@@ -987,6 +1474,8 @@ def build_seahub_dropin_bundle(
             "experiment_id",
             "well_index",
             "well_id",
+            "channel_id",
+            "time_index",
             "image_id",
             "source_experiment_id",
             "source_fov_id",
@@ -997,6 +1486,7 @@ def build_seahub_dropin_bundle(
             "filename",
             *_BBOX_COLUMNS,
             *_CALIBRATION_MERGE_COLUMNS,
+            *_SOURCE_MASK_PROVENANCE_COLUMNS,
         )
         if column in assigned.columns
     ]
@@ -1011,8 +1501,16 @@ def build_seahub_dropin_bundle(
     ):
         experiment_root = output_root / "experiments" / str(experiment_id)
         experiment_root.mkdir(parents=True, exist_ok=True)
+        precomputed_frame_masks_csv = (
+            experiment_root / "dropin_frame_masks.csv"
+            if "source_mask_path" in experiment_rows.columns
+            else None
+        )
+        materialized_frame_masks = pd.DataFrame(
+            columns=FRAME_MASKS_REQUIRED_COLUMNS
+        )
         if materialize_images:
-            _materialize_experiment_images(
+            materialized_frame_masks = _materialize_experiment_images(
                 experiment_rows,
                 experiment_root=experiment_root,
                 canvas_width_px=canvas_width_px,
@@ -1033,6 +1531,12 @@ def build_seahub_dropin_bundle(
         frame_inventory_csv = experiment_root / "dropin_frame_inventory.csv"
         frame_inventory.to_csv(frame_inventory_csv, index=False)
         if materialize_images:
+            if precomputed_frame_masks_csv is not None:
+                _write_precomputed_frame_masks(
+                    materialized_frame_masks,
+                    frame_inventory=frame_inventory,
+                    output_csv=precomputed_frame_masks_csv,
+                )
             validate_frame_inventory(
                 frame_inventory_csv,
                 frame_inventory_csv.with_suffix(".csv.validated"),
@@ -1058,6 +1562,7 @@ def build_seahub_dropin_bundle(
                     frame_inventory_csv=frame_inventory_csv,
                     plate_metadata_csv=plate_metadata_csv,
                     image_root=experiment_root,
+                    precomputed_frame_masks_csv=precomputed_frame_masks_csv,
                 ),
                 sort_keys=False,
             ),
@@ -1068,6 +1573,11 @@ def build_seahub_dropin_bundle(
                 "experiment_id": experiment_id,
                 "frame_inventory_csv": str(frame_inventory_csv.resolve()),
                 "plate_metadata_csv": str(plate_metadata_csv.resolve()),
+                "precomputed_frame_masks_csv": (
+                    str(precomputed_frame_masks_csv.resolve())
+                    if precomputed_frame_masks_csv is not None
+                    else pd.NA
+                ),
                 "image_root": str(experiment_root.resolve()),
                 "runtime_config_yaml": str(runtime_config_yaml.resolve()),
                 "embryo_count": len(experiment_rows),
@@ -1151,13 +1661,36 @@ def materialize_planned_experiment(
         flip_polarity=_as_bool(first_frame["flip_polarity"]),
         overwrite_images=bool(overwrite_images),
     )
-    _materialize_experiment_images(
+    materialized_frame_masks = _materialize_experiment_images(
         experiment_rows,
         experiment_root=experiment_root,
         canvas_width_px=int(width_values[0]),
         canvas_height_px=int(height_values[0]),
         config=config,
     )
+    raw_precomputed_path = manifest_row.get("precomputed_frame_masks_csv")
+    if not _is_missing(raw_precomputed_path):
+        precomputed_path = Path(str(raw_precomputed_path)).expanduser()
+        if not precomputed_path.is_absolute():
+            raise ValueError(
+                "Planned SeaHub precomputed_frame_masks_csv must be absolute; "
+                f"got {precomputed_path}."
+            )
+        precomputed_path = precomputed_path.resolve()
+        expected_precomputed_path = (
+            experiment_root / "dropin_frame_masks.csv"
+        ).resolve()
+        if precomputed_path != expected_precomputed_path:
+            raise ValueError(
+                "Planned SeaHub precomputed_frame_masks_csv points outside the "
+                f"selected shard: {precomputed_path}; expected "
+                f"{expected_precomputed_path}."
+            )
+        _write_precomputed_frame_masks(
+            materialized_frame_masks,
+            frame_inventory=frame_inventory,
+            output_csv=precomputed_path,
+        )
     output_flag = frame_inventory_csv.with_suffix(".csv.validated")
     validate_frame_inventory(
         frame_inventory_csv,

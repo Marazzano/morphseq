@@ -107,15 +107,19 @@ experiments/{experiment_id}/
   images/{well_id}/BF/projection/focus_stack/{image_id}.jpg
   dropin_frame_inventory.csv
   dropin_frame_inventory.csv.validated
+  dropin_frame_masks.csv
   plate_metadata.csv
   plate_metadata.csv.validated
   runtime_config.yaml
 ```
 
-The integration directory contains `fov_scale_calibration.csv`, `embryo_ingest.csv`,
-`well_provenance.csv`, `dropped_fovs.csv`, `detection_failures.csv`, `experiment_manifest.csv`, and
-`experiments.txt`. The runtime drop-in config requires all of `frame_inventory_csv`,
-`plate_metadata_csv`, and `image_root`.
+The integration directory contains `fov_scale_calibration.csv`, `source_mask_manifest.csv`,
+`embryo_ingest.csv`, `well_provenance.csv`, `dropped_fovs.csv`, `detection_failures.csv`,
+`experiment_manifest.csv`, and `experiments.txt`. The runtime drop-in config requires all of
+`frame_inventory_csv`, `plate_metadata_csv`, and `image_root`. SeaHub additionally selects
+`frame_masks.mode=precomputed` with the shard's absolute `dropin_frame_masks.csv`; the redundant
+GroundingDINO pass remains a required audit and cannot replace these authoritative masks. SeaHub
+alone sets `snip_processing.apply_clahe=false`; other scopes retain the legacy default.
 
 Every production attempt starts from a new, empty bundle/output root. `build-bundle` refuses a
 non-empty root; old acquisition, frame-inventory, or validation products must be quarantined rather
@@ -140,7 +144,8 @@ conda run -n morphseq-env --no-capture-output env PYTHONPATH=src \
 ```
 
 After the existing GroundingDINO workflow has produced the complete detection manifest and the
-source-FOV SAM2 pass has produced the complete mask-area manifest, build the bundle on the cluster:
+source-FOV SAM2 pass has produced the complete cleaned-mask manifest and persisted one full-FOV
+binary mask per embryo, build the bundle on the cluster:
 
 ```bash
 conda run -n morphseq-env --no-capture-output env PYTHONPATH=src \
@@ -151,10 +156,12 @@ conda run -n morphseq-env --no-capture-output env PYTHONPATH=src \
   --output-root <bundle_root>
 ```
 
-The scale-mask manifest may identify its source FOV as `source_fov_id` or `image_id`. Finite,
-positive `mask_area_px` values are usable when no explicit `is_valid_mask` column is present. No
-mask-score cutoff is silently imposed; `--min-scale-mask-score` is an explicit optional review
-choice.
+The scale-mask manifest may identify its source FOV as `source_fov_id` or `image_id`. It must have
+exactly one row per `(source_fov_id, embryo_position)`, an absolute `mask_path` to a cleaned binary
+mask, and finite positive `mask_area_px`. Production cleanup keeps the prompt-associated connected
+component and then fills its holes. Integration rejects prompt-box/full-inset masks and masks with
+less than 50% of their area inside the associated padded detector crop. No mask-score cutoff is silently imposed;
+`--min-scale-mask-score` is an explicit optional review choice.
 
 `--plan-only` exercises reconciliation, inclusion, detection completeness, identity packing,
 metadata, and runtime-config generation without opening or writing source images. Each row of

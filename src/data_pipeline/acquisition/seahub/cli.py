@@ -111,6 +111,7 @@ def cmd_build_bundle(args: argparse.Namespace) -> None:
         output_root=args.output_root,
         config=_config_from_args(args),
         fov_scale_calibration=scale_calibration,
+        source_mask_manifest=mask_manifest,
         materialize_images=not args.plan_only,
     )
     print(
@@ -144,6 +145,7 @@ def cmd_all(args: argparse.Namespace) -> None:
         output_root=args.output_root,
         config=_config_from_args(args),
         fov_scale_calibration=scale_calibration,
+        source_mask_manifest=mask_manifest,
         materialize_images=not args.plan_only,
     )
     print(
@@ -196,8 +198,9 @@ def _add_bundle_options(parser: argparse.ArgumentParser) -> None:
         type=Path,
         required=True,
         help=(
-            "Source-FOV SAM2 mask-area manifest used to infer one provisional "
-            "pixel scale per FOV."
+            "Complete source-FOV SAM2 mask manifest. Persisted cleaned masks are "
+            "used both for provisional scale inference and as authoritative "
+            "downstream frame masks."
         ),
     )
     parser.add_argument(
