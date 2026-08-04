@@ -58,13 +58,23 @@ YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS: tuple[str, ...] = (
     "objective_magnification",
     "n_z",                      # full Z depth of this acquisition (provenance)
     "source_nd2_path",          # the ONE ND2 (no per-plane path)
-    # ACQUISITION SETTINGS -- the difference between comparable and incomparable pixels. Fluorescence
-    # intensity means nothing across frames acquired with different exposure, and exposure is the
-    # setting most likely to change without being recorded as an experimental variable: it gets
-    # adjusted to make a good-looking image. MEASURED on the pbx collection, where the fluorescence
-    # channel ran at 600 ms on day 1 and 300 ms on days 2-3 -- a 2x artifact the same size as the
-    # 1-vs-2-copy dosage effect it would be mistaken for. Optional by contract (parsed from the ND2
-    # free-text dump, so a file that does not carry them yields NaN rather than failing ingest).
+)
+
+# ACQUISITION SETTINGS -- the difference between comparable and incomparable pixels. Fluorescence
+# intensity means nothing across frames acquired with different exposure, and exposure is the setting
+# most likely to change without being recorded as an experimental variable: it gets adjusted to make
+# a good-looking image. MEASURED on the pbx collection, where the fluorescence channel ran at 600 ms
+# on day 1 and 300 ms on days 2-3 -- a 2x artifact the same size as the 1-vs-2-copy dosage effect it
+# would be mistaken for.
+#
+# OPTIONAL, AND DELIBERATELY NOT IN THE REQUIRED TUPLE ABOVE. These are parsed from the ND2
+# free-text dump, so a file whose settings do not parse must still ingest -- and, more importantly,
+# every inventory written before these columns existed must still VALIDATE. Adding them to the
+# required set broke 19 tests at once by making the entire installed base retroactively invalid,
+# which is the correct signal: provenance a reader may want is not the same as structure a row
+# cannot exist without. They are emitted (see YX1_ACQUISITION_INVENTORY_COLUMNS) so column ORDER is
+# stable, but never required to be present.
+YX1_ACQUISITION_INVENTORY_ILLUMINATION_COLUMNS: tuple[str, ...] = (
     "exposure_ms",
     "illumination_power",
     "dia_iris_intensity",
@@ -73,9 +83,16 @@ YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS: tuple[str, ...] = (
 # The maximal per-coordinate schema = the SHARED Tier-1 core + the YX1 Tier-2 extras. Standardized
 # ``*_index`` axis vocabulary — the inventory is a NEW artifact, born with target names (the legacy
 # scope_metadata keeps z_position until the Scope-2 collapse).
-YX1_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
+YX1_ACQUISITION_INVENTORY_REQUIRED_COLUMNS: tuple[str, ...] = (
     *REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS,
     *YX1_ACQUISITION_INVENTORY_SCOPE_COLUMNS,
+)
+
+# The full emitted schema = required + optional provenance. Used for column ORDER on write; the
+# validator checks only the required tuple above.
+YX1_ACQUISITION_INVENTORY_COLUMNS: tuple[str, ...] = (
+    *YX1_ACQUISITION_INVENTORY_REQUIRED_COLUMNS,
+    *YX1_ACQUISITION_INVENTORY_ILLUMINATION_COLUMNS,
 )
 
 # The tensor cell key — exactly one raw unit may occupy each cell. YX1 is clean by construction.
@@ -157,7 +174,7 @@ def validate_yx1_acquisition_inventory(
     """
     # Hard-check the shared core first (every scope must satisfy it), then the full YX1 schema.
     assert_columns_present(df, REQUIRED_ACQUISITION_INVENTORY_CORE_COLUMNS, scope_label=_SCOPE_LABEL)
-    assert_columns_present(df, YX1_ACQUISITION_INVENTORY_COLUMNS, scope_label=_SCOPE_LABEL)
+    assert_columns_present(df, YX1_ACQUISITION_INVENTORY_REQUIRED_COLUMNS, scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "micrometers_per_pixel", scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "image_width_px", scope_label=_SCOPE_LABEL)
     assert_positive_column(df, "image_height_px", scope_label=_SCOPE_LABEL)
