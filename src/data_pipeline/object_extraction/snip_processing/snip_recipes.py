@@ -61,6 +61,12 @@ class SnipRecipeContract:
     #: unusable for cross-embryo quantification, and this flag is what lets that be asserted rather
     #: than remembered.
     is_photometric: bool
+    #: dtype the RENDERED snip is written as, or None for "whatever the source was". Distinct from
+    #: required_dtypes, which constrains the INPUT: a recipe can accept several dtypes and still
+    #: emit one, or accept anything and emit whatever it got. The geometry step reads this rather
+    #: than hardcoding uint8 -- that hardcode is what silently truncated uint16 to 8 bits AFTER the
+    #: read-boundary barrier had already let it through.
+    output_dtype: str | None
     summary: str
 
 
@@ -68,12 +74,14 @@ SNIP_RECIPE_CONTRACTS: dict[str, SnipRecipeContract] = {
     NO_CHANGE: SnipRecipeContract(
         required_dtypes=None,
         is_photometric=False,
+        output_dtype=None,  # preserve the source's, whatever it is
         summary="Geometry only. Source dtype and intensity scale preserved.",
     ),
     CLAHE_BLEND: SnipRecipeContract(
         # apply_clahe documents uint8 in / uint8 out, and the noise blend is tuned for 8-bit BF.
         required_dtypes=("uint8",),
         is_photometric=True,
+        output_dtype="uint8",
         summary="CLAHE + synthetic background noise blend, uint8 out. Display/model input only.",
     ),
 }
@@ -99,6 +107,19 @@ def recipe_contract(snip_recipe: str) -> SnipRecipeContract:
             f"unknown snip_recipe {snip_recipe!r}. Supported: "
             f"{sorted(SUPPORTED_SNIP_RECIPES)}."
         ) from None
+
+
+def recipe_output_dtype(snip_recipe: str, *, source_dtype) -> object:
+    """The dtype a recipe's output must be written as.
+
+    ``None`` in the contract means "preserve the source", which is what makes no_change honest: a
+    uint16 frame stays uint16 through geometry rather than being truncated by a constant that no
+    longer describes every product.
+    """
+    import numpy as _np
+
+    declared = recipe_contract(snip_recipe).output_dtype
+    return _np.dtype(source_dtype) if declared is None else _np.dtype(declared)
 
 
 def assert_source_dtype_is_acceptable(image: np.ndarray, *, snip_recipe: str, source: str) -> None:

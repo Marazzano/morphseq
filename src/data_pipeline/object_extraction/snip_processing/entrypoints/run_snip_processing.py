@@ -28,6 +28,7 @@ from data_pipeline.object_extraction.segmentation.physical_embryo_registry.snip_
 )
 from data_pipeline.shared.identifiers.constructors import (
     build_embryo_id,
+    build_image_id,
     build_snip_id,
     build_snip_transform_id,
 )
@@ -38,10 +39,12 @@ from data_pipeline.object_extraction.snip_processing.legacy_snip_paths import (
 )
 from data_pipeline.object_extraction.snip_processing.snip_product_keys import (
     DEFAULT_BF_SNIP_PRODUCT_KEY,
+    channel_id_for_snip_product_key,
     parse_snip_product_key,
 )
 from data_pipeline.object_extraction.snip_processing.snip_recipes import (
     assert_source_dtype_is_acceptable,
+    recipe_output_dtype,
     render_snip,
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform import (
@@ -84,6 +87,39 @@ def _physical_embryo_id_by_track(
         (str(row["well_id"]), str(row["track_id"])): str(row["physical_embryo_id"])
         for _, row in physical_embryo_registry.iterrows()
     }
+
+
+def _source_frames_for_product(
+    frame_inventory: pd.DataFrame, *, source_image_product_key: str
+) -> pd.DataFrame:
+    """Rows of ONE image product, indexed by image_id.
+
+    Fails loud when the product is absent rather than returning an empty frame: a job asked to
+    render snips of a product that was never materialized should say so, not produce a well full of
+    invalid rows that look like segmentation failures.
+    """
+    from data_pipeline.acquisition.image_materialization.image_product_keys import (
+        image_product_key_for_frame_row,
+    )
+
+    keys = frame_inventory.apply(
+        lambda row: image_product_key_for_frame_row(
+            channel_id=row["channel_id"],
+            image_product_type=row.get("image_product_type", "projection"),
+            projection_method=row.get("projection_method"),
+        ),
+        axis=1,
+    ) if len(frame_inventory) else pd.Series(dtype=str)
+
+    matched = frame_inventory[keys == source_image_product_key] if len(frame_inventory) else frame_inventory
+    if len(frame_inventory) and matched.empty:
+        available = sorted(set(keys))
+        raise ValueError(
+            f"snip_processing: no frame_inventory rows for source product "
+            f"{source_image_product_key!r}; available: {available}. Materialize that product before "
+            "requesting snips of it."
+        )
+    return matched.set_index("image_id")
 
 
 def _estimate_background(
@@ -139,13 +175,29 @@ def run_snip_processing(
     background_noise_scale: float = 0.1,
     blend_radius_um: float = 20.0,
     snip_transform_table_path: Path | None = None,
+    snip_product_key: str = DEFAULT_BF_SNIP_PRODUCT_KEY,
 ) -> None:
     frame_masks = pd.read_csv(frame_masks_csv)
     frame_inventory = pd.read_csv(frame_inventory_csv)
     physical_embryo_registry = pd.read_csv(physical_embryo_registry_csv)
 
+    # ONE JOB RENDERS ONE PRODUCT. The fanout is {well_id} x {snip_product_key}, so each job owns a
+    # disjoint output subtree and can fail without taking its siblings down -- BF succeeding while
+    # RFP fails is a real and useful state, since everything downstream depends on BF.
+    #
+    # DERIVED from the key, never passed alongside it: the key already says which recipe this is,
+    # and a second parameter could disagree with it.
+    _source_image_product_key, snip_recipe = parse_snip_product_key(snip_product_key)
+    source_channel_id = channel_id_for_snip_product_key(snip_product_key)
+
     valid_masks = frame_masks[frame_masks["is_valid_mask"].astype(bool)].copy()
-    inventory_index = frame_inventory.set_index("image_id")
+    # PRODUCT-AWARE SOURCE LOOKUP. The effective frame key is (image_id, product_key), not image_id
+    # alone -- frame_inventory_contract warns that anchoring on image_id "would falsely collide" two
+    # projection products of one channel. Filtering to the requested source product first makes the
+    # remaining image_id index unambiguous.
+    inventory_index = _source_frames_for_product(
+        frame_inventory, source_image_product_key=_source_image_product_key
+    )
 
     # Identity is JOINED from the registry, never minted here. A valid mask whose track has no
     # registry row is a contract violation (the registry is built from frame_masks, so it must
@@ -156,13 +208,6 @@ def run_snip_processing(
     snips_dir = Path(snips_dir)
     output_root = Path(output_root)
 
-    # The product this entrypoint renders. SINGLE-VALUED TODAY: this path is the historical BF
-    # clahe_blend renderer, and naming that explicitly is what lets the path, the inventory column,
-    # and the compatibility alias all agree. P2 turns it into a parameter.
-    snip_product_key = DEFAULT_BF_SNIP_PRODUCT_KEY
-    # DERIVED from the key, never passed alongside it: the key already says which recipe this is,
-    # and a second parameter could disagree with it.
-    _source_image_product_key, snip_recipe = parse_snip_product_key(snip_product_key)
     # Every alias created this run, for debugging external breakage without archaeology.
     legacy_alias_manifest: list[dict[str, str]] = []
 
@@ -260,9 +305,19 @@ def run_snip_processing(
         }
 
         try:
-            if image_id not in inventory_index.index:
-                raise KeyError(f"image_id {image_id!r} not found in frame_inventory")
-            inv_row = inventory_index.loc[image_id]
+            # THE MASK'S image_id IS ALWAYS BF. Detection and segmentation are BF-only, so
+            # frame_masks contains BF rows exclusively; a non-BF product must translate to its own
+            # SIBLING frame of the same well and timepoint. That translation is a pure id
+            # construction, not a persisted mapping -- which is what lets an RFP job run in parallel
+            # with the BF one instead of waiting on any of its artifacts.
+            source_image_id = build_image_id(well_id, source_channel_id, int(time_index))
+            if source_image_id not in inventory_index.index:
+                raise KeyError(
+                    f"image_id {source_image_id!r} (source product "
+                    f"{_source_image_product_key!r}, sibling of mask frame {image_id!r}) not found "
+                    "in frame_inventory"
+                )
+            inv_row = inventory_index.loc[source_image_id]
 
             image_path = Path(str(inv_row["image_path"]))
             pixel_size_um = float(inv_row["image_micrometers_per_pixel"])
@@ -332,7 +387,14 @@ def run_snip_processing(
                 product_um_per_px=pixel_size_um,
                 centering=CENTERING_LATCHED,
             )
-            image_cropped = apply_transform_to_image(image, resolved, dtype=np.uint8)
+            # The output dtype is the RECIPE's, not a constant: hardcoding uint8 here truncated
+            # uint16 to 8 bits AFTER the read-boundary barrier had already let it through, which is
+            # the same erasure one layer down.
+            image_cropped = apply_transform_to_image(
+                image,
+                resolved,
+                dtype=recipe_output_dtype(snip_recipe, source_dtype=image.dtype),
+            )
             mask_cropped = apply_transform_to_mask(embryo_mask, resolved)
 
             # Record HOW this snip was built, on the row. Cheap, queryable, and answers "what

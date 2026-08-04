@@ -64,6 +64,11 @@ def _make_frame_inventory(tmp_images: Path) -> pd.DataFrame:
             "time_index": t,
             "z_index": pd.NA,
             "channel_id": "BF",
+            # Required by frame_inventory_contract and part of frame identity: the effective key is
+            # (image_id, product_key), so the product atoms must be present for a product-aware
+            # source lookup to resolve.
+            "image_product_type": "projection",
+            "projection_method": "focus_stack",
             "image_path": str(img_path),
             "image_width_px": IMG_W,
             "image_height_px": IMG_H,
@@ -413,3 +418,69 @@ def test_uint16_source_is_refused_not_silently_rescaled(tmp_path):
     # And no pixels were written for them: a rescaled uint16 snip on disk is the artifact that
     # would later be measured as if it carried real intensity.
     assert not list((tmp_path / "snips").rglob("*.png"))
+
+
+def test_a_second_product_renders_from_its_own_source(tmp_path):
+    """A non-BF product renders from ITS OWN frames, into ITS OWN subtree, preserving uint16.
+
+    The end-to-end claim of P1+P2 together: the geometry comes from the BF mask, the pixels come
+    from the requested source product, and nothing in between autoscales them. Before the product
+    key existed there was no way to ASK for this; before the recipe registry there was no way to
+    render it without CLAHE.
+    """
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+
+    # Add an RFP sibling for every BF frame: same well, same timepoints, uint16 at a scale that
+    # would be destroyed by any 8-bit coercion.
+    inventory = pd.read_csv(frame_inventory_csv)
+    rfp_rows = []
+    for _, row in inventory.iterrows():
+        rfp_id = build_image_id(WELL_ID, "RFP", int(row["time_index"]))
+        rfp_path = tmp_path / "images" / f"{rfp_id}.png"
+        rng = np.random.default_rng(11 + int(row["time_index"]))
+        skio.imsave(
+            str(rfp_path),
+            rng.integers(3000, 12000, (IMG_H, IMG_W), dtype=np.uint16),
+            check_contrast=False,
+        )
+        rfp = dict(row)
+        rfp.update({
+            "image_id": rfp_id,
+            "channel_id": "RFP",
+            "projection_method": "max",
+            "image_path": str(rfp_path),
+        })
+        rfp_rows.append(rfp)
+    pd.concat([inventory, pd.DataFrame(rfp_rows)], ignore_index=True).to_csv(
+        frame_inventory_csv, index=False
+    )
+
+    out_csv = tmp_path / "rfp_snip_inventory.csv"
+    run_snip_processing(
+        frame_masks_csv=frame_masks_csv,
+        frame_inventory_csv=frame_inventory_csv,
+        physical_embryo_registry_csv=registry_csv,
+        output_csv=out_csv,
+        snips_dir=tmp_path / "snips",
+        output_root=tmp_path,
+        target_pixel_size_um=2.17,
+        output_height_px=64,
+        output_width_px=64,
+        snip_product_key="RFP__projection__max__no_change",
+    )
+
+    df = pd.read_csv(out_csv)
+    assert df["is_valid_snip"].astype(bool).all(), (
+        f"RFP snips failed: {df['error_message'].dropna().tolist()[:3]}"
+    )
+    assert (df["snip_product_key"] == "RFP__projection__max__no_change").all()
+
+    # Its own subtree, beneath the embryo -- not mixed in with the BF product.
+    written = sorted((tmp_path / "snips").rglob("RFP__projection__max__no_change/*.png"))
+    assert written, "no RFP pixels were written under the product directory"
+
+    # THE POINT: uint16 survived. A snip that had been through the removed rescale, or through
+    # clahe_blend, would come back 8-bit.
+    snip = skio.imread(str([p for p in written if not p.name.endswith("_embryo.png")][0]))
+    assert snip.dtype == np.uint16, f"no_change produced {snip.dtype}; dosage information is gone"
+    assert snip.max() > 255, "values were compressed into the 8-bit range"
