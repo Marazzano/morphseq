@@ -561,21 +561,69 @@ def test_a_render_job_cannot_derive_its_own_geometry(tmp_path):
     assert "snip_geometry must run" in reasons, reasons
 
 
-def test_a_changed_mask_fails_the_freeze(tmp_path):
-    """MASK-HASH FREEZE. The gate fixes placement; this fixes the raster it was derived from.
+def test_a_changed_mask_fails_the_job_not_the_row(tmp_path):
+    """MASK-HASH FREEZE, enforced as a PREFLIGHT CONTRACT rather than a row condition.
 
-    Regenerating frame_masks between snip_geometry and a render job would otherwise pair OLD
-    geometry with a NEWER mask -- pixels placed by one segmentation, masked by another, silently.
+    A hash mismatch is not a bad embryo. It says the renderer is consuming a different REVISION of
+    frame_masks than the geometry gate certified, so placement and mask no longer describe the same
+    segmentation event. Every resulting artifact is individually plausible -- which is what makes it
+    dangerous -- so marking rows invalid would prevent their use while NORMALIZING a condition that
+    must never occur, and hundreds of invalid rows would bury the real diagnosis.
+
+    The job therefore fails before writing anything, reports ALL mismatches at once, and says how to
+    recover.
+    """
+    from data_pipeline.object_extraction.snip_processing.entrypoints.run_snip_processing import (
+        MaskProvenanceError,
+    )
+
+    _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
+    table = _run_geometry(tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv)
+
+    # Mutate one mask's PIXELS (not merely its encoding) after geometry was derived.
+    masks = pd.read_csv(frame_masks_csv)
+    decoded = decode_binary_mask_rle(json.loads(str(masks.loc[0, "mask_rle"])))
+    decoded[decoded.shape[0] // 2, :] = True
+    masks.loc[0, "mask_rle"] = json.dumps(encode_binary_mask_rle(decoded))
+    masks.to_csv(frame_masks_csv, index=False)
+
+    out_csv = tmp_path / "snip_inventory.csv"
+    snips_dir = tmp_path / "snips"
+    with pytest.raises(MaskProvenanceError) as excinfo:
+        run_snip_processing(
+            frame_masks_csv=frame_masks_csv,
+            frame_inventory_csv=frame_inventory_csv,
+            physical_embryo_registry_csv=registry_csv,
+            snip_transform_table_csv=table,
+            output_csv=out_csv,
+            snips_dir=snips_dir,
+            output_root=tmp_path,
+            target_pixel_size_um=2.17,
+            output_height_px=64,
+            output_width_px=64,
+        )
+
+    message = str(excinfo.value)
+    assert "Hash mismatches: 1" in message, message
+    assert "Regenerate snip_geometry" in message, "the error must say how to recover"
+    # NOTHING was written -- not a partial inventory, not one pixel.
+    assert not out_csv.exists()
+    assert not list(snips_dir.rglob("*.png"))
+
+
+def test_a_reencoded_mask_is_not_a_mismatch(tmp_path):
+    """The complement: re-serializing an UNCHANGED mask must not trip the freeze.
+
+    Two RLE strings can encode one binary mask, so hashing the string rather than the decoded pixels
+    would fail on a no-op rewrite -- catching nothing real while blocking legitimate reruns.
     """
     _, frame_masks_csv, frame_inventory_csv, registry_csv = _write_inputs(tmp_path)
     table = _run_geometry(tmp_path, frame_masks_csv, frame_inventory_csv, registry_csv)
 
-    # Mutate one mask's PIXELS (not just its encoding) after geometry was derived.
     masks = pd.read_csv(frame_masks_csv)
-    rle = json.loads(str(masks.loc[0, "mask_rle"]))
-    decoded = decode_binary_mask_rle(rle)
-    decoded[decoded.shape[0] // 2, :] = True
-    masks.loc[0, "mask_rle"] = json.dumps(encode_binary_mask_rle(decoded))
+    for i in masks.index:
+        decoded = decode_binary_mask_rle(json.loads(str(masks.loc[i, "mask_rle"])))
+        masks.loc[i, "mask_rle"] = json.dumps(encode_binary_mask_rle(decoded))
     masks.to_csv(frame_masks_csv, index=False)
 
     out_csv = tmp_path / "snip_inventory.csv"
@@ -591,9 +639,7 @@ def test_a_changed_mask_fails_the_freeze(tmp_path):
         output_height_px=64,
         output_width_px=64,
     )
-    df = pd.read_csv(out_csv)
-    reasons = " ".join(str(r) for r in df["error_message"].fillna(""))
-    assert "does not match what snip_geometry derived from" in reasons, reasons
+    assert pd.read_csv(out_csv)["is_valid_snip"].astype(bool).all()
 
 
 def test_siblings_share_one_transform_row(tmp_path):

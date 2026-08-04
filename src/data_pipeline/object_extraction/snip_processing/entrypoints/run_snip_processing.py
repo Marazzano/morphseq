@@ -15,7 +15,6 @@ mass-distribution heuristic and extraction uses a zero yolk mask.
 from __future__ import annotations
 
 import json
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +57,7 @@ from data_pipeline.object_extraction.snip_processing.snip_transform import (
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform_table import (
     canonical_from_row,
+    mask_content_fingerprint,
     read_snip_transform_table,
 )
 
@@ -86,6 +86,85 @@ def _physical_embryo_id_by_track(
         (str(row["well_id"]), str(row["track_id"])): str(row["physical_embryo_id"])
         for _, row in physical_embryo_registry.iterrows()
     }
+
+
+class MaskProvenanceError(RuntimeError):
+    """The masks on disk are not the masks snip_geometry certified.
+
+    A JOB-LEVEL contract failure, deliberately NOT a per-row data condition. An empty mask, a
+    clipped embryo, a corrupt frame -- those are row conditions: this well contains one bad object.
+    A hash mismatch says something categorically different: the renderer is consuming a DIFFERENT
+    REVISION of frame_masks than the geometry gate derived from, so the placement and the mask no
+    longer describe the same segmentation event.
+
+    Every artifact in that state is individually plausible -- the placement looks reasonable, the
+    mask looks reasonable -- which is what makes it dangerous. Marking such rows invalid would
+    prevent their use while NORMALIZING a condition that should never occur, and 143 invalid rows in
+    an inventory obscures the actual diagnosis: a stale transform table, or mismatched frame_masks.
+    """
+
+
+def _assert_masks_match_geometry(
+    valid_masks: pd.DataFrame,
+    transform_rows_by_id: dict[str, Any],
+    *,
+    physical_embryo_id_by_track: dict[tuple[str, str], str],
+    scope_label: str,
+) -> None:
+    """PREFLIGHT. Verify every mask still matches what geometry was derived from.
+
+    Runs BEFORE any pixel is written, and collects EVERY mismatch rather than exploding on the
+    first, so the operator sees one intelligible fact about the well instead of an inventory
+    carpeted with invalid rows.
+
+    WHY THIS EARNS ITS KEEP DESPITE SNAKEMAKE. A dependency graph asserts "the declared inputs
+    appear current"; this asserts "these are actually the same pixels." The two diverge under copied
+    artifacts with preserved timestamps, manual file replacement, partial reruns, stale outputs from
+    an older code revision, direct entrypoint invocation, and network-filesystem timing oddities.
+    """
+    missing: list[str] = []
+    mismatched: list[tuple[str, str, str]] = []
+
+    for _, mask_row in valid_masks.iterrows():
+        image_id = str(mask_row["image_id"])
+        well_id = str(mask_row["well_id"])
+        track_id = str(mask_row["track_id"])
+        _, _channel, time_index = parse_image_id(image_id)
+        physical_embryo_id = physical_embryo_id_by_track.get((well_id, track_id))
+        if physical_embryo_id is None:
+            continue  # the registry gate below reports this with a better message
+
+        transform_id = build_snip_transform_id(physical_embryo_id, int(time_index))
+        row = transform_rows_by_id.get(transform_id)
+        if row is None:
+            missing.append(f"{transform_id} (mask_id={mask_row['mask_id']})")
+            continue
+
+        expected = str(row["geometry_source_mask_sha256"])
+        observed = mask_content_fingerprint(
+            decode_binary_mask_rle(json.loads(str(mask_row["mask_rle"]))).astype(np.uint8)
+        )
+        if expected != observed:
+            mismatched.append((str(mask_row["mask_id"]), expected, observed))
+
+    if not missing and not mismatched:
+        return
+
+    examples = "\n".join(
+        f"  mask_id={mid}\n    expected={exp[:16]}...\n    observed={obs[:16]}..."
+        for mid, exp, obs in mismatched[:3]
+    ) or "\n".join(f"  {m}" for m in missing[:3])
+
+    raise MaskProvenanceError(
+        f"Mask provenance validation failed for {scope_label}:\n"
+        f"  {len(mismatched)} of {len(valid_masks)} masks differ from those used to derive snip "
+        f"geometry.\n"
+        f"  Missing from the transform table: {len(missing)}\n"
+        f"  Hash mismatches: {len(mismatched)}\n"
+        f"Examples:\n{examples}\n"
+        "Regenerate snip_geometry from the current frame_masks artifact, or restore the frame_masks "
+        "revision the transform table was built from. No product artifacts were written."
+    )
 
 
 def _source_frames_for_product(
@@ -223,6 +302,15 @@ def run_snip_processing(
         transform_rows_by_id = {
             str(r["snip_transform_id"]): r for _, r in _table.iterrows()
         }
+        # PREFLIGHT, before a single pixel is written. A provenance failure invalidates this
+        # PRODUCT job for this well and nothing else -- a sibling product's already-valid artifacts
+        # are untouched -- but it must not produce a shard that mixes mask revisions.
+        _assert_masks_match_geometry(
+            valid_masks,
+            transform_rows_by_id,
+            physical_embryo_id_by_track=physical_embryo_id_by_track,
+            scope_label=f"{Path(frame_masks_csv).stem} / {snip_product_key}",
+        )
 
     rows: list[dict[str, Any]] = []
     # Collected inside the loop, reconciled after it. Reconciliation is keyed by snip_transform_id so
@@ -394,19 +482,8 @@ def run_snip_processing(
                 )
             transform_row = transform_rows_by_id[snip_transform_id]
 
-            # MASK-HASH FREEZE. The gate fixes PLACEMENT; without this it would not fix the raster
-            # the placement was derived from. A frame_masks regeneration between snip_geometry and
-            # this job would otherwise pair old geometry with a newer mask — pixels placed by one
-            # segmentation, masked by another, silently. The hash is over the DECODED mask, not the
-            # RLE string: a re-encode changes the string without changing a pixel.
-            if sha256(embryo_mask.tobytes()).hexdigest() != str(
-                transform_row["geometry_source_mask_sha256"]
-            ):
-                raise ValueError(
-                    f"mask content for {snip_transform_id!r} does not match what snip_geometry "
-                    f"derived from (mask_id={mask_id!r}). frame_masks changed after the transform "
-                    "table was written — regenerate snip_geometry for this well."
-                )
+            # Mask provenance was verified up front for the whole well, so by here the mask
+            # and the transform are known to describe the same segmentation event.
 
             canonical = canonical_from_row(transform_row)
             resolved = transform_for_product(

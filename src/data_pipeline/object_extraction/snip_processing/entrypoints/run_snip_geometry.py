@@ -24,7 +24,6 @@ Fanout is per-well with NO product wildcard, deliberately — one embryo-time ha
 from __future__ import annotations
 
 import json
-from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +38,7 @@ from data_pipeline.object_extraction.snip_processing.snip_transform import (
 )
 from data_pipeline.object_extraction.snip_processing.snip_transform_table import (
     build_snip_transform_row,
+    mask_content_fingerprint,
     write_snip_transform_table,
 )
 from data_pipeline.shared.identifiers.constructors import build_snip_transform_id
@@ -139,7 +139,7 @@ def run_snip_geometry(
             no_yolk_policy=NO_YOLK_POLICY,
             # Over the DECODED mask: a re-encode changes the RLE string without changing a pixel,
             # so hashing the string would fail on a no-op rewrite.
-            geometry_source_mask_sha256=sha256(embryo_mask.tobytes()).hexdigest(),
+            geometry_source_mask_sha256=mask_content_fingerprint(embryo_mask),
         )
 
     output_path = Path(output_path)

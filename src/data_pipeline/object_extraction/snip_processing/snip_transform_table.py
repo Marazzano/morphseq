@@ -122,6 +122,24 @@ class SnipTransformTableError(ValueError):
     """A transform table could not be built, validated, read, or replayed."""
 
 
+def mask_content_fingerprint(mask: np.ndarray) -> str:
+    """Hash a DECODED mask, including shape and dtype.
+
+    THE ONE DEFINITION, shared by the writer (snip_geometry) and the verifier (the renderer). Two
+    copies of this arithmetic is precisely how a freeze becomes decorative: I wrote exactly that
+    bug -- the writer hashed bare tobytes() while the verifier hashed shape+dtype+bytes, so every
+    mask "mismatched" on an unchanged well.
+
+    Pixels, not encoding: two RLE strings can serialize one binary mask, so hashing the string would
+    fail on a no-op re-encode while catching nothing real. Shape and dtype join the payload because
+    identical byte sequences under different shapes would otherwise be ambiguous.
+    """
+    import hashlib
+
+    payload = f"{mask.shape}|{mask.dtype}|".encode() + np.ascontiguousarray(mask).tobytes()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _jsonable(value: Any) -> Any:
     """Coerce numpy scalars/arrays and tuples into JSON-native forms, recursively."""
     if isinstance(value, dict):
