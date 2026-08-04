@@ -1,0 +1,41 @@
+# Two-product smoke: the pbx fluorescence pilot, BF + RFP.
+#
+# The first run that renders a real RFP snip through the geometry gate. Everything beneath is
+# unit-tested and the DAG shape is proven by dry run, but no uint16 fluorescence pixel has been
+# through the seam end to end.
+#
+# EXPERIMENT ID INCLUDES THE PLATE TOKEN. Collections compose it as {collection}_{plate_token}
+# (collection_acquisition_union.py), so the id is ..._coll_plate01, not ..._coll. The plate metadata
+# file already follows this: 20260624_2x_td_bf_pbx_coll_plate01_well_metadata.xlsx.
+experiments: ["20260624_2x_td_bf_pbx_coll_plate01"]
+microscope: YX1
+
+# SCOPED TO FOUR WELLS for the first pass. 96 positions x 3 timepoints x 2 channels is a lot of
+# SAM2 to spend before knowing whether the RFP product renders at all. Delete this block to run the
+# full plate once the seam is proven.
+target_wells:
+  20260624_2x_td_bf_pbx_coll_plate01:
+    - 20260624_2x_td_bf_pbx_coll_plate01_A01
+    - 20260624_2x_td_bf_pbx_coll_plate01_A02
+    - 20260624_2x_td_bf_pbx_coll_plate01_B01
+    - 20260624_2x_td_bf_pbx_coll_plate01_B02
+
+image_materialization:
+  products:
+    # BF: geometry source AND the historical display product. Its snips must come back
+    # byte-identical to what the pipeline produced before product keys existed.
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+      write_index_map: true
+      snips:
+        - snip_recipe: clahe_blend
+
+    # RFP (tdtomato, already mapped in the YX1 channel map). no_change is the whole point: the
+    # source is uint16 and must stay uint16 at full scale, because relative intensity across
+    # embryos IS the measurement -- each carries 0, 1, or 2 copies of the transgene.
+    - channel_id: RFP
+      image_product_type: projection
+      projection_method: max
+      snips:
+        - snip_recipe: no_change
