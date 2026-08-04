@@ -33,7 +33,8 @@ from ..types import (
     Frame,
 )
 from .back_direction import compute_back_direction
-from image_geometry import TransformChain, affine_step, flip_x_step
+from image_geometry import TransformChain, affine_step, flip_x_step, resize_step
+from image_geometry.transforms import resize_interpolation_flags
 
 
 def _pixel_center_affine(M: np.ndarray) -> np.ndarray:
@@ -62,6 +63,55 @@ def _pixel_center_affine(M: np.ndarray) -> np.ndarray:
     half = np.array([0.5, 0.5], dtype=np.float64)
     M[:, 2] += M[:, :2] @ half - half
     return M
+
+
+def _prescale_for_downscale(
+    arr: np.ndarray, scale: float, *, is_mask: bool
+) -> tuple[np.ndarray, float]:
+    """Pull a downscale OUT of the fused affine so it can actually anti-alias.
+
+    THE DEFECT THIS REPAIRS. ``cv2.warpAffine`` SILENTLY IGNORES ``INTER_AREA`` — it accepts the
+    flag and resamples without any prefilter. So a fused rotate+scale affine containing a 3x
+    decimation (the production case: 3.2308 -> 10.0 um/px) physically cannot anti-alias, no matter
+    which flag is passed. High-frequency structure folds into false low-frequency structure, and on
+    a binary mask that shows up as ragged, area-losing edges on exactly the thin features (tail,
+    fin) the downstream UOT is trying to measure.
+
+    THE FIX. Do the decimation as its OWN ``cv2.resize`` step, which honors the interpolation
+    policy, and hand the affine only the leftover. Interpolation comes from
+    ``image_geometry.resize_interpolation_flags`` — THE shared policy — rather than being
+    reimplemented here: INTER_AREA for images, INTER_NEAREST for masks.
+
+    THE RESIDUAL. The prescale can only realize integer output dims, so its true ratio is
+    ``out_n/in_n``, NOT the requested factor. Returning ``scale / realized`` as the residual lets
+    the caller compose the exact requested scale back; using the requested factor for the affine
+    instead would reintroduce precisely the systematic sub-pixel bias ``_pixel_center_affine``
+    exists to remove.
+
+    Upscales are returned untouched: there is nothing to prefilter when adding samples.
+    """
+    if cv2 is None:  # pragma: no cover
+        raise ImportError("cv2 is required for _prescale_for_downscale.")
+    if scale >= 1.0:
+        return arr, float(scale)
+
+    h_in, w_in = arr.shape[:2]
+    h_out = max(1, int(round(h_in * scale)))
+    w_out = max(1, int(round(w_in * scale)))
+    if (h_out, w_out) == (h_in, w_in):
+        return arr, float(scale)
+
+    flags = resize_interpolation_flags(
+        in_shape_yx=(h_in, w_in), out_shape_yx=(h_out, w_out), is_mask=is_mask
+    )
+    out = cv2.resize(arr.astype(np.float32), (w_out, h_out), interpolation=flags)
+
+    # Realized ratio from the INTEGER dims — never the requested factor. Both axes are scaled by
+    # one uniform factor here, so averaging them would hide an inconsistency rather than fix one;
+    # the y ratio is authoritative and x is asserted to match by construction of h_out/w_out.
+    realized = h_out / h_in
+    residual = float(scale) / realized
+    return out, residual
 
 
 @dataclass
@@ -169,6 +219,35 @@ class CanonicalAligner:
         M[0, 2] += (self.W / 2) - cx
         M[1, 2] += (self.H / 2) - cy
         return _pixel_center_affine(M)
+
+    def _prescaled_placement(
+        self,
+        mask: np.ndarray,
+        yolk: Optional[np.ndarray],
+        *,
+        cx: float,
+        cy: float,
+        rotation_deg: float,
+        scale: float,
+    ) -> tuple[np.ndarray, Optional[np.ndarray], np.ndarray]:
+        """Anti-aliased decimation first, then the residual rotate/scale/place affine.
+
+        The decimation cannot live in the affine (``warpAffine`` ignores ``INTER_AREA``), so it is
+        split out. That moves the array under the PCA centroid, which was measured in SOURCE
+        coordinates — so the rotation center is carried through the same pixel-center mapping the
+        prescale realized. Skipping that remap would rotate about the wrong point and translate the
+        whole embryo by a scale-dependent offset.
+        """
+        pre_mask, residual = _prescale_for_downscale(mask, scale, is_mask=True)
+        pre_yolk = (
+            _prescale_for_downscale(yolk, scale, is_mask=True)[0] if yolk is not None else None
+        )
+        realized = pre_mask.shape[0] / mask.shape[0]
+        # Pixel-center forward map of the rotation center into prescaled coordinates.
+        cx_p = realized * (cx + 0.5) - 0.5
+        cy_p = realized * (cy + 0.5) - 0.5
+        M = self._placement_affine(cx_p, cy_p, rotation_deg, residual)
+        return pre_mask, pre_yolk, M
 
     def _bbox(self, mask: np.ndarray) -> Optional[tuple[int, int, int, int]]:
         """INCLUSIVE ``(min_y, max_y, min_x, max_x)`` of pixels ``> 0.5``.
@@ -452,8 +531,10 @@ class CanonicalAligner:
         _best_score, best_rot, best_flip = max(candidates, key=lambda x: x[0])
         final_rotation = rotation_needed + best_rot
 
-        M_final = self._placement_affine(cx, cy, final_rotation, scale)
-        aligned_mask = self._warp(mask, M_final)
+        pre_mask, _pre_yolk, M_final = self._prescaled_placement(
+            mask, None, cx=cx, cy=cy, rotation_deg=final_rotation, scale=scale
+        )
+        aligned_mask = self._warp(pre_mask, M_final)
         if best_flip:
             aligned_mask = cv2.flip(aligned_mask, 1)
 
@@ -516,6 +597,7 @@ class CanonicalAligner:
             best_flip=bool(best_flip),
             M_shift=M_shift,
             src_shape_yx=tuple(mask.shape[:2]),
+            prescale_shape_yx=tuple(pre_mask.shape[:2]),
         )
         return final_mask, meta, chain
 
@@ -554,9 +636,11 @@ class CanonicalAligner:
             mask, yolk, rotation_needed, scale, cx, cy, use_yolk=True
         )
 
-        M_final = self._placement_affine(cx, cy, final_rotation, scale)
-        aligned_mask = self._warp(mask, M_final)
-        aligned_yolk = self._warp(yolk, M_final)
+        pre_mask, pre_yolk, M_final = self._prescaled_placement(
+            mask, yolk, cx=cx, cy=cy, rotation_deg=final_rotation, scale=scale
+        )
+        aligned_mask = self._warp(pre_mask, M_final)
+        aligned_yolk = self._warp(pre_yolk, M_final)
         if best_flip:
             aligned_mask = cv2.flip(aligned_mask, 1)
             aligned_yolk = cv2.flip(aligned_yolk, 1)
@@ -635,6 +719,7 @@ class CanonicalAligner:
             best_flip=bool(best_flip),
             M_shift=M_shift,
             src_shape_yx=tuple(mask.shape[:2]),
+            prescale_shape_yx=tuple(pre_mask.shape[:2]),
         )
         return final_mask, final_yolk_mask, meta, chain
 
@@ -673,16 +758,34 @@ def _build_stage1_chain(
     best_flip: bool,
     M_shift: np.ndarray,
     src_shape_yx: tuple[int, int],
+    prescale_shape_yx: tuple[int, int],
 ) -> TransformChain:
-    transforms = [
+    """Record what ACTUALLY executed: anti-aliased prescale, then the residual placement affine.
+
+    The prescale is a real step, not bookkeeping — re-rendering this chain onto the image (which
+    ``to_canonical_grid_frame`` does) must reproduce the mask's geometry exactly. If the decimation
+    were folded back into the affine here, the image path would resample at full resolution through
+    a kernel that cannot anti-alias, and the image and mask would disagree.
+    """
+    transforms = []
+    if tuple(prescale_shape_yx) != tuple(src_shape_yx):
+        transforms.append(
+            resize_step(
+                name="prescale_anti_alias",
+                in_shape_yx=tuple(src_shape_yx),
+                out_shape_yx=tuple(prescale_shape_yx),
+                anti_alias=True,
+            )
+        )
+    transforms.append(
         affine_step(
             name="rotate_scale_center",
             affine_2x3=np.asarray(M_final, dtype=np.float64),
-            in_shape_yx=tuple(src_shape_yx),
+            in_shape_yx=tuple(prescale_shape_yx),
             out_shape_yx=grid_shape_yx,
             interp="nearest",
         )
-    ]
+    )
     if best_flip:
         transforms.append(flip_x_step(shape_yx=grid_shape_yx, interp="nearest"))
     transforms.append(
