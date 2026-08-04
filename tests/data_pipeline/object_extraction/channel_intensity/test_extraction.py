@@ -280,3 +280,56 @@ class TestEvidenceRow:
         assert row["hist_bin_width_dn"] == HIST_BIN_WIDTH_DN
         assert row["intensity_recipe_version"]
         assert row["image_micrometers_per_pixel_y"] == UM[0]
+
+
+class TestAFrameSizedMaskIsNotANeighbour:
+    """A failed segmentation must not destroy a DIFFERENT embryo's background.
+
+    MEASURED on pbx well B02: mask m0000 is a full-frame 2304x2304 blob (4,987,142 px, ~100x a real
+    embryo, confidence 0.0, is_valid_mask False). The rule "an invalid mask is still a fish emitting
+    photons" is correct in general and kept it as a neighbour -- but it covers the whole frame, so
+    dilating it erased 100% of the true embryo's annulus. That well produced annulus_px 0,
+    annulus_excluded_px 132,627, and a NaN pooled null: no background estimate at all, caused
+    entirely by another mask's failure.
+    """
+
+    def _target_and_blob(self):
+        target = _disc(SHAPE[0] // 2, SHAPE[1] // 2, 6)
+        blob = np.ones(SHAPE, dtype=bool)  # the whole frame, as B02's m0000 was
+        return target, blob
+
+    def test_the_annulus_survives_a_frame_sized_neighbour(self):
+        target, blob = self._target_and_blob()
+        exclusion, n_neighbors = neighbor_union_mask(
+            target_mask_id="target",
+            target_box=BoxYX.from_mask(target),
+            neighbors=[_row("target", target), _row("blob", blob)],
+            decode=_decode,
+            shape_yx=SHAPE,
+            outer_radius_um=20.0,
+            exclude_radius_um=25.0,
+            um_per_px_yx=(1.0, 1.0),
+        )
+        assert n_neighbors == 0, "a frame-sized mask is a segmentation failure, not an object"
+        assert not exclusion.any(), (
+            "the frame-sized mask was dilated into an exclusion covering everything, which is "
+            "exactly what erased B02's annulus and left the well with no background estimate"
+        )
+
+    def test_a_real_neighbour_is_still_excluded(self):
+        # The guard must reject only impossible masks. A genuine close fish is the whole reason
+        # neighbour exclusion exists, and rejecting it would silently readmit contamination.
+        target = _disc(SHAPE[0] // 2, SHAPE[1] // 2, 6)
+        neighbour = _disc(SHAPE[0] // 2, SHAPE[1] // 2 + 18, 6)
+        exclusion, n_neighbors = neighbor_union_mask(
+            target_mask_id="target",
+            target_box=BoxYX.from_mask(target),
+            neighbors=[_row("target", target), _row("near", neighbour)],
+            decode=_decode,
+            shape_yx=SHAPE,
+            outer_radius_um=20.0,
+            exclude_radius_um=8.0,
+            um_per_px_yx=(1.0, 1.0),
+        )
+        assert n_neighbors == 1
+        assert exclusion.any()

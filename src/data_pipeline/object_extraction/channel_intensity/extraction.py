@@ -58,6 +58,11 @@ INTENSITY_RECIPE_VERSION = "native_annulus_hist_v1"
 HIST_BIN_WIDTH_DN = 32
 HIST_N_BINS = 2048
 HIST_MIN_DN = 0
+
+# A neighbour mask larger than this fraction of the frame is rejected as a segmentation failure
+# rather than treated as an object. Generous by design: a real embryo occupies ~1-2% of these
+# frames, so half the frame is unambiguous and this cannot reject a crowded-but-real well.
+MAX_NEIGHBOR_FRAME_FRACTION = 0.5
 _HIST_SHIFT = 5  # value >> 5 == value // 32; exact for the power-of-two bin width above.
 
 
@@ -237,6 +242,20 @@ def neighbor_union_mask(
     chances to disagree; one EDT on the union is cheaper and cannot drift. The exclusion radius is
     typically LARGER than the annulus outer radius, because a neighbor's halo reaches past its mask
     edge.
+
+    A FRAME-SIZED "NEIGHBOUR" IS A SEGMENTATION FAILURE, NOT A FISH, and is dropped. This is the one
+    place where "an invalid mask still emits photons" stops being true: a mask covering most of the
+    frame is not an object, and dilating it erases the annulus of every real embryo in the well.
+
+    MEASURED on pbx well B02: mask m0000 is a full-frame 2304x2304 blob (4,987,142 px, ~100x a real
+    embryo, confidence 0.0). Kept as a neighbour it wiped 100% of the true embryo's annulus --
+    annulus_px 0, annulus_excluded_px 132,627 -- so the well produced NO background estimate at all
+    and its pooled null came out NaN. One failed segmentation silently destroyed a different
+    embryo's measurement.
+
+    The threshold is deliberately generous (``MAX_NEIGHBOR_FRAME_FRACTION``): it is not trying to
+    judge embryo size, only to reject masks that cannot be objects. A real embryo occupies ~1-2% of
+    these frames, so a mask over half the frame is unambiguous.
     """
     padded = target_box.pad(
         int(np.ceil(outer_radius_um / um_per_px_yx[0])),
@@ -244,7 +263,9 @@ def neighbor_union_mask(
     )
 
     union = np.zeros(shape_yx, dtype=bool)
+    frame_px = int(shape_yx[0]) * int(shape_yx[1])
     n_decoded = 0
+    n_rejected_frame_sized = 0
     for row in neighbors:
         if str(row["mask_id"]) == str(target_mask_id):
             continue
@@ -256,7 +277,12 @@ def neighbor_union_mask(
         )
         if not padded.intersects(neighbor_box):
             continue
-        union |= np.asarray(decode(row)).astype(bool)
+        neighbor_mask = np.asarray(decode(row)).astype(bool)
+        if np.count_nonzero(neighbor_mask) > MAX_NEIGHBOR_FRAME_FRACTION * frame_px:
+            # Not an object. Including it would erase this embryo's entire annulus.
+            n_rejected_frame_sized += 1
+            continue
+        union |= neighbor_mask
         n_decoded += 1
 
     if n_decoded == 0 or exclude_radius_um <= 0:
