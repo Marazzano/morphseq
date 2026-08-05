@@ -78,7 +78,13 @@ if [[ ! -s "${OUTPUT_CSV}" || ! -d "${MASK_DIR}" ]]; then
     echo "ERROR: SAM2 production outputs are incomplete: ${OUTPUT_CSV}, ${MASK_DIR}" >&2
     exit 2
 fi
-EXPECTED_MASK_COUNT="$(awk 'END {print NR - 1}' "${OUTPUT_CSV}")"
+# Count logical CSV records, not physical lines: quoted SeaHub metadata fields
+# legitimately contain embedded newlines.
+EXPECTED_MASK_COUNT="$(
+    "${CONDA}" run -n "${CONDA_ENV}" --no-capture-output \
+        python -c 'import csv, sys; print(sum(1 for _ in csv.DictReader(open(sys.argv[1], encoding="utf-8", newline=""), strict=True)))' \
+        "${OUTPUT_CSV}"
+)"
 ACTUAL_MASK_COUNT="$(find "${MASK_DIR}" -maxdepth 1 -type f -name '*.png' | wc -l)"
 if [[ "${ACTUAL_MASK_COUNT}" -ne "${EXPECTED_MASK_COUNT}" ]]; then
     echo "ERROR: persisted SAM2 mask count ${ACTUAL_MASK_COUNT} != manifest row count ${EXPECTED_MASK_COUNT}." >&2
