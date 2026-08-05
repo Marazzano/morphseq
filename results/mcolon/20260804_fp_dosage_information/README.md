@@ -308,3 +308,53 @@ to entropy, so the effective count discounts exactly what inflates the raw one.
 Result on 165 embryo-times: resolution 125, separation 141, unsaturated 164, **all three: 122**.
 
 Thresholds are starting points to calibrate against the full plate, not established cutoffs.
+
+---
+
+# AT 52 WELLS: the carriers are ONE CONTINUOUS MODE, not two
+
+With ~2x the data, the picture resolves — and it overturns the earlier "~2x split".
+
+## The split my method reported was an artifact
+
+Largest-log-gap splitting still returns a number (2.49x at t1, 2.62x at t2, QC-gated), but looking
+at the sorted values shows why that is meaningless:
+
+```
+t2:  12.6 12.6 14.2 14.2 14.8 14.8 15.6 15.6 18.5 19.5 21.3 21.3 22.1 24.3
+     26.5 28.7 28.7 31.7 33.1 36.7 37.7 43.4 44.3 60.0 60.0 65.8 65.8
+```
+
+That is a continuum. A gap-finder must return *some* boundary, so it cuts an arbitrary point and
+reports a ratio.
+
+## Tested against a unimodal null
+
+Comparing the observed largest log-gap to 2000 log-normal samples of the same size and spread:
+
+| t | n | largest gap | null median | null p95 | p | verdict |
+|---|---|---|---|---|---|---|
+| 1 | 27 | 0.582 | 0.446 | 0.943 | **0.281** | one continuous mode |
+| 2 | 27 | 0.439 | 0.529 | 1.096 | **0.672** | one continuous mode |
+
+No evidence of bimodality. The carrier distribution is **4.4-5.2x wide** — consistent with the
+A09/G09 matched pair (4-7x) and far too wide for a 2x copy-number step.
+
+## Converging lines of evidence
+
+1. **A09 vs G09** — same genotype, same treatment, matched size and orientation: 4-7x apart
+2. **Population shape** — 27 QC-passing carriers per timepoint form one continuous log-normal-ish
+   distribution spanning 4-5x, with no significant gap
+3. **The earlier 2x** — came from a 4-embryo forced k=3, and from an unmatched pair (B02 compact vs
+   G09 elongated)
+
+**Brightness in this line reflects continuous expression-level variation, not discrete copy
+number.** Any 3-class dosage assignment from intensity would be imposing structure that the data
+does not contain.
+
+## Two open items
+
+- **Carrier fraction is 91-94%**, up from 77-85% at 26 wells, against ~75% for a het incross.
+  Either the ab floor is too permissive or this is not a simple het incross. Worth resolving.
+- **The ~3.0 DN/ms dim group persists** (6 embryos at t2, was 3 at 26 wells) and sits well below
+  the continuum. It is a distinct population, not the low tail — still unexplained.
