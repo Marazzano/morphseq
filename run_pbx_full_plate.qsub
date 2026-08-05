@@ -85,6 +85,12 @@ echo "[pbx-smoke] env.yaml -> smoke roots (${SMOKE_ROOT})"
 export PYTHONPATH="${REPO_ROOT}/src:${PYTHONPATH:-}"
 cd "${REPO_ROOT}"
 
+# --keep-going is REQUIRED for a 96-well run. The DAG is per-well parallel, but Snakemake's DEFAULT
+# is to stop SCHEDULING new jobs the moment any job fails ("Exiting because a job execution
+# failed") -- it drains what is in flight and quits. That is why one bad well (B03) ended the run at
+# 812/1197 with ~70 wells never even attempted: nothing blocked them, the scheduler simply stopped
+# feeding the DAG. Per-well independence buys nothing without this flag.
+#
 # --resources gpu=1 is REQUIRED, not decorative. frame_masks declares gpu=1 so SAM2 holds the card
 # for its duration, but Snakemake only enforces that if the budget is also passed on the CLI --
 # without it, --cores 8 would start four SAM2 jobs on one GPU.
@@ -94,6 +100,7 @@ cd "${REPO_ROOT}"
   --cores 8 \
   --resources gpu=1 \
   --rerun-incomplete \
+  --keep-going \
   --printshellcmds \
   "${TARGET:-${SMOKE_ROOT}/out/object_extraction/20260624_2x_td_bf_pbx_coll_plate01/channel_intensity/20260624_2x_td_bf_pbx_coll_plate01_channel_intensity.csv}"
 
