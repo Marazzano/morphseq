@@ -20,6 +20,7 @@ well-grain estimator and lives in ``feature_extraction/channel_intensity``.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -29,10 +30,16 @@ from data_pipeline.object_extraction.channel_intensity.extraction import (
     ChannelIntensityError,
     extract_embryo_intensity_evidence,
 )
+from data_pipeline.object_extraction.channel_intensity.contract import (
+    CHANNEL_INTENSITY_ACQUISITION_COLUMNS,
+    CHANNEL_INTENSITY_COLUMNS,
+)
 from data_pipeline.object_extraction.segmentation.masks.mask_rle import decode_binary_mask_rle
 
 # Physical radii for the background annulus. In MICROMETRES: the membership test is physical, so
 # these do not need restating when a product's calibration changes.
+log = logging.getLogger(__name__)
+
 DEFAULT_INNER_RADIUS_UM = 150.0
 DEFAULT_OUTER_RADIUS_UM = 400.0
 # Deliberately LARGER than the outer radius: a neighbour's halo reaches past its mask edge, so
@@ -156,12 +163,30 @@ def run_channel_intensity(
             rows.append(evidence)
 
     if not rows:
-        raise ChannelIntensityError(
-            f"measured no embryos for {source_image_product_key!r}. A well with masks and frames "
-            "that yields no rows means the join found no overlapping timepoints."
+        # AN EMPTY WELL IS A FACT, NOT A PIPELINE FAILURE. A well whose every mask is an invalid
+        # full-frame blob (segmentation found no embryo) legitimately has nothing to measure --
+        # observed on B03, whose three masks are all ~5.0M px with is_valid_mask False, the same
+        # pathology as B02's m0000.
+        #
+        # Raising here killed a 96-well run at job 812 over ONE bad well, which is the wrong
+        # severity: it discards 91 wells of good measurements to report a well that has no data.
+        # An empty shard is the honest artifact -- the merge row-stacks it to nothing, and the
+        # absence is visible as a well missing from the merged table rather than as a dead DAG.
+        #
+        # A MISSING PRODUCT still raises (above): that is a configuration error, not a fact about
+        # this well.
+        log.warning(
+            "channel_intensity: no measurable embryo in %s for %r -- every mask is invalid or "
+            "empty. Writing an empty shard; this well contributes no rows.",
+            frame_masks_csv, source_image_product_key,
         )
 
-    frame_out = pd.DataFrame(rows)
+    # An empty shard still needs the CONTRACT'S COLUMNS. pd.DataFrame([]) has none, and the merge
+    # validates required_columns -- so a well with nothing to measure would take the merge down
+    # instead of contributing zero rows, reintroducing the failure this branch exists to avoid.
+    frame_out = pd.DataFrame(rows) if rows else pd.DataFrame(
+        columns=list(CHANNEL_INTENSITY_COLUMNS) + list(CHANNEL_INTENSITY_ACQUISITION_COLUMNS)
+    )
     # Histograms are lists; CSV would stringify them inconsistently across pandas versions and the
     # pooling step needs them back as exact integer arrays.
     for column in ("annulus_hist_counts", "embryo_hist_counts"):
