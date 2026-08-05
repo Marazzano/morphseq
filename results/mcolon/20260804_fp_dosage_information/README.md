@@ -474,3 +474,19 @@ Earlier passes reported entropy gaps and asked whether they "looked small". This
 quantitative prediction from first principles and measures the residual against it. The residual —
 0.18–0.30 bits — is the honest estimate of real biological difference between embryos, and it is
 comparable to the 0.15–0.20 bit floor measured between already-matched-brightness pairs.
+
+## Confirmed at 3x the sample
+
+Re-run at 83 wells / 289 embryo-times (from 165), 10,069 pairs (from ~3,000):
+
+| t | embryos | pairs | r | slope (theory 1.000) | residual | median &#124;ΔH_norm&#124; |
+|---|---|---|---|---|---|---|
+| 1 | 113 | 6328 | **+0.985** | **1.041** | 0.276 bits | 0.309 |
+| 2 | 87 | 3741 | **+0.979** | 0.942 | 0.364 bits | 0.238 |
+
+The t1 slope moved from 0.968 → **1.041**, i.e. *toward* theory and slightly past it, which is how a
+real law behaves as it is measured more precisely — not how a fitted artifact behaves. r stays
+above 0.979 with 3x the pairs.
+
+QC at this sample: 289 embryo-times, resolution 226, separation 252, unsaturated 284, **all three
+219**.
