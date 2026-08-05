@@ -46,24 +46,30 @@ from data_pipeline.feature_extraction.channel_intensity.pooling import (  # noqa
 EXP = "20260624_2x_td_bf_pbx_coll_plate01"
 CENTERS = (np.arange(2048) + 0.5) * HIST_BIN_WIDTH_DN
 
-# CALIBRATED against the matched-brightness entropy floor, on the RANGE-RELATIVE measure (see
-# evaluate()). Re-swept after that measure replaced the encoding-dependent one:
+# CALIBRATED AGAINST BIOLOGICAL GROUND TRUTH, not against a floor derived from the same data.
+# The plate's 8 `ab` wells carry NO transgene, so every ab embryo-time MUST fail the gate; any that
+# passes is a false positive on a known negative. 24 ab embryo-times vs 310 transgenic:
 #
-#     min_eff   t1 kept   t1 norm/floor    t2 kept   t2 norm/floor
-#         0       165         6.89           160         7.98
-#        64       138         3.72           109         1.39
-#        96       123         1.86           105         1.25
-#       128       102         1.42            99         1.18
-#       160        38         0.59            66         0.72
+#     thr    ab pass    FPR     transgenic pass    TPR
+#      40        3     12.5%          276         89.0%
+#      55        0      0.0%          269         86.8%     <- ab MAXIMUM is 54.6
+#      64        0      0.0%          266         85.8%
+#     128        0      0.0%          237         76.5%
+#     160        0      0.0%          163         52.6%
 #
-# 128 brings both timepoints to ~1.2-1.4x the floor while keeping ~100 embryos each. 160 would go
-# below the floor but keeps only 38 at t1, which is over-pruning to chase a number.
+# 55 is the SMALLEST threshold with zero false positives, and everything above it only discards
+# real embryos: 128 (the previous value, tuned against a synthetic entropy floor) throws away 32
+# transgenic embryo-times for no gain in specificity.
+MIN_EFFECTIVE_STATES = 55.0
+# SEPARATION IS RETAINED AS A REPORTED FEATURE BUT NO LONGER GATED ON. Measured against the same
+# ground truth, it is the WEAK check: at >=5 it passes 8 of 24 known-negative ab embryos, and it
+# needs >=26.6 to exclude them all, which costs a third of the transgenic population. Worse, once
+# effective_states>=55 is applied the false-positive rate is ALREADY zero, so every separation
+# increment only removes true positives (87% -> 81% at sigma>=10, -> 69% at sigma>=20).
 #
-# The sweep is MONOTONIC here, unlike the earlier one on the absolute-DN measure -- another sign
-# that the encoding-free version is measuring the intended thing rather than partly the encoding.
-MIN_EFFECTIVE_STATES = 128.0
-# The other two remain a priori, NOT calibrated -- stated so the difference is visible.
-MIN_SEPARATION_SIGMA = 5.0    # embryo mean this many background sigmas above the background mode
+# That some ab embryos reach 26 sigma is itself worth knowing -- a non-fluorescent embryo reading
+# far above its own well background means autofluorescence or a bad background estimate, not signal.
+MIN_SEPARATION_SIGMA = 0.0   # not gating; kept so the column is still computed and reported
 MAX_SATURATED_FRAC = 0.01     # >1% of pixels at the ceiling compresses the bright tail
 
 # Bins spanning each embryo's OWN percentile range. Fixing the COUNT rather than the WIDTH is what

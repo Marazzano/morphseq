@@ -245,3 +245,73 @@ candidate. Head-to-head at matched retention it is consistently the weaker discr
 They correlate at ~0.8, so they measure related things, but entropy weights *how* the pixels are
 distributed across the range rather than just how wide it is. Kept as a reported feature; not the
 gate.
+
+---
+
+# CALIBRATED AGAINST BIOLOGICAL GROUND TRUTH (supersedes the entropy-floor calibration)
+
+Everything above tuned thresholds against a matched-brightness *entropy floor* derived from the same
+data. That is circular. The plate carries **real ground truth**: the 8 `ab` wells have no transgene,
+so **every `ab` embryo-time must fail**. Any that passes is a false positive on a known negative.
+
+24 ab embryo-times vs 310 transgenic.
+
+## `effective_states` sweep against the negatives
+
+| threshold | ab pass | FPR | transgenic pass | TPR |
+|---|---|---|---|---|
+| 40 | 3 | 12.5% | 276 | 89.0% |
+| **55** | **0** | **0.0%** | **269** | **86.8%** |
+| 64 | 0 | 0.0% | 266 | 85.8% |
+| 128 | 0 | 0.0% | 237 | 76.5% |
+| 160 | 0 | 0.0% | 163 | 52.6% |
+
+The ab **maximum is 54.6**, so 55 is the smallest threshold with zero false positives. Everything
+above it only discards real embryos — **128, the previous value, throws away 32 transgenic
+embryo-times for no gain in specificity.**
+
+## `separation_sigma` is the weak check and has been removed from the gate
+
+| threshold | ab pass (of 24) | transgenic pass (of 310) |
+|---|---|---|
+| 5 | **8** | 288 |
+| 10 | 4 | 264 |
+| 20 | 1 | 218 |
+| 26.6 | 0 | 204 |
+
+At the a priori `>= 5` it **passes 8 of 24 known negatives**. Excluding them all needs 26.6, costing
+a third of the transgenic population. And once `effective_states >= 55` is applied the FPR is
+already zero, so separation only removes true positives:
+
+```
+eff>=55 alone      transgenic 269/310 (87%)
++ separation>=10   transgenic 251/310 (81%)
++ separation>=20   transgenic 215/310 (69%)
+```
+
+Retained as a reported feature, not gated on. **That some ab embryos reach 26σ is itself a finding**
+— a non-fluorescent embryo reading far above its own well background means autofluorescence or a bad
+background estimate, not signal.
+
+## Final gate performance
+
+```
+resolution_ok    effective_states >= 55     (calibrated on ab negatives)
+unsaturated_ok   saturated_frac   <= 0.01   (a priori, no negatives exercise it)
+```
+
+| group | pass | |
+|---|---|---|
+| **ab (no transgene)** | **0/24** | **FPR 0.0% — all 24 correctly rejected** |
+| tdtomato | 149/177 | 84% |
+| pbx4/pbx1b crispant | 115/133 | 86% |
+
+## The remaining 46 transgenic failures are the next question
+
+46 transgenic embryo-times across 26 wells fail the gate. Some are genuine measurement failures;
+some are likely **real non-fluorescent embryos in transgenic wells** — the user noted that
+conditions were sometimes picked without confirming fluorescence.
+
+Those are unlabelled true negatives. Separating "the measurement failed" from "this embryo has no
+transgene" needs either a visual pass over those 46 or an independent genotype call. Until then the
+84–86% TPR is a **lower bound**: some of the 14–16% rejected may be correctly rejected.
