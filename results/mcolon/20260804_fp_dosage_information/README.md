@@ -1,3 +1,13 @@
+> **PAUSED 2026-08-05.** Two threads left in a well-defined state:
+> 1. **The QC gate** — designed and calibrated against biological ground truth, **not wired into
+>    the DAG**. See `INTENSITY_QC_DESIGN.md`.
+> 2. **Information preservation under normalization** — **preliminary: roughly yes**, conditional on
+>    the embryo passing that QC. Quantified below against a matched-brightness null.
+>
+> The two are coupled: normalization preserves information *when the dim embryo is adequately
+> digitized*, which is exactly what the gate decides. Neither is finished; both are reproducible
+> from `scripts/`.
+
 # FP dosage: is the same information there after normalization?
 
 **Question.** The transgene is a **pan-nuclear** marker, so RFP intensity is a proxy for **cell
