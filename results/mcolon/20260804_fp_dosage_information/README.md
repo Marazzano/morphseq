@@ -403,3 +403,74 @@ already-matched embryos show anyway.
 
 This does **not** license pooling for dosage — normalization removes the absolute scale, which is
 where a copy-number signal would live. See the pattern/dosage split above.
+
+---
+
+# THE FORMAL ARGUMENT (`scripts/plot_entropy_scale_proof.py` → `output/entropy_scale_proof.png`)
+
+## The claim, stated so it can be falsified
+
+Let X be an embryo's pixel-intensity distribution and s a scale factor. With **fixed** bin width w
+(here 32 DN), a value v lands in bin ⌊v/w⌋, so scaling by s widens the occupied index range by s.
+A scale change is a change of measure with constant Jacobian — it adds log₂(s) to entropy and
+nothing to shape:
+
+```
+    H_fixed(sX) = H_fixed(X) + log₂(s)          (1)
+    H_norm (sX) = H_norm (X)                    (2)
+```
+
+where H_norm bins on a grid rescaled to each sample's own percentile span.
+
+Together these give a sharp prediction for **any** two embryos i, j:
+
+```
+    H_raw(j) − H_raw(i)   ==  log₂( mean_j / mean_i )   if the shapes are the same
+    H_norm(j) − H_norm(i) ==  0                          if the shapes are the same
+```
+
+**Any departure is real distributional difference.** That is the argument: it converts "is the
+information the same?" into a residual against a known law, so the null has teeth.
+
+## A. The identity, verified on synthetic data
+
+One log-normal distribution, rescaled 1x → 8x:
+
+| | max deviation |
+|---|---|
+| fixed-grid ΔH vs log₂(s) | **0.0057 bits** |
+| normalized ΔH across 8x | **0.0000 bits** |
+
+## B. Two real embryos, 5.2x apart
+
+G06 (12.6 DN/ms) vs F05 (65.8 DN/ms):
+
+| | value |
+|---|---|
+| brightness ratio | 5.20x |
+| predicted raw ΔH = log₂(5.20) | **+2.38 bits** |
+| observed raw ΔH | **+2.01 bits** |
+| observed normalized ΔH | **+0.28 bits** |
+
+Panel B2 is the visual core: divided by their own means, the two histograms nearly superimpose. The
+raw 2.01-bit gap was the scale term; 0.28 bits of genuine shape difference survives.
+
+## C. Every pair, against the prediction
+
+| t | pairs | corr(ΔH_raw, log₂ ratio) | slope (theory 1.000) | residual |
+|---|---|---|---|---|
+| 1 | 1891 | **+0.986** | 0.968 | 0.178 bits |
+| 2 | 1081 | **+0.973** | 0.900 | 0.296 bits |
+
+Raw ΔH follows the log₂ law along the diagonal; normalized ΔH collapses onto zero.
+
+**Nearly all raw entropy variation between embryos is the scale term the theory predicts.** The
+slopes sit slightly below 1.0 (0.90–0.97), which is the expected finite-bin departure — the identity
+is exact only in the fine-bin limit, and the dimmest embryos occupy few enough bins to feel it.
+
+## Why this is stronger than the earlier comparisons
+
+Earlier passes reported entropy gaps and asked whether they "looked small". This makes a
+quantitative prediction from first principles and measures the residual against it. The residual —
+0.18–0.30 bits — is the honest estimate of real biological difference between embryos, and it is
+comparable to the 0.15–0.20 bit floor measured between already-matched-brightness pairs.
