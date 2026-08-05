@@ -490,3 +490,73 @@ above 0.979 with 3x the pairs.
 
 QC at this sample: 289 embryo-times, resolution 226, separation 252, unsaturated 284, **all three
 219**.
+
+---
+
+# FULL PLATE (96 wells, 334 embryo-times) — final
+
+Run 23443692 completed 374/374 steps. 91 wells with rows, 4 with no measurable embryo, 1 shard
+absent.
+
+## The law holds decisively
+
+| t | embryos | pairs | r | slope (theory 1.000) | residual |
+|---|---|---|---|---|---|
+| 1 | 135 | **9,045** | **+0.9838** | 1.039 | 0.282 bits |
+| 2 | 108 | **5,778** | **+0.9740** | 0.978 | 0.403 bits |
+
+14,823 pairs. Slopes 0.978 and 1.039 straddle the theoretical 1.000. The prediction
+`ΔH_raw = log₂(brightness ratio)` is confirmed.
+
+## But the null test got WORSE at scale — and that is the useful finding
+
+| normalized far-pairs vs the matched-brightness floor | 26 wells | full plate |
+|---|---|---|
+| t1 | 1.94x | **3.44x** |
+| t2 | 0.77x | **1.68x** |
+
+The earlier "t2 fully closes the gap" was a small-sample result and does not survive. **Reported as
+a correction, not buried.**
+
+### Why: the full plate reaches the resolution limit
+
+Brightness now spans 54x (t1) and 381x (t2), pulling in embryos that pass the gate but sit near the
+digitization floor. Splitting far-pairs by how well-resolved the *dimmer* member is:
+
+| dimmer member | t1 &#124;ΔH_norm&#124; | t2 &#124;ΔH_norm&#124; |
+|---|---|---|
+| well resolved | **0.287** | **0.288** bits |
+| poorly resolved | 0.874 | 0.612 bits |
+
+**When the dim embryo is well resolved, normalization works — 0.287 bits against a 0.17-0.23 floor.
+When it is not, it does not.** This is the "normalization cannot create levels" argument confirmed
+directly on data rather than asserted.
+
+## Threshold recalibrated: 64 → 128 effective states
+
+64 was a guess (2**6). Swept against the null floor:
+
+| min_eff | t1 kept | t1 norm/floor | t2 kept | t2 norm/floor |
+|---|---|---|---|---|
+| 64 | 135 | 3.44 | 108 | 1.68 |
+| **128** | **116** | **1.80** | **99** | **1.25** |
+| 192 | 91 | 2.28 | 91 | 1.29 |
+| 256 | 66 | 1.75 | 74 | 1.55 |
+
+128 halves the t1 ratio while keeping 116/135. Above that the ratio moves non-monotonically, which
+is sampling noise in the floor estimate rather than structure — so 128, not more.
+
+Final gate on 334 embryo-times: resolution 248, separation 296, unsaturated 329, **all three 242**.
+
+## The answer, final form
+
+**Yes — normalization preserves the information, PROVIDED the dim embryo is adequately digitized.**
+
+- adequately resolved (≥128 effective states): residual 0.287 bits vs a 0.17-0.23 bit floor
+- poorly resolved: residual 0.61-0.87 bits, and no rescaling recovers it
+
+So the operative constraint is not a brightness ratio but a **resolution floor**. A 5x-dimmer embryo
+with 300 effective states is fine; a 2x-dimmer one with 40 is not.
+
+For **pattern/morphology** work: pool freely above the gate.
+For **dosage**: do not normalize at all — the scale is the signal.

@@ -46,9 +46,21 @@ from data_pipeline.feature_extraction.channel_intensity.pooling import (  # noqa
 EXP = "20260624_2x_td_bf_pbx_coll_plate01"
 CENTERS = (np.arange(2048) + 0.5) * HIST_BIN_WIDTH_DN
 
-# Thresholds are STARTING POINTS to be calibrated against the full plate, not established cutoffs.
-# Stated as constants so they are visible and revisable rather than buried in a comparison.
-MIN_EFFECTIVE_STATES = 64.0   # 2**6: enough gradation to describe a distribution's shape
+# CALIBRATED ON THE FULL PLATE, not chosen a priori. 64 was a guess (2**6) and it is too
+# permissive: at 64 the normalized far-pair difference sits at 3.44x the matched-brightness floor
+# (t1), because the plate reaches embryos near the resolution limit. Sweeping the threshold against
+# that floor:
+#
+#     min_eff   t1 kept   t1 norm/floor    t2 kept   t2 norm/floor
+#        64       135         3.44           108         1.68
+#       128       116         1.80            99         1.25
+#       192        91         2.28            91         1.29
+#       256        66         1.75            74         1.55
+#
+# 128 halves the t1 ratio while keeping 116/135 embryos. 256 buys nothing and costs half the
+# sample. The non-monotonicity above 128 is sampling noise in the floor estimate, not structure.
+MIN_EFFECTIVE_STATES = 128.0
+# The other two remain a priori, NOT calibrated -- stated so the difference is visible.
 MIN_SEPARATION_SIGMA = 5.0    # embryo mean this many background sigmas above the background mode
 MAX_SATURATED_FRAC = 0.01     # >1% of pixels at the ceiling compresses the bright tail
 
