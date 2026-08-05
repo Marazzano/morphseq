@@ -183,3 +183,65 @@ feature_extraction/channel_intensity_qc/
    correlation is `-0.035` against `+0.751` for separation. So `effective_states` tracks SIGNAL
    QUALITY, not mask size, and the threshold does not penalise small embryos. This was the check
    most likely to invalidate the whole gate, so it is worth having done first.
+
+---
+
+# CORRECTION: `effective_states` was bit-depth dependent
+
+The gate as first written binned entropy on the **fixed 32-DN grid**, so the number depended on the
+image encoding, not just the data. Demonstrated directly — one distribution, two encodings, same
+32-DN bins:
+
+| encoding | effective_states |
+|---|---|
+| 8-bit | **5.7** |
+| 16-bit | **1479.8** |
+| ratio | **259x for identical data** |
+
+A gate at `>= 128` would have rejected **every 8-bit image on principle**, penalising acquisition
+format rather than data quality.
+
+## The fix: bin as a fraction of range, not in absolute DN
+
+Bin each embryo's own 0.5–99.5 percentile span into a **fixed number** of bins (256). Fixing the
+count rather than the width is what makes it encoding-free:
+
+| encoding | range-relative effective_states |
+|---|---|
+| 8-bit | 184.4 |
+| 16-bit | 151.1 |
+| ratio | **0.82x** |
+
+`entropy_fixed_grid_bits` is retained as a diagnostic — its scale-dependence is exactly the subject
+of the entropy-scale analysis, so it must stay available, just not be gated on.
+
+## Recalibrated, and the sweep is now monotonic
+
+| min effective | t1 kept | t1 ratio | t2 kept | t2 ratio |
+|---|---|---|---|---|
+| 0 | 165 | 6.89 | 160 | 7.98 |
+| 64 | 138 | 3.72 | 109 | 1.39 |
+| 96 | 123 | 1.86 | 105 | 1.25 |
+| **128** | **102** | **1.42** | **99** | **1.18** |
+| 160 | 38 | 0.59 | 66 | 0.72 |
+
+128 brings both timepoints to ~1.2–1.4x the floor while keeping ~100 embryos each. 160 goes below
+the floor but keeps only 38 at t1 — over-pruning to chase a number.
+
+**The sweep is monotonic here**, unlike the earlier one on the absolute-DN measure, which is further
+evidence the encoding-free version measures the intended thing.
+
+## Also considered and rejected: `span_in_sigmas`
+
+`(p99 − p01) / background_sigma` is bit-depth-free by construction and was the obvious simpler
+candidate. Head-to-head at matched retention it is consistently the weaker discriminator:
+
+| retention | t1: effective_states | t1: span_in_sigmas | t2: effective_states | t2: span_in_sigmas |
+|---|---|---|---|---|
+| 85% | 3.38 | 4.23 | 5.09 | 6.87 |
+| 70% | **1.01** | 3.31 | **1.17** | 1.88 |
+| 55% | 1.13 | 1.62 | 0.96 | 1.01 |
+
+They correlate at ~0.8, so they measure related things, but entropy weights *how* the pixels are
+distributed across the range rather than just how wide it is. Kept as a reported feature; not the
+gate.

@@ -46,23 +46,29 @@ from data_pipeline.feature_extraction.channel_intensity.pooling import (  # noqa
 EXP = "20260624_2x_td_bf_pbx_coll_plate01"
 CENTERS = (np.arange(2048) + 0.5) * HIST_BIN_WIDTH_DN
 
-# CALIBRATED ON THE FULL PLATE, not chosen a priori. 64 was a guess (2**6) and it is too
-# permissive: at 64 the normalized far-pair difference sits at 3.44x the matched-brightness floor
-# (t1), because the plate reaches embryos near the resolution limit. Sweeping the threshold against
-# that floor:
+# CALIBRATED against the matched-brightness entropy floor, on the RANGE-RELATIVE measure (see
+# evaluate()). Re-swept after that measure replaced the encoding-dependent one:
 #
 #     min_eff   t1 kept   t1 norm/floor    t2 kept   t2 norm/floor
-#        64       135         3.44           108         1.68
-#       128       116         1.80            99         1.25
-#       192        91         2.28            91         1.29
-#       256        66         1.75            74         1.55
+#         0       165         6.89           160         7.98
+#        64       138         3.72           109         1.39
+#        96       123         1.86           105         1.25
+#       128       102         1.42            99         1.18
+#       160        38         0.59            66         0.72
 #
-# 128 halves the t1 ratio while keeping 116/135 embryos. 256 buys nothing and costs half the
-# sample. The non-monotonicity above 128 is sampling noise in the floor estimate, not structure.
+# 128 brings both timepoints to ~1.2-1.4x the floor while keeping ~100 embryos each. 160 would go
+# below the floor but keeps only 38 at t1, which is over-pruning to chase a number.
+#
+# The sweep is MONOTONIC here, unlike the earlier one on the absolute-DN measure -- another sign
+# that the encoding-free version is measuring the intended thing rather than partly the encoding.
 MIN_EFFECTIVE_STATES = 128.0
 # The other two remain a priori, NOT calibrated -- stated so the difference is visible.
 MIN_SEPARATION_SIGMA = 5.0    # embryo mean this many background sigmas above the background mode
 MAX_SATURATED_FRAC = 0.01     # >1% of pixels at the ceiling compresses the bright tail
+
+# Bins spanning each embryo's OWN percentile range. Fixing the COUNT rather than the WIDTH is what
+# makes the measure independent of bit depth; 256 is the ceiling on effective_states.
+N_RELATIVE_BINS = 256
 
 
 def shannon_bits(counts) -> float:
@@ -81,10 +87,29 @@ def evaluate(row, null) -> dict:
     sigma = float(null["null_robust_sigma_dn"])
     n_px = int(row["embryo_px"])
 
-    entropy = shannon_bits(counts)
-    # EFFECTIVE states, not unique values: 2**H asks how many states are actually carrying the
-    # distribution, so a level occupied by a single noisy pixel contributes almost nothing.
+    # ENTROPY ON A RANGE-RELATIVE GRID, NOT THE FIXED 32-DN ONE. Binning in absolute DN makes the
+    # measure depend on the ENCODING: the same distribution digitized 8-bit vs 16-bit and binned at
+    # 32 DN gives effective_states 5.7 vs 1479.8, a 259x difference for identical data. A gate on
+    # that number rejects every 8-bit image on principle, which penalises acquisition format rather
+    # than data quality.
+    #
+    # Binning each embryo's own 0.5-99.5 percentile span into a fixed NUMBER of bins is
+    # encoding-free: the same test gives 184 vs 151, a 0.82x ratio. What survives is what the
+    # question actually is -- how finely resolved is the signal ACROSS ITS OWN RANGE.
+    #
+    # counts_raw is kept for occupied_levels and for the raw-entropy diagnostics, which are
+    # deliberately scale-dependent (that dependence is the subject of the entropy-scale analysis).
+    values = np.repeat(CENTERS[: len(counts)], counts.astype(int)) - mode
+    values = values[values > 0]
+    if len(values) >= 100:
+        lo_p, hi_p = np.percentile(values, [0.5, 99.5])
+        relative = (np.histogram(values, bins=N_RELATIVE_BINS, range=(lo_p, hi_p))[0].astype(float)
+                    if hi_p > lo_p else np.zeros(1))
+    else:
+        relative = np.zeros(1)
+    entropy = shannon_bits(relative)
     effective = float(2 ** entropy) if np.isfinite(entropy) else float("nan")
+    entropy_fixed_grid = shannon_bits(counts)   # diagnostic only; scale- and encoding-dependent
     occupied = int((counts > 0).sum())
 
     mean_dn = float((counts * CENTERS[: len(counts)]).sum() / n_px) if n_px else float("nan")
@@ -100,6 +125,7 @@ def evaluate(row, null) -> dict:
         "occupied_levels": occupied,
         "effective_states": effective,
         "entropy_bits": entropy,
+        "entropy_fixed_grid_bits": entropy_fixed_grid,
         "separation_sigma": separation,
         "saturated_frac": saturated,
         **checks,
