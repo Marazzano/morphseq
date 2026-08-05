@@ -199,3 +199,51 @@ An earlier pass used B02 and G09 and reported ~2x (1.80/2.27/1.89), reading it a
 That pair was **not** matched: B02 is compact (aspect 1.01-1.33) against G09's elongated
 (2.62-3.49), and `corr(mean, aspect)` is +0.35 population-wide. The ~2x was contaminated by
 presentation. **A09/G09 supersedes it.**
+
+---
+
+# THE ANSWER, on the matched pair: YES, normalization preserves the information
+
+A09 vs G09 is the right test for this question — same genotype, same treatment, matched size and
+orientation, differing only in brightness (4-7x).
+
+| t | mean ratio | occupied levels | raw entropy gap | **normalized entropy gap** |
+|---|---|---|---|---|
+| 0 | 6.79x | 304 vs 1381 | +2.69 bits | **+0.45 bits** |
+| 1 | 6.19x | 209 vs 1053 | +2.56 bits | **+0.83 bits** |
+| 2 | 4.30x | 343 vs 1562 | +2.29 bits | **+0.03 bits** |
+
+**~85-99% of the apparent information gap disappears once the two are put on a common scale.** The
+raw gap was brightness spreading across more fixed-width bins, not the dim embryo knowing less.
+
+## Why it works here, and where it stops working
+
+Normalization rescales the intensity levels an embryo occupies; it cannot create new ones. So the
+question is whether the dim embryo has *enough* levels left to describe its distribution:
+
+| distinct levels | max representable entropy | |
+|---|---|---|
+| 16 | 4.00 bits | the earlier "class 0" embryos |
+| 32 | 5.00 bits | |
+| 209 | 7.71 bits | **A09** |
+| 1053 | 10.04 bits | **G09** |
+
+A09 sits at 209-343 levels and carries 6.42-7.26 bits — **not clipped**, with headroom. That is why
+normalizing recovers it.
+
+The failure threshold is not "6x dimmer". It is **when the digitizer runs out of levels**. The
+class-0 embryos at 16-31 levels have a 4.0-4.95 bit ceiling, so no rescaling can make them
+comparable to a 10-bit embryo — but those were non-transgenic controls with no signal, which is a
+different situation from a genuinely dim carrier.
+
+## This corrects the earlier three-class conclusion
+
+The earlier "4.46 bits, unchanged under four normalizations" compared classes spanning
+non-transgenic controls to the brightest embryo, i.e. an embryo with ~nothing to measure against one
+with full dynamic range. That comparison is dominated by the control and answers a question about
+the noise floor, not about whether two real measurements can be pooled.
+
+**Practical answer:** two carriers differing ~6x in brightness DO carry the same information after
+normalization, and can be analysed together. The caution is a floor check, not a ratio check —
+verify an embryo occupies enough distinct levels (say >100) rather than that it is within some
+brightness factor of the others.
