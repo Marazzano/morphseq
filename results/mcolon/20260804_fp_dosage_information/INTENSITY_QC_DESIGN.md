@@ -315,3 +315,67 @@ conditions were sometimes picked without confirming fluorescence.
 Those are unlabelled true negatives. Separating "the measurement failed" from "this embryo has no
 transgene" needs either a visual pass over those 46 or an independent genotype call. Until then the
 84–86% TPR is a **lower bound**: some of the 14–16% rejected may be correctly rejected.
+
+---
+
+# TEMPORAL CONSISTENCY — the ground-truth check the gate cannot game
+
+Carrying a transgene is **permanent**. So a true negative must fail at *every* timepoint, and a
+carrier should pass at every timepoint. Consistency over time is not fitted to anything, which makes
+it a stronger test than any per-embryo-time score.
+
+## At track (individual embryo) grain
+
+| genotype | always fails | always passes | INCONSISTENT |
+|---|---|---|---|
+| **ab (no transgene)** | **8** | 0 | **0** |
+| tdtomato | 2 | 48 | 9 |
+| pbx4/pbx1b crispant | 1 | 30 | 13 |
+
+**All 8 ab embryos fail at every timepoint; none is inconsistent.** That is the strongest evidence
+the gate measures something real — a permanent property is being called permanently.
+
+**3 transgenic embryos always fail.** Very likely the genuinely non-fluorescent embryos picked into
+transgenic wells — correct rejections we lack labels for.
+
+## Grain matters: H07 was a FALSE inconsistency
+
+Collapsed to **well** grain, 23/91 wells (25%) looked inconsistent. At **track** grain it is 22/111
+embryos (20%), and H07 explains the difference:
+
+| H07 | t0 | t1 | t2 |
+|---|---|---|---|
+| embryo A | eff 133 PASS | 149 PASS | 147 PASS |
+| embryo B | eff 18 FAIL | 17 FAIL | 4 FAIL |
+
+**Two embryos in one well, each perfectly consistent.** The well-grain rollup manufactured an
+inconsistency that does not exist. This answers open question 2 above: **the gate belongs at track
+grain**, and any per-well rollup must be `all()` over tracks, never over rows.
+
+## What the 22 genuine inconsistencies actually are
+
+From the gallery (`output/inconsistent_wells_gallery.png`) — none is an absent transgene; every one
+is visibly fluorescent:
+
+| cause | example | signature |
+|---|---|---|
+| **mask caught multiple objects** | A02 t1/t2 (eff 101 → 10) | debris/fragments inside the mask dilute the signal |
+| **mask caught the well rim** | E04 (eff 132 → 45/44) | bright ring dominates a small embryo |
+| **saturation, not resolution** | D04 (eff 217/173/213, sat 0.03/0.00/0.02) | excellent resolution, clipping the detector |
+| **threshold-marginal** | A12 t2 (eff 168) | a clean bright fish rejected by a threshold set at 55 |
+
+**D04 is the most instructive**: it fails on `saturated_frac`, not `effective_states`. A different
+failure mode entirely, and one the resolution check cannot see — which justifies keeping saturation
+as an independent check even though no `ab` negative exercises it.
+
+**A12 t2 failing at eff=168 while others pass at 55 is not a threshold problem** — it fails the
+saturation check too. Worth stating because the gallery makes it look like a resolution
+near-miss.
+
+## Consequences for the design
+
+1. **Gate at track grain.** Well-grain rollups fabricate inconsistencies in multi-embryo wells.
+2. **`inconsistent_over_time` is itself a QC feature** — an embryo whose verdict flips is a
+   measurement-reliability flag independent of any single-timepoint threshold.
+3. Saturation stays in the gate despite no negative exercising it: D04 shows it catches a real,
+   distinct failure that resolution misses.
