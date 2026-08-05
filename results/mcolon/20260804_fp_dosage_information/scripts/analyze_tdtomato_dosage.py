@@ -63,7 +63,19 @@ def load_genotypes() -> dict[str, str]:
     }
 
 
-raw = pd.read_csv(MERGED)
+# READ THE PER-WELL SHARDS, not the merged table: the merge is the DAG's last rule and only runs
+# once every well succeeds, so mid-run the merged file is stale. The shards are the ground truth
+# for what has actually been measured.
+import glob
+_shards = sorted(glob.glob(str(
+    MORPHSEQ_ROOT / ".pbx_smoke/out/object_extraction" / EXP
+    / "channel_intensity/per_well/*/RFP__projection__max/channel_intensity.csv"
+)))
+_frames = [f for f in (pd.read_csv(p) for p in _shards) if len(f)]
+if not _frames:
+    raise SystemExit("no non-empty channel_intensity shards on disk yet")
+raw = pd.concat(_frames, ignore_index=True)
+print(f"read {len(_shards)} shards ({len(_shards) - len(_frames)} empty)")
 for column in ("annulus_hist_counts", "embryo_hist_counts"):
     raw[column] = raw[column].map(json.loads)
 
