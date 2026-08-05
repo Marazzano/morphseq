@@ -84,11 +84,9 @@ cd "${REPO_ROOT}"
 # without it, --cores 4 would start four SAM2 jobs on one GPU.
 "${PYTHON_EXEC}" -m snakemake \
   --snakefile "${WORKFLOW_DIR}/Snakefile" \
+  --profile "${WORKFLOW_DIR}/profiles/default" \
   --configfile "${CONFIG}" \
   --cores 4 \
-  --resources gpu=1 \
-  --rerun-incomplete \
-  --printshellcmds \
   "${TARGET:-${SMOKE_ROOT}/out/object_extraction/20260624_2x_td_bf_pbx_coll_plate01/snips/20260624_2x_td_bf_pbx_coll_plate01_snip_inventory.csv}"
 
 echo "[pbx-smoke] Done."

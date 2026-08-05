@@ -16,8 +16,16 @@ Later `--configfile` arguments override earlier ones.
 
 So a normal run looks like:
 
+> **Always pass `--profile pipeline_orchestrator/profiles/default`.** It supplies `--keep-going`,
+> `--resources gpu=1`, `--rerun-triggers mtime`, and `--rerun-incomplete`, which are POLICY for this
+> pipeline rather than per-run choices. Without `--keep-going` a single failing well stops Snakemake
+> from scheduling any further jobs -- that ended a 96-well run at 812/1197 with ~70 wells never
+> attempted. Snakemake 7 does not auto-discover the profile, so the flag is required; anything on
+> the command line still overrides it.
+
 ```bash
-snakemake --configfile config.yaml \
+snakemake --profile src/data_pipeline/pipeline_orchestrator/profiles/default \
+  --configfile config.yaml \
   --configfile configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml \
   all --cores 1
 ```
@@ -135,7 +143,8 @@ all
 Example: run all discovered wells for one experiment through the full pipeline:
 
 ```bash
-snakemake --configfile config.yaml \
+snakemake --profile src/data_pipeline/pipeline_orchestrator/profiles/default \
+  --configfile config.yaml \
   --configfile configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml \
   all --cores 1
 ```
@@ -143,7 +152,8 @@ snakemake --configfile config.yaml \
 Example: run one well through the front half only:
 
 ```bash
-snakemake --configfile config.yaml \
+snakemake --profile src/data_pipeline/pipeline_orchestrator/profiles/default \
+  --configfile config.yaml \
   --configfile configs/runtime_configs/config_smoke_front_half_20250912.yaml \
   front_half --cores 1
 ```
@@ -151,7 +161,8 @@ snakemake --configfile config.yaml \
 Example: run one well through the biological processing path:
 
 ```bash
-snakemake --configfile config.yaml \
+snakemake --profile src/data_pipeline/pipeline_orchestrator/profiles/default \
+  --configfile config.yaml \
   --configfile configs/runtime_configs/config_smoke_through_line_20250912_B01.yaml \
   through_line --cores 1
 ```
@@ -179,9 +190,10 @@ experiments:
 The SGE script runs `rule all` with that overlay:
 
 ```bash
-snakemake --configfile config.yaml \
+snakemake --profile src/data_pipeline/pipeline_orchestrator/profiles/default \
+  --configfile config.yaml \
   --configfile configs/runtime_configs/runtime_config_all_20250912_and_20260410_otx_pilot.yaml \
-  --cores 4 --rerun-triggers mtime --keep-going --printshellcmds all
+  --cores 4 all
 ```
 
 SGE logs are written under the repo root:
