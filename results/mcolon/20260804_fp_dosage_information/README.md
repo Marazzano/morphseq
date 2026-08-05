@@ -156,3 +156,46 @@ het-vs-homo comparability can be drawn from this data. What the data does suppor
 Answering the het-vs-homo question needs the **genotype table** (so classes are known rather than
 discovered) and the **full plate** (so there are enough embryos per class to see a 2x step against
 the within-class spread, which here is comparable to the step itself).
+
+---
+
+# MATCHED-PAIR RESULT: A09 vs G09 — 4-7x within one genotype
+
+The user identified A09 and G09 as embryos lying in the same orientation. They are the best-
+controlled comparison available:
+
+| | area ratio | aspect | MEAN ratio | INTEGRATED ratio |
+|---|---|---|---|---|
+| t0 | 1.12x | 2.49 vs 2.62 | **6.79x** | 6.08x |
+| t1 | 1.14x | 4.23 vs 3.49 | **6.19x** | 5.43x |
+| t2 | 1.08x | 3.41 vs 3.03 | **4.30x** | 4.66x |
+
+Both elongated laterals, within 8-14% on area at every timepoint.
+
+## Every designed variable is held constant
+
+From the plate sheet, A09 and G09 are the **same genotype**
+(`pbx4_pbx1b_crispant_tdtomato`) and the **same treatment** (PTU). Same clutch, same well
+conditions, matched size, matched orientation.
+
+So the 4-7x difference has no experimental explanation. What remains is the transgene itself:
+expression level, mosaicism, or different insertion sites — **not copy number**, which could only
+produce 2x.
+
+## Two things this settles
+
+**1. With area matched, mean and integrated AGREE.** 6.79 vs 6.08, 6.19 vs 5.43, 4.30 vs 4.66.
+Their disagreement in the unmatched comparison was area doing the work. The earlier claim that
+"integrated is the worse statistic" was really "area varies" — a weaker and different claim. When
+geometry is controlled the two statistics carry the same information, which is what they should do.
+
+**2. Brightness does not read copy number in this line.** A 4-7x spread between two embryos that
+are identical in every controlled respect is far too large for a 1-vs-2 copy step, and it is
+*within* a genotype group rather than between groups.
+
+## Correction to the earlier B02/G09 numbers
+
+An earlier pass used B02 and G09 and reported ~2x (1.80/2.27/1.89), reading it as possible dosage.
+That pair was **not** matched: B02 is compact (aspect 1.01-1.33) against G09's elongated
+(2.62-3.49), and `corr(mean, aspect)` is +0.35 population-wide. The ~2x was contaminated by
+presentation. **A09/G09 supersedes it.**
