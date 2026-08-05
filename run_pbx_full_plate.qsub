@@ -94,6 +94,17 @@ cd "${REPO_ROOT}"
 # --resources gpu=1 is REQUIRED, not decorative. frame_masks declares gpu=1 so SAM2 holds the card
 # for its duration, but Snakemake only enforces that if the budget is also passed on the CLI --
 # without it, --cores 8 would start four SAM2 jobs on one GPU.
+# CLEAR A STALE LOCK FIRST. A killed job (qdel, SGE timeout, OOM) leaves Snakemake's directory
+# lock behind, and the NEXT submission then dies instantly with LockException having run zero
+# rules -- which is exactly how 23443514 was lost. This is safe here because the qsub owns the
+# whole run: if another snakemake were genuinely live on this directory, it would be this
+# script's own earlier invocation, which SGE has already reaped.
+"${PYTHON_EXEC}" -m snakemake \
+  --snakefile "${WORKFLOW_DIR}/Snakefile" \
+  --profile "${WORKFLOW_DIR}/profiles/default" \
+  --configfile "${CONFIG}" \
+  --cores 1 --unlock || true
+
 "${PYTHON_EXEC}" -m snakemake \
   --snakefile "${WORKFLOW_DIR}/Snakefile" \
   --profile "${WORKFLOW_DIR}/profiles/default" \
