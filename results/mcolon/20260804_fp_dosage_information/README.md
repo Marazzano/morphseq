@@ -358,3 +358,48 @@ does not contain.
   Either the ab floor is too permissive or this is not a simple het incross. Worth resolving.
 - **The ~3.0 DN/ms dim group persists** (6 embryos at t2, was 3 at 26 wells) and sits well below
   the continuum. It is a distinct population, not the low tail — still unexplained.
+
+---
+
+# DOES NORMALIZATION PRESERVE INFORMATION? Answered against a matched-brightness null
+
+The right control, as the user framed it: compare normalization's effect against a null of
+**similarly fluorescent, unnormalized** embryos. Their entropy difference is the floor — the
+biological + measurement scatter you get even when brightness is already matched, so it is not
+attributable to scale.
+
+QC-passing embryos only, within a single timepoint.
+
+| | t1 | t2 |
+|---|---|---|
+| **NULL** — pairs <1.2x apart in brightness, raw | **0.150 bits** (382 pairs) | **0.195 bits** (205 pairs) |
+| pairs >2x apart, raw | 1.475 bits (631 pairs) | 1.538 bits (468 pairs) |
+| pairs >2x apart, **normalized** | **0.290 bits** | **0.149 bits** |
+| normalized vs the null floor | 1.94x | **0.77x** |
+
+**At t2, normalized brightness-mismatched pairs are indistinguishable from already-matched pairs** —
+0.149 vs a 0.195 floor. Normalization fully closed a 1.538-bit gap. At t1 it closes ~5x of a
+1.475-bit gap but leaves a residual at ~2x the floor.
+
+## Within the normal range, raw entropy is almost purely a brightness readout
+
+Restricting to the IQR of the carrier distribution — no controls, no dim outliers, only
+1.76-2.16x of brightness spread:
+
+| | t1 | t2 |
+|---|---|---|
+| corr(brightness, H_raw) | **+0.923** | **+0.817** |
+| corr(brightness, H_norm) | **-0.187** | **-0.044** |
+
+Raw entropy tracks brightness at r>0.8 even across a <2x range. After normalization the dependence
+is gone. The raw-entropy differences reported earlier in this document were therefore measuring the
+intensity scale, not the amount of biological structure.
+
+## What this establishes
+
+For **pattern/texture/morphology** questions, embryos spanning the carrier brightness range can be
+normalized and pooled: the residual information difference is at or below what two
+already-matched embryos show anyway.
+
+This does **not** license pooling for dosage — normalization removes the absolute scale, which is
+where a copy-number signal would live. See the pattern/dosage split above.
