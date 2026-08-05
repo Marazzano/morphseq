@@ -247,3 +247,64 @@ the noise floor, not about whether two real measurements can be pooled.
 normalization, and can be analysed together. The caution is a floor check, not a ratio check —
 verify an embryo occupies enough distinct levels (say >100) rather than that it is within some
 brightness factor of the others.
+
+---
+
+# QC GATE — and the distinction that matters more than the gate
+
+## Normalization is licensed for PATTERN, not for DOSAGE
+
+Per-embryo normalization removes the absolute scale. For dosage, that scale **is** the signal — a
+6x brightness difference is the measurement, not a nuisance. So:
+
+```
+pattern / texture / morphology :  normalize AFTER QC
+dosage / absolute expression   :  keep native intensities + exposure, do NOT normalize
+```
+
+The earlier conclusion ("two carriers 6x apart carry the same information and can be analysed
+together") is correct **for pattern work only**. Stated without that qualifier it was wrong, because
+it would license erasing the very quantity a dosage analysis is trying to read.
+
+## A brightness ratio is the wrong gate
+
+A09 is 4-7x dimmer than G09 and carries essentially the same information after normalization
+(entropy gap +0.03 to +0.83 bits). Exposure, copy number, expression level and optics all move
+absolute brightness while leaving spatial signal intact.
+
+## But so is a raw level count
+
+An earlier draft proposed ">100 distinct occupied levels" as the whole gate. Measured on this data,
+**7 embryo-times pass that rule and fail on separation**:
+
+| well | t | area | occupied | **effective (2^H)** | separation |
+|---|---|---|---|---|---|
+| D06 | 2 | 20k | 144 | **42** | 3.0σ |
+| E11 | 2 | 85k | 473 | **251** | 3.4σ |
+| H05 | 1 | 4473k | 102 | **16** | 4.2σ |
+| E01 | 1 | 4563k | 265 | **28** | 4.8σ |
+
+H05 over-reports by 6x — 102 occupied levels, 16 effective. It is a whole-well segmentation blob
+whose "levels" are read noise. That is the numerical-taxidermy case, and a raw count waves it
+through.
+
+Note one prediction that did NOT hold here: `corr(occupied, area) = -0.27`, i.e. area is not
+inflating the count on this plate, because the largest masks are mostly-uniform background. Area
+inflation is a real hazard in general but is not the operative one in this dataset.
+
+## The gate (`scripts/intensity_qc_gate.py`)
+
+Three checks, because they fail independently:
+
+```
+effective_states = 2**entropy   >= 64      how many states are MEANINGFULLY used
+separation       = (mean - bg_mode)/bg_sigma >= 5   distinguishable from its own well
+saturated_frac                  <= 1%      bright tail intact
+```
+
+`2**H` rather than unique-value count: a level held by one noisy pixel contributes almost nothing
+to entropy, so the effective count discounts exactly what inflates the raw one.
+
+Result on 165 embryo-times: resolution 125, separation 141, unsaturated 164, **all three: 122**.
+
+Thresholds are starting points to calibrate against the full plate, not established cutoffs.
