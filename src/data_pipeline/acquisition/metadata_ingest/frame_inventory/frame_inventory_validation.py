@@ -36,7 +36,9 @@ from data_pipeline.io.validators import validate_dataframe_schema
 from data_pipeline.acquisition.image_materialization.frame_inventory_contract import (
     FRAME_INVENTORY_NULLABLE_COLUMNS,
     REQUIRED_FRAME_INVENTORY_COLUMNS,
+    backfill_n_sources,
     validate_frame_inventory_identity_contract,
+    validate_n_sources,
 )
 from data_pipeline.acquisition.metadata_ingest.frame_inventory.frame_inventory_validation_rules import (
     validate_grain,
@@ -53,12 +55,17 @@ def _read_frame_inventory_table(path: Path) -> pd.DataFrame:
     # projection). The identity gate's product-coherence check enforces that the nulls land on the
     # right rows; the schema layer only allows them to BE null.
     df = pd.read_csv(path)
+    # Legacy inventories predate the n_sources provenance column — a single-acquisition well is
+    # n_sources == 1 by definition, so backfill the absent column before the schema gate (a
+    # present-but-invalid column is NOT repaired here; validate_n_sources fails loud on it).
+    df = backfill_n_sources(df)
     validate_dataframe_schema(
         df,
         list(REQUIRED_FRAME_INVENTORY_COLUMNS),
         "frame_inventory",
         nullable_columns=FRAME_INVENTORY_NULLABLE_COLUMNS,
     )
+    validate_n_sources(df, scope_label="frame_inventory")
     return df
 
 

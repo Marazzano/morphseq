@@ -72,7 +72,7 @@ def _legacy_mask_rle() -> pd.DataFrame:
                 "image_id": f"20250912_B01_BF_t{t:04d}",
                 "embryo_id": "embryo_0",
                 "channel_id": "BF",
-                "time_int": t,
+                "time_index": t,
                 "mask_rle": '{"counts": "abc", "size": [80, 100]}',
                 "area_px": 42,
                 "bbox_x_min": 10,

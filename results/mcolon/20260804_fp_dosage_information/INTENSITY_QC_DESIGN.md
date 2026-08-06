@@ -1,0 +1,381 @@
+# Design: `channel_intensity_qc` — features to extract, and how to gate on them
+
+Status: **proposal**, written from the full-plate analysis (96 wells, 334 embryo-times). Nothing
+here is wired into the DAG yet.
+
+---
+
+## The thing this fixes
+
+The analysis kept saying "normalization cannot recover an embryo that was never digitized above
+noise". That is stated as an *analysis caveat* in the write-ups, which is the wrong place for it:
+
+```
+dim image containing only:  100, 101, 102, 103
+stretched to:               0, 85, 170, 255
+still only 4 distinct measurements
+```
+
+An embryo like that should never reach the analysis. It is a **QC exclusion**, decided once from
+extracted features, not a footnote every downstream reader has to remember. The corollary is that
+the features the gate needs must be *extracted and persisted*, not recomputed ad hoc — which is
+what the exploratory `scripts/intensity_qc_gate.py` currently does.
+
+---
+
+## What is already extracted (nothing new needed at object grain)
+
+`object_extraction/channel_intensity` already persists, per embryo-time x source product:
+
+| column | why it is sufficient |
+|---|---|
+| `embryo_hist_counts` | 2048 x 32-DN histogram — entropy, effective states, percentiles all derive from it exactly |
+| `embryo_sum_dn`, `embryo_sumsq_dn`, `embryo_px` | exact moments |
+| `embryo_clipped_px` | saturation at the ceiling |
+| `annulus_hist_counts`, `annulus_px` | the background this embryo is judged against |
+| `exposure_ms`, `illumination_power` | acquisition scale, so DN/ms is available |
+
+**No pixel re-read is required for any feature below.** That is the payoff for having persisted
+histograms rather than summary statistics — the QC module is arithmetic over an existing table.
+
+---
+
+## Features to extract (new module: `feature_extraction/channel_intensity_qc`)
+
+Grain: **one row per (embryo-time, source_image_product_key)**, matching `channel_intensity`.
+
+### Resolution — is the signal digitized finely enough to survive normalization?
+
+| feature | definition | why not the obvious alternative |
+|---|---|---|
+| `entropy_bits` | Shannon H of the embryo histogram | |
+| `effective_states` | `2 ** entropy_bits` | NOT `occupied_levels`. Measured: H05 shows 102 occupied levels but 16 effective — read noise inflates the raw count 6x. A level held by one pixel barely moves entropy. |
+| `occupied_levels` | count of non-empty bins | keep for diagnosis, do not gate on it |
+
+### Separation — is the embryo distinguishable from the well it sits in?
+
+| feature | definition |
+|---|---|
+| `separation_sigma` | `(embryo_mean − annulus_mode) / annulus_robust_sigma` |
+| `well_null_mode_dn`, `well_null_sigma_dn` | copied onto the row so it is self-explaining without a join |
+
+The null must be estimated **per (well, timepoint)**, never pooled across timepoints — measured on
+this plate, t0 backgrounds run 560–688 DN against 336–400 at t1/t2 because t0 was a 600 ms exposure.
+Pooling under-subtracts t0 by ~256 DN on a ~1100 DN signal.
+
+### Saturation — is the bright end intact?
+
+| feature | definition |
+|---|---|
+| `saturated_frac` | `embryo_clipped_px / embryo_px` |
+
+Saturation compresses bright embryos toward dim ones while looking like clean data, so it must be
+visible rather than inferred.
+
+### Geometry — is this an embryo at all?
+
+| feature | definition | rationale |
+|---|---|---|
+| `area_px` | mask area | 5 t2 masks were 425k–4.6M px against a real embryo's ~85k: whole-well blobs |
+| `aspect_ratio` | bbox long/short | orientation proxy; ranged 1.01–5.31 on this plate |
+| `bbox_fill_fraction` | `area_px / bbox_area` | 0.15 means a fragmented mask, not a fish |
+
+Geometry is included because it is the confound the intensity features cannot see: a mask that
+caught more of the fish integrates more signal at the same expression level.
+
+---
+
+## How the gate applies
+
+### Flags annotate; they do not drop rows
+
+This follows the existing convention (`focus_flag`, `motion_blur_flag`) — QC writes a flag column
+and a report, and **nothing in the pipeline removes a row on its own**. The exclusion decision is
+the analyst's, made explicitly downstream, because a row silently vanishing is how a filtered
+population gets mistaken for a measured one.
+
+### Three independent checks, because they fail independently
+
+```
+resolution_ok   effective_states  >= 128
+separation_ok   separation_sigma  >= 5
+unsaturated_ok  saturated_frac    <= 0.01
+```
+
+### The verdict is per-QUESTION, not a single boolean
+
+This is the part most easily got wrong, and the earlier write-ups did get it wrong:
+
+| flag | means |
+|---|---|
+| `usable_for_pattern` | all three checks pass — texture/morphology/spatial work may normalize and pool |
+| `usable_for_dosage` | all three **and** `exposure_ms` present **and** the analysis must NOT normalize |
+
+Per-embryo normalization removes the absolute scale, which **is** the dosage signal. A single
+`usable` boolean would license erasing the quantity a dosage analysis is trying to read.
+
+### Threshold provenance must be recorded
+
+| threshold | status |
+|---|---|
+| `effective_states >= 128` | **CALIBRATED** on the full plate against the matched-brightness floor (see below) |
+| `separation_sigma >= 5` | a priori, uncalibrated |
+| `saturated_frac <= 0.01` | a priori, uncalibrated |
+
+Marking which is which matters: 64 was a guess (2**6) and proved too permissive. Swept against the
+floor:
+
+| min effective | t1 kept | t1 residual/floor | t2 kept | t2 residual/floor |
+|---|---|---|---|---|
+| 64 | 135 | 3.44 | 108 | 1.68 |
+| **128** | **116** | **1.80** | **99** | **1.25** |
+| 192 | 91 | 2.28 | 91 | 1.29 |
+| 256 | 66 | 1.75 | 74 | 1.55 |
+
+128 halves the t1 ratio while keeping 116/135. The non-monotonicity above it is sampling noise in
+the floor estimate, not structure.
+
+**The other two thresholds should be calibrated the same way before being trusted.**
+
+---
+
+## Why a brightness ratio is NOT among the checks
+
+The obvious rule — "more than Nx dimmer than its peers, therefore unusable" — is wrong, and the
+plate shows it. A09 is 4–7x dimmer than G09 and carries the same information after normalization
+(residual 0.287 bits against a 0.17–0.23 floor). Exposure, expression level, copy number and optics
+all move absolute brightness while leaving spatial signal intact.
+
+The operative constraint is a **resolution floor**: a 5x-dimmer embryo with 300 effective states is
+fine; a 2x-dimmer one with 40 is not.
+
+---
+
+## Wiring (mirrors `feature_extraction/mask_geometry`)
+
+```
+feature_extraction/channel_intensity_qc/
+    compute.py      pure: channel_intensity rows -> QC rows
+    config.py       thresholds as a dataclass, with provenance in comments
+    contract.py     column contract for the merge
+    entrypoint.py   I/O half
+```
+
+- registry step `channel_intensity_qc`, stage `feature_extraction`, `PER_WELL_THEN_MERGE`
+- rule reads the per-well `channel_intensity` shard; **no pixel access**, so it is CPU-cheap and can
+  run anywhere in the DAG after intensity
+- merge is a dumb concat with `required_columns`, like every other merge
+- a report under `quality_control/reporting`, following `focus_qc` / `motion_blur_qc`
+
+---
+
+## Open questions
+
+1. **Should `separation_sigma` and `saturated_frac` thresholds be calibrated, and against what?**
+   The resolution threshold had a natural target (the matched-brightness entropy floor). Separation
+   and saturation need their own, and I do not have one yet.
+2. **Does the gate belong at embryo-time grain or track grain?** An embryo that fails at one
+   timepoint and passes at two others is currently three independent verdicts. A track-level rollup
+   may be what analyses actually want.
+3. ~~**`effective_states` depends on pixel count.**~~ **RESOLVED — it does not.** Measured on the
+   plate (plausible masks only): `corr(effective_states, area_px) = +0.018`, and small vs large
+   masks give median effective states of 263 vs 269. Restricted to well-separated embryos the
+   correlation is `-0.035` against `+0.751` for separation. So `effective_states` tracks SIGNAL
+   QUALITY, not mask size, and the threshold does not penalise small embryos. This was the check
+   most likely to invalidate the whole gate, so it is worth having done first.
+
+---
+
+# CORRECTION: `effective_states` was bit-depth dependent
+
+The gate as first written binned entropy on the **fixed 32-DN grid**, so the number depended on the
+image encoding, not just the data. Demonstrated directly — one distribution, two encodings, same
+32-DN bins:
+
+| encoding | effective_states |
+|---|---|
+| 8-bit | **5.7** |
+| 16-bit | **1479.8** |
+| ratio | **259x for identical data** |
+
+A gate at `>= 128` would have rejected **every 8-bit image on principle**, penalising acquisition
+format rather than data quality.
+
+## The fix: bin as a fraction of range, not in absolute DN
+
+Bin each embryo's own 0.5–99.5 percentile span into a **fixed number** of bins (256). Fixing the
+count rather than the width is what makes it encoding-free:
+
+| encoding | range-relative effective_states |
+|---|---|
+| 8-bit | 184.4 |
+| 16-bit | 151.1 |
+| ratio | **0.82x** |
+
+`entropy_fixed_grid_bits` is retained as a diagnostic — its scale-dependence is exactly the subject
+of the entropy-scale analysis, so it must stay available, just not be gated on.
+
+## Recalibrated, and the sweep is now monotonic
+
+| min effective | t1 kept | t1 ratio | t2 kept | t2 ratio |
+|---|---|---|---|---|
+| 0 | 165 | 6.89 | 160 | 7.98 |
+| 64 | 138 | 3.72 | 109 | 1.39 |
+| 96 | 123 | 1.86 | 105 | 1.25 |
+| **128** | **102** | **1.42** | **99** | **1.18** |
+| 160 | 38 | 0.59 | 66 | 0.72 |
+
+128 brings both timepoints to ~1.2–1.4x the floor while keeping ~100 embryos each. 160 goes below
+the floor but keeps only 38 at t1 — over-pruning to chase a number.
+
+**The sweep is monotonic here**, unlike the earlier one on the absolute-DN measure, which is further
+evidence the encoding-free version measures the intended thing.
+
+## Also considered and rejected: `span_in_sigmas`
+
+`(p99 − p01) / background_sigma` is bit-depth-free by construction and was the obvious simpler
+candidate. Head-to-head at matched retention it is consistently the weaker discriminator:
+
+| retention | t1: effective_states | t1: span_in_sigmas | t2: effective_states | t2: span_in_sigmas |
+|---|---|---|---|---|
+| 85% | 3.38 | 4.23 | 5.09 | 6.87 |
+| 70% | **1.01** | 3.31 | **1.17** | 1.88 |
+| 55% | 1.13 | 1.62 | 0.96 | 1.01 |
+
+They correlate at ~0.8, so they measure related things, but entropy weights *how* the pixels are
+distributed across the range rather than just how wide it is. Kept as a reported feature; not the
+gate.
+
+---
+
+# CALIBRATED AGAINST BIOLOGICAL GROUND TRUTH (supersedes the entropy-floor calibration)
+
+Everything above tuned thresholds against a matched-brightness *entropy floor* derived from the same
+data. That is circular. The plate carries **real ground truth**: the 8 `ab` wells have no transgene,
+so **every `ab` embryo-time must fail**. Any that passes is a false positive on a known negative.
+
+24 ab embryo-times vs 310 transgenic.
+
+## `effective_states` sweep against the negatives
+
+| threshold | ab pass | FPR | transgenic pass | TPR |
+|---|---|---|---|---|
+| 40 | 3 | 12.5% | 276 | 89.0% |
+| **55** | **0** | **0.0%** | **269** | **86.8%** |
+| 64 | 0 | 0.0% | 266 | 85.8% |
+| 128 | 0 | 0.0% | 237 | 76.5% |
+| 160 | 0 | 0.0% | 163 | 52.6% |
+
+The ab **maximum is 54.6**, so 55 is the smallest threshold with zero false positives. Everything
+above it only discards real embryos — **128, the previous value, throws away 32 transgenic
+embryo-times for no gain in specificity.**
+
+## `separation_sigma` is the weak check and has been removed from the gate
+
+| threshold | ab pass (of 24) | transgenic pass (of 310) |
+|---|---|---|
+| 5 | **8** | 288 |
+| 10 | 4 | 264 |
+| 20 | 1 | 218 |
+| 26.6 | 0 | 204 |
+
+At the a priori `>= 5` it **passes 8 of 24 known negatives**. Excluding them all needs 26.6, costing
+a third of the transgenic population. And once `effective_states >= 55` is applied the FPR is
+already zero, so separation only removes true positives:
+
+```
+eff>=55 alone      transgenic 269/310 (87%)
++ separation>=10   transgenic 251/310 (81%)
++ separation>=20   transgenic 215/310 (69%)
+```
+
+Retained as a reported feature, not gated on. **That some ab embryos reach 26σ is itself a finding**
+— a non-fluorescent embryo reading far above its own well background means autofluorescence or a bad
+background estimate, not signal.
+
+## Final gate performance
+
+```
+resolution_ok    effective_states >= 55     (calibrated on ab negatives)
+unsaturated_ok   saturated_frac   <= 0.01   (a priori, no negatives exercise it)
+```
+
+| group | pass | |
+|---|---|---|
+| **ab (no transgene)** | **0/24** | **FPR 0.0% — all 24 correctly rejected** |
+| tdtomato | 149/177 | 84% |
+| pbx4/pbx1b crispant | 115/133 | 86% |
+
+## The remaining 46 transgenic failures are the next question
+
+46 transgenic embryo-times across 26 wells fail the gate. Some are genuine measurement failures;
+some are likely **real non-fluorescent embryos in transgenic wells** — the user noted that
+conditions were sometimes picked without confirming fluorescence.
+
+Those are unlabelled true negatives. Separating "the measurement failed" from "this embryo has no
+transgene" needs either a visual pass over those 46 or an independent genotype call. Until then the
+84–86% TPR is a **lower bound**: some of the 14–16% rejected may be correctly rejected.
+
+---
+
+# TEMPORAL CONSISTENCY — the ground-truth check the gate cannot game
+
+Carrying a transgene is **permanent**. So a true negative must fail at *every* timepoint, and a
+carrier should pass at every timepoint. Consistency over time is not fitted to anything, which makes
+it a stronger test than any per-embryo-time score.
+
+## At track (individual embryo) grain
+
+| genotype | always fails | always passes | INCONSISTENT |
+|---|---|---|---|
+| **ab (no transgene)** | **8** | 0 | **0** |
+| tdtomato | 2 | 48 | 9 |
+| pbx4/pbx1b crispant | 1 | 30 | 13 |
+
+**All 8 ab embryos fail at every timepoint; none is inconsistent.** That is the strongest evidence
+the gate measures something real — a permanent property is being called permanently.
+
+**3 transgenic embryos always fail.** Very likely the genuinely non-fluorescent embryos picked into
+transgenic wells — correct rejections we lack labels for.
+
+## Grain matters: H07 was a FALSE inconsistency
+
+Collapsed to **well** grain, 23/91 wells (25%) looked inconsistent. At **track** grain it is 22/111
+embryos (20%), and H07 explains the difference:
+
+| H07 | t0 | t1 | t2 |
+|---|---|---|---|
+| embryo A | eff 133 PASS | 149 PASS | 147 PASS |
+| embryo B | eff 18 FAIL | 17 FAIL | 4 FAIL |
+
+**Two embryos in one well, each perfectly consistent.** The well-grain rollup manufactured an
+inconsistency that does not exist. This answers open question 2 above: **the gate belongs at track
+grain**, and any per-well rollup must be `all()` over tracks, never over rows.
+
+## What the 22 genuine inconsistencies actually are
+
+From the gallery (`output/inconsistent_wells_gallery.png`) — none is an absent transgene; every one
+is visibly fluorescent:
+
+| cause | example | signature |
+|---|---|---|
+| **mask caught multiple objects** | A02 t1/t2 (eff 101 → 10) | debris/fragments inside the mask dilute the signal |
+| **mask caught the well rim** | E04 (eff 132 → 45/44) | bright ring dominates a small embryo |
+| **saturation, not resolution** | D04 (eff 217/173/213, sat 0.03/0.00/0.02) | excellent resolution, clipping the detector |
+| **threshold-marginal** | A12 t2 (eff 168) | a clean bright fish rejected by a threshold set at 55 |
+
+**D04 is the most instructive**: it fails on `saturated_frac`, not `effective_states`. A different
+failure mode entirely, and one the resolution check cannot see — which justifies keeping saturation
+as an independent check even though no `ab` negative exercises it.
+
+**A12 t2 failing at eff=168 while others pass at 55 is not a threshold problem** — it fails the
+saturation check too. Worth stating because the gallery makes it look like a resolution
+near-miss.
+
+## Consequences for the design
+
+1. **Gate at track grain.** Well-grain rollups fabricate inconsistencies in multi-embryo wells.
+2. **`inconsistent_over_time` is itself a QC feature** — an embryo whose verdict flips is a
+   measurement-reliability flag independent of any single-timepoint threshold.
+3. Saturation stays in the gate despite no negative exercising it: D04 shows it catches a real,
+   distinct failure that resolution misses.

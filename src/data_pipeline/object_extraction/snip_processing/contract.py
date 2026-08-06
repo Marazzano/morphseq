@@ -15,7 +15,7 @@ REQUIRED_COLUMNS_SNIP_MANIFEST = [
     "well_index",
     "image_id",
     "embryo_id",
-    "time_int",
+    "time_index",
 
     # Inputs (relative to data_pipeline_output where possible)
     "image_path",

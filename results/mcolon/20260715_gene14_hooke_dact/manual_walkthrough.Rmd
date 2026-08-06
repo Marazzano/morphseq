@@ -33,9 +33,13 @@ BASE    <- "/net/trapnell/vol1/home/mdcolon/proj/morphseq/results/mcolon/2026071
 PHENO   <- file.path(BASE, "output", "gene14_embryos_with_phenotype.tsv")
 OUT_DIR <- file.path(BASE, "output")   # where fit results are saved
 
-# CONFIRM both exist before going further:
-stopifnot(file.exists(CDS_PATH), file.exists(PHENO))
-cat("CDS path and phenotype table found.\n")
+# The WT reference abundance atlas — the source of the REAL percent_max_abund
+# (see the quality-filter chunk below for why this file is required).
+WT_ABUNDANCES <- file.path(MCCLINTOCK, "kinetics", "wt_abundances.tsv")
+
+# CONFIRM all three exist before going further:
+stopifnot(file.exists(CDS_PATH), file.exists(PHENO), file.exists(WT_ABUNDANCES))
+cat("CDS path, phenotype table, and WT abundances found.\n")
 ```
 
 # 3. Load the processed cells
@@ -223,11 +227,61 @@ dact_raw <- purrr::pmap_dfr(
 dplyr::count(dact_raw, tag)
 ```
 
+## 5e-bis. Attach the REAL percent_max_abund (the WT-atlas presence gate)
+
+`percent_max_abund` is **not** a contrast quantity and cannot be derived from
+`get_perturbation_effects()` output. It is a property of the WT reference atlas:
+
+```
+percent_max_abund = exp(log_abund) / max_abundance
+max_abundance     = that cell type's PEAK abundance over developmental time in WT
+```
+
+at grain `(cell_group x timepoint)`. It answers **"does this cell type meaningfully
+exist at this age?"** — nothing to do with mutant vs control. (Verified directly
+against `wt_abundances.tsv`; mcclintock's `fit_wt_model.R:240` uses the same 0.1
+cutoff for its `present_above_thresh` flag.)
+
+This matters: in the mcclintock-output path (`scripts/2_baseline_perturbation_dacts.py`)
+this gate removed ~89 spurious negsib DACTs that were cell types with **zero cells in
+every embryo** at the timepoint — spline undershoot in data-sparse regions. Our
+hand-rolled fits never had the column, so that whole class of artifact was never
+removed here.
+
+```{r attach-pct-max-abund}
+# Join grain = (cell_group, timepoint). Verified: the atlas covers 3-96 hpf as
+# integers, and all 353 cell types in our contrast tables are present in it.
+wt_abund <- readr::read_tsv(WT_ABUNDANCES, show_col_types = FALSE) %>%
+  dplyr::select(cell_group, timepoint, percent_max_abund)
+
+attach_pct_max_abund <- function(tbl) {
+  # mcclintock's own contrast_abundance_tbl.tsv already carries the column.
+  if ("percent_max_abund" %in% colnames(tbl)) return(tbl)
+  stopifnot(all(c("cell_group", "timepoint") %in% colnames(tbl)))
+  n_before <- nrow(tbl)
+  out <- dplyr::left_join(tbl, wt_abund, by = c("cell_group", "timepoint"))
+  # A silent key mismatch would leave the column all-NA and turn the gate into a
+  # no-op — which is exactly the failure mode being fixed here. Fail loudly.
+  stopifnot(nrow(out) == n_before)
+  n_na <- sum(is.na(out$percent_max_abund))
+  if (n_na > 0) {
+    stop(sprintf(
+      "%d/%d rows got no percent_max_abund - check cell_group naming / timepoint coding",
+      n_na, n_before))
+  }
+  out
+}
+
+dact_raw <- attach_pct_max_abund(dact_raw)
+cat("percent_max_abund attached to dact_raw:", nrow(dact_raw), "rows\n")
+```
+
 ## 5f. Inspect the thresholds BEFORE applying them
 
 ```{r threshold-diagnostics, fig.width=9, fig.height=6}
 Q_THRESH <- 0.05   # delta_q_value cutoff (FDR)
 LA_THRESH <- -3    # log_abund_x floor (drop near-empty cell types)
+PMA_THRESH <- 0.1  # percent_max_abund floor (cell type actually present at this age)
 
 # --- how many rows each cut removes, and the two cuts combined ------------------
 n_all   <- nrow(dact_raw)
@@ -277,18 +331,90 @@ floor is safely trimming noise.
 ## 5g. Apply the DACT gate
 
 ```{r kr1-dact-gate}
-# DACT = significant AND above the abundance-quality floor.
-#   delta_q_value < 0.05    (FDR)
-#   log_abund_x >= -3       (not a near-empty cell type)
-# (percent_max_abund filter is skipped — get_perturbation_effects doesn't emit it.)
+# DACT = significant AND above BOTH abundance-quality floors.
+#   delta_q_value      < 0.05   (FDR)
+#   log_abund_x       >= -3     (not a near-empty cell type in the control)
+#   percent_max_abund >= 0.1    (cell type actually EXISTS at this age; joined
+#                                from the WT atlas in 5e-bis — get_perturbation_effects
+#                                does not emit it)
 dact_hits <- dact_raw %>%
-  filter(delta_q_value < Q_THRESH, log_abund_x >= LA_THRESH)
+  filter(delta_q_value < Q_THRESH,
+         log_abund_x >= LA_THRESH,
+         percent_max_abund >= PMA_THRESH)
+
+# What the presence gate alone removed — if this is large, those calls were
+# cell types that barely exist at that timepoint (the spline-undershoot class).
+n_pre <- dact_raw %>%
+  filter(delta_q_value < Q_THRESH, log_abund_x >= LA_THRESH) %>%
+  nrow()
+cat(sprintf("hits before percent_max_abund gate: %d\n after: %d  (removed %d)\n",
+            n_pre, nrow(dact_hits), n_pre - nrow(dact_hits)))
 
 # the KR1 answer: DACT cell types per contrast
 dact_hits %>%
   count(tag, name = "n_dacts") %>%
   arrange(desc(n_dacts))
 ```
+
+## 5h. VERIFY the calls — per-embryo proportion box plots
+
+The DACT gate is a model output. Before trusting it, plot the RAW per-embryo
+proportion of each hit cell type, case vs control, and eyeball whether the mutant
+really is depleted/enriched. A real DACT = clear separation with each embryo as a
+dot; a suspicious one = overlapping clouds driven by one outlier.
+
+```{r dact-proportions-helper}
+# Per-embryo proportion of every cell_type, built straight from the CDS colData
+# (embryo_ID x cell_type) — transparent, no ccs internals. One row per embryo x type.
+embryo_props <- as.data.frame(colData(cds)) %>%
+  count(embryo_ID, perturbation, genotype_block, timepoint, cell_type,
+        name = "n_cells") %>%
+  group_by(embryo_ID) %>%
+  mutate(prop = n_cells / sum(n_cells)) %>%   # fraction of THIS embryo's cells
+  ungroup()
+```
+
+```{r verify-dacts, fig.width=11, fig.height=8}
+# Pick ONE contrast to verify (change tag to check others). cep290's 9 is a good
+# small start; crispants have 50+ so you'd want to page through them.
+VERIFY_TAG <- "cep290_vs_reference"   # <- edit to any tag in dact_hits
+
+# which (block, case, controls) does this tag correspond to? pull from contrasts_all
+spec <- contrasts_all %>% filter(tag == VERIFY_TAG)
+blk  <- spec$block[[1]]; case <- spec$genotype[[1]]; ctrls <- spec$ctrl[[1]]
+
+# the DACT cell types for this contrast, tagged by direction (loss vs gain)
+hits <- dact_hits %>%
+  filter(tag == VERIFY_TAG) %>%
+  transmute(cell_type = cell_group,
+            dir = ifelse(delta_log_abund < 0, "loss (down in mut)", "gain (up in mut)"),
+            delta_log_abund, delta_q_value)
+
+# embryos in this contrast: the case + its control(s), fenced to the block
+plot_df <- embryo_props %>%
+  filter(genotype_block == blk,
+         perturbation %in% c(case, ctrls),
+         cell_type %in% hits$cell_type) %>%
+  mutate(group = ifelse(perturbation == case, "mutant", "control")) %>%
+  left_join(hits %>% select(cell_type, dir), by = "cell_type")
+
+# box + every-embryo jitter, faceted by cell type, colored by DACT direction
+ggplot(plot_df, aes(group, prop, colour = dir)) +
+  geom_boxplot(outlier.shape = NA, width = 0.5) +
+  geom_jitter(width = 0.15, size = 1, alpha = 0.7) +
+  facet_wrap(~ cell_type, scales = "free_y", labeller = label_wrap_gen(28)) +
+  scale_colour_manual(values = c("loss (down in mut)" = "#B2182B",
+                                 "gain (up in mut)"  = "#2166AC")) +
+  labs(title = paste0("Verify DACTs: ", VERIFY_TAG),
+       subtitle = "each dot = one embryo's proportion of that cell type",
+       x = NULL, y = "proportion of embryo's cells") +
+  theme(strip.text = element_text(size = 7),
+        legend.position = "top")
+```
+
+Read it: for a REAL call the `mutant` box should sit clearly below (loss) or above
+(gain) the `control` box, with the embryo dots supporting it. If the boxes overlap
+heavily or one dot drags the mean, treat that DACT with suspicion.
 
 ## 5f. Save the results (same outputs the grid script writes)
 
@@ -340,3 +466,163 @@ Resume in a brand-new R session (restores all objects by their names):
 load(file.path(OUT_DIR, "dact_checkpoint.RData"))
 #   -> dact_raw, dact_hits, contrasts_all, ccs are all back
 ```
+
+# 6. 48hpf-ONLY drill-in — cep290 & b9d2 with the timepoint spline KILLED
+
+WHY: the KR1 fits (section 5) use `interval_col = "timepoint"`, which fits a natural
+spline `ns(timepoint, ...)` over the whole time course. A wiggly spline across sparse
+timepoints can MANUFACTURE abundance shifts that read as DACTs but are fit artifacts,
+not biology. This section isolates ONE timepoint (48hpf) for cep290 and b9d2 so the
+spline has nothing to bend over — any DACT that survives here is a genuine 48hpf
+abundance difference.
+
+HOW the spline actually dies (no formula hacking needed): inside
+`platt:::fit_genotype_ccm`, the time term is chosen by
+`num_knockout_timepoints = length(unique(colData(subset_ccs)[[interval_col]]))`.
+When that is > 1 it builds `~ ns(timepoint, knots=...)`; when it is **1** it falls to
+the `else` branch and the nuisance formula collapses to `~ 1` — no spline, no time
+term. So **subsetting the ccs to a single timepoint removes the spline by the
+library's own logic.** We just feed it 48hpf-only cells.
+
+FILTER GRAIN (the thing to keep straight): the DACT threshold in 5g is applied
+per **(cell_type × timepoint × contrast)** row of `get_perturbation_effects`, NOT per
+embryo. Embryos are collapsed into the cell_count_set at 5c and pooled by the model;
+the gate never sees an individual embryo. Killing the timepoint axis here means each
+surviving DACT is one (cell_type × contrast) abundance call at 48hpf.
+
+## 6a. Confirm the timepoint coding, then subset the ccs to 48hpf
+
+```{r tp48-subset}
+# What timepoint values exist? (confirm 48 is present and how it's coded — numeric 48
+# vs "48hpf" string. Adjust TP48 to match.)
+print(sort(unique(colData(ccs)$timepoint)))
+
+TP48 <- 48   # <- edit if timepoint is coded as a string like "48" / "48hpf"
+
+# Subset the SHARED ccs to 48hpf cells only. Everything downstream fences per block
+# exactly as fit_within_block does — this just narrows the time axis to one value.
+ccs_48 <- ccs[, !is.na(colData(ccs)$timepoint) & colData(ccs)$timepoint == TP48]
+
+cat(sprintf("ccs_48: %d embryos at timepoint==%s (of %d total)\n",
+            ncol(ccs_48), TP48, ncol(ccs)))
+# GUARD: each block we refit must actually have both case + control embryos at 48hpf.
+print(table(colData(ccs_48)$genotype_block, colData(ccs_48)$perturbation,
+            useNA = "ifany"))
+```
+
+## 6b. Refit cep290 & b9d2 at 48hpf only (spline-free)
+
+```{r tp48-fit}
+# Same fence-by-subset logic as fit_within_block (5d), but on ccs_48. Because ccs_48
+# holds a single timepoint, fit_genotype_ccm's time term collapses to ~ 1 (no spline).
+# We refit ONLY the cep290 & b9d2 contrasts (the two you care about), all 3 controls each.
+fit_within_block_48 <- function(block, genotype, ctrl_ids, tag) {
+  ccs_sub <- ccs_48[, colData(ccs_48)$genotype_block == block]
+  stopifnot(ncol(ccs_sub) > 0)
+  message("\n=== [48hpf] ", tag, "  (", genotype, " vs ",
+          paste(ctrl_ids, collapse = "+"), " | ", ncol(ccs_sub), " embryos) ===")
+  ccm <- platt:::fit_genotype_ccm(
+    genotype         = genotype,
+    ccs              = ccs_sub,
+    perturbation_col = "perturbation",
+    ctrl_ids         = ctrl_ids,
+    interval_col     = "timepoint",     # still named, but single-value => ~1 (no spline)
+    batch_col        = "batch_one",
+    vhat_method      = "sandwich_var",
+    num_threads      = 3
+  )
+  saveRDS(ccm, file.path(OUT_DIR, paste0("dact48_ccm_", tag, ".rds")))
+  tbl <- platt:::get_perturbation_effects(ccm, interval_col = "timepoint")
+  tbl$tag <- tag
+  readr::write_tsv(tbl, file.path(OUT_DIR, paste0("dact48_contrast_", tag, ".tsv")))
+  tbl
+}
+
+# Just the cep290 + b9d2 rows from the existing spec (drops crispant + negsib-vs-ref).
+contrasts_48 <- contrasts_all %>%
+  dplyr::filter(block %in% c("cep290", "b9d2"),
+                tag %in% c("cep290_vs_negsib", "cep290_vs_reference", "cep290_vs_pool",
+                           "b9d2_vs_negsib",   "b9d2_vs_reference",   "b9d2_vs_pool"))
+
+dact48_raw <- purrr::pmap_dfr(
+  contrasts_48,
+  function(block, tag, genotype, ctrl) fit_within_block_48(block, genotype, ctrl, tag)
+)
+dplyr::count(dact48_raw, tag)
+```
+
+## 6c. Gate + color by % of max abundance
+
+```{r tp48-gate-pctmax, fig.width=10, fig.height=7}
+# Same DACT gate as 5g (per cell_type × contrast — there's only ONE timepoint now).
+Q_THRESH   <- 0.05
+LA_THRESH  <- -3
+PMA_THRESH <- 0.1
+
+# % of max abundance = the REAL percent_max_abund, joined from the WT atlas in
+# 5e-bis. It is each cell type's abundance as a fraction of ITS OWN developmental
+# peak in wild-type — i.e. "how present is this cell type at 48hpf?".
+#
+# This is the gate that matters most for THIS section. The spline artifacts we are
+# hunting are largely cell types that barely exist at the timepoint; without the
+# presence gate you cannot tell "the spline manufactured this" apart from "this
+# cell type isn't really there at 48hpf" — both show up as spline-only SUSPECTs.
+dact48_hits <- dact48_raw %>%
+  attach_pct_max_abund() %>%
+  dplyr::filter(delta_q_value < Q_THRESH,
+                log_abund_x >= LA_THRESH,
+                percent_max_abund >= PMA_THRESH) %>%
+  dplyr::mutate(pct_of_max = 100 * percent_max_abund)
+
+cat(sprintf(
+  "48hpf DACTs (q<%.2f, log_abund_x>=%d, pct_max_abund>=%.2f): %d rows / %d contrasts\n",
+  Q_THRESH, LA_THRESH, PMA_THRESH, nrow(dact48_hits),
+  dplyr::n_distinct(dact48_hits$tag)))
+
+# One panel per contrast; each surviving cell type as a point, x = effect size
+# (delta_log_abund), colored by its % of max abundance (how "real"/dominant it is).
+ggplot(dact48_hits,
+       aes(x = delta_log_abund,
+           y = reorder(cell_group, delta_log_abund),
+           colour = pct_of_max)) +
+  geom_vline(xintercept = 0, colour = "grey60", linewidth = 0.3) +
+  geom_point(size = 3) +
+  facet_wrap(~ tag, scales = "free_y") +
+  scale_colour_viridis_c(name = "% of WT peak\nabundance", limits = c(0, 100)) +
+  labs(title = "48hpf-only DACTs (spline killed) — cep290 & b9d2",
+       subtitle = "x = delta_log_abund (mut vs control); colour = abundance as % of that cell type's own WT developmental peak",
+       x = "delta_log_abund  (<0 loss in mutant, >0 gain)", y = NULL) +
+  theme(strip.text = element_text(size = 8))
+```
+
+## 6d. Does killing the spline change the calls? (48hpf vs full-spline)
+
+```{r tp48-vs-full}
+# The payoff comparison: which DACTs were present in the FULL spline fit (any timepoint)
+# but VANISH when restricted to a clean 48hpf-only fit — candidates for spline artifacts.
+full_48ish <- dact_hits %>%          # from section 5 (spline fits, all timepoints)
+  dplyr::filter(tag %in% contrasts_48$tag) %>%
+  dplyr::distinct(tag, cell_group) %>%
+  dplyr::mutate(in_full_spline = TRUE)
+
+only48 <- dact48_hits %>%
+  dplyr::distinct(tag, cell_group) %>%
+  dplyr::mutate(in_48hpf_only = TRUE)
+
+compare <- dplyr::full_join(full_48ish, only48, by = c("tag", "cell_group")) %>%
+  tidyr::replace_na(list(in_full_spline = FALSE, in_48hpf_only = FALSE)) %>%
+  dplyr::mutate(status = dplyr::case_when(
+    in_full_spline &  in_48hpf_only ~ "robust (both)",
+    in_full_spline & !in_48hpf_only ~ "spline-only (SUSPECT)",
+    !in_full_spline & in_48hpf_only ~ "48hpf-only (new)")) %>%
+  dplyr::arrange(tag, status)
+
+print(compare, n = Inf)
+dplyr::count(compare, tag, status)
+```
+
+Read 6d: **`spline-only (SUSPECT)`** rows are DACTs the full-timecourse spline called
+that DO NOT survive a clean 48hpf-only refit — your prime candidates for spline-
+manufactured abnormalities. **`robust (both)`** survive the honest single-timepoint
+test. `48hpf-only (new)` appear only when the spline's borrowing-across-time was
+*hiding* a real 48hpf effect.

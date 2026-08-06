@@ -11,17 +11,10 @@ b9d2 phenotype green/orange, cep290 phenotype pink/teal, genotype blue/amber/cri
 
 from __future__ import annotations
 
+from analyze.viz.styling.color_mapping_config import PHENOTYPE_COLORS
+
 # ── phenotype (homozygous binary, the confidence-plot v1 classes) ────────────────
-PHENOTYPE_COLORS = {
-    # b9d2
-    "CE":  "#1b9e77",   # green
-    "HTA": "#d95f02",   # darker orange
-    # cep290
-    "High_to_Low": "#E76FA2",   # pink
-    "Low_to_High": "#2FB7B0",   # teal
-    # kept for reference plots that still show the pooled-away class
-    "Not Penetrant": "#BBBBBB",
-}
+# Imported from the morphseq package so all analyses share one canonical palette.
 
 # ── genotype / zygosity ──────────────────────────────────────────────────────────
 GENOTYPE_COLORS = {

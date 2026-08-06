@@ -95,14 +95,49 @@ def _join_well_identity(
     *,
     experiment_id: str,
 ) -> pd.DataFrame:
-    """Attach ``well_index``/``well_id`` to an inventory that lacks them, via the mapping."""
+    """Attach ``well_index``/``well_id`` to an inventory that lacks them, via the mapping.
+
+    SOURCE_ORDINAL IS PART OF THE KEY FOR COLLECTIONS. A single-source experiment has one row per
+    position, so ``(experiment_id, position_index)`` is unique and the join works. A COLLECTION
+    merges several acquisitions into one experiment_id, and each source contributes its own
+    position 0..N -- so that pair repeats once per source and the many_to_one validation fails with
+    "Merge keys are not unique in right dataset".
+
+    ``collection_position_mapping`` states it outright: source_ordinal is "the JOIN KEY ... (see the
+    docstring above for why it is not time_index)". Both frames carry it. Measured on the pbx
+    collection: 288 mapping rows = 96 positions x 3 sources, all 288 duplicated on the two-column
+    key and ZERO duplicated once source_ordinal joins it.
+
+    Included only when BOTH frames have it, so single-source experiments -- which predate the
+    column -- keep their existing two-column join and their existing behavior.
+    """
     mapping = position_well_mapping_df.copy()
     mapping["experiment_id"] = mapping["experiment_id"].astype(str)
     mapping = mapping[mapping["experiment_id"] == experiment_id]
 
+    join_keys = ["experiment_id", "position_index"]
+    if "source_ordinal" in mapping.columns:
+        if "source_ordinal" not in acquisition_inventory_df.columns:
+            raise ValueError(
+                "position_well_mapping.csv carries 'source_ordinal' (a collection mapping, one "
+                "block per raw source) but the acquisition inventory does not. Both sides must "
+                "speak the same source key — the collection acquisition union stamps "
+                "source_ordinal; a mapping and inventory from different pipelines cannot be joined."
+            )
+        # Coerce BOTH sides. A CSV round-trip can leave one int64 and the other object/float64,
+        # which yields ZERO matches rather than an error -- and the failure then surfaces as a
+        # misleading "no rows resolve to this well". Mirrors apply_position_to_well_mapping, which
+        # hit exactly this.
+        acquisition_inventory_df = acquisition_inventory_df.copy()
+        for frame in (acquisition_inventory_df, mapping):
+            frame["source_ordinal"] = pd.to_numeric(
+                frame["source_ordinal"], errors="raise"
+            ).astype(int)
+        join_keys.append("source_ordinal")
+
     return acquisition_inventory_df.merge(
-        mapping[["experiment_id", "position_index", "well_index", "well_id"]],
-        on=["experiment_id", "position_index"],
+        mapping[join_keys + ["well_index", "well_id"]],
+        on=join_keys,
         how="left",
         validate="many_to_one",
     )

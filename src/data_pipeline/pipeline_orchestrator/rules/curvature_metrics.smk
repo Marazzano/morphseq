@@ -22,10 +22,10 @@ def _curvature_metrics_validated(experiment, *, path_mode, well_id=None):
     return rule_validated(CURVATURE_METRICS_STEP, "curvature_metrics", experiment, path_mode=path_mode, well_id=well_id)
 
 def _curvature_metrics_snip_inventory(experiment, *, well_id):
-    return rule_artifact("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_artifact("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _curvature_metrics_snip_inventory_validated(experiment, *, well_id):
-    return rule_validated("snip_inventory", "snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
+    return rule_validated("snip_inventory", "legacy_default_snip_inventory", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)
 
 def _curvature_metrics_frame_masks(experiment, *, well_id):
     return rule_artifact("frame_masks", "frame_masks", experiment, path_mode=PATH_MODE_PER_WELL, well_id=well_id)

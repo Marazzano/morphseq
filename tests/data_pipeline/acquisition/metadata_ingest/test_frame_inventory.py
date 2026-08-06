@@ -39,6 +39,7 @@ def _inventory_row(well_id: str, time_index: int) -> dict:
         "downsample_factor": 1,
         "downsample_method": "none",
         "jpeg_quality": pd.NA,
+        "flip_polarity": True,
     }
 
 

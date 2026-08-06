@@ -1,0 +1,13 @@
+{
+  "experiment_id": "chem28c_coll_plate01",
+  "product_key": "BF__projection__focus_stack",
+  "resolved_product": {
+    "channel_id": "BF",
+    "image_product_type": "projection",
+    "projection_method": "focus_stack",
+    "xy_composition": "mosaic"
+  },
+  "schema_version": 1,
+  "scope_name": "keyence",
+  "well_id": "chem28c_coll_plate01_A02"
+}

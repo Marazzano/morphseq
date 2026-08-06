@@ -1,0 +1,37 @@
+{
+  "experiment_id": "20260624_2x_td_bf_pbx_coll_plate01",
+  "is_collection": true,
+  "sources": [
+    {
+      "file": "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf",
+      "raw_path": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/input/raw_image_data/YX1/20260624_2x_td_bf_pbx_coll/20260624_pbx_flouresence_bf_pilot_plate01_t33hpf",
+      "declared_hpf": 33,
+      "source_ordinal": 0,
+      "time_index": 0
+    },
+    {
+      "file": "20260625_pbx_flouresence_bf_pilot_plate01_t52hpf",
+      "raw_path": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/input/raw_image_data/YX1/20260624_2x_td_bf_pbx_coll/20260625_pbx_flouresence_bf_pilot_plate01_t52hpf",
+      "declared_hpf": 52,
+      "source_ordinal": 1,
+      "time_index": 1
+    },
+    {
+      "file": "20260626_pbx_flouresence_bf_pilot_plate01_t77hpf",
+      "raw_path": "/net/trapnell/vol1/home/nlammers/projects/data/morphseq/pipeline/input/raw_image_data/YX1/20260624_2x_td_bf_pbx_coll/20260626_pbx_flouresence_bf_pilot_plate01_t77hpf",
+      "declared_hpf": 77,
+      "source_ordinal": 2,
+      "time_index": 2
+    }
+  ],
+  "start_age_by_source_ordinal": {
+    "0": 33,
+    "1": 52,
+    "2": 77
+  },
+  "start_age_by_time_index": {
+    "0": 33,
+    "1": 52,
+    "2": 77
+  }
+}

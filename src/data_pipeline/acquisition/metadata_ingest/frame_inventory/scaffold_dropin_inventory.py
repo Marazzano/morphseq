@@ -87,6 +87,8 @@ def scaffold_row_for_image(image_path: Path, *, image_root: Path | None = None) 
     row["image_product_type"] = "projection"
     row["projection_method"] = "focus_stack"
     row["z_index"] = pd.NA
+    # A dropped-in well is a single acquisition (not a merged collection) → n_sources = 1.
+    row["n_sources"] = 1
     return row
 
 

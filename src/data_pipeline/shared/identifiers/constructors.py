@@ -29,7 +29,7 @@ Tiny doctrine:
 
 BREAKING CHANGE (snip world update):
     build_embryo_id(well_id, local_track_id)  →  build_embryo_id(physical_embryo_id, image_id)
-    build_snip_id(embryo_id, time_int)        →  build_snip_id(embryo_id, image_id)
+    build_snip_id(embryo_id, time_index)      →  build_snip_id(embryo_id, image_id)
     NEW: build_physical_embryo_id(well_id, local_embryo_index)
 
     Production callers using the old signatures fail loudly at import time and must migrate.
@@ -78,7 +78,7 @@ def build_well_id(experiment_id: str, well_index: str) -> str:
 def build_image_id(
     well_id: str,
     channel_id: str,
-    time_int: int,
+    time_index: int,
     *,
     z_index: int | None = None,
 ) -> str:
@@ -88,7 +88,7 @@ def build_image_id(
     A real ``z_index`` identifies one materialized z-stack plane.
     """
     if z_index is None:
-        return f"{str(well_id)}_{str(channel_id)}_t{int(time_int):04d}"
+        return f"{str(well_id)}_{str(channel_id)}_t{int(time_index):04d}"
     if isinstance(z_index, bool):
         raise ValueError("z_index must be an integer or None.")
     try:
@@ -97,7 +97,7 @@ def build_image_id(
         raise ValueError("z_index must be an integer or None.") from exc
     if z < 0:
         raise ValueError("z_index must be zero or greater.")
-    return f"{str(well_id)}_{str(channel_id)}_z{z:04d}_t{int(time_int):04d}"
+    return f"{str(well_id)}_{str(channel_id)}_z{z:04d}_t{int(time_index):04d}"
 
 
 def build_mask_id(base_id: str, local_mask_index: int) -> str:
@@ -194,6 +194,30 @@ def build_snip_id(embryo_id: str, image_id: str) -> str:
             "A snip must derive from the same channel as its embryo identity."
         )
     return f"{str(embryo_id)}_t{time_index:04d}"
+
+
+def build_snip_transform_id(physical_embryo_id: str, time_index: int) -> str:
+    """Return the CHANNEL-INDEPENDENT identity of a snip's geometric transform.
+
+    A transform is a property of an animal at a time — where it is and which way it points — and is
+    derived from the segmentation MASK, never from image pixels. So its identity is
+    ``physical_embryo_id x time_index`` with NO channel segment: ``BF__clahe_blend``,
+    ``RFP__no_change``, and any future ``GFP__no_change`` snip of the same embryo-time all reference
+    the SAME transform row.
+
+    That channel-independence is the whole point. Naming the transform after one channel's snip would
+    make an RFP row point at "a file named for BF", and would let sibling products each hold a COPY
+    of identical geometry that can drift apart — silently breaking the pixel-registerability the
+    transform exists to guarantee. One id, referenced by every sibling, makes that unrepresentable.
+
+    Example: ``("20250416_D09_e01", 32)`` → ``"20250416_D09_e01_t0032"``
+    """
+    _require_non_empty_text(physical_embryo_id, field_name="physical_embryo_id")
+    _require_non_negative_int(time_index, field_name="time_index")
+    # Parse for its side effect: a malformed physical_embryo_id must fail here, not silently
+    # produce a well-formed-looking id that joins to nothing.
+    parse_physical_embryo_id(physical_embryo_id)
+    return f"{str(physical_embryo_id)}_t{int(time_index):04d}"
 
 
 def _require_non_empty_text(value: str, *, field_name: str) -> None:

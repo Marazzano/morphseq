@@ -1,0 +1,1 @@
+.collection_test_scratch/dag_out/object_extraction/chem28c_coll_plate01/physical_embryo_registry/chem28c_coll_plate01_physical_embryo_registry.csv.validated

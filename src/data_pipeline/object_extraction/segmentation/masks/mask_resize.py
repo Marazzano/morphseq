@@ -1,9 +1,16 @@
-"""The one controlled seam for pixel-grid resizing — masks AND images.
+"""The DOMAIN-FACING seam for pixel-grid resizing — masks AND images.
 
 THE LAW: no resize inline, no silent dimension changes. Every operation that changes a 2-D pixel
 grid's ``(height, width)`` goes through a named helper here, never a raw ``cv2.resize`` /
-``skimage.resize`` sprinkled in a consumer. Centralising it keeps the shape validation in one
-tested place and keeps the two interpolation regimes from ever being mixed up:
+``skimage.resize`` sprinkled in a consumer.
+
+WHERE THE POLICY NOW LIVES. The interpolation decision itself moved to
+``image_geometry.resize_interpolation_flags``, which this module and ``image_geometry``'s transform
+engine both call. Two seams had independently derived the SAME policy (area-on-shrink for images,
+nearest for masks) and were one edit away from disagreeing; the rule is now stated once. This module
+keeps what is genuinely its own — the validation doctrine below, and names that say ``shape`` — and
+its validations were folded INTO the shared engine rather than left behind. The two interpolation
+regimes it exists to keep separate:
 
 * :func:`resize_binary_mask_to_shape` — for BINARY masks. Nearest-neighbour, so a label never
   becomes a fractional 0.5; preserves bool / 0-1 semantics. Returns bool.
@@ -25,6 +32,8 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+
+from image_geometry import resize_interpolation_flags
 
 from .mask_rle import validate_binary_mask
 
@@ -91,13 +100,18 @@ def resize_image_to_shape(image: np.ndarray, target_shape: tuple[int, int]) -> n
     ``INTER_LINEAR`` when growing. The dtype of ``image`` is preserved. An image already at
     ``target_shape`` is returned unchanged. ``target_shape`` is (H, W); OpenCV's ``dsize`` is
     (W, H), so the axes are swapped on the way in and the output shape is asserted before returning.
+
+    The interpolation decision is delegated to :func:`image_geometry.resize_interpolation_flags`,
+    which is the same policy ``image_geometry``'s ``_apply_step`` executes — see that function for
+    why "shrinking" is decided PER AXIS.
     """
     _require_2d(image, what="image")
     target_h, target_w = _validate_target_shape(target_shape)
     if image.shape == (target_h, target_w):
         return image
-    shrinking = target_h * target_w < image.shape[0] * image.shape[1]
-    interp = cv2.INTER_AREA if shrinking else cv2.INTER_LINEAR
+    interp = resize_interpolation_flags(
+        in_shape_yx=image.shape[:2], out_shape_yx=(target_h, target_w), is_mask=False
+    )
     resized = cv2.resize(image, (target_w, target_h), interpolation=interp).astype(
         image.dtype, copy=False
     )

@@ -1,0 +1,62 @@
+# Runtime overlay for the pbx fluorescence COLLECTION (YX1, BF + RFP/tdTomato).
+# Usage (composed over base config.yaml; later --configfile wins):
+#   snakemake --configfile config.yaml --configfile config_runtime_pbx_fluorescence.yaml \
+#     <target> --rerun-triggers mtime --cores 1
+#
+# WHY THIS FILE EXISTS — the RFP product must NOT go in base config.yaml.
+# A requested-but-unacquired channel is a HARD failure (resolve_channel_index fails loud, naming the
+# channel and the fix). That is the right behavior: silently dropping a requested product would make
+# "not acquired" indistinguishable from "materialization broke". But base config.yaml runs against
+# EVERY experiment, most of which are brightfield-only, so a global RFP entry would break all of
+# them. Fluorescence products therefore live in a per-run config listing only RFP-capable
+# experiments. (Per-experiment product scoping — one config saying "RFP where available" — is the
+# real long-term fix and is not built.)
+
+# The 3-source collection: 20260624/25/26 pbx fluorescence bf pilot, merged into one experiment.
+# Verified from its acquisition inventory: 5184 rows, channels {BF: BF-no bin -> index 0,
+# RFP: tdtomato -> index 1}, 9 z-planes, 3 merged time_index values (one per source).
+experiments:
+  - 20260624_2x_td_bf_pbx_coll_plate01
+
+microscope: "YX1"
+
+image_materialization:
+  # products is a REPLACEMENT, not a merge — the BF entries are relisted deliberately. Dropping them
+  # here would silently stop materializing brightfield, which everything downstream depends on
+  # (BF anchors the segmentation timeline and is the detection/snip source).
+  products:
+    - channel_id: BF
+      image_product_type: projection
+      projection_method: focus_stack
+      write_index_map: true
+    - channel_id: BF
+      image_product_type: z_stack
+    # The fluorescence product. max (not focus_stack) because LoG focus scoring selects the
+    # sharpest-EDGE plane, which on a sparse fluorescence stack is noise wherever there is no
+    # signal. write_index_map is false: the argmax map is reconstructible from the z_stack and is
+    # not needed yet — flip it to true if per-pixel plane provenance becomes interesting.
+    - channel_id: RFP
+      image_product_type: projection
+      projection_method: max
+      write_index_map: false
+
+  # RFP__projection__max's encoding (native uint16 png, no polarity flip) is locked in
+  # materialized_image_write_policy._PRODUCT_DEFAULTS and deliberately NOT overridden here:
+  # downsampling a max projection averages puncta against dark background and destroys peak
+  # intensity, and uint8 would compress 65,536 levels into 256.
+  write_policies:
+    BF__z_stack:
+      file_format: jpg
+      jpeg_quality: 85
+      downsample_factor: 4
+      downsample_method: area_resize
+      pixel_dtype: uint8
+
+# Plate metadata is needed for through_line/analysis_ready/all; front_half runs without it.
+plate_metadata:
+  enabled: false
+
+# RAGGED-CHANNEL POLICY — left at the default ("fail") ON PURPOSE.
+# This acquisition is rectangular: BF and RFP share all 3 time_index values, so the default passes.
+# Only set ragged_channel_policy: "warn" if a real acquisition images fluorescence less often than
+# brightfield. Setting it pre-emptively would turn a dropped-frame defect into a log line.

@@ -64,6 +64,9 @@ def _projection_row(well_id: str, time_index: int) -> dict:
         "downsample_factor": 1,
         "downsample_method": "none",
         "jpeg_quality": pd.NA,
+        # BF products invert display polarity — see
+        # materialized_image_write_policy._PRODUCT_DEFAULTS["BF__projection__focus_stack"].
+        "flip_polarity": True,
     }
 
 

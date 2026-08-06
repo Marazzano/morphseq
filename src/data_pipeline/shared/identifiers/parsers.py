@@ -48,6 +48,216 @@ _TRACK_ID_RE = re.compile(r"^(.+)_track(\d{4,})$")
 
 _WELL_INDEX_RE = re.compile(r"^[A-Za-z]\d{1,3}$")
 
+# ── Experiment collection grammar (see docs/EXPERIMENT_GROUP_PLATE_MODEL.md) ──
+#
+# A COLLECTION is a raw directory whose name ends in ``_coll``. Inside it, each
+# child folder/file is named positionally:
+#
+#     {date}_{plate_token}_{event_label}   e.g. 20260607_plate01_t45hpf
+#
+#     date        = 8 digits            → acquisition fact, NOT identity (dropped)
+#     plate_token = plate01             → the PLATE identity; this IS the experiment
+#     event_label = t45hpf (optional)   → declared_hpf axis (dropped from identity)
+#
+# The MERGE model: date and event_label are dropped from identity; the plate token
+# IS the id. Multiple t-events of one plate share ``experiment_id = {coll}_{plate}``.
+_COLLECTION_SUFFIX = "_coll"
+
+# child name: {date}_{plate_token}[_{event_label}], date is the 8-digit split anchor.
+# Group 1 = plate_token, group 3 = event_label (may be absent → None).
+#
+# NOTE: this positional reading assumes the plate token is the FIRST underscore-delimited
+# token after the date. Real acquisitions also carry a free-form descriptive middle, e.g.
+#   20260624_pbx_flouresence_bf_pilot_plate01_t33hpf
+# where positionally group 1 would be "pbx" (a project label, not the plate) and group 3
+# "flouresence_bf_pilot_plate01_t33hpf" (which no declared-hpf pattern matches). So the
+# token-anchored patterns below take PRECEDENCE, and this positional form is the fallback
+# for names that carry no recognizable plate/age token.
+_COLLECTION_CHILD_RE = re.compile(r"^\d{8}_([^_]+)(_(.+))?$")
+
+# ANCHORED tokens — matched by SHAPE anywhere in the name, not by position. These are what
+# make a descriptive middle harmless. Both are anchored to token boundaries (start/underscore
+# … underscore/end) so they cannot match inside a longer word.
+#   plate token: plate01, plate1, PLATE02 → the PLATE identity
+_PLATE_TOKEN_RE = re.compile(r"(?:^|_)(plate\d+)(?:_|$)", flags=re.IGNORECASE)
+#   declared-age token: t45hpf → the age axis. Trailing/anywhere; the LAST one wins.
+_AGE_TOKEN_RE = re.compile(r"(?:^|_)(t\d+hpf)(?:_|$)", flags=re.IGNORECASE)
+
+# The 8-digit date prefix every collection child must carry (the split anchor).
+_CHILD_DATE_PREFIX_RE = re.compile(r"^\d{8}_")
+
+# event_label declared-age token: t<NN>hpf → NN.
+_DECLARED_HPF_RE = re.compile(r"^t(\d+)hpf$")
+
+
+def is_collection(name: str) -> bool:
+    """Return True iff ``name`` marks an experiment COLLECTION (``_coll`` suffix).
+
+    The marker is a pure suffix test — collection names are experiment-id-shaped
+    strings, so no filesystem probe is needed to classify an input entry. A folder
+    WITHOUT the marker is a legacy single experiment (unchanged behavior).
+    """
+    return str(name).strip().endswith(_COLLECTION_SUFFIX)
+
+
+_COLLECTION_ID_MARKER = _COLLECTION_SUFFIX + "_"  # "_coll_" — the marker INSIDE a plate id
+
+
+def is_collection_plate_id(experiment_id: str) -> bool:
+    """Return True iff ``experiment_id`` is a merged collection plate id (``{collection}_coll_{plate}``).
+
+    Distinct from ``is_collection`` (which tests a collection *name*, ending in ``_coll``): a plate
+    id has the ``_coll_`` marker INSIDE it (``cilia_snapshots_coll_plate01``). Used at the DAG seam
+    to decide whether an experiment is a single scope read or a collection UNION.
+    """
+    return _COLLECTION_ID_MARKER in str(experiment_id).strip()
+
+
+def parse_collection_name_from_plate_id(experiment_id: str) -> str:
+    """``{collection}_coll_{plate}`` -> ``{collection}_coll`` (the raw dir name to glob).
+
+    Inverse-facing helper for acquisition ingest: the collection dir is the id up to and
+    including the ``_coll`` marker. Fails loud if the id is not a collection plate id.
+    """
+    text = str(experiment_id).strip()
+    if _COLLECTION_ID_MARKER not in text:
+        raise ValueError(
+            f"parse_collection_name_from_plate_id: {experiment_id!r} is not a collection plate id "
+            f"(no '{_COLLECTION_ID_MARKER}' marker)."
+        )
+    return text[: text.index(_COLLECTION_ID_MARKER)] + _COLLECTION_SUFFIX
+
+
+def parse_plate_token(source_id: str) -> str:
+    """Extract the ``plate_token`` from a collection child name.
+
+    The token is found by SHAPE (``plate<N>``) anywhere in the name, so a free-form
+    descriptive middle is harmless::
+
+        "20260607_plate01_t45hpf"                          -> "plate01"
+        "20260607_plate01"                                 -> "plate01"
+        "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf"  -> "plate01"   (not "pbx")
+
+    Falls back to the positional reading (``{date}_{plate_token}[_{event_label}]``) for
+    names that carry no ``plate<N>``-shaped token, preserving the original behavior for
+    plate tokens that are named differently. Fails loud on a name that does not match the
+    collection child grammar (e.g. a missing/non-8-digit date).
+
+    Returned lowercased when matched by shape so the token is a stable identity component
+    regardless of source casing (``PLATE01`` and ``plate01`` are the same plate).
+    """
+    text = str(source_id).strip()
+    if not _CHILD_DATE_PREFIX_RE.match(text):
+        raise ValueError(
+            f"parse_plate_token: cannot parse {source_id!r}. Expected a collection child "
+            "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
+            "(e.g. 20260607_plate01_t45hpf)."
+        )
+
+    # Anchored token wins: it is the plate identity wherever it sits in the name. MULTIPLE distinct
+    # plate tokens are AMBIGUOUS — nothing in the name says which is the plate identity, and silently
+    # taking the first would mis-key the experiment. (A repeated identical token is fine.)
+    anchored = _PLATE_TOKEN_RE.findall(text)
+    if anchored:
+        distinct = sorted({token.lower() for token in anchored})
+        if len(distinct) > 1:
+            raise ValueError(
+                f"parse_plate_token: {source_id!r} contains multiple plate tokens {distinct}. "
+                "The plate token IS the experiment identity, so this is ambiguous — rename the raw "
+                "child so exactly one plate<N> token appears."
+            )
+        return distinct[0]
+
+    # Fallback: the original positional reading (first token after the date).
+    match = _COLLECTION_CHILD_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_plate_token: cannot parse {source_id!r}. Expected a collection child "
+            "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
+            "(e.g. 20260607_plate01_t45hpf)."
+        )
+    return match.group(1)
+
+
+def parse_event_label(source_id: str) -> str | None:
+    """Extract the optional ``event_label`` from a collection child name.
+
+    The declared-age token is found by SHAPE (``t<NN>hpf``) so a free-form descriptive
+    middle is harmless::
+
+        "20260607_plate01_t45hpf"                           -> "t45hpf"
+        "20260607_plate01"                                  -> None        (no event)
+        "20260624_pbx_flouresence_bf_pilot_plate01_t33hpf"   -> "t33hpf"
+
+    Falls back to the positional reading (everything after ``{date}_{plate_token}_``) for
+    names whose event label is not age-shaped (e.g. ``sci``), preserving the original
+    behavior. Fails loud on a name that does not match the collection child grammar.
+
+    Returned lowercased when matched by shape, so ``T45HPF`` and ``t45hpf`` agree.
+    """
+    text = str(source_id).strip()
+    if not _CHILD_DATE_PREFIX_RE.match(text):
+        raise ValueError(
+            f"parse_event_label: cannot parse {source_id!r}. Expected a collection child "
+            "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
+            "(e.g. 20260607_plate01_t45hpf)."
+        )
+
+    # Anchored age token wins wherever it sits. The LAST match is the event: a descriptive
+    # middle could itself contain an age-shaped word, and the event label is conventionally
+    # the trailing token.
+    anchored = list(_AGE_TOKEN_RE.finditer(text))
+    if anchored:
+        return anchored[-1].group(1).lower()
+
+    # Fallback: the original positional reading (may be a non-age label like "sci", or None).
+    match = _COLLECTION_CHILD_RE.match(text)
+    if not match:
+        raise ValueError(
+            f"parse_event_label: cannot parse {source_id!r}. Expected a collection child "
+            "named {date}_{plate_token}[_{event_label}] with date = 8 digits "
+            "(e.g. 20260607_plate01_t45hpf)."
+        )
+    return match.group(3)
+
+
+def parse_declared_hpf(event_label_or_name: str | None) -> int | None:
+    """Return the declared (planned) age in hpf, or ``None`` if none is declared.
+
+    Accepts either a bare event_label (``"t45hpf"``) or a full collection child name
+    (``"20260607_plate01_t45hpf"``) — a full name is reduced to its event_label first.
+    ``t<NN>hpf -> NN``; no ``t...hpf`` token (e.g. ``sci``, absent event) -> ``None``.
+    """
+    if event_label_or_name is None:
+        return None
+    text = str(event_label_or_name).strip()
+    if not text:
+        return None
+    # Reduce a full child name to its event_label if it looks like one.
+    if _COLLECTION_CHILD_RE.match(text):
+        text = parse_event_label(text) or ""
+    match = _DECLARED_HPF_RE.match(text)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def compose_collection_experiment_id(collection_name: str, source_id: str) -> str:
+    """Compose ``experiment_id = {collection}_{plate_token}`` for a collection child.
+
+    The plate token IS the id: date and event_label are DROPPED (the MERGE model — all
+    t-events of one plate share this id). The composed id is run through
+    ``sanitize_experiment_id`` so it inherits the canonical grammar. This is the ONE
+    place a collection id is minted — the plural resolver consumes it, never re-mints.
+
+    Example: ``("cilia_snapshots_coll", "20260607_plate01_t45hpf")``
+             -> ``"cilia_snapshots_coll_plate01"``
+    """
+    from data_pipeline.shared.identifiers.constructors import sanitize_experiment_id
+
+    plate_token = parse_plate_token(source_id)
+    return sanitize_experiment_id(f"{str(collection_name).strip()}_{plate_token}")
+
 
 def parse_embryo_local_track_id(value: object) -> int:
     """Parse tracker-native embryo IDs like ``"embryo_0"`` to a zero-based integer track index.

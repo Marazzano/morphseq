@@ -6,7 +6,7 @@ Keyence raw data on disk is **per-Z-plane, per-channel, per-tile TIFFs** named
 single tensor file whose axes encode it.
 
 This module owns that grammar so the acquisition inventory (the system of record) and the legacy
-``stitched_index/materialize_stitched_images.py`` materializer share **one parser** during the
+the per-well Keyence materializer share **one parser** during the
 strangler overlap. The functions were lifted verbatim from the legacy materializer; the only
 addition is ``_parse_keyence_time_z_channel`` which ALSO returns ``channel_index`` (the legacy
 ``_parse_keyence_time_and_z`` matched ``_CH\\d+`` but discarded the number and the materializer
@@ -152,37 +152,37 @@ def _parse_keyence_time_z_channel(path: Path) -> tuple[int, int, int] | None:
     if not zc_match:
         return None
 
-    time_int = 0
+    time_index = 0
     # Prefer directory timepoint (legacy Keyence layout: .../T0034/...).
     for part in path.parts:
         t_match = re.fullmatch(r"T(\d+)", part, flags=re.IGNORECASE)
         if t_match:
-            time_int = max(int(t_match.group(1)) - 1, 0)
+            time_index = max(int(t_match.group(1)) - 1, 0)
             break
 
     # Fallback for layouts that encode explicit T in filename.
-    if time_int == 0:
+    if time_index == 0:
         t_name_match = re.search(r"_T(\d+)_Z\d+_CH\d+", path.name, flags=re.IGNORECASE)
         if t_name_match:
-            time_int = max(int(t_name_match.group(1)) - 1, 0)
+            time_index = max(int(t_name_match.group(1)) - 1, 0)
 
     z_index = int(zc_match.group(1))
     channel_index = int(zc_match.group(2))
-    return time_int, z_index, channel_index
+    return time_index, z_index, channel_index
 
 
 def _parse_keyence_time_and_z(path: Path) -> tuple[int, int] | None:
     """Legacy 2-tuple ``(time_index, z_index)`` parser — kept byte-compatible for the materializer.
 
     Thin wrapper over ``_parse_keyence_time_z_channel`` that drops the channel index, preserving the
-    exact return shape the legacy ``materialize_stitched_images`` + ``test_keyence_parsing_semantics``
+    exact return shape the legacy stitch path + ``test_keyence_parsing_semantics``
     depend on. New code should call ``_parse_keyence_time_z_channel`` instead.
     """
     parsed = _parse_keyence_time_z_channel(path)
     if parsed is None:
         return None
-    time_int, z_index, _channel_index = parsed
-    return time_int, z_index
+    time_index, z_index, _channel_index = parsed
+    return time_index, z_index
 
 
 def _infer_keyence_stack_lookup(raw_images_dir: Path) -> dict[tuple[str, int], dict[int, list[Path]]]:
@@ -195,8 +195,8 @@ def _infer_keyence_stack_lookup(raw_images_dir: Path) -> dict[tuple[str, int], d
         parsed = _parse_keyence_time_and_z(path)
         if parsed is None:
             continue
-        time_int, z_index = parsed
-        key = (well_index, time_int)
+        time_index, z_index = parsed
+        key = (well_index, time_index)
         lookup.setdefault(key, {}).setdefault(tile_id, []).append((z_index, path))
 
     out: dict[tuple[str, int], dict[int, list[Path]]] = {}

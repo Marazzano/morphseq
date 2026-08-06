@@ -14,7 +14,7 @@ Phenotype models exist only for b9d2 (CE/HTA) and cep290 (High_to_Low/Low_to_Hig
 
 Run:
   conda run -n segmentation_grounded_sam --no-capture-output python \
-      results/mcolon/20260715_gene14_hooke_dact/scripts/1_attach_phenotype_labels.py
+      results/mcolon/20260715_gene14_hooke_dact/scripts/core/1_attach_phenotype_labels.py
 """
 
 from __future__ import annotations
@@ -98,8 +98,30 @@ def main() -> None:
 
     # attach onto the reconciled DACT embryos — keep ALL 520; phenotype is an EXTRA column
     recon = pd.read_csv(RECONCILED_TSV, sep="\t")
+
+    # ONE physical embryo -> ONE sequencing embryo, in its collection x acquisition column.
+    # When several imaging rows (t01 30hpf snapshot / t02 48hpf snapshot / _sci timeseries)
+    # resolve to the SAME seq_embryo_ID, we must NOT take whichever sorts first — we prioritize
+    # by acquisition, matching the confidence-plot convention:
+    #   timeseries (_sci)  >  48hpf snapshot (_t02)  >  30hpf snapshot (_t01)  >  other
+    # (timeseries is prioritized for label transfer; snapshot-only plates like cep290/b9d2
+    # plate02 use their 48hpf t02 snapshot as the answer, NOT the 30hpf t01). Without this,
+    # the plate02 t01 (30hpf) row wrongly won over t02 (48hpf) for E01/F01, mislabeling E01
+    # (t01=High_to_Low@0.56 vs the correct t02=Low_to_High@0.99) and bucketing it at 48.
+    def _acq_priority(imaging_id: str) -> int:
+        s = str(imaging_id)
+        if "_sci_" in s or s.rstrip("_e01").endswith("sci"):
+            return 0  # timeseries — highest priority
+        if "_t02_" in s:
+            return 1  # 48hpf backup snapshot
+        if "_t01_" in s:
+            return 3  # 30hpf snapshot — lowest (only if it's the only acquisition)
+        return 2      # plain snapshot (no t-token)
+    ph = pheno.dropna(subset=["seq_embryo_ID"]).copy()
+    ph["_acq_rank"] = ph["embryo_id"].map(_acq_priority)
+    ph = ph.sort_values(["seq_embryo_ID", "_acq_rank"])
     pheno_by_seq = (
-        pheno.dropna(subset=["seq_embryo_ID"]).drop_duplicates("seq_embryo_ID")
+        ph.drop_duplicates("seq_embryo_ID", keep="first")
         .set_index("seq_embryo_ID")
         .rename(columns={"predicted_label": "morphseq_phenotype", "embryo_id": "imaging_embryo_id"})
     )
@@ -108,6 +130,19 @@ def main() -> None:
                       "total_length_um", "baseline_deviation_normalized", "imaging_embryo_id"]],
         left_on="embryo_ID", right_index=True, how="left",
     )
+
+    # BIOLOGICAL CUTOFF: the phenotype only EXISTS once morphological divergence has
+    # emerged. Before that, the imaging classifier is guessing a phenotype that isn't
+    # real yet, so we NULL the label there (the embryo keeps its perturbation label).
+    #   cep290 (HtL/LtH): meaningful only at tp >= 30 (pre-30 was the classifier default;
+    #                     e.g. 18hpf was all-LtH, 24hpf all-HtL -- pre-phenotype noise)
+    #   b9d2   (CE/HTA) : meaningful only at tp >= 18 (drops the 14hpf calls)
+    PHENO_MIN_TP = {"cep290": 30, "b9d2": 18}
+    for gene, mintp in PHENO_MIN_TP.items():
+        pre = (recon["target"] == gene) & recon["morphseq_phenotype"].notna() & (recon["timepoint"] < mintp)
+        n = int(pre.sum())
+        recon.loc[pre, "morphseq_phenotype"] = pd.NA
+        print(f"  [cutoff] nulled {n} {gene} phenotype labels at tp < {mintp} (pre-emergence)")
 
     print(f"\n=== attached to reconciled DACT embryos ===")
     print(f"  DACT embryos total        : {len(recon)}")

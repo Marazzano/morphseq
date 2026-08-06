@@ -24,6 +24,7 @@ suppressMessages({
   library(purrr)
   library(readr)
   library(tibble)
+  library(tidyr)     # pivot_wider() in the artifact-check summary
 })
 
 CDS_PATH <- "/net/seahub_zfish/vol1/data/seahub_rna_processing/portal_inputs/v3.1.0/mcclintock/GENE14/run_1/filter_embryos/embryo_filtered_cds"
@@ -92,8 +93,22 @@ fit_within_block <- function(block, genotype, ctrl_ids, tag) {
     vhat_method      = "sandwich_var",
     num_threads      = NUM_THREADS
   )
-  # save the fitted MODEL (for plotting). LARGE (~6GB — bundles the ccs).
-  saveRDS(ccm, file.path(OUT_DIR, paste0("dact_ccm_", tag, ".rds")))
+  # Save the fitted MODEL only. ccm@ccs is a full embedded copy of the ccs —
+  # 20.5GB of a 20.6GB object (99.7%), and IDENTICAL across every fit in a
+  # block. Serializing it made each save ~44GB / ~25min, i.e. the write was
+  # ~95% of the runtime. Blanking it leaves the model itself untouched
+  # (@best_full_model, @vhat, @full_model_formula ~= 52MB total).
+  #
+  # To PLOT later you MUST re-attach a matching ccs:
+  #     ccm <- readRDS("dact_ccmlite_<tag>.rds")
+  #     ccm@ccs <- ccs[, colData(ccs)$genotype_block == "<block>"]
+  #     plot_contrast(ccm, ...)
+  # (plot_contrast reads ccm@ccs@cds for UMAP coords + cell_group.)
+  # See docs/storing_hooke_ccms.md.
+  ccm_lite <- ccm
+  ccm_lite@ccs <- new("cell_count_set")
+  saveRDS(ccm_lite, file.path(OUT_DIR, paste0("dact_ccmlite_", tag, ".rds")),
+          compress = FALSE)   # ~52MB: gzip CPU costs more than the I/O saves
   tbl <- platt:::get_perturbation_effects(ccm, interval_col = "timepoint")
   tbl$tag <- tag
   write_tsv(tbl, file.path(OUT_DIR, paste0("dact_contrast_", tag, ".tsv")))
@@ -116,6 +131,16 @@ write_tsv(dact_hits, file.path(OUT_DIR, "dact_hits.tsv"))
 message("\n=== DACT counts per contrast ===")
 print(dact_hits %>% count(tag, name = "n_dacts") %>% arrange(desc(n_dacts)))
 
-message("\n=== DACT counts per contrast ===")
-print(kr1_dacts %>% count(tag, name = "n_dacts") %>% arrange(desc(n_dacts)))
-message("\nWrote: kr1_raw_contrasts.tsv / .rds, kr1_dacts.tsv (+ per-contrast tsvs)")
+# Artifact check: median |delta| across ALL cell types, per timepoint. A real
+# phenotype moves SOME cell types; a large median here means the whole abundance
+# vector shifted — the signature of a control with no embryos at that timepoint
+# (see cep290-negsib @ 30hpf, which has none, and reported median 1.05).
+message("\n=== median |delta_log_abund| across ALL cell types (artifact check) ===")
+print(dact_raw %>%
+        group_by(tag, timepoint) %>%
+        summarise(med_abs_delta = round(median(abs(delta_log_abund)), 3),
+                  .groups = "drop") %>%
+        tidyr::pivot_wider(names_from = timepoint, values_from = med_abs_delta))
+
+message("\nWrote: dact_raw_contrasts.tsv / .rds, dact_hits.tsv ",
+        "(+ per-contrast tsvs, + dact_ccmlite_*.rds)")

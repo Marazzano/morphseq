@@ -1,0 +1,22 @@
+{
+  "experiment_id": "chem28c_coll_plate01",
+  "is_collection": true,
+  "sources": [
+    {
+      "file": "20250622_plate01_t28hpf",
+      "raw_path": ".collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250622_plate01_t28hpf",
+      "declared_hpf": 28,
+      "time_index": 0
+    },
+    {
+      "file": "20250623_plate01_t52hpf",
+      "raw_path": ".collection_test_scratch/dag_input/raw_image_data/Keyence/chem28c_coll/20250623_plate01_t52hpf",
+      "declared_hpf": 52,
+      "time_index": 1
+    }
+  ],
+  "start_age_by_time_index": {
+    "0": 28,
+    "1": 52
+  }
+}
