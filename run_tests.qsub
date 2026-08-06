@@ -2,7 +2,7 @@
 #$ -N morphseq_tests
 #$ -q trapnell-login.q
 #$ -l mfree=16G
-#$ -l h_rt=0:30:00
+#$ -l h_rt=2:00:00
 #$ -j y
 #$ -V
 #$ -o /net/trapnell/vol1/home/mdcolon/proj/morphseq/.coll_wt/logs
@@ -29,21 +29,14 @@ export PYTEST_ADDOPTS="-p no:cacheprovider"
 
 echo "[tests] cwd=$(pwd)"
 echo "[tests] HEAD=$(git rev-parse --short HEAD)"
-# FIVE STALE TEST MODULES ARE IGNORED, and this needs justifying rather than hiding. They import
-# module paths that no longer exist (data_pipeline.snip_processing, data_pipeline.segmentation,
-# data_pipeline.metadata_ingest, data_pipeline.io.frame_snapshot_hash, and a function removed from
-# quality_control). They were last touched between 2025-09 and 2026-07 and are untouched by the
-# current work -- pre-existing rot from module moves that never updated their tests.
+# NO --ignore LIST ANY MORE. Five stale modules used to be skipped here because their imports had
+# broken with module moves, and a COLLECTION error aborts the ENTIRE pytest run ("Interrupted: 5
+# errors during collection") -- so those five kept every other test in the repo from executing.
+# They have now been resolved rather than suppressed: three were repointed at the relocated modules
+# (and their assertions brought up to the current contracts), two were deleted because the code
+# they tested no longer exists in any form.
 #
-# The reason they cannot simply be left failing: a COLLECTION error aborts the entire pytest run
-# ("Interrupted: 5 errors during collection"), so these five prevented every other test in the repo
-# from executing at all. Ignoring them is what makes the other ~4000 tests observable.
-#
-# TODO: delete or repair these five; they have tested nothing since their imports broke.
+# Keep it this way. An --ignore entry here is invisible suppression: it makes a broken test look
+# like a passing suite.
 conda run -n segmentation_grounded_sam --no-capture-output \
-  python -m pytest src/data_pipeline tests --import-mode=importlib -q \
-    --ignore=tests/test_build04_bootstrap.py \
-    --ignore=tests/test_frame_snapshot_hash.py \
-    --ignore=tests/test_plate_processing_excel.py \
-    --ignore=tests/test_segmentation_tracking_upgrade_v2.py \
-    --ignore=tests/test_snip_manifest_validator.py
+  python -m pytest src/data_pipeline tests --import-mode=importlib -q
